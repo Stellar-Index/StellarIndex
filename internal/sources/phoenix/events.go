@@ -146,19 +146,15 @@ const (
 //	withdraw_rewards   (2 events): user, reward_token
 //	distribute_rewards (1 event):  asset
 //
-// Neither event carries an amount. The paid-out / distributed amount
-// surfaces on the reward token's own SEP-41 `transfer` event emitted
-// in the SAME op (event_index+1, verified on both real samples) — a
-// SAC contract event, not a stake-contract field-event, so it is NOT
-// correlated here (would require cross-decoder joins on tx_hash+
-// op_index against sep41_transfers, which this decoder does not do). The
-// events are stored with a NULL amount rather than a misleading "0"
+// Neither event carries an amount. It surfaces on the reward token's own SEP-41
+// `transfer` event in the SAME op (event_index+1), which is NOT correlated here
+// (that needs a cross-decoder join against sep41_transfers). The events are
+// stored with a NULL amount rather than a misleading "0"
 // (see phoenix_stake_events.amount, migration 0098).
 //
-// distribute_rewards is a POOL-WIDE announcement — it carries no user
-// field on the wire (verified: every real sample across 3 stake
-// contracts omits it) — so it is decoded directly from its single
-// event rather than through the correlation buffer.
+// distribute_rewards is a POOL-WIDE announcement with no user field on the wire,
+// so it is decoded directly from its single event, not through the correlation
+// buffer.
 const (
 	EventActionWithdrawRewards   = "withdraw_rewards"
 	EventActionDistributeRewards = "distribute_rewards"
@@ -274,27 +270,19 @@ var MainnetStakeContracts = []string{
 	// CBBUVHCE… is deliberately absent: a bond-instrument contract whose WASM
 	// has none of the stake literals; it only shares the "bond" topic word.
 	// The 13 below are genuine per-pool stake contracts the lake-activity
-	// snapshot missed. Together they hold 2,513 rows in
-	// phoenix_stake_events that the gated re-derive scores expected=0
-	// without them, and several are STILL emitting near tip (e.g.
-	// CDOXQONPND… bond/unbond to ledger 64.0M), so leaving them out of
-	// the gate drops live events, not just reconcile rows. Each emits the
-	// phoenix stake surface (bond/unbond → user/token/amount,
+	// snapshot missed; several still emit near tip, so leaving them out of the
+	// gate drops live events. Each emits the phoenix stake surface (bond/unbond,
 	// withdraw_rewards, distribute_rewards, create_distribution_flow,
 	// ("initialize","LP Share token staking contract")). VERIFIED genuine
 	// (r1 lake stellar.contract_events):
-	//   • the first 11 each co-occur in their pool's phoenix-factory
-	//     create transaction (the factory deploys pool + stake together)
-	//     — a hard on-chain deployment link, paired 1:1 with a curated
-	//     pool above;
-	//   • CDOXQONPND… shares 260 transactions with curated phoenix pools
-	//     and is driven by the phoenix reward keeper CBZ7M5B3Y4WW…, which
-	//     also drives the seeded stakes above;
-	//   • CDEQYRWFU… (created before the lake window, like the pools) is
-	//     driven by that same keeper and emits the phoenix stake v1.1
-	//     migration events (`Stake: Migration: `, `Start of migration for
-	//     user: `, `Query for user completed: `) a foreign contract has
-	//     no reason to replicate.
+	//   • the first 11 each co-occur in their pool's phoenix-factory create
+	//     transaction (the factory deploys pool + stake together), paired 1:1
+	//     with a curated pool above;
+	//   • CDOXQONPND… shares 260 transactions with curated phoenix pools and is
+	//     driven by the phoenix reward keeper CBZ7M5B3Y4WW…, which also drives
+	//     the seeded stakes above;
+	//   • CDEQYRWFU… is driven by that same keeper and emits the phoenix stake
+	//     v1.1 migration events a foreign contract has no reason to replicate.
 	"CABWEFVXUB3XWYPTWFETEGJR2WRGE2ZKYYLZDLV3EBUVFMOU4ENK4DJC", // ↔ pool CBHCRSVX (factory create @51,572,026)
 	"CAIR3UPW2PEP27QZWX4XGMO65W6LJ3XCRA3F5G7Z3D52MNOVF5K5YZ56", // ↔ pool CBCZGGNO (factory create @51,572,030)
 	"CDP6DT2YU75ZMOPTTCQ563H2XZDDWHPWKRQ6N2W5LNVE5HHRSB4MMRNQ", // ↔ pool CAZ6W4WH (factory create @51,572,101)

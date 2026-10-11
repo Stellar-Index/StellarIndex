@@ -445,21 +445,16 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// factory/creationSym pair lets preseedFactoryChildren admit a
 			// pool created after that table was frozen.
 			//
-			// newGatedDec (and NOT a static contractIDs list) is what scopes
-			// the -ch re-derive. It is not an optimisation here, it is what
-			// makes the re-derive finish: the source's own `mint` and `burn`
-			// symbols are 33% and 12% of ALL pubnet contract events, so an
-			// unscoped read over [61.5M, tip] streams the CAP-67 firehose. A
-			// STATIC contractIDs list would also be a hard filter on
-			// ch-rebuild / ch-reproject and would silently drop a pool created
-			// after the curated table was frozen; gatedPrefilter re-walks the
-			// factory creation events from the lake instead, so the set is a
-			// guaranteed superset at every point in the window.
+			// newGatedDec (NOT a static contractIDs list) scopes the -ch
+			// re-derive and makes it finish: the source's `mint` and `burn`
+			// symbols are 33% and 12% of ALL pubnet contract events. A static
+			// list would also hard-filter ch-rebuild / ch-reproject and drop a
+			// pool created after the curated table was frozen; gatedPrefilter
+			// re-walks the factory creation events from the lake, so the set is
+			// a superset at every point in the window.
 			//
-			// Strict per-ledger, no netting: a V3 swap body is
-			// self-contained, so a decoded trade is always attributed to the
-			// ledger its own event closed in and the served row keys 1:1
-			// with the re-derive.
+			// Strict per-ledger, no netting: a V3 swap body is self-contained,
+			// so the served row keys 1:1 with the re-derive.
 			name:        "sushiswap_v3",
 			genesis:     sushiswap_v3.FactoryGenesisLedger,
 			dec:         sushiswap_v3.NewDecoder(),
@@ -478,22 +473,16 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// set; no factory namespace exists, so there is nothing to
 			// fan out from and no newGatedDec).
 			//
-			// contractIDs is not an optimisation here, it is what makes
-			// the re-derive finish AND what keeps the recognition axis
-			// honest. The source's own symbols are `deposit`, `withdraw`
-			// and `transfer` — `transfer` alone is ~88% of all pubnet
-			// contract events under the archive's uniform V4 meta — so an
-			// unscoped read over [62.6M, tip] streams the CAP-67 firehose,
-			// and every unrecognised stranger's `deposit` would cap THIS
-			// source's recognition instead of the system-wide bucket.
+			// contractIDs makes the re-derive finish AND keeps the recognition
+			// axis honest: `transfer` alone is ~88% of all pubnet contract
+			// events, and every unrecognised stranger's `deposit` would cap
+			// THIS source's recognition instead of the system-wide bucket.
 			//
-			// Strict per-ledger, no netting and no fan-out: each decoded
-			// event produces exactly one row keyed on its own
-			// (ledger, tx, op, event_index), so the served row keys 1:1
-			// with the re-derive. The eight recognised-but-unserved kinds
-			// (custody / governance / allowance) decode to zero rows, which
-			// is what lets their ledgers count as expected-zero rather than
-			// blind.
+			// Strict per-ledger, no netting, no fan-out: each event yields one
+			// row keyed on (ledger, tx, op, event_index), 1:1 with the
+			// re-derive. The eight recognised-but-unserved kinds (custody /
+			// governance / allowance) decode to zero rows, so their ledgers
+			// count as expected-zero rather than blind.
 			name:           "upshift",
 			genesis:        upshift.GenesisLedger,
 			dec:            upshift.NewDecoder(),
@@ -658,13 +647,9 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// (DFeesEvent, second target below). Both flow layers land
 			// in defindex_flows
 			// (layer discriminator column). strategy.harvest MUST be listed:
-			// the decoder emits it (strategy yield realised into the vault,
-			// direction=harvest, admitted by migration 0138) and the sink
-			// persists it to defindex_flows, so omitting the kind here
+			// the decoder emits it and the sink persists it, so omitting it
 			// undercounts the EXPECTED side and false-flags every
-			// genuine-harvest ledger as a projection gap (a
-			// 974-mismatched-ledger verdict whose Σ|Δ| equalled the served
-			// harvest-row count exactly).
+			// genuine-harvest ledger as a projection gap.
 			{"defindex_flows", "", []string{
 				"defindex.strategy.deposit", "defindex.strategy.withdraw",
 				"defindex.strategy.harvest",

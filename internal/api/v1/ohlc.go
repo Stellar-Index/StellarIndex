@@ -35,16 +35,12 @@ const ohlcDefaultOutlierSigma = 4.0
 // [amountScaleDecimalsFor]. A consumer dividing by a fixed 1e7 overstates a
 // CEX-fed pair tenfold.
 //
-// BaseVolumeDecimals / QuoteVolumeDecimals state that scale on the wire.
-// Every point window is lifted to ONE common scale by
-// [aggregate.NormalizeAmountScale] before summing; the stated value is that
-// lift target, resolved by [commonAmountScaleDecimals] over the
-// PRE-outlier-filter population so it stays the served integers' true scale
-// even when the filter removes the only max-scale venue.
+// BaseVolumeDecimals / QuoteVolumeDecimals state that scale on the wire: the
+// lift target of [aggregate.NormalizeAmountScale], resolved by
+// [commonAmountScaleDecimals] over the PRE-outlier-filter population.
 //
 // This is the per-SOURCE axis only: a leg in `nonstandard_decimals_assets`
-// is stamped at the ASSET's own decimals, which NormalizeAmountScale does not
-// model (the gap [aggregate.AdjustPrice] patches on the price axis).
+// is stamped at the ASSET's own decimals, which NormalizeAmountScale does not model.
 //
 // Truncated signals the window hit the per-request trade cap: Open/High/Low
 // reflect only the chronologically-LAST N trades (the reader drops the OLDEST
@@ -130,13 +126,8 @@ func priceRenderScale(r *big.Rat, digits int) int {
 //     max 1000) closed bars, oldest first, sourced from the
 //     prices_<n> continuous aggregates.
 //
-// Defaults (single-bar mode) match /v1/history:
-//   - from: to - 1h
-//   - to:   now (clamped to the previous closed-bucket boundary)
-//
-// Defaults (series mode) are interval-aware:
-//   - to:   now snapped DOWN to interval boundary
-//   - from: to - limit*interval
+// Defaults: single-bar matches /v1/history (from to-1h, to now clamped to the
+// previous closed bucket); series mode snaps to now and from = to - limit*interval.
 func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	reader := s.History
 	if reader == nil {
@@ -335,14 +326,9 @@ func (s *Server) computeOHLCSingleBar(
 // [barScaleDecimals] is the series arm's bar-level twin, over a CAGG row's
 // `sources` column; both resolve a venue through [amountScaleDecimalsFor]
 // so the point and series paths cannot disagree about a source's scale.
-// Returns [ohlcBarScaleUnknown] if any contributing trade's source has
-// no [external.Registry] entry: [external.Lookup] answers such a source
-// with the registry's CEX-flavoured 8-decimal default (AmountScaleDecimals'
-// zero-value fallback), and stating that default as fact for a source we
-// do not actually recognise would misstate the scale tenfold for
-// the opposite population — an unregistered on-chain DEX at 7 decimals
-// would be reported at 8. An unrecognised source is scale-unknown, not
-// scale-8.
+// Returns [ohlcBarScaleUnknown] if any contributing source has no
+// [external.Registry] entry: [external.Lookup] would answer with the CEX-flavoured
+// 8-decimal default, misstating an unregistered 7-decimal DEX tenfold.
 func commonAmountScaleDecimals(window aggregate.ScaledWindow) int {
 	trades := window.Trades()
 	for i := range trades {

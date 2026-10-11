@@ -97,26 +97,22 @@ func substrateForGenesis(ctx context.Context, scan substrateScanner, cache map[u
 
 // computeCompleteness is the ADR-0033 Phase 6 computor: it derives the
 // per-source completeness WATERMARK (substrate ∧ recognition ∧ projection) and
-// writes it to completeness_snapshots for the API and status page.
-// Operator/cron-driven; compute-once, read-cheap.
+// writes it to completeness_snapshots. Operator/cron-driven.
 //
 // Per-source watermark = substrate continuity + hash chain (Claim 1) ∧
 // projection reconciliation across ALL the source's tables (Claim 2b) ∧
 // recognition for the source's own contracts (Claim 2a). Recognition gaps on a
 // CONTRACT-PINNED source (oracles) cap that source; gaps on contracts no source
-// owns go to a system-wide `recognition` snapshot (topic-based sources cannot
-// attribute an unhandled topic to themselves).
+// owns go to a system-wide `recognition` snapshot.
 //
-// Projection is bounded to the substrate∧recognition-verified region. Its
-// LOWER bound is derived from the served tier's own data per target
-// (projectionScopes), never a hardcoded retention guess, and the covered range
-// is stated in the verdict detail so `complete=true` claims exactly what was
-// reconciled (see targetScope and projectionClaim).
+// Projection is bounded to the substrate∧recognition-verified region. Its LOWER
+// bound comes from the served tier's own data per target (projectionScopes),
+// never a hardcoded retention guess, and the covered range is stated in the
+// verdict detail (see targetScope and projectionClaim).
 //
-// Exit status reports whether the pass ran, not the verdict: an incomplete
-// verdict alerts via stellarindex_completeness_incomplete. A per-source error
-// keeps that source's prior verdict, still evaluates the rest, and exits
-// non-zero naming each failure (evaluateEachSource).
+// Exit status reports whether the pass ran, not the verdict. A per-source error
+// keeps that source's prior verdict, evaluates the rest, and exits non-zero
+// (evaluateEachSource).
 func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo // linear computor; one block per claim.
 	fs, gate := opsutil.NewMutatingFlagSet("compute-completeness")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -1482,30 +1478,25 @@ func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, prio
 	return priorProj, priorSub, priorRec, priorWatermark
 }
 
-// projectionClaim gates what a run may publish on the served (`complete`)
-// axis, given the range it ACTUALLY reconciled, so a verdict cannot silently
-// regress from complete=false to complete=true.
+// projectionClaim gates what a run may publish on the served (`complete`) axis,
+// given the range it ACTUALLY reconciled, so a verdict cannot silently regress
+// from complete=false to complete=true.
 //
 // The risk: completeness-incremental.sh passes `-from = min(watermark)`, but
-// watermark_ledger is the lake axis, AT tip when the lake is clean. An
-// incremental run then never re-sees the mismatch that pinned `complete=false`
-// and would write complete=true with no evidence (ADR-0033 forbids it).
+// watermark_ledger is the lake axis, AT tip when the lake is clean, so an
+// incremental run never re-sees the mismatch that pinned `complete=false`.
 //
 // Rules, fail-closed, in order:
 //  1. A mismatch found by THIS run always fails.
-//  2. A run whose reconcile started at or below servedFrom covered the whole
-//     served range: self-evidencing, may publish true. This is the only way a
-//     failing verdict is cleared.
+//  2. A run reconciling from at or below servedFrom covered the whole served
+//     range and may publish true: the only way a failing verdict is cleared.
 //  3. A partial run may CARRY FORWARD a prior clean verdict for the prefix it
-//     skipped, only if the prior is contiguous with this window
-//     (prior.tip+1 >= runFrom), reached down to servedFrom
-//     (prior.verifiedFrom <= servedFrom), and every present target has a
-//     proven floor (unprovenCarryTargets). Confirm, never upgrade.
-//  4. Anything else (no prior, a failing prior, a stale prior leaving an
-//     unverified band) publishes false.
+//     skipped, only if the prior is contiguous (prior.tip+1 >= runFrom), reached
+//     down to servedFrom (prior.verifiedFrom <= servedFrom), and every present
+//     target has a proven floor (unprovenCarryTargets). Confirm, never upgrade.
+//  4. Anything else publishes false.
 //
-// The detail states the range actually verified: `complete=true` is not
-// genesis-to-tip (that is the lake_complete axis).
+// The detail states the range verified; `complete=true` is not genesis-to-tip.
 func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail string, prior priorProjection, scope claimScope) (bool, string) {
 	if !runClean {
 		return false, "projection: " + runDetail

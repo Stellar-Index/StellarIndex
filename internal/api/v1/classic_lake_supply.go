@@ -21,25 +21,20 @@ import (
 // The classic supply map ([Server.cachedClassicSupply]) sums trustline balances
 // from the lake's current-state projection. A trustline is one of FOUR places a
 // classic asset's supply can sit; the others are claimable balances,
-// liquidity-pool reserves and balances a Stellar Asset Contract holds for
-// CONTRACT holders. `stellar.ledger_entries_current` fills its `asset` column for
-// trustlines ONLY, so an `asset = 'CODE-ISSUER'` query is blind to the rest.
+// liquidity-pool reserves and SAC balances held by CONTRACT holders.
+// `stellar.ledger_entries_current` fills `asset` for trustlines ONLY.
 //
 // # Why the fix reads flows rather than widening the state query
 //
-// A liquidity pool holds two assets in one row, which one (asset, balance)
-// column pair cannot represent, and a SAC balance entry names its CONTRACT, never
-// its asset. So the lake reads `stellar.supply_flows` (i128 amounts):
-// Σmint − Σburn − Σclawback over the asset's SAC is its supply wherever the
-// tokens rest, the same figure GET /v1/assets/{asset_id}/supply serves.
+// A liquidity pool holds two assets in one row, and a SAC balance entry names its
+// CONTRACT, never its asset. So the lake reads `stellar.supply_flows` (i128):
+// Σmint − Σburn − Σclawback over the asset's SAC (as GET /v1/assets/{id}/supply).
 //
 // # Why it can only ever raise the served figure
 //
-// Every trustline balance was minted, so the trustline sum is a PROVABLE LOWER
-// BOUND on issued supply. A flows total BELOW it means the flows are
-// incompletely seeded, so [higherClassicSupply] keeps the trustline figure. The
-// floor holds only for a trustline sum of comparable vintage, hence
-// cachedClassicSupply stops serving the map once it is classicSupplyMaxAge old.
+// The trustline sum is a PROVABLE LOWER BOUND on issued supply. A flows total
+// BELOW it means incompletely seeded flows, so [higherClassicSupply] keeps the
+// trustline figure; cachedClassicSupply stops serving the map past classicSupplyMaxAge.
 
 const (
 	// classicLakeSupplyTTL bounds how long one asset's lake-flows reading is
@@ -183,11 +178,9 @@ func higherClassicSupply(lake, trustline string) (string, supply.Basis) {
 // classicSupplyReading resolves one listing row's circulating supply and names
 // the basis that produced it.
 //
-// It is the ONE place the listing path's preference order lives. Every surface
-// publishing a listing-derived circulating supply calls it ([Server.fillRowMarketCap],
-// [Server.rwaFillMissingSupply]); two copies of the chain would let one surface
-// publish a floor while the other publishes a four-domain total under the same
-// field name.
+// It is the ONE place the listing path's preference order lives
+// ([Server.fillRowMarketCap], [Server.rwaFillMissingSupply] call it); two copies
+// could publish a floor and a four-domain total under the same field name.
 //
 // Order: the ADR-0011 supply observation, then the lake-flows total, then the
 // trustline sum, never below the trustline floor. A served figure below both the
@@ -515,22 +508,14 @@ func (s *Server) rwaClassicPrewarmSet(ctx context.Context) map[string]string {
 // `opts` and reduces the answer with the REQUEST PATH's own candidate
 // derivation.
 //
-// Both halves are the drift guard, and they are the whole reason this function
-// exists rather than a list of asset ids. The rows come from
-// [Server.listAssetsExtAt], the call handleAssetList makes; the asset_id → SAC
-// map comes from [classicLakeSupplyCandidates], the function
-// [Server.classicLakeSupply] calls on the rows it is about to answer for; and
-// the row → detail projection is [assetDetailFromAssetRow], the one the
-// handler uses. Nothing about the population or the cache key is restated
-// here, so none of it can drift the way three earlier prewarms in this
-// codebase drifted on Order, Sources and Limit — each of which warmed a
-// phantom slot while every real request still paid the cold fill.
+// Both halves are the drift guard: rows come from [Server.listAssetsExtAt] (as
+// handleAssetList), the asset_id → SAC map from [classicLakeSupplyCandidates] (as
+// [Server.classicLakeSupply]), and the projection is [assetDetailFromAssetRow].
+// Nothing about the population or cache key is restated, so a prewarm cannot warm
+// a phantom slot while real requests still pay the cold fill.
 //
-// The handler truncates the overfetch row before it fills market caps, so the
-// (Limit+1)th asset of each shape is warmed without being asked about on that
-// page. That is a superset, not a phantom: the extra row is the first row of
-// the caller's next page, and it costs nothing because it rides in a batch
-// that was going to run anyway.
+// The (Limit+1)th overfetch asset is warmed too: a superset, not a phantom, being
+// the first row of the next page, and it rides a batch that ran anyway.
 func (s *Server) classicLakeSupplyPrewarmSet(
 	ctx context.Context, opts []timescale.ListAssetsOptions,
 ) map[string]string {

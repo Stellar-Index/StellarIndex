@@ -9,26 +9,19 @@ import (
 
 // Boot-seeding the /v1/assets listing cache.
 //
-// A race the prewarm cannot win: the process listens within milliseconds, the
-// first /v1/assets requests arrive within seconds, and the cold listing
-// aggregate takes ~10s. The cost IS the first fill.
-//
-// So seed the entries at boot from the previous process's last-good page-set
-// (persisted to Redis by the prewarm, see
-// cmd/stellarindex-api/assets_listing_snapshot.go), with the rows' REAL
-// observation time. [CachedAssetsReader.fetchRows] then takes branch (A'):
-// serve stale immediately, one detached refresh behind it, honestly labelled
-// `flags.stale` with the true `as_of`.
+// The prewarm cannot beat the first /v1/assets requests: the cold listing
+// aggregate takes ~10s. So seed the entries at boot from the previous process's
+// last-good page-set (persisted to Redis, see
+// cmd/stellarindex-api/assets_listing_snapshot.go) with the rows' REAL
+// observation time. [CachedAssetsReader.fetchRows] then takes branch (A'): serve
+// stale immediately, one detached refresh behind it, labelled `flags.stale`.
 //
 // Two invariants keep that honest:
 //
 //   - The seeded entry's `at` is the snapshot's observation time, never
-//     `time.Now()`, so a snapshot re-persisted from a stale serve keeps its
-//     ORIGINAL time and age resets only on a real upstream refresh.
+//     `time.Now()`, so age resets only on a real upstream refresh.
 //   - [Server.listAssetsExtAt] reports observation time and staleness to the
-//     handler, mirroring [CachedMarketsReader.DistinctPairsExtAt] (same
-//     `Flags{Stale: stale}` + `env.AsOf = observedAt`): one staleness
-//     convention.
+//     handler, as [CachedMarketsReader.DistinctPairsExtAt] does.
 
 // listAssetsCacheKey derives the [CachedAssetsReader.entries] key for a
 // ListAssetsExt call.
@@ -51,23 +44,17 @@ func listAssetsCacheKey(opts timescale.ListAssetsOptions) string {
 // cache entry for `opts`, timestamped with the rows' real observation
 // time. It reports whether the seed was installed.
 //
-// Refuses (returns false, leaving today's cold-fill behaviour intact)
-// when:
+// Refuses (returns false, leaving the cold-fill behaviour) when:
 //
-//   - the cache is disabled (ttl <= 0) — there are no entries to seed;
-//   - `rows` is empty — a boot seed must never be able to publish an
-//     empty listing where the uncached path would have published the
-//     real one;
-//   - `observedAt` is zero or in the future — an entry we cannot date
-//     cannot be labelled honestly, and a future-dated one would read
-//     as fresh forever;
-//   - an entry already exists at the key — the seed runs before the
-//     listener starts, but it must never clobber a live fill or orphan
+//   - the cache is disabled (ttl <= 0);
+//   - `rows` is empty — a seed must never publish an empty listing;
+//   - `observedAt` is zero or in the future — it cannot be labelled honestly and
+//     a future-dated entry would read as fresh forever;
+//   - an entry already exists at the key — never clobber a live fill or orphan
 //     the waiters of an in-flight one.
 //
-// Callers apply their own maximum age before calling; this function
-// deliberately accepts any past `observedAt` so the age policy lives in
-// one place (assetsListingSeedMaxAge) rather than being split in two.
+// Callers apply their own maximum age (assetsListingSeedMaxAge); this accepts
+// any past `observedAt`.
 func (c *CachedAssetsReader) SeedListing(
 	opts timescale.ListAssetsOptions, rows []timescale.AssetRow, observedAt time.Time,
 ) bool {
@@ -90,25 +77,18 @@ func (c *CachedAssetsReader) SeedListing(
 }
 
 // ListAssetsExtAt is [CachedAssetsReader.ListAssetsExt] plus the served
-// row-set's observation time and staleness flag — the same shape, and
-// the same purpose, as [CachedMarketsReader.DistinctPairsExtAt]:
-// /v1/assets uses it to stamp an honest `as_of` and `flags.stale`
-// instead of asserting `stale:false` / `as_of=now` over rows the SWR
-// path served from an expired (or boot-seeded) entry.
+// row-set's observation time and staleness flag, as
+// [CachedMarketsReader.DistinctPairsExtAt] does: /v1/assets stamps an honest
+// `as_of` and `flags.stale` over rows served from an expired or boot-seeded entry.
 //
-// observedAt is the zero time — caller stamps as_of=now, not stale —
-// when the cache is disabled, since an uncached read comes straight
-// from upstream and is live-fresh.
+// observedAt is the zero time (caller stamps as_of=now, not stale) when the cache
+// is disabled, since an uncached read is live-fresh.
 //
-// How the meta is obtained without a second, racier source of truth:
-// the entry state is snapshotted BEFORE the fetch. If a servable entry
-// existed then, fetchRows served exactly it (branch A or A'), and its
-// pre-call `at` is that row-set's observation time. Otherwise fetchRows
-// filled inline (branch B or C) and the post-call `at` is the fill
-// time. The only way the pre-call read can be wrong is if a background
-// refresh landed between the snapshot and fetchRows' own read — in
-// which case we under-state freshness (report the older observation
-// over newer rows), which is the conservative direction.
+// The entry state is snapshotted BEFORE the fetch. If a servable entry existed,
+// fetchRows served exactly it (branch A or A') and its pre-call `at` is the
+// observation time; otherwise it filled inline (B or C) and the post-call `at` is
+// the fill time. A background refresh landing in between only under-states
+// freshness, the conservative direction.
 func (c *CachedAssetsReader) ListAssetsExtAt(
 	ctx context.Context, opts timescale.ListAssetsOptions,
 ) ([]timescale.AssetRow, time.Time, bool, error) {

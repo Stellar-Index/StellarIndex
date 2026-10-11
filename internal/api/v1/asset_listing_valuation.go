@@ -16,17 +16,14 @@ import (
 
 // A listing-sourced valuation for a verified-catalogue asset whose market cap
 // this index declines to publish (e.g. USDT0, whose thin Stellar market trips the
-// dust-liquidity guard). Supply times an independent listing's USD price is true
-// and checkable; folded into market cap it would be false. So, like the RWA
-// surface (rwa_reference.go), it ships as `reference` plus `valuation` blocks
-// with provenance and is never written into `market_cap_usd`.
+// dust-liquidity guard). Like the RWA surface (rwa_reference.go), it ships as
+// `reference` plus `valuation` blocks with provenance and is never written into
+// `market_cap_usd`.
 //
 // The listing must name the asset exactly: its classic CODE-GISSUER id or its SAC
-// address (derived from one (code, issuer) pair, so an impersonator's contract
-// never matches); the upstream uses each form for about half the set. Matching
-// by code is never done. Verified-catalogue membership (internal/currency/data/seed.yaml)
-// is a second gate: the listing corroborates, the catalogue attests.
-// [Server.listingValuationFor] then fills only a price hole:
+// address (so an impersonator's contract never matches); never by code.
+// Verified-catalogue membership (internal/currency/data/seed.yaml) is a second
+// gate. [Server.listingValuationFor] then fills only a price hole:
 //
 //   - a published market cap wins ([ListingValuationMarketCapPublished]);
 //   - an observed, substance-gated market price means the hole is in our own
@@ -34,10 +31,8 @@ import (
 //     or transitive `price_basis` is not an observation;
 //   - scam-flagged and unverified-collision rows get no valuation at all.
 //
-// An unreadable or empty snapshot publishes nothing ([ListingValuationUnavailable])
-// rather than carrying an old price forward, as [Server.rwaListingSnapshot] does.
-// Price age uses the RWA bounds: [rwaReferenceStaleAfter] labels,
-// [rwaReferenceMaxAge] withholds.
+// An unreadable or empty snapshot publishes nothing ([ListingValuationUnavailable]).
+// Price age: [rwaReferenceStaleAfter] labels, [rwaReferenceMaxAge] withholds.
 
 // ─── wire shape ─────────────────────────────────────────────────────
 
@@ -95,23 +90,15 @@ type AssetListingReference struct {
 // AssetListingValuation is the asset's circulating supply valued at the
 // listing platform's price — and it is NOT a market capitalisation.
 //
-// The distinction is the entire reason this field exists separately:
+//   - `market_cap_usd` is adversarially verified: its price passed the
+//     thin-market substance gate, the dust-liquidity guard and the scam-issuer
+//     suppression, and rests on a trade on a venue this index observed.
+//   - this figure is an independent platform's aggregate price times a supply
+//     reading. This index observed none of those trades and gated none of them.
+//     It is a second opinion, not an equivalent.
 //
-//   - `market_cap_usd` is adversarially verified. A price reaches it
-//     only after the thin-market substance gate, the dust-liquidity
-//     guard and the scam-issuer suppression have each declined to
-//     withhold it, and behind that price is a trade somebody settled on
-//     a venue this index observed.
-//   - this figure is an independent platform's aggregate of what the
-//     token trades at elsewhere, multiplied by a supply reading. This
-//     index observed none of those trades and applied none of its gates
-//     to them. It is a second opinion, published because withholding a
-//     figure that can be correctly sourced and correctly labelled is
-//     its own kind of dishonesty — not because it is equivalent.
-//
-// The two are never folded together, never summed into one total without
-// the total saying so, and a consumer that renders this as a market cap
-// has misread the field name, the provenance and this comment.
+// The two are never folded together or summed into one total without the total
+// saying so.
 type AssetListingValuation struct {
 	// Status is the single authority on why there is or is not a
 	// figure. Always present when the block is.
@@ -593,18 +580,14 @@ func listingReferenceOf(entry timescale.ListingEntry, form string, now time.Time
 // `lake` is Σmint − Σburn − Σclawback over the asset's Stellar Asset Contract.
 // [listingSupplyReading] prefers it over the row's own reading whenever that
 // reading is a trustline FLOOR (or absent) and the lake is larger; an ADR-0011
-// observation on the row is kept. The difference can be two orders of magnitude:
-// USDT0's trustline sum is 6,469 tokens against 2,581,052 by mint-burn, because a
-// trustline query is blind to tokens held by contracts, claimable balances and
-// liquidity pools. The floor guard in [higherClassicSupply] makes taking the
-// larger safe: the trustline sum is a provable LOWER BOUND on issued supply, and a
-// lake total below it means incomplete flow seeding.
+// observation on the row is kept. The gap can be two orders of magnitude (USDT0:
+// 6,469 by trustlines vs 2,581,052 by mint-burn). The floor guard in
+// [higherClassicSupply] makes taking the larger safe: the trustline sum is a
+// provable LOWER BOUND, and a lake total below it means incomplete flow seeding.
 //
 // The reading is published INSIDE the valuation block and the row's own
-// `circulating_supply` is left as every other producer left it. A dollar figure
-// whose multiplicand is invisible is a total with no traceable source, and
-// overwriting the field would change what a widely-consumed field means on the
-// strength of a third party's row.
+// `circulating_supply` is left alone: a dollar figure with an invisible
+// multiplicand has no traceable source.
 func (s *Server) publishListingValuation(row *AssetDetail, lake string) {
 	circ, reading := listingSupplyReading(row, lake)
 	if circ == "" {

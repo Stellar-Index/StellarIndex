@@ -376,26 +376,21 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 // Stellar code (no Stellar issuance, or a Soroban-only one), keyed on its
 // ticker.
 //
-// Such an entry never enters indexStellarEntries' issuance loop, so without
-// this StellarCollision could not speak about it: that gap covers every
-// `reference_only` entry (USDT, BTC, XRP, ...), and `?code=XRP` would return
-// hundreds of rows with none flagged. No legitimate classic asset can bear a
-// ticker verified as an off-Stellar asset, so EVERY classic `USDT-G…` is an
-// impersonator.
+// Such an entry never enters indexStellarEntries' issuance loop, so without this
+// StellarCollision could not speak about every `reference_only` entry (USDT,
+// BTC, XRP, ...). No legitimate classic asset can bear a ticker verified as an
+// off-Stellar asset, so EVERY classic `USDT-G…` is an impersonator.
 //
-// A legitimately-anchored wrapper gets no ticker allowlist — that would
-// reopen this exact vector (see docs/architecture/domain-traps.md). Instead add
-// the issuance as a `network: stellar` entry on the SAME seed.yaml entry, so
-// indexStellarEntries indexes it as the verified issuer and this function is
-// never reached. Until then, flagging all bearers is the fail-closed default.
+// A legitimately-anchored wrapper gets no ticker allowlist — that would reopen
+// this vector (see docs/architecture/domain-traps.md). Add the issuance as a
+// `network: stellar` entry on the SAME seed.yaml entry instead, so
+// indexStellarEntries indexes it and this function is never reached.
 //
 // A SOVEREIGN CURRENCY is the exception, so ClassFiat lands in byFiatCode.
-// `USD` names a unit of account nobody issues (fiat entries carry
-// `networks: []`), and SEP-1 tells an anchor to denominate a deposit token
-// by its ISO code (`anchor_asset_type: fiat`, `anchor_asset: USD`). A
-// regulated `USD-G…` is following the spec, not impersonating the dollar.
-// The code stays answerable through FiatDenomination; a fiat entry that gains
-// a verified Stellar issuance collides like any other.
+// `USD` names a unit of account nobody issues, and SEP-1 tells an anchor to
+// denominate a deposit token by its ISO code, so a regulated `USD-G…` is not
+// impersonating the dollar. The code stays answerable through FiatDenomination;
+// a fiat entry that gains a verified Stellar issuance collides like any other.
 func (cat *Catalogue) indexTickerOnlyEntry(vc *VerifiedCurrency) error {
 	codeKey := strings.ToUpper(vc.Ticker)
 	if codeKey == "" {
@@ -523,26 +518,19 @@ func (c *Catalogue) LookupByStellarAssetID(assetID string) (*VerifiedCurrency, b
 // ticker collision on Stellar: a verified currency claims this code
 // on Stellar but its registered issuer is different.
 //
-// Returns (verified, true) when the code matches a verified Stellar
-// entry but the issuer does not — the caller surfaces an
-// unverified-collision warning.
-// Returns (verified, false) when the code matches AND the issuer
-// matches — this IS the verified asset, no warning.
-// Returns (nil, false) when the code is not claimed by any
-// verified currency on Stellar.
+// Returns (verified, true) when the code matches a verified Stellar entry but
+// the issuer does not: the caller surfaces an unverified-collision warning.
+// Returns (verified, false) when code AND issuer match: the verified asset.
+// Returns (nil, false) when no verified currency claims the code, or when code
+// or issuer is empty.
 //
-// Soroban contracts are out of scope here, and so is the native
-// asset ITSELF (it has no code, so callers never ask about it).
-// IMPERSONATORS of the native asset are very much in scope: a classic
-// asset with code "XLM" matches the native entry and always reports a
-// collision, because no legitimate classic asset can carry that code.
-// Callers passing empty code or issuer get (nil, false).
+// Soroban contracts and the native asset ITSELF are out of scope, but
+// IMPERSONATORS of native are in: a classic asset with code "XLM" always
+// reports a collision.
 //
-// A code that only matches a SOVEREIGN CURRENCY entry with no Stellar
-// issuance (USD, EUR, GBP, …) is NOT a collision and returns
-// (nil, false) — it is a denomination, not an asset identity; see
-// indexTickerOnlyEntry for the reasoning and FiatDenomination for the
-// lookup that does answer it.
+// A code matching only a SOVEREIGN CURRENCY entry with no Stellar issuance
+// (USD, EUR, GBP, …) is a denomination, not a collision; see
+// indexTickerOnlyEntry and FiatDenomination.
 func (c *Catalogue) StellarCollision(code, issuer string) (*VerifiedCurrency, bool) {
 	if c == nil || code == "" || issuer == "" {
 		return nil, false

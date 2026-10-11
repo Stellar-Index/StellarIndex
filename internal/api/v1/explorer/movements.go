@@ -218,16 +218,13 @@ func (h *Handler) parseMovementCursor(w http.ResponseWriter, r *http.Request) (m
 // boundary; Postgres' sep41_transfers 'transfer' rows cover every ledger AT OR
 // ABOVE it. The boundary is movementsSplit's pgFloor: timescale.MovementsFloor()
 // (P23 ledger on pubnet, genesis on a test net), raised to one past the cap67
-// watermark when higher. The ranges cannot overlap by construction, and
-// assertMovementsNonOverlap checks that on every request. Because they never
-// overlap, mergeAccountMovementRows is a real two-pointer merge of DESC-sorted
-// pages (not a concatenation), so the endpoint stays correct if a regression
-// ever violates that.
+// watermark when higher. The ranges cannot overlap by construction;
+// assertMovementsNonOverlap checks it on every request, and
+// mergeAccountMovementRows is a real two-pointer merge so a regression stays correct.
 //
-// Honest empty-state: classic-movements-backfill is an operator-run historical
-// job, so stellar.account_movements is EMPTY until an operator runs it. Until
-// then only the Postgres tail is served, and CoverageNote says so rather than
-// presenting a partial feed as complete.
+// Honest empty-state: stellar.account_movements is EMPTY until an operator runs
+// classic-movements-backfill; CoverageNote says so rather than presenting the
+// Postgres tail as a complete feed.
 func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -426,18 +423,14 @@ func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, l
 // failure) takes priority — it means the response is MISSING data
 // beyond the structural scope.
 //
-// wm == 0: the cap67-derived archive isn't provisioned —
-// post-P23 coverage is the watched-token Postgres tail only, and
-// classic XLM payment history after the boundary is absent. Saying so
-// on EVERY response is what keeps a busy XLM account's feed from
-// masquerading as complete.
+// wm == 0: the cap67-derived archive isn't provisioned — post-P23 coverage is
+// the watched-token Postgres tail only, and classic XLM payment history after
+// the boundary is absent. Saying so on EVERY response keeps a busy XLM
+// account's feed from masquerading as complete.
 //
-// wm > 0: all assets are served through the watermark; only the sliver
-// above it (the derive follows the tip via a continuous follow daemon,
-// seconds behind) is watched-tokens-only. The watermark is the derive's
-// progress marker, not a verdict: account_movements is not a reconcile
-// target and has no /v1/coverage row, so the note must not call it
-// complete.
+// wm > 0: all assets are served through the watermark; only the sliver above it
+// is watched-tokens-only. The watermark is a progress marker, not a verdict:
+// account_movements has no /v1/coverage row, so the note must not call it complete.
 //
 // Every variant ends with movementsKindGapNote: the note scopes kinds as
 // well as assets.
@@ -639,18 +632,14 @@ func (h *Handler) mapSEP41RowsToMovements(ctx context.Context, address string, r
 // genuine Soroban-native token, which has no classic-asset name to
 // resolve to).
 //
-// The event-topic hint is attacker-influenceable and MUST be
-// cross-checked: sep41_transfers are ingested from ANY
-// token contract (not identity-gated), so a hostile non-SAC token can
-// emit a CAP-67 transfer whose trailing sep0011 topic claims a trusted
-// asset (e.g. Circle USDC) and — rendered verbatim — impersonate that
-// identity on this public, unauthenticated feed. So the fallback routes
-// through sacAssetViaEvents (the SAME helper wasm_view.go uses): it
-// re-derives the SAC address from the claimed asset and only trusts the
-// label when it matches contractID (the topic is influenceable, the
-// deterministic derivation is not). A non-matching claim falls through
-// to the raw contract_id — the spoof renders as itself, never as the
-// asset it impersonated. A proven SAC is memoised across requests.
+// The event-topic hint is attacker-influenceable and MUST be cross-checked:
+// sep41_transfers are ingested from ANY token contract, so a hostile non-SAC
+// token can emit a transfer whose trailing sep0011 topic claims a trusted asset
+// (e.g. Circle USDC) and impersonate it on this public feed. The fallback routes
+// through sacAssetViaEvents (same helper as wasm_view.go): it re-derives the SAC
+// address from the claimed asset and trusts the label only when it matches
+// contractID. A non-matching claim renders as the raw contract_id. A proven SAC
+// is memoised across requests.
 func (h *Handler) resolveSEP41MovementAsset(ctx context.Context, contractID string) string {
 	name, _ := h.resolveSEP41MovementAssetChecked(ctx, contractID)
 	return name

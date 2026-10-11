@@ -702,23 +702,17 @@ func checkpointAnchorReached(checkpointsOK, checkpointsMissed, checkpointsUnmirr
 // where that flag doesn't apply. Pure — unit-testable without a live
 // archive walk.
 //
-// checkpointsOK == 0 && checkpointsMissed > 0 (every checkpoint anchor
-// missed — the run verified NOTHING against the cross-anchor archive)
-// is fatal REGARDLESS of failOnMissed. This is distinct from a PARTIAL
-// miss (some matched, some missed), which fails unless the operator
-// opted out with -fail-on-missed=false. An all-missed range was never
-// actually anchored, so it must not be certified complete or advance
-// the checkpoint tier's LastVerifiedLedger — the caller skips the
-// state-persist on any non-nil error returned here.
+// checkpointsOK == 0 && checkpointsMissed > 0 (the run verified NOTHING against
+// the cross-anchor archive) is fatal REGARDLESS of failOnMissed. A PARTIAL miss
+// fails unless the operator passed -fail-on-missed=false. An all-missed range was
+// never anchored, so it must not be certified complete or advance the tier's
+// LastVerifiedLedger — the caller skips the state-persist on any error here.
 //
-// checkpointsMissed counts only checkpoints absent from
-// INSIDE the mirror's coverage span — a hole in the cross-anchor
-// archive. A checkpoint the walk reached before the mirror's fill job
-// did is counted as unmirrored and never arrives here, which is what
-// makes -fail-on-missed wirable on the nightly tier-B unit. The
-// all-missed branch below is consequently the narrow case of
-// checkpointAnchorReached, which the caller runs first and which also
-// covers a run that saw only unmirrored checkpoints.
+// checkpointsMissed counts only checkpoints absent from INSIDE the mirror's
+// coverage span. One the walk reached before the mirror's fill job is counted as
+// unmirrored and never arrives here, which makes -fail-on-missed wirable on the
+// nightly tier-B unit. The all-missed branch is the narrow case of
+// checkpointAnchorReached, which the caller runs first.
 func checkpointAnchorDecision(checkpointsOK, checkpointsMissed int, failOnMissed bool) error {
 	if checkpointsOK == 0 && checkpointsMissed > 0 {
 		return fmt.Errorf("verification FAILED: checkpoint anchor inconclusive — %d missed, 0 matched — nothing was anchored", checkpointsMissed)
@@ -1055,26 +1049,17 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int, archiveRo
 // archive URL (file:// for the local mirror, https:// for any peer's
 // published archive) and surfaces the result.
 //
-// The hashing is what --verify buys: a bare `scan` only checks that
-// the files exist. With it, stellar-archivist (go-stellar-sdk
-// tools/stellar-archivist) walks every checkpoint, verifies the
-// checkpoint files, and recomputes the sha256 of every referenced
-// bucket against its name — orthogonal to Tier B, which trusts the
-// local mirror's manifest.
+// --verify is what buys the hashing: a bare `scan` only checks the files exist.
+// With it, stellar-archivist walks every checkpoint and recomputes the sha256 of
+// every referenced bucket against its name — orthogonal to Tier B, which trusts
+// the local mirror's manifest.
 //
-// We don't parse the binary's stdout structurally; we stream it to
-// our stderr (so the operator sees progress) and rely on the exit
-// code, which is non-zero when any object is missing or invalid.
+// Stdout is streamed to stderr for progress; the verdict is the exit code,
+// non-zero when any object is missing or invalid, the URL does not resolve, the
+// timeout expires (ctx cancel, killed), or bin is not on $PATH (ErrNotFound).
 //
-// Failure modes:
-//   - bin not on $PATH                    → ErrNotFound, exits 127
-//   - archive URL doesn't resolve         → non-zero exit
-//   - any checkpoint / bucket fails hash  → non-zero exit
-//   - takes longer than the timeout       → ctx cancel, killed
-//
-// The CLI flag default is "stellar-archivist", the Go binary the
-// role apt-installs. A binary passed via -archivist-bin must accept
-// the same argv.
+// A binary passed via -archivist-bin must accept the same argv as the default
+// "stellar-archivist".
 func verifyArchiveArchivist(bin, url string, timeout time.Duration) error {
 	fmt.Fprintf(os.Stderr, "verify-archive: archivist scan --verify bin=%s url=%s timeout=%s\n",
 		bin, url, timeout)
