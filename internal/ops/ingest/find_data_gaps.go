@@ -18,26 +18,15 @@ import (
 // find-data-gaps — data-derived gap detector for Soroban-era ledger
 // ingest coverage.
 //
-// Why this exists. The cursor-derived density projection in
-// `/v1/diagnostics/ingestion` measures process state ("did we walk
-// this ledger") and can read 100% while underlying data is missing.
-// This subcommand scans the soroban_events hypertable directly and
-// reports contiguous ledger-coverage gaps >= --min-gap-size.
-// Operators use the output as the input to a *targeted* backfill —
-// `stellarindex-ops backfill --from <gap.start> --to <gap.end>
-// --source soroban-events` — rather than re-running every stalled
-// cursor on faith.
+// The cursor-derived density projection in `/v1/diagnostics/ingestion`
+// measures process state ("did we walk this ledger") and can read 100% while
+// underlying data is missing. This subcommand scans the soroban_events
+// hypertable directly and reports contiguous ledger-coverage gaps >=
+// --min-gap-size, as input to a *targeted* backfill.
 //
-// The threshold default of 1000 ledgers filters out the legitimate
-// "no Soroban contract emitted in this block" stretches that are
-// expected on mainnet (Soroban activity is dense but not gap-free).
-// A 1000-ledger contiguous gap is ~1.5 h of network time and
-// implies an ingest-side failure, not network quiet.
-//
-// JSON output mode (`--output json`) emits a plan-shaped document
-// ready to feed automation; text mode is the operator-friendly
-// default. Both modes report `total_missing_ledgers` so a fleet of
-// invocations can be aggregated for a global gap-size dashboard.
+// The default threshold of 1000 ledgers (~1.5 h of network time) filters out
+// legitimate "no Soroban contract emitted" stretches; a longer gap implies an
+// ingest-side failure, not network quiet.
 const findDataGapsDefaultMinGapSize = int64(1000)
 
 type findDataGapsReport struct {

@@ -80,19 +80,8 @@ func classify(e *events.Event) string {
 // carried directly in the event topics.
 //
 // Verified against aquarius-amm/liquidity_pool_events/src/lib.rs:122-150
-// (soroban-sdk 25.0.2):
-//
-//	e.events().publish(
-//	    (Symbol::new(e, "trade"), token_in, token_out, user),
-//	    (in_amount as i128, out_amount as i128, fee_amount as i128),
-//	);
-//
-// Topics (4):
-//
-//	topic[0] = Symbol("trade")
-//	topic[1] = Address(token_in)  — sold_asset
-//	topic[2] = Address(token_out) — bought_asset
-//	topic[3] = Address(user)      — trader (often a router contract)
+// (soroban-sdk 25.0.2). Topics (4): "trade", token_in (sold_asset),
+// token_out (bought_asset), user (trader, often a router contract).
 //
 // Body: Vec<ScVal> of length 3 = [i128, i128, i128] —
 // (sold_amount, bought_amount, fee). soroban-sdk serializes

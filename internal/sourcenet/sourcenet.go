@@ -4,18 +4,11 @@
 // Every protocol source is anchored to CONTRACT IDENTITY (ADR-0035), and those
 // identities are PUBNET addresses. On testnet or futurenet the same decoders
 // correctly match nothing, but a consumer that lists them anyway carries pubnet
-// genesis floors (soroswap 50,746,266 on a network whose tip was 4.4M), so
-// /v1/coverage there read "0 of 14 complete" BY CONSTRUCTION and the
-// completeness alerts were noise while the lake was complete.
+// genesis floors, so /v1/coverage there read "0 of 14 complete" BY CONSTRUCTION
+// and the completeness alerts were noise while the lake was complete.
 //
-// This package is deliberately a static table, not configuration: a source
-// becomes applicable on a network when a contract set for it is added to its
-// decoder, a code change, so the table changes in the same commit.
-//
-// The catalogue endpoints pass every external.Registry name, including
-// off-chain CEX / FX / aggregator feeds this table does not classify; the
-// default false excludes them from test nets on purpose, since no test-net
-// deployment runs a price feed.
+// The table is static: a source becomes applicable on a network when a contract
+// set for it is added to its decoder, so the table changes in the same commit.
 //
 // A consumer whose source names are not config.KnownSources (the gap detector
 // keys per TABLE, e.g. "aquarius-liquidity") maps each onto a canonical name

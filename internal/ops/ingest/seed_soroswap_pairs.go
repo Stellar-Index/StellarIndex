@@ -32,14 +32,6 @@ import (
 //
 // Fail-closed (opsutil.WriteGate): the default run is a DRY RUN reporting the pairs
 // it WOULD insert; -write applies.
-//
-// Flags:
-//
-//	-config PATH    TOML config (required): postgres DSN, soroswap factory, RPC fallback.
-//	-rpc URL        Override RPC endpoint. Falls back to
-//	                cfg.Oracle.Soroswap.SeedRPCEndpoint, then to the
-//	                first cfg.Stellar.RPCEndpoints entry.
-//	-timeout DUR    Total wall-clock budget. Default 15m.
 func seedSoroswapPairs(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("seed-soroswap-pairs")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")

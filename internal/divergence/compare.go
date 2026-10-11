@@ -308,27 +308,19 @@ func collectOutcomes(
 
 // CountAgreeing returns how many references in `sources` corroborate
 // `ourPrice` within `thresholdPct` percent — the cross-oracle
-// AGREEMENT count per ADR-0019 Phase 3 ("how many independent
-// references corroborate our VWAP within threshold").
+// AGREEMENT count per ADR-0019 Phase 3.
 //
 // A reference agrees when `abs(ourPrice - refPrice) / refPrice * 100
-// <= thresholdPct` — the same per-reference delta the observation
-// sink records, with agreement defined as the complement of the
-// per-reference firing condition (delta > threshold fires; delta <=
-// threshold agrees). A delta exactly AT the threshold counts as
-// agreement, mirroring `flushObservations`' strict `>` firing test.
+// <= thresholdPct`; a delta exactly AT the threshold agrees, mirroring
+// `flushObservations`' strict `>` firing test.
 //
-// DivergenceChecked semantics: only references that
-// RESPONDED can agree or disagree. Failed references are simply not
-// in `sources` — they contribute neither agreement nor disagreement.
-// An empty map returns 0, which consumers MUST read as "unchecked"
-// (no corroboration data), never as "every reference disagrees";
-// gate on the companion SuccessCount before interpreting the count.
+// Only references that RESPONDED can agree or disagree; failed ones are
+// not in `sources`. An empty map returns 0, which consumers MUST read as
+// "unchecked", never as "every reference disagrees"; gate on the companion
+// SuccessCount before interpreting the count.
 //
-// Defensive edges: non-finite or non-positive ourPrice returns 0
-// (no meaningful comparison exists); non-finite or non-positive
-// reference prices are skipped (mirrors the zero-guard in
-// flushObservations); NaN/negative thresholds count nothing.
+// Non-finite or non-positive ourPrice returns 0; non-finite or non-positive
+// reference prices are skipped; NaN/negative thresholds count nothing.
 func CountAgreeing(ourPrice float64, sources map[string]float64, thresholdPct float64) int {
 	if !isFinitePositive(ourPrice) || math.IsNaN(thresholdPct) || thresholdPct < 0 {
 		return 0

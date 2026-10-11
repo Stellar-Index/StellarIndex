@@ -445,26 +445,21 @@ func FailedFloor(volumeUSD *big.Rat, buckets, valuedBuckets, spanSeconds int64, 
 // Allowed reports whether an aggregated price claim for (base, quote)
 // may be served. `surface` labels the withheld metric
 // (obs.PriceServeSubstanceWithheldTotal) so operators can see WHICH
-// serving path is withholding — it must be a low-cardinality constant
-// ("price_read", "tip", "oracle", "asset_headline", "price_alert"),
-// never a pair string.
+// serving path is withholding — a low-cardinality constant, never a pair string.
 //
 // The measurement is the ALIAS UNION of the pair: XLM's three canonical
 // spellings (native / crypto:XLM / the SAC) hold disjoint venue
-// populations (CS: the aggregator writes CEX volume under crypto:XLM
-// while SDEX writes under native), and the pair's real market is their
-// union — volumes add, a minute active under two spellings is one
-// bucket. Without the union, /v1/price?asset=native&quote=fiat:USD
-// would measure only the literal native/fiat:USD pair — which has zero
-// rows by construction — and withhold XLM itself.
+// populations, and the pair's real market is their union — volumes add, a
+// minute active under two spellings is one bucket. Without the union,
+// /v1/price?asset=native&quote=fiat:USD would measure only the literal
+// native/fiat:USD pair (zero rows by construction) and withhold XLM itself.
 //
 // Verdicts are cached for [substanceCacheTTL] per direction-insensitive
 // pair key. Nil-receiver safe: a nil gate allows everything.
 //
-// Allowed FAILS OPEN when the pair could not be measured — right for a
-// single price lookup, where a store blip must not 404 the surface. A
-// surface that must not publish an unverified claim (listings, market
-// caps — ADR-0018) asks [SubstanceGate.Verdict] instead.
+// Allowed FAILS OPEN when the pair could not be measured, so a store blip
+// does not 404 a price lookup. A surface that must not publish an unverified
+// claim (listings, market caps — ADR-0018) asks [SubstanceGate.Verdict].
 func (g *SubstanceGate) Allowed(ctx context.Context, base, quote canonical.Asset, surface string) bool {
 	allowed, measured := g.Verdict(ctx, base, quote, surface)
 	return allowed || !measured

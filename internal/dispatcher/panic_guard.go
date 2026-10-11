@@ -26,24 +26,22 @@ type panicSite struct {
 }
 
 // recordDecoderPanic converts a recovered decoder panic into the decode error
-// every dispatch seam already skips on. Decoders run on adversary-influenced ledger data. An unrecovered panic would
-// discard every source's output for the ledger in pipeline.ProcessLedger and
-// refuse the cursor advance; the indexer would restart, panic on the same event,
-// and park in `failed`: one decoder bug as a total ingest outage. Treating it as
-// a decode error (count it, skip that ONE input) shrinks the blast radius.
+// every dispatch seam already skips on. Decoders run on adversary-influenced
+// ledger data; an unrecovered panic would discard every source's output for the
+// ledger and refuse the cursor advance, so one decoder bug becomes a total
+// ingest outage.
 //
 // Defensible only because the skip is DURABLY RECORDED:
 //   - The raw event is already in the ClickHouse lake (dispatchOne pushes to
-//     rawEventSink BEFORE the decoder pass), so re-derivation is
-//     `projector-replay` / `ch-rebuild` (invariant 8).
-//   - The decode-error delta reaches decoder_stats via statsflush, and ADR-0033's
-//     re-derive marks the ledger a blind spot (/v1/coverage complete=false).
+//     rawEventSink BEFORE the decoder pass): `projector-replay` / `ch-rebuild`
+//     re-derive it (invariant 8).
+//   - The decode-error delta reaches decoder_stats, and ADR-0033's re-derive
+//     marks the ledger a blind spot (/v1/coverage complete=false).
 //   - DecoderPanicsTotal pages (stellarindex_decoder_panicked).
 //
-// A panicking Matches is treated like a panicking Decode, and a first-match seam
-// stops scanning: the NEXT decoder would inherit a broken decoder's events, a
-// misattribution ADR-0033 cannot see. The op seam offers every op to every
-// decoder, so continuing re-attributes nothing.
+// A panicking Matches is treated like a panicking Decode, and a first-match
+// seam stops scanning: the NEXT decoder would inherit a broken decoder's
+// events, a misattribution ADR-0033 cannot see.
 //
 // seenCounted says whether bumpEventsSeen already ran (the panic came out of
 // Decode, not Matches); if not, bump it here so the error-rate denominator

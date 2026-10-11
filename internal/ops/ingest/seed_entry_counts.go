@@ -25,16 +25,11 @@ import (
 // Run it after the all-time backfill, when ingest only appends at the tip: the
 // GROUP BY scans every `trades` chunk in one transaction (within the 4096
 // max_locks_per_transaction budget) but is slow and lock-hungry mid-backfill. It is
-// not race-free against concurrent tip ingest (counts may be off by O(low
-// thousands) of 60M+, <0.01%) and self-corrects on the next run.
+// not race-free against concurrent tip ingest (<0.01% drift) and self-corrects on
+// the next run.
 //
-// Flags:
-//
-//	-config PATH   TOML config (required) — postgres DSN.
-//	-write         Overwrite source_entry_counts. -dry-run instead only
-//	               loads the config; a run passing neither is refused so a
-//	               script written before -write fails rather than skipping.
-//	-timeout DUR   Wall-clock budget. Default 30m.
+// -write is required; a run passing neither -write nor -dry-run is refused so a
+// script written before -write fails rather than skipping.
 func seedEntryCounts(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("seed-entry-counts")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")

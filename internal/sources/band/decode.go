@@ -127,28 +127,21 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 	// close.
 	ts := canonical.SafeUnixSeconds(resolveSeconds, closedAt)
 	// relay() (not force_relay) applies an update only while
-	// `resolve_time < ledger.timestamp + OFFSET` (ref_data.rs) — outside
-	// that, the on-chain call is a silent no-op though the tx succeeds.
-	// Clamping such a resolve_time to closedAt and still writing it would
-	// let a rate the chain never applied win our `ORDER BY ts DESC`
-	// latest-read for up to one relay interval. Drop it instead — see
-	// bandRelayWouldNoOp.
+	// `resolve_time < ledger.timestamp + OFFSET` (ref_data.rs); outside
+	// that the on-chain call is a silent no-op though the tx succeeds.
+	// Clamping and writing such a rate would let one the chain never applied
+	// win our `ORDER BY ts DESC` latest-read, so drop it (bandRelayWouldNoOp).
 	//
 	// We can't see the per-symbol stored resolve_time the contract also
-	// gates on (on-chain state, not in the call args), so a genuine
-	// first write for a symbol with no live RefData entry (which the
-	// contract accepts with no resolve_time bound) is indistinguishable
-	// from a rejected relay and gets dropped too — an accepted
-	// false-negative over the false-positive of serving a rejected
-	// rate. Both cases surface via the existing decode-error counter
-	// (obs.SourceDecodeErrorsTotal{source="band"}).
+	// gates on, so a genuine first write for a symbol with no live RefData
+	// entry is dropped too: an accepted false-negative over serving a
+	// rejected rate. Both surface via obs.SourceDecodeErrorsTotal{source="band"}.
 	//
-	// force_relay is the unconditional admin path with no such gate to
-	// mirror, so it keeps the clamp-to-close fallback below.
+	// force_relay is the unconditional admin path, so it keeps the
+	// clamp-to-close fallback below.
 	//
-	// Checked here but applied after the symbol_rates loop below, so a
-	// structurally malformed pair still surfaces its own ErrMalformedArgs
-	// rather than being masked by this reject.
+	// Applied after the symbol_rates loop so a malformed pair still surfaces
+	// its own ErrMalformedArgs.
 	relayRejected := fnName == FnRelay && bandRelayWouldNoOp(resolveSeconds, closedAt)
 	if !ts.Before(closedAt.Add(bandMaxFutureResolveTime)) {
 		ts = closedAt.UTC()

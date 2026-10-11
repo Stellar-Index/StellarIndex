@@ -22,18 +22,12 @@ import (
 // transaction, so an in-place exact repair over millions of rows takes days;
 // the per-chunk bracket does not.
 //
-// Not shared with the xlm-base tier:
+// Not shared with the xlm-base tier: `-chunk-batch` (one `-slice` window is one
+// UPDATE, so `-slice` is the bound and the flag is refused rather than ignored)
+// and `-max-generation` / `-min-rel-delta` / `-report` / `-sample` (an identity
+// has no relative-move distribution).
 //
-//   - `-chunk-batch`: one `-slice` window is one UPDATE in one transaction,
-//     so `-slice` is the bound and the flag is refused rather than ignored.
-//   - `-max-generation` / `-min-rel-delta` / `-report` / `-sample`: an
-//     identity has no relative-move distribution, and the generation guard
-//     is the run's own generation.
-//
-// Kept from the in-place walk: per-UTC-day classification
-// (ClassifyUSDVolumeTier, cached per day), the identity, the
-// `derive_generation <= gen` guard, opt-in `-fill-null`, and the fail-closed
-// dry run: without `-write` it counts through
+// Fail-closed dry run: without `-write` it counts through
 // CountUSDVolumeRestampCandidates and decompresses nothing.
 
 // exactChunkStore is the exact tier's seam: the driver's chunk and policy

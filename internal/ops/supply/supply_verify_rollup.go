@@ -38,15 +38,11 @@ type rollupTruthReader interface {
 //
 // The re-sum is the same-source PG aggregate, not the lake: the PG observer is
 // watched-set-gated and bare-i128-only, so per-contract totals legitimately
-// differ from the lake (migrations 0085/0088). The projection reconcile proves
-// sep41_supply_events faithful to the lake, so agreement here implies agreement
-// with the lake.
+// differ from the lake (migrations 0085/0088).
 //
 // Each re-sum can scan every chunk of a hundreds-of-millions-row hypertable, so
-// this is a one-shot post-re-derive check, never a per-tick job. Run it on r1
-// under the heavy-job wrapper:
-//
-//	run-heavy-job.sh verify-rollup stellarindex-ops supply verify-rollup -config /etc/stellarindex/stellarindex.toml
+// this is a one-shot post-re-derive check, never a per-tick job; run it on r1
+// under run-heavy-job.sh.
 //
 // A requested contract with no checkpoint row is reported MISSING and fails the
 // run. A small -tolerance absorbs a worker advance racing the re-sum.
