@@ -8,7 +8,7 @@
 -- fresh-host apply set is declared in
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
--- stellar.transactions: add Soroban resource-metering columns (5.1-full Slice A).
+-- stellar.transactions: add Soroban resource-metering columns.
 --
 -- Additive, DEFAULT 0 → metadata-only for existing parts (NO rewrite), O(1),
 -- and old-binary-safe: an indexer that doesn't yet write these columns keeps
@@ -23,7 +23,7 @@
 -- The new indexer's flushTxs INSERT names these columns explicitly. If that
 -- binary ships before the ALTER lands, every transactions insert fails against
 -- a table lacking the columns and INGEST HALTS (the "config-gated feature ships
--- dead on binary-only deploy" class, commit c82f3b0; a binary deploy does NOT
+-- dead on binary-only deploy" class; a binary deploy does NOT
 -- apply deploy/clickhouse/ per scripts/ci/config-apply-gate.sh). Sequence:
 --   1. Apply this file on r1 (clickhouse-client < transactions_soroban_metering.sql).
 --   2. Verify the columns exist (see the SELECT at the bottom).

@@ -7,8 +7,8 @@
 -- the runbook is the reason the file exists. Scope markers are enforced by
 -- scripts/ci/lint-ch-apply-scope.sh.
 --
--- movements_by_asset (asset page slice A1): account_movements
--- re-keyed asset-first. Design and column rationale: tier1_schema.sql.
+-- movements_by_asset: account_movements re-keyed asset-first. Design and
+-- column rationale: tier1_schema.sql.
 --
 -- Step 1 (table + MV, instant) -> Step 2 (partition walk, HEAVY) -> Step 3.
 
@@ -40,15 +40,13 @@ SELECT address, ledger, ledger_close_time, tx_hash, op_index, leg_index, directi
 FROM stellar.account_movements;
 
 -- ── Step 2: partition-at-a-time catch-up ────────────────────────────────────
--- ***Heavy job, r1 only.*** Measured on r1 (ledgers 60,000,000-
--- 60,009,999, max_threads=4): 8,639,902 rows re-sorted asset-first in 20.3 s
--- = 2.35 us/row. Extrapolated over account_movements' 10,618,524,167 rows:
--- ~6.9 h sort+read, plan 8-14 h with insert cost and sort spill; target
--- 0.4-0.6 TiB compressed. Run AFTER the lake backup and never beside another
--- heavy job. account_movements is ordered by address, so each statement is one
--- 1M-ledger partition (up to ~518M rows) through run-heavy-job.sh.
--- Capture TIP when the MV is created; overlap with the MV era is idempotent
--- under the ReplacingMergeTree, and re-running any window is safe.
+-- ***Heavy job, r1 only.*** Sorting account_movements asset-first costs
+-- ~2.35 us/row (~7 h sort+read for the full table; plan 8-14 h with insert
+-- cost and sort spill; target 0.4-0.6 TiB compressed). Run AFTER the lake
+-- backup and never beside another heavy job. account_movements is ordered by
+-- address, so each statement is one 1M-ledger partition (up to ~518M rows)
+-- through run-heavy-job.sh. Capture TIP when the MV is created; overlap with
+-- the MV era is idempotent under the ReplacingMergeTree; re-running a window is safe.
 --
 --   TIP=$(clickhouse-client --port 9300 -q "SELECT max(ledger) FROM stellar.account_movements")
 --   for P in $(seq 0 $((TIP / 1000000))); do

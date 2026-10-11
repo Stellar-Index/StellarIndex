@@ -10,20 +10,18 @@
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
 -- contract_instance_changes — per-contract instance-executable timeline
--- index for the explorer's code-history + wasm reads (without it,
--- /v1/contracts/{id}/code-history is a persistent 503 class).
+-- index for the explorer's code-history + wasm reads.
 --
 -- WHY: stellar.ledger_entry_changes is ORDER BY (ledger_seq, …), so the
--- "instance entry for contract X" predicate (key_xdr IN (…)) is
--- scan-shaped over the whole changes history — 8s+ cold and 503 under
--- the explorer budget for any non-prewarmed contract. Both
--- ContractCodeHistory and the ContractWasm hash resolution pay it.
+-- "instance entry for contract X" predicate (key_xdr IN (…)) scans the whole
+-- changes history: 8s+ cold, over the explorer budget for any non-prewarmed
+-- contract. ContractCodeHistory and ContractWasm hash resolution both pay it.
 --
 -- THE INDEX: one narrow row per captured instance-entry WRITE, keyed
 -- (contract, ledger, tx_hash, change_index), carrying just the decoded
--- verdict: SAC or wasm + which hash. The wire layout makes the MV extraction a
--- pair of fixed-offset substrings (byte-verified against
--- go-stellar-sdk marshalling, all three shapes):
+-- verdict: SAC or wasm + which hash. The MV extraction is a pair of
+-- fixed-offset substrings (byte-verified against go-stellar-sdk
+-- marshalling, all three shapes):
 --
 --   key_xdr   (48 bytes): [1-4]=LedgerKey type contract_data(6)
 --                         [5-8]=SCAddress type contract(1)
@@ -34,21 +32,21 @@
 --                         [61-64]=executable type (0=wasm 1=SAC)
 --                         [65-96]=wasm hash (wasm only)
 --
--- Instance-STORAGE writes rewrite the same key,
--- so a busy contract contributes many rows — but each is ~90 bytes vs
--- the multi-KB entry_xdr, and readers collapse to distinct executables.
+-- Instance-STORAGE writes rewrite the same key, so a busy contract
+-- contributes many rows, but each is ~90 bytes vs the multi-KB entry_xdr and
+-- readers collapse to distinct executables.
+--
 --
 -- THE KEY: change_index restarts at 0 on every TRANSACTION
--- (extract_entry_changes.go), so two transactions in one ledger writing
--- the same contract's instance share it — keyed on it alone, the RMT
--- merged them into one row. (tx_hash, change_index) is the change's
--- identity: unique within a ledger, stable across re-ingest and across
--- dispatcher.EntryWalkVersion renumbering, and populated on legacy rows
--- whose intra_ledger_seq is still 0. intra_ledger_seq is carried but NOT
--- keyed — it is the READ order (ledger_seq, intra_ledger_seq,
--- change_index), which puts the ledger-final write last; keying on it
--- would stop a renumbering re-derive from replacing the rows it
--- supersedes. Legacy rows (intra_ledger_seq 0) order across
+-- (extract_entry_changes.go), so two transactions in one ledger writing the
+-- same contract's instance share it; keyed on it alone the RMT would merge
+-- them. (tx_hash, change_index) is the change's identity: unique within a
+-- ledger, stable across re-ingest and dispatcher.EntryWalkVersion
+-- renumbering, and populated on legacy rows whose intra_ledger_seq is 0.
+-- intra_ledger_seq is carried but NOT keyed: it is the READ order
+-- (ledger_seq, intra_ledger_seq, change_index), which puts the ledger-final
+-- write last, and keying on it would stop a renumbering re-derive from
+-- replacing the rows it supersedes. Legacy rows (0) order across
 -- transactions only by change_index until ledger_entry_changes is
 -- re-derived; seed rows (4294967295) are ledger-final by construction.
 --
@@ -57,18 +55,18 @@
 -- collapse in the RMT (the migration-0059 double-count class does not
 -- apply).
 --
--- EXISTING DEPLOYMENTS: r1 created this table under the old
--- (contract, ledger, change_index) key, and CREATE IF NOT EXISTS is a
--- no-op against it. ORDER BY cannot change in place — run
+-- EXISTING DEPLOYMENTS: a table created under the old
+-- (contract, ledger, change_index) key makes CREATE IF NOT EXISTS a no-op,
+-- and ORDER BY cannot change in place. Run
 -- deploy/clickhouse/contract_instance_changes_tx_key.sql (side table,
 -- genesis backfill, rename cut-over).
 --
 -- OPERATOR CONTRACT (same as contract_active_ledgers): table-level
--- presence + non-empty gates the fast path on/off. ContractCodeHistory
--- (internal/storage/clickhouse/wasm_lake_reader.go) then TRUSTS
--- per-contract emptiness and returns an empty timeline without the
--- ledger_entry_changes key_xdr scan. contractWasmHash (audit REC-04) still
--- falls through to the PK-keyed ledger_entries_current read on a miss.
+-- presence + non-empty gates the fast path. ContractCodeHistory
+-- (internal/storage/clickhouse/wasm_lake_reader.go) then TRUSTS per-contract
+-- emptiness and returns an empty timeline without the ledger_entry_changes
+-- key_xdr scan. contractWasmHash still falls through to the PK-keyed
+-- ledger_entries_current read on a miss.
 -- Apply this DDL, then IMMEDIATELY run the windowed historical backfill to
 -- genesis — serialized with other heavy jobs:
 --

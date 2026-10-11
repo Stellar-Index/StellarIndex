@@ -11,12 +11,10 @@
 --
 -- Tier-1 raw lake schema (ADR-0034 / docs/architecture/storage-considerations.md §Tier-1 lake schema).
 -- Structural, decoder-INDEPENDENT decode of every ledger; raw XDR blobs retained
--- so any protocol decoder (event / op / contract-call / ledger-entry-change) can
--- run from ClickHouse without re-touching galexie.
+-- so any protocol decoder can run from ClickHouse without re-touching galexie.
 --
 -- Engine: ReplacingMergeTree(ingested_at) -> idempotent re-ingest (latest wins on
--- merge; NO ON CONFLICT silent-drop like the Postgres soroban_events bug). Query
--- with FINAL / GROUP BY for read-time dedup until merges settle.
+-- merge). Query with FINAL / GROUP BY for read-time dedup until merges settle.
 -- Partitioned by 1M-ledger ranges; ORDER BY = each row's natural unique identity.
 
 CREATE DATABASE IF NOT EXISTS stellar;
@@ -59,13 +57,11 @@ CREATE TABLE IF NOT EXISTS stellar.transactions
     memo_type       LowCardinality(String),
     memo            String,
     ingested_at     DateTime DEFAULT now(),
-    -- Soroban resource metering (extract.go:extractSorobanMetering). All
-    -- DEFAULT 0 → additive + old-binary-safe; only Soroban txs are non-zero, so
-    -- these sparse columns compress to near-nothing. DECLARED = the submitter's
-    -- resource bid (tx envelope SorobanTransactionData); the three *_fee values
-    -- are what core CHARGED (tx meta SorobanTransactionMetaExtV1). There is no
-    -- actual-instructions-consumed value in pubnet ledger meta, so none is
-    -- stored. Populated GO-FORWARD only; historical Soroban txs read 0.
+    -- Soroban resource metering. DEFAULT 0 keeps it additive and old-binary-safe;
+    -- the columns are sparse (only Soroban txs are non-zero). DECLARED = the
+    -- submitter's resource bid; the three *_fee values are what core CHARGED.
+    -- Pubnet meta carries no actual-instructions-consumed value, so none is
+    -- stored. Go-forward only; historical Soroban txs read 0.
     soroban_instructions      UInt32 DEFAULT 0,  -- declared CPU instruction bid
     soroban_disk_read_bytes   UInt32 DEFAULT 0,  -- declared
     soroban_write_bytes       UInt32 DEFAULT 0,  -- declared
@@ -75,20 +71,19 @@ CREATE TABLE IF NOT EXISTS stellar.transactions
     soroban_nonrefundable_fee Int64  DEFAULT 0,  -- actual non-refundable fee charged
     soroban_refundable_fee    Int64  DEFAULT 0,  -- actual refundable fee charged
     soroban_rent_fee          Int64  DEFAULT 0,  -- actual rent fee charged
-    -- Fee-bump outer layer (extract.go:extractFeeBump). On a fee bump tx_hash
-    -- is the OUTER hash while source_account and max_fee are the INNER tx's
-    -- (the SDK accessors unwrap), so these carry what the envelope adds.
-    -- ''/0 on a non-fee-bump tx. GO-FORWARD only (deploy/clickhouse/
-    -- transactions_fee_bump.sql): a historical fee bump (result_code 1 or
-    -- -13) reads '' here until its range is re-derived.
+    -- Fee-bump outer layer. On a fee bump tx_hash is the OUTER hash while
+    -- source_account and max_fee are the INNER tx's, so these carry what the
+    -- envelope adds. ''/0 on a non-fee-bump tx. Go-forward only
+    -- (deploy/clickhouse/transactions_fee_bump.sql): a historical fee bump reads
+    -- '' until its range is re-derived.
     inner_tx_hash             String DEFAULT '', -- inner tx hash (also indexed in tx_hash_index)
     fee_account               String DEFAULT '', -- fee payer
     fee_bump_fee              Int64  DEFAULT 0,  -- fee payer's max-fee bid (bounds fee_charged)
     inner_result_code         Int32  DEFAULT 0,  -- inner TransactionResultCode (the inner failure reason)
-    -- Bloom skip-index for hash lookups (GET /v1/tx/{hash}, ADR-0038): the
-    -- sort key is (ledger_seq, tx_index), so WHERE tx_hash=? would otherwise
-    -- full-scan. New parts are indexed on insert; an existing host takes it
-    -- (and idx_tx_source) from deploy/clickhouse/tier1_skip_indexes.sql.
+    -- Bloom skip-index for hash lookups (GET /v1/tx/{hash}, ADR-0038): the sort key
+    -- is (ledger_seq, tx_index), so WHERE tx_hash=? would otherwise full-scan. An
+    -- existing host takes it (and idx_tx_source) from
+    -- deploy/clickhouse/tier1_skip_indexes.sql.
     INDEX idx_tx_hash tx_hash TYPE bloom_filter(0.01) GRANULARITY 1,
     -- Per-account submitted-tx lookups (GET /v1/accounts/{g}/transactions).
     INDEX idx_tx_source source_account TYPE bloom_filter(0.01) GRANULARITY 1,
@@ -112,9 +107,8 @@ CREATE TABLE IF NOT EXISTS stellar.operations
     source_account String,
     body_xdr       String CODEC(ZSTD(3)),
     ingested_at    DateTime DEFAULT now(),
-    -- Per-account sourced-operation lookups (GET /v1/accounts/{g}/operations);
-    -- sort key is (ledger_seq, tx_index, op_index) so a source_account
-    -- predicate would otherwise full-scan. Existing host:
+    -- Per-account sourced-operation lookups (GET /v1/accounts/{g}/operations); the
+    -- sort key would otherwise full-scan. Existing host:
     -- deploy/clickhouse/tier1_skip_indexes.sql.
     INDEX idx_op_source source_account TYPE bloom_filter(0.01) GRANULARITY 1
 )
@@ -136,22 +130,16 @@ ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger_seq, 1000000)
 ORDER BY (ledger_seq, tx_hash, op_index);
 
--- Per-op NON-SOURCE participants (ADR-0038 Phase B). One row per
--- (account, operation) where `account` is a G-strkey the op TOUCHES but
--- did not source: a payment destination, trustor, merge target, clawback
--- victim, etc. Derived in the Go extract via xdrjson.ParticipantAccounts
--- (decodes the op body's G-strkey fields); the op's own source stays in
--- stellar.operations.source_account. Account history (GET
--- /v1/accounts/{g}/operations|transactions) is then the UNION of
--- operations.source_account = G (sourced) and a lookup here (incoming).
+-- Per-op NON-SOURCE participants (ADR-0038 Phase B): one row per (account,
+-- operation) where `account` is a G-strkey the op touches but did not source
+-- (payment destination, trustor, merge target, clawback victim, ...). Account
+-- history (GET /v1/accounts/{g}/operations|transactions) is the UNION of
+-- operations.source_account = G and a lookup here.
 --
--- ORDER BY (account, …) so a per-account lookup is a primary-key range
--- scan — `account` is the sort prefix, so no separate skip-index is
--- needed (unlike operations.source_account, which is a non-prefix column
--- and therefore carries a bloom index). Live ingest fills this going
--- forward; the historical re-derive over the full op history is a
--- (multi-day, operator-gated) ch-backfill, like the Phase-C entry-change
--- fill.
+-- ORDER BY (account, ...) makes a per-account lookup a primary-key range scan, so
+-- no skip-index is needed (operations.source_account is a non-prefix column and
+-- carries a bloom index). Live ingest fills this go-forward; the historical
+-- re-derive is a multi-day, operator-gated ch-backfill.
 CREATE TABLE IF NOT EXISTS stellar.operation_participants
 (
     account     String,
@@ -183,21 +171,16 @@ CREATE TABLE IF NOT EXISTS stellar.contract_events
     op_args_xdr        Array(String) CODEC(ZSTD(3)),
     in_successful_call UInt8,
     ingested_at        DateTime DEFAULT now(),
-    -- Bloom skip-index for per-contract activity (GET /v1/contracts/{c},
-    -- ADR-0038): the sort key is (ledger_seq, tx_hash, ...), so WHERE
-    -- contract_id=? would otherwise full-scan. New parts indexed on insert;
-    -- an existing host: deploy/clickhouse/tier1_skip_indexes.sql.
+    -- Bloom skip-index for per-contract activity (GET /v1/contracts/{c}, ADR-0038):
+    -- the sort key is (ledger_seq, tx_hash, ...), so WHERE contract_id=? would
+    -- otherwise full-scan. Existing host: deploy/clickhouse/tier1_skip_indexes.sql.
     INDEX idx_contract_id contract_id TYPE bloom_filter(0.01) GRANULARITY 1,
-    -- Day-window pruning for the census rollup (stellarindex-ops
-    -- ch-census-rollup, internal/storage/clickhouse/contracts_census.go):
-    -- it filters WHERE close_time >= day AND close_time < day+1 every
-    -- 30 min, but close_time is in neither the partition key nor the sort
-    -- key, and ClickHouse keeps part-level min/max only for partition-key
-    -- columns — so without this index every granule of the table is read
-    -- per run. close_time is monotone in ledger_seq (the sort key), so a
-    -- per-granule minmax prunes a one-day window to ~one day of granules.
-    -- Existing host: deploy/clickhouse/tier1_skip_indexes.sql (ADD INDEX,
-    -- then per-partition MATERIALIZE INDEX).
+    -- Day-window pruning for the census rollup (ch-census-rollup): it filters on
+    -- close_time every 30 min, but close_time is in neither the partition nor the
+    -- sort key, and ClickHouse keeps part-level min/max only for partition-key
+    -- columns. close_time is monotone in ledger_seq, so a per-granule minmax prunes
+    -- a one-day window. Existing host: deploy/clickhouse/tier1_skip_indexes.sql
+    -- (ADD INDEX, then per-partition MATERIALIZE INDEX).
     INDEX idx_ce_close_time close_time TYPE minmax GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(ingested_at)
@@ -215,36 +198,29 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     change_index UInt32,
     change_type  LowCardinality(String),
     entry_type   LowCardinality(String),
-    -- CODEC(ZSTD(3)) applied on r1 by ALTER (Phase A capacity relief)
-    -- — measured 1.75x over the LZ4 default on entry_xdr. Keep this in sync
-    -- with the live ALTER so schema and new-ingest match
-    -- DAT-04: this had drifted).
+    -- CODEC(ZSTD(3)) must match the live ALTER (measured 1.75x over the LZ4
+    -- default on entry_xdr).
     key_xdr      String CODEC(ZSTD(3)),
     entry_xdr    String CODEC(ZSTD(3)),
-    -- ingested_at sits HERE, before the ADR-0038 columns below, because that
-    -- is the LIVE column order: account_id/asset/balance/intra_ledger_seq
-    -- were ALTER TABLE ADDed on r1 (appended after ingested_at), and the
-    -- drift check compares ordered column lists (declared inline, they
-    -- would read as .columns drift forever). A fresh
-    -- bootstrap from this file matches the operative table exactly.
+    -- ingested_at sits HERE, before the ADR-0038 columns below, because that is the
+    -- live column order: those were ALTER TABLE ADDed after it, and the drift check
+    -- compares ordered column lists.
     ingested_at  DateTime DEFAULT now(),
-    -- Queryable owner + asset (ADR-0038 Phase C account-state / asset-holder
-    -- reads). account_id = owning G-strkey for account-owned entries (account
-    -- / trustline / offer / data); asset = canonical "CODE-ISSUER" / "native"
-    -- / "pool:<hex>" for trustlines. Empty otherwise. account_id carries a
-    -- bloom skip-index so WHERE account_id=? prunes parts — the sort key is
-    -- (ledger_seq, tx_hash, …). asset has none: asset-holder reads use
-    -- ledger_entries_current's idx_lecur_asset; WHERE asset=? here scans every part.
-    -- Existing rows backfill to '' until a ch re-derive repopulates them.
+    -- Queryable owner + asset (ADR-0038 Phase C). account_id = owning G-strkey for
+    -- account-owned entries (account / trustline / offer / data); asset = canonical
+    -- "CODE-ISSUER" / "native" / "pool:<hex>" for trustlines. Empty otherwise.
+    -- account_id carries a bloom skip-index since the sort key is (ledger_seq,
+    -- tx_hash, ...). asset has none: asset-holder reads use ledger_entries_current's
+    -- idx_lecur_asset; WHERE asset=? here scans every part.
+    -- Existing rows read '' until a ch re-derive repopulates them.
     account_id   String DEFAULT '',
     asset        String DEFAULT '',
-    -- Stroop balance for account (native) + trustline entries, 0 otherwise.
-    -- Lets top-holder / account-balance reads sort + aggregate in SQL without
-    -- decoding every entry's XDR.
+    -- Stroop balance for account (native) + trustline entries, 0 otherwise; lets
+    -- top-holder reads aggregate in SQL without decoding XDR.
     balance      Int64 DEFAULT 0,
-    -- Position of this change within its ledger's canonical entry-change walk
-    -- — a per-LEDGER monotonic counter (unlike change_index, which restarts
-    -- per transaction), assigned in LEDGER-WIDE PHASE order:
+    -- Position of this change within its ledger's canonical entry-change walk: a
+    -- per-LEDGER monotonic counter (change_index restarts per transaction),
+    -- assigned in LEDGER-WIDE PHASE order:
     --   phase 1  every tx's fee changes            (tx-set apply order)
     --   phase 2  every tx's apply-phase meta       (tx-changes-before, per-op
     --                                               changes in op_index /
@@ -252,29 +228,26 @@ CREATE TABLE IF NOT EXISTS stellar.ledger_entry_changes
     --                                               tx-changes-after)
     --   phase 3  every tx's post-apply fee changes (P23 Soroban refunds)
     -- This mirrors the SDK's canonical ingest.LedgerChangeReader state machine
-    -- (feeChangesState → metaChangesState → postTxApplyState) and
-    -- dispatcher.walkLedgerEntryChanges. It is NOT a per-transaction order
-    -- ("within each tx: fee-changes, …"): that ranks tx1's apply-phase change
-    -- BELOW tx2's fee change and so lets FINAL keep a fee-phase row as a
-    -- key's ledger-final state.
-    -- Folded into ledger_entries_current's ReplacingMergeTree version so the
-    -- LAST change to a key within one ledger wins FINAL dedup
-    -- deterministically. DEFAULT 0 (old-binary-safe
-    -- + the value legacy rows carry until a re-derive repopulates
-    -- them); snapshot/seed backfill rows stamp 4294967295 (math.MaxUint32 —
-    -- authoritative final state for their ledger).
+    -- (feeChangesState -> metaChangesState -> postTxApplyState) and
+    -- dispatcher.walkLedgerEntryChanges. A per-transaction order would rank tx1's
+    -- apply-phase change BELOW tx2's fee change and let FINAL keep a fee-phase row
+    -- as a key's ledger-final state.
+    -- Folded into ledger_entries_current's ReplacingMergeTree version so the LAST
+    -- change to a key within one ledger wins FINAL dedup deterministically. DEFAULT
+    -- 0 is old-binary-safe and what legacy rows carry until re-derived; snapshot/seed
+    -- backfill rows stamp 4294967295 (math.MaxUint32, authoritative final state).
     --
-    -- POSITIONS ARE SCOPED TO dispatcher.EntryWalkVersion (currently 3).
-    -- EntryWalkVersion 3 RENUMBERED every ledger, so a legacy row can carry a
-    -- HIGHER version than the corrected row for the same key — and a lower
-    -- RMT version never displaces a higher one. Re-deriving a range therefore
-    -- requires DROPPING the partition first, not just re-inserting. See
-    -- migrations/0120 and docs/operations/runbooks/entry-walk-renumbering.md.
+    -- POSITIONS ARE SCOPED TO dispatcher.EntryWalkVersion (currently 3). Version 3
+    -- renumbered every ledger, so a legacy row can carry a HIGHER version than the
+    -- corrected row for the same key, and a lower RMT version never displaces a
+    -- higher one. Re-deriving a range therefore requires DROPPING the partition
+    -- first, not just re-inserting. See migrations/0120 and
+    -- docs/operations/runbooks/entry-walk-renumbering.md.
     intra_ledger_seq UInt32 DEFAULT 0,
     INDEX idx_lec_account_id account_id TYPE bloom_filter(0.01) GRANULARITY 1,
-    -- key_xdr is not in the sort key; the bloom prunes point lookups.
-    -- 0.01 as live on r1: a probe reads the whole index, so a tighter FP
-    -- (bigger index) is slower, and no production reader needs it.
+    -- key_xdr is not in the sort key; the bloom prunes point lookups. 0.01 matches
+    -- r1: a probe reads the whole index, so a tighter FP is slower and no reader
+    -- needs it.
     INDEX idx_lec_key_xdr key_xdr TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(ingested_at)
@@ -282,36 +255,27 @@ PARTITION BY intDiv(ledger_seq, 1000000)
 ORDER BY (ledger_seq, tx_hash, op_index, change_index);
 
 -- Current-state projection of ledger_entry_changes: the LATEST entry per
--- (entry_type, key) — ReplacingMergeTree keeps the highest-VERSION row, FINAL
--- forces read-time dedup. Backs the account-state + asset-holder reads
--- (ADR-0038 Phase C): instead of a GROUP BY over all of an account's / asset's
--- historical changes (which grows unboundedly with the backfill), a read
--- touches ~1 row per live entry via the account_id / asset skip-indexes. Kept
--- current by the materialized view below — every insert into
--- ledger_entry_changes (live-capture + ch-backfill re-derive) flows through.
+-- (entry_type, key). ReplacingMergeTree keeps the highest-VERSION row; FINAL forces
+-- read-time dedup. Backs the account-state + asset-holder reads (ADR-0038 Phase C):
+-- a read touches ~1 row per live entry via the account_id / asset skip-indexes
+-- instead of a GROUP BY over all historical changes. Kept current by the
+-- materialized view below (live-capture and ch-backfill re-derive both flow through).
 --
--- Version = (ledger_seq << 32) | intra_ledger_seq, NOT ledger_seq alone.
--- ledger_seq is not unique per key within a ledger —
--- a single ledger can hold several changes to one key (update-then-remove, or
--- remove-then-recreate). With ledger_seq as the sole version those same-ledger
--- rows tied, so FINAL kept an ARBITRARY one: it could resurrect a deleted entry
--- (keep a stale before-image over a later 'removed') or serve a mid-ledger
--- state. Folding the per-ledger intra_ledger_seq (the canonical within-ledger
--- walk position — see ledger_entry_changes.intra_ledger_seq) into the low 32
--- bits makes the version strictly monotonic in canonical order, so FINAL
--- deterministically keeps the LAST change (including a removal). The high 32
--- bits are the ledger, so cross-ledger ordering is unchanged. version is
--- MATERIALIZED (computed on insert, never written by a client) — the MV and any
--- reproject INSERT supply only the base columns.
+-- Version = (ledger_seq << 32) | intra_ledger_seq, NOT ledger_seq alone. A single
+-- ledger can hold several changes to one key (update-then-remove, or
+-- remove-then-recreate); with ledger_seq alone they tie and FINAL keeps an
+-- ARBITRARY one, which could resurrect a deleted entry or serve a mid-ledger
+-- state. Folding the canonical within-ledger walk position (see
+-- ledger_entry_changes.intra_ledger_seq) into the low 32 bits makes the version
+-- strictly monotonic, so FINAL keeps the LAST change (including a removal).
+-- version is MATERIALIZED, so the MV and any reproject INSERT supply only the
+-- base columns.
 --
--- NOTE: intra_ledger_seq is 0 on every row written before this fix (the column
--- DEFAULT) and on legacy rows until a full re-derive of ledger_entry_changes
--- repopulates it; for those rows same-ledger ties remain unbroken exactly as
--- before (no regression). The tie-break is effective for all NEW ingest
--- immediately, and for historical ledgers once re-derived. Existing deployments
--- reproject this table from ledger_entry_changes via the operator-run migration
+-- intra_ledger_seq is 0 on legacy rows until a full re-derive of
+-- ledger_entry_changes repopulates it; their same-ledger ties stay unbroken until
+-- then. Existing deployments reproject this table via the operator-run
 -- deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql (a fresh deploy
--- gets the corrected shape straight from this file).
+-- gets the corrected shape from this file).
 CREATE TABLE IF NOT EXISTS stellar.ledger_entries_current
 (
     entry_type  LowCardinality(String),
@@ -339,23 +303,20 @@ TO stellar.ledger_entries_current AS
 SELECT entry_type, key_xdr, account_id, asset, balance, change_type, ledger_seq, close_time, entry_xdr, intra_ledger_seq
 FROM stellar.ledger_entry_changes;
 
--- Slim TTL-liveness projection: key_hash → liveUntilLedgerSeq (v0.21.4). Backs
+-- Slim TTL-liveness projection: key_hash -> liveUntilLedgerSeq. Backs
 -- internal/storage/clickhouse/ttl_liveness.go's ClassifyTTLLiveness as a
--- primary-key lookup, replacing the per-batch scan of ledger_entries_current's
--- 586M ttl rows (which read the wide entry_xdr per row and OOM'd its own 8 GiB
--- pin — six failed production attempts). Three tiny columns, one
--- row per TTL change: ~20-30 GB vs the 590 GB source; the reader is bounded by
--- construction. The v0.21.4+ binary hard-errors if this table is absent — no
--- scan fallback exists.
+-- primary-key lookup; scanning ledger_entries_current's ttl rows read the wide
+-- entry_xdr per row and OOM'd its memory pin. Three tiny columns, one row per TTL
+-- change, so the reader is bounded by construction. The binary hard-errors if this
+-- table is absent; there is no scan fallback.
 --
--- Extraction (production-validated; ttl_liveness_test.go pins these
--- expressions against the Go layout constants, here AND in the operator
--- migration artifact deploy/clickhouse/ttl_live_until.sql — keep all three in
+-- Extraction (ttl_liveness_test.go pins these expressions against the Go layout
+-- constants, here AND in deploy/clickhouse/ttl_live_until.sql: keep all three in
 -- lockstep): a TTL LedgerKey is 36 bytes (type=00000009 | sha256(LedgerKey)),
 -- a TTLEntry is 48 bytes (lastModified(4) | data.type(4) | keyHash(32) |
 -- liveUntilLedgerSeq(4) | ext(4)); XDR is big-endian, reinterpretAsUInt32 is
 -- little-endian, hence reverse(). version = (ledger_seq << 32) |
--- intra_ledger_seq — same composite as ledger_entries_current.
+-- intra_ledger_seq, same composite as ledger_entries_current.
 --
 -- Fail-open guard: rows failing the exact 36/48 decoded-length checks are
 -- SKIPPED (→ key absent → TTLUnknown → callers KEEP the entry) — a layout
@@ -389,13 +350,13 @@ WHERE entry_type = 'ttl'
   AND length(tryBase64Decode(entry_xdr)) = 48;
 
 -- Per-token supply events (CAP-67 classic SAC + SEP-41 mint/burn/clawback) with
--- the i128 amount DECODED at ingest (decode-at-ingest, ADR-0034). Total supply
--- for a token is a pure SQL sum over this table:
+-- the i128 amount DECODED at ingest (ADR-0034). Total supply for a token is a
+-- pure SQL sum over this table:
 --   Σ amount WHERE kind='mint' − Σ amount WHERE kind IN ('burn','clawback')
--- — no XDR decode at read time and no periodic rollup refresh (the dual-sink
--- keeps it real-time; ch-backfill re-fills holes). ORDER BY contract_id first
--- so a per-token read is a fast PK-prefix scan; the (ledger,tx,op,event) suffix
--- is the event identity, so re-ingest (drop→heal / re-backfill) is idempotent.
+-- No XDR decode at read time and no periodic rollup refresh (the dual-sink keeps it
+-- real-time; ch-backfill re-fills holes). ORDER BY contract_id first makes a
+-- per-token read a PK-prefix scan; the (ledger,tx,op,event) suffix is the event
+-- identity, so re-ingest is idempotent.
 CREATE TABLE IF NOT EXISTS stellar.supply_flows
 (
     contract_id  String,
@@ -413,38 +374,25 @@ PARTITION BY intDiv(ledger_seq, 1000000)
 ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index);
 
 -- ── contract_events_daily — pre-aggregated per-contract activity ──────────
--- Serves /v1/protocols/{name} detail (event breakdown + activity series)
--- without the ~15s raw scan. The
--- source table is ReplacingMergeTree, so a SummingMergeTree MV would
--- OVERCOUNT on duplicate inserts (live-sink retries, ch-rebuild
--- re-derives re-inserting parts) — the `events` column has to dedup on
--- the event's natural key (ledger_seq, tx_hash, op_index, event_index),
--- not just sum row counts.
+-- Serves /v1/protocols/{name} detail (event breakdown + activity series) without
+-- the ~15s raw scan. The source table is ReplacingMergeTree, so a SummingMergeTree
+-- MV would OVERCOUNT on duplicate inserts (live-sink retries, ch-rebuild re-derives
+-- re-inserting parts); `events` must dedup on the event's natural key
+-- (ledger_seq, tx_hash, op_index, event_index), not sum row counts.
 --
--- events uses uniqCombined(17), NOT uniqExact.
--- uniqExact's state
--- is a literal hash SET that grows ~16 bytes per distinct event and is
--- UNBOUNDED for a hot contract+day+event_type+topic group — on r1 this
--- grew large enough that background merges of the AggregatingMergeTree
--- exceeded the kernel commit budget (vm.overcommit_memory=2) and
--- retry-looped, starving the live sink for hours. uniqCombined(17) hashes
--- the SAME natural key into a bounded HyperLogLog-family sketch (~10-96KB
--- per state regardless of cardinality — measured, not theoretical; see
--- the redesign doc), so it (a) still collapses duplicate/retried natural
--- keys to one — a re-insert never inflates the count, avoiding the
--- overcount SummingMergeTree would have caused — while (b) merging in
--- bounded memory. The distinct count itself is an estimate: ~0.1-0.5%
--- error at the cardinalities measured (500K-4M uniques/state) — this table is a
--- dashboard pre-aggregation (explorer's compact-formatted "events · 24h" /
--- event-breakdown charts), never the ADR-0033 completeness oracle, so the
--- tradeoff is one-sided: it fixes an active production fuse for
--- imperceptible display-rounding error. See the redesign doc's reader
--- survey for the full evidence chain.
+-- events uses uniqCombined(17), NOT uniqExact. uniqExact's state is a hash set
+-- growing ~16 bytes per distinct event, unbounded for a hot
+-- contract+day+event_type+topic group; its background merges exceeded the kernel
+-- commit budget (vm.overcommit_memory=2) and starved the live sink.
+-- uniqCombined(17) hashes the same natural key into a bounded sketch (~10-96KB
+-- per state), so it still collapses duplicate/retried keys to one while merging in
+-- bounded memory. The count is an estimate (~0.1-0.5% error at 500K-4M
+-- uniques/state); this table is a dashboard pre-aggregation, never the ADR-0033
+-- completeness oracle.
 --
--- Historical fill (run ONCE after creating, off-peak, windowed by
--- ledger_seq on a large existing lake — see
--- deploy/clickhouse/contract_events_daily_v2.sql for the run-heavy-job-wrapped
--- windowed form):
+-- Historical fill (run ONCE after creating, off-peak, windowed by ledger_seq on a
+-- large existing lake; see deploy/clickhouse/contract_events_daily_v2.sql for the
+-- run-heavy-job-wrapped windowed form):
 --   INSERT INTO stellar.contract_events_daily
 --   SELECT toDate(close_time) AS day, contract_id, event_type,
 --          topic_0_sym, if(topic_0_sym = '', topics_xdr[2], '') AS t1_xdr,
@@ -453,22 +401,19 @@ ORDER BY (contract_id, ledger_seq, tx_hash, op_index, event_index);
 --   FROM stellar.contract_events FINAL
 --   GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 --
--- Changing the table's shape on an EXISTING deployment (r1) — an
--- AggregateFunction column's serialized state format is tied to its
--- declared function+params, so neither the t0_xdr column (it's in the
--- ORDER BY) nor the uniqExact→uniqCombined engine swap
--- can be a bare ALTER; both needed recreate + re-fill:
+-- Changing the table's shape on an EXISTING deployment: an AggregateFunction
+-- column's serialized state is tied to its declared function+params, so neither
+-- the t0_xdr column (in the ORDER BY) nor the uniqExact -> uniqCombined swap can
+-- be a bare ALTER; both need recreate + re-fill:
 --   RENAME TABLE stellar.contract_events_daily TO stellar.contract_events_daily_old;
 --   -- (also drop/recreate the _mv), run this CREATE, then the fill above,
 --   -- then DROP the _old table. Until the new table is populated the fast
 --   -- query errors and ProtocolEventBreakdown/ProtocolDailyActivity
 --   -- gracefully fall back to the raw scan.
--- The uniqCombined swap ships as a side-by-side v2 build so r1 never runs
--- with the fast path down — see
--- deploy/clickhouse/contract_events_daily_v2.sql for the exact,
--- tested apply sequence (this file's canonical CREATE below is what a
--- FRESH deployment gets automatically; r1 needs the v2 runbook because
--- IF NOT EXISTS is a no-op against its already-existing v1 table).
+-- The uniqCombined swap ships as a side-by-side v2 build so r1 never runs with the
+-- fast path down: see deploy/clickhouse/contract_events_daily_v2.sql for the apply
+-- sequence (the CREATE below is what a FRESH deployment gets; IF NOT EXISTS is a
+-- no-op against r1's existing v1 table).
 CREATE TABLE IF NOT EXISTS stellar.contract_events_daily
 (
     day          Date,
@@ -502,35 +447,33 @@ SELECT
 FROM stellar.contract_events
 GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 
--- ── tx_hash_index — hash-ordered transaction lookup (perf-todo §4) ────────
+-- ── tx_hash_index — hash-ordered transaction lookup ────────
 -- GET /v1/tx/{hash} resolution table. stellar.transactions is ORDER BY
--- (ledger_seq, tx_index); its tx_hash bloom skip-index PRUNES but cannot
--- SEEK — at 10.2B rows a point lookup still scans ~96M residual rows
--- (~5.4s). This table is ORDER BY tx_hash, so hash → ledger_seq is a
--- primary-key binary search (µs); the reader then re-reads the summary
--- row ledger-scoped (partition-pruned, sub-100ms).
+-- (ledger_seq, tx_index); its tx_hash bloom skip-index prunes but cannot SEEK (a
+-- point lookup still scans ~96M residual rows). This table is ORDER BY tx_hash, so
+-- hash -> ledger_seq is a primary-key lookup; the reader then re-reads the summary
+-- row ledger-scoped.
 --
--- ReplacingMergeTree: duplicate inserts (live-sink retries, ch-backfill /
--- ch-rebuild re-derives re-inserting ranges, overlapping backfill windows)
--- collapse on merge — tx hashes are unique network-wide, so ORDER BY
--- tx_hash is the row's natural identity. The MV indexes every NEWLY
--- ingested transaction immediately; existing history needs the one-time
--- windowed operator backfill (resumable; see the ClickHouse-log/root-fill
--- caution in docs/operations/perf-todo.md §4):
+-- ReplacingMergeTree: duplicate inserts (live-sink retries, re-derives, overlapping
+-- backfill windows) collapse on merge; tx hashes are unique network-wide, so ORDER
+-- BY tx_hash is the row's natural identity. The MV indexes every NEWLY ingested
+-- transaction; existing history needs the one-time windowed operator backfill
+-- (resumable; see the ClickHouse-log/root-fill caution in
+-- docs/operations/perf-todo.md §4):
 --
 --   stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 \
 --     -full -window 5000000 -write
 --
 -- CORRECTNESS, not just speed: the reader (ExplorerReader.TransactionByHash)
--- treats an index miss as authoritative absence only when the index is
--- non-empty AND stellar.tx_hash_index_coverage holds a marker; a plain miss
--- never falls back to the bloom scan (that would let garbage hashes trigger
--- a multi-second scan of the full transactions table). Without the marker,
--- or on an index-path error or empty index, the bloom scan answers.
+-- treats an index miss as authoritative absence only when the index is non-empty
+-- AND stellar.tx_hash_index_coverage holds a marker; a plain miss never falls back
+-- to the bloom scan (garbage hashes would trigger a multi-second scan of the full
+-- transactions table). Without the marker, or on an index-path error or empty
+-- index, the bloom scan answers.
 --
--- A freshly (re)created index on a lake with history goes non-empty after
--- the first live transaction while all prior history is missing; the marker
--- keeps the reader on the bloom scan until the full backfill has completed:
+-- A freshly (re)created index on a lake with history goes non-empty after the
+-- first live transaction while prior history is missing; the marker keeps the
+-- reader on the bloom scan until the full backfill has completed:
 --
 --   stellarindex-ops ch-txindex-backfill -ch-addr 127.0.0.1:9300 \
 --     -full -window 5000000 -write
@@ -576,28 +519,22 @@ SELECT inner_tx_hash AS tx_hash, ledger_seq, tx_index FROM stellar.transactions
 WHERE inner_tx_hash != '';
 
 -- ── account_movements — ADR-0048 D2 feed-shaped account-activity archive ──
--- Amends ADR-0047 D1 (which planned a Postgres `classic_movements` hypertable,
--- migration 0105 — never populated and dropped by migration 0113; see those
--- migrations' rows in migrations/README.md): "serve by query shape, not by
--- data age." The one
--- genuinely archive-scale story here — "enter an address, see everything it
--- has ever done" — is `WHERE address = X ORDER BY ledger` over what will
--- become 10-20B immutable rows; that is a ClickHouse-shaped read, not a
--- Postgres one (ADR-0048 §Context). This table is NOT a raw-lake table (it is
--- decoder-DERIVED, unlike every table above it in this file) — it is a
--- dedicated SERVING table per ADR-0048 D1, populated by
--- `stellarindex-ops classic-movements-backfill` (internal/sources/
--- classicmovements decodes `stellar.operations`/`operation_results`/
--- `ledger_entry_changes` above; internal/storage/clickhouse's
--- FanOutAccountMovement + InsertAccountMovements write here). Never written by
--- the dual-sink / live extractor.
+-- Amends ADR-0047 D1 (which planned a Postgres `classic_movements` hypertable):
+-- serve by query shape, not by data age. "Enter an address, see everything it has
+-- ever done" is `WHERE address = X ORDER BY ledger` over what will become 10-20B
+-- immutable rows; that is a ClickHouse-shaped read (ADR-0048 §Context). This table
+-- is NOT a raw-lake table (it is decoder-DERIVED, unlike every table above it) but
+-- a dedicated SERVING table per ADR-0048 D1, populated by
+-- `stellarindex-ops classic-movements-backfill` (internal/sources/classicmovements
+-- decodes stellar.operations / operation_results / ledger_entry_changes;
+-- internal/storage/clickhouse's FanOutAccountMovement + InsertAccountMovements
+-- write here). Never written by the dual-sink / live extractor.
 --
--- Feed-shaped: TWO rows per movement (one per participant), with a
--- `direction` discriminator (sent/received/self) rather than one row with
--- from/to columns — so a single-address query needs no OR / UNION. Row
--- cardinality per movement_kind (mirrors internal/sources/classicmovements'
--- exact FromAddress/ToAddress decode semantics — see that package's doc.go
--- and README.md for the full per-op derivation):
+-- Feed-shaped: TWO rows per movement (one per participant), with a `direction`
+-- discriminator (sent/received/self) rather than from/to columns, so a
+-- single-address query needs no OR / UNION. Row cardinality per movement_kind
+-- mirrors internal/sources/classicmovements' FromAddress/ToAddress decode (see that
+-- package's doc.go and README.md):
 --   payment / create_account / clawback / account_merge
 --     -> 2 rows (from_address != to_address, both known: one 'sent' row for
 --        the source, one 'received' row for the destination)
@@ -630,34 +567,28 @@ WHERE inner_tx_hash != '';
 --        assets)
 --
 -- Engine: ReplacingMergeTree(ingested_at), same idempotent-re-derivation
--- convention as every table above (see this file's header) — re-running an
--- already-written classic-movements-backfill window is a safe no-op once
--- merges settle.
+-- convention as every table above: re-running an already-written
+-- classic-movements-backfill window is a safe no-op once merges settle.
 --
--- ORDER BY (address, ledger, tx_hash, op_index, leg_index, direction) is
--- ADR-0048 D2's exact key: `address` first makes a per-account read a
--- contiguous primary-key range scan (the entire point of this table existing
--- instead of a Postgres `WHERE address = ?` over an unindexed-at-that-scale
--- hypertable); the remainder is the row's natural unique identity within one
--- account's feed. `direction` is the LAST key column deliberately: the
--- sent/received pair from one movement lands at two DIFFERENT `address`
--- values (no collision risk from direction there), so it exists purely to
--- keep a 'self' row from colliding with the address's own past/future
--- sent/received rows at the same (ledger, tx_hash, op_index, leg_index).
+-- ORDER BY (address, ledger, tx_hash, op_index, leg_index, direction) is ADR-0048
+-- D2's exact key: `address` first makes a per-account read a contiguous
+-- primary-key range scan; the remainder is the row's natural unique identity within
+-- one account's feed. `direction` is LAST deliberately: the sent/received pair of
+-- one movement lands at two DIFFERENT `address` values, so it exists only to keep a
+-- 'self' row from colliding with the address's own sent/received rows at the same
+-- (ledger, tx_hash, op_index, leg_index).
 --
--- amount: Int128, matching stellar.supply_flows' sibling convention. Classic
--- amounts are int64-stroop-scale and are NOT special-cased (ADR-0047 D1) —
--- Int128 costs nothing extra per row and keeps every amount column in the
--- lake/serving tier uniformly wide, avoiding a second amount-typing
--- convention for one table.
+-- amount: Int128, matching stellar.supply_flows. Classic amounts are
+-- int64-stroop-scale and NOT special-cased (ADR-0047 D1); Int128 keeps every
+-- amount column in the lake/serving tier uniformly wide.
 --
--- attributes: JSON-as-String (not a native JSON/Map type), mirroring
--- migration 0105's `attributes jsonb` remainder 1:1 (balance_id, claimants,
--- send_asset/send_amount, dest_asset/dest_amount, pool_id, revocation, …) — read via
--- JSONExtractString/JSONExtract at query time, never a SQL predicate target
--- in the hot path here. FindClaimableBalanceCreates' balance_id lookup is an
--- external-table semijoin run with use_skip_indexes=0, so idx_cb_balance_id
--- below does not back it (no current reader uses it).
+-- attributes: JSON-as-String (not a native JSON/Map type), mirroring migration
+-- 0105's `attributes jsonb` remainder (balance_id, claimants, send_asset/send_amount,
+-- dest_asset/dest_amount, pool_id, revocation, ...), read via
+-- JSONExtractString/JSONExtract at query time, never a hot-path SQL predicate.
+-- FindClaimableBalanceCreates' balance_id lookup is an external-table semijoin run
+-- with use_skip_indexes=0, so idx_cb_balance_id below does not back it (no current
+-- reader uses it).
 CREATE TABLE IF NOT EXISTS stellar.account_movements
 (
     address           String,
@@ -674,9 +605,8 @@ CREATE TABLE IF NOT EXISTS stellar.account_movements
     amount            Int128,
     attributes        String DEFAULT '{}',
     ingested_at       DateTime DEFAULT now(),
-    -- Added for the removed single-ref balance_id lookup; the current batched
-    -- lookup runs with use_skip_indexes=0. Only prunes when the WHERE predicate
-    -- is textually IDENTICAL to this expression.
+    -- Prunes only when the WHERE predicate is textually IDENTICAL to this
+    -- expression; the batched balance_id lookup runs with use_skip_indexes=0.
     INDEX idx_cb_balance_id JSONExtractString(attributes, 'balance_id') TYPE bloom_filter(0.01) GRANULARITY 4
 )
 ENGINE = ReplacingMergeTree(ingested_at)
@@ -719,14 +649,12 @@ SELECT address, ledger, ledger_close_time, tx_hash, op_index, leg_index, directi
 FROM stellar.account_movements;
 
 -- ── ops_by_source: slim sourced-history projection ─────────────
--- (source_account → ledger/tx/op keys) from BOTH stellar.operations (op-
--- effective source, real op_index) and stellar.transactions (tx source,
--- sentinel op_index 4294967295). The account-history readers' sourced arms
--- read this via PK prefix instead of the source_account bloom probe over the
--- full 23B/34B-row tables (measured 6.17s → PK-shaped; explorer_reader.go).
--- The v0.21.7+ binary REFUSES account-history reads without this table — no
--- scan fallback. Keep in lockstep with the operator migration artifact
--- deploy/clickhouse/ops_by_source.sql (which also carries the Step-2
+-- (source_account -> ledger/tx/op keys) from BOTH stellar.operations (op-effective
+-- source, real op_index) and stellar.transactions (tx source, sentinel op_index
+-- 4294967295). The account-history readers' sourced arms read this via PK prefix
+-- instead of the source_account bloom probe over the full lake tables. The reader
+-- REFUSES account-history reads without this table (no scan fallback). Keep in
+-- lockstep with deploy/clickhouse/ops_by_source.sql (which also carries the Step-2
 -- windowed backfills a fresh MV-only deployment still needs for history).
 CREATE TABLE IF NOT EXISTS stellar.ops_by_source
 (
@@ -751,14 +679,12 @@ FROM stellar.transactions
 WHERE source_account != '';
 
 -- ── account_activity — see deploy/clickhouse/account_activity.sql ──
--- Per-account activity watermark: (account → the max ledger the account was
--- EVER named in, across EVERY role the account-history readers serve — op
--- source, tx source/fee-payer, non-source participant). ~1 row per account,
--- tiny vs the multi-billion-row lake tables. AccountOperations reads
--- max(last_ledger) as an EXACT UPPER BOUND (`ledger_seq <= ?`) on its per-arm
--- reverse primary-key resolves, so a long-idle account's page stops at the
--- account's real last activity instead of walking granules back from the tip
--- (measured ~4s live for a 46d-idle account).
+-- Per-account activity watermark: (account -> the max ledger the account was EVER
+-- named in, across EVERY role the account-history readers serve: op source, tx
+-- source/fee-payer, non-source participant). ~1 row per account. AccountOperations
+-- reads max(last_ledger) as an EXACT UPPER BOUND (`ledger_seq <= ?`) on its per-arm
+-- reverse primary-key resolves, so a long-idle account's page stops at its real
+-- last activity instead of walking granules back from the tip.
 --
 -- CORRECTNESS INVARIANT (data-hiding — read before touching the MV set): the
 -- watermark must be >= the ledger_seq of every row the account-history
@@ -1127,13 +1053,11 @@ ORDER BY (sponsored, sponsor);
 CREATE TABLE IF NOT EXISTS stellar.account_sponsor_edges_by_sponsored_staging
 AS stellar.account_sponsor_edges_by_sponsored;
 
--- account_cohort_* — what the accounts this address CREATED or SPONSORED
--- went on to hold and do. The sponsor and creator boards rank an
--- address by how many accounts it stood behind; these tables answer the
--- question that ranking invites — what value did that cohort bring to
--- the network — from the cohort's own ledger footprint: current
--- holdings, monthly flows in and out, the contracts it moved value
--- through, how recently it was active, and its open DeFi positions.
+-- account_cohort_* — what the accounts this address CREATED or SPONSORED went on to
+-- hold and do: current holdings, monthly flows in and out, the contracts it moved
+-- value through, how recently it was active, and its open DeFi positions. The
+-- sponsor and creator boards rank by how many accounts an address stood behind;
+-- these answer what value that cohort brought.
 --
 -- One cycle (stellarindex-ops ch-cohort-rollup) rebuilds every table
 -- into its _staging twin and swaps atomically, so a reader never sees a
@@ -1339,21 +1263,19 @@ ORDER BY (rel, root, protocol, venue, asset, position_kind);
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_positions_staging
 AS stellar.account_cohort_positions;
 
--- contract_instance_changes — per-contract instance-executable timeline
--- index for the explorer's code-history + wasm reads (without it,
--- /v1/contracts/{id}/code-history is a persistent 503 class).
+-- contract_instance_changes — per-contract instance-executable timeline index for
+-- the explorer's code-history + wasm reads.
 --
--- WHY: stellar.ledger_entry_changes is ORDER BY (ledger_seq, …), so the
--- "instance entry for contract X" predicate (key_xdr IN (…)) is
--- scan-shaped over the whole changes history — 8s+ cold and 503 under
--- the explorer budget for any non-prewarmed contract. Both
--- ContractCodeHistory and the ContractWasm hash resolution pay it.
+-- WHY: stellar.ledger_entry_changes is ORDER BY (ledger_seq, ...), so the
+-- "instance entry for contract X" predicate (key_xdr IN (...)) is scan-shaped over
+-- the whole history: 8s+ cold and 503 under the explorer budget for any
+-- non-prewarmed contract. ContractCodeHistory and the ContractWasm hash resolution
+-- both pay it.
 --
--- THE INDEX: one narrow row per captured instance-entry WRITE, keyed
--- (contract, ledger, tx_hash, change_index), carrying just the decoded
--- verdict: SAC or wasm + which hash. The wire layout makes the MV extraction a
--- pair of fixed-offset substrings (byte-verified against
--- go-stellar-sdk marshalling, all three shapes):
+-- THE INDEX: one narrow row per captured instance-entry WRITE, keyed (contract,
+-- ledger, tx_hash, change_index), carrying just the decoded verdict: SAC or wasm +
+-- which hash. The wire layout makes the MV extraction a pair of fixed-offset
+-- substrings (byte-verified against go-stellar-sdk marshalling, all three shapes):
 --
 --   key_xdr   (48 bytes): [1-4]=LedgerKey type contract_data(6)
 --                         [5-8]=SCAddress type contract(1)
@@ -1364,34 +1286,30 @@ AS stellar.account_cohort_positions;
 --                         [61-64]=executable type (0=wasm 1=SAC)
 --                         [65-96]=wasm hash (wasm only)
 --
--- Instance-STORAGE writes rewrite the same key,
--- so a busy contract contributes many rows — but each is ~90 bytes vs
--- the multi-KB entry_xdr, and readers collapse to distinct executables.
+-- Instance-STORAGE writes rewrite the same key, so a busy contract contributes many
+-- rows, but each is ~90 bytes vs the multi-KB entry_xdr and readers collapse to
+-- distinct executables.
 --
--- THE KEY: change_index restarts at 0 on every TRANSACTION
--- (extract_entry_changes.go), so two transactions in one ledger writing
--- the same contract's instance share it — keyed on it alone, the RMT
--- merged them into one row. (tx_hash, change_index) is the change's
--- identity: unique within a ledger, stable across re-ingest and across
--- dispatcher.EntryWalkVersion renumbering, and populated on legacy rows
--- whose intra_ledger_seq is still 0. intra_ledger_seq is carried but NOT
--- keyed — it is the READ order (ledger_seq, intra_ledger_seq,
--- change_index), which puts the ledger-final write last; keying on it
--- would stop a renumbering re-derive from replacing the rows it
--- supersedes. Legacy rows (intra_ledger_seq 0) order across
--- transactions only by change_index until ledger_entry_changes is
--- re-derived; seed rows (4294967295) are ledger-final by construction.
+-- THE KEY: change_index restarts at 0 on every TRANSACTION, so two transactions in
+-- one ledger writing the same contract's instance share it and would merge into one
+-- row. (tx_hash, change_index) is the change's identity: unique within a ledger,
+-- stable across re-ingest and dispatcher.EntryWalkVersion renumbering, and
+-- populated on legacy rows whose intra_ledger_seq is still 0. intra_ledger_seq is
+-- carried but NOT keyed: it is the READ order (ledger_seq, intra_ledger_seq,
+-- change_index), which puts the ledger-final write last; keying on it would stop a
+-- renumbering re-derive from replacing the rows it supersedes. Legacy rows
+-- (intra_ledger_seq 0) order across transactions only by change_index until
+-- ledger_entry_changes is re-derived; seed rows (4294967295) are ledger-final by
+-- construction.
 --
--- REPLAY-SAFE: no counts; identical (contract, ledger, tx_hash,
--- change_index) keys re-inserted by re-derives/overlapping backfills
--- collapse in the RMT (the migration-0059 double-count class does not
--- apply).
+-- REPLAY-SAFE: no counts; identical (contract, ledger, tx_hash, change_index) keys
+-- re-inserted by re-derives/overlapping backfills collapse in the RMT.
 --
--- EXISTING DEPLOYMENTS: r1 created this table under the old
--- (contract, ledger, change_index) key, and CREATE IF NOT EXISTS is a
--- no-op against it. ORDER BY cannot change in place — run
--- deploy/clickhouse/contract_instance_changes_tx_key.sql (side table,
--- genesis backfill, rename cut-over).
+-- EXISTING DEPLOYMENTS: an existing host created this table under the old
+-- (contract, ledger, change_index) key, and CREATE IF NOT EXISTS is a no-op
+-- against it. ORDER BY cannot change in place: run
+-- deploy/clickhouse/contract_instance_changes_tx_key.sql (side table, genesis
+-- backfill, rename cut-over).
 --
 -- OPERATOR CONTRACT (same as contract_active_ledgers): presence +
 -- non-empty = readers TRUST it, including per-contract emptiness
@@ -1441,26 +1359,21 @@ WHERE entry_type = 'contract_data'
   AND substring(tryBase64Decode(key_xdr), 41, 4) = unhex('00000014')
   AND entry_xdr != ''
   AND substring(tryBase64Decode(entry_xdr), 57, 4) = unhex('00000013');
--- contracts_census_daily — day-keyed per-contract event counts behind
--- the /v1/contracts directory.
+-- contracts_census_daily — day-keyed per-contract event counts behind the
+-- /v1/contracts directory.
 --
--- WHY: the directory's census query (uniqExact over the PK of
--- billions-row contract_events, GROUP BY contract_id over multi-day
--- windows) measured 40s / 790M rows per run and ran ~160 times per 3h
--- across the prewarm rungs. Ranking from contract_events_daily was
--- MEASURED WORSE (24.5s — merging ~15M uniqCombined HLL states), and
--- contract_active_ledgers is contract-first so a window scan doesn't
--- prune. The durable shape is plain per-day counts computed ONCE per
--- day.
+-- WHY: the directory's census query (uniqExact over the PK of contract_events,
+-- GROUP BY contract_id over multi-day windows) measured 40s / 790M rows per run.
+-- Ranking from contract_events_daily was WORSE (24.5s, merging ~15M uniqCombined
+-- HLL states), and contract_active_ledgers is contract-first so a window scan
+-- doesn't prune. The durable shape is plain per-day counts computed ONCE per day.
 --
--- DUP-SAFETY (the migration-0059 Summing-MV double-count class): this
--- table has NO MV. A periodic job (stellarindex-ops ch-census-rollup)
--- recomputes whole days and swaps them in atomically with
--- ALTER TABLE … REPLACE PARTITION — recomputing a day is idempotent by
--- construction, and a partial write never mixes with served rows.
--- Completed days are written once; the current (partial) day is
--- re-replaced every cycle, so the serving tail is at most one cadence
--- (30 min) stale — inside the directory's SWR staleness budget.
+-- DUP-SAFETY: this table has NO MV (a Summing-MV would double-count on duplicate
+-- inserts). A periodic job (stellarindex-ops ch-census-rollup) recomputes whole
+-- days and swaps them in atomically with ALTER TABLE ... REPLACE PARTITION, so
+-- recomputing a day is idempotent and a partial write never mixes with served
+-- rows. Completed days are written once; the current (partial) day is re-replaced
+-- every cycle, so the serving tail is at most one cadence (30 min) stale.
 --
 -- OPERATOR CONTRACT (same as the sibling indexes): presence +
 -- non-empty = the reader TRUSTS it for any window whose floor is
@@ -1476,9 +1389,8 @@ CREATE TABLE IF NOT EXISTS stellar.contracts_census_daily
 (
     day         Date,
     contract_id String,
-    -- uniqExact over (ledger_seq, tx_hash, op_index, event_index) —
-    -- exact, matching the legacy census (audit: count() over-counted
-    -- via lake duplicate rows).
+    -- uniqExact over (ledger_seq, tx_hash, op_index, event_index): exact, since
+    -- count() over-counts lake duplicate rows.
     events      UInt64,
     last_ledger UInt32,
     last_seen   DateTime('UTC')

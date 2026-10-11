@@ -12,27 +12,21 @@
 -- contracts_census_daily — day-keyed per-contract event counts behind
 -- the /v1/contracts directory.
 --
--- WHY: the directory's census query (uniqExact over the PK of
--- billions-row contract_events, GROUP BY contract_id over multi-day
--- windows) measured 40s / 790M rows per run and ran ~160 times per 3h
--- across the prewarm rungs. Ranking from contract_events_daily was
--- MEASURED WORSE (24.5s — merging ~15M uniqCombined HLL states), and
+-- WHY: a census over billions-row contract_events (uniqExact, GROUP BY
+-- contract_id over multi-day windows) cost ~40s per run. Ranking from
+-- contract_events_daily is worse (merging uniqCombined states), and
 -- contract_active_ledgers is contract-first so a window scan doesn't
--- prune. The durable shape is plain per-day counts computed ONCE per
--- day.
+-- prune. Plain per-day counts computed once per day avoid both.
 --
--- DUP-SAFETY (the migration-0059 Summing-MV double-count class): this
--- table has NO MV. A periodic job (stellarindex-ops ch-census-rollup)
--- recomputes whole days and swaps them in atomically with
--- ALTER TABLE … REPLACE PARTITION — recomputing a day is idempotent by
--- construction, and a partial write never mixes with served rows.
--- Completed days are written once; the current (partial) day is
--- re-replaced every cycle, so the serving tail is at most one cadence
--- (30 min) stale — inside the directory's SWR staleness budget.
+-- DUP-SAFETY (the migration-0059 Summing-MV double-count class): no MV.
+-- stellarindex-ops ch-census-rollup recomputes whole days and swaps them in
+-- with ALTER TABLE … REPLACE PARTITION, so a recompute is idempotent and a
+-- partial write never mixes with served rows. The current day is re-replaced
+-- every cycle, so the tail is at most one cadence (30 min) stale.
 --
--- OPERATOR CONTRACT (same as the sibling indexes): presence +
--- non-empty = the reader TRUSTS it for any window whose floor is
--- covered. Apply the DDL, then run the historical fill promptly:
+-- OPERATOR CONTRACT (same as the sibling indexes): presence + non-empty =
+-- the reader TRUSTS it for any window whose floor is covered. Apply the
+-- DDL, then run the historical fill promptly:
 --
 --   /usr/local/sbin/run-heavy-job.sh census-rollup-backfill \
 --     /usr/local/bin/stellarindex-ops ch-census-rollup \
@@ -44,9 +38,8 @@ CREATE TABLE IF NOT EXISTS stellar.contracts_census_daily
 (
     day         Date,
     contract_id String,
-    -- uniqExact over (ledger_seq, tx_hash, op_index, event_index) —
-    -- exact, matching the legacy census (audit: count() over-counted
-    -- via lake duplicate rows).
+-- uniqExact over (ledger_seq, tx_hash, op_index, event_index): count()
+-- over-counts lake duplicate rows.
     events      UInt64,
     last_ledger UInt32,
     last_seen   DateTime('UTC')
@@ -57,11 +50,8 @@ ENGINE = MergeTree
 PARTITION BY day
 ORDER BY (day, contract_id);
 
--- No shared staging table. Each ch-census-rollup run computes into a
--- private stellar.contracts_census_daily_staging_<16 hex> it CREATEs AS
--- the live table and DROPs on exit (concurrent timer + backfill runs
--- must never share one), so the static twin the sibling rollups use was
--- never written by any code path. A host provisioned while it was still
--- declared carries an empty orphan; this drop is the one reason to
--- re-run this file there.
+-- Each ch-census-rollup run computes into a private
+-- stellar.contracts_census_daily_staging_<16 hex> it creates and drops, so no
+-- shared staging table exists. This drop clears an empty orphan on hosts
+-- provisioned when one was still declared; re-run this file there only for it.
 DROP TABLE IF EXISTS stellar.contracts_census_daily_staging;

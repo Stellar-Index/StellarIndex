@@ -1,58 +1,47 @@
 -- Add the missing TimescaleDB compression POLICIES on served-tier
--- hypertables that have compression ELIGIBILITY set but no policy to
--- act on it. Capacity reclaim (~0.2-0.4 TiB of never-compressed aged
--- chunks — master-plan §0b §2).
+-- hypertables that have compression ELIGIBILITY set but no policy to act on
+-- it (reclaims ~0.2-0.4 TiB of never-compressed aged chunks).
 --
 -- Background: at creation, most served-tier hypertables set
 --   ALTER TABLE x SET (timescaledb.compress, compress_segmentby=..., ...)
--- which only makes a table ELIGIBLE for compression — it does NOT
--- compress anything. Compression happens when a policy
--- (add_compression_policy) ages chunks past compress_after. `trades`
--- (0001) and `oracle_updates` (0003) got that policy; ~19 other
--- eligible tables never did, so their aged chunks sit uncompressed
--- forever. This script closes that gap. The 7-day interval matches the
--- house convention (12 of the existing policies use INTERVAL '7 days').
+-- which only makes a table ELIGIBLE for compression; it does NOT compress
+-- anything. Chunks compress when a policy (add_compression_policy) ages them
+-- past compress_after, and only `trades` (0001) and `oracle_updates` (0003)
+-- got one. The 7-day interval matches the house convention.
 --
 -- WHY THIS IS NOT A NUMBERED MIGRATION (ordering matters):
--- numbered migrations run in Phase C, BEFORE the Phase D (D4)
--- projector-replay backfills historical rows into these same
--- served-tier tables. Activating a compression policy before that
--- backfill would force D4's historical writes down the
--- insert-into-compressed path (decompress/restage) on the go-live long
--- pole. Run this AFTER D4 completes, when the tables are settled — then
--- the 7-day frontier is pure reclaim with no write interaction.
+-- numbered migrations run in Phase C, BEFORE the Phase D (D4) projector-replay
+-- backfills historical rows into these served-tier tables. A compression
+-- policy active before that backfill would force D4's historical writes down
+-- the insert-into-compressed path (decompress/restage). Run this AFTER D4
+-- completes, when the tables are settled; then the 7-day frontier is pure
+-- reclaim with no write interaction.
 --   Sequence: D4 → cleanup → THIS → verify pool free space dropped.
 --
--- Idempotent: if_not_exists => true, so re-running is a no-op for any
--- table that already has a policy (and safe to run after adding more
--- eligible tables — just extend the list).
+-- Idempotent: if_not_exists => true, so re-running is a no-op for any table
+-- that already has a policy (extend the list to cover more tables).
 --
--- NOT INCLUDED (need a compression-eligibility decision first — they
--- have NO `timescaledb.compress` set, so add_compression_policy would
--- error): api_usage_events (0027), usage_daily (0071). Enabling
--- compression on those needs a deliberate compress_segmentby choice;
--- tracked in the master plan, out of scope for this pure-policy script.
+-- NOT INCLUDED (no `timescaledb.compress` set, so add_compression_policy
+-- would error): api_usage_events (0027), usage_daily (0071). Enabling
+-- compression there needs a deliberate compress_segmentby choice.
 --
--- NOT INCLUDED (segment-by is near-unique per row, so compression stores
--- about one row per segment and GROWS the chunk): claimable_observations
--- (0012), sac_balance_observations (0014), soroswap_router_swaps (0049),
+-- NOT INCLUDED (segment-by is near-unique per row, so compression stores about
+-- one row per segment and GROWS the chunk): claimable_observations (0012),
+-- sac_balance_observations (0014), soroswap_router_swaps (0049),
 -- trustline_observations (0011). Re-segment on the served predicate first.
 --
--- Dropped by migration 0152: aggregator_exposures
--- (0025), classic_asset_stats_5m (0024) and tvl_observations (0021)
--- were dropped as never-wired scaffolds. They MUST come out of the list
--- below in the same change: `\set ON_ERROR_STOP on` plus a
--- add_compression_policy on a table that no longer exists aborts the
--- whole DO block, so every table AFTER the missing one silently never
--- gets its policy.
+-- Dropped by migration 0152: aggregator_exposures (0025),
+-- classic_asset_stats_5m (0024) and tvl_observations (0021). A dropped table
+-- MUST come out of the list below in the same change: `\set ON_ERROR_STOP on`
+-- plus add_compression_policy on a missing table aborts the whole DO block,
+-- so every table AFTER it silently never gets its policy.
 --
 -- Operator usage (post-D4):
 --   PGPASSWORD=$(cat /etc/stellarindex/postgres-password.txt) \
 --   psql -h 127.0.0.1 -U stellarindex -d stellarindex \
 --        -v ON_ERROR_STOP=1 -f scripts/ops/add-missing-compression-policies.sql
 --
--- Verify afterward (chunks should begin compressing on the next policy
--- run; force-check one immediately if impatient):
+-- Verify afterward (chunks begin compressing on the next policy run):
 --   SELECT hypertable_name, count(*) FILTER (WHERE is_compressed) AS compressed,
 --          count(*) AS total
 --   FROM timescaledb_information.chunks

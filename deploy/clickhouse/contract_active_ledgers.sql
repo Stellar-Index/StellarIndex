@@ -13,35 +13,31 @@
 -- explorer's contract detail read.
 --
 -- WHY: stellar.contract_events is ORDER BY (ledger_seq, tx_hash, …). The
--- "most recent N events for contract X" read relies on a reverse
--- read-in-order walk (v0.26.1) that is fast for BUSY contracts (tail dense
--- with matches) but scans the whole key range backwards for QUIET ones —
--- measured avg 9.3s / 114M rows on r1, and every such cold page 503s at the
--- 8s explorer budget (three user reports: CCW5IBJ7…, CBUYWJCO…, CDMAFG3H…).
+-- "most recent N events for contract X" reverse read-in-order walk is fast
+-- for BUSY contracts but scans the whole key range backwards for QUIET ones
+-- (~9s / 114M rows), which 503s at the 8s explorer budget.
 --
 -- THE INDEX: one narrow row per (contract, ledger-with-activity). The reader
 -- walks the contract's most recent active ledgers here (primary-key reverse
--- walk, µs), then reads the events ledger-pruned from contract_events.
--- ~20-40 GiB against 12.7B events (contract_id compresses to ~nothing
--- sorted; ledger_seq/close_time delta-compress) vs ~800 GiB for a
--- per-event index carrying tx_hash.
+-- walk), then reads the events ledger-pruned from contract_events. ~20-40 GiB
+-- against 12.7B events (contract_id compresses to ~nothing sorted;
+-- ledger_seq/close_time delta-compress) vs ~800 GiB for a per-event index
+-- carrying tx_hash.
 --
 -- REPLAY-SAFE: no counts, no sums — re-derives / ch-rebuild / overlapping
--- backfill windows re-insert identical (contract, ledger) keys and RMT
--- collapses them. This is deliberate: a Summing/counted design would
--- double-count on replay (the migration-0059 comet class).
+-- backfill windows re-insert identical (contract, ledger) keys and the RMT
+-- collapses them. Deliberate: a Summing/counted design would double-count on
+-- replay (the migration-0059 comet class).
 --
 -- OPERATOR CONTRACT: table-level presence + non-empty gates the fast path
--- on/off (the reader's requireRows probe refuses an entirely-empty table —
--- MV dropped/TRUNCATEd reads as "index unavailable"). PER-CONTRACT
--- emptiness is deliberately NOT trusted as authoritative "no events":
--- ExplorerReader.ContractEventsRecent (internal/storage/clickhouse/
--- explorer_reader.go) treats an empty per-contract
--- walk as "unknown, fall back" and re-reads contract_events directly,
--- exactly as it did before this index existed — because the table-global
--- probe cannot see PARTIAL backfill coverage. Apply this DDL (the MV
--- covers everything ingested from that moment), then run the windowed
--- historical backfill to genesis:
+-- (the reader's requireRows probe refuses an entirely-empty table — MV
+-- dropped/TRUNCATEd reads as "index unavailable"). PER-CONTRACT emptiness is
+-- deliberately NOT trusted as "no events": ExplorerReader.ContractEventsRecent
+-- (internal/storage/clickhouse/explorer_reader.go) treats an empty
+-- per-contract walk as "unknown, fall back" and re-reads contract_events
+-- directly, because the table-global probe cannot see PARTIAL backfill
+-- coverage. Apply this DDL (the MV covers everything ingested from that
+-- moment), then run the windowed historical backfill to genesis:
 --
 --   /usr/local/sbin/run-heavy-job.sh contract-ledgers-backfill \
 --     /usr/local/bin/stellarindex-ops ch-contract-ledgers-backfill \

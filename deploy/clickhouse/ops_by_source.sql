@@ -13,16 +13,13 @@
 -- ledger/tx/op keys), MV-maintained from BOTH stellar.operations and
 -- stellar.transactions.
 --
--- Why this table exists: the account-history readers' "sourced" arms
--- (explorer_reader.go accountTransactionsQuery / accountOperationsQuery
--- arm 1) resolved `source_account = ?` via the bloom skip-index over the
--- full 23B-row transactions / 34B-row operations tables. Granule-pruned
--- but still scan-shaped: MEASURED on r1 for a 328-op account,
--- arm 1 = 6.17 s vs arm 2 (operation_participants, PK-prefixed) = 0.056 s
--- — 110×, and the reason /v1/accounts/{g}/transactions|operations sat in
--- the 8s 503 class under load. This projection is the same fix class as
--- stellar.ttl_live_until: extract the lookup ONCE per row at ingest into a
--- slim PK-ordered table, make the read a primary-index range.
+-- WHY: the account-history readers' "sourced" arms (explorer_reader.go
+-- accountTransactionsQuery / accountOperationsQuery arm 1) resolved
+-- `source_account = ?` via the bloom skip-index over the full transactions /
+-- operations tables: granule-pruned but scan-shaped (110x slower than the
+-- PK-prefixed operation_participants arm). This extracts the lookup once per
+-- row at ingest into a slim PK-ordered table, like stellar.ttl_live_until, so
+-- the read is a primary-index range.
 --
 -- ONE table serves BOTH readers via an op_index sentinel:
 --   * rows from stellar.operations carry the OP-EFFECTIVE source (an op
@@ -32,16 +29,16 @@
 --     op_index = 4294967295 (the sentinel) → the TRANSACTIONS arm reads
 --     DISTINCT (ledger_seq, tx_index) over ALL rows, so a tx is found
 --     whether the account sourced the tx itself or any single op in it.
--- Keeping both streams preserves the readers' exact semantics: a tx
--- sourced by A whose every op overrides to another source is still A's;
--- an op sourced by B inside A's tx is still B's.
+-- Both streams preserve the readers' semantics: a tx sourced by A whose every
+-- op overrides to another source is still A's; an op sourced by B inside A's
+-- tx is still B's.
 --
 -- Engine: ReplacingMergeTree over the full sort key — rows are identity
--- facts (no versions to race); a backfill window re-run or MV/backfill
--- overlap dedups to one row. Readers keep their LIMIT 1 BY guards, so
--- un-merged duplicates never shorten a page.
+-- facts (no versions to race); a backfill re-run or MV/backfill overlap
+-- dedups to one row. Readers keep their LIMIT 1 BY guards, so un-merged
+-- duplicates never shorten a page.
 --
--- Operator sequence (deploy order matters — the v0.21.7+ binary REFUSES
+-- Operator sequence (deploy order matters — the binary REFUSES
 -- account-history reads until this table exists; no scan fallback):
 --   Step 1 (table + MVs, instant) → Step 2 (windowed backfills, heavy)
 --   → Step 3 (verify) → deploy the binary that reads it.
