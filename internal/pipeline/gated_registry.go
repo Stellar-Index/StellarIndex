@@ -321,11 +321,9 @@ func seedCuratedContracts(
 }
 
 // GatedRegistryOptions warms the contractid.Registry for every contract-gated
-// source and returns a map keyed by source name. BuildDispatcher / BuildRegistry
-// forward out[source] to each gated decoder's NewDecoder so the gate resumes
-// with a complete registry across restarts (the projector cursor advances past
-// creation events, so live-only seeding would miss pools deployed before boot;
-// ADR-0035).
+// source and returns a map keyed by source name, forwarded to each gated
+// decoder's NewDecoder. The cursor advances past creation events, so live-only
+// seeding would miss pools deployed before boot (ADR-0035).
 //
 // The warm has two inputs:
 //
@@ -335,24 +333,17 @@ func seedCuratedContracts(
 //     (ADR-0040 §1 mechanism 3: comet, blend_emitter, upshift), which has no
 //     creation events, so nothing else writes its contracts to the table.
 //
-// Seeding the curated set here keeps the options self-sufficient. Otherwise the
-// options carry nothing for that source (leaning on each decoder constructor
-// re-installing its set is a redundancy this layer must not depend on; blend's
-// installs no children), and the table stays empty, so
-// GET /v1/protocols/{name} serves an empty roster that reads like a protocol
-// with no pools yet.
+// Seeding it here keeps the table populated; otherwise GET /v1/protocols/{name}
+// serves an empty roster that reads like a protocol with no pools yet.
 //
 // withHook installs the live-upsert persistence callback (indexer path): a NEW
 // factory creation event upserts the child into protocol_contracts, and it arms
 // the curated reconcile that writes any curated contract the table is missing.
 // Read-only consumers (recognition / completeness audits) pass withHook=false:
-// they still gate on the curated set (contractid.WithSeed is a pure constructor
-// option and fires no hook; TestRegistry_WithSeed_doesNotFireHook) but write
-// nothing, since an audit that registered contracts would manufacture its own
-// evidence.
+// they still gate on the curated set but write nothing, since an audit that
+// registered contracts would manufacture its own evidence.
 //
-// hookCtx scopes the live upserts' lifetime (typically the process root
-// context) and is unused when withHook is false.
+// hookCtx scopes the live upserts; unused when withHook is false.
 func GatedRegistryOptions(
 	ctx context.Context,
 	store *timescale.Store,

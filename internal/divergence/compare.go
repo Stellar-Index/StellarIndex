@@ -137,32 +137,19 @@ const overallDeadlineLabel = OutcomeDeadlineExceeded
 //
 // Behaviour:
 //
-//   - Each reference runs in its own goroutine with the per-
-//     reference timeout from opts.
-//   - References returning [ErrAssetUnsupported] are recorded in
-//     Failures with a stable label (operator can decide whether
-//     that asset belongs in the source's supported set).
-//   - References returning [ErrPriceUnavailable] are recorded the
-//     same way; the divergence threshold logic distinguishes
-//     "this source is down" from "we disagree with this source".
-//   - Other errors (network timeout, panic recovered, etc.) are
-//     recorded in Failures with the verbatim error message.
-//   - A reference that has not reported by opts.OverallTimeout is
-//     recorded as [overallDeadlineLabel] and Compare returns the
-//     PARTIAL result. Waiting on the WaitGroup alone would let a
-//     single reference that ignores context cancellation block the
-//     comparison — and, through it, the aggregator's
-//     divergence refresh — indefinitely. The abandoned goroutine is
-//     left to finish on its own; its send cannot block or panic
-//     because the results channel is buffered to len(refs) and is
-//     never closed.
-//
-// The aggregator's caller-side gating logic typically reads:
-//
-//	res := divergence.Compare(ctx, refs, pair, ourPrice, ts, opts)
-//	if res.SuccessCount >= 2 && res.DivergencePct > threshold {
-//	    flags.DivergenceWarning = true
-//	}
+//   - Each reference runs in its own goroutine with the per-reference timeout
+//     from opts.
+//   - [ErrAssetUnsupported] and [ErrPriceUnavailable] are recorded in Failures
+//     with a stable label; the threshold logic distinguishes "this source is
+//     down" from "we disagree with this source".
+//   - Other errors (timeout, recovered panic, etc.) are recorded in Failures
+//     with the verbatim message.
+//   - A reference that has not reported by opts.OverallTimeout is recorded as
+//     [overallDeadlineLabel] and Compare returns the PARTIAL result. Waiting on
+//     the WaitGroup alone would let one reference that ignores context
+//     cancellation block the aggregator's divergence refresh indefinitely. The
+//     abandoned goroutine's send cannot block or panic: the results channel is
+//     buffered to len(refs) and never closed.
 func Compare(
 	ctx context.Context,
 	refs []Reference,

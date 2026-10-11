@@ -1,76 +1,27 @@
 // Package upshift decodes events from the Upshift tokenized yield vaults on
 // Stellar (curated by Gami Labs and Stake Capital Group).
 //
-// A vault is ERC-4626-shaped: one underlying asset in, proportional SHARES out,
-// and the vault contract IS the share token (it emits SEP-41 transfer/approve
-// for its shares). RedStone prices `earnUSDC_FUNDAMENTAL` on that identity
-// ([MainnetVaultEarnUSDC]), deliberately not the underlying's: a yield-bearing
-// claim is a different instrument from USDC.
+// A vault is ERC-4626-shaped and the vault contract IS the share token (it emits
+// SEP-41 transfer/approve for its shares). RedStone prices `earnUSDC_FUNDAMENTAL`
+// on that identity ([MainnetVaultEarnUSDC]), deliberately not the underlying's:
+// a yield-bearing claim is a different instrument from USDC.
 //
-// # Contracts
+// Two vaults exist (CCL3WITW… earnUSDC, CC6TRAPQ… earnXLM). Each underlying is
+// proven by the SAC `transfer` one event ahead of a `deposit` for exactly its
+// `assets` amount; ticker names are inferred, CONTRACT IDS are proven. A
+// circulated "vault" address (CC2DNHE5…) has zero lake events and is absent from
+// [MainnetVaults].
 //
-// Two vaults exist: the only contracts at or after ledger 62,000,000 emitting
-// any of the five bespoke symbols (`deployed_assets_changed`,
-// `wallet_deployed_updated`, `deposit_to_subaccount`,
-// `withdraw_from_subaccount`, `wallet_net_deployed_seeded`):
+// Shapes: `deposit`/`withdraw` carry three Address topics (caller, receiver,
+// owner) and Map{assets, shares}. `transfer` is a bare i128 OR Map{amount,
+// to_muxed_id} (CAP-67). Shares are not at the underlying's scale.
+// Not decoded: custody-side events (they would double-count
+// `deployed_assets_changed`), governance events, `approve`; they decode to zero
+// rows so the ADR-0033 re-derive counts them as expected-zero.
 //
-//	CCL3WITW… (earnUSDC)   CC6TRAPQ… (earnXLM)
-//
-// Each underlying is proven by the SAC `transfer` one event ahead of a `deposit`
-// in the same transaction for exactly its `assets` amount. The ticker names are
-// inferred; the CONTRACT IDS the decoder gates on are proven.
-// CC2DNHE5EFPPVJ47BJCRIQCEZ7KVHOATVR5QMNBEKKZQF2EZO7U7YTHT, circulated as a
-// vault address, has zero events in the lake and is deliberately absent from
-// [MainnetVaults] (TestGolden_zeroEventAddressIsNotRegistered).
-//
-// # Event shapes (field names read off real lake bytes)
-//
-//	deposit    topics [Symbol, Address, Address, Address]
-//	           body   Map{ assets: i128, shares: i128 }
-//	withdraw   topics [Symbol, Address, Address, Address]
-//	           body   Map{ assets: i128, shares: i128 }
-//	transfer   topics [Symbol, from Address, to Address]
-//	           body   i128 OR Map{ amount: i128, to_muxed_id: … }  (CAP-67)
-//	deployed_assets_changed
-//	           topics [Symbol, operator Address]
-//	           body   Map{ old_amount: i128, new_amount: i128 }
-//
-// The `deposit` / `withdraw` topic addresses are (caller, receiver, owner), the
-// OpenZeppelin ERC-4626 ordering, proven by a withdraw with three distinct
-// addresses; every `deposit` carries three identical addresses, so its ordering
-// is assumed.
-//
-// Shares are not at the underlying's scale: genesis-era deposits mint
-// shares == assets × 1,000,000 (an ERC-4626 decimals offset of 6), then drift as
-// the share price accrues. Both are stored as raw i128 (ADR-0003) with no ratio
-// assumed.
-//
-// # Not decoded
-//
-//   - deposit_to_subaccount / withdraw_from_subaccount / wallet_deployed_updated
-//     / wallet_net_deployed_seeded: the custody side of what
-//     `deployed_assets_changed` already reports; decoding them would
-//     double-count deployed capital.
-//   - subaccount_added / admin_set / operator_set / vault_paused /
-//     vault_unpaused: governance, no economic state.
-//   - approve: an allowance, not a balance change. `transfer` is decoded here as
-//     vault economics and also by internal/sources/sep41_transfers when the vault
-//     is watched; the two write different tables.
-//
-// All ten are still recognized by [classify] and gated by [Decoder.Matches]; they
-// decode to zero rows with no error, so the ADR-0033 re-derive counts their
-// ledgers as expected-zero instead of going blind on them.
-//
-// # Gating
-//
-// `deposit`, `withdraw` and `transfer` are among the most generic symbols on the
-// network (a 20,000-ledger census found four contracts emitting `deposit`), so
-// ADR-0035 contract-identity gating is essential. Neither vault has a creation
-// event, so there is no factory to anchor on: the ADR-0040 curated set applies,
-// as in internal/sources/comet. The trust root is [MainnetGatedSet] plus the
-// `protocol_contracts` DB warm; a new vault must be operator-admitted, and until
-// then its events surface as an ADR-0033 recognition gap, never a silent
-// mis-attribution.
+// Gating: the symbols are generic, so ADR-0035 contract-identity gating is
+// essential. With no creation event, the ADR-0040 curated set applies
+// ([MainnetGatedSet] plus the `protocol_contracts` DB warm).
 package upshift
 
 import (

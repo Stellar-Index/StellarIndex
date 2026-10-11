@@ -1,36 +1,25 @@
 // Package hashdb is a tiny on-disk record of (ledger_seq → sha256 of LCM
 // bytes), a drift detector against retroactive rewrites of upstream galexie
-// objects.
-//
-// A region reading from a non-local bucket is exposed to upstream rewriting a
-// previously-fetched ledger's bytes. The bytes can stay chain-link consistent
-// and match SDF's signed history yet differ from what the region first saw, so
-// Tier A + Tier D can pass; only a fingerprint of what we originally saw
-// catches it. The indexer appends sha256 per LCM; a periodic verifier
-// recomputes from the bucket and alerts on mismatch.
+// objects. Upstream can rewrite a fetched ledger's bytes while staying
+// chain-link consistent, so Tier A + Tier D pass; only a fingerprint of what we
+// first saw catches it. The indexer appends sha256 per LCM; a verifier cron
+// recomputes and alerts on mismatch.
 //
 // Format: a 16-byte header followed by dense fixed-size records.
 //
 //	magic       [8]byte    // "rxhashdb"
 //	version     uint32     // file format version (1)
 //	startLedger uint32     // ledger of record 0 (records are dense)
+//	then N records of: hash [32]byte  // sha256 of the LCM XDR bytes
 //
-//	then N records of:
-//	  hash      [32]byte   // sha256 of the LCM XDR bytes
+// The sequence is implicit: `seq = startLedger + index`. No gaps. An all-zero
+// record means "not yet written" and Verify() rejects it as ErrMissing.
 //
-// The sequence is implicit: `seq = startLedger + index`. No gaps (galexie
-// buckets are contiguous). An all-zero record means "not yet written" and
-// Verify() rejects it as ErrMissing; sha256 of an empty LCM is not realistic,
-// so the false-zero edge case is accepted. A full pubnet hashdb is ~2 GB,
-// kept on disk with O(1) seeks.
-//
-// Concurrency: a *DB owns its *os.File; callers must serialise calls, with
-// one writer (the indexer) and one reader (the verify cron), never both at
-// once. A record write is NOT atomic everywhere: with the 16-byte header, 1
-// record in 128 straddles a 4 KiB page, and a torn record reads as non-zero
-// (permanent false drift). Writes are atomic on copy-on-write filesystems
-// (ZFS, which r1 runs); on ext4/xfs a torn record surfaces as drift, see the
-// hashdb runbook.
+// Concurrency: callers must serialise calls (one writer, one reader, never both
+// at once). A record write is NOT atomic everywhere: 1 record in 128 straddles a
+// 4 KiB page, and a torn record reads as non-zero (permanent false drift).
+// Writes are atomic on copy-on-write filesystems (ZFS); on ext4/xfs a torn
+// record surfaces as drift, see the hashdb runbook.
 package hashdb
 
 import (

@@ -1,46 +1,27 @@
 // Scam-pricing gate: the serving-side "issuer is flagged" floor.
 //
-// The substance gate asks "is this a REAL market?" and is blind to a liquid
-// market run by a flagged fraud. For an asset whose ISSUER carries a scam-class
-// tag in the curated account directory (migration 0136), this gate withholds the
-// AGGREGATED price claim (same `errors/price-withheld` problem type as the
-// substance gate); raw trade surfaces stay visible. It DELIBERATELY overturns
-// the directory's "display-only, tags never gate pricing" invariant
-// (asset_directory_tags.go).
+// The substance gate is blind to a liquid market run by a flagged fraud. For an
+// asset whose ISSUER carries a scam-class directory tag, this gate withholds the
+// AGGREGATED price claim; raw trade surfaces stay visible. It DELIBERATELY
+// overturns the directory's "tags never gate pricing" invariant.
 //
 // There is no single seam: /v1/twap and /v1/vwap compute from raw trades and
-// never touch the price reader. Consumers are the price-reader chokepoint
-// (cmd/stellarindex-api priceWithheld, via [Gate]: /v1/price, batch, headline,
-// SEP-40, /v1/price/at, DEX-TVL), the aggregator's alert evaluator and
-// anomaly/divergence webhooks, /v1/price/tip (computeTip),
-// /v1/price/stream (closedStreamWithheld, at connect AND on every forwarded
-// bucket, since the producer path does no gate check), and the /v1/vwap,
-// /v1/twap, /v1/chart and /v1/history/since-inception handlers (not the shared
-// tradesInRangeWithStablecoinFallback, which also feeds the visible single-bar
-// /v1/ohlc).
-//
-// Inside internal/api/v1 every site routes through scamWithheld; its AST guard
-// (TestScamGateIsAskedThePairQuestion) fails on any other `Withheld` selector
-// and on a pair question naming one leg twice. A new price-claim surface must
-// add its own call: gate_guard_test.go catches a cmd/* function reading a closed
-// VWAP bucket without a [Gate], but not a handler that computes its own price.
+// never touch the price reader. Consumers: the price-reader chokepoint
+// (priceWithheld, via [Gate]), alert and webhook paths, /v1/price/tip, the
+// price stream (connect AND every bucket), and the vwap, twap, chart and
+// since-inception handlers. A new price-claim surface must add its own call.
 //
 // BOTH LEGS, always: withholding is a property of the MARKET, else
 // `?base=native&quote=<FLAGGED>` would republish the reciprocal of the refused
-// price. [ScamGate.WithheldPair] folds both legs inside this package.
+// price. [ScamGate.WithheldPair] folds both legs.
 //
-// Fail-OPEN, like substance.go: a directory-reader error (a local synced table,
-// so the local DB is down) does not withhold, since failing closed would blank
-// every price. Each fail-open serve increments obs.ScamGateLookupFailuresTotal
-// (watched by the stellarindex_scam_gate_fail_open alert) and logs a Warn.
+// Fail-OPEN, like substance.go: a directory-reader error does not withhold
+// (counted in obs.ScamGateLookupFailuresTotal); failing closed blanks every price.
 //
-// OPERATOR OVERRIDE of a false positive: deliberately no allow-list here, since
-// it would disagree with the /v1/assets rank tier and the explorer flag pill,
-// which read the directory row directly. Instead an operator-owned
-// account_directory row (timescale.DirectoryOperatorOverrideSource, untouched by
-// `directory-sync`), written by `stellarindex-ops directory-override
-// -clear-scam-flag` (timescale.Store.ClearDirectoryScamFlag), drops only the
-// scam-class tags. The gate stops withholding within scamCacheTTL.
+// OPERATOR OVERRIDE of a false positive: no allow-list here, since it would
+// disagree with the /v1/assets rank tier and the explorer flag pill.
+// `stellarindex-ops directory-override -clear-scam-flag` drops only the
+// scam-class tags; the gate follows within scamCacheTTL.
 package pricingguard
 
 import (
@@ -339,16 +320,11 @@ func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface s
 // own C-address. Native / fiat / crypto-CEX assets have no address to flag.
 //
 // The asset is first resolved to its CANONICAL family form
-// (canonical.CanonicalAsset): a SAC wrapper is the same asset as the classic
-// issuance it wraps but has no G-address of its own, so without resolution a
-// flagged issuer's price would stay servable to anyone naming the wrapper's
-// C-address, on every price surface and on the quote leg too. Resolving here
-// rather than per caller keeps the consultations in agreement
-// (TestScamGateWithholdsSACSpellingOnEveryPriceSurface pins each surface).
-//
-// Resolution is one-way: the family is classic-first (canonical.NewAliasRegistry),
-// so a classic-keyed request is unchanged; XLM's SAC canonicalises to `native`,
-// which has no issuer and returns false.
+// (canonical.CanonicalAsset): a SAC wrapper has no G-address of its own, so
+// without resolution a flagged issuer's price would stay servable via the
+// wrapper's C-address, on every surface and the quote leg too. Resolution is
+// one-way and classic-first; XLM's SAC canonicalises to `native`, which has no
+// issuer and returns false.
 //
 // A SAC with no `[supply].sac_wrappers` entry resolves to itself (a C-address
 // cannot be inverted without that table), so a contract leg is matched against

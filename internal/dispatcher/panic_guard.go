@@ -25,38 +25,29 @@ type panicSite struct {
 	OpIndex int
 }
 
-// recordDecoderPanic converts a recovered decoder panic into the decode
-// error every dispatch seam already skips on.
+// recordDecoderPanic converts a recovered decoder panic into the decode error
+// every dispatch seam already skips on. Decoders run on adversary-influenced ledger data. An unrecovered panic would
+// discard every source's output for the ledger in pipeline.ProcessLedger and
+// refuse the cursor advance; the indexer would restart, panic on the same event,
+// and park in `failed`: one decoder bug as a total ingest outage. Treating it as
+// a decode error (count it, skip that ONE input) shrinks the blast radius.
 //
-// A decoder's Matches/Decode runs on adversary-influenced ledger data. An
-// unrecovered panic would be caught at LEDGER granularity in
-// pipeline.ProcessLedger, discarding every source's output for that ledger and
-// refusing the cursor advance; the indexer then exits, restarts at the same
-// cursor, panics on the same event, and parks in `failed` after
-// StartLimitBurst: one decoder bug as a total ingest outage. Treating a panic
-// like any other decode error (count it, skip that ONE input) shrinks the
-// blast radius to one input, one decoder.
-//
-// That is defensible only because the skip is DURABLY RECORDED:
+// Defensible only because the skip is DURABLY RECORDED:
 //   - The raw event is already in the ClickHouse lake (dispatchOne pushes to
-//     rawEventSink BEFORE the decoder pass; clickhouse.ExtractLedger is
-//     decoder-independent), so re-derivation is `projector-replay` /
-//     `ch-rebuild` (invariant 8).
-//   - The decode-error delta reaches decoder_stats via statsflush, and
-//     ADR-0033's re-derive marks the ledger a blind spot
-//     (completeness.safeDecode → BlindSpots → /v1/coverage complete=false).
+//     rawEventSink BEFORE the decoder pass), so re-derivation is
+//     `projector-replay` / `ch-rebuild` (invariant 8).
+//   - The decode-error delta reaches decoder_stats via statsflush, and ADR-0033's
+//     re-derive marks the ledger a blind spot (/v1/coverage complete=false).
 //   - DecoderPanicsTotal pages (stellarindex_decoder_panicked).
 //
-// A panicking Matches is treated like a panicking Decode, and a first-match
-// seam stops scanning: offering the input to the NEXT decoder would let a
-// broken decoder hand its events to another source, a misattribution ADR-0033
-// cannot see. The op seam is the exception: it offers every op to every
+// A panicking Matches is treated like a panicking Decode, and a first-match seam
+// stops scanning: the NEXT decoder would inherit a broken decoder's events, a
+// misattribution ADR-0033 cannot see. The op seam offers every op to every
 // decoder, so continuing re-attributes nothing.
 //
 // seenCounted says whether bumpEventsSeen already ran (the panic came out of
-// Decode, not Matches); if not, we bump it here so the decoder error-rate
-// denominator keeps one input attempted per error, as
-// SourceMatchedEventsTotal's godoc states.
+// Decode, not Matches); if not, bump it here so the error-rate denominator
+// stays one attempt per error.
 func (d *Dispatcher) recordDecoderPanic(name string, seenCounted bool, r any, site panicSite) error {
 	if name == "" {
 		name = "unknown"

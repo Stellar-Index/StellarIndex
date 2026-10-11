@@ -20,33 +20,24 @@ const SyntheticCrossName = "synthetic-usd-cross"
 //
 //	base/fiat:X  :=  (base / fiat:USD)  ÷  (fiat:X / fiat:USD)
 //
-// Motivation (the corroborated-release rule's operational cost):
-// EUR/GBP-quoted pairs have exactly ONE direct
-// reference (CoinGecko), which is below the divergence trust floor
-// (divergenceMinSources), so their freezes can never auto-release —
-// every one ends in an operator page. The components for a second,
-// independent reading already exist in the reference set: the on-chain
-// oracles price the BASE in USD (reflector-cex, chainlink, redstone,
-// band) and reflector-fx prices FIAT codes in USD. This reference
-// composes them.
+// Motivation: EUR/GBP-quoted pairs have exactly ONE direct reference
+// (CoinGecko), below the divergence trust floor (divergenceMinSources), so
+// their freezes can never auto-release and every one ends in an operator page.
+// The on-chain oracles price the BASE in USD (reflector-cex, chainlink,
+// redstone, band) and reflector-fx prices FIAT codes in USD; this reference
+// composes them into a second, independent reading.
 //
-// Independence: the synthetic counts as one source in Compare's median
-// and SuccessCount. Its legs (USD-quoted oracle feeds) do not answer
-// non-USD-fiat-quoted pairs directly — that gap is precisely why this
-// reference exists — so the same underlying feed cannot contribute
-// twice to one pair's reference set. If a leg source ever learns to
-// answer such pairs directly, revisit this before keeping both (a
-// doubled source would overweight it in the median). The two legs must
-// also come from different publishers (see [referencePublisher]): a
-// cross of one publisher's feeds shares its failure modes, so it is no
-// second opinion; with no independent leg pair the cross is unavailable.
+// Independence: the synthetic counts as one source in Compare's median and
+// SuccessCount. Its legs do not answer non-USD-fiat-quoted pairs directly, so
+// the same feed cannot contribute twice; if a leg source ever learns to, revisit
+// before keeping both. The two legs must also come from different publishers
+// (see [referencePublisher]): a cross of one publisher's feeds shares its
+// failure modes, so with no independent leg pair the cross is unavailable.
 //
-// The composite is only as good as its weaker leg: both legs must be
-// fresh (each leg's own MaxAge discipline applies — this type adds no
-// caching), positive, and finite. Any leg failure degrades to the
-// sentinel that keeps Compare's bookkeeping honest: unsupported when no
-// leg CAN answer, unavailable when a leg SHOULD have answered but
-// didn't.
+// Both legs must be fresh (each leg's own MaxAge applies; no caching here),
+// positive, and finite. A leg failure degrades to the sentinel that keeps
+// Compare's bookkeeping honest: unsupported when no leg CAN answer, unavailable
+// when a leg SHOULD have answered but didn't.
 type SyntheticCrossReference struct {
 	usdLegs []Reference // ordered candidates for base → fiat:USD
 	fxLegs  []Reference // ordered candidates for fiat:X → fiat:USD
