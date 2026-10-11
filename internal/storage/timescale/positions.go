@@ -57,20 +57,16 @@ func queryFold[T any](ctx context.Context, db *sql.DB, label, query string, args
 }
 
 // BlendPositionFold is one (pool, asset) money-market fold for a user, read
-// from blend_positions (migration 0045/0053/0054). SupplyNet and BorrowNet
-// are independent nets: a user can carry both in the same (pool, asset), so
-// each becomes its own position row at the handler layer, independently
-// net-zero-filtered.
+// from blend_positions. SupplyNet and BorrowNet are independent nets: a user
+// can carry both in the same (pool, asset), so each becomes its own position
+// row at the handler layer, independently net-zero-filtered.
 //
 // SupplyNet sums `token_amount` (the UNDERLYING asset amount, NOT
 // `b_or_d_amount`, the b-token amount) signed +supply/+supply_collateral,
 // -withdraw/-withdraw_collateral. BorrowNet sums the same column signed
 // +borrow/+flash_loan, -repay: a flash_loan mints d-tokens that stay owed
 // until a `repay` burns them; excluding it nets that repay to negative debt.
-//
-// These are summed UNDERLYING amounts at each event, not a live read of the
-// b/d-token exchange rate, so the fold cannot reflect accrued interest
-// (amount_semantics "net_underlying_at_event_time" at the handler layer).
+// Summed at each event, the fold cannot reflect accrued interest.
 //
 // SupplySuperseded / BorrowSuperseded mark a leg an auction or bad-debt
 // write-off has moved b/d-tokens into or out of (blendAuctionMovesSQL). Those
@@ -233,26 +229,19 @@ func (s *Store) BlendPositionsByUser(ctx context.Context, address string) ([]Ble
 }
 
 // BlendBackstopFold is one pool's backstop-share fold for a user, read
-// from blend_backstop_events (migration 0063).
+// from blend_backstop_events.
 //
-// SharesNet sums `amount2` — verified per decode.go's decodeDeposit /
-// decodeWithdraw doc comments: deposit's body is `Vec[i128 amount, i128
-// shares]` -> `Amount2: shares` (shares MINTED); withdraw's body is
-// `Vec[i128 shares_burned, i128 tokens_out]` but the decoder normalizes
-// `Amount` to `tokens_out` and `Amount2` to `sharesBurned` — so
-// `amount2` is "shares" on BOTH event kinds, signed
-// +deposit/-withdraw. This is a real, exact current share count (shares
-// are only minted on deposit and burned on withdraw — no other backstop
-// event touches share supply), so amount_semantics at the handler layer
-// is "shares", not an approximation.
+// SharesNet sums `amount2`, signed +deposit/-withdraw: the decoder puts
+// shares minted (deposit) and shares burned (withdraw) in Amount2 on both
+// kinds (decodeDeposit / decodeWithdraw). Shares are only minted on deposit
+// and burned on withdraw, so this is an exact current share count and
+// amount_semantics at the handler layer is "shares".
 //
-// queue_withdrawal / dequeue_withdrawal are DELIBERATELY EXCLUDED: they
-// are intent-only lifecycle events (a queued unstake is not yet
-// executed — the shares stay staked and earning until the matching
-// `withdraw` event fires) that carry a shares-shaped amount in a
-// DIFFERENT column (`Amount`, not `Amount2` — see decodeQueueWithdrawal),
-// so folding them in would both double-count against the eventual real
-// `withdraw` and read the wrong column.
+// queue_withdrawal / dequeue_withdrawal are DELIBERATELY EXCLUDED: they are
+// intent-only (queued shares stay staked until the matching `withdraw`) and
+// carry their shares in `Amount`, not `Amount2` (decodeQueueWithdrawal), so
+// folding them in would double-count the eventual `withdraw` and read the
+// wrong column.
 type BlendBackstopFold struct {
 	Pool         string
 	SharesNet    string
@@ -389,26 +378,23 @@ func (s *Store) DefindexVaultSharesByUser(ctx context.Context, address string) (
 }
 
 // CreditPositionFold is one sorocredit position for an owner, read from
-// credit_positions (migration 0090) LEFT-JOINed against that position's
-// MOST RECENT credit_statements row.
+// credit_positions LEFT-JOINed against that position's MOST RECENT
+// credit_statements row.
 //
 // Unlike every other protocol here, sorocredit has no per-event amount to
 // sum: credit_positions is an identity registry (one row per opened
-// position, from `NewCollateralContract`; see migration 0090 and
-// internal/sources/sorocredit/README.md). The closest thing to its size is
-// the protocol's own most-recently-published `StatementPublished` amount
-// (credit_statements.amount), a value the PROTOCOL computed, i.e. "basis:
-// stateful" at the handler layer rather than "event_derived".
+// position, from `NewCollateralContract`). The closest thing to its size is
+// the protocol's own latest `StatementPublished` amount, a value the
+// PROTOCOL computed ("basis: stateful" at the handler layer).
 //
 // LatestAmount is the empty string / LatestActivity the zero time when no
 // statement has been published yet (a just-opened position); the handler
 // surfaces that as no reportable amount rather than guessing 0.
 //
-// Withdrawn reports whether a `Withdrawal` event (credit_events,
-// event_type='withdrawal') has ever fired against this position's
-// collateral_contract, the same "still open" proxy CreditWindowAnalytics
-// uses (sorocredit.go) but UNWINDOWED: credit_events carries NO retention
-// (migration 0090), so an all-time EXISTS is the honest signal.
+// Withdrawn reports whether a `Withdrawal` event has ever fired against
+// this position's collateral_contract, the same "still open" proxy
+// CreditWindowAnalytics uses but UNWINDOWED: credit_events carries no
+// retention, so an all-time EXISTS is the honest signal.
 type CreditPositionFold struct {
 	CollateralContract string
 	PositionUUID       string

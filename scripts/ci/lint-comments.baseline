@@ -90,9 +90,6 @@ internal/storage/timescale/cagg_refresh_timeout.go	long-block
 internal/storage/timescale/cctp_chains.go	long-block
 internal/storage/timescale/completeness_snapshots.go	long-block
 internal/storage/timescale/contract_catalogue.go	long-block
-internal/storage/timescale/coverage_floor.go	long-block
-internal/storage/timescale/coverage_floor.go	long-block
-internal/storage/timescale/coverage_floor.go	long-block
 internal/storage/timescale/discovery.go	long-block
 internal/storage/timescale/errors.go	long-block
 internal/storage/timescale/freeze_events.go	long-block
@@ -105,9 +102,6 @@ internal/storage/timescale/ohlc_routes.go	long-block
 internal/storage/timescale/oracle.go	long-block
 internal/storage/timescale/oracle.go	long-block
 internal/storage/timescale/per_source_gaps.go	long-block
-internal/storage/timescale/positions.go	long-block
-internal/storage/timescale/positions.go	long-block
-internal/storage/timescale/positions.go	long-block
 internal/storage/timescale/priceless_coverage.go	long-block
 internal/storage/timescale/projection_dirty_window.go	long-block
 internal/storage/timescale/protocol_bespoke.go	long-block
