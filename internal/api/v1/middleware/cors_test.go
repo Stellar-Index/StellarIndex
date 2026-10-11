@@ -156,14 +156,9 @@ func TestCORS_NoOriginNoHeaders(t *testing.T) {
 	}
 }
 
-// TestCORS_VaryOriginAlwaysSetForExactMatchMode — the middleware
-// MUST emit `Vary: Origin` on every response in exact-match mode
-// regardless of whether the current request's Origin matched the
-// allow list. Without this, a cacheable response served to a
-// no-Origin (curl / server-side) request would be cached at the
-// CDN without origin discrimination — a later browser request
-// whose Origin WOULD have been allowed would receive that cached
-// "no CORS" response, breaking client-side fetch().
+// TestCORS_VaryOriginAlwaysSetForExactMatchMode pins `Vary: Origin` on every exact-match
+// response, matched or not. Otherwise a CDN could replay a cached no-CORS response (from a
+// curl or server-side request) to a later allowed browser origin and break its fetch().
 func TestCORS_VaryOriginAlwaysSetForExactMatchMode(t *testing.T) {
 	h := middleware.CORS(middleware.CORSOptions{
 		AllowedOrigins: []string{"https://stellarindex.io"},
@@ -216,13 +211,9 @@ func TestCORS_VaryNotSetForWildcardMode(t *testing.T) {
 	}
 }
 
-// TestCORS_DefaultAllowedMethodsIncludePOST pins the v1-surface-
-// matching default. A default of {GET, HEAD,
-// OPTIONS}; cross-origin POST to /v1/account/keys etc. would fail
-// preflight unless the operator overrode AllowedMethods. Now POST
-// is in the default set so the API binary's
-// `CORS(CORSOptions{AllowedOrigins: ...})` shorthand wires
-// browser-callable POST endpoints out of the box.
+// TestCORS_DefaultAllowedMethodsIncludePOST pins POST in the default methods, so the
+// `CORS(CORSOptions{AllowedOrigins: ...})` shorthand serves browser-callable POST endpoints
+// such as /v1/account/keys without failing preflight.
 func TestCORS_DefaultAllowedMethodsIncludePOST(t *testing.T) {
 	h := middleware.CORS(middleware.CORSOptions{
 		AllowedOrigins: []string{"https://wallet.example.com"},
@@ -251,11 +242,9 @@ func TestCORS_DefaultAllowedMethodsIncludePOST(t *testing.T) {
 	}
 }
 
-// TestCORS_PerRequestObservability — every request increments the
-// CORS decisions counter with the right outcome label. This lets
-// operators see real cross-origin traffic patterns + alert when a
-// wildcard policy starts handling actual cross-origin requests in
-// production rather than just at startup.
+// TestCORS_PerRequestObservability pins one decisions-counter increment per request with the
+// right outcome label, so operators can alert when a wildcard policy starts serving real
+// cross-origin traffic.
 func TestCORS_PerRequestObservability(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -350,11 +339,9 @@ func TestCORS_AllowCredentialsPanicOnWildcard(t *testing.T) {
 	})
 }
 
-// TestCORS_CredentialsNotEmittedToNonCredentialedOrigin is the RSEC-X1
-// regression: a deployment with several read-allowed origins but only
-// ONE of them trusted for credentials must NOT leak
-// Access-Control-Allow-Credentials to the others, even though they're
-// all CORS-readable and AllowCredentials is globally true.
+// TestCORS_CredentialsNotEmittedToNonCredentialedOrigin pins that with several read-allowed
+// origins and only one credentialed, Access-Control-Allow-Credentials is not leaked to the
+// others even though AllowCredentials is globally true.
 func TestCORS_CredentialsNotEmittedToNonCredentialedOrigin(t *testing.T) {
 	h := middleware.CORS(middleware.CORSOptions{
 		AllowedOrigins:      []string{"https://dashboard.stellarindex.io", "https://docs.stellarindex.io"},

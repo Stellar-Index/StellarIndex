@@ -9,11 +9,9 @@ import (
 	"testing"
 )
 
-// TestPolicyForPath_PinsDirectives — the policy table is part of
-// the API contract (CDN configs reference these strings). Pinning
-// every documented path against its expected directive guards
-// against a typo flipping a public-cacheable endpoint to
-// no-store at scale.
+// TestPolicyForPath_PinsDirectives pins every documented path to its directive: the table is
+// API contract (CDN configs reference these strings), and a typo could flip a public endpoint
+// to no-store at scale.
 func TestPolicyForPath_PinsDirectives(t *testing.T) {
 	tests := []struct {
 		path string
@@ -71,12 +69,8 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/price/stream", "no-store"},
 		{"/v1/ledger/stream", "private, no-store"},
 
-		// Closed-bucket price surfaces — 5s shared cache. The
-		// 150s SLA-probe freshness target leaves no room for
-		// s-maxage=60: it can serve a bucket a full bucket behind
-		// origin (age <= 210s) and a stale frozen/confidence for two
-		// aggregator ticks. max-age stays 30s — a client's own copy is
-		// not a shared-cache lie.
+		// Closed-bucket price surfaces get a 5s shared cache: the 150s SLA-probe freshness
+		// target leaves no room for s-maxage=60. max-age stays 30s, a client's own copy.
 		{"/v1/price", "public, max-age=30, s-maxage=5"},
 		{"/v1/price/batch", "public, max-age=30, s-maxage=5"},
 		// Multi-horizon change strip tracks the current-price band
@@ -113,10 +107,8 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/markets", "public, max-age=60, s-maxage=300"},
 		{"/v1/pairs", "public, max-age=60, s-maxage=300"},
 		{"/v1/sources", "public, max-age=60, s-maxage=300"},
-		// NB /v1/oracle/latest, /v1/oracle/lastprice, /v1/oracle/prices and
-		// /v1/oracle/x_last_price are NOT here — they left the catalogue
-		// band; see
-		// TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand and
+		// The oracle latest/lastprice/prices/x_last_price routes are not in the catalogue band;
+		// see TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand and
 		// TestPolicyForPath_OracleSEP40PassthroughsShareTheShortBand.
 
 		// Registry catalogues + change-summary
@@ -158,13 +150,9 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		// data keyed on the query-string address list).
 		{"/v1/directory", "public, max-age=60, s-maxage=300"},
 
-		// Account-creator league table — a rollup snapshot of
-		// network-wide aggregate reference data, so it takes the public
-		// catalogue band while the per-account surface around it stays
-		// private. Exact path only: anything deeper must fall through to
-		// the conservative default, or a future /v1/accounts/creators/{g}
-		// per-account drill-down would inherit a public policy nobody
-		// chose for it.
+		// Aggregate reference data takes the public band while the per-account surface stays
+		// private. Exact path only: a future /v1/accounts/creators/{g} drill-down must fall
+		// to the conservative default rather than inherit a public policy nobody chose.
 		{"/v1/accounts/creators", "public, max-age=60, s-maxage=300"},
 		{"/v1/accounts/creators/extra", "private, no-store"},
 		{"/v1/accounts/sponsors", "public, max-age=60, s-maxage=300"},
@@ -254,11 +242,8 @@ func TestCacheControl_Middleware_HandlerOverrideWins(t *testing.T) {
 	}
 }
 
-// TestCacheControl_Middleware_AppliesToErrorResponses — a handler
-// that 4xxs still gets the route's cache directive applied. CDNs
-// are expected to refuse to cache 5xx via origin config; this test
-// pins that the middleware itself doesn't strip the directive on
-// non-2xx responses.
+// TestCacheControl_Middleware_AppliesToErrorResponses pins that the middleware does not strip
+// the route's directive from non-2xx responses; refusing to cache 5xx is left to CDN config.
 func TestCacheControl_Middleware_AppliesToErrorResponses(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "bad input", http.StatusBadRequest)
@@ -274,11 +259,9 @@ func TestCacheControl_Middleware_AppliesToErrorResponses(t *testing.T) {
 	}
 }
 
-// TestPolicyForPath_CDNDisabled — operators without a CDN in front
-// of the API set api.cdn_enabled=false; the middleware must drop
-// `s-maxage` from cacheable directives so a CDN they don't have
-// can't cache anything. private + no-store directives are
-// unaffected (they were never CDN-cacheable anyway).
+// TestPolicyForPath_CDNDisabled pins that api.cdn_enabled=false drops `s-maxage` from cacheable
+// directives, so a CDN the operator does not have cannot cache anything. Private directives
+// are unaffected.
 func TestPolicyForPath_CDNDisabled(t *testing.T) {
 	cases := []struct {
 		path string
@@ -339,14 +322,10 @@ func TestCacheControlWithCDN_FalseDropsSMaxAge(t *testing.T) {
 	}
 }
 
-// TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand pins the
-// separation explicitly, because it is the kind of thing a later edit
-// "tidies" back together. /v1/oracle/latest is a LATEST-OBSERVATION-per-
-// source surface: no closed-bucket contract, no staleness flag on the
-// reading. It sat in the 300s catalogue band solely because it matched
-// the `/v1/oracle/` prefix arm — five minutes of shared-cache lag on a
-// surface whose whole claim is "latest". Its siblings genuinely are
-// catalogue reads and must stay where they are.
+// TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand pins the separation so a later edit
+// does not "tidy" it away. /v1/oracle/latest is a latest-observation surface with no
+// closed-bucket contract, so five minutes of shared-cache lag from the `/v1/oracle/` prefix
+// arm contradicts its claim; its siblings are genuine catalogue reads and stay put.
 func TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand(t *testing.T) {
 	latest := policyForPath("/v1/oracle/latest", true)
 	prefix := policyForPath("/v1/oracle/streams", true)
@@ -361,14 +340,10 @@ func TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand(t *testing.T) {
 	}
 }
 
-// TestPolicyForPath_OracleSEP40PassthroughsShareTheShortBand pins that
-// /v1/oracle/lastprice and /v1/oracle/x_last_price are, like
-// /v1/oracle/latest, "last observed price" surfaces with no closed-bucket
-// contract, and /v1/oracle/prices is itself closed-bucket (it excludes the
-// in-progress bucket, same as /v1/price/changes). None of the three belong
-// in the `/v1/oracle/` prefix's 300s catalogue band, yet only
-// /v1/oracle/latest had been carved out of it — the other three fell
-// through and served a stale 5-minute-lag directive on a "latest" surface.
+// TestPolicyForPath_OracleSEP40PassthroughsShareTheShortBand pins that /v1/oracle/lastprice and
+// /v1/oracle/x_last_price are "last observed price" surfaces and /v1/oracle/prices is
+// closed-bucket (it excludes the in-progress bucket). None belong in the `/v1/oracle/`
+// prefix's 300s catalogue band, which would add five minutes of lag to a "latest" surface.
 func TestPolicyForPath_OracleSEP40PassthroughsShareTheShortBand(t *testing.T) {
 	const wantShortBand = "public, max-age=30, s-maxage=5"
 	for _, path := range []string{"/v1/oracle/lastprice", "/v1/oracle/prices", "/v1/oracle/x_last_price"} {
@@ -387,12 +362,10 @@ func TestPolicyForPath_OracleSEP40PassthroughsShareTheShortBand(t *testing.T) {
 	}
 }
 
-// TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe encodes WHY the
-// number is 5 and not 60: the SLA probe's closed-bucket freshness target
-// is 150s and is built from 60s bucket + 30s CAGG end_offset + <=30s
-// schedule + runtime. A shared TTL adds itself to that worst case, so any
-// s-maxage above ~30s puts a compliant origin outside its own SLA at the
-// edge. The test fails if someone raises it back.
+// TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe encodes why the shared TTL is 5 and not
+// 60: the probe's 150s freshness target (60s bucket + 30s CAGG end_offset + <=30s schedule +
+// runtime) absorbs a shared TTL only up to ~30s, beyond which a compliant origin breaks its SLA
+// at the edge.
 func TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe(t *testing.T) {
 	const probeBudgetSeconds = 30 // headroom inside the 150s target
 	for _, path := range SLOPriceRoutes {
@@ -412,21 +385,13 @@ func TestPolicyForPath_PriceSharedTTLIsBoundedByTheProbe(t *testing.T) {
 	}
 }
 
-// TestPolicyForPath_OperationsSharesTheLedgerListBand pins the
-// adjudication and the reason for it, because "operations" reads like a
-// catalogue and a later tidy-up would file it next to /v1/markets.
+// TestPolicyForPath_OperationsSharesTheLedgerListBand pins that /v1/operations, which reads like
+// a catalogue, takes the same band as /v1/ledgers: a network-wide directory advancing once per
+// ledger (~5s) behind its own server-side cache.
 //
-// /v1/operations shipped `private, no-store` — not a decision, just an
-// unclassified route landing on the conservative default. It is the sibling
-// of /v1/ledgers: a network-wide directory advancing once per ledger (~5s),
-// fronted by its own server-side cache. So it takes the SAME band.
-//
-// It must NOT take the 300s catalogue band. explorer.opsDirCache serves stale
-// on expiry and only refreshes ON a request, so at a low arrival rate an
-// entry's age is bounded by the inter-arrival gap, not by its 10s TTL
-// (measured on r1: `as_of` 93.2s behind after a quiet window). A
-// 300s shared cache would compound that real staleness rather than absorb a
-// burst.
+// It must NOT take the 300s catalogue band. explorer.opsDirCache serves stale on expiry and
+// refreshes only ON a request, so at a low arrival rate an entry's age is bounded by the
+// inter-arrival gap, not its 10s TTL; a 300s shared cache would compound that staleness.
 func TestPolicyForPath_OperationsSharesTheLedgerListBand(t *testing.T) {
 	ops := policyForPath("/v1/operations", true)
 	if ops != "public, max-age=10, s-maxage=15" {
@@ -478,11 +443,9 @@ func TestCacheControl_OperationsBandIgnoresTheQuery(t *testing.T) {
 	}
 }
 
-// TestPolicyForPath_PublicRoutesOffTheDefault pins the public GET routes
-// that would otherwise reach the conservative default with nobody having chosen
-// it. Each assertion is the band its data supports; the live-state trio
-// stays private, no-store but through an explicit arm (the registry test
-// below is what proves the arm exists).
+// TestPolicyForPath_PublicRoutesOffTheDefault pins public GET routes that would otherwise reach
+// the conservative default unchosen. Each asserts the band its data supports; the live-state
+// trio stays private, no-store through an explicit arm, which the registry test below proves.
 func TestPolicyForPath_PublicRoutesOffTheDefault(t *testing.T) {
 	const (
 		short     = "public, max-age=10, s-maxage=15"
@@ -524,11 +487,9 @@ func TestPolicyForPath_PublicRoutesOffTheDefault(t *testing.T) {
 	}
 }
 
-// TestPolicyForPath_EveryRegisteredGETRouteIsAdjudicated walks the GET
-// patterns the v1 server and its sub-packages register and fails on any
-// that reaches the default arm without an allowlist entry, and on any
-// allowlist entry that does not. A new public route therefore cannot
-// silently inherit `private, no-store`.
+// TestPolicyForPath_EveryRegisteredGETRouteIsAdjudicated walks the registered GET patterns and
+// fails on any that reaches the default arm without an allowlist entry, and on any stale
+// allowlist entry, so a new public route cannot silently inherit `private, no-store`.
 func TestPolicyForPath_EveryRegisteredGETRouteIsAdjudicated(t *testing.T) {
 	patterns := registeredGETPatterns(t)
 	if len(patterns) < 50 {

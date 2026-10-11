@@ -8,26 +8,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// SlowRequestThreshold is the latency at or above which a request also
-// logs its query shape and a `slow=true` marker.
-//
-// 500 ms is the published p99 SLA target, so "slow" here means "outside
-// the number we promise" rather than an arbitrary line. On r1 that
-// selected ~0.2% of requests (48 of 21,104 in a 30-minute sample), which
-// is the property that matters: the field has to be rare enough not to
-// re-create the journal pressure this file's 429 note is about.
+// SlowRequestThreshold is the latency at or above which a request also logs its query shape and
+// a `slow=true` marker. It equals the published p99 target and must stay rare (~0.2% of
+// requests) so it does not recreate the journal pressure the 429 skip avoids.
 const SlowRequestThreshold = 500 * time.Millisecond
 
-// maxLoggedPathLen and maxLoggedUserAgentLen bound how much of these
-// two caller-controlled fields reach the journal per line. Neither is
-// allow-listed the way QueryShape's parameters are, and nothing else
-// bounds them application-side — a path or User-Agent is otherwise
-// limited only by Go's net/http default header/request-line size
-// (~1 MB), which is a transport limit, not a log-safety one. Paths
-// here can legitimately carry a 56-char Stellar contract/account id
-// plus nested resource segments, so the path bound is generous; the
-// User-Agent bound matches real browser/SDK strings with room to
-// spare.
+// maxLoggedPathLen and maxLoggedUserAgentLen bound two caller-controlled fields per log line;
+// net/http's ~1 MB header limit is a transport limit, not a log-safety one. The path bound is
+// generous because paths can carry a 56-char Stellar id plus nested segments.
 const (
 	maxLoggedPathLen      = 512
 	maxLoggedUserAgentLen = 256
@@ -40,19 +28,13 @@ const (
 //   - a SUCCESSFUL request from first-party synthetic traffic -> DEBUG
 //   - everything else -> INFO
 //
-// Fields (minimum): method, path, status, bytes, latency_ms, request_id (from
-// RequestID middleware), user_agent, and remote_ip ([RemoteIP]: the rightmost
-// X-Forwarded-For hop outside the trusted-proxy CIDRs when the peer is a trusted
-// proxy, else r.RemoteAddr stripped of the port; never the first hop, which the
-// caller writes).
+// remote_ip is [RemoteIP]: the rightmost X-Forwarded-For hop outside the trusted-proxy CIDRs,
+// never the first hop, which the caller writes.
 //
-// 429 is skipped: one misconfigured client can produce thousands per second and
-// flood journald. Visibility is kept by the
-// `stellarindex_http_requests_total{status="429"}` counter.
-//
-// Synthetic traffic uses the same judgement as the SLO ([obs.IsSyntheticRequest]);
-// only SUCCESSFUL synthetic requests are demoted. Does NOT log query parameters
-// or request bodies: they may carry API keys or PII.
+// 429 is skipped because one misconfigured client can flood journald; the
+// `stellarindex_http_requests_total{status="429"}` counter keeps visibility. Only SUCCESSFUL
+// synthetic requests ([obs.IsSyntheticRequest], same judgement as the SLO) are demoted. Query
+// parameters and bodies are never logged: they may carry API keys or PII.
 func Logger(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -86,19 +68,9 @@ func Logger(logger *slog.Logger) Middleware {
 				"user_agent", boundedLogField(r.UserAgent(), maxLoggedUserAgentLen),
 			}
 
-			// A slow request additionally carries its query SHAPE. On
-			// this API the query string is what decides the query plan —
-			// `/v1/assets` is one route and many plans, selected by limit,
-			// order_by and cursor — so `path` alone cannot tell an
-			// operator which request was slow. Measured on r1:
-			// /v1/assets?limit=100 served in 82 ms while the same limit
-			// with order_by=volume_24h_usd_desc took 1523 ms. Identical
-			// log lines, 18x apart.
-			//
-			// Values are allow-listed, never raw — see QueryShape. The
-			// field is attached only above the threshold, which keeps the
-			// journal-pressure objection in this file's own doc satisfied:
-			// on r1 this is ~0.2% of requests.
+			// A slow request also carries its query SHAPE because the query string picks the plan,
+			// so `path` alone cannot say which request was slow. Values are allow-listed, never
+			// raw (see QueryShape), and only attached above the threshold to limit journal volume.
 			if latency >= SlowRequestThreshold {
 				if shape := QueryShapeOf(r); shape != "" {
 					attrs = append(attrs, "query_shape", shape)
@@ -149,12 +121,8 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// Unwrap exposes the underlying ResponseWriter so
-// http.NewResponseController can reach SetWriteDeadline / Flush /
-// Hijack on it. Without this, SSE handlers (which need
-// SetWriteDeadline(zero-Time) to dodge the global 30s WriteTimeout)
-// would see http.ErrNotSupported on every middleware-wrapped
-// connection in production.
+// Unwrap lets http.NewResponseController reach SetWriteDeadline / Flush / Hijack; without it SSE
+// handlers could not clear the global WriteTimeout and would get http.ErrNotSupported.
 func (r *statusRecorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
 }

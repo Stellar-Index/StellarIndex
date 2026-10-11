@@ -26,11 +26,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// The webhook ceiling is tier-aware: platform.Tier.MaxWebhooks is
-// the default ladder (free 10 → partner 100), overridable per
-// tier via Config.WebhookQuotas. This replaced the flat 10-webhook
-// MaxWebhooksPerAccount cap ("tier-aware quotas can replace this
-// once billing is wired — Phase 2").
+// The webhook ceiling is tier-aware: platform.Tier.MaxWebhooks is the default ladder,
+// overridable per tier via Config.WebhookQuotas.
 
 // Config wires the handlers' dependencies.
 type Config struct {
@@ -83,16 +80,10 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 
 // Mount installs the dashboard webhook-management routes.
 //
-// Every route is wrapped in [dashboardauth.RequireSession], so an
-// anonymous request is refused before any other layer runs; the
-// handlers still read the session for its account.
-//
-// Every mutation is wrapped in [middleware.RequireSameSiteWrite]
-// because these routes authenticate with the session
-// COOKIE, so a cross-site page could otherwise drive them on a
-// logged-in customer's behalf — registering an endpoint that
-// exfiltrates the victim's webhook payloads is the concrete attack.
-// Reads stay unwrapped — safe methods change nothing.
+// Every route is wrapped in [dashboardauth.RequireSession], so anonymous requests are refused
+// first. Every mutation is also wrapped in [middleware.RequireSameSiteWrite] because these
+// routes authenticate with the session COOKIE: a cross-site page could otherwise register an
+// endpoint that exfiltrates the victim's webhook payloads. Reads stay unwrapped.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	session := dashboardauth.RequireSession()
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
@@ -107,11 +98,8 @@ func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 
 // webhookDTO is the wire shape the dashboard reads.
 //
-// The signing key is persisted (the delivery worker needs it to sign),
-// but it is returned by `POST /v1/dashboard/webhooks` exactly once and
-// stays out of this DTO so no later read re-exposes it; rotation returns
-// the new key once from HandleRotateSecret. See [platform.CustomerWebhook]
-// for the at-rest model.
+// The signing key is returned once at create (and once per rotation) and stays out of this DTO
+// so no later read re-exposes it. See [platform.CustomerWebhook] for the at-rest model.
 type webhookDTO struct {
 	ID        string        `json:"id"`
 	Name      string        `json:"name"`
@@ -199,14 +187,11 @@ type createRequest struct {
 
 type createResponse struct {
 	Webhook webhookDTO `json:"webhook"`
-	// Secret is the HMAC-SHA-256 signing key plaintext, returned
-	// once at create + never again. The customer stores it
-	// server-side + verifies each delivery by recomputing
-	// HMAC-SHA-256(secret, X-StellarIndex-Timestamp + "." + rawBody)
-	// against X-StellarIndex-Signature (sha256=…), and rejecting a
-	// timestamp outside a tolerance window to bound replay.
-	// X-StellarIndex-Signature-V2 also binds the Delivery-Id and Event
-	// headers; the worker's signDeliveryHMACSHA256 documents it.
+	// Secret is the HMAC-SHA-256 signing key plaintext, returned once at create. Receivers
+	// verify HMAC-SHA-256(secret, X-StellarIndex-Timestamp + "." + rawBody) against
+	// X-StellarIndex-Signature (sha256=...) and reject stale timestamps to bound replay.
+	// X-StellarIndex-Signature-V2 also binds the Delivery-Id and Event headers; see the
+	// worker's signDeliveryHMACSHA256.
 	Secret string `json:"secret"`
 }
 
@@ -411,12 +396,10 @@ type rotateSecretResponse struct {
 	PreviousSecretExpiresAt wiretime.Time `json:"previous_secret_expires_at"`
 }
 
-// HandleRotateSecret replaces the webhook's signing key in place. Unlike
-// delete + recreate, the webhook keeps its id, its queued and retrying
-// deliveries and its delivery log, and the old key keeps signing for
-// previousSecretOverlap. Wrapped in the Idempotency-Key middleware: a
-// retried rotate would otherwise push the key the receiver still holds
-// out of the overlap.
+// HandleRotateSecret replaces the signing key in place, keeping the webhook's id, queued
+// deliveries and log; the old key keeps signing for previousSecretOverlap. It sits behind the
+// Idempotency-Key middleware because a retried rotate would push the receiver's key out of the
+// overlap.
 func (h *Handlers) HandleRotateSecret(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
 	if !ok {
@@ -592,12 +575,9 @@ func validateWebhookURL(ctx context.Context, raw string) error {
 	if err != nil {
 		return fmt.Errorf("url is malformed: %w", err)
 	}
-	// SSRF defence-in-depth.
-	// Reject embedded credentials, non-https schemes (already
-	// caught above but defensive), and resolve the hostname to
-	// confirm it isn't in a private / loopback / link-local /
-	// reserved range. DNS-rebinding is also countered at delivery
-	// time in the worker's dial-control hook.
+	// SSRF defence in depth: reject userinfo and non-https, and resolve the host to refuse
+	// private, loopback, link-local and reserved ranges. The worker's dial-control hook
+	// counters DNS rebinding at delivery time.
 	if u.User != nil {
 		return errors.New("url must not embed userinfo")
 	}
@@ -615,18 +595,11 @@ func validateWebhookURL(ctx context.Context, raw string) error {
 	return nil
 }
 
-// rejectInternalHost resolves `host` and returns a non-nil error
-// if any resolved address is in a non-public range. Used at
-// registration time; the delivery worker performs the same check
-// at send time to defeat DNS rebinding (the resolution can change
-// between when the URL is saved and when the callback fires).
+// rejectInternalHost errors if any address host resolves to is non-public. The worker repeats
+// the check at send time because DNS can change between save and delivery.
 //
-// Hostnames in RFC 2606 / RFC 6761 reserved TLDs (.example, .test,
-// .invalid, .localhost) bypass the resolution check at registration
-// — those names are guaranteed not to resolve to real
-// infrastructure, and the delivery worker will reject them at send
-// time when name resolution genuinely fails. This keeps tests
-// terse without weakening the production check.
+// RFC 2606 / 6761 reserved TLDs (.example, .test, .invalid, .localhost) skip resolution: they
+// never resolve to real infrastructure and the worker rejects them at send time.
 func rejectInternalHost(parent context.Context, host string) error {
 	if nettools.IsReservedTLD(host) {
 		return nil
@@ -652,14 +625,11 @@ func rejectInternalHost(parent context.Context, host string) error {
 }
 
 // blockedResolvedAddrError reports the first resolved address in addrs that
-// falls in a non-public range, or nil if none do. Split out of
-// rejectInternalHost so the client-facing wording is unit-testable without a
-// real DNS resolution.
+// falls in a non-public range, or nil if none do. Split out so the wording is testable without
+// DNS.
 //
-// RSEC-Y1: the error text carries only `host` — the customer's own input —
-// never the resolved IP. validateWebhookURL's caller writes err.Error()
-// straight into the 400 response body, and the resolved address is internal
-// network topology, not something the customer's own request disclosed.
+// The error carries only host, never the resolved IP: the caller writes err.Error() into the
+// 400 body, and the resolved address is internal network topology.
 func blockedResolvedAddrError(host string, addrs []net.IPAddr) error {
 	for _, ipa := range addrs {
 		if nettools.IsBlockedIP(ipa.IP) {

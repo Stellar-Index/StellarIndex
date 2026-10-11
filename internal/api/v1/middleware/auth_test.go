@@ -329,14 +329,9 @@ func TestAuth_ModeSEP10_RejectsXAPIKey(t *testing.T) {
 	}
 }
 
-// TestAuth_AccountStatusUnavailableIs503Retryable pins the auth-ks-1
-// fix at the HTTP boundary: when the validator reports the account-
-// status kill-switch read is degraded (auth.ErrAccountStatusUnavailable),
-// the middleware answers 503 + Retry-After, NOT the 401 the default
-// branch would emit — so a transient Postgres blip reads as a
-// retryable "auth layer degraded" rather than "your credential is
-// invalid" (which drives clients to rotate keys during a server-side
-// outage).
+// TestAuth_AccountStatusUnavailableIs503Retryable pins that auth.ErrAccountStatusUnavailable
+// answers 503 + Retry-After, not 401, so a server-side blip does not read as an invalid
+// credential and drive clients to rotate keys.
 func TestAuth_AccountStatusUnavailableIs503Retryable(t *testing.T) {
 	opts := middleware.AuthOptions{
 		Mode: middleware.AuthModeAPIKey,
@@ -383,10 +378,8 @@ func TestAuth_AccountStatusUnavailableIs503Retryable(t *testing.T) {
 }
 
 // TestAuth_ErrorBodyIsProblemJSON pins the wire shape every auth
-// failure path emits — application/problem+json per
-// docs/reference/api-design.md §11. Emitting
-// text/plain bodies on these paths would break the "every 4xx/5xx is
-// problem+json" client contract.
+// failure path emits: application/problem+json, so the "every 4xx/5xx is problem+json" client
+// contract holds.
 func TestAuth_ErrorBodyIsProblemJSON(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -471,23 +464,11 @@ func contains(s, sub string) bool {
 // TestAuth_InfraPathsBypassCredentials pins that operational
 // plumbing must answer WITHOUT credentials whatever auth_mode is set to.
 //
-// Auth() wraps the whole mux and every infra route is registered on that same
-// mux, so before this, flipping auth_mode from `none` to `apikey` made
-// liveness probes, readiness probes, the Prometheus scrape, robots.txt and the
-// error-documentation pages all return 401.
+// Auth() wraps the whole mux, so the apikey cutover would otherwise 401 health probes, the
+// Prometheus scrape and docs pages at go-live.
 //
-// That flip is the DOCUMENTED production cutover
-// (docs/operations/launch-day-checklist.md: --extra-vars 'auth_mode=apikey'),
-// so the failure fires at the moment of going live: load-balancer health checks
-// start failing, the orchestrator concludes the API is unhealthy, and
-// monitoring goes blind exactly when an operator most needs it.
-//
-// The validator here rejects EVERY key, so any request that reaches
-// authenticate() 401s. An infra path returning 200 therefore proves the bypass
-// ran, not that some credential happened to work.
-//
-// Proven red: without isUnauthenticatedInfraPath every infra subtest returns
-// 401.
+// The validator rejects EVERY key, so a 200 on an infra path proves the bypass ran rather than
+// that some credential worked.
 func TestAuth_InfraPathsBypassCredentials(t *testing.T) {
 	mw := middleware.Auth(middleware.AuthOptions{
 		Mode:   middleware.AuthModeAPIKey,
@@ -613,14 +594,9 @@ func TestAuth_BearerSchemeIsCaseInsensitive(t *testing.T) {
 }
 
 // TestAuth_FailedAuthThrottle_FailsClosedOnSustainedOutage pins the
-// fail-closed behaviour: once the failed-auth Bucket has been erroring for
-// longer than its dwell-time (Take returns
-// [ratelimit.ErrThrottleUnavailable]), the credential-stuffing throttle
-// must fail CLOSED (still block the request) instead of silently
-// disabling brute-force protection for the rest of the outage. On the
-// unfixed code takeFailedAuth returns (false, 0) for ANY limiter error
-// — including ErrThrottleUnavailable — so a bad key keeps returning a
-// plain 401 forever during a sustained Redis outage.
+// fail-closed behaviour: once the failed-auth Bucket has erred past its dwell time (Take returns
+// [ratelimit.ErrThrottleUnavailable]) the throttle must still block the request, not silently
+// disable brute-force protection for the rest of the outage.
 func TestAuth_FailedAuthThrottle_FailsClosedOnSustainedOutage(t *testing.T) {
 	if err := middleware.SetTrustedProxyCIDRs([]string{}); err != nil {
 		t.Fatalf("SetTrustedProxyCIDRs: %v", err)
@@ -680,12 +656,9 @@ func TestAuth_FailedAuthThrottle_FailsClosedOnSustainedOutage(t *testing.T) {
 	}
 }
 
-// TestAuth_FailedAuthThrottle is the regression: invalid-credential
-// attempts must be throttled PER IP. Auth runs before the main rate
-// limiter, so without this a wrong key is rejected (401) before reaching
-// any limiter and can be retried without bound (credential stuffing). On
-// the unfixed code the (N+1)th bad key from one IP is still a plain 401;
-// with the fix it becomes 429.
+// TestAuth_FailedAuthThrottle pins that invalid-credential attempts are throttled PER IP: Auth
+// runs before the main limiter, so otherwise a wrong key could be retried without bound. The
+// (N+1)th bad key from one IP must be 429, not 401.
 func TestAuth_FailedAuthThrottle(t *testing.T) {
 	// Direct-peer keying: no trusted proxies, so remoteIPFor uses
 	// RemoteAddr's host deterministically.
@@ -780,11 +753,9 @@ func TestAuth_FailedAuthThrottle_NilLimiterIsNoop(t *testing.T) {
 	}
 }
 
-// TestAuth_FailedAuthThrottle_PerKeyPrefix is the RSEC-R4 regression: a
-// distributed guesser aiming at ONE key from many IPs must still be
-// throttled. With an IP-only bucket every guess below lands in a fresh
-// per-IP bucket and returns 401 forever; the key-prefix dimension turns
-// the (budget+1)th guess at the same prefix into a 429.
+// TestAuth_FailedAuthThrottle_PerKeyPrefix pins that a distributed guesser aiming at ONE key
+// from many IPs is still throttled: the key-prefix dimension turns the (budget+1)th guess at the
+// same prefix into a 429 even though each IP bucket is fresh.
 func TestAuth_FailedAuthThrottle_PerKeyPrefix(t *testing.T) {
 	if err := middleware.SetTrustedProxyCIDRs([]string{}); err != nil {
 		t.Fatalf("SetTrustedProxyCIDRs: %v", err)
@@ -911,19 +882,10 @@ func TestAuth_FailedAuthThrottle_SEP10NotPooledByPrefix(t *testing.T) {
 	}
 }
 
-// TestAuth_FailedAuthThrottle_ClientAbortsDoNotArmFailClosed pins the
-// hazard on the failed-auth (credential-stuffing) throttle: unlike
-// [middleware.RateLimit] / [middleware.RateLimitBySubject], which detach
-// from the request's cancellation via throttleContext before calling
-// into [ratelimit.Bucket],
-// takeFailedAuth passed r.Context() straight into limiter.Take. A
-// client that opens a connection, sends a bad API key and RSTs before
-// the Redis round-trip completes hands the bucket a context.Canceled
-// error, which [ratelimit.Bucket] cannot distinguish from a Redis
-// failure — every abort arms the dwell clock. Enough aborts in a row
-// trip ErrThrottleUnavailable on a perfectly healthy Redis, and the
-// failed-auth throttle fails CLOSED (429) for a well-behaved bad-key
-// attempt that should just get a plain 401.
+// TestAuth_FailedAuthThrottle_ClientAbortsDoNotArmFailClosed pins that takeFailedAuth detaches
+// from the request's cancellation like RateLimit does. A client that sends a bad key and resets
+// the connection hands the bucket context.Canceled, which it cannot tell from a Redis failure;
+// enough aborts would trip ErrThrottleUnavailable on a healthy Redis and 429 well-behaved callers.
 func TestAuth_FailedAuthThrottle_ClientAbortsDoNotArmFailClosed(t *testing.T) {
 	if err := middleware.SetTrustedProxyCIDRs([]string{}); err != nil {
 		t.Fatalf("SetTrustedProxyCIDRs: %v", err)

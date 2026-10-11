@@ -7,34 +7,19 @@ import (
 	"strings"
 )
 
-// Diagnosing a slow endpoint means knowing WHICH request was slow, and on this
-// API the query string decides that: `/v1/assets` is one route and many
-// queries (limit picks a cache key, `order_by` an index path, a cursor a keyset
-// scan). The access log records `path` only.
+// The query string decides the plan behind a route like `/v1/assets`, but raw queries may carry
+// API keys or PII, so a slow request logs only its SHAPE:
 //
-// Logging the raw query is wrong: the Logger doc says query parameters "may
-// carry API keys or PII" (customer emails can reach edge logs this way). So
-// this records the SHAPE of a request, never its content:
-//
-//   - An allow-listed parameter contributes `name=value`. These select a query
-//     plan (limits, orderings, granularities, type filters), and their values
-//     are small enumerations or integers that cannot carry a secret or identify
-//     a person.
-//   - Any other parameter contributes `name=<set>`: the name distinguishes the
-//     shape (a cursor page is a different plan from a first page), the value
-//     never appears.
-//
-// An operator sees `limit=500&order_by=volume_24h_usd_desc` or
-// `cursor=<set>&q=<set>`: enough to reproduce a slow request, never enough to
-// leak one.
+//   - An allow-listed parameter contributes `name=value`; these are small enumerations or
+//     integers that cannot carry a secret or identify a person.
+//   - Any other parameter contributes `name=<set>`; the name distinguishes the shape (a cursor
+//     page is a different plan) and the value never appears.
 
 // shapeSafeParams are query parameters whose VALUES may be logged.
 //
-// The bar for adding one: the value must come from a fixed enumeration
-// or be a bounded number, AND it must change which query plan runs.
-// Anything free-text (`q`), anything identifying (`email`, `account`),
-// and anything credential-bearing (`api_key`, `token`) is excluded by
-// construction — it is not on this list, so it is redacted.
+// A parameter belongs here only if its value is a fixed enumeration or bounded number AND changes
+// the query plan. Free-text, identifying and credential-bearing parameters are redacted by
+// omission.
 var shapeSafeParams = map[string]struct{}{
 	"limit":            {},
 	"order_by":         {},
@@ -53,30 +38,20 @@ var shapeSafeParams = map[string]struct{}{
 	"include_unmapped": {},
 }
 
-// maxShapeValueLen bounds a logged value so a hostile caller cannot use
-// an allow-listed parameter as a journal-flooding channel. The real
-// values are short (`500`, `volume_24h_usd_desc`); anything longer is
-// not a legitimate use of these parameters.
+// maxShapeValueLen bounds a logged value so an allow-listed parameter cannot flood the journal;
+// legitimate values are short.
 const maxShapeValueLen = 48
 
-// maxShapeNameLen bounds a logged parameter NAME. Unlike a value, a
-// name is never allow-listed before it reaches the log — any
-// `name+"=<set>"` term uses the caller's own key verbatim — so without
-// this it is as unbounded a channel as a value would be without
-// maxShapeValueLen.
+// maxShapeNameLen bounds a logged parameter NAME, which reaches the log verbatim (never
+// allow-listed) and is otherwise as unbounded a flooding channel as a value.
 const maxShapeNameLen = 48
 
-// maxShapeParts bounds how many distinct parameters contribute a term
-// to the shape. A request can carry an arbitrary number of distinct
-// query keys; each becomes its own term, so the part COUNT is a third
-// flooding channel independent of any single name or value's length.
+// maxShapeParts bounds how many distinct parameters contribute a term, since the COUNT is a
+// flooding channel independent of any single name or value length.
 const maxShapeParts = 32
 
-// boundedLogField strips control characters (a log-injection
-// primitive — a raw newline splits one log line into two) and caps
-// length, so a caller-controlled string can carry only so much into a
-// single log line. Shared by QueryShape and Logger: every field whose
-// length or content the caller picks goes through the same bound.
+// boundedLogField strips control characters (a raw newline splits one log line into two) and caps
+// length. Every caller-controlled log field in QueryShape and Logger goes through it.
 func boundedLogField(s string, maxLen int) string {
 	s = strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f {
@@ -94,11 +69,8 @@ func boundedLogField(s string, maxLen int) string {
 // non-identifying shape. Returns "" when there is no query string, so
 // the caller can omit the field entirely rather than log an empty one.
 //
-// Deterministic: parameters are sorted, so the same shape produces the
-// same string and an operator can group by it. The cap in
-// maxShapeParts is applied after sorting so a truncated shape is still
-// the same prefix every time, not whichever keys a hostile caller's
-// map iteration happened to hit first.
+// Deterministic: parameters are sorted so operators can group by shape, and the maxShapeParts cap
+// applies after sorting so a truncated shape is always the same prefix.
 func QueryShape(u *url.URL) string {
 	if u == nil || u.RawQuery == "" {
 		return ""
