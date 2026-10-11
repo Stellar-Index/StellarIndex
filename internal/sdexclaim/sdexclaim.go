@@ -52,39 +52,27 @@ func BoughtSide(a xdr.ClaimAtom) (asset xdr.Asset, amount xdr.Int64, known bool)
 // IsRealTrade reports whether internal/sources/sdex.decodeClaimAtom would
 // return a Trade rather than an error for one ClaimAtom.
 //
-// It is the SINGLE definition of that predicate, applied by the two
-// count oracles (dispatcher.claimAtomCount for the ADR-0033 census and
+// It is the SINGLE definition of that predicate, applied by both count
+// oracles (dispatcher.claimAtomCount for the ADR-0033 census and
 // clickhouse.claimAtomCount for the lake's classic_trade_effect_count)
 // so both equal the DECODER's trade output by construction. They do NOT
 // equal COUNT(trades): the writer additionally drops one-side-zero fills
 // (canonical.Trade.Validate, CHECK base_amount > 0), which rule 2 keeps.
-// A served-tier projection oracle must re-derive through that filter
-// (chops.sdexServedCensus), not read these counters.
+// A served-tier oracle must re-derive through that filter
+// (chops.sdexServedCensus).
 //
-// The four drop rules, in the decoder's own order:
+// The four drop rules, in the decoder's order:
 //
-//  1. UNKNOWN ATOM TYPE. A future/unrecognised ClaimAtom discriminant is
-//     not decodable, so decodeClaimAtom returns ErrUnknownClaimAtomType.
-//  2. BOTH LEGS ZERO. stellar-core occasionally emits no-op claim atoms
-//     that clear at zero on both sides; Hubble drops them too.
-//     ONE-side-zero fills are KEPT — they are real trades where one leg
-//     rounded to 0, and the aggregator/OHLC paths already skip zero legs.
-//  3. AN ASSET THAT DOESN'T CONVERT. [canonical.AssetFromXDR] rejects
-//     unsupported asset types, un-encodable issuers, and — the case that
-//     actually bites on pubnet — asset codes carrying bytes outside
-//     [a-zA-Z0-9]. stellar-core does not enforce the character rule, so
-//     control-byte codes exist on chain and the decoder drops those fills.
-//  4. A SELF-CROSS. canonical.NewPair rejects base == quote, so a claim
-//     atom whose sold and bought assets are the same asset is not a
-//     trade.
+//  1. UNKNOWN ATOM TYPE: decodeClaimAtom returns ErrUnknownClaimAtomType.
+//  2. BOTH LEGS ZERO: no-op claim atoms. ONE-side-zero fills are KEPT:
+//     real trades where one leg rounded to 0.
+//  3. AN ASSET THAT DOESN'T CONVERT: [canonical.AssetFromXDR] rejects
+//     unsupported types, un-encodable issuers, and asset codes with
+//     bytes outside [a-zA-Z0-9] (control-byte codes exist on chain).
+//  4. A SELF-CROSS: canonical.NewPair rejects base == quote.
 //
-// All four rules must apply here, not only inside the decoder: a
-// predicate of rule 2 alone makes both census counters over-report every
-// self-cross and every non-alphanumeric-code fill. The census is the
-// ADR-0033 oracle that is supposed to prove the decoders lost nothing —
-// an oracle that counts rows the writer deterministically refuses can
-// NEVER reconcile, so a genuine future trade loss would be
-// indistinguishable from that permanent baseline discrepancy.
+// All four must apply here: an oracle that counts rows the writer
+// deterministically refuses can NEVER reconcile, hiding real loss.
 func IsRealTrade(a xdr.ClaimAtom) bool {
 	sold, bought, soldAsset, boughtAsset, known := parts(a)
 	if !known {

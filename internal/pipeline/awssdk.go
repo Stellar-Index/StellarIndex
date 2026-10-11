@@ -35,46 +35,28 @@ var (
 
 // SilenceSDKChecksumWarnings wraps the process's stderr (fd 2) with a
 // filtering pipe that drops lines containing
-// "Response has no supported checksum" before they reach the real
-// stderr. Everything else is forwarded byte-for-byte.
+// "Response has no supported checksum"; all else passes through.
 //
-// aws-sdk-go-v2 WARNs on every GetObject lacking a supported checksum
-// header, and MinIO never sends one, so verify-archive's ~50k ledgers/s
-// walk floods journald and buries real failures. The env-var off switch
-// (AWS_RESPONSE_CHECKSUM_VALIDATION=when_required) does not help:
+// aws-sdk-go-v2 WARNs on every GetObject lacking a checksum header and
+// MinIO never sends one. The env-var off switch does not help:
 // go-stellar-sdk/support/datastore/s3.go hardcodes
-// `ChecksumMode: types.ChecksumModeEnabled` on every GetObjectInput.
-//
-// Mechanism: dup fd 2 as the real stderr, dup2 a pipe's write end onto
-// fd 2, and drain the reader in a goroutine that drops matching lines.
+// `ChecksumMode: types.ChecksumModeEnabled`. Mechanism: dup fd 2 as the
+// real stderr, dup2 a pipe onto fd 2, drain it in a goroutine.
 //
 //   - Must run BEFORE config.LoadDefaultConfig, which binds os.Stderr
-//     into the SDK logger; call it from the first line of main().
-//   - Fail-soft: a pipe/dup2 error logs to the original stderr and
-//     returns; a logging filter never crashes startup.
-//   - sync.Once-guarded; a second call returns the first flush.
-//   - The goroutine drains continuously, so a slow real stderr
-//     (journald rate-limit) cannot deadlock writers beyond the pipe
-//     buffer.
+//     into the SDK logger; call it first in main().
+//   - Fail-soft on pipe/dup2 error; sync.Once-guarded.
 //
-// # Drain-on-exit
+// The caller MUST run the returned flush before exiting or short-lived
+// processes lose buffered output. flush restores fd 2, closes the
+// writer and waits for the drain. os.Exit skips defers, so:
 //
-// The caller MUST run the returned flush before exiting, or short-lived
-// processes lose buffered output (`stellarindex-ops backfill` errors
-// printed nothing). flush restores fd 2, closes the pipe writer and
-// waits for the goroutine to drain. os.Exit skips defers, so the caller
-// shape is:
-//
-//	func main() { os.Exit(realMain()) }
 //	func realMain() int {
-//	    flush := pipeline.SilenceSDKChecksumWarnings()
-//	    defer flush()  // runs because realMain returns normally
-//	    // ...
-//	    return 0  // or 1 on error
+//	    defer pipeline.SilenceSDKChecksumWarnings()()
+//	    ...
 //	}
 //
-// flush is non-nil even after a fail-soft install, so callers can defer
-// unconditionally.
+// flush is never nil, so defer it unconditionally.
 func SilenceSDKChecksumWarnings() (flush func()) {
 	silenceOnce.Do(func() {
 		f, err := installStderrFilter()

@@ -9,37 +9,29 @@ import (
 )
 
 // ConfigReserveBalanceReader is a [ReserveBalanceReader] backed by a
-// static operator-supplied balance map. The supply-snapshot writer
-// uses it as the bootstrap fallback in the chained-reader pattern
-// (see docs/architecture/supply-pipeline.md §"The chained-fallback
-// reader pattern"): the live [LCMReserveBalanceReader] takes
-// precedence when every watched account has an observation, and
-// this reader fills the gap when the AccountEntry observer hasn't
-// backfilled yet (or, transiently, on storage error).
+// static operator-supplied balance map. The supply-snapshot writer uses
+// it as the bootstrap fallback in the chained-reader pattern (see
+// docs/architecture/supply-pipeline.md "The chained-fallback reader
+// pattern"): the live [LCMReserveBalanceReader] takes precedence when
+// every watched account has an observation, and this reader fills the
+// gap when the AccountEntry observer hasn't backfilled yet (or on
+// storage error).
 //
 // Operator usage: populate
-// `[supply] reserve_balances_stroops = { "G..." = "12345..." }` in
-// the operator config. The writer constructs one of these from that
-// map and passes it into the chained reader; once the observer has
-// covered every account in `sdf_reserve_accounts`, the static map
-// is no longer consulted.
+// `[supply] reserve_balances_stroops = { "G..." = "12345..." }`.
 //
 // Limitations (as a fallback):
 //
-//   - Static map — no automatic balance refresh. The map carries its
-//     own as-of date and the reader refuses to answer once that date
-//     is more than maxAge old (or was never set), so a forgotten
-//     snapshot fails closed instead of being re-stamped at every new
-//     ledger as the current reserve.
-//   - No per-account ledger versioning. The reader returns whatever
-//     the config says for the requested account regardless of the
-//     `ledger` argument. The live [LCMReserveBalanceReader] is the
-//     ledger-aware path; this fallback is intentionally
-//     ledger-agnostic since its purpose is bring-up only.
+//   - Static map, no refresh. The map carries its own as-of date and
+//     the reader refuses to answer once that date is more than maxAge
+//     old (or was never set), so a forgotten snapshot fails closed
+//     instead of being re-stamped at every new ledger as the current
+//     reserve.
+//   - No per-account ledger versioning: it ignores the `ledger`
+//     argument; the live reader is the ledger-aware path.
 //
-// Its answers are tagged [ReserveSourceStatic], which the
-// [XLMComputer] publishes as [BasisXLMSDFReserveExclusionStatic] with
-// no freshness anchor.
+// Answers are tagged [ReserveSourceStatic]; [XLMComputer] publishes
+// them as [BasisXLMSDFReserveExclusionStatic] with no freshness anchor.
 type ConfigReserveBalanceReader struct {
 	balances map[string]*big.Int
 	asOf     time.Time

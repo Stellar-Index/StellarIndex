@@ -385,39 +385,28 @@ var aggregatorMADFactor = big.NewRat(5, 1)
 
 // rejectAggregatorOutliers drops aggregator observations whose price is
 // grossly divergent from the consensus of the other sources, so a
-// single bad print cannot drag the plain-mean headline price (finding
-// M8: a 2-source example moved the mean 50%; a 3-source example ~33%).
+// single bad print cannot drag the plain-mean headline price.
 //
-// It computes the EXACT median of the sources' prices (each projected
-// onto [aggregatorCommonDecimals]) and drops any source whose deviation
-// from that median exceeds aggregatorMADFactor·(1.4826·MAD). When a
-// strict majority of sources agree exactly (MAD == 0), [robustCentreScale]
-// substitutes [zeroScaleRelFloor]·|centre| for the scale rather than
-// zero, so the band is not a single point: a source within
-// aggregatorMADFactor·zeroScaleRelFloor (±2.5% at the shipped
-// defaults) of the majority price is NOT dropped, only one further out
-// is. All comparison arithmetic is exact *big.Rat (ADR-0003).
+// It computes the EXACT median of the sources' prices (projected onto
+// [aggregatorCommonDecimals]) and drops any source whose deviation from
+// it exceeds aggregatorMADFactor*(1.4826*MAD). When a strict majority
+// agree exactly (MAD == 0), [robustCentreScale] substitutes
+// [zeroScaleRelFloor]*|centre| for the scale so the band is not a single
+// point (about +-2.5% at the shipped defaults). All comparison
+// arithmetic is exact *big.Rat (ADR-0003).
 //
 // The deviation is measured in RATIO space ([symmetricDev]), not
-// additively in price space. The additive band
-// `|p − centre| > K·scale` is one-sided-blind by construction: a source
-// can only ever be `centre` below the centre, so once K·scale reaches
-// the centre — a relative MAD of 1/(5·1.4826) = 13.5 %, which three
-// aggregators quoting a thin RWA or a mid-crash major reach routinely —
-// the lower edge goes non-positive and NO downward print can be
-// rejected, while the mirror-image up-move still is. A single vendor
-// publishing a decimal-shifted or stale-to-zero quote would then halve the
-// plain-mean headline that this filter exists to protect. The
-// ratio-symmetric band [centre²/(centre + K·scale), centre + K·scale] is
-// identical above the centre; below it the mirrored edge is never lower than
-// the additive one (1/(1+r) ≥ 1−r), so nothing the additive band rejects is
-// accepted — the downward side is strictly tightened, and a
-// source sitting between the additive and mirrored lower edge is dropped.
+// additively. The additive band `|p - centre| > K*scale` is blind
+// downward: once K*scale reaches the centre (relative MAD of 13.5%,
+// routine for thin RWA) the lower edge goes non-positive and NO
+// downward print can be rejected, so one decimal-shifted or zero quote
+// would halve the headline. The ratio band
+// [centre^2/(centre + K*scale), centre + K*scale] matches the additive
+// one above the centre and is never lower below it.
 //
 // It NEVER fails closed: with fewer than [aggregatorMinForOutlierReject]
-// usable sources (no majority to define consensus) it returns the input
-// unchanged, and because the centre is the median at least one source
-// (the consensus) always survives whenever it does filter.
+// usable sources it returns the input unchanged, and the median source
+// always survives when it does filter.
 func rejectAggregatorOutliers(rows []canonical.OracleUpdate) []canonical.OracleUpdate {
 	if len(rows) < aggregatorMinForOutlierReject {
 		return rows

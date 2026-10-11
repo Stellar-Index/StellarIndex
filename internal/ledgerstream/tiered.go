@@ -17,41 +17,28 @@ import (
 var ErrBothTiersMissing = errors.New("missing in BOTH tiers (hot, then cold)")
 
 // TieredDataStore wraps a hot + cold [datastore.DataStore] in a
-// fallback chain. Reads try the hot store first; on a not-found
-// error (and only that — not transient errors) they fall through
-// to the cold store. Writes always target the hot store; the cold
-// store is treated as read-only.
+// fallback chain. Reads try hot first; on a not-found error (and only
+// that, not transient errors) they fall through to cold. Writes always
+// target hot; cold is read-only. Per ADR-0027 hot is local
+// galexie-archive (MinIO on r1) and cold is `aws-public-blockchain` S3.
 //
-// Per ADR-0027 the production hot tier is local galexie-archive
-// (MinIO on r1) and the cold tier is `aws-public-blockchain` S3
-// (the Open Data Sponsorship bucket). The cold path is read-only; PutFile +
-// PutFileIfNotExists always target hot.
+// Fail-loud-not-silent: transient hot errors propagate immediately, so
+// a misconfigured hot endpoint surfaces as the operator's problem
+// instead of being masked by a slow cold fallback that succeeds.
 //
-// Fail-loud-not-silent: transient errors from the hot store
-// propagate immediately. A misconfigured hot endpoint surfaces
-// as the operator's actual problem rather than being masked by
-// a slow cold fallback that succeeds for every read.
-//
-// Metrics (always emitted — package-level, registered once at boot):
+// Metrics:
 //
 //   - stellarindex_ledgerstream_tier_read_total
 //     {outcome="hot"|"cold"|"both_missing"} (obs.LedgerstreamTierReadTotal)
 //   - stellarindex_ledgerstream_cold_read_duration_seconds
 //     {outcome="ok"|"miss"|"error"} (obs.LedgerstreamColdReadDurationSeconds)
 //
-// These are obs package-level metrics registered unconditionally at
-// process boot — NOT gated on a per-instance registry. The
-// production ledgerstream.Config leaves Registry nil (the SDK's
+// These are obs package-level metrics, NOT per-instance: the production
+// ledgerstream.Config leaves Registry nil (the SDK's
 // BufferedStorageBackend registration panics across the
-// archive→live→catch-up Stream calls), so a per-instance metric here
-// would be nil in production and the `both_missing` page could never fire.
-// Sourcing them from obs decouples this observability from the SDK's
-// registry constraint.
-//
-// Operators chart `cold` rate as a proxy for "is the trim window
-// correctly sized, or am I paying cross-Atlantic latency for
-// ranges that should be hot?". A `cold` rate spike on live ingest
-// = trim window too tight; cold rate on backfill is expected.
+// archive->live->catch-up Stream calls), so a per-instance metric would
+// be nil in production and the `both_missing` page could never fire.
+// A `cold` rate spike on live ingest means the trim window is too tight.
 type TieredDataStore struct {
 	hot  datastore.DataStore
 	cold datastore.DataStore

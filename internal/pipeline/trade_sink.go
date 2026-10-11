@@ -225,43 +225,29 @@ func retryInfra(ctx context.Context, logger *slog.Logger, op string, do func(con
 }
 
 // flushTradeBatch writes one buffered trade batch with the resilient
-// failure policy (ADR-0041). A plain "batch failed → per-row → drop on
-// error" path would silently lose writes during a Postgres outage while
-// the cursor advanced.
+// failure policy (ADR-0041): a plain "batch failed -> per-row -> drop"
+// path would silently lose writes during a Postgres outage while the
+// cursor advanced.
 //
-// Behaviour by failure class:
-//   - success                    — return.
-//   - anything not positively     — isolate per-row (the
-//     recognised as infra           belt-and-braces fallback), so one bad
-//     row can't sink the batch and lock contention resolves via
-//     single-row lock order. Each row is then re-classified on its own
+//   - success: return.
+//   - not positively recognised as infra: isolate per-row, so one bad
+//     row can't sink the batch. Each row is re-classified on its own
 //     ([persistTradeRouted]): a permanent data fault is counted and
-//     skipped, everything else follows the infra policy below.
-//   - infrastructure fault        — split by lake-recoverability:
-//     ON-CHAIN trades (sdex + Soroban DEXes) block-and-retry so the
-//     cursor stalls until they land (nothing dropped); EXTERNAL CEX/FX
-//     trades (no cursor, vendor-refillable) go to the bounded async
-//     retry buffer, which drops-oldest under sustained overflow.
+//     skipped, everything else follows the infra policy.
+//   - infrastructure fault: ON-CHAIN trades (sdex + Soroban DEXes)
+//     block-and-retry so the cursor stalls until they land; EXTERNAL
+//     CEX/FX trades (no cursor, vendor-refillable) go to the bounded
+//     async retry buffer, which drops-oldest under sustained overflow.
 //
-// extBuf may be nil (shutdown drain / projector / backfill paths that
-// carry no external trades) — then every trade block-and-retries within
-// the caller's bounded context.
+// extBuf may be nil (shutdown drain / projector / backfill paths); then
+// every trade block-and-retries within the caller's bounded context.
 //
-// Returns the trades that were NEITHER written NOR permanently dropped
-// because ctx was cancelled mid-flush (nil otherwise). The caller owns
-// what happens to them: [persistWorker]'s steady-state flush runs under
-// the parent ctx, so a shutdown that races an in-flight write cancels
-// it — those rows must be carried into the worker's bounded shutdown
-// drain (flushShutdown) and retried there, exactly as the
-// sorobanevents AsyncSink does. Abandoning them here instead would send
-// the cancelled batch into the per-row isolation pass, where every
-// row's InsertTrade fails instantly against the same dead ctx, and up
-// to [tradeBatchSize] already-accepted trades would be logged as
-// "abandoned — re-derive" on every deploy that caught a flush in
-// flight — while flushShutdown's [drainTimeout] budget sits unused. The
-// bounded shutdown callers report whatever comes back via
-// [reportAbandonedTrades]: for them the ctx deadline IS the drain
-// budget, so an abandon there is a genuine loss.
+// Returns the trades neither written nor permanently dropped because
+// ctx was cancelled mid-flush (nil otherwise). The caller must carry
+// them into its shutdown drain ([persistWorker] -> flushShutdown):
+// per-row isolation against the same dead ctx would misreport accepted
+// trades as lost. Bounded shutdown callers report leftovers via
+// [reportAbandonedTrades]; there an abandon is a genuine loss.
 func flushTradeBatch(ctx context.Context, logger *slog.Logger, w tradeWriter, extBuf *externalRetryBuffer, batch []canonical.Trade, workerID int) []canonical.Trade {
 	if len(batch) == 0 {
 		return nil

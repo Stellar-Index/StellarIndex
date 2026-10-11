@@ -1,39 +1,26 @@
-// Package comet decodes on-chain events from Comet — a Soroban
-// implementation of Balancer v1's weighted-AMM design. Pools hold
-// N ≥ 2 tokens with arbitrary weights; trading preserves the
-// weighted-geometric-mean invariant.
+// Package comet decodes on-chain events from Comet, a Soroban
+// implementation of Balancer v1's weighted-AMM design (N >= 2 tokens,
+// arbitrary weights).
 //
-// Wire shape, verified against comet-contracts-v1
-// (contracts/src/c_pool/event.rs, call_logic/pool.rs) and upstream `main`:
+// Wire shape (comet-contracts-v1 contracts/src/c_pool/event.rs):
+// topic[0] = Symbol("POOL"), topic[1] = Symbol("<event_name>"), body a
+// Map. Exactly five events are emitted:
 //
-//	topic[0] = Symbol("POOL")
-//	topic[1] = Symbol("<event_name>")
-//	body     = Map { … }      (shape per event)
+//   - "swap" -> a canonical.Trade
+//   - "join_pool" / "exit_pool" -> a LiquidityEvent per token (an
+//     N-token join produces N rows)
+//   - "deposit" / "withdraw" -> single-asset add / remove
+//     (withdraw carries pool_amount_in, the BPT shares burned)
 //
-// The Soroban port emits exactly five events under `POOL`:
+// Any other POOL topic is rejected with ErrNotCometEvent. BPT
+// transfers belong to internal/sources/sep41_supply.
 //
-//   - "swap"      — caller, token_in, token_out, token_amount_in,
-//     token_amount_out → a canonical.Trade
-//   - "join_pool" — caller, token_in, token_amount_in → a LiquidityEvent
-//     per token (an N-token join produces N rows)
-//   - "exit_pool" — caller, token_out, token_amount_out → LiquidityEvent
-//   - "deposit"   — caller, token_in, token_amount_in → single-asset add
-//   - "withdraw"  — caller, token_out, token_amount_out, pool_amount_in
-//     (the BPT shares burned) → single-asset remove
-//
-// Balancer-v1's bind / rebind / unbind / finalize / set_swap_fee /
-// set_public_swap do not exist in the port (the token+weight set is fixed
-// at `init()`); set_controller and gulp exist but publish nothing. A
-// future upgrade adding a new POOL topic is rejected with
-// ErrNotCometEvent until support is added. BPT transfers use the SEP-41
-// surface and belong to internal/sources/sep41_supply, not this package.
-//
-// `POOL` is shared by every Balancer-v1-derived contract, so ROUTING is by
-// topic bytes but ATTRIBUTION is gated on contract identity at dispatch
-// time (ADR-0035/0040): Decoder.Matches only claims an event whose
+// `POOL` is shared by every Balancer-v1-derived contract, so ROUTING is
+// by topic bytes but ATTRIBUTION is gated on contract identity
+// (ADR-0035/0040): Decoder.Matches only claims an event whose
 // ContractID is in the curated registry (MainnetGatedSet +
 // protocol_contracts warm). A comet-shaped event from an unregistered
-// contract is left for the recognition audit, never silently attributed.
+// contract is left for the recognition audit, never attributed.
 package comet
 
 import (

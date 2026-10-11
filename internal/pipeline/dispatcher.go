@@ -134,46 +134,25 @@ func AccountObserverWatchSet(sup config.SupplyConfig, meta config.MetadataConfig
 
 // RegisterSupplyEntryDecoders attaches the LCM-based supply observers
 // to disp based on the supply config. Each observer is opt-in: an
-// empty watched-set leaves the corresponding observer unregistered
-// (no decoder, no work per ledger). Returns the slice of registered
-// observer names so the caller can log which observers are live —
-// operators reading boot logs see the wired set without consulting
-// config.
+// empty watched-set leaves it unregistered (no decoder, no per-ledger
+// work). Returns the registered observer names for boot logs.
 //
-// Currently wired:
+// Wired observers and their watch sets:
 //
-//   - accounts.Observer — backed by [AccountObserverWatchSet]:
-//     [supply.SDFReserveAccounts] (Algorithm 1 XLM circulating supply)
-//     plus [metadata.WatchedIssuerAccounts] (issuer home_domain). Records
-//     AccountEntry changes into `account_observations`; each reader
-//     queries by account id, so the union does not leak issuers into
-//     the reserve sum.
-//   - trustlines.Observer — backed by [supply.WatchedClassicAssets].
-//     Records TrustLineEntry balance changes for the watched
-//     classic assets into `classic_supply_trustline_observations`.
-//   - claimable_balances.Observer — same watched-set. Records
-//     ClaimableBalanceEntry create/remove deltas into
-//     `classic_supply_claimable_observations`.
-//   - liquidity_pools.Observer — same watched-set. Records
-//     LiquidityPoolEntry reserve changes into
-//     `classic_supply_lp_reserve_observations`.
-//   - sac_balances.Observer — backed by [supply.SACWrappers] (the
-//     SAC contract C-strkey → asset_key map). Records ContractData
-//     balance changes for SAC-wrapped classics + pure SEP-41
-//     contracts into `classic_supply_sac_balance_observations`.
+//   - accounts.Observer: [AccountObserverWatchSet], i.e.
+//     [supply.SDFReserveAccounts] plus [metadata.WatchedIssuerAccounts].
+//     Readers query by account id, so issuers do not leak into the
+//     reserve sum.
+//   - trustlines.Observer, claimable_balances.Observer and
+//     liquidity_pools.Observer: [supply.WatchedClassicAssets].
+//   - sac_balances.Observer: [supply.SACWrappers] (SAC C-strkey ->
+//     asset_key map); covers SAC-wrapped classics and pure SEP-41.
 //
-// The persistence side (internal/pipeline/sink.go) already type-
-// switches on every observer's Observation type and calls the right
-// store.Insert*; this function only fills the registration gap.
-//
-// Design rule: the watched-set itself is the on/off switch. Empty
-// list → observer skipped. This avoids a separate `[supply] enabled`
-// boolean an operator could forget to flip.
-//
-// The Algorithm 3 sep41_supply observer is event-stream (regular
-// Decoder, not LedgerEntryChangeDecoder); it ships in
-// [RegisterSupplyEventDecoders] alongside the LedgerEntry registration
-// here so an indexer that wants the full supply pipeline calls both.
+// Persistence is the type-switch in internal/pipeline/sink.go; this
+// function only fills the registration gap. The watched-set is the
+// on/off switch, so there is no separate `[supply] enabled` flag to
+// forget. The event-stream sep41_supply observer registers in
+// [RegisterSupplyEventDecoders]; call both for the full pipeline.
 func RegisterSupplyEntryDecoders(disp *dispatcher.Dispatcher, sup config.SupplyConfig, meta config.MetadataConfig) ([]string, error) {
 	var registered []string
 	if watched := AccountObserverWatchSet(sup, meta); len(watched) > 0 {
