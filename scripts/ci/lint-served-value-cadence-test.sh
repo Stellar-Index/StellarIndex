@@ -189,7 +189,7 @@ sed 's|stellarindex-ops verify-served-values|stellarindex-ops verify-archive|' \
   > "$wrong_cmd/$UNITS/verify-served-values.service.j2"
 check "a unit that runs some other subcommand is caught" 1 "$wrong_cmd"
 
-# THE CASE THE PREVIOUS REVISION PASSED. Every mention of both unit names is
+# The case a bare grep would pass: every mention of both unit names is
 # here — twice each — and nothing installs anything.
 removal_only="$(mk_tree removal_only)"
 removal_block > "$removal_only/$TASKS/14-stellarindex-services.yml"

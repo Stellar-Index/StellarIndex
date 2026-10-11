@@ -8,7 +8,7 @@
 # there is no standalone /v1/coins route; the overlay is on every
 # /v1/assets row.
 #
-# Row filters (BACKLOG #54), combinable:
+# Row filters, combinable:
 #   type=native|classic|soroban|fiat|any   structural asset class
 #   code=USDC                              exact, case-sensitive code
 #   issuer=G...                            issuing account G-strkey

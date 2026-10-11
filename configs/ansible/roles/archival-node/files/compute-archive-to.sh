@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
-# Compute ARCHIVE_TO
-# for archive-completeness.service from the indexer cursor.
-# Uses the same DSN as the application binaries (sourced from
-# /etc/default/stellarindex) rather than peer-auth which fails
+# Compute ARCHIVE_TO for archive-completeness.service from the indexer cursor.
+# Uses the application DSN (from /etc/default/stellarindex); peer-auth fails
 # under systemd's restricted user-switch context.
 set -euo pipefail
 # Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
 # values are unquoted (that is what systemd wants), so the shell would
 # expand `$`, split on `;`/`&`/`|`/whitespace and eat quotes inside a
-# secret: the services keep working while this path gets a mangled DSN
-# (deploy-ansible-secrets-5). Same reader as run-heavy-job.sh.
+# secret: the services keep working while this path gets a mangled DSN.
+# Same reader as run-heavy-job.sh.
 # usage: load_env_file FILE [export]
 load_env_file() {
   local line
@@ -32,14 +30,10 @@ if [ -z "$TO" ] || [ "$TO" = "0" ]; then
   exit 1
 fi
 
-# ARCHIVE_TO had no floor. A cursor reset or a partial
-# reap-cursors leaving MAX(last_ledger) far below its true position
-# silently shrinks the verified range instead of failing — the
-# nightly run stamps success for [from, TO] and the ledgers beyond TO
-# go unverified with every gauge green. Floor against the previous
-# run's ARCHIVE_TO (the archive's own last-verified checkpoint,
-# persisted alongside this file in /run — tmpfs, so it resets across
-# a reboot, which is the one case a fresh start is legitimate).
+# Floor against the previous run's ARCHIVE_TO (persisted in /run, tmpfs, so it
+# resets on reboot, the one case a fresh start is legitimate). Without a floor a
+# cursor reset or partial reap-cursors silently shrinks the verified range and
+# ledgers beyond TO go unverified with every gauge green.
 ENV_FILE="${ARCHIVE_COMPLETENESS_ENV_FILE:-/run/archive-completeness.env}"
 PREV_TO=0
 if [ -f "$ENV_FILE" ]; then

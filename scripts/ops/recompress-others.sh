@@ -1,8 +1,8 @@
 #!/bin/bash
 # Phase A margin: recompress operations/operation_results/contract_events to ZSTD.
 # Refuses to start until each table's XDR column carries the ZSTD codec from
-# deploy/clickhouse/tier1_schema.sql. One table at a time, one partition at a time, biggest-first,
-# disk-guarded. Pool has ~2.8 TiB free so this is low-risk; still bounded + reversible.
+# deploy/clickhouse/tier1_schema.sql. One table at a time, one partition at a time,
+# biggest-first, disk-guarded, bounded and reversible.
 # The raised merge ceiling is put back to the value each table had before the run
 # on every exit a shell can trap (success, failure, TERM/INT/HUP). A SIGKILL cannot
 # be trapped: the pre-run values are logged at OTHERS_START so they can be restored

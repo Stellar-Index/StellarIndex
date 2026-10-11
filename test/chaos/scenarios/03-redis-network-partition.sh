@@ -33,7 +33,7 @@ chaos_setup
 
 cleanup() {
     log "cleanup: healing partition (no-op if already healed)"
-    # Do NOT redirect heal_partition's own stdout/stderr away — it now
+    # Do NOT redirect heal_partition's own stdout/stderr away — it
     # warns internally when a network reconnect fails, and swallowing
     # that here would defeat the point. `|| true` only guards this
     # trap against heal_partition's "nothing to heal" no-op return

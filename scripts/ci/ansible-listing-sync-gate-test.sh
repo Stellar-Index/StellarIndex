@@ -12,8 +12,8 @@
 # sits under `listing_sync_enabled | bool`, and a block under its negation
 # stops, disables and removes both units.
 #
-# ROLE_TASKS / ROLE_DEFAULTS override the files so a pre-fix tree can be
-# replayed (the red proof). Needs a python with jinja2 + PyYAML (ansible's
+# ROLE_TASKS / ROLE_DEFAULTS override the files so another tree can be replayed.
+# Needs a python with jinja2 + PyYAML (ansible's own); fail-closed in CI, skip locally.
 # own); fail-closed in CI, skip locally.
 # Run: bash scripts/ci/ansible-listing-sync-gate-test.sh
 set -uo pipefail

@@ -84,7 +84,7 @@ else
 fi
 
 # 2. mc alias set succeeds, bucket has an object — resumes from
-# last_exported+1 (baseline behaviour must survive the fix untouched).
+# last_exported+1 (the healthy path must be unchanged).
 run 0 "live/galexie-live/chunk/FC43AFEC--62672915.xdr.zst"
 if [ "$STATUS" -eq 0 ] && grep -q -- "--start 62672916" "$TMP/argv" 2>/dev/null; then
   ok "alias-set success + non-empty bucket: resumes at last_exported+1"

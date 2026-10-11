@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# compute-archive-to_test.sh — ARCHIVE_TO had no floor. A
-# cursor reset or a partial reap-cursors leaving MAX(last_ledger) far
-# below its true position silently shrank the verified range instead
-# of failing. Pins that a regression against the last written
-# ARCHIVE_TO now fails loudly instead of overwriting the env file.
+# compute-archive-to_test.sh — pins that a regression of ARCHIVE_TO below the
+# last written value fails loudly instead of overwriting the env file.
 #
 # Uses a fake `psql` on PATH and overridable STELLARINDEX_ENV_FILE /
 # ARCHIVE_COMPLETENESS_ENV_FILE (same override pattern as TEXTFILE_DIR
@@ -64,11 +61,8 @@ run 2000000
 expect 'advance succeeds' "$STATUS" 0
 expect 'advance writes new ARCHIVE_TO' "$(cat "$TMP/archive-completeness.env")" "ARCHIVE_TO=2000000"
 
-# Reproduction: a reset/reaped cursor computes a TO far below
-# the last verified checkpoint. Before the fix this silently
-# overwrote the env file and the nightly run stamped success for a
-# shrunk range. After the fix it must fail closed and leave the prior
-# checkpoint in place.
+# A reset/reaped cursor computes a TO far below the last verified checkpoint;
+# it must fail closed and leave the prior checkpoint in place.
 run 1200000
 expect 'regression is rejected (non-zero exit)' "$STATUS" 1
 expect 'regression does not overwrite the prior checkpoint' "$(cat "$TMP/archive-completeness.env")" "ARCHIVE_TO=2000000"

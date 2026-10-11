@@ -94,7 +94,7 @@ images_dir="$work/images"; vg_dir="$work/vg0"
 mkdir -p "$images_dir" "$vg_dir"
 keys_file="$work/keys"; echo "ssh-ed25519 AAAAtest test@example.com" > "$keys_file"
 
-# Pre-seed a matching image so the checksum step (commit 1) doesn't
+# Pre-seed a matching image so the checksum step doesn't
 # interfere with this test's focus — use the same fixed body the stub
 # wget would have produced, with a checksum computed for real so the
 # verification step (which runs regardless) passes.

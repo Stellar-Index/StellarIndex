@@ -2,13 +2,11 @@
 # stellar-core-auto-upgrade — install apt's newer stellar-core without an operator.
 #
 # WHY: a captive-core older than the network protocol halts ingest at the
-# upgrade-vote ledger. The version-lag probe detected core 29.0.0 (a P29
-# prerequisite and SDF security fix) within a day of its publish,
-# and the P1 page then sat unactioned for ~2.5 days with the vote 4 days out.
-# Detection was never the gap; acting was. This closes it for core, which
-# ships through apt.stellar.org. galexie ships from a git tag and needs a new
-# build only when the XDR changes, which is an SDK code change anyway, so it
-# stays on the lag alert.
+# upgrade-vote ledger. The version-lag probe detects a new core within a day,
+# but a P1 page alone sat unactioned until the vote was days away: detection
+# was never the gap, acting was. Covers core only (apt.stellar.org); galexie
+# ships from a git tag and needs a rebuild only when the XDR changes (an SDK
+# code change anyway), so it stays on the lag alert.
 #
 # Each run: if the apt candidate is newer than the installed core, stop
 # galexie, install the candidate, restore the captive-core config group

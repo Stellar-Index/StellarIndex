@@ -3,7 +3,7 @@
 # Environment= default must appear BEFORE its EnvironmentFile=
 # directives.
 #
-# THE BUG CLASS (SL07). systemd.exec(5): Environment= and
+# THE BUG CLASS. systemd.exec(5): Environment= and
 # EnvironmentFile= are applied in the order they appear in the unit
 # file, and a later directive wins over an earlier one for the same
 # key. A default declared via Environment= AFTER an EnvironmentFile=
@@ -11,7 +11,7 @@
 # silently, since systemd emits no warning for a "successful" merge.
 #
 # Usage: lint-systemd-envfile-order.sh [ROOT] [FILE...]
-# FILE defaults to the /bin/sh-free units SL07 applies to; the
+# FILE defaults to the /bin/sh-free units; the
 # self-test passes an explicit fixture path.
 set -uo pipefail
 
