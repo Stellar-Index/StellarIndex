@@ -146,15 +146,11 @@ const (
 	aliasUSDCSAC     = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 )
 
-// TestAssetDetail_SACFormResolvesCanonical is Part A's detail-page half:
-// GET /v1/assets/{USDC-SAC} must serve the CANONICAL classic USDC detail
-// (same asset_id as /v1/assets/{USDC-classic}), resolved from the config
-// AliasRegistry with NO lake round-trip (no explorer wired here). This is
-// what makes a SAC-form link land on the asset's real page instead of a
-// second, thin "SAC" identity.
-//
-// RED without the handleAssetGet canonicalization: with no explorer to run
-// resolveSACToClassic, the SAC C-address echoes back as its own asset_id.
+// TestAssetDetail_SACFormResolvesCanonical: GET /v1/assets/{USDC-SAC} must serve the
+// CANONICAL classic USDC detail (same asset_id as /v1/assets/{USDC-classic}), resolved from
+// the config AliasRegistry with NO lake round-trip (no explorer wired here), so a SAC-form
+// link lands on the asset's real page instead of a second, thin "SAC" identity. Without the
+// handleAssetGet canonicalization the SAC C-address echoes back as its own asset_id.
 func TestAssetDetail_SACFormResolvesCanonical(t *testing.T) {
 	// Process-global registry — must not run parallel; reset on cleanup.
 	reg, err := canonical.NewAliasRegistry(canonical.PubnetPassphrase, map[string]string{aliasUSDCSAC: "USDC:" + aliasUSDCIssuer})

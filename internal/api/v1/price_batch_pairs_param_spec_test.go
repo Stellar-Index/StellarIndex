@@ -8,12 +8,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestPriceBatchSpecDocumentsPairsAlias pins that handlePriceBatch
-// (price.go) accepts `pairs=` as an alias for
-// `asset_ids=` on GET /v1/price/batch, but the spec's parameters block
-// documented only `asset_ids`. A client reading the spec — or a
-// generator deriving a client from it — never learns `pairs` exists,
-// even though the server accepts it.
+// TestPriceBatchSpecDocumentsPairsAlias pins that the spec documents `pairs=`, which
+// handlePriceBatch (price.go) accepts as an alias for `asset_ids=` on GET /v1/price/batch.
+// Otherwise a client or generator reading the spec never learns the alias exists.
 func TestPriceBatchSpecDocumentsPairsAlias(t *testing.T) {
 	names := specGetParamNames(t, "/price/batch")
 	if len(names) == 0 {

@@ -105,12 +105,9 @@ func TestHandlePriceAt(t *testing.T) {
 	}
 }
 
-// TestHandlePriceAt_WithheldDistinctFromNotFound pins that a
-// reader that returns ErrPriceWithheld (the pair HAS a closed bucket
-// but the substance/scam gate refuses to publish it) must 404 with the
-// distinct errors/price-withheld type, not the generic
-// errors/price-not-found the "we have never seen this pair" case uses
-// — same contract handlePrice and handlePriceTip already carry.
+// TestHandlePriceAt_WithheldDistinctFromNotFound pins that ErrPriceWithheld (the pair HAS a
+// closed bucket but the substance/scam gate refuses to publish it) 404s with the distinct
+// errors/price-withheld type, not errors/price-not-found, as handlePrice and handlePriceTip do.
 func TestHandlePriceAt_WithheldDistinctFromNotFound(t *testing.T) {
 	ts := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
 	s := &Server{Options: Options{PriceAt: priceAtStub{err: ErrPriceWithheld}}}
@@ -170,11 +167,9 @@ func (s priceAtPairStub) PriceAt(_ context.Context, pair canonical.Pair, _ time.
 	return "", time.Time{}, 0, ErrPriceAtUnavailable
 }
 
-// TestHandlePriceAt_StablecoinFallback pins the CAGG sibling of the
-// stablecoin proxy: a historical native/fiat:USD lookup
-// with no direct fiat:USD bucket serves the USD-pegged-classic bucket
-// instead, echoing the REQUESTED quote and stamping
-// flags.triangulated.
+// TestHandlePriceAt_StablecoinFallback pins the CAGG sibling of the stablecoin proxy: a
+// historical native/fiat:USD lookup with no direct fiat:USD bucket serves the USD-pegged
+// classic bucket, echoing the REQUESTED quote and stamping flags.triangulated.
 func TestHandlePriceAt_StablecoinFallback(t *testing.T) {
 	usdc, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -216,11 +211,10 @@ func TestHandlePriceAt_StablecoinFallback(t *testing.T) {
 	}
 }
 
-// TestHandlePriceAt_ReaderFailureIsNotNotFound: a reader error that is
-// neither ErrPriceAtUnavailable nor withheld-class says nothing about
-// whether a bucket exists, so /v1/price/at must not answer the
-// "no closed bucket" 404 — a timeout is a retryable 503, any other
-// failure a 500.
+// TestHandlePriceAt_ReaderFailureIsNotNotFound: a reader error that is neither
+// ErrPriceAtUnavailable nor withheld-class says nothing about whether a bucket exists, so
+// /v1/price/at must not answer the "no closed bucket" 404; a timeout is a retryable 503, any
+// other failure a 500.
 func TestHandlePriceAt_ReaderFailureIsNotNotFound(t *testing.T) {
 	ts := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
 	nativeUSD, err := canonical.NewPair(canonical.NativeAsset(), canonical.Asset{Type: canonical.AssetFiat, Code: "USD"})

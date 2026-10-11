@@ -17,11 +17,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 )
 
-// harvestEventStreamer feeds the ClickHouse-lake re-derive path
-// (completeness.ReDeriveOutputCountsByKindFromEvents) a fixed set of
-// events.Event, exactly as the CH contract_events reader would after
-// reconstructing them from topics_xdr — so the REAL defindex decoder runs,
-// not a mock.
+// harvestEventStreamer feeds the lake re-derive path
+// (completeness.ReDeriveOutputCountsByKindFromEvents) fixed events, as the CH contract_events
+// reader would, so the REAL defindex decoder runs rather than a mock.
 type harvestEventStreamer struct{ evs []events.Event }
 
 func (s harvestEventStreamer) StreamContractEvents(
@@ -39,28 +37,16 @@ func (s harvestEventStreamer) StreamContractEvents(
 	return nil
 }
 
-// TestDefindexReconcile_CountsStrategyHarvest is the regression pin for the
-// defindex completeness money-data bug root-caused on r1
-// (fix/defindex-completeness-rederive): the served defindex_flows table holds a
-// genuine strategy-harvest flow at each of 974 ledgers, but the ADR-0033/0034
-// projection RE-DERIVE reported expected=0 there and marked source `defindex`
-// complete=false (974 mismatched ledger(s), Σ|Δ|=974 — equal to the served
-// harvest-row count).
+// TestDefindexReconcile_CountsStrategyHarvest pins that the ADR-0033/0034 projection
+// RE-DERIVE counts strategy-harvest flows. The served defindex_flows data is correct: the
+// decoder emits a DirectionHarvest StrategyFlow for a ("BlendStrategy","harvest") event (body
+// {from, amount, price_per_share}) and the sink persists it. The event mirrors a real one
+// whose topic[0] is ScvString, so topic_0_sym is empty in the lake.
 //
-// The served data is CORRECT: the decoder emits a DirectionHarvest StrategyFlow
-// for a ("BlendStrategy","harvest") event (body
-// {from, amount, price_per_share}), the sink persists it to defindex_flows
-// (direction=harvest, migration 0138), and this event mirrors the r1 first
-// mismatch at ledger 57,485,721 (contract CDPWNUW7…, op_index=0, event_index=2,
-// topic[0]=ScvString("BlendStrategy") so topic_0_sym is empty in the lake).
-//
-// The bug was in the reconciliation catalogue: the defindex_flows reconTarget
-// enumerated only the deposit/withdraw kinds, so SumKinds omitted every genuine
-// harvest from the EXPECTED side. This test runs the REAL decoder over the real
-// re-derive entry point and sums the catalogue's ACTUAL defindex_flows kinds, so
-// it fails (expected=0, a phantom-row gap) on the un-fixed catalogue and passes
-// once "defindex.strategy.harvest" is listed — proving the fix with NO change to
-// the served data.
+// The defindex_flows reconTarget must list "defindex.strategy.harvest" alongside
+// deposit/withdraw, or SumKinds omits every harvest from the EXPECTED side and the source
+// reads complete=false with phantom-row gaps. This runs the REAL decoder over the real
+// re-derive entry point and sums the catalogue's ACTUAL kinds.
 func TestDefindexReconcile_CountsStrategyHarvest(t *testing.T) {
 	const (
 		// r1 first-mismatch ledger; the strategy contract from the finding.

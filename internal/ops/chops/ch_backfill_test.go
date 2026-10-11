@@ -25,19 +25,14 @@ func testBackfillConfig(seam uint32) config.Config {
 	return cfg
 }
 
-// TestBackfillBucket_NoSeamKeepsTheLiveDefault pins the DELIBERATE limit of
-// the bucket-resolution fix.
+// TestBackfillBucket_NoSeamKeepsTheLiveDefault pins the DELIBERATE limit of the bucket
+// resolution: with no ingestion.live_seam_ledger the live bucket's floor is not knowable from
+// config, and guessing it causes wrong-bucket bugs. Defaulting to the archive would break
+// scripts/ops/ch-live-catchup.sh, which runs with NO -bucket to extend the tip; the archive is
+// an hourly mirror that lags it.
 //
-// With no ingestion.live_seam_ledger (r1 today) the live bucket's floor is
-// not knowable from config, and guessing it is what produced this class of
-// bug. Silently switching the default to the archive would also break
-// scripts/ops/ch-live-catchup.sh, which heals live-era holes and extends the
-// tip with NO -bucket: the archive is an hourly mirror of live, so it lags
-// the tip and that timer would fail every run until it caught up.
-//
-// So the wrong-bucket defect is closed by backfillCoverage (a historic range
-// against the live bucket streams zero ledgers and now HARD FAILS naming the
-// bucket), not by second-guessing the default here.
+// The wrong-bucket defect is closed by backfillCoverage (a historic range against the live
+// bucket streams zero ledgers and HARD FAILS naming the bucket), not by changing the default.
 func TestBackfillBucket_NoSeamKeepsTheLiveDefault(t *testing.T) {
 	cfg := testBackfillConfig(0) // r1: no seam configured
 
@@ -100,11 +95,9 @@ func TestBackfillBucket_SeamAware(t *testing.T) {
 	}
 }
 
-// TestBackfillCoverage_ZeroLedgersIsAHardError is the other half of the
-// vacuous-success guard: ch-backfill must not exit 0 after streaming ZERO ledgers of a
-// nonzero request. That exit code is load-bearing — ch-full-backfill.sh
-// appends the window to its resume state only on exit 0 — so a vacuous
-// success removes the window from the backfill permanently.
+// TestBackfillCoverage_ZeroLedgersIsAHardError: ch-backfill must not exit 0 after streaming
+// ZERO ledgers of a nonzero request. ch-full-backfill.sh banks the window in its resume state
+// only on exit 0, so a vacuous success removes the window from the backfill permanently.
 func TestBackfillCoverage_ZeroLedgersIsAHardError(t *testing.T) {
 	err := backfillCoverage(2, 1_000_000, 0, "galexie-live", false)
 	if err == nil {
@@ -118,11 +111,9 @@ func TestBackfillCoverage_ZeroLedgersIsAHardError(t *testing.T) {
 	}
 }
 
-// TestBackfillCoverage_PartialWalkIsAHardError — the command's contract is
-// "[from,to] is now in ClickHouse". A short count means the bucket lacks the
-// objects or per-ledger extraction failed (chBackfillChunk logs and skips
-// those); either way the range is not in the lake and the window must not be
-// banked.
+// TestBackfillCoverage_PartialWalkIsAHardError: the contract is "[from,to] is now in
+// ClickHouse". A short count means missing objects or failed per-ledger extraction
+// (chBackfillChunk logs and skips those), so the window must not be banked.
 func TestBackfillCoverage_PartialWalkIsAHardError(t *testing.T) {
 	err := backfillCoverage(1_000_000, 1_000_999, 900, "galexie-archive", false)
 	if err == nil {
@@ -158,11 +149,10 @@ func TestBackfillCoverage_FullWalkPasses(t *testing.T) {
 	}
 }
 
-// TestCHBackfill_RefusesWithoutAStatedMode pins that ch-backfill does not
-// WRITE by default. A run naming neither -write nor -dry-run
-// must refuse before loading config, so a caller assuming write-by-default
-// (ch-live-catchup.sh on a timer) fails loudly instead of silently
-// previewing and exiting 0.
+// TestCHBackfill_RefusesWithoutAStatedMode pins that ch-backfill does not WRITE by default: a
+// run naming neither -write nor -dry-run refuses before loading config, so a caller assuming
+// write-by-default (ch-live-catchup.sh on a timer) fails loudly instead of previewing and
+// exiting 0.
 func TestCHBackfill_RefusesWithoutAStatedMode(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "absent.toml")
 	base := []string{"-config", cfgPath, "-from", "2", "-to", "3"}

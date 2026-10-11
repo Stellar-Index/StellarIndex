@@ -11,18 +11,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestOraclePricesSpecDocumentsAsset and TestPoolsSpecDocumentsPagination
-// close the gap: `/v1/oracle/prices` rows always carry `asset`
-// (handleOraclePrices builds SEP40Price{Asset: asset.String(), ...} for
-// every row — oracle_sep40.go) and `/v1/pools` serves a `pagination`
-// cursor on non-final pages, but the OpenAPI schemas for both response
-// bodies omitted the field/property, so a spec-driven client couldn't
-// type either one.
+// TestOraclePricesSpecDocumentsAsset and TestPoolsSpecDocumentsPagination pin that the OpenAPI
+// schemas declare what the server always sends: `asset` on every `/v1/oracle/prices` row
+// (handleOraclePrices, oracle_sep40.go) and a `pagination` cursor on non-final `/v1/pools` pages.
+// A spec-driven client could not type either otherwise.
 //
-// These load the spec at full document depth (unlike specSchemaProps,
-// which only resolves a named schema's TOP-LEVEL properties and can't
-// see into an allOf branch or an array item schema) because both gaps
-// live one level below that.
+// These load the spec at full document depth because specSchemaProps resolves only a named
+// schema's TOP-LEVEL properties and cannot see into an allOf branch or array item schema, where
+// both fields live.
 
 // specDoc caches the parsed spec: callers only read it, and re-parsing the
 // whole YAML per schema pair cost api/v1 ~20 s under -race.

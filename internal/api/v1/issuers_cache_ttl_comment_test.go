@@ -6,12 +6,9 @@ import (
 	"testing"
 )
 
-// TestIssuersCacheComment_NoDanglingConfigReference pins that the doc
-// comment on NewCachedIssuersReader must not point readers at a
-// configs/example.toml issuers_cache_ttl knob that doesn't exist — there is
-// no [api] issuers_cache_ttl field anywhere in internal/config/config.go or
-// configs/example.toml, so a reader following that comment to "pin it
-// shorter" finds nothing to pin.
+// TestIssuersCacheComment_NoDanglingConfigReference pins that the doc comment on
+// NewCachedIssuersReader does not point readers at an issuers_cache_ttl knob in
+// configs/example.toml: no such [api] field exists in internal/config/config.go.
 func TestIssuersCacheComment_NoDanglingConfigReference(t *testing.T) {
 	src, err := os.ReadFile("issuers_cache.go")
 	if err != nil {

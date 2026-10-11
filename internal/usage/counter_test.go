@@ -177,12 +177,8 @@ func TestRead_EmptySubjectReturnsNil(t *testing.T) {
 	}
 }
 
-// TestRead_NilCounterIsNoOp — a nil *Counter must behave like the
-// disabled-tracking case: IncrementBy and MonthToDate both
-// guard `c == nil`, but Read did not, so a deployment without a usage
-// counter wired up (`UsageReader` left nil-backed) panicked on
-// `c.nowFn()` the first time /v1/account/usage was hit instead of
-// returning an empty result the way the rest of the type does.
+// TestRead_NilCounterIsNoOp — a nil *Counter is the disabled-tracking case: Read must return
+// an empty result like IncrementBy and MonthToDate, not panic on c.nowFn().
 func TestRead_NilCounterIsNoOp(t *testing.T) {
 	var c *usage.Counter
 	rows, err := c.Read(context.Background(), "subj-1", 7)
@@ -194,11 +190,9 @@ func TestRead_NilCounterIsNoOp(t *testing.T) {
 	}
 }
 
-// TestRead_DaysClampedToRetention — asking for more days than the
-// retention window returns at most RetentionDays rows. Clamp is
-// load-bearing because the caller's `days` parameter is wire-
-// derived (from the API `?days=` query) and we don't want a
-// caller demanding 365 days to issue 365 MGETs.
+// TestRead_DaysClampedToRetention — asking for more days than the retention window returns at
+// most RetentionDays rows. The clamp is load-bearing: `days` comes from the API query, so an
+// unclamped caller could force one MGET per requested day.
 func TestRead_DaysClampedToRetention(t *testing.T) {
 	_, rdb := newRedis(t)
 	clock := time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
@@ -339,11 +333,9 @@ func dayKey(subject, day string) string {
 	return "usage:" + url.QueryEscape(subject) + ":" + day
 }
 
-// TestMonthToDate_EvictedDayKeysReconcileFromUsageDaily:
-// the day keys live on an evicting Redis and a missing key read as a
-// quiet day, so evicting the month's cold early days silently cut the
-// billed month from 950 to 250. The rollup has already persisted those
-// days, so the meter must still read 950.
+// TestMonthToDate_EvictedDayKeysReconcileFromUsageDaily: day keys live on an evicting Redis
+// and a missing key reads as a quiet day, which would silently under-bill the month. The
+// rollup has persisted those days, so the meter must reconcile from it.
 func TestMonthToDate_EvictedDayKeysReconcileFromUsageDaily(t *testing.T) {
 	mr, rdb := newRedis(t)
 	clock := time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)

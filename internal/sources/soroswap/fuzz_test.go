@@ -467,14 +467,11 @@ func FuzzClassify(f *testing.F) {
 	})
 }
 
-// FuzzBufferCorrelation drives the swap/sync buffer with an arbitrary
-// event sequence over colliding (ledger, tx, op, pool) keys and checks it
-// against a model: a completed pair's swap and sync share the full key
-// including the emitting pool; a same-kind event with a new
-// EventIndex on an occupied slot rotates the group out (swap-only as
-// completed, sync-only as evicted) while a redelivery (same EventIndex)
-// overwrites in place; and nothing completes, evicts or lingers that the
-// model disagrees on.
+// FuzzBufferCorrelation drives the swap/sync buffer with arbitrary events over colliding
+// (ledger, tx, op, pool) keys and checks it against a model: a completed pair shares the full
+// key including the emitting pool; a same-kind event with a new EventIndex on an occupied
+// slot rotates the group out (swap-only as completed, sync-only as evicted) while a
+// redelivery (same EventIndex) overwrites in place; nothing else completes, evicts or lingers.
 func FuzzBufferCorrelation(f *testing.F) {
 	f.Add([]byte{0x00, 0x01})
 	f.Add([]byte{0x00, 0x04, 0x01, 0x05})

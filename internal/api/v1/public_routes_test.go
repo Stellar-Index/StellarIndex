@@ -54,12 +54,10 @@ func isDashboardLoginOp(op string) bool {
 	return strings.HasPrefix(path, "/v1/auth/") && !strings.HasPrefix(path, "/v1/auth/sep10/")
 }
 
-// TestPublicOpenAPIRoutes_AnswerWithoutCredential pins that every
-// operation the spec declares `security: []` must answer an uncredentialed
-// caller with something other than 401 under the credential-REQUIRED modes.
-// Under auth_mode=sep10 the SEP-10 challenge/token routes 401'd, so the mode
-// could not issue the credential it demanded; under apikey, signup, register
-// and the emailed verification link 401'd.
+// TestPublicOpenAPIRoutes_AnswerWithoutCredential pins that every operation the spec declares
+// `security: []` answers an uncredentialed caller with something other than 401 under the
+// credential-REQUIRED modes. Otherwise sep10 could not issue the credential it demands (challenge
+// and token routes), and under apikey signup, register and the emailed verification link fail.
 func TestPublicOpenAPIRoutes_AnswerWithoutCredential(t *testing.T) {
 	ops := specSecurityNoneOps(t)
 	for _, mode := range []middleware.AuthMode{middleware.AuthModeAPIKey, middleware.AuthModeSEP10} {

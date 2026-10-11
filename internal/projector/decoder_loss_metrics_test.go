@@ -26,12 +26,10 @@ func (*fakeLossyDecoder) Decode(events.Event) ([]consumer.Event, error) {
 func (f *fakeLossyDecoder) EvictedOrphans() int       { return f.orphans }
 func (f *fakeLossyDecoder) UnknownContractDrops() int { return f.drops }
 
-// TestEmitDecoderLossDeltas pins that the projector builds its OWN decoder
-// instance per source (a separate instance from the live indexer's
-// dispatcher), so it must read that instance's EvictedOrphans /
-// UnknownContractDrops counters — else the projector's half of the loss
-// signal has zero observability. The metric must move by the
-// decoder's OWN accumulated count, not stay at zero forever.
+// TestEmitDecoderLossDeltas pins that the projector builds its OWN decoder instance per
+// source (separate from the live indexer's dispatcher), so it must read that instance's
+// EvictedOrphans / UnknownContractDrops counters. The metric must move by the decoder's OWN
+// accumulated count, or the projector's half of the loss signal is unobservable.
 func TestEmitDecoderLossDeltas(t *testing.T) {
 	dec := &fakeLossyDecoder{}
 	src := Source{Name: "q037-fake-source", Decoder: dec}

@@ -9,24 +9,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestSortTradesByConflictKey_FullKeyOrder is the regression test for
-// the CEX batch-insert deadlock storm: two concurrent
-// `BatchInsertTrades` callers whose batches share overlapping trades
-// PK rows must acquire Postgres row locks in the SAME order, or a
-// same-keys-different-order lock acquisition is a textbook AB/BA
-// (40P01) deadlock. That requires sorting by the FULL conflict key —
-// `(source, ledger, tx_hash, op_index, ts)`, matching `ON CONFLICT
-// (source, ledger, tx_hash, op_index, ts)` in BatchInsertTrades — not
-// just a prefix of it.
+// TestSortTradesByConflictKey_FullKeyOrder guards the CEX batch-insert deadlock: concurrent
+// BatchInsertTrades callers with overlapping trades PK rows must take Postgres row locks in the
+// SAME order, or they AB/BA deadlock (40P01). That needs the FULL conflict key
+// (source, ledger, tx_hash, op_index, ts), not a prefix.
 //
-// This test builds a batch containing rows that tie on the first four
-// columns (source, ledger, tx_hash, op_index — the exact shape of
-// off-chain CEX/FX rows, which all share ledger=0 and often op_index=0)
-// but differ on `ts`, the fifth column. It shuffles the input many
-// times and asserts the sorted output order is IDENTICAL every time —
-// proving `ts` is used as a real tiebreaker rather than left to
-// sort.Slice's unspecified (non-stable) order for tied elements, which
-// is exactly the gap a partial-key sort leaves open.
+// The batch ties on the first four columns (the shape of off-chain CEX/FX rows, which share
+// ledger=0) and differs only on ts; shuffled many times, the sorted order must be identical,
+// so ts is a real tiebreaker and not sort.Slice's unspecified order for ties.
 func TestSortTradesByConflictKey_FullKeyOrder(t *testing.T) {
 	base := time.Date(2026, 7, 8, 18, 12, 0, 0, time.UTC)
 	mk := func(source string, ledger uint32, txHash string, opIndex uint32, tsOffsetSeconds int) canonical.Trade {

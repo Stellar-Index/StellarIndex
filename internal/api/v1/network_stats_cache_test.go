@@ -21,12 +21,10 @@ func (u *countingNetStatsUpstream) GetNetworkStats(_ context.Context) (timescale
 	return u.val, nil
 }
 
-// TestCachedNetworkStatsAt_StaleServeReportsStale drives the cache into its
-// SWR stale-serve branch (A') and proves GetNetworkStatsAt reports
-// stale=true with the AGED observation time — the signal the handler needs
-// to stamp an honest as_of instead of now(). A fresh hit reports
-// stale=false. This is the cache half of the fix (the handler half
-// is TestNetworkStats_HonestStaleAsOf).
+// TestCachedNetworkStatsAt_StaleServeReportsStale drives the cache into its SWR stale-serve
+// branch and proves GetNetworkStatsAt reports stale=true with the AGED observation time, so
+// the handler can stamp an honest as_of instead of now(). A fresh hit reports stale=false.
+// The handler half is TestNetworkStats_HonestStaleAsOf.
 func TestCachedNetworkStatsAt_StaleServeReportsStale(t *testing.T) {
 	up := &countingNetStatsUpstream{val: timescale.NetworkStats{MarketsCount24h: 7}}
 	// A short TTL so we can expire it deterministically by sleeping past it.

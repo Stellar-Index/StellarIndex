@@ -9,23 +9,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// A rebuild in which one arm's READ FAILED must not become the served
-// set, and must not clear the failure stamp.
+// A rebuild in which one arm's READ FAILED must not become the served set, and must not clear
+// the failure stamp. Caching on "either arm answered" would serve a half-empty membership set
+// (a failed classic scan beside a healthy contract scan) for the full cache lifetime while
+// reporting `stale: false` and no `rebuild_failed_at`. Membership is what this index CALLS a
+// real-world asset, so a half set is wrong coverage that looks fresh.
 //
-// The shape the defect had: the cache decision asked only whether
-// EITHER arm had answered, so a failed classic scan beside a healthy
-// contract scan cached a set with no classic members in it, dated the
-// cache NOW and cleared rwaFailedAt — so the surface served a
-// half-empty membership set for the full ten-minute lifetime while
-// reporting `stale: false` and no `rebuild_failed_at`. Membership is
-// what this index CALLS a real-world asset, so a half set is published
-// coverage that is wrong, self-certified fresh, and invisible to a
-// reader of the response.
-//
-// The distinction the fix rests on is WIRED-AND-FAILED versus NOT
-// WIRED. `available: false` says both, and only the first may refuse a
-// cache write — which is what [TestRefreshRWAMembership_UnwiredArmStillCaches]
-// below holds in place.
+// The distinction is WIRED-AND-FAILED versus NOT WIRED. `available: false` says both, and only
+// the first may refuse a cache write, which
+// [TestRefreshRWAMembership_UnwiredArmStillCaches] below holds in place.
 
 // stubRWAContractArm answers the contract arm's directory scan. Empty
 // by default: what matters here is that the arm ANSWERED, not what it
@@ -178,11 +170,9 @@ func TestRefreshRWAMembership_UnwiredArmStillCaches(t *testing.T) {
 	}
 }
 
-// The funnel has to say the classic arm was not measured, for the
-// reason it already says so for the other two: its stages then read
-// zero, and a narrowing of zeros asserts that no issuer on the network
-// publishes a real-world-asset attestation — a finding, out of a scan
-// that never ran.
+// The funnel must say the classic arm was not measured, as it does for the other two: its
+// stages then read zero, and a narrowing of zeros would assert that no issuer publishes a
+// real-world-asset attestation, a finding out of a scan that never ran.
 func TestRWAFunnelBasis_NamesAnUnmeasuredClassicArm(t *testing.T) {
 	const unmeasuredSaid = "`classic` arm was NOT MEASURED"
 

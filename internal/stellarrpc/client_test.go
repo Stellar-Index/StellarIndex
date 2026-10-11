@@ -281,11 +281,9 @@ func TestGetTransactionsBatch(t *testing.T) {
 }
 
 func TestNonEnvelopeHTTPErrorSurfaces(t *testing.T) {
-	// Servers / reverse proxies sometimes return HTTP 5xx with a JSON
-	// body that ISN'T a JSON-RPC error envelope — e.g. AWS ALB's
-	// {"message":"Internal server error"} or Cloudflare's
-	// {"errors":[{...}]}. The client must NOT treat those as success
-	// just because the body parses as JSON.
+	// Reverse proxies (AWS ALB, Cloudflare) return HTTP 5xx with a JSON body that is not a
+	// JSON-RPC error envelope. The client must NOT treat those as success just because the
+	// body parses as JSON.
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"message":"Internal server error"}`))
@@ -354,11 +352,9 @@ func (t errTransport) RoundTrip(*http.Request) (*http.Response, error) {
 }
 
 func TestTransportErrorRedactsKeyedEndpoint(t *testing.T) {
-	// stellar.rpc_endpoints (config.go) is a generic []string an
-	// operator can point at a keyed third-party stellar-rpc provider,
-	// the same shape divergence's Chainlink RPC uses. A raw %w wrap of
-	// http.Client.Do's *url.Error would put the whole URL — API key
-	// included — into every transport-failure log line.
+	// stellar.rpc_endpoints can point at a keyed third-party provider. A raw %w wrap of
+	// http.Client.Do's *url.Error would put the whole URL, API key included, into every
+	// transport-failure log line.
 	const secret = "topsecret-provider-token-1234567890"
 	endpoint := "https://rpc.example.invalid/v2/" + secret
 	c := rpc.New(endpoint, rpc.WithHTTPClient(&http.Client{
@@ -550,13 +546,10 @@ func rawResponder(status int, body string) *httptest.Server {
 	}))
 }
 
-// Every response with a status >= 400 must come back as an
-// *HTTPStatusError carrying that status, whatever the body was. The
-// client must not keep the status only for a non-empty non-JSON body and
-// a valid-JSON non-envelope body; an EMPTY body must not surface as "decode:
-// unexpected end of JSON input", a non-decodable JSON body as a decode
-// error, nor an error ENVELOPE as the bare *JSONRPCError — a caller
-// could not then tell a 429 from a malformed request.
+// Every response with a status >= 400 must come back as an *HTTPStatusError carrying that
+// status, whatever the body was: an EMPTY body must not surface as a decode error, nor an
+// error ENVELOPE as the bare *JSONRPCError, or a caller could not tell a 429 from a
+// malformed request.
 func TestHTTPStatusSurvivesEveryBodyShape(t *testing.T) {
 	const envelope32005 = `{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"rate limit exceeded"}}`
 	cases := []struct {

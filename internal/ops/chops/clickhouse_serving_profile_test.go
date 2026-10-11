@@ -11,35 +11,27 @@ import (
 	"testing"
 )
 
-// ─── The api_serving profile's `readonly` value ────────────────────
+// The api_serving profile's `readonly` value.
 //
-// ADR-0048 D4 provisions a dedicated ClickHouse user + settings profile
-// for the API's public serving reads
-// (configs/ansible/roles/archival-node/tasks/20-clickhouse-serving-profile.yml).
-// That file shipped with <readonly>1</readonly>, which would have taken
-// out every explorer/supply endpoint the moment
-// stellarindex_clickhouse_serving_enabled flipped on:
+// ADR-0048 D4 provisions a dedicated ClickHouse user + settings profile for the API's public
+// serving reads (configs/ansible/roles/archival-node/tasks/20-clickhouse-serving-profile.yml).
+// With <readonly>1</readonly> every explorer/supply endpoint breaks once
+// stellarindex_clickhouse_serving_enabled flips on:
 //
 //	readonly=1 — read-data queries only AND changing settings prohibited.
 //	readonly=2 — read data AND change settings; INSERT/ALTER/DROP/CREATE
 //	             still blocked, and `readonly` itself cannot be raised.
 //
-// The serving readers change settings on every query. Both constructors
-// the API binary hands the serving credentials to open the connection
-// with clickhouse.Settings{"max_execution_time": 30}, and clickhouse-go
-// merges the connection's Settings into the settings packet of every
-// query. Under readonly=1 ClickHouse answers "Cannot modify
-// 'max_execution_time' setting in readonly mode. (READONLY)". The
-// native Ping carries no settings, so this would not have failed at
-// startup — it would have failed on the first served request.
+// The serving readers change settings on every query: both constructors the API binary hands the
+// serving credentials to open the connection with clickhouse.Settings{"max_execution_time": 30},
+// and clickhouse-go merges it into every query. Under readonly=1 ClickHouse answers "Cannot
+// modify 'max_execution_time' setting in readonly mode. (READONLY)". The native Ping carries no
+// settings, so the failure would surface on the first served request, not at startup.
 //
-// This lives in a Go test rather than a rule lint because the two facts
-// that have to stay in agreement are one ansible file and one Go file,
-// and neither `ansible --syntax-check` nor `go vet` can see across that
-// seam. The Go half is asserted here too, so the pairing can't rot by
-// someone deleting the connection Settings and leaving readonly=2
-// unexplained, or (worse) re-tightening readonly=1 later because the
-// Settings "looked unused".
+// This is a Go test because the two facts that must agree live in one ansible file and one Go
+// file, and neither `ansible --syntax-check` nor `go vet` sees across that seam. The Go half is
+// asserted too, so the pairing cannot rot by deleting the Settings and leaving readonly=2
+// unexplained, or re-tightening readonly=1 because the Settings "looked unused".
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
@@ -93,11 +85,9 @@ func TestServingProfileReadonlyAllowsQuerySettings(t *testing.T) {
 	}
 }
 
-// TestServingReadersStillSendQuerySettings pins the other half of the
-// pairing. If both serving constructors ever stop sending connection
-// Settings, the readonly=2 justification above weakens and this test
-// says so at the point of change — rather than the profile silently
-// keeping a looser permission than it needs.
+// TestServingReadersStillSendQuerySettings pins the other half of the pairing. If both serving
+// constructors stop sending connection Settings, the readonly=2 justification weakens and this
+// test says so, rather than the profile silently keeping a looser permission than it needs.
 func TestServingReadersStillSendQuerySettings(t *testing.T) {
 	for _, tc := range []struct{ file, ctor string }{
 		{"internal/storage/clickhouse/explorer_reader.go", "func NewExplorerReaderAuth("},

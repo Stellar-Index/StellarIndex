@@ -22,16 +22,12 @@ const metricsReadme = "../../docs/reference/metrics/README.md"
 // surface table the four price-serve gate counters share.
 const substanceWithheldHeading = "### `stellarindex_price_serve_substance_withheld_total`"
 
-// TestPriceServeSurfaceLabelsAreDocumented pins the README's `surface`
-// table to the labels the code actually emits, in both directions. The
-// documented enums drifted both ways (listing/transitive/twap/vwap/chart
-// emitted but undocumented), so an operator reading the reference could
-// not tell which paths withhold.
+// TestPriceServeSurfaceLabelsAreDocumented pins the README's `surface` table to the labels
+// the code emits, in both directions, so an operator can tell which paths withhold.
 //
-// Emitted = every string constant passed as the `surface` argument of a
-// non-test function that declares a `surface` parameter, anywhere under
-// internal/ and cmd/. A call that forwards its own `surface` parameter
-// is followed at ITS callers; any other non-constant argument fails,
+// Emitted = every string constant passed as the `surface` argument of a non-test function
+// declaring a `surface` parameter, under internal/ and cmd/. A call forwarding its own
+// `surface` parameter is followed at ITS callers; any other non-constant argument fails,
 // because a label the scan cannot read is a label nobody can document.
 func TestPriceServeSurfaceLabelsAreDocumented(t *testing.T) {
 	emitted := emittedSurfaceLabels(t, "../../internal", "../../cmd")

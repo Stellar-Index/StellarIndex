@@ -54,17 +54,11 @@ func (r *shrinkGuardRow) Scan(dest ...any) error {
 
 func (r *shrinkGuardRow) Err() error { return r.err }
 
-// TestRunHoldersRollupRefusesAShrunkenBoard pins: a staging arm that
-// comes out of the fills far smaller than what is currently live must not
-// be published. ClickHouse can finish the FINAL scan that fills a staging
-// arm having read far fewer rows than a healthy cycle WITHOUT returning any
-// error, so the only thing that can catch it is a row-count comparison
-// between the fills finishing and the EXCHANGE firing.
-//
-// Red against a RunHoldersRollup that executes every
-// statement in holdersRollupStatements — including the final EXCHANGE — in
-// a plain loop with no check in between: the swap fires anyway and the
-// degraded board goes live.
+// TestRunHoldersRollupRefusesAShrunkenBoard pins: a staging arm far smaller than what is live
+// must not be published. ClickHouse can finish the FINAL scan filling an arm having read far
+// fewer rows than a healthy cycle WITHOUT any error, so only a row-count comparison between the
+// fills finishing and the EXCHANGE firing can catch it. A RunHoldersRollup that loops every
+// holdersRollupStatements entry, EXCHANGE included, with no check in between goes red here.
 func TestRunHoldersRollupRefusesAShrunkenBoard(t *testing.T) {
 	conn := &shrinkGuardConn{counts: map[string]uint64{
 		// Staging came out of this cycle's fills with almost nothing —

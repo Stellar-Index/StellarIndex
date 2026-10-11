@@ -15,13 +15,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// The operator kill switch.
-//
-// The suspension machinery existed and was enforced on the read paths,
-// but NOTHING in the HTTP surface could trigger it: PATCH
-// /v1/admin/accounts/{id} covered tier + the two overrides and never
-// Status, and self-service key revoke needs the compromised customer's
-// own credential, so staff could not kill a leaked key at all.
+// The operator kill switch. Suspension is enforced on the read paths, so the admin HTTP surface
+// must be able to trigger it: PATCH /v1/admin/accounts/{id} must carry Status, because
+// self-service key revoke needs the compromised customer's own credential and staff could
+// otherwise not kill a leaked key.
 
 // TestAdminAccount_SuspendViaPatch is the account-half regression: an
 // operator can move an account to suspended, the suspension bookkeeping

@@ -9,13 +9,10 @@ import (
 	"testing"
 )
 
-// TestNewCrossAnchorFiller_NetworkGuard is the cross-network-corruption
-// proof: the built-in DefaultCrossAnchorSources are all
-// PUBNET archives, so constructing a filler for a non-pubnet archive with
-// no explicit sources MUST be refused — otherwise `archive-completeness
-// fill` on a test-net VM downloads pubnet checkpoints and writes them into
-// the test-net archive root, which galexie/indexer then ingest as test-net
-// data.
+// TestNewCrossAnchorFiller_NetworkGuard: the built-in DefaultCrossAnchorSources are all PUBNET
+// archives, so a filler for a non-pubnet archive with no explicit sources MUST be refused;
+// otherwise `archive-completeness fill` on a test-net VM writes pubnet checkpoints into the
+// test-net archive root, which galexie/indexer then ingest as test-net data.
 func TestNewCrossAnchorFiller_NetworkGuard(t *testing.T) {
 	dir := t.TempDir()
 

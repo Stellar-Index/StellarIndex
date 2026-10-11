@@ -14,11 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 )
 
-// readSSEFrames blocks until `want` complete frames have been read
-// from the response, or `timeout` elapses. A "frame" here is one
-// non-comment SSE event terminated by a blank line. Returns the
-// raw frame text (without the trailing blank line) so tests can
-// assert on `id:`/`event:`/`data:` directly.
+// readSSEFrames blocks until `want` complete frames have been read, or `timeout` elapses. A frame
+// is one non-comment SSE event ended by a blank line; the raw text (minus the trailing blank
+// line) is returned so tests can assert on `id:`/`event:`/`data:` directly.
 func readSSEFrames(t *testing.T, body io.Reader, want int, timeout time.Duration) []string {
 	t.Helper()
 	br := bufio.NewReader(body)
@@ -243,12 +241,10 @@ func TestStream_ContextCancelEndsStream(t *testing.T) {
 	}
 }
 
-// TestStream_KeepsRouteCacheControl — the v1 CacheControl middleware
-// sets each stream's per-route policy before the handler runs; the SSE
-// writer must not overwrite it (forcing a bare `no-cache` would turn
-// /v1/price/stream's no-store into a storable response and
-// drop `private` from tip/observations). With no policy set, the
-// writer's own fallback must still forbid storage.
+// TestStream_KeepsRouteCacheControl: the v1 CacheControl middleware sets each stream's per-route
+// policy before the handler runs, and the SSE writer must not overwrite it (a bare `no-cache`
+// would make /v1/price/stream's no-store storable and drop `private` from tip/observations).
+// With no policy set, the writer's own fallback must still forbid storage.
 func TestStream_KeepsRouteCacheControl(t *testing.T) {
 	for _, preset := range []string{"no-store", "private, no-cache, must-revalidate", "private, no-store", ""} {
 		t.Run(preset, func(t *testing.T) {

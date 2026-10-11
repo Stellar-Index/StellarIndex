@@ -5,15 +5,10 @@ import (
 	"time"
 )
 
-// TestGapDetectorStatementTimeoutWithinGoBudget pins the timeout
-// ordering an r1 incident violated: the PG-side
-// statement_timeout the gap detector SETs on its scan queries must sit
-// at or below the Go per-target context timeout. When it doesn't (the
-// count-distinct used the 2h ops/verify constant against a 15-min Go
-// context), an over-budget query is abandoned by Go but keeps running
-// in PG, and each subsequent cycle / restart stacks another orphan on a
-// 257 GB hypertable scan — 121 calls, mean 556 s, 18.7 h of IO, load
-// 19.6, 503s on the serving path.
+// TestGapDetectorStatementTimeoutWithinGoBudget pins that the PG-side statement_timeout the
+// gap detector SETs on its scan queries is at or below the Go per-target context timeout.
+// Otherwise Go abandons an over-budget query while PG keeps running it, and each cycle or
+// restart stacks another orphan hypertable scan, starving the serving path.
 func TestGapDetectorStatementTimeoutWithinGoBudget(t *testing.T) {
 	t.Parallel()
 

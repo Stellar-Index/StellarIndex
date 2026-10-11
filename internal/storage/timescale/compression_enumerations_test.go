@@ -9,40 +9,27 @@ import (
 	"testing"
 )
 
-// The compression-policy want-list is written down in TWO operator files
-// that must agree with each other and with the schema:
+// The compression-policy want-list is written in TWO operator files that must agree with each
+// other and with the schema:
 //
-//   - scripts/ops/add-missing-compression-policies.sql — the DO block that
-//     ATTACHES a policy to each compression-eligible hypertable. It runs
-//     under `\set ON_ERROR_STOP on`, so `add_compression_policy` against a
-//     table that no longer exists raises and aborts the whole block: every
-//     table listed AFTER the missing one silently never gets its policy.
-//   - scripts/ops/config-assertions.sh — `compression_policies_applied`,
-//     which COUNTS want-list tables with no policy job and pages (via
-//     stellarindex_config_assertion_failed) when the count is non-zero. A
-//     dropped table has no job, so it fails that assertion forever.
+//   - scripts/ops/add-missing-compression-policies.sql — the DO block that ATTACHES a policy
+//     to each compression-eligible hypertable. It runs under `\set ON_ERROR_STOP on`, so a
+//     table that no longer exists aborts the block and every table listed AFTER it silently
+//     never gets its policy.
+//   - scripts/ops/config-assertions.sh — `compression_policies_applied`, which COUNTS
+//     want-list tables with no policy job and pages (via
+//     stellarindex_config_assertion_failed) when non-zero. A dropped table has no job, so it
+//     fails forever.
 //
-// Neither failure is visible from Go: one is a psql script an operator runs
-// by hand post-Phase-D, the other is a shell assertion on r1. Migration 0152
-// dropped three tables that were in both lists — tvl_observations,
-// classic_asset_stats_5m and aggregator_exposures — and this test is what
-// makes the next such drop a red build instead of a silent operational
-// regression.
+// Neither failure is visible from Go, so this test turns a drop into a red build. It asserts:
 //
-// It asserts three things:
-//
-//  1. The two lists are IDENTICAL. They are the same claim written twice;
-//     a table in the assertion but not the script pages for a policy
-//     nothing will ever attach.
+//  1. The two lists are IDENTICAL (the same claim written twice).
 //  2. Every table in them is CREATEd by a migration.
 //  3. None of them is DROPped by a LATER migration.
 //
-// Deliberately NOT asserted: that each listed table is compression-eligible
-// (`ALTER TABLE … SET (timescaledb.compress …)`). That is a real property,
-// but several of these set it inside a `DO` block or via a helper, and a
-// half-right parse that passes on a table it cannot see would be worse than
-// no check. The three assertions above are the ones that were actually
-// violated.
+// Deliberately NOT asserted: that each table is compression-eligible
+// (`ALTER TABLE … SET (timescaledb.compress …)`). Several set it inside a `DO` block or via a
+// helper, and a half-right parse that passes on a table it cannot see is worse than no check.
 
 var (
 	// A quoted table name inside a SQL ARRAY[...] literal.

@@ -107,11 +107,9 @@ func encodeFuzzAtoms(atoms ...fuzzAtom) []byte {
 	return b
 }
 
-// FuzzPathPaymentStrictReceiveSourceAmount checks the StrictReceive
-// source-leg derivation against a big.Int reference: the result is the
-// exact sum of the leading run of claim atoms whose AssetBought is the
-// SendAsset, and anything the reference cannot represent as a positive
-// int64 stroop amount must be an error, never a wrapped value.
+// FuzzPathPaymentStrictReceiveSourceAmount checks the StrictReceive source-leg derivation
+// against a big.Int reference: the exact sum of the leading claim atoms whose AssetBought is
+// the SendAsset; anything not representable as a positive int64 must error, never wrap.
 func FuzzPathPaymentStrictReceiveSourceAmount(f *testing.F) {
 	m := func(amt int64) fuzzAtom { return fuzzAtom{matches: true, amount: amt} }
 	f.Add([]byte{}, int64(500))
@@ -208,11 +206,9 @@ func refStrictReceiveSourceAmount(atoms []fuzzAtom, lastAmount int64) (*big.Int,
 	return sum, true
 }
 
-// FuzzLiquidityPoolReserveDeltas checks the LP deposit/withdraw legs
-// against big.Int reserve arithmetic: every emitted leg is the exact
-// reserve delta on the right asset and leg index, and a reserve set the
-// protocol cannot produce (a negative reserve, a wrong-signed delta) is
-// rejected, never emitted as a wrapped int64.
+// FuzzLiquidityPoolReserveDeltas checks the LP deposit/withdraw legs against big.Int reserve
+// arithmetic: each leg is the exact reserve delta on the right asset and leg index, and an
+// impossible reserve set (negative reserve, wrong-signed delta) is rejected, never wrapped.
 func FuzzLiquidityPoolReserveDeltas(f *testing.F) {
 	const (
 		haveState   = 1 << 0
@@ -369,12 +365,10 @@ func fuzzPoolEntry(assetA, assetB xdr.Asset, reserveA, reserveB int64) *xdr.Ledg
 	}}
 }
 
-// FuzzDecodeOp drives arbitrary (OperationBody, OperationResult) XDR
-// through the op-only decode surface. Properties: nothing out of scope
-// is decoded; a failed op moves nothing; every movement's amount is the
-// exact int64 field the protocol defines for its kind (no truncation, no
-// sign flip); counterparties are G-strkeys, never M-strkeys; and every
-// error is a classified sentinel.
+// FuzzDecodeOp drives arbitrary (OperationBody, OperationResult) XDR through the op-only
+// decode surface. Properties: nothing out of scope is decoded; a failed op moves nothing;
+// every amount is the exact int64 the protocol defines for its kind (no truncation or sign
+// flip); counterparties are G-strkeys, never M-strkeys; every error is a classified sentinel.
 func FuzzDecodeOp(f *testing.F) {
 	for _, fx := range realOpFixtures {
 		body, err := base64.StdEncoding.DecodeString(fx[0])

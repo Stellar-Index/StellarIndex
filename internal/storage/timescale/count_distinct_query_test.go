@@ -6,14 +6,11 @@ import (
 	"testing"
 )
 
-// TestCountDistinctLedgersQueryRoutesOnlySorobanEventsToCensus is the
-// differential guard for the r1 incident fix: the density
-// numerator for soroban-events comes from the ledger_ingest_log census
-// (PK range scan) instead of a full scan of the index-less 257 GB
-// soroban_events hypertable — and EVERY other registered target keeps
-// the generic COUNT(DISTINCT <ledger>) over its own table, filter
-// included, byte-for-byte. Gauge / snapshot / density_pct semantics
-// for the rest of the registry must not move.
+// TestCountDistinctLedgersQueryRoutesOnlySorobanEventsToCensus is the differential guard: the
+// soroban-events density numerator comes from the ledger_ingest_log census (PK range scan)
+// instead of a full scan of the index-less soroban_events hypertable, while EVERY other
+// registered target keeps the generic COUNT(DISTINCT <ledger>) over its own table, filter
+// included, byte-for-byte.
 func TestCountDistinctLedgersQueryRoutesOnlySorobanEventsToCensus(t *testing.T) {
 	t.Parallel()
 
@@ -49,11 +46,9 @@ func TestCountDistinctLedgersQueryRoutesOnlySorobanEventsToCensus(t *testing.T) 
 	}
 }
 
-// TestCountDistinctLedgersQueryOverrideBindsRange pins the override
-// contract the integration test relies on: $1/$2 are the inclusive
-// ledger range, and a target with no override still gets the generic
-// statement (an unregistered ad-hoc target must not silently route to
-// the census).
+// TestCountDistinctLedgersQueryOverrideBindsRange pins the override contract the integration
+// test relies on: $1/$2 are the inclusive ledger range, and a target with no override still
+// gets the generic statement (an ad-hoc target must not silently route to the census).
 func TestCountDistinctLedgersQueryOverrideBindsRange(t *testing.T) {
 	t.Parallel()
 	for _, ph := range []string{"$1", "$2"} {

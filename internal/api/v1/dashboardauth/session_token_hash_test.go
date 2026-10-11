@@ -11,22 +11,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestSessionTokenIsHashedAtRest is the W1-auth-passkey-2 regression:
-// the session cookie must carry a high-entropy random token whose
-// sha256 (NOT the raw value, and NOT the row's primary key) is what the
-// sessions table stores and what the auth path looks up by. This pins
-// the security property three ways, each of which fails on a naive
-// code (cookie == sess.ID.String(); resolveSession GetSession(uuid)):
+// TestSessionTokenIsHashedAtRest: the session cookie must carry a high-entropy random token whose
+// sha256 (NOT the raw value, and NOT the row's primary key) is what the sessions table stores and
+// the auth path looks up by. Pinned three ways:
 //
 //	(1) the freshly-minted cookie resolves to its user (round trip);
 //	(2) the stored value is sha256(cookie) — a hash, not the plaintext;
 //	(3) the session's primary key, replayed as a cookie, does NOT
 //	    resolve — so a leak of the sessions table (which holds only the
 //	    hash + the PK) is not directly replayable.
-//
-// Proven red: reverting either the mintSession hunk (cookie=token,
-// store TokenHash) or the resolveSession hunk (hash-lookup) fails
-// assertions (2) and (3).
 func TestSessionTokenIsHashedAtRest(t *testing.T) {
 	r := newTestRig(t)
 	acct, err := r.accounts.Create(context.Background(), platform.Account{

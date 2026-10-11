@@ -9,13 +9,11 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// TestLakeWatermark_ClampsToContiguousTip is the contiguity proof: LakeWatermark
-// must not surface `as_of_ledger` past a live-sink hole. LiveSink drops whole
-// ledgers under buffer pressure (ADR-0041), so raw max(ledger_seq) can sit
-// past a gap the lake has not actually captured. This pins that a hole
-// INSIDE the gap window (from raw tip - lakeWatermarkGapWindow) clamps the
-// returned ledger + close time to the true contiguous tip (firstGap-1), not
-// the raw max and its close time.
+// TestLakeWatermark_ClampsToContiguousTip is the contiguity proof: LakeWatermark must not surface
+// `as_of_ledger` past a live-sink hole. LiveSink drops whole ledgers under buffer pressure
+// (ADR-0041), so raw max(ledger_seq) can sit past an uncaptured gap. A hole INSIDE the gap window
+// (raw tip - lakeWatermarkGapWindow) must clamp the returned ledger and close time to the true
+// contiguous tip (firstGap-1), not the raw max.
 func TestLakeWatermark_ClampsToContiguousTip(t *testing.T) {
 	const (
 		rawTip        = uint32(100_020)

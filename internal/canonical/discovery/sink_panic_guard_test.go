@@ -23,15 +23,13 @@ func (panickingRecorder) IsKnown(context.Context, string) (bool, error) {
 	return false, nil
 }
 
-// AsyncSink's drain worker is a detached goroutine, and an
-// unrecovered panic in ANY goroutine terminates the WHOLE process it is
-// linked into (here: stellarindex-api and stellarindex-indexer alike), not
-// just the worker. Without the guard this test does not fail, it CRASHES the
-// test binary — which is exactly the production harm, observed.
+// AsyncSink's drain worker is a detached goroutine, and an unrecovered panic in ANY goroutine
+// terminates the WHOLE process (stellarindex-api and stellarindex-indexer alike). Without the
+// guard this test CRASHES the test binary, which is the production harm.
 //
-// Containment alone is not enough either: run() closes s.done, and Stop()
-// blocks on that channel, so a recover that did not keep close(s.done) as
-// the outermost defer would trade a crash for a shutdown that never returns.
+// Containment alone is not enough: run() closes s.done and Stop() blocks on it, so a recover
+// that did not keep close(s.done) as the outermost defer would trade a crash for a shutdown
+// that never returns.
 func TestAsyncSink_PanickingRecorderDoesNotKillTheProcess(t *testing.T) {
 	const workerName = "discovery-async-sink-drain"
 	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName))

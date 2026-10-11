@@ -12,29 +12,18 @@ import (
 
 // The membership set's own age, on the wire.
 //
-// These tests pin what the response must say. The
-// envelope's `as_of` is the RESPONSE's instant and moves sub-second
-// between requests; read as the set's build time it says the set is
-// refreshing continuously, and the conclusion drawn from it — that
-// rebuilds were running and seeing rows — was the exact opposite of
-// what was happening. The set was ten minutes old and nothing had
-// looked at its source since before the sync landed.
-//
-// `membership.built_at` is a different event from `as_of` and is named
-// so it cannot be substituted for one: a set is BUILT, a response is AS
-// OF. The two tests below fix the distinction in place — that the field
-// tracks the REBUILD and not the request, and that a set serving past
-// its lifetime says so.
+// The envelope's `as_of` is the RESPONSE's instant and moves between requests; read as the set's
+// build time it wrongly suggests continuous refresh. `membership.built_at` is a different event
+// and named so it cannot be substituted for `as_of`: a set is BUILT, a response is AS OF. The two
+// tests below pin that the field tracks the REBUILD and not the request, and that a set serving
+// past its lifetime says so.
 
 func rwaAgeTestServer() *Server {
 	return &Server{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
 
-// built_at must date the REBUILD, and must not move when the set is
-// read again. A field that advanced on every read would be the
-// envelope's `as_of` under another name — the substitution this block
-// exists to prevent — and would report a frozen cache as continuously
-// fresh.
+// built_at must date the REBUILD and not move when the set is read again. A field advancing on
+// every read would be `as_of` under another name and would report a frozen cache as fresh.
 func TestRWAMembershipSet_DatesTheRebuildNotTheRead(t *testing.T) {
 	s := rwaAgeTestServer()
 	built := time.Now().UTC().Add(-3 * time.Minute)

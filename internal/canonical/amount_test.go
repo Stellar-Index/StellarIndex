@@ -9,18 +9,12 @@ import (
 	"testing"
 )
 
-// TestAmount_FromInt128Parts_KALIENIncident is the canonical
-// regression test for ADR-0003 (i128 no-truncation invariant).
+// TestAmount_FromInt128Parts_KALIENIncident is the canonical regression test for ADR-0003
+// (i128 no-truncation invariant).
 //
-// The KALIEN balance in the production incident the ADR references
-// was 40,000,005,972,900,000,000 — well above i64 max of ~9.22e18.
-// It was stored with hi=2, lo=3106517825480896768. A naive
-// low-word-only decoder shows 310,651,782,548.0896768 (wrong by
-// orders of magnitude).
-//
-// This test asserts the correct 128-bit reconstruction. If it
-// ever fails, our core amount handling is broken and a SEV-1 is
-// warranted.
+// The KALIEN balance, 40,000,005,972,900,000,000 (hi=2, lo=3106517825480896768), is well above
+// the i64 max of ~9.22e18. A low-word-only decoder shows 310,651,782,548.0896768, wrong by
+// orders of magnitude. This asserts the correct 128-bit reconstruction.
 func TestAmount_FromInt128Parts_KALIENIncident(t *testing.T) {
 	t.Parallel()
 

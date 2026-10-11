@@ -11,11 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestAssetVolumeCharacterRollupSQL_Shape pins the all-asset roll to the
-// SAME signal definitions the per-asset assetVolumeCharacterSQL uses, so a
-// future edit can't silently let the rollup drift from the value the detail
-// computes live (the oracle guards it end-to-end; this guards the
-// SQL text cheaply).
+// TestAssetVolumeCharacterRollupSQL_Shape pins the all-asset roll to the SAME signal definitions
+// as the per-asset assetVolumeCharacterSQL, so the rollup cannot drift from the live detail value
+// (the oracle guards it end-to-end; this guards the SQL text cheaply).
 func TestAssetVolumeCharacterRollupSQL_Shape(t *testing.T) {
 	q := assetVolumeCharacterRollupSQLTemplate
 	musts := []string{
@@ -157,14 +155,12 @@ func TestRefreshAssetVolumeCharacter_zeroRowPassKeepsLastGood(t *testing.T) {
 	}
 }
 
-// TestRollAssetVolumeCharacter_RestoresCapturedStatementTimeout proves the
-// pinned connection's PRIOR statement_timeout (whatever an [OpenBackground]
-// connector's session backstop set it to) is captured before this
-// call's own assetVolumeCharacterRollTimeout override and restored — via set_config with the
-// captured value, not a bare RESET — before the connection goes back to
-// the pool. Without the capture/restore, a later query landing on the
-// same pooled connection would silently inherit this call's assetVolumeCharacterRollTimeout (45min) bound
-// (or the server default) instead of the operator's configured backstop.
+// TestRollAssetVolumeCharacter_RestoresCapturedStatementTimeout pins that the pinned connection's
+// PRIOR statement_timeout (an [OpenBackground] connector's session backstop) is captured before
+// the assetVolumeCharacterRollTimeout override and restored via set_config with the captured
+// value, not a bare RESET, before the connection returns to the pool. Otherwise a later query on
+// that pooled connection would inherit the 45min bound (or the server default) instead of the
+// operator's backstop.
 func TestRollAssetVolumeCharacter_RestoresCapturedStatementTimeout(t *testing.T) {
 	t.Parallel()
 

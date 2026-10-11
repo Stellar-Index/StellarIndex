@@ -16,12 +16,10 @@ import (
 // (route paths, HTTP verbs, etc).
 var llmsTxtAssetIDExample = regexp.MustCompile("`(native|XLM|[a-z]+:[A-Za-z0-9:]+|[A-Z0-9]+-G[A-Z0-9]{55})`")
 
-// TestLlmsTxtAssetExamples_ParseAsCanonicalAssets pins that llms.txt
-// is public-facing documentation an AI agent reads to learn our
-// asset_id format, and it once taught a shape (`credit:USDC:G…`) that
-// ParseAsset rejects outright — a colon inside the issuer breaks the
-// classic code:issuer alias split. Every asset_id example the file
-// advertises must actually round-trip through ParseAsset.
+// TestLlmsTxtAssetExamples_ParseAsCanonicalAssets pins that llms.txt, which AI agents read to
+// learn our asset_id format, only advertises shapes ParseAsset accepts (a colon inside the issuer
+// breaks the classic code:issuer alias split, as `credit:USDC:G…` did). Every asset_id example
+// in the file must round-trip through ParseAsset.
 func TestLlmsTxtAssetExamples_ParseAsCanonicalAssets(t *testing.T) {
 	path := filepath.Join(repoRoot(), "web/explorer/public/llms.txt")
 	b, err := os.ReadFile(path)

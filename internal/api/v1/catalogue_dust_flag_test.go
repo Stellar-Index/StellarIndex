@@ -48,17 +48,12 @@ func (s *dustTwinAssets) LatestSupplyObservations(
 	return observedSupply(map[string]string{"USDC-" + dustGuardUSDCIssuer: "100000000000000000"}), nil
 }
 
-// TestCatalogueTwinDustFlagPropagates is the M4 regression: a verified-currency
-// catalogue row whose Stellar twin trips the dust-liquidity guard
-// (source_count=1 AND positive sub-floor volume) must surface
-// market_cap_low_liquidity on the catalogue-LISTING row — matching the twin's
-// classic row / detail page. mergeTwinStats must carry the flag as well as the
-// (nil) cap, or the listing row silently shows neither. Twins are not exempt
-// from the guard's source-count map: the twin row comes from ListAssetsExt,
-// which DOES populate source_count.
-//
-// Fails red against the un-fixed mergeTwinStats (flag stays false); passes
-// green with the flag copied through.
+// TestCatalogueTwinDustFlagPropagates: a verified-currency catalogue row whose Stellar twin trips
+// the dust-liquidity guard (source_count=1 AND positive sub-floor volume) must surface
+// market_cap_low_liquidity on the catalogue-LISTING row, matching the twin's classic row and
+// detail page. mergeTwinStats must carry the flag as well as the (nil) cap, or the listing row
+// silently shows neither. Twins are not exempt from the guard's source-count map: the twin row
+// comes from ListAssetsExt, which DOES populate source_count.
 func TestCatalogueTwinDustFlagPropagates(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {

@@ -149,24 +149,16 @@ func TestBufferSeparatesSwapsByGroupKey(t *testing.T) {
 	}
 }
 
-// TestDecoderSeparatesMultiPoolSameOpSwaps pins the multi-hop-router
-// data-corruption case: two DIFFERENT
-// pool contracts emitting swaps within the SAME (ledger, tx_hash,
-// op_index) must reassemble into SEPARATE buffer entries. Without
-// ContractID in groupKey, an INCOMPLETE leg from pool A (a
-// lost field-event, or an upgraded WASM emitting <8 fields) shared a
-// buffer slot with pool B keyed only on (ledger,tx,op): pool B's
-// field-events hijacked pool A's entry in place, so the completing
-// event produced ONE Frankenstein trade — pool A's amounts + one of
-// pool B's tokens, stamped with pool A's frozen first-field EventIndex
-// (wrong FanoutOpIndex) — while pool A's leg was silently lost.
+// TestDecoderSeparatesMultiPoolSameOpSwaps pins the multi-hop-router corruption case: swaps from
+// two DIFFERENT pool contracts within the SAME (ledger, tx_hash, op_index) must reassemble into
+// SEPARATE buffer entries. Without ContractID in groupKey, an INCOMPLETE leg from pool A (a lost
+// field-event, or an upgraded WASM emitting <8 fields) shares a slot with pool B, so pool B's
+// field-events complete it into ONE mixed trade (pool A's amounts, pool B's token, a stale
+// FanoutOpIndex) while pool A's leg is lost.
 //
-// This drives the FULL Decoder path (absorb → decodeSwap → TradeEvent)
-// so it asserts the corrected tokens/amounts/op_index — not merely that
-// something completed. The interleave is chosen so the un-fixed code is
-// unambiguously red: pool A is missing SellToken and pool B emits
-// SellToken FIRST, so without the ContractID key pool B's SellToken
-// completes pool A's stub into a mixed trade.
+// This drives the FULL Decoder path (absorb → decodeSwap → TradeEvent) and asserts the tokens,
+// amounts and op_index. The interleave is chosen so the keyless code is unambiguously red: pool A
+// is missing SellToken and pool B emits SellToken FIRST.
 func TestDecoderSeparatesMultiPoolSameOpSwaps(t *testing.T) {
 	// Distinct assets per pool so contamination is observable.
 	poolAbuy, err := canonical.NewClassicAsset("EURC", testAddress)
@@ -457,11 +449,9 @@ func TestDecodeSwap_incomplete(t *testing.T) {
 }
 
 func TestBufferBackfillOldEventsComplete(t *testing.T) {
-	// Regression: the planned backfill path replays ancient events;
-	// without using the event's own ClosedAt as the eviction
-	// reference, the first-absorbed field would evict immediately
-	// when the 2nd through 8th arrived. Verify an 8-field set with
-	// a 6-hour-old ClosedAt still completes in one buffer.
+	// Backfill replays ancient events, so eviction must be relative to the event's own ClosedAt;
+	// against wall-clock the first field would evict as the 2nd through 8th arrive. An 8-field
+	// set with a 6-hour-old ClosedAt must still complete in one buffer.
 	buf := newBuffer()
 	events := allEightSwapEventsAt(100, phoenixTxHash, 0, time.Now().UTC().Add(-6*time.Hour))
 

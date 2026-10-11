@@ -3,17 +3,13 @@
 
 package chops
 
-// ch_rebuild.go's tradeOf mirrors pipeline.tradeFromEvent by hand, and its
-// doc comment says so — but nothing checked it, and the drift is not
-// harmless. `scripts/ops/ch-rebuild-projected.sh` is the sanctioned
-// clean-slate key repair: it DELETEs a window of trades for the projected
-// trade sources and then re-derives it with `ch-rebuild -write`. A trade
-// source present in that DELETE list but missing from tradeOf has its rows
-// deleted and never rewritten — silent data loss, in the one procedure
-// operators reach for when trades are already wrong.
+// ch_rebuild.go's tradeOf mirrors pipeline.tradeFromEvent by hand, so drift is silent data loss.
+// `scripts/ops/ch-rebuild-projected.sh` DELETEs a window of trades for the projected trade
+// sources and re-derives it with `ch-rebuild -write`; a source in that DELETE list but missing
+// from tradeOf has its rows deleted and never rewritten, in the procedure operators use when
+// trades are already wrong.
 //
-// This walks both switches with go/ast, the same way
-// pipeline/lockstep_ast_test.go walks its five sites.
+// This walks both switches with go/ast, as pipeline/lockstep_ast_test.go does for its sites.
 
 import (
 	"os"

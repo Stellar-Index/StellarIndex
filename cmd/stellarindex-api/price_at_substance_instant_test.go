@@ -1,17 +1,14 @@
 package main
 
-// Proven through the PRODUCTION seam: storePriceAtReader
-// is the one reader behind /v1/price/at and every /v1/price/changes
-// horizon, and it asked the thin-market gate about the trailing 24h
-// ending NOW while serving the bucket at-or-before a past `ts`.
+// Proven through the PRODUCTION seam: storePriceAtReader is the one reader behind /v1/price/at
+// and every /v1/price/changes horizon, and the thin-market gate must be asked about the window
+// at the served `ts`, not the trailing 24h ending NOW, when serving a past bucket.
 //
-// storePriceAtReader.s is a concrete *timescale.Store with an unexported
-// db field (see price_at_guard_wiring_test.go), so this package cannot
-// script the price read itself. It does not need to: the withholding
-// decision is made BEFORE the store is touched, so with a nil store the
-// two outcomes are distinguishable without one — a withheld read returns
-// v1.ErrPriceWithheld, and an allowed read goes on to the store (and,
-// here, panics on it, which the helper reports as "reached the store").
+// storePriceAtReader.s is a concrete *timescale.Store with an unexported db field (see
+// price_at_guard_wiring_test.go), so this package cannot script the price read. It does not
+// need to: the withholding decision is made BEFORE the store is touched, so with a nil store a
+// withheld read returns v1.ErrPriceWithheld, and an allowed read goes on to the store (and
+// panics on it, which the helper reports as "reached the store").
 
 import (
 	"context"

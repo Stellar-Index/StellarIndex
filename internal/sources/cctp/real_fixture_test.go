@@ -12,12 +12,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Real mainnet goldens for the four CCTP events otherwise covered only by
-// synthetic bodies. Captured from stellar.contract_events in the lake, one
-// tx each: ledger 64775357 (burn on Stellar toward domain 6) and ledger
-// 64775825 (mint on Stellar from a domain-6 burn). Contract identity is
-// asserted before decoding. Live WASM at capture, resolved from
-// stellar.contract_instance_changes (see test/fixtures/reflector/README.md):
+// Real mainnet goldens for the four CCTP events otherwise covered only by synthetic bodies,
+// captured from stellar.contract_events: ledger 64775357 (burn on Stellar toward domain 6) and
+// ledger 64775825 (mint on Stellar from a domain-6 burn). Contract identity is asserted before
+// decoding. Live WASM at capture (stellar.contract_instance_changes; see
+// test/fixtures/reflector/README.md):
 //   - a6c1acc6e367e46535733ce8a7320c718616ed42f762cf2f1a0aa77ac6e056f6 TokenMessengerMinter, set at ledger 62225106
 //   - 99bd0ddc506ee13fc4f433f0627092034dc38f4773ec16930a1823a1174431d4 MessageTransmitter, set at ledger 62225178
 
@@ -87,11 +86,10 @@ func requireRealEvent(t *testing.T, ev *events.Event, contract, want string) {
 	}
 }
 
-// TestDepositForBurnAmount_IsCanonicalSixDecimals pins the outbound scale the
-// served CCTP sums divide by 1e6 (protocol_bespoke_cctp.go): the burn's amount
-// must equal the BurnMessage amount the same tx sends cross-chain, which the
-// destination (domain 6, Base, 6-decimal USDC) mints 1:1. A 7-decimal local
-// SAC amount here would be 10x the message amount.
+// TestDepositForBurnAmount_IsCanonicalSixDecimals pins the outbound scale the served CCTP sums
+// divide by 1e6 (protocol_bespoke_cctp.go): the burn amount must equal the BurnMessage amount the
+// same tx sends cross-chain, minted 1:1 as 6-decimal USDC on the destination. A 7-decimal local
+// SAC amount would be 10x the message amount.
 func TestDepositForBurnAmount_IsCanonicalSixDecimals(t *testing.T) {
 	t.Parallel()
 	burnEv, msgEv := realDepositForBurn, realMessageSent

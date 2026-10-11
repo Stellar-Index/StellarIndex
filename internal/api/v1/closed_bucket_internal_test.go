@@ -7,11 +7,9 @@ import (
 	"time"
 )
 
-// TestParseFromToClamped_ImplicitToSnapsToBoundary covers the
-// ADR-0015 contract: when the client doesn't supply `to`, the
-// handler-default (now) is rounded down to the closed-bucket
-// boundary so two requests landing in the same window get the
-// same answer regardless of which region serves them.
+// TestParseFromToClamped_ImplicitToSnapsToBoundary covers the ADR-0015 contract: when the
+// client omits `to`, the default (now) is rounded down to the closed-bucket boundary so two
+// requests in the same window get the same answer from any region.
 func TestParseFromToClamped_ImplicitToSnapsToBoundary(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/vwap?base=native&quote=fiat:USD", nil)
 	rec := httptest.NewRecorder()
@@ -42,11 +40,9 @@ func TestParseFromToClamped_ImplicitToSnapsToBoundary(t *testing.T) {
 	}
 }
 
-// TestParseFromToClamped_ExplicitToPreserved covers the second half
-// of the contract: when the client DID supply `to`, we honour it
-// verbatim. The clamp is for default-now only — surprising clients
-// who pass an exact timestamp by snapping their range would be a
-// usability regression.
+// TestParseFromToClamped_ExplicitToPreserved: when the client DID supply a closed `to`, it is
+// honoured verbatim. The clamp is for default-now only; snapping an exact timestamp would
+// surprise clients.
 func TestParseFromToClamped_ExplicitToPreserved(t *testing.T) {
 	// 12:34:56.500 — deliberately NOT on a 30 s boundary.
 	explicit := "2026-04-27T12:34:56.500Z"
@@ -68,12 +64,10 @@ func TestParseFromToClamped_ExplicitToPreserved(t *testing.T) {
 	}
 }
 
-// TestParseFromToClamped_ExplicitToInOpenBucketClamps pins the rule:
-// ADR-0015 says the most-recent row served is ALWAYS closed, not
-// "closed unless the client asked for a specific `to`". An explicit
-// `to` landing inside the still-filling bucket (here, wall-clock now)
-// would be honoured verbatim, serving a partial, unflagged window —
-// indistinguishable on the wire from a real closed-bucket answer.
+// TestParseFromToClamped_ExplicitToInOpenBucketClamps pins ADR-0015: the most-recent row
+// served is ALWAYS closed, even when the client asked for a specific `to`. An explicit `to`
+// inside the still-filling bucket (here, wall-clock now) honoured verbatim would serve a
+// partial, unflagged window indistinguishable from a closed-bucket answer.
 func TestParseFromToClamped_ExplicitToInOpenBucketClamps(t *testing.T) {
 	now := time.Now().UTC()
 	req := httptest.NewRequest(http.MethodGet,
@@ -96,11 +90,9 @@ func TestParseFromToClamped_ExplicitToInOpenBucketClamps(t *testing.T) {
 	}
 }
 
-// TestParseFromToClamped_TwoCallsSameWindowAgree is the cross-region
-// consistency property in test form. Two requests that land at
-// different sub-second moments within the same 30 s window must
-// resolve to the SAME (from, to) pair. This is what makes
-// "all 3 regions return the same rate" true rather than aspirational.
+// TestParseFromToClamped_TwoCallsSameWindowAgree is the cross-region consistency property:
+// two requests at different sub-second moments within the same 30 s window must resolve to
+// the SAME (from, to) pair, so every region returns the same rate.
 func TestParseFromToClamped_TwoCallsSameWindowAgree(t *testing.T) {
 	// Skip on the unlucky case where the test crosses a boundary
 	// mid-execution. Highly unlikely in practice (test runs in
@@ -156,10 +148,8 @@ func TestParseFromToClamped_ExplicitFromNotShifted(t *testing.T) {
 	}
 }
 
-// TestParseFromTo_WindowParam covers the `window=`
-// shortcut sets `from = to - duration` so CG-style customers don't
-// have to compute it. If the param were silently ignored,
-// users would get the 1h default, and a 24h-window request would return a
+// TestParseFromTo_WindowParam: the `window=` shortcut sets `from = to - duration`. If it were
+// silently ignored, users would get the 1h default and a 24h-window request would return a
 // confusing 404 over the wrong range.
 func TestParseFromTo_WindowParam(t *testing.T) {
 	cases := []struct {

@@ -10,13 +10,10 @@ import (
 	"time"
 )
 
-// TestCheckRestampLiveOverlap is the one-writer contract for a `trades`
-// re-stamp. `usd_volume` has exactly one live writer — the indexer's
-// ingest path at the ledgerstream cursor — and a restamp is only
-// legitimate BEHIND it: overlapping lets the restamp's high
-// derive_generation beat the ingest path's own value for a row the tail
-// is still writing (or the reverse), so one of the two writers is
-// silently discarded on a money column.
+// TestCheckRestampLiveOverlap is the one-writer contract for a `trades` re-stamp.
+// `usd_volume` has one live writer, the indexer's ingest path at the ledgerstream cursor, and
+// a restamp is only legitimate BEHIND it: overlapping lets one writer's derive_generation
+// silently beat the other's value on a money column.
 func TestCheckRestampLiveOverlap(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -66,11 +63,9 @@ func TestCheckRestampLiveOverlap(t *testing.T) {
 	}
 }
 
-// TestValidateRestampTierFlags: an unknown -tier is rejected, and an
-// xlm-base-only flag passed with -tier exact is an ERROR rather than a
-// silent no-op. An operator who typed -report and got a write run, or
-// who typed -min-rel-delta and got every row rewritten, has been
-// actively misled by the tool on a money column.
+// TestValidateRestampTierFlags: an unknown -tier is rejected, and an xlm-base-only flag with
+// -tier exact is an ERROR, not a silent no-op; ignoring -report or -min-rel-delta would mislead
+// the operator into a write run or full rewrite on a money column.
 func caseValidateRestampTierFlags(t *testing.T) {
 	t.Parallel()
 	if err := validateRestampTierFlags(restampTierExact, nil); err != nil {

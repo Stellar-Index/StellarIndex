@@ -74,25 +74,21 @@ func TestECWindowCoverage_Missing(t *testing.T) {
 	}
 }
 
-// TestECWindowCoverageQuery_AntiJoin pins that the
-// Check-2 coverage count must be evaluated PER TX-BEARING LEDGER, not as a
-// standalone cardinality of stellar.ledger_entry_changes.
+// TestECWindowCoverageQuery_AntiJoin pins that the Check-2 coverage count is evaluated PER
+// TX-BEARING LEDGER, not as a standalone cardinality of stellar.ledger_entry_changes.
 //
-// A naive form would run two independent scans and subtract them:
+// A naive form runs two independent scans and subtracts them:
 //
 //	SELECT uniqExact(ledger_seq) FROM stellar.ledgers            WHERE … AND tx_count > 0
 //	SELECT uniqExact(ledger_seq) FROM stellar.ledger_entry_changes WHERE …
 //
-// Entry-change rows exist for tx_count == 0 ledgers (protocol upgrades,
-// config/base-reserve changes), so those ledgers inflate the second count
-// while never appearing in the first — inside a 1,000,000-ledger window they
-// cancel genuinely-uncovered tx-bearing ledgers one-for-one and Check 2,
-// the hard gate above -ec-floor, reports zero deficiency on a real gap.
+// Entry-change rows exist for tx_count == 0 ledgers (protocol upgrades, config/base-reserve
+// changes), which inflate the second count while never appearing in the first. They cancel
+// genuinely-uncovered tx-bearing ledgers one-for-one, so Check 2 (the hard gate above
+// -ec-floor) reports zero deficiency on a real gap.
 //
-// This asserts the structural property that makes that cancellation
-// impossible: the coverage count is a uniqExactIf over stellar.ledgers'
-// tx-bearing rows, with ledger_entry_changes appearing ONLY inside the
-// membership subquery.
+// The structural property asserted: the coverage count is a uniqExactIf over stellar.ledgers'
+// tx-bearing rows, with ledger_entry_changes appearing ONLY inside the membership subquery.
 func TestECWindowCoverageQuery_AntiJoin(t *testing.T) {
 	q := ecWindowCoverageQuery()
 

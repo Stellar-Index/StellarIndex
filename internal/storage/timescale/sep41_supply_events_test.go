@@ -56,12 +56,10 @@ func TestSEP41EventKind_IsValid(t *testing.T) {
 	}
 }
 
-// TestSEP41SupplyEventWriters_ShareRowContract runs the same invalid second
-// row through both multi-row sep41_supply_events writers: each must refuse
-// it before touching the database, as InsertSEP41SupplyEvent does. The zero
-// Store has no *sql.DB, so a row that slips past validation panics in the
-// writer and is reported as reaching the DB. One negative row would
-// otherwise fail CHECK (amount >= 0) and abort the whole statement.
+// TestSEP41SupplyEventWriters_ShareRowContract runs the same invalid second row through both
+// multi-row writers: each must refuse it before touching the database, as InsertSEP41SupplyEvent
+// does, or one negative row fails CHECK (amount >= 0) and aborts the whole statement. The zero
+// Store has no *sql.DB, so a row that slips past validation panics and is reported as reaching it.
 func TestSEP41SupplyEventWriters_ShareRowContract(t *testing.T) {
 	good := SEP41SupplyEvent{
 		ContractID: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",

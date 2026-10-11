@@ -13,12 +13,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// The pre-handler throttle seams detach from the request's
-// cancellation so a client abort cannot arm their dwell clocks, but
-// context.WithoutCancel drops the DEADLINE too. With a flat 5 s per seam
-// the MonthlyQuota read and the RateLimit take ran outside the request
-// timeout they sit inside, pushing worst-case wall time past the
-// server's WriteTimeout.
+// The pre-handler throttle seams detach from the request's cancellation so a client abort
+// cannot arm their dwell clocks, but context.WithoutCancel drops the DEADLINE too. A flat
+// per-seam budget would let the MonthlyQuota read and RateLimit take run outside the request
+// timeout they sit inside, pushing worst-case wall time past the server's WriteTimeout.
 
 func TestThrottleContext_NeverOutlivesTheRequestDeadline(t *testing.T) {
 	reqCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)

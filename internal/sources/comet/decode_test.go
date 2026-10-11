@@ -291,12 +291,10 @@ type cometSwapFixture struct {
 	Value          string   `json:"value"`
 }
 
-// TestRealMainnetFixtures_comet replays a real captured Comet POOL
-// swap event through the full dispatcher-facing path (Matches +
-// Decode) — unlike every other test in this file, which synthesises
-// its event bytes from a seeded strkey. Proves the event schema this
-// package documents (events.go's SwapEvent Map shape) against a byte
-// the chain actually produced, not just against upstream Rust source.
+// TestRealMainnetFixtures_comet replays a real captured Comet POOL swap event through the
+// dispatcher-facing path (Matches + Decode), unlike the rest of this file which synthesises
+// its bytes. It proves the documented SwapEvent Map shape against bytes the chain produced,
+// not just against upstream Rust source.
 func TestRealMainnetFixtures_comet(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "test", "fixtures", "comet")
 	dirs, err := os.ReadDir(root)

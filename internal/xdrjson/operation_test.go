@@ -683,14 +683,10 @@ func operationBodyFixture(t *testing.T, typ xdr.OperationType) (string, bool) {
 	return "", false
 }
 
-// TestDecodeOperationBody_FieldsExhaustive: every operation type
-// the SDK knows must produce either decoded Fields or be on the explicit
-// genuinely-empty allowlist (inflation, end_sponsoring_future_reserves — the
-// op body carries nothing else) — never silently fall back to raw_xdr because
-// fillOpFields has no case for it. Mirrors result_codes_test.go's
-// TestTxResultNamesExhaustive: it ranges the SDK's OWN valid enum values, not
-// a fixed count, so a future protocol op type goes RED here until
-// fillOpFields (and operationBodyFixture, for this test itself) gets it.
+// TestDecodeOperationBody_FieldsExhaustive: every operation type the SDK knows must decode to
+// Fields or be on the genuinely-empty allowlist (inflation, end_sponsoring_future_reserves),
+// never silently fall back to raw_xdr. It ranges the SDK's own enum values, not a fixed count,
+// so a new protocol op type goes RED until fillOpFields and operationBodyFixture handle it.
 func TestDecodeOperationBody_FieldsExhaustive(t *testing.T) {
 	genuinelyEmpty := map[xdr.OperationType]bool{
 		xdr.OperationTypeInflation:                   true,

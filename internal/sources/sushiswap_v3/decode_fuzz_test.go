@@ -92,23 +92,19 @@ func fuzzSwapBody(t *testing.T, amount0, amount1 xdr.ScVal, liq xdr.UInt128Parts
 	return fuzzB64(t, xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &pm})
 }
 
-// FuzzSwapDirectionAndExactAmounts drives the production entry point
-// (Decoder.Decode on a registered pool) over the whole i128 × i128
-// domain of the two signed pool deltas and asserts the trade it emits
-// against a reference computed with *big.Int, independently of the
-// decoder:
+// FuzzSwapDirectionAndExactAmounts drives Decoder.Decode on a registered pool over the whole
+// i128 x i128 domain of the two signed pool deltas and checks the emitted trade against a
+// *big.Int reference:
 //
-//   - a trade exists iff exactly one delta is strictly positive and the
-//     other strictly negative; every other combination (a zero on either
-//     side, same signs) is a counted recognized no-op, never a trade at a
+//   - a trade exists iff exactly one delta is strictly positive and the other strictly
+//     negative; any other combination is a counted recognized no-op, never a trade at a
 //     fabricated price;
-//   - base = the token the pool RECEIVED at the exact positive delta,
-//     quote = the token it PAID at the exact magnitude of the negative
-//     delta — no int64 truncation (ADR-0003), including -2^127 whose
-//     magnitude does not fit an i128;
+//   - base = the token the pool RECEIVED at the exact positive delta, quote = the token it
+//     PAID at the exact magnitude of the negative delta, with no int64 truncation (ADR-0003),
+//     including -2^127 whose magnitude does not fit an i128;
 //   - OpIndex fans out by event index, Taker is the output recipient;
-//   - the best-effort fields (liquidity u128, sqrt_price_x96 u256, tick,
-//     sender) round-trip at full width regardless of field order.
+//   - the best-effort fields (liquidity u128, sqrt_price_x96 u256, tick, sender) round-trip
+//     at full width regardless of field order.
 //
 // Generative run:
 // go test -run=^$ -fuzz=^FuzzSwapDirectionAndExactAmounts$ -fuzztime=60s -parallel=2 ./internal/sources/sushiswap_v3/
@@ -246,11 +242,9 @@ func FuzzSwapDirectionAndExactAmounts(f *testing.F) {
 	})
 }
 
-// FuzzSwapAmountForeignScValType asserts the price-forming amounts are
-// read ONLY from an i128: the same 128 bits wrapped as u128 / i64 / u64 /
-// i256 / u256 is a foreign schema and must be refused, never decoded as
-// a magnitude (a u128 read of an i128 slot silently flips a negative
-// delta into a ~2^128 positive one).
+// FuzzSwapAmountForeignScValType asserts price-forming amounts are read ONLY from an i128.
+// The same bits wrapped as u128/i64/u64/i256/u256 is a foreign schema and must be refused
+// (a u128 read of an i128 slot flips a negative delta into a ~2^128 positive one).
 func FuzzSwapAmountForeignScValType(f *testing.F) {
 	for typ := uint8(0); typ < 6; typ++ {
 		f.Add(typ, int64(0), uint64(1_000_000), false)

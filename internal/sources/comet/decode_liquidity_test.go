@@ -384,12 +384,10 @@ func TestDecodeLiquidity_LargeI128(t *testing.T) {
 	}
 }
 
-// TestDecodeLiquidity_PopulatesEventIndex pins that the liquidity
-// path must carry events.Event.EventIndex onto the row so two
-// same-(kind,token) liquidity events emitted by ONE operation don't
-// collapse on the comet_liquidity PK (migration 0059) via ON CONFLICT.
-// (The swap path already fans op_index via canonical.FanoutOpIndex;
-// the liquidity path keys on event_index directly.)
+// TestDecodeLiquidity_PopulatesEventIndex pins that the liquidity path carries
+// events.Event.EventIndex onto the row, so two same-(kind,token) liquidity events from ONE
+// operation don't collapse on the comet_liquidity PK via ON CONFLICT. (The swap path fans
+// op_index via canonical.FanoutOpIndex; the liquidity path keys on event_index directly.)
 func TestDecodeLiquidity_PopulatesEventIndex(t *testing.T) {
 	caller := accountStrkeyFromSeed(t, 0x70)
 	token := contractStrkeyFromSeed(t, 0x71)

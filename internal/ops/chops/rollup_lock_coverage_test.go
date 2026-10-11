@@ -9,20 +9,14 @@ import (
 	"testing"
 )
 
-// TestRollupCLIsSerializeOnTheirLock pins that ch-creators-rollup,
-// ch-sponsors-rollup and ch-cohort-rollup must refuse to run while another
-// invocation of the SAME job already holds its lock, exactly as
+// TestRollupCLIsSerializeOnTheirLock pins that ch-creators-rollup, ch-sponsors-rollup and
+// ch-cohort-rollup refuse to run while another invocation of the SAME job holds its lock, as
 // ch-holders-rollup does (TestAcquireHoldersRollupLockSerializesConcurrentRuns).
 //
-// Without the lock these three CLI entry points would run unguarded: a
-// manually-invoked `stellarindex-ops ch-creators-rollup` (etc.) would proceed
-// straight past flag parsing into ClickHouse work, so a run launched
-// while the 30-minute timer's own invocation was mid TRUNCATE -> fill ->
-// EXCHANGE on the same global staging tables would race it instead of being
-// turned away here. Each case below holds the lock externally first and
-// asserts the CLI entry point returns the contention error BEFORE it
-// would reach any network call, so the test needs no ClickHouse and no
-// config file.
+// Unguarded, a manual run would race the 30-minute timer's invocation mid TRUNCATE -> fill ->
+// EXCHANGE on the same global staging tables. Each case holds the lock externally and asserts the
+// entry point returns the contention error BEFORE any network call, so no ClickHouse or config
+// file is needed.
 func TestRollupCLIsSerializeOnTheirLock(t *testing.T) {
 	for _, tc := range []struct {
 		name string

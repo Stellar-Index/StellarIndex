@@ -13,12 +13,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These pin the serving contract for the /v1/liquidity-pools ranked
-// listing. Measured cause: nativeLPListing held nativeLPMu across the
-// whole-`liquidity_pool`-prefix scan, so once every 60s TTL lapse the next
-// caller paid that scan on its request deadline (live: 0.825 s) and every
-// concurrent caller queued behind it — and with no prewarm anywhere, a cold
-// process made the FIRST visitor pay it too.
+// These pin the serving contract for the /v1/liquidity-pools ranked listing: the
+// whole-`liquidity_pool`-prefix scan must not run under nativeLPMu on a request deadline, or
+// each TTL lapse makes the next caller pay the scan while every concurrent caller queues behind
+// it, and a cold process (no prewarm) makes the FIRST visitor pay it too.
 
 // lpCacheReader is the narrow slice of ExplorerReader this cache uses: a
 // countable, blockable, failable NativeLiquidityPoolsRanked.

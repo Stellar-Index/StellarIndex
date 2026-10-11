@@ -8,19 +8,13 @@ import (
 	"testing"
 )
 
-// TestDex24hBucketWindowMatchesSourceVolumeHistory pins that the two
-// readers of source_volume_1h's 24h window — dexWindowKPIQuery /
-// dexActivitySeriesQuery (bespoke_dex.go, behind the source page's
-// bespoke KPI/series) and sourceVolumeHistory (sources_stats.go, behind
-// /v1/sources' 24h volume history) — must select the SAME set of hourly
-// buckets for "the same source and window", or the served note claiming
-// that parity is false.
+// TestDex24hBucketWindowMatchesSourceVolumeHistory pins that the two readers of
+// source_volume_1h's 24h window (dexWindowKPIQuery / dexActivitySeriesQuery in bespoke_dex.go,
+// and sourceVolumeHistory in sources_stats.go) select the SAME hourly buckets for the same
+// source and window, or the served parity note is false.
 //
-// Flooring the window with
-// date_trunc('hour', NOW() - $1::interval) (a >= 25-bucket window)
-// while the bespoke queries use a strict `bucket > now() - $2::interval`
-// (a 24-bucket window) — same CAGG, same nominal 24h, different bucket
-// counts and so a different reported volume.
+// Flooring with date_trunc('hour', NOW() - $1::interval) gives a >= 25-bucket window while
+// `bucket > now() - $2::interval` gives 24, so the same CAGG reports different volumes.
 func TestDex24hBucketWindowMatchesSourceVolumeHistory(t *testing.T) {
 	kpi := dexWindowKPIQuery(1)
 	series := dexActivitySeriesQuery(1)

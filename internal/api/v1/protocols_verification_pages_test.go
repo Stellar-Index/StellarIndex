@@ -14,13 +14,10 @@ const repoRootFromAPIV1 = "../../.."
 // protocolDocsDir is the verification-page tree, repo-relative.
 const protocolDocsDir = "docs/protocols"
 
-// nonProtocolDocs are the pages under docs/protocols that are
-// deliberately not a /v1/protocols row: the index, the two supply
-// write-ups (indexing domains, not protocols), and the Blend Emitter
-// (a module folded into the Blend row — it has no source name of its
-// own in the directory). Anything else added to the tree must be linked
-// by a protocol, which is what TestProtocolVerificationPages_EveryDocIsLinked
-// enforces.
+// nonProtocolDocs are the pages under docs/protocols deliberately not a /v1/protocols row:
+// the index, the two supply write-ups (indexing domains), and the Blend Emitter (folded into
+// the Blend row). Anything else must be linked by a protocol, which
+// TestProtocolVerificationPages_EveryDocIsLinked enforces.
 var nonProtocolDocs = map[string]bool{
 	"README.md":           true,
 	"sep41-supply.md":     true,
@@ -50,11 +47,9 @@ func TestProtocolVerificationPages_PointAtRealFiles(t *testing.T) {
 	}
 }
 
-// TestProtocolVerificationPages_ProtocolWithADocLinksIt is the missing
-// half of the promise README and /protocols make. A page written for a
-// protocol would need a second, easily-missed edit here before the API
-// linked it, leaving protocols whose pages /v1/protocols reported
-// as verification_page: null.
+// TestProtocolVerificationPages_ProtocolWithADocLinksIt: a protocol with a page under
+// docs/protocols must have it linked, or /v1/protocols reports verification_page: null
+// despite the doc existing.
 func TestProtocolVerificationPages_ProtocolWithADocLinksIt(t *testing.T) {
 	for _, p := range protocolRegistry {
 		doc := filepath.Join(protocolDocsDir, p.Name+".md")

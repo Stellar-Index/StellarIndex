@@ -21,16 +21,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// newTestKrakenServer plays back a scripted Kraken v2 session:
-//
-//  1. Sends a status frame on connect.
-//  2. Expects a subscribe request; reads it to validate the symbols
-//     the Streamer sent.
-//  3. Replies with a subscribe-ack.
-//  4. Sends trade-channel updates.
-//
-// Exposed via httptest so we exercise the full JSON-subscribe
-// handshake without hitting real Kraken infra.
+// newTestKrakenServer plays back a scripted Kraken v2 session over httptest: a status frame
+// on connect, a subscribe request (validated against the symbols the Streamer sent), a
+// subscribe-ack, then trade-channel updates.
 func newTestKrakenServer(t *testing.T, tradeFrames []string, capturedSub *subscribeReq) *httptest.Server {
 	t.Helper()
 

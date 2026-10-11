@@ -9,15 +9,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/cmd/stellarindex-api/internal/wiring"
 )
 
-// TestClickhouseReadyChecks_ConfiguredButUnreachableStillPublishes: the
-// "ClickHouse was already down when the API started" state must still
-// publish the `stellarindex_dependency_up{dependency="clickhouse"}`
-// series; appending the checker inside the success branch of the boot
-// dial would leave it absent. The alert over that gauge is
-// `stellarindex_dependency_up == 0` — deliberately not absent() — so
-// the one state the runbook calls "the only signal that it is gone" was
-// the state with no signal: every lake-backed endpoint 503'd and
-// nothing paged.
+// TestClickhouseReadyChecks_ConfiguredButUnreachableStillPublishes: the "ClickHouse was
+// already down when the API started" state must still publish the
+// `stellarindex_dependency_up{dependency="clickhouse"}` series; registering the checker only
+// in the success branch of the boot dial would leave it absent. The alert is
+// `stellarindex_dependency_up == 0`, deliberately not absent(), so an absent series means
+// every lake-backed endpoint 503s and nothing pages.
 func TestClickhouseReadyChecks_ConfiguredButUnreachableStillPublishes(t *testing.T) {
 	dialErr := errors.New("dial tcp 127.0.0.1:9000: connect: connection refused")
 	checks := wiring.ClickhouseReadyChecks("localhost:9000", nil, dialErr, clickhouseBootDialBudget)

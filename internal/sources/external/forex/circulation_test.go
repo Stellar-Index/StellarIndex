@@ -63,12 +63,10 @@ func TestLoadCirculationTable_BroadCoverage(t *testing.T) {
 	}
 }
 
-// TestLoadCirculationTable_AsOfReasonable — `as_of` dates must
-// not be in the future (typo guard), and not so far back as to be
-// useless. The WB publishes some emerging-market series with a
-// multi-year lag — a few rows are legitimately 5-7 years old. The
-// 8-year floor catches genuine staleness (decade-old typo) without
-// rejecting the WB-lag entries that are still better-than-null.
+// TestLoadCirculationTable_AsOfReasonable — `as_of` dates must not be in the future (typo
+// guard) nor uselessly old. The World Bank publishes some emerging-market series with a
+// multi-year lag (legitimately 5-7 years old); the 8-year floor catches genuine staleness
+// without rejecting those still better-than-null entries.
 func TestLoadCirculationTable_AsOfReasonable(t *testing.T) {
 	table, err := loadCirculationTable()
 	if err != nil {

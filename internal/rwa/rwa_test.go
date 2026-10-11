@@ -7,11 +7,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestAnchorClass_ClosedVocabulary — only the four SEP-1 terms naming a
-// real-world instrument normalise; every invented synonym present in the
-// production payload set stays out. Accepting synonyms is how a closed
-// set stops being closed, and the terms below were all measured on the
-// live directory.
+// TestAnchorClass_ClosedVocabulary — only the four SEP-1 terms naming a real-world instrument
+// normalise; invented synonyms seen in real payloads stay out, because accepting synonyms is how
+// a closed set stops being closed.
 func TestAnchorClass_ClosedVocabulary(t *testing.T) {
 	for _, in := range []string{"stock", "BOND", " commodity ", "RealEstate"} {
 		if AnchorClass(in) == "" {
@@ -123,11 +121,9 @@ func TestQualify_ScamTagBeatsRecognition(t *testing.T) {
 	}
 }
 
-// TestQualify_OracleBasisNeverAdmitsOnCodeAlone is the anti-phishing
-// invariant in its sharpest form. USTRY, BENJI and XAU are all codes an
-// RWA oracle prices, and all three are issued on the live network by
-// accounts the directory flags. The oracle basis must not carry any of
-// them past requirement 3.
+// TestQualify_OracleBasisNeverAdmitsOnCodeAlone is the anti-phishing invariant in its sharpest
+// form. USTRY, BENJI and XAU are codes an RWA oracle prices, and all three are also issued by
+// accounts the directory flags. The oracle basis must not carry any of them past requirement 3.
 func TestQualify_OracleBasisNeverAdmitsOnCodeAlone(t *testing.T) {
 	for _, code := range []string{"USTRY", "BENJI", "XAU", "xaum", "deJTRSY"} {
 		unrecognised := Qualify(Candidate{Code: code, Issuer: "G1", BoundSep1: true})
@@ -154,16 +150,13 @@ func TestQualify_OracleBasisNeverAdmitsOnCodeAlone(t *testing.T) {
 	}
 }
 
-// TestCouldQualify_MatchesQualifyOnTheAssetSideInputs — the storage
-// pre-filter must never drop an entry [Qualify] would have admitted.
-// A pre-filter that is narrower than the rule it precedes is a silent
-// membership change with no test to catch it.
+// TestCouldQualify_MatchesQualifyOnTheAssetSideInputs — the storage pre-filter must never drop
+// an entry [Qualify] would have admitted; a pre-filter narrower than its rule is a silent
+// membership change.
 //
-// The matrix spans EVERY asset-side input a requirement-4 arm reads:
-// code (oracle arm), anchor type (class arm) and anchor asset (ISIN
-// arm). The third dimension was missing when the ISIN arm shipped, so
-// the guard passed while the pre-filter dropped the three Franklin
-// share classes the arm exists for.
+// The matrix spans EVERY asset-side input a requirement-4 arm reads: code (oracle arm), anchor
+// type (class arm) and anchor asset (ISIN arm). Omitting a dimension lets the guard pass while
+// the pre-filter drops the very assets that arm exists for.
 func TestCouldQualify_MatchesQualifyOnTheAssetSideInputs(t *testing.T) {
 	codes := []string{"USTRY", "BENJI", "XAU", "XAUm", "MEME", "USDC", ""}
 	types := []string{"bond", "stock", "commodity", "realestate", "fiat", "crypto", "nft", "other", ""}
@@ -230,11 +223,9 @@ func TestQualify_FundNAVBindingAdmitsOnlyItsOwnIssuer(t *testing.T) {
 	}
 }
 
-// Franklin Templeton's Luxembourg and Singapore share classes: declared
-// with ISINs in franklintempleton.com's own SEP-1, on issuer accounts the
-// curated directory never listed, beside the BENJI issuer it did. A
-// sibling on the same bound domain recognises them — and the verdict
-// says which arm did it.
+// Franklin Templeton's Luxembourg and Singapore share classes are declared with ISINs in
+// franklintempleton.com's own SEP-1, on issuer accounts the curated directory never listed.
+// A sibling on the same bound domain recognises them, and the verdict says which arm did it.
 func TestQualify_SiblingOnTheSameDomainRecognisesAnUnlistedIssuer(t *testing.T) {
 	base := Candidate{
 		Code: "gBENJI", Issuer: "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP",

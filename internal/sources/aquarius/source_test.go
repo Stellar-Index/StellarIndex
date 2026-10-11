@@ -77,20 +77,16 @@ func TestClassify(t *testing.T) {
 // convention (events.go).
 var eventConstNamePattern = regexp.MustCompile(`^Event[A-Z]`)
 
-// eventsExcludedFromClassify are Event* constants that are
-// deliberately NOT part of classify()'s closed set. EventAddPool is
-// the ROUTER's pool-registration topic — recognised by
-// dispatcher_adapter.go's own topic check, not routed through
-// kindByTopicSymbol/classify (see events.go's EventAddPool doc).
+// eventsExcludedFromClassify are Event* constants deliberately NOT in classify()'s closed set.
+// EventAddPool is the ROUTER's pool-registration topic, recognised by dispatcher_adapter.go's own
+// topic check rather than kindByTopicSymbol/classify (see events.go's EventAddPool doc).
 var eventsExcludedFromClassify = map[string]bool{
 	"EventAddPool": true,
 }
 
-// packageEventConstants AST-parses every non-test .go file in this
-// package directory and returns every top-level string constant named
-// Event* (name -> value). Unlike a hand-copied list, this reflects
-// whatever events.go actually declares: a future Event* constant is
-// picked up automatically, with no second list to remember to update.
+// packageEventConstants AST-parses every non-test .go file in this package directory and returns
+// every top-level string constant named Event* (name -> value). Unlike a hand-copied list, a
+// future Event* constant is picked up automatically.
 func packageEventConstants(t *testing.T) map[string]string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
@@ -142,14 +138,10 @@ func packageEventConstants(t *testing.T) map[string]string {
 	return out
 }
 
-// TestClassify_completenessVsUpstream is a forcing function: if a
-// future agent adds an Event* constant without also wiring it into
-// kindByTopicSymbol/classify(), this test fails. It AST-enumerates
-// every Event* constant declared in the package (see
-// packageEventConstants) instead of a hand-maintained list, so the
-// enumeration itself cannot drift out of sync with events.go. The
-// test fixture also acts as documentation of the closed set of topics
-// aquarius emits (verified against
+// TestClassify_completenessVsUpstream is a forcing function: adding an Event* constant without
+// wiring it into kindByTopicSymbol/classify() fails it. It AST-enumerates the package's Event*
+// constants (see packageEventConstants), so the enumeration cannot drift from events.go. The
+// fixture also documents the closed set of topics aquarius emits (verified against
 // aquarius-amm/liquidity_pool_events/src/lib.rs).
 func TestClassify_completenessVsUpstream(t *testing.T) {
 	consts := packageEventConstants(t)

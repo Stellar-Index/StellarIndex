@@ -6,12 +6,9 @@ import (
 	"testing"
 )
 
-// TestDocDoesNotClaimUnshippedPrimaryCheck guards against the package
-// docs re-asserting that the primary (galexie-archive) scan is
-// implemented. Report.Primary is never populated anywhere in this
-// package. No code shells out to `galexie detect-gaps`, so the
-// doc comments must say so plainly instead of claiming the mode ships
-// or carrying a stale "PR B fills it" placeholder.
+// TestDocDoesNotClaimUnshippedPrimaryCheck guards against the package docs claiming the primary
+// (galexie-archive) scan is implemented. Report.Primary is never populated and no code shells out
+// to `galexie detect-gaps`, so the doc comments must say so plainly.
 func TestDocDoesNotClaimUnshippedPrimaryCheck(t *testing.T) {
 	staleClaims := []string{
 		"Modes (all shipped)",

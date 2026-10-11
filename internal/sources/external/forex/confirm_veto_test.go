@@ -10,14 +10,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestAcceptRate_HistoryConflictVetoReclassifiesWhenStuck mirrors the
-// history band's stuck reclassification for the confirm veto: a
-// provider persistently serving the same (within 1% jitter) broken
-// current bar keeps hitting the veto, and past
-// [stuckRejectionThreshold] consecutive refusals the repeats count
-// under "deviation_history_conflict_stuck" — excluded from the
-// rejection alert — while the veto keeps refusing either way. Any
-// accepted current rate resets the streak.
+// TestAcceptRate_HistoryConflictVetoReclassifiesWhenStuck mirrors the history band's stuck
+// reclassification for the confirm veto: a provider persistently serving the same (within 1%
+// jitter) broken bar keeps hitting the veto, and past [stuckRejectionThreshold] consecutive
+// refusals the repeats count under "deviation_history_conflict_stuck" (excluded from the
+// rejection alert) while the veto keeps refusing. Any accepted rate resets the streak.
 func TestAcceptRate_HistoryConflictVetoReclassifiesWhenStuck(t *testing.T) {
 	w, _ := bandTestWorker(io.Discard)
 	w.guards["UZS"] = &rateGuard{lastAccepted: 11817.69}

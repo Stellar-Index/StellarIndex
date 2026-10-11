@@ -7,38 +7,22 @@ import (
 	"testing"
 )
 
-// oracle_updates is the one served-tier table that can hold rows whose
-// `asset` is not an asset at all. Since the capture-totality change, an
-// oracle symbol that maps to no canonical asset is recorded verbatim as
-// `raw:<symbol>` rather than dropped, so the evidence survives a
-// mapping gap. Those rows are RECORD-layer only: nothing that
-// interprets a price may treat one as an asset.
+// oracle_updates can hold rows whose `asset` is not an asset: an oracle symbol with no
+// canonical mapping is recorded verbatim as `raw:<symbol>`. Those rows are RECORD-layer only;
+// nothing that interprets a price may treat one as an asset.
 //
-// A read of this table is safe by one of two mechanisms, and which one
-// applies is a property of the QUERY:
+// A read is safe by one of two mechanisms, a property of the QUERY:
 //
-//   - It keys by canonical asset (`asset = $n`, `asset = ANY($n)`). A
-//     raw row then cannot come back unless a caller explicitly asked
-//     for one, and the callers build keys from canonical.Pair legs,
-//     which Pair.Validate refuses to construct from a raw asset.
-//   - Or it scans, and something else must handle the raw rows —
-//     either a filter in the query or an explicit contract above it.
+//   - It keys by canonical asset (`asset = $n`, `asset = ANY($n)`), so a raw row cannot come
+//     back unless asked for; callers build keys from canonical.Pair legs, which Pair.Validate
+//     refuses to construct from a raw asset.
+//   - Or it scans, and a filter in the query or an explicit contract above it handles raw rows.
 //
-// The second kind is where a defect can hide, because the query looks
-// perfectly ordinary. This guard makes every scanning read declare
-// itself, so adding one is a deliberate act with a written reason
-// rather than an oversight.
-//
-// Why a guard and not a fix: every existing scan is already correct — see the
-// exemption table below for the per-query verdict. The gap was never
-// the code; it was that a squash merge deleted the tests proving
-// it, leaving the property unpinned.
+// Scanning reads look ordinary, so this guard makes each one declare itself with a written
+// reason. Every existing scan is already correct; the guard keeps that property pinned.
 
-// scanningOracleReads are the reads in oracle.go that do NOT key by
-// canonical asset, each with the reason it is nonetheless safe.
-//
-// Adding a function here is the deliberate act: if a new scanning read
-// appears without an entry, the test fails and asks for the reasoning.
+// scanningOracleReads are the reads that do NOT key by canonical asset, each with the reason
+// it is safe. A new scanning read without an entry fails the test.
 var scanningOracleReads = map[string]string{
 	"CountOracleUpdates": "a bare row count for diagnostics, explicitly " +
 		"documented as not for production hot paths. A count of what the " +
@@ -92,11 +76,9 @@ var scanningOracleReads = map[string]string{
 		"CountOracleUpdates.",
 }
 
-// oracleUpdatesReaderFiles are every file in this package with at least
-// one `FROM oracle_updates` read, discovered by a repo-wide grep — NOT
-// just oracle.go. A file dropping off this list without its reads
-// disappearing would make the guard scan the wrong set and pass
-// vacuously, which is exactly the failure mode oracle.go alone had.
+// oracleUpdatesReaderFiles are every file in this package with a `FROM oracle_updates` read,
+// not just oracle.go. A file dropping off this list while its reads remain would make the
+// guard scan the wrong set and pass vacuously.
 var oracleUpdatesReaderFiles = []string{
 	"oracle.go",
 	"bespoke_oracle.go",
@@ -105,11 +87,9 @@ var oracleUpdatesReaderFiles = []string{
 	"protocol_stats.go",
 }
 
-// fromOracleUpdates finds each read of the table and the enclosing
-// function, so a failure names the function a reviewer has to look at
-// rather than a line number. funcDeclRe matches both `Store` methods
-// (oracle.go) and the plain query-builder functions bespoke_oracle.go
-// splits its SQL into.
+// fromOracleUpdates finds each read of the table and its enclosing function, so a failure
+// names the function to review. funcDeclRe matches both `Store` methods and the plain
+// query-builder functions bespoke_oracle.go splits its SQL into.
 var (
 	funcDeclRe = regexp.MustCompile(`(?m)^func (?:\(s \*Store\) )?(\w+)\(`)
 	assetKeyRe = regexp.MustCompile(`asset\s*(=|IN)\s*(\$\d+|ANY\(\$\d+\))`)

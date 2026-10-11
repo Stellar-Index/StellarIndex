@@ -7,24 +7,13 @@ const (
 	sep1ImgAttacker = "GAS4V4XZ3JHFTGKHCTMTWIIVFHGLBUMSQMGZM4RIWYPQHNXBAOGZBKHR"
 )
 
-// A SEP-1 payload may only declare images for the issuer that served
-// it. The global image map is keyed on (code, issuer) taken from the
-// TOML, so without this rule any Stellar account could publish
-//
-//	[[CURRENCIES]] code = "USDC" issuer = "<Circle's G-key>"
-//	               image = "https://attacker.example/x.png"
-//
-// and take over the logo served for USDC on /v1/assets and the
-// explorer homepage — a per-visitor beacon under a verified brand.
-// Nothing upstream filters on org_verified, and projectCatalogueRows
-// assigns the result unconditionally, so this check is the only thing
-// standing between a hostile TOML and a curated asset's identity.
-//
-// The rule is a per-row check on the server-side-projected scan (see
-// [allSep1ImagesQuery]); the attack it must refuse is the same as under
-// whole-payload parsing.
-// TestAllSep1ImagesProjection in test/integration re-runs this exact
-// hijack through the real SQL.
+// A SEP-1 payload may only declare images for the issuer that served it. The global image map
+// is keyed on (code, issuer) taken from the TOML, so without this rule any account could
+// publish a [[CURRENCIES]] entry for USDC with Circle's issuer and an attacker image URL, and
+// take over the logo served on /v1/assets and the explorer homepage. Nothing upstream filters
+// on org_verified and projectCatalogueRows assigns the result unconditionally, so this
+// per-row check on the projected scan (see [allSep1ImagesQuery]) is the only guard.
+// TestAllSep1ImagesProjection in test/integration re-runs this hijack through the real SQL.
 func TestSep1ImageFrom_OnlyTheServingIssuerMayDeclareImages(t *testing.T) {
 	t.Parallel()
 
@@ -63,11 +52,9 @@ func TestSep1ImageFrom_SelfDeclarationIsKept(t *testing.T) {
 	}
 }
 
-// Incomplete entries yield nothing rather than erroring — one bad entry
-// must not blank the whole map. Malformed JSON is no longer reachable
-// here (the column is jsonb, and the projection hands over already-typed
-// text), so the cases that remain are the ones a well-formed but useless
-// [[CURRENCIES]] block produces.
+// Incomplete entries yield nothing rather than erroring, so one bad entry cannot blank the
+// whole map. Malformed JSON is unreachable (the column is jsonb); only well-formed but useless
+// [[CURRENCIES]] blocks remain.
 func TestSep1ImageFrom_IncompleteEntriesAreSkipped(t *testing.T) {
 	t.Parallel()
 

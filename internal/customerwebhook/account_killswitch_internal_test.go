@@ -11,12 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// [New] requires its store to answer the account kill
-// switch ([AccountStatusReader]), so the package's white-box fakes —
-// which model the webhook tables only and never a suspended account —
-// complete the contract here by reporting every account active. The
-// kill switch's own behaviour is pinned in worker_test.go
-// (delivery path) and in
+// [New] requires its store to answer the account kill switch ([AccountStatusReader]), so the
+// white-box fakes, which model only webhook tables, report every account active. The kill
+// switch itself is pinned in worker_test.go (delivery path) and
 // test/integration/pg_auth_webhooks_test.go (SQL).
 
 // WebhookAccountStatus completes the DeliveryStore contract for nopStore.
@@ -24,11 +21,9 @@ func (nopStore) WebhookAccountStatus(context.Context, uuid.UUID) (platform.Accou
 	return platform.AccountActive, nil
 }
 
-// WebhookAccountStatus completes the DeliveryStore contract for
-// ctxHonouringStore. Unlike its GetWebhook this does not model a store
-// round-trip: the lifetime tests turn on the attempt context
-// expiring inside GetWebhook, and a second delay here would move the
-// deadline they pin.
+// WebhookAccountStatus completes the DeliveryStore contract for ctxHonouringStore. It does
+// not model a store round-trip: the lifetime tests turn on the attempt context expiring
+// inside GetWebhook, and a second delay here would move the deadline they pin.
 func (*ctxHonouringStore) WebhookAccountStatus(context.Context, uuid.UUID) (platform.AccountStatus, error) {
 	return platform.AccountActive, nil
 }

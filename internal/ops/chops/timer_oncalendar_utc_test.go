@@ -11,21 +11,14 @@ import (
 	"testing"
 )
 
-// ─── pgbackrest-backup.timer.j2 had no UTC suffix ─────────────
+// ─── OnCalendar= must carry an explicit UTC suffix ─────────────
 //
-// systemd resolves an OnCalendar= expression against the unit's
-// configured timezone, which defaults to the HOST's local zone, not
-// UTC. Every sibling timer in this directory pins an explicit ` UTC`
-// token on its fixed-clock OnCalendar= line so the schedule cannot
-// drift with the box's timezone or a DST transition; pgbackrest-backup
-// was the one exception, so a host provisioned (or later reconfigured)
-// with a non-UTC zone would run the daily backup at a different wall
-// clock than every other archival-node job planned around a shared
-// 02:00-06:20 UTC backup/rollup window.
+// systemd resolves an OnCalendar= expression against the HOST's local timezone, not UTC. Every
+// timer pins an explicit ` UTC` token on its fixed-clock line so the schedule cannot drift with
+// the box's timezone or a DST transition; a non-UTC host would otherwise run a job outside the
+// shared 02:00-06:20 UTC backup/rollup window the other archival-node jobs are planned around.
 //
-// This walks every *.timer.j2 in the role and asserts the same rule
-// the sweep found broken in one file, so the next new timer that
-// forgets the suffix fails here instead of drifting silently.
+// This walks every *.timer.j2 in the role, so a new timer that forgets the suffix fails here.
 func TestArchivalNodeTimers_OnCalendarPinsUTC(t *testing.T) {
 	root := repoRoot(t)
 	dir := filepath.Join(root, "configs", "ansible", "roles", "archival-node", "templates", "systemd")

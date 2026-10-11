@@ -11,14 +11,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests cover the two unauthenticated explorer reads whose cost is
-// set by the lake rather than the request.
-//
-// GET /v1/assets/{asset_id}/holders ran two ledger_entries_current FINAL
-// scans per request; the GET /v1/contracts directory ran a GROUP BY over
-// up to a year of contract_events per request, across 365 distinct
-// accepted window sizes. Both ran on the shared explorer pool with no
-// credential required.
+// These tests cover the two unauthenticated explorer reads whose cost is set by the lake rather
+// than the request. GET /v1/assets/{asset_id}/holders must not run ledger_entries_current FINAL
+// scans per request, and the GET /v1/contracts directory must not run a GROUP BY over up to a year
+// of contract_events per request across 365 accepted window sizes. Both share the explorer pool
+// with no credential required.
 
 // countingExplorerReader wraps the shared stub and counts the two heavy
 // reads (plus the tip read each window floor needs), so these tests can

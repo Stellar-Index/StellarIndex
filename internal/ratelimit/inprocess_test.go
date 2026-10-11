@@ -99,21 +99,13 @@ func TestInProcess_WindowRollover(t *testing.T) {
 	}
 }
 
-// TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket is the
-// regression, driven through the exported API at the real cap.
+// TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket drives the exported API at the real cap.
 //
-// The attack: a distinct-key flood (>100k unique keys inside one window
-// on one process — well past any real client population) against the
-// Redis-less fallback limiter. Inserting every one of those keys
-// into the map would let the flood choose the limiter's memory
-// footprint and, worse, drag a full O(n) scan under the shared mutex
-// on each insert past 100k. Instead the map must stop growing at
-// `localStoreMaxKeys` and everything beyond it is folded into ONE shared,
-// fail-CLOSED bucket: the first overflow key consumes the shared budget,
-// the next is denied.
-//
-// The `strconv` key shape mirrors the anon-IP keys the fallback really
-// sees. 100k inserts is ~10 MB and well under a second.
+// A distinct-key flood (>100k unique keys in one window) against the Redis-less fallback limiter
+// must not let the attacker choose the limiter's memory footprint or drag an O(n) scan under the
+// shared mutex on each insert. The map must stop growing at `localStoreMaxKeys` and fold
+// everything beyond it into ONE shared, fail-CLOSED bucket: the first overflow key consumes the
+// shared budget, the next is denied. The `strconv` keys mirror the anon-IP keys the fallback sees.
 func TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket(t *testing.T) {
 	fakeNow := time.Unix(1_700_000_000, 0)
 	b := ratelimit.New(nil, 1, time.Minute,

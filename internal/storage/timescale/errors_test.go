@@ -55,12 +55,9 @@ func TestIsInfraError(t *testing.T) {
 	}
 }
 
-// TestIsPermanentDataError_sorobanEventsValidation pins that a row
-// InsertSorobanEventsBatch's own pre-SQL shape check rejects is
-// classified PERMANENT. The check is deterministic, so an unclassified
-// error there made the raw-event AsyncSink re-send the identical batch
-// forever and stall the landing zone behind one malformed row, instead of
-// bisecting to that row and counting it lost.
+// TestIsPermanentDataError_sorobanEventsValidation pins that a row InsertSorobanEventsBatch's own
+// pre-SQL shape check rejects is classified PERMANENT. The check is deterministic, so otherwise
+// the AsyncSink would re-send the identical batch forever instead of bisecting to the bad row.
 func TestIsPermanentDataError_sorobanEventsValidation(t *testing.T) {
 	valid := func() domain.SorobanEventRow {
 		return domain.SorobanEventRow{

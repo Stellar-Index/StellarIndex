@@ -204,12 +204,9 @@ func TestAddContractCallDecoder_appendsAndPreservesOrder(t *testing.T) {
 	}
 }
 
-// extractInvokeContractCalls must produce a nil slot for any
-// InvokeHostFunction op whose host function isn't an InvokeContract.
-// Soroban tx envelopes can also carry CreateContract and
-// UploadContractWasm — these create / upload code rather than calling
-// existing contracts and have no (contract, function, args) tuple to
-// surface, so the dispatcher's downstream consumers must see nil.
+// extractInvokeContractCalls must produce a nil slot for any InvokeHostFunction op whose host
+// function isn't an InvokeContract. CreateContract and UploadContractWasm have no (contract,
+// function, args) tuple to surface, so downstream consumers must see nil.
 
 func TestExtractInvokeContractCalls_uploadContractWasmReturnsNilSlot(t *testing.T) {
 	wasm := []byte{0xAA, 0xBB, 0xCC}

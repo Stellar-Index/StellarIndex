@@ -5,13 +5,11 @@ package chops
 
 import "testing"
 
-// TestClassicMovementsResumeStart_WidenedFromNotSkipped: a
-// prior, narrower run wrote data only at the TOP of a later, WIDER
-// -from range. MaxAccountMovementLedger over the wider range still
-// finds that prior run's tip, but MinAccountMovementLedger proves the
-// wider range's data does NOT start at the new -from — so the resume
-// jump must be refused and the run must start at -from, or the
-// newly-widened earlier region is silently never revisited.
+// TestClassicMovementsResumeStart_WidenedFromNotSkipped: a prior, narrower run wrote data
+// only at the TOP of a later, WIDER -from range. MaxAccountMovementLedger still finds that
+// tip, but MinAccountMovementLedger proves the data does NOT start at the new -from, so the
+// resume jump must be refused and the run start at -from, or the widened earlier region is
+// silently never revisited.
 func TestClassicMovementsResumeStart_WidenedFromNotSkipped(t *testing.T) {
 	const (
 		widenedFrom  = uint32(500_000) // this run's -from, widened below the prior run's start

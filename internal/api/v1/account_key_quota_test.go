@@ -25,12 +25,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// Self-service key-mint quota.
-//
-// POST /v1/account/keys minted on every call with no count check, so
-// one authenticated caller could mint live credentials in a loop until
-// the store filled. These pin the ceiling, its wire shape, and the two
-// boundaries (one under, disabled).
+// Self-service key-mint quota: POST /v1/account/keys must enforce a per-caller ceiling so one
+// authenticated caller cannot mint credentials without bound. These pin the ceiling, its wire
+// shape, and the two boundaries (one under, disabled).
 
 // newAccountQuotaTestServer wires the self-service surface with an
 // explicit per-identifier key quota.
@@ -420,12 +417,8 @@ func TestAccountKeysCreate_ChildInheritsMonthlyQuota(t *testing.T) {
 	}
 }
 
-// TestAccountKeysCreate_UncappedParentMintsUncappedChild is the
-// negative pin the fix must not cross: the ceiling is OPT-IN, so a
-// caller without one must not have one invented for its child. Guards
-// against "default the child to the tier ceiling", which would convert
-// the documented opt-in contract into on-by-default and 429 keys that
-// never had a cap.
+// TestAccountKeysCreate_UncappedParentMintsUncappedChild pins that the ceiling is OPT-IN: a caller
+// without one must not get one invented for its child, or keys that never had a cap would 429.
 func TestAccountKeysCreate_UncappedParentMintsUncappedChild(t *testing.T) {
 	sub := mintChildKeySubject(t, auth.Subject{
 		Identifier: "acct-uncapped",

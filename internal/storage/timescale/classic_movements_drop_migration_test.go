@@ -7,19 +7,13 @@ import (
 	"testing"
 )
 
-// TestMigration0113DropsClassicMovements guards the
-// cleanup: migration 0113 must DROP the dead classic_movements table
-// (superseded by ADR-0048 D2 — the pre-P23 movement archive moved to
-// ClickHouse-native stellar.account_movements, leaving this Postgres
-// hypertable with no live writer or reader) and its .down.sql must
-// RECREATE the full 0105 schema so the drop is reversible.
+// TestMigration0113DropsClassicMovements guards that migration 0113 DROPs the dead
+// classic_movements table (superseded by ADR-0048 D2: the movement archive lives in ClickHouse
+// stellar.account_movements) and that its .down.sql RECREATEs the full 0105 schema so the drop is
+// reversible.
 //
-// This is the fast, no-Docker guard; test/integration/migrations_test.go
-// additionally proves the drop actually executes against real
-// TimescaleDB (assertTableAbsent(..., "classic_movements") after the
-// full up stack). Without the 0113 migration files this test is RED
-// (os.ReadFile below fails on the missing up.sql), so it cannot pass
-// against a tree without that migration.
+// This is the fast, no-Docker guard; test/integration/migrations_test.go proves the drop executes
+// against real TimescaleDB. It is RED on a tree without the 0113 files (ReadFile fails).
 func TestMigration0113DropsClassicMovements(t *testing.T) {
 	root := findRepoRoot(t)
 

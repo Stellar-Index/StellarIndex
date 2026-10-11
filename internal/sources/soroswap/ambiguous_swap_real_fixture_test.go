@@ -11,32 +11,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Golden regression from the completeness projection "false-red" investigation:
-// mainnet ledger 56,779,692, tx a479f1d6…, op_index 0, registered
-// pair CDJDRGUC… (soroswap_pairs: token0=CAS3J7GY…, token1=CDIKURWHYS…). The
-// pair emitted sync (event_index 2) then swap (event_index 3) whose body settled
-// with THREE non-zero amounts:
+// Golden regression: mainnet ledger 56,779,692, tx a479f1d6…, op_index 0, registered pair
+// CDJDRGUC… (soroswap_pairs: token0=CAS3J7GY…, token1=CDIKURWHYS…). The pair emitted sync
+// (event_index 2) then swap (event_index 3) whose body settled with THREE non-zero amounts:
 //
 //	amount_0_in  = 10,000,000
 //	amount_0_out = 8,079,362,527
 //	amount_1_in  = 2,306,549,617
 //	amount_1_out = 0
 //
-// token0 has BOTH an `in` and an `out` leg, so the direction is ambiguous: no
-// single (in,out) cross-token pair describes the trade. An
-// all-four-only ambiguity guard lets this three-leg shape match the
-// `in1 && out0` arm and emit a trade reporting the GROSS amount_1_in /
-// amount_0_out while silently dropping the 10M amount_0_in leg — fabricating a
-// price. That mis-decode is exactly the served gen-0 `trades` row this ledger
-// still carries (base_amount=2306549617, quote_amount=8079362527), which the
-// current re-derive produces ZERO for — the reconcile's `expected=0 served=1`.
+// token0 has BOTH an `in` and an `out` leg, so the direction is ambiguous: no single (in,out)
+// cross-token pair describes the trade. An all-four-only ambiguity guard would let this shape
+// match the `in1 && out0` arm and emit a trade with the GROSS amount_1_in / amount_0_out while
+// silently dropping the amount_0_in leg, fabricating a price. That mis-decode is the stale gen-0
+// `trades` row this ledger still carries (base_amount=2306549617, quote_amount=8079362527).
 //
-// This test pins the CURRENT (correct) behaviour: the completed swap+sync is a
-// recognized no-op (ErrAmbiguousSwapDirection, which wraps ErrNonDirectionalSwap)
-// — zero projected rows, nil error — so the ADR-0033 re-derive counts it
-// expected-zero. The served row is therefore a stale phantom, not a re-derive
-// decode gap; the fix is an operator-side targeted re-projection to purge it,
-// NOT a decoder change and NOT masking the reconcile.
+// The test pins the correct behaviour: the completed swap+sync is a recognized no-op
+// (ErrAmbiguousSwapDirection, which wraps ErrNonDirectionalSwap), zero projected rows and nil
+// error, so the ADR-0033 re-derive counts it expected-zero. The served row is a stale phantom to
+// purge by targeted re-projection, not a decoder change and not something to mask in the
+// reconcile.
 //
 // Bytes are verbatim from the r1 ClickHouse lake (stellar.contract_events,
 // tx_hash=a479f1d6…, ledger_seq=56779692).
@@ -73,11 +67,9 @@ func ambEvent(t *testing.T, topic1, data string, eventIndex int) events.Event {
 	}
 }
 
-// TestAmbiguousSwap_RealLedger56779692_RecognizedNoOp proves the current decoder
-// refuses the real three-non-zero-leg swap at ledger 56,779,692 as a recognized
-// no-op, so the projection re-derive counts it expected-zero — establishing that
-// the surviving served `trades` row for this ledger is a stale gen-0 phantom
-// (an older mis-decode), not a re-derive decode gap.
+// TestAmbiguousSwap_RealLedger56779692_RecognizedNoOp proves the decoder refuses the real
+// three-non-zero-leg swap at ledger 56,779,692 as a recognized no-op, so the projection
+// re-derive counts it expected-zero and the served `trades` row is a stale phantom.
 func TestAmbiguousSwap_RealLedger56779692_RecognizedNoOp(t *testing.T) {
 	// First, the WHY: the real swap body decodes to exactly the three
 	// non-zero legs (0_in, 0_out, 1_in) that make the direction ambiguous.

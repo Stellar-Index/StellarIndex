@@ -10,11 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// TestOracleSourceNames_AreKnownSources keeps the oracle subset honest:
-// every name a staleness override may use must also be a source the
-// indexer can actually run — an on-chain source in KnownSources or a
-// poller with its own [external.<name>] section. A name that is
-// neither would accept an override for a source nothing emits.
+// TestOracleSourceNames_AreKnownSources: every name a staleness override may use must be a source
+// the indexer can run (an on-chain source in KnownSources or a poller with its own
+// [external.<name>] section), or an override would be accepted for a source nothing emits.
 func TestOracleSourceNames_AreKnownSources(t *testing.T) {
 	if len(config.OracleSourceNames) == 0 {
 		t.Fatal("OracleSourceNames is empty — this check must not pass vacuously")
@@ -50,21 +48,18 @@ func TestValidateStalenessOverrides_AcceptsPolledOracleSource(t *testing.T) {
 	}
 }
 
-// TestAnsibleOracleStalenessOverrides_ValidAndComplete is the codified-
-// config gate for the one shipped override.
+// TestAnsibleOracleStalenessOverrides_ValidAndComplete is the codified-config gate for the one
+// shipped override.
 //
-// The override lives in the deployed ansible template, which is plain
-// TOML behind jinja control lines. Nothing else parses it before a
-// deploy, so a mis-spelled asset label ("DAI" for "crypto:DAI") or a
-// dropped `reason` would surface as an indexer that refuses to start on
-// r1 — config.Validate rejects both, correctly, but at the worst
-// possible moment. This extracts the stanza the r1 render produces
-// (aggregator on) and puts it through the same loader.
+// The override lives in the ansible template (TOML behind jinja control lines) and nothing else
+// parses it before a deploy, so a mis-spelled asset label ("DAI" for "crypto:DAI") or a dropped
+// `reason` would make the indexer refuse to start (config.Validate rejects both) at the worst
+// moment. This extracts the stanza the r1 render produces (aggregator on) and loads it the same
+// way.
 //
-// It also pins the seeded row itself: reflector-cex / crypto:DAI at
-// 32400s (9h), sized from measured gaps to 7h against the 50-minute
-// source default. Changing the number should be a deliberate edit here
-// too, with the new observation written into `reason`.
+// It also pins the seeded row: reflector-cex / crypto:DAI at 32400s (9h), sized from measured
+// gaps to 7h against the 50-minute source default. Changing it is a deliberate edit here too,
+// with the new observation written into `reason`.
 func TestAnsibleOracleStalenessOverrides_ValidAndComplete(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

@@ -9,12 +9,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
-// TestMount_CreateIdempotencyKey_ReplaysInsteadOfMinting proves that
-// a client that retries POST /v1/dashboard/keys with the same
-// Idempotency-Key header (e.g. after a timed-out response) gets the
-// ORIGINAL key replayed, not a second key minted. Routed through
-// h.Mount so the idempotency middleware wired there is actually
-// exercised, not bypassed by calling h.HandleCreate directly.
+// TestMount_CreateIdempotencyKey_ReplaysInsteadOfMinting proves a retried POST
+// /v1/dashboard/keys with the same Idempotency-Key header gets the ORIGINAL key replayed, not
+// a second key minted. It goes through h.Mount so the wired idempotency middleware is
+// exercised, not bypassed via h.HandleCreate.
 func TestMount_CreateIdempotencyKey_ReplaysInsteadOfMinting(t *testing.T) {
 	h, store, sc := newTestRig(t)
 	mux := http.NewServeMux()

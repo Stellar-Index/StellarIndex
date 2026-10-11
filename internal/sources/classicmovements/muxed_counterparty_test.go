@@ -12,18 +12,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// TestMuxedCounterpartiesResolveToBaseAccount pins Q118: the three
-// MUXED-typed classic counterparties (PaymentOp.Destination,
-// ClawbackOp.From, AccountMergeOp.Destination) must be recorded as the
-// G-strkey of the account that actually holds the balance.
+// TestMuxedCounterpartiesResolveToBaseAccount pins that the three MUXED-typed classic
+// counterparties (PaymentOp.Destination, ClawbackOp.From, AccountMergeOp.Destination) are
+// recorded as the G-strkey of the account that actually holds the balance.
 //
-// A muxed destination's M-strkey is a custodian's routing label, not an
-// on-chain account. Written verbatim it lands in
-// stellar.account_movements' address/counterparty columns, which are
-// read by G-strkey equality (/v1/accounts/{g}/movements) — so the
-// movement is unreachable for every reader AND missing from the
-// underlying account's own feed. The same rule already governs the
-// shared participant derivation and the lake's op-source extraction.
+// An M-strkey is a custodian's routing label, not an on-chain account. Written verbatim into
+// stellar.account_movements' address/counterparty columns, which are read by G-strkey equality
+// (/v1/accounts/{g}/movements), the movement is unreachable and missing from the underlying
+// account's own feed. The shared participant derivation and lake op-source extraction follow
+// the same rule.
 
 // mkMuxedAccount returns the M-strkey, the underlying G-strkey, and the
 // xdr.MuxedAccount for a muxed (SEP-23) account with a memo id.
@@ -153,11 +150,9 @@ func TestMuxedCounterpartiesResolveToBaseAccount(t *testing.T) {
 	})
 }
 
-// TestMuxedDestinationCarriedInAttributes pins that baseAccountAddress
-// resolves ToAddress to the base G for lookup, but that drops the M-strkey
-// an exchange actually addressed the deposit to, and /v1/accounts/{M…}
-// has no way to attribute the row back to that sub-account. The receiver
-// side row must carry the M-strkey in Attributes["destination_muxed"].
+// TestMuxedDestinationCarriedInAttributes pins that resolving ToAddress to the base G must not
+// drop the M-strkey the deposit was addressed to, or /v1/accounts/{M…} cannot attribute the row
+// to that sub-account. The receiver-side row carries it in Attributes["destination_muxed"].
 func TestMuxedDestinationCarriedInAttributes(t *testing.T) {
 	source, _ := mkAccount(t, 0xa0)
 	usdc := mkAlphanum4Asset(t, "USDC", 0xa1)

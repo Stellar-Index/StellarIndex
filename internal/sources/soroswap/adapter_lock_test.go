@@ -11,25 +11,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestDecode_PanicInTheCriticalSectionReleasesTheLock is the RV2 H1
-// regression.
+// TestDecode_PanicInTheCriticalSectionReleasesTheLock: the dispatcher recovers from a decoder
+// panic, skips that input and carries on (internal/dispatcher/panic_guard.go). A mutex held
+// across the panicking statement then never unlocks, the NEXT event's Matches blocks on RLock and
+// the dispatch goroutine deadlocks with /metrics still answering and the cursor frozen, so
+// systemd sees nothing to restart. A bare Unlock after `d.buf.absorb(...)` is that shape.
 //
-// The dispatcher does not crash on a decoder panic any more: it
-// RECOVERS, counts it, skips that one input and carries on
-// (internal/dispatcher/panic_guard.go). That contract turns a
-// mutex held across the panicking statement into something worse than
-// the original crash — the lock is never released, the NEXT event's
-// Matches blocks on RLock, and the dispatch goroutine deadlocks for the
-// life of the process with /metrics still answering, the unit still
-// `active` and the cursor frozen. systemd sees nothing to restart.
-//
-// Holding d.mu across `d.buf.absorb(...)` with a bare Unlock on the
-// line below is exactly that shape. The panic
-// source here (a nil correlation buffer — the one pointer dereferenced
-// inside the critical section) is a stand-in: the property under test
-// is that ANY panic raised while the decoder lock is held still leaves
-// the lock released, because "absorb cannot panic today" is a claim
-// about today's body, not an invariant anyone will re-check.
+// The nil correlation buffer is a stand-in panic source: the property is that ANY panic raised
+// while the decoder lock is held leaves it released, since "absorb cannot panic today" is a claim
+// about today's body, not an invariant.
 func TestDecode_PanicInTheCriticalSectionReleasesTheLock(t *testing.T) {
 	pair := makeContractStrkey(t, 0x20)
 	tok0, _ := canonical.NewSorobanAsset(makeContractStrkey(t, 0x10))

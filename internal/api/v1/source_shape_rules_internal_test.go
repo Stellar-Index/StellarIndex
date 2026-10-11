@@ -407,11 +407,10 @@ func auditStreamCallSites(t *testing.T, path string) int {
 // This is the assertion that fails if the drain is ever "simplified"
 // into an http.Server.BaseContext derived from the process root
 
-// checkSSEProducerGoroutinesRecover: every goroutine this package spawns
-// registers a recover(). An unrecovered panic in any goroutine terminates the
-// process, and middleware.Recoverer wraps only the handler goroutine. The
-// spawned set is derived from the source, and the named producers are pinned
-// so a drifted scan cannot pass.
+// checkSSEProducerGoroutinesRecover: every goroutine this package spawns registers a recover().
+// An unrecovered panic in any goroutine terminates the process, and middleware.Recoverer wraps
+// only the handler goroutine. The spawned set is derived from the source, and the named producers
+// are pinned so a drifted scan cannot pass.
 func checkSSEProducerGoroutinesRecover(t *testing.T) {
 	fset := token.NewFileSet()
 	entries, err := os.ReadDir(".")
@@ -512,13 +511,11 @@ func checkSSEProducerGoroutinesRecover(t *testing.T) {
 	}
 }
 
-// blockRegistersRecover reports whether body registers panic recovery via a
-// top-level deferred statement: a func literal that calls recover() directly,
-// a deferred call to the shared (*Server).recoverStreamProducer helper, or a
-// deferred call to worker.Recover — all three ARE the deferred function, so
-// recover() still fires in the panicking goroutine. All three are accepted so
-// the guard survives whichever extraction a given call site uses without
-// weakening what it asserts: the goroutine must register SOME recovery.
+// blockRegistersRecover reports whether body registers panic recovery via a top-level deferred
+// statement: a func literal calling recover() directly, or a deferred call to
+// (*Server).recoverStreamProducer or worker.Recover. All three ARE the deferred function, so
+// recover() still fires in the panicking goroutine; accepting all keeps the guard stable across
+// extractions while still requiring SOME recovery.
 func blockRegistersRecover(body *ast.BlockStmt) bool {
 	if body == nil {
 		return false

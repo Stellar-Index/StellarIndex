@@ -26,14 +26,11 @@ func gaugeValue(t *testing.T, body, metric string) string {
 	return ""
 }
 
-// TestCap67Progress_AccumulatesAcrossWindowsAndTicks pins that the
-// cap67-movements watermark had no metric publisher at all, so a wedged
-// -follow daemon (holding the watermark, and every downstream /movements
-// read behind it, at a fixed ledger) looked identical to a healthy one.
-// record is called once per derive window (potentially many per catch-up,
-// and once per -follow tick over the daemon's life) — total must be the
-// running SUM across every call, not the last window's own count, or a
-// long -follow run would report only its final tick's row count.
+// TestCap67Progress_AccumulatesAcrossWindowsAndTicks pins the cap67-movements progress metric. A
+// wedged -follow daemon holds the watermark (and every downstream /movements read) at a fixed
+// ledger, so it needs a heartbeat to look different from a healthy one. record is called once per
+// derive window and once per -follow tick, so total must be the running SUM across calls, not the
+// last window's count.
 func TestCap67Progress_AccumulatesAcrossWindowsAndTicks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ops_job_ch_cap67_movements.prom")
 

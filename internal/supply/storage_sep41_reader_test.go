@@ -110,11 +110,9 @@ func TestStorageSEP41SupplyReader_HappyPath(t *testing.T) {
 	}
 }
 
-// TestStorageSEP41SupplyReader_MinLedgerPropagates pins the
-// success path: a non-zero MinSEP41ComponentLedger from storage must reach
-// SEP41SupplyComponents.MinComponentLedger unchanged. Every other test in
-// this file leaves minLedger at its zero value (gate-skip), so none of
-// them can catch a reader that drops the field on the floor.
+// TestStorageSEP41SupplyReader_MinLedgerPropagates pins that a non-zero MinSEP41ComponentLedger
+// from storage reaches SEP41SupplyComponents.MinComponentLedger unchanged. Every other test here
+// leaves minLedger at zero (gate-skip), so none would catch a reader dropping the field.
 func TestStorageSEP41SupplyReader_MinLedgerPropagates(t *testing.T) {
 	store := &fakeSEP41Store{
 		totals: SEP41KindTotals{
@@ -192,11 +190,9 @@ func TestStorageSEP41SupplyReader_PropagatesTotalsError(t *testing.T) {
 	}
 }
 
-// TestStorageSEP41SupplyReader_LockedSetSummed — operator-
-// configured locked accounts and contracts contribute to the
-// per-component sums. Each holder's balance is looked up by
-// (holder, contract_id) — because for SEP-41 contracts the
-// asset_key IS the contract_id per supply.AssetKey.
+// TestStorageSEP41SupplyReader_LockedSetSummed pins that operator-configured locked accounts and
+// contracts contribute to the per-component sums. Balances are looked up by (holder, contract_id)
+// because for SEP-41 contracts the asset_key IS the contract_id per supply.AssetKey.
 func TestStorageSEP41SupplyReader_LockedSetSummed(t *testing.T) {
 	store := &fakeSEP41Store{
 		totals: SEP41KindTotals{
@@ -259,12 +255,9 @@ func TestAssetBoundSEP41Computer_HappyPath(t *testing.T) {
 	if snap.TotalSupply.Int64() != 1_000 {
 		t.Errorf("TotalSupply=%s want 1000", snap.TotalSupply)
 	}
-	// The reader hardcodes AdminBalance=0 and Policy{} carries no
-	// locked-set, so circulating == total and NOTHING was excluded —
-	// stamping "admin_exclusion" would tell every consumer the issuer's
-	// own holdings had been netted out of circulating supply.
-	// BasisSEP41TotalOnly is the honest reading, mirroring
-	// BasisXLMTotalOnly.
+	// The reader hardcodes AdminBalance=0 and Policy{} carries no locked-set, so nothing was
+	// excluded; "admin_exclusion" would falsely claim issuer holdings were netted out.
+	// BasisSEP41TotalOnly is the honest reading, mirroring BasisXLMTotalOnly.
 	if snap.Basis != BasisSEP41TotalOnly {
 		t.Errorf("Basis=%s want %s", snap.Basis, BasisSEP41TotalOnly)
 	}

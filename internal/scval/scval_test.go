@@ -65,12 +65,8 @@ func TestGolden_symbolBytes(t *testing.T) {
 		sym  string
 		want string // base64
 	}{
-		// SCVal::Symbol("REFLECTOR"):
-		//   disc=15 (Symbol, u32=0x0000000f)
-		//   len=9   (u32=0x00000009)
-		//   bytes  "REFLECTOR" padded to 4-byte boundary (3 pad bytes)
-		//   → 20 bytes raw = base64 "AAAADwAAAAlSRUZMRUNUT1IAAAA="
-		// "REFLECTOR" — 9 bytes → XDR pads to 12 → 4-byte disc + 4-byte len + 12 bytes = 20 bytes raw.
+		// SCVal::Symbol("REFLECTOR"): 4-byte disc (15), 4-byte len (9), then the 9 bytes
+		// padded to 12 for XDR's 4-byte alignment: 20 bytes raw.
 		{"REFLECTOR", "AAAADwAAAAlSRUZMRUNUT1IAAAA="},
 		// "update" — 6 bytes → XDR pads to 8 → 4+4+8 = 16 bytes raw.
 		{"update", "AAAADwAAAAZ1cGRhdGUAAA=="},
@@ -223,11 +219,9 @@ func TestAsAddressStrkey_claimableBalance(t *testing.T) {
 	}
 }
 
-// TestAsAddressStrkey_liquidityPool pins the CAP-67 / P23 LP
-// strkey encoding (L-…). Every SEP-41 transfer
-// targeting an LP destination otherwise trips "unknown ScAddress type 4"
-// (LP is type 4 in the SDK enum despite the SEP-41 / strkey doc
-// ordering).
+// TestAsAddressStrkey_liquidityPool pins the CAP-67 / P23 LP strkey encoding (L-…). Without
+// it, every SEP-41 transfer to an LP destination trips "unknown ScAddress type 4" (LP is type
+// 4 in the SDK enum despite the SEP-41 / strkey doc ordering).
 func TestAsAddressStrkey_liquidityPool(t *testing.T) {
 	var lp xdr.PoolId
 	scAddr := xdr.ScAddress{
@@ -449,11 +443,9 @@ func TestAsBool_roundtrip(t *testing.T) {
 	}
 }
 
-// TestAsBool_zeroValueDoesNotPanic pins the fix: ScValTypeScvBool
-// is 0, so a zero-value xdr.ScVal reports Type==ScvBool while carrying a nil
-// B pointer. Dereferencing that nil would panic the decode
-// goroutine on a malformed/zero contract value; AsBool must return
-// ErrScValType instead.
+// TestAsBool_zeroValueDoesNotPanic: ScValTypeScvBool is 0, so a zero-value xdr.ScVal reports
+// Type==ScvBool with a nil B pointer. Dereferencing it would panic the decode goroutine on a
+// malformed contract value; AsBool must return ErrScValType instead.
 func TestAsBool_zeroValueDoesNotPanic(t *testing.T) {
 	_, err := AsBool(xdr.ScVal{})
 	if !errors.Is(err, ErrScValType) {

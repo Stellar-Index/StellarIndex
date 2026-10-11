@@ -5,12 +5,8 @@ import (
 	"testing"
 )
 
-// TestMaskEmail is the single contract test for the redactor. It moved
-// here from dashboardauth when the second, untested copy in
-// internal/api/v1 was deleted — that copy's doc comment
-// claimed "the contract is pinned by a test in each package", which was
-// not true, so a drift that started leaking addresses would have passed
-// CI.
+// TestMaskEmail is the single contract test for the redactor, so a drift that started leaking
+// addresses fails CI in the one place it is implemented.
 func TestMaskEmail(t *testing.T) {
 	cases := map[string]string{
 		"alice@example.com": "a***@example.com",

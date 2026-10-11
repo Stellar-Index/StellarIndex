@@ -13,22 +13,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Regression suite for /v1/vwap and /v1/twap
-// served a directory-scam-flagged issuer's aggregated price at 200,
-// while /v1/price, /v1/price/tip, /v1/price/batch, the SEP-40 oracle
-// and the asset headline all withheld it.
-//
-// The gap was DOCUMENTED AS FIXED. pricingguard/scam.go's package doc
-// claimed the gate sat "at the price-reader seam so every reader-backed
-// surface (/v1/price, /v1/price/batch, /v1/twap, /v1/vwap, …) is
-// covered by ONE gate", and a merged PR body repeated it verbatim.
-// Neither endpoint goes through the price reader at all — both compute
-// from raw trades via their own fetch — so the claim was never true and
-// no test contradicted it.
-//
-// Reproduced live without the gate against a flagged issuer:
-// /v1/price → 404 price-withheld, /v1/price/tip → 404 price-withheld,
-// but /v1/vwap → 200 with a price and /v1/twap → 200 with a price.
+// Regression suite: /v1/vwap and /v1/twap must withhold a directory-scam-flagged issuer's
+// aggregated price, as /v1/price, /v1/price/tip, /v1/price/batch, the SEP-40 oracle and the
+// asset headline do. Neither endpoint goes through the price reader (both compute from raw
+// trades via their own fetch), so the pricingguard gate at the price-reader seam does not
+// cover them; without their own gate a flagged issuer's /v1/price is a 404 price-withheld
+// while /v1/vwap and /v1/twap return 200 with a price.
 
 // scamGateFor withholds exactly the listed bases and records the surface
 // label each call was made with, so a test can assert the gate was

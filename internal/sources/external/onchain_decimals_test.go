@@ -6,22 +6,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// TestOnChainSourcesDeclareSevenDecimals pins the amount scale for every
-// on-chain (SubclassDEX) source.
+// TestOnChainSourcesDeclareSevenDecimals pins the amount scale for every on-chain
+// (SubclassDEX) source.
 //
-// Stellar classic amounts are 7-decimal stroops. Metadata.AmountScaleDecimals()
-// falls back to 8 when AmountDecimals is unset, so a DEX entry that omits it
-// silently reports the CEX scale — and every consumer that divides by 10^dec
-// then UNDERSTATES on-chain volume by 10x. That is not cosmetic: the value flows
-// into approxUSDVolume (orchestrator/confidence.go), which drives the confidence
-// liquidity factor, which is zero below a $1,000 bucket floor. A 10x
-// understatement therefore pushes genuinely-liquid on-chain buckets under that
-// floor, zeroing their confidence — and a zeroed confidence collapses the
-// Phase-2 3-signal freeze AND down to the z-score alone.
-//
-// framework.go's own comment on AmountDecimals warns "Read this instead of
-// assuming 1e8" — this test makes that warning enforceable for the
-// sources where it matters, including any DEX source added later.
+// Stellar classic amounts are 7-decimal stroops, but Metadata.AmountScaleDecimals() falls back
+// to 8 when AmountDecimals is unset, so a DEX entry that omits it silently reports the CEX scale
+// and understates on-chain volume 10x. That flows into approxUSDVolume
+// (orchestrator/confidence.go), whose liquidity factor is zero below a $1,000 bucket floor, so
+// genuinely liquid buckets lose their confidence and the 3-signal freeze AND collapses to the
+// z-score alone. This makes framework.go's "Read this instead of assuming 1e8" warning
+// enforceable for every DEX source, including ones added later.
 func TestOnChainSourcesDeclareSevenDecimals(t *testing.T) {
 	const stellarStroopDecimals = 7
 

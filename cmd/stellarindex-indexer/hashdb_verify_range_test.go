@@ -2,12 +2,10 @@ package main
 
 import "testing"
 
-// TestVerifyHashDBRangeFlags_Validate pins the -verify-hashdb-from/-to
-// contract. Neither set leaves full ingest unchanged; a range far behind the
-// live tip must pass through untouched (the CLI path is decoupled from
-// hashDBVerifySweep's trailing window); a half-set or inverted range must
-// fail loudly with requested=true so the caller surfaces the error instead of
-// silently ingesting.
+// TestVerifyHashDBRangeFlags_Validate pins the -verify-hashdb-from/-to contract. Neither set
+// leaves full ingest unchanged; a range far behind the live tip passes through untouched (the
+// CLI path is decoupled from hashDBVerifySweep's trailing window); a half-set or inverted range
+// fails loudly with requested=true so the caller surfaces the error instead of silently ingesting.
 func TestVerifyHashDBRangeFlags_Validate(t *testing.T) {
 	cases := []struct {
 		name          string

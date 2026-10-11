@@ -10,14 +10,11 @@ import (
 	"testing"
 )
 
-// TestChHoldersRollupWiresHeartbeat proves the heartbeat gap is closed:
-// without it the 30-minute timer's only signal is a systemd unit-failed state
-// on an outright crash, so a cycle that falls behind without erroring is
-// invisible. -write against an unreachable ClickHouse address fails
-// (mirrors TestChHoldersRollupDryRunTouchesNoClickHouse), but the run must
-// still publish the shared ops_job textfile with last_exit_ok=0 — the same
-// last-success/failure signal ch-backfill and usd-volume-restamp already
-// expose to the generic ops_job alert tree.
+// TestChHoldersRollupWiresHeartbeat pins that the timer publishes a heartbeat: without it the
+// only signal is a systemd unit-failed state on a crash, so a cycle that falls behind without
+// erroring is invisible. -write against an unreachable ClickHouse fails, but the run must
+// still publish the shared ops_job textfile with last_exit_ok=0, the same signal ch-backfill
+// and usd-volume-restamp expose to the generic ops_job alert tree.
 func TestChHoldersRollupWiresHeartbeat(t *testing.T) {
 	unreachable := "127.0.0.1:1"
 	lockPath := filepath.Join(t.TempDir(), "ch-holders-rollup.lock")

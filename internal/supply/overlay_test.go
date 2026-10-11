@@ -181,12 +181,9 @@ func TestOverlay_RejectsNegativeDeclaration(t *testing.T) {
 	}
 }
 
-// TestOverlay_RejectsZeroOrBelowCirculating is the M14 guard against
-// issuer-poisoning: a sloppy/hostile issuer declaring max_supply=0 (or
-// any max below the asset's known circulating supply) in stellar.toml
-// must NOT be applied — publishing max < circulating is a nonsensical,
-// self-contradictory number (FDV below realised supply). Treat it as
-// unset, exactly like a missing declaration.
+// TestOverlay_RejectsZeroOrBelowCirculating guards against issuer poisoning: a stellar.toml
+// max_supply of 0, or below known circulating supply, is not applied (FDV would sit below
+// realised supply). It is treated as unset, like a missing declaration.
 func TestOverlay_RejectsZeroOrBelowCirculating(t *testing.T) {
 	usdc, _ := canonical.NewClassicAsset("USDC", validIssuer)
 
@@ -275,11 +272,9 @@ func TestOverlay_RejectsZeroOrBelowCirculating(t *testing.T) {
 	})
 }
 
-// TestOverlay_RejectsBelowTotalDeclaration is the floor guard.
-// Circulating is total minus the issuer/admin/locked exclusions, so a
-// CIRCULATING floor would let an issuer declaring a max that sits
-// BETWEEN circulating and total through while still asserting the
-// impossible max_supply < total_supply. The floor must be total.
+// TestOverlay_RejectsBelowTotalDeclaration pins the floor at total supply. Circulating is
+// total minus exclusions, so a circulating floor would admit a max between the two and assert
+// the impossible max_supply < total_supply.
 func TestOverlay_RejectsBelowTotalDeclaration(t *testing.T) {
 	usdc, _ := canonical.NewClassicAsset("USDC", validIssuer)
 	// 1000 minted, 400 of it sitting on the issuer → circulating 600.
@@ -379,10 +374,8 @@ func TestOverlay_NilResolverIsNoop(t *testing.T) {
 	}
 }
 
-// TestOverlay_BasisOverrideKeptBesideDeclaredMax — when an asset
-// already has Basis=Override (e.g. operator extended the locked-set
-// but didn't supply a max_supply), applying the SEP-1 max labels the
-// max as self-declared without erasing the operator-curated
+// TestOverlay_BasisOverrideKeptBesideDeclaredMax pins that applying a SEP-1 max to an asset
+// with Basis=Override labels the max self-declared without erasing the operator-curated
 // circulating policy.
 func TestOverlay_BasisOverrideKeptBesideDeclaredMax(t *testing.T) {
 	resolver := &stubMetadataResolver{raw: "1000000", ok: true}

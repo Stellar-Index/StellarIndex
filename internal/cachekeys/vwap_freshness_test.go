@@ -7,16 +7,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// TestVWAPTTL_BoundedBySilenceGrace contract: a published
-// VWAP may not outlive its publisher by more than the silence grace.
+// TestVWAPTTL_BoundedBySilenceGrace contract: a published VWAP may not outlive its publisher by
+// more than the silence grace.
 //
-// The aggregator recomputes and re-writes EVERY configured (pair,
-// window) on every tick, so the window is an aggregation span, not a
-// freshness claim. Keying the TTL to the window let `vwap:<pair>:86400`
-// survive 24 h after the aggregator stopped, and `/v1/price?window=86400`
-// serves that key with `observed_at` stamped at request time and no
-// stale flag — i.e. a day-old price asserted as current, undetectable
-// from the payload.
+// The aggregator re-writes EVERY configured (pair, window) on every tick, so the window is an
+// aggregation span, not a freshness claim. A TTL keyed to the window would let `vwap:<pair>:86400`
+// survive 24 h after the aggregator stopped, and /v1/price?window=86400 would serve it with
+// `observed_at` stamped at request time and no stale flag: a day-old price asserted as current.
 func TestVWAPTTL_BoundedBySilenceGrace(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -50,11 +47,9 @@ func TestVWAPTTL_BoundedBySilenceGrace(t *testing.T) {
 	}
 }
 
-// TestVWAPTTLWithMaxAge_DerivesFromCaller: VWAPMaxAge's
-// "10 missed ticks" relationship to the tick interval existed only in
-// prose. A caller whose interval differs from the package default must
-// be able to pass its OWN derived grace rather than being stuck with
-// VWAPMaxAge regardless of its cadence.
+// TestVWAPTTLWithMaxAge_DerivesFromCaller: a caller whose tick interval differs from the package
+// default must be able to pass its OWN derived grace rather than being stuck with VWAPMaxAge
+// ("10 missed ticks") regardless of its cadence.
 func TestVWAPTTLWithMaxAge_DerivesFromCaller(t *testing.T) {
 	raisedGrace := 10 * time.Minute // e.g. a 60s interval: 10 missed ticks = 10m
 	for _, tc := range []struct {
@@ -83,11 +78,9 @@ func TestVWAPTTLWithMaxAge_DerivesFromCaller(t *testing.T) {
 	}
 }
 
-// TestConfidenceTTL_TracksVWAPTTLUnderTheBound — the confidence score is
-// an attribute of the VWAP it scored, so it must expire with it. Before
-// the bound both were "the window" and agreed by accident; they have to
-// agree by construction, or a 24 h-lived score outlives the value and
-// gets attached to whatever the next publish writes.
+// TestConfidenceTTL_TracksVWAPTTLUnderTheBound: the confidence score is an attribute of the VWAP
+// it scored, so it must expire with it by construction, or a 24 h-lived score outlives the value
+// and gets attached to whatever the next publish writes.
 func TestConfidenceTTL_TracksVWAPTTLUnderTheBound(t *testing.T) {
 	for _, window := range []time.Duration{
 		time.Minute, 5 * time.Minute, time.Hour, 24 * time.Hour,

@@ -156,13 +156,11 @@ func TestPollOnce_BaseMismatch_Rejected(t *testing.T) {
 	}
 }
 
-// TestPollOnce_MissingTimestamp_Rejected pins undated boards: a response with
-// `timestamp: 0` carries rates of UNKNOWN age, and substituting
-// time.Now() would relabel a possibly-stale (or replayed)
-// board as freshly observed. This connector is IncludeInVWAP, so those
-// rows would have out-ranked genuinely older quotes in every freshness
-// gate downstream. Refuse instead, same error class as the base
-// mismatch: emit nothing rather than a row we cannot honestly date.
+// TestPollOnce_MissingTimestamp_Rejected pins undated boards: a response with `timestamp: 0`
+// carries rates of UNKNOWN age, and substituting time.Now() would relabel a possibly stale or
+// replayed board as fresh. This connector is IncludeInVWAP, so such rows would out-rank genuinely
+// older quotes in every downstream freshness gate. Refuse, same error class as the base mismatch:
+// emit nothing rather than a row we cannot honestly date.
 func TestPollOnce_MissingTimestamp_Rejected(t *testing.T) {
 	srv := newTestServer(t, `{
       "success": true, "timestamp": 0, "base": "USD", "date": "2026-04-24",

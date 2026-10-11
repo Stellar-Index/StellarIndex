@@ -12,30 +12,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Real-bytes golden tests. Both fixtures are UNMODIFIED
-// InvokeHostFunction operation bodies (base64 XDR) captured from the
-// certified ClickHouse lake (stellar.operations.body_xdr) on r1:
+// Real-bytes golden tests. Both fixtures are UNMODIFIED InvokeHostFunction operation bodies
+// (base64 XDR) captured from the certified ClickHouse lake (stellar.operations.body_xdr):
 //
-//   - router_toplevel_op_ledger62000296.b64
-//     tx 642bb2de2703c289f945b493714de0603170c3e5f48d1ef8c1aca96587fb98a6
-//     op 0, ledger 62,000,296 (closed 2026-04-06 21:02:24 UTC).
-//     A DIRECT router call: the op's own InvokeContract target is the
-//     router. Auth tree = router root + one nested token transfer.
+//   - router_toplevel_op_ledger62000296.b64: op 0 of ledger 62,000,296. A DIRECT router call
+//     whose own InvokeContract target is the router. Auth tree = router root + one nested
+//     token transfer.
 //
-//   - router_subinvocation_op_ledger62029020.b64
-//     tx da2ffe5a8651e2289408631a180cc8f6fe26247c6558bfc80dbf6d9527849cc7
-//     op 0, ledger 62,029,020 (closed 2026-04-08 18:35:46 UTC).
-//     The headline shape: an AGGREGATOR (`exec` on CD45PQFH…JRZH)
-//     wraps an adapter (`swap_exact_tokens_for_tokens` on
-//     CAYP3UWL…TXTO) which wraps the ROUTER two levels deep. The
-//     top-level-only walk never sees this call — the 8,729×
-//     undercount class.
+//   - router_subinvocation_op_ledger62029020.b64: op 0 of ledger 62,029,020. The headline
+//     shape: an AGGREGATOR (`exec` on CD45PQFH…JRZH) wraps an adapter
+//     (`swap_exact_tokens_for_tokens` on CAYP3UWL…TXTO) which wraps the ROUTER two levels
+//     deep. A top-level-only walk never sees this call and undercounts massively.
 //
-// The tests drive the exact production path: dispatcher call-tree
-// extraction (ExtractContractCallTree — byte-identical to what
-// ProcessLedger feeds ContractCallDecoders) → Decoder.Matches →
-// Decoder.Decode, then assert the decoded RouterSwap field-by-field
-// including the new CallPath / CallDepth / CallKind columns.
+// The tests drive the production path: ExtractContractCallTree (byte-identical to what
+// ProcessLedger feeds ContractCallDecoders) → Decoder.Matches → Decoder.Decode, then assert
+// the decoded RouterSwap field-by-field including CallPath / CallDepth / CallKind.
 
 // loadRealOp reads a testdata base64 op body and returns the op.
 func loadRealOp(t *testing.T, name string) sdkxdr.Operation {
@@ -51,11 +42,9 @@ func loadRealOp(t *testing.T, name string) sdkxdr.Operation {
 	return sdkxdr.Operation{Body: body}
 }
 
-// decodeRouterCallsFromOp runs the production seam over one op:
-// extract the auth-tree call list, route through Matches, decode each
-// matching call with a ContractCallContext carrying the tree position
-// (exactly as Dispatcher.ProcessLedger and chops.forEachContractCallEvent
-// both do).
+// decodeRouterCallsFromOp runs the production seam over one op: extract the call tree, route
+// through Matches, decode each match with a ContractCallContext carrying the tree position
+// (as Dispatcher.ProcessLedger and chops.forEachContractCallEvent do).
 func decodeRouterCallsFromOp(t *testing.T, op sdkxdr.Operation, ledger uint32, txHash string) []RouterSwap {
 	t.Helper()
 	dec := NewDecoder(MainnetRouter)
@@ -124,11 +113,9 @@ func TestRealBytes_TopLevelRouterCall(t *testing.T) {
 	if got, want := s.AmountOut.String(), "95014502"; got != want {
 		t.Errorf("AmountOut = %q, want %q (amount_out_min lower bound)", got, want)
 	}
-	// This real call carries a garbage-far-future deadline (year
-	// 58233) — the class the sink's pgTimestamptzRepresentable guard
-	// exists for. It IS representable in Go time; assert the decode
-	// preserved it rather than clamping (clamping is the SINK's job,
-	// NULL at insert, and only for values outside the PG domain).
+	// This call carries a far-future deadline (year 58233), the class the sink's
+	// pgTimestamptzRepresentable guard exists for. It is representable in Go time, so the
+	// decode must preserve it; clamping (NULL) is the SINK's job for out-of-PG-domain values.
 	if s.DeadlineTs.Year() != 58233 {
 		t.Errorf("DeadlineTs year = %d, want 58233 (garbage sentinel preserved at decode layer)", s.DeadlineTs.Year())
 	}
@@ -209,11 +196,9 @@ func TestRealBytes_SubInvocationRouterCall(t *testing.T) {
 	}
 }
 
-// TestRealBytes_CallSigIgnoresTreePosition — the same economic call
-// observed at two different tree positions (a co-signed multi-entry
-// tx surfaces duplicates) must produce IDENTICAL CallSigs so the
-// served PK's ON CONFLICT dedups them. Guards the migration-0056
-// dedup contract against a future "add CallPath to the hash" change.
+// TestRealBytes_CallSigIgnoresTreePosition — the same economic call at two tree positions (a
+// co-signed multi-entry tx surfaces duplicates) must produce IDENTICAL CallSigs so the
+// served PK's ON CONFLICT dedups them. Guards against adding CallPath to the hash.
 func TestRealBytes_CallSigIgnoresTreePosition(t *testing.T) {
 	t.Parallel()
 	op := loadRealOp(t, "router_subinvocation_op_ledger62029020.b64")

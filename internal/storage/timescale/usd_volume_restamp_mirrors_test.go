@@ -16,11 +16,9 @@ import (
 
 // ─── the two mirror tiers' decision rules ───────────────────────────────
 //
-// The scan is pinned by the integration tests (a real hypertable, a real
-// compressed chunk). What is pinned HERE is what each tier DECIDES about
-// a row it scanned: which rows it owns, what it computes for them, and —
-// the part a money column is judged on — which rows it refuses to price
-// at all.
+// The scan is pinned by the integration tests (real hypertable, real compressed chunk). Pinned
+// HERE is what each tier decides about a scanned row: which rows it owns, what it computes, and
+// which rows it refuses to price at all.
 
 // mirrorScan builds a scanned row in the shape the shared SELECT
 // produces, for whichever source the tier under test scans.
@@ -65,11 +63,9 @@ func cexFiatValuerAt(r USDVolumeFXResolver) restampValuer {
 	}
 }
 
-// TestXLMQuoteRestampDecide_ValuesTheXLMLegAndIsLockstepWithTheInsertPath
-// is the mirror tier's central claim: for a DEX trade whose QUOTE leg is
-// XLM, the re-derive writes `quote_amount/1e7 x XLM/USD` — and it writes
-// exactly what the insert path's own function produces for the same row,
-// because it IS that function, handed the mirrored trade.
+// TestXLMQuoteRestampDecide_ValuesTheXLMLegAndIsLockstepWithTheInsertPath pins that for a DEX trade
+// whose QUOTE leg is XLM the re-derive writes `quote_amount/1e7 x XLM/USD`, exactly what the
+// insert path's own function produces, because it IS that function handed the mirrored trade.
 func TestXLMQuoteRestampDecide_ValuesTheXLMLegAndIsLockstepWithTheInsertPath(t *testing.T) {
 	t.Parallel()
 	resolver := stubFXResolver{prices: map[string]string{
@@ -197,11 +193,9 @@ func TestCEXFiatRestampDecide_DeclinedRowsAreReportedNotGuessed(t *testing.T) {
 	}
 }
 
-// TestRestampTierGates_TheSubstanceGate is the tier-3b valuation
-// incident's rule, stated as a test: NO tier here prices a pair whose
-// legs are all counterparty-authored. A token/token row — the ~54M-row
-// population on r1 — is out of scope for every gate, so it can never
-// enter a write set however the scan is widened.
+// TestRestampTierGates_TheSubstanceGate pins that NO tier prices a pair whose legs are all
+// counterparty-authored. A token/token row is out of scope for every gate, so it can never enter
+// a write set however the scan is widened.
 func TestRestampTierGates_TheSubstanceGate(t *testing.T) {
 	t.Parallel()
 	spec, err := NewUSDVolumeQuoteSpec([]string{usdcAssetID}, nil)

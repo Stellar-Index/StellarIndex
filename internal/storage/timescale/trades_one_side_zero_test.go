@@ -32,11 +32,9 @@ func osztPair(t *testing.T) canonical.Pair {
 // osztHash returns a valid 64-char lowercase-hex tx hash seeded by n.
 func osztHash(n uint32) string { return fmt.Sprintf("%064x", n) }
 
-// TestIsOneSideZeroFill pins the predicate that separates the EXPECTED,
-// benign SDEX rounding artifact (exactly one leg == 0) from every other
-// Validate failure. It is that classifier: a false positive would
-// silence a genuine decoder bug; a false negative would re-fire the spurious
-// insert-error alert on an ordinary one-side-zero fill.
+// TestIsOneSideZeroFill pins the predicate separating the benign SDEX rounding artifact
+// (exactly one leg == 0) from every other Validate failure: a false positive would silence a
+// real decoder bug, a false negative would re-fire the spurious insert-error alert.
 func TestIsOneSideZeroFill(t *testing.T) {
 	t.Parallel()
 	pair := osztPair(t)
@@ -64,16 +62,10 @@ func TestIsOneSideZeroFill(t *testing.T) {
 	}
 }
 
-// TestFilterStorableTrades proves the batch pre-filter that keeps one bad
-// row from sinking the whole all-or-nothing INSERT:
-//
-//   - valid rows pass through, order preserved;
-//   - a one-side-zero fill passes Validate and is ADMITTED (the served tier
-//     stores it unpriceable) and counted on TradesZeroLegAdmittedTotal; it
-//     must NOT bump SourceInsertErrorsTotal (the counter behind
-//     stellarindex_source_insert_errors_total, the spurious alert);
-//   - any OTHER Validate failure (here: a malformed tx_hash) is dropped AND
-//     counted loudly, exactly as the single-row InsertTrade path surfaces it.
+// TestFilterStorableTrades proves the batch pre-filter that keeps one bad row from sinking the
+// all-or-nothing INSERT. Valid rows pass in order; a one-side-zero fill is admitted (stored
+// unpriceable) and counted on TradesZeroLegAdmittedTotal, not SourceInsertErrorsTotal; any
+// other Validate failure is dropped and counted loudly, as the single-row InsertTrade does.
 func TestFilterStorableTrades(t *testing.T) {
 	pair := osztPair(t)
 	ts := time.Now().UTC().Add(-time.Hour)

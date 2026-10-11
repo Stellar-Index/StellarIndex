@@ -692,12 +692,8 @@ func TestValidateWebhookURL_PortAndLength(t *testing.T) {
 	}
 }
 
-// TestHandleCreate_DuplicateURLConflicts pins the UNIQUE
-// (account_id, url): a second registration of the same destination is a
-// 409, not a second row fanning every event out to it again.
-// TestHandleCreate_DuplicateURLConflicts pins the UNIQUE
-// (account_id, url): a second registration of the same destination is a
-// 409, not a second row fanning every event out to it again.
+// TestHandleCreate_DuplicateURLConflicts pins the UNIQUE (account_id, url): a second registration
+// of the same destination is a 409, not a second row fanning every event out to it again.
 func TestHandleCreate_DuplicateURLConflicts(t *testing.T) {
 	h, store, sc := newTestRig(t)
 	body := createBody("ops", "https://hooks.example/dup", platform.WebhookEventIncidentSEV1)

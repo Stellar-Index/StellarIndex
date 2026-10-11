@@ -12,17 +12,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// TestTopic0Predicate_MatchesBothTopicEncodings is the fast default-suite
-// guard for the lake half of the string-topic prefilter (the executing proof against a real
-// ClickHouse is
+// TestTopic0Predicate_MatchesBothTopicEncodings is the fast guard for the lake half of the
+// string-topic prefilter (the executing proof against a real ClickHouse is
 // test/integration/clickhouse_reads_test.go).
 //
-// extract.go fills topic_0_sym from Topics[0].GetSym() — Symbol only — so the
-// column is EMPTY for an ScvString topic[0]. A prefilter of
-// `topic_0_sym IN (…)` alone therefore matched ZERO rows for phoenix's
-// ("create","liquidity_pool") announcement, and every consumer keyed on
-// creationSym (seed-protocol-contracts, the -ch gatedPrefilter walk) walked a
-// lake full of those events and admitted nothing.
+// extract.go fills topic_0_sym from Topics[0].GetSym() only, so the column is EMPTY for an
+// ScvString topic[0]. A prefilter of `topic_0_sym IN (…)` alone matches zero rows for
+// phoenix's ("create","liquidity_pool") announcement, so creationSym consumers admit nothing.
 func TestTopic0Predicate_MatchesBothTopicEncodings(t *testing.T) {
 	t.Parallel()
 	pred := topic0Predicate([]string{"create"})

@@ -14,20 +14,11 @@ import (
 // was written.
 const clickhouseGoroutineFloor = 3
 
-// TestClickhouseGoroutinesRecover is the package-wide guard for this
-// package's detached goroutines: every `go` statement in a
-// non-test file under internal/storage/clickhouse must defer
-// worker.Recover or worker.Report. main.go-scoped guards cannot see these
-// — they are started from ExplorerReader's cache-refresh paths, not from
-// any binary's main().
-//
-// Why it matters here specifically: the refreshed account is
-// attacker-chosen (a fabricated G-address hits refreshAccountState), so
-// these goroutines are reachable with arbitrary input, not just
-// operator-controlled data.
-//
-// Proven red: removing any of the worker.Recover/worker.Report defers this
-// guards fails it by line.
+// TestClickhouseGoroutinesRecover requires every `go` statement in a non-test file of this
+// package to defer worker.Recover or worker.Report. main.go-scoped guards cannot see these:
+// they start from ExplorerReader's cache-refresh paths. The refreshed account is
+// attacker-chosen (a fabricated G-address hits refreshAccountState), so a panic is reachable
+// with arbitrary input.
 func TestClickhouseGoroutinesRecover(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {

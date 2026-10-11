@@ -18,13 +18,11 @@ import (
 // pair.String()) is exercised without noise.
 func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
-// The price-alert evaluator reads the same raw prices_1m closed bucket
-// (LatestClosedVWAP1mForPair) as the two API serving paths — a bare
-// Σ(quote)/Σ(base) CAGG that bypasses the σ-outlier / min-volume / freeze
-// filters. Without the serving-sanity guard, a fat-finger / manipulation
-// print in the served minute would fire a SPURIOUS customer price alert.
-// These tests mirror the pricingguard package cases for the price-alert
-// path: normal→unchanged, fat-finger→last-known-good, thin→pass-through.
+// The price-alert evaluator reads the same raw prices_1m closed bucket (LatestClosedVWAP1mForPair)
+// as the two API serving paths: a bare Σ(quote)/Σ(base) CAGG that bypasses the σ-outlier /
+// min-volume / freeze filters. Without the serving-sanity guard, a fat-finger or manipulation
+// print would fire a SPURIOUS customer alert. These mirror the pricingguard cases for this path:
+// normal→unchanged, fat-finger→last-known-good, thin→pass-through.
 
 // fakeAlertVWAPStore is a priceAlertVWAPStore returning canned rows so the
 // reader (and its guard call) is testable without a database.
@@ -156,11 +154,10 @@ func (f fakeAlertDecimalsLookup) Lookup(assetID string) (int, bool) {
 	return d, ok
 }
 
-// TestPriceAlertReader_NonstandardDecimalsCorrected proves that a
-// confirmed non-7-decimal base leg (the runbook's real CC2RB… incident,
-// decimals()=9 vs USDC's 7, raw ratio 41.32) must be corrected the same
-// way /v1/price's TestPrice_NonstandardDecimals_NormalizesFlaggedBaseLeg
-// corrects it (K = 10^(9-7) = 100 -> 4132), not compared/served raw.
+// TestPriceAlertReader_NonstandardDecimalsCorrected: a confirmed non-7-decimal base leg
+// (decimals()=9 vs USDC's 7, raw ratio 41.32) must be corrected the same way /v1/price's
+// TestPrice_NonstandardDecimals_NormalizesFlaggedBaseLeg does (K = 10^(9-7) = 100 -> 4132), not
+// compared or served raw.
 func TestPriceAlertReader_NonstandardDecimalsCorrected(t *testing.T) {
 	base, quote := alertUSDAssets(t)
 	trailing := make([]timescale.Vwap1mRow, 12)
@@ -181,11 +178,9 @@ func TestPriceAlertReader_NonstandardDecimalsCorrected(t *testing.T) {
 	}
 }
 
-// TestPriceAlertReader_SubEpsilonCorrectedPriceStaysNonZero proves the
-// slice-C03 must_fix: a corrected price below 1e-10 must not truncate to
-// "0". Base decimals 7, quote decimals 18 -> divide by 10^11: raw "1.0"
-// corrects to the exact decimal 0.00000000001 (1e-11), which a fixed
-// FloatString(10) render would truncate to "0".
+// TestPriceAlertReader_SubEpsilonCorrectedPriceStaysNonZero: a corrected price below 1e-10 must
+// not truncate to "0". Base decimals 7, quote decimals 18 -> divide by 10^11: raw "1.0" corrects
+// to the exact decimal 0.00000000001, which a fixed FloatString(10) render would truncate to "0".
 func TestPriceAlertReader_SubEpsilonCorrectedPriceStaysNonZero(t *testing.T) {
 	base, quote := alertUSDAssets(t)
 	reader := priceAlertVWAPReader{
@@ -222,11 +217,10 @@ func TestPriceAlertReader_NoClosedBucketIsBenignNoOp(t *testing.T) {
 	}
 }
 
-// A bucket the guard could not validate (no trailing baseline — a pair's
-// first minute, or its first after a day dormant) is the fail-open case
-// the guard serves only as low-confidence. An alert has no stale flag to
-// carry that doubt, so it must not fire off it: a single
-// manipulated first print would otherwise deliver a customer webhook.
+// A bucket the guard could not validate (no trailing baseline: a pair's first minute, or first
+// after a day dormant) is the fail-open case served only as low-confidence. An alert has no stale
+// flag to carry that doubt, so it must not fire off it, or one manipulated first print delivers a
+// customer webhook.
 func TestPriceAlertReader_UnvalidatedBucketDoesNotFire(t *testing.T) {
 	base, quote := alertUSDAssets(t)
 	reader := priceAlertVWAPReader{

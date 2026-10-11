@@ -38,13 +38,10 @@ func TestNetworkPassphrase_InstallAndReset(t *testing.T) {
 	}
 }
 
-// TestSacContractID_NetworkAware is the corruption-fix proof: the SAC
-// address a classic/native asset resolves to is a pure function of the
-// network passphrase, so it DIFFERS by network. Using the pubnet passphrase
-// everywhere would make a testnet
-// /v1/assets/{id} serve the PUBNET contract address — a value wallets
-// resolve holdings against and send to. This test fails if SacContractID
-// ever ignores the installed network again.
+// TestSacContractID_NetworkAware: the SAC address a classic/native asset resolves to is a pure
+// function of the network passphrase, so it DIFFERS by network. Using the pubnet passphrase
+// everywhere would make a testnet /v1/assets/{id} serve the PUBNET contract address, which
+// wallets resolve holdings against and send to.
 func TestSacContractID_NetworkAware(t *testing.T) {
 	t.Cleanup(func() { canonical.InstallNetworkPassphrase("") })
 

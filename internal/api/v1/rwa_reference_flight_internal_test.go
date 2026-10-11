@@ -33,12 +33,10 @@ func (o *panicOnceOracle) LatestOracleStreams(context.Context) ([]canonical.Orac
 	return o.streams, nil
 }
 
-// TestCachedRWAReferences_PanicDoesNotWedgeTheFlight pins that a panic
-// out of the oracle read must not leave rwaRefFlight latched on a channel
-// nobody closes. The outer recover simulates net/http's own per-request
-// panic recovery, which is what actually catches the panic in production
-// — the bug was never a process crash, it was the single-flight marker
-// surviving that recovery in a state no later caller could clear.
+// TestCachedRWAReferences_PanicDoesNotWedgeTheFlight pins that a panic out of the oracle read
+// must not leave rwaRefFlight latched on a channel nobody closes. The outer recover simulates
+// net/http's per-request panic recovery; the risk is not a process crash but the single-flight
+// marker surviving that recovery in a state no later caller can clear.
 func TestCachedRWAReferences_PanicDoesNotWedgeTheFlight(t *testing.T) {
 	oracle := &panicOnceOracle{
 		streams: []canonical.OracleUpdate{

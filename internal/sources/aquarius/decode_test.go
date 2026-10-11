@@ -17,28 +17,20 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// aquariusFixtureFeeBps names the per-trade protocol fee, in basis
-// points, of every pool contract captured under
-// test/fixtures/aquarius — sourced from a reconciliation
-// against real lake bytes. Used only by
-// TestTradeAmounts_feeIsGrossOfSoldAmount below.
+// aquariusFixtureFeeBps is the per-trade protocol fee, in basis points, of every pool contract
+// under test/fixtures/aquarius, reconciled against real lake bytes. Used only by
+// TestTradeAmounts_feeIsGrossOfSoldAmount.
 var aquariusFixtureFeeBps = map[string]int64{
 	"CAB6MICC2WKRT372U3FRPKGGVB5R3FDJSMWSLPF2UJNJPYMBZ76RQVYE": 15,
 	"CA6GAFOJCW4MGQQBUCQUSA3CLIH25G4SNKB2JHYKZCVWZTNW5VXMSC4O": 15,
 	"CDE57N6XTUPBKYYDGQMXX7E7SLNOLFY3JEQB4MULSMR2AKTSAENGX2HC": 5,
 }
 
-// TestTradeAmounts_feeIsGrossOfSoldAmount settles the question: is a
-// decoded trade's BaseAmount (sold_amount) the taker's gross input,
-// or already net of the accompanying fee?
-//
-// Every real fixture satisfies fee == ceil(sold_amount * fee_bps /
-// 10000) — the fee is a fraction of the RAW sold_amount, which is
-// only arithmetically consistent if sold_amount is gross-of-fee. The
-// net hypothesis (gross input = sold_amount + fee, so
-// fee = gross * fee_bps / (10000 - fee_bps)) is checked too and must
-// NOT match: if it ever does, the gross/net call needs to be
-// reopened, not silently re-derived.
+// TestTradeAmounts_feeIsGrossOfSoldAmount pins that a decoded trade's BaseAmount (sold_amount)
+// is the taker's gross input, not net of the fee. Every real fixture satisfies
+// fee == ceil(sold_amount * fee_bps / 10000), consistent only if sold_amount is gross. The net
+// hypothesis (fee = gross * fee_bps / (10000 - fee_bps)) is checked too and must NOT match; if
+// it ever does, reopen the gross/net call rather than silently re-deriving it.
 func TestTradeAmounts_feeIsGrossOfSoldAmount(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "test", "fixtures", "aquarius")
 	dirs, err := os.ReadDir(root)

@@ -14,13 +14,11 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// An ADR-0051 local-currency price is one USD-leg market observation
-// times an FX rate. The FX feed converts that observation; it is not a
-// second market, and the pair the aggregator freezes is the USD leg —
-// there is no marker for the derived fiat pair. So single_source and
-// frozen on a derived response are the USD leg's. The
-// freeze-aware surfaces (/v1/price, /v1/price/batch and the SEP-40
-// x_last_price) substitute a held value; the tip stays freeze-agnostic.
+// An ADR-0051 local-currency price is one USD-leg market observation times an FX rate. The FX
+// feed converts it and is not a second market, and the aggregator freezes the USD leg (there is
+// no marker for the derived fiat pair), so single_source and frozen on a derived response are the
+// USD leg's. The freeze-aware surfaces (/v1/price, /v1/price/batch, SEP-40 x_last_price)
+// substitute a held value; the tip stays freeze-agnostic.
 
 const (
 	xlmUSDKey    = "native/fiat:USD"
@@ -224,11 +222,9 @@ func TestDerivedFiatPriceUnfrozenLegReportsFreezeChecked(t *testing.T) {
 	}
 }
 
-// The tip is freeze-agnostic (price_tip.go's handler doc): the derived
-// BRL answer must be exactly what the same surface serves for USD,
-// times the rate — never a 404 while USD
-// serves, never a silently substituted held value, and with the leg's
-// venues still credited.
+// The tip is freeze-agnostic (price_tip.go's handler doc): the derived BRL answer must be exactly
+// what the same surface serves for USD times the rate, never a 404 while USD serves, never a
+// silently substituted held value, and with the leg's venues still credited.
 func TestDerivedFiatFreezeAgnosticSurfacesFollowTheirUSDLeg(t *testing.T) {
 	rate := strconv.FormatFloat(brlRateUSD, 'f', -1, 64)
 	for _, held := range []string{legHeld, ""} {

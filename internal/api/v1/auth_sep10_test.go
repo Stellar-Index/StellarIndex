@@ -285,27 +285,16 @@ func TestSEP10Token_VerificationFailed_401(t *testing.T) {
 	}
 }
 
-// TestSEP10Unavailable_TellsTheCallerWhatToDoInstead pins the BODY of
-// the 404, not just its code.
+// TestSEP10Unavailable_TellsTheCallerWhatToDoInstead pins the BODY of the 404, not just its
+// code.
 //
-// Four separate branches produce this answer — no validator wired on
-// either route, and ErrNotImplemented surfacing from Challenge or
-// Verify — and they must not carry two different strings. The terser
-// one said only "this deployment has no SEP-10 validator wired",
-// which is the error code restated in prose: a caller reading it
-// learns nothing they can act on, and cannot tell a permanent
-// deployment posture from an outage worth retrying.
+// Four branches produce this answer (no validator wired on either route, and ErrNotImplemented
+// from Challenge or Verify) and they must carry one string. Restating the error code in prose
+// gives a caller nothing to act on and cannot distinguish a permanent deployment posture from
+// an outage worth retrying, so the body must say WHY it refuses and WHAT WORKS INSTEAD.
 //
-// Every document that once promised the flow now says it is off here
-// (/sdk, docs/getting-started.md, pkg/client's godoc, the spec). This
-// response is the surface that answers a caller who read none of
-// them, so it has to carry the same two facts on its own: WHY it
-// refuses, and WHAT WORKS INSTEAD.
-//
-// The assertions are about substance rather than wording, so the
-// sentence can be rewritten without a test edit — but it cannot be
-// hollowed back out to a bare code, and the four branches cannot
-// drift apart from each other again.
+// The assertions check substance, not wording, so the sentence can be rewritten without a test
+// edit, but not hollowed out to a bare code or allowed to drift between branches.
 func TestSEP10Unavailable_TellsTheCallerWhatToDoInstead(t *testing.T) {
 	notImplemented := func() *stubSEP10Validator {
 		return &stubSEP10Validator{

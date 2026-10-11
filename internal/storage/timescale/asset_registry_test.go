@@ -13,11 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// newDedupeStore returns a DB-less Store whose dedupe cache is
-// fresh, so each `shouldSkipAssetRegistryUpsert` case sees the
-// asset as never-upserted. The cache lives on the Store (not the
-// package), so a new Store IS
-// the reset.
+// newDedupeStore returns a DB-less Store with a fresh dedupe cache, so each case sees the
+// asset as never upserted. The cache lives on the Store, so a new Store is the reset.
 func newDedupeStore() *Store {
 	return &Store{}
 }
@@ -90,16 +87,10 @@ func (d *recordingDriver) classicAssetUpserts() int {
 	return n
 }
 
-// TestAssetRegistryDedupe_IsolatedPerStore — the dedupe cache is
-// scoped to ONE Store (one database). asset_id is only unique
-// within a database, so a process-wide cache let a second Store
-// over a different DB inherit "already upserted within TTL" for
-// a classic_assets row that DB never received — the
-// TestAssetsReader `HasAsset(USDC) = false` flake, reproduced
-// whenever it ran after any test that inserted a USDC trade into
-// a different container. Drives the real registerClassicAssetSeen
-// path on two Stores over two (recording) databases: each database
-// must receive its own classic_assets upsert.
+// TestAssetRegistryDedupe_IsolatedPerStore pins that the dedupe cache is scoped to one Store
+// (one database). asset_id is only unique within a database, so a shared cache would let a
+// second Store skip a classic_assets upsert its database never received. Drives the real
+// registerClassicAssetSeen path on two Stores: each database must get its own upsert.
 func TestAssetRegistryDedupe_IsolatedPerStore(t *testing.T) {
 	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {

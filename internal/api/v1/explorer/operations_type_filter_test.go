@@ -90,11 +90,10 @@ func TestOperations_TypeFilterRejectsUnknownType(t *testing.T) {
 	}
 }
 
-// ParseLimit(500, 2000) bounds ROW count but not the response's BYTE
-// size — an op's decoded body is attacker-influenced in size. Past
-// operationsResponseByteBudget, further rows must be served UNDECODED
-// (RawXDR empty) rather than fully decoded, bounding the response to
-// roughly the budget regardless of how many giant-bodied ops a ledger has.
+// ParseLimit bounds ROW count but not the response's BYTE size, and an op's decoded body is
+// attacker-influenced in size. Past operationsResponseByteBudget, further rows must be served
+// UNDECODED (RawXDR empty), bounding the response to roughly the budget however many
+// giant-bodied ops a ledger has.
 func TestOperations_LedgerPath_BoundsDecodedResponseBytes(t *testing.T) {
 	half := operationsResponseByteBudget / 2
 	rows := []clickhouse.OpRow{
@@ -169,12 +168,9 @@ func TestOperations_LedgerParamRejected(t *testing.T) {
 	}
 }
 
-// TestOperations_LedgerPath_SignalsTruncation pins that a ledger whose
-// true operation count (from the ledger header) exceeds the served page
-// must say so — the same Total/Truncated shape LedgerTransactionsView
-// already gives /v1/ledgers/{seq}/transactions — rather than returning a
-// silently short page with HTTP 200 and no way to tell "that's everything"
-// from "that's a truncated slice".
+// TestOperations_LedgerPath_SignalsTruncation pins that a ledger whose true operation count
+// (from the ledger header) exceeds the served page must say so, with the same Total/Truncated
+// shape LedgerTransactionsView gives, rather than a silently short page that looks complete.
 func TestOperations_LedgerPath_SignalsTruncation(t *testing.T) {
 	rows := []clickhouse.OpRow{
 		{Seq: 64490439, CloseTime: time.Unix(1700000000, 0).UTC(), TxHash: "h0"},

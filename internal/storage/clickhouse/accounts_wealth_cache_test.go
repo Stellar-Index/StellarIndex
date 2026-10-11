@@ -6,13 +6,10 @@ import (
 	"time"
 )
 
-// TestWealthCacheServesAnyLimitFromOneEntry pins that the cache must store ONE ranking that every
-// request size slices from, not a per-limit entry.
-//
-// The original per-limit keying meant prewarm warmed limit=100 while
-// requests used 5/10/etc — each a distinct key that missed, so every real
-// request 503'd and kicked its own 23s scan. This pins that a single put()
-// (as prewarm does) satisfies gets at every limit.
+// TestWealthCacheServesAnyLimitFromOneEntry pins that the cache stores ONE ranking that every
+// request size slices from, not a per-limit entry: with per-limit keys prewarm warms only
+// limit=100, every other limit misses and kicks its own slow scan. A single put() (as prewarm
+// does) must satisfy gets at every limit.
 func TestWealthCacheServesAnyLimitFromOneEntry(t *testing.T) {
 	t.Parallel()
 	c := newAccountsWealthCache()

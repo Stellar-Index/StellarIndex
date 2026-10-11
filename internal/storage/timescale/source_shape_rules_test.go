@@ -38,18 +38,13 @@ var (
 	issuersWriteRE     = regexp.MustCompile(`(?i)\b(UPDATE|INTO)\s+issuers\b`)
 )
 
-// rulePairBoundPrices1mReadsAreClosed is the ADR-0015 companion to
-// TestCAGGPairReadsFoldBothDirections: a pair-bound read of prices_1m must
-// admit only CLOSED buckets. The in-progress minute is still filling, so a
-// read that admits it serves a value no other region (and no later read)
-// will reproduce — and on /v1/changes that value was ratcheted into the
-// stored ath/atl for good (`bucket < $4` with $4 = the worker's
-// wall clock).
+// rulePairBoundPrices1mReadsAreClosed (ADR-0015) requires a pair-bound read of prices_1m to
+// admit only CLOSED buckets. The in-progress minute is still filling, so a read that admits it
+// serves a value no other region or later read will reproduce, and /v1/changes would ratchet
+// it into the stored ath/atl for good.
 //
-// Subjects are derived from the source (every string literal that reads
-// prices_1m with a `base_asset = $n AND quote_asset = $m` filter), so a new
-// reader is covered the day it lands. Each subject is named by its
-// enclosing func or const.
+// Subjects are derived from the source (every string literal reading prices_1m with a
+// base_asset/quote_asset filter), so a new reader is covered when it lands.
 func rulePairBoundPrices1mReadsAreClosed(t *testing.T) {
 	t.Parallel()
 
@@ -90,11 +85,9 @@ func rulePairBoundPrices1mReadsAreClosed(t *testing.T) {
 	}
 }
 
-// ruleIssuersHomeDomainWriterUnbindsSep1 fails when a statement that
-// writes issuers.home_domain does not route through
-// sep1ResetOnHomeDomainChange. The executing proof is
-// test/integration/pg_assets_sep1_test.go; this catches the
-// next writer, which that test cannot know about.
+// ruleIssuersHomeDomainWriterUnbindsSep1 fails when a statement writing issuers.home_domain
+// does not route through sep1ResetOnHomeDomainChange. The executing proof is
+// test/integration/pg_assets_sep1_test.go; this catches the next writer it cannot know about.
 func ruleIssuersHomeDomainWriterUnbindsSep1(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {

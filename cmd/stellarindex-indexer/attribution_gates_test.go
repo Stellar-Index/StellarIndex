@@ -6,15 +6,12 @@ import (
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 )
 
-// TestRouterEnabled_FoldsWhitespaceAndCase pins that routerEnabled gates
-// the routed-via attribution sweeper on membership in
-// ingestion.enabled_sources, but internal/config/validate.go and
-// internal/pipeline/dispatcher.go both fold that list with
-// strings.ToLower(strings.TrimSpace(...)) before comparing/dispatching.
-// An operator entry like " Soroswap-Router " (accepted by config.Validate,
-// dispatched correctly) must also be recognised here — otherwise the
-// sweeper silently never starts even though the source is live and
-// writing soroswap_router_swaps.
+// TestRouterEnabled_FoldsWhitespaceAndCase pins that routerEnabled, which gates the routed-via
+// attribution sweeper on ingestion.enabled_sources, folds the list with
+// strings.ToLower(strings.TrimSpace(...)) like internal/config/validate.go and
+// internal/pipeline/dispatcher.go. An entry like " Soroswap-Router " (accepted by
+// config.Validate, dispatched correctly) must be recognised here too, or the sweeper silently
+// never starts while the source is live and writing soroswap_router_swaps.
 func TestRouterEnabled_FoldsWhitespaceAndCase(t *testing.T) {
 	cases := []struct {
 		name string

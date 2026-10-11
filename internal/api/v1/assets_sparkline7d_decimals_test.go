@@ -3,12 +3,10 @@
 
 package v1_test
 
-// The ?include=sparkline7d leg. The listing's price_usd comes from
-// asset_price_snapshot, which its writer normalises for a confirmed
-// non-7-decimals token. The 7d series attached beside it comes from the
-// batch price-history reader, which returns RAW prices_1m ratios — and
-// was put on the wire verbatim, so a 9-decimals token listed at 2.50 USD
-// over a chart that ran along 0.025.
+// The ?include=sparkline7d leg. The listing's price_usd comes from asset_price_snapshot, which
+// its writer normalises for a confirmed non-7-decimals token. The 7d series beside it comes from
+// the batch price-history reader, which returns RAW prices_1m ratios, so it must be scaled the
+// same way or a 9-decimals token lists at 2.50 USD over a chart running along 0.025.
 
 import (
 	"net/http"
@@ -195,11 +193,9 @@ func TestAssetsListing_Sparkline7d_CatalogueRowsKeyOnStellarTwin(t *testing.T) {
 	}
 }
 
-// TestAssetsListing_Sparkline7d_DefaultListingHonoursInclude — the
-// listing served WITHOUT asset_class (the /v1/assets shape the issue
-// reproduced with, and the one every SDK consumer gets) ignored
-// `include=sparkline7d` entirely: the response was byte-identical with
-// and without it.
+// TestAssetsListing_Sparkline7d_DefaultListingHonoursInclude: the listing served WITHOUT
+// asset_class (the /v1/assets shape every SDK consumer gets) must honour `include=sparkline7d`
+// rather than return a byte-identical response.
 func TestAssetsListing_Sparkline7d_DefaultListingHonoursInclude(t *testing.T) {
 	const xrp = "XRP-" + otherRealIssuer
 	stub := &sparklineStub{
@@ -244,11 +240,9 @@ func TestAssetsListing_Sparkline7d_DefaultListingHonoursInclude(t *testing.T) {
 	}
 }
 
-// TestAssetsListing_Sparkline7d_WithheldPriceRendersNoChart — the
-// honesty rule in the other direction. A row whose price we withhold
-// (scam-flagged issuer) or that has no price at all must render NO
-// chart, and must not even be looked up: the last point of the series
-// IS the number we refused to publish.
+// TestAssetsListing_Sparkline7d_WithheldPriceRendersNoChart: a row whose price we withhold
+// (scam-flagged issuer) or that has no price at all must render NO chart and must not even be
+// looked up, because the last point of the series IS the number we refused to publish.
 func TestAssetsListing_Sparkline7d_WithheldPriceRendersNoChart(t *testing.T) {
 	const (
 		scamID  = "JFKBANK2-" + scamAUDIssuer

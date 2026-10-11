@@ -15,21 +15,16 @@ import (
 
 // The money leg, on the surface a client actually lands on.
 //
-// A SEP-1 fiat anchor codes its deposit token with the ISO code of the
-// currency it denominates (`anchor_asset_type: fiat`, `anchor_asset:
-// USD`, classic code `USD`). The catalogue holds USD/EUR/GBP/… as
-// sovereign-currency entries with no Stellar issuance, and filing those
-// tickers in the impersonation index made StellarCollision report every
-// such anchor — so populateMarketCap returned before the cap fill and
-// /v1/assets/USD-G… served `market_cap_usd: null` for an asset that has
-// a price and a supply, while the listing stamped the same row
-// `unverified_ticker_collision: true` and the detail page warned that
-// the code "matches a well-known asset that has NO verified issuance on
-// Stellar" — of a dollar token, about the dollar.
+// A SEP-1 fiat anchor codes its deposit token with the ISO code of the currency it denominates
+// (`anchor_asset_type: fiat`, `anchor_asset: USD`, classic code `USD`). The catalogue holds
+// USD/EUR/GBP/... as sovereign-currency entries with no Stellar issuance; filing those tickers
+// in the impersonation index would make StellarCollision flag every such anchor, so
+// populateMarketCap would return before the cap fill and /v1/assets/USD-G... would serve
+// `market_cap_usd: null` for an asset that has a price and a supply, and stamp it
+// `unverified_ticker_collision: true`.
 //
-// The control cases below are the other half of the pin: the
-// impersonation machinery is untouched for tickers that name an ISSUED
-// asset, which is what the catalogue's fiat carve-out must not disarm.
+// The control cases are the other half of the pin: the impersonation machinery stays armed for
+// tickers that name an ISSUED asset, which the catalogue's fiat carve-out must not disarm.
 func TestFiatCodedAnchorKeepsItsValuation(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {

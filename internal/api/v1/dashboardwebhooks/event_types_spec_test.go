@@ -9,13 +9,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestSpecEventTypeEnumsMatchPlatform keeps every OpenAPI enum that
-// enumerates webhook event types (one spanning more than one event family,
-// e.g. incident.* and price.*) equal to platform.WebhookEventTypes(). The
-// spec is what the explorer's generated types and customers read, so a
-// type missing there is as unsubscribable as one missing from
-// validateEvents. Single-family enums — a payload's own `event`
-// field — are subsets by design and are not checked.
+// TestSpecEventTypeEnumsMatchPlatform keeps every OpenAPI enum spanning more than one webhook
+// event family (e.g. incident.* and price.*) equal to platform.WebhookEventTypes(). The spec
+// feeds the explorer's generated types and customers, so a type missing there is as
+// unsubscribable as one missing from validateEvents. Single-family enums (a payload's own
+// `event` field) are subsets by design and are not checked.
 func TestSpecEventTypeEnumsMatchPlatform(t *testing.T) {
 	spec, err := os.ReadFile("../../../../openapi/stellar-index.v1.yaml")
 	if err != nil {

@@ -32,17 +32,13 @@ func (priceMissReader) RecentClosedSnapshots(context.Context, canonical.Asset, c
 	return []v1.PriceSnapshot{}, nil
 }
 
-// TestVWAPCacheServesTheValuesObservationTime pins, through the
-// production adapter, that every /v1/price surface that serves the
-// aggregator's VWAP cache must stamp observed_at with when the aggregator
-// observed the value, not when the API read it. A freeze keeps the held
-// value alive for its whole hold without rewriting it, so "the key
-// exists" says nothing about age.
+// TestVWAPCacheServesTheValuesObservationTime pins, through the production adapter, that every
+// /v1/price surface serving the aggregator's VWAP cache stamps observed_at with when the
+// aggregator observed the value, not when the API read it. A freeze keeps the held value alive
+// without rewriting it, so "the key exists" says nothing about age.
 //
-// The stamp key is spelled out on the wire (not via its builder): the
-// aggregator and the API are separate binaries, so the key is the
-// contract. Against the unfixed API every case below serves observed_at
-// = read time, twenty minutes after the value was observed.
+// The stamp key is spelled out on the wire (not via its builder): the aggregator and the API are
+// separate binaries, so the key is the contract.
 func TestVWAPCacheServesTheValuesObservationTime(t *testing.T) {
 	const window = 5 * time.Minute
 	const held = "0.251100000000"

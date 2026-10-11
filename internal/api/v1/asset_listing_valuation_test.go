@@ -33,11 +33,9 @@ func assetListingCacheTestServer(reader AssetListingDirectoryReader) *Server {
 	}
 }
 
-// The listing snapshot is a process-wide cache shared by every request
-// inside its 60s TTL. A request that happens to trigger a refresh must
-// not be able to poison that cache for everyone else by disconnecting
-// mid-read: the read has to run on a context detached from the
-// caller's, the same way the curated cache's does.
+// The listing snapshot is a process-wide cache shared by every request inside its 60s TTL. The
+// request that triggers a refresh must not poison it for everyone else by disconnecting
+// mid-read, so the read runs on a context detached from the caller's, as the curated cache's does.
 func TestAssetListingSnapshot_ReadDoesNotInheritCallerCancellation(t *testing.T) {
 	reader := &blockingAssetListingReader{rows: map[string]timescale.ListingEntry{
 		"CBUBVYRKTQLMDRUBPP6SH4GO33KZCEEYBIWB5AWNGKODP4A6KPKM2VJ4": {
@@ -71,12 +69,10 @@ func (hangingAssetListingReader) ListingDirectoryByAddress(ctx context.Context) 
 	return nil, timescale.ListingDirectoryCensus{}, ctx.Err()
 }
 
-// A hung storage read must not hold the cache mutex that every
-// /v1/assets, /v1/assets/{id} and /v1/rwa/assets request queues on: the
-// detached read runs under its own budget and the refresh returns,
-// failed closed, once that budget is spent — and NOT cached as
-// listing_unavailable for the full 60s TTL because the caller happened
-// to disconnect.
+// A hung storage read must not hold the cache mutex that every /v1/assets, /v1/assets/{id} and
+// /v1/rwa/assets request queues on: the detached read runs under its own budget and the refresh
+// returns, failed closed, once spent. It must NOT be cached as listing_unavailable for the full
+// 60s TTL just because the caller disconnected.
 func TestAssetListingSnapshot_HungReadReturnsWithinBudget(t *testing.T) {
 	const budget = 50 * time.Millisecond
 	s := assetListingCacheTestServer(hangingAssetListingReader{})

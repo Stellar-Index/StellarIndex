@@ -138,11 +138,9 @@ func TestCachedSourcesStatsReader_ErrorIsNotCached(t *testing.T) {
 	}
 }
 
-// TestCachedSourcesStatsReader_WaitersSeeLeaderError — when
-// the single-flight leader's upstream call errors, every goroutine
-// that waited on it must get that error back too, not a fabricated
-// cache "hit" of the stale/nil field. A waiter that did
-// `<-ch` and unconditionally returned (c.stats, nil) would hide it.
+// TestCachedSourcesStatsReader_WaitersSeeLeaderError — when the single-flight leader's
+// upstream call errors, every waiting goroutine must get that error too, not a fabricated
+// cache "hit" of the stale/nil field.
 func TestCachedSourcesStatsReader_WaitersSeeLeaderError(t *testing.T) {
 	wantErr := errors.New("timescale: query failed")
 	up := &fakeUpstream{statsDelay: 80 * time.Millisecond, statsErr: wantErr}
@@ -172,11 +170,8 @@ func TestCachedSourcesStatsReader_WaitersSeeLeaderError(t *testing.T) {
 }
 
 // TestCachedSourcesStatsReader_HitMissCounter pins the
-// stellarindex_api_cache_ops_total{cache="sources_stats"} counter
-// for both ops on the wrapper. Same regression-guard rationale as
-// the markets + assetsReader variants — if a future refactor drops the
-// .Inc() on either branch, the cache-ops alert silently stops firing
-// for these surfaces.
+// stellarindex_api_cache_ops_total{cache="sources_stats"} counter for both ops. If a refactor
+// drops the .Inc() on either branch, the cache-ops alert silently stops firing.
 func TestCachedSourcesStatsReader_HitMissCounter(t *testing.T) {
 	for _, tc := range []struct {
 		op   string

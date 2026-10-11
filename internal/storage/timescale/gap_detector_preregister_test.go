@@ -46,26 +46,15 @@ func gatherGapDetectorRunsTotal(t *testing.T) map[[3]string]float64 {
 	return got
 }
 
-// TestGapDetectorPreregistersRunsTotalSeries pins the
-// false-fire of stellarindex_ingest_gap_detector_silent: after the
-// v0.49.0 deploy the seeded schedule correctly deferred every scan, so
-// no Inc() ever ran and `sum by (outcome)(runs_total)` returned NO
-// series for 26 min — absent_over_time(runs_total[15m]) read "no scan
-// due yet" as "detector dead". A detector that has run zero scans must
-// still expose {outcome="ok"} and {outcome="error"} at exactly 0 for
-// every configured target.
-// preregFixtureSeq numbers this test's fixture targets so each
-// invocation gets label sets no earlier one has used.
+// TestGapDetectorPreregistersRunsTotalSeries pins the stellarindex_ingest_gap_detector_silent
+// false-fire: a detector that has run zero scans (the seeded schedule deferred them all) must
+// still expose {outcome="ok"} and {outcome="error"} at exactly 0 for every configured target,
+// or absent_over_time(runs_total) reads "no scan due yet" as "detector dead".
 //
-// The guard below insists the series is ABSENT before
-// preregisterGapDetectorSeries runs, which is what makes its presence
-// afterwards attributable to that call rather than to anything else in
-// the binary that touched the process-global vec. Fixed names satisfy
-// that exactly once per process: a second iteration (`go test -count=2`,
-// the standard way to hunt a flake) trips the guard on the previous
-// iteration's own leftovers and reports a fixture collision. Numbering
-// keeps the guard strict rather than relaxing it to tolerate a
-// pre-existing series.
+// preregFixtureSeq numbers the fixture targets so each invocation gets fresh label sets. The
+// test requires the series to be ABSENT before preregisterGapDetectorSeries runs, so its
+// presence afterwards is attributable to that call and not to the process-global vec; fixed
+// names would trip that guard on `go test -count=2`. Numbering keeps the guard strict.
 var preregFixtureSeq atomic.Uint64
 
 func TestGapDetectorPreregistersRunsTotalSeries(t *testing.T) {

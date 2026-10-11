@@ -47,12 +47,10 @@ func withChangeType(change xdr.LedgerEntryChange, typ xdr.LedgerEntryChangeType)
 	}
 }
 
-// FuzzSACBalanceObservation drives the observer over the whole i128
-// domain, both value shapes and every live-entry change variant. The
-// balance lands in the SAC-wrapped supply component, so ADR-0003 applies:
-// it must be the exact i128, never its low limb. IntraLedgerSeq and
-// Ledger must survive too — the writer keeps the FINAL change per
-// (contract, holder, ledger) by IntraLedgerSeq.
+// FuzzSACBalanceObservation drives the observer over the whole i128 domain, both value shapes
+// and every live-entry change variant. The balance feeds the SAC-wrapped supply component, so
+// it must be the exact i128, never its low limb (ADR-0003). IntraLedgerSeq and Ledger must
+// survive too: the writer keeps the FINAL change per (contract, holder, ledger) by IntraLedgerSeq.
 //
 // Generative run:
 // go test -run=^$ -fuzz=^FuzzSACBalanceObservation$ -fuzztime=60s -parallel=2 ./internal/sources/sac_balances

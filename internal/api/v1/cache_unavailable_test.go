@@ -13,18 +13,14 @@ import (
 )
 
 // miscOnfErr models the wire-format MISCONF reply Redis returns when
-// stop-writes-on-bgsave-error is active (the May-10 SEV-2 shape):
+// stop-writes-on-bgsave-error is active:
 //
 //	"MISCONF Redis is configured to save RDB snapshots, but it's
 //	 currently unable to persist to disk."
 //
-// go-redis surfaces this as a proto.RedisError (the unexported
-// concrete type implementing the redis.Error interface) — but its
-// matcher, redis.HasErrorPrefix, ALSO trips on a plain
-// fmt.Errorf("MISCONF ...") wrap because it only requires
-// errors.As(err, &redis.Error). The fallback string-prefix branch in
-// IsCacheUnavailable catches the plain-string case so test stubs
-// (which can't import proto/) still drive the right branch.
+// go-redis surfaces this as a proto.RedisError (an unexported type implementing redis.Error).
+// The fallback string-prefix branch in IsCacheUnavailable also catches a plain
+// fmt.Errorf("MISCONF ...") so test stubs, which cannot import proto/, drive the same branch.
 var miscOnfErr = errors.New("MISCONF Redis is configured to save RDB snapshots, but it's currently unable to persist to disk on disk.")
 
 // IsCacheUnavailable sanity check — the helper is unit-tested via the
@@ -97,11 +93,9 @@ func assertCacheUnavailable(t *testing.T, resp *http.Response) {
 
 // ─── /v1/price/tip ────────────────────────────────────────────────
 
-// tipCacheUnavailablePriceReader is a PriceReader stub that returns
-// MISCONF on every LatestPrice call. The tip handler's computeTip
-// path goes Reader → fallback chain; the fallback chain's first hop
-// is also a Redis lookup, so returning MISCONF from the reader is
-// enough to drive the unavailable branch.
+// tipCacheUnavailablePriceReader is a PriceReader stub that returns MISCONF on every
+// LatestPrice call. computeTip goes Reader → fallback chain, whose first hop is also a Redis
+// lookup, so MISCONF from the reader is enough to drive the unavailable branch.
 type tipCacheUnavailablePriceReader struct{}
 
 func (tipCacheUnavailablePriceReader) LatestPrice(_ context.Context, _, _ canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {

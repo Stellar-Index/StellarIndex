@@ -9,13 +9,11 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Regression tests for ReplacingMergeTree dedup (ClickHouse ReplacingMergeTree reads that
-// neither FINAL nor dedup, over-counting un-merged duplicate rows). These use
-// the stubConn/stubRows harness from tx_hash_index_test.go. stubConn does not
-// implement real ReplacingMergeTree semantics, so these are query-SHAPE
-// assertions — proof that the emitted SQL carries the dedup construct — not
-// a live-ClickHouse proof of the merge behavior itself (see the fixer's
-// report for that caveat).
+// Regression tests for ReplacingMergeTree dedup: reads that use neither FINAL nor a dedup
+// over-count un-merged duplicate rows. These use the stubConn/stubRows harness from
+// tx_hash_index_test.go, which does not implement real ReplacingMergeTree semantics, so they
+// are query-SHAPE assertions (the emitted SQL carries the dedup construct), not a
+// live-ClickHouse proof of the merge behavior.
 
 // opLightRowFor builds the 7-column opColsLight row scanOpsLight expects.
 func opLightRowFor(seq uint32, txIndex, opIndex uint32) []any {

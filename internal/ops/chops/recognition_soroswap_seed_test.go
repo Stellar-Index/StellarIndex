@@ -9,18 +9,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// TestRecognitionCensus_SoroswapPairSeedRequired pins the fix for the soroswap
-// recognition false-red: the recognition census builds its decoder chain via
-// pipeline.BuildDispatcher, and unless the soroswap decoder is seeded with the
-// pair registry its pairTokens map is empty — so Matches() rejects every real
-// SoroswapPair protocol event (swap/sync/deposit/withdraw/skim), each becoming
-// a false "unhandled topic" gap attributed to soroswap even though the indexer
-// decodes + serves them. compute-completeness now threads
-// WithSeededPairTokensDecoder(registry) into the census dispatcher (built from
-// LoadSoroswapPairRegistry, the SAME set attribution folds into ownerOf).
+// TestRecognitionCensus_SoroswapPairSeedRequired pins that the recognition census seeds the
+// soroswap decoder with the pair registry. Unseeded, pairTokens is empty and Matches() rejects
+// every real SoroswapPair event, each becoming a false "unhandled topic" gap. The census
+// dispatcher gets WithSeededPairTokensDecoder(registry) from LoadSoroswapPairRegistry, the
+// SAME set attribution folds into ownerOf.
 //
-// The test proves BOTH directions on the same event so it can't pass
-// vacuously: unseeded MUST reject (reproduces the bug), seeded MUST recognize.
+// Both directions run on the same event so it cannot pass vacuously: unseeded MUST reject,
+// seeded MUST recognize.
 func TestRecognitionCensus_SoroswapPairSeedRequired(t *testing.T) {
 	// A real registered soroswap pair contract (from the r1 pair registry).
 	const pairID = "CB46LMGJC7SYSH4C7SBNLV635OX5BSNQDGRR32NRXAV7N2AVNZMQUJ3A"

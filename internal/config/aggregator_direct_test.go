@@ -7,13 +7,10 @@ import (
 	cfg "github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// AggregatorPairs and AggregatorWindows are documented as
-// infallible in practice (validate() rejects bad entries at
-// startup). They still return errors to keep the seam testable
-// and to surface a failure loudly if validation is bypassed.
-// Pin those error branches by calling the methods directly on a
-// struct that skips validation — covers the seam, catches a
-// refactor that swallows the underlying parse error.
+// AggregatorPairs and AggregatorWindows are infallible in practice (validate() rejects bad
+// entries at startup) but still return errors so a bypassed validation fails loudly. These
+// tests call them on a struct that skips validation, to catch a refactor that swallows the
+// underlying parse error.
 
 func TestAggregatorPairs_emptyReturnsNil(t *testing.T) {
 	a := cfg.AggregateConfig{}

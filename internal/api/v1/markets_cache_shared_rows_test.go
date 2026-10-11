@@ -19,18 +19,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// /v1/markets and /v1/pools normalise (and, for
-// markets, enrich) their rows IN PLACE. Production wires the handlers to
-// a CachedMarketsReader, which, without a copy, hands every caller the cache
-// entry's own backing array, so:
+// /v1/markets and /v1/pools normalise (and, for markets, enrich) their rows IN PLACE.
+// Production wires the handlers to a CachedMarketsReader, which without a copy hands every
+// caller the cache entry's own backing array, so:
 //
-//   - the dex-nonstandard-decimals correction was re-applied on every hit
-//     (41.32 → 4132 → 413200 → … — K^N on a served money value), and
-//   - concurrent requests wrote the same array elements with no lock.
+//   - the dex-nonstandard-decimals correction would re-apply on every hit (K^N on a served
+//     money value), and
+//   - concurrent requests would write the same array elements with no lock.
 //
-// Every pre-existing listing test wired the handler to a bare stub, so
-// the production path (handler → cache) was never exercised. These tests
-// wire it the way cmd/stellarindex-api does.
+// These tests wire handler to cache the way cmd/stellarindex-api does, since a bare stub never
+// exercises the production path.
 
 // sharedRowsUpstream stands in for the storage reader BELOW the cache. It
 // builds a fresh slice on every call — like the real store and the Redis

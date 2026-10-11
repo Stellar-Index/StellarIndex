@@ -11,25 +11,19 @@ import (
 	"testing"
 )
 
-// withoutCancelAllowlist is every (file, line-content) pair permitted to
-// call context.WithoutCancel in this package. TouchUsage and
-// UsageTracker must not detach their post-response bookkeeping from the
-// request's cancellation with context.WithoutCancel(r.Context()) plus a
-// flat timeout, run INLINE on the request goroutine before the response
-// was ever flushed — so a wedged Redis added up to 10 s to a request
-// entirely outside api.request_timeout. The fix ([AfterResponse]) hands
-// that work to a separate goroutine under context.Background() instead,
-// so neither file needs WithoutCancel at all.
+// withoutCancelAllowlist is every (file, line-content) pair permitted to call
+// context.WithoutCancel in this package. TouchUsage and UsageTracker must not detach
+// post-response bookkeeping with context.WithoutCancel(r.Context()) plus a flat timeout run
+// INLINE on the request goroutine: a wedged Redis would add up to 10 s to a request outside
+// api.request_timeout. [AfterResponse] instead hands that work to a separate goroutine under
+// context.Background(), so neither file needs WithoutCancel.
 //
-// throttleContext (ratelimit.go) is a DIFFERENT, legitimate use: a
-// PRE-handler seam that detaches RateLimit's/MonthlyQuota's dwell-clock
-// take from a client abort while re-applying the request's deadline —
-// see its doc comment. It is the only entry that may remain.
+// throttleContext (ratelimit.go) is a DIFFERENT, legitimate use: a PRE-handler seam that detaches
+// RateLimit's/MonthlyQuota's dwell-clock take from a client abort while re-applying the request's
+// deadline. It is the only entry that may remain.
 //
-// This allowlist may only SHRINK. Add a new context.WithoutCancel call
-// under this package and this test fails — that is the point: the next
-// "just detach it and bound it separately" post-response shortcut is
-// exactly the shape of the inline-detach defect.
+// This allowlist may only SHRINK: a new context.WithoutCancel call here fails the test, so the
+// next "detach it and bound it separately" shortcut is caught.
 var withoutCancelAllowlist = map[string]bool{
 	"ratelimit.go:\treturn context.WithDeadline(context.WithoutCancel(r.Context()), deadline)": true,
 }

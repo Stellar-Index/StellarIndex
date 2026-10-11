@@ -39,11 +39,9 @@ func makeDeployEventFrom(t *testing.T, factory, poolAddr string) events.Event {
 	}
 }
 
-// TestDecoder_MultiFactory pins that BOTH Blend pool factories (the
-// empirically-verified V1 + V2) are honored: a deploy from EITHER
-// registers the pool, and a deploy from a non-factory does not. The V1
-// factory regression is the concrete bug this guards — V2-only gating
-// silently dropped the 4 pools V1 deployed.
+// TestDecoder_MultiFactory pins that BOTH Blend pool factories (V1 and V2) are honored: a deploy
+// from either registers the pool, a deploy from a non-factory does not. V2-only gating
+// silently dropped the pools V1 deployed.
 func TestDecoder_MultiFactory(t *testing.T) {
 	if len(MainnetPoolFactories) < 2 {
 		t.Fatalf("expected >=2 Blend factories, got %v", MainnetPoolFactories)
@@ -414,11 +412,9 @@ func TestDecodeDeleteAuction_HappyPath(t *testing.T) {
 // ─── dispatcher.Decoder boundary ───────────────────────────────
 
 func TestDecoder_Matches(t *testing.T) {
-	// Contract-gated (ADR-0035): a topic match is necessary but
-	// NOT sufficient — every business event must come from a REGISTERED
-	// pool, and `deploy` must come from the canonical Pool Factory. A
-	// registered pool's events match; the identical topics from an
-	// unregistered (foreign) contract do not.
+	// Contract-gated (ADR-0035): a topic match is necessary but NOT sufficient. Business events
+	// must come from a REGISTERED pool and `deploy` from the canonical Pool Factory; identical
+	// topics from an unregistered (foreign) contract do not match.
 	const registeredPool = "CDPOOLREGISTEREDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	const foreign = "CDFOREIGNCONTRACTBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
 	d := NewDecoder(contractid.WithSeed([]string{registeredPool}))
@@ -508,12 +504,10 @@ func TestDecoder_NameAndKind(t *testing.T) {
 	}
 }
 
-// TestDecodeAuctions_PopulateEventIndex pins that each auction
-// decode must carry events.Event.EventIndex onto the row so multiple
-// same-kind auction events emitted by ONE operation don't collapse on
-// the blend_auctions PK (migration 0058). Without it a liquidation
-// that fills several positions in one op silently drops all but one
-// fill_auction row via ON CONFLICT DO NOTHING.
+// TestDecodeAuctions_PopulateEventIndex pins that each auction decode carries
+// events.Event.EventIndex onto the row, so same-kind auction events from ONE operation don't
+// collapse on the blend_auctions PK. Without it a liquidation filling several positions in one
+// op silently drops all but one fill_auction row via ON CONFLICT DO NOTHING.
 func TestDecodeAuctions_PopulateEventIndex(t *testing.T) {
 	pool := contractStrkeyFromSeed(t, 0x01)
 	user := accountStrkeyFromSeed(t, 0x10)

@@ -13,13 +13,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The divergence-service and freeze-sink customer-webhook
-// payloads were `map[string]any` literals: nothing tied their key set
-// to openapi/stellar-index.v1.yaml's AnomalyFreezeWebhookPayload /
-// DivergenceFiringWebhookPayload schemas, so a field rename on either
-// side would drift silently into production deliveries. This test
-// walks the spec's `properties` for both schemas and the equivalent
-// Go struct's `json` tags and fails on any mismatch, in either
+// Nothing else ties the divergence-service and freeze-sink customer-webhook payload key sets
+// to the spec's AnomalyFreezeWebhookPayload / DivergenceFiringWebhookPayload schemas, so a
+// field rename on either side would drift silently into deliveries. This test compares the
+// spec's `properties` with the Go struct's `json` tags and fails on a mismatch in either
 // direction.
 const aggregatorSpecPath = "../../openapi/stellar-index.v1.yaml"
 

@@ -12,22 +12,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// resolveStartLedger decides where every indexer restart begins reading.
-// Each of its three arms fails in a different and
-// expensive way, and none of them fails loudly at the point of the
-// mistake:
+// resolveStartLedger decides where every indexer restart begins reading. Each arm fails
+// quietly (the indexer just looks busy), so the precedence is pinned rather than inspected:
 //
-//   - resuming from the cursor ITSELF rather than cursor+1 re-ingests
-//     one ledger every restart;
-//   - preferring backfill_from_ledger OVER a live cursor rewinds the
-//     indexer to a stale config value — on r1 that is a multi-million-
-//     ledger replay that looks like a normal (very long) catch-up;
-//   - defaulting to some ledger when neither is set is exactly the
-//     "operators re-ingest genesis by accident" case the function's own
-//     docstring says it exists to prevent.
-//
-// The failure is always "the indexer is busy", never "the indexer is
-// wrong", which is why the precedence is pinned rather than inspected.
+//   - resuming from the cursor ITSELF rather than cursor+1 re-ingests one ledger every restart;
+//   - preferring backfill_from_ledger OVER a live cursor rewinds to a stale config value, a
+//     huge replay that looks like a normal catch-up;
+//   - defaulting to some ledger when neither is set is the "re-ingest genesis by accident"
+//     case the function exists to prevent.
 
 // fakeCursorStore is a cursorReader that returns a scripted answer. It
 // is a probe on the precedence decision, not a store double: the values
@@ -137,11 +129,9 @@ func TestResolveStartLedger_NeitherSetRefusesToGuess(t *testing.T) {
 	}
 }
 
-// TestResolveStartLedger_StoreErrorIsPropagatedNotTreatedAsAbsent is the
-// dangerous confusion. A transient Postgres failure must NOT be read as
-// "no cursor" — that would silently rewind a live indexer to
-// backfill_from_ledger, or abort, depending on config. Only the typed
-// ErrNotFound means "no cursor row".
+// TestResolveStartLedger_StoreErrorIsPropagatedNotTreatedAsAbsent: a transient Postgres
+// failure must NOT be read as "no cursor", which would silently rewind a live indexer to
+// backfill_from_ledger (or abort, per config). Only the typed ErrNotFound means "no cursor row".
 func TestResolveStartLedger_StoreErrorIsPropagatedNotTreatedAsAbsent(t *testing.T) {
 	t.Parallel()
 

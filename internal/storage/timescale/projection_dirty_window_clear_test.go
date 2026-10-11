@@ -5,27 +5,16 @@ import (
 	"testing"
 )
 
-// TestClearProjectionDirtyWindowGuardsOnUpdatedAt pins the
-// dirty-window clear guard at the level a unit test can reach: the DELETE's own predicate.
+// TestClearProjectionDirtyWindowGuardsOnUpdatedAt pins the dirty-window clear guard.
 //
-// The clear's bounds (`from_ledger >= $2 AND to_ledger <= $3`) catch a
-// WIDENED window — a concurrent replay that grew the range leaves a row
-// outside the bounds, which survives, and the next run re-checks it.
+// The bounds (`from_ledger >= $2 AND to_ledger <= $3`) only catch a WIDENED window. A replay
+// that re-records the same or a narrower range still satisfies them, so the delete would erase
+// evidence of a rewind this run never verified and the next completeness verdict would carry a
+// clean claim over it. `updated_at = $4` closes that: any re-record bumps updated_at, the
+// delete matches nothing and the window stays pending (fail-closed, at most one extra reconcile).
 //
-// They do NOT catch a SUBSET RE-RECORD. A replay that re-records the
-// same or a narrower range leaves both bounds satisfying the predicate,
-// so the delete removes evidence of a rewind this run never verified,
-// and the next completeness verdict carries a clean claim over it.
-//
-// `updated_at = $4` closes that: the clear succeeds only if the row is
-// the one whose obligation this run actually discharged. Any re-record —
-// wider, narrower, or identical — bumps updated_at, the delete matches
-// nothing, and the window stays pending. Fail-closed, costing at most
-// one extra reconcile.
-//
-// Asserted against the query text because the behaviour lives in SQL the
-// database evaluates; the end-to-end path needs Postgres and is covered
-// by the integration suite.
+// Asserted against the query text because the behaviour lives in SQL; the end-to-end path
+// needs Postgres and is covered by the integration suite.
 func TestClearProjectionDirtyWindowGuardsOnUpdatedAt(t *testing.T) {
 	t.Parallel()
 	q := clearProjectionDirtyWindowQuery

@@ -11,12 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// A factory whose own genesis is at/after the re-derive's start ledger `to`
-// deployed no children before `to`, so the [genesis, to) preseed window is
-// empty — and inverted (genesis > to) when a whole-lake ch-reproject starts
-// below a later-deploying factory's genesis. The guard must return before
-// touching the streamer; passing a nil streamer proves it does (a walk would
-// panic).
+// A factory whose genesis is at or after the re-derive's start ledger `to` deployed no children
+// before `to`, so the [genesis, to) preseed window is empty, or inverted (genesis > to) when a
+// whole-lake ch-reproject starts below a later-deploying factory's genesis. The guard must return
+// before touching the streamer; a nil streamer proves it (a walk would panic).
 func TestPreseedFactoryChildrenSkipsEmptyOrInvertedWindow(t *testing.T) {
 	src := reconSource{
 		name:      "phoenix",

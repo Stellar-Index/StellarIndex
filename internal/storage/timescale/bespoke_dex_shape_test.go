@@ -33,12 +33,10 @@ const (
 	dexDayUpperSQL     = "< date_trunc('day', now())"
 )
 
-// TestDexWindowsShareCompleteDayBounds pins one window per DEX block. The
-// daily CAGG labels a day by its 00:00 start and never materializes today,
-// so a rolling `bucket > now() - '7 days'` cut summed 6 days under a "(7d)"
-// label while the raw-trade KPIs beside it covered 168 hours. Beyond 24h
-// every builder — CAGG and raw alike — must bound on the N complete UTC
-// days before today, and each window bind must carry both bounds.
+// TestDexWindowsShareCompleteDayBounds pins one window per DEX block. The daily CAGG labels a
+// day by its 00:00 start and never materializes today, so a rolling `bucket > now() - '7 days'`
+// cut sums 6 days under a "(7d)" label. Beyond 24h every builder, CAGG and raw alike, must
+// bound on the N complete UTC days before today, and each window bind must carry both bounds.
 func TestDexWindowsShareCompleteDayBounds(t *testing.T) {
 	builders := map[string]func(int) string{
 		"dexActivitySeriesQuery": dexActivitySeriesQuery,

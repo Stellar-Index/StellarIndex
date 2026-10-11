@@ -9,13 +9,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
-// TestMount_CreateIdempotencyKey_ReplaysInsteadOfRegistering proves
-// that a client that retries POST /v1/dashboard/price-alerts with
-// the same Idempotency-Key header (e.g. after a timed-out response)
-// gets the ORIGINAL alert replayed, not a second alert registered.
-// Routed through h.Mount so the idempotency middleware wired there is
-// actually exercised, not bypassed by calling h.HandleCreate
-// directly.
+// TestMount_CreateIdempotencyKey_ReplaysInsteadOfRegistering proves a client retrying POST
+// /v1/dashboard/price-alerts with the same Idempotency-Key (e.g. after a timed-out response) gets
+// the ORIGINAL alert replayed, not a second one. It routes through h.Mount so the idempotency
+// middleware is exercised rather than bypassed by calling h.HandleCreate directly.
 func TestMount_CreateIdempotencyKey_ReplaysInsteadOfRegistering(t *testing.T) {
 	h, store, sc := newTestRig(t, nil)
 	mux := http.NewServeMux()

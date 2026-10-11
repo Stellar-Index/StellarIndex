@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// contractRegisterWasm is a real Soroban contract module pulled from the r1
-// lake (contract CAP6ZT7JC3ZCNELT4I7OJ6IBACRGRN2CWS5GBPCPYRLF3RLOTX33FAF6,
-// wasm hash f89eb3cc…). Used as a golden fixture for the native export parser.
+// contractRegisterWasm is a real Soroban contract module from the lake (contract
+// CAP6ZT7JC3ZCNELT4I7OJ6IBACRGRN2CWS5GBPCPYRLF3RLOTX33FAF6), the golden fixture for the parser.
 //
 //go:embed testdata/contract_register.wasm
 var contractRegisterWasm []byte
@@ -101,13 +100,11 @@ func uleb(v uint64) []byte {
 	}
 }
 
-// TestParseWasmExports_RejectsMalformed: every input must fail cleanly, never
-// OOM or panic. The huge count would drive a multi-GB prealloc from an
-// attacker-influenced LEB128 (safeCap bounds make() by the remaining bytes).
-// The huge lengths are a 9-byte varint near MaxInt64, for which `r.i+n`
-// overflows negative, passes the bounds guard and panicked in the slice
-// expression. stellar-core validates WASM at upload, but any corruption of
-// entry_xdr that preserves XDR framing reaches this parser.
+// TestParseWasmExports_RejectsMalformed: every input must fail cleanly, never OOM or panic.
+// A huge LEB128 count must not drive a multi-GB prealloc (safeCap bounds make() by the remaining
+// bytes), and a 9-byte varint near MaxInt64 must not overflow `r.i+n` negative past the bounds
+// guard. stellar-core validates WASM at upload, but any entry_xdr corruption that preserves XDR
+// framing reaches this parser.
 func TestParseWasmExports_RejectsMalformed(t *testing.T) {
 	hdr := []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00}
 	module := func(parts ...[]byte) []byte {

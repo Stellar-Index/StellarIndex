@@ -6,12 +6,10 @@ import (
 	"time"
 )
 
-// slowWatermark models the PRODUCTION lake reader's shape rather than a
-// convenient one: clickhouse.ExplorerReader.LakeWatermark is a plain
-// QueryRow with no internal deadline (its only bound is the connection's
-// max_execution_time=30 / ReadTimeout=30s), so a slow lake keeps it in the
-// read long after the caller that started it has given up. delay therefore
-// elapses regardless of the context handed in.
+// slowWatermark models the PRODUCTION lake reader: clickhouse.ExplorerReader.LakeWatermark is a
+// plain QueryRow with no internal deadline (only the connection's max_execution_time=30 /
+// ReadTimeout=30s), so a slow lake keeps it reading long after its caller gave up. delay
+// therefore elapses regardless of the context handed in.
 type slowWatermark struct {
 	mu       sync.Mutex
 	calls    int

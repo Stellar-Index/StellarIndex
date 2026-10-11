@@ -194,12 +194,10 @@ func TestKrakenBackfill_GranularityIsPartOfCandleIdentity(t *testing.T) {
 	}
 }
 
-// TestKrakenBackfill_DetectsDepthHorizonStraddle: Kraken ignores a
-// `since` older than its ~720-candle horizon and serves its most
-// recent window instead, with err=nil at the HTTP layer. A range that
-// straddles the horizon must surface as ErrDepthExceeded — carrying the
-// trades that ARE inside the served window — not as a silent, truncated
-// success.
+// TestKrakenBackfill_DetectsDepthHorizonStraddle: Kraken ignores a `since` older than its
+// ~720-candle horizon and serves its most recent window instead, with no HTTP error. A range
+// straddling the horizon must surface as ErrDepthExceeded, carrying the trades that ARE inside
+// the served window, not as a silent truncated success.
 func TestKrakenBackfill_DetectsDepthHorizonStraddle(t *testing.T) {
 	const requestedFromSec = int64(1_700_000_000)
 	const hourSec = int64(3_600)

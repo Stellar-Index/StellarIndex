@@ -9,13 +9,9 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// TestConfigurePool_AppliesAllFourSettings pins that
-// every pool setting MUST be applied on every fresh *sql.DB the package opens.
-// If a future refactor drops one, this test fails before the bug
-// ships.
-//
-// We use `sql.Open` (lazy — no real connection attempted until
-// Ping) so the test runs as a pure unit test, no postgres needed.
+// TestConfigurePool_AppliesAllFourSettings pins that every pool setting is applied on every fresh
+// *sql.DB the package opens. It uses lazy `sql.Open` (no connection until Ping), so no postgres
+// is needed.
 func TestConfigurePool_AppliesAllFourSettings(t *testing.T) {
 	db, err := sql.Open("pgx", "postgres://invalid:invalid@127.0.0.1:1/invalid")
 	if err != nil {

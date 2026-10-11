@@ -89,14 +89,9 @@ func TestValidateAssetsCursor_volumeOrder(t *testing.T) {
 	}
 }
 
-// TestValidateAssetsCursor_rejectsShapesThatReachTheDatabase pins
-// cursors that passed validation and then failed —
-// or worse, silently degenerated — further down.
-//
-// The validator's job is to make a malformed cursor a 400 at the
-// boundary. Each case below got past it and produced something else: a
-// database-level error, or an empty 200 page indistinguishable from
-// end-of-pagination.
+// TestValidateAssetsCursor_rejectsShapesThatReachTheDatabase pins cursors that must be refused
+// at the boundary as a 400. Each case below, if accepted, produces a database-level error or an
+// empty 200 page indistinguishable from end-of-pagination.
 func TestValidateAssetsCursor_rejectsShapesThatReachTheDatabase(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

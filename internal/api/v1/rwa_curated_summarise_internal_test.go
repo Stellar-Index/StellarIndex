@@ -10,13 +10,10 @@ import (
 
 // TestRWACuratedSummarise_DegradedContractReadIsUnavailableNotServedZero.
 //
-// A curated snapshot that answered (snap.available) says nothing about
-// whether the SEPARATE contract-catalogue read behind the per-asset rows
-// also answered. A failed catalogue read (rows == nil,
-// degraded == true) must not fall through the switch's default branch
-// like a curator with a genuinely empty recognised set: "served" with
-// Assets: 0. Those two states are not the same thing and must not
-// render identically.
+// A curated snapshot that answered (snap.available) says nothing about whether the SEPARATE
+// contract-catalogue read behind the per-asset rows also answered. A failed catalogue read
+// (rows == nil, degraded == true) must not fall through the default branch like a curator with a
+// genuinely empty recognised set ("served" with Assets: 0); the two states must not render alike.
 func TestRWACuratedSummarise_DegradedContractReadIsUnavailableNotServedZero(t *testing.T) {
 	snap := rwaCurated{available: true, wired: true}
 	now := time.Now().UTC()
