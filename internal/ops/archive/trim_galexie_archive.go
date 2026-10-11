@@ -29,20 +29,15 @@ import (
 
 // ─── stellarindex-ops trim-galexie-archive ──────────────────────
 //
-// Per ADR-0027 §Decision: the DESTRUCTIVE operator that deletes cold-eligible
-// LCM files from the local hot tier (galexie-archive MinIO bucket) once their
-// presence in the cold tier is verified. Reads for those ranges fall back to
-// the cold tier through TieredDataStore.
-//
-// Safety stack (each is independent):
+// Per ADR-0027: the DESTRUCTIVE operator that deletes cold-eligible LCM files
+// from the local hot tier (galexie-archive MinIO bucket) once their presence
+// in the cold tier is verified. Safety stack (each is independent):
 //
 //   1. --dry-run is the DEFAULT; deletion needs --commit (or the shared
-//      -write). The dry-run output is the review step. Mismatched flags
-//      (--dry-run --commit) are refused before any S3 call.
-//   2. Upstream verification is always on: every candidate is HEAD'd against
-//      the cold tier and SKIPPED if cold.Exists is false.
-//      --no-verify-upstream is only for restore-from-backup workflows where
-//      the upstream copy is already proven.
+//      -write). Mismatched flags are refused before any S3 call.
+//   2. Every candidate is HEAD'd against the cold tier and SKIPPED if
+//      cold.Exists is false. --no-verify-upstream is only for
+//      restore-from-backup workflows.
 //   3. --max-files caps deletions per run (default 100000, refused above
 //      trimMaxFilesCeiling).
 //   4. --older-than-ledger is REQUIRED and must sit at least
@@ -157,26 +152,19 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 		defer func() { _ = cold.Close() }()
 	}
 
-	// Raw S3 client for DeleteObject — the SDK's datastore.DataStore
-	// interface has no Delete method. We construct the same shape the
-	// SDK's NewS3DataStore builds (path-style, optional anonymous
-	// fallback for public buckets that don't need it here), then call
-	// DeleteObject directly. Auth comes from the standard AWS env vars
-	// (or the operator's ~/.aws/credentials if running interactively).
-	// Hot is local MinIO; the env vars STELLARINDEX_S3_ACCESS_KEY +
+	// Raw S3 client for DeleteObject — the SDK's datastore.DataStore has no
+	// Delete method. Same shape as the SDK's NewS3DataStore (path-style).
+	// Auth comes from the standard AWS env vars; STELLARINDEX_S3_ACCESS_KEY +
 	// STELLARINDEX_S3_SECRET_KEY map to the dedicated
 	// stellarindex-archive-trimmer MinIO identity (List+Delete,
-	// galexie-archive only) via the systemd EnvironmentFile, NOT to
-	// MinIO's root creds.
+	// galexie-archive only) via the systemd EnvironmentFile, NOT MinIO's root.
 	//
-	// This client is HOT-ONLY and therefore does NOT share the
-	// cold-tier credential hazard: every argument below
-	// comes from cfg.Storage.S3* (the MinIO block), it only ever
-	// DeleteObjects out of hotBucket, and the ambient AWS_* chain it
-	// may fall back to holds MinIO's credentials — the right ones for
-	// this endpoint. It is also the reason the cold path cannot
-	// simply reuse buildS3Client: a single ambient chain is correct
-	// for exactly one of the two backends.
+	// This client is HOT-ONLY, so it does NOT share the cold-tier credential
+	// hazard: every argument comes from cfg.Storage.S3* (the MinIO block), it
+	// only DeleteObjects out of hotBucket, and any ambient AWS_* fallback
+	// holds MinIO's credentials, the right ones for this endpoint. That is
+	// also why the cold path cannot reuse buildS3Client: one ambient chain is
+	// correct for exactly one of the two backends.
 	hotBucket, hotKeyPrefix, err := splitBucketPath(cfg.Storage.S3BucketArchive)
 	if err != nil {
 		return fmt.Errorf("parse archive bucket path: %w", err)
@@ -343,24 +331,21 @@ func deleteTrimCandidates(ctx context.Context, logger *slog.Logger, del s3Object
 // ─── partition-scoped enumeration ────────────────────────────────
 //
 // One unbounded hot.ListFilePaths call cannot enumerate this archive: the SDK
-// clamps it to 1000 keys (support/datastore listFilePathsMaxLimit), so
-// Limit:0 means "1000", not "all". galexie-archive holds ~63.6M objects
-// (one per ledger, 64000 per partition).
+// clamps it to 1000 keys, so Limit:0 means "1000", not "all". galexie-archive
+// holds ~63.6M objects (one per ledger, 64000 per partition).
 //
 // Worse, those 1000 are the wrong ones. Partition directories are named
-// "%08X--<start>-<end>/" with hex = MaxUint32-start, so hex descends as the
-// ledger ascends and a lexicographic listing returns the NEWEST objects
-// first, all above any useful cutoff. The result is "candidates=0", which is
-// also what a fully-trimmed archive looks like, so it reads like success.
+// "%08X--<start>-<end>/" with hex = MaxUint32-start, so a lexicographic
+// listing returns the NEWEST objects first, all above any useful cutoff. The
+// result is "candidates=0", which is also what a fully-trimmed archive looks
+// like, so it reads like success.
 //
 // Instead: discover partitions (one delimited listing), skip those entirely
-// at/above the cutoff, and page StartAfter through the rest. A partition
-// that straddles the cutoff is enumerated and filtered per file.
+// at/above the cutoff, and page StartAfter through the rest. A straddling
+// partition is enumerated and filtered per file.
 //
-// The per-file safety chain (ParseRangeFromObjectKey bucketing, cold-tier
-// HEAD, --max-files, --dry-run) applies to every file. --max-files caps
-// deletions for the whole run, not per partition: the counter lives on
-// trimPlan.
+// The per-file safety chain applies to every file. --max-files caps deletions
+// for the whole run, not per partition: the counter lives on trimPlan.
 
 // trimListPageSize is the SDK's hard per-call ceiling (see above). We
 // request it explicitly rather than relying on the Limit:0 default,

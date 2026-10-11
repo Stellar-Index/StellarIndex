@@ -535,17 +535,12 @@ const defaultRequestTimeout = 15 * time.Second
 // The 3s headroom is response-writing room against the DEFAULT deadline, not a
 // minimum the boot check enforces. The check ([config.APIConfig.validate]) requires
 // only api.request_timeout > [config.APIMaxHandlerBudget], because RequestTimeout
-// cancels the CONTEXT and nothing else (a write in flight still reaches the client;
-// the bound on writing is the 30s http.Server WriteTimeout). A deployment with a
-// tighter global budget keeps every handler's timeout branch reachable, which is the
-// invariant that matters. Handlers wanting the longest legal budget name this
+// cancels the CONTEXT and nothing else (the bound on writing is the 30s
+// http.Server WriteTimeout). Handlers wanting the longest legal budget name this
 // constant so re-tuning defaultRequestTimeout moves them with it.
-// TestHandlerBudgets_StayInsideTheRequestTimeout enforces the bound across every
-// request-derived budget in the API packages.
-//
-// The compile-time bound is half the guarantee: the installed deadline is
-// Options.RequestTimeout (api.request_timeout, operator-set), so this is mirrored as
-// [config.APIMaxHandlerBudget] and validated at boot.
+// TestHandlerBudgets_StayInsideTheRequestTimeout enforces the bound.
+// The installed deadline is Options.RequestTimeout (operator-set), mirrored as
+// [config.APIMaxHandlerBudget] and validated at boot;
 // TestMaxHandlerBudgetMatchesConfigBound keeps the two equal.
 const maxHandlerBudget = defaultRequestTimeout - 3*time.Second
 
@@ -1822,22 +1817,18 @@ func (s *Server) middlewareStack() []stackEntry {
 	// CaptureRoute. In the inner position Auth / KeyPolicy / RequireEmailVerified /
 	// MonthlyQuota / RateLimit / UsageTracker / SessionAuth would run OUTSIDE the
 	// deadline, their Redis and Postgres round-trips bounded only by go-redis's 3 s
-	// default and http.Server WriteTimeout (which cancels nothing in flight), so a slow
-	// store could hold a goroutine well past the timeout.
+	// default and http.Server WriteTimeout (which cancels nothing in flight).
 	//
 	// It stays INSIDE CORS/TrailingSlashRedirect (allocation- and I/O-free) so a
-	// preflight short-circuits without a timer. Tighter per-handler 8s WithTimeout
+	// preflight short-circuits without a timer. Tighter per-handler WithTimeout
 	// wrappers layer under it and fire first. Three PRE-handler seams detach from
-	// request CANCELLATION (context.WithoutCancel): the MonthlyQuota read, the RateLimit
-	// take and Auth's failed-auth throttle, so a client abort can't arm their dwell
-	// clocks; middleware.throttleContext re-applies this deadline, so they are bounded
-	// by min(5s, time left).
+	// request CANCELLATION (context.WithoutCancel): the MonthlyQuota read, the
+	// RateLimit take and Auth's failed-auth throttle, so a client abort can't arm
+	// their dwell clocks; middleware.throttleContext re-applies this deadline.
 	//
-	// Post-RESPONSE bookkeeping in UsageTracker/TouchUsage doesn't use WithoutCancel:
-	// [middleware.AfterResponse] flushes the response first, then runs the write on the
-	// shared worker pool under its own Background-derived bound, so moving this timeout
-	// can't drop a usage row nor pin a request goroutine. SSE endpoints are exempt
-	// inside the middleware; skipped when requestTimeout <= 0.
+	// Post-RESPONSE bookkeeping in UsageTracker/TouchUsage uses
+	// [middleware.AfterResponse]: flush first, then write on the shared worker pool
+	// under its own bound. SSE endpoints are exempt; skipped when requestTimeout <= 0.
 	if s.requestTimeout > 0 {
 		stack = append(stack, stackEntry{"RequestTimeout", middleware.RequestTimeout(s.requestTimeout)})
 	}
@@ -2717,23 +2708,21 @@ type lakeHealth struct {
 // handleLivezLake is the LAKE-critical health probe (multi-region plan §7.3 /
 // ADR-0050). /v1/readyz treats ClickHouse as NON-critical so a lake outage degrades
 // rather than un-readies the pricing surface, but that 200 keeps a lake-dead region
-// in a load balancer's pool for the ~21 lake-backed routes it can't serve. This is
+// in a load balancer's pool for the lake-backed routes it can't serve. This is
 // the complement: 200 iff the registered ClickHouse checker pings; 503 when it fails
-// OR when no lake is wired (absent fails closed: a lake-less deployment must never
-// receive lake-route traffic). Point lake-route LB monitors here, pricing monitors
-// on /v1/readyz.
+// OR when no lake is wired (absent fails closed). Point lake-route LB monitors
+// here, pricing monitors on /v1/readyz.
 //
 // Single-flight + 1s result cache. The route shares readyz's infra exemptions (no
 // auth, no anonymous rate limit), which are only safe behind a single-flight cache:
-// otherwise EVERY anonymous request would run a fresh `LakeTipLedger` query under a
-// 5s timeout, an amplifier pointed at the lake exactly when it struggles. Concurrent
-// callers share ONE ping round per second, like handleReadyz.
+// otherwise EVERY anonymous request would run a fresh `LakeTipLedger` query, an
+// amplifier pointed at the lake exactly when it struggles.
 //
 // livezLakeMu is held only to read/write the cache and flight fields, never across
-// the ping: under the lock every queued caller on this unauthenticated route would
-// block up to the 5s ping budget against a 1s TTL during the lake outage the route
-// exists to surface. The round runs detached in fillLivezLake; queued callers wait
-// on its done channel and can abandon it via their own request context.
+// the ping: every queued caller on this unauthenticated route would block up to
+// the 5s ping budget during the lake outage the route exists to surface. The round
+// runs detached in fillLivezLake; queued callers wait on its done channel and can
+// abandon it via their own request context.
 func (s *Server) handleLivezLake(w http.ResponseWriter, r *http.Request) {
 	s.livezLakeMu.Lock()
 	if time.Since(s.livezLakeAt) < livezLakeTTL && s.livezLakeBody != nil {

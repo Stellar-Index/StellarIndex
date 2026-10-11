@@ -18,20 +18,15 @@ import (
 // home_domain and 14,635 with a fetched SEP-1 payload. Without the
 // funnel nothing in the response distinguishes "the network holds six
 // real-world assets" from "the pipeline discarded fourteen thousand
-// candidates without saying so", and the only way to tell the two apart
-// is a database session.
+// candidates without saying so".
 //
-// A refusal tally cannot close that gap on its own: it reports
-// requirements that were EVALUATED, and the stages that discard most of
-// the population run before any candidate reaches the definition. So
-// the funnel reports the stages, the refusal tally reports the
-// requirements, and between them every unit that entered is accounted
-// for.
+// A refusal tally cannot close that gap alone: it reports requirements
+// that were EVALUATED, and the stages that discard most of the population
+// run before any candidate reaches the definition. So the funnel reports
+// the stages, the refusal tally the requirements, and between them every
+// unit that entered is accounted for.
 //
-// WHAT IT IS NOT. It is not a second membership rule and it admits
-// nothing. Widening coverage means moving a number here that somebody
-// can act on — an attestation nobody has fetched, an issuer nobody has
-// vouched for — never loosening the definition until a bucket empties.
+// NOT a second membership rule: it admits nothing; widening coverage never loosens it.
 
 // Funnel stage units. The unit changes down the funnel, and comparing
 // two counts of different units is the easiest way to misread it, so
@@ -423,13 +418,11 @@ func rwaClassicStages(m rwaMembership, join rwaCatalogueJoin, served int) []RWAF
 	//
 	// The split cannot say WHY a reached domain served nothing: no per-attempt
 	// outcome is stored, so 404, dead name, TLS failure and a document without SEP-1
-	// are one count. The reason string therefore says what was observed, not whose
-	// fault it was.
+	// are one count. The reason string says what was observed, not whose fault.
 	//
-	// Both counts are clamped (the gap at zero; fetched-but-empty to the gap, with
-	// the never-attempted remainder taking the rest). Neither clamp hides an
-	// inconsistency: the census Check() bounds the same counts against the same
-	// population independently, and Balanced requires both.
+	// Both counts are clamped (the gap at zero; fetched-but-empty to the gap). Neither
+	// clamp hides an inconsistency: the census Check() bounds the same counts
+	// independently, and Balanced requires both.
 	gap := max(c.IssuersWithHomeDomain-c.IssuersWithPayload, 0)
 	servedNothing := min(c.IssuersFetchedWithoutPayload, gap)
 	neverFetched := gap - servedNothing
@@ -719,8 +712,7 @@ func rwaListingAdmitted(m rwaMembership) int {
 // reached the full ordered evaluation on this arm.
 //
 // C2's own refusals are decided by the candidate build and appear as
-// drops on the stage above, so they are unreachable here — the same
-// relationship the contract arm has with its C1-to-C3 constants.
+// drops on the stage above, so they are unreachable here.
 //
 // What remains in practice is C3: a scam flag on an address the curated
 // directory named ONLY to flag. It is attributed to `definition`,
@@ -728,13 +720,11 @@ func rwaListingAdmitted(m rwaMembership) int {
 // this repository and flagged by a third party is precisely the case
 // the precedence exists for.
 //
-// The C4 drop is carried but is UNREACHABLE on this arm by
-// construction: a candidate reaches the verdict only if a curated
-// binding names it, and a curated binding is exactly what C4's first
-// branch answers on. It is listed rather than omitted so that a future
-// arm-2 candidate admitted on some other evidence cannot drop out of
-// the accounting silently — an unlisted reason unbalances the funnel,
-// which is loud but uninformative.
+// The C4 drop is carried but UNREACHABLE on this arm by construction: a
+// candidate reaches the verdict only if a curated binding names it, and
+// that is exactly what C4's first branch answers on. It is listed so a
+// future arm-2 candidate admitted on other evidence cannot drop out of
+// the accounting silently (an unlisted reason unbalances the funnel).
 func rwaListingCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 	out := make([]RWAFunnelDrop, 0, 2)
 	for _, d := range []struct {
@@ -828,17 +818,14 @@ func rwaDrops(drops ...RWAFunnelDrop) []RWAFunnelDrop {
 //     issuers publish. The two counts measure different things and no
 //     subtraction relates them, so that pair is required to carry no
 //     drops instead. Every other unit change is a relabelling of a
-//     population that maps one-to-one — a bound declaration IS the
-//     candidate asset it names — and still has to reconcile.
+//     population that maps one-to-one and still has to reconcile.
 //   - the issuer_asset_page_truncated drop, which counts ISSUERS whose
 //     asset tail went unread rather than assets. Letting it into the
 //     asset arithmetic would make the funnel close by inventing a
 //     number, which is worse than reporting that it does not.
 //
 // Surfaced through RWAFunnel.Balanced rather than raised as an error: a
-// funnel that cannot be reconciled must SAY so. A reader who silently
-// fails to make the numbers meet is exactly the outcome this structure
-// exists to prevent.
+// funnel that cannot be reconciled must SAY so.
 func rwaFunnelImbalance(stages []RWAFunnelStage) string {
 	for i := 0; i+1 < len(stages); i++ {
 		if bad := rwaStagePairImbalance(stages[i], stages[i+1]); bad != "" {

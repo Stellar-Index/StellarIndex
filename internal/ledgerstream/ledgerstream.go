@@ -54,26 +54,23 @@ type Config struct {
 	// through ingest.ApplyLedgerMetadata is used instead.
 	ColdDataStore datastore.DataStoreConfig
 
-	// ColdDataStoreFactory — optional. When non-nil, [Stream] calls
-	// this INSTEAD OF datastore.NewDataStore(ctx, ColdDataStore) to
-	// open the cold tier; ColdDataStore is still required (its
-	// non-empty Type is the tiering opt-in, and its NetworkPassphrase
-	// / Schema still drive datastore.LoadSchema on the cold side).
+	// ColdDataStoreFactory — optional. When non-nil, [Stream] calls this
+	// INSTEAD OF datastore.NewDataStore(ctx, ColdDataStore) to open the cold
+	// tier; ColdDataStore is still required (its non-empty Type is the
+	// tiering opt-in, and its NetworkPassphrase / Schema still drive
+	// datastore.LoadSchema on the cold side).
 	//
-	// It exists because the SDK's datastore.NewDataStore builds every
-	// S3 client through config.LoadDefaultConfig, i.e. the ambient AWS
-	// credential chain — and on r1 that chain carries local MinIO's
-	// credentials (the HOT tier authenticates through it). Those keys
-	// were then presented to real AWS, so every cold read failed with
-	// `InvalidAccessKeyId: The AWS Access Key Id you provided does not
-	// exist in our records` and the tier silently degraded to hot-only.
-	// One process cannot serve two S3 backends with different
-	// credentials through datastore.NewDataStore.
+	// It exists because datastore.NewDataStore builds every S3 client through
+	// the ambient AWS credential chain, and on r1 that chain carries local
+	// MinIO's credentials (the HOT tier authenticates through it). Those keys
+	// were presented to real AWS, so every cold read failed with
+	// InvalidAccessKeyId and the tier silently degraded to hot-only. One
+	// process cannot serve two S3 backends with different credentials through
+	// datastore.NewDataStore.
 	//
-	// This package takes datastore.DataStoreConfig, not our
-	// config.Config, so it cannot resolve the storage.s3_cold_*_key_env
-	// names itself — hence a hook rather than more fields. Production
-	// wires pipeline.NewColdDataStore in via
+	// This package takes datastore.DataStoreConfig, not config.Config, so it
+	// cannot resolve the storage.s3_cold_*_key_env names itself — hence a
+	// hook. Production wires pipeline.NewColdDataStore in via
 	// pipeline.LedgerstreamConfig.
 	ColdDataStoreFactory func(ctx context.Context) (datastore.DataStore, error)
 
@@ -146,19 +143,16 @@ type Config struct {
 	// walks. False preserves strict semantics: any missing file is an error.
 	//
 	// A gap farther than TrailingMissingWindow below To, or below the
-	// DataStore's own latest ledger (resolved when a miss is seen), still
-	// errors; the tip check is what refuses a mid-history hole when To is only a
-	// chunk boundary. A caller setting this on a bounded range still owns the
-	// coverage check: count delivered ledgers and fail a short walk, as
-	// chops.backfillCoverage, ingest.censusCoverage and
-	// ingest.backfillChunkCoverage do.
+	// DataStore's own latest ledger, still errors; the tip check refuses a
+	// mid-history hole when To is only a chunk boundary. A caller setting this
+	// on a bounded range still owns the coverage check: count delivered
+	// ledgers and fail a short walk, as chops.backfillCoverage,
+	// ingest.censusCoverage and ingest.backfillChunkCoverage do.
 	//
 	// Delivery caveat (SDK-level): on a missing file BufferedStorageBackend
 	// cancels its context and drops pre-fetched ledgers not yet delivered, so
 	// the last delivered ledger can be up to BufferSize behind the missing seq.
-	// Full-coverage backfills must clamp -to below the live tip in advance; this
-	// flag is a graceful exit for trailing-edge races, not a substitute for
-	// tip-aware -to.
+	// Full-coverage backfills must clamp -to below the live tip in advance.
 	TolerateTrailingMissing bool
 
 	// TrailingMissingWindow — how close to the bounded range's To, and
@@ -301,21 +295,17 @@ func latestLedger(ctx context.Context, dsCfg datastore.DataStoreConfig) (uint32,
 // exists only after the datastore is opened and its schema loaded (LoadSchema
 // LISTS the bucket), both done ONCE with no retry. Without this, a lake outage
 // present at START bypasses the budget; the supervisor counts starts not
-// seconds, so the unit parks in `failed` until `systemctl reset-failed` even
-// after MinIO returns.
+// seconds, so the unit parks in `failed` until `systemctl reset-failed`.
 //   - It CANNOT skip a ledger: it re-attempts only while delivered == 0,
-//     before the caller's cursor-writing callback has run. After any ledger
-//     lands, a later failure is returned untouched.
+//     before the caller's cursor-writing callback has run.
 //   - It is BOUNDED by a wall-clock deadline fixed before the first re-attempt;
 //     an unbounded reconnect would turn a visible outage into a silent freeze.
-//   - It is VISIBLE via stellarindex_ledgerstream_live_start_retries_total;
-//     exhaustion pages via stellarindex_ingestion_ledger_stalled.
+//   - It is VISIBLE via stellarindex_ledgerstream_live_start_retries_total.
 //
 // Errors are NOT classified transient vs permanent: on an unbounded tail "could
-// not start" always means "try again shortly", the SDK exposes no sentinel, and
-// a 403 is as likely a half-restarted MinIO as a revoked key.
-// Backoff is exponential from LiveRetryWait, capped at [maxLiveStartRetryWait],
-// no jitter. Callers must gate on the range being unbounded; see [Stream].
+// not start" always means "try again shortly". Backoff is exponential from
+// LiveRetryWait, capped at [maxLiveStartRetryWait], no jitter. Callers must
+// gate on the range being unbounded; see [Stream].
 func retryLiveStart(
 	ctx context.Context,
 	cfg Config,

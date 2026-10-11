@@ -1,27 +1,22 @@
 // Package pricingguard is the serving-sanity guard shared by every raw
 // prices_1m closed-bucket serving path across the API and aggregator binaries.
 //
-// Those paths read a CLOSED prices_1m bucket directly, a bare
-// Σ(quote)/Σ(base) CAGG bucket that BYPASSES the orchestrator's σ-outlier
-// filter, min-USD-volume gate and freeze protection (they guard only the path
-// that writes the filtered VWAP to Redis). A single manipulated print would
-// otherwise be served verbatim with stale=false. The consumers, each a WIRED call
-// site: /v1/price (StorePriceReader.LatestPrice), /v1/assets/{slug}
+// Those paths read a CLOSED prices_1m bucket directly, a bare CAGG bucket that
+// BYPASSES the orchestrator's σ-outlier filter, min-USD-volume gate and freeze
+// protection, so one manipulated print would be served verbatim. The consumers, each a
+// WIRED call site: /v1/price (StorePriceReader.LatestPrice), /v1/assets/{slug}
 // (GlobalPriceReader.LatestVWAP), the price-alert evaluator
 // (priceAlertVWAPReader.LatestVWAP), /v1/price/at + /v1/price/changes
 // (storePriceAtReader.PriceAt, via [GuardServedVWAP1mAt]), the SEP-40 prices()
-// series (StorePriceReader.RecentClosedSnapshots, via [GuardServedVWAP1mSeries]) and /v1/assets change_24h_pct's 24h-ago
-// anchor (storeChange24hReader.USDPrice24hAgo, via [GuardServedVWAP1mAt]).
-// TestRawPrices1mReadersPassTheGuard (cmd/stellarindex-api) fails when a
-// function under cmd/ calls a raw prices_1m store read without a guard entry
-// point, or is missing from this list.
+// series (StorePriceReader.RecentClosedSnapshots, via [GuardServedVWAP1mSeries])
+// and /v1/assets change_24h_pct's 24h-ago anchor
+// (storeChange24hReader.USDPrice24hAgo, via [GuardServedVWAP1mAt]).
+// TestRawPrices1mReadersPassTheGuard (cmd/stellarindex-api) fails on a raw
+// prices_1m read with no guard entry point or missing from this list.
 //
 // This package is the WIRING around the pure robust-band decision
-// ([aggregate.GuardServedVWAP], ADR-0003 exact-rational): it fetches the
-// trailing baseline and, on gross deviation, swaps in the newest clean
-// last-known-good bucket. It sits above storage and above the pure decision
-// (timescale already imports aggregate, so the reverse edge would cycle), so both
-// binaries can import it without duplicating the glue.
+// ([aggregate.GuardServedVWAP], ADR-0003 exact-rational), above storage so both
+// binaries can import it (timescale imports aggregate; the reverse would cycle).
 package pricingguard
 
 import (
@@ -78,20 +73,14 @@ type TrailingAtReader interface {
 //
 // lowConfidence is true when a SUCCESSFUL trailing fetch returned no usable
 // baseline (a pair's first-ever served minute, or first after more than
-// [BaselineMaxAge] dormant). [aggregate.GuardServedVWAP] fails open there, so the
-// value is still served (no blackout of a new pair) but the caller must surface
-// it as stale / low-confidence. A transient fetch error fails open with
+// [BaselineMaxAge] dormant). The value is still served but the caller must
+// surface it as stale / low-confidence. A transient fetch error fails open with
 // lowConfidence=false, so a DB blip does not flag every price stale.
 //
 // substituted is true when the candidate was rejected and `served` is the older
 // last-known-good bucket. A caller that staples enrichment from a separate cache
-// keyed by (pair, window) (confidence score, composite-router flags) must treat
-// it as "that enrichment answers for the CURRENT tick, not the bucket served"
-// and withhold it.
-//
-// There is deliberately no row-only form: every caller must decide what an
-// unvalidated or substituted bucket means on its surface, and a caller with no
-// flag to carry it withholds (as [GuardServedVWAP1mAt] does).
+// keyed by (pair, window) must withhold it: it answers for the CURRENT tick, not
+// the bucket served. There is deliberately no row-only form.
 func GuardServedVWAP1mConfidence(
 	ctx context.Context,
 	store TrailingReader,
@@ -135,18 +124,17 @@ func GuardServedVWAP1mConfidence(
 //
 // `ts` and `maxStaleness` are the caller's at-or-before contract: a rejected
 // candidate is replaced by the newest clean trailing bucket only while it still
-// CLOSES within maxStaleness of ts (the test [timescale.Store.ClosedVWAPAtOrBefore]
-// applied). Otherwise ok=false and the caller reports "no price at this instant",
-// never a rejected value nor one breaching the requested staleness.
+// CLOSES within maxStaleness of ts. Otherwise ok=false and the caller reports
+// "no price at this instant", never a rejected value nor one breaching the
+// requested staleness.
 //
 // The baseline is the [SampleFetch] closed buckets immediately BEFORE the
 // candidate ([TrailingAtReader]), not the newest: a now-anchored baseline holds
 // nothing older than a historical candidate, so it would pass unjudged.
 //
-// An empty baseline (nothing within [BaselineMaxAge] before the candidate) is
-// ok=false here, where [GuardServedVWAP1mConfidence] serves it flagged
-// low-confidence: a point-in-time answer has no stale flag to carry that doubt.
-// A trailing-fetch error still fails open.
+// An empty baseline is ok=false here, where [GuardServedVWAP1mConfidence] serves
+// it flagged low-confidence: a point-in-time answer has no stale flag to carry
+// that doubt. A trailing-fetch error still fails open.
 func GuardServedVWAP1mAt(
 	ctx context.Context,
 	store TrailingAtReader,
