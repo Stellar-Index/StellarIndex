@@ -1,40 +1,32 @@
 ---
 title: SEV status-page update
-last_verified: 2026-09-20
+last_verified: 2026-10-12
 status: living doc
 related:
   - docs/operations/sev-playbook.md
   - internal/incidents/data/_template.md
   - web/explorer/src/app/status/
+  - web/status/
 ---
 
 # SEV status-page update
 
 The customer-facing companion to the on-call escalation flow.
 Every SEV that meets the visibility threshold below MUST be
-posted to `stellarindex.io/status`; this runbook is the binding
+posted to `status.stellarindex.io`; this runbook is the binding
 how-to.
 
-**Where the page actually lives (2026-08-29).** The status page is
-part of the **explorer**: `web/explorer/src/app/status/page.tsx`
-(index) plus `web/explorer/src/app/status/incident/[slug]/page.tsx`
-(per-incident), with the build-time loader at
-`web/explorer/src/lib/incidents.ts` reading
-`internal/incidents/data/<YYYY-MM-DD>-<slug>.md` straight from the
-repo. One site, unified nav, served at `stellarindex.io/status`.
+**Where the page lives.** Two renderers read the same corpus,
+`internal/incidents/data/<YYYY-MM-DD>-<slug>.md`, at build time:
 
-`web/status/` is now a **redirect-only stub** — a Cloudflare Pages
-project (`stellarindex-status`) still bound to
-`status.stellarindex.io` whose `public/_redirects` 301s every path to
-`https://stellarindex.io/status/:splat`. Its workflow
-(`.github/workflows/status-page.yml`) is `workflow_dispatch`-only and
-rebuilds that stub; editing anything under `web/status/` will NOT
-change what customers see. See `web/status/README.md`.
-
-(History: F-1211 (codex audit-2026-05-12) retired an even older
-`deploy/status-page/cstate/...` workflow. The corpus location —
-`internal/incidents/data/` — has been stable throughout; only the
-renderer moved.)
+- **`status.stellarindex.io`** — `web/status/`, its own Cloudflare Pages
+  project (`stellarindex-status`), deployed by
+  `.github/workflows/status-page.yml`. It makes no API call, so it is the
+  channel that still publishes during an outage. Post here first.
+- **`stellarindex.io/status`** — part of the explorer
+  (`web/explorer/src/app/status/`), with live component health. It shares
+  one `next build` with every explorer page, so an API outage can block it
+  (see "Known risk" below).
 
 ## When to post
 
@@ -141,15 +133,20 @@ gh pr create --title "incident: ${DATE}-${SLUG}" --body ""
 gh pr merge --squash --auto
 ```
 
+Publish to the standalone page as soon as the PR merges; it never
+touches the API:
+
+```sh
+gh workflow run status-page.yml --ref main
+```
+
 The **explorer's** Cloudflare Pages git integration auto-deploys on
 the merge into `main` and renders the new incident at
 `stellarindex.io/status` within a minute or two (the loader reads the
 corpus at build time, so a rebuild is what publishes it). Verify the
 incident lands on the index page before stepping away. If the git
 integration is paused, the manual fallback is
-`gh workflow run explorer-deploy.yml --ref main -f network=mainnet -f environment=production`
-— `status-page.yml` rebuilds the redirect stub only and will not
-publish an incident.
+`gh workflow run explorer-deploy.yml --ref main -f network=mainnet -f environment=production`.
 
 **Known risk: a genuine API outage can block the update it's meant to
 announce.** The status page shares ONE `next build` with every other
@@ -162,10 +159,8 @@ and aborts the WHOLE `next build` — that's correct for those pages
 SEV this runbook targets (the live API is down) can make the build
 that would publish the NEW incident update fail too, on an unrelated
 page's fetch, not the status page's own code (`web/explorer/src/lib/incidents.ts`
-reads the corpus from disk, not the network). This is not yet fixed —
-isolating the status page's build/deploy from the rest of the site is
-an infra change (a separate Cloudflare Pages project + build target)
-that hasn't been scoped.
+reads the corpus from disk, not the network). `status.stellarindex.io` is
+the isolated build that avoids this; the explorer copy can lag.
 
 **Interim workaround.** If a status-page-update build fails and the
 failure is `BuildFetchError` (not a status-page or corpus error), the

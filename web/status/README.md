@@ -1,22 +1,16 @@
-# web/status — redirect-only stub
+# web/status — standalone status page
 
-**The status page moved onto the main site at
-[`stellarindex.io/status`](https://stellarindex.io/status)** (one site,
-unified nav). Its source now lives in the explorer at
-`web/explorer/src/app/status/` (page + `incident/[slug]` postmortems),
-with the incident loader at `web/explorer/src/lib/incidents.ts`.
+`status.stellarindex.io` (Cloudflare Pages project `stellarindex-status`).
+It renders the incident corpus in `internal/incidents/data/` at build time
+and makes no API call, so it builds and publishes while the API and the
+explorer are down. That is its job: the outage channel.
 
-This directory is what remains: a **redirect-only** Cloudflare Pages
-project (`stellarindex-status`, still bound to `status.stellarindex.io`).
-`public/_redirects` 301s every path to
-`https://stellarindex.io/status/:splat` (incident deep-links preserved).
-The tiny Next page here is just the build artifact the redirect rides on
-— it's shadowed by the edge redirect and rarely rendered.
+The loader is the explorer's `web/explorer/src/lib/incidents.ts`, imported
+across the package (it uses only `node:` builtins). `next.config.mjs` sets the
+repo root as the build root so that import resolves.
 
-Deploy is unchanged: `.github/workflows/status-page.yml` builds + publishes
-this project, keeping the subdomain (and its TLS cert) resolving. No DNS
-change was needed to move the page.
+Live component health stays on the explorer at `stellarindex.io/status`.
+`public/_redirects` sends `/incident/<slug>` deep links there.
 
-To retire the subdomain entirely later, delete the `stellarindex-status`
-CF Pages project + the `status.stellarindex.io` DNS record; nothing else
-depends on it.
+Deploy: `gh workflow run status-page.yml --ref main`. Procedure:
+`docs/operations/runbooks/sev-status-page-update.md`.
