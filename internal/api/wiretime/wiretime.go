@@ -15,27 +15,19 @@ import (
 // wire: RFC 3339, always in UTC, always with a literal `Z` offset.
 //
 // It exists because a plain [time.Time] field marshals in whatever
-// location the value happens to carry, and the values that reach a
-// response struct do NOT reliably carry UTC. Rows read back from
-// Postgres decode `timestamptz` into the PROCESS's local zone, so a
-// handler that passes a stored timestamp straight into a `time.Time`
-// json field emits the server's local offset — the same instant,
-// rendered differently. Production served a `+02:00` offset from
-// /v1/price/at and a `+01:00` one from /v1/history/since-inception.
-// Note the second offset: it moves with DST, so one series rendered two
-// different offsets across the same grid.
+// location the value carries, and values reaching a response struct do NOT
+// reliably carry UTC: rows read back from Postgres decode `timestamptz` into
+// the PROCESS's local zone, so the server's local offset (which moves with
+// DST) leaks onto the wire — same instant, rendered differently.
 //
-// Every such string is schema-valid — `format: date-time` accepts an
-// offset — so neither the OpenAPI contract test nor any status-code
-// check could see it. The reader it hurts is the one who buckets by
-// the literal string instead of the parsed instant: they mis-bucket
-// by an hour, silently, on price history and trade history, which are
-// the two surfaces where an hour matters most.
+// Every such string is schema-valid (`format: date-time` accepts an offset),
+// so neither the OpenAPI contract test nor any status-code check can see it.
+// A client that buckets by the literal string instead of the parsed instant
+// mis-buckets by an hour, silently, on price and trade history.
 //
-// This type fixes rendering, not storage. The underlying instant is
-// unchanged, conversion is free, and for a value that was already UTC
-// the bytes are IDENTICAL to what [time.Time] produced — so adopting
-// it is not a response-shape change.
+// This type fixes rendering, not storage: the instant is unchanged, and for a
+// value that was already UTC the bytes are IDENTICAL to what [time.Time]
+// produced, so adopting it is not a response-shape change.
 //
 // Use it for every json-tagged timestamp field a client reads. The rule
 // is enforced over all of internal/api by v1's

@@ -1551,25 +1551,18 @@ const maxSupplyLakeClampLedgers = clickhouse.LatestLedgerLookbackLedgers
 // Resolution has two load-bearing steps:
 //
 //  1. The chain cursor names the position, not MAX(last_ledger) over every
-//     cursor. An operator backfilling near the tip would win the max and stamp
+//     cursor: an operator backfilling near the tip would win the max and stamp
 //     the snapshot at a ledger no component was observed at. MAX survives only
 //     as the named pre-first-run fallback.
 //
 //  2. The lake's landed tip bounds it. ingestion_cursors leads stellar.ledgers
-//     by seconds, so an exact lookup of the cursor's ledger routinely misses.
-//     Resolution clamps to the newest landed ledger at or before the cursor,
-//     reading only the [maxSupplyLakeClampLedgers] below it (an unbounded
-//     `ledger_seq <= cursor` prunes no partition).
+//     by seconds, so an exact lookup routinely misses; resolution clamps to the
+//     newest landed ledger at or before the cursor, reading only the
+//     [maxSupplyLakeClampLedgers] below it (unbounded prunes no partition).
 //
 // Fail-closed: no cursor, no landed row within the clamp, or a lake trailing the
 // cursor by more than that, returns a retryable no_ledger error, never a
 // wall-clock guess.
-//
-// The supply-component readers return whatever at-or-before row they have, even
-// a much older one. supply.Supply.MinComponentLedger records the oldest (zero
-// passes the gate); the Refresher rejects snapshots whose components lag past
-// [supply.WithStaleComponentLedgers] and moved since the last tick, and keeps a
-// frozen lagging one as dormant until the dormancy horizon.
 type supplyAggregatorLedgers struct {
 	s          supplyCursorLister
 	closeTimes ledgerCloseTimeReader

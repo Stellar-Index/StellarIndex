@@ -61,24 +61,19 @@ type CachedResult struct {
 	//
 	// The second leg exists because the median gate alone is blind to
 	// symmetric disagreement: references straddling our price (one
-	// +8%, one −8%) produce a median equal to our price and a
-	// DivergencePct of ~0, so total disagreement would read as agreement.
+	// +8%, one −8%) give a median equal to our price and DivergencePct ~0.
 	// See [Service.RefreshPair] for why the leg is "nobody agrees"
 	// rather than "somebody disagrees".
 	//
-	// The raw condition above must additionally have
-	// PERSISTED for at least ServiceOptions.WarningPersistence (default
-	// 5m) before this flips true. OurPrice is a shortest-window VWAP
-	// while the references are instantaneous spot quotes, so on a fast
-	// price move the VWAP legitimately lags the spot and the raw
-	// condition trips for up to one window even though nothing is wrong;
-	// that transient self-clears as the average rolls past the move. A
-	// genuine divergence persists past the window and still fires. See
-	// [Service.warningPersists].
+	// The raw condition must also have PERSISTED for at least
+	// ServiceOptions.WarningPersistence (default 5m) before this flips true.
+	// OurPrice is a shortest-window VWAP while the references are
+	// instantaneous spot quotes, so on a fast move the VWAP legitimately
+	// lags and the raw condition trips for up to one window; a genuine
+	// divergence persists past it. See [Service.warningPersists].
 	//
-	// A below-quorum refresh reaches no verdict, so it carries the last
-	// evaluated value forward instead of asserting false; SuccessCount
-	// below the quorum is what marks the entry unchecked.
+	// A below-quorum refresh reaches no verdict: it carries the last
+	// value forward; SuccessCount below quorum marks the entry unchecked.
 	WarningFired bool `json:"warning_fired"`
 
 	// FiringSince is the comparison time the current uninterrupted raw

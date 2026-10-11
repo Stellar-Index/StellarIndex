@@ -304,24 +304,18 @@ func latestLedger(ctx context.Context, dsCfg datastore.DataStoreConfig) (uint32,
 // seconds, so the unit parks in `failed` until `systemctl reset-failed` even
 // after MinIO returns.
 //   - It CANNOT skip a ledger: it re-attempts only while delivered == 0,
-//     re-issuing the identical range before the caller's cursor-writing callback
-//     has run. After any ledger lands, a later failure is returned untouched.
+//     before the caller's cursor-writing callback has run. After any ledger
+//     lands, a later failure is returned untouched.
 //   - It is BOUNDED by a wall-clock deadline fixed before the first re-attempt;
 //     an unbounded reconnect would turn a visible outage into a silent freeze.
-//   - It is VISIBLE via stellarindex_ledgerstream_live_start_retries_total.
-//     Exhaustion exits the process before any scrape, so it pages via
-//     stellarindex_ingestion_ledger_stalled (for MinIO,
-//     stellarindex_minio_exporter_down within ~2 min).
+//   - It is VISIBLE via stellarindex_ledgerstream_live_start_retries_total;
+//     exhaustion pages via stellarindex_ingestion_ledger_stalled.
 //
 // Errors are NOT classified transient vs permanent: on an unbounded tail "could
 // not start" always means "try again shortly", the SDK exposes no sentinel, and
-// a 403 is as likely a half-restarted MinIO as a revoked key. A permanent fault
-// surfaces one budget later, as [Config.LiveRetryBudget] documents.
-//
+// a 403 is as likely a half-restarted MinIO as a revoked key.
 // Backoff is exponential from LiveRetryWait, capped at [maxLiveStartRetryWait],
-// with no jitter (one indexer per host reading a MinIO on 127.0.0.1; jitter
-// would make timing untestable). Callers must gate on the range being unbounded;
-// see [Stream].
+// no jitter. Callers must gate on the range being unbounded; see [Stream].
 func retryLiveStart(
 	ctx context.Context,
 	cfg Config,

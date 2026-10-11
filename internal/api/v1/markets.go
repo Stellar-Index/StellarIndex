@@ -167,15 +167,12 @@ type Pool struct {
 // venues.
 //
 // Query params:
-//   - cursor   (optional): opaque, from a prior pagination.next.
-//   - limit    (optional): integer 1-500, default 100.
-//   - order_by (optional): "volume_24h_usd_desc" (default) or "pair".
-//   - source   (optional): single DEX name. Unknown / non-DEX names return an
-//     empty list.
-//   - base / quote (optional): canonical asset_id restricting the base / quote
-//     side; AND-combined when both are passed (single-pair lookup).
-//   - asset    (optional): canonical asset_id appearing on either side. Mutually
-//     exclusive with `base`/`quote`: AND vs OR has no well-defined combination.
+// Query params (all optional): cursor (opaque, from pagination.next); limit
+// (1-500, default 100); order_by ("volume_24h_usd_desc" default, or "pair");
+// source (single DEX name; unknown / non-DEX names return an empty list);
+// base / quote (canonical asset_id per side, AND-combined); asset (canonical
+// asset_id on either side, mutually exclusive with `base`/`quote`: AND vs OR
+// has no well-defined combination).
 //
 // canonicaliseAssetFilter documents why every ?asset=/?base=/?quote= filter on
 // this file's handlers re-spells the caller's input through canonical.ParseAsset
@@ -184,11 +181,10 @@ type Pool struct {
 // Horizon-style "CODE:ISSUER") while the stores hold only the canonical form and
 // the SQL compares with `=`. Discarding the parsed value would make those aliases
 // produce an authoritative HTTP 200 with an EMPTY list, cached under their own
-// key for 60s (/v1/markets?asset=XLM returned 0 rows while ?asset=native
-// returned 5).
+// key for 60s.
 //
 // Residual: `native` and `crypto:XLM` are stored as distinct rows, so
-// canonicalising to one form does not merge them (the XLM dual-form class).
+// canonicalising does not merge them (the XLM dual-form class).
 func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo,funlen // option parsing + DEX-source filter + asset/base+quote validation + 8s-timeout guard are linear; splitting fragments the request lifecycle
 	cursor := r.URL.Query().Get("cursor")
 	limit := 100

@@ -377,30 +377,25 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 // ticker.
 //
 // Such an entry never enters indexStellarEntries' issuance loop, so without
-// this StellarCollision could not speak about it. That gap covers every
-// `reference_only` entry (USDT, BTC, ETH, SOL, BNB, XRP, ADA, DOGE, AVAX,
-// POL, DOT, LINK, UNI, AAVE, WBTC): byStellarCode would hold only 11 keys,
-// and `?code=XRP` would return hundreds of rows with none flagged. No
-// legitimate classic asset can bear a ticker verified as an off-Stellar
-// asset, so EVERY classic `USDT-G…` is an impersonator.
+// this StellarCollision could not speak about it: that gap covers every
+// `reference_only` entry (USDT, BTC, XRP, ...), and `?code=XRP` would return
+// hundreds of rows with none flagged. No legitimate classic asset can bear a
+// ticker verified as an off-Stellar asset, so EVERY classic `USDT-G…` is an
+// impersonator.
 //
 // A legitimately-anchored wrapper gets no ticker allowlist — that would
-// reopen this exact vector (internal/currency is hand-vetted; see
-// docs/architecture/domain-traps.md). Instead add the issuance as a
-// `network: stellar` entry on the SAME seed.yaml entry: indexStellarEntries
-// then indexes it as the verified issuer and this function is never
-// reached. Until then, flagging all bearers is the fail-closed default.
+// reopen this exact vector (see docs/architecture/domain-traps.md). Instead add
+// the issuance as a `network: stellar` entry on the SAME seed.yaml entry, so
+// indexStellarEntries indexes it as the verified issuer and this function is
+// never reached. Until then, flagging all bearers is the fail-closed default.
 //
 // A SOVEREIGN CURRENCY is the exception, so ClassFiat lands in byFiatCode.
 // `USD` names a unit of account nobody issues (fiat entries carry
 // `networks: []`), and SEP-1 tells an anchor to denominate a deposit token
 // by its ISO code (`anchor_asset_type: fiat`, `anchor_asset: USD`). A
-// regulated `USD-G…` is following the spec, not impersonating the dollar;
-// flagging it cost such anchors their market cap, listing valuation and a
-// false impersonation warning. The code stays answerable through
-// FiatDenomination, a fiat entry that gains a verified Stellar issuance
-// collides like any other, and a fiat-coded classic asset is judged by the
-// issuer directory, scam tags and substance gate like any uncatalogued one.
+// regulated `USD-G…` is following the spec, not impersonating the dollar.
+// The code stays answerable through FiatDenomination; a fiat entry that gains
+// a verified Stellar issuance collides like any other.
 func (cat *Catalogue) indexTickerOnlyEntry(vc *VerifiedCurrency) error {
 	codeKey := strings.ToUpper(vc.Ticker)
 	if codeKey == "" {

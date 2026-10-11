@@ -11,20 +11,17 @@
 //	go func() { defer worker.Recover(logger, "x"); loop(ctx) }()   // seen
 //	go loop(ctx)                                                   // INVISIBLE
 //
-// The second form is the one that bites, because it looks tidier. At the
-// time this package was written the stellarindex-api binary started four
-// workers that way and its guard test could not see a single one of them.
-// This package resolves a named callee to its declaration — same package
-// (any file), or another package of the SAME MODULE, whose source is
-// located from go.mod and parsed — and checks the guard there.
+// The second form is the one that bites, because it looks tidier. This package
+// resolves a named callee to its declaration — same package (any file), or
+// another package of the SAME MODULE, located from go.mod and parsed — and
+// checks the guard there.
 //
-// Resolution is syntactic (go/parser only, no type checker and no
-// golang.org/x/tools dependency), so it cannot resolve everything. That
-// is deliberate and safe in ONE direction only: a site it cannot resolve
-// is reported as [KindUnresolved], never as "guarded". Callers must fail
-// on unresolved sites and ask for a `go func(){ defer … }()` wrapper,
-// which is always expressible. A scanner that quietly skipped what it
-// could not understand would be a guard that widens itself.
+// Resolution is syntactic (go/parser only, no type checker or x/tools), so it
+// cannot resolve everything. That is safe in ONE direction only: a site it
+// cannot resolve is reported as [KindUnresolved], never as "guarded". Callers
+// must fail on unresolved sites and ask for a `go func(){ defer … }()` wrapper.
+// A scanner that quietly skipped what it could not understand would be a guard
+// that widens itself.
 package guardscan
 
 import (

@@ -29,9 +29,8 @@ const claimableSeedBatchSize = 2000
 // (ADR-0022 / migration 0012). It is the claimable analogue of `supply
 // seed-sac-balances -full-history`.
 //
-// The live observer only sees balances created since it started; without the
-// seed older unclaimed balances are missing from Algorithm-2 classic supply.
-//
+// The live observer only sees balances created since it started, so without
+// the seed older unclaimed balances are missing from Algorithm-2 classic supply.
 // The seed reduces ClaimableBalanceEntry state latest-write-wins out of
 // stellar.ledger_entry_changes and is idempotent: rows land at each balance's
 // true last-modified ledger with intra_ledger_seq =
@@ -40,18 +39,15 @@ const claimableSeedBatchSize = 2000
 // lake shows claimed is written as an is_removal tombstone at the claim's
 // ledger; one the lake has no record of fails the pass by name after the writes.
 //
-// Every classic credit asset is seeded by default because a partial seed leaves
-// the rest under-reported; -assets narrows a run and prints a PARTIAL banner.
-// Native claimable balances belong to Algorithm 1 and are never seeded.
+// Every classic credit asset is seeded by default (a partial seed under-reports
+// the rest); -assets narrows a run and prints a PARTIAL banner. Native
+// claimable balances belong to Algorithm 1 and are never seeded.
 //
-// The walk covers a ~150-billion-row table: run it under run-heavy-job.sh on r1.
-// It prints nothing until the last ledger window is folded (silence is not a
-// hang), and all writes happen at the end, so a -timeout expiring mid-scan loses
-// the pass. Without -write it is a dry run.
-//
-// Only a clean pass upserts claimable_seed_provenance (migration 0184), one row
-// per asset, with the ledger the lake was verified through. There is no resume
-// cursor: every write is an idempotent upsert, so a re-run is the resume.
+// Run under run-heavy-job.sh on r1 (~150-billion-row table). It prints nothing
+// until the last window is folded, and all writes happen at the end, so a
+// -timeout expiring mid-scan loses the pass. Without -write it is a dry run.
+// Only a clean pass upserts claimable_seed_provenance (migration 0184); a
+// re-run is the resume, as every write is an idempotent upsert.
 func supplySeedClaimableBalances(args []string) error {
 	fs := flag.NewFlagSet("supply seed-claimable-balances", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

@@ -6,31 +6,24 @@ import (
 
 // Serving-sanity guard for the /v1/price closed-bucket path.
 //
-// Context (adversarial-review HIGH): /v1/price serves the most-recent
-// CLOSED prices_1m continuous-aggregate bucket for a directly-quoted
-// pair. That CAGG is a bare Σ(quote)/Σ(base) per bucket — it is NOT run
-// through the orchestrator's σ-outlier filter, min-USD-volume gate, or
-// freeze value-protection (those guard the ORCHESTRATOR path that writes
-// the filtered VWAP to Redis, which the CAGG bypasses). A pure-synthetic
-// fiat pair like native/fiat:USD has no prices_1m rows at all (SDEX
-// native trades are quoted in issuer-stablecoins, never fiat:USD), so it
-// misses the CAGG read and falls through to the filtered Redis value. But
-// any pair with real prices_1m rows serves its raw closed-bucket VWAP
-// unfiltered: directly-quoted DEX/CEX pairs (a Soroban token priced in
-// USDC-GA5Z…, crypto:BTC/crypto:USDT, …) AND headline pairs with a real
-// fiat CEX market (crypto:XLM/fiat:USD via Kraken/Coinbase). For those, a
-// single fat-finger / manipulation trade in the served minute would
-// corrupt the price with stale=false and no volume floor.
+// /v1/price serves the most-recent CLOSED prices_1m continuous-aggregate
+// bucket for a directly-quoted pair. That CAGG is a bare Σ(quote)/Σ(base) per
+// bucket — it is NOT run through the orchestrator's σ-outlier filter,
+// min-USD-volume gate, or freeze value-protection (those guard the
+// ORCHESTRATOR path that writes the filtered VWAP to Redis, which the CAGG
+// bypasses). A pure-synthetic fiat pair like native/fiat:USD has no prices_1m
+// rows, so it falls through to the filtered Redis value. But any pair with real
+// prices_1m rows (directly-quoted DEX/CEX pairs, and headline pairs with a real
+// fiat CEX market like crypto:XLM/fiat:USD) serves its raw closed-bucket VWAP
+// unfiltered, so a single fat-finger / manipulation trade in the served minute
+// would corrupt the price with stale=false and no volume floor.
 //
-// [GuardServedVWAP] is a robust sanity bound over the pair's recent
-// trailing closed buckets: it rejects a candidate whose VWAP is grossly
-// off the robust centre and signals the caller to serve last-known-good
-// instead. It is tuned CONSERVATIVELY — the acceptance region is the
-// UNION of a wide ratio band and a MAD band, so it only ever catches
-// gross (order-of-magnitude-ish) deviation and never a legitimately
-// volatile-but-real move. On a healthy bucket it is a pure pass-through
-// (a liquid pair sits tightly clustered and always passes), so it changes
-// the served value ONLY for a manipulated bucket. Everything is exact
+// [GuardServedVWAP] is a robust sanity bound over the pair's recent trailing
+// closed buckets: it rejects a candidate whose VWAP is grossly off the robust
+// centre and signals the caller to serve last-known-good instead. It is tuned
+// CONSERVATIVELY — the acceptance region is the UNION of a wide ratio band and
+// a MAD band, so it only catches gross deviation, never a legitimately volatile
+// move, and on a healthy bucket it is a pure pass-through. Everything is exact
 // *big.Rat (ADR-0003); no float64 enters the value path.
 
 const (
