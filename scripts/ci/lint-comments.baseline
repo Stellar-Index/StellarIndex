@@ -76,11 +76,7 @@ internal/divergence/chainlink_decimals.go	long-block
 internal/nettools/ssrf.go	long-block
 internal/ops/accounts/freeze_unfreeze.go	long-block
 internal/ops/accounts/freeze_unfreeze.go	long-block
-internal/ops/chops/ch_participant_backfill.go	long-block
-internal/ops/chops/ch_txindex_backfill.go	long-block
 internal/ops/chops/projected_rebuild.go	long-block
-internal/ops/chops/sdf_reserve_list.go	long-block
-internal/ops/chops/usd_volume_restamp_mirrors.go	long-block
 internal/ops/chops/usd_volume_restamp_xlmbase.go	long-block
 internal/ops/keys/mint_key.go	long-block
 internal/ops/keys/upgrade_key.go	long-block

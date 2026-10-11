@@ -18,17 +18,12 @@ import (
 // Operator cautions for the full-history run on r1 (perf-todo §4): the
 // operator serializes it (don't run alongside other heavy CH jobs), and runs
 // it under the root-<2G watchdog — heavy CH load can wedge the CH log
-// channel on the small root partition. Each
-// window prints a resume point; on interrupt/failure re-run with that -from.
+// channel on the small root partition. Each window prints a resume point; on
+// interrupt/failure re-run with that -from.
 //
-// Safe default: the flag defaults are -from 2 / -to 0(=tip), so, unguarded, a
-// BARE `ch-txindex-backfill` with no arguments would silently start the
-// entire ledger-2..tip (~10.2B row) backfill — an easy footgun for a heavy
-// job the cautions above say must be babysat. The full-history run is a real
-// operation, but it needs an explicit word: an explicit -from (a resume
-// point / lower bound), an explicit -to (an upper bound), or -full to run the
-// whole history from scratch. This mirrors trim-galexie-archive requiring
-// --commit for its destructive path — the big operation must be intentional.
+// The flag defaults (-from 2 / -to 0=tip) would make a bare
+// `ch-txindex-backfill` start the whole ~10.2B-row backfill, so the run needs
+// an explicit -from, -to, or -full.
 type txIndexBackfillPlan struct {
 	chAddr string
 	from   uint32

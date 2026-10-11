@@ -27,9 +27,8 @@ import (
 // so the list is read from the dashboard's source, stellar/dashboard
 // `common/lumens.js`: the `accounts` table plus
 // `networkUpgradeReserveAccount`, exactly what `noncirculatingSupply()`
-// subtracts. The configured list cites the same source
-// (configs/ansible/roles/archival-node/defaults/main.yml). `voidAccount` is
-// the burn address, subtracted from total supply, so it is excluded.
+// subtracts. `voidAccount` is the burn address, subtracted from total
+// supply, so it is excluded.
 //
 // The parser fails CLOSED into "skipped" (served_value_skipped=1, no verdict):
 // a missing or malformed accounts block, any row outside the `key: "G…"`

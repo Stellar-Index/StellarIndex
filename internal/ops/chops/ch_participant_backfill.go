@@ -26,8 +26,7 @@ import (
 //
 // Windowed + resumable like ch-txindex-backfill: each window prints its resume
 // point (-from) and re-running a window is idempotent (ReplacingMergeTree keyed
-// on (account, ledger_seq, tx_index, op_index)). -dry-run decodes + counts the
-// participants that WOULD be written, writing nothing. On r1 run it under
+// on (account, ledger_seq, tx_index, op_index)). On r1 run it under
 // /usr/local/sbin/run-heavy-job.sh, serialized with other heavy CH jobs and the
 // root-<2G watchdog (heavy CH load can wedge the log channel on the small
 // root partition).

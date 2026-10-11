@@ -12,9 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ─── `-tier xlm-quote` and `-tier cex-fx` — the two mirror re-derives ───
-//
-// These repair the populations either side of the xlm-base tier through the
+// `-tier xlm-quote` and `-tier cex-fx`, the two mirror re-derives, repair the populations either side of the xlm-base tier through the
 // same run, walk, chunk driver, generation guard, `-fill-null` opt-in and
 // fail-closed dry run; each supplies only a planner.
 //
