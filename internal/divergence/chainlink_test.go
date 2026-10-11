@@ -26,12 +26,7 @@ import (
 	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 )
 
-// fakeChainlinkRPC returns a server that responds to a latestRoundData()
-// eth_call with the supplied result (hex string with 0x prefix) and to a
-// decimals() eth_call with 8 — Chainlink's standard, which is what every
-// feed spec in these tests asserts, so the on-chain verification agrees
-// and the price path under test is reached. Cases that need a different
-// or failing decimals() use newChainlinkFakeRPC.
+// fakeChainlinkRPC answers latestRoundData() with the given hex and decimals() with 8, so the on-chain verification agrees; use newChainlinkFakeRPC for other decimals() behaviour.
 func fakeChainlinkRPC(t *testing.T, answerHex string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -253,12 +248,7 @@ func TestChainlink_Name(t *testing.T) {
 	}
 }
 
-// TestChainlink_DefaultFeedMapCoversCommonPairs pins the regression
-// fixed alongside the CoinGecko default-IDMap fix: an
-// operator deploying with a stock config (no
-// `[divergence.chainlink].feed_map` block) must not get
-// asset_unsupported on the major crypto + fiat-anchor pairs the
-// aggregator computes by default.
+// TestChainlink_DefaultFeedMapCoversCommonPairs pins that a stock config (no feed_map) does not get asset_unsupported on the major crypto and fiat-anchor pairs.
 func TestChainlink_DefaultFeedMapCoversCommonPairs(t *testing.T) {
 	// Fake RPC: every call returns 100 * 10^8 = 10_000_000_000.
 	answer := big.NewInt(10_000_000_000)
@@ -294,11 +284,7 @@ func TestChainlink_DefaultFeedMapCoversCommonPairs(t *testing.T) {
 	}
 }
 
-// TestChainlink_DefaultFeedMapMatchesSource pins the invariant that
-// this package's default feed map cannot silently drift from the
-// ingest source's: same key set, same address, decimals and invert
-// per key (two independently hardcoded copies gave a real
-// divergence between the two proxies no way to surface).
+// TestChainlink_DefaultFeedMapMatchesSource pins that the default feed map cannot drift from the ingest source's (same keys, address, decimals, invert).
 func TestChainlink_DefaultFeedMapMatchesSource(t *testing.T) {
 	src := externalchainlink.DefaultFeedMap()
 	got := defaultChainlinkFeedMap()
@@ -374,11 +360,7 @@ func abs(x float64) float64 {
 	return x
 }
 
-// TestChainlink_StaleRoundRejected pins: a round
-// whose updatedAt exceeds the feed's MaxAge (relative to the
-// comparison's observedAt) must surface as ErrPriceUnavailable —
-// "reference unavailable", never a fresh-looking price that can
-// mask or fabricate divergence.
+// TestChainlink_StaleRoundRejected pins that a round older than the feed's MaxAge is ErrPriceUnavailable, never a fresh-looking price.
 func TestChainlink_StaleRoundRejected(t *testing.T) {
 	answer := big.NewInt(6_543_210_000_000)
 	observedAt := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
@@ -438,11 +420,7 @@ func TestChainlink_LegacyAnswerShapeFailsLoudly(t *testing.T) {
 	}
 }
 
-// TestChainlink_OmittedMaxAgeKeepsFXBudget pins that an operator feed
-// entry omitting MaxAge does not silently swap an FX feed's 76h
-// weekend budget for the 3h crypto one: a built-in key inherits the
-// built-in budget and any other fiat/fiat key gets the FX default. A
-// 70h-old round is a normal Sunday-night FX read, not a dead feed.
+// TestChainlink_OmittedMaxAgeKeepsFXBudget pins that omitting MaxAge keeps an FX feed's 76h weekend budget rather than the 3h crypto one (a 70h-old Sunday round is normal).
 func TestChainlink_OmittedMaxAgeKeepsFXBudget(t *testing.T) {
 	answer := big.NewInt(1_27000000)
 	observedAt := time.Date(2026, 7, 5, 22, 0, 0, 0, time.UTC)
@@ -479,12 +457,7 @@ func TestChainlink_OmittedMaxAgeKeepsFXBudget(t *testing.T) {
 	}
 }
 
-// chainlinkFakeRPC is a selector-dispatching JSON-RPC fake for the
-// on-chain decimals() verification tests: latestRoundData() answers
-// roundHex; decimals() answers the current decimalsValue as a 32-byte
-// word, or the configured HTTP status when decimalsStatus != 200. Both
-// call kinds are counted so the cadence tests can assert how often the
-// reference actually re-reads the chain.
+// chainlinkFakeRPC is a selector-dispatching JSON-RPC fake: latestRoundData() answers roundHex, decimals() answers decimalsValue (or decimalsStatus if not 200); both call kinds are counted for the cadence tests.
 type chainlinkFakeRPC struct {
 	srv            *httptest.Server
 	roundHex       string
@@ -604,11 +577,7 @@ func TestChainlink_Decimals_EqualFlows(t *testing.T) {
 	}
 }
 
-// TestChainlink_Decimals_MismatchRefusedAndCounted — configured 8 but
-// the chain says 18: every reading is refused as ErrPriceUnavailable +
-// ErrChainlinkDecimalsMismatch, each refusal increments the counter, the
-// price is never even read, decimals() is re-read only after the retry
-// interval, and readings resume once config and chain agree.
+// TestChainlink_Decimals_MismatchRefusedAndCounted: configured 8 vs chain 18 refuses every reading (ErrPriceUnavailable + ErrChainlinkDecimalsMismatch), counts each, never reads the price, and recovers when they agree.
 func TestChainlink_Decimals_MismatchRefusedAndCounted(t *testing.T) {
 	t.Parallel()
 	pair := mustPair(t, "crypto:LINK", "fiat:USD")
@@ -663,12 +632,7 @@ func TestChainlink_Decimals_MismatchRefusedAndCounted(t *testing.T) {
 	}
 }
 
-// TestChainlink_Decimals_MismatchDoesNotBleedAcrossPairsSharingAddress
-// — two canonical pairs mapped to the SAME feed address, one whose
-// configured decimals disagrees with the chain and one that agrees
-// (asserts none): the verification state is keyed by address only, so
-// it must never let the first pair's refusal leak into the second
-// pair's verdict on a cache-hit call within the same retry window.
+// TestChainlink_Decimals_MismatchDoesNotBleedAcrossPairsSharingAddress: verification state is keyed by address, so one pair's refusal must not leak into another pair on the same feed within the retry window.
 func TestChainlink_Decimals_MismatchDoesNotBleedAcrossPairsSharingAddress(t *testing.T) {
 	t.Parallel()
 	const address = "0x00000000000000000000000000000000000000e7"
@@ -718,11 +682,7 @@ func TestChainlink_Decimals_MismatchDoesNotBleedAcrossPairsSharingAddress(t *tes
 	}
 }
 
-// TestChainlink_Decimals_RPCErrorKeepsConfiguredWithRetry — decimals()
-// fails (500) but latestRoundData() works: the configured value is kept
-// with a WARN, the fail-open counter advances so the failure is
-// alertable, the read is retried only after the retry interval, and
-// nothing crashes.
+// TestChainlink_Decimals_RPCErrorKeepsConfiguredWithRetry: a failing decimals() keeps the configured value with a WARN and an alertable fail-open counter, retried only after the retry interval.
 func TestChainlink_Decimals_RPCErrorKeepsConfiguredWithRetry(t *testing.T) {
 	t.Parallel()
 	pair := mustPair(t, "fiat:JPY", "fiat:USD")
@@ -863,12 +823,7 @@ func TestDecodeChainlinkDecimals(t *testing.T) {
 // secret. Deliberately an obviously-fake, low-entropy string.
 const chainlinkSecretPath = "/v2/not-a-real-key-ns12" // gitleaks:allow
 
-// hangUpRPC returns a server that accepts the connection and then
-// closes it without answering, so the real http.Client produces a real
-// *url.Error — the exact shape a timeout / TLS failure / dropped
-// connection against the operator's RPC endpoint produces in
-// production. Hijacking (rather than pointing at a closed port) keeps
-// the test hermetic: no reliance on a port staying unbound.
+// hangUpRPC accepts then closes the connection without answering, giving a real *url.Error hermetically (hijacking, not a closed port).
 func hangUpRPC(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -888,15 +843,7 @@ func hangUpRPC(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// TestChainlink_TransportError_RedactsKeyedEndpoint — NS12.
-//
-// r.rpcURL is a secret (same CHAINLINK_RPC_URL as the ingest poller;
-// keyed providers embed the API key in the path). A transport failure
-// yields a *url.Error whose Error() quotes the full request URL, so
-// wrapping it raw put the operator's API key into the error string that
-// Compare copies verbatim into Result.Failures. The error must name the
-// endpoint host — that is the operator's whole diagnostic — with the
-// path redacted.
+// TestChainlink_TransportError_RedactsKeyedEndpoint: rpcURL is a secret and a raw *url.Error would put its API key into Result.Failures; the error must name the host with the path redacted.
 func TestChainlink_TransportError_RedactsKeyedEndpoint(t *testing.T) {
 	srv := hangUpRPC(t)
 	ref := NewChainlinkReference(ChainlinkOptions{
@@ -953,11 +900,7 @@ func TestChainlink_RPCRedirectNotFollowed(t *testing.T) {
 	}
 }
 
-// slowRPC returns a server that sleeps past any short context deadline
-// before answering, so a request against it produces a real
-// context.DeadlineExceeded wrapped in the *url.Error http.Client.Do
-// returns — the exact shape an RPC-timeout classification needs to
-// see through the redactor.
+// slowRPC sleeps past any short context deadline, producing a real context.DeadlineExceeded inside the *url.Error that the redactor must let through.
 func slowRPC(t *testing.T, delay time.Duration) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -968,12 +911,7 @@ func slowRPC(t *testing.T, delay time.Duration) *httptest.Server {
 	return srv
 }
 
-// TestChainlink_TransportTimeout_ClassifiesAsTimeout_NotError — wrapping
-// RedactURLError with "%s" (chainlink.go's ethCall) stringifies the
-// error and discards the chain, so errors.Is matches nothing and a
-// genuine RPC timeout would fall into errorOutcome's default case (OutcomeError) instead
-// of OutcomeTimeout. The redacted error must still unwrap to
-// context.DeadlineExceeded while never rendering the keyed endpoint.
+// TestChainlink_TransportTimeout_ClassifiesAsTimeout_NotError: the redacted error must still unwrap to context.DeadlineExceeded (so it is OutcomeTimeout, not OutcomeError) without rendering the keyed endpoint.
 func TestChainlink_TransportTimeout_ClassifiesAsTimeout_NotError(t *testing.T) {
 	srv := slowRPC(t, 200*time.Millisecond)
 	ref := NewChainlinkReference(ChainlinkOptions{
@@ -1022,16 +960,7 @@ func TestChainlink_BadRequestURL_RedactsKeyedEndpoint(t *testing.T) {
 	}
 }
 
-// TestChainlink_TransportError_SecretNeverReachesDivergenceCache —
-// NS12 end to end, through the production entry point.
-//
-// This is the artifact the finding is about: RefreshPair's CachedResult
-// is JSON-marshalled into the per-pair divergence key in Redis, which
-// ha-plan.md documents as a single internal-bind, no-AUTH instance.
-// Every refresh cycle re-writes it while the endpoint keeps erroring,
-// so an ordinary timeout parked the operator's API key at rest with no
-// attacker action at all. Assert on the raw cached bytes, not on the
-// error, because the bytes are what an unauthenticated reader gets.
+// TestChainlink_TransportError_SecretNeverReachesDivergenceCache: RefreshPair caches its result in a no-AUTH Redis, so assert on the raw cached bytes (what an unauthenticated reader gets) that the keyed endpoint never appears.
 func TestChainlink_TransportError_SecretNeverReachesDivergenceCache(t *testing.T) {
 	srv := hangUpRPC(t)
 	ref := NewChainlinkReference(ChainlinkOptions{

@@ -15,26 +15,9 @@ import (
 // Prometheus labels, and in operator dumps — renaming is a wire break.
 const SyntheticCrossName = "synthetic-usd-cross"
 
-// SyntheticCrossReference derives a reference price for a pair quoted
-// in a non-USD fiat by crossing two USD-quoted legs:
-//
-//	base/fiat:X  :=  (base / fiat:USD)  ÷  (fiat:X / fiat:USD)
-//
-// Motivation: EUR/GBP-quoted pairs have exactly ONE direct reference
-// (CoinGecko), below the divergence trust floor (divergenceMinSources), so
-// their freezes can never auto-release and every one ends in an operator page.
-// This composes the on-chain oracles' BASE/USD with reflector-fx's FIAT/USD
-// into a second, independent reading.
-//
-// Independence: the synthetic counts as one source in Compare's median and
-// SuccessCount. The two legs must come from different publishers (see
-// [referencePublisher]): a cross of one publisher's feeds shares its failure
-// modes, so with no independent leg pair the cross is unavailable.
-//
-// Both legs must be fresh (each leg's own MaxAge applies), positive, and
-// finite. A leg failure degrades to the sentinel that keeps Compare's
-// bookkeeping honest: unsupported when no leg CAN answer, unavailable when a
-// leg SHOULD have answered but didn't.
+// SyntheticCrossReference derives a non-USD-fiat pair as (base / fiat:USD) / (fiat:X / fiat:USD), giving EUR/GBP pairs a second reading above the divergence trust floor (divergenceMinSources).
+// It counts as one source and the legs must come from different publishers (see [referencePublisher]); both must be fresh, positive and finite.
+// A leg failure is unsupported when no leg CAN answer, unavailable when one SHOULD have.
 type SyntheticCrossReference struct {
 	usdLegs []Reference // ordered candidates for base → fiat:USD
 	fxLegs  []Reference // ordered candidates for fiat:X → fiat:USD
@@ -75,14 +58,8 @@ func NewSyntheticCrossReference(opts SyntheticCrossOptions) (*SyntheticCrossRefe
 // Name implements [Reference].
 func (s *SyntheticCrossReference) Name() string { return SyntheticCrossName }
 
-// LookupQuote implements [Reference]. Only pairs quoted in a non-USD
-// fiat are in scope; everything else is ErrAssetUnsupported (USD-quoted
-// pairs already have the direct oracle references — a synthetic reading
-// there would double-count the very feeds it is built from).
-//
-// Each leg is held to its own pair's [MaxComparableAge], and the cross
-// is as old as its base leg: the FX leg's age is bounded by the FX
-// ceiling, and FX moves far less per day than the divergence threshold.
+// LookupQuote implements [Reference]; only pairs quoted in a non-USD fiat are in scope (USD pairs have direct oracles, and a synthetic there would double-count them).
+// Each leg is held to its own [MaxComparableAge] and the cross is as old as its base leg.
 func (s *SyntheticCrossReference) LookupQuote(ctx context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	if pair.Quote.Type != canonical.AssetFiat || pair.Quote.Code == "USD" {
 		return Quote{}, fmt.Errorf("%w: %s: synthetic cross covers non-USD-fiat quotes only",
@@ -215,11 +192,7 @@ func (f *legFailures) record(err error) {
 
 func (f *legFailures) err(pair canonical.Pair) error {
 	if f.sawTransient {
-		// Deliberately NOT %w on lastErr (errorlint appeased via
-		// .Error()): the leg's last error may itself wrap
-		// ErrAssetUnsupported, and double-wrapping would make this
-		// error match BOTH sentinels — Compare's unsupported-vs-
-		// degraded classification must see exactly ErrPriceUnavailable.
+		// Deliberately NOT %w on lastErr: it may itself wrap ErrAssetUnsupported, and double-wrapping would match BOTH sentinels, but Compare must see exactly ErrPriceUnavailable.
 		return fmt.Errorf("%w: %s", ErrPriceUnavailable, f.lastErr.Error())
 	}
 	return fmt.Errorf("%w: no leg lists %s", ErrAssetUnsupported, pair.String())

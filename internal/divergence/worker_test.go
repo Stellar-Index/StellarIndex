@@ -50,12 +50,8 @@ func newTestService(t *testing.T, refs []divergence.Reference, opts divergence.S
 	return svc, rdb, mr
 }
 
-// refreshQuiet is the only sound "must not fire" check under the default
-// WarningPersistence debounce, which holds WarningFired false on a pair's
-// first raw firing whatever the gate under test decides. It refreshes twice,
-// a full default window apart, and after each asserts that neither the
-// published verdict nor the raw condition (FiringSince, zero while clear)
-// fired. Returns the last cached result.
+// refreshQuiet is the only sound "must not fire" check under the default WarningPersistence debounce: it refreshes twice, a full window apart,
+// and asserts neither WarningFired nor the raw condition (FiringSince) fired. Returns the last cached result.
 func refreshQuiet(t *testing.T, svc *divergence.Service, rdb *redis.Client,
 	pair canonical.Pair, ourPrice float64, t0 time.Time,
 ) divergence.CachedResult {
@@ -116,13 +112,7 @@ func TestRefreshPair_HappyPath(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_FiresWarning — references agree on a price that
-// disagrees with our value by > threshold; WarningFired=true.
-// TestRefreshPair_OnWarningFiredEdgeOnly pins that the OnWarningFired hook fires only on the
-// `below threshold → above threshold` edge, not on every refresh
-// while a divergence stays elevated. Multiple consecutive
-// above-threshold refreshes must produce one hook call; a return
-// to below-threshold + re-cross re-arms the latch.
+// TestRefreshPair_OnWarningFiredEdgeOnly pins that OnWarningFired fires once on the below-to-above edge, and a return below plus re-cross re-arms it.
 func TestRefreshPair_OnWarningFiredEdgeOnly(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "a", price: 1.00},
@@ -195,13 +185,7 @@ func TestRefreshPair_FiresWarning(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_MedianLegVetoedByMajorityAgreement pins that at the
-// quorum floor (SuccessCount==2) the median is an arithmetic mean, so
-// one reference off by more than 2×threshold must not fire the warning
-// when the other reference agreed exactly. threshold=5%,
-// ourPrice=50000, Sources={50000 (agrees), 56000 (+12%, disagrees)}:
-// Median=53000, DivergencePct≈5.66%>5, but 1 of the 2 (a majority)
-// corroborates us, so the median leg must be vetoed.
+// TestRefreshPair_MedianLegVetoedByMajorityAgreement pins that at the 2-reference floor (median is a mean) one outlier must not fire when the other agrees exactly.
 func TestRefreshPair_MedianLegVetoedByMajorityAgreement(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "agrees", price: 50000},
@@ -222,11 +206,7 @@ func TestRefreshPair_MedianLegVetoedByMajorityAgreement(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_ZeroAgreementLegStillFires guards the leg the fix
-// above must NOT touch: the symmetric-disagreement case, where
-// two references straddle ourPrice (median ≈ ourPrice, DivergencePct
-// small) but neither individually agrees. AgreementCount==0 must still
-// fire regardless of the majority-veto.
+// TestRefreshPair_ZeroAgreementLegStillFires guards the symmetric-disagreement case (median near ourPrice, nobody agrees), which must fire despite the majority veto.
 func TestRefreshPair_ZeroAgreementLegStillFires(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "high", price: 1.08},
@@ -345,13 +325,7 @@ func xlmPair(t *testing.T, quoteFiat string) canonical.Pair {
 	return canonical.Pair{Base: canonical.NativeAsset(), Quote: q}
 }
 
-// TestLookupCached_PerPairOR_OrderIndependent pins that
-// the by-asset reader must report "firing if ANY quote diverges"
-// regardless of the order the worker refreshes the base's pairs. A
-// per-base key would let the LAST pair refreshed clobber the
-// asset's verdict — so XLM/USD diverging but XLM/GBP not would clear
-// the warning if GBP refreshed last. Per-pair keys + the OR
-// across the base index keep the verdict stable.
+// TestLookupCached_PerPairOR_OrderIndependent pins that the by-asset verdict is firing if ANY quote diverges, whatever order pairs refresh in (no per-base clobber).
 func TestLookupCached_PerPairOR_OrderIndependent(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "a", price: 1.00},
@@ -362,11 +336,7 @@ func TestLookupCached_PerPairOR_OrderIndependent(t *testing.T) {
 	gbpPair := xlmPair(t, "GBP")
 	ctx := context.Background()
 
-	// Two refresh orderings; both must yield firing=true for the base.
-	// Ordering 1: USD (diverging) first, GBP (in-tolerance) last —
-	// this is the regression case (GBP would have cleared the base key
-	// under a per-base layout).
-	// Ordering 2: GBP first, USD last.
+	// Both refresh orderings must yield firing=true for the base (USD diverging, GBP in tolerance).
 	type step struct {
 		pair  canonical.Pair
 		price float64
@@ -388,12 +358,7 @@ func TestLookupCached_PerPairOR_OrderIndependent(t *testing.T) {
 			firingPair: usdPair,
 		},
 		{
-			// Robustness against Redis set-iteration order: the FIRING
-			// quote (EUR) sorts lexicographically BEFORE the clean
-			// quote (USD), so miniredis's sorted SMembers returns the
-			// clean pair LAST. A naive "last value wins" aggregation
-			// (a per-base clobber) would read the base
-			// verdict as false here — only a true OR keeps it firing.
+			// The firing quote (EUR) sorts before the clean one (USD), so SMembers returns the clean pair LAST; only a true OR, not last-value-wins, keeps the base firing.
 			name:       "firing_quote_sorts_first",
 			order:      []step{{eurPair, 1.50}, {usdPair, 1.00}},
 			firingPair: eurPair,
@@ -576,11 +541,7 @@ func TestRefreshPair_NoSinkIsLegacyBehaviour(t *testing.T) {
 	// behaviour preserved.
 }
 
-// TestRefreshPair_ObservationStampedWithComparisonTime pins observed_at. The durable divergence_observations row answers "when
-// did this divergence occur", and observed_at is part of its conflict
-// key — so it must carry the comparison instant the caller supplied
-// (the same instant handed to every Reference), not the wall clock at
-// flush time, which trails it by the whole reference fan-out.
+// TestRefreshPair_ObservationStampedWithComparisonTime pins observed_at (part of the conflict key) to the caller's comparison instant, not the wall clock at flush.
 func TestRefreshPair_ObservationStampedWithComparisonTime(t *testing.T) {
 	// A comparison time deliberately far from wall-clock now, so a
 	// time.Now() stamp cannot coincidentally pass.
@@ -607,11 +568,7 @@ func TestRefreshPair_ObservationStampedWithComparisonTime(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_ObservationCarriesReferenceAsOf — each row records when
-// ITS reference observed the price, not only the comparison time:
-// two references answering the same comparison from different instants must
-// persist different RefObservedAt values, so a reader can tell a fresh quote
-// from a 50-minute-old one that still passed the comparability ceiling.
+// TestRefreshPair_ObservationCarriesReferenceAsOf pins that each row records when ITS reference observed the price, so a reader can tell a fresh quote from a stale one.
 func TestRefreshPair_ObservationCarriesReferenceAsOf(t *testing.T) {
 	comparedAt := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 	freshAsOf := comparedAt.Add(-30 * time.Second)
@@ -1047,11 +1004,7 @@ func TestCompare_EvenCountMedian(t *testing.T) {
 
 // ─── CoinGecko reference tests ─────────────────────────────────────
 
-// TestCoinGecko_HappyPath — typical /simple/price response decodes,
-// returns the mapped price. The reference batches every configured
-// (id, quote) pair into a single request, so we assert the URL
-// contains the expected id + quote (alongside others from the
-// merged defaults) rather than equality.
+// TestCoinGecko_HappyPath: a /simple/price response decodes to the mapped price; the batched URL is checked for the expected id and quote, not equality.
 func TestCoinGecko_HappyPath(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Confirm we hit the right path with a batched query.
@@ -1088,12 +1041,7 @@ func TestCoinGecko_HappyPath(t *testing.T) {
 	}
 }
 
-// TestCoinGecko_AssetNotInIDMap — an asset that's neither in the
-// operator's IDMap nor in the built-in default falls back to
-// ErrAssetUnsupported (not a transport error). The bare native /
-// XLM / BTC / ETH paths are now covered by the built-in default,
-// so we use a deliberately-unknown synthetic asset to exercise
-// the unsupported branch.
+// TestCoinGecko_AssetNotInIDMap: an asset in neither the IDMap nor the built-in default is ErrAssetUnsupported, not a transport error.
 func TestCoinGecko_AssetNotInIDMap(t *testing.T) {
 	ref := divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
 		IDMap: map[string]string{}, // empty — relies on built-in default
@@ -1115,11 +1063,7 @@ func TestCoinGecko_AssetNotInIDMap(t *testing.T) {
 	}
 }
 
-// TestCoinGecko_DefaultIDMapCoversCommonPairs — a stock deployment
-// (no operator IDMap) MUST recognise the canonical asset_id forms
-// the aggregator computes by default. An empty IDMap would make every
-// pair return ErrAssetUnsupported, leaving divergence_observations
-// silently empty even though Compare's "ok" counter incremented.
+// TestCoinGecko_DefaultIDMapCoversCommonPairs: a stock deployment must recognise the aggregator's default asset ids, else every pair is unsupported and observations stay silently empty.
 func TestCoinGecko_DefaultIDMapCoversCommonPairs(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The batched request includes every default id; just
@@ -1214,13 +1158,7 @@ func TestCoinGecko_NameStable(t *testing.T) {
 	}
 }
 
-// TestCoinGecko_BatchedAcrossPairs: multiple
-// per-pair LookupQuote calls within the batch TTL window MUST
-// coalesce into a single HTTP request covering every configured
-// (id, quote) pair. One call per pair from the orchestrator's per-tick
-// loop would be 9 pairs × 2 ticks/min × 1440 min/day = 25,920
-// calls/day, well past CoinGecko's demo-tier 10K/day limit; batching
-// gives 1 call per tick (~2,880/day).
+// TestCoinGecko_BatchedAcrossPairs: per-pair lookups in the batch TTL window must coalesce into one HTTP request, or per-pair calls exceed CoinGecko's demo-tier daily limit.
 func TestCoinGecko_BatchedAcrossPairs(t *testing.T) {
 	var hits int64
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1365,11 +1303,7 @@ func mustParseAsset(t *testing.T, s string) canonical.Asset {
 	return a
 }
 
-// panickingReference panics on every LookupQuote. Used to verify
-// the comparator's panic-recovery contract — a misbehaving
-// reference MUST NOT take the whole Compare run down with it,
-// even though the docstring promises "panic recovered ...
-// recorded in Failures."
+// panickingReference panics on every LookupQuote, to verify a misbehaving reference cannot take the whole Compare run down.
 type panickingReference struct {
 	name        string
 	panicValue  any
@@ -1387,11 +1321,7 @@ func (p *panickingReference) LookupQuote(_ context.Context, _ canonical.Pair, _ 
 	panic(p.panicValue)
 }
 
-// TestCompare_PanicInOneReferenceIsolated — one reference panicking
-// MUST NOT take the comparator down. The other references' results
-// still aggregate; the panic-source surfaces in Failures with a
-// "panicked: …" label so operators see which reference is broken
-// without reading goroutine traces.
+// TestCompare_PanicInOneReferenceIsolated: one panicking reference must not take the comparator down; it surfaces in Failures with a "panicked: ..." label.
 func TestCompare_PanicInOneReferenceIsolated(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "good-a", price: 0.10},
@@ -1454,15 +1384,7 @@ func TestCompare_PanicInName(t *testing.T) {
 	}
 }
 
-// TestCoinGecko_StalenessGate — a FROZEN CoinGecko
-// upstream must read as "reference unavailable", never as a fresh
-// price that could suppress a real divergence or manufacture a false
-// one. The reference requests include_last_updated_at=true and gates
-// the returned quote against observedAt using the same discipline as
-// the Chainlink and on-chain oracle references.
-//
-// Guards against ignoring observedAt, which would let a price
-// stamped hours ago into the divergence median.
+// TestCoinGecko_StalenessGate: a FROZEN upstream must read as "reference unavailable", never a fresh price that could suppress or manufacture a divergence.
 func TestCoinGecko_StalenessGate(t *testing.T) {
 	// Fixed bucket-end comparison time the aggregator passes through.
 	observedAt := time.Unix(1_770_000_000, 0).UTC()
@@ -1541,11 +1463,7 @@ func TestCoinGecko_StalenessGate(t *testing.T) {
 	})
 }
 
-// blockingReference ignores context cancellation entirely — the
-// hang hazard. Real-world shapes: a third-party SDK doing a blocking
-// socket read, a cgo call, an operator-supplied Reference that forgets
-// to select on ctx.Done(). release lets the test unblock it at the end
-// so the goroutine doesn't outlive the run.
+// blockingReference ignores context cancellation (a blocking SDK read, a cgo call); release unblocks it at test end so the goroutine does not leak.
 type blockingReference struct {
 	name    string
 	release chan struct{}
@@ -1558,12 +1476,7 @@ func (b *blockingReference) LookupQuote(_ context.Context, _ canonical.Pair, obs
 	return divergence.Quote{Price: 1.00, AsOf: freshAt(observedAt)}, nil
 }
 
-// TestCompare_OverallDeadlineReturnsPartial guards the overall deadline.
-// If Compare only waits on a WaitGroup, a single reference that
-// ignores cancellation blocks the comparison — and the aggregator's
-// whole divergence refresh loop behind it — forever. It must instead
-// return the partial result within the overall budget, recording the
-// stuck reference as a failure.
+// TestCompare_OverallDeadlineReturnsPartial guards the overall deadline: a reference that ignores cancellation must not block Compare forever; it returns the partial result with that reference as a failure.
 func TestCompare_OverallDeadlineReturnsPartial(t *testing.T) {
 	blocked := &blockingReference{name: "stuck", release: make(chan struct{})}
 	defer close(blocked.release)
@@ -1603,12 +1516,7 @@ func TestCompare_OverallDeadlineReturnsPartial(t *testing.T) {
 	}
 }
 
-// TestCoinGecko_MissingUpstreamTimestampIsRejected — every
-// request sets include_last_updated_at=true and /simple/price returns
-// it, so a response WITHOUT the field means the freshness contract the
-// staleness gate rests on was not honoured. Waving it through silently
-// disabled the staleness gate for that id and served a possibly-frozen
-// price as fresh; fail closed instead.
+// TestCoinGecko_MissingUpstreamTimestampIsRejected: a response without the last-updated field voids the freshness contract, so it fails closed rather than disabling the staleness gate.
 func TestCoinGecko_MissingUpstreamTimestampIsRejected(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1734,18 +1642,8 @@ func TestRefreshPair_ReflectorDEXCannotCorroborate(t *testing.T) {
 	}
 }
 
-// Compare's per-reference fan-out already recovered (a broken
-// reference must not take the comparison down; see
-// TestCompare_PanicInOneReferenceIsolated), but it recovered PRIVATELY: the
-// panic landed in one Result's Failures map and nowhere else, so the alert
-// that exists to say "a detached goroutine died" — which reads
-// stellarindex_worker_panics_total via stellarindex_worker_panicked — never
-// fired. A reference panicking on every tick looked, to the page rule,
-// exactly like a reference that was simply unreachable.
-//
-// This pins the recovered value going through worker.Report as well, and
-// deliberately re-asserts the Failures label so routing the panic to the
-// metric cannot quietly cost the operator-facing one.
+// Pins that a recovered reference panic also goes through worker.Report (the panic metric the page rule reads), not only the Failures map,
+// and that the Failures label is still asserted so routing to the metric cannot cost the operator-facing one.
 func TestCompare_PanicMovesTheWorkerPanicCounter(t *testing.T) {
 	const workerName = "divergence-reference-lookup"
 	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName))
@@ -1771,11 +1669,8 @@ func TestCompare_PanicMovesTheWorkerPanicCounter(t *testing.T) {
 	}
 }
 
-// A pair with exactly two references loses one to a
-// fail-closed freshness gate (price_unavailable). SuccessCount drops below
-// the quorum, the verdict is carried forward instead of evaluated, and the
-// pass still returns nil — so the pass-level outcome counter reads "ok".
-// The per-reference counter and the pair quorum gauge must say otherwise.
+// A pair with exactly two references loses one to a fail-closed freshness gate: SuccessCount drops below quorum and the verdict is carried forward while the pass still returns nil,
+// so the per-reference counter and the pair quorum gauge must say otherwise.
 func TestRefreshPair_ExportsReferenceOutcomesAndQuorumLoss(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "gh679-healthy", price: 1.40},
@@ -1896,11 +1791,7 @@ func TestCompare_OutcomesAreBoundedClasses(t *testing.T) {
 	}
 }
 
-// The div: key must outlive the gap between two writes of the
-// same pair. With the default 300s min interval on a 30s tick the pass runs
-// every 330s, so a key written with the bare 300s TTL expired ~30s before
-// its rewrite on every cycle — longer when the fan-out is slow — and the
-// freeze path read "no cross-oracle data" throughout.
+// The div: key must outlive the gap between two writes of the same pair (default 300s min interval plus a 30s tick), else the key expires before its rewrite and the freeze path reads "no cross-oracle data".
 func TestRefreshPair_TTLBridgesRefreshCadence(t *testing.T) {
 	const cadence = 330 * time.Second
 	refs := []divergence.Reference{&stubReference{name: "a", price: 1.00}}
@@ -2086,11 +1977,7 @@ func TestRefreshPair_AgreementCountPersisted(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_AllReferencesDark_AgreementZeroMeansUnchecked —
-// when every reference fails, the cached result reads
-// SuccessCount=0 + AgreementCount=0 and RefreshPair returns
-// ErrNoReferenceResponded. Consumers must interpret that as
-// "unchecked", never as "zero references agree with us".
+// TestRefreshPair_AllReferencesDark_AgreementZeroMeansUnchecked: with every reference failing, SuccessCount=0 and AgreementCount=0 mean "unchecked", never "zero agree with us".
 func TestRefreshPair_AllReferencesDark_AgreementZeroMeansUnchecked(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "a", err: divergence.ErrPriceUnavailable},
@@ -2119,13 +2006,7 @@ func TestRefreshPair_AllReferencesDark_AgreementZeroMeansUnchecked(t *testing.T)
 	}
 }
 
-// TestRefreshPair_AllUnsupportedIsNotAnOutage pins: a pair every
-// reference structurally doesn't cover (ErrAssetUnsupported —
-// reference.go's own doc: "no reference for this pair on this source,
-// not a degradation") must not be reported as ErrNoReferenceResponded.
-// Guards against FailureCount folding asset_unsupported in with genuine
-// transport failures, which would page a deployment with an uncovered pair as
-// "checker running blind" forever with both references healthy.
+// TestRefreshPair_AllUnsupportedIsNotAnOutage pins that a pair no reference structurally covers (ErrAssetUnsupported) is not ErrNoReferenceResponded, which would page "checker running blind" forever.
 func TestRefreshPair_AllUnsupportedIsNotAnOutage(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "a", err: divergence.ErrAssetUnsupported},
@@ -2170,15 +2051,7 @@ func TestRefreshPair_MixedUnsupportedAndFailedIsAnOutage(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_SymmetricStraddleFiresWarning is the
-// regression on the SERVED value (flags.divergence_warning, read
-// straight off CachedResult.WarningFired).
-//
-// Two references straddle our price symmetrically — one 20% above,
-// one 20% below. Their median lands exactly ON our price, so the
-// median-only gate computed DivergencePct ≈ 0 and stayed silent while
-// NEITHER reference corroborated us within the 5% threshold. Total
-// external disagreement was served as agreement.
+// TestRefreshPair_SymmetricStraddleFiresWarning: references 20% above and below put the median ON our price, so the median-only gate stayed silent though neither corroborated us; the served flag must fire.
 func TestRefreshPair_SymmetricStraddleFiresWarning(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "high", price: 1.20},
@@ -2224,12 +2097,7 @@ func TestRefreshPair_SymmetricStraddleFiresWarning(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_OneDissenterDoesNotFireWarning pins the deliberate
-// limit of the agreement leg: it fires on "nobody agrees", NOT
-// on "somebody disagrees". With three references and one outlier, two
-// still corroborate us and the warning must stay silent — otherwise a
-// single flaky reference would pin the customer-visible flag on
-// permanently.
+// TestRefreshPair_OneDissenterDoesNotFireWarning pins that the agreement leg fires on "nobody agrees", not "somebody disagrees", so one flaky reference cannot pin the flag on.
 func TestRefreshPair_OneDissenterDoesNotFireWarning(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "a", price: 1.00},
@@ -2317,12 +2185,7 @@ func TestNewOracleReference_RequiresSourceAndReader(t *testing.T) {
 	}
 }
 
-// TestOracleReference_ScaleExactness verifies the raw-integer →
-// float64 conversion is exact at every stored oracle scale,
-// including values above 2^53 that would corrupt under a float64
-// intermediate (ADR-0003). Expected values are computed via
-// strconv.ParseFloat of the decimal string — both paths must round
-// identically (nearest-even) or the big-int path lost precision.
+// TestOracleReference_ScaleExactness verifies the raw-integer to float64 conversion is exact at every oracle scale, including values above 2^53 (ADR-0003), matching strconv.ParseFloat.
 func TestOracleReference_ScaleExactness(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -2381,11 +2244,7 @@ func TestOracleReference_ScaleExactness(t *testing.T) {
 	}
 }
 
-// TestOracleReference_PairMapping_XLMDualIdentity — `native` and
-// `crypto:XLM` are the same asset on two wire forms; the reference
-// must query BOTH so a Reflector-CEX row published under crypto:XLM
-// matches our on-chain native/fiat:USD pair (and vice versa). Every
-// other asset maps to exactly its canonical string.
+// TestOracleReference_PairMapping_XLMDualIdentity: `native` and `crypto:XLM` are one asset, so the reference must query BOTH; every other asset maps to exactly its canonical string.
 func TestOracleReference_PairMapping_XLMDualIdentity(t *testing.T) {
 	now := time.Now().UTC()
 	reader := &fakeOracleReader{row: oracleRow(t, divergence.OracleSourceReflectorCEX, "11000000000000", 14, now)}
@@ -2434,13 +2293,8 @@ func TestOracleReference_PairMapping_XLMDualIdentity(t *testing.T) {
 	}
 }
 
-// TestOracleReference_BaseKeysCoverEveryAliasFamily is the guard against
-// a hand-rolled key expander drifting from the alias registry: for every
-// member of every installed family (the XLM baseline plus a configured
-// classic↔SAC pair), the keys bound for that member must include the
-// whole family. reflector-dex publishes XLM only under its SAC
-// C-address, so a native-keyed read that omits the SAC can never match
-// a reflector-dex row.
+// TestOracleReference_BaseKeysCoverEveryAliasFamily guards a hand-rolled key expander drifting from the alias registry: keys for any family member must include the whole family
+// (reflector-dex publishes XLM only under its SAC address).
 func TestOracleReference_BaseKeysCoverEveryAliasFamily(t *testing.T) {
 	const usdcClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	const usdcSACContract = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
@@ -2584,11 +2438,7 @@ func TestOracleReference_NonPositivePriceRejected(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_OnChainOracleReferences is the worker-cycle test:
-// a Service wired with three on-chain oracle references (two fresh,
-// one stale) refreshes a pair and the cached result + observation
-// sink carry the per-reference outcomes under the oracle source
-// labels — same observation schema as the HTTP references.
+// TestRefreshPair_OnChainOracleReferences: a Service with three on-chain oracle references (two fresh, one stale) carries per-reference outcomes in the cache and sink under the oracle source labels.
 func TestRefreshPair_OnChainOracleReferences(t *testing.T) {
 	now := time.Now().UTC()
 	// reflector-cex: XLM at 0.11 (14 decimals), fresh.
@@ -2678,22 +2528,8 @@ func readDivergence(t *testing.T, rdb *redis.Client, pair canonical.Pair) diverg
 	return cached
 }
 
-// TestRefreshPair_FastMoveDoesNotFalseWarn is the red
-// proof for debouncing. OurPrice is a shortest-window (5m) VWAP; the references are
-// instantaneous spot quotes. On a fast upward move the spot has jumped
-// but our VWAP still averages in the pre-move trades, so our value
-// legitimately lags the references by more than the threshold. Before
-// the fix that raised flags.divergence_warning immediately even though
-// nothing was wrong.
-//
-// A SINGLE refresh of a real 10% gap (well over the 5% threshold, with
-// no reference corroborating us) must NOT fire the warning: the gap has
-// not yet persisted past the debounce window, so it is indistinguishable
-// from the mechanical VWAP-vs-spot lag of a fast move.
-//
-// This is the non-vacuous assertion: against a worker that
-// set WarningFired = checked && (DivergencePct > threshold || nobody
-// agrees) this single 10% refresh fires true and the test fails red.
+// TestRefreshPair_FastMoveDoesNotFalseWarn: our value is a 5m VWAP and the references are spot, so a single refresh of a real 10% gap must NOT fire until it persists past the debounce window.
+// Non-vacuous: a worker using WarningFired = checked && (DivergencePct > threshold || nobody agrees) fires on this refresh and fails the test.
 func TestRefreshPair_FastMoveDoesNotFalseWarn(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "coingecko", price: 1.00},
@@ -2769,12 +2605,7 @@ func TestRefreshPair_SustainedDivergenceStillWarns(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_TransientDivergenceSelfClears proves the gate keys on
-// an UNINTERRUPTED streak, not on wall-clock-since-first-ever. A gap
-// that appears, clears, then reappears must restart its persistence
-// clock — so a pair of brief spikes straddling more than a window never
-// fires. This is what stops the debounce from degrading into a plain
-// "warn if we've ever been over threshold for N minutes" bound.
+// TestRefreshPair_TransientDivergenceSelfClears proves the gate keys on an UNINTERRUPTED streak: a gap that clears and reappears restarts its persistence clock.
 func TestRefreshPair_TransientDivergenceSelfClears(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "coingecko", price: 1.00},
@@ -2818,11 +2649,7 @@ func TestRefreshPair_TransientDivergenceSelfClears(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_OnWarningHookFiresOnlyAfterPersistence pins that the
-// edge-triggered customer-webhook hook rides the DEBOUNCED WarningFired,
-// so subscribers aren't paged on a fast-move blip. The hook must fire on
-// the persisted false→true edge, not on the first raw over-threshold
-// refresh.
+// TestRefreshPair_OnWarningHookFiresOnlyAfterPersistence pins that the webhook hook rides the DEBOUNCED WarningFired, not the first raw over-threshold refresh.
 func TestRefreshPair_OnWarningHookFiresOnlyAfterPersistence(t *testing.T) {
 	refs := []divergence.Reference{
 		&stubReference{name: "coingecko", price: 1.00},
@@ -2853,13 +2680,7 @@ func TestRefreshPair_OnWarningHookFiresOnlyAfterPersistence(t *testing.T) {
 	}
 }
 
-// TestRefreshPair_BelowQuorumTickFreezesWarning pins that a refresh which
-// cannot reach the reference quorum is a no-op on warning state. A firing
-// pair drops to one responding reference for a single refresh: the cached
-// WarningFired must stay true (not be rewritten to an all-clear), the
-// persistence streak must survive so the warning is still up the moment
-// references return, and no second webhook may be emitted for the same
-// ongoing episode.
+// TestRefreshPair_BelowQuorumTickFreezesWarning pins that a below-quorum refresh is a no-op on warning state: WarningFired stays true, the streak survives, and no second webhook is emitted.
 func TestRefreshPair_BelowQuorumTickFreezesWarning(t *testing.T) {
 	flaky := &stubReference{name: "chainlink", price: 1.00}
 	refs := []divergence.Reference{
@@ -2933,12 +2754,7 @@ func depeggedRefs() []divergence.Reference {
 	}
 }
 
-// TestRefreshPair_RestartKeepsPublishedWarning: a divergence that has been
-// published for a while must stay published across an aggregator restart,
-// and the restarted process must not re-send divergence.firing for it.
-// Maps that start empty would make the first post-restart refresh
-// write WarningFired=false — /v1/price said "cross-checked and agrees" for
-// a 7% depeg — and the next matured refresh re-fired the webhook.
+// TestRefreshPair_RestartKeepsPublishedWarning: a published divergence stays published across a restart and divergence.firing is not re-sent (empty maps would write WarningFired=false and re-fire).
 func TestRefreshPair_RestartKeepsPublishedWarning(t *testing.T) {
 	refs := depeggedRefs()
 	var firstHooks, secondHooks int

@@ -15,18 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// AuditStore implements [platform.AuditStore] against the
-// `audit_log` table from migration 0027.
-//
-// Append is the load-bearing operation — every privileged action
-// (key.mint, plan.upgrade, session.revoke, …) lands one row. List
-// reads back the same rows (with account / actor-kind / action /
-// time-window filters); no dashboard or API route calls it yet — it
-// has no non-test caller, only the integration suite.
-//
-// All writes are fire-and-forget from the caller's perspective:
-// audit-log unavailability never blocks customer / staff workflows
-// (the caller logs the error + continues).
+// AuditStore implements [platform.AuditStore] against `audit_log`; Append is fire-and-forget, so audit unavailability never blocks customer or staff workflows (the caller logs and continues).
 type AuditStore struct{ s *Store }
 
 // NewAuditStore returns the Postgres-backed implementation.

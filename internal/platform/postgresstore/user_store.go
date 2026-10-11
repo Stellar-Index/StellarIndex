@@ -270,12 +270,7 @@ func (r *UserStore) GetSession(ctx context.Context, id uuid.UUID) (platform.Sess
 	return out, nil
 }
 
-// GetSessionByTokenHash is the authentication-path lookup: the caller
-// (resolveSession) hashes the incoming cookie token and looks the
-// active session up by hash. The sessions table stores only the hash,
-// so read-access to the table is not directly replayable. An expired
-// row is filtered here, not left to every caller: expired rows persist
-// until the session reaper's grace window passes.
+// GetSessionByTokenHash is the authentication lookup by cookie-token hash (the table stores only hashes); expired rows are filtered here, since they persist until the reaper's grace window passes.
 func (r *UserStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (platform.Session, error) {
 	const q = `SELECT ` + sessionColumns + ` FROM sessions
 		WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()`
@@ -290,19 +285,8 @@ func (r *UserStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte)
 	return out, nil
 }
 
-// TouchSession updates the last-seen fields. Caller debounces
-// to once-per-minute to avoid hot-row contention; this method
-// itself is unconditional — every call writes.
-//
-// ip_last_seen is `inet NOT NULL` (migration 0027), so a nil ip
-// can't be written as NULL — but it must not be written as a fake
-// address either: `clientIP` (dashboardauth/handlers.go) can
-// legitimately return nil (RemoteAddr without a splittable port),
-// and stamping the literal sentinel "0.0.0.0" into that row whenever
-// it did would corrupt the session-hijack / abuse-forensics column
-// this data exists for. COALESCE against the existing value leaves
-// the column genuinely unchanged on a nil ip, matching what the caller's
-// own comment (dashboardauth/middleware.go's parseIP) promises.
+// TouchSession updates the last-seen fields; the caller debounces to once a minute, this method always writes.
+// ip_last_seen is `inet NOT NULL`, so a nil ip must not become a fake "0.0.0.0" (clientIP can return nil) and corrupt the forensics column; COALESCE keeps the existing value instead.
 func (r *UserStore) TouchSession(ctx context.Context, id uuid.UUID, ip net.IP, userAgent string) error {
 	const q = `
 		UPDATE sessions SET
@@ -384,18 +368,7 @@ func (r *UserStore) CapUserSessions(ctx context.Context, userID, keepSessionID u
 // errNilClientIP is returned by ipString when ip is nil.
 var errNilClientIP = errors.New("postgresstore: nil client IP")
 
-// ipString renders ip as the literal the `inet NOT NULL` session /
-// magic-link-token columns require.
-//
-// A nil IP is not test-only: clientIP (internal/api/v1/dashboardauth)
-// returns nil whenever r.RemoteAddr fails to split into host:port,
-// which reaches CreateSession and CreateMagicLinkToken on a real login
-// or magic-link request. Writing a plausible-looking
-// placeholder into a security-forensics column would let that
-// malformed-request condition masquerade as "the client at 0.0.0.0"
-// instead of surfacing. The schema has no representable NULL here
-// (inet NOT NULL, migration 0027), so this fails closed instead: the
-// caller gets an error and nothing is written.
+// ipString renders ip for the `inet NOT NULL` columns. A nil IP is not test-only (clientIP returns nil when RemoteAddr fails to split) and the schema cannot hold NULL, so this fails closed with an error rather than writing a plausible-looking placeholder into a forensics column.
 func ipString(ip net.IP) (string, error) {
 	if ip == nil {
 		return "", errNilClientIP
@@ -403,13 +376,7 @@ func ipString(ip net.IP) (string, error) {
 	return ip.String(), nil
 }
 
-// SweepEndedSessions deletes sessions that expired or were revoked
-// before olderThan, returning how many were removed. Drives the
-// session reaper (internal/retentionreaper).
-//
-// Both states are terminal: every lookup filters `revoked_at IS NULL`,
-// the authentication lookup also filters `expires_at > now()`, and
-// nothing moves expires_at forward.
+// SweepEndedSessions deletes sessions that expired or were revoked before olderThan (driving internal/retentionreaper); both states are terminal since nothing moves expires_at forward.
 func (r *UserStore) SweepEndedSessions(ctx context.Context, olderThan time.Time) (int64, error) {
 	const q = `
 		DELETE FROM sessions

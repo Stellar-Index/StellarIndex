@@ -13,11 +13,7 @@ import (
 	"testing"
 )
 
-// TestWebhookEventTypesListsEveryConstant parses this package's source and
-// requires every constant typed WebhookEventType to appear in
-// WebhookEventTypes(). Go has no exhaustiveness check over string
-// constants, so without this a sixth type would be invisible to every
-// consumer of the list.
+// TestWebhookEventTypesListsEveryConstant requires every WebhookEventType constant to appear in WebhookEventTypes(), as Go has no exhaustiveness check over string constants.
 func TestWebhookEventTypesListsEveryConstant(t *testing.T) {
 	declared := declaredWebhookEventTypes(t)
 	if len(declared) == 0 {

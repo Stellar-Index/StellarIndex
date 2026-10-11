@@ -35,11 +35,7 @@ func ValidAlertCondition(s string) bool {
 	}
 }
 
-// MinAlertCooldownSeconds floors the re-fire interval. An alert re-arms each
-// time the price moves back across its threshold, so without a floor a price
-// oscillating around it re-enqueues every subscribed webhook on alternate
-// 30 s ticks: at the free tier's 25 alerts x 10 webhooks that outruns the
-// delivery worker's ~5/s drain. Migration 0181 raised stored values below it.
+// MinAlertCooldownSeconds floors the re-fire interval: without it a price oscillating around the threshold re-enqueues every subscribed webhook each tick and outruns the delivery worker's drain.
 const MinAlertCooldownSeconds = 300
 
 // MaxAlertCooldownSeconds is the largest cooldown the int4
@@ -53,16 +49,7 @@ func ValidAlertCooldown(n int) bool {
 	return n >= MinAlertCooldownSeconds && n <= MaxAlertCooldownSeconds
 }
 
-// PriceAlert is one customer-registered price-threshold rule: "notify
-// this account when <BaseAsset>/<QuoteAsset> goes <Condition>
-// <Threshold>". Backs the `price_alerts` table (migration 0080).
-//
-// The aggregator's evaluator (internal/pricealerts) reads enabled rows
-// every tick, compares each against the latest closed 1-minute VWAP for
-// the pair, and — when the condition holds on an armed alert whose cooldown
-// has elapsed — enqueues one `price.alert` delivery per subscribed webhook
-// of the owning account. Owner-scoped by AccountID so one account's alerts
-// never reach another's webhooks.
+// PriceAlert is a customer price-threshold rule evaluated against the latest closed 1-minute VWAP; owner-scoped by AccountID so one account's alerts never reach another's webhooks.
 type PriceAlert struct {
 	ID        uuid.UUID
 	AccountID uuid.UUID
@@ -102,19 +89,9 @@ type PriceAlert struct {
 	UpdatedAt time.Time
 }
 
-// PriceAlertStore is the persistence boundary for [PriceAlert].
-//
-// Implementation: postgresstore.PriceAlertStore (migration 0080). The
-// CRUD half (Create/Get/List-for-account/Update/Delete) is called by
-// the dashboard handlers in the API binary; the evaluator half
-// (ListEnabledPriceAlerts/ClaimPriceAlertFire) is called by the
-// aggregator's price-alert worker.
+// PriceAlertStore is the persistence boundary for [PriceAlert]: CRUD for the dashboard, ListEnabledPriceAlerts/ClaimPriceAlertFire for the aggregator worker.
 type PriceAlertStore interface {
-	// CreatePriceAlert inserts a new alert, enforcing the per-account
-	// `maxPerAccount` cap atomically (same advisory-lock + CTE-gated
-	// INSERT shape as CreateWebhook). Returns
-	// [ErrPriceAlertQuotaExceeded] when the account is already at the
-	// cap.
+	// CreatePriceAlert inserts an alert, enforcing the per-account cap atomically; [ErrPriceAlertQuotaExceeded] at the cap.
 	CreatePriceAlert(ctx context.Context, a PriceAlert, maxPerAccount int) (PriceAlert, error)
 
 	// GetPriceAlert returns one alert by ID. [ErrNotFound] when absent.
@@ -128,33 +105,16 @@ type PriceAlertStore interface {
 	// accounts. The evaluator sweeps this set each tick.
 	ListEnabledPriceAlerts(ctx context.Context) ([]PriceAlert, error)
 
-	// UpdatePriceAlert persists the mutable fields (base/quote asset,
-	// condition, threshold, cooldown, enabled). AccountID + ID are
-	// immutable. It re-arms the alert when the pair, condition or threshold
-	// changes or a disabled alert is enabled: either is a new rule to watch.
-	// [ErrNotFound] when the row is gone.
+	// UpdatePriceAlert persists the mutable fields (AccountID and ID immutable) and re-arms when the pair, condition or threshold changes or a disabled alert is enabled; [ErrNotFound] if gone.
 	UpdatePriceAlert(ctx context.Context, a PriceAlert) error
 
 	// DeletePriceAlert removes the row. Idempotent (deleting an absent
 	// id is not an error).
 	DeletePriceAlert(ctx context.Context, id uuid.UUID) error
 
-	// ClaimPriceAlertFire atomically claims this crossing for the caller:
-	// it stamps last_fired_at, disarms the alert (and bumps updated_at)
-	// ONLY when the row is armed and its own cooldown has elapsed, and
-	// reports whether it won.
-	//
-	// The claim is conditional in the UPDATE itself because the evaluator's
-	// cooldown check reads a SNAPSHOT from ListEnabledPriceAlerts: two
-	// overlapping evaluators (second aggregator, standby, deploy overlap) both
-	// pass it, and an unconditional stamp would send two webhooks per crossing.
-	// Postgres serialises the UPDATEs on the row lock, so the loser matches nothing.
-	//
-	// a is the snapshot the caller evaluated: the claim also requires the
-	// row to still be enabled with the same pair, condition and threshold.
-	//
-	// claimed=false means "not yours to deliver" (claimed elsewhere, or edited,
-	// disabled or deleted mid-sweep); skip the fan-out.
+	// ClaimPriceAlertFire atomically claims a crossing (stamps last_fired_at, disarms) only if the row is armed, past its cooldown, and still matches snapshot a's pair, condition and threshold; reports whether it won.
+	// It is conditional in the UPDATE because the evaluator's cooldown check reads a snapshot and overlapping evaluators would otherwise send two webhooks per crossing.
+	// claimed=false means not yours to deliver: skip the fan-out.
 	ClaimPriceAlertFire(ctx context.Context, a PriceAlert, firedAt time.Time) (claimed bool, err error)
 
 	// RearmPriceAlert clears Disarmed after the evaluator saw the condition

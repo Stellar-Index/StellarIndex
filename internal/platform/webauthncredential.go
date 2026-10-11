@@ -7,12 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// WebAuthnCredential is one registered passkey (WebAuthn public-key
-// credential) for a dashboard user. The private key never leaves the
-// user's authenticator; we store only the public key + the metadata
-// the WebAuthn verification algorithm needs (sign count for clone
-// detection, transports for allow-list hints, backup flags for
-// risk display). Rows are user-scoped — deleting the user cascades.
+// WebAuthnCredential is one registered passkey for a dashboard user; the private key never leaves the authenticator and rows are user-scoped (deleting the user cascades).
 type WebAuthnCredential struct {
 	ID     uuid.UUID
 	UserID uuid.UUID

@@ -9,30 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Divergence is an INTERPRETATION-layer consumer of oracle_updates, and
-// the oracle capture-totality contract is explicit that it must never
-// read a `raw:` row: an unmapped oracle symbol is recorded verbatim as
-// evidence, and nothing that interprets prices may treat it as an asset.
-//
-// The reassuring part is that divergence cannot currently do so. The
-// unreassuring part is WHY: it is safe by construction, through a chain
-// of three separate facts that live in three different packages —
-//
-//  1. canonical.Pair.Validate refuses a raw asset as either leg;
-//  2. OracleReference.LookupQuote takes a canonical.Pair, so its keys
-//     are derived from legs that already passed (1);
-//  3. Store.LatestOracleObservation matches `asset = ANY($2)`, an exact
-//     set membership, so it can only return what it was asked for.
-//
-// Break any one link and divergence starts interpreting raw rows, with
-// nothing in this package objecting. The test that pinned this was
-// deleted by a squash merge along with two siblings,
-// so the property has been unproven since.
-//
-// This restores the proof. It is deliberately written against the
-// PROPERTY (no raw key ever reaches the reader) rather than against any
-// one link, so it keeps holding if the implementation is refactored and
-// starts failing if the chain is broken anywhere along it.
+// Divergence must never read a `raw:` oracle row (an unmapped symbol recorded verbatim); it is safe only by a chain of three facts in three packages: Pair.Validate refuses a raw leg,
+// OracleReference.LookupQuote keys derive from validated legs, and Store.LatestOracleObservation matches `asset = ANY($2)` exactly.
+// This test asserts the PROPERTY (no raw key reaches the reader), so it survives refactors and fails if any link breaks.
 
 // keyRecordingOracleReader captures every key set it is asked for, so a
 // test can assert on what divergence REQUESTED — not merely on what it
@@ -55,11 +34,7 @@ func (r *keyRecordingOracleReader) allKeys() []string {
 	return append(append([]string{}, r.baseKeys...), r.quoteKeys...)
 }
 
-// TestRawSymbolCannotBecomeAPairLeg pins link (1) — the one the other
-// two rest on. If Pair.Validate ever accepts a raw leg, divergence
-// starts interpreting unmapped oracle symbols and this suite's other
-// test would still pass, because it would be asking about a pair that
-// should never have existed.
+// TestRawSymbolCannotBecomeAPairLeg pins link (1), which the others rest on: if Pair.Validate accepts a raw leg, the other test would ask about a pair that should never exist.
 func TestRawSymbolCannotBecomeAPairLeg(t *testing.T) {
 	raw, err := canonical.NewOracleRawAsset("USDT0")
 	if err != nil {

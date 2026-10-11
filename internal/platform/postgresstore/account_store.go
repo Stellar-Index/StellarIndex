@@ -73,22 +73,12 @@ func scanAccount(row interface {
 	if suspendedAt.Valid {
 		a.SuspendedAt = suspendedAt.Time
 	}
-	// Legacy-tier folding (free-platform model): stored
-	// rows still carry the migration-0027 five-string vocabulary
-	// (free/starter/pro/business/enterprise). In-memory the tier is
-	// always canonical (free/partner) so every ladder lookup, clamp,
-	// and wire view speaks the three-level model; the reverse mapping
-	// happens at write time via [platform.Tier.StorageValue].
+	// Stored rows carry the legacy five-string tier vocabulary; in memory the tier is always canonical, and [platform.Tier.StorageValue] reverses it on write.
 	a.Tier = a.Tier.Canonical()
 	return a, nil
 }
 
-// Create inserts a new account. The schema's CHECK constraints
-// catch malformed slugs / tiers / statuses; we map the unique-
-// violation case (slug collision) to platform.ErrConflict. A slug an
-// erasure retired (erased_account_slugs, migration 0188) is a collision
-// too: Redis key records and usage counters are keyed by acct:<slug>, so
-// reissuing it would hand a new owner anything a cleanup missed.
+// Create inserts a new account, mapping a slug collision to platform.ErrConflict; a slug an erasure retired (erased_account_slugs) collides too, because Redis keys and usage counters are keyed by acct:<slug> and reissuing it could hand a new owner leftovers.
 func (r *AccountStore) Create(ctx context.Context, a platform.Account) (platform.Account, error) {
 	const q = `
 		INSERT INTO accounts (
@@ -167,19 +157,9 @@ func (r *AccountStore) GetBySlug(ctx context.Context, slug string) (platform.Acc
 	return out, nil
 }
 
-// Update writes the mutable fields — including the suspension
-// bookkeeping (status, suspended_at, suspended_reason). Immutable (id,
-// slug, created_at) are ignored; passing different values is a no-op
-// rather than an error so callers can round-trip a Get → mutate →
-// Update pattern.
+// Update writes the mutable fields incl. suspension bookkeeping; immutable fields (id, slug, created_at) are ignored so a Get, mutate, Update round-trip is safe.
 func (r *AccountStore) Update(ctx context.Context, a platform.Account) error {
-	// suspended_at / suspended_reason are written here too. Writing
-	// `status` without the two columns that explain it would let a caller
-	// doing the documented Get → mutate → Update round-trip move an
-	// account to `suspended` and leave suspended_at NULL with no reason —
-	// the suspension would be enforced with no record of when or why.
-	// Every reader projects both columns (accountColumns), so an
-	// untouched round-trip rewrites the same values it read.
+	// suspended_at/suspended_reason are written with status so a suspension is never enforced without a record of when or why; readers project both, so a round-trip rewrites what it read.
 	n, err := execAccountUpdate(ctx, r.s.db, a)
 	if err != nil {
 		return fmt.Errorf("update account: %w", err)
@@ -230,22 +210,8 @@ func execAccountUpdate(ctx context.Context, exec accountExecer, a platform.Accou
 	return res.RowsAffected()
 }
 
-// UpdateAtomic loads the account row under a `SELECT ... FOR UPDATE` row
-// lock, applies mutate to an in-memory copy, and writes the result back
-// — all inside one transaction, so a concurrent PATCH on the same
-// account cannot interleave between the read and the write.
-//
-// A plain Get, in-memory mutate, then Update has no lock and no version
-// check. Update rewrites every mutable column (not a diff), so two
-// operator PATCHes racing on the same account (one flipping status,
-// the other setting an override) would both start from the same stale
-// snapshot and the second commit would silently discard the first's
-// change. Status is the operator kill switch: a lost SUSPEND under
-// that race would be a live hole, not just clobbered data.
-//
-// mutate returning an error aborts the transaction; nothing is read or
-// written durably. platform.ErrNotFound (unwrapped) is returned when
-// the row does not exist.
+// UpdateAtomic reads the row under SELECT ... FOR UPDATE, applies mutate, and writes back in one transaction. Update rewrites every column, so without the lock two racing PATCHes would lose the first (a lost SUSPEND is a live hole).
+// mutate returning an error aborts; platform.ErrNotFound (unwrapped) if the row is absent.
 func (r *AccountStore) UpdateAtomic(
 	ctx context.Context, id uuid.UUID, mutate func(*platform.Account) error,
 ) (before, after platform.Account, err error) {
@@ -319,26 +285,8 @@ func (r *AccountStore) Unsuspend(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// ReapSuspendedOrphans hard-deletes speculative-account orphans: rows
-// that were Suspended with a `suspended_reason` starting with
-// reasonPrefix (the `signup-race:` marker the lost-race
-// recovery path stamps on the losing account) and suspended strictly
-// before olderThan.
-//
-// The predicate is deliberately conservative. Beyond the exact-reason
-// + age-threshold match it additionally requires the account to have
-// NO child users AND NO api_keys. A lost signup-race orphan has
-// neither by construction — its `CreateUser` lost the `users_email_idx`
-// race, so no user (and therefore no dashboard key) was ever attached.
-// The NOT EXISTS guards make the delete self-evidently safe for a
-// human reviewer AND sidestep the `users` / `api_keys`
-// `ON DELETE RESTRICT` foreign keys (migration 0027), which would
-// otherwise abort the whole batch if a single row were ever
-// mislabelled. Returns the number of rows deleted.
-//
-// reasonPrefix is matched with `LIKE '<escaped-prefix>%'`; callers pass a
-// fixed package constant (signupreaper.SignupRaceReasonPrefix) and any
-// LIKE metacharacters are escaped, so there is no pattern-injection surface.
+// ReapSuspendedOrphans hard-deletes signup-race orphans: Suspended, `suspended_reason` starting with reasonPrefix, suspended before olderThan, and with NO users AND NO api_keys (the NOT EXISTS guards also dodge the ON DELETE RESTRICT foreign keys). Returns rows deleted.
+// reasonPrefix is matched with LIKE and its metacharacters are escaped, so there is no pattern injection.
 func (r *AccountStore) ReapSuspendedOrphans(ctx context.Context, reasonPrefix string, olderThan time.Time) (int64, error) {
 	const q = `
 		DELETE FROM accounts a
@@ -368,12 +316,7 @@ func (r *AccountStore) ReapSuspendedOrphans(ctx context.Context, reasonPrefix st
 	return total, nil
 }
 
-// ListAbandonedRegistrations returns up to limit accounts, oldest first,
-// in the shape an unused /v1/register call leaves: active, free tier, no
-// billing customer, no member user, at least one API key and none ever
-// used (last_used_at is NULL), created before createdBefore. Callers
-// erase them through [accounterasure.Eraser], which also checks that the
-// keys' validator records have expired.
+// ListAbandonedRegistrations returns up to limit accounts, oldest first, left by an unused /v1/register (active, free, no billing customer, no user, keys never used) created before createdBefore; erase them through [accounterasure.Eraser].
 func (r *AccountStore) ListAbandonedRegistrations(ctx context.Context, createdBefore time.Time, limit int) ([]uuid.UUID, error) {
 	const q = `
 		SELECT a.id FROM accounts a

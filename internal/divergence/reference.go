@@ -9,20 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Reference is a pluggable external price reference. Each
-// implementation maps to one external oracle / aggregator
-// (CoinGecko, CMC, Reflector, Band, etc.) and exposes one method
-// to fetch the price the source reports for a given pair.
-//
-// Implementations:
-//
-//   - MUST be safe for concurrent LookupQuote calls
-//   - SHOULD set a per-call timeout via the supplied ctx (caller
-//     also bounds it but the implementation is the closest layer
-//     to the network)
-//   - SHOULD return [ErrAssetUnsupported] when the source doesn't
-//     list the asset (so [Compare] can record the gap without
-//     treating it as a transport failure)
+// Reference is a pluggable external price reference. Implementations MUST be safe for concurrent LookupQuote calls, SHOULD set a per-call timeout via ctx,
+// and SHOULD return [ErrAssetUnsupported] for an unlisted asset so [Compare] records the gap without treating it as a transport failure.
 type Reference interface {
 	// Name returns a stable, lowercase, hyphenated label suitable
 	// for Prometheus labels and JSON keys (e.g. "coingecko",
@@ -30,11 +18,7 @@ type Reference interface {
 	// renaming is a wire break against the divergence-warning alerts.
 	Name() string
 
-	// LookupQuote returns the source's reported price for the pair,
-	// denominated as `1 base = N quote`, and the instant its upstream
-	// observed that price. observedAt is the comparison time; the
-	// quote's AsOf is required, because [Compare] refuses a quote it
-	// cannot age (see [MaxComparableAge]).
+	// LookupQuote returns the source's price as `1 base = N quote` and the instant its upstream observed it. The quote's AsOf is required: [Compare] refuses a quote it cannot age (see [MaxComparableAge]).
 	LookupQuote(ctx context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error)
 }
 
@@ -51,16 +35,8 @@ type Quote struct {
 // short-window VWAP it would be compared with.
 var ErrTooStaleToCompare = errors.New("divergence: reference too stale to compare")
 
-// Comparability ceilings for [MaxComparableAge].
-//
-//   - Non-FX pairs: 1h, the longest heartbeat of any reference meant to
-//     track a live market (Chainlink crypto/USD, ≤1h). An older quote is
-//     from a feed that is overdue or only heartbeats daily (Redstone,
-//     Band: 26h liveness), and cannot be assumed to describe the market
-//     a minutes-wide VWAP measures.
-//   - FX pairs (fiat/fiat): the FX liveness budget. FX quotes pause over
-//     market closes and move far less than the divergence threshold per
-//     day, so their liveness budget already bounds their error.
+// Comparability ceilings for [MaxComparableAge]. Non-FX pairs get 1h (the longest heartbeat of a live-market reference; older quotes cannot describe a minutes-wide VWAP's market).
+// FX pairs get the FX liveness budget, which already bounds their error since FX quotes pause over closes and move far less than the threshold per day.
 const (
 	DefaultMaxComparableAge   = time.Hour
 	DefaultMaxComparableAgeFX = defaultChainlinkMaxAgeFX
@@ -91,15 +67,7 @@ func checkComparable(q Quote, pair canonical.Pair, observedAt time.Time) error {
 	return nil
 }
 
-// Sentinel errors returned by [Reference] implementations.
-//
-// Compare distinguishes these from generic transport errors so
-// "asset not listed on this source" doesn't pollute the
-// degradation signal. An asset that genuinely isn't listed on
-// CoinGecko is information for the operator (consider adding the
-// pair to the source's supported list, or accept a smaller
-// reference universe for that pair); a transport failure is a
-// transient outage signal.
+// Sentinel errors returned by [Reference] implementations; Compare keeps "asset not listed on this source" (information) apart from transport failures (a transient outage signal).
 var (
 	// ErrAssetUnsupported — the source does not list the asset
 	// (or the pair). Caller treats this as "no reference for this

@@ -1,24 +1,5 @@
-// NOT WIRED -- dead code, no writer exists. The UsageStore interface and
-// the UsageEvent/UsageRollup/UsageQuery types below are fully documented
-// but have ZERO implementations and ZERO callers anywhere in the
-// codebase: no async worker drains a Redis stream into AppendEvent(Batch),
-// nothing constructs a UsageStore, and nothing reads UsageRollup. The
-// api_usage_events hypertable these types model
-// (migrations/0027_platform_v1_schema.up.sql) exists and is never
-// written to; the api_usage_{5m,1h,1d} CAGGs that migration names in a
-// comment were never created.
-//
-// Per-request billing/usage accounting is live via a DIFFERENT,
-// unrelated package: internal/usage (Redis INCR counters, see
-// internal/usage/counter.go + rollup.go) — that is the real
-// mechanism backing GET /v1/account/usage and the daily rollup.
-// Don't confuse the two: internal/usage is the wired mechanism, and
-// this interface has never been.
-//
-// Do not build new features on this interface without first writing
-// the missing worker (AppendEvent call site + a draining loop) —
-// today anything that assumes rows land in api_usage_events will
-// silently see none.
+// NOT WIRED: the UsageStore interface and UsageEvent/UsageRollup/UsageQuery types have no implementation or caller, and api_usage_events is never written.
+// The live usage accounting is internal/usage (Redis counters); do not build on this interface without first writing the draining worker.
 package platform
 
 import (
@@ -29,13 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// UsageEvent is one row in the api_usage_events hypertable —
-// emitted (asynchronously, via Redis stream) for each
-// authenticated request.
-//
-// Anonymous-tier requests are NOT recorded here (would blow up
-// row volume); they continue to be reflected only in Prometheus
-// histograms.
+// UsageEvent is one api_usage_events row per authenticated request; anonymous-tier requests are NOT recorded (row volume), only in Prometheus.
 type UsageEvent struct {
 	Timestamp  time.Time
 	AccountID  uuid.UUID
@@ -76,11 +51,7 @@ type UsageQuery struct {
 	Granularity string    // "5m" / "1h" / "1d"
 }
 
-// UsageStore persists [UsageEvent] and reads [UsageRollup].
-//
-// Write path: AppendEvent is called by an async worker draining
-// a Redis stream — never directly from the request hot path.
-// Read path: QueryRollup reads from the matching CAGG.
+// UsageStore persists [UsageEvent] (AppendEvent from an async worker, never the request hot path) and reads [UsageRollup] from the matching CAGG.
 type UsageStore interface {
 	// AppendEvent inserts one event. Errors are logged by the
 	// worker but don't block the request the event describes.

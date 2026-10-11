@@ -31,18 +31,8 @@ func moduleRoot(t *testing.T) string {
 	return ""
 }
 
-// TestSessionsTableComment_DoesNotClaimUnimplementedAlert. Migration 0027's header comment on `sessions` claimed
-// "Geo + IP fields drive the 'new login from a new country' email
-// alert", but no such alert exists: internal/obs/metrics.go declares
-// exactly two notify templates (magic-link, signup-verify), and
-// neither dashboardauth.mintSession nor postgresstore.UserStore
-// compares geo_first_seen/geo_last_seen or sends a notification on
-// mismatch. A reader of the schema would believe a security control
-// exists that does not. This pins the corrected comment, which is a
-// `--` header comment (not executed, not stored in the database), so
-// correcting it is the header-comment path in
-// migrations/README.md#amending-a-shipped-migration, not a new
-// migration.
+// TestSessionsTableComment_DoesNotClaimUnimplementedAlert pins the corrected migration 0027 header on `sessions`: no "new login from a new country" alert exists, so the schema must not imply one.
+// It is a `--` header comment, so the fix follows migrations/README.md#amending-a-shipped-migration, not a new migration.
 func TestSessionsTableComment_DoesNotClaimUnimplementedAlert(t *testing.T) {
 	root := moduleRoot(t)
 

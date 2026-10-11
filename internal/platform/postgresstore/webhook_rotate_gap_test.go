@@ -9,11 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// TestRotateWebhookSecret_RefusesUnusableInput pins the guards that run
-// before any SQL: an empty key would sign every delivery forgeably, and a
-// zero expiry would violate the previous-secret pair CHECK. The in-place
-// UPDATE itself is executed by test/integration's
-// TestCustomerWebhookRotateSecretKeepsQueue.
+// TestRotateWebhookSecret_RefusesUnusableInput pins the pre-SQL guards: an empty key would sign forgeably and a zero expiry violates the previous-secret CHECK; the UPDATE itself is covered by test/integration.
 func TestRotateWebhookSecret_RefusesUnusableInput(t *testing.T) {
 	store := &WebhookStore{}
 	ctx := context.Background()

@@ -8,15 +8,8 @@ import (
 // AccountExportSchemaVersion versions the [AccountExport] document.
 const AccountExportSchemaVersion = 1
 
-// AccountExport is the document GET /v1/dashboard/account/export serves:
-// everything the service holds about an account, as the requesting owner
-// may see it. Secrets (key hashes, webhook signing keys, session token
-// hashes, passkey public keys, MFA material) are never included, and
-// other members' sessions, passkeys, addresses and agents are left out:
-// they are those members' data, not the requester's.
-//
-// jsonb columns are carried as json.RawMessage so no number in them is
-// ever decoded into a float64; NUMERIC columns are decimal strings.
+// AccountExport is the GET /v1/dashboard/account/export document. Secrets (key hashes, signing keys, session hashes, passkey public keys, MFA material) and other members' data are never included.
+// jsonb columns are carried as json.RawMessage so no number is decoded into a float64; NUMERIC columns are decimal strings.
 type AccountExport struct {
 	SchemaVersion int       `json:"schema_version"`
 	GeneratedAt   time.Time `json:"generated_at"`

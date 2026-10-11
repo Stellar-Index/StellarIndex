@@ -13,32 +13,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// On-chain decimals() verification for the Chainlink reference.
-//
-// A configured `decimals` that is never checked against the AggregatorV3
-// proxy's `decimals()` view lets a wrong or drifted value scale every
-// reading by 10^(configured-actual) silently, producing a permanent false
-// divergence (or, worse, masking a real one). The reference therefore reads
-// `decimals()` from each feed over its `latestRoundData()` JSON-RPC path, on
-// first use and every chainlinkDecimalsRefreshInterval, and:
-//
-//   - configured value ABSENT (0) → adopts the on-chain value;
-//   - both present and EQUAL → readings flow;
-//   - both present and DIFFERENT → logs at ERROR with both values,
-//     counts obs.ChainlinkFeedDecimalsMismatchTotal on every refused
-//     reading, and REFUSES the feed (ErrPriceUnavailable) until they
-//     agree — a divergence check that scales wrongly is worse than none;
-//   - decimals() RPC failure → keeps the last known value (configured,
-//     or the previously verified on-chain value) with a WARN and
-//     retries after chainlinkDecimalsRetryInterval; a feed with no
-//     configured value and no successful read yet is refused, never
-//     served at a guessed scale.
+// On-chain decimals() verification for the Chainlink reference: a configured `decimals` never checked against the proxy would silently mis-scale every reading by 10^(configured-actual).
+// Read on first use and every chainlinkDecimalsRefreshInterval: absent adopts the chain; equal flows; DIFFERENT logs ERROR, counts obs.ChainlinkFeedDecimalsMismatchTotal and REFUSES the feed (ErrPriceUnavailable);
+// an RPC failure keeps the last known value with a WARN and retries after chainlinkDecimalsRetryInterval, and a feed with no value and no read is refused, never served at a guessed scale.
 const (
-	// chainlinkDecimalsRefreshInterval is how long a verified
-	// decimals() read stays trusted before it is re-read. A proxy's
-	// decimals is effectively immutable, so daily is plenty; the
-	// refresh exists so a proxy re-pointed at a differently-scaled
-	// aggregator cannot mis-scale for the lifetime of the process.
+	// chainlinkDecimalsRefreshInterval is how long a verified decimals() read is trusted; daily suffices, and re-reading catches a proxy re-pointed at a differently-scaled aggregator.
 	chainlinkDecimalsRefreshInterval = 24 * time.Hour
 
 	// chainlinkDecimalsRetryInterval bounds how often a feed whose
@@ -53,22 +32,11 @@ const (
 	chainlinkDecimalsSelector = "0x313ce567"
 )
 
-// ErrChainlinkDecimalsMismatch — the feed's configured decimals
-// disagrees with the aggregator's on-chain decimals(). Always wrapped
-// together with [ErrPriceUnavailable] so [Compare] classifies the
-// refusal as price_unavailable ("reference unavailable this run"), and
-// exposed on its own so operators and tests can errors.Is the cause.
+// ErrChainlinkDecimalsMismatch: configured decimals disagree with on-chain decimals(). Always wrapped with [ErrPriceUnavailable] so [Compare] classifies it as price_unavailable; exposed for errors.Is.
 var ErrChainlinkDecimalsMismatch = errors.New("divergence: chainlink configured decimals disagree with on-chain decimals()")
 
-// chainlinkDecimalsState is the per-feed verification memory, keyed by
-// lowercase feed address in ChainlinkReference.decimals. onChain is a
-// property of the ADDRESS, so it is safe to share across every
-// canonical pair mapped to that address. Whether it agrees with a
-// caller's configured decimals is NOT a property of the address — two
-// pairs can point at the same feed with different (or absent)
-// configured values — so that verdict is never cached here; it is
-// recomputed per call in decimalsVerdict against the caller's own
-// spec.Decimals.
+// chainlinkDecimalsState is the per-feed memory keyed by lowercase address; onChain is a property of the ADDRESS and shared across pairs, but agreement with a caller's configured decimals is not,
+// so that verdict is never cached here and is recomputed per call in decimalsVerdict.
 type chainlinkDecimalsState struct {
 	onChain   int       // last successfully read decimals(); valid when hasChain
 	hasChain  bool      // at least one decimals() read has succeeded
@@ -102,11 +70,7 @@ func (r *ChainlinkReference) resolveDecimals(ctx context.Context, pair canonical
 		r.decimals[key] = st
 	}
 	if err != nil {
-		// Keep whatever we knew (configured, or a prior on-chain read);
-		// never guess a scale for a feed we know nothing about. Counted
-		// separately from the mismatch counter: this is the fail-OPEN
-		// path (readings keep flowing at the last known scale), so a
-		// WARN log alone gives an operator nothing to alert on.
+		// Keep whatever we knew; never guess a scale for an unknown feed. Counted apart from the mismatch counter because this fail-OPEN path keeps readings flowing, so a WARN alone gives nothing to alert on.
 		st.lastErr = err
 		st.nextCheck = now.Add(chainlinkDecimalsRetryInterval)
 		obs.ChainlinkFeedDecimalsVerifyFailedTotal.WithLabelValues("divergence", pair.String()).Inc()
@@ -145,13 +109,8 @@ func (r *ChainlinkReference) resolveDecimals(ctx context.Context, pair canonical
 	return r.decimalsVerdict(pair, spec, st)
 }
 
-// decimalsVerdict turns the per-feed state into a scale or a refusal.
-// Caller holds r.decMu. The mismatch check is against THIS call's own
-// spec.Decimals, never a value cached on st: st is shared by every
-// canonical pair mapped to the same feed address, so a mismatch found
-// for one pair's configured decimals must never be served — from the
-// resolveDecimals fast-path cache hit — to a different pair whose
-// configured value agrees (or asserts none).
+// decimalsVerdict turns the per-feed state into a scale or a refusal; caller holds r.decMu. The mismatch check uses THIS call's spec.Decimals, never a value cached on st
+// (shared by every pair on the address), so one pair's mismatch is never served to another pair that agrees.
 func (r *ChainlinkReference) decimalsVerdict(pair canonical.Pair, spec chainlinkFeedSpec, st *chainlinkDecimalsState) (int, error) {
 	switch {
 	case st.hasChain && spec.Decimals != 0 && spec.Decimals != st.onChain:
@@ -185,12 +144,7 @@ func (r *ChainlinkReference) fetchDecimals(ctx context.Context, address string) 
 	return dec, nil
 }
 
-// decodeChainlinkDecimals parses the 32-byte `decimals()` eth_call
-// result (uint8, left-padded to one word). Rejects anything that is
-// not exactly one word — a proxy answering a different shape must fail
-// loudly — and a value outside 1..255: uint8 cannot exceed 255, and a
-// 0-decimal price feed does not exist on Chainlink, so 0 is treated as
-// a broken contract rather than a scale.
+// decodeChainlinkDecimals parses the 32-byte `decimals()` result (uint8, one word). It rejects any other shape and values outside 1..255 (a 0-decimal Chainlink feed does not exist, so 0 means a broken contract).
 func decodeChainlinkDecimals(hexStr string) (int, error) {
 	raw, err := hex.DecodeString(strings.TrimPrefix(hexStr, "0x"))
 	if err != nil {

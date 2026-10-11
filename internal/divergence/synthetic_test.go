@@ -53,12 +53,7 @@ func synthPair(t *testing.T, quoteCode string) canonical.Pair {
 	return canonical.Pair{Base: base, Quote: quote}
 }
 
-// TestSyntheticCross_DerivesNonUSDFiatQuote is the reason this
-// reference exists: XLM/EUR gets a SECOND reference by
-// crossing XLM/USD (oracle leg) with EUR/USD (an independent FX leg), so
-// SuccessCount can reach the divergence trust floor and the
-// corroborated-release gate can auto-release genuine repricings on
-// EUR/GBP-quoted pairs instead of paging an operator per freeze.
+// TestSyntheticCross_DerivesNonUSDFiatQuote: XLM/EUR gets a second reference by crossing XLM/USD with an independent EUR/USD leg, so SuccessCount can reach the trust floor and auto-release genuine repricings.
 func TestSyntheticCross_DerivesNonUSDFiatQuote(t *testing.T) {
 	usdLeg := &pairStub{name: "reflector-cex", prices: map[string]float64{
 		"crypto:XLM/fiat:USD": 0.35,

@@ -84,11 +84,7 @@ func TestStellarDashboardReference_DerivesCirculating(t *testing.T) {
 }
 
 func TestStellarDashboardReference_PrefersExplicitField(t *testing.T) {
-	// The component formula (total − mandate − upgrade − feePool) gives
-	// 34,740,000,000 here — deliberately NOT what circulatingSupply
-	// says (34,000,000,000), so a regression that deletes the explicit
-	// branch and falls through to the derived formula changes the
-	// asserted value instead of leaving it coincidentally correct.
+	// The component formula gives 34,740,000,000, deliberately NOT circulatingSupply (34,000,000,000), so deleting the explicit branch changes the asserted value.
 	const body = `{"updatedAt":"2026-07-07T01:06:15.982Z","totalSupply":"50000000000","sdfMandate":"15000000000","upgradeReserve":"250000000","feePool":"10000000","circulatingSupply":"34000000000"}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, body)
@@ -109,11 +105,7 @@ func TestStellarDashboardReference_PrefersExplicitField(t *testing.T) {
 	}
 }
 
-// TestSupplyReferences_StalenessGate — a FROZEN
-// supply upstream must read as "reference unavailable", never drive a
-// supply divergence. Both references expose an upstream publication
-// time (`/lumens`.updatedAt, `/coins/{id}`.market_data.last_updated);
-// a figure older than the 24h default is excluded.
+// TestSupplyReferences_StalenessGate: a FROZEN supply upstream (figure older than the 24h default) must read as "reference unavailable", never drive a divergence.
 func TestSupplyReferences_StalenessGate(t *testing.T) {
 	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
 	fresh := now.Add(-1 * time.Hour).Format(time.RFC3339)  // within 24h
@@ -158,12 +150,7 @@ func TestSupplyReferences_StalenessGate(t *testing.T) {
 	})
 }
 
-// TestSupplyReferences_MissingPublicationTimeFailsClosed — a supply
-// figure whose upstream publication time is absent or unparseable has
-// unverifiable freshness and must read as "reference unavailable",
-// matching the CoinGecko price reference's missing-last_updated_at arm.
-// A /lumens body that drops or renames updatedAt must not disarm the
-// staleness gate and let a frozen upstream drive the divergence alert.
+// TestSupplyReferences_MissingPublicationTimeFailsClosed: a figure with an absent or unparseable publication time is unverifiable and must read as "reference unavailable", not disarm the staleness gate.
 func TestSupplyReferences_MissingPublicationTimeFailsClosed(t *testing.T) {
 	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
 	const dashComponents = `"totalSupply":"50000000000","sdfMandate":"15000000000","upgradeReserve":"250000000","feePool":"10000000"`
@@ -252,11 +239,7 @@ func TestCoinGeckoSupplyReference_UnsupportedAsset(t *testing.T) {
 	}
 }
 
-// A Pro key 404s the public host. With no explicit
-// BaseURL, an APIKey must auto-switch the host to the Pro tier — same
-// as the ingest poller's DefaultEndpoint/ProEndpoint switch — or every
-// supply lookup 404s and the cross-check the operator paid a Pro key
-// for stays permanently dark.
+// With no explicit BaseURL, an APIKey must auto-switch to the Pro host (as the ingest poller does), or every lookup 404s and the paid cross-check stays dark.
 func TestCoinGeckoSupplyReference_APIKeyAutoSwitchesToProHost(t *testing.T) {
 	ref := NewCoinGeckoSupplyReference(CoinGeckoSupplyOptions{APIKey: "pro-key-placeholder"}) // gitleaks:allow
 	if ref.baseURL != coinGeckoProBaseURL {

@@ -17,23 +17,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 )
 
-// This file adds a SUPPLY-divergence cross-check that mirrors the
-// price-divergence path in worker.go, but for the served
-// `circulating_supply` figure instead of VWAP price.
-//
-// Motivation: the price path (CoinGecko / Chainlink / on-chain
-// oracles) catches a wrong PRICE, but nothing cross-checked our
-// SUPPLY. A genuinely-stale SDF-reserve exclusion list — or a supply
-// computation error — would silently drift `/v1/assets/native` circulating away
-// from the market with no automated signal, and the manual "is our
-// supply right?" investigation (see
-// docs/methodology/xlm-circulating-supply.md) is the only line of
-// defense.
-//
-// The check degrades gracefully to a `no_reference` outcome when every
-// reference is dark or stale — exactly the discipline the price path
-// applies, so a dead reference is a distinct (non-paging) signal, not
-// a false divergence alert.
+// This file cross-checks the served `circulating_supply` against external references, mirroring the price path in worker.go.
+// When every reference is dark or stale it degrades to a non-paging `no_reference` outcome, not a false divergence alert.
+// See docs/methodology/xlm-circulating-supply.md.
 
 // Supply-check sentinel errors. ErrAssetUnsupported (reference.go) is
 // reused for "this reference doesn't publish the asset"; the two below
@@ -45,23 +31,12 @@ var (
 	// ErrPriceUnavailable on the price path.
 	ErrSupplyUnavailable = errors.New("divergence: circulating supply unavailable")
 
-	// ErrNoServedSupply — OUR served tier has no circulating snapshot
-	// for the asset yet (bootstrap state, before the supply refresher
-	// has produced its first `asset_supply_history` row). Distinct from
-	// a reference miss: it means we have nothing to compare, so the
-	// check records `refresh_error` for the asset rather than a
-	// (misleading) divergence.
+	// ErrNoServedSupply: our served tier has no circulating snapshot yet (bootstrap), so nothing to compare; recorded as `refresh_error`, not a divergence.
 	ErrNoServedSupply = errors.New("divergence: no served circulating supply for asset")
 )
 
-// SupplyReference is a pluggable external circulating-supply
-// reference. One implementation per external source (Stellar
-// Dashboard, CoinGecko). Analogue of [Reference] on the price path.
-//
-// Implementations MUST be safe for concurrent LookupCirculatingSupply
-// calls and SHOULD return [ErrAssetUnsupported] for an asset they
-// don't publish (so the service records the gap without treating it as
-// a transport failure).
+// SupplyReference is a pluggable external circulating-supply source, the analogue of [Reference]. Implementations MUST be safe for concurrent
+// LookupCirculatingSupply calls and SHOULD return [ErrAssetUnsupported] for an unpublished asset (a gap, not a transport failure).
 type SupplyReference interface {
 	// Name returns a stable, lowercase, hyphenated label suitable for
 	// the Prometheus `reference` label and JSON keys (e.g.
@@ -69,11 +44,7 @@ type SupplyReference interface {
 	// renaming is a wire break against the supply-divergence alert.
 	Name() string
 
-	// LookupCirculatingSupply returns the reference's reported
-	// circulating supply for the asset, in WHOLE-TOKEN units (NOT minor
-	// units / stroops). Returns [ErrAssetUnsupported] when the source
-	// doesn't publish the asset, and [ErrSupplyUnavailable] on a
-	// transient outage.
+	// LookupCirculatingSupply returns the supply in WHOLE-TOKEN units (NOT minor units / stroops); [ErrAssetUnsupported] if unpublished, [ErrSupplyUnavailable] on a transient outage.
 	LookupCirculatingSupply(ctx context.Context, asset canonical.Asset) (float64, error)
 }
 
@@ -90,18 +61,10 @@ type ServedSupply struct {
 	ObservedAt     time.Time
 }
 
-// ServedSupplyReader is the read seam onto OUR served circulating
-// supply. Production wires an adapter over
-// `internal/storage/timescale.(*Store).LatestSupply`; tests substitute
-// a fake. Kept as a package-local interface (not an import of
-// internal/supply) so the divergence package stays decoupled from the
-// supply pipeline, same discipline as [OracleReader].
+// ServedSupplyReader is the read seam onto OUR served circulating supply (production: timescale LatestSupply); package-local so divergence stays decoupled from the supply pipeline.
 type ServedSupplyReader interface {
-	// LatestCirculatingSupply returns the most-recent served snapshot
-	// for the supply asset_key (supply.AssetKey form — "XLM" for native
-	// lumens). Implementations MUST return a wrapped [ErrNoServedSupply]
-	// when no snapshot exists yet so the service distinguishes the
-	// bootstrap state from a real read failure.
+	// LatestCirculatingSupply returns the latest snapshot for a supply.AssetKey ("XLM" for native). Implementations MUST return a wrapped
+	// [ErrNoServedSupply] when none exists, so bootstrap is distinguishable from a read failure.
 	LatestCirculatingSupply(ctx context.Context, assetKey string) (ServedSupply, error)
 }
 
@@ -136,24 +99,14 @@ const (
 	// disagreed by more than the threshold. The ratio gauge carries the
 	// magnitude; the supply-divergence alert fires off the gauge.
 	SupplyOutcomeDivergent SupplyOutcomeKind = "divergent"
-	// SupplyOutcomeNoReference — our served figure loaded fine but every
-	// configured reference was unreachable / didn't publish the asset
-	// (CoinGecko 429, Dashboard outage). Graceful-degrade state: NOT a
-	// divergence, deliberately not paged (a dead reference must not
-	// masquerade as a real supply drift).
+	// SupplyOutcomeNoReference: our figure loaded but every reference was unreachable or didn't publish the asset. Not a divergence and deliberately not paged.
 	SupplyOutcomeNoReference SupplyOutcomeKind = "no_reference"
 	// SupplyOutcomeRefreshError — OUR served snapshot couldn't be read
 	// (bootstrap, storage error). Nothing to compare against.
 	SupplyOutcomeRefreshError SupplyOutcomeKind = "refresh_error"
 )
 
-// SupplyEmitter is the metric-emission seam — kept as an interface so
-// the service stays Prometheus-agnostic and unit tests capture emitted
-// values without a registry. Production wraps
-// obs.SupplyDivergenceRatio / obs.SupplyDivergenceTotal /
-// obs.SupplyDivergenceDurationSeconds; the wiring lives in
-// cmd/stellarindex-aggregator/main.go so this package keeps no obs
-// dependency (same split as [supply.CrossCheckEmitter]).
+// SupplyEmitter is the metric-emission seam, keeping the service Prometheus-agnostic; wiring lives in cmd/stellarindex-aggregator/main.go so this package has no obs dependency.
 type SupplyEmitter interface {
 	// Ratio sets the per-(asset, reference) gauge to the absolute
 	// relative divergence |our − ref| / ref. Called once per responding
@@ -194,28 +147,11 @@ type SupplyServiceOptions struct {
 	NowFn func() time.Time
 }
 
-// DefaultSupplyMaxAge is the staleness ceiling for a supply
-// reference's upstream publication time. Circulating supply moves
-// glacially (XLM inflation was disabled in 2019; the figure now drifts
-// only by fee burns), so the gate is deliberately generous — its job
-// is to catch a genuinely FROZEN upstream (a reference that has stopped
-// updating for a day-plus), not normal cadence. The Stellar Dashboard
-// recomputes `updatedAt` roughly per-ledger and CoinGecko refreshes
-// `market_data.last_updated` frequently, so 24h means "the reference
-// has been dark for a full day" — well beyond any healthy gap.
-//
-// VALUE DECISION: 24h is a defensible engineering default, not a
-// business rule.
+// DefaultSupplyMaxAge is the staleness ceiling for a supply reference's upstream publication time; deliberately generous (24h), since supply drifts glacially and the gate only catches a FROZEN upstream.
 const DefaultSupplyMaxAge = 24 * time.Hour
 
-// supplyStaleness enforces the staleness gate for a supply reference's
-// upstream publication time. Unlike the price path (which threads the
-// bucket-end observedAt through [Compare]) the [SupplyReference]
-// interface carries no comparison time, so each reference gates against
-// its own injected clock. A zero publishedAt (timestamp missing or
-// unparseable) fails closed like the CoinGecko price reference's
-// missing last_updated_at: an unverifiable figure is excluded, never
-// served as fresh.
+// supplyStaleness gates a reference against its own injected clock ([SupplyReference] carries no comparison time). A zero publishedAt
+// fails closed: an unverifiable figure is excluded, never served as fresh.
 func supplyStaleness(now func() time.Time, maxAge time.Duration, refName string, publishedAt time.Time) error {
 	if publishedAt.IsZero() {
 		return fmt.Errorf("%w: %s returned no parseable publication time (freshness unverifiable)",
@@ -232,26 +168,14 @@ func supplyStaleness(now func() time.Time, maxAge time.Duration, refName string,
 	return nil
 }
 
-// DefaultSupplyThreshold is the 1% relative-divergence ceiling. It sits
-// two-plus orders of magnitude above the ~0.03% XLM noise floor (the
-// Fee-Pool delta between our figure and the Dashboard's, see
-// docs/methodology/xlm-circulating-supply.md), so the alert only fires
-// on a REAL drift (e.g. a stale SDF exclusion account) — never on that
-// structural noise.
+// DefaultSupplyThreshold is the 1% relative-divergence ceiling, far above the ~0.03% XLM fee-pool noise floor (docs/methodology/xlm-circulating-supply.md), so only a real drift alerts.
 const DefaultSupplyThreshold = 0.01
 
 // DefaultSupplyPerReferenceTimeout bounds each supply-reference HTTP call
 // when the caller sets none (supply endpoints are slower than price ones).
 const DefaultSupplyPerReferenceTimeout = 10 * time.Second
 
-// SupplyService runs one supply cross-check cycle per [Tick]. For each
-// configured [SupplyCheck] it loads our served circulating figure,
-// fans out to every reference, computes the relative divergence, and
-// emits the ratio gauge + outcome counter + duration histogram.
-//
-// Safe for concurrent Tick calls after construction; the References,
-// Reader, and Emitter must also be concurrent-safe (they are by
-// contract).
+// SupplyService runs one supply cross-check cycle per [Tick]: load our figure, fan out to references, emit ratio, outcome and duration; safe for concurrent Tick with concurrent-safe dependencies.
 type SupplyService struct {
 	checks    []SupplyCheck
 	refs      []SupplyReference
@@ -263,12 +187,7 @@ type SupplyService struct {
 	nowFn     func() time.Time
 }
 
-// NewSupplyService constructs the cross-check service. Returns an error
-// when a required option is missing OR when no references are
-// configured — a service with nothing to compare against would emit
-// only `no_reference` forever, so the caller should simply not wire it
-// (the aggregator gates on `[divergence.supply].enabled` + at least one
-// reference before calling this).
+// NewSupplyService errors on a missing required option or no references; the caller should not wire a service with nothing to compare (it would emit only `no_reference`).
 func NewSupplyService(opts SupplyServiceOptions) (*SupplyService, error) {
 	if opts.Reader == nil {
 		return nil, errors.New("divergence: supply service Reader is required")
@@ -310,11 +229,7 @@ func NewSupplyService(opts SupplyServiceOptions) (*SupplyService, error) {
 	}, nil
 }
 
-// DefaultSupplyChecks is the built-in flagship set: XLM only. XLM is
-// the single most-viewed supply figure and the one the Stellar
-// Dashboard covers authoritatively; USDC + the top verified currencies
-// are a mechanical follow-up (add a SupplyCheck + a CoinGecko slug)
-// once a reference that actually publishes them today is wired.
+// DefaultSupplyChecks is the built-in flagship set: XLM only, the one figure the Stellar Dashboard covers authoritatively.
 func DefaultSupplyChecks() []SupplyCheck {
 	return []SupplyCheck{
 		{
@@ -426,12 +341,8 @@ func (s *SupplyService) lookupOne(ctx context.Context, ref SupplyReference, asse
 	return ref.LookupCirculatingSupply(cctx, asset)
 }
 
-// scaleServedSupply divides the served minor-unit *big.Int by
-// 10^decimals via big.Rat (never int64 truncation, ADR-0003) and
-// collapses to whole-token float64 only at the comparison boundary —
-// the divergence is percentage-based so float64 at the boundary is
-// fine, same trade-off as scaleOracleAmount. Returns ok=false for a
-// nil / non-positive / out-of-range input.
+// scaleServedSupply divides the minor-unit *big.Int by 10^decimals via big.Rat (never int64 truncation, ADR-0003) and collapses to float64 only at the percentage comparison boundary.
+// Returns ok=false for a nil, non-positive or out-of-range input.
 func scaleServedSupply(raw *big.Int, decimals int) (float64, bool) {
 	if raw == nil || raw.Sign() <= 0 {
 		return 0, false
@@ -449,18 +360,7 @@ func scaleServedSupply(raw *big.Int, decimals int) (float64, bool) {
 
 // ─── Stellar Network Dashboard reference ─────────────────────────────
 
-// StellarDashboardReference reads the authoritative XLM supply
-// breakdown the Stellar Network Dashboard publishes at
-// `dashboard.stellar.org/api/v3/lumens` and derives circulating supply
-// the same way the Dashboard does:
-//
-//	circulating = totalSupply − sdfMandate − upgradeReserve − feePool
-//
-// This is the market-standard "lumens in circulation" figure (see
-// docs/methodology/xlm-circulating-supply.md). It covers XLM ONLY;
-// every other asset returns [ErrAssetUnsupported]. Free, no auth,
-// reliable — the primary reference for the XLM check (CoinGecko's free
-// tier is 429-throttled).
+// StellarDashboardReference derives XLM circulating supply as the Dashboard does: totalSupply - sdfMandate - upgradeReserve - feePool (docs/methodology/xlm-circulating-supply.md). XLM ONLY; others are [ErrAssetUnsupported].
 type StellarDashboardReference struct {
 	httpClient *http.Client
 	baseURL    string
@@ -513,11 +413,7 @@ func NewStellarDashboardReference(opts StellarDashboardOptions) *StellarDashboar
 // Name implements [SupplyReference].
 func (r *StellarDashboardReference) Name() string { return "stellar-dashboard" }
 
-// dashboardLumens is the subset of the `/lumens` response body we
-// consume. All figures are decimal strings in whole XLM units. Newer
-// endpoint versions also publish `circulatingSupply` directly; we
-// prefer it when present and fall back to the component formula
-// otherwise (the v3 body computes it client-side).
+// dashboardLumens is the consumed subset of `/lumens` (decimal strings, whole XLM); prefers `circulatingSupply` when present, else the component formula.
 type dashboardLumens struct {
 	TotalSupply       string `json:"totalSupply"`
 	SDFMandate        string `json:"sdfMandate"`
@@ -614,20 +510,10 @@ func (r *StellarDashboardReference) getLumens(ctx context.Context) ([]byte, erro
 // coinGeckoDefaultBaseURL is the public / free-tier REST base.
 const coinGeckoDefaultBaseURL = "https://api.coingecko.com/api/v3"
 
-// coinGeckoProBaseURL is the paid-tier REST base. A Pro key 404s
-// against coinGeckoDefaultBaseURL, so NewCoinGeckoSupplyReference
-// auto-switches to this host when APIKey is set and BaseURL wasn't
-// explicitly overridden — mirroring
-// internal/sources/external/coingecko/poller.go's DefaultEndpoint /
-// ProEndpoint switch.
+// coinGeckoProBaseURL is the paid-tier base; a Pro key 404s against the public host, so it is auto-selected when APIKey is set and BaseURL is not.
 const coinGeckoProBaseURL = "https://pro-api.coingecko.com/api/v3"
 
-// CoinGeckoSupplyReference reads `market_data.circulating_supply` from
-// CoinGecko's `/coins/{id}` endpoint. OFF by default: the free tier is
-// 429-throttled, so enabling it without a working Pro key just produces the graceful
-// no_reference outcome. Distinct from the price path's
-// [CoinGeckoReference] (which uses `/simple/price`) — kept separate
-// because the endpoints, response shapes, and quota profiles differ.
+// CoinGeckoSupplyReference reads `market_data.circulating_supply` from `/coins/{id}`; OFF by default (the free tier is 429-throttled, yielding only `no_reference`), and distinct from the price-path [CoinGeckoReference].
 type CoinGeckoSupplyReference struct {
 	httpClient *http.Client
 	baseURL    string
@@ -645,11 +531,7 @@ type CoinGeckoSupplyOptions struct {
 	// HTTPClient — nil falls back to a 10s-timeout client. One without a
 	// CheckRedirect is used with [httpx.KeyedSameOriginRedirect] added.
 	HTTPClient *http.Client
-	// BaseURL overrides the API base. Empty defaults to
-	// coinGeckoDefaultBaseURL, UNLESS APIKey is also set, in which
-	// case it defaults to coinGeckoProBaseURL (a Pro key 404s against
-	// the public host). An explicit BaseURL always wins over that
-	// auto-switch.
+	// BaseURL overrides the API base; empty defaults to the public host, or the Pro host when APIKey is set. An explicit BaseURL always wins.
 	BaseURL string
 	// APIKey, when non-empty, is sent as the `x-cg-pro-api-key` header
 	// (the Pro-tier auth that lifts the free-tier 429 ceiling).
@@ -670,11 +552,7 @@ type CoinGeckoSupplyOptions struct {
 func NewCoinGeckoSupplyReference(opts CoinGeckoSupplyOptions) *CoinGeckoSupplyReference {
 	baseURL := opts.BaseURL
 	if baseURL == "" {
-		// A Pro key 404s against the public host — auto-switch to the
-		// Pro host, mirroring the ingest poller's
-		// APIKey!=""&&endpoint==DefaultEndpoint check (poller.go).
-		// Only applies when the operator hasn't set an explicit
-		// base_url; an explicit override always wins.
+		// A Pro key 404s the public host: auto-switch to the Pro host unless the operator set an explicit base_url (as the ingest poller does).
 		if opts.APIKey != "" {
 			baseURL = coinGeckoProBaseURL
 		} else {
@@ -802,11 +680,7 @@ func parseUpstreamTime(s string) time.Time {
 	return t.UTC()
 }
 
-// isNativeLumensSupplyForm reports whether a is an XLM alias form whose
-// supply is the ledger's lumens: `native` or `crypto:XLM`. The XLM SAC is
-// excluded on purpose: supply.AssetKey keys it on the contract, whose
-// supply is the wrapped amount, so matching it here would page a false
-// divergence.
+// isNativeLumensSupplyForm reports whether a is `native` or `crypto:XLM`. The XLM SAC is excluded on purpose: supply.AssetKey keys it on the contract (wrapped amount), so matching it would page a false divergence.
 func isNativeLumensSupplyForm(a canonical.Asset) bool {
 	return a.Type != canonical.AssetSoroban &&
 		canonical.CanonicalAsset(a).Type == canonical.AssetNative

@@ -7,11 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// StatusNoticeSeverity is the banner-severity bucket an operator picks
-// when posting a status notice. Distinct from the Alertmanager-derived
-// `/v1/status` incident severities (page/ticket/informational) and from
-// the embedded post-mortem SEV-1/2/3 ladder — this is a human-authored
-// banner classification.
+// StatusNoticeSeverity is the human-authored banner severity for a status notice, distinct from the Alertmanager-derived incident severities and the post-mortem SEV ladder.
 type StatusNoticeSeverity string
 
 const (

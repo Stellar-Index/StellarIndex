@@ -7,25 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Tier is the capability bucket an account sits in. The platform is
-// free (no payments), so the model is exactly three levels:
-//
-//   - anon:    unauthenticated callers. Not an account tier at all —
-//     the per-IP baseline enforced by the rate-limit middleware
-//     (`[api].anon_rate_limit_per_min`, default 60/min); never persisted
-//     to `accounts.tier`.
-//   - free:    every registered account's default; higher limits than anon.
-//   - partner: staff-admitted accounts with per-account limits set by
-//     an operator via PATCH /v1/admin/accounts/{id} (the
-//     rate_limit_per_min / monthly_request_quota overrides). The
-//     ladder values below are the partner CEILINGS when no override
-//     is set; the override, when set, is the real limit.
-//
-// The `accounts.tier` CHECK constraint (migration 0027) still speaks the
-// legacy five-string vocabulary (free/starter/pro/business/enterprise).
-// The mapping is code-level: [Tier.Canonical] folds legacy strings into
-// the three-level model on every read, and [Tier.StorageValue] renders a
-// canonical tier back into a CHECK-legal string on every write.
+// Tier is the capability bucket an account sits in: anon (unauthenticated per-IP baseline, never persisted), free (registered default) or partner (staff-admitted); legacy `accounts.tier` strings fold via [Tier.Canonical] on read and [Tier.StorageValue] on write.
 type Tier string
 
 const (
@@ -40,13 +22,7 @@ const (
 	TierPartner Tier = "partner"
 )
 
-// Legacy pre-free-platform tier strings, still present in
-// `accounts.tier` rows (and accepted by the admin PATCH for
-// back-compat). Canonical() folds them into the three-level model.
-//
-// Deprecated: use TierFree / TierPartner; these exist only for the
-// legacy-string mapping until the stored rows are rewritten. Will be
-// removed in v2.0.0.
+// Legacy pre-free-platform tier strings still present in `accounts.tier` rows; Canonical() folds them into the three-level model.
 const (
 	TierStarter    Tier = "starter"    // → free (identical numbers)
 	TierPro        Tier = "pro"        // → partner
@@ -54,13 +30,7 @@ const (
 	TierEnterprise Tier = "enterprise" // → partner
 )
 
-// KnownTier reports whether s is an accepted account-tier string:
-// canonical (free / partner) or one of the legacy paid-tier names
-// that [Tier.Canonical] folds (starter / pro / business /
-// enterprise). anon is deliberately NOT accepted — it is the
-// unauthenticated baseline, never an account tier. This is the
-// single definition of the PATCH /v1/admin/accounts/{id} tier
-// vocabulary.
+// KnownTier reports whether s is an accepted account-tier string (canonical or legacy); anon is deliberately NOT accepted since it is never an account tier.
 func KnownTier(s string) bool {
 	switch Tier(s) {
 	case TierFree, TierPartner,
@@ -71,13 +41,7 @@ func KnownTier(s string) bool {
 	}
 }
 
-// Canonical maps any tier string — canonical, legacy, or corrupt —
-// into the three-level model. Legacy paid plans above Starter had
-// individually negotiated / elevated limits, which is exactly what
-// partner now means, so pro/business/enterprise fold to partner;
-// starter folds to free (the free ladder IS the old Starter ladder).
-// Unknown values fold to free, matching the historical "a corrupt row
-// should not unlock elevated budgets" posture.
+// Canonical maps any tier string into the three-level model: starter folds to free, pro/business/enterprise to partner, and unknown values to free so a corrupt row never unlocks elevated budgets.
 func (t Tier) Canonical() Tier {
 	switch t {
 	case TierAnon:
@@ -89,13 +53,7 @@ func (t Tier) Canonical() Tier {
 	}
 }
 
-// StorageValue renders the tier as a string the migration-0027 CHECK
-// constraint accepts (the constraint is deliberately untouched — the
-// mapping lives in code). partner persists as "enterprise" (the
-// legacy string that canonicalises back to partner); everything else
-// persists as "free". Round-trip property: for any t,
-// Tier(t.StorageValue()).Canonical() == t.Canonical() (with anon
-// defensively folding to free, since anon is never an account tier).
+// StorageValue renders the tier as a string the migration-0027 CHECK accepts (partner as "enterprise", everything else "free"), so Tier(t.StorageValue()).Canonical() == t.Canonical().
 func (t Tier) StorageValue() string {
 	if t.Canonical() == TierPartner {
 		return string(TierEnterprise)
@@ -103,20 +61,7 @@ func (t Tier) StorageValue() string {
 	return string(TierFree)
 }
 
-// MaxRateLimitPerMin returns the per-tier ceiling for the customer-
-// supplied `rate_limit_per_min` field on dashboard-minted keys.
-//
-// Without this ceiling the dashboard key-creation flow would accept
-// any positive value up to 100_000 regardless of the account's tier.
-//
-// Ladder:
-//
-//   - anon:    60/min (the `[api].anon_rate_limit_per_min` default —
-//     documented here, enforced by the middleware)
-//   - free:    1000/min (the old Starter budget; also what
-//     POST /v1/signup and POST /v1/register mint at)
-//   - partner: 100_000/min ceiling; the staff-set per-account
-//     override is the real limit
+// MaxRateLimitPerMin returns the per-tier ceiling (anon 60, free 1000, partner 100_000) on a dashboard-minted key's `rate_limit_per_min`; the staff-set account override is the real partner limit.
 func (t Tier) MaxRateLimitPerMin() int {
 	switch t.Canonical() {
 	case TierAnon:
@@ -128,14 +73,7 @@ func (t Tier) MaxRateLimitPerMin() int {
 	}
 }
 
-// MaxActiveKeys returns the per-tier ceiling on concurrently active
-// (non-revoked) API keys an account can hold. Deployments can override per
-// tier via the dashboard handler config (dashboardkeys.Config.KeyQuotas);
-// this method is the config-absent default ladder.
-//
-// An unknown tier value is treated as free (defensive — a corrupt
-// row should not unlock elevated quotas), matching
-// [Tier.MaxRateLimitPerMin].
+// MaxActiveKeys returns the default per-tier ceiling on concurrently active API keys (dashboard config may override); unknown tiers are treated as free.
 func (t Tier) MaxActiveKeys() int {
 	switch t.Canonical() {
 	case TierAnon:
@@ -147,26 +85,7 @@ func (t Tier) MaxActiveKeys() int {
 	}
 }
 
-// MaxMonthlyQuota returns the per-tier ceiling on a dashboard-minted
-// key's customer-supplied `monthly_quota` (the monthly request-volume
-// cap the runtime quota middleware enforces).
-//
-// This is the CEILING the account-level operator override
-// ([Account.MonthlyRequestQuotaOverride]) falls back to when unset: the
-// dashboard clamps a customer-supplied per-key quota to min(requested,
-// override-if-set-else-this-ladder) so a customer can only LOWER their
-// cap. Without it a customer could self-mint a key with
-// `monthly_quota: 9_000_000_000`, running effectively unmetered.
-//
-// Symmetric-opposite of [Tier.MaxRateLimitPerMin]: rate limit is a
-// burst ceiling clamped at mint AND raised by the account override as
-// a FLOOR at auth time; monthly quota is a volume ceiling clamped at
-// mint AND lowered by the account override as a CEILING at auth time.
-//
-// Values are round plan budgets, not a rate×minutes derivation.
-//
-// An unknown tier is treated as free (a corrupt row must not unlock
-// elevated quotas), matching the other tier ladders.
+// MaxMonthlyQuota returns the per-tier ceiling on a dashboard-minted key's `monthly_quota`; the dashboard clamps to min(requested, override-or-this-ladder) so a customer can only LOWER their cap. Unknown tiers are treated as free.
 func (t Tier) MaxMonthlyQuota() int64 {
 	switch t.Canonical() {
 	case TierAnon:
@@ -193,11 +112,7 @@ func (t Tier) MaxWebhooks() int {
 	}
 }
 
-// MaxPriceAlerts returns the per-tier ceiling on registered price
-// alerts an account can hold. Same tier-aware ladder
-// shape as [Tier.MaxWebhooks]; the override seam is
-// dashboardpricealerts.Config.AlertQuotas. Unknown tiers are treated
-// as free, matching the other tier ladders.
+// MaxPriceAlerts returns the per-tier ceiling on registered price alerts; unknown tiers are treated as free.
 func (t Tier) MaxPriceAlerts() int {
 	switch t.Canonical() {
 	case TierAnon:
@@ -227,12 +142,7 @@ const (
 	MaxAccountSlugLen = 63
 )
 
-// Account is the top-level org primitive — every API key,
-// webhook, audit-log entry hangs off Account.ID.
-//
-// v1 is one user per account; v2 multi-org migrates by moving
-// (account_id, role) from User to a new memberships join table
-// without changing this type.
+// Account is the top-level org primitive; every API key, webhook and audit-log entry hangs off Account.ID (v1 is one user per account).
 type Account struct {
 	ID                          uuid.UUID
 	Name                        string
@@ -292,10 +202,6 @@ func (a Account) EffectiveMonthlyQuota() int64 {
 }
 
 // AccountStore is the persistence boundary for [Account].
-//
-// Implementations: PostgresAccountStore (Week 1, this PR ships
-// the interface; concrete impl lands when the auth flow needs
-// it in Week 2).
 type AccountStore interface {
 	// Create inserts a new account. Returns the created row with
 	// server-generated ID + CreatedAt populated.
