@@ -48,16 +48,11 @@ const cohortRollupLockPath = "/var/lib/stellarindex/ch-cohort-rollup.lock"
 // per root, into the account_cohort_* tables (deploy/clickhouse/
 // account_cohort_rollup.sql). Backs /v1/accounts/{g}/graph/cohort.
 //
-// Two stores, one cycle: the DeFi position snapshot is read from the
-// served tier's per-protocol folds (the six behind
-// /v1/accounts/{g}/positions) and staged into ClickHouse first, so the
-// cohort join happens beside the 25M-row membership instead of
-// shipping the membership to Postgres. The served tier's monthly USD
-// VWAPs (prices_1mo, alias-folded) ride along the same way, into
-// asset_month_usd_prices, so the flows read can value a month at that
-// month's own price. The rest is ClickHouse only:
-// membership from the board rollups' edge tables, one walk over the
-// movements archive, and folds.
+// Two stores, one cycle: the DeFi position snapshot (served tier's
+// per-protocol folds) and the served tier's monthly USD VWAPs (prices_1mo,
+// alias-folded) are staged into ClickHouse first, so the cohort join happens
+// beside the 25M-row membership rather than shipping it to Postgres. The
+// rest is ClickHouse only.
 //
 // Runs AFTER the creators and sponsors rollups: membership is their
 // edge tables, and the creator floor reads account_creators_rollup.

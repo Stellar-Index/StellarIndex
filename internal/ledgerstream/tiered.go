@@ -26,19 +26,12 @@ var ErrBothTiersMissing = errors.New("missing in BOTH tiers (hot, then cold)")
 // a misconfigured hot endpoint surfaces as the operator's problem
 // instead of being masked by a slow cold fallback that succeeds.
 //
-// Metrics:
-//
-//   - stellarindex_ledgerstream_tier_read_total
-//     {outcome="hot"|"cold"|"both_missing"} (obs.LedgerstreamTierReadTotal)
-//   - stellarindex_ledgerstream_cold_read_duration_seconds
-//     {outcome="ok"|"miss"|"error"} (obs.LedgerstreamColdReadDurationSeconds)
-//
-// These are obs package-level metrics, NOT per-instance: the production
-// ledgerstream.Config leaves Registry nil (the SDK's
-// BufferedStorageBackend registration panics across the
-// archive->live->catch-up Stream calls), so a per-instance metric would
-// be nil in production and the `both_missing` page could never fire.
-// A `cold` rate spike on live ingest means the trim window is too tight.
+// Metrics (obs.LedgerstreamTierReadTotal, obs.LedgerstreamColdReadDurationSeconds)
+// are obs package-level, NOT per-instance: the production ledgerstream.Config
+// leaves Registry nil (the SDK's BufferedStorageBackend registration panics
+// across the archive->live->catch-up Stream calls), so a per-instance metric
+// would be nil and the `both_missing` page could never fire. A `cold` rate
+// spike on live ingest means the trim window is too tight.
 type TieredDataStore struct {
 	hot  datastore.DataStore
 	cold datastore.DataStore

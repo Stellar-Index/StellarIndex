@@ -209,25 +209,19 @@ func backfillBucket(cfg config.Config, override string, from, to uint32) (string
 // a hard error, naming the bucket it read.
 //
 // Without it ch-backfill exits 0 after streaming ZERO ledgers of a nonzero
-// request. TolerateTrailingMissing —
-// which every ops walker sets so a `-to` at the live tip doesn't explode —
-// makes an ENTIRELY absent range indistinguishable from a clean walk at the
-// ledgerstream layer, so a wrong-bucket run reports success. That success
-// is load-bearing: scripts/ops/ch-full-backfill.sh appends the window to its
-// resume state only when ch-backfill exits 0, so one vacuous success removes
-// that window from the backfill forever and leaves a hole the completeness
-// verdict then has to find.
+// request: TolerateTrailingMissing (set by every ops walker so a `-to` at the
+// live tip doesn't explode) makes an ENTIRELY absent range indistinguishable
+// from a clean walk, so a wrong-bucket run reports success.
+// scripts/ops/ch-full-backfill.sh appends the window to its resume state only
+// when ch-backfill exits 0, so one vacuous success removes that window from
+// the backfill forever.
 //
-// The bar is the command's actual contract — "[from,to] is now in
-// ClickHouse" — so a PARTIAL walk fails too. Short counts have exactly two
-// causes here and both mean the range is not in the lake: the bucket does
-// not hold those objects, or per-ledger extraction failed (chBackfillChunk
-// logs and skips those, deliberately, so one bad ledger doesn't abort a
-// multi-day run — but the run must not then claim the range). An interrupted
-// run fails for the same reason: a SIGINT'd window is not a done window.
-// Re-running is free — ClickHouse writes are idempotent under
-// ReplacingMergeTree — so failing closed costs a re-run and failing open
-// costs a silent hole.
+// A PARTIAL walk fails too: short counts mean the bucket lacks those objects,
+// or per-ledger extraction failed (chBackfillChunk logs and skips those so one
+// bad ledger doesn't abort a multi-day run, but the run must not claim the
+// range). An interrupted run fails for the same reason. Re-running is free
+// (ReplacingMergeTree is idempotent), so failing closed costs a re-run and
+// failing open costs a silent hole.
 func backfillCoverage(from, to uint32, streamed int64, bucket string, interrupted bool) error {
 	want := int64(to) - int64(from) + 1
 	switch {

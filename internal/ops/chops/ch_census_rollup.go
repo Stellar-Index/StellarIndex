@@ -16,23 +16,18 @@ import (
 //
 // Default (timer) mode recomputes the CURRENT UTC day plus any days
 // missing since the newest one present — one whole-day compute +
-// atomic REPLACE PARTITION each, so re-runs are idempotent and a
-// 30-min cadence keeps the serving tail at most one cadence stale.
+// atomic REPLACE PARTITION each, so re-runs are idempotent.
 //
 // A -write run never reads past the contiguous lake tip (the LiveSink
 // drops whole ledgers under buffer pressure, so the lake can hold holes
-// near the tip): the walk stops at the day holding that tip, which stays
-// the newest day present and so is recomputed once ch-live-catchup heals
-// the hole. A recompute smaller than the live partition is refused unless
-// -shrink-ok.
+// near the tip): the walk stops at the day holding that tip, which is
+// recomputed once ch-live-catchup heals the hole. A recompute smaller than
+// the live partition is refused unless -shrink-ok.
 //
 // -backfill walks every day from the lake's first contract event
-// (or -from-day) up to today. Heavy on the first run — serialize on
-// r1 under run-heavy-job.sh.
+// (or -from-day) up to today. Heavy: serialize on r1 under run-heavy-job.sh.
 //
-// Fail-closed DRY RUN by default (opsutil.WriteGate): without -write
-// this only logs which days WOULD be recomputed. The census-rollup
-// and holders-rollup systemd units pass -write explicitly.
+// Fail-closed DRY RUN by default (opsutil.WriteGate).
 func chCensusRollup(args []string) error {
 	fs := flag.NewFlagSet("ch-census-rollup", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
