@@ -52,27 +52,21 @@ func BoughtSide(a xdr.ClaimAtom) (asset xdr.Asset, amount xdr.Int64, known bool)
 // IsRealTrade reports whether internal/sources/sdex.decodeClaimAtom would
 // return a Trade rather than an error for one ClaimAtom.
 //
-// It is the SINGLE definition of that predicate, applied by both count
-// oracles (dispatcher.claimAtomCount for the ADR-0033 census and
-// clickhouse.claimAtomCount for the lake's classic_trade_effect_count)
-// so both equal the DECODER's trade output by construction. They do NOT
-// equal COUNT(trades): the writer additionally drops one-side-zero fills
-// (canonical.Trade.Validate, CHECK base_amount > 0), which rule 2 keeps.
-// A served-tier oracle must re-derive through that filter
+// It is the SINGLE definition of that predicate, applied by both count oracles
+// so both equal the DECODER's trade output. They do NOT equal COUNT(trades):
+// the writer also drops one-side-zero fills (canonical.Trade.Validate), which
+// rule 2 keeps. A served-tier oracle must re-derive through that filter
 // (chops.sdexServedCensus).
 //
 // The four drop rules, in the decoder's order:
 //
 //  1. UNKNOWN ATOM TYPE: decodeClaimAtom returns ErrUnknownClaimAtomType.
-//  2. BOTH LEGS ZERO: no-op claim atoms. ONE-side-zero fills are KEPT:
-//     real trades where one leg rounded to 0.
+//  2. BOTH LEGS ZERO: no-op atoms. ONE-side-zero fills are KEPT.
 //  3. AN ASSET THAT DOESN'T CONVERT: [canonical.AssetFromXDR] rejects
-//     unsupported types, un-encodable issuers, and asset codes with
-//     bytes outside [a-zA-Z0-9] (control-byte codes exist on chain).
+//     unsupported types, un-encodable issuers and codes outside [a-zA-Z0-9].
 //  4. A SELF-CROSS: canonical.NewPair rejects base == quote.
 //
-// All four must apply here: an oracle that counts rows the writer
-// deterministically refuses can NEVER reconcile, hiding real loss.
+// An oracle counting rows the writer refuses can NEVER reconcile.
 func IsRealTrade(a xdr.ClaimAtom) bool {
 	sold, bought, soldAsset, boughtAsset, known := parts(a)
 	if !known {

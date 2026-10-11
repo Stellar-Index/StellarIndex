@@ -31,24 +31,16 @@ const liveTailRetryWait = 500 * time.Millisecond
 // which the SDK retries forever without consuming attempts. See
 // ledgerstream.Config.LiveRetryBudget for the mechanism.
 //
-// The budget is an explicit decision rather than a by-product of the
-// tip-latency setting. The SDK pairs RetryWait with RetryLimit=5, so a
-// 500ms RetryWait alone caps MinIO-fault tolerance at 5 × 500ms =
-// **2.5 seconds**. MinIO is a local systemd unit that restarts for
-// upgrades and config applies; a restart of a couple of minutes would
-// then kill stellarindex-indexer over and over until systemd's
-// StartLimit parked the unit in `failed` — taking ingest, the CH live
-// sink, hashdb and the projector down with it, and needing a human
-// `systemctl reset-failed` to come back.
+// The SDK pairs RetryWait with RetryLimit=5, so a 500ms RetryWait alone caps
+// MinIO-fault tolerance at **2.5 seconds**. A MinIO restart of a couple of
+// minutes would then kill stellarindex-indexer until systemd's StartLimit
+// parked the unit in `failed`, taking ingest, the CH live sink, hashdb and the
+// projector down until a human ran `systemctl reset-failed`.
 //
-// 5 minutes is chosen to comfortably exceed a MinIO restart (observed
-// 2–3 min worst case, including a config apply) plus the host-level
-// blips that accompany one. The cost of the wait is bounded and cheap:
-// the retries are against a refused local socket, and a genuinely
-// permanent fault (bad credentials, deleted bucket) still surfaces —
-// five minutes later, well inside what the cursor-lag alerts cover.
-// It does NOT slow the tip: a not-yet-written ledger never consumes an
-// attempt, so caught-up re-checks still happen every liveTailRetryWait.
+// 5 minutes exceeds a MinIO restart (observed 2–3 min worst case); a permanent
+// fault (bad credentials, deleted bucket) still surfaces inside the cursor-lag
+// alerts. It does NOT slow the tip: a not-yet-written ledger never consumes an
+// attempt.
 const liveTailRetryBudget = 5 * time.Minute
 
 // LedgerstreamConfig builds a ledgerstream.Config pointing at one

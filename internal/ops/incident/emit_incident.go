@@ -119,8 +119,7 @@ func parseIncidentEvent(event string) (platform.WebhookEventType, error) {
 // every subscribed dashboard hook for the given slug.
 //
 // Incident content is embedded from `internal/incidents/data/*.md`, so
-// there is no in-process state transition; Emit is an operator step of
-// the SEV runbook:
+// Emit is an operator step of the SEV runbook:
 //
 //  1. Draft `internal/incidents/data/<slug>.md` (status=investigating,
 //     severity=SEV-1), merge and redeploy.
@@ -131,14 +130,9 @@ func parseIncidentEvent(event string) (platform.WebhookEventType, error) {
 // delivery: a subscribed customer was not told and no retry row exists.
 // A zero-subscriber fan-out is a successful no-op.
 //
-// Usage:
-//
-//	stellarindex-ops emit-incident -config /etc/stellarindex.toml \
-//	  -slug YYYY-MM-DD-redis-blip -event sev1 -write
-//
 // -dry-run counts the subscribers and enqueues nothing. A run with
 // neither flag is refused, so a stale runbook line fails instead of
-// silently telling no one. `-event` also accepts `sev1`/`resolved`.
+// silently telling no one.
 func Emit(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("emit-incident")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

@@ -22,24 +22,19 @@ import (
 // `stellarindex_verify_archive_mismatches_total`, whose only other export is
 // the opt-in `-metrics-listen` endpoint, which nothing scrapes. A short-lived
 // batch job cannot be scraped reliably, so this uses the node_exporter
-// textfile pattern of the other batch emitters.
+// textfile pattern.
 //
 // Three properties keep the counter usable by `increase()`:
 //
-//  1. CUMULATIVE: each run adds to the total the previous run left on disk; a
-//     per-run rewrite would break `increase()` on every clean run.
+//  1. CUMULATIVE: each run adds to the total the previous run left on disk.
 //  2. ZERO-SEEDED: all three `reason` values are emitted even at 0, since a
 //     series that first APPEARS at 1 yields `increase() == 0` and the page
-//     would miss the first divergence (see obs.seedBoundedLabelSeries,
-//     archivecompleteness.writeLastSuccess).
+//     would miss the first divergence.
 //  3. AGGREGATED OVER chunk_idx, a per-run worker index: a mismatch on a
 //     never-seen chunk_idx would create a new series, defeating property 2.
-//     Per-chunk detail stays in journald and the state file.
 //
 // The `tier` label keeps the tier-a and tier-b `.prom` files from exposing
-// the same label set through one node_exporter, which the textfile collector
-// rejects as a duplicate and which would make them race on each other's
-// carry-forward.
+// the same label set, which the textfile collector rejects as a duplicate.
 
 const (
 	// verifyArchiveMismatchMetric is the counter the P1

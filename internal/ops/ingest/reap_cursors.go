@@ -17,25 +17,16 @@ import (
 )
 
 // reap-cursors deletes the ingestion_cursors rows left behind by finished or
-// abandoned one-shot jobs.
-//
-// ingestion_cursors has one permanent row per (source, sub_source), no retention
-// policy, and every sharded ops job mints one row per shard that nothing removes
-// when the job ends. The dead rows were the bulk of what `list-cursors`,
-// /diagnostics and `/v1/diagnostics/cursors` showed. The API defaults to the
-// non-abandoned set; this is the other half, removing the records once an operator
-// has decided the work is over.
+// abandoned one-shot jobs (every sharded ops job mints one row per shard that
+// nothing removes).
 //
 // Posture:
-//   - Preview by default. Writes only under -write via [opsutil.WriteGate]; the
-//     preview prints per-source counts, the oldest row and a sample of the rows a
-//     -write run would delete.
-//   - -older-than has a hard floor of [reapMinAge], so a mistyped small threshold
-//     cannot sweep live positions.
+//   - Preview by default. Writes only under -write via [opsutil.WriteGate].
+//   - -older-than has a hard floor of [reapMinAge], so a mistyped small
+//     threshold cannot sweep live positions.
 //   - The namespaces in [timescale.LiveCursorSources] are never reaped, with or
-//     without -write: deleting a stuck live cursor turns "the indexer is behind"
-//     into "restart from the configured start ledger". The same list keeps those
-//     rows out of the API's `abandoned` state.
+//     without -write: deleting a stuck live cursor turns "the indexer is
+//     behind" into "restart from the configured start ledger".
 //
 // Deleting a row deletes a RECORD, never data; what is lost is the resume point.
 // Reap only shards that are finished or deliberately abandoned; check first with

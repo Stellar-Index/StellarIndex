@@ -25,26 +25,16 @@ const upsertHookTimeout = 2 * time.Second
 // the indexer + every parallel backfill chunk should pass to
 // [BuildDispatcher] when soroswap is in the enabled-sources list.
 //
-// Two options are returned:
+//  1. WithSeededPairTokensDecoder — preloaded from the soroswap_pairs table
+//     (empty is fine; run `stellarindex-ops seed-soroswap-pairs` once to bootstrap).
+//  2. WithPairUpsertHook — bound to store.UpsertSoroswapPair so every live
+//     factory new_pair event persists to the table the next load reads.
 //
-//  1. WithSeededPairTokensDecoder — preloaded from the
-//     soroswap_pairs table. Empty table is fine (returns an empty
-//     seed); operators run `stellarindex-ops seed-soroswap-pairs`
-//     once on first deployment to bootstrap.
-//  2. WithPairUpsertHook — bound to store.UpsertSoroswapPair so
-//     every live factory new_pair event persists through to the
-//     same table the next process load reads from.
+// Both, because the live in-memory pair registry is invisible to parallel
+// backfill workers and restarts (migrations/0016_create_soroswap_pairs.up.sql).
 //
-// Why both at once: pre-launch we discovered the live indexer's
-// in-memory pair registry is invisible to parallel backfill workers
-// and to indexer restarts (see migrations/0016_create_soroswap_pairs.up.sql
-// header). This helper is the single place that connects the two
-// halves — load on boot, write on the fly — so any caller that wants
-// the persistent semantics gets both at once.
-//
-// hookCtx is captured by the upsert callback for use as the parent
-// context of every UpsertSoroswapPair call. Pass the binary's root
-// context; the hook adds its own short timeout.
+// hookCtx is the parent context of every UpsertSoroswapPair call; pass the
+// binary's root context.
 func SoroswapPersistenceOptions(
 	ctx context.Context,
 	store *timescale.Store,

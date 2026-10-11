@@ -40,23 +40,14 @@ var (
 // aws-sdk-go-v2 WARNs on every GetObject lacking a checksum header and
 // MinIO never sends one. The env-var off switch does not help:
 // go-stellar-sdk/support/datastore/s3.go hardcodes
-// `ChecksumMode: types.ChecksumModeEnabled`. Mechanism: dup fd 2 as the
-// real stderr, dup2 a pipe onto fd 2, drain it in a goroutine.
+// `ChecksumMode: types.ChecksumModeEnabled`.
 //
 //   - Must run BEFORE config.LoadDefaultConfig, which binds os.Stderr
 //     into the SDK logger; call it first in main().
 //   - Fail-soft on pipe/dup2 error; sync.Once-guarded.
 //
-// The caller MUST run the returned flush before exiting or short-lived
-// processes lose buffered output. flush restores fd 2, closes the
-// writer and waits for the drain. os.Exit skips defers, so:
-//
-//	func realMain() int {
-//	    defer pipeline.SilenceSDKChecksumWarnings()()
-//	    ...
-//	}
-//
-// flush is never nil, so defer it unconditionally.
+// The caller MUST run the returned flush (never nil) before exiting or
+// short-lived processes lose buffered output. os.Exit skips defers.
 func SilenceSDKChecksumWarnings() (flush func()) {
 	silenceOnce.Do(func() {
 		f, err := installStderrFilter()
