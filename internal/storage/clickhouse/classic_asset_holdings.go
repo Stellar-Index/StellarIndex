@@ -14,9 +14,9 @@ import (
 // TrustlineAssetSeed is one distinct classic asset the lake holds a
 // trustline for, with the ledger bracket the evidence spans.
 //
-// It answers one question, does this (code, issuer) EXIST on Stellar, and deliberately carries no
-// balance, holder count or supply: those are owned by the asset_holders_* rollup and the supply
-// pipeline, and duplicating them from an operator-cadence scan would add a second, stale answer.
+// It answers only whether this (code, issuer) EXISTS on Stellar. Balance, holder count and supply
+// belong to the asset_holders_* rollup and the supply pipeline; repeating them from an
+// operator-cadence scan would add a second, stale answer.
 type TrustlineAssetSeed struct {
 	// Asset is the lake's asset string, the canonical `CODE-GISSUER` form for a credit trustline
 	// (internal/xdrjson.TrustLineAssetID). The caller parses it with canonical.ParseAsset rather
@@ -36,9 +36,8 @@ type TrustlineAssetSeed struct {
 
 // HoldingsScanner pages the lake's distinct trustline-held classic assets.
 //
-// It holds one heavy-read connection ([openRead]) for the whole walk: unbounded execution time,
-// a per-query memory ceiling, and external spill for aggregation and sort, so a walk that
-// outgrows memory costs time instead of an OOM.
+// It holds one heavy-read connection ([openRead]) for the whole walk: unbounded execution time, a
+// per-query memory ceiling and external spill, so outgrowing memory costs time, not an OOM.
 type HoldingsScanner struct {
 	conn driver.Conn
 }
@@ -63,14 +62,14 @@ func (h *HoldingsScanner) Close() error {
 // trustlineAssetsPageQuery is one page of the walk, keyset-paginated on
 // the asset string.
 //
-// NO FINAL: the query groups on `asset` and takes min/max over `ledger_seq`, so the duplicate
-// versions FINAL would collapse are folded by the GROUP BY anyway, and the read-time merge is the
-// most expensive part of scanning this table. The answer differs only toward MORE evidence: any
-// row present is a ledger at which a trustline existed. max() is merge-invariant; min() is not,
-// but the writer takes LEAST across runs, so first_seen can only move EARLIER, toward the truth.
+// NO FINAL: the query groups on `asset` and takes min/max over `ledger_seq`, so the GROUP BY folds
+// the duplicate versions FINAL would collapse, and the read-time merge is the costliest part of
+// scanning this table. The answer differs only toward MORE evidence: any row present is a ledger
+// at which a trustline existed. max() is merge-invariant; min() is not, but the writer takes LEAST
+// across runs, so first_seen can only move EARLIER, toward the truth.
 //
-// NO change_type FILTER: this answers "does this asset exist", and a deleted trustline is still
-// proof it did (the holders rollup excludes `removed` because it answers "who holds this now").
+// NO change_type FILTER: a deleted trustline is still proof the asset exists (the holders rollup
+// excludes `removed` because it answers "who holds this now").
 //
 // Spill settings are inherited from [openRead]. Do NOT set optimize_aggregation_in_order here:
 // beside an external-group-by threshold it CANCELS the spill valve and turns a spill into an OOM.
@@ -119,9 +118,8 @@ func (h *HoldingsScanner) CountTrustlineAssets(ctx context.Context) (int64, erro
 // stopped. Pass "" for the first page and the last Asset of page N for page N+1; an empty result
 // means the walk is complete.
 //
-// entry_type is the FIRST sort-key column, so the `entry_type = 'trustline'` predicate prunes
-// granules. Each page still re-aggregates the trustline range, so bigger pages mean fewer passes
-// at more memory per pass.
+// entry_type is the FIRST sort-key column, so `entry_type = 'trustline'` prunes granules. Each
+// page re-aggregates the trustline range, so bigger pages mean fewer passes at more memory each.
 //
 // Native XLM and pool-share trustlines are excluded in SQL: they have no (code, issuer)
 // identity. The two exact-match predicates cover the `pool:<hex>` form and the bare `pool`

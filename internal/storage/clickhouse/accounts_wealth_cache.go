@@ -12,8 +12,7 @@ import (
 // AccountsWealthCacheTTL is how long a wealth ranking stays servable.
 //
 // The query is a FINAL scan of ledger_entries_current (43.6M rows, ~11 s for the count alone),
-// so it must be precomputed. A leaderboard of the largest balances reorders on the timescale
-// of large transfers; the response carries the snapshot's own ledger (AsOfLedger).
+// so it must be precomputed; the response carries the snapshot's own ledger (AsOfLedger).
 const AccountsWealthCacheTTL = 15 * time.Minute
 
 // AccountsWealthRefreshTimeout bounds one background refresh: well above the ~11-20 s the
@@ -122,7 +121,7 @@ func (c *accountsWealthCache) endFlight(ch chan struct{}) {
 //
 //   - fresh: served as-is; handlers stamp the snapshot's AsOf/AsOfLedger, never a serve-time
 //     watermark read (a torn read).
-//   - stale: served with its real asOf while a detached single-flight refresh runs; the handler
+//   - stale: served with its real asOf during a detached single-flight refresh; the handler
 //     compares asOf to AccountsWealthCacheTTL to set `stale`.
 //   - empty: ok=false immediately (honest warming state) and the refresh is kicked.
 func (r *ExplorerReader) AccountsByWealthCached(

@@ -359,11 +359,10 @@ func chunkStrings(ids []string, n int) [][]string {
 // FindClaimableBalanceCreates batch-resolves pending claim/clawback refs to their create rows,
 // keyed by balance_id. Ids go in a ClickHouse external table and match via a hash-set semijoin:
 // an inlined IN-list exceeds max_query_size and compounds the bloom filter's false-positive
-// rate into a full scan of the wide attributes column. The query runs with use_skip_indexes=0,
-// so idx_cb_balance_id is unused here.
-// The map holds only found ids; a miss means no create row yet (ADR-0047 D4 incompleteness), so
-// callers must count and log it, never guess an amount. Duplicate rows are identical, first
-// wins. Empty input returns an empty non-nil map.
+// rate into a full scan of the wide attributes column. use_skip_indexes=0, so idx_cb_balance_id
+// is unused here. The map holds only found ids; a miss means no create row yet (ADR-0047 D4
+// incompleteness), so callers must count and log it, never guess an amount. Duplicate rows are
+// identical, first wins. Empty input returns an empty non-nil map.
 func FindClaimableBalanceCreates(ctx context.Context, addr string, balanceIDHexes []string) (map[string]ClaimableBalanceCreateRow, error) {
 	out := make(map[string]ClaimableBalanceCreateRow, len(balanceIDHexes))
 	if len(balanceIDHexes) == 0 {
@@ -555,8 +554,8 @@ func accountMovementsSQL(filter AccountMovementFilter, hasCursor, exactDedup boo
 // merges this archive with the Postgres tail; its ledger ceiling travels in
 // filter.MaxLedger/HasMaxLedger so it applies before LIMIT, never as a post-read trim.
 // No FINAL: the page is read as a window in sort-key order (LIMIT 1 BY would stop the early
-// exit), newest ingested_at per key is kept in Go, and a window that cannot prove a full page
-// falls back to accountMovementsQuery.
+// exit) and the newest ingested_at per key is kept in Go. A window that cannot prove a full
+// page falls back to accountMovementsQuery.
 func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, limit int, cur AccountMovementCursor, filter AccountMovementFilter) ([]AccountMovementRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 25

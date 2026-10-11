@@ -10,10 +10,9 @@ import (
 
 // wasm_disasm_tool.go — best-effort WAT disassembly + wasm-decompile pseudocode via the wabt
 // toolchain. OPTIONAL: if the binaries aren't on PATH the metadata + native-parsed exports still
-// ship, and the ToolNote explains the absence rather than 503-ing.
-//
-// Cache-Control (wasm_view.go) is not a server-side cache, so the fork/exec cost is bounded HERE:
-// ExplorerReader.disasmCache keys a successful run by wasm hash (content-addressed, immutable).
+// ship, and the ToolNote explains the absence rather than 503-ing. Cache-Control (wasm_view.go)
+// is not a server-side cache, so fork/exec cost is bounded by ExplorerReader.disasmCache, keyed
+// by the immutable wasm hash.
 
 // wasmToolTimeout bounds each external tool invocation. WAT/decompile of a
 // ~50 KB module is sub-second; the timeout only fires on a pathological input.
@@ -27,7 +26,6 @@ const maxDisasmOutputBytes = 2 << 20 // 2 MiB
 
 // buildWasmDisassembly fills info.Wat + info.Decompiled best-effort and appends to info.ToolNote.
 // It never fails the caller; a missing tool or tool error leaves the field empty with a note.
-//
 // info.WasmHash is a content address, so a cached SUCCESSFUL run is served without fork/exec.
 // Only full success populates r.disasmCache: caching a failure would pin a transient condition
 // (tool not yet installed, a load-induced timeout) as a permanent false negative for that hash.
@@ -64,11 +62,9 @@ func (r *ExplorerReader) buildWasmDisassembly(ctx context.Context, info *Contrac
 }
 
 // runWasmTool runs a wabt binary against the wasm module and returns its text output. The second
-// return is a human note: empty on success, else why the stage is absent.
-//
-// wabt reads the module from a real file path (this build treats "-" as a literal filename) and
-// "-o -" is silently empty, so both input and output are staged through temp files, removed
-// before returning.
+// return is a human note: empty on success, else why the stage is absent. wabt reads the module
+// from a real file path (this build treats "-" as a literal filename) and "-o -" is silently
+// empty, so input and output are staged through temp files, removed before returning.
 func runWasmTool(ctx context.Context, tool string, code []byte, extraArgs ...string) (string, string) {
 	if _, err := exec.LookPath(tool); err != nil {
 		return "", tool + " not on PATH (install wabt to enable)"

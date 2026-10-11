@@ -32,10 +32,9 @@ type ReconcileEventStreamer struct {
 const reconcileStreamWindow = 250_000
 
 // StreamContractEvents streams events for [from,to] narrowed by the source's prefilter, one window
-// at a time. NO FINAL (a full-range merge-on-read is too heavy). Unmerged ReplacingMergeTree
-// duplicates share a ledger, hence a window, and each window is ORDER BY (ledger, tx_hash,
-// op_index, event_index), so they stay ADJACENT and the reconcile dedups by identity in O(1) memory
-// (ReDeriveOutputCountsByKindFromEvents).
+// at a time. NO FINAL (a full-range merge-on-read is too heavy): unmerged ReplacingMergeTree
+// duplicates share a window ordered by (ledger, tx_hash, op_index, event_index), so they stay
+// ADJACENT and the reconcile dedups by identity in O(1) memory (ReDeriveOutputCountsByKindFromEvents).
 func (s ReconcileEventStreamer) StreamContractEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms []string, fn func(events.Event) error) error {
 	where := s.filterWhere(contractIDs, topic0Syms)
 	return forEachLedgerWindow(from, to, reconcileStreamWindow, func(lo, hi uint32) error {
@@ -52,12 +51,11 @@ func (s ReconcileEventStreamer) filterWhere(contractIDs, topic0Syms []string) st
 
 // ContiguousWatermark returns the highest ledger L such that stellar.ledgers holds every ledger in
 // [from, L] with no hole: the projector's safe upper read bound (ADR-0041).
-// The live dual-sink drops whole ledgers under buffer pressure and a flush can partly fail, while
-// the projector advances its cursor unconditionally; reading past a hole would silently lose that
-// ledger's events. Clamping to this watermark stalls AT the hole until catch-up heals it.
-// Keyed off ledgers because Sink.Flush writes it LAST, so presence there implies the other tables
-// are durable. Returns from-1 when CH has not reached `from` or `from` itself is a hole (the
-// boundary case the interior-gap scan cannot see); callers treat tip <= from as idle.
+// The live dual-sink can drop whole ledgers while the projector advances its cursor
+// unconditionally, so reading past a hole would silently lose events; clamping to this watermark
+// stalls AT the hole until catch-up heals it. Keyed off ledgers because Sink.Flush writes it LAST.
+// Returns from-1 when CH has not reached `from` or `from` itself is a hole (a case the
+// interior-gap scan cannot see); callers treat tip <= from as idle.
 func ContiguousWatermark(ctx context.Context, addr string, from uint32) (uint32, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -76,11 +74,10 @@ func contiguousWatermarkOn(ctx context.Context, conn driver.Conn, from uint32) (
 // contiguousWatermarkUpTo bounds the gap scan to [from, to] and clamps the result to `to`, so a
 // lagging reader pays one batch window per call.
 func contiguousWatermarkUpTo(ctx context.Context, conn driver.Conn, from, to uint32) (uint32, error) {
-	// first_gap_start sees only INTERIOR gaps (leadInFrame over DISTINCT ledgers finds nxt >
-	// ledger+1), so it is blind to a hole at `from` itself: with `from` absent, {from+1, ...} is
-	// contiguous and it reads 0. min_present exposes that: when it exceeds `from`, `from` is
-	// missing and the watermark stalls at from-1. The healer scripts/ops/ch-live-catchup.sh carries
-	// both arms; change them together.
+	// first_gap_start sees only INTERIOR gaps, so it is blind to a hole at `from` itself: with
+	// `from` absent, {from+1, ...} is contiguous and it reads 0. min_present exposes that: above
+	// `from`, `from` is missing and the watermark stalls at from-1. scripts/ops/ch-live-catchup.sh
+	// carries both arms; change them together.
 	// leadInFrame returns the row's own value for the last row, so there is no spurious trailing
 	// gap; min() over an empty set is 0, read as "no hole".
 	// Every column is toUInt64(ifNull(..., 0)): scalar subqueries are Nullable and
@@ -197,8 +194,8 @@ func substrateQueryLo(wlo, from uint64) uint64 {
 // SubstrateProblem returns the earliest ledger in [from,to] where the lake substrate fails
 // (ADR-0033 Claim 1): a missing ledger or a hash-chain break (prev_hash != prior ledger_hash).
 // (0, false) means continuous and hash-linked over the whole range. Both checks run over a
-// per-ledger dedup (GROUP BY ledger_seq, argMax by ingested_at) so duplicate parts do not create
-// false breaks. Windows overlap by one ledger and the first problem found is returned.
+// per-ledger dedup (GROUP BY ledger_seq, argMax by ingested_at) so duplicate parts cannot create
+// false breaks. Windows overlap by one ledger so a break on a boundary is not missed.
 func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (problem uint32, hasProblem bool, detail string, err error) {
 	conn, oerr := openRead(ctx, addr)
 	if oerr != nil {
@@ -361,8 +358,7 @@ func substrateHeadProblem(from, to uint32, present bool, haveMin uint32) (proble
 //
 // The minPresent guard closes a data-loss blind spot: with `from` absent, {from+1, ...} is
 // contiguous, so returning chMax would let the projector skip `from` and permanently drop its
-// sole-writer rows. Order matters: after the chMax<from guard, minPresent > from means `from` is
-// missing, and from-1 wins over any interior gap above it.
+// sole-writer rows. Order matters: from-1 wins over any interior gap above a missing `from`.
 func watermark(from, chMax, firstGap, minPresent uint32) uint32 {
 	if from == 0 {
 		// Ledger 0 does not exist, and from-1 would wrap to MaxUint32, read as "complete forever".
@@ -404,8 +400,8 @@ type EventCensusShortfall struct {
 // alone: a DROP/REPLACE PARTITION or a restore that brings ledgers back first
 // (docs/operations/clickhouse-destructive-ddl.md) leaves ledgers intact over an empty event table.
 // soroban_event_count increments exactly when a contract_events row is appended, so fewer rows
-// means lost events. Present counts active parts (system.parts); unmerged duplicates only raise
-// it, so no false shortfall (a partial loss masked by as many duplicates goes undetected).
+// means lost events. Present counts active parts; unmerged duplicates only raise it, so there is
+// no false shortfall (a loss masked by as many duplicates goes undetected).
 // Expected is read BEFORE present, since the sink flushes contract_events before ledgers.
 func EventCensusShortfalls(ctx context.Context, addr string, from, to uint32) ([]EventCensusShortfall, error) {
 	if from > to {

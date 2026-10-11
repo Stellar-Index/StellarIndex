@@ -20,12 +20,9 @@ type wasmDisasmEntry struct {
 	cachedAt time.Time
 }
 
-// wasmDisasmCache is a bounded, no-TTL cache of wabt output keyed by wasm
-// hash: bytes behind a content-addressed hash never change, so the cap only
-// bounds memory.
-//
-// Only SUCCESSFUL tool runs are cached (see buildWasmDisassembly), so a
-// transient failure is retried rather than pinned as a false negative.
+// wasmDisasmCache is a bounded, no-TTL cache of wabt output keyed by wasm hash: the bytes behind
+// a content-addressed hash never change, so the cap only bounds memory. Only SUCCESSFUL runs are
+// cached (see buildWasmDisassembly), so a transient failure is retried, not pinned.
 type wasmDisasmCache struct {
 	mu      sync.Mutex
 	entries map[string]wasmDisasmEntry

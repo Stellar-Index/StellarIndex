@@ -148,14 +148,11 @@ func (w ECWindowCoverage) Missing() uint64 {
 const ecTxScopedRow = "tx_hash != ''"
 
 // ecWindowCoverageQuery is the Check-2 per-window scan; a builder so a unit test pins the shape.
-//
-//   - uniqExact(ledger_seq), not count(): stellar.ledgers is ReplacingMergeTree, so count()
-//     double-counts un-merged re-ingests.
-//   - uniqExactIf(... IN (subquery)) restricts coverage to the tx-bearing set the total uses,
-//     so tx_count == 0 ledgers never count as coverage.
-//   - Both sides are primary-key range scans bounded by the stride window; the subquery admits
-//     only ecTxScopedRow rows, since a snapshot or eviction row is not coverage.
-//
+// It uses uniqExact(ledger_seq), not count(), because stellar.ledgers is ReplacingMergeTree and
+// count() double-counts un-merged re-ingests. uniqExactIf(... IN (subquery)) restricts coverage to
+// the tx-bearing set the total uses, so tx_count == 0 ledgers never count as coverage. Both sides
+// are primary-key range scans bounded by the stride window; the subquery admits only
+// ecTxScopedRow rows, since a snapshot or eviction row is not coverage.
 // The four `?` bind positionally: (subquery lo, hi, outer lo, hi).
 func ecWindowCoverageQuery() string {
 	return `

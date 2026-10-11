@@ -121,10 +121,9 @@ func DistinctTopicShapes(ctx context.Context, addr string, from, to uint32, excl
 
 // DistinctTopicShapesForWatchedContracts scopes the distinct-shape scan to a topic[0] set AND a
 // contract set, for the watched-SEP41 recognition census. The global scan drops the CAP-67
-// classic-token topics (re-scanning that firehose for every contract is too costly), so a watched
-// SEP-41 source silently dropping its OWN transfer/mint/burn events would be invisible to it.
-// Restricting both keeps those kinds auditable at bounded cost. Returns (nil, nil) if either
-// set is empty.
+// classic-token topics (too costly to re-scan for every contract), so a watched SEP-41 source
+// dropping its OWN transfer/mint/burn events would be invisible to it. Restricting both sets
+// keeps those kinds auditable at bounded cost. Returns (nil, nil) if either set is empty.
 func DistinctTopicShapesForWatchedContracts(ctx context.Context, addr string, from, to uint32, topic0, contractIDs []string) ([]TopicShape, error) {
 	if len(topic0) == 0 || len(contractIDs) == 0 {
 		return nil, nil

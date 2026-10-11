@@ -14,12 +14,11 @@ import (
 
 // Soroban archives a contract_data entry once its TTL lapses, but the lake keeps its last
 // value forever, so "newest contract_data row for this key" serves an archived balance
-// indefinitely. The signal is the companion TTL entry's `liveUntilLedgerSeq`.
-//
-// It is extracted at ingest into the slim `stellar.ttl_live_until` projection (key_hash ->
-// live_until, ReplacingMergeTree(version)); this reader is a bounded primary-key lookup.
-// Scanning ledger_entries_current for ttl rows (586M rows, wide entry_xdr) OOMs, so there is
-// no fallback: a missing projection gives [errTTLLiveUntilTableMissing].
+// indefinitely. The signal is the companion TTL entry's `liveUntilLedgerSeq`, extracted at ingest
+// into the slim `stellar.ttl_live_until` projection (key_hash -> live_until,
+// ReplacingMergeTree(version)); this reader is a bounded primary-key lookup. Scanning
+// ledger_entries_current for ttl rows (wide entry_xdr) OOMs, so there is no fallback: a missing
+// projection gives [errTTLLiveUntilTableMissing].
 
 // ttlKeyHashOffset/Len locate the 32-byte key hash in a decoded TTL LedgerKey: a 4-byte
 // LedgerEntryType discriminant (TTL = 9) then sha256 of the governed LedgerKey.
@@ -35,8 +34,8 @@ const (
 //	liveUntilLedgerSeq (4)    | ext.v (4)     = 48
 //
 // so liveUntilLedgerSeq starts at byte 40. The SQL DDL (tier1_schema.sql, ttl_live_until.sql)
-// is guarded on these exact lengths so an unrecognised shape is skipped ([TTLUnknown], entry
-// kept), never misread as archived. ttl_liveness_test.go asserts both files against these.
+// is guarded on these exact lengths so an unrecognised shape is [TTLUnknown] (entry kept), never
+// misread as archived. ttl_liveness_test.go asserts both files against these.
 const (
 	ttlEntryLen         = 48
 	ttlLiveUntilOffset0 = 40
@@ -80,12 +79,12 @@ const (
 )
 
 // ClassifyTTLLiveness resolves whether each base64 LedgerKey in keyXDRs is live as of
-// asOfLedger, via a primary-key lookup of `stellar.ttl_live_until` (cost scales with the
-// batch). Missing projection: [errTTLLiveUntilTableMissing].
+// asOfLedger, via a primary-key lookup of `stellar.ttl_live_until`, chunked by
+// [ttlLivenessBatchSize]. Missing projection: [errTTLLiveUntilTableMissing].
 //
 // Keys with no TTL row come back [TTLUnknown] and callers KEEP them: a silent over-drop
 // understates supply and is harder to notice than an over-count. Only a parsed, lapsed
-// liveUntilLedgerSeq justifies exclusion. Work is chunked by [ttlLivenessBatchSize].
+// liveUntilLedgerSeq justifies exclusion.
 func ClassifyTTLLiveness(ctx context.Context, conn driver.Conn, keyXDRs []string, asOfLedger uint32) (map[string]TTLLiveness, error) {
 	liveUntil, err := resolveTTLLiveUntil(ctx, conn, keyXDRs)
 	if err != nil {
@@ -153,11 +152,9 @@ func ensureTTLLiveUntilTable(ctx context.Context, conn driver.Conn) error {
 }
 
 // ttlLivenessBatchQuery renders the per-batch lookup. argMax(live_until, version) keeps the
-// latest TTL state per key (version = (ledger_seq<<32) | intra_ledger_seq, the table's RMT
-// version), correct over un-merged duplicates without FINAL.
-//
-// The SETTINGS pins are guard rails: unpinned max_threads fans a read out far beyond its cost,
-// so a layout shift fails this query loudly instead of starving the host.
+// latest TTL state per key (version = (ledger_seq<<32) | intra_ledger_seq), correct over
+// un-merged duplicates without FINAL. The SETTINGS pins are guard rails: unpinned max_threads
+// fans a read out far beyond its cost, so a layout shift fails loudly instead of starving the host.
 func ttlLivenessBatchQuery(placeholders []string) string {
 	return fmt.Sprintf(`
 		SELECT lower(hex(key_hash)) AS key_hash_hex,

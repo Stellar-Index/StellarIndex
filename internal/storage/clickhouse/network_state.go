@@ -115,11 +115,10 @@ func (t *LumenTally) Residual() *big.Int {
 var lumenEntryTypes = []string{"account", "claimable_balance", "liquidity_pool", "contract_data"}
 
 // LumenConservation tallies native XLM held in ledger_entries_current as of the
-// newest committed ledger (stellar.ledgers is written last in a flush). One
-// FINAL read gives a single parts snapshot; keys whose resolved row is newer
-// than that ledger are rolled back to their first later change's pre-image in
-// ledger_entry_changes, so concurrent ingest cannot tear the sum.
-// nativeSAC is the network's native Stellar Asset Contract id (C…).
+// newest committed ledger (stellar.ledgers is written last in a flush). One FINAL read gives a
+// single parts snapshot; keys whose resolved row is newer than that ledger are rolled back to
+// their first later change's pre-image in ledger_entry_changes, so concurrent ingest cannot tear
+// the sum. nativeSAC is the network's native Stellar Asset Contract id (C…).
 func (r *NetworkStateReader) LumenConservation(ctx context.Context, nativeSAC string) (*LumenTally, error) {
 	sac, prefix, err := nativeSACKey(nativeSAC)
 	if err != nil {

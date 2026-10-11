@@ -30,8 +30,8 @@ type txIndexLookup func(ctx context.Context, ledgers []uint32) (map[ledgerTx]uin
 // applyOrderer re-sorts streamed contract events within each ledger into transaction APPLY
 // order. The table sorts by (ledger_seq, tx_hash, ...), a lexical order, so a pool's first trade
 // whose tx hash sorts before its add_pool's would reach a live-grown registry first and be
-// dropped. The SQL keeps the sort key so ClickHouse still streams in read order; the reorder is
-// per ledger, buffered and stable, so exact duplicates stay adjacent for consumers that skip
+// dropped. The SQL keeps the sort key so ClickHouse streams in read order; the per-ledger
+// reorder is buffered and stable, so exact duplicates stay adjacent for consumers that skip
 // them by previous key.
 type applyOrderer struct {
 	ctx     context.Context

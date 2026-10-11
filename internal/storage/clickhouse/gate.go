@@ -11,9 +11,9 @@ import (
 
 // GateCounts is the read-back of a ledger range's Tier-1 counts: the per-ledger STORED counts
 // (the ledgers row the extractor wrote) and the ACTUAL row counts of the child tables. The
-// completeness gate (internal/ops/chops/ch_gate.go) asserts these agree with each other AND
-// with the decoder-independent census oracle. All reads use FINAL so duplicate
-// ReplacingMergeTree parts dedup at read time.
+// completeness gate (internal/ops/chops/ch_gate.go) asserts they agree with each other AND with
+// the decoder-independent census oracle. All reads use FINAL so duplicate ReplacingMergeTree
+// parts dedup at read time.
 type GateCounts struct {
 	LedgerRows   uint64 // count() of stellar.ledgers in range (deduped)
 	TotalLedgers uint64 // count() of ALL stellar.ledgers (whole DB) — footprint denominator
@@ -53,10 +53,9 @@ func openRead(ctx context.Context, addr string) (driver.Conn, error) {
 		Settings: clickhouse.Settings{
 			// Heavy-FINAL gate/reconcile read class. `max_execution_time` stays UNLIMITED: a
 			// legitimate FINAL stream over a full-history window runs for many minutes (see
-			// ReadTimeout below). The real hazard is memory, so the guard is a per-query ceiling
-			// low enough to fail a pathological query before it starves Postgres on the shared
-			// host (ADR-0034). max_threads bounds how many wide part streams hold buffers at once,
-			// which drives this class's peak.
+			// ReadTimeout below). The hazard is memory, so the guard is a per-query ceiling low
+			// enough to fail a pathological query before it starves Postgres on the shared host
+			// (ADR-0034); max_threads bounds how many wide part streams hold buffers at once.
 			"max_execution_time": 0,
 			// Streaming the CAP-67 firehose's wide columns InOrder can hit CH's SERVER-WIDE
 			// OvercommitTracker cap on its own (per-query tracking undercounts read-pool buffers

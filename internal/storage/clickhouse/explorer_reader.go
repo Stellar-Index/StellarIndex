@@ -22,8 +22,8 @@ import (
 // probe fanned out to 4.76 GiB peak vs 89 MiB at max_threads=4: the amplification is per-stream
 // read buffers across part ranges. The 8 GiB ceiling makes a part-layout shift fail one query
 // loudly. Keyed point reads do not carry it (they never fan out). The clause is SQL text, not
-// clickhouse.WithSettings, because settings did not reach the server on some driver paths and so
-// reader tests can pin it. The spill pair turns an OOM into a slower success above 4 GB.
+// clickhouse.WithSettings, because settings do not reach the server on some driver paths; this
+// also lets reader tests pin it. The spill pair turns an OOM into a slower success above 4 GB.
 const explorerScanSettings = ` SETTINGS max_threads = 4, max_memory_usage = 8589934592,` +
 	` max_bytes_before_external_group_by = 4000000000, max_bytes_before_external_sort = 4000000000`
 
@@ -719,10 +719,11 @@ func (r *ExplorerReader) queryRecentOperations(ctx context.Context, q string, cu
 	return scanOpsLight(rows)
 }
 
-// recentOperationsQuery builds the exact-dedup SQL, the fallback when a windowed read cannot prove a full page.
-// LIMIT 1 BY the primary key, not FINAL: stellar.operations is ReplacingMergeTree(ingested_at)
-// and a re-ingested operation leaves an un-merged duplicate that would be served twice. LIMIT 1 BY
-// dedups inside the streamed ORDER BY read; FINAL would merge every overlapping part.
+// recentOperationsQuery builds the exact-dedup SQL, the fallback when a windowed read cannot prove
+// a full page. LIMIT 1 BY the primary key, not FINAL: stellar.operations is
+// ReplacingMergeTree(ingested_at) and a re-ingested operation leaves an un-merged duplicate that
+// would be served twice. LIMIT 1 BY dedups inside the streamed ORDER BY read; FINAL would merge
+// every overlapping part.
 // The `bounded` arm's lower ledger bound (tip or cursor minus recentLedgersTailWindow) makes the
 // read partition-pruned. It is a PERFORMANCE bound only: RecentOperations re-runs unbounded when
 // the bounded pass is short. Cursor arms add recentOperationsCursorPredicate and
@@ -763,7 +764,7 @@ func recentOperationsSQL(hasCursor, bounded, exactDedup, typed bool) string {
 // It is equivalent to `(ledger_seq, tx_index, op_index) < (?, ?, ?)` via (L,T,O) < (l,t,o) iff
 // L < l OR (L = l AND (T,O) < (t,o)); all three columns are non-Nullable UInt32 and
 // ExplorerCursor.IsSet() guarantees l > 0. KeyCondition does not decompose a 3-column tuple
-// compare, so the tuple form selected essentially the whole table.
+// compare, so the tuple form would select essentially the whole table.
 // The outer parentheses are load-bearing: AND binds tighter than OR, so without them the
 // `AND ledger_seq >= ?` bound would attach to the equality arm alone and return every operation
 // below the cursor.
@@ -773,9 +774,8 @@ const recentOperationsCursorPredicate = `(ledger_seq < ? OR (ledger_seq = ? AND 
 // mintable, so a pathological pick is REFUSED (TOO_MANY_ROWS, 158) rather than served over
 // minutes. 200M is well above the densest legitimate window and far below a whole-table selection.
 // read_overflow_mode is pinned to 'throw': 'break' would silently TRUNCATE the page and mint a
-// next_cursor from the wrong row.
-// Not applied to the first-page arms: the unbounded first-page fallback is the quiet-tip
-// correctness net and has no caller-controlled input.
+// next_cursor from the wrong row. Not applied to the first-page arms: their unbounded fallback is
+// the quiet-tip correctness net and has no caller-controlled input.
 const recentOperationsCursorRowCeiling = `, max_rows_to_read = 200000000, read_overflow_mode = 'throw'`
 
 // chTooManyRows is ClickHouse's TOO_MANY_ROWS (max_rows_to_read under read_overflow_mode='throw').
@@ -860,9 +860,9 @@ const recentLedgersTailWindow = 5000
 
 // NetworkThroughput returns daily throughput for the most-recent `windowDays` UTC days
 // (default 30, cap 365), ascending; windowDays-1 complete days plus today (Partial).
-// The window is DAY-ALIGNED on close_time, not a ledger count: a ledger-count bound lands
-// mid-day, rendering the first bucket as a false drop. The ledger predicate is only a
-// partition-pruning hint sized generously so it never clips a day; close_time is the boundary.
+// The window is DAY-ALIGNED on close_time, not a ledger count, which would land mid-day and render
+// the first bucket as a false drop. The ledger predicate is only a partition-pruning hint sized
+// generously so it never clips a day; close_time is the boundary.
 func (r *ExplorerReader) NetworkThroughput(ctx context.Context, windowDays int) ([]ThroughputBucket, error) {
 	if windowDays <= 0 || windowDays > 365 {
 		windowDays = 30
@@ -975,8 +975,8 @@ func (c ContractEventsCursor) IsSet() bool { return c.Ledger > 0 }
 // Both are ORDER BY (account, ledger_seq, tx_index[, op_index]), so each arm is a
 // primary-key-prefix range and the wide tables see only point lookups.
 // Exactness: the union of two top-N sets contains the union's top N. mergeKeysDesc drops
-// cross-arm duplicates BEFORE cutting to `limit`, since a duplicate eating a slot would serve a
-// short page that the handler reads as end of history.
+// cross-arm duplicates BEFORE cutting to `limit`; a duplicate eating a slot would serve a short
+// page that the handler reads as end of history.
 
 // sourcedTxKeysExactQuery is the sourced tx arm's LIMIT 1 BY form: exact but O(account
 // history), so it runs only when the windowed read cannot prove a full page. The leading
@@ -1468,8 +1468,8 @@ func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (Tx
 // Row count matters because a per-hash miss is treated as authoritative not-found: against an
 // existing-but-EMPTY index (MV dropped or TRUNCATEd) every real hash would 404. Emptiness is not
 // cached. "Holds rows" is a LEASE, not a latch ([schemaProbeLease]), so truncation under a running
-// process stops granting authority within one lease. The parity check catches PARTIAL divergence;
-// this catches total loss.
+// process stops granting authority within one lease. This catches total loss; the parity check
+// catches PARTIAL divergence.
 func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.txIndexProbe,
 		`SELECT ledger_seq FROM stellar.tx_hash_index LIMIT 1`, true)
@@ -1734,8 +1734,8 @@ func (r *ExplorerReader) txByLedgerAndHash(ctx context.Context, seq uint32, hash
 // 1. Find WHICH ledger holds the hash via the tx_hash bloom skip-index. NOT FINAL: that would
 // defeat the skip-index over the whole table, and there is no ledger to bound it yet. Only
 // ledger_seq is read, safe from an un-merged duplicate since a tx executes in exactly one ledger.
-// The `ORDER BY ingested_at DESC` only makes a hash recorded against two ledgers resolve
-// deterministically to the most recently ingested; it does NOT resolve duplicate rows.
+// `ORDER BY ingested_at DESC` only makes a hash recorded against two ledgers resolve
+// deterministically to the newest; it does NOT resolve duplicate rows.
 // 2. Read the row via txByLedgerAndHash (cheap FINAL, correct on an ingested_at tie).
 // found=false when step 1 comes up empty.
 func (r *ExplorerReader) txByHashScan(ctx context.Context, hash string) (TxSummary, bool, error) {
@@ -1830,8 +1830,8 @@ type TxOutcome struct {
 // the tx_hash bloom (high false-positive rate) as the only filter. The set is lossless: an op's
 // parent tx is in the op's own ledger. This bounds cost by page size (ParseLimit).
 // FINAL stays: transactions holds real duplicates and ingested_at ties (see txByLedgerAndHash);
-// with ledger_seq a point set FINAL merges only a handful of parts. A stale verdict is worse than
-// the cost.
+// with a ledger_seq point set it merges only a handful of parts, and a stale verdict is worse than
+// that cost.
 // Empty input returns an empty non-nil map. The SQL is a const so explorer_tx_outcomes_test.go can
 // pin the ledger IN-set and FINAL.
 const txOutcomesByHashQuery = `SELECT tx_hash, successful, result_code FROM stellar.transactions FINAL
@@ -2113,9 +2113,8 @@ func (r *ExplorerReader) ContractInteractions(ctx context.Context, contractID st
 	}
 	// Anchor the window to the contract's OWN recent activity, not wall-clock days: both halves
 	// scale with ledger SPAN. This narrows what a busy contract reports, consistent with
-	// subjectTxCap already truncating to a recent sample. Quiet contracts have fewer active
-	// ledgers than the cap and keep the full window. The effective floor is RETURNED so
-	// since_ledger describes the window served.
+	// subjectTxCap truncating to a recent sample; quiet contracts keep the full window. The
+	// effective floor is RETURNED so since_ledger describes the window served.
 	const activeLedgerWindow = 500
 	if r.contractLedgersIndexAvailable(ctx) {
 		if ls, err := r.contractActiveLedgers(ctx, contractID, 0, activeLedgerWindow); err == nil && len(ls) == activeLedgerWindow {

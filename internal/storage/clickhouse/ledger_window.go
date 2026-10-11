@@ -1,17 +1,11 @@
 package clickhouse
 
 // ledgerWindowHi returns the INCLUSIVE upper bound of the ledger window that starts at lo, for a
-// walk over [from, to] in windows of `window` ledgers. It is the one walk step shared by every
-// windowed, resumable lake job here.
-//
-// Two properties a naive `hi := lo + window - 1` breaks:
-//
-//   - The FINAL window is never dropped and never over-runs `to`: when fewer than `window` ledgers
-//     remain, hi is clamped to `to`.
-//   - No uint32 overflow: testing the REMAINING span (`to - lo >= window`) first means the addition
-//     only runs when its result fits.
-//
-// Callers guarantee 0 < from <= to and window > 0; lo is within [from, to].
+// walk over [from, to] in windows of `window` ledgers, shared by every windowed, resumable lake job.
+// A naive `hi := lo + window - 1` breaks two things: the FINAL window must be clamped to `to`
+// rather than dropped or over-run, and the addition must not overflow uint32, so the REMAINING
+// span (`to - lo >= window`) is tested first. Callers guarantee 0 < from <= to, window > 0, and lo
+// within [from, to].
 func ledgerWindowHi(lo, to, window uint32) uint32 {
 	if rem := to - lo; rem >= window { // window fits without uint overflow
 		return lo + window - 1
@@ -22,12 +16,10 @@ func ledgerWindowHi(lo, to, window uint32) uint32 {
 // adaptiveLedgerWindow carries the ledger-window width for a windowed walk of
 // stellar.ledger_entry_changes: narrow on a ClickHouse memory-limit error, widen again after
 // sustained success, so one dense range cannot pin the window at its floor for the rest of the
-// chain.
-//
-// The asymmetry is deliberate. Narrowing is immediate (one failure halves the width) because a
-// failed window is a wasted scan; widening needs widenAfter consecutive clean windows because
-// re-widening into a range that just failed would oscillate. The per-query memory ceiling is never
-// raised, only the amount of chain per query.
+// chain. The asymmetry is deliberate: narrowing is immediate (one failure halves the width)
+// because a failed window is a wasted scan; widening needs widenAfter consecutive clean windows
+// because re-widening into a range that just failed would oscillate. The per-query memory ceiling
+// is never raised, only the amount of chain per query.
 type adaptiveLedgerWindow struct {
 	initial    uint32
 	floor      uint32

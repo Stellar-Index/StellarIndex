@@ -18,17 +18,17 @@ import (
 //   - The walk is ledger-wide and three-phase, as the SDK's ingest.LedgerChangeReader: every
 //     tx's fee changes, then apply-phase changes, then PostTxApplyFeeChanges (P23 Soroban
 //     fee refunds; LCM V2 only). intra_ledger_seq thus ranks an apply change above a later
-//     tx's fee change and a refund above both, so "the final intra-ledger change wins FINAL
-//     dedup" means the ledger-final balance. Ledger UPGRADE changes are not walked (no tx_hash).
+//     tx's fee change and a refund above both, so the change that wins FINAL dedup is the
+//     ledger-final balance. Ledger UPGRADE changes are not walked (no tx_hash).
 //   - A fourth phase records state-archival EVICTIONS as `removed` rows, only for temporary
 //     entries and TTL keys: persistent entries and contract code are archived and restorable,
 //     so they stay live. Skipped keys still take their walk position.
 //
 // Within each block changes follow entrywalk.Canonical order (core's block order is hash-map order
-// and differs between exports). change_index is a per-TRANSACTION counter (stable across
-// re-ingest, so idempotent under the ReplacingMergeTree). A change that won't marshal is skipped
+// and differs between exports). change_index is a per-TRANSACTION counter, stable across
+// re-ingest so the ReplacingMergeTree write is idempotent. A change that won't marshal is skipped
 // and counted, never fatal, and still takes its intra_ledger_seq, the per-LEDGER position folded
-// into the RMT version so the last intra-ledger change to a key wins FINAL dedup deterministically.
+// into the RMT version so the last change to a key wins FINAL dedup deterministically.
 func extractLedgerEntryChanges(ext *LedgerExtract, txs []ingest.LedgerTransaction, evicted []xdr.LedgerKey, seq uint32, closeTime time.Time) {
 	var entryChangeSeq uint32
 	// change_index is per-transaction, so it must survive the gap between the two
@@ -191,8 +191,8 @@ func entryChangeRow(seq uint32, closeTime time.Time, txHash string, opIndex int3
 // "pool:<hex>") from a ledger key. Both empty for entry types with no single owner (claimable
 // balances, pools, contract data/code, ttl, config); asset is empty for all but trustlines.
 //
-// The empty asset on other holding types is structural, not a gap: the key does not name the asset
-// (a claimable balance's key is a hash, a pool holds two assets, a SAC Balance entry names only its
+// The empty asset on other holding types is structural: the key does not name the asset (a
+// claimable balance's key is a hash, a pool holds two assets, a SAC Balance entry names only its
 // contract, derivable only forward via canonical.Asset.SacContractID). Any per-asset supply summed
 // off this column is a trustline-only LOWER BOUND; the lake-flows total over the SAC contract
 // (stellar.supply_flows) sees all four domains. See ClassicCirculatingSupply.

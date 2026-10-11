@@ -370,11 +370,11 @@ type AccountWealth struct {
 }
 
 // balance is stroops (1e7); k = "native" for the account entry, else the trustline
-// asset; only priced rows (has(assets, k)) count. The sum is Decimal256, never
-// Float64, because it is the served figure; stroop-to-unit division happens in Go.
-// Background refresh only (accounts_wealth_cache.go): the FINAL scan is slow, so
-// threads, memory and max_execution_time are pinned in SQL text (test-assertable;
-// the driver drops context settings, see cbLookupCreatesQuery).
+// asset; only priced rows (has(assets, k)) count. The sum is Decimal256, never Float64, because
+// it is the served figure; stroop-to-unit division happens in Go. Background refresh only
+// (accounts_wealth_cache.go): the FINAL scan is slow, so threads, memory and max_execution_time
+// are pinned in SQL text (test-assertable; the driver drops context settings, see
+// cbLookupCreatesQuery).
 const accountsByWealthQuery = `WITH arrayMap(p -> toDecimal256(p, 18), ?) AS px,
 		sum(toDecimal256(balance, 0) * arrayElement(px, indexOf(?, k))) AS stroop_value
 		SELECT account_id, toString(stroop_value),
@@ -556,10 +556,10 @@ func accountKeyXDR(gStrkey string) (string, error) {
 }
 
 // accountEntryKeyPrefix returns a base64 prefix matching every key_xdr of the given
-// entry type for the account, turning the read into a primary-index range. Both key
-// shapes start [type (4B)][AccountId (4B + 32B)], contiguous under ORDER BY. Base64
-// is prefix-stable only at 3-byte boundaries, so cut at 39 bytes (52 chars); the
-// caller's exact `account_id = ?` closes the one-byte residual.
+// entry type for the account, turning the read into a primary-index range. Both key shapes start
+// [type (4B)][AccountId (4B + 32B)], contiguous under ORDER BY. Base64 is prefix-stable only at
+// 3-byte boundaries, so cut at 39 bytes (52 chars); the caller's exact `account_id = ?` closes
+// the one-byte residual.
 func accountEntryKeyPrefix(gStrkey string, entryType xdr.LedgerEntryType) (string, error) {
 	var aid xdr.AccountId
 	if err := aid.SetAddress(gStrkey); err != nil {

@@ -22,9 +22,9 @@ const (
 // lockstep). Windowed on ledger_seq (the source's primary-key prefix); the target RMT collapses
 // re-runs of overlapping windows. table is one of the two constants above, never caller text.
 //
-// FINAL on the source read, for txHashIndexBackfillQuery's reason: a corrected re-ingest can leave
-// the stale part beside the fix, and both would tie on the target's DEFAULT now() ingested_at,
-// letting the stale wasm_hash survive the collapse. FINAL is bounded by the window.
+// FINAL on the source read: a corrected re-ingest can leave the stale part beside the fix, and
+// both would tie on the target's DEFAULT now() ingested_at, letting the stale wasm_hash survive
+// the collapse. FINAL is bounded by the window.
 func contractInstanceBackfillQuery(table string) string {
 	return fmt.Sprintf(`
 	INSERT INTO stellar.%s
@@ -127,10 +127,10 @@ func ReadInstanceBackfillStart(ctx context.Context, addr, table string) (Instanc
 }
 
 // SetContractInstanceChangesGenesisWatermark records that the named instance-timeline table is
-// complete from the lake's first ledger through `thru`, in the shared entry_history_watermark
-// table. Readers trust a per-contract miss instead of scanning ledger_entry_changes, so call only
-// after a backfill proven complete. A thru at or below the stored mark records nothing: the table
-// is a ReplacingMergeTree, so a later, lower row would win after a merge.
+// complete from the lake's first ledger through `thru`, in entry_history_watermark. Readers trust
+// a per-contract miss instead of scanning ledger_entry_changes, so call only after a backfill
+// proven complete. A thru at or below the stored mark records nothing: the table is a
+// ReplacingMergeTree, so a later, lower row would win after a merge.
 func SetContractInstanceChangesGenesisWatermark(ctx context.Context, addr, table string, thru uint32) error {
 	if table != ContractInstanceChangesTable && table != ContractInstanceChangesV2Table {
 		return fmt.Errorf("clickhouse: instance-changes watermark: table %q is not %s or %s",

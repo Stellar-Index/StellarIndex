@@ -11,10 +11,9 @@ import (
 const assetStatsDailyLatestDay = `stellar.asset_stats_daily WHERE day = (SELECT max(day) FROM stellar.asset_stats_daily)`
 
 // assetStatsSnapshotFill computes one arm of the day's snapshot into staging.
-// Ranks run over every non-removed entry, zero balances included: they sort
-// after every positive balance, so they shift no holder's rank and add
-// nothing to any sum. With x ranked descending (r = 1 is the largest) the
-// Gini over the n positive holders is ((n+1)·S − 2·Σ r·x) / (n·S); the
+// Ranks run over every non-removed entry, zero balances included: they sort after every positive
+// balance, so they shift no holder's rank and add nothing to any sum. With x ranked descending
+// (r = 1 is the largest) the Gini over the n positive holders is ((n+1)·S − 2·Σ r·x) / (n·S); the
 // numerator is exact in Int128 for any n below 2^31, only the ratio is float.
 func assetStatsSnapshotFill(at, day, rankedSource string) string {
 	return `INSERT INTO stellar.asset_stats_daily_staging

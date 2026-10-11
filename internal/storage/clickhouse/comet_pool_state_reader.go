@@ -22,8 +22,8 @@ import (
 //	Record { balance: i128, weight: i128, scalar: i128, index: u32 }
 //
 // Decode is by field name, so only the `balance` i128 is required. The reader probes BOTH key
-// encodings (Vec[Symbol] per the spec, bare Symbol defensively) because upgrades may change it. A
-// pool matching neither lands in the undecodable list: fail-to-absent, never a misread number.
+// encodings (Vec[Symbol] per the spec, bare Symbol defensively) since upgrades may change it. A
+// pool matching neither is undecodable: fail-to-absent, never a misread number.
 const (
 	cometRecordDataKeySymbol = "AllRecordData"
 	cometFieldBalance        = "balance"
@@ -66,8 +66,8 @@ const cometPoolStateQuery = `SELECT key_xdr, ledger_seq, entry_xdr
 //   - Pools with NO captured record entry, or a TTL-ARCHIVED one, are absent from both returns;
 //     absence is "reserves unavailable", never zero.
 //   - Pools whose entry does NOT decode to the recognised Map<Address, Record{balance: i128, ...}>
-//     shape come back in the second return (undecodable, sorted) so callers can count them. The
-//     whole pool fails on ANY malformed record: a partial balance set would understate TVL silently.
+//     shape come back in the second return (undecodable, sorted) so callers can count them. ANY
+//     malformed record fails the whole pool: a partial balance set would understate TVL.
 func (r *ExplorerReader) CometPoolReserves(ctx context.Context, pools []string) (map[string]CometPoolState, []string, error) {
 	keys := make([]string, 0, len(pools)*2)
 	poolByKey := make(map[string]string, len(pools)*2)

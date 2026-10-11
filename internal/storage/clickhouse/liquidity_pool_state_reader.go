@@ -14,8 +14,8 @@ import (
 // NativeLiquidityPoolState is one classic (CAP-38) constant-product pool's CURRENT reserve
 // state (ADR-0039), read from the `liquidity_pool` LedgerEntry in the lake. Both sides are
 // always present, unlike the watched-asset-gated `lp_reserve_observations` supply path.
-// Reserves are 7-decimal stroops kept as *big.Int (ADR-0003) even though they fit in int64,
-// so the shared constant-product depth math treats them like the Soroban AMM path.
+// Reserves are 7-decimal stroops kept as *big.Int (ADR-0003) even though they fit in int64, so
+// the shared constant-product depth math treats them like the Soroban AMM path.
 type NativeLiquidityPoolState struct {
 	PoolHex     string // 32-byte LiquidityPoolId, lowercase hex (Horizon/SDEX form)
 	PoolStrkey  string // L-strkey (SEP-23)
@@ -83,18 +83,16 @@ func (r *ExplorerReader) NativeLiquidityPoolReserves(ctx context.Context, poolID
 
 // NativeLiquidityPoolsRanked reads EVERY classic constant-product pool's current state and
 // returns the top `limit` by pool-share trustline count (liquidity providers), the only
-// cross-pool-comparable size signal without USD pricing of arbitrary assets: shares and
-// reserves are in per-pair units. Ties break on pool id for a stable order. The scan is one
-// PK-prefix-scoped aggregate over the `liquidity_pool` entry_type (~40k pools); callers cache
-// the result rather than re-scan per request.
+// cross-pool-comparable size signal without USD pricing of arbitrary assets (reserves are in
+// per-pair units). Ties break on pool id for a stable order. The scan is one PK-prefix-scoped
+// aggregate over the `liquidity_pool` entry_type; callers cache the result rather than re-scan
+// per request.
 func (r *ExplorerReader) NativeLiquidityPoolsRanked(ctx context.Context, limit int) ([]NativeLiquidityPoolState, error) {
 	// argMax over the ReplacingMergeTree versions (manual dedup, cheaper than FINAL for a
 	// whole-prefix scan) gives the latest entry per pool; a trailing removal (empty entry_xdr)
-	// is dropped by `HAVING e != ''`.
-	//
-	// Version key is `version` ((ledger_seq<<32)|intra_ledger_seq) where that schema is applied,
-	// else `ledger_seq`. The column is absent on older tables, so it is probed once per process;
-	// hard-coding it would 500 the endpoint there.
+	// is dropped by `HAVING e != ''`. The version key is `version` ((ledger_seq<<32)|
+	// intra_ledger_seq) where that schema is applied, else `ledger_seq`; the column is absent on
+	// older tables, so it is probed once per process rather than hard-coded.
 	versionKey := "ledger_seq"
 	if r.ledgerEntriesVersioned(ctx) {
 		versionKey = "version"

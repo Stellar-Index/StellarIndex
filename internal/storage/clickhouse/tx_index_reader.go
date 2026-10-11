@@ -54,10 +54,8 @@ const txIndexChunk = 500
 // TxIndexes returns tx_hash -> tx_index for every hash the lake knows. Missing hashes (not yet
 // indexed; the historical backfill is windowed) are absent from the map and callers degrade rather
 // than guess. max() collapses un-merged ReplacingMergeTree duplicates (tx_index is identical across
-// duplicates of one hash).
-//
-// A failed chunk aborts the call: a partial map would read as "legitimately unindexed" to the MEV
-// worker. MEVLakeOrderLookupSkippedTotal counts it.
+// duplicates of one hash). A failed chunk aborts the call: a partial map would read as
+// "legitimately unindexed" to the MEV worker. MEVLakeOrderLookupSkippedTotal counts it.
 func (r *TxIndexReader) TxIndexes(ctx context.Context, hashes []string) (map[string]uint32, error) {
 	out := make(map[string]uint32, len(hashes))
 	err := forEachTxHashChunk(ctx, hashes, obs.MEVLakeOrderLookupSkippedTotal, func(chunk []string) error {

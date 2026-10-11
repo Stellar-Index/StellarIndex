@@ -19,10 +19,9 @@ import (
 // It returns one row per NON-source G-account the op body touches (xdrjson.ParticipantAccounts).
 // Soroban InvokeContract ops contribute NO participant: their args and auth entries are
 // attacker-controllable at decode time. The op's own source_account is EXCLUDED: the account-history
-// reader UNIONs it from operations.source_account on the invariant that an op is sourced XOR has
-// the account as a non-source participant (explorer_reader.AccountOperations); a source row would
-// double-count it. Asset ISSUERS and counterparties of op types xdrjson doesn't field-decode are
-// not captured, so a re-derive reproduces live output.
+// reader UNIONs it from operations.source_account (explorer_reader.AccountOperations), so a source
+// row would double-count it. Asset ISSUERS and counterparties of op types xdrjson doesn't
+// field-decode are not captured, so a re-derive reproduces live output.
 //
 // A malformed body_xdr returns the decode error; callers soft-skip and count it. Sorted,
 // deduplicated output makes a re-derive idempotent under the RMT.
@@ -66,12 +65,10 @@ const participantInsertBatch = 50_000
 
 // BackfillOperationParticipants fills stellar.operation_participants for the inclusive [from,to]
 // ledger range by re-deriving participants from stellar.operations.body_xdr: a CH-INTERNAL job,
-// not a Galexie re-walk. It uses the SAME operationParticipantRows as live capture, so output is
-// byte-identical.
-//
-// Windowed + resumable like BackfillTxHashIndex; re-running a window is idempotent
-// (ReplacingMergeTree keyed on (account, ledger_seq, tx_index, op_index)). Memory is bounded: rows
-// are STREAMED and flushed in fixed batches. dryRun counts what WOULD be written and writes nothing.
+// not a Galexie re-walk, using the SAME operationParticipantRows as live capture. Windowed and
+// resumable like BackfillTxHashIndex; re-running a window is idempotent (ReplacingMergeTree
+// keyed on (account, ledger_seq, tx_index, op_index)). Rows are STREAMED and flushed in fixed
+// batches to bound memory. dryRun counts what WOULD be written and writes nothing.
 func BackfillOperationParticipants(ctx context.Context, addr string, from, to, window uint32, dryRun bool, logf func(format string, args ...any)) (ParticipantBackfillStats, error) {
 	var stats ParticipantBackfillStats
 	if from == 0 || to < from || window == 0 {

@@ -23,9 +23,9 @@ import (
 // ops subcommands load it). Live daemons may use a named `live_daemon` user the same way.
 //
 // Precedence ([chAuthFrom]): ops pair, then live pair, then CH `default`. Ops first because batch
-// units source both env files. Every pair unset is byte-for-byte the unconfigured behaviour (empty
-// Auth.Username is CH's `default` user). The ops pair must reach ONLY batch jobs: each live-daemon
-// unit strips it with `UnsetEnvironment=` (TestOpsBatchIdentityNeverReachesLiveDaemons).
+// units source both env files. With every pair unset Auth.Username is empty, CH's `default` user.
+// The ops pair must reach ONLY batch jobs: each live-daemon unit strips it with
+// `UnsetEnvironment=` (TestOpsBatchIdentityNeverReachesLiveDaemons).
 const (
 	// OpsUserEnv names the env var holding the ops-batch CH username.
 	OpsUserEnv = "STELLARINDEX_CLICKHOUSE_OPS_USER"

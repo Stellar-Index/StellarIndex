@@ -18,16 +18,14 @@ import (
 // The raw readers are the FALLBACK; the serving path is contract_events_daily (*Fast), used when
 // that table is empty or a fast read errors. Raw cost is the skip index, not FINAL: a BUSY
 // contract touches nearly every granule, while a QUIET one is pruned by the bloom and FINAL then
-// re-expands it.
-// Do not add explorerScanSettings here: max_threads = 4 measured ~2x slower for identical I/O. The
-// bound that is applied is protocolRawScanRowCeiling.
+// re-expands it. Do not add explorerScanSettings here (max_threads = 4 was ~2x slower for
+// identical I/O); the bound applied is protocolRawScanRowCeiling.
 
 // protocolRawScanRowCeiling refuses a raw scan the ExplorerReader connection could not finish
-// anyway (max_execution_time 30 s at ~18.6 M rows/s fits ~558 M rows; a busy protocol's window is
-// far larger). Without it the read decompresses a huge volume before the kill, three at once per
-// page build. 600 M is that budget rounded up: a tripwire, not a policy bound.
-// read_overflow_mode='throw' REFUSES rather than truncating; callers already degrade honestly on
-// error, whereas a LIMIT would serve a short answer as complete.
+// anyway (max_execution_time 30 s at ~18.6 M rows/s fits ~558 M rows). Without it the read
+// decompresses a huge volume before the kill. 600 M is that budget rounded up: a tripwire, not a
+// policy bound. read_overflow_mode='throw' REFUSES rather than truncating; callers already degrade
+// honestly on error, whereas a LIMIT would serve a short answer as complete.
 const protocolRawScanRowCeiling = ` SETTINGS max_rows_to_read = 600000000, read_overflow_mode = 'throw'`
 
 // ProtocolEventTypeCount is one (event symbol → count) row of a protocol's
@@ -68,9 +66,9 @@ const lakeWatermarkGapWindow = 10_000
 
 // LakeWatermark returns the lake's CONTIGUOUS captured tip (highest ledger with no hole within
 // lakeWatermarkGapWindow below the raw max) and its close time. Handlers surface it as
-// `as_of_ledger` and compare the close time to now for `flags.stale`.
-// The raw max(ledger_seq) can point PAST a live-sink drop, yet consumers read `as_of_ledger` as
-// "everything up to here is captured". contiguousWatermarkOn is the query the projector clamps to.
+// `as_of_ledger` and compare the close time to now for `flags.stale`. The raw max(ledger_seq) can
+// point PAST a live-sink drop, yet consumers read `as_of_ledger` as "everything up to here is
+// captured"; contiguousWatermarkOn is the query the projector clamps to.
 func (r *ExplorerReader) LakeWatermark(ctx context.Context) (uint32, time.Time, error) {
 	var rawTip uint32
 	if err := r.conn.QueryRow(ctx, `SELECT max(ledger_seq) FROM stellar.ledgers`).Scan(&rawTip); err != nil {
@@ -125,8 +123,8 @@ func (r *ExplorerReader) ProtocolEventBreakdown(ctx context.Context, contractIDs
 // protocolEventBreakdownQuery builds the raw breakdown query, split out so the shape (FINAL, the
 // ledger bound, the row ceiling) is unit-testable; losing any is silent and expensive.
 // FINAL is REQUIRED: contract_events is ReplacingMergeTree(ingested_at) and unmerged duplicates are
-// large (+45% on a busy contract), so dropping it overstates every headline count. A LIMIT 1 BY
-// rewrite would not help: ingested_at is DateTime (1 s) and cannot break a same-second tie.
+// large (+45% on a busy contract), so dropping it overstates every headline count. LIMIT 1 BY
+// cannot replace it: ingested_at is DateTime (1 s) and cannot break a same-second tie.
 func protocolEventBreakdownQuery(windowed bool) string {
 	q := `SELECT topic_0_sym,
 		       if(topic_0_sym = '', topics_xdr[2], '') AS t1,
@@ -173,14 +171,10 @@ func scanEventBreakdown(rows driver.Rows) ([]ProtocolEventTypeCount, error) {
 	return out, nil
 }
 
-// effectiveEventName resolves the display label, in priority order:
-//
-//  1. topic_0_sym (topic[0] is a Symbol).
-//  2. topic[1] as a Symbol, for a namespace-marker String topic[0] (Soroswap).
-//     Symbol-ONLY so it cannot match Phoenix's String field names.
-//  3. topic[0] as a Symbol or String (Phoenix action names).
-//
-// Returns "" when no topic yields a name (folded into "untyped" upstream).
+// effectiveEventName resolves the display label: topic_0_sym; else topic[1] as a Symbol for a
+// namespace-marker String topic[0] (Soroswap; Symbol-ONLY so it cannot match Phoenix's String
+// field names); else topic[0] as a Symbol or String (Phoenix action names). Returns "" when no
+// topic yields a name (folded into "untyped" upstream).
 func effectiveEventName(topic0Sym, topic1XDR, topic0XDR string) string {
 	if topic0Sym != "" {
 		return topic0Sym
@@ -290,11 +284,11 @@ func (r *ExplorerReader) ProtocolContractActivity(ctx context.Context, contractI
 	return out, rows.Err()
 }
 
-// contract_events_daily fast paths. The pre-aggregation (deploy/clickhouse/tier1_schema.sql)
-// replaces the raw scans with per-day uniqCombined(17) states: uniqExact's unbounded hash set blew
-// the merge memory budget. uniqCombined still dedups the natural key (ledger_seq, tx_hash,
-// op_index, event_index), avoiding a Summing MV's retry overcount, in bounded memory at ~0.1-0.5%
-// error. Callers probe DailyActivityAvailable and fall back to the raw readers.
+// contract_events_daily fast paths. The pre-aggregation (deploy/clickhouse/tier1_schema.sql) holds
+// per-day uniqCombined(17) states: uniqExact's unbounded hash set blew the merge memory budget.
+// uniqCombined still dedups the natural key (ledger_seq, tx_hash, op_index, event_index), avoiding
+// a Summing MV's retry overcount, at ~0.1-0.5% error. Callers probe DailyActivityAvailable and
+// fall back to the raw readers.
 
 // DailyActivityAvailable reports whether the pre-aggregation exists with rows. definitive=true only
 // when the server ANSWERED (table missing or rows found). A transport error or deadline is not an

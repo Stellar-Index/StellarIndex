@@ -26,11 +26,9 @@ import (
 //
 // Byte-identical rewrites are not changes: write_prices rewrites every requested feed's entry but
 // only the accepted feed's PriceData changes.
-//
 // Cost: one point query per stateWriteKeyBatch events, a primary-key prefix lookup
 // ((ledger_seq, tx_hash, op_index) is the ORDER BY prefix) bounded by the batch's ledger span for
 // partition pruning. Opt-in per source (like withOpArgs).
-//
 // ReplacingMergeTree: un-merged duplicates repeat (ledger_seq, tx_hash, op_index, change_index);
 // the scan keeps the latest ingested_at per change_index, as FINAL would, so no FINAL is needed
 // and a re-ingested correction beats its stale predecessor.
@@ -285,10 +283,10 @@ func (ks *lakeKeyState) valueChanged() bool {
 }
 
 // contractDataEntryVal parses entry_xdr and returns the owning C-strkey plus the
-// ContractDataEntry.Val bytes. decodable=false: unmarshal failed, so the caller must poison the
-// row's KEY (see changedWriteKeysForContract), not drop the row. decodable=true with ok=false: not
-// contract-data or account-owned, skip. nil val with ok=true: Val marshal failure, callers exclude
-// the key.
+// ContractDataEntry.Val bytes. decodable=false (unmarshal failed): the caller must poison the
+// row's KEY (see changedWriteKeysForContract), not drop the row. decodable=true with ok=false:
+// not contract-data or account-owned, skip. nil val with ok=true: Val marshal failure, so callers
+// exclude the key.
 func contractDataEntryVal(entryB64 string) (contractID string, val []byte, ok, decodable bool) {
 	var entry xdr.LedgerEntry
 	if err := xdr.SafeUnmarshalBase64(entryB64, &entry); err != nil {

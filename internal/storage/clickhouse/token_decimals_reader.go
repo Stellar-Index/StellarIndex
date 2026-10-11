@@ -14,27 +14,22 @@ import (
 const maxSaneTokenDecimals = 38
 
 // tokenDecimalsKeys are the METADATA map keys that carry the scale, in preference order.
-//
-// `decimal` is the soroban-token-sdk's name (SACs, token-sdk builds); hand-written tokens, including
-// tokenized Treasury funds, use `decimals`, so both are read. A missed reading publishes a
-// wrong figure: a 5-decimal fund read at the default 7 shows one hundredth of its
-// capitalisation. Never blended: see [decimalsFromInstanceEntry].
+// `decimal` is the soroban-token-sdk's name (SACs); hand-written tokens, including tokenized
+// Treasury funds, use `decimals`, so both are read. A missed reading publishes a wrong figure: a
+// 5-decimal fund read at the default 7 shows one hundredth of its capitalisation. Never blended:
+// see [decimalsFromInstanceEntry].
 var tokenDecimalsKeys = []string{"decimal", "decimals"}
 
 // tokenMetadataMapKeys are the instance-storage keys whose value is a map that may carry the
-// scale, in preference order.
-//
-// `METADATA` is the soroban-token-sdk convention. Private-credit deal tokens have no METADATA
-// key; their instance storage holds `Config`, a map whose `decimals` is the scale. Reading it
-// keeps the published supply on our own measurement, not a third-party seed file. Both maps are
-// read and never blended: differing scales are refused by [decimalsFromInstance].
+// scale, in preference order. `METADATA` is the soroban-token-sdk convention; private-credit deal
+// tokens have no METADATA key and instead hold `Config`, a map whose `decimals` is the scale.
+// Both maps are read and never blended: differing scales are refused by [decimalsFromInstance].
 var tokenMetadataMapKeys = []string{"METADATA", "Config"}
 
 // TokenDecimals resolves a token contract's `decimals()` from the METADATA map in its instance
-// storage, the value `decimals()` would return, without executing WASM.
-//
-// found=false (nil error) when the instance isn't in the lake, no METADATA map exists, or the
-// declaration is out of bounds; callers keep their default (7).
+// storage, the value `decimals()` would return, without executing WASM. found=false (nil error)
+// when the instance isn't in the lake, no METADATA map exists, or the declaration is out of
+// bounds; callers keep their default (7).
 func (r *ExplorerReader) TokenDecimals(ctx context.Context, contractID string) (uint32, bool, error) {
 	raw, err := strkey.Decode(strkey.VersionByteContract, contractID)
 	if err != nil {

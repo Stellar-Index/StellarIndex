@@ -8,8 +8,7 @@ import (
 
 // A dependency-free reader for the WebAssembly sections the contract-wasm endpoint surfaces: the
 // export table plus the type, function and import sections that give each export a signature.
-// It is not a validator; every other section is length-skipped. Pure Go (no wabt, no cgo) so
-// the exports layer works regardless of tooling.
+// It is not a validator; every other section is length-skipped. Pure Go (no wabt, no cgo).
 //
 // Binary format reference: https://webassembly.github.io/spec/core/binary/
 
@@ -58,11 +57,10 @@ type reader struct {
 
 func (r *reader) eof() bool { return r.i >= len(r.b) }
 
-// safeCap bounds a make() prealloc hint by the reader's remaining bytes. A
-// LEB128 count is attacker-influenced (a ~5-byte field encodes ~5e9), so an uncapped
-// make([]T, 0, count) could allocate gigabytes or panic before the loop reaches errTruncated.
-// Every element takes at least one byte, so the remaining bytes bound the hint; an oversized
-// count still errors normally when the loop runs off the end.
+// safeCap bounds a make() prealloc hint by the reader's remaining bytes. A LEB128 count is
+// attacker-influenced (a ~5-byte field encodes ~5e9), so an uncapped make([]T, 0, count) could
+// allocate gigabytes or panic before the loop reaches errTruncated. Every element takes at least
+// one byte, so an oversized count still errors normally when the loop runs off the end.
 func (r *reader) safeCap(count uint64) int {
 	rem := len(r.b) - r.i
 	if rem < 0 {
@@ -103,12 +101,10 @@ func (r *reader) uvarint() (uint64, error) {
 	}
 }
 
-// bytes reads n raw bytes.
-//
-// The bound is `n > len(r.b)-r.i`, not `r.i+n > len(r.b)`: n comes from an attacker-authored
-// LEB128 and can be near MaxInt64, where r.i+n overflows negative, passes the check and panics
-// in the slice expression. The subtraction cannot overflow because r.i <= len(r.b) holds after
-// every mutation in this file.
+// bytes reads n raw bytes. The bound is `n > len(r.b)-r.i`, not `r.i+n > len(r.b)`: n comes from
+// an attacker-authored LEB128 and can be near MaxInt64, where r.i+n overflows negative, passes the
+// check and panics in the slice expression. The subtraction cannot overflow because
+// r.i <= len(r.b) holds after every mutation in this file.
 func (r *reader) bytes(n int) ([]byte, error) {
 	if n < 0 || n > len(r.b)-r.i {
 		return nil, errTruncated

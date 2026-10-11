@@ -28,12 +28,11 @@ type LiveSinkOptions struct {
 	// WriteTimeout). Ledgers still unflushed when it expires are logged
 	// and left to ch-live-catchup.
 	StopTimeout time.Duration
-	// MaxBufferLedgers caps how many ledgers the Sink holds in memory before it starts
-	// BOUNDED-DROPPING incoming extracts during a sustained ClickHouse outage (default 4096).
-	// BufferSize bounds the worker's INBOX; this bounds the Sink's per-table row slices, which
-	// the channel cap does NOT (a failing flush keeps them while the worker keeps appending).
-	// Combined, the CH backlog is bounded at ~BufferSize + MaxBufferLedgers ledgers; beyond that
-	// the ch-live-catchup gap-scan timer heals the gap.
+	// MaxBufferLedgers caps how many ledgers the Sink holds in memory before it drops incoming
+	// extracts during a sustained ClickHouse outage (default 4096). BufferSize bounds only the
+	// worker's INBOX; the Sink's per-table row slices are not bounded by it (a failing flush keeps
+	// them while the worker keeps appending). Combined, the backlog is ~BufferSize +
+	// MaxBufferLedgers ledgers; beyond that the ch-live-catchup gap-scan timer heals the gap.
 	MaxBufferLedgers int
 	// Logger for worker warn/error lines; nil → slog.Default().
 	Logger *slog.Logger
@@ -44,14 +43,12 @@ type LiveSinkOptions struct {
 // interval. The ch-live-catchup timer is the completeness backstop for anything this best-effort
 // sink drops.
 //
-// Safety: PushLedger is NON-BLOCKING. On a full buffer it DROPS the whole LedgerExtract
-// (DroppedCount++) rather than back-pressuring the live ingest loop, so a slow or down
-// ClickHouse can never stall Postgres ingest.
-//
-// Completeness: a drop (or a mid-flush write error) leaves a HOLE in the lake. ch-live-catchup
-// heals holes only if it gap-scans below CH_max, not just extends the tip. The real-time
-// projector (ADR-0041) does not trust the lake to be hole-free: it reads contract_events only up
-// to ContiguousWatermark, so an unhealed drop stalls it at the hole rather than losing events.
+// PushLedger is NON-BLOCKING: on a full buffer it DROPS the whole LedgerExtract (DroppedCount++)
+// rather than back-pressuring the live ingest loop, so a slow or down ClickHouse can never stall
+// Postgres ingest. A drop (or a mid-flush write error) leaves a HOLE in the lake that
+// ch-live-catchup heals only if it gap-scans below CH_max, not just extends the tip. The
+// real-time projector (ADR-0041) reads contract_events only up to ContiguousWatermark, so an
+// unhealed drop stalls it at the hole rather than losing events.
 type LiveSink struct {
 	sink        *Sink
 	logger      *slog.Logger
@@ -144,12 +141,12 @@ func (l *LiveSink) Start() { go l.run() }
 
 // PushLedger enqueues a ledger's structural extract for the worker. NON-BLOCKING: drops
 // (DroppedCount++) if the buffer is full or shutdown is in progress, so it never stalls the live
-// ingest loop. A drop is logged with its ledger: the lake watermark stalls at that hole until
-// the catch-up timer heals it, and the log names the ledger to re-derive.
+// ingest loop. A drop is logged with its ledger, since the lake watermark stalls at that hole
+// until the catch-up timer heals it.
 //
-// The send runs under mu, which Stop takes to set `stopped` before closing
-// `stopping`: a push either lands before the worker's final drain or is
-// counted as a drop — never left in a channel nobody reads.
+// The send runs under mu, which Stop takes to set `stopped` before closing `stopping`: a push
+// either lands before the worker's final drain or is counted as a drop, never left in a channel
+// nobody reads.
 func (l *LiveSink) PushLedger(ext LedgerExtract) {
 	l.mu.Lock()
 	stopped, sent := l.stopped, false

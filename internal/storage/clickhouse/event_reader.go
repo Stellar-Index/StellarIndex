@@ -92,14 +92,12 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 // tx_hash; scanInApplyOrder re-sorts each ledger by tx_index). ID and TransactionIndex stay zero.
 // Empty filters leave Decoder.Matches as the only gate. excludeTopic0Syms (nil = none) drops the
 // CAP-67 firehose in SQL (ClassicTokenTopic0Syms).
-//
 // useFinal=false (projector): windows are small and writes idempotent, so duplicate
 // ReplacingMergeTree parts are absorbed. A COUNTING consumer must not double-count them: pass true,
 // or dedup adjacent rows in Go (ORDER BY makes duplicates consecutive; gentler on the shared host).
 // FINAL + contract_id filter + wide range is the protocol_reader.go trap; the sole useFinal=true
 // caller is deliberate (openRead has no execution-time cap and it streams), but a new request-path
 // caller needs its own row ceiling.
-//
 // withOpArgs reads op_args_xdr, a wide column only decoders reading events.Event.OpArgs (redstone)
 // need. withStateWriteKeys resolves StateWriteKeys from ledger_entry_changes (state_write_keys.go).
 func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs, withStateWriteKeys bool, fn func(events.Event) error) error {
@@ -147,7 +145,7 @@ func streamContractEventsWhere(ctx context.Context, addr string, from, to uint32
 // topic_0_sym from GetSym() (Symbol only), so it is empty for an ScvString topic[0] (phoenix) and
 // filtering on it alone silently matches nothing. topics_xdr[1] is also tested against the
 // ScvString encoding, since widening the column would mean re-extracting the lake. It only widens
-// a prefilter; each decoder's Matches() remains the final gate.
+// the prefilter; each decoder's Matches() remains the final gate.
 func topic0Predicate(topic0Syms []string) string {
 	asStrings := make([]string, 0, len(topic0Syms))
 	for _, s := range topic0Syms {
