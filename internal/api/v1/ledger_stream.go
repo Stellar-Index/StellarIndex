@@ -113,16 +113,12 @@ type ledgerStreamTipResult struct {
 //
 // Wire shape per connection:
 //
-//   - Headers: text/event-stream + X-Accel-Buffering: no (set by the
-//     streaming writer); Cache-Control is the route policy.
 //   - Initial event: a ledger_update with the current tip, emitted
 //     synchronously on connect. There is no Last-Event-ID resume: every
 //     connection starts from the current tip.
 //   - Recurring events: one per new ledger (poll cadence 500ms), plus
 //     a keepalive refresh every ~10s if the ledger has not advanced
 //     — so lag_seconds never goes stale even during an ingest stall.
-//   - Heartbeats: streaming.DefaultHeartbeatInterval (15s) comment
-//     frames when nothing else flows.
 //
 // Pre-stream errors (no CursorsReader wired, cursor not yet
 // established) are returned as problem+json with the right status —

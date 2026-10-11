@@ -350,10 +350,6 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 // "unmapped" badge — see docs/design/oracle-capture-totality-design.md
 // §5). The storage read is unfiltered either way — a raw row must
 // never be silently dropped between the table and this boundary.
-//
-// Empty array + 200 when no oracles have published recently or no
-// OracleReader is wired — consistent with /v1/oracle/latest's
-// "nothing to report" handling.
 func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 	reader := s.Oracle
 	if reader == nil {
