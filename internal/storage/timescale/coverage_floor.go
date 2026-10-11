@@ -19,23 +19,20 @@ import (
 // window [$3, $4).
 //
 // Shape: `WHERE base_asset = ANY($1) AND quote_asset = ANY($2)` does NOT
-// reach prices_<g>_pair_bucket_idx. A ScalarArrayOpExpr on the leading index
-// columns is planned as a bucket-ordered scan with the pair as a post-filter,
-// so proving a sparse direction empty walks every chunk (5 666 ms on r1
-// prices_1d). One correlated `min(bucket)` per (form, form, direction)
-// combination is an equality lookup the index satisfies as an Index Only Scan
-// (6.9 ms). The alias arrays are cross-joined here so the SQL text is STATIC.
+// reach prices_<g>_pair_bucket_idx; it plans as a bucket-ordered scan with
+// the pair as a post-filter, so proving a sparse direction empty walks every
+// chunk. One correlated `min(bucket)` per (form, form, direction) is an
+// Index Only Scan. The alias arrays are cross-joined here so the SQL text
+// is STATIC.
 //
 // Both window bounds are Go-side literals rather than now(): run-time chunk
-// exclusion for now() leaves the PLANNER enumerating every chunk (see
-// [Store.LatestClosedVWAP1mForPair]). The ADR-0015 closed-bucket guard rides
-// on that bound as `bucket <= $4 - INTERVAL`, never `bucket + INTERVAL <= $4`.
+// exclusion for now() leaves the PLANNER enumerating every chunk. The
+// ADR-0015 closed-bucket guard rides on that bound as
+// `bucket <= $4 - INTERVAL`, never `bucket + INTERVAL <= $4`.
 //
-// The explicit `::timestamptz` cast on $4 is load-bearing: its first use is
-// the operand of `- INTERVAL`, so uncast it parses as `interval - interval`
-// and fails with 42883 before a row is read. A probe error is silent by
-// design (one warning), which is why the integration test in test/integration
-// must execute this statement.
+// The `::timestamptz` cast on $4 is load-bearing: uncast it parses as
+// `interval - interval` and fails with 42883. A probe error is silent by
+// design, so the integration test must execute this statement.
 const earliestBucketSQL = `
 	SELECT min(m) FROM (
 	    SELECT (SELECT min(p.bucket)
@@ -79,12 +76,10 @@ const earliestBucketStoredSQL = `
 // outside-coverage signal.
 //
 // Alias-complete on BOTH legs and BOTH stored directions: the serving reads
-// this floor explains ([Store.OHLCSeries], [Store.HistoryPoints],
-// [Store.HistoryPointsInRange]) take ONE spelling per leg, and the API walks
-// canonical.AssetAliases across both. XLM's native / crypto:XLM / SAC forms
-// are disjoint venue populations and the SDEX decoder records a market in
-// whichever orientation the venue used, so a floor read against one spelling
-// of one direction would be too LATE.
+// this floor explains take ONE spelling per leg, and the API walks
+// canonical.AssetAliases across both. XLM's forms are disjoint venue
+// populations and SDEX records a market in whichever orientation the venue
+// used, so a floor read against one spelling would be too LATE.
 //
 // A surface reading ONE stored orientation must use
 // [Store.EarliestBucketAsStored]; the fiat-quoted /v1/ohlc series, which
@@ -135,18 +130,12 @@ func (s *Store) EarliestBucketAsStored(
 // through the flipped arm, base_asset equal to it), the base leg still
 // alias-complete and both stored directions still folded.
 //
-// It exists for the fiat-quoted /v1/ohlc series. That series is served
-// by combining the USD-pegged constituents
-// ([v1.Server.usdPeggedConstituents]), and each constituent is read
-// under the ONE quote spelling the peg expansion named it in — a
-// declared peg in its classic form, an abstract backer, or the fiat
-// itself. [Store.OHLCSeries] takes that spelling literally; it folds
-// the two stored directions but never a second spelling of a leg. A
-// declared peg's SAC wrapper is therefore unreachable from that
-// surface, and Soroban AMMs quote in exactly that wrapper — so a floor
-// folded across the quote family would find a pool's bucket and
-// describe the surface as quiet since it, a coverage claim about bars
-// the series can never return. The base leg keeps its fold because the
+// It exists for the fiat-quoted /v1/ohlc series, which reads each USD-pegged
+// constituent ([v1.Server.usdPeggedConstituents]) under ONE quote spelling.
+// [Store.OHLCSeries] never folds a second spelling of a leg, so a declared
+// peg's SAC wrapper (where Soroban AMMs quote) is unreachable from that
+// surface; a floor folded across the quote family would claim coverage for
+// bars the series can never return. The base leg keeps its fold because the
 // combine itself enumerates every base spelling.
 //
 // Same window contract, same closed-bucket guard, and the same
