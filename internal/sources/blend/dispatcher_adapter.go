@@ -54,30 +54,21 @@ func (*Decoder) Name() string { return SourceName }
 // so it is the contract-id prefilter for the -ch completeness re-derive.
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
-// Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY,
-// not topic symbol (ADR-0035): a non-Blend contract that emits a
-// `supply`/`claim`/`set_admin`/… topic (SACs and other DeFi do) must NOT
-// be attributed to Blend.
+// Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY, not topic symbol
+// (ADR-0035): a non-Blend contract that emits a `supply`/`claim`/`set_admin`/… topic (SACs and
+// other DeFi do) must NOT be attributed to Blend.
 //
-//   - `deploy` matches ONLY when emitted by one of the canonical Pool
-//     Factories (MainnetPoolFactories — Blend has MORE THAN ONE; see that
-//     var). This is the trust root — without it a foreign contract could
-//     inject a pool into the registry and launder its own events as
-//     Blend's; with only ONE of the factories it would silently drop the
-//     other factory's pools.
-//   - every other event matches ONLY when emitted by a REGISTERED pool
-//     (a factory descendant). The registry is seeded from factory deploy
-//     events (live + DB warm + genesis walk), so a real pool is always
-//     present before its business events are processed.
+//   - `deploy` matches ONLY from a canonical Pool Factory (MainnetPoolFactories; Blend has MORE
+//     THAN ONE). This is the trust root: otherwise a foreign contract could inject a pool into the
+//     registry and launder its own events as Blend's.
+//   - every other event matches ONLY from a REGISTERED pool (a factory descendant). The registry
+//     is seeded from factory deploy events (live + DB warm + genesis walk).
 //
-// COVERAGE NOTE (ADR-0035): an un-seeded real pool would have its events
-// dropped, so registry completeness is a hard requirement. It is
-// guaranteed by the factory `deploy` events themselves living in the lake
-// (substrate-continuous per ADR-0033 Claim 1) — a missing pool would mean
-// a missing factory event, which continuity already rules out — AND by
-// MainnetPoolFactories being the complete factory set (empirically
-// verified; an undocumented factory is the only residual risk, mitigated
-// by re-running the deploy-graph enumeration).
+// COVERAGE NOTE (ADR-0035): an un-seeded real pool has its events dropped, so registry
+// completeness is a hard requirement. It rests on the factory `deploy` events living in the lake
+// (substrate-continuous per ADR-0033 Claim 1) and on MainnetPoolFactories being the complete
+// factory set; an undocumented factory is the residual risk, mitigated by re-running the
+// deploy-graph enumeration.
 func (d *Decoder) Matches(ev events.Event) bool {
 	kind := classifyAny(&ev)
 	if kind == "" {

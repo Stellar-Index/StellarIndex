@@ -10,26 +10,21 @@ import (
 
 // Decoder is the OpDecoder for pre-P23 classic-movement reconstruction
 // (ADR-0047 D2). It mirrors sdex.Decoder's shape but is NEVER registered with
-// the live dispatcher (see the package doc). It is wired only into
+// the live dispatcher. It is wired only into
 // `stellarindex-ops classic-movements-backfill`, which feeds clickhouse.ClassicOp
 // values through Decode as a dispatcher.OpContext, as ch-rebuild's SDEX pass does.
 //
-// Stateful since Phase 3: claiming or clawing back a CreateClaimableBalance
-// needs that create's Asset/Amount, which neither op carries (only the
-// BalanceId). balances is an in-RUN index, populated as Decode observes
-// 'claimable_balance_create' movements, that resolves same-run claims for free;
-// pending collects those it can't resolve (create outside this run's range or
-// in a not-yet-visited window; see doc.go's ordering caveat) for the caller's
-// second-pass ClickHouse lookup (ADR-0048 D2), via
-// TakePendingClaimableBalances / ResolvePendingClaimableBalance.
+// Stateful: claiming or clawing back a CreateClaimableBalance needs that create's Asset/Amount,
+// which neither op carries (only the BalanceId). balances is an in-RUN index populated as Decode
+// observes 'claimable_balance_create' movements; pending collects claims it can't resolve (create
+// outside this run's range or in a not-yet-visited window; see doc.go's ordering caveat) for the
+// caller's second-pass ClickHouse lookup (ADR-0048 D2), via TakePendingClaimableBalances /
+// ResolvePendingClaimableBalance.
 //
-// The index is BOUNDED at maxCBIndexEntries (FIFO, oldest create evicted
-// first): a genesis-to-P23 run in one invocation would otherwise accumulate
-// about the full CreateClaimableBalance row count (~1.5B, sampled) before any
-// claim, which drove an earlier OOM. Eviction is safe: a miss falls through to
-// clickhouse.FindClaimableBalanceCreates, the backfill's batched second pass.
-// Still chunk `-from`/`-to`: a smaller working set keeps more claims on the
-// free in-memory path.
+// The index is BOUNDED at maxCBIndexEntries (FIFO, oldest create evicted first): a genesis-to-P23
+// run would otherwise hold about the full CreateClaimableBalance row count (~1.5B) before any
+// claim. Eviction is safe: a miss falls through to clickhouse.FindClaimableBalanceCreates, the
+// batched second pass. Chunk `-from`/`-to` to keep more claims on the in-memory path.
 //
 // Not safe for concurrent Decode calls (as dispatcher.Dispatcher).
 type Decoder struct {

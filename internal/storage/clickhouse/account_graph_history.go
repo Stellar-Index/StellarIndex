@@ -16,8 +16,7 @@ import (
 // (sponsor, sponsored) pair, with only first_at and last_at. Per-event times exist
 // only in the rollups' working tables (account_creators_ops, account_sponsors_ops),
 // which each cycle TRUNCATEs and refills, so reading one mid-cycle serves a partial
-// archive (deploy/clickhouse/account_creators_rollup.sql). No per-event series
-// is available and none is invented. Two facts are derivable and kept apart:
+// archive (deploy/clickhouse/account_creators_rollup.sql). Two facts are derivable and kept apart:
 //
 //   - NEW ACCOUNTS per month: counterparties first created/sponsored that month.
 //     COMPLETE: summed over all months it equals the distinct-counterparty total.
@@ -26,13 +25,9 @@ import (
 //
 // events == placed + unplaced (TestAccountGraphHistoryPlacementIdentity).
 //
-// A month with nothing in it emits no point and nothing is carried forward: a
-// reader cannot tell "nothing happened" from "we could not see". Coverage is the
-// span the rollup actually aggregated (ADR-0031), so an absent month inside it was
-// quiet and one outside it was not observed.
-//
-// The grain is fixed at months: with two timestamps per edge a daily bucket would
-// not place any extra event, only scatter the same ones over ~4,000 buckets.
+// A month with nothing in it emits no point and nothing is carried forward. Coverage is the span
+// the rollup aggregated (ADR-0031): an absent month inside it was quiet, one outside it was not
+// observed.
 
 // accountGraphHistoryPeriodsQuery buckets both arms' edges by month in one trip.
 // Each sub-select is a PRIMARY-KEY RANGE READ (tables are ORDER BY (creator, created)

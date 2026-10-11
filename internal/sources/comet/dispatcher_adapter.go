@@ -13,30 +13,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Decoder is the dispatcher-facing view of Comet. Single instance
-// per indexer — Comet uses a shared ("POOL", <event_name>) topic
-// namespace across every pool contract, so event ROUTING is by topic
-// bytes, but ATTRIBUTION is gated on contract identity
-// (ADR-0035/0040): any pubnet contract deployed from (or mimicking)
-// the Balancer-v1 WASM emits the identical topic shape, and without
-// the gate a look-alike could inject fabricated trades under
-// `source = "comet"`.
+// Decoder is the dispatcher-facing view of Comet. Single instance per indexer. Comet uses a shared
+// ("POOL", <event_name>) topic namespace across every pool contract, so ROUTING is by topic bytes
+// but ATTRIBUTION is gated on contract identity (ADR-0035/0040): any contract deployed from (or
+// mimicking) the Balancer-v1 WASM emits the same topic shape, and without the gate a look-alike
+// could inject fabricated trades under `source = "comet"`.
 //
-// Comet has NO factory namespace — no creation event announces new
-// pools — so the gate is the curated-set mechanism (ADR-0040 §1
-// mechanism 2/3): the in-code MainnetGatedSet (today exactly one
-// pool, Blend's backstop) is the trust root; caller opts layer the
-// protocol_contracts DB warm on top (the operator seam for admitting
-// a future pool without a redeploy). No WASM-hash sweep discovers
-// pools; wasm-drift alerts on drift but never admits one.
+// No creation event announces new pools, so the gate is the curated set (ADR-0040 §1 mechanism
+// 2/3): the in-code MainnetGatedSet (today one pool, Blend's backstop) is the trust root; the
+// protocol_contracts DB warm layers on top as the operator seam for admitting a pool without a
+// redeploy. No WASM-hash sweep discovers pools; wasm-drift alerts on drift but never admits one.
 //
-// No goroutines, no polling. Claims any of the five Soroban-emitted
-// POOL events from a REGISTERED pool: swap (→ TradeEvent), join_pool
-// / exit_pool / deposit / withdraw (→ LiquidityEvent). Admin
-// functions (set_controller, gulp, init) exist but do NOT publish
-// events in the Soroban port; BPT transfers go through the SEP-41
-// standard token-event surface (handled by sep41_supply when the
-// pool is in scope), not the POOL namespace.
+// Claims the five Soroban-emitted POOL events from a REGISTERED pool: swap (→ TradeEvent),
+// join_pool / exit_pool / deposit / withdraw (→ LiquidityEvent). Admin functions publish no events
+// in the Soroban port; BPT transfers use the SEP-41 surface (sep41_supply), not the POOL
+// namespace.
 type Decoder struct {
 	reg *contractid.Registry
 

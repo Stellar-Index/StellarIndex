@@ -159,30 +159,20 @@ func (d *Decoder) storePairTokens(pair string, token0, token1 canonical.Asset) f
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.Decoder]. Topic symbols are NOT unique
-// across protocols (every AMM emits "swap"/"sync"/"skim", and any
-// contract can emit a `("SoroswapFactory","new_pair")`-shaped event), so
-// matching by topic alone would absorb other protocols' events as
-// Soroswap trades. We gate on CONTRACT IDENTITY:
+// Matches implements [dispatcher.Decoder]. Topic symbols are NOT unique across protocols (every
+// AMM emits "swap"/"sync"/"skim"), so we gate on CONTRACT IDENTITY, not topic (ADR-0035):
 //
-//   - factory `new_pair` events match ONLY when emitted by one of the
-//     canonical Soroswap factories (MainnetFactories — Soroswap has more
-//     than one; see that var). This is the load-bearing gate: without it a
-//     foreign contract could inject a pair→tokens mapping into the registry
-//     and have its own swaps mis-attributed as Soroswap trades; with
-//     only ONE factory it would miss the others' pairs.
-//   - pair-contract events (swap/sync/deposit/withdraw/skim) match ONLY
-//     when the emitter is a REGISTERED Soroswap pair. The registry is
-//     seeded from factory new_pair events (live), a startup DB warm, and
-//     the genesis factory walk (`stellarindex-ops seed-soroswap-pairs`),
-//     so a real pair is always present before its events arrive
-//     (chronological: a pair's new_pair precedes its first swap), while
-//     a topic-collision from a non-Soroswap contract is rejected.
+//   - factory `new_pair` events match ONLY from a canonical Soroswap factory (MainnetFactories;
+//     there is more than one). This is the load-bearing gate: otherwise a foreign contract could
+//     inject a pair→tokens mapping into the registry and have its swaps mis-attributed as Soroswap
+//     trades.
+//   - pair-contract events (swap/sync/deposit/withdraw/skim) match ONLY from a REGISTERED Soroswap
+//     pair. The registry is seeded from factory new_pair events (live), a startup DB warm and the
+//     genesis factory walk (`stellarindex-ops seed-soroswap-pairs`); a pair's new_pair precedes
+//     its first swap.
 //
-// COVERAGE NOTE: completeness of the pair registry is therefore a hard
-// requirement — an un-seeded real pair would have its events dropped.
-// The swap path already depended on the registry (token resolution), so
-// this only extends the same dependency to skim/deposit/withdraw.
+// COVERAGE NOTE: pair-registry completeness is a hard requirement; an un-seeded real pair has its
+// events dropped.
 func (d *Decoder) Matches(ev events.Event) bool {
 	kind := classify(&ev)
 	if kind == "" {

@@ -23,19 +23,9 @@ import (
 //
 //	Record { balance: i128, weight: i128, scalar: i128, index: u32 }
 //
-// Earlier WASM generations carried a different Record field set; decode is by
-// field name, so only the `balance` i128 is required. The reader probes BOTH plausible key encodings (Vec[Symbol] per the spec, bare
-// Symbol defensively) because upgrades may change it. Operator check (HTTP
-// port 8123):
-//
-//	SELECT key_xdr, ledger_seq, entry_xdr != '' AS present
-//	FROM stellar.ledger_entries_current FINAL
-//	WHERE entry_type = 'contract_data'
-//	  AND key_xdr IN (<output of cometPoolKeys for
-//	                   comet.MainnetBackstopPool, both encodings>)
-//
-// Exactly one row is expected. A mismatch shows up as the pool landing in the
-// undecodable list: fail-to-absent, never a misread number.
+// Decode is by field name, so only the `balance` i128 is required. The reader probes BOTH key
+// encodings (Vec[Symbol] per the spec, bare Symbol defensively) because upgrades may change it. A
+// pool matching neither lands in the undecodable list: fail-to-absent, never a misread number.
 const (
 	cometRecordDataKeySymbol = "AllRecordData"
 	cometFieldBalance        = "balance"

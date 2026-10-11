@@ -9,30 +9,25 @@ import (
 	"sort"
 )
 
-// This file parses the RedStone signed payload (write_prices' third argument) far enough to recover
-// per-feed signer values and timestamps, for SUBSET-FILTERED batches whose updated_feeds is shorter than
-// feed_ids. The adapter stores each accepted feed's signer MEDIAN, so a surviving price must equal a
-// unique candidate's median at its package_timestamp; anything ambiguous refuses the event.
+// This file parses the RedStone signed payload (write_prices' third argument) to recover per-feed
+// signer values and timestamps for SUBSET-FILTERED batches (updated_feeds shorter than feed_ids).
+// The adapter stores each feed's signer MEDIAN, so a surviving price must equal a unique
+// candidate's median at its package_timestamp; anything ambiguous refuses the event.
 //
 // Wire layout (big-endian, parsed from the END):
 //
-//	[dataPackage 1]…[dataPackage N] [packagesCount 2B]
-//	[unsignedMetadataSize 3B] [unsignedMetadata] [redstoneMarker 9B]
+//	package set: [dataPackage 1]…[dataPackage N] [packagesCount 2B]
+//	             [unsignedMetadataSize 3B] [unsignedMetadata] [redstoneMarker 9B]
+//	dataPackage: [dataPoint 1]…[dataPoint M] [timestampMS 6B]
+//	             [valueByteSize 4B] [dataPointsCount 3B] [signature 65B]
+//	dataPoint:   [feedID 32B zero-right-padded] [value valueByteSize B]
 //
-// each dataPackage, also from its end:
+// Signatures are NOT verified (the event proves the adapter accepted the payload). Without signer
+// filtering every package is aggregated, so medians can disagree with the adapter's.
 //
-//	[dataPoint 1]…[dataPoint M] [timestampMS 6B]
-//	[valueByteSize 4B] [dataPointsCount 3B] [signature 65B]
-//
-// each dataPoint: [feedID 32B zero-right-padded] [value valueByteSize B]
-//
-// Signatures are NOT verified: the event proves the adapter accepted the payload. Without redstone-core's
-// signer filtering every package is aggregated, so medians can disagree with the adapter's (usually a refusal).
-//
-// F1 CAVEAT: it misattributes only when (1) signer-filter divergence hits a surviving feed, (2) a dropped
-// feed's median equals that price (the BENJI twins in decode_test.go), and (3) the dropped feed sits
-// between survivors so the bijection is unique. Fallback path only; corroborateFallback refuses it when
-// state writes name the op's feeds.
+// F1 CAVEAT (fallback path only): it misattributes only when signer-filter divergence hits a
+// surviving feed and a dropped feed's median equals that price (the BENJI twins in decode_test.go).
+// corroborateFallback refuses it when state writes name the op's feeds.
 var redstoneMarker = []byte{0x00, 0x00, 0x02, 0xed, 0x57, 0x01, 0x1e, 0x00, 0x00}
 
 const (
