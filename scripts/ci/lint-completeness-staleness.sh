@@ -3,49 +3,40 @@
 # must stay CALIBRATED to the deployed completeness-audit cadence.
 #
 # internal/api/v1/coverage_verdicts.go hand-calibrates two constants that
-# decide when GET /v1/coverage flags its verdict `stale` (the gate
-# that stops "15/15 complete" reading healthy forever after the audit
-# died):
+# decide when GET /v1/coverage flags its verdict `stale` (so "15/15 complete"
+# cannot read healthy forever after the audit died):
 #   - coverageVerdictStaleAge     (a Go time.Duration, e.g. 26 * time.Hour)
 #   - coverageVerdictStaleLedgers (a ledger count, e.g. 34560)
-# Both carry an in-code "CALIBRATED TO THE DEPLOYED CADENCE" note pinned
-# to the DAILY completeness timer. Nothing cross-checked them: change the
-# timer cadence (daily -> weekly) and the staleness flag silently either
-# never trips or flaps on every normal cycle — recreating the exact
-# failure class the flag exists to prevent.
+# Both carry an in-code "CALIBRATED TO THE DEPLOYED CADENCE" note pinned to
+# the DAILY completeness timer. Change the cadence (daily -> weekly) and the
+# flag silently never trips or flaps every cycle, the failure it exists to
+# prevent.
 #
-# The AUTHORITATIVE cadence is the r1-deployed, Ansible-rendered timer
-# (docs/operations/maintainer-workflow.md: "r1 configuration is
-# ansible-managed", enforced by
+# The AUTHORITATIVE cadence is the Ansible-rendered r1 timer (maintainer-
+# workflow.md: "r1 configuration is ansible-managed", enforced by
 # ansible-drift.yml):
 #   configs/ansible/roles/archival-node/templates/systemd/compute-completeness.timer.j2
-# (templated + enabled in tasks/14-stellarindex-services.yml). NOTE:
-# The retired hourly deploy/systemd/stellarindex-completeness.timer was
-# never deployed and has been deleted; the code comment's reference to it
-# is out of date.
+# (enabled in tasks/14-stellarindex-services.yml). The hourly
+# deploy/systemd/stellarindex-completeness.timer was never deployed and is
+# deleted; the code comment's reference to it is out of date.
 #
-# This lint parses both constants and the timer's period and asserts:
-#   AGE (hard, both directions):
-#     timerPeriod + SLACK  <=  staleAge  <  2 * timerPeriod
-#     - lower bound: a normal on-cadence run (a gap up to one period,
-#       plus jitter/run-time) must NEVER trip stale;
-#     - upper bound: a single GENUINELY-missed cycle MUST eventually trip
-#       (staleAge under two periods), else a dead audit hides for cycles.
-#   LEDGERS (hard, lower bound only — see fuzziness note below):
-#     staleLedgers  >=  periodLedgers + LEDGER_SLACK
+# Asserts:
+#   AGE (hard, both directions):  timerPeriod + SLACK <= staleAge < 2 * timerPeriod
+#     - lower: a normal on-cadence run (a gap up to one period plus
+#       jitter/run-time) must NEVER trip stale;
+#     - upper: one GENUINELY missed cycle MUST eventually trip, else a dead
+#       audit hides for cycles.
+#   LEDGERS (hard, lower bound only):  staleLedgers >= periodLedgers + LEDGER_SLACK
 #     where periodLedgers = timerPeriod / ~5s-per-ledger (pubnet target).
 #
-# Fuzziness we deliberately DON'T assert: the ledger<->wall-clock link is
-# approximate (pubnet close time drifts ~5-6s) and the two constants are
-# calibrated to different horizons on purpose (age ~= 1 period + grace,
-# ledgers ~= 2 periods per the in-code note), so we do NOT assert the
-# ledger const equals the age const, nor an upper bound on it — only that
-# it, too, comfortably exceeds one period so a cadence change can't leave
-# it flapping/never-tripping. 5s/ledger is conservative for the lower
-# bound (real close >=5s => fewer ledgers/period => easier to pass).
+# Deliberately NOT asserted: ledger<->wall-clock is approximate (close time
+# drifts ~5-6s) and the constants target different horizons (age ~= 1 period +
+# grace, ledgers ~= 2 periods), so no equality and no ledger upper bound; only
+# that it comfortably exceeds one period. 5s/ledger is conservative for the
+# lower bound (real closes >=5s give fewer ledgers per period).
 #
-# Exit 0 clean, non-zero on any violation. Wired into CI's import-checks
-# job alongside lint-i128 / lint-migrations.
+# Exit 0 clean, non-zero on any violation. Wired into CI's import-checks job
+# alongside lint-i128 / lint-migrations.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -128,10 +119,9 @@ systemd_span_to_seconds() {
   echo "$total"
 }
 
-# Classify an OnCalendar= expression to a worst-case run PERIOD in seconds.
-# Handles the systemd keywords, and the common explicit form
-# `[WEEKDAY] Y-M-D H:M:S [TZ]`. Refuses (fail-closed) anything it can't
-# cleanly classify so a human extends the lint rather than mis-calibrating.
+# Classify an OnCalendar= expression to a worst-case run PERIOD in seconds:
+# systemd keywords and the explicit `[WEEKDAY] Y-M-D H:M:S [TZ]` form. Fail
+# closed on anything else so a human extends the lint rather than mis-calibrate.
 oncalendar_to_seconds() {
   local cal="$1" low tok
   cal="$(trim "$cal")"
@@ -147,8 +137,8 @@ oncalendar_to_seconds() {
     yearly|annually)  echo 31536000;  return 0 ;;
   esac
 
-  # Explicit calendar spec. Tokenise on whitespace; drop a trailing
-  # timezone token (UTC, an Area/City zone, or a +/-HH:MM offset).
+  # Explicit calendar spec: tokenise on whitespace, drop a trailing timezone
+  # token (UTC, Area/City, or +/-HH:MM offset).
   local weekday="" datepart="" timepart=""
   for tok in $cal; do
     case "$tok" in

@@ -1,54 +1,37 @@
 #!/usr/bin/env bash
 # lint-replay-plan.sh — the "decoder changed, who replays history?" tripwire.
 #
-# A decoder or an asset allow-list defines what live ingestion RECORDS.
-# Widening one changes what new rows look like from the moment the binary
-# deploys — but every row already written stays as it was, and nothing in
-# the deploy path replays the past. The served dataset then silently
-# forks: recent history has the new shape, older history does not, and
-# no gate notices because each row is individually valid.
+# A decoder or asset allow-list defines what live ingestion RECORDS. Widening
+# one changes new rows from the moment the binary deploys while every
+# existing row stays as it was and nothing replays the past, so the served
+# dataset silently forks and no gate notices (each row is valid). The change
+# is correct; the omission is the plan, and a plan in someone's head is not
+# one the next operator can read.
 #
-# Widening a canonical set (e.g. fiat codes) starts live ingestion of the
-# new members at once; without a replay their history is missing, and the
-# gap surfaces only when a gate compares against the widened set. The
-# change is correct; the omission is the plan — and a plan that lives in someone's head is not
-# a plan the next operator can read.
-#
-# This gate makes the plan ship WITH the change. Any commit range that
-# touches a watched path (a source decoder / event schema / feed
-# registry, or a canonical asset allow-list) fails unless a commit
-# message in the range carries an explicit, auditable trailer:
+# This gate makes the plan ship WITH the change. A commit range touching a
+# watched path (source decoder, event schema, feed registry, canonical asset
+# allow-list) fails unless a commit message in it carries a trailer:
 #
 #     Replay-Plan: <what history is replayed, how, and by whom>
-#
-# or, when no already-served history is affected (e.g. a pure refactor,
-# a new source with no rows yet, a decoder for an event that has never
-# fired on mainnet):
-#
+# or, when no served history is affected (pure refactor, new source with no
+# rows, event never fired on mainnet):
 #     Replay-Plan: none — <why no served history is affected>
 #
-# The trailer does not make a replay-free widening "allowed by default"
-# — it makes it impossible to do SILENTLY. A reviewer (or the operator
-# reading `git log`) sees the declaration next to the change, and a bare
-# `Replay-Plan: none` without a reason does not count.
+# A bare `none` without a reason does not count. The trailer makes a
+# replay-free widening impossible to do SILENTLY, not allowed by default.
 #
-# Deliberately NOT a per-file gate, and deliberately WITHOUT the CID-1
-# base-walk lint-baseline-growth.sh carries: decoders are a high-churn
-# surface (a dozen PRs a week touch one), so one plan per range is the
-# right granularity, and walking BASE_SHA back past every historical
-# undeclared decoder commit on main would red every PR that merges after
-# one. The failure mode this guards is a FORGOTTEN plan, not a hidden
-# bypass — one honest run per range is enough.
+# Deliberately not per-file, and without lint-baseline-growth.sh's CID-1
+# base-walk: decoders are high-churn, so one plan per range is the right
+# granularity, and walking BASE_SHA past every historical undeclared commit
+# would red every later PR. It guards a FORGOTTEN plan, not a hidden bypass.
 #
-# One thing it does NOT decide: which command. That is the replay decision
-# rule in docs/architecture/ingest-pipeline.md, and a declared plan naming
-# a projected source with `backfill` / `ch-rebuild` gets a WARNING here
-# (never a failure — see warn_wrong_replay_command).
+# It does not choose the command (the replay decision rule in
+# docs/architecture/ingest-pipeline.md); a plan naming a projected source with
+# `backfill` / `ch-rebuild` only WARNS (see warn_wrong_replay_command).
 #
 # Usage: BASE_SHA=<sha> ./scripts/ci/lint-replay-plan.sh
-#   BASE_SHA — the comparison base (PR base sha, or the push event's
-#              `before` sha). Unset/zero → check is skipped (first
-#              push / manual local run without history context).
+#   BASE_SHA is the PR base sha or the push event's `before`; unset/zero skips
+#   the check (first push, local run without history).
 #        ./scripts/ci/lint-replay-plan.sh --list-projected
 #   prints the projected source names the advisory checks against.
 set -euo pipefail
@@ -60,30 +43,25 @@ ZERO_SHA="0000000000000000000000000000000000000000"
 
 # Watched paths — the files whose content decides what ingestion writes.
 # Git pathspecs: `*` crosses `/`, so internal/sources/*/ reaches both
-# internal/sources/<src>/ and internal/sources/external/<venue>/. Test
-# files are deliberately NOT watched (the trailing :(exclude) pathspec):
-# a *_test.go change cannot alter a served row. Keep this list in step
-# with the failure message below.
+# internal/sources/<src>/ and internal/sources/external/<venue>/. Tests are
+# excluded (a *_test.go change cannot alter a served row). Keep in step with
+# the failure message below.
 WATCHED=(
-  # canonical asset allow-lists (ADR-0010 fiat, ADR-0014 crypto,
-  # ADR-0028 RWA): what asset codes the pipeline will accept at all.
+  # canonical asset allow-lists (ADR-0010 fiat, ADR-0014 crypto, ADR-0028 RWA)
   'internal/canonical/asset_fiat.go'
   'internal/canonical/asset_crypto.go'
   'internal/canonical/asset_rwa.go'
-  # per-source decoders (decode.go plus its siblings: aquarius
-  # decode_rewards.go / decode_admin.go, blend decode_money_market.go),
-  # event schemas, feed registries, and the external-venue pair
-  # allow-lists (external/{coinbase,bitstamp,kraken,binance}/pairs.go —
-  # the same widen-without-replay class as asset_fiat.go).
+  # per-source decoders (decode*.go siblings included), event schemas, feed
+  # registries, and external-venue pair allow-lists (same widen-without-replay
+  # class as asset_fiat.go).
   'internal/sources/*/decode*.go'
   'internal/sources/*/events.go'
   'internal/sources/*/feeds.go'
   'internal/sources/*/pairs.go'
-  # correlation / scaling / reconstruction logic that decides a
-  # recorded value without living in a decode*.go file itself: the
-  # soroswap Swap/Sync reserve correlation, redstone's price median,
-  # classicmovements' liquidity-pool op decoders, sorobanevents'
-  # multi-event reconstruction, and the CEX/oracle amount scalers.
+  # correlation / scaling / reconstruction logic that decides a recorded value
+  # outside decode*.go: soroswap Swap/Sync correlation, redstone median,
+  # classicmovements LP op decoders, sorobanevents reconstruction, CEX/oracle
+  # amount scalers.
   'internal/sources/*/consumer.go'
   'internal/sources/*/payload.go'
   'internal/sources/*/entrychanges.go'
@@ -93,19 +71,17 @@ WATCHED=(
   ':(exclude)*_test.go'
 )
 
-# changed_watched <base> <head> — the watched paths that differ between
-# <base> and <head> (three-dot: the PR's own changes, not drift on main).
+# changed_watched <base> <head> — watched paths that differ (three-dot: the
+# PR's own changes, not drift on main).
 changed_watched() {
   local base="$1" head="$2"
   git diff --name-only "${base}...${head}" -- "${WATCHED[@]}"
 }
 
-# has_replay_plan <log-body>
-# True iff <log-body> carries a Replay-Plan trailer with a substantive
-# value: non-empty, and not a bare `none` (a "none" must give its reason).
-# Both greps read from here-strings, not a pipeline, so `grep -q`
-# closing its input early can never surface as a SIGPIPE'd writer under
-# `set -o pipefail` — the trap lint-baseline-growth.sh documents.
+# has_replay_plan <log-body> — true iff the body carries a Replay-Plan trailer
+# with a substantive value (non-empty, not a bare `none`). Greps read
+# here-strings, not a pipeline, so `grep -q` closing early cannot SIGPIPE a
+# writer under pipefail (the trap lint-baseline-growth.sh documents).
 has_replay_plan() {
   local body="$1" trailers
   trailers="$(grep -iE '^Replay-Plan:[[:space:]]*\S' <<<"$body" || true)"
@@ -116,24 +92,20 @@ has_replay_plan() {
 }
 
 # ── advisory: does the declared plan name the RIGHT command? ───────────
-# A projected source (ADR-0031/0032: written by internal/projector and
-# nothing else) is replayed with projector-replay / projected-rebuild.
-# `backfill` is a MinIO walk that invariant 8 rules out and that writes
-# ZERO rows on a gated projected source; `ch-rebuild` is the
-# non-projected pass (and its event pass over a projected domain is a
-# second writer). The rule lives in docs/architecture/ingest-pipeline.md
-# ("The replay decision rule"); this is a WARNING, never a failure — the
-# gate's job is to make the plan exist, and only a human knows whether an
-# unusual command is the clean-slate exception.
+# A projected source (ADR-0031/0032: written only by internal/projector) is
+# replayed with projector-replay / projected-rebuild. `backfill` is a MinIO
+# walk that invariant 8 rules out and writes ZERO rows on a gated projected
+# source; `ch-rebuild`'s event pass over a projected domain is a second
+# writer. Rule: docs/architecture/ingest-pipeline.md ("The replay decision
+# rule"). A WARNING, never a failure: only a human knows whether an unusual
+# command is the clean-slate exception.
 #
-# The source names are DERIVED from the SourceSpec registry, never listed
-# here: a list here would be the same drift this whole gate exists to
-# prevent. A spec is projected iff it has a non-nil Projector (AGENTS.md
-# invariant 7), either as a `{ Name: …, Projector: … }` literal or through
-# a `func <helper>(name …) SourceSpec` whose body sets both. Each
-# `<pkg>.<Const>` name resolves through the import block to that package's
-# string constant. Anything the parser cannot resolve is an error, not a
-# skip: a derivation that silently drops names checks nothing.
+# Source names are DERIVED from the SourceSpec registry, never listed here (a
+# list would be the drift this gate exists to prevent). A spec is projected iff
+# it has a non-nil Projector (AGENTS.md invariant 7), as a `{ Name: …,
+# Projector: … }` literal or via a `func <helper>(name …) SourceSpec` setting
+# both. `<pkg>.<Const>` names resolve via the import block to that package's
+# string constant. Anything unresolvable is an error, not a skip.
 SPEC_REGISTRY=internal/pipeline/source_spec.go
 
 # shellcheck disable=SC2016  # awk program, not a shell expansion
@@ -263,8 +235,7 @@ if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
   exit 0
 fi
 
-# Derived on every run, not only when a plan is declared, so the PR that
-# moves or reshapes the registry is the one that goes red.
+# Derived on every run so the PR that reshapes the registry goes red.
 if ! projected="$(projector_source_names)" || [[ -z "$projected" ]]; then
   echo "lint-replay-plan: FAIL — derived no projected source names from $SPEC_REGISTRY."
   echo "  The registry moved or changed shape. Re-aim projector_source_names in"
@@ -279,8 +250,7 @@ if [[ -z "${changed//[[:space:]]/}" ]]; then
   exit 0
 fi
 
-# Range log body, captured into a variable rather than piped into grep -q
-# (see has_replay_plan for the SIGPIPE-under-pipefail reason).
+# Captured into a variable, not piped into grep -q (SIGPIPE; see has_replay_plan).
 log_body="$(git log --format=%B "${BASE_SHA}..HEAD")"
 
 if has_replay_plan "$log_body"; then

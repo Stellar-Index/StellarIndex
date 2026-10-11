@@ -1,26 +1,20 @@
 #!/usr/bin/env bash
 # ONE-TIME Cloudflare Pages bootstrap for a NEW zone.
 #
-# NOT idempotent against a live zone, despite reading like it: the
-# DNS upserts at the bottom will repoint the apex at the pre-rename
-# "stellarindex-showcase" project, detaching the live explorer. See
-# the safety interlock below. The word "idempotent" is what made
-# docs/operations/cf-pages-setup.md describe this as safe to run
-# from CI.
+# NOT idempotent against a live zone, despite reading like it: the DNS upserts
+# repoint the apex at the pre-rename "stellarindex-showcase" project,
+# detaching the live explorer (see the safety interlock below). Calling it
+# "idempotent" is what made docs/operations/cf-pages-setup.md describe it as
+# safe to run from CI.
 #
-# Creates / updates three Pages projects (showcase, dashboard,
-# status), binds custom domains, and (when the zone is on
-# Cloudflare) writes the DNS records. Everything lives in CF
-# config — no GUI clicks required after the one-time GitHub-app
-# authorization at the CF account level (see PREREQ below).
+# Creates/updates three Pages projects (showcase, dashboard, status), binds
+# custom domains, and (when the zone is on Cloudflare) writes the DNS records.
+# No GUI clicks after the one-time GitHub-app authorization (PREREQ).
 #
-# PREREQ: authorize Cloudflare's GitHub app on this org ONCE.
-# The CF UI for that lives at:
+# PREREQ: authorize Cloudflare's GitHub app on this org ONCE, at
 #   https://dash.cloudflare.com/<account-id>/pages/new/connect
-# Click "Connect GitHub", authorize the `StellarIndex` org,
-# select the `stellar-index` repo. After that, this script can
-# create new projects + change git config without ever opening
-# the CF dashboard again.
+# ("Connect GitHub", authorize the `StellarIndex` org, select `stellar-index`).
+# After that this script can create projects and change git config.
 #
 # Usage:
 #   export CLOUDFLARE_API_TOKEN=...   # Pages:Edit + Zone:Edit + DNS:Edit + Account:Read
@@ -43,24 +37,16 @@
 set -euo pipefail
 
 # ─── SAFETY INTERLOCK (do not remove without reading this) ────────
-#
-# This script is for the ORIGINAL bootstrap, before the project
-# rename. Run against the live zone it does two
-# irreversible things:
-#
-#   1. Creates the PRE-RENAME Pages projects (stellarindex-showcase
-#      et al), which are not what serves the site now.
-#   2. Upserts the APEX record stellarindex.io -> the showcase Pages
-#      project, DETACHING the live explorer from the domain.
-#
-# It is kept because the bootstrap procedure it encodes is still the
-# reference for standing up a fresh zone. It must not run against a
-# zone that is already live.
-#
-# To use it on a genuinely new zone, set CF_BOOTSTRAP_I_UNDERSTAND=1.
-# The variable is deliberately awkward: an operator who has not read
-# the paragraph above will not guess it, and CI cannot supply it by
-# accident.
+# This script is for the ORIGINAL bootstrap, before the project rename. Run
+# against the live zone it does two irreversible things:
+#   1. Creates the PRE-RENAME Pages projects (stellarindex-showcase et al),
+#      which are not what serves the site now.
+#   2. Upserts the APEX record stellarindex.io -> the showcase Pages project,
+#      DETACHING the live explorer from the domain.
+# It stays as the reference for standing up a fresh zone; never run it
+# against a live one. For a genuinely new zone set CF_BOOTSTRAP_I_UNDERSTAND=1,
+# deliberately awkward so an operator who has not read this will not guess it
+# and CI cannot supply it by accident.
 if [ "${CF_BOOTSTRAP_I_UNDERSTAND:-}" != "1" ]; then
   cat >&2 <<'REFUSAL'
 cf-pages-bootstrap: REFUSING TO RUN.
@@ -152,10 +138,8 @@ project_create_or_update() {
   existing=$(cf GET "/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$name" 2>/dev/null \
              | jq -r '.result.name // empty' || true)
 
-  # Build the env-vars JSON object: { "KEY": { "value": "VAL", "type": "plain_text" }, ... }
-  # Iterate via numeric index to avoid `set -u` tripping on an
-  # empty array — `${env_vars[@]}` errors when the array has
-  # zero elements; `${#env_vars[@]}` is always defined.
+# Build the env-vars JSON object: { "KEY": { "value": "VAL", "type": "plain_text" }, ... }
+# Numeric index, not `${env_vars[@]}`, which trips `set -u` on an empty array.
   local env_json='{}' i k v
   for (( i = 0; i < ${#env_vars[@]}; i++ )); do
     k="${env_vars[i]%%=*}"
@@ -300,9 +284,8 @@ project_create_or_update \
   "NODE_VERSION=20" \
   "PNPM_VERSION=10"
 
-# Static OpenAPI reference (Redocly-generated, committed to the
-# repo). No build step — CF Pages just serves the directory.
-# `make docs-api` regenerates the source HTML; CI checks the diff.
+# Static OpenAPI reference (Redocly-generated, committed). No build step: CF
+# Pages serves the directory. `make docs-api` regenerates it; CI checks the diff.
 project_create_or_update \
   "stellarindex-docs" \
   "docs/reference/api" \

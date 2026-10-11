@@ -2,24 +2,14 @@
 # lint-migration-compat.sh — enforce migrations/README.md rule 9:
 # every up-migration must be ADDITIVE and OLD-BINARY-SAFE.
 #
-# Why this gate exists:
+# Why: the playbook runs `migrate up` in pre_tasks, BEFORE any binary swap. If
+# the new binary fails its health probe, deploy-one-binary.yml rolls back the
+# BINARY ONLY; the schema stays (down-migrations are data-destructive). That
+# is safe only if every migration keeps the PREVIOUS released binary working
+# against the NEW schema. A `DROP COLUMN` shipped with the release that stops
+# reading it turns a failed deploy into an outage rollback cannot clear.
 #
-#   The deploy pipeline applies `migrate up` in the playbook's
-#   pre_tasks — BEFORE any binary is swapped. If the new binary then
-#   fails its health probe, configs/ansible/tasks/deploy-one-binary.yml
-#   rolls back the BINARY ONLY; the schema stays at the new version
-#   (deliberate policy, because down-migrations are
-#   data-destructive and the pipeline cannot know what already depends
-#   on what it would revert).
-#
-#   That policy is only safe if every migration keeps the PREVIOUS
-#   released binary working against the NEW schema. Rule 9 said so in
-#   prose; nothing enforced it. A single `DROP COLUMN` shipped in the
-#   same release that stops reading the column turns a failed deploy
-#   into an outage that the rollback cannot clear.
-#
-# What is flagged (the mechanically-detectable half of rule 9):
-#
+# Flagged (the mechanically detectable half of rule 9):
 #   drop-table            DROP TABLE
 #   drop-column           ALTER TABLE … DROP COLUMN
 #   rename                RENAME TO / RENAME COLUMN
@@ -29,45 +19,33 @@
 #   drop-view             DROP [MATERIALIZED] VIEW
 #   add-constraint        ALTER TABLE … ADD CONSTRAINT (tightening)
 #   dml                   DELETE FROM / TRUNCATE / UPDATE … SET, unguarded
-#                         (a bare DELETE whose down is `SELECT 1`
-#                         re-deletes replay-repaired rows on a down/up)
-#
-#   Loosening operations (DROP CONSTRAINT, DROP INDEX, ADD COLUMN
-#   nullable, CREATE TABLE/INDEX/VIEW) are additive-safe and are NOT
-#   flagged.
+#                         (a bare DELETE with a `SELECT 1` down re-deletes
+#                         replay-repaired rows on a down/up)
+# Loosening operations (DROP CONSTRAINT, DROP INDEX, nullable ADD COLUMN,
+# CREATE TABLE/INDEX/VIEW) are additive-safe and not flagged.
 #
 # Escape hatches:
-#
-#   1. Inline, per statement — the rule-9 two-release dance:
+#   1. Inline, per statement (the rule-9 two-release dance):
 #          … DROP COLUMN foo;  -- migration-compat:ok <reason>
-#      The reason is mandatory and must say why the PREVIOUS released
-#      binary is unaffected (e.g. "shape added in 0104, no released
-#      binary reads it"). Does NOT clear `dml` — see 3 below.
-#
-#   2. scripts/ci/migration-compat.baseline — the grandfathered set of
-#      pre-existing violations, keyed `<file>:<class>`. Shrink-only:
-#      stale entries FAIL, and scripts/ci/lint-baseline-growth.sh makes
-#      any growth require an explicit `Baseline-Growth:` commit trailer.
-#
-#   3. `dml` only: a `RAISE EXCEPTION` row-count guard anywhere in the
-#      same migration file (the pattern in
-#      migrations/0152_drop_unwired_scaffold_tables.up.sql:88-97 — a
-#      `DO $$ … IF n > 0 THEN RAISE EXCEPTION … END IF; END $$;` block).
-#      An unconditional DELETE/TRUNCATE/UPDATE cannot prove the previous
-#      released binary's row-count assumptions still hold, so the inline
-#      marker alone is not enough for this class; it needs a statement
-#      that refuses to run rather than a promise in a comment.
+#      The reason is mandatory and must say why the PREVIOUS released binary
+#      is unaffected. Does NOT clear `dml` (see 3).
+#   2. scripts/ci/migration-compat.baseline — grandfathered violations keyed
+#      `<file>:<class>`. Shrink-only: stale entries FAIL, and growth needs a
+#      `Baseline-Growth:` trailer (scripts/ci/lint-baseline-growth.sh).
+#   3. `dml` only: a `RAISE EXCEPTION` row-count guard anywhere in the same
+#      file (`DO $$ … IF n > 0 THEN RAISE EXCEPTION … END IF; END $$;`, as in
+#      migrations/0152_drop_unwired_scaffold_tables.up.sql:88-97). An
+#      unconditional DELETE/TRUNCATE/UPDATE cannot prove the previous binary's
+#      row-count assumptions; it needs a statement that refuses to run, not a
+#      comment promise.
 #
 # Usage:
 #   bash scripts/ci/lint-migration-compat.sh              # repo migrations/
 #   MIGRATIONS_DIR=dist/migrations \
 #     bash scripts/ci/lint-migration-compat.sh --staged   # deploy.yml
-#
-# `--staged` skips the stale-baseline check: a released tag legitimately
-# contains fewer migrations than the current tree, and a deploy must not
-# fail because a baseline entry has no counterpart in the older set. New
-# violations still fail, which is the point — the staged run is the last
-# gate before `migrate up` touches production.
+# `--staged` skips the stale-baseline check (a released tag legitimately has
+# fewer migrations than the tree); new violations still fail, as the last gate
+# before `migrate up` touches production.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -90,10 +68,9 @@ if [ ! -d "$MIGRATIONS_DIR" ]; then
   exit 1
 fi
 
-# Four parallel arrays (a single `class|regex` string would split on
-# the `|` ALTERNATION inside the regexes themselves — that bug silently
-# truncated the `rename` pattern to `RENAME[[:space:]]+(TO`, which grep
-# rejected as unbalanced and `|| true` swallowed).
+# Four parallel arrays, not `class|regex` strings: the `|` alternation inside
+# the regexes would split them (it once truncated `rename` to an unbalanced
+# regex that `|| true` swallowed).
 #   CLASSES[i]  — display name, also the baseline key suffix
 #   MATCH[i]    — case-insensitive ERE that flags the line
 #   EXCLUDE[i]  — optional ERE; a matched line containing it is cleared
@@ -121,11 +98,9 @@ MATCH=(
   'ADD[[:space:]]+(COLUMN[[:space:]]+)?(IF[[:space:]]+NOT[[:space:]]+EXISTS[[:space:]]+)?[a-zA-Z0-9_"]+[[:space:]]+[a-zA-Z0-9_()[:space:],]*NOT[[:space:]]+NULL'
   'DROP[[:space:]]+(MATERIALIZED[[:space:]]+)?VIEW'
   'ADD[[:space:]]+CONSTRAINT'
-  # Anchored to the start of the (whitespace-trimmed) line: a real
-  # DELETE/TRUNCATE/UPDATE statement always opens its line. That is what
-  # keeps this off prose — "TRUNCATE of audit_log" inside a COMMENT ON
-  # string, or a `BEFORE TRUNCATE ON t` trigger declaration — which never
-  # has the keyword as the line's first token.
+  # Anchored to the line start: a real DELETE/TRUNCATE/UPDATE always opens its
+  # line, which keeps this off prose ("TRUNCATE of audit_log" in a COMMENT ON
+  # string, a `BEFORE TRUNCATE ON t` trigger).
   '^[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE|UPDATE[[:space:]]+[a-zA-Z0-9_."]+[[:space:]]+SET)'
 )
 EXCLUDE=(
@@ -134,9 +109,8 @@ EXCLUDE=(
   ''
   ''
   ''
-  # `ADD COLUMN … NOT NULL DEFAULT <x>` IS old-binary-safe: an INSERT
-  # from the previous binary that omits the column gets the default.
-  # Only a NOT NULL column with no default breaks it.
+  # `ADD COLUMN … NOT NULL DEFAULT <x>` is old-binary-safe (an INSERT omitting
+  # the column gets the default); only a NOT NULL column without one breaks.
   'DEFAULT'
   ''
   ''
@@ -193,8 +167,8 @@ for f in "$MIGRATIONS_DIR"/*.up.sql; do
     class="${CLASSES[$i]}"
     re="${MATCH[$i]}"
     exclude="${EXCLUDE[$i]}"
-    # Drop whole-line SQL comments before matching so a `-- we used to
-    # DROP COLUMN here` note never trips the gate.
+    # Whole-line SQL comments are dropped below so a `-- we used to DROP
+    # COLUMN here` note never trips the gate.
     hits="$(grep_lines -nEi -- "$re" "$f")"
     if [ -n "$hits" ]; then
       hits="$(printf '%s\n' "$hits" | grep_lines -vE -- '^[0-9]+:[[:space:]]*--')"
@@ -206,9 +180,8 @@ for f in "$MIGRATIONS_DIR"/*.up.sql; do
     SEEN+=("${base}:${class}")
     guard="${GUARD[$i]}"
     if [ -n "$guard" ]; then
-      # Guarded classes (`dml`) do NOT get the inline per-line marker
-      # escape — a comment is not proof. Only the guard itself, or the
-      # baseline, clears a hit.
+      # Guarded classes (`dml`) get no inline-marker escape: a comment is not
+      # proof. Only the guard or the baseline clears a hit.
       if grep -qiE -- "$guard" "$f"; then
         continue
       fi
@@ -219,8 +192,7 @@ for f in "$MIGRATIONS_DIR"/*.up.sql; do
       fi
       continue
     fi
-    # An inline `-- migration-compat:ok <reason>` on the matched line
-    # is the rule-9 two-release-dance escape. Reason is mandatory.
+    # Inline `-- migration-compat:ok <reason>` is the two-release-dance escape.
     unmarked="$(printf '%s\n' "$hits" \
       | grep_lines -viE -- '--[[:space:]]*migration-compat:ok[[:space:]]+[^[:space:]]')"
     if [ -n "$unmarked" ] && ! in_baseline "${base}:${class}"; then

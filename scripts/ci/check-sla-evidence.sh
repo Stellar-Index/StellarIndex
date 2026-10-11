@@ -3,47 +3,37 @@
 # (.github/workflows/k6-weekly.yml).
 #
 # k6-weekly.yml is the ONLY feed into the monthly proof-of-SLA report
-# (docs/operations/sla-proof-procedure.md). A scheduled run that skips
-# every measuring step must not conclude `success`: a green badge for an
-# SLA regression alarm that has never measured anything
-# is worse than no badge: silence read as success.
+# (docs/operations/sla-proof-procedure.md). A scheduled run that skips every
+# measuring step must not conclude `success`: a green badge on an alarm that
+# never measured anything is silence read as success.
 #
-# This script is the verdict the workflow branches on. It is deterministic
-# and offline (no gh, no network, no k6) so it is exercised on every PR by
-# scripts/ci/check-sla-evidence-test.sh rather than only once a week.
+# This script is the verdict the workflow branches on. Deterministic and
+# offline (no gh, network or k6), so scripts/ci/check-sla-evidence-test.sh
+# exercises it on every PR.
 #
-# TWO SOURCES NOW FEED LEG 2, AND LEG 2 DID NOT CHANGE. The proof report
-# can be produced by a k6 load run (scripts/ci/render-sla-proof.sh) or by
-# aggregating the SLA probe (scripts/ops/sla-proof-from-probe.sh). Both
-# write the SAME artefact — docs/operations/sla-proof-<YYYY-MM-DD>.md with
-# the same filename shape — so the presence-and-freshness leg below reads
-# either one without a line of change, and none was made to it. What did
-# have to change is leg 1: it must ask which source the CALLER depends on, not only
-# "are the k6 secrets set", or a feed producing evidence from the probe
-# every Sunday would be reported RED forever for the absence of a load
-# target it does not need.
+# Two producers feed the same artefact: a k6 load run
+# (scripts/ci/render-sla-proof.sh) or the SLA probe aggregate
+# (scripts/ops/sla-proof-from-probe.sh). Both write
+# docs/operations/sla-proof-<YYYY-MM-DD>.md, so leg 2 (presence and
+# freshness) reads either. Leg 1 must ask which source the CALLER depends on,
+# or a probe-fed feed would be RED forever for lacking a load target.
 #
 # Env:
-#   SLA_EVIDENCE_SOURCE        which producer must be able to run:
-#                              `k6` (the load run), `probe` (the probe
-#                              aggregate), or `any` (default — either one
-#                              is enough). Callers that branch on rc 1 to
-#                              skip their own steps must name their source
-#                              explicitly; `any` is the right answer only
-#                              for "is this feed alive at all".
+#   SLA_EVIDENCE_SOURCE        which producer must be able to run: `k6`,
+#                              `probe`, or `any` (default; either suffices).
+#                              Callers that branch on rc 1 to skip their own
+#                              steps must name their source; `any` only
+#                              answers "is this feed alive at all".
 #   K6_TARGET                  load-run base URL     (workflow secret)
 #   STELLARINDEX_LOAD_API_KEY  load-test API key     (workflow secret)
 #   SLA_PROBE_PROM_URL         Prometheus holding the stellarindex_sla_probe_*
 #                              series the aggregate reads
-#   SLA_EVIDENCE_DIR           where landed proof reports live
-#                              (default: docs/operations)
-#   SLA_PROOF_MAX_AGE_DAYS     proof staleness threshold (default: 45 —
-#                              the procedure's MONTHLY cadence plus two
-#                              weeks of operator slack. The probe-aggregate
-#                              feed runs WEEKLY, so 45 days tolerates six
-#                              missed runs; tightening it is a cadence
-#                              decision for the procedure doc to make, not
-#                              a default to change quietly here.)
+#   SLA_EVIDENCE_DIR           where proof reports live (default: docs/operations)
+#   SLA_PROOF_MAX_AGE_DAYS     staleness threshold (default 45: the monthly
+#                              cadence plus two weeks of slack; the weekly
+#                              probe feed tolerates six missed runs).
+#                              Tightening it is a cadence decision for the
+#                              procedure doc, not a quiet default change.
 #   SLA_EVIDENCE_NOW           epoch-seconds clock override (tests only)
 #
 # Exit codes — the workflow branches on all three, so they are a contract:
@@ -52,10 +42,8 @@
 #   1  NO TARGET nothing can run: skip the producer's steps, and do NOT
 #                report the run as a success.
 #   2  NO PROOF  the run can proceed, but no proof report inside the window
-#                has landed, so the feed still isn't producing its artefact.
-#                Deliberately distinct from 1: a stale report must never
-#                block the very run that would let an operator write a
-#                fresh one.
+#                has landed. Distinct from 1: a stale report must never block
+#                the very run that lets an operator write a fresh one.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -74,10 +62,9 @@ SLA_PROOF_MAX_AGE_DAYS="${SLA_PROOF_MAX_AGE_DAYS:-45}"
 now_epoch="${SLA_EVIDENCE_NOW:-$(date -u +%s)}"
 
 # ── Leg 1: can a producer run at all? ───────────────────────────────────
-# Each source is assessed on its own and reported on its own, so a caller
-# that needs one of them is never told about the other's secrets. The
-# wording of the k6 branch is unchanged: the workflow, the tracking issue
-# body and the fixtures all read these lines.
+# Each source is assessed and reported on its own, so a caller needing one is
+# never told about the other's secrets. The k6 wording is fixed: the workflow,
+# the tracking issue body and the fixtures read these lines.
 k6_ready=true
 missing=""
 if [ -z "${K6_TARGET:-}" ]; then
@@ -124,9 +111,8 @@ fi
 echo "sla-evidence: source=${SLA_EVIDENCE_SOURCE}."
 
 # ── Leg 2: has the feed actually produced its artefact recently? ────────
-# Match ONLY the dated report filenames the procedure prescribes. The
-# glob deliberately excludes sla-proof-procedure.md, which lives in the
-# same directory and is the recipe — not evidence.
+# Match ONLY the dated report filenames; the glob excludes
+# sla-proof-procedure.md, which is the recipe, not evidence.
 newest_proof=""
 newest_date=""
 for f in "$SLA_EVIDENCE_DIR"/sla-proof-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md; do
@@ -141,13 +127,12 @@ for f in "$SLA_EVIDENCE_DIR"/sla-proof-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9
   fi
 done
 
-# Portable ISO date → epoch (GNU date and BSD/macOS date differ) — same
-# idiom as scripts/ci/check-main-ci-health.sh.
+# Portable ISO date → epoch (GNU vs BSD date); idiom from check-main-ci-health.sh.
 to_epoch() {
   date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%d" "$1" +%s 2>/dev/null || echo 0
 }
 
-# Portable SHA-256 — same idiom as scripts/ci/lint-migration-immutability.sh.
+# Portable SHA-256; idiom from lint-migration-immutability.sh.
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum -- "$1" | awk '{print $1}'
@@ -176,18 +161,13 @@ fi
 echo "sla-evidence: threshold SLA_PROOF_MAX_AGE_DAYS=${SLA_PROOF_MAX_AGE_DAYS}."
 
 # ── Leg 2b: is the freshest filename actually evidence? ─────────────────
-# A filename matching sla-proof-<date>.md is not itself proof of anything
-# — a masked timer, a hand-edited file, or a truncated write would still
-# match it. Two things a real report must carry:
-#   1. a `generator:` front-matter line naming which producer wrote it
-#      (the only place that fact is recorded at all);
-#   2. IF it carries a self-referential `digest: sha256:<hex>` line (only
-#      scripts/ops/sla-proof-from-probe.sh embeds one; the k6-driven
-#      scripts/ci/render-sla-proof.sh predates it), that digest must
-#      reproduce from the file's own bytes with the digest line zeroed —
-#      the same scheme the generator uses to write it.
-# Neither check runs unless a candidate file exists; an absent proof was
-# already reported above and stays reported as NO PROOF, not corrupted.
+# A filename match proves nothing (a masked timer, hand edit or truncated
+# write still matches). A real report carries:
+#   1. a `generator:` front-matter line naming its producer;
+#   2. if it has a self-referential `digest: sha256:<hex>` line (only
+#      sla-proof-from-probe.sh embeds one), that digest must reproduce from
+#      the file's own bytes with the digest line zeroed, as the generator does.
+# Neither check runs without a candidate file; an absent proof stays NO PROOF.
 proof_integrity_ok=true
 if [ -n "$newest_proof" ]; then
   if ! grep -q '^generator: .\+$' "$newest_proof"; then
@@ -240,10 +220,9 @@ EOF
   exit 1
 fi
 
-# Which producer is actually the live one, for the wording below. The k6
-# branch keeps its exact bytes: the fixtures and the tracking-issue body
-# read these lines, and only a caller that has NO k6 source but DOES have
-# the probe one gets the other sentence.
+# Which producer is live, for the wording below. The k6 branch keeps its exact
+# bytes (fixtures and the tracking-issue body read them); only a caller with
+# the probe source and no k6 gets the other sentence.
 speak_probe=false
 if [ "$SLA_EVIDENCE_SOURCE" = "probe" ]; then
   speak_probe=true

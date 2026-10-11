@@ -1,54 +1,40 @@
 #!/usr/bin/env bash
 # bootstrap-worktree.sh — make a fresh checkout or linked worktree able to
-# pass scripts/dev/verify.sh, in one command, and report EVERY missing item
-# in one pass rather than one per twelve-minute run.
+# pass scripts/dev/verify.sh in one command, and report EVERY missing item in
+# one pass rather than one per twelve-minute run.
 #
-# The cost of not having this, measured once: two full verify.sh
-# runs, each failing on a different missing install about ten minutes in and
-# in a section unrelated to the change under test.
-#
-#   run 1  `openapi-typescript: command not found` — web/explorer had no
-#          node_modules, so `make web-generate-api` died inside the
-#          generated-artifact drift check.
-#   run 2  `tsc: command not found` — web/status had no node_modules, so
-#          `make status-typecheck` died. verify.sh gates that section on
-#          web/status/pnpm-lock.yaml, which is TRACKED and therefore always
-#          present; node_modules is not tracked and was not checked.
-#
-# Both are five-second questions. Nothing here is serial: the survey runs to
-# completion and prints every gap before the first install.
+# Why: verify.sh failed twice, ~10 minutes in, each time on a different
+# missing install in a section unrelated to the change: web/explorer had no
+# node_modules (`openapi-typescript: command not found`), then web/status had
+# none (`tsc: command not found`). verify.sh gates web/status on its TRACKED
+# pnpm-lock.yaml, which is always present; node_modules is not tracked and
+# was not checked. The survey runs to completion before the first install.
 #
 # Usage:
 #   scripts/dev/bootstrap-worktree.sh          survey, then install what it can
 #   scripts/dev/bootstrap-worktree.sh --check  survey only, install nothing
 #   make bootstrap-worktree
 #
-# Severity, and what the exit code means:
+# Severity and exit code:
+#   BLOCKING    verify.sh HARD-FAILS without it. Exit is non-zero while any
+#               is unresolved.
+#   clearance   verify.sh defers the check and ends "VERIFY INCOMPLETE", but
+#               scripts/dev/doctor.sh --profile native (run by `make prepush`
+#               and cut-release.sh) requires it. Reported with its install
+#               command; does not fail this script.
 #
-#   BLOCKING    scripts/dev/verify.sh HARD-FAILS without it. Exit is
-#               non-zero while any of these is unresolved.
-#   clearance   verify.sh defers the check and ends "VERIFY INCOMPLETE",
-#               but scripts/dev/doctor.sh --profile native — which
-#               `make prepush` and `scripts/dev/cut-release.sh` both run —
-#               treats it as required. Reported with its install command;
-#               does not fail this script.
+# Installed:
+#   - Missing pinned Go tools via `make deps`, which owns the pins (no
+#     version numbers here).
+#   - Missing node_modules via the `pnpm --dir <app> install --frozen-lockfile`
+#     that prepush.sh runs, for web/explorer and web/status.
+#   - A tool at the WRONG version is reported, never corrected: ~/go/bin is
+#     shared with every checkout on the machine, so a downgrade is the
+#     operator's call; `make deps` makes them all match.
 #
-# What is installed, and what deliberately is not:
-#
-#   - Missing pinned Go tools are installed by `make deps`, which owns the
-#     pins. This script never repeats a version number.
-#   - Missing node_modules are installed with the same
-#     `pnpm --dir <app> install --frozen-lockfile` that scripts/dev/prepush.sh
-#     runs, for BOTH web/explorer and web/status.
-#   - A tool present at the WRONG version is reported, never silently
-#     corrected: ~/go/bin is shared with every other checkout on the
-#     machine, so downgrading one is a decision for the operator, and
-#     `make deps` is the one command that makes them all match.
-#
-# Note that ~/go/bin is not on every shell's PATH. The Makefile calls
-# gofumpt, goimports and golangci-lint through $(GOBIN) by absolute path,
-# so they work regardless; this survey resolves them the same way rather
-# than through `command -v`, which would report a false miss.
+# ~/go/bin is not on every PATH. The Makefile calls gofumpt, goimports and
+# golangci-lint through $(GOBIN) by absolute path, so this survey resolves
+# them the same way; `command -v` would report a false miss.
 
 set -uo pipefail
 
@@ -83,8 +69,7 @@ echo ""
 echo "── survey (every gap is listed before anything is installed) ─────────"
 
 # ── 1. Interpreters and gate tools resolved on PATH ──────────────────────
-#
-# BLOCKING set: verify.sh runs these unconditionally and dies without them.
+# BLOCKING set: verify.sh runs these unconditionally.
 for tool in git make go python3 tar; do
     if path="$(command -v "$tool")"; then
         ok "$tool" "$path"
@@ -95,11 +80,9 @@ for tool in git make go python3 tar; do
 done
 
 # ── 2. Go tools the Makefile resolves through GOBIN ──────────────────────
-#
 # make fmt and make lint call these by absolute path out of $(GOBIN), so a
-# `command -v` survey reports a false miss on any machine whose PATH omits
-# ~/go/bin — which is most of them. Resolve them where the Makefile does,
-# and compare against the Makefile's own pins.
+# `command -v` survey reports a false miss where PATH omits ~/go/bin. Resolve
+# them where the Makefile does and compare against its pins.
 go_tool_pin() { # go_tool_pin <make-variable>
     var="$1"
     line="$(grep -E "^${var} *:?= *v" Makefile)"
@@ -125,18 +108,16 @@ survey_go_tool() { # survey_go_tool <tool> <make-pin-variable> <severity>
         ok "$tool" "${GO_BIN}/${tool} ${have:-(version unreadable)}"
     fi
 }
-# Only these three. govulncheck is deliberately NOT here: `make vuln` and
-# verify.sh both resolve it with `command -v`, so a copy sitting in
-# ${GO_BIN} that PATH cannot see is still a deferred check — surveying it
-# by absolute path would report "ok" for something verify.sh skips.
+# Only these three. govulncheck is NOT here: `make vuln` and verify.sh resolve
+# it with `command -v`, so a copy in ${GO_BIN} that PATH cannot see is still a
+# deferred check; an absolute-path survey would report "ok" for it wrongly.
 survey_go_tool gofumpt       GOFUMPT_VERSION       blocking
 survey_go_tool goimports     GOIMPORTS_VERSION     blocking
 survey_go_tool golangci-lint GOLANGCI_LINT_VERSION blocking
 
 # ── 3. Tools verify.sh defers on, and doctor --profile native requires ───
-#
-# Absent, verify.sh prints "(deferred: …)" and ends VERIFY INCOMPLETE with
-# exit 1 — by design, not a bug — while doctor's native profile, which
+# Absent, verify.sh prints "(deferred: …)" and ends VERIFY INCOMPLETE (exit 1,
+# by design) while doctor's native profile requires each.
 # `make prepush` and cut-release.sh both run, treats each as required.
 for tool in node npx pnpm jq govulncheck gitleaks promtool amtool ansible-playbook zizmor gh; do
     if path="$(command -v "$tool")"; then
@@ -147,8 +128,8 @@ for tool in node npx pnpm jq govulncheck gitleaks promtool amtool ansible-playbo
     fi
 done
 
-# govulncheck's pin still matters once PATH can see it — the Makefile's
-# `audit` target reinstalls at GOVULNCHECK_VERSION, so a newer copy is drift.
+# govulncheck's pin matters once PATH sees it: `make audit` reinstalls at
+# GOVULNCHECK_VERSION, so a newer copy is drift.
 if govulncheck_path="$(command -v govulncheck)"; then
     govulncheck_pin="$(go_tool_pin GOVULNCHECK_VERSION)"
     govulncheck_have="$(go_tool_installed "$govulncheck_path")"
@@ -159,8 +140,7 @@ if govulncheck_path="$(command -v govulncheck)"; then
 fi
 
 # GNU tar. macOS ships bsdtar, so the deploy migrations-sync self-test is
-# deferred here by design (verify.sh's own comment says so). Recorded, never
-# treated as a gap.
+# deferred by design. Recorded, never a gap.
 if grep -q 'GNU tar' <<<"$(tar --version 2>/dev/null)"; then
     ok "gnu-tar" "$(command -v tar)"
 else
@@ -168,13 +148,10 @@ else
 fi
 
 # ── 4. node_modules in BOTH web apps ─────────────────────────────────────
-#
-# This is the pair that cost the two runs. The check is for the executable
-# each gate actually invokes, not for the directory: a half-finished install
-# leaves node_modules present and the binary absent.
-#
+# Check for the executable each gate invokes, not the directory: a
+# half-finished install leaves node_modules present and the binary absent.
 # A present install can still be stale: verify.sh fails when pnpm-lock.yaml is
-# newer than node_modules/.modules.yaml, and points here to fix it.
+# newer than node_modules/.modules.yaml, and points here.
 web_app_stale() { # web_app_stale <dir>
     [ -f "$1/node_modules/.modules.yaml" ] && [ "$1/pnpm-lock.yaml" -nt "$1/node_modules/.modules.yaml" ]
 }

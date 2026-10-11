@@ -1,27 +1,23 @@
 #!/usr/bin/env bash
 # ch-live-catchup.sh — keep the ClickHouse Tier-1 lake COMPLETE up to the live
-# indexer's confirmed position (ADR-0034 live fan-out). Two responsibilities:
 #
-#   1. HOLE HEALING — the in-dispatcher dual-sink (clickhouse.LiveSink) is
-#      best-effort: it DROPS whole ledgers under buffer pressure and a flush can
-#      partially fail, leaving holes BELOW the lake's max ledger. A tip-only
-#      catch-up ([CH_max+1, tip]) can never re-fill those — the sink already
-#      wrote past them. So we gap-scan stellar.ledgers over [LIVE_ERA_FROM, tip]
-#      and ch-backfill every missing range.
-#   2. TIP EXTENSION — backfill [CH_max+1, tip] for whatever the dual-sink hasn't
-#      reached yet (e.g. between flushes, or while the sink was down).
+#   1. HOLE HEALING: the in-dispatcher dual-sink (clickhouse.LiveSink) is
+#      best-effort. It DROPS whole ledgers under buffer pressure and a flush
+#      can partly fail, leaving holes BELOW the lake's max ledger. A tip-only
+#      catch-up ([CH_max+1, tip]) can never re-fill them, so gap-scan
+#      stellar.ledgers over [LIVE_ERA_FROM, tip] and ch-backfill every gap.
+#   2. TIP EXTENSION: backfill [CH_max+1, tip] for what the dual-sink has not
+#      reached yet (between flushes, or while the sink was down).
 #
 # ch-backfill is idempotent (ReplacingMergeTree dedups), so this is safe on a
-# short timer; each run only writes the ranges that are actually missing. The
-# real-time projector (clickhouse_projector_source) reads CH only up to the
-# contiguous-completeness watermark, so a hole stalls the projector until THIS
-# script heals it — never silent loss.
+# short timer. The projector (clickhouse_projector_source) reads CH only up to
+# the contiguous-completeness watermark, so a hole stalls it until this script
+# heals it: never silent loss.
 set -uo pipefail
-# Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
-# values are unquoted (that is what systemd wants), so the shell would
-# expand `$`, split on `;`/`&`/`|`/whitespace and eat quotes inside a
-# secret: the services keep working while this path gets a mangled DSN
-# (deploy-ansible-secrets-5). Same reader as run-heavy-job.sh.
+# Read a systemd EnvironmentFile VERBATIM, never `.`/source it: its values are
+# unquoted (as systemd wants), so the shell would expand `$`, split on `;&|`
+# and whitespace, and eat quotes inside a secret, mangling the DSN while the
+# services keep working. Same reader as run-heavy-job.sh.
 # usage: load_env_file FILE [export]
 load_env_file() {
   local line
@@ -38,10 +34,9 @@ load_env_file() {
   done < "$1"
 }
 load_env_file /etc/default/stellarindex-ops export
-# Optional ops-user credentials (STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD,
-# from /etc/default/stellarindex-ops). Handed to clickhouse-client via its
-# CLICKHOUSE_USER/CLICKHOUSE_PASSWORD env — never argv, which ps and the journal
-# would show. Unset ⇒ nothing exported; the default user exactly as before.
+# Optional ops-user credentials (from /etc/default/stellarindex-ops), handed to
+# clickhouse-client via CLICKHOUSE_USER/CLICKHOUSE_PASSWORD env, never argv,
+# which ps and the journal would show. Unset: the default user.
 if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
   export CLICKHOUSE_USER="$STELLARINDEX_CLICKHOUSE_OPS_USER"
   export CLICKHOUSE_PASSWORD="${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD:-}"
@@ -50,9 +45,8 @@ OPS=${OPS:-/usr/local/bin/stellarindex-ops-ch}
 CFG=${CFG:-/etc/stellarindex.toml}
 DSN="$STELLARINDEX_POSTGRES_DSN"
 PAR=${PAR:-4}
-# ops_batch's -C file once the role renders it. It must win over
-# root's ~/.clickhouse-client/config.xml (ops_admin, normal priority); absent,
-# the env pair above applies as before.
+# ops_batch's -C file once the role renders it. It must win over root's
+# ~/.clickhouse-client/config.xml (ops_admin); absent, the env pair applies.
 CH_CFG=/etc/clickhouse-client/ops-batch.xml
 CH_AUTH=(-C "$CH_CFG")
 if [[ ! -r "$CH_CFG" ]]; then
@@ -60,33 +54,28 @@ if [[ ! -r "$CH_CFG" ]]; then
   CH_AUTH=()
 fi
 CH() { clickhouse-client ${CH_AUTH[@]+"${CH_AUTH[@]}"} --port "${CH_PORT:-9300}" "$@"; }
-# LIVE_ERA_FROM is the lowest ledger the in-dispatcher dual-sink is
-# responsible for — one past the ceiling of the certified bulk backfill.
-# Everything below it was written by ch-backfill and is already contiguous;
-# at or above it a sink-shaped hole can form, so that is where the gap scan
-# starts.
+# LIVE_ERA_FROM is the lowest ledger the in-dispatcher dual-sink is responsible
+# for: one past the ceiling of the certified bulk backfill. Below it ch-backfill
+# wrote contiguously; at or above it a sink-shaped hole can form, so the gap
+# scan starts there.
 #
-# It is a per-DEPLOYMENT fact with no defensible default: a literal here
-# (say r1's mainnet backfill ceiling) would ship verbatim via the ansible
-# role to every host it provisions — and both ways of being wrong are SILENT:
-#
-#   too high — the gap scan matches nothing, and the lake's only self-healer
-#              quietly becomes a no-op (the projector then stalls at the
-#              contiguous watermark behind the first unhealed hole);
-#   too low  — a 10-minute timer turns into a full-history DISTINCT scan
-#              against the ClickHouse that also serves the explorer.
-#
+# It is a per-DEPLOYMENT fact with no defensible default (a literal such as
+# r1's backfill ceiling would ship via the ansible role to every host), and
+# both wrong directions are SILENT:
+#   too high: the gap scan matches nothing and the only self-healer becomes a
+#             no-op (the projector then stalls behind the first unhealed hole);
+#   too low:  a 10-minute timer becomes a full-history DISTINCT scan against
+#             the ClickHouse that also serves the explorer.
 # So refuse to guess. Set `stellarindex_ch_live_era_from` in the host's
 # inventory; roles/archival-node/tasks/09-minio.yml templates it into
-# /etc/default/stellarindex-ops, which this script reads above. Derive it as
-# the `-to` of the last ch-backfill range certified complete, plus one.
+# /etc/default/stellarindex-ops. Derive it as the `-to` of the last
+# ch-backfill range certified complete, plus one.
 if [ -z "${LIVE_ERA_FROM:-}" ]; then
   echo "$(date -u) ch-live-catchup: LIVE_ERA_FROM is unset — refusing to guess the live-era floor (a wrong floor fails silently in both directions). Set stellarindex_ch_live_era_from in this host's inventory and re-apply the archival-node role with --tags minio." >&2
   exit 1
 fi
-# Digits only: the value is interpolated into the gap-scan SQL below, so this
-# is both a typo guard and the reason no operator-supplied text reaches the
-# query.
+# Digits only: the value is interpolated into the gap-scan SQL, so this is
+# both a typo guard and why no operator text reaches the query.
 case "$LIVE_ERA_FROM" in
   *[!0-9]*|'')
     echo "$(date -u) ch-live-catchup: LIVE_ERA_FROM='${LIVE_ERA_FROM}' is not a ledger sequence (digits only)." >&2
@@ -103,16 +92,14 @@ fi
 
 rc=0
 
-# 1. Heal holes below CH_MAX, in two arms that together mirror the Go
+# 1. Heal holes below CH_MAX in two arms that together mirror the Go
 #    ContiguousWatermark (internal/storage/clickhouse/completeness.go) the
-#    projector clamps on — any hole it can stall at must be one this finds.
+#    projector clamps on: any hole it can stall at must be found here.
 #
-#  1a. The FLOOR hole. The interior scan below only sees a jump between two
-#      present ledgers, so a hole starting AT LIVE_ERA_FROM (the cutover band
-#      below the dual-sink's first write) is invisible to it: every present
-#      ledger sits above it and {first, first+1, …} is contiguous. MIN_PRESENT
-#      is ContiguousWatermark's min_present arm; 0 means nothing at or above
-#      the floor is present yet, which the tip-extend in step 2 covers.
+#  1a. The FLOOR hole. The interior scan only sees a jump between two present
+#      ledgers, so a hole starting AT LIVE_ERA_FROM is invisible to it.
+#      MIN_PRESENT is ContiguousWatermark's min_present arm; 0 means nothing at
+#      or above the floor is present yet, which the tip-extend covers.
 MIN_PRESENT=$(CH -q "SELECT ifNull(min(ledger_seq), 0) FROM stellar.ledgers WHERE ledger_seq >= ${LIVE_ERA_FROM}")
 FLOOR_GAP=
 case "$MIN_PRESENT" in
@@ -127,10 +114,10 @@ case "$MIN_PRESENT" in
     ;;
 esac
 
-#  1b. INTERIOR holes. leadInFrame's (CURRENT ROW .. 1 FOLLOWING) frame
-#      returns the last row's own value, so there is no spurious trailing gap.
-#      stderr stays on the journal and the exit status is checked: a failed scan
-#      also yields no rows, and must not be reported as "no holes".
+#  1b. INTERIOR holes. leadInFrame's (CURRENT ROW .. 1 FOLLOWING) frame returns
+#      the last row's own value, so there is no spurious trailing gap. stderr
+#      stays on the journal and the exit status is checked: a failed scan also
+#      yields no rows and must not read as "no holes".
 GAPS=$(CH -q "
   SELECT gap_start, gap_end FROM (
     SELECT ledger_seq + 1 AS gap_start, nxt - 1 AS gap_end

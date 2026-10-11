@@ -3,69 +3,53 @@
 #
 # ── THE DEFECT THIS EXISTS FOR ──────────────────────────────────────────
 #
-# configs/ansible/roles/archival-node/tasks/08-clickhouse.yml must not copy
-# `deploy/clickhouse/*.sql` with with_fileglob and execute every file it
-# finds, wherever clickhouse_apply_schema is true — which is BOTH
-# configs/ansible/inventory/testnet.yml and .../futurenet.yml. But that
+# 08-clickhouse.yml (configs/ansible/roles/archival-node/tasks/) must not copy
+# `deploy/clickhouse/*.sql` with with_fileglob and run every file wherever
+# clickhouse_apply_schema is true (testnet.yml and futurenet.yml). That
 # directory holds one founding DDL (tier1_schema.sql) and fifteen OPERATOR
 # artifacts for the EXISTING deployment (r1): per-feature DDL mirrors with
-# their windowed-backfill runbooks, plus four genuine migrations. Four of
-# them said so in their own headers — "NOT auto-applied by any bootstrap",
-# "A FRESH deployment does NOT need this file", and in one case
-# "FREEZE-GATED: do NOT run" — and every one of those claims was FALSE on a
-# test net.
+# backfill runbooks, plus four real migrations. Their headers said "NOT
+# auto-applied by any bootstrap" and the claim was FALSE on a test net.
 #
-# Most of it was invisible: every CREATE in every non-tier1 file is
-# byte-identical to tier1_schema.sql's own and tier1 is applied first, so
-# `IF NOT EXISTS` made them no-ops. The two that were not built the cut-over
-# halves — stellar.ledger_entries_current_v2 (+_mv) and
-# stellar.contract_events_daily_v2 (+_mv) — as exact duplicates of their v1
-# tables on hosts that have no v1 to cut over FROM. Confirmed live on the
-# testnet host: identical column list and order, identical engine, ORDER BY
-# and indexes; the MVs differ only in their TO target and read the same
-# source with the same SELECT. Those hosts do double materialized-view write
-# work and hold a second copy of the same rows, permanently, for a migration
-# they will never run.
+# Most was invisible: non-tier1 CREATEs are byte-identical to tier1's and
+# tier1 runs first, so `IF NOT EXISTS` made them no-ops. The exceptions built
+# the cut-over halves, stellar.ledger_entries_current_v2 (+_mv) and
+# stellar.contract_events_daily_v2 (+_mv), as exact duplicates of v1 tables on
+# hosts with no v1 to cut over FROM: double MV write work and a second copy of
+# the rows, permanently, for a migration they will never run.
 #
-# The fix made the apply set a default-deny allow-list. This gate is the
-# other half: an allow-list nobody is forced to maintain rots into a silent
-# omission, and a plain "put migrations in a subdirectory" convention fails
-# open the moment somebody drops the next one in the wrong place.
+# The fix made the apply set a default-deny allow-list. This gate is the other
+# half: an allow-list nobody must maintain rots into a silent omission, and a
+# "migrations go in a subdirectory" convention fails open when one lands wrong.
 #
 # ── THE RULES ─────────────────────────────────────────────────────────────
 #
 #   1. Every deploy/clickhouse/*.sql declares exactly one
 #      `-- si-apply-scope: fresh-host|operator` in its HEADER (the leading
-#      comment run). A NEW file is therefore unclassified and RED until
-#      somebody says which it is — that is the property a directory
-#      convention cannot give.
+#      comment run). A NEW file is unclassified and RED until someone says
+#      which; a directory convention cannot give that.
 #   2. The ansible allow-list (`clickhouse_fresh_host_schema:` in
-#      08-clickhouse.yml) is EXACTLY the set of fresh-host-scoped files, in
-#      both directions. A fresh-host file missing from the list would be a
-#      lake object nothing creates; a listed file that is not fresh-host is
-#      the original defect.
-#   3. tier1_schema.sql is fresh-host and is FIRST in that list — it CREATEs
-#      the `stellar` database everything else needs.
+#      08-clickhouse.yml) is EXACTLY the fresh-host-scoped files, both ways:
+#      a missing one is a lake object nothing creates; an extra non-fresh-host
+#      one is the original defect.
+#   3. tier1_schema.sql is fresh-host and FIRST: it CREATEs the `stellar`
+#      database everything else needs.
 #   4. A fresh-host file contains ONLY `CREATE … IF NOT EXISTS`. Mutating and
-#      destructive verbs (ALTER/DROP/RENAME/EXCHANGE/INSERT/TRUNCATE/
-#      OPTIMIZE/DETACH/ATTACH/SYSTEM/SET) belong to an operator with a
-#      runbook, never to an unattended provision.
+#      destructive verbs (ALTER/DROP/RENAME/EXCHANGE/INSERT/TRUNCATE/OPTIMIZE/
+#      DETACH/ATTACH/SYSTEM/SET) belong to an operator with a runbook.
 #   5. Every object an OPERATOR file creates is also created by a fresh-host
-#      file, with an equivalent statement (comments stripped, whitespace
-#      collapsed) — unless that file declares it `-- si-cutover-object: X`.
-#      This is what makes "apply tier1_schema.sql alone" provably sufficient
-#      instead of incidentally sufficient: a genuinely-new fresh-host table
-#      cannot hide inside a migration, and a mirror cannot silently drift
-#      from the canonical DDL.
-#   6. A si-cutover-object is NOT declared by any fresh-host file. A
-#      completed cut-over ends by renaming v2 onto the base name and
-#      dropping the v2 names, so codifying v2 in the founding DDL would make
-#      SUCCESS read as schema drift forever.
-#   7. The task file does not glob deploy/clickhouse/*.sql — reintroducing
-#      with_fileglob there is the defect itself.
+#      file with an equivalent statement (comments stripped, whitespace
+#      collapsed), unless declared `-- si-cutover-object: X`. This makes
+#      "apply tier1_schema.sql alone" provably sufficient: a new fresh-host
+#      table cannot hide in a migration and a mirror cannot drift.
+#   6. A si-cutover-object is NOT declared by any fresh-host file: a completed
+#      cut-over renames v2 onto the base name and drops the v2 names, so
+#      codifying v2 in founding DDL would make SUCCESS read as drift.
+#   7. The task file does not glob deploy/clickhouse/*.sql (with_fileglob
+#      there is the defect itself).
 #
-# Exit 0 = clean. Exit 1 = findings (each printed with its rule). Prints a
-# self-accounting line, so a scan of zero files cannot pass silently.
+# Exit 0 = clean; 1 = findings (each printed with its rule). Prints a
+# self-accounting line so a scan of zero files cannot pass silently.
 
 set -uo pipefail
 
@@ -85,7 +69,7 @@ for p in "$CH_DIR" "$TASK_FILE"; do
   fi
 done
 
-# (bash 3.2 on macOS has no mapfile — read loops.)
+# bash 3.2 (macOS) has no mapfile: read loops.
 sql_files=()
 while IFS= read -r f; do sql_files+=("$f"); done < <(find "$CH_DIR" -maxdepth 1 -type f -name '*.sql' | sort)
 
@@ -95,14 +79,13 @@ if [ "${#sql_files[@]}" -eq 0 ]; then
 fi
 
 # ── Parser ───────────────────────────────────────────────────────────────
-# Emits one record per line, tab-separated:
+# Emits tab-separated records:
 #   SCOPE   <value>                       header marker
 #   CUTOVER <object>                      header marker
 #   CREATE  <object>  <normalized stmt>   a CREATE, comments stripped
 #   VERB    <verb>                        any other statement's leading verb
-# The header is the leading run of blank/`--` lines; a marker below the
-# first SQL statement is deliberately NOT seen, so it cannot hide halfway
-# down a runbook.
+# The header is the leading run of blank/`--` lines; a marker below the first
+# SQL statement is deliberately NOT seen, so it cannot hide in a runbook.
 parse() {
   awk '
     function emit(stmt,   lo, pfx, n, a, name) {
@@ -163,11 +146,9 @@ scope_of() { # $1 = basename → prints scope, or nothing
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-# The fresh-host object catalogue is one file per object ($tmp/fresh/<name>
-# holding its normalized statement) rather than a greppable blob:
-# `… | grep -q` under `set -o pipefail` is a coin flip once the producer
-# outsizes the 64 KiB pipe buffer, and tier1_schema.sql's 60 statements are
-# comfortably past that.
+# One file per object ($tmp/fresh/<name> holds its normalized statement), not
+# a greppable blob: `… | grep -q` under pipefail is a coin flip once the
+# producer outsizes the 64 KiB pipe buffer, which tier1_schema.sql does.
 mkdir -p "$tmp/fresh"
 
 for f in "${sql_files[@]}"; do
@@ -240,9 +221,8 @@ for b in $operator_files; do
 done
 
 # ── Pass 3: the ansible allow-list ───────────────────────────────────────
-# Comment lines are dropped first: the task file EXPLAINS the removed
-# with_fileglob at length, and a gate that fires on the prose describing the
-# defect is a gate people delete.
+# Comment lines are dropped first: the task file explains the removed
+# with_fileglob at length, and a gate firing on that prose gets deleted.
 task_code="$(sed -e 's/^[[:space:]]*#.*$//' "$TASK_FILE")"
 case "$task_code" in
   *"$CH_DIR/*"*)
