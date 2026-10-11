@@ -31,14 +31,6 @@ import (
 // (UPLOAD_CONTRACT_WASM) and Restored changes carry the bytes, so both are
 // accepted.
 //
-// CLI usage:
-//
-//	stellarindex-ops extract-wasm-from-galexie \
-//	    -config /etc/stellarindex.toml \
-//	    -hashes <hex,hex,...> \
-//	    -output-dir /var/wasm-audit \
-//	    [-from N] [-to N] [-parallel N]
-//
 // Defaults: from=2 (the walker skips pre-Soroban LCMs). to=0 walks to archive
 // tip; set it explicitly when running parallel.
 func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocyclo // linear diagnostic, splitting reduces readability
