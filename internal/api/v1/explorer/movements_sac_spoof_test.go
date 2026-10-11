@@ -11,30 +11,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin the behaviour: the
-// public, unauthenticated /v1/accounts/{g}/movements feed must NOT
-// render a SAC/asset label taken from the attacker-influenceable CAP-67
-// sep0011 event topic as a trusted identity. sep41_transfers are
-// ingested from ANY token contract (not identity-gated), so a hostile
-// non-SAC token can emit a 4-topic transfer whose trailing sep0011
-// topic claims a trusted asset (e.g. Circle USDC) and — absent a
-// cross-check — impersonate that identity on a victim's movements.
+// These tests pin that the public /v1/accounts/{g}/movements feed never renders a SAC/asset label
+// taken from the attacker-influenceable CAP-67 sep0011 event topic as a trusted identity.
+// sep41_transfers are ingested from ANY token contract, so a hostile non-SAC token can emit a
+// transfer whose topic claims a trusted asset (e.g. Circle USDC) and impersonate it.
 //
-// The fix routes the event-topic fallback in resolveSEP41MovementAsset
-// through the SAME derivation cross-check the sibling wasm_view.go uses
-// (sacAssetViaEvents): re-derive the SAC address from the claimed asset
-// and only trust the label when it equals the on-chain contract_id.
-//
-// Circle USDC's real issuer is used only as a recognizable label; the
-// spoof case attaches that claim to an UNRELATED contract id, the
-// legit case attaches it to the genuine derived SAC address.
+// resolveSEP41MovementAsset therefore cross-checks like wasm_view.go's sacAssetViaEvents: re-derive
+// the SAC address from the claimed (code, issuer) and trust the label only when it equals the
+// on-chain contract_id. The spoof case attaches the claim to an unrelated contract id; the legit
+// case to the genuine derived SAC address.
 
-// sacSpoofReader is an ExplorerReader whose SAC-resolution seams return
-// configured values, so the resolver's trusted-instance path
-// (SACClassicAssetName) and attacker-influenceable event path
-// (SACAssetFromEvents) can be driven independently. SACAssetFromEvents
-// returns the claim verbatim regardless of contract id — mirroring a
-// real attacker's contract genuinely emitting the spoofed topic.
+// sacSpoofReader drives the trusted-instance path (SACClassicAssetName) and the
+// attacker-influenceable event path (SACAssetFromEvents) independently. SACAssetFromEvents returns
+// the claim verbatim regardless of contract id, as a real attacker's contract would emit it.
 type sacSpoofReader struct {
 	*capReader
 	classicName    string // SACClassicAssetName result; "" => not found (forces event path)

@@ -6,14 +6,10 @@ import (
 	"time"
 )
 
-// TestContractDetailCache_PutProtectsUnexpiredCodeHistory is the
-// Regression guard. A "ch:" (code-history) entry has a
-// 24h TTL and is only re-stamped once a day, so under global-oldest-cachedAt
-// eviction it is ALWAYS the chronologically oldest entry next to the
-// 1-5 minute "pos:"/"act:" classes — and gets evicted first however hot it
-// is, even though it has not expired and plenty of genuinely stale churn
-// entries exist. The fix must prefer an already-TTL-expired entry for
-// eviction over an unexpired one, however old the unexpired one is.
+// TestContractDetailCache_PutProtectsUnexpiredCodeHistory: a "ch:" (code-history) entry has a 24h
+// TTL and is re-stamped once a day, so under global-oldest-cachedAt eviction it is always the
+// oldest next to the 1-5 minute "pos:"/"act:" classes and is evicted first however hot. Eviction
+// must prefer an already-expired entry over an unexpired one, however old the unexpired one is.
 func TestContractDetailCache_PutProtectsUnexpiredCodeHistory(t *testing.T) {
 	c := &contractDetailCache{entries: make(map[string]contractDetailEntry, contractDetailCacheMax)}
 	now := time.Now()

@@ -12,29 +12,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// Per-IP concurrent-SSE-connection cap.
-//
-// The global cap ([maxConcurrentStreams]) bounds TOTAL concurrent
-// streams, but on its own it lets a single client hold open the entire
-// budget — a stalled/non-reading client leaks goroutine+conn+FD per
-// stream (until the rolling write deadline fires) and can starve the
-// streams for everyone else. This per-IP cap gives each client its own
-// small ceiling so no one address can monopolise the fan-out.
-//
-// Disabled by default (cap 0); the binary wires the operator-configured
-// value via [SetMaxStreamsPerIP] at startup and the forge-resistant IP
-// resolver via [SetStreamClientIPResolver].
+// Per-IP concurrent-SSE-connection cap. The global cap ([maxConcurrentStreams]) alone lets one
+// stalled client hold the entire budget, so each address gets its own ceiling. Disabled by default
+// (0); the binary wires it via [SetMaxStreamsPerIP] and [SetStreamClientIPResolver].
 var (
 	maxStreamsPerIP int64 // 0 = disabled
 
 	streamIPMu   sync.Mutex
 	streamsPerIP = map[string]int{}
 
-	// streamClientIP resolves the caller identity used to key the per-IP
-	// cap. Defaults to the direct socket peer host; the binary overrides
-	// it with the trusted-proxy-aware resolver (middleware.RemoteIP) so
-	// the cap keys off the real client behind Caddy rather than the
-	// proxy's single address.
+	// streamClientIP keys the per-IP cap. It defaults to the socket peer; the binary installs the
+	// trusted-proxy-aware resolver so the cap sees the real client, not Caddy's single address.
 	streamClientIPMu sync.RWMutex
 	streamClientIP   = defaultStreamClientIP
 )
@@ -80,11 +68,9 @@ func resolveStreamClientIP(r *http.Request) string {
 	return ratelimit.ThrottleIPKey(ip)
 }
 
-// acquireIPStreamSlot reserves one per-IP stream slot for r's client.
-// Returns ok=false when the client is already at its cap (caller must
-// reject the connection). The returned release MUST be called exactly
-// once when the stream ends. When the per-IP cap is disabled it always
-// succeeds with a no-op release.
+// acquireIPStreamSlot reserves one per-IP slot for r's client; ok=false means the client is at its
+// cap and the caller must reject. release MUST be called when the stream ends. With the cap
+// disabled it always succeeds with a no-op release.
 func acquireIPStreamSlot(r *http.Request) (release func(), ok bool) {
 	limit := atomic.LoadInt64(&maxStreamsPerIP)
 	if limit <= 0 {

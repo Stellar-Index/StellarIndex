@@ -16,10 +16,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin the GET /v1/network/throughput contract: the year-window FINAL scan never runs
-// on a request deadline. A warm entry is sliced, a stale one is SERVED (flags.stale + its real
-// as_of) while ONE detached refresh runs, a saturated gate degrades to stale rather than erroring,
-// and prewarm warms the exact entry the handler reads.
+// These tests pin GET /v1/network/throughput: the year-window FINAL scan never runs on a request
+// deadline. A warm entry is sliced, a stale one is SERVED (flags.stale, real as_of) while ONE
+// detached refresh runs, a saturated gate degrades to stale rather than erroring, and prewarm
+// warms the exact entry the handler reads.
 
 // throughputReader is a capReader whose NetworkThroughput is countable,
 // controllable, and records the window argument each caller passed (the
@@ -296,10 +296,10 @@ func TestPrewarmNetworkThroughput_WarmsTheEntryTheHandlerReads(t *testing.T) {
 	h.PrewarmNetworkThroughput(cancelled)
 }
 
-// TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock pins that `partial` is passed
-// through verbatim from the query's own max(close_time), never recomputed against the handler's
-// wall clock. A stale cache entry or a region whose clock has ticked over would otherwise clear
-// a bucket that is still genuinely incomplete.
+// TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock: `partial` is derived from the
+// query's own max(close_time) and passed through verbatim, never recomputed against the server
+// clock. A bucket whose day rolled over by that clock may still be incomplete (a cache entry past
+// its TTL, a peer region ahead), and a wall-clock recompute would silently clear it.
 func TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock(t *testing.T) {
 	h, _ := newThroughputHandler()
 	h.ParseWindowDays = func(_ http.ResponseWriter, _ *http.Request, def int) (int, bool) { return def, true }
@@ -334,11 +334,10 @@ func TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock(t *testing.T) 
 	}
 }
 
-// TestNetworkThroughput_FeePoolAdjustmentOnP24UpgradeDay pins the fee-burn
-// correction across ledger 59,501,299: pubnet's P24 upgrade credited the fee
-// pool with stroops no transaction paid, so that day's fee_pool delta minus
-// fee_pool_adjustment must equal the fees actually burned. The same calendar
-// day without the 23→24 transition (another network) carries no adjustment.
+// TestNetworkThroughput_FeePoolAdjustmentOnP24UpgradeDay pins the fee-burn correction at ledger
+// 59,501,299: pubnet's P24 upgrade credited the fee pool with stroops no transaction paid, so that
+// day's fee_pool delta minus fee_pool_adjustment equals the fees actually burned. Another network
+// without the 23-to-24 transition carries no adjustment.
 func TestNetworkThroughput_FeePoolAdjustmentOnP24UpgradeDay(t *testing.T) {
 	h, _ := newThroughputHandler()
 	h.ParseWindowDays = func(_ http.ResponseWriter, _ *http.Request, def int) (int, bool) { return def, true }

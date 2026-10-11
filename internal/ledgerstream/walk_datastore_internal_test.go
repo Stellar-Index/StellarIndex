@@ -31,20 +31,12 @@ func (c *closeTrackingStore) Close() error {
 	return c.DataStore.Close()
 }
 
-// TestWalkDataStore_ClosesStoreOnEveryReturnPath guards the close path: walkDataStore's docstring
-// must not claim backend.Close() closed the underlying store "thereby" — it
-// does not (the SDK's BufferedStorageBackend.Close only closes its
-// own internal ledger buffer, never the datastore.DataStore it was
-// built over). Every return path past the two early
-// schema-load/backend-construction failures — including a normal
-// validateRange rejection, and every walk-loop exit — leaked the
-// store's open connections/file handles.
+// TestWalkDataStore_ClosesStoreOnEveryReturnPath guards the close path: the SDK's
+// BufferedStorageBackend.Close never closes the datastore it was built over, so walkDataStore must
+// close the store itself on every return path or leak connections/file handles.
 //
-// Drives a range that fails validateRange, which runs AFTER schema
-// load + backend construction have already succeeded — i.e. past the
-// two pre-existing manual store.Close() calls this test does NOT
-// exercise — and confirms the store is still closed exactly once via
-// the new top-of-function defer.
+// It drives a range that fails validateRange, which runs after schema load and backend
+// construction succeed, and confirms the store is still closed exactly once by the top-level defer.
 func TestWalkDataStore_ClosesStoreOnEveryReturnPath(t *testing.T) {
 	tmp := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -72,11 +64,8 @@ func TestWalkDataStore_ClosesStoreOnEveryReturnPath(t *testing.T) {
 	tracked := &closeTrackingStore{DataStore: fsStore}
 	cfg := Config{DataStore: dsCfg}
 
-	// An invalid bounded range (To < From) fails validateRange — a
-	// check that runs strictly AFTER schema-load + backend
-	// construction succeed, so reaching it proves those two steps
-	// worked and the walk is exercising a return path beyond the
-	// pre-existing manual store.Close() calls.
+	// To < From fails validateRange, which runs strictly after schema load and backend
+	// construction, so this exercises a return path past the early manual store.Close() calls.
 	badRange := ledgerbackend.BoundedRange(10, 5)
 
 	err = walkDataStore(ctx, cfg, tracked, badRange,
@@ -90,16 +79,13 @@ func TestWalkDataStore_ClosesStoreOnEveryReturnPath(t *testing.T) {
 	}
 }
 
-// TestWalkDataStore_LiveRetryBudgetRidesOutADatastoreOutage drives the
-// SDK's real fetch-worker retry loop over a scripted datastore that
-// fails 8 times and then succeeds. 8 exceeds the SDK's RetryLimit of 5,
-// so with a policy that only overrides RetryWait (RetryWait overridden, RetryLimit left at
-// the default) the backend cancels with "maximum retries exceeded" and
-// the walk errors — which in the indexer is a process exit.
+// TestWalkDataStore_LiveRetryBudgetRidesOutADatastoreOutage drives the SDK's real fetch-worker
+// retry loop over a datastore that fails 8 times, then succeeds. 8 exceeds the SDK's RetryLimit of
+// 5, so a policy overriding only RetryWait would cancel with "maximum retries exceeded", which in
+// the indexer is a process exit.
 //
-// The wait/budget are scaled down (10ms / 2s) so the test is fast; the
-// POLICY under test is the same function production calls, and the
-// production pairing is pinned separately above.
+// Wait/budget are scaled down (10ms / 2s) for speed; the policy function is the one production
+// calls.
 func TestWalkDataStore_LiveRetryBudgetRidesOutADatastoreOutage(t *testing.T) {
 	tmp := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -163,11 +149,9 @@ func TestWalkDataStore_LiveRetryBudgetRidesOutADatastoreOutage(t *testing.T) {
 	}
 }
 
-// faultingStore returns a transient (non-NotExist) error for the first
-// `failures` GetFile calls against `key`, then delegates. Everything
-// else — the manifest LoadSchema reads, other ledger objects — passes
-// straight through, so the test exercises exactly the fetch-worker
-// retry loop and nothing else.
+// faultingStore returns a transient (non-NotExist) error for the first `failures` GetFile calls
+// on `key`, then delegates; everything else passes through, so only the fetch-worker retry loop
+// is exercised.
 type faultingStore struct {
 	datastore.DataStore
 

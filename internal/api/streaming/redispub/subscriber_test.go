@@ -217,17 +217,10 @@ func callValues(t *testing.T, calls []hubCall) string {
 	return strings.Join(vs, ",")
 }
 
-// TestSubscriber_DropsForgedValueDecimal — a host-adjacent process
-// injecting an event with a non-numeric / non-positive / absurd
-// value_decimal must be DROPPED, not fanned out to SSE clients (F2).
-//
-// Proven by publishing a batch of forged events followed by ONE valid
-// sentinel: messages on a single Redis channel are processed in order,
-// so once the sentinel reaches the Hub every forged message before it
-// has already been handled. A Hub holding exactly the sentinel proves
-// each forged message was rejected. Against the un-fixed subscriber
-// (which forwards anything with a non-empty asset/quote) every forged
-// message is fanned out too and this fails.
+// TestSubscriber_DropsForgedValueDecimal: an event with a non-numeric, non-positive or absurd
+// value_decimal must be dropped, not fanned out. Forged events are followed by ONE valid sentinel;
+// a single Redis channel is processed in order, so a Hub holding exactly the sentinel proves every
+// forged message was already handled and rejected.
 func TestSubscriber_DropsForgedValueDecimal(t *testing.T) {
 	const channel = "test:closed"
 	_, rdb := newRedis(t)
@@ -286,14 +279,10 @@ func TestSubscriber_DropsForgedValueDecimal(t *testing.T) {
 	}
 }
 
-// TestSubscriber_StripsInjectedExtraFields — a VALID event carrying
-// attacker-injected extra JSON fields is fanned out, but SANITIZED to
-// the canonical four-field shape: the subscriber re-marshals the
-// validated struct rather than forwarding the raw payload (F2), so the
-// injected fields never reach SSE clients. The value_decimal survives
-// unchanged as a decimal string (the money representation is not
-// weakened). Against the un-fixed subscriber (which forwards the raw
-// bytes) the injected fields leak through and this fails.
+// TestSubscriber_StripsInjectedExtraFields: a valid event carrying injected extra JSON fields is
+// fanned out sanitized to the canonical four-field shape, because the subscriber re-marshals the
+// validated struct rather than forwarding raw bytes. value_decimal survives unchanged as a decimal
+// string.
 func TestSubscriber_StripsInjectedExtraFields(t *testing.T) {
 	const channel = "test:closed"
 	_, rdb := newRedis(t)

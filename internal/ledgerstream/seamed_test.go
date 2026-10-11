@@ -13,11 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
 )
 
-// TestStreamArchiveThenLive_crossesSeam covers the production
-// happy path: ledgers 5..9 in the archive bucket, ledgers 10..15
-// in the live bucket, seam=10 marks the handoff. StreamArchiveThenLive
-// must read the archive [5,9] bounded then continue into live
-// [10, ∞) until the callback signals stop.
+// TestStreamArchiveThenLive_crossesSeam covers the production happy path: ledgers 5..9 in the
+// archive bucket, 10..15 in live, seam=10. It must read archive [5,9] bounded, then live [10, inf)
+// until the callback signals stop.
 func TestStreamArchiveThenLive_crossesSeam(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -178,28 +176,18 @@ func newSeededFilesystemDataStore(t *testing.T, ctx context.Context, from, to ui
 	return cfg, dir
 }
 
-// TestStreamArchiveThenLive_trailingGapRefusesHandoff pins the fix for the
-// silent seam gap.
+// TestStreamArchiveThenLive_trailingGapRefusesHandoff pins the silent seam gap fix.
 //
-// Config.TolerateTrailingMissing is set for BOTH buckets by
-// pipeline.LedgerstreamConfig — deliberately, because ops backfills reuse that
-// helper against the archive bucket and must survive racing the live tip. The
-// consequence for the indexer is that a genuine hole at the trailing edge of
-// the archive range makes the bounded Stream return SUCCESS. The handoff
-// must not then jump to the fixed `seam` regardless, or every
-// undelivered ledger is skipped — and skipped PERMANENTLY, because the
-// cursor advances past the gap and nothing re-reads it. The completeness
-// verdict would be the only thing to ever notice, long after the fact.
+// TolerateTrailingMissing is set for both buckets (ops backfills share the helper and must
+// survive racing the live tip), so a hole at the archive's trailing edge makes the bounded Stream
+// return success. The handoff must not then jump to the fixed seam, or every undelivered ledger
+// is skipped permanently: the cursor advances past the gap and nothing re-reads it. It was also
+// silent, since the trailing-missing WARN only logs when cfg.Logger is set and production never
+// sets it.
 //
-// It was also genuinely silent: ledgerstream only logs when cfg.Logger is
-// non-nil, and neither LedgerstreamConfig nor cmd/stellarindex-indexer ever
-// sets it, so the trailing-missing WARN never fired in production.
-//
-// Here the archive holds only [5,7] while the seam says it should cover
-// [5,9]. The stream must refuse to hand off rather than silently skip 8 and 9.
-//
-// Proven red: without the lastArchive check this returns the live phase's
-// stop sentinel and ledgers 8-9 are missing from `got`.
+// The archive holds only [5,7] while the seam implies [5,9]; the stream must refuse to hand off
+// rather than skip 8 and 9. Without the lastArchive check it returns the live phase's stop
+// sentinel with 8-9 missing from `got`.
 func TestStreamArchiveThenLive_trailingGapRefusesHandoff(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

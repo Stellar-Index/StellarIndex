@@ -34,17 +34,10 @@ func TestWriteStream_EmitsRetryInPrelude(t *testing.T) {
 	}
 }
 
-// TestGenerator_NeverDuplicates pins the docstring contract:
-// "never returns the same ID twice." Earlier code masked the
-// counter to 16 bits and wrapped at 65 536 IDs/ms back to zero,
-// re-issuing every prior ID in the millisecond. A burst-publish
-// scenario (e.g. fan-out spike, tight test loop, accidental
-// hot-loop in operator code) could trip the wrap silently.
-//
-// 70 000 calls forced into the same millisecond exposes 4 464
-// duplicates with the buggy mask; with the fix, every ID is
-// unique because the generator advances the synthetic millis
-// instead of wrapping the counter.
+// TestGenerator_NeverDuplicates pins the contract "never returns the same ID twice". A counter
+// masked to 16 bits would wrap at 65 536 IDs/ms and silently re-issue IDs under a burst. 70 000
+// calls forced into one millisecond must stay unique because the generator advances the synthetic
+// millis instead of wrapping.
 func TestGenerator_NeverDuplicates(t *testing.T) {
 	t.Parallel()
 

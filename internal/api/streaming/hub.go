@@ -11,17 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// DefaultBufferSize is the per-topic ring-buffer capacity used when
-// no explicit override is supplied. 256 events is the sweet spot:
-//
-//   - At the 1m closed-bucket cadence (/v1/price/stream): ~4 hours of
-//     replay window — generous for the typical 30s reconnect blip
-//     and enough for a multi-minute network outage.
-//   - At the 5s tip cadence (/v1/price/tip/stream): ~21 minutes,
-//     comfortable for short reconnect storms.
-//
-// At 4 KiB per Event the buffer is ~1 MiB per topic — fine even with
-// hundreds of topics.
+// DefaultBufferSize is the per-topic ring capacity: ~4 hours of replay at the 1m closed-bucket
+// cadence and ~21 minutes at the 5s tip cadence, about 1 MiB per topic at 4 KiB per Event.
 const DefaultBufferSize = 256
 
 // subscriberQueueDepth is the per-subscriber channel capacity. Once
@@ -30,43 +21,25 @@ const DefaultBufferSize = 256
 // subscriber gets evicted quickly rather than ballooning memory.
 const subscriberQueueDepth = 32
 
-// maxSplitReplayTopics is the largest subscription width at which
-// Hub.Subscribe still splits the replay budget evenly per topic. Real
-// callers subscribe to a handful of alias topics at most (see
-// canonical.AssetAliases); this is generous headroom above that, not
-// a tuned production limit.
+// maxSplitReplayTopics is the widest subscription at which Hub.Subscribe still splits the replay
+// budget evenly per topic. Alias fan-out (canonical.AssetAliases) is a handful of topics, so this
+// is headroom, not a tuned limit.
 const maxSplitReplayTopics = 8
 
-// DefaultTopicIdleTTL is how long a topic that still holds buffered
-// events but has NO subscribers is kept before the reaper drops it.
-// It is the window in which a client that disconnects can
-// come back with Last-Event-ID and still get its replay: 15 minutes is
-// far beyond the typical reconnect blip (seconds) and a multi-minute
-// network outage, while stopping a pair that goes quiet for good from
-// holding its ring buffer for the life of the process.
-//
-// Topics whose buffer is EMPTY — never published to, which is exactly
-// the shape a client mints by streaming an arbitrary pair — have
-// nothing to replay and are dropped as soon as their last subscriber
-// leaves, without waiting out this TTL.
+// DefaultTopicIdleTTL is how long a subscriber-less topic with buffered events is kept, so a
+// client that disconnects can reconnect with Last-Event-ID and still get its replay. Topics with an
+// EMPTY buffer (what a client mints by streaming an arbitrary pair) have nothing to replay and are
+// dropped as soon as their last subscriber leaves.
 const DefaultTopicIdleTTL = 15 * time.Minute
 
 // DefaultMaxTopics is the topic-map ceiling per Hub. Over it the reaper evicts SUBSCRIBER-LESS
-// topics oldest-first; a topic with a live subscriber is never evicted, because dropping it would
-// silently detach an open stream from its fanout. When every topic is subscribed, [Hub.Subscribe]
-// refuses to mint another with [ErrTopicCapacity], so client-supplied keys can never grow the map
-// past the ceiling. Only Publish may briefly exceed it, with subscriber-less topics the next sweep
-// reclaims.
+// topics oldest-first; a subscribed topic is never evicted, because that would silently detach an
+// open stream. When every topic is subscribed, [Hub.Subscribe] refuses with [ErrTopicCapacity], so
+// client-supplied keys cannot grow the map past the ceiling; only Publish may briefly exceed it.
 //
-// The expensive part of a topic is its replay ring (an empty 256-event ring reserves ~20 KiB),
-// allocated only on a topic's first PUBLISH — see [topicState.buffer]. Rings therefore scale with
-// topics that actually carry events, which the reaper bounds at roughly this threshold (~80 MiB),
-// while a subscriber-only topic — the shape a client mints by naming an arbitrary pair, window or
-// alias spelling — costs a map entry rather than a ring. [Hub.BufferedTopicCount] reports the
-// count that carries the memory.
-//
-// Real deployments key topics by traded pair — hundreds, not thousands — so 4096 leaves generous
-// headroom for the reaper to work in.
+// Rings are allocated on first PUBLISH (see [topicState.buffer]), so memory scales with topics that
+// carry events (~80 MiB at this bound) while a subscriber-only topic costs just a map entry.
+// [Hub.BufferedTopicCount] reports the count that carries the memory.
 const DefaultMaxTopics = 4096
 
 // ErrTopicCapacity is returned by [Hub.Subscribe] when a topic it would
@@ -75,29 +48,18 @@ const DefaultMaxTopics = 4096
 var ErrTopicCapacity = errors.New("streaming: hub topic capacity exhausted")
 
 const (
-	// topicSweepGrowth reaps once this many topics have been created
-	// since the last pass. This is what bounds a BURST: a flood minting
-	// one topic per connection is swept every 64 creations instead of
-	// accumulating for a whole sweep interval.
+	// topicSweepGrowth reaps once this many topics were created since the last pass, which
+	// bounds a burst of one-topic-per-connection floods.
 	topicSweepGrowth = 64
 
-	// topicSweepInterval is the slow-trickle floor — a Hub that creates
-	// topics rarely still reaps roughly this often.
-	//
-	// Reaping is opportunistic: it runs on topic CREATION, so a Hub
-	// that stops creating topics keeps what it already holds. That is
-	// deliberate — it keeps the Hub free of a background goroutine (it
-	// has no Close/lifecycle to stop one) and is sufficient, because
-	// the map can only grow through the same creation path that reaps.
+	// topicSweepInterval is the slow-trickle floor. Reaping runs on topic CREATION only, which
+	// keeps the Hub free of a background goroutine (it has no Close to stop one) and is enough
+	// because the map can only grow through that same path.
 	topicSweepInterval = 30 * time.Second
 )
 
-// Hub is the pub/sub primitive backing the SSE stream handlers.
-// One instance is shared across all stream endpoints (each endpoint
-// uses different topic names — typically pair-keyed, e.g.
-// "tip:native/fiat:USD").
-//
-// Hub is goroutine-safe.
+// Hub is the goroutine-safe pub/sub primitive backing the SSE stream handlers, shared across all
+// stream endpoints (topics are typically pair-keyed, e.g. "tip:native/fiat:USD").
 type Hub struct {
 	gen        Generator
 	bufferSize int
@@ -121,35 +83,21 @@ type Hub struct {
 	reaped atomic.Uint64
 }
 
-// topicState is the per-topic ring buffer + subscriber list.
-//
-// Held via a per-topic pointer so Hub.Publish can lock the topic
-// alone, not the whole Hub — avoids lock-contention spikes when many
-// topics publish concurrently.
+// topicState is the per-topic ring buffer + subscriber list, held by pointer so Hub.Publish locks
+// the topic alone rather than the whole Hub.
 type topicState struct {
 	mu sync.Mutex
-	// buffer is the replay ring, allocated LAZILY on the topic's first publish and nil until then.
-	//
-	// The ring is by far the expensive part of a topic (an empty 256-event ring pre-allocates ~20 KiB)
-	// while the topic KEY is client-supplied and the map may hold up to [Hub.maxTopics]
-	// subscribed-but-silent topics. Eager allocation would make resident memory scale with
-	// concurrent-streams × alias fan-out: /v1/price/stream subscribes one connection to
-	// assetAliases(base) × assetAliases(quote) — up to 9 topics — of which the aggregator publishes to
-	// at most a few, so at the default 8192-stream cap the never-published remainder alone would
-	// reserve well over a gigabyte of rings that could never hold an event. Lazy allocation makes ring
-	// memory scale with topics that actually CARRY data, which the reaper bounds: a published topic
-	// that loses its subscribers is evicted on idleTTL.
-	//
-	// Every read goes through [topicState.replayAfter] / [topicState.bufferEmpty]; only Hub.Publish
+	// buffer is the replay ring, nil until the topic's first publish. The topic key is
+	// client-supplied and /v1/price/stream subscribes to up to 9 alias topics per connection, so
+	// eager allocation (~20 KiB each) would reserve gigabytes of rings that never hold an event.
+	// Reads go through [topicState.replayAfter] / [topicState.bufferEmpty]; only Hub.Publish
 	// allocates it.
 	buffer *ring
 	subs   map[*subscription]struct{}
 
-	// lastUsed is the last publish/subscribe/unsubscribe on this topic;
-	// it drives idle reaping. evicted marks a state the reaper has
-	// detached from Hub.topics — publishing into or subscribing on a
-	// detached state would silently lose the event, so every user
-	// re-checks it under mu (see Hub.withTopic).
+	// lastUsed drives idle reaping. evicted marks a state the reaper detached from Hub.topics;
+	// using a detached state would silently lose the event, so every user re-checks it under mu
+	// (see Hub.withTopic).
 	lastUsed time.Time
 	evicted  bool
 }
@@ -236,15 +184,9 @@ func (h *Hub) TopicCount() int {
 	return len(h.topics)
 }
 
-// BufferedTopicCount reports how many topics have actually allocated a
-// replay ring, i.e. have been published to at least once since they
-// were created.
-//
-// This is the count that carries the Hub's memory: rings are allocated
-// lazily (see [topicState.buffer]), so the difference between this and
-// [Hub.TopicCount] is the set of topics a client has subscribed to but
-// nothing ever published on — arbitrary pairs, windows and alias
-// spellings, which cost a map entry each rather than ~20 KiB each.
+// BufferedTopicCount reports how many topics have allocated a replay ring (were published to at
+// least once). This is the count that carries the Hub's memory; the difference from
+// [Hub.TopicCount] is subscribed-only topics, which cost a map entry rather than ~20 KiB.
 func (h *Hub) BufferedTopicCount() int {
 	h.mu.RLock()
 	topics := make([]*topicState, 0, len(h.topics))
@@ -270,14 +212,11 @@ func (h *Hub) BufferedTopicCount() int {
 // retention policy is mistuned).
 func (h *Hub) TopicsReaped() uint64 { return h.reaped.Load() }
 
-// Publish broadcasts a fresh Event on the given topic. The Event's
-// ID and Timestamp are populated by Hub — callers MUST leave both
-// zero. Returns the assigned ID.
+// Publish broadcasts a fresh Event on the given topic and returns the assigned ID; the Hub
+// populates ID and Timestamp, so callers MUST leave both zero.
 //
-// Slow subscribers are dropped: if a subscriber's queue is full,
-// its channel is closed and the subscription removed. The dropped
-// client sees the connection close and reconnects with
-// Last-Event-ID for buffered replay.
+// A subscriber whose queue is full is dropped (channel closed, subscription removed); the client
+// sees the connection close and reconnects with Last-Event-ID for buffered replay.
 func (h *Hub) Publish(topic, eventType string, data []byte) string {
 	ev := Event{
 		Type:      eventType,
@@ -289,31 +228,18 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 	// Publish is never refused: its topics are server-chosen, and one it
 	// creates has no subscriber, so the reaper can reclaim it.
 	_ = h.withTopic(topic, false, func(t *topicState) {
-		// Draw the ID INSIDE the topic lock. Assigning it outside would
-		// make ID assignment and ring insertion non-atomic, so two
-		// concurrent publishes to one topic could enter the ring out of
-		// ID order: G1 draws A, G2 draws B>A, G2 wins the lock and
-		// pushes B, then G1 pushes A. The ring's ascending-ID invariant
-		// — which snapshotAfter's strict `>` filter depends on — would
-		// break, and the consequences would all be silent: a live subscriber
-		// receives B before A on a channel documented as ID-ordered; an
-		// EventSource that stores the LAST id it saw (A) gets B again on
-		// reconnect; a client tracking the MAX id (B) never receives A
-		// even though it is sitting in the buffer; and ring.push evicts
-		// slot 0, which under inversion is not the lowest-ID event.
+		// Draw the ID INSIDE the topic lock: if ID assignment and ring insertion were not atomic,
+		// concurrent publishes could enter the ring out of ID order, breaking the ascending-ID
+		// invariant that snapshotAfter's strict `>` filter and ring.push eviction rely on. The
+		// failures would be silent (B delivered before A, or A never replayed to a client
+		// tracking the max id).
 		ev.ID = h.gen.Next()
-		// The ring is allocated on FIRST PUBLISH, never on subscribe —
-		// see [topicState.buffer]. A topic that only ever had
-		// subscribers has nothing to replay, so the allocation would be
-		// a pure 20 KiB tax on a client-supplied key.
+		// The ring is allocated on first publish, never on subscribe (see [topicState.buffer]).
 		if t.buffer == nil {
 			t.buffer = newRing(h.bufferSize)
 		}
 		t.buffer.push(ev)
-		// Snapshot subscribers so we can release the topic lock before
-		// sending — keeps a slow sub from blocking publishers (sends
-		// below are non-blocking anyway, but the snapshot lets us drop
-		// them off-lock).
+		// Snapshot subscribers so the sends happen off the topic lock.
 		subs = make([]*subscription, 0, len(t.subs))
 		for s := range t.subs {
 			subs = append(subs, s)
@@ -321,12 +247,9 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 	})
 
 	for _, s := range subs {
-		// trySend is guarded by the subscription's own mutex, so it can
-		// never race with a concurrent close(): a send on a
-		// closed channel panics and would crash the whole process, and
-		// the send here is deliberately off the topic lock, so a
-		// cancel()/drop on another goroutine (or another topic, for a
-		// multi-topic sub) could otherwise close sub.ch mid-send.
+		// trySend holds the subscription's own mutex because this send is off the topic lock: a
+		// cancel() or drop on another goroutine (or topic) could otherwise close sub.ch mid-send,
+		// and a send on a closed channel panics the whole process.
 		if full := s.trySend(ev); full && h.dropSubscriber(topic, s) {
 			obs.APIStreamSubscriberDropsTotal.Inc()
 		}
@@ -340,15 +263,10 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 // in ID order ACROSS every subscribed topic (not just within one),
 // then live events. Unsubscribe by calling cancel().
 //
-// If lastEventID is empty, no replay happens — the client gets only
-// events published after Subscribe returns. If lastEventID is older
-// than the subscriber queue can hold, the OLDEST events are dropped and
-// replay starts partway through the buffer, silently to the client —
-// see the note in the loop below — but a stream_gap marker precedes it
-// so a consumer that tracks gaps can detect the loss.
-//
-// It returns [ErrTopicCapacity], holding no registration, when a topic
-// it would create does not fit under the ceiling.
+// An empty lastEventID means no replay. If the backlog exceeds the subscriber queue, the OLDEST
+// events are dropped (see the loop below) and a stream_gap marker precedes the replay only when
+// the ring itself lost events. It returns [ErrTopicCapacity], holding no registration, when a
+// topic it would create does not fit under the ceiling.
 func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func(), error) {
 	sub := &subscription{
 		ch:     make(chan Event, subscriberQueueDepth),
@@ -360,24 +278,13 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 		}
 	}
 
-	// Replay is budgeted at HALF the channel capacity, shared across
-	// the subscribed topics via a running total rather than a
-	// full-capacity clamp per topic. A per-topic clamp equal to
-	// subscriberQueueDepth lets a single topic (or the first of
-	// several alias topics) fill the entire channel on resume, so the
-	// very next live Publish finds it full and evicts the subscriber
-	// it just resumed — replay would have accomplished nothing.
-	// Reserving headroom means a resuming subscriber survives at
-	// least one live tick.
+	// Replay is budgeted at HALF the channel capacity, shared across topics via a running total.
+	// Filling the whole channel on resume would make the next live Publish find it full and evict
+	// the subscriber it just resumed; the headroom lets it survive at least one live tick.
 	//
-	// Below maxSplitReplayTopics (comfortably above the largest real
-	// alias fan-out — see canonical.AssetAliases) the budget is also
-	// split evenly per topic, so a later alias topic in a multi-topic
-	// subscription is never starved by an earlier one that happens to
-	// have a deeper backlog. Above that threshold — a shape no real
-	// caller produces — splitting further would only shrink the one
-	// topic actually carrying traffic, so each topic is instead
-	// offered whatever of the shared budget is still unspent.
+	// Up to maxSplitReplayTopics the budget is also split evenly per topic, so a later alias topic
+	// is not starved by an earlier one with a deeper backlog. Above that, each topic is offered
+	// whatever of the shared budget is unspent.
 	remaining := subscriberQueueDepth / 2
 	var merged []Event
 	var gaps []Event
@@ -388,55 +295,29 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 			share = (remaining + topicsLeft - 1) / topicsLeft // ceil(remaining/topicsLeft)
 		}
 
-		// Replay-snapshot and live registration happen in ONE
-		// topic-locked critical section. Doing them in two (snapshot,
-		// then register) leaves a gap: Publish takes the same lock to
-		// push into the ring AND to snapshot subscribers, so an event
-		// landing in the gap is in neither this subscriber's replay nor
-		// its fanout and is silently lost. Interleaved this way every
-		// event is in exactly one of the two — no loss, no duplicate.
-		// The actual send to sub.ch is deferred until every topic has
-		// been processed (below), so replay across topics can be
-		// merge-sorted by ID instead of queued topic-by-topic — ids
-		// come from one Hub-wide generator but are minted per-topic
-		// ring, so queuing a whole topic's replay before the next
-		// would walk the wire `id:` line backwards at the topic boundary.
+		// Replay snapshot and live registration happen in ONE topic-locked section. Publish takes
+		// the same lock to push and to snapshot subscribers, so an event landing between two
+		// separate steps would be in neither the replay nor the fanout. This way every event is in
+		// exactly one of them. The send to sub.ch is deferred until all topics are processed so
+		// replay can be merge-sorted by ID; queuing topic-by-topic would walk the wire `id:` line
+		// backwards at a topic boundary.
 		err := h.withTopic(topic, true, func(t *topicState) {
-			// Replay the NEWEST events that fit, then register for live.
-			//
-			// Replaying oldest-first and CLOSING the connection the
-			// moment the queue fills is the worst of both: the client
-			// gets the 32 OLDEST buffered events — the stalest prices in
-			// the ring — and is then disconnected. Measured on r1 with
-			// that behaviour, every reconnect returned exactly 32 events
-			// and closed in 6-8ms, so a client 20 minutes behind ground
-			// through ~8 reconnect rounds rendering progressively-stale
-			// prices as live, and one that only advanced its
-			// Last-Event-ID after a "complete" sync never converged at
-			// all. Nothing on the wire distinguishes a replayed event
-			// from a live one.
-			//
-			// Dropping the oldest instead is the honest trade: the
-			// client lands on the CURRENT price immediately and stays
-			// connected.
+			// Replay the NEWEST events that fit, then register for live. Replaying oldest-first and
+			// closing when the queue fills hands the client the stalest prices and disconnects it,
+			// so a lagging client would reconnect repeatedly and render stale prices as live
+			// (nothing on the wire distinguishes replay from live). Dropping the oldest lands it on
+			// the CURRENT price immediately and keeps it connected.
 			oldestHeld := t.oldestBufferedID()
 			full := t.replayAfter(lastEventID)
 			trimmed := full
 			if len(trimmed) > share {
 				trimmed = trimmed[len(trimmed)-share:]
 			}
-			// A gap is reported only when the ring has genuinely
-			// discarded an event the client's cursor implies it once
-			// held (hasEvictedBuffered + oldestHeld > lastEventID) —
-			// NOT merely because this subscription's replay budget
-			// trimmed a deep backlog. Budget trimming is the ordinary,
-			// documented "newest N" resume behaviour (every reconnect
-			// beyond the queue depth hits it); flagging it as a gap
-			// would fire on nearly every large resume rather than on
-			// genuine, unrecoverable loss.
-			// A cursor from a foreign ID space (another region whose clock
-			// is ahead) sorts above the whole ring, so replay is empty and
-			// would otherwise look like a clean resume.
+			// A gap is reported only when the ring itself discarded an event the cursor implies it
+			// held, NOT when this subscription's replay budget trimmed a deep backlog (that is the
+			// ordinary "newest N" resume and would flag nearly every large resume). A cursor from a
+			// foreign ID space (another region whose clock is ahead) sorts above the whole ring, so
+			// replay is empty and would otherwise look like a clean resume.
 			if h.resumeGap(t, lastEventID, oldestHeld) {
 				gaps = append(gaps, newStreamGapEvent(topic, lastEventID, oldestHeld))
 			}
@@ -522,19 +403,11 @@ func (h *Hub) dropSubscriber(topic string, sub *subscription) bool {
 	return present && sub.close()
 }
 
-// withTopic runs fn under the named topic's lock, creating the topic
-// on first use and refreshing its idle clock so anything in active use
-// is never reaped.
-//
-// It retries when the reaper evicted the state between lookup and
-// lock: an evicted topicState is detached from Hub.topics, so a push
-// into it (or a registration on it) would be invisible to everyone
-// else. The loop makes progress — every retry costs some other
-// goroutine a whole completed sweep, landing in the nanosecond window
-// between the lookup and the lock here — so it cannot spin against
-// itself.
-//
-// With bounded set, creating the topic may fail with [ErrTopicCapacity].
+// withTopic runs fn under the named topic's lock, creating the topic on first use and refreshing
+// its idle clock. It retries when the reaper evicted the state between lookup and lock, since a
+// push or registration on a detached state would be invisible to everyone else; each retry costs
+// another goroutine a whole sweep, so it cannot spin. With bounded set, creating the topic may
+// fail with [ErrTopicCapacity].
 func (h *Hub) withTopic(name string, bounded bool, fn func(t *topicState)) error {
 	for {
 		t, err := h.getOrCreateTopic(name, bounded)
@@ -609,22 +482,12 @@ func (h *Hub) maybeReapLocked(now time.Time) {
 	h.ceilingFutile = len(h.topics) >= h.maxTopics
 }
 
-// reapLocked drops every topic that no longer earns its memory:
+// reapLocked drops subscriber-less topics with an empty buffer (nothing to replay) or idle past
+// idleTTL (replay window expired). If the map is still at the ceiling, subscriber-less topics go
+// least-recently-used first. Topics with a live subscriber are NEVER dropped.
 //
-//   - no subscribers AND an empty buffer — nothing to replay, so
-//     recreating it on the next use is free (this is the shape a
-//     made-up pair leaves behind);
-//   - no subscribers AND idle past idleTTL — the replay window a
-//     reconnecting client could still have used has expired.
-//
-// If the map is still at the ceiling afterwards, subscriber-less
-// topics are evicted least-recently-used first. Topics with a live
-// subscriber are NEVER dropped — that would silently detach an open
-// stream from its fanout.
-//
-// Caller holds h.mu for writing. Topic locks are taken underneath it,
-// which is the one place the two are held together; no other path
-// takes h.mu while holding a topic lock, so the order can't invert.
+// Caller holds h.mu for writing. Topic locks are taken underneath it, the one place the two are
+// held together; no other path takes h.mu while holding a topic lock, so the order cannot invert.
 func (h *Hub) reapLocked(now time.Time) {
 	h.lastSweep = now
 	h.sinceSweep = 0
@@ -688,12 +551,9 @@ func (h *Hub) evictLocked(name string) {
 	obs.APIStreamHubTopicsReapedTotal.Inc()
 }
 
-// subscription is one active stream's per-Hub state.
-//
-// mu serializes trySend against close so a publisher can never send on a
-// channel a concurrent cancel/drop has closed (a send on a closed channel
-// panics and crashes the process). It is held only for a non-blocking
-// select, so contention is negligible.
+// subscription is one active stream's per-Hub state. mu serializes trySend against close so a
+// publisher never sends on a channel a concurrent cancel/drop closed (that panics the process);
+// it is held only for a non-blocking select.
 type subscription struct {
 	ch     chan Event
 	topics []string
@@ -719,14 +579,10 @@ func (s *subscription) trySend(ev Event) (full bool) {
 	}
 }
 
-// sendReplay queues one buffered-replay event during Subscribe.
-// Returns false when the queue is full OR the subscription has already
-// been closed — the caller drops the subscription and the client
-// reconnects with a fresher Last-Event-ID.
-//
-// Guarded by the same mutex as trySend/close: replay runs while
-// the subscription is registered on earlier topics, so a concurrent
-// drop could otherwise close sub.ch mid-send and crash the process.
+// sendReplay queues one buffered-replay event during Subscribe, returning false when the queue is
+// full or the subscription is closed (the client then reconnects with a fresher Last-Event-ID).
+// It shares trySend's mutex because replay runs while the subscription is already registered on
+// earlier topics, so a concurrent drop could close sub.ch mid-send.
 func (s *subscription) sendReplay(ev Event) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

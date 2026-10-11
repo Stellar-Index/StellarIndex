@@ -11,25 +11,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin the behaviour: a lake read that blows
-// explorerReadTimeout must be served as a 503 `…-timeout` problem+json, NOT the
-// `errors/internal` 500 every explorer handler would otherwise emit. The live symptom
-// was GET /v1/contracts/{id}/code-history returning
-// `500 {"type":".../errors/internal","title":"Internal error"}` at exactly 8.0s
-// for every contract (API log: `explorer ContractCodeHistory failed
-// err="context deadline exceeded"`), which told callers "we broke" when the
-// truthful answer was "this exceeded our time budget" — and buried a capacity
-// problem in the same bucket as real server bugs for the 5xx SLA probe.
+// These tests pin that a lake read exceeding explorerReadTimeout is served as a 503 `...-timeout`
+// problem+json, not an `errors/internal` 500. A 500 says "we broke" when the truth is "this
+// exceeded our time budget", and buries a capacity problem among real bugs for the 5xx SLA probe.
 //
-// 503 (not 504) is the codebase's existing convention for a server-side read
-// deadline — see writeReadTimeout's doc comment and v1's handlerTimedOut call
-// sites — and every explorer route already declares 503 in the OpenAPI spec.
+// 503 (not 504) is the codebase's convention for a server-side read deadline (see
+// writeReadTimeout and v1's handlerTimedOut), and every explorer route declares 503 in OpenAPI.
 
-// timeoutReader is a capReader whose lake reads all fail the way ClickHouse
-// fails one that outran its context: the driver propagates the cancellation and
-// the error unwraps to context.DeadlineExceeded (exactly what the production log
-// line showed). Only the methods the tested handlers call are overridden; the
-// rest fall through to capReader's harmless zero values.
+// timeoutReader is a capReader whose lake reads fail the way ClickHouse fails one that outran its
+// context: the error unwraps to context.DeadlineExceeded. Only the methods the tested handlers
+// call are overridden; the rest fall through to capReader's zero values.
 type timeoutReader struct{ *capReader }
 
 func (r *timeoutReader) RecentLedgers(context.Context, int, uint32) ([]clickhouse.LedgerHeader, error) {

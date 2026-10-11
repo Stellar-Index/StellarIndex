@@ -1,21 +1,12 @@
 // Package streampublish bridges the closed-bucket VWAP cache to the
 // SSE streaming Hub backing /v1/price/stream.
 //
-// One [Publisher] runs in the API binary alongside the Hub. For
-// each operator-configured (asset, quote) pair it polls the same
-// PriceReader the /v1/price handler uses; when a new closed bucket
-// arrives (detected by ObservedAt advancing past the last published
-// timestamp) it serialises the snapshot envelope and calls
-// [streaming.Hub.Publish] on the matching topic. Subscribers
-// attached to the topic via /v1/price/stream receive byte-identical
-// payloads — the same cross-region consistency property as
-// /v1/price itself (ADR-0015).
+// One [Publisher] polls the same PriceReader as /v1/price for each configured pair and calls
+// [streaming.Hub.Publish] when ObservedAt advances. Payloads are byte-identical to /v1/price,
+// keeping the cross-region consistency property (ADR-0015).
 //
-// Static pair list: the operator declares which pairs to broadcast
-// in the binary's `[api.streaming]` config section. Adding a pair
-// requires a config + restart. Pairs without observations stay
-// silent — no synthetic events; a withheld pair publishes a
-// price_withheld event instead of its bucket.
+// The pair list is static (config + restart to change). Pairs without observations stay silent,
+// with no synthetic events; a withheld pair publishes price_withheld instead of its bucket.
 package streampublish
 
 import (
@@ -33,23 +24,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// PriceReader is the narrow read-side dependency the publisher
-// needs. Satisfied by the same v1.PriceReader the /v1/price
-// handler consumes — declared here to avoid an import cycle into
-// the v1 package's `Server`. In practice the production wiring
-// passes a shared adapter to both.
+// PriceReader is the publisher's read-side dependency, satisfied by the same adapter the
+// /v1/price handler uses; declared here to avoid an import cycle into v1's Server.
 type PriceReader interface {
 	LatestPrice(ctx context.Context, asset, quote canonical.Asset) (
 		snapshot v1.PriceSnapshot, sources []string, stale bool, err error,
 	)
 }
 
-// Publisher polls a fixed set of pairs and republishes every newly-
-// closed bucket to a Hub. Construct via [New], then call [Run] in
-// a long-lived goroutine.
-//
-// Goroutine-safe — Run starts one inner goroutine per pair, all
-// driven off the supplied context.
+// Publisher polls a fixed set of pairs and republishes every newly closed bucket to a Hub.
+// Construct via [New], then run [Run] in a long-lived goroutine; it starts one goroutine per pair.
 type Publisher struct {
 	hub      *streaming.Hub
 	reader   PriceReader
@@ -58,12 +42,8 @@ type Publisher struct {
 	decimals *v1.NonstandardDecimalsCache
 	frozen   v1.FrozenLooker
 
-	// lastPublished tracks the most recent ObservedAt we've already
-	// fanned out, keyed by topic. Each pair's poller goroutine has
-	// exclusive access to its own key — no cross-goroutine writes —
-	// but we still wrap in a mutex for race-detector cleanliness and
-	// to keep the data structure honest if a future caller wants to
-	// inspect it from elsewhere.
+	// lastPublished is the latest ObservedAt already fanned out, per topic. Each pair's poller owns
+	// its own key; the mutex keeps the map race-clean.
 	mu            sync.Mutex
 	lastPublished map[string]time.Time
 	// withheld is the reason last put on the wire for a withheld topic.
@@ -74,20 +54,14 @@ type Publisher struct {
 // constructor convention (docs/engineering-standards.md 14.2) — the zero
 // value is a valid, fully-functional Publisher.
 type Options struct {
-	// Decimals wires the dex-nonstandard-decimals confirmed-decimals cache
-	// so tickOnce can correct a raw snapshot before publishing (see
-	// [v1.NormalizeRawPriceSnapshot]). nil (the zero value) treats every
-	// pair as standard-decimals — the same fail-open default every other
-	// consumer of the cache gets when it isn't wired.
+	// Decimals is the confirmed-decimals cache used to correct a raw snapshot before publishing
+	// (see [v1.NormalizeRawPriceSnapshot]). nil treats every pair as standard-decimals.
 	Decimals *v1.NonstandardDecimalsCache
 
-	// Frozen wires the ADR-0019 freeze marker — the same looker
-	// v1.Options.Freeze gives /v1/price. The closed bucket this publisher
-	// reads is raw prices_1m, which the anomaly checker never gates, so
-	// on a frozen pair it is the very bucket the freeze refused. With a
-	// looker wired such a bucket is replaced by a price_frozen event, and
-	// every price_update carries frozen_checked. nil leaves both off:
-	// the stream then makes no freeze claim at all.
+	// Frozen is the ADR-0019 freeze marker, the same looker /v1/price uses. The raw prices_1m bucket
+	// read here is never gated by the anomaly checker, so on a frozen pair it is the bucket the
+	// freeze refused: it becomes a price_frozen event and every price_update carries frozen_checked.
+	// nil leaves both off, so the stream makes no freeze claim.
 	Frozen v1.FrozenLooker
 }
 
@@ -123,21 +97,13 @@ func New(hub *streaming.Hub, reader PriceReader, interval time.Duration, logger 
 	}
 }
 
-// DefaultInterval is the per-pair poll cadence used when the
-// caller passes 0 / negative to [New]. 5 s detects a new 1-minute
-// closed bucket within 5 s of its end — well inside the 30 s
-// freshness SLA target — without hammering the reader for
-// pairs that update once per minute.
+// DefaultInterval is the per-pair poll cadence when [New] gets 0 or negative. 5 s catches a new
+// 1-minute bucket well inside the 30 s freshness target without hammering the reader.
 const DefaultInterval = 5 * time.Second
 
-// Run starts one polling goroutine per pair and blocks until ctx
-// is cancelled. Returns ctx.Err() on shutdown so callers can chain
-// onto an errgroup without losing the cancel cause.
-//
-// Pairs is treated as immutable for the Publisher's lifetime —
-// adding a pair requires a binary restart. The cost of that
-// constraint is recovered by simpler bookkeeping (no
-// add/remove/ref-count machinery).
+// Run starts one polling goroutine per pair and blocks until ctx is cancelled, returning
+// ctx.Err() so errgroup callers keep the cancel cause. Pairs are immutable for the Publisher's
+// lifetime, which avoids add/remove bookkeeping.
 func (p *Publisher) Run(ctx context.Context, pairs []canonical.Pair) error {
 	if len(pairs) == 0 {
 		// No pairs configured — nothing to do, but block until
@@ -151,12 +117,8 @@ func (p *Publisher) Run(ctx context.Context, pairs []canonical.Pair) error {
 	for _, pair := range pairs {
 		wg.Add(1)
 		go func(pair canonical.Pair) {
-			// A panic in one pair's poll loop must not crash the whole API
-			// process. The binary's outer recoverBackgroundWorker wraps
-			// only the goroutine that CALLS Run — it cannot catch a panic
-			// in these per-pair goroutines Run fans out, so each needs its
-			// own guard (logged at Error with its stack; that pair stops
-			// publishing, the others keep going).
+			// The binary's outer recover covers only the goroutine that calls Run, not these per-pair
+			// goroutines, so each needs its own guard: that pair stops publishing, the others go on.
 			defer worker.Recover(p.logger, "streampublish:"+pair.String())
 			defer wg.Done()
 			p.pollLoop(ctx, pair)
@@ -166,11 +128,9 @@ func (p *Publisher) Run(ctx context.Context, pairs []canonical.Pair) error {
 	return ctx.Err()
 }
 
-// publishWindowSeconds is the window component of this publisher's
-// Hub topics. The snapshots it forwards are /v1/price's 1-minute
-// closed buckets, so its series is the 60-second window — distinct
-// from the aggregator windows (300/3600/86400) the redispub bridge
-// publishes, now that the window is part of the topic key.
+// publishWindowSeconds is the window part of this publisher's Hub topics: /v1/price's 1-minute
+// buckets are the 60-second series, distinct from the aggregator windows the redispub bridge
+// publishes.
 const publishWindowSeconds = 60
 
 // pollLoop is the per-pair ticker. Returns when ctx is cancelled.
@@ -195,14 +155,10 @@ func (p *Publisher) pollLoop(ctx context.Context, pair canonical.Pair) {
 	}
 }
 
-// tickOnce queries the latest price for one pair and publishes if
-// the ObservedAt advanced past the last-published timestamp.
-//
-// Best-effort: a reader error logs at WARN and the loop continues —
-// a Postgres outage shouldn't take the publisher down across other
-// pairs. ErrPriceNotFound is silent (the pair has no closed bucket
-// yet, or has fallen outside the freshness window); ErrPriceWithheld
-// publishes a price_withheld event (see [Publisher.publishWithheld]).
+// tickOnce publishes one pair's latest price if ObservedAt advanced. It is best-effort: a reader
+// error logs at WARN so a Postgres outage does not take down other pairs. ErrPriceNotFound is
+// silent (no closed bucket, or outside the freshness window); ErrPriceWithheld publishes
+// price_withheld (see [Publisher.publishWithheld]).
 func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic string) {
 	pollCtx, cancel := context.WithTimeout(ctx, p.interval)
 	defer cancel()
@@ -243,25 +199,15 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 		return
 	}
 
-	// Apply the dex-nonstandard-decimals forward normalization. reader.LatestPrice
-	// returns the RAW closed-1m/last-trade ratio (see
-	// v1.Server.normalizeRawPriceSnapshot's doc comment) — the handler-side
-	// /v1/price path corrects it before serving, and this producer must too,
-	// or a flagged Soroban pair streams the wrong price by a power of ten
-	// while the REST surface serves the corrected one. Byte-identical no-op
-	// for every standard-decimals pair (the overwhelming common case).
+	// reader.LatestPrice returns the RAW ratio; /v1/price corrects it before serving, so this
+	// producer must too, or a flagged Soroban pair streams a price off by a power of ten.
+	// A no-op for standard-decimals pairs.
 	v1.NormalizeRawPriceSnapshot(&snap, pair.Base, pair.Quote, p.decimals)
 
-	// The DOCUMENTED envelope shape — field-compatible with /v1/price
-	// responses and the redispub bridge's fan-out, never a bespoke shape
-	// that matches neither. as_of is the bucket's ObservedAt —
-	// deterministic, preserving the byte-identical cross-region property
-	// this package's docs promise.
-	// AsOf is v1.WireTime, not time.Time, for the same reason every
-	// timestamp on the v1 wire is: ObservedAt carries whatever location
-	// the stored bucket decoded into, and a plain time.Time field would
-	// publish the server's local offset to SSE subscribers while the
-	// field-compatible /v1/price response published `Z`.
+	// The envelope is field-compatible with /v1/price and the redispub fan-out. as_of is the
+	// bucket's ObservedAt, keeping payloads byte-identical across regions. AsOf is v1.WireTime
+	// because ObservedAt carries whatever location the bucket decoded into; a plain time.Time
+	// would publish the server's local offset where /v1/price publishes Z.
 	payload, err := json.Marshal(struct {
 		Data    v1.PriceSnapshot `json:"data"`
 		AsOf    v1.WireTime      `json:"as_of"`
@@ -298,13 +244,10 @@ type frozenBucket struct {
 	WindowSeconds int         `json:"window_seconds"`
 }
 
-// frozenVerdict reads the freeze marker of every spelling of the pair's
-// base, as /v1/price does when it cannot tell which alias its bucket was
-// read from (the reader here does not say). Any frozen spelling governs;
-// checked is true only when every marker read succeeded, so an unknown
-// verdict never travels as "confirmed not frozen". A read error fails
-// open to publishing without frozen_checked — /v1/price's posture for
-// the same error.
+// frozenVerdict reads the freeze marker of every alias of the pair's base, as /v1/price does when
+// it cannot tell which alias the bucket came from. Any frozen alias governs; checked is true only
+// when every read succeeded, so an unknown verdict never travels as "confirmed not frozen". A read
+// error fails open to publishing without frozen_checked.
 func (p *Publisher) frozenVerdict(ctx context.Context, pair canonical.Pair) (frozen, checked bool) {
 	if p.frozen == nil {
 		return false, false
@@ -327,12 +270,9 @@ func (p *Publisher) frozenVerdict(ctx context.Context, pair canonical.Pair) (fro
 	return false, checked
 }
 
-// publishFrozen puts the freeze on the wire in place of the bucket it
-// refused. /v1/price never serves that bucket under the flag (it serves
-// the held VWAP or refuses), and this 60-second series has no held value
-// of its own, so the event carries the bucket's identity and no price.
-// Silence would be indistinguishable from a pair with no trades. stale is
-// the reader's verdict on that bucket, carried as price_update carries it.
+// publishFrozen puts the freeze on the wire in place of the refused bucket. This series has no
+// held value, so the event carries the bucket's identity and no price; silence would look like a
+// pair with no trades. stale is the reader's verdict, carried as price_update carries it.
 func (p *Publisher) publishFrozen(pair canonical.Pair, topic string, snap v1.PriceSnapshot, stale bool) {
 	payload, err := json.Marshal(struct {
 		Data  frozenBucket `json:"data"`
@@ -389,11 +329,9 @@ func (p *Publisher) publishWithheld(pair canonical.Pair, topic string, reason v1
 	obs.StreamPublishTotal.WithLabelValues("price_stream").Inc()
 }
 
-// shouldPublish records the latest observed timestamp for the
-// topic and returns true on advance. False (no advance) is the
-// common case between bucket closes — the reader returns the same
-// bucket for every poll until a new one materialises. A served read
-// also ends any withholding recorded for the topic.
+// shouldPublish records the latest observed timestamp for the topic and returns true on advance;
+// false is the common case, as the reader repeats the same bucket until a new one closes. A served
+// read also ends any withholding recorded for the topic.
 func (p *Publisher) shouldPublish(topic string, observedAt time.Time) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()

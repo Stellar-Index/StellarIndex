@@ -13,11 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These pin the serving contract for GET /v1/accounts/{g}/positions.
-// Measured cause: the six protocol folds ran inline on the request context
-// with no memoisation and no flight — live on r1 the endpoint answered in
-// 1.253 s then 1.148 s back-to-back, i.e. every visitor paid the whole
-// fan-out, while the sibling /v1/accounts/{g} is SWR-cached.
+// These pin the serving contract for GET /v1/accounts/{g}/positions: the six protocol folds are
+// memoised and single-flighted like the SWR-cached sibling /v1/accounts/{g}, so a visitor does not
+// pay the whole fan-out inline on the request context.
 
 // countingPositionsReader answers every fold immediately, counting how many
 // times the BLEND fold (the first) was entered — a proxy for "how many full

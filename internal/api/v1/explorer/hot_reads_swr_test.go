@@ -14,9 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin the stale-while-revalidate contract for the three lake-priced explorer reads
+// These tests pin the stale-while-revalidate contract for the lake-priced explorer reads
 // (contracts directory, asset holders, op-type stats): a stale entry is SERVED (degraded=true,
-// real as_of) while exactly one detached refresh runs; a cold key waits for the detached compute
+// real as_of) while exactly one detached refresh runs; a cold key waits for the detached compute,
 // bounded by the request deadline only; a failed refresh keeps the previous entry.
 
 // swrReader overrides the three reads with countable, controllable stubs.
@@ -188,9 +188,9 @@ func TestPrewarmContractsDirectory_WarmsDefaultRung(t *testing.T) {
 	}
 }
 
-// TestPrewarmOpTypeStats_FillsColdCacheThenNoops pins boot warmth: prewarm builds the op-type
-// panel before any request so a cold first /v1/operations load never renders without it; a fresh
-// panel makes prewarm a no-op, and a reader-less or cancelled handler is safe.
+// TestPrewarmOpTypeStats_FillsColdCacheThenNoops: the prewarm loop builds the op-type panel before
+// any request so a cold first /v1/operations load never renders without it; a fresh panel makes
+// prewarm a no-op, and a reader-less or cancelled handler is safe.
 func TestPrewarmOpTypeStats_FillsColdCacheThenNoops(t *testing.T) {
 	h, reader := newSWRHandler()
 	h.PrewarmOpTypeStats(context.Background())
@@ -268,10 +268,9 @@ func TestSWRRefresh_ObservesMetrics(t *testing.T) {
 // ── shared detached-refresh gate ───────────────────
 
 // TestDetachedRefreshGate_SaturationSkipsNotQueues pins the global bound across cache keys:
-// per-key single-flight alone lets attacker-chosen key churn (fabricated addresses/assets) queue
-// one unbounded detached lake scan per key. On saturation the refresh is SKIPPED, so stale
-// entries keep serving and cold keys miss with a retryable error, and refreshes resume once
-// capacity frees.
+// per-key single-flight alone lets fabricated addresses/assets (each a distinct cold key) queue
+// one unbounded lake scan per key on the shared pool. On saturation the refresh is SKIPPED (stale
+// entries keep serving, cold keys miss with a retryable error) and resumes once capacity frees.
 func TestDetachedRefreshGate_SaturationSkipsNotQueues(t *testing.T) {
 	h, reader := newSWRHandler()
 	gate := h.detachedGate()
@@ -398,8 +397,8 @@ func TestContractDetailCached_ColdFailurePropagates(t *testing.T) {
 }
 
 // TestDetachedClassForKey_PanelsDoNotShareOneBudget: the contract page fans out to several panels
-// at once, and they must not compete for one refresh-gate class, or the per-class cap (half the
-// global limit) refuses the losers and a cold page serves a 503 panel.
+// at once, which must not compete for one refresh-gate class, or the per-class cap (half the
+// global limit) refuses the losers and cold pages serve 503 panels.
 func TestDetachedClassForKey_PanelsDoNotShareOneBudget(t *testing.T) {
 	// The four kinds a contract page + account activity actually use.
 	keys := map[string]string{

@@ -94,16 +94,10 @@ func TestStream_PerIPConcurrentCap(t *testing.T) {
 	}
 }
 
-// TestStream_PerIPCapAggregatesIPv6Slash64 is the SEC-rate-limit
-// regression: the per-IP SSE cap must key IPv6 clients on their /64
-// network prefix, not the full /128 address. Without the fix, a
-// client that controls an entire delegated /64 (typical
-// residential/mobile ISP allocation) opens an unbounded number of
-// concurrent streams by rotating its source address within that
-// block — each address gets its own bucket and the cap never
-// engages. Here every connection uses a DIFFERENT IPv6 address drawn
-// from the same /64; with capN=3 the 4th MUST be rejected because all
-// of them key to one bucket.
+// TestStream_PerIPCapAggregatesIPv6Slash64: the per-IP SSE cap must key IPv6 clients on their /64
+// prefix, not the /128 address, or a client holding a delegated /64 rotates addresses and never
+// meets the cap. Every connection uses a different address from one /64; with capN=3 the 4th MUST
+// be rejected.
 func TestStream_PerIPCapAggregatesIPv6Slash64(t *testing.T) {
 	const capN = 3
 

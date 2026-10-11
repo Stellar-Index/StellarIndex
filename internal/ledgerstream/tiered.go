@@ -16,49 +16,32 @@ import (
 // ErrBothTiersMissing marks a read that neither the hot nor the cold tier could serve.
 var ErrBothTiersMissing = errors.New("missing in BOTH tiers (hot, then cold)")
 
-// TieredDataStore wraps a hot + cold [datastore.DataStore] in a
-// fallback chain. Reads try hot first; on a not-found error (and only
-// that, not transient errors) they fall through to cold. Writes always
-// target hot; cold is read-only. Per ADR-0027 hot is local
-// galexie-archive (MinIO on r1) and cold is `aws-public-blockchain` S3.
+// TieredDataStore wraps a hot + cold [datastore.DataStore] in a fallback chain (ADR-0027). Reads
+// try hot first and fall through to cold on not-found only; writes target hot, cold is read-only.
 //
-// Fail-loud-not-silent: transient hot errors propagate immediately, so
-// a misconfigured hot endpoint surfaces as the operator's problem
-// instead of being masked by a slow cold fallback that succeeds.
+// Transient hot errors propagate immediately so a misconfigured hot endpoint is not masked by a
+// slow cold fallback that succeeds.
 //
-// Metrics (obs.LedgerstreamTierReadTotal, obs.LedgerstreamColdReadDurationSeconds)
-// are obs package-level, NOT per-instance: the production ledgerstream.Config
-// leaves Registry nil (the SDK's BufferedStorageBackend registration panics
-// across the archive->live->catch-up Stream calls), so a per-instance metric
-// would be nil and the `both_missing` page could never fire. A `cold` rate
-// spike on live ingest means the trim window is too tight.
+// Tier metrics are obs package-level, not per-instance: production leaves Config.Registry nil
+// (SDK registration panics across repeated Stream calls), so a per-instance metric would be nil
+// and the `both_missing` page could never fire. A `cold` rate spike on live ingest means the trim
+// window is too tight.
 type TieredDataStore struct {
 	hot  datastore.DataStore
 	cold datastore.DataStore
 }
 
-// NewTieredDataStore builds a TieredDataStore wrapping hot + cold.
-//
-// Metrics are the obs package-level [obs.LedgerstreamTierReadTotal] /
-// [obs.LedgerstreamColdReadDurationSeconds], registered once at process
-// boot — so there is no per-instance registry to wire and no typed-nil
-// footgun. Repeated construction across the archive→live→catch-up
-// Stream calls is safe because the metrics are NOT re-registered here.
+// NewTieredDataStore builds a TieredDataStore wrapping hot + cold. Metrics are package-level and
+// registered once at boot, so repeated construction across Stream calls is safe.
 func NewTieredDataStore(hot, cold datastore.DataStore) *TieredDataStore {
 	return &TieredDataStore{hot: hot, cold: cold}
 }
 
-// IsNotFound returns true when err is a missing-key error from any
-// datastore backend. All three backends normalize to os.ErrNotExist:
-// the filesystem store natively, and the SDK's S3DataStore converts
-// AWS typed errors (types.NoSuchKey from GetObject, types.NotFound
-// from HeadObject) via errors.As before returning os.ErrNotExist
-// (go-stellar-sdk support/datastore/s3.go, isNotFoundError) — so no
-// string matching is needed or performed. Manifest-empty errors
-// ([datastore.ErrNoLedgerFiles] etc.) also count as not-found.
-// Transient errors (network timeouts, auth failures, throttling)
-// DO NOT match and so propagate up rather than falsely triggering
-// a cold fallback.
+// IsNotFound reports whether err is a missing-key error from any datastore backend. All backends
+// normalize to os.ErrNotExist (the SDK's S3 store converts NoSuchKey/NotFound), so no string
+// matching is needed; manifest-empty errors ([datastore.ErrNoLedgerFiles] etc.) also count.
+// Transient errors (timeouts, auth, throttling) do not match, so they never falsely trigger a
+// cold fallback.
 func IsNotFound(err error) bool {
 	if err == nil {
 		return false
@@ -70,11 +53,8 @@ func IsNotFound(err error) bool {
 }
 
 // GetFile reads from hot; on IsNotFound, reads from cold.
-// Transient errors from hot propagate without trying cold.
-//
-// The int64 is the object size in bytes (go-stellar-sdk v0.6 added it to the
-// datastore.DataStore.GetFile contract); we thread the underlying store's
-// value through unchanged.
+// Transient errors from hot propagate without trying cold. The int64 is the object size in
+// bytes, passed through from the underlying store.
 func (t *TieredDataStore) GetFile(ctx context.Context, path string) (io.ReadCloser, int64, error) {
 	rc, size, err := t.hot.GetFile(ctx, path)
 	if err == nil {
@@ -159,14 +139,9 @@ func (t *TieredDataStore) Size(ctx context.Context, path string) (int64, error) 
 	return t.cold.Size(ctx, path)
 }
 
-// ListFilePaths returns the union of hot + cold listings. Cold
-// paths that are also in hot are deduplicated — hot wins (the
-// fresh path). This is the right shape for backfills that span
-// the hot/cold boundary: a single call returns every available
-// partition.
-//
-// Order is hot-first then cold-only; callers that need a sorted
-// view sort downstream.
+// ListFilePaths returns the union of hot + cold listings, deduplicated with hot winning, so a
+// backfill spanning the hot/cold boundary sees every partition. Order is hot-first then cold-only;
+// callers needing a sorted view sort downstream.
 func (t *TieredDataStore) ListFilePaths(ctx context.Context, options datastore.ListFileOptions) ([]string, error) {
 	hot, err := t.hot.ListFilePaths(ctx, options)
 	if err != nil {

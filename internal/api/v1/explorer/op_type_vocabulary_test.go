@@ -7,13 +7,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// TestOpViewLight_UsesControlledOpTypeVocabulary pins that the directory
-// listing (opViewLight, backing /v1/operations and the ledger-scoped
-// listings) must serve the same snake_case op-type vocabulary as the
-// decoded happy path, not the naive lowercase-and-strip-prefix fallback.
-// A naive fallback would make a multi-word lake type like "OperationTypeManageSellOffer"
-// come out as "manageselloffer" here while xdrjson.OpTypeName gives
-// "manage_sell_offer" everywhere else.
+// TestOpViewLight_UsesControlledOpTypeVocabulary: the directory listing (opViewLight, backing
+// /v1/operations and the ledger-scoped listings) must serve the same snake_case op-type vocabulary
+// as the decoded path. A lowercase-and-strip-prefix fallback would turn "OperationTypeManageSellOffer"
+// into "manageselloffer" where xdrjson.OpTypeName gives "manage_sell_offer".
 func TestOpViewLight_UsesControlledOpTypeVocabulary(t *testing.T) {
 	row := clickhouse.OpRow{OpType: "OperationTypeManageSellOffer"}
 	got := opViewLight(row).Type

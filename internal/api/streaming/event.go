@@ -10,18 +10,8 @@ import (
 // idLen is the width of a generated event ID in hex characters.
 const idLen = 16
 
-// Event is one SSE message ready for delivery on a topic.
-//
-// Wire mapping when serialised by the Stream handler:
-//
-//	id: <ID>
-//	event: <Type>
-//	data: <Data>
-//	\n
-//
-// Data is pre-serialised JSON or whatever the producer wants on the
-// wire — Stream is content-agnostic to keep it reusable across
-// price/tip/observations stream shapes.
+// Event is one SSE message ready for delivery on a topic (see [WriteFrame] for the wire mapping).
+// Data is pre-serialised by the producer; Stream is content-agnostic.
 type Event struct {
 	// ID is the lexicographically-sortable event identifier.
 	// Clients use it as `Last-Event-ID` on reconnect to resume.
@@ -50,33 +40,17 @@ type Event struct {
 	Retry time.Duration
 }
 
-// EventTypeStreamGap is the `event:` value Hub.Subscribe emits when a
-// replay cannot cover the requested Last-Event-ID — either because the
-// ring already evicted older events, or because the per-subscription
-// replay budget trimmed them, or because the cursor is newer than any ID
-// this process could have issued (a foreign ID space). IDs are
-// timestamp-packed, not a per-topic sequence, so a gap is otherwise
-// unobservable to the client. Sent before any replay event, with no ID
-// of its own — it does not advance the client's resume cursor.
+// EventTypeStreamGap is the `event:` value Hub.Subscribe emits when a replay cannot cover the
+// requested Last-Event-ID: the ring evicted older events, or the cursor is newer than any ID this
+// process could have issued (a foreign ID space). IDs are timestamp-packed, not a per-topic
+// sequence, so the client cannot observe a gap otherwise. It is sent before any replay event with
+// no ID of its own, so it does not advance the resume cursor.
 const EventTypeStreamGap = "stream_gap"
 
-// Generator is a goroutine-safe monotonic event-ID source. Each
-// call to [Generator.Next] returns a fresh 16-char lowercase hex
-// ID composed of:
-//
-//   - 8 bytes (16 hex chars) packed: high 48 bits are unix-millis
-//     (truncated), low 16 bits are a per-millisecond rolling counter
-//     to break ties in the same wall-clock millisecond.
-//
-// This is NOT a ULID — we intentionally avoid the dependency. The
-// only contract clients need is "lexicographic sort = chronological"
-// which this format satisfies for the next ~8900 years (until 2^48
-// ms overflows in 10889 CE). The internal format is private; treat
-// IDs as opaque strings.
-//
-// Hubs hold a Generator internally; non-Hub callers (e.g. the
-// /v1/price/tip/stream handler that ticks per-connection without
-// going through a Hub) can construct one directly.
+// Generator is a goroutine-safe monotonic event-ID source. [Generator.Next] returns a 16-char
+// lowercase hex ID: the high 48 bits are unix millis, the low 16 a per-millisecond counter. The
+// only client contract is "lexicographic sort = chronological"; treat IDs as opaque. Non-Hub
+// callers (per-connection tickers) can construct one directly.
 type Generator struct {
 	// state packs (lastMillis << 16) | counter into a single
 	// uint64 for atomic-CAS update. counter resets implicitly each
@@ -84,12 +58,9 @@ type Generator struct {
 	state atomic.Uint64
 }
 
-// Ahead reports whether id is a well-formed ID newer than anything this
-// generator could have issued by now — a cursor minted by another process
-// whose clock runs ahead. Such a cursor sorts above every event in this
-// process's rings, so a resume would replay nothing and hide the loss.
-// Malformed IDs return false: they are not in this ID space at all and
-// keep the plain "replay what sorts after" behaviour.
+// Ahead reports whether id is a well-formed ID newer than anything this generator could have
+// issued by now (a cursor from a process whose clock runs ahead). It sorts above every ring event,
+// so a resume would replay nothing and hide the loss. Malformed IDs return false.
 func (g *Generator) Ahead(id string) bool {
 	if len(id) != idLen {
 		return false
@@ -122,14 +93,9 @@ func (g *Generator) Next() string {
 			// increment the counter).
 			next = (oldMillis << 16) | (oldCounter + 1)
 		default:
-			// Same millisecond AND counter saturated at 0xFFFF (65 535
-			// IDs already issued in this ms). Advance the millis by one
-			// instead of wrapping the counter back to 0 — which would
-			// re-issue every prior ID for this millisecond, breaking
-			// the "never returns the same ID twice" contract. The
-			// synthetic-future millis is harmless: subsequent real-time
-			// ms will catch back up via the `now > oldMillis` branch
-			// once wall-clock advances past the synthesised value.
+			// Counter saturated within one ms: advance the millis instead of wrapping, since
+			// wrapping would re-issue every prior ID. The synthetic-future millis is harmless;
+			// the `now > oldMillis` branch catches up once the wall clock passes it.
 			next = (oldMillis + 1) << 16
 		}
 		if g.state.CompareAndSwap(old, next) {

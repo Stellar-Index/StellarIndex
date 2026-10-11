@@ -24,14 +24,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestStream_boundedRange_filesystemDatastore proves the SDK's
-// BufferedStorageBackend happy path flows through our wrapper:
-// write three ledger files into a temp directory in the Galexie
-// layout, call Stream(from=5, to=7), confirm the callback got all
-// three LedgerCloseMeta values in order.
-//
-// Filesystem datastore (no Docker) — unit-test-grade. A separate
-// MinIO integration test belongs with the indexer wiring to live MinIO.
+// TestStream_boundedRange_filesystemDatastore proves the SDK's BufferedStorageBackend happy path
+// flows through our wrapper: three ledger files in Galexie layout, Stream(from=5, to=7) delivers
+// all three in order. Uses the filesystem datastore, so no Docker.
 func TestStream_boundedRange_filesystemDatastore(t *testing.T) {
 	tmp := t.TempDir()
 
@@ -110,13 +105,9 @@ func TestStream_boundedRange_filesystemDatastore(t *testing.T) {
 	}
 }
 
-// TestStream_singleLedgerBoundedRange pins the ch-live-catchup
-// tip-extend case: Stream(from=N, to=N) must walk exactly one
-// ledger. The SDK's ingest.ApplyLedgerMetadata rejects single-ledger
-// bounded ranges (`invalid end value for bounded range`), so Stream
-// routes them through the in-house hot-only walk — without that,
-// every catch-up run that fires exactly one ledger behind the
-// galexie tip would fail.
+// TestStream_singleLedgerBoundedRange pins the ch-live-catchup tip-extend case: Stream(from=N,
+// to=N) must walk exactly one ledger. The SDK rejects single-ledger bounded ranges, so Stream
+// routes them through the in-house hot-only walk.
 func TestStream_singleLedgerBoundedRange(t *testing.T) {
 	tmp := t.TempDir()
 
@@ -168,14 +159,9 @@ func TestStream_singleLedgerBoundedRange(t *testing.T) {
 	}
 }
 
-// TestStream_singleLedgerBoundedRange_BelowGenesis_ReturnsError pins that a single-ledger
-// bounded request entirely below Stellar genesis (ledger 2) — e.g.
-// Stream(from=1, to=1) — must not PrepareRange against the UNCLAMPED
-// range while the walk loop starts at the CLAMPED from=2. Since
-// clamped-from (2) > To (1), the loop's bound check fails on its
-// very first iteration and Stream would return nil (success) having
-// invoked the callback ZERO times — a silent no-op indistinguishable
-// from "there was nothing to walk". It must instead return an error.
+// TestStream_singleLedgerBoundedRange_BelowGenesis_ReturnsError pins that Stream(from=1, to=1),
+// entirely below genesis (ledger 2), returns an error. Clamped-from (2) > To (1) would otherwise
+// make the walk deliver ZERO ledgers and return nil, a silent no-op.
 func TestStream_singleLedgerBoundedRange_BelowGenesis_ReturnsError(t *testing.T) {
 	tmp := t.TempDir()
 
@@ -298,11 +284,8 @@ func TestStream_callbackErrorAborts(t *testing.T) {
 
 // ─── fixture helpers ────────────────────────────────────────────
 
-// writeLedgerFixture constructs a minimal xdr.LedgerCloseMeta for
-// the given sequence number, wraps it in an xdr.LedgerCloseMetaBatch,
-// zstd-compresses to XDR bytes, and writes to the Galexie object-key
-// for seq. Mirrors what Galexie itself would produce, but constructed
-// in-test so we don't ship fixture binaries in the repo.
+// writeLedgerFixture writes a minimal zstd-compressed LedgerCloseMetaBatch for seq at its Galexie
+// object key, built in-test so no fixture binaries ship in the repo.
 func writeLedgerFixture(t *testing.T, ctx context.Context, store datastore.DataStore, schema datastore.DataStoreSchema, seq uint32) {
 	t.Helper()
 	lcm := minimalLedgerCloseMeta(seq)
@@ -325,14 +308,9 @@ func writeLedgerFixture(t *testing.T, ctx context.Context, store datastore.DataS
 	_ = filepath.Join // silence unused on older paths
 }
 
-// minimalLedgerCloseMeta builds a V1 LCM with just the ledger
-// sequence populated + an empty GeneralizedTransactionSet arm so
-// the XDR encoder doesn't reject the zero-valued union switch.
-//
-// Our Stream wrapper doesn't inspect any field beyond what the
-// SDK's BufferedStorageBackend needs to round-trip the batch;
-// downstream decoders that care about tx content will use larger
-// fixtures captured from mainnet.
+// minimalLedgerCloseMeta builds a V1 LCM with just the sequence set, plus an empty
+// GeneralizedTransactionSet arm so the XDR encoder accepts the union. Stream inspects nothing
+// beyond what the SDK needs to round-trip the batch.
 func minimalLedgerCloseMeta(seq uint32) xdr.LedgerCloseMeta {
 	return xdr.LedgerCloseMeta{
 		V: 1,
@@ -371,20 +349,12 @@ func (b bufferWriterTo) WriteTo(w io.Writer) (int64, error) {
 	return int64(n), err
 }
 
-// TestStream_ColdTierInitFailure_FallsBackToHotOnly proves BACKLOG
-// #56a: a cold-tier that fails to construct (bad Type, wrong
-// region, unreachable endpoint, etc.) must NOT abort the walk. Per
-// ADR-0027 the cold tier is an optional fallback for ranges trimmed
-// from the local mirror — a broken cold config cannot make a
-// perfectly-good hot read fail. streamTiered's cold branch logs a
-// WARN (operator-visible) and degrades to the hot-only path instead
-// of propagating the cold-side error.
+// TestStream_ColdTierInitFailure_FallsBackToHotOnly proves a cold tier that fails to construct
+// must NOT abort the walk: per ADR-0027 it is an optional fallback, so a broken cold config cannot
+// fail a good hot read. streamTiered logs a WARN and degrades to hot-only.
 //
-// This exercises the multi-ledger branch of the fallback (From !=
-// To), which closes the already-opened hot store and re-enters via
-// the SDK's ingest.ApplyLedgerMetadata over cfg.DataStore alone —
-// distinct from the single-ledger branch covered by
-// TestStream_ColdTierInitFailure_SingleLedgerRange below.
+// This covers the multi-ledger branch (From != To), which closes the open hot store and re-enters
+// via ApplyLedgerMetadata; the single-ledger branch is TestStream_ColdTierInitFailure_SingleLedgerRange.
 func TestStream_ColdTierInitFailure_FallsBackToHotOnly(t *testing.T) {
 	tmp := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -455,13 +425,9 @@ func TestStream_ColdTierInitFailure_FallsBackToHotOnly(t *testing.T) {
 	}
 }
 
-// TestStream_ColdSchemaMismatch_ReturnsError guards the schema check: when hot and cold both construct
-// successfully but their Galexie export shapes disagree (here,
-// LedgersPerFile), object keys computed from hot's schema are simply
-// wrong for cold's layout — cold fallback would silently 404 forever
-// instead of ever actually serving a trimmed-from-hot range. Stream
-// must refuse loudly rather than wrap a TieredDataStore whose cold
-// side can never be reached.
+// TestStream_ColdSchemaMismatch_ReturnsError guards the schema check: when hot and cold export
+// different shapes (here LedgersPerFile), hot-shaped keys silently 404 on cold forever. Stream
+// must refuse loudly rather than wrap a TieredDataStore whose cold side can never be reached.
 func TestStream_ColdSchemaMismatch_ReturnsError(t *testing.T) {
 	hotDir := t.TempDir()
 	coldDir := t.TempDir()
@@ -527,13 +493,9 @@ func TestStream_ColdSchemaMismatch_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestStream_ColdTierInitFailure_SingleLedgerRange covers the other
-// half of streamTiered's cold-init-failure branch: a single-ledger
-// bounded range (From == To) reuses the already-open hot store via
-// the in-house walk rather than closing it and re-entering
-// ApplyLedgerMetadata (which itself rejects single-ledger ranges —
-// see TestStream_singleLedgerBoundedRange). Both branches must
-// degrade to hot-only on a broken cold config.
+// TestStream_ColdTierInitFailure_SingleLedgerRange covers the other half of the cold-init-failure
+// branch: a single-ledger range reuses the open hot store via the in-house walk, since
+// ApplyLedgerMetadata rejects it. Both branches must degrade to hot-only.
 func TestStream_ColdTierInitFailure_SingleLedgerRange(t *testing.T) {
 	tmp := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -600,25 +562,13 @@ func TestStream_ColdTierInitFailure_SingleLedgerRange(t *testing.T) {
 	}
 }
 
-// TestStream_ColdDataStoreFactory_TakesPrecedence proves the ADR-0027
-// cold-tier credential fix is actually reachable from Stream: when
-// Config.ColdDataStoreFactory is set, streamTiered must open the cold
-// tier through it and NOT through datastore.NewDataStore.
+// TestStream_ColdDataStoreFactory_TakesPrecedence proves that when Config.ColdDataStoreFactory is
+// set, streamTiered opens the cold tier through it and NOT through datastore.NewDataStore, whose
+// ambient AWS credential chain carries the hot tier's MinIO keys (see the factory's godoc).
 //
-// Why that matters: datastore.NewDataStore builds
-// every S3 client from the ambient AWS credential chain, which on r1
-// carries local MinIO's credentials because the HOT tier authenticates
-// through it. Those keys were then presented to real AWS and every cold
-// read failed with `InvalidAccessKeyId: The AWS Access Key Id you
-// provided does not exist in our records`. The factory is how
-// pipeline.NewColdDataStore — which resolves the cold credentials
-// explicitly — gets injected here.
-//
-// The test is arranged so the two paths are distinguishable by outcome
-// rather than by inspection: ColdDataStore.Type is an unsupported type,
-// so a datastore.NewDataStore call would fail and degrade to hot-only,
-// which cannot serve ledger 6 (hot holds only 5). Delivering both
-// ledgers is only possible if the factory opened the cold store.
+// The paths are distinguishable by outcome: ColdDataStore.Type is unsupported, so
+// datastore.NewDataStore would fail and degrade to hot-only, which cannot serve ledger 6 (hot
+// holds only 5). Delivering both ledgers is only possible if the factory opened the cold store.
 func TestStream_ColdDataStoreFactory_TakesPrecedence(t *testing.T) {
 	hotDir := t.TempDir()
 	coldDir := t.TempDir()
@@ -689,11 +639,9 @@ func TestStream_ColdDataStoreFactory_TakesPrecedence(t *testing.T) {
 	}
 }
 
-// TestStream_ColdDataStoreFactoryError_FallsBackToHotOnly keeps the
-// ADR-0027 "cold tier is optional" invariant across the new hook: a
-// factory that fails (e.g. pipeline.NewColdDataStore refusing a
-// half-configured credential pair) must degrade to hot-only exactly
-// like a datastore.NewDataStore failure does, not abort the walk.
+// TestStream_ColdDataStoreFactoryError_FallsBackToHotOnly keeps the "cold tier is optional"
+// invariant across the factory hook: a failing factory must degrade to hot-only exactly like a
+// datastore.NewDataStore failure, not abort the walk.
 func TestStream_ColdDataStoreFactoryError_FallsBackToHotOnly(t *testing.T) {
 	tmp := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -842,15 +790,10 @@ func TestStream_buffered_overrideUsedVerbatim(t *testing.T) {
 	}
 }
 
-// TestStream_liveRetryWait_picksUpLateLedger pins Config.LiveRetryWait.
-// On an unbounded (live-tail) stream, a fetch worker that misses the
-// next ledger object must re-check within LiveRetryWait, not the
-// SDK's 30s default. The test writes ledger 7 ~400ms AFTER the stream
-// has already caught up to ledger 6 — so the worker fetching 7 has
-// missed and entered its retry-wait loop — then asserts the stream
-// delivers 7 well inside an 8s window. That is impossible if the 30s
-// default leaked through, so the test genuinely exercises the
-// override and guards the live-tail ingest-lag fix from regression.
+// TestStream_liveRetryWait_picksUpLateLedger pins Config.LiveRetryWait: a live-tail fetch worker
+// that misses the next object must re-check within LiveRetryWait, not the SDK's 30s default. It
+// writes ledger 7 ~400ms after the stream caught up to 6 (so the worker is already in its
+// retry-wait) and asserts delivery well inside 8s, which the 30s default could not meet.
 func TestStream_liveRetryWait_picksUpLateLedger(t *testing.T) {
 	tmp := t.TempDir()
 
@@ -925,25 +868,16 @@ func TestStream_liveRetryWait_picksUpLateLedger(t *testing.T) {
 	}
 }
 
-// Config.LiveRetryBudget must cover the datastore
-// STARTUP, not only the SDK fetch worker's in-walk retries.
+// Config.LiveRetryBudget must cover the datastore STARTUP, not only the SDK fetch worker's
+// in-walk retries.
 //
-// The budget is spent inside the SDK's ledger buffer,
-// which only exists after datastore.NewDataStore + datastore.LoadSchema
-// have both succeeded — and those run once, up front, with no retry
-// (go-stellar-sdk ingest/producer.go:96-105; LoadSchema is a live LIST
-// against the bucket). So a lake that is unreachable when the live tail
-// STARTS was never covered: Stream returned in microseconds with
-// "failed to retrieve datastore schema", the indexer exited, and because
-// every restart then died in that same startup path in ~1s (rather than
-// the ~5 min the unit file's StartLimit sizing assumes), sixty restarts
-// fit inside StartLimitIntervalSec and the unit parked in `failed` —
-// staying parked after MinIO recovered until a human intervened.
+// The budget is spent inside the SDK's ledger buffer, which exists only after NewDataStore and
+// LoadSchema (a live LIST) have succeeded once with no retry. A lake unreachable when the tail
+// STARTS would make Stream fail in microseconds, and restarts dying in ~1s exhaust the unit's
+// StartLimit and park it in `failed` even after the lake recovers.
 //
-// A directory that does not exist yet is the hermetic stand-in for a
-// MinIO that is down: FilesystemDataStore.ListFilePaths walks the base
-// path, so LoadSchema fails exactly as it does against a refused socket.
-// Creating it mid-test is the lake coming back.
+// A directory that does not exist yet is the hermetic stand-in for a down MinIO: LoadSchema fails
+// as against a refused socket, and creating it mid-test is the lake coming back.
 func TestStream_liveTail_retriesWhenDataStoreIsDownAtStart(t *testing.T) {
 	root := t.TempDir()
 	// The datastore path deliberately does not exist yet.
@@ -1058,11 +992,8 @@ func TestStream_liveTail_retriesWhenDataStoreIsDownAtStart(t *testing.T) {
 	}
 }
 
-// The budget is a CEILING, not an invitation to spin forever: a lake that
-// never comes back must still surface the error, and must do so within
-// roughly one budget rather than hanging until the caller's context dies.
-// An unbounded reconnect would turn a visible outage into a silent freeze
-// — strictly worse than the crash it replaces.
+// The budget is a ceiling: a lake that never comes back must surface the error within roughly one
+// budget, not hang until the caller's context dies; a silent freeze is worse than a crash.
 func TestStream_liveTail_startRetryIsBounded(t *testing.T) {
 	root := t.TempDir()
 	lakePath := filepath.Join(root, "never-arrives")
@@ -1115,12 +1046,9 @@ func TestStream_liveTail_startRetryIsBounded(t *testing.T) {
 	}
 }
 
-// A BOUNDED stream must be untouched by any of this: a missing object in
-// a bounded range is a hard error whose handling belongs to the caller
-// (see Config.LiveRetryBudget's godoc and maybeTolerateTrailingMissing).
-// Retrying there would silently stretch every ops backfill's failure
-// path — and the archive walk in StreamArchiveThenLive depends on failing
-// fast rather than being retried behind the operator's back.
+// A BOUNDED stream must be untouched: a missing object there is a hard error owned by the caller
+// (see maybeTolerateTrailingMissing). Retrying would silently stretch every ops backfill's failure
+// path, and the archive walk in StreamArchiveThenLive depends on failing fast.
 func TestStream_boundedRange_startFailureIsNotRetried(t *testing.T) {
 	root := t.TempDir()
 	lakePath := filepath.Join(root, "never-arrives")
@@ -1159,13 +1087,10 @@ func TestStream_boundedRange_startFailureIsNotRetried(t *testing.T) {
 	}
 }
 
-// The backoff window is the one place retryLiveStart blocks that a plain
-// walk does not, so a SIGTERM landing in it must still read as a clean
-// stop. cmd/stellarindex-indexer discriminates with
-// `errors.Is(err, context.Canceled)`: anything else becomes fatalErr, so
-// a deliberate `systemctl stop` during a lake outage would exit non-zero
-// and mark the unit failed. The cause has to survive alongside it, or the
-// journal loses the only line saying WHY the tail had not started.
+// A SIGTERM landing in the backoff window must still read as a clean stop: the indexer checks
+// errors.Is(err, context.Canceled), and anything else exits non-zero and marks the unit failed on
+// a deliberate stop. The cause must survive alongside it so the journal says why the tail had not
+// started.
 func TestStream_liveTail_startRetryShutdownIsNotFatal(t *testing.T) {
 	root := t.TempDir()
 	lakePath := filepath.Join(root, "never-arrives")
@@ -1285,26 +1210,17 @@ func TestStream_TolerateTrailingMissing_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stream returned err=%v; want nil (trailing-edge tolerated)", err)
 	}
-	// Note: `got` is intentionally NOT asserted to a specific value.
-	// When the SDK's BufferedStorageBackend hits a missing file at
-	// the trailing edge it cancels its internal context, dropping
-	// any pre-fetched ledgers in the buffer that hadn't been
-	// delivered to the callback yet — including ledgers that were
-	// fully materialised on disk. This is SDK-level behaviour
-	// outside our control: with parallel workers the cancel race
-	// can drop 0 or all pre-fetched ledgers. Operators relying on
-	// full coverage (100%-density backfills) must clamp -to below
-	// the live tip in advance. The tolerate flag's role is
-	// exclusively graceful exit on trailing-edge races
-	// (chain-check, defence in depth).
+	// `got` is intentionally NOT asserted: on a trailing-edge miss the SDK's
+	// BufferedStorageBackend cancels its context and drops undelivered pre-fetched ledgers, even
+	// ones present on disk, and with parallel workers the race can drop 0 or all of them. Full
+	// coverage requires clamping -to below the live tip; the tolerate flag only gives a graceful
+	// exit on trailing-edge races.
 	_ = got
 }
 
-// TestStream_TolerateTrailingMissing_MidRangeStillErrors asserts
-// that a missing file FAR from the bounded To still errors even
-// when TolerateTrailingMissing is set. This guards against masking
-// real corruption: only the trailing window is treated as a tip-
-// race; everything earlier is a real gap.
+// TestStream_TolerateTrailingMissing_MidRangeStillErrors asserts a missing file FAR from To still
+// errors under TolerateTrailingMissing, so real corruption is not masked: only the trailing window
+// is a tip race.
 func TestStream_TolerateTrailingMissing_MidRangeStillErrors(t *testing.T) {
 	tmp := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -1449,16 +1365,10 @@ func TestStream_TolerateTrailingMissing_DisabledStrictMode(t *testing.T) {
 	}
 }
 
-// TestStream_TolerateTrailingMissing_SingleLedgerZeroDelivery_Errors
-// pins that a
-// single-ledger bounded Stream (from == to) whose one ledger IS the
-// missing one is not tolerated under
-// TolerateTrailingMissing — otherwise Stream returns nil having invoked the
-// callback ZERO times, a silent success indistinguishable from "there
-// was nothing to walk". Unlike a wider bounded range (see the
-// HappyPath test's documented SDK prefetch-cancel raciness), a
-// single-ledger range has no ambiguity: delivered==0 always means the
-// ledger genuinely doesn't exist, never a race artifact.
+// TestStream_TolerateTrailingMissing_SingleLedgerZeroDelivery_Errors pins that a single-ledger
+// Stream (from == to) whose one ledger IS the missing one is not tolerated; otherwise it returns
+// nil with ZERO callbacks, a silent success. Unlike a wider range (prefetch-cancel raciness, see
+// the HappyPath test), delivered==0 here always means the ledger genuinely doesn't exist.
 func TestStream_TolerateTrailingMissing_SingleLedgerZeroDelivery_Errors(t *testing.T) {
 	tmp := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

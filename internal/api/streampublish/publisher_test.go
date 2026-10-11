@@ -327,18 +327,10 @@ func (panicReader) LatestPrice(context.Context, canonical.Asset, canonical.Asset
 	panic("simulated reader fault in tickOnce")
 }
 
-// TestPublisher_Run_RecoversPanickingPollLoop proves the fix:
-// a panic in one pair's poll goroutine (the Run fan-out at publisher.go)
-// is CONTAINED. The API binary's outer recoverBackgroundWorker wraps only
-// the goroutine that CALLS Run — it cannot catch a panic in the per-pair
-// goroutines Run itself spawns, which is exactly the gap this closes.
-//
-// Proven red: without the `defer worker.Recover(...)` in the per-pair
-// goroutine, the panic below is unrecovered in a DETACHED goroutine and
-// takes the whole test binary down. With the guard, the poll goroutine
-// unwinds cleanly and Run returns. (The recover's Error-level log is
-// asserted deterministically in internal/worker's helper test — asserting
-// it here would race Run's wg.Wait against the deferred log write.)
+// TestPublisher_Run_RecoversPanickingPollLoop proves a panic in one pair's poll goroutine is
+// contained: the binary's outer recover cannot catch panics in goroutines Run spawns. Without the
+// per-pair worker.Recover the panic takes the test binary down. The recover's Error log is
+// asserted in internal/worker's helper test; asserting it here would race Run's wg.Wait.
 func TestPublisher_Run_RecoversPanickingPollLoop(t *testing.T) {
 	hub := streaming.NewHub(0)
 	asset := mustParse(t, "native")
@@ -371,13 +363,9 @@ func (stallReader) LatestPrice(ctx context.Context, _, _ canonical.Asset) (v1.Pr
 	return v1.PriceSnapshot{}, nil, false, ctx.Err()
 }
 
-// TestPublisher_PollTimeoutIsNotShutdown: a
-// reader that outlives the poll interval must be logged and counted
-// as a stall, not treated as if the parent ctx were cancelled. Before
-// the fix, tickOnce's error branch matched context.DeadlineExceeded
-// unconditionally and returned silently even with a live parent ctx —
-// this test fails against that code because neither the WARN log nor
-// obs.StreamPublishStallTotal ever fires.
+// TestPublisher_PollTimeoutIsNotShutdown: a reader that outlives the poll interval must be logged
+// and counted as a stall, not mistaken for a cancelled parent ctx, which would swallow both the
+// WARN log and obs.StreamPublishStallTotal.
 func TestPublisher_PollTimeoutIsNotShutdown(t *testing.T) {
 	hub := streaming.NewHub(0)
 	asset := mustParse(t, "native")
@@ -421,15 +409,10 @@ func TestPublisher_PollTimeoutIsNotShutdown(t *testing.T) {
 	}
 }
 
-// TestPublisher_NormalizesNonstandardDecimals proves the SSE closed-bucket
-// producer applies the SAME dex-nonstandard-decimals correction
-// /v1/price applies before serving: reader.LatestPrice returns
-// the RAW closed-1m ratio, and without normalization the wire payload
-// would carry that raw (wrong by 10^11) value instead of the true price.
-//
-// Golden shape mirrors TestPriceTip_NonstandardDecimals_Normalizes: an
-// 18dp Soroban base leg against a 7dp quote, ohlcPriceDigits=10 fixed
-// formatting.
+// TestPublisher_NormalizesNonstandardDecimals proves the producer applies the same
+// nonstandard-decimals correction as /v1/price: reader.LatestPrice returns the RAW ratio, which
+// would otherwise reach the wire wrong by 10^11. Golden shape mirrors
+// TestPriceTip_NonstandardDecimals_Normalizes (18dp base vs 7dp quote, ohlcPriceDigits=10).
 func TestPublisher_NormalizesNonstandardDecimals(t *testing.T) {
 	sorobanContract := "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO" // gitleaks:allow — public Stellar contract id, not a secret
 	decimals := v1.NewNonstandardDecimalsCache(&fakeDecimalsReader{
@@ -499,12 +482,9 @@ func (r *fakeDecimalsReader) LoadNonstandardDecimalsAssets(context.Context) ([]t
 	return r.rows, nil
 }
 
-// TestPublisher_FrozenPairPublishesTheFreezeNotTheRefusedBucket — under
-// an ADR-0019 freeze the raw prices_1m bucket is the value the freeze
-// refused, and /v1/price never serves it under the flag. The stream
-// would publish it every minute as a price_update with flags
-// {stale:false} and no frozen key — the same bytes as a healthy pair.
-// The marker of ANY spelling governs (the reader does not report which
+// TestPublisher_FrozenPairPublishesTheFreezeNotTheRefusedBucket: under an ADR-0019 freeze the raw
+// prices_1m bucket is the value the freeze refused; publishing it as a price_update would look
+// identical to a healthy pair. The marker of ANY alias governs (the reader does not say which
 // alias its bucket came from), so a freeze on crypto:XLM covers native.
 func TestPublisher_FrozenPairPublishesTheFreezeNotTheRefusedBucket(t *testing.T) {
 	ev := firstEvent(t, fakeFreeze{frozen: map[string]bool{"crypto:XLM/fiat:USD": true}}, true)

@@ -6,11 +6,9 @@
 // receives its events via this package, never via stellar-rpc
 // (scripts/ci/lint-imports.sh rule A/no-rpc-in-ingest enforces it).
 //
-// It is a thin wrapper around the SDK's ingest.ApplyLedgerMetadata, which
-// already implements the buffered, parallel-fetch, retry-on-error reader. The
-// package exists as one import boundary and test seam (Filesystem datastore in
-// tests, MinIO in integration, S3 in prod) and to centralize logger + Prometheus
-// wiring.
+// It is a thin wrapper around the SDK's ingest.ApplyLedgerMetadata, which already implements the
+// buffered, parallel-fetch reader. It exists as one import boundary and test seam (filesystem in
+// tests, MinIO in integration, S3 in prod) and to centralize logger and Prometheus wiring.
 package ledgerstream
 
 import (
@@ -30,12 +28,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Config binds the SDK's datastore configuration + BufferedStorageBackend
-// tuning + optional observability into one unit. Typical production
-// values come from our config.Stellar section; unit tests use the
-// filesystem datastore pointed at a tempdir.
-//
-// The zero-value DataStore is invalid — [Stream] returns an error
+// Config binds the SDK's datastore configuration, BufferedStorageBackend tuning and optional
+// observability into one unit. The zero-value DataStore is invalid: [Stream] returns an error
 // rather than silently skipping.
 type Config struct {
 	// DataStore — required. Describes the Galexie output bucket
@@ -44,34 +38,19 @@ type Config struct {
 	// galexie-archive on r1).
 	DataStore datastore.DataStoreConfig
 
-	// ColdDataStore — optional. When non-zero (Type set), Stream
-	// constructs a [TieredDataStore] wrapping DataStore (hot) +
-	// ColdDataStore (cold) per ADR-0027, so reads of LCMs absent
-	// from the local mirror transparently fall back to a cold
-	// upstream (typically `aws-public-blockchain` S3 — the AWS
-	// Open Data Sponsorship bucket). Writes always target hot.
-	// The zero-value disables tiering; the single-source path
-	// through ingest.ApplyLedgerMetadata is used instead.
+	// ColdDataStore — optional. When Type is set, Stream wraps DataStore (hot) and this (cold) in a
+	// [TieredDataStore] (ADR-0027), so LCMs absent from the local mirror fall back to the cold
+	// upstream. Writes always target hot. The zero value disables tiering.
 	ColdDataStore datastore.DataStoreConfig
 
-	// ColdDataStoreFactory — optional. When non-nil, [Stream] calls this
-	// INSTEAD OF datastore.NewDataStore(ctx, ColdDataStore) to open the cold
-	// tier; ColdDataStore is still required (its non-empty Type is the
-	// tiering opt-in, and its NetworkPassphrase / Schema still drive
-	// datastore.LoadSchema on the cold side).
+	// ColdDataStoreFactory — optional. When non-nil, [Stream] calls it INSTEAD OF
+	// datastore.NewDataStore to open the cold tier; ColdDataStore is still required (its Type is
+	// the tiering opt-in and its passphrase/Schema drive LoadSchema).
 	//
-	// It exists because datastore.NewDataStore builds every S3 client through
-	// the ambient AWS credential chain, and on r1 that chain carries local
-	// MinIO's credentials (the HOT tier authenticates through it). Those keys
-	// were presented to real AWS, so every cold read failed with
-	// InvalidAccessKeyId and the tier silently degraded to hot-only. One
-	// process cannot serve two S3 backends with different credentials through
-	// datastore.NewDataStore.
-	//
-	// This package takes datastore.DataStoreConfig, not config.Config, so it
-	// cannot resolve the storage.s3_cold_*_key_env names itself — hence a
-	// hook. Production wires pipeline.NewColdDataStore in via
-	// pipeline.LedgerstreamConfig.
+	// datastore.NewDataStore builds every S3 client from the ambient AWS credential chain, which
+	// carries the hot tier's MinIO keys; presented to real AWS, every cold read fails and the tier
+	// silently degrades to hot-only. This package cannot resolve the cold credential env names
+	// itself, hence the hook (production wires pipeline.NewColdDataStore).
 	ColdDataStoreFactory func(ctx context.Context) (datastore.DataStore, error)
 
 	// Buffered — optional. If nil, Stream derives sensible defaults
@@ -85,84 +64,51 @@ type Config struct {
 	// through our slog setup.
 	Logger *sdklog.Entry
 
-	// Registry — optional. When non-nil, the backend registers
-	// Prometheus metrics (buffer_fetch_latency_seconds, etc.) under
-	// RegistryNamespace. MUST stay nil in production: the SDK's
-	// backend metric registration is not idempotent, and Stream is
-	// called more than once per process across the archive, live and
-	// catch-up paths — a second call registers the same collector
-	// names again, and MustRegister panics on the resulting
-	// AlreadyRegisteredError. Only safe for a caller that invokes
-	// Stream exactly once per process.
+	// Registry — optional. When non-nil, the backend registers its Prometheus metrics under
+	// RegistryNamespace. MUST stay nil in production: the SDK's registration is not idempotent and
+	// Stream runs more than once per process (archive, live, catch-up), so a second call panics in
+	// MustRegister. Only safe for a caller that invokes Stream exactly once.
 	//
-	// [TieredDataStore]'s tier_read_total and cold_read_duration_seconds
-	// are package-level obs metrics (obs.LedgerstreamTierReadTotal,
-	// obs.LedgerstreamColdReadDurationSeconds) registered once at
-	// process boot; they do not depend on this field.
+	// [TieredDataStore]'s tier metrics are package-level obs metrics registered once at boot and
+	// do not depend on this field.
 	Registry          *prometheus.Registry
 	RegistryNamespace string
 
-	// LiveRetryWait overrides the BufferedStorageBackend's RetryWait
-	// for an **unbounded (live-tail)** stream only. The SDK default
-	// is 30s: when a fetch worker requests the next ledger object and
-	// it isn't in the datastore yet, the worker sleeps RetryWait
-	// before re-checking. Once the indexer has caught up to galexie's
-	// tip every next-ledger fetch misses, so a 30s default makes the
-	// end-to-end ingest lag sawtooth 0→30s even though galexie
-	// uploads the next LCM within ~5s. Setting this to a few seconds
-	// lets a caught-up worker re-check promptly. Zero leaves the
-	// SDK/derived default untouched. Ignored for bounded ranges (a
-	// missing object there is a hard error, not a wait-for-tip).
+	// LiveRetryWait overrides the BufferedStorageBackend's RetryWait for an unbounded (live-tail)
+	// stream only. Once caught up, every next-ledger fetch misses and the worker sleeps RetryWait;
+	// the SDK's 30s default makes ingest lag sawtooth 0-30s although galexie uploads within ~5s.
+	// Zero leaves the SDK default. Ignored for bounded ranges, where a missing object is a hard
+	// error, not a wait-for-tip.
 	LiveRetryWait time.Duration
 
-	// LiveRetryBudget is how long a live-tail fetch worker keeps retrying a
-	// datastore FAULT before giving up, for an unbounded (live-tail) stream
-	// only; ignored for bounded ranges, like LiveRetryWait. Zero leaves the
-	// SDK/derived RetryLimit untouched.
+	// LiveRetryBudget is how long a live-tail fetch worker keeps retrying a datastore FAULT before
+	// giving up. Unbounded streams only, like LiveRetryWait. Zero leaves the SDK RetryLimit.
 	//
-	// The SDK's ledger buffer (go-stellar-sdk
-	// ingest/ledgerbackend/ledger_buffer.go `worker`) treats failures
-	// asymmetrically: `os.ErrNotExist` on an unbounded range ("the tip hasn't
-	// been written yet") sleeps RetryWait and retries forever without consuming
-	// an attempt, while anything else (connection refused, 5xx, TLS reset)
-	// consumes an attempt and after RetryLimit the backend cancels and Stream
-	// returns, which exits the indexer.
-	//
-	// Both share RetryWait, so shortening it for tip latency also shortened
-	// fault tolerance (500ms x 5 attempts = a 2.5 s MinIO blip budget; a restart
-	// of a couple of minutes crash-looped the unit into systemd's StartLimit).
-	// Expressing tolerance as a TIME budget makes RetryLimit = ceil(budget /
-	// RetryWait), so tuning tip latency can never silently shrink it.
+	// The SDK ledger buffer retries os.ErrNotExist (tip not written yet) forever without consuming
+	// an attempt, but any other failure (refused, 5xx, TLS reset) consumes one and after RetryLimit
+	// Stream returns, exiting the indexer. Both share RetryWait, so shortening it for tip latency
+	// also shortened fault tolerance. Expressing tolerance as a time budget makes
+	// RetryLimit = ceil(budget / RetryWait), so tuning latency cannot silently shrink it.
 	LiveRetryBudget time.Duration
 
-	// TolerateTrailingMissing, when true, converts a bounded Stream failing with
-	// the SDK's "ledger object containing sequence X is missing" error into a
-	// clean walk-complete (nil, WARN log) provided X is within
-	// TrailingMissingWindow of the bounded To. For backfills that may race the
-	// live tip (Galexie writes partition files lazily) or archive-integrity
-	// walks. False preserves strict semantics: any missing file is an error.
+	// TolerateTrailingMissing, when true, converts a bounded Stream failing with the SDK's "ledger
+	// object containing sequence X is missing" error into a clean walk-complete (nil, WARN log) if
+	// X is within TrailingMissingWindow of To. For backfills racing the live tip (Galexie writes
+	// partition files lazily). False keeps strict semantics: any missing file is an error.
 	//
-	// A gap farther than TrailingMissingWindow below To, or below the
-	// DataStore's own latest ledger, still errors; the tip check refuses a
-	// mid-history hole when To is only a chunk boundary. A caller setting this
-	// on a bounded range still owns the coverage check: count delivered
-	// ledgers and fail a short walk, as chops.backfillCoverage,
-	// ingest.censusCoverage and ingest.backfillChunkCoverage do.
+	// A gap farther below To, or below the DataStore's own latest ledger, still errors; the tip
+	// check refuses a mid-history hole when To is only a chunk boundary. The caller still owns the
+	// coverage check: count delivered ledgers and fail a short walk.
 	//
-	// Delivery caveat (SDK-level): on a missing file BufferedStorageBackend
-	// cancels its context and drops pre-fetched ledgers not yet delivered, so
-	// the last delivered ledger can be up to BufferSize behind the missing seq.
+	// Delivery caveat (SDK): on a missing file BufferedStorageBackend cancels and drops pre-fetched
+	// ledgers, so the last delivered ledger can be up to BufferSize behind the missing seq.
 	// Full-coverage backfills must clamp -to below the live tip in advance.
 	TolerateTrailingMissing bool
 
-	// TrailingMissingWindow — how close to the bounded range's To, and
-	// to the DataStore's latest ledger, the missing-file's sequence must
-	// be to qualify as trailing-edge. Default 65536 (one full Galexie 64k-ledger
-	// partition plus slack — covers any "Galexie hasn't written
-	// the next partition yet" race plus operator-set To values
-	// that overshoot the tip by hours). Mid-range gaps farther
-	// from To than the window error regardless of the tolerate
-	// flag. Ignored when TolerateTrailingMissing is false.
+	// TrailingMissingWindow — how close to To, and to the DataStore's latest ledger, the missing
+	// sequence must be to count as trailing-edge. Default 65536 (one Galexie partition plus slack,
+	// covering a not-yet-written partition and a To that overshoots the tip by hours). Ignored when
+	// TolerateTrailingMissing is false.
 	TrailingMissingWindow uint32
 }
 
@@ -173,25 +119,15 @@ func (c *Config) tieringEnabled() bool {
 	return c.ColdDataStore.Type != ""
 }
 
-// Stream reads ledgers in [from, to] from the datastore and invokes
-// callback once per xdr.LedgerCloseMeta.
+// Stream reads ledgers in [from, to] from the datastore and invokes callback once per
+// xdr.LedgerCloseMeta. It blocks.
 //
-//   - to == 0 → unbounded live tail. Stream returns only on ctx
-//     cancellation, a datastore error, or a callback error.
-//   - to >= from → bounded range. Stream returns nil on successful
-//     completion of the range.
+//   - to == 0 → unbounded live tail; returns only on ctx cancellation, datastore error or
+//     callback error.
+//   - to >= from → bounded range; returns nil on completion.
 //
-// from is clamped upward to the Stellar genesis ledger (2), per
-// the SDK's ApplyLedgerMetadata contract. Callers passing 0 or 1
-// get data from ledger 2 onward — that's an SDK behavior, not ours.
-//
-// The callback blocks Stream's goroutine; expensive work inside
-// callback directly affects ingest throughput. For multi-consumer
-// fanout, have callback send onto a channel and let consumers read
-// off it.
-//
-// Blocking: yes. Call Stream in its own goroutine if the caller
-// needs concurrent work.
+// from is clamped upward to the Stellar genesis ledger (2) by the SDK. The callback runs on
+// Stream's goroutine, so expensive work there throttles ingest; fan out via a channel instead.
 func Stream(
 	ctx context.Context,
 	cfg Config,
@@ -207,11 +143,8 @@ func Stream(
 
 	buffered := bufferedConfig(cfg)
 
-	// Live-tail retry policy — see Config.LiveRetryWait /
-	// Config.LiveRetryBudget. Only an unbounded range (to == 0) waits
-	// for the tip; on a bounded range a missing object is a hard error,
-	// so the overrides are meaningless there and deliberately not
-	// applied.
+	// Only an unbounded range waits for the tip; on a bounded range a missing object is a hard
+	// error, so the live retry overrides are deliberately not applied.
 	if to == 0 {
 		applyLiveRetryPolicy(cfg, &buffered)
 	}
@@ -243,12 +176,9 @@ func Stream(
 		case cfg.tieringEnabled():
 			return streamTiered(ctx, cfg, ledgerRange, buffered, countingCallback)
 		case ledgerRange.Bounded() && ledgerRange.To() == ledgerRange.From():
-			// The SDK's ingest.ApplyLedgerMetadata rejects a bounded
-			// range of exactly one ledger (producer.go: `To() <=
-			// From()`) even though the SDK exports SingleLedgerRange.
-			// Walk it with our own backend loop instead — this is
-			// ch-live-catchup's tip-extend case whenever the timer
-			// fires exactly one ledger behind the galexie tip.
+			// The SDK's ApplyLedgerMetadata rejects a bounded range of exactly one ledger
+			// (To() <= From()), so walk it with our own backend loop; ch-live-catchup hits this
+			// whenever it fires one ledger behind the tip.
 			obs.LedgerstreamStreamPathTotal.WithLabelValues("hot_single_ledger").Inc()
 			return streamHot(ctx, cfg, ledgerRange, buffered, countingCallback)
 		default:
@@ -287,25 +217,22 @@ func latestLedger(ctx context.Context, dsCfg datastore.DataStoreConfig) (uint32,
 	return datastore.FindLatestLedgerSequence(ctx, ds)
 }
 
-// retryLiveStart re-runs a live tail that failed WITHOUT EVER DELIVERING A
-// LEDGER, until Config.LiveRetryBudget is exhausted. It returns the last error,
-// or nil if a re-attempt eventually ran clean.
+// retryLiveStart re-runs a live tail that failed WITHOUT EVER DELIVERING A LEDGER, until
+// Config.LiveRetryBudget is exhausted. It returns the last error, or nil if a re-attempt ran clean.
 //
-// [applyLiveRetryPolicy] spends the budget inside the SDK's fetch worker, which
-// exists only after the datastore is opened and its schema loaded (LoadSchema
-// LISTS the bucket), both done ONCE with no retry. Without this, a lake outage
-// present at START bypasses the budget; the supervisor counts starts not
-// seconds, so the unit parks in `failed` until `systemctl reset-failed`.
-//   - It CANNOT skip a ledger: it re-attempts only while delivered == 0,
-//     before the caller's cursor-writing callback has run.
-//   - It is BOUNDED by a wall-clock deadline fixed before the first re-attempt;
-//     an unbounded reconnect would turn a visible outage into a silent freeze.
-//   - It is VISIBLE via stellarindex_ledgerstream_live_start_retries_total.
+// [applyLiveRetryPolicy] spends the budget inside the SDK's fetch worker, which exists only after
+// the datastore is opened and its schema loaded (LoadSchema lists the bucket), both done once with
+// no retry. Without this, a lake outage at START bypasses the budget and the supervisor, which
+// counts starts not seconds, parks the unit in `failed`.
+//   - It cannot skip a ledger: it re-attempts only while delivered == 0, before the caller's
+//     cursor-writing callback has run.
+//   - It is bounded by a wall-clock deadline fixed before the first re-attempt; an unbounded
+//     reconnect would turn a visible outage into a silent freeze.
+//   - It is visible via stellarindex_ledgerstream_live_start_retries_total.
 //
-// Errors are NOT classified transient vs permanent: on an unbounded tail "could
-// not start" always means "try again shortly". Backoff is exponential from
-// LiveRetryWait, capped at [maxLiveStartRetryWait], no jitter. Callers must
-// gate on the range being unbounded; see [Stream].
+// Errors are not classified transient vs permanent: on an unbounded tail "could not start" always
+// means "try again shortly". Backoff is exponential from LiveRetryWait, capped at
+// [maxLiveStartRetryWait], no jitter. Callers must gate on the range being unbounded.
 func retryLiveStart(
 	ctx context.Context,
 	cfg Config,
@@ -331,14 +258,9 @@ func retryLiveStart(
 		}
 		obs.LedgerstreamLiveStartRetriesTotal.Inc()
 		if !sleepWithContext(ctx, wait) {
-			// Shutdown landed in the backoff window — the one place this
-			// function blocks that a plain walk does not. Carry the
-			// cancellation in the error so the indexer's
-			// `errors.Is(err, context.Canceled)` check still reads it as a
-			// clean stop; without it, a SIGTERM during a lake outage would
-			// exit non-zero and park the unit on a deliberate `systemctl
-			// stop`. The original cause is wrapped alongside so the journal
-			// still says WHY the tail had not started.
+			// Wrap ctx.Err() so the indexer's errors.Is(err, context.Canceled) still reads this as
+			// a clean stop; otherwise SIGTERM during a lake outage exits non-zero and parks the
+			// unit on a deliberate stop. The last error is wrapped too, to say why it had not started.
 			return fmt.Errorf("ledgerstream: live tail start abandoned on shutdown (last error: %w): %w", err, ctx.Err())
 		}
 		err = attempt()
@@ -378,27 +300,19 @@ const (
 	// (pipeline.LedgerstreamConfig), so this only covers direct callers.
 	defaultLiveStartRetryWait = time.Second
 
-	// maxLiveStartRetryWait caps [retryLiveStart]'s exponential backoff.
-	// 30s matches the SDK's own default RetryWait, and at a 5-minute
-	// budget it keeps a full outage to ~16 re-attempts rather than the
-	// ~600 a flat 500ms step would make — each of which rebuilds an S3
-	// client through the AWS credential chain.
+	// maxLiveStartRetryWait caps [retryLiveStart]'s backoff. 30s matches the SDK default and keeps
+	// a 5-minute outage to ~16 re-attempts, each of which rebuilds an S3 client through the AWS
+	// credential chain, instead of ~600 at a flat 500ms.
 	maxLiveStartRetryWait = 30 * time.Second
 )
 
-// applyLiveRetryPolicy stamps the live-tail retry overrides onto the
-// BufferedStorageBackend config. Split out of [Stream] so the
-// policy — not just its inputs — is unit-testable: the ONLY correctness
-// property that matters here is that the derived attempt count times the
-// wait covers the configured budget, and that is invisible from Stream's
-// signature.
+// applyLiveRetryPolicy stamps the live-tail retry overrides onto the BufferedStorageBackend config.
+// It is split out of [Stream] so the property that attempts times wait covers the budget is
+// unit-testable.
 //
-// Order is load-bearing: RetryWait is overridden first, because the
-// attempt count is derived FROM it. Deriving the limit from the SDK's
-// 30s default while the worker actually sleeps 500ms would give a
-// tolerance 60× shorter than asked for.
-//
-// Callers must gate on the range being unbounded; see [Stream].
+// Order is load-bearing: RetryWait is overridden first because the attempt count is derived from
+// it; deriving from the SDK's 30s default while the worker sleeps 500ms would shrink tolerance 60x.
+// Callers must gate on the range being unbounded.
 func applyLiveRetryPolicy(cfg Config, buffered *ledgerbackend.BufferedStorageBackendConfig) {
 	if cfg.LiveRetryWait > 0 {
 		buffered.RetryWait = cfg.LiveRetryWait
@@ -423,14 +337,9 @@ func liveRetryLimit(wait, budget time.Duration) uint32 {
 	return uint32(attempts)
 }
 
-// validateRange rejects malformed ranges before PrepareRange. A
-// bounded range of exactly one ledger (To == From) is VALID — the
-// SDK models it as a first-class concept
-// (ledgerbackend.SingleLedgerRange) and the walk loop handles it as
-// a single iteration. A `To() <= From()` check would reject it and make
-// ch-live-catchup's tip-extend fail every time the timer fires exactly
-// one ledger behind the galexie tip (an intermittent flap whenever the
-// 10-min cadence lands on a 1-ledger delta).
+// validateRange rejects malformed ranges before PrepareRange. A bounded range of exactly one
+// ledger (To == From) is valid (ledgerbackend.SingleLedgerRange); a `To() <= From()` check would
+// make ch-live-catchup's tip-extend flap whenever it lands one ledger behind the tip.
 func validateRange(r ledgerbackend.Range) error {
 	if r.Bounded() && r.To() < r.From() {
 		return fmt.Errorf("ledgerstream: invalid end value for bounded range, must not be less than start")
@@ -446,14 +355,11 @@ func validateRange(r ledgerbackend.Range) error {
 // Config.TolerateTrailingMissing AND the missing sequence is within the trailing
 // window of To. All other errors pass through; a nil err returns nil.
 //
-// A single-ledger bounded range (from == to) whose one ledger IS the missing one
-// requires delivered > 0 to tolerate, else Stream would return nil having
-// invoked the callback ZERO times, indistinguishable from a successfully walked
-// empty range. A wider range is not held to this: BufferedStorageBackend can
-// legitimately race-cancel its prefetch buffer on a trailing-edge miss and
-// deliver anywhere from zero to all present ledgers
-// (TestStream_TolerateTrailingMissing_HappyPath), so requiring delivered > 0
-// would make a materialised backfill range flaky on prefetch scheduling.
+// A single-ledger range (from == to) whose one ledger is the missing one requires delivered > 0,
+// else Stream would return nil with ZERO callbacks, indistinguishable from a walked empty range.
+// A wider range is not held to this: BufferedStorageBackend can race-cancel its prefetch buffer
+// on a trailing-edge miss and deliver zero to all present ledgers
+// (TestStream_TolerateTrailingMissing_HappyPath), so requiring it would make backfills flaky.
 //
 // resolveTip is consulted only for a miss that passes every cheaper check. To is
 // often a chunk boundary, so only the store's own latest ledger tells an object
@@ -537,17 +443,9 @@ func parseTrailingMissingSeq(err error) (uint32, bool) {
 	return uint32(n), true
 }
 
-// streamTiered is the hot+cold branch of [Stream]. It mirrors the
-// SDK's ingest.ApplyLedgerMetadata loop (producer.go) but injects
-// a [TieredDataStore] as the BufferedStorageBackend's underlying
-// store instead of letting the SDK construct one from
-// DataStoreConfig. Both hot and cold instances of the SDK's
-// concrete DataStore are built from cfg.DataStore + cfg.ColdDataStore
-// respectively, then wrapped.
-//
-// Behavioural parity with ApplyLedgerMetadata: same bounded/unbounded
-// validation, same from-clamp (max(2, range.From)), same GetLedger
-// loop, same error wrapping.
+// streamTiered is the hot+cold branch of [Stream]. It mirrors the SDK's ApplyLedgerMetadata loop
+// (same validation, from-clamp and error wrapping) but injects a [TieredDataStore] built from
+// cfg.DataStore and cfg.ColdDataStore as the BufferedStorageBackend's store.
 func streamTiered(
 	ctx context.Context,
 	cfg Config,
@@ -561,27 +459,15 @@ func streamTiered(
 	}
 	cold, err := openColdDataStore(ctx, cfg)
 	if err != nil {
-		// Cold tier is OPTIONAL by design (ADR-0027) — it's a
-		// fallback for ledger ranges trimmed from local
-		// galexie-archive. If cold init fails (wrong region,
-		// network issue, anonymous auth rejected by the upstream
-		// bucket, etc.) we should NOT abort — local galexie-archive
-		// is still authoritative for everything it holds, and the
-		// hot-only path serves it unchanged.
-		//
-		// Fail-loud-but-degrade: log a Warn (operator-visible) and
-		// fall back; don't propagate the cold-side error as a
-		// blocking failure. Propagating it would turn a cold
-		// misconfig (e.g. a region mismatch) into a backfill abort —
-		// opposite of the cold tier being optional.
+		// The cold tier is optional (ADR-0027): the local archive is still authoritative for
+		// everything it holds. Degrade to hot-only with a Warn rather than propagate, which would
+		// turn a cold misconfig (e.g. region mismatch) into a backfill abort.
 		obs.LedgerstreamStreamPathTotal.WithLabelValues("cold_degraded").Inc()
 		if cfg.Logger != nil {
 			cfg.Logger.WithField("err", err).Warn("ledgerstream: cold datastore init failed; falling back to hot-only single-source path")
 		}
 		if ledgerRange.Bounded() && ledgerRange.To() == ledgerRange.From() {
-			// ApplyLedgerMetadata rejects single-ledger bounded
-			// ranges (see the [Stream] dispatch) — reuse the
-			// already-open hot store via our own walk.
+			// ApplyLedgerMetadata rejects single-ledger ranges; reuse the open hot store.
 			return walkDataStore(ctx, cfg, hot, ledgerRange, buffered, callback)
 		}
 		_ = hot.Close()
@@ -598,20 +484,10 @@ func streamTiered(
 			callback,
 		)
 	}
-	// Object keys for every tiered read are computed from ONE schema
-	// — the one [walkDataStore] loads from whichever tier answers
-	// first, i.e. hot's (TieredDataStore.GetFileMetadata prefers
-	// hot). If cold's actual Galexie export used a different
-	// LedgersPerFile/FilesPerPartition/FileExtension shape, every
-	// hot-shaped key handed to cold on fallback is simply wrong for
-	// cold's layout — cold 404s exactly like hot did, and the
-	// "fallback" silently never fires. An operator who configured
-	// ColdDataStore expecting archive-range recovery gets a
-	// confusing both-tiers-missing error deep in a later Stream call
-	// instead of a clear diagnostic now. Validate both schemas agree
-	// before wrapping them — hard-fail rather than silently
-	// degrading, since a shape mismatch is a config bug the operator
-	// needs to fix, not a transient condition to route around.
+	// Every tiered read computes object keys from ONE schema, hot's (TieredDataStore prefers hot).
+	// If cold's export used a different LedgersPerFile/FilesPerPartition/FileExtension, hot-shaped
+	// keys 404 on cold and the fallback silently never fires. Hard-fail on a mismatch now: it is a
+	// config bug, not a transient condition to route around.
 	hotSchema, err := datastore.LoadSchema(ctx, hot, cfg.DataStore)
 	if err != nil {
 		_ = hot.Close()
@@ -640,13 +516,9 @@ func streamTiered(
 	return walkDataStore(ctx, cfg, tiered, ledgerRange, buffered, callback)
 }
 
-// openColdDataStore opens the cold tier, preferring
-// [Config.ColdDataStoreFactory] when the caller supplied one. The
-// datastore.NewDataStore path remains for callers that construct a
-// ledgerstream.Config directly (tests, Filesystem-backed fixtures)
-// and for whom the ambient AWS credential chain is either irrelevant
-// or already correct — see ColdDataStoreFactory's godoc for why the
-// production S3 path cannot use it.
+// openColdDataStore opens the cold tier, preferring [Config.ColdDataStoreFactory]. The
+// datastore.NewDataStore fallback is for tests and filesystem fixtures where the ambient AWS
+// credential chain is irrelevant; production S3 cannot use it (see the factory's godoc).
 func openColdDataStore(ctx context.Context, cfg Config) (datastore.DataStore, error) {
 	if cfg.ColdDataStoreFactory != nil {
 		return cfg.ColdDataStoreFactory(ctx)
@@ -654,13 +526,8 @@ func openColdDataStore(ctx context.Context, cfg Config) (datastore.DataStore, er
 	return datastore.NewDataStore(ctx, cfg.ColdDataStore)
 }
 
-// streamHot is the hot-only counterpart of [streamTiered]: same
-// backend construction + walk loop, but over cfg.DataStore alone
-// with no tiering wrapper. It exists because the SDK's
-// ingest.ApplyLedgerMetadata rejects a bounded range of exactly one
-// ledger (`To() <= From()` in producer.go) even though the SDK
-// itself exports ledgerbackend.SingleLedgerRange — so [Stream]
-// routes single-ledger non-tiered requests here instead.
+// streamHot is the hot-only counterpart of [streamTiered], over cfg.DataStore alone. [Stream]
+// routes single-ledger non-tiered requests here because the SDK's ApplyLedgerMetadata rejects them.
 func streamHot(
 	ctx context.Context,
 	cfg Config,
@@ -708,16 +575,10 @@ func bufferedConfig(cfg Config) ledgerbackend.BufferedStorageBackendConfig {
 	return ingest.DefaultBufferedStorageBackendConfig(lpf)
 }
 
-// walkDataStore builds the buffered storage backend over `store`
-// and runs the GetLedger walk — the shared tail of [streamTiered]
-// and [streamHot]. Closes `store` itself on every return path: the
-// SDK's BufferedStorageBackend.Close only closes its internal ledger
-// buffer, NOT the underlying datastore.DataStore it was built over, so
-// relying on it would leak the store's open connections/file handles.
-// Behavioural parity with the SDK's ingest.ApplyLedgerMetadata loop:
-// same from-clamp (max(2, From)), same GetLedger loop, same error
-// wrapping — except single-ledger bounded ranges are accepted (see
-// [validateRange]).
+// walkDataStore builds the buffered storage backend over store and runs the GetLedger walk, the
+// shared tail of [streamTiered] and [streamHot]. It closes store on every return path because the
+// SDK's BufferedStorageBackend.Close does not, which would leak connections/file handles. Parity
+// with ApplyLedgerMetadata (from-clamp, error wrapping) except single-ledger ranges are accepted.
 func walkDataStore(
 	ctx context.Context,
 	cfg Config,
@@ -751,12 +612,9 @@ func walkDataStore(
 	if from < 2 {
 		from = 2
 	}
-	// A bounded request entirely below genesis — e.g. from=0/1, to=1 —
-	// leaves clamped-from > To, so the walk loop below would deliver
-	// ZERO ledgers and return nil (success) — a silent no-op
-	// indistinguishable from "walked an empty range on purpose". Refuse
-	// loudly instead: every ledger the caller asked for lies below what
-	// the SDK's ApplyLedgerMetadata contract will ever serve.
+	// A bounded request entirely below genesis (e.g. from=0, to=1) leaves clamped-from > To, so the
+	// walk would deliver ZERO ledgers and return nil, indistinguishable from a deliberately empty
+	// range. Refuse loudly instead.
 	if ledgerRange.Bounded() && from > ledgerRange.To() {
 		return fmt.Errorf("ledgerstream: requested range [%d,%d] is entirely before genesis ledger 2",
 			ledgerRange.From(), ledgerRange.To())

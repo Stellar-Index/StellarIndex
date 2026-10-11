@@ -375,10 +375,10 @@ func deref(s *string) string {
 	return *s
 }
 
-// A month's flows are valued a second time at THAT month's own price: exact big.Rat rounded once
-// at the end, absent (never zero) where no positive month price was joined, never applied to an
-// unscaled contract token, and summed over priced assets only, exactly, so two half-cents make
-// one cent rather than the two a sum of rounded strings gives.
+// A month's flows are valued again at THAT month's own price: exact big.Rat rounded once at the
+// end, absent (never zero) where no positive month price was joined, never applied to an unscaled
+// contract token, and summed over priced assets only, so two half-cents make one cent rather than
+// the two a sum of rounded strings gives.
 func TestAccountCohortView_ValuesFlowsAtTheMonthsOwnPrice(t *testing.T) {
 	h := &Handler{
 		PricingEnabled: true,
@@ -485,9 +485,9 @@ func TestAccountCohortView_ValuesFlowsAtTheMonthsOwnPrice(t *testing.T) {
 	}
 }
 
-// A month point's today and then figures value ONE basket, the assets priced on both bases, so
-// switching the chart's basis changes the price, never the asset set. An asset priced on one
-// basis alone is in neither point sum, while its by_asset row keeps its figure.
+// A month point's today and then figures value ONE basket (assets priced on both bases), so
+// switching basis changes the price, never the asset set. An asset priced on one basis is in
+// neither point sum, while its by_asset row keeps its figure. Asserted on the wire shape.
 func TestAccountCohortView_FlowPointSumsShareOneBasket(t *testing.T) {
 	const (
 		todayOnly = "AQUA-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -579,8 +579,8 @@ func TestAccountCohortView_FlowPointEmptyBasketOmitsBothBases(t *testing.T) {
 }
 
 // AccountCohortFlowsV.Assets promises the cohort's most moved first. Rows arrive ordered by
-// (month, asset), so building Assets by first appearance would be alphabetic within the earliest
-// month; this pins the promised ranked order.
+// (month, asset), so building Assets by first appearance would give alphabetic order within the
+// earliest month; this pins the ranked order.
 func TestAccountCohortView_FlowAssetsOrderedByMovementNotFirstAppearance(t *testing.T) {
 	noPrice := func(string) (cohortPrice, bool) { return cohortPrice{}, false }
 	jul := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)

@@ -10,11 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// blockingTradesReader blocks every ListAccountTrades call on `release`,
-// recording the peak number of concurrently in-flight scans and signalling
-// each entry on `entered`. It is the instrument for proving the handler
-// actually ACQUIRES accountTradesGate: a bounded handler can never
-// have more than cap(accountTradesGate) scans in flight at once.
+// blockingTradesReader blocks every ListAccountTrades call on `release`, records the peak of
+// concurrently in-flight scans and signals each entry on `entered`. It proves the handler acquires
+// accountTradesGate: a bounded handler never exceeds cap(accountTradesGate) scans in flight.
 type blockingTradesReader struct {
 	entered   chan struct{}
 	release   chan struct{}
