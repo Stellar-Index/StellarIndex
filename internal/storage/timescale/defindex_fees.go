@@ -7,13 +7,10 @@ import (
 	"time"
 )
 
-// DefindexFee is one defindex_fees row (migration 0146) — a single
-// per-asset entry of a DeFindex vault `dfees` protocol-fee
-// distribution. The decoder fans one on-chain event out to one row
-// per distributed_fees Vec entry; FeeIndex is the position in that
-// Vec and a PK component. Token is the fee token contract C-strkey
-// (the captured samples are SACs, e.g. USDC's) — PER-ASSET, not
-// per-recipient. Amount is a decimal-string i128 per ADR-0003.
+// DefindexFee is one defindex_fees row: a single per-asset entry of a DeFindex vault `dfees`
+// protocol-fee distribution. One on-chain event fans out to one row per distributed_fees Vec
+// entry; FeeIndex is the position in that Vec and a PK component. Token is the fee token
+// contract C-strkey, PER-ASSET not per-recipient. Amount is a decimal-string i128.
 type DefindexFee struct {
 	Ledger          uint32
 	LedgerCloseTime time.Time
@@ -27,14 +24,12 @@ type DefindexFee struct {
 }
 
 // InsertDefindexFee lands one dfees distribution entry, idempotent on
-// the (ledger_close_time, contract_id, ledger, tx_hash, op_index,
-// event_index, fee_index) PK with the generation-guarded
-// corrective upsert (migration 0110 convention): a corrected re-derive
-// of token/amount lands in place when its generation is >= the stored
-// one; a live gen-0 replay can never revert it.
+// the (ledger_close_time, contract_id, ledger, tx_hash, op_index, event_index, fee_index) PK
+// with a generation-guarded corrective upsert: a corrected re-derive of token/amount lands in
+// place when its generation is >= the stored one, and a live gen-0 replay cannot revert it.
 //
-// Defensive: rejects an empty TxHash / ContractID / Token / Amount and
-// a zero LedgerCloseTime before touching the DB.
+// Defensive: rejects an empty TxHash / ContractID / Token / Amount and a zero LedgerCloseTime
+// before touching the DB.
 func (s *Store) InsertDefindexFee(ctx context.Context, e DefindexFee) error {
 	if e.TxHash == "" {
 		return errors.New("timescale: InsertDefindexFee: TxHash is empty")

@@ -101,11 +101,10 @@ func (s *Store) InsertFXFixingBatch(ctx context.Context, rows []FXFixing) (int64
 	return inserted, nil
 }
 
-// fxFixingAtOrBeforeSelect is the binding rule: per ticker, the row with the
-// greatest bar_end ≤ cutoff inside the lookback, hourly over daily on a tie,
-// then the highest generation. Every parameter is cast: an untyped parameter
-// beside an interval fails to resolve an operator. The bar_start bound is
-// implied by the bar_end window (a bar is at most a day wide); it lets the
+// fxFixingAtOrBeforeSelect is the binding rule: per ticker, the row with the greatest bar_end <=
+// cutoff inside the lookback, hourly over daily on a tie, then the highest generation. Every
+// parameter is cast, since an untyped parameter beside an interval fails to resolve an operator.
+// The bar_start bound is implied by the bar_end window (a bar is at most a day wide) and lets the
 // planner exclude chunks, which are partitioned on bar_start.
 const fxFixingAtOrBeforeSelect = `
 	SELECT DISTINCT ON (ticker)
@@ -119,12 +118,11 @@ const fxFixingAtOrBeforeSelect = `
 	 ORDER BY ticker, bar_end DESC, grain DESC, generation DESC
 `
 
-// FXFixingAtOrBefore binds each ticker's FX leg for a closed bucket ending at
-// e: the fixing with the greatest bar_end ≤ e − [FXFixingLag] within maxAge.
-// A ticker whose fixings start after e − lag (or that has none) binds its
-// fx_quotes day instead, one day earlier still, as a daily bar. A ticker
-// absent from the result is a miss: a gap inside the fixings era, or no
-// daily row either. The answer is a function of e and the stored series only.
+// FXFixingAtOrBefore binds each ticker's FX leg for a closed bucket ending at e: the fixing with
+// the greatest bar_end <= e - [FXFixingLag] within maxAge. A ticker whose fixings start after
+// e - lag (or has none) binds its fx_quotes day instead, one day earlier, as a daily bar. A ticker
+// absent from the result is a miss (a gap inside the fixings era, or no daily row either). The
+// answer depends only on e and the stored series.
 func (s *Store) FXFixingAtOrBefore(ctx context.Context, tickers []string, e time.Time, maxAge time.Duration) (map[string]FXFixingBinding, error) {
 	out := make(map[string]FXFixingBinding, len(tickers))
 	if len(tickers) == 0 {

@@ -11,21 +11,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// This file is the served-tier writer for the sorocredit source (an
-// unbranded consumer-USDC credit / CDP protocol; see
-// internal/sources/sorocredit). Four hypertables, migration 0090:
+// This file is the served-tier writer for the sorocredit source (internal/sources/sorocredit),
+// over four hypertables:
 //
-//	credit_positions    ← NewCollateralContract  (one row per opened position)
-//	credit_statements   ← StatementPublished     (periodic per-position statement)
-//	credit_settlements  ← "Liquidation"          (SCHEDULED settlement — NOT distress)
-//	credit_events       ← Withdrawal + config    (event_type-discriminated)
+//	credit_positions    <- NewCollateralContract  (one row per opened position)
+//	credit_statements   <- StatementPublished     (periodic per-position statement)
+//	credit_settlements  <- "Liquidation"          (SCHEDULED settlement, NOT distress)
+//	credit_events       <- Withdrawal + config    (event_type-discriminated)
 //
-// All amounts are decimal-i128 strings handed verbatim to NUMERIC
-// columns (ADR-0003 — never int64). The projector (ADR-0031/0032) is the
-// sole writer; the pipeline sink converts sorocredit.Event → these
-// storage structs (row types live HERE, not imported from the source
-// package, so storage keeps its no-upward-import boundary — the cctp /
-// rozo pattern).
+// All amounts are decimal-i128 strings handed verbatim to NUMERIC columns, never int64. The
+// projector is the sole writer; row types live here, not in the source package, so storage
+// keeps its no-upward-import boundary.
 
 // CreditPosition is one credit_positions row — a position opened by a
 // NewCollateralContract event. CollateralContract is the per-user
@@ -57,11 +53,9 @@ type CreditStatement struct {
 	EventIndex         int
 }
 
-// CreditSettlement is one credit_settlements row — a SCHEDULED settlement
-// (decoded from the on-wire "Liquidation" event; NOT a distressed
-// liquidation, see internal/sources/sorocredit). DebtAsset / SettledAmount
-// are the primary (USDC) leg; empty → SQL NULL. Attributes holds the full
-// event body.
+// CreditSettlement is one credit_settlements row: a SCHEDULED settlement decoded from the
+// on-wire "Liquidation" event, NOT a distressed liquidation. DebtAsset / SettledAmount are the
+// primary (USDC) leg; empty means SQL NULL. Attributes holds the full event body.
 type CreditSettlement struct {
 	CollateralContract string
 	PositionUUID       string
@@ -284,16 +278,12 @@ func (s *Store) InsertCreditEvent(ctx context.Context, e CreditEvent) error {
 	return nil
 }
 
-// CreditAnalyticsSummary is the windowed sorocredit activity summary the
-// /v1/protocols/sorocredit bespoke block is built from — the READ side of
-// the four credit_* tables the projector fills. All volume fields are
-// i128/NUMERIC (canonical.Amount, never int64 — ADR-0003); counts are
-// exact row / distinct-key tallies.
+// CreditAnalyticsSummary is the windowed sorocredit activity summary behind the
+// /v1/protocols/sorocredit block. Volumes are i128/NUMERIC (canonical.Amount, never int64);
+// counts are exact row / distinct-key tallies.
 //
-// SettlementVolume is the summed SCHEDULED-settlement amount (the on-wire
-// "Liquidation" event — a recurring keeper settlement, NOT distress; see
-// InsertCreditSettlement and migration 0090). It must NEVER be surfaced as
-// a liquidation / risk signal.
+// SettlementVolume sums SCHEDULED settlements (a recurring keeper settlement, NOT distress) and
+// must NEVER be surfaced as a liquidation / risk signal.
 type CreditAnalyticsSummary struct {
 	// PositionsOpened is the count of NewCollateralContract events in the
 	// window (one child Collateral-<uuid> contract per opened position).
@@ -357,14 +347,11 @@ const creditSettlementsAnalyticsQuery = `
 		  FROM credit_settlements WHERE ledger_close_time > now() - $1::interval`
 
 // CreditWindowAnalytics reads the windowed sorocredit activity summary
-// (positions / statements / SCHEDULED settlements / withdrawals) from the
-// four credit_* hypertables. Volumes are i128/NUMERIC preserved as
-// canonical.Amount (never int64 — ADR-0003).
+// (positions / statements / SCHEDULED settlements / withdrawals) from the four credit_*
+// hypertables. Volumes stay i128/NUMERIC as canonical.Amount, never int64.
 //
-// Empty-safe: returns (nil, nil) when no credit_* row exists in the window,
-// so the bespoke block omits the panel cleanly (the credit_* tables stay
-// empty until the sorocredit projector-replay has run).
-// windowDays <= 0 is treated as 90.
+// Empty-safe: returns (nil, nil) when no credit_* row exists in the window so the block omits
+// the panel. windowDays <= 0 is treated as 90.
 func (s *Store) CreditWindowAnalytics(ctx context.Context, windowDays int) (*CreditAnalyticsSummary, error) {
 	if windowDays <= 0 {
 		windowDays = 90

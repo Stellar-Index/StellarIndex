@@ -52,11 +52,8 @@ type BlendEmitterRecipient struct {
 	Amount  canonical.Amount
 }
 
-// BlendEmitterDropEvent is one observed `drop` event. The writer
-// fans Recipients out to one blend_emitter_events row per recipient
-// — a `recipient_index` discriminator (0-based, matching slice
-// order) keeps the rows distinct. Mirrors
-// [AquariusReservesEvent]'s per-token fan-out.
+// BlendEmitterDropEvent is one observed `drop` event. The writer fans Recipients out to one row
+// each, with a 0-based recipient_index (slice order) keeping the rows distinct.
 type BlendEmitterDropEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -87,16 +84,12 @@ type BlendEmitterSwapConfigEvent struct {
 	UnlockTime time.Time
 }
 
-// insertBlendEmitterEventQuery is shared by every writer below — the
-// three event kinds differ only in which columns are populated vs
-// NULL.
+// insertBlendEmitterEventQuery is shared by every writer; the three event kinds differ only in
+// which columns are NULL.
 //
-// Generation-guarded corrective upsert (migration 0110): a corrected
-// re-derive of the emission `amount` (or the other decoded columns) lands in
-// place when its generation is >= the stored one; a live gen-0 replay can
-// never revert it. The drop fan-out issues one Exec per recipient with a
-// distinct recipient_index (a conflict-key component), so one statement never
-// repeats a key — no intra-batch dedup needed.
+// Generation-guarded corrective upsert: a corrected re-derive lands in place when its generation
+// is >= the stored one, so a live gen-0 replay never reverts it. The drop fan-out issues one Exec
+// per recipient with a distinct recipient_index (a conflict-key part), so no intra-batch dedup.
 const insertBlendEmitterEventQuery = `
     INSERT INTO blend_emitter_events (
         contract_id, ledger, ledger_close_time, tx_hash, op_index,
@@ -153,19 +146,12 @@ func execBlendEmitterRow(
 	return nil
 }
 
-// InsertBlendEmitterDistribute appends one `distribute` row.
-// Idempotent on the (ledger_close_time, contract_id, ledger, tx_hash,
-// op_index, event_kind, event_index, recipient_index) PK — a
-// projector-replay over the same range writes the same row via the
-// generation-guarded corrective upsert (migration 0110): the
-// row is only overwritten when the incoming derive_generation is >=
-// the stored one, so a stale replay can't revert a later correction.
+// InsertBlendEmitterDistribute appends one `distribute` row, idempotent on the table PK. A replay
+// rewrites the row only when the incoming derive_generation is >= the stored one, so a stale
+// replay cannot revert a later correction.
 //
-// Defensive: rejects empty ContractID / TxHash / BackstopID and a
-// non-positive Amount before touching the DB — the decoder already
-// enforces these but the writer double-checks so a malformed event
-// from an integration test or fuzz harness can't silently land a
-// bad row.
+// It rejects empty ContractID/TxHash/BackstopID and a non-positive Amount before touching the DB;
+// the decoder enforces these too, but the writer double-checks so malformed input cannot land.
 func (s *Store) InsertBlendEmitterDistribute(ctx context.Context, e BlendEmitterDistributeEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertBlendEmitterDistribute: ContractID is empty")
@@ -188,14 +174,12 @@ func (s *Store) InsertBlendEmitterDistribute(ctx context.Context, e BlendEmitter
 	)
 }
 
-// InsertBlendEmitterDrop appends one `drop` event, fanned to one row
-// per recipient (recipient_index = slice position). Runs in a single
-// transaction so a partial fan-out (some recipients landed, others
-// didn't) can't happen. Idempotent per-row on the same PK and the
-// same generation-guarded upsert as InsertBlendEmitterDistribute.
+// InsertBlendEmitterDrop appends one `drop` event as one row per recipient (recipient_index =
+// slice position). A single transaction prevents a partial fan-out; each row is idempotent under
+// the same generation-guarded upsert as InsertBlendEmitterDistribute.
 //
-// Defensive: rejects empty ContractID / TxHash, an empty recipient
-// list, and (per-recipient) an empty address or non-positive amount.
+// It rejects empty ContractID/TxHash, an empty recipient list, and per-recipient empty addresses
+// or non-positive amounts.
 func (s *Store) InsertBlendEmitterDrop(ctx context.Context, e BlendEmitterDropEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertBlendEmitterDrop: ContractID is empty")
@@ -236,15 +220,11 @@ func (s *Store) InsertBlendEmitterDrop(ctx context.Context, e BlendEmitterDropEv
 	return nil
 }
 
-// InsertBlendEmitterSwapConfig appends one `q_swap` / `swap` row.
-// Idempotent on the same PK shape and generation-guarded upsert as
-// the other two writers.
+// InsertBlendEmitterSwapConfig appends one `q_swap` or `swap` row, with the same PK and
+// generation-guarded upsert as the other writers.
 //
-// Defensive: rejects empty ContractID / TxHash / NewBackstop /
-// NewBackstopToken and a Kind other than BlendEmitterQSwap /
-// BlendEmitterSwap before touching the DB. UnlockTime that is zero
-// or outside postgres's timestamptz range writes SQL NULL rather
-// than erroring (matches soroswap_router_swaps.DeadlineTS).
+// It rejects empty ContractID/TxHash/NewBackstop/NewBackstopToken and any other Kind. An
+// UnlockTime that is zero or outside the timestamptz range writes SQL NULL rather than erroring.
 func (s *Store) InsertBlendEmitterSwapConfig(ctx context.Context, e BlendEmitterSwapConfigEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertBlendEmitterSwapConfig: ContractID is empty")

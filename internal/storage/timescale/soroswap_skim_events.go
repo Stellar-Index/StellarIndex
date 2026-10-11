@@ -12,14 +12,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// SoroswapSkimEvent is one soroswap_skim_events row — a single
-// observed Soroswap pair-contract `skim` event (migration 0042).
+// SoroswapSkimEvent is one soroswap_skim_events row: a single Soroswap pair-contract `skim` event.
 //
-// Amount0 / Amount1 are decimal-string i128 values per ADR-0003;
-// stored verbatim into the NUMERIC columns by the postgres driver.
-// To is the strkey of the optional recipient (empty string → SQL
-// NULL, matching the today-Soroswap WASM that omits a `to` field;
-// see decode.SkimFields godoc).
+// Amount0 / Amount1 are decimal-string i128 values (ADR-0003) stored verbatim into NUMERIC. To is
+// the optional recipient strkey; empty means SQL NULL, since the current Soroswap WASM omits it.
 type SoroswapSkimEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -32,23 +28,16 @@ type SoroswapSkimEvent struct {
 	Amount1         string // decimal i128
 }
 
-// InsertSoroswapSkimEvent appends one Soroswap skim event row,
-// idempotent on the (ledger_close_time, ledger, tx_hash, op_index,
-// event_index) PK. Re-running the indexer or a backfill over the
-// same range writes the same rows; ON CONFLICT DO UPDATE guarded by
-// derive_generation (migration 0110) corrects the row in place on a
-// higher-or-equal-generation replay and no-ops a stale lower one.
+// InsertSoroswapSkimEvent appends one skim event row, idempotent on the (ledger_close_time,
+// ledger, tx_hash, op_index, event_index) PK. ON CONFLICT DO UPDATE guarded by derive_generation
+// corrects the row on a higher-or-equal-generation replay and no-ops a stale lower one.
 //
-// Defensive: rejects empty ContractID / TxHash / Amount0 / Amount1
-// and a zero LedgerCloseTime (the partition column — NULL/zero would
-// route the row to a chunk Timescale won't open). The amount columns
-// are NOT NULL in the migration; passing an empty string here is a
-// caller bug, not a missing-field case.
+// It rejects empty ContractID / TxHash / Amount0 / Amount1 (the amount columns are NOT NULL, so
+// empty is a caller bug) and a zero LedgerCloseTime, the partition column, which would route the
+// row to a chunk Timescale will not open.
 //
-// TxHash auto-decodes a 64-char hex string for callers that still
-// hand the row through with the hex form — every other Soroban
-// table accepts raw bytes, but Soroswap's TradeEvent / SkimEvent
-// keep TxHash as a string field, so we centralise the parse here.
+// TxHash auto-decodes a 64-char hex string because Soroswap events keep TxHash as a string while
+// every other Soroban table takes raw bytes.
 func (s *Store) InsertSoroswapSkimEvent(ctx context.Context, e SoroswapSkimEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertSoroswapSkimEvent: ContractID is empty")
@@ -104,11 +93,9 @@ func (s *Store) InsertSoroswapSkimEvent(ctx context.Context, e SoroswapSkimEvent
 	return nil
 }
 
-// SoroswapSkimSummary is the windowed Soroswap skim activity summary — the
-// READ side of soroswap_skim_events (migration 0043). Skims and Pairs are
-// window totals; amounts exist only per pair in ByPair, because token0 and
-// token1 are different tokens (and decimals) in every pair and a cross-pair
-// sum would add unlike base units.
+// SoroswapSkimSummary is the windowed skim activity summary over soroswap_skim_events. Skims and
+// Pairs are window totals; amounts exist only per pair in ByPair, because token0 and token1 differ
+// in token and decimals and a cross-pair sum would add unlike base units.
 type SoroswapSkimSummary struct {
 	Skims    int64
 	Pairs    int64
@@ -128,14 +115,12 @@ type SoroswapSkimPairTotal struct {
 	Amount1    canonical.Amount
 }
 
-// SoroswapSkimWindowStats reads the windowed Soroswap skim summary (count,
-// distinct pairs, and per-pair token0/token1 skimmed excess) from
-// soroswap_skim_events. Skim is the caller-initiated claim of pool balance
-// above recorded reserves (rare — single-digit rows/day expected); it is not
-// a trade and never feeds VWAP. ByPair is ordered by skim count descending.
+// SoroswapSkimWindowStats reads the windowed skim summary (count, distinct pairs, per-pair
+// token0/token1 excess), ByPair ordered by skim count descending. A skim claims pool balance above
+// recorded reserves; it is not a trade and never feeds VWAP.
 //
-// Empty-safe: returns (nil, nil) when no skim exists in the window, so the
-// bespoke KPI is omitted cleanly. windowDays <= 0 is treated as 90.
+// Returns (nil, nil) when no skim exists in the window so the KPI is omitted. windowDays <= 0
+// means 90.
 func (s *Store) SoroswapSkimWindowStats(ctx context.Context, windowDays int) (*SoroswapSkimSummary, error) {
 	if windowDays <= 0 {
 		windowDays = 90
@@ -185,15 +170,9 @@ func (s *Store) SoroswapSkimWindowStats(ctx context.Context, windowDays int) (*S
 	return &out, nil
 }
 
-// DecodeSoroswapTxHash maps the SkimEvent.TxHash string (which comes
-// from the events.Event JSON shape — 64-char lowercase hex) to the
-// raw 32-byte form the bytea column accepts. Exposed for callers
-// (pipeline sink + integration tests) that own the projection from
-// the SkimEvent value into a SoroswapSkimEvent row.
-//
-// Accepts the raw 32-byte form unchanged (some test fixtures hand a
-// `[]byte` directly). Accepts a 64-character hex string as the
-// production wire form. Rejects everything else.
+// DecodeSoroswapTxHash maps SkimEvent.TxHash (64-char lowercase hex on the wire) to the raw 32
+// bytes the bytea column accepts. It also passes a raw 32-byte value through unchanged (test
+// fixtures) and rejects everything else.
 func DecodeSoroswapTxHash(s string) ([]byte, error) {
 	if len(s) == 32 {
 		// Raw bytes round-trip — accepted for symmetry with

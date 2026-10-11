@@ -22,10 +22,8 @@ type PhoenixInitializeEvent struct {
 }
 
 // InsertPhoenixInitialize lands one initialize event, idempotent on the
-// (ledger_close_time, pool, ledger, tx_hash, op_index, event_index) PK
-// with the generation-guarded corrective upsert (migration 0110).
-//
-// Defensive: rejects an empty Pool / TxHash / Token, a zero
+// (ledger_close_time, pool, ledger, tx_hash, op_index, event_index) PK via the
+// generation-guarded corrective upsert. It rejects an empty Pool / TxHash / Token, a zero
 // LedgerCloseTime, and a TokenSlot outside {'a','b'}.
 func (s *Store) InsertPhoenixInitialize(ctx context.Context, e PhoenixInitializeEvent) error {
 	if e.Pool == "" {

@@ -45,15 +45,11 @@ func (t BlendBackstopEventType) IsValid() bool {
 	return false
 }
 
-// BlendBackstopEvent is one blend_backstop_events row — a single
-// observed Blend Backstop contract event on Stellar. Mirrors the
-// migration-0063 columns.
+// BlendBackstopEvent is one blend_backstop_events row: a Blend Backstop contract event.
 //
-// Pool / UserAddress are strkey strings; the empty string means "this
-// event type carries no such field" and writes SQL NULL. Amount /
-// Amount2 are decimal i128 strings (ADR-0003 — never int64); empty →
-// NULL. Attributes holds the event-type-specific remainder as a jsonb
-// blob.
+// Pool and UserAddress are strkeys; "" means the event type carries no such field and writes SQL
+// NULL. Amount and Amount2 are decimal i128 strings (never int64), "" also NULL. Attributes holds
+// the event-type-specific remainder as jsonb.
 type BlendBackstopEvent struct {
 	ContractID  string
 	Ledger      uint32
@@ -69,21 +65,15 @@ type BlendBackstopEvent struct {
 	Attributes  map[string]any
 }
 
-// InsertBlendBackstopEvent appends one backstop event row, idempotent
-// on the PK (ledger_close_time, ledger, tx_hash, op_index, event_index).
-// Re-running the indexer or a replay over the same range writes the
-// same rows. ON CONFLICT ... DO UPDATE, guarded by
-// `derive_generation <= EXCLUDED.derive_generation`: a replay
-// at an equal-or-higher generation OVERWRITES the stored value
-// columns, a lower-generation one is refused. Idempotent in row count,
-// NOT inert in value — the corrective upsert exists so a re-derive can
-// repair a wrong stored row, so a replay wired with different inputs
-// will rewrite them.
+// InsertBlendBackstopEvent appends one backstop event row, idempotent on the PK
+// (ledger_close_time, ledger, tx_hash, op_index, event_index). ON CONFLICT DO UPDATE is guarded by
+// `derive_generation <= EXCLUDED.derive_generation`: a replay at an equal-or-higher generation
+// OVERWRITES the stored value columns, a lower one is refused. It is idempotent in row count, NOT
+// inert in value: the corrective upsert exists to repair wrong rows, so a replay with different
+// inputs rewrites them.
 //
-// Defensive: rejects empty ContractID / TxHash and an invalid
-// EventType before touching the DB. Amount / Amount2 pass straight to
-// the NUMERIC columns as decimal strings — a malformed value (the
-// decoder should never produce one) surfaces as a DB error here.
+// It rejects empty ContractID/TxHash and an invalid EventType before touching the DB. Amounts pass
+// straight to NUMERIC as decimal strings, so a malformed value surfaces as a DB error.
 func (s *Store) InsertBlendBackstopEvent(ctx context.Context, e BlendBackstopEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertBlendBackstopEvent: ContractID is empty")

@@ -19,25 +19,16 @@ type DecoderStatsBucket struct {
 	LastLedger   uint32
 }
 
-// InsertDecoderStats writes one (or zero — empty input is a valid
-// no-op) decoder_stats_5m rows. ON CONFLICT (bucket, source) DO
-// UPDATE so two flushes for the same bucket (e.g. a brief overlap
-// during a clock-jump or a leader-change) merge non-destructively
+// InsertDecoderStats writes decoder_stats_5m rows; empty input is a valid no-op. ON CONFLICT
+// (bucket, source) DO UPDATE merges two flushes for one bucket (clock jump, leader change)
 // instead of erroring.
 //
-// Caller is responsible for emitting deltas (current minus last
-// snapshot) — the table semantics expect per-bucket counts, not
-// running totals.
+// The caller emits deltas (current minus last snapshot), not running totals.
 //
-// ALL-OR-NOTHING. The batch runs inside one transaction because the
-// caller's failure compensation depends on it: statsflush retains its
-// previous snapshot on any error so the unwritten delta folds into the
-// next successful flush. Combined with the ACCUMULATING conflict clause
-// above, a partial batch would make that compensation double-count —
-// rows committed before the failing statement would be re-emitted into
-// the next bucket and added on top of what already landed, inflating
-// events_seen by a whole window and corrupting the decode-error RATE
-// that denominator exists to serve.
+// ALL-OR-NOTHING: one transaction, because statsflush retains its previous snapshot on any
+// error so the unwritten delta folds into the next flush. With the ACCUMULATING conflict clause,
+// a partial batch would double-count on that retry, inflating events_seen by a whole window and
+// corrupting the decode-error rate that denominator serves.
 func (s *Store) InsertDecoderStats(ctx context.Context, rows []DecoderStatsBucket) error {
 	if len(rows) == 0 {
 		return nil

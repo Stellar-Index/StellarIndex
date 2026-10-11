@@ -5,43 +5,33 @@ import (
 	"fmt"
 )
 
-// ContractCatalogueRows reads catalogue rows for an EXPLICIT set of contract
-// addresses, keyed by contract id.
+// ContractCatalogueRows reads catalogue rows for an explicit set of contract addresses, keyed by
+// contract id.
 //
-// Why the listing spine could not be reused: its `catalogue_assets` CTE and
-// `GetAssetBySlug` gate the discovered-contract arm on `EXISTS (SELECT 1 FROM
-// asset_volume_24h ...)`. A tokenized treasury or money-market fund is held, not
-// traded, and can carry a nine-figure supply while absent from every 24h volume
-// rollup, so that gate would silently drop a contract the membership decision
-// admitted. Here the set is bounded by MEMBERSHIP (the contracts an independent
-// party named), so there is no pagination or ranking.
+// The listing spine cannot be reused: its `catalogue_assets` CTE and `GetAssetBySlug` gate the
+// discovered-contract arm on a row in asset_volume_24h. A tokenized treasury or money-market fund
+// is held, not traded, and can carry a nine-figure supply while absent from every 24h volume
+// rollup, so that gate would silently drop a contract the membership decision admitted. The set
+// here is bounded by membership, so there is no pagination or ranking.
 //
-// Shared with the listing, deliberately: the price side is the SAME rollup under
-// the SAME floor (asset_price_snapshot with `computed_at > now() -
-// assetPriceSnapshotMaxAge`, the shared constant), so a wedged aggregator makes
-// the join MISS rather than serve an indefinitely old price. Volume, source count
-// and volume character come from the same rollups. market_cap_usd and
-// circulating_supply are NULL in the spine; the API layer fills them.
+// The price side is deliberately the same rollup under the same floor as the listing
+// (asset_price_snapshot with `computed_at > now() - assetPriceSnapshotMaxAge`), so a wedged
+// aggregator makes the join miss rather than serve an indefinitely old price. market_cap_usd and
+// circulating_supply are NULL here; the API layer fills them.
 //
-// Rows never observed are missing from the map; the caller reports that as a
-// drop. It is not an error here.
+// Contracts never observed are missing from the map; the caller reports that as a drop, not an
+// error.
 func (s *Store) ContractCatalogueRows(ctx context.Context, contractIDs []string) (map[string]AssetRow, error) {
 	if len(contractIDs) == 0 {
 		return map[string]AssetRow{}, nil
 	}
-	// ROUND(price, 10)::text and the to_char change formats are copied
-	// from the listing SELECT for one reason: the wire string a consumer
-	// reads for a contract asset must be the string /v1/assets would have
-	// produced for it, digit for digit. A different rounding here would
-	// show up as the two surfaces disagreeing about the same token's
-	// price.
+	// ROUND(price, 10)::text and the to_char change formats are copied from the listing SELECT so
+	// the wire string for a contract asset matches /v1/assets digit for digit.
 	//
-	// The rounding is safe for a non-7-decimals contract — the class this
-	// read exists for — only because asset_price_snapshot stores the
-	// decimals-CORRECTED price (snapshotNormalizedPriceUSDExpr): the raw
-	// prices_1m ratio of an 18-decimals token worth 1 USD is 1e-11, which
-	// this ROUND would turn into zero. The caller multiplies this price
-	// by supply to publish a market cap, and must not scale it again.
+	// The rounding is safe for non-7-decimals contracts only because asset_price_snapshot stores
+	// the decimals-corrected price (snapshotNormalizedPriceUSDExpr): a raw prices_1m ratio for an
+	// 18-decimals token worth 1 USD is 1e-11, which ROUND would zero. The caller multiplies this
+	// price by supply for market cap and must not scale it again.
 	const q = `
 		SELECT d.contract_id,
 		       d.first_seen_ledger,
@@ -78,11 +68,8 @@ func (s *Store) ContractCatalogueRows(ctx context.Context, contractIDs []string)
 		); err != nil {
 			return nil, fmt.Errorf("timescale: scan contract catalogue row: %w", err)
 		}
-		// Code, IssuerGStrkey and Slug stay empty, matching what the
-		// listing spine selects for the same arm: a contract asset has no
-		// issuer account and no SEP-1 code. Slug falls back to the
-		// contract id the way the listing's COALESCE does, so the two
-		// paths hand the API layer the same shape.
+		// Code and IssuerGStrkey stay empty as in the listing spine: a contract asset has no issuer
+		// account or SEP-1 code. Slug falls back to the contract id like the listing's COALESCE.
 		r.Slug = r.AssetID
 		out[r.AssetID] = r
 	}

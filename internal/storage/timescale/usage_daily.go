@@ -19,24 +19,18 @@ const usageDailyUpsertChunk = 500
 // usageDailyColumns is the bind-parameter width of one usage_daily row.
 const usageDailyColumns = 7
 
-// UpsertUsageDaily merges a batch of per-(day, subject, endpoint)
-// usage aggregates into the `usage_daily` hypertable (migration
-// 0071). Satisfies [usage.RollupSink] — the API binary's rollup
-// worker calls this every sweep with CUMULATIVE per-day counters.
+// UpsertUsageDaily merges per-(day, subject, endpoint) usage aggregates into the `usage_daily`
+// hypertable. It satisfies [usage.RollupSink]; the rollup worker calls it every sweep with
+// cumulative per-day counters.
 //
-// GREATEST()-merge, not overwrite: the Redis counters only grow
-// within a day, so re-sweeping the same window is a no-op, and a
-// mid-day Redis flush (counter reset to a lower value) can never
-// regress an already-persisted row.
+// The merge is GREATEST(), not overwrite: Redis counters only grow within a day, so re-sweeping is
+// a no-op and a mid-day Redis flush (counter reset lower) can never regress a persisted row.
 //
-// Rows go to Postgres as multi-row INSERTs of at most
-// usageDailyUpsertChunk rows, one autocommitted statement per chunk,
-// so the round-trip count and the transaction size are both bounded
-// by the chunk, not by the batch. A failure mid-batch leaves the
-// earlier chunks committed: every row is an independently valid
-// cumulative value and the next sweep re-sends whatever did not land,
-// so a partial batch is never a wrong state, only an incomplete one.
-// The batch is validated whole before the first statement is sent.
+// Rows go as multi-row INSERTs of at most usageDailyUpsertChunk rows, one autocommitted statement
+// per chunk, bounding round trips and transaction size by the chunk. A mid-batch failure leaves
+// earlier chunks committed; each row is an independently valid cumulative value and the next sweep
+// re-sends the rest, so a partial batch is incomplete, never wrong. The batch is validated whole
+// before the first statement.
 func (s *Store) UpsertUsageDaily(ctx context.Context, rows []usage.RollupRow) error {
 	rows, err := foldUsageDailyRows(rows)
 	if err != nil {
@@ -51,12 +45,10 @@ func (s *Store) UpsertUsageDaily(ctx context.Context, rows []usage.RollupRow) er
 	return nil
 }
 
-// foldUsageDailyRows rejects an incomplete row and folds duplicate
-// (day, subject, endpoint) keys into one row holding the per-column
-// maximum — the same result the GREATEST merge would reach applying
-// them one at a time, and necessary because Postgres refuses to touch
-// the same row twice in one ON CONFLICT statement. First-seen order
-// is kept.
+// foldUsageDailyRows rejects an incomplete row and folds duplicate (day, subject, endpoint) keys
+// into one row of per-column maxima, matching what the GREATEST merge would reach row by row.
+// Folding is required because Postgres refuses to touch the same row twice in one ON CONFLICT
+// statement. First-seen order is kept.
 func foldUsageDailyRows(rows []usage.RollupRow) ([]usage.RollupRow, error) {
 	type key struct{ day, subject, endpoint string }
 	index := make(map[key]int, len(rows))

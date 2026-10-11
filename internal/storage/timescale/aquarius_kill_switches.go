@@ -29,13 +29,10 @@ type AquariusKillSwitchEvent struct {
 	Action          string
 }
 
-// InsertAquariusKillSwitch lands one circuit-breaker toggle, idempotent
-// on the (ledger_close_time, contract_id, ledger, tx_hash, op_index,
-// event_index) PK with the generation-guarded corrective upsert
-// (migration 0110).
-//
-// Defensive: rejects an empty ContractID / TxHash, a zero
-// LedgerCloseTime, and an Action outside the closed set.
+// InsertAquariusKillSwitch lands one circuit-breaker toggle, idempotent on (ledger_close_time,
+// contract_id, ledger, tx_hash, op_index, event_index) with a generation-guarded corrective upsert.
+// It rejects an empty ContractID / TxHash, a zero LedgerCloseTime and an Action outside the closed
+// set.
 func (s *Store) InsertAquariusKillSwitch(ctx context.Context, e AquariusKillSwitchEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertAquariusKillSwitch: ContractID is empty")

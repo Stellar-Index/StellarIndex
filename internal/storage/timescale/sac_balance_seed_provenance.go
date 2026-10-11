@@ -15,11 +15,9 @@ type SACBalanceSeedSource string
 
 const (
 	// SACBalanceSeedSourceCurrentState reads stellar.ledger_entries_current
-	// (clickhouse.StreamSACBalanceSeeds) — fast, but has a coverage floor
-	// (~ledger 62,000,000): the current-state materialized view only
-	// reflects ledger_entry_changes rows inserted after the MV was
-	// created, so a Balance(Address) entry dormant since before that
-	// floor is invisible to it.
+	// (clickhouse.StreamSACBalanceSeeds). It is fast but has a coverage floor: the materialized
+	// view only reflects ledger_entry_changes inserted after it was created, so a Balance(Address)
+	// entry dormant since before that floor is invisible to it.
 	SACBalanceSeedSourceCurrentState SACBalanceSeedSource = "current_state"
 
 	// SACBalanceSeedSourceFullHistory reads stellar.ledger_entry_changes
@@ -48,13 +46,10 @@ type SACBalanceSeedProvenance struct {
 	SeededAt         time.Time
 }
 
-// UpsertSACBalanceSeedProvenance records (or overwrites) the most recent
-// seed pass for a contract. Idempotent — a re-run of `supply
-// seed-sac-balances` for the same contract simply replaces the prior
-// row's stats + timestamp, matching sep41_supply_rollup's genesis-seed
-// upsert pattern (migration 0088). Pure audit trail: never read by the
-// supply computation (ClassicSupplyAt / SumSACBalancesAtOrBefore), only
-// by operator/ops reporting.
+// UpsertSACBalanceSeedProvenance records (or overwrites) the most recent seed pass for a contract;
+// a re-run of `supply seed-sac-balances` replaces the prior row's stats and timestamp. Pure audit
+// trail: never read by the supply computation (ClassicSupplyAt / SumSACBalancesAtOrBefore), only
+// by ops reporting.
 func (s *Store) UpsertSACBalanceSeedProvenance(ctx context.Context, p SACBalanceSeedProvenance) error {
 	if p.ContractID == "" {
 		return errors.New("timescale: UpsertSACBalanceSeedProvenance: empty ContractID")

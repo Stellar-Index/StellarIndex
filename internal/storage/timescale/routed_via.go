@@ -8,26 +8,21 @@ import (
 	"time"
 )
 
-// Phase B of router attribution (migration 0025): joining persisted router
-// invocations (soroswap_router_swaps) to the `trades` rows they drove and
-// stamping trades.routed_via with the router's registry name.
+// Router attribution: joins persisted router invocations (soroswap_router_swaps) to the `trades`
+// rows they drove and stamps trades.routed_via with the router's registry name.
 //
-//   - FIRST-WINS: the UPDATE only touches rows whose routed_via IS NULL, so an
-//     existing tag is never overwritten and re-running a window is idempotent.
-//   - SOURCE-SCOPED: a composed tx can carry unrelated trades (Phoenix AND the
-//     Soroswap router), so only trades whose `source` matches the router's
-//     underlying venue are tagged.
-//   - TIME-BOUNDED: both join sides carry a time predicate so TimescaleDB prunes
-//     chunks. The trades bound is widened by routedViaTsSlack for
-//     second-vs-millisecond skew; correctness comes from the exact
-//     (ledger, tx_hash) equality, the ts bound is pruning only.
-//   - CALL-PATH ATTRIBUTED (migration 0101 / 0103): call_path[1] (Postgres
-//     1-indexed; Go CallPath[0]) is the OUTERMOST invoking contract. When it is a
-//     registered 'router'-kind entry the trade is tagged with THAT name, so
-//     /v1/aggregators can report volume via the specific wrapper. Otherwise it
-//     falls back to routerName (direct calls, unregistered wrappers, legacy NULL
-//     call_path), so the fallback never claims a wrapper it lacks evidence for.
-//     See docs/adr/0052-contract-call-tree-routing.md.
+//   - FIRST-WINS: only rows with routed_via IS NULL are updated, so a tag is never overwritten and
+//     re-running a window is idempotent.
+//   - SOURCE-SCOPED: a composed tx can carry unrelated trades (Phoenix AND the Soroswap router), so
+//     only trades whose `source` matches the router's underlying venue are tagged.
+//   - TIME-BOUNDED: both join sides carry a time predicate so TimescaleDB prunes chunks. The trades
+//     bound is widened by routedViaTsSlack for second-vs-millisecond skew; correctness comes from
+//     the exact (ledger, tx_hash) equality, the ts bound is pruning only.
+//   - CALL-PATH ATTRIBUTED (ADR-0052): call_path[1] (Postgres 1-indexed; Go CallPath[0]) is the
+//     outermost invoking contract. When it is a registered 'router'-kind entry the trade is tagged
+//     with that name so /v1/aggregators can report volume per wrapper; otherwise it falls back to
+//     routerName (direct calls, unregistered wrappers, legacy NULL call_path), so the fallback never
+//     claims a wrapper it lacks evidence for.
 
 // routedViaTsSlack widens the trades.ts chunk-pruning bound relative
 // to the router-swap window. Generous (well beyond any close-time
@@ -35,24 +30,15 @@ import (
 // chunks.
 const routedViaTsSlack = 5 * time.Minute
 
-// TagTradesRoutedVia back-tags trades.routed_via for every trade
-// that shares (ledger, tx_hash) with a soroswap_router_swaps row
-// whose ledger_close_time is in [from, to). Returns the number of
-// trades rows tagged.
+// TagTradesRoutedVia back-tags trades.routed_via for every trade sharing (ledger, tx_hash) with a
+// soroswap_router_swaps row whose ledger_close_time is in [from, to), and returns the count tagged.
 //
-// routerName is the FALLBACK value written into routed_via
-// (routers.name, e.g. soroswap_router.SourceName) — used whenever
-// the router swap can't be attributed to a more specific registered
-// wrapper (see the CALL-PATH ATTRIBUTED policy above). tradeSource
-// scopes which trades are eligible (see the source-scoped policy
-// above). Both the live sweeper (internal/pipeline/routedvia.go) and
-// the historical `stellarindex-ops tag-routed-via` pass call through
-// here, so the tagging predicate cannot drift between the two.
+// routerName is the fallback written when the swap cannot be attributed to a more specific
+// registered wrapper; tradeSource scopes eligible trades (see the policies above). The live
+// sweeper and the historical tag-routed-via pass both call here so the predicate cannot drift.
 //
-// NOTE for historical passes: an UPDATE into compressed trades
-// chunks (older than the 7-day compression horizon) decompresses the
-// affected segments — run windowed via tag-routed-via, not as one
-// giant statement.
+// An UPDATE into compressed trades chunks (older than the 7-day horizon) decompresses the touched
+// segments, so historical passes must run windowed, not as one giant statement.
 func (s *Store) TagTradesRoutedVia(ctx context.Context, routerName, tradeSource string, from, to time.Time) (int64, error) {
 	if routerName == "" {
 		return 0, errors.New("timescale: TagTradesRoutedVia: routerName is empty")
@@ -112,13 +98,10 @@ func (s *Store) RouterSwapLedgerBounds(ctx context.Context) (minLedger, maxLedge
 	return uint32(lo.Int64), uint32(hi.Int64), true, nil
 }
 
-// RouterSwapTimeBounds returns the (min, max) ledger_close_time of
-// soroswap_router_swaps rows in the inclusive ledger range
-// [fromLedger, toLedger]. ok=false when the range holds no rows —
-// the caller skips the window without touching trades. Uses the
-// ledger column (plain integer, cheap btree range) so the historical
-// pass can window by ledger while TagTradesRoutedVia stays
-// time-bounded for chunk pruning.
+// RouterSwapTimeBounds returns the (min, max) ledger_close_time of soroswap_router_swaps rows in
+// the inclusive ledger range [fromLedger, toLedger]; ok=false means no rows, so the caller skips
+// the window without touching trades. It ranges on the integer ledger column (cheap btree) so
+// historical passes window by ledger while TagTradesRoutedVia stays time-bounded for pruning.
 func (s *Store) RouterSwapTimeBounds(ctx context.Context, fromLedger, toLedger uint32) (minTS, maxTS time.Time, ok bool, err error) {
 	var lo, hi sql.NullTime
 	if err := s.db.QueryRowContext(ctx,
@@ -135,11 +118,9 @@ func (s *Store) RouterSwapTimeBounds(ctx context.Context, fromLedger, toLedger u
 	return lo.Time.UTC(), hi.Time.UTC(), true, nil
 }
 
-// AggregatorRollupRow is one /v1/aggregators row: a routers-registry
-// entry joined with its routed-trade stats since `since` (the
-// handler passes now-24h). Volume is a NUMERIC decimal string
-// (ADR-0003); nil when none of the routed trades carried a USD
-// valuation (usd_volume is aggregator-backfilled and can lag).
+// AggregatorRollupRow is one /v1/aggregators row: a routers-registry entry joined with its
+// routed-trade stats since `since`. Volume is a NUMERIC decimal string (ADR-0003), nil when no
+// routed trade carried a USD valuation (usd_volume is backfilled and can lag).
 type AggregatorRollupRow struct {
 	ContractID     string
 	Name           string
@@ -152,16 +133,13 @@ type AggregatorRollupRow struct {
 	LastRoutedAt *time.Time
 }
 
-// AggregatorRollup returns every routers-registry entry with its
-// routed-trade rollup for trades whose ts >= since. Registry rows
-// with no routed trades still appear (LEFT JOIN) with zero counts —
-// aggregator-vault entries always look like that today because
-// per-tx tagging only applies to kind='router'.
+// AggregatorRollup returns every routers-registry entry with its routed-trade rollup for trades
+// with ts >= since. Entries with no routed trades still appear (LEFT JOIN) with zero counts, as
+// aggregator-vault entries always do because per-tx tagging only applies to kind='router'.
 //
-// The routed-trades scan is cheap: trades_routed_via_idx is a
-// partial index over the (rare) non-NULL routed_via rows, and the
-// ts bound prunes chunks. `since` is computed by the caller (not
-// now() in SQL) so the statement stays parameter-sargable.
+// The scan is cheap: trades_routed_via_idx is a partial index over the rare non-NULL routed_via
+// rows and the ts bound prunes chunks. `since` comes from the caller, not now() in SQL, so the
+// predicate stays parameter-sargable.
 func (s *Store) AggregatorRollup(ctx context.Context, since time.Time) ([]AggregatorRollupRow, error) {
 	const q = `
         SELECT r.contract_id, r.name, r.kind, r.protocol_slug, r.auto_discovered,

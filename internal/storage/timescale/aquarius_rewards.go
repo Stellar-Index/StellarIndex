@@ -47,11 +47,9 @@ func (k AquariusRewardsKind) IsValid() bool {
 	return false
 }
 
-// AquariusRewardsEvent is one observed rewards-gauge event (any of
-// the twelve kinds). UserAddress / Amount are universal promoted
-// columns, NULL when the kind doesn't carry them; Attributes holds
-// the kind-specific remainder (i128 fields as decimal strings —
-// NUMERIC inside jsonb is lossy per ADR-0003).
+// AquariusRewardsEvent is one observed rewards-gauge event (any of the twelve kinds).
+// UserAddress and Amount are NULL when the kind does not carry them; Attributes holds the rest,
+// with i128 fields as decimal strings because NUMERIC inside jsonb is lossy (ADR-0003).
 type AquariusRewardsEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -65,17 +63,10 @@ type AquariusRewardsEvent struct {
 	Attributes      map[string]any
 }
 
-// InsertAquariusRewardsEvent appends one rewards-gauge event to
-// aquarius_rewards_events. Idempotent on the (ledger_close_time,
-// contract_id, ledger, tx_hash, op_index, event_kind, event_index) PK
-// — a projector-replay over the same range writes the same rows.
-// ON CONFLICT ... DO UPDATE, guarded by
-// `derive_generation <= EXCLUDED.derive_generation`: a replay
-// at an equal-or-higher generation OVERWRITES the stored value
-// columns, a lower-generation one is refused. Idempotent in row count,
-// NOT inert in value — the corrective upsert exists so a re-derive can
-// repair a wrong stored row, so a replay wired with different inputs
-// will rewrite them.
+// InsertAquariusRewardsEvent appends one rewards-gauge event to aquarius_rewards_events.
+// Idempotent in row count on the table PK, but not inert in value: the upsert is guarded by
+// `derive_generation <= EXCLUDED.derive_generation`, so a replay at an equal-or-higher generation
+// overwrites stored values (letting a re-derive repair a wrong row) and a lower one is refused.
 func (s *Store) InsertAquariusRewardsEvent(ctx context.Context, e AquariusRewardsEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertAquariusRewardsEvent: ContractID is empty")
@@ -138,11 +129,8 @@ func (s *Store) InsertAquariusRewardsEvent(ctx context.Context, e AquariusReward
 
 // ─── Read side: rewards-gauge analytics for the Aquarius bespoke block ───
 //
-// These reads serve the full-history aquarius_rewards_events table (millions of
-// rows) that this file's Insert side writes, for
-// internal/storage/timescale/protocol_bespoke.go (aquariusRewardsBlocks),
-// which augments the Aquarius DEX bespoke block —
-// see docs/protocols/aquarius.md "Rewards + governance analytics surface".
+// These reads serve the multi-million-row aquarius_rewards_events table for the Aquarius bespoke
+// block (protocol_bespoke.go, aquariusRewardsBlocks), so each must stay index-bounded.
 
 // aquariusRewardsAllKinds is the ordered set of the twelve rewards-gauge
 // kinds — the migration-0099 census order (busiest kind first). Reused so
@@ -164,21 +152,13 @@ type AquariusRewardsKindCount struct {
 	Events int64
 }
 
-// AquariusRewardsLifetimeByKind reads the LIFETIME per-kind event count
-// for all twelve rewards-gauge kinds, in migration-0099 census order.
+// AquariusRewardsLifetimeByKind reads the lifetime per-kind event count for all twelve
+// rewards-gauge kinds, in migration-0099 census order.
 //
-// "Lifetime" over a multi-million-row hypertable would be a genuinely
-// unbounded scan as a plain `GROUP BY event_kind` (visiting every row to
-// build the twelve groups, regardless of index). Instead this LATERAL-joins
-// each kind literal against aquarius_rewards_events, forcing Postgres to
-// plan each of the twelve branches as its own `event_kind = <literal>`
-// index scan against aquarius_rewards_events_kind_ts_idx (migration 0099) —
-// bounded to that kind's own row range. The table's compression policy
-// segments by (contract_id, event_kind) (migration 0099
-// timescaledb.compress_segmentby), so on compressed chunks this predicate
-// additionally lets TimescaleDB skip whole non-matching segments rather
-// than decompressing them — the per-kind filter is the physically cheap
-// access path here, not an approximation of one. Single round trip.
+// A plain `GROUP BY event_kind` would visit every row of a multi-million-row hypertable. Instead
+// each kind literal is LATERAL-joined so Postgres plans twelve `event_kind = <literal>` scans on
+// aquarius_rewards_events_kind_ts_idx, each bounded to its own rows. The table is compressed with
+// segmentby (contract_id, event_kind), so the equality also skips whole non-matching segments.
 func (s *Store) AquariusRewardsLifetimeByKind(ctx context.Context) ([]AquariusRewardsKindCount, error) {
 	kinds := make([]string, len(aquariusRewardsAllKinds))
 	for i, k := range aquariusRewardsAllKinds {
@@ -220,11 +200,9 @@ func (s *Store) AquariusRewardsLifetimeByKind(ctx context.Context) ([]AquariusRe
 	return out, nil
 }
 
-// AquariusClaimRewardWindow is the windowed claim_reward drill-down —
-// Aquarius's dominant user-facing rewards action (a user claiming accrued
-// gauge rewards). Volume is only available per reward token (ByToken):
-// claim_reward rows name different reward tokens with different decimals
-// and no price at this layer, so there is no meaningful cross-token total.
+// AquariusClaimRewardWindow is the windowed claim_reward drill-down. Volume exists only per
+// reward token (ByToken): tokens differ in decimals and carry no price here, so a cross-token
+// total would be meaningless.
 type AquariusClaimRewardWindow struct {
 	Events            int64
 	DistinctClaimants int64
@@ -241,18 +219,12 @@ type AquariusClaimRewardTokenVolume struct {
 	Amount      canonical.Amount
 }
 
-// AquariusRewardsClaimWindow reads the windowed claim_reward summary: event
-// count and distinct claimant addresses overall, plus event count and
-// summed amount per reward token (busiest token first, ties by token id).
-// Bounded by BOTH event_kind = 'claim_reward' (equality, the leading column
-// of aquarius_rewards_events_kind_ts_idx) AND ledger_close_time > now() -
-// windowDays (the trailing range on that same index) — one sargable,
-// fully-indexed predicate; neither side wraps the indexed columns in a
-// function. The overall and per-token figures come from one scan via
-// GROUPING SETS.
+// AquariusRewardsClaimWindow reads the windowed claim_reward summary: event count and distinct
+// claimants overall, plus event count and summed amount per reward token (busiest first, ties by
+// token id). The event_kind equality plus ledger_close_time range is one sargable predicate on
+// aquarius_rewards_events_kind_ts_idx, and GROUPING SETS gives both levels from one scan.
 //
-// Empty-safe: returns (nil, nil) when no claim_reward fired in the window.
-// windowDays <= 0 is treated as 30 (the bespoke block's drill-down window).
+// Returns (nil, nil) when no claim_reward fired in the window; windowDays <= 0 means 30.
 func (s *Store) AquariusRewardsClaimWindow(ctx context.Context, windowDays int) (*AquariusClaimRewardWindow, error) {
 	if windowDays <= 0 {
 		windowDays = 30
@@ -297,11 +269,9 @@ func (s *Store) AquariusRewardsClaimWindow(ctx context.Context, windowDays int) 
 	return &out, nil
 }
 
-// AquariusRewardsDailyClaimSeries reads the daily claim_reward event count
-// over the trailing windowDays — bounded/indexed identically to
-// AquariusRewardsClaimWindow (event_kind equality + ledger_close_time range
-// against aquarius_rewards_events_kind_ts_idx). windowDays <= 0 is treated
-// as 90 (matching scanDailySeries's sibling callers in protocol_bespoke.go).
+// AquariusRewardsDailyClaimSeries reads the daily claim_reward event count over the trailing
+// windowDays, bounded by the same index predicate as AquariusRewardsClaimWindow. windowDays <= 0
+// means 90.
 func (s *Store) AquariusRewardsDailyClaimSeries(ctx context.Context, windowDays int) ([]BespokeSeriesPt, error) {
 	if windowDays <= 0 {
 		windowDays = 90

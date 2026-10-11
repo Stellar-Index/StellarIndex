@@ -11,26 +11,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
 )
 
-// InsertSorobanEventsBatch persists a slice of raw Soroban event
-// rows into the `soroban_events` hypertable (migration 0041,
-// ADR-0029). Idempotent on the (ledger_close_time, ledger, tx_hash, op_index,
-// event_index) PK via `ON CONFLICT DO NOTHING` — replays /
-// retries / overlapping backfill chunks are a no-op for already-
-// captured rows.
+// InsertSorobanEventsBatch persists raw Soroban event rows into the soroban_events hypertable.
+// It is idempotent on the (ledger_close_time, ledger, tx_hash, op_index, event_index) PK via
+// ON CONFLICT DO NOTHING, so replays and overlapping backfill chunks are no-ops.
 //
-// Single multi-row INSERT statement. For a typical batch size of
-// 1000 rows × 15 columns this is one round-trip to Postgres, which
-// is what the [sorobanevents.AsyncSink] depends on for throughput.
+// One multi-row INSERT keeps a ~1000-row batch to a single round-trip, which the AsyncSink's
+// throughput depends on. An empty batch returns nil (an idle flush tick).
 //
-// An empty batch returns nil — the caller's flush ticker hits an
-// idle period; that's not an error.
-//
-// Defensive bounds-check: every row must carry a non-empty TxHash
-// + ContractID + Topic0XDR + BodyXDR. The capture function should
-// never produce malformed rows, but a single bad row in a 1000-row
-// batch would abort the whole transaction on COMMIT — surfacing
-// the validation here keeps one rogue event from sinking 999 good
-// ones.
+// Every row must carry a non-empty TxHash, ContractID, Topic0XDR and BodyXDR: one malformed row
+// would abort the whole transaction on COMMIT, so validating here keeps it from sinking the rest.
 func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.SorobanEventRow) error {
 	if len(rows) == 0 {
 		return nil
@@ -86,12 +75,8 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.Soro
 			base+14, base+15, base+16,
 		)
 		r := &rows[i]
-		// A nil [][]byte encodes (via pgx) to SQL NULL, which
-		// the NOT NULL topics_xdr column (migration 0114) rejects. A
-		// row built without the full list (e.g. an older topic_0..3-only
-		// constructor) writes an empty '{}' array instead, so the reader
-		// falls back to topic_0..3; the live Capture path always
-		// populates TopicsXDR (>=1 topic).
+		// A nil [][]byte encodes to SQL NULL, which the NOT NULL topics_xdr column rejects. Rows
+		// built without the full list write '{}' so the reader falls back to topic_0..3.
 		topics := r.TopicsXDR
 		if topics == nil {
 			topics = [][]byte{}
@@ -123,19 +108,15 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.Soro
 	return nil
 }
 
-// StreamSorobanEvents invokes `fn` once per soroban_events row matching the
-// predicate in [from, to] (inclusive), in (ledger_close_time, ledger,
-// tx_hash, op_index, event_index) order; event_index keeps multi-event ops
-// (Phoenix's 8 events per swap) stable (ADR-0033). It feeds the projector's
-// tail loop, `projector-replay` and the completeness reconciler through the
-// live decoders without a MinIO walk.
+// StreamSorobanEvents calls fn once per soroban_events row matching the predicate in [from, to]
+// (inclusive), ordered by (ledger_close_time, ledger, tx_hash, op_index, event_index); event_index
+// keeps multi-event ops (Phoenix's 8 events per swap) stable. It feeds the projector, replay and
+// the completeness reconciler without a MinIO walk.
 //
-// `contractIDs` and `topic0Syms` are inclusive filters (empty = no filter);
-// passing both pushes the scope into Postgres instead of streaming billions
-// of irrelevant rows.
+// `contractIDs` and `topic0Syms` are inclusive filters (empty = none); passing both pushes the
+// scope into Postgres instead of streaming billions of irrelevant rows.
 //
-// A non-nil error from the callback aborts the walk; ctx cancellation is
-// checked between rows and propagates through the driver.
+// A non-nil callback error aborts the walk; ctx cancellation is checked between rows.
 func (s *Store) StreamSorobanEvents(
 	ctx context.Context,
 	from, to uint32,
@@ -164,16 +145,9 @@ func (s *Store) StreamSorobanEvents(
     `)
 	args := appendSorobanEventsFilter(&sb, []any{int64(from), int64(to)},
 		contractIDs, topic0Syms, excludeTopic0Syms)
-	// Chunk-pruning (ADR-0033): soroban_events is partitioned by
-	// ledger_close_time, so `WHERE ledger BETWEEN` alone scans every
-	// chunk. When ledger_ingest_log fully covers [from,to] we can bound
-	// ledger_close_time exactly (see SorobanEventsTimeBound) and prune.
-	// The fullyCovered guard preserves correctness — a partial bound
-	// could exclude in-range rows — so without full coverage we keep the
-	// (correct, slower) unpruned scan. Sources that pass a contract /
-	// topic prefilter already use those indexes; this helps the
-	// match-by-topic sources (soroswap/aquarius/phoenix/comet) that
-	// pass no prefilter.
+	// soroban_events is partitioned by ledger_close_time, so `WHERE ledger BETWEEN` alone scans
+	// every chunk. When ledger_ingest_log fully covers [from,to], bound ledger_close_time to
+	// prune chunks. Partial coverage keeps the unpruned scan: a partial bound could drop rows.
 	if lo, hi, covered, terr := s.SorobanEventsTimeBound(ctx, from, to); terr == nil && covered {
 		next := len(args) + 1
 		args = append(args, lo, hi)
@@ -305,36 +279,23 @@ func placeholdersFrom(startIdx, count int) string {
 	return sb.String()
 }
 
-// LedgerGap is one contiguous block of ledgers with no
-// soroban_events row. Produced by [FindSorobanEventsLedgerGaps]
-// and consumed by the operator-facing `stellarindex-ops
-// find-data-gaps` subcommand + future periodic gap-detection
-// metric.
-//
-// Start and End are inclusive. Size = End - Start + 1. JSON
-// tags use snake_case so the subcommand's `--output json` mode
-// emits the same shape an operator-facing plan would (consumed
-// by shell scripts piping into `stellarindex-ops backfill`).
+// LedgerGap is one contiguous block of ledgers with no soroban_events row, produced by
+// [FindSorobanEventsLedgerGaps]. Start and End are inclusive and Size = End - Start + 1; the
+// snake_case JSON tags are the shape shell scripts consume from find-data-gaps `--output json`.
 type LedgerGap struct {
 	Start int64 `json:"start"`
 	End   int64 `json:"end"`
 	Size  int64 `json:"size"`
 }
 
-// FindSorobanEventsLedgerGaps scans the soroban_events.ledger column in
-// [from, to] and returns every contiguous gap of size >= minGapSize. It is the
-// **data-derived** alternative to cursor coverage: it catches failures the
-// cursor cannot see, e.g. cursors advancing while a back-pressured sink lands
-// no rows. minGapSize (typically ~1000, ~1.5 h) filters expected quiet gaps.
+// FindSorobanEventsLedgerGaps returns every contiguous gap of size >= minGapSize in
+// soroban_events.ledger within [from, to], using LAG() over distinct ledgers. It is the
+// data-derived alternative to cursor coverage and catches cursors advancing while a
+// back-pressured sink lands no rows. minGapSize (typically ~1000) filters expected quiet gaps.
 //
-// Implementation: LAG() over distinct ledgers.
-//
-// soroban_events is partitioned by ledger_close_time, NOT ledger, so a ledger
-// bound alone scans every chunk. When ledger_ingest_log fully covers
-// [from,to] the time is bounded exactly ([Store.SorobanEventsTimeBound]).
-// Full coverage is a correctness requirement: a partial time bound could
-// exclude in-range ledgers and fabricate phantom gaps, so otherwise the
-// slower unpruned scan runs.
+// The table is partitioned by ledger_close_time, so a ledger bound alone scans every chunk. The
+// time is bounded ([Store.SorobanEventsTimeBound]) only when ledger_ingest_log fully covers
+// [from,to]: a partial bound could exclude in-range ledgers and fabricate phantom gaps.
 func (s *Store) FindSorobanEventsLedgerGaps(ctx context.Context, from, to, minGapSize int64) ([]LedgerGap, error) {
 	if to < from {
 		return nil, fmt.Errorf("timescale: FindSorobanEventsLedgerGaps: to (%d) < from (%d)", to, from)

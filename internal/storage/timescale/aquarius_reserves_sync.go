@@ -9,11 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// AquariusReservesSyncEvent is one observed Aquarius `reserves_sync`
-// event (migration 0128). The writer fans it out to one
-// aquarius_reserves_sync row per token position. reserves_sync is a
-// distinct reserve-sync signal, separate from the update_reserves
-// post-state (AquariusReservesEvent → aquarius_reserves).
+// AquariusReservesSyncEvent is one observed Aquarius `reserves_sync` event, fanned out to one
+// aquarius_reserves_sync row per token position. It is a distinct signal from the
+// update_reserves post-state (AquariusReservesEvent, aquarius_reserves).
 type AquariusReservesSyncEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -27,15 +25,13 @@ type AquariusReservesSyncEvent struct {
 }
 
 // InsertAquariusReservesSync appends one reserves_sync observation,
-// fanned to one row per token position. Idempotent on the
-// (ledger_close_time, contract_id, ledger, tx_hash, op_index,
-// event_index, token_index) PK, with the generation-guarded
-// corrective upsert (migration 0110): a re-derive at a HIGHER
-// derive_generation lands its correction in place; a lower generation
-// can never revert one. Mirrors InsertAquariusReserves.
+// fanned to one row per token position. Idempotent on the (ledger_close_time, contract_id,
+// ledger, tx_hash, op_index, event_index, token_index) PK, with the generation-guarded
+// corrective upsert of InsertAquariusReserves: a higher derive_generation lands its correction
+// in place and a lower one cannot revert it.
 //
-// Defensive: rejects an empty ContractID / TxHash, an empty vector, and
-// a negative value before touching the DB.
+// Defensive: rejects an empty ContractID / TxHash, an empty vector and a negative value before
+// touching the DB.
 func (s *Store) InsertAquariusReservesSync(ctx context.Context, e AquariusReservesSyncEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertAquariusReservesSync: ContractID is empty")

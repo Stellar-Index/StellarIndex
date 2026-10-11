@@ -107,11 +107,10 @@ func (s *Store) CAGGInvalidationBacklogs(ctx context.Context, views []string, cu
 	return out, nil
 }
 
-// CAGGInvalidatedRanges returns the half-open ranges of view's pending
-// invalidation entries, from its own log and its source hypertable's,
-// clipped to [from, to) and sorted by start; open-ended entries are
-// clipped like the rest. They may overlap. Like
-// [Store.CAGGInvalidationBacklogs] it reads TimescaleDB's internal catalog.
+// CAGGInvalidatedRanges returns the half-open ranges of view's pending invalidation entries, from
+// its own log and its source hypertable's, clipped to [from, to) (open-ended entries too) and
+// sorted by start. Ranges may overlap. Like [Store.CAGGInvalidationBacklogs] it reads
+// TimescaleDB's internal catalog.
 func (s *Store) CAGGInvalidatedRanges(ctx context.Context, view string, from, to time.Time) ([][2]time.Time, error) {
 	var matID, rawID int64
 	err := s.db.QueryRowContext(ctx, `SELECT mat_hypertable_id, raw_hypertable_id FROM _timescaledb_catalog.continuous_agg

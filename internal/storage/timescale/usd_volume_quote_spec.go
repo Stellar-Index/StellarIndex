@@ -6,50 +6,35 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// USDVolumeQuoteSpec lets the trade-insert path recognise on-chain
-// quote assets the operator has declared as USD-pegged stablecoins,
-// and supplies the per-asset decimals needed to compute usd_volume.
+// USDVolumeQuoteSpec lets the trade-insert path recognise on-chain quote assets the operator
+// declared USD-pegged and supplies their decimals for usd_volume.
 //
-// The off-chain CEX/FX path doesn't need this — every external source
-// stamps amounts at the uniform 10^8 scale and recognises peg via
-// `aggregate.FiatProxy`'s crypto-ticker map. On-chain trades stamp amounts
-// at per-asset decimals and the quote can be:
+// Off-chain CEX/FX sources use a uniform 10^8 scale and `aggregate.FiatProxy`, but on-chain
+// trades use per-asset decimals and the quote is either `AssetClassic{Code, Issuer}` or
+// `AssetSoroban{ContractID}`. Neither maps to a global ticker, so trust is keyed on the declared
+// (CODE, ISSUER) pairs, and the SAC form resolves back to its classic asset via
+// `[supply.sac_wrappers]`, never by code alone.
 //
-//   - `AssetClassic{Code, Issuer}`, e.g. SDEX's USDC-GA5...
-//   - `AssetSoroban{ContractID}`, e.g. Soroswap's USDC SAC contract
-//     CCW6...
-//
-// Neither form maps to a global ticker; the operator declares which (CODE, ISSUER)
-// pairs are trusted as USD-pegged, and this spec resolves both the classic form
-// and its SAC-wrapped counterpart via the `[supply.sac_wrappers]` map.
-//
-// Scope: USD-pegged stablecoins only, classic-decimal (7) only. Non-USD pegs
-// (EUR / MXN / etc.) live in [VWAPUSDFXResolver]. SEP-41 tokens with
-// non-classic decimals remain unsupported on either path.
+// Scope: USD-pegged, classic-decimal (7) only. Non-USD pegs live in [VWAPUSDFXResolver];
+// SEP-41 tokens with other decimals are unsupported.
 type USDVolumeQuoteSpec struct {
 	// classicUSDPegs is the set of classic asset_keys (in the
 	// canonical "CODE-ISSUER" wire form) the operator has declared
 	// as USD-pegged stablecoins.
 	classicUSDPegs map[string]struct{}
 
-	// sacToClassic is the SAC contract id → classic asset_key map
-	// (in "CODE-ISSUER" form, normalised from the supply package's
-	// "CODE:ISSUER" form). Used to resolve a Soroban-form quote
-	// asset (Soroswap/Phoenix/Aquarius) back to its underlying
-	// classic so the peg + decimals lookup can succeed.
+	// sacToClassic maps SAC contract id to the classic "CODE-ISSUER" key (normalised from the
+	// supply package's "CODE:ISSUER"), so a Soroban-form quote resolves to its classic asset for
+	// the peg and decimals lookup.
 	sacToClassic map[string]string
 }
 
-// NewUSDVolumeQuoteSpec composes the lookup. classicUSDPegs is the
-// operator's `[trades].usd_pegged_classic_assets` list (each entry is
-// the canonical "CODE-ISSUER" form for a classic credit). sacWrappers
-// is the same map used by the supply pipeline:
-// SAC contract id → "CODE:ISSUER" (the supply.AssetKey colon form).
+// NewUSDVolumeQuoteSpec composes the lookup. classicUSDPegs is the operator's
+// `[trades].usd_pegged_classic_assets` list ("CODE-ISSUER" per entry); sacWrappers is the supply
+// pipeline's map of SAC contract id to "CODE:ISSUER".
 //
-// Returns an error when a classicUSDPegs entry doesn't parse as a
-// classic asset — operator config validation; we want to fail at
-// startup rather than silently ignore a typo'd asset_key that
-// matches no trade.
+// It errors on an unparseable classicUSDPegs entry so a typo'd asset_key fails at startup instead
+// of silently matching no trade.
 func NewUSDVolumeQuoteSpec(classicUSDPegs []string, sacWrappers map[string]string) (*USDVolumeQuoteSpec, error) {
 	out := &USDVolumeQuoteSpec{
 		classicUSDPegs: make(map[string]struct{}, len(classicUSDPegs)),
@@ -80,15 +65,10 @@ func NewUSDVolumeQuoteSpec(classicUSDPegs []string, sacWrappers map[string]strin
 	return out, nil
 }
 
-// QuoteUSDPegInfo, when ok=true, says: this quote asset is on the
-// operator's USD-pegged list and the trade's quote_amount should be
-// divided by 10^decimals to obtain its USD value (using the trusted
-// 1.0 peg). When ok=false, the quote isn't recognised — the caller
-// stores usd_volume as NULL.
-//
-// Returns ok=false for nil spec (no operator config supplied) and
-// for SEP-41 contracts that aren't in sacWrappers (pure SEP-41
-// stablecoins are phase-2 work).
+// QuoteUSDPegInfo with ok=true says the quote asset is on the operator's USD-pegged list, so
+// quote_amount divided by 10^decimals is its USD value at the trusted 1.0 peg. With ok=false the
+// caller stores usd_volume as NULL. That includes a nil spec and SEP-41 contracts absent from
+// sacWrappers (pure SEP-41 stablecoins are unsupported).
 func (s *USDVolumeQuoteSpec) QuoteUSDPegInfo(asset canonical.Asset) (decimals int, ok bool) {
 	if s == nil {
 		return 0, false

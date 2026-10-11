@@ -9,14 +9,11 @@ import (
 )
 
 // relationDataVolumePathSelect resolves the directory a relation's storage
-// lives under: its tablespace location when it has one, the server's
-// data_directory otherwise. A caller measures free space on the filesystem
-// holding that path — which only means anything when the caller runs ON the
-// database host, so every caller is expected to offer an operator override
-// for the case where it does not.
+// lives under: its tablespace location when it has one, the server's data_directory otherwise.
+// Free space measured on that path only means anything when the caller runs ON the database
+// host, so every caller should offer an operator override for when it does not.
 //
-// $1 is cast to regclass explicitly rather than interpolated, so the
-// relation name is a bind parameter and never a SQL fragment.
+// $1 is cast to regclass so the relation name is a bind parameter, never a SQL fragment.
 const relationDataVolumePathSelect = `
 	SELECT COALESCE(NULLIF(pg_tablespace_location(t.oid), ''), current_setting('data_directory'))
 	  FROM pg_class c

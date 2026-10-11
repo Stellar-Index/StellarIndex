@@ -27,11 +27,8 @@ type ChainBreak struct {
 	GotPrevHash  string // hex of ledger[seq].prev_ledger_hash
 }
 
-// UpsertLedgerIngestLog writes (or refreshes) the substrate record
-// for one fully-processed ledger. ON CONFLICT DO UPDATE so a
-// re-census (census-backfill correcting a pre-event_index-fix count,
-// or a replay) overwrites stale counts rather than being silently
-// dropped.
+// UpsertLedgerIngestLog writes or refreshes the substrate record for one fully-processed ledger.
+// ON CONFLICT DO UPDATE so a re-census overwrites stale counts instead of silently dropping them.
 func (s *Store) UpsertLedgerIngestLog(ctx context.Context, row LedgerIngestRow) error {
 	if len(row.LedgerHash) != 32 {
 		return fmt.Errorf("timescale: UpsertLedgerIngestLog: ledger_hash len %d, want 32 (ledger %d)", len(row.LedgerHash), row.LedgerSeq)
@@ -60,15 +57,10 @@ func (s *Store) UpsertLedgerIngestLog(ctx context.Context, row LedgerIngestRow) 
 	return nil
 }
 
-// FindLedgerIngestGaps returns every contiguous run of missing ledger
-// sequences in [from, to] (inclusive). A genuinely complete substrate
-// returns no gaps. Covers both interior gaps (a LAG window over the
-// present sequences) and the leading/trailing boundary (present range
-// narrower than [from, to]).
-//
-// Cheap: this runs over the narrow ledger_ingest_log btree on
-// ledger_seq, NOT over trades. There is no statement_timeout dance
-// because the table is one slim row per ledger.
+// FindLedgerIngestGaps returns every contiguous run of missing ledger sequences in [from, to]
+// inclusive, covering interior gaps (LAG window) and leading/trailing ones when the present range
+// is narrower than [from, to]. Cheap: it scans the ledger_seq btree of a one-row-per-ledger
+// table, not trades, so it needs no statement_timeout.
 func (s *Store) FindLedgerIngestGaps(ctx context.Context, from, to uint32) ([]LedgerGap, error) {
 	if to < from {
 		return nil, errors.New("timescale: FindLedgerIngestGaps: to < from")
@@ -137,13 +129,10 @@ func newLedgerGap(start, end int64) LedgerGap {
 	return LedgerGap{Start: start, End: end, Size: end - start + 1}
 }
 
-// VerifyLedgerHashChain returns every ledger in (from, to] whose
-// prev_ledger_hash does not equal the previous ledger's ledger_hash.
-// An empty result means the chain is unbroken across every adjacent
-// pair we hold in the range — the cryptographic half of Claim 1.
-//
-// Only adjacent pairs BOTH present in the table are checked; missing
-// ledgers are FindLedgerIngestGaps's job, not this query's.
+// VerifyLedgerHashChain returns every ledger in (from, to] whose prev_ledger_hash differs from the
+// previous ledger's ledger_hash; empty means the chain is unbroken (the cryptographic half of
+// Claim 1). Only adjacent pairs both present are checked; missing ledgers are
+// FindLedgerIngestGaps's job.
 func (s *Store) VerifyLedgerHashChain(ctx context.Context, from, to uint32) ([]ChainBreak, error) {
 	if to < from {
 		return nil, errors.New("timescale: VerifyLedgerHashChain: to < from")
@@ -179,17 +168,11 @@ func (s *Store) VerifyLedgerHashChain(ctx context.Context, from, to uint32) ([]C
 	return breaks, nil
 }
 
-// ClassicTradeEffectCountsByLedger returns the LCM-derived
-// classic-trade-effect count per ledger in [from, to] — the "expected"
-// side of the SDEX projection reconciliation (ADR-0033 Claim 2b,
-// classic). SDEX predates Soroban so there is no soroban_events to
-// re-derive from; this census (one ClaimAtom = one SDEX trade) is the
-// decoder-independent oracle instead. Ledgers with zero trade effects
-// are omitted (ReconcileCounts treats absent as 0).
-//
-// Reads ledger_ingest_log, so it is only meaningful where the substrate
-// record covers the range — callers should verify continuity
-// (FindLedgerIngestGaps) first.
+// ClassicTradeEffectCountsByLedger returns the LCM-derived classic-trade-effect count per ledger
+// in [from, to], the expected side of SDEX reconciliation (ADR-0033 Claim 2b). SDEX has no
+// soroban_events to re-derive from, so this census (one ClaimAtom = one trade) is the
+// decoder-independent oracle. Zero-count ledgers are omitted (ReconcileCounts treats absent as 0).
+// Callers must check continuity with FindLedgerIngestGaps first, since it reads ledger_ingest_log.
 func (s *Store) ClassicTradeEffectCountsByLedger(ctx context.Context, from, to uint32) (map[uint32]int, error) {
 	if to < from {
 		return nil, fmt.Errorf("timescale: ClassicTradeEffectCountsByLedger: to (%d) < from (%d)", to, from)
@@ -217,22 +200,14 @@ func (s *Store) ClassicTradeEffectCountsByLedger(ctx context.Context, from, to u
 	return out, nil
 }
 
-// SorobanEventsTimeBound returns the [lo, hi] ledger_close_time span of
-// the ledgers [from, to] as recorded in ledger_ingest_log, plus whether
-// the log FULLY covers that range (one row per ledger). It exists to
-// make soroban_events ledger-range queries prune chunks: that table is
-// partitioned by ledger_close_time, so a `WHERE ledger BETWEEN` filter
-// alone scans every chunk. Adding `AND ledger_close_time BETWEEN lo AND
-// hi` restores pruning.
+// SorobanEventsTimeBound returns the [lo, hi] ledger_close_time span of ledgers [from, to] from
+// ledger_ingest_log, plus whether the log fully covers the range. soroban_events is partitioned by
+// ledger_close_time, so `WHERE ledger BETWEEN` alone scans every chunk; adding
+// `AND ledger_close_time BETWEEN lo AND hi` restores chunk pruning.
 //
-// The fullyCovered guard is a correctness requirement, not just an
-// optimization: a soroban_events row's ledger_close_time equals its
-// ledger's close time exactly (same LCM), so [lo, hi] over a FULLY
-// covered range bounds every soroban_events row whose ledger is in
-// [from, to]. If the log is missing ledgers in the range, a partial
-// [lo, hi] could exclude rows whose ledger is in range — so callers
-// MUST only apply the bound when fullyCovered is true, and otherwise
-// fall back to the (correct, slower) unpruned scan.
+// fullyCovered is a correctness guard: a row's ledger_close_time equals its ledger's close time
+// exactly, so [lo, hi] bounds every row in range only when no ledgers are missing. Callers must
+// apply the bound only when fullyCovered is true, else fall back to the unpruned scan.
 func (s *Store) SorobanEventsTimeBound(ctx context.Context, from, to uint32) (lo, hi time.Time, fullyCovered bool, err error) {
 	if to < from {
 		return time.Time{}, time.Time{}, false, fmt.Errorf("timescale: SorobanEventsTimeBound: to (%d) < from (%d)", to, from)
@@ -254,12 +229,10 @@ func (s *Store) SorobanEventsTimeBound(ctx context.Context, from, to uint32) (lo
 	return loN.Time, hiN.Time, cnt == expected, nil
 }
 
-// enclosingCloseTimeQuery returns close times that enclose every ledger
-// in [$1, $2]: those of the nearest logged ledger at or below $1 and at
-// or above $2. Close time is monotonic in ledger sequence, so unlike
-// [Store.SorobanEventsTimeBound] this needs no full coverage of the range
-// (the gap scan runs exactly when coverage may have holes); a side with
-// no anchor comes back NULL and is left unbounded.
+// enclosingCloseTimeQuery returns the close times of the nearest logged ledger at or below $1 and
+// at or above $2, which enclose every ledger in [$1, $2]. Close time is monotonic in ledger
+// sequence, so unlike [Store.SorobanEventsTimeBound] it needs no full coverage (the gap scan runs
+// exactly when coverage may have holes); a side with no anchor is NULL and left unbounded.
 const enclosingCloseTimeQuery = `
 	SELECT (SELECT ledger_close_time FROM ledger_ingest_log
 	         WHERE ledger_seq <= $1 ORDER BY ledger_seq DESC LIMIT 1),

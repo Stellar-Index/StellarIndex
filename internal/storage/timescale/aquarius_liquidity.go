@@ -66,17 +66,11 @@ type AquariusLiquidityEvent struct {
 	Shares canonical.Amount
 }
 
-// InsertAquariusReserves appends one update_reserves observation,
-// fanned to one row per token position. Idempotent on the
-// (ledger_close_time, contract_id, ledger, tx_hash, op_index,
-// event_index, token_index) PK — a projector-replay or ch-rebuild over
-// the same range writes the same rows. The upsert is generation-guarded
-// DO UPDATE, NOT DO NOTHING: a re-derive at a HIGHER derive_generation
-// lands its correction in place, while a lower generation can never
-// revert one. DO NOTHING would make corrected re-derives silently no-op.
-//
-// Defensive: rejects an empty ContractID / TxHash, an empty reserve
-// vector, and a negative reserve before touching the DB.
+// InsertAquariusReserves appends one update_reserves observation, fanned to one row per token
+// position. Idempotent on the table PK. The upsert is a generation-guarded DO UPDATE, not DO
+// NOTHING: a re-derive at a higher derive_generation lands its correction in place, a lower one
+// never reverts it, and DO NOTHING would silently drop corrected re-derives.
+// Rejects an empty ContractID/TxHash, an empty reserve vector and a negative reserve up front.
 func (s *Store) InsertAquariusReserves(ctx context.Context, e AquariusReservesEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertAquariusReserves: ContractID is empty")
@@ -88,12 +82,9 @@ func (s *Store) InsertAquariusReserves(ctx context.Context, e AquariusReservesEv
 		return errors.New("timescale: InsertAquariusReserves: empty reserve vector")
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the post-state `reserve` lands in place when its
-	// generation is >= the stored one; a live gen-0 replay can never revert
-	// it. Each fanned row carries a distinct token_index (a conflict-key
-	// component), so one statement never repeats a key — no intra-batch
-	// dedup needed.
+	// Generation-guarded upsert (migration 0110): a corrected re-derive of `reserve` lands when
+	// its generation is >= the stored one; a live gen-0 replay never reverts it. Fanned rows carry
+	// distinct token_index values, so one statement never repeats a key and needs no dedup.
 	const q = `
         INSERT INTO aquarius_reserves (
             contract_id, ledger, ledger_close_time, tx_hash,
@@ -132,15 +123,10 @@ func (s *Store) InsertAquariusReserves(ctx context.Context, e AquariusReservesEv
 	return nil
 }
 
-// InsertAquariusLiquidity appends one deposit_liquidity /
-// withdraw_liquidity observation, fanned to one row per token
-// position. Shares lands on the token_index = 0 row only (NULL on the
-// others). Idempotent on the (ledger_close_time, contract_id, ledger,
-// tx_hash, op_index, event_index, action, token_index) PK.
-//
-// Defensive: rejects empty identifiers, an invalid Action, a
-// tokens/amounts length mismatch, an empty token address, a negative
-// amount, and negative shares before touching the DB.
+// InsertAquariusLiquidity appends one deposit_liquidity / withdraw_liquidity observation, fanned
+// to one row per token position. Shares lands on the token_index = 0 row only (NULL elsewhere).
+// Idempotent on the table PK. Rejects empty identifiers, an invalid Action, a tokens/amounts
+// length mismatch, an empty token address and negative amounts or shares up front.
 func (s *Store) InsertAquariusLiquidity(ctx context.Context, e AquariusLiquidityEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertAquariusLiquidity: ContractID is empty")
@@ -162,12 +148,9 @@ func (s *Store) InsertAquariusLiquidity(ctx context.Context, e AquariusLiquidity
 		return fmt.Errorf("timescale: InsertAquariusLiquidity: shares must be >= 0 (got %s)", e.Shares)
 	}
 
-	// Generation-guarded corrective upsert (migration 0110): a
-	// corrected re-derive of the per-leg `amount` / `shares` lands in place
-	// when its generation is >= the stored one; a live gen-0 replay can never
-	// revert it. Each fanned row carries a distinct token_index (a
-	// conflict-key component), so one statement never repeats a key —
-	// no intra-batch dedup needed.
+	// Generation-guarded upsert (migration 0110): a corrected re-derive of `amount` / `shares`
+	// lands when its generation is >= the stored one; a live gen-0 replay never reverts it. Fanned
+	// rows carry distinct token_index values, so one statement never repeats a key.
 	const q = `
         INSERT INTO aquarius_liquidity (
             contract_id, ledger, ledger_close_time, tx_hash,
@@ -245,24 +228,19 @@ type AquariusPoolReserve struct {
 	Legs []AquariusReserveLeg
 }
 
-// LatestAquariusReserves returns the newest reserve snapshot per pool
-// observed within the trailing windowDays, most-recently-updated pool
-// first. A pool's snapshot is the complete reserve vector from its single
-// most recent update_reserves event (max ledger_close_time, then
-// ledger/op_index/event_index), so a multi-token stableswap pool comes
-// back with all its legs. Token addresses are resolved positionally from
-// the pool's most recent deposit/withdraw in the window (update_reserves
-// carries no token address — AGENTS.md / migration 0089); a leg with no
-// observed liquidity event keeps an empty Token.
+// LatestAquariusReserves returns the newest reserve snapshot per pool within the trailing
+// windowDays, most recently updated first. A snapshot is the full reserve vector of the pool's
+// single latest update_reserves event, so multi-token stableswap pools keep all legs. Token
+// addresses are recovered positionally from the pool's latest deposit/withdraw in the window
+// (update_reserves carries none, migration 0089); a leg with no liquidity event keeps an empty
+// Token.
 //
-// Two limits callers must carry: token identity is positional recovery,
-// not a captured address; and aquarius_reserves has no transaction
-// application order, so when two transactions touch a pool in its latest
-// ledger at the same op_index and event_index the snapshot is either
-// one's post-state, not provably the final one.
+// Two limits callers must carry: token identity is positional recovery, not a captured address;
+// and aquarius_reserves has no transaction application order, so if two transactions touch a pool
+// in its latest ledger at the same op_index and event_index, the snapshot is either one's
+// post-state, not provably the final one.
 //
-// Empty-safe: returns (nil, nil) when no reserves have been captured in the
-// window. windowDays <= 0 is treated as 90.
+// Returns (nil, nil) when nothing was captured in the window; windowDays <= 0 means 90.
 func (s *Store) LatestAquariusReserves(ctx context.Context, windowDays int) ([]AquariusPoolReserve, error) {
 	if windowDays <= 0 {
 		windowDays = 90
@@ -292,11 +270,9 @@ func (s *Store) LatestAquariusReserves(ctx context.Context, windowDays int) ([]A
 	return pools, nil
 }
 
-// aquariusLatestReserveLegs reads, per pool, the fanned reserve legs of its
-// single most recent update_reserves event within the window. Ordered so a
-// pool's legs are contiguous and pools come back recency-first. Its result
-// set is fully consumed and closed before returning, so LatestAquariusReserves
-// never holds two open cursors.
+// aquariusLatestReserveLegs reads, per pool, the reserve legs of its latest update_reserves event
+// in the window, ordered so a pool's legs are contiguous and pools are recency-first. The result
+// set is closed before returning so LatestAquariusReserves never holds two open cursors.
 func (s *Store) aquariusLatestReserveLegs(ctx context.Context, since string) ([]AquariusPoolReserve, error) {
 	const q = `
 		WITH latest AS (

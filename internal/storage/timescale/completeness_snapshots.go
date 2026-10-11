@@ -22,19 +22,13 @@ type CompletenessSnapshot struct {
 	// additionally gates Complete (the served/combined axis).
 	LakeComplete bool
 	FirstProblem uint32 // 0 = none
-	// FoundProblem is write-only (no column): this run's own check found a
-	// failure that FirstProblem cannot localise — the ClickHouse projection
-	// reconcile is an aggregate, so a nonzero delta, blind spots or floor
-	// loss name no ledger. Never set for a claim that was merely not
-	// evaluated. See [CompletenessSnapshot.foundProblem].
+	// FoundProblem is write-only (no column): this run found a failure FirstProblem cannot localise,
+	// since the ClickHouse projection reconcile is an aggregate whose nonzero delta names no
+	// ledger. Never set for a claim that was merely not evaluated.
 	FoundProblem bool
-	// ProjectionVerifiedFrom is the PROJECTION axis's floor (migration
-	// 0155), computed by chops.projectionScopes: the source's genesis, or
-	// for a declared served window the minimum served row over its
-	// targets. ProjectionOK is a claim about
-	// [ProjectionVerifiedFrom, Watermark] and about nothing below it —
-	// Genesis is the LAKE axis's floor and is routinely ten years lower.
-	// 0 = not recorded (pre-0155 snapshot, or projection not evaluated);
+	// ProjectionVerifiedFrom is the PROJECTION axis's floor: the source's genesis, or for a
+	// declared served window the minimum served row over its targets. ProjectionOK claims
+	// nothing below it (Genesis is the LAKE floor, routinely far lower). 0 means not recorded;
 	// never read 0 as a floor.
 	ProjectionVerifiedFrom uint32
 	// ProjectionReconciledFrom is the lowest ledger THIS run's projection
@@ -57,11 +51,8 @@ type CompletenessSnapshot struct {
 	ComputedAt             time.Time
 }
 
-// upsertCompletenessSnapshotQuery is the verdict write. Package-level so
-// [Store.UpsertCompletenessSnapshot] and [Store.PublishCompletenessVerdict]
-// run the byte-identical statement — the never-regress guard it ends in is what
-// makes "did this write land?" a question at all, and two copies of it
-// would drift.
+// upsertCompletenessSnapshotQuery is the verdict write, shared so [Store.UpsertCompletenessSnapshot]
+// and [Store.PublishCompletenessVerdict] run the byte-identical statement and never-regress guard.
 const upsertCompletenessSnapshotQuery = `
         INSERT INTO completeness_snapshots (
             source, genesis_ledger, tip_ledger, watermark_ledger,
@@ -143,10 +134,9 @@ func execCompletenessSnapshot(ctx context.Context, ex snapshotExecer, snap Compl
 
 // UpsertCompletenessSnapshot writes (or refreshes) a source's verdict.
 //
-// It does NOT report whether the never-regress guard rejected the write. A caller
-// whose next step depends on the verdict having been STORED — clearing a
-// replay-rewind dirty window is the one that exists — must use
-// [Store.PublishCompletenessVerdict] instead.
+// It does NOT report whether the never-regress guard rejected the write; a caller whose next step
+// depends on the verdict having been STORED (clearing a dirty window) must use
+// [Store.PublishCompletenessVerdict].
 func (s *Store) UpsertCompletenessSnapshot(ctx context.Context, snap CompletenessSnapshot) error {
 	if _, err := execCompletenessSnapshot(ctx, s.db, snap); err != nil {
 		return fmt.Errorf("timescale: UpsertCompletenessSnapshot (%s): %w", snap.Source, err)
@@ -177,24 +167,15 @@ type VerdictPublication struct {
 	WindowCleared bool
 }
 
-// PublishCompletenessVerdict writes a source's verdict and — only if that
-// write was APPLIED — clears the replay-rewind dirty window the verdict
-// discharged, in ONE transaction.
+// PublishCompletenessVerdict writes a source's verdict and, only if that write was APPLIED,
+// clears the replay-rewind dirty window it discharged, in ONE transaction.
 //
-// Two independent statements would not do: the first cannot report that it
-// did nothing. A run with a `-to` below the stored tip and no problem is
-// rejected by the never-regress guard with a nil error; the caller would
-// then delete the window on the strength of a verdict that was never stored.
-//
-// The window is the obligation and the stored verdict is its discharge, so
-// the delete is gated on rows-affected and shares the verdict's
-// transaction: a crash or error between the two rolls BOTH back (the
-// window survives and the next run re-verifies — fail-closed), and a
-// rejected verdict never reaches the delete at all. Under READ COMMITTED a
-// verdict blocked behind a concurrent writer of the same source row
-// re-evaluates the guard against the committed row once unblocked, so
-// Applied reflects the row as it really is, not as it was when the run
-// started.
+// Two statements would not do: a run with `-to` below the stored tip is rejected by the
+// never-regress guard with a nil error, and the caller would delete the window on a verdict that
+// was never stored. The delete is therefore gated on rows-affected and shares the transaction, so
+// a crash between the two rolls BOTH back (fail-closed: the next run re-verifies). Under READ
+// COMMITTED a blocked verdict re-evaluates the guard against the committed row, so Applied
+// reflects the row as it really is.
 //
 // clearWindow == nil publishes the verdict alone.
 func (s *Store) PublishCompletenessVerdict(ctx context.Context, snap CompletenessSnapshot, clearWindow *DirtyWindowClear) (VerdictPublication, error) {
@@ -278,12 +259,9 @@ func (s *Store) ListCompletenessSnapshots(ctx context.Context) ([]CompletenessSn
 	return out, nil
 }
 
-// DeleteCompletenessSnapshots removes the verdict rows of the named
-// sources. Used by compute-completeness on a non-pubnet network to clear
-// rows written for pubnet-only sources before the catalogue was
-// network-scoped; the caller passes only catalogue names it has
-// itself classified as not applicable, never arbitrary input. A nil or
-// empty list is a no-op.
+// DeleteCompletenessSnapshots removes the verdict rows of the named sources, which
+// compute-completeness has itself classified as not applicable on a non-pubnet network (never
+// arbitrary input). A nil or empty list is a no-op.
 func (s *Store) DeleteCompletenessSnapshots(ctx context.Context, sources []string) (int64, error) {
 	if len(sources) == 0 {
 		return 0, nil

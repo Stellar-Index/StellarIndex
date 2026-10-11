@@ -12,17 +12,9 @@ import (
 // LedgerProvider is defined by freeze_events.go.
 // Reusing it here keeps the seam consistent across sinks.
 
-// DivergenceSink is the timescale-backed implementation of
-// divergence.ObservationSink. Persists every per-reference
-// comparison the worker computes to the `divergence_observations`
-// hypertable.
-//
-// Today the worker writes the aggregate (median + boolean firing
-// flag) to Redis with a TTL; the per-reference deltas are lost
-// after the next tick. This sink keeps a queryable history so
-// the explorer /divergences page can plot deltas over time and
-// post-mortems can verify "Reflector drifted N% from us at
-// ledger X" against ground truth.
+// DivergenceSink is the timescale-backed divergence.ObservationSink. It persists every
+// per-reference comparison to the `divergence_observations` hypertable, because the worker's
+// Redis aggregate (median + firing flag) loses the per-reference deltas after the next tick.
 type DivergenceSink struct {
 	db        *sql.DB
 	getLedger LedgerProvider
@@ -50,19 +42,12 @@ func WithDivergenceLedgerProvider(p LedgerProvider) DivergenceSinkOption {
 	}
 }
 
-// RecordObservation implements divergence.ObservationSink.
+// RecordObservation implements divergence.ObservationSink. It inserts one row per call; the PK
+// (asset_id, quote_id, reference, observed_at) makes a same-microsecond duplicate a no-op via
+// ON CONFLICT.
 //
-// Inserts one row per call; the table's PK (asset_id, quote_id,
-// reference, observed_at) makes concurrent inserts at the identical
-// microsecond a no-op via ON CONFLICT — but since we control the
-// observed_at upstream (the worker sets it) collisions are rare in
-// practice.
-//
-// obs.OurPrice / RefPrice / DeltaPct are decimal strings (ADR-0003)
-// bound directly into the our_price/ref_price/delta_pct NUMERIC
-// columns — never a Go float64 — mirroring the ::text cast the read
-// path ([Store.ListDivergenceLatest], [Store.ListDivergenceSeries])
-// uses to hand the same columns back out as strings.
+// obs.OurPrice / RefPrice / DeltaPct are decimal strings bound straight into NUMERIC columns,
+// never a Go float64, mirroring the ::text cast the read paths use to return them as strings.
 func (s *DivergenceSink) RecordObservation(ctx context.Context, obs domain.DivergenceObservationRecord) error {
 	var ledger uint32
 	if s.getLedger != nil {
@@ -117,18 +102,13 @@ type DivergenceRow struct {
 	RefObservedAt *time.Time
 }
 
-// ListDivergenceLatest returns the LATEST observation per (asset,
-// quote, reference) within the trailing `sinceDays` window, for at most
-// `limit` (asset, quote) pairs — every reference of a returned pair is
-// included, so a pair is never served with part of its comparison set.
-// Pairs rank by their widest |delta_pct|; firingOnly keeps pairs with at
-// least one reference firing at its latest observation. Rows are ordered
-// pair by pair (widest first), then by |delta_pct| desc within a pair.
-// limit ≤ 500.
+// ListDivergenceLatest returns the LATEST observation per (asset, quote, reference) within the
+// trailing `sinceDays` window, for at most `limit` (<= 500) pairs. Every reference of a returned
+// pair is included, so a pair is never served with part of its comparison set. Pairs rank by
+// widest |delta_pct|; firingOnly keeps pairs with a reference firing at its latest observation.
 //
-// DISTINCT ON (asset, quote, reference) with the matching ORDER prefix
-// uses the (asset, quote, reference, observed_at DESC) index to pick
-// each triple's newest row without a separate sort.
+// DISTINCT ON (asset, quote, reference) with the matching ORDER prefix uses the
+// (asset, quote, reference, observed_at DESC) index to pick each newest row without a sort.
 func (s *Store) ListDivergenceLatest(ctx context.Context, sinceDays int, firingOnly bool, limit int) ([]DivergenceRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -186,14 +166,11 @@ func (s *Store) ListDivergenceLatest(ctx context.Context, sinceDays int, firingO
 	return out, nil
 }
 
-// DivergenceSeriesPoint is one downsampled (bucket, reference) cell of
-// a pair's divergence history. Values are the LAST observation of that
-// reference inside the bucket (the board semantics, not an average —
-// averaging would smooth exactly the spikes the chart exists to show);
-// LastAt is that observation's time, so a caller can pick the bucket's
-// newest our_price across references. Firing is true when ANY of the
-// reference's observations in the bucket breached threshold, so a brief
-// breach can't disappear into its bucket. Decimal strings (ADR-0003).
+// DivergenceSeriesPoint is one downsampled (bucket, reference) cell of a pair's divergence
+// history. Values are the LAST observation in the bucket, not an average, which would smooth
+// away the spikes the chart exists to show; LastAt lets a caller pick the newest our_price across
+// references. Firing is true when ANY observation in the bucket breached threshold, so a brief
+// breach cannot vanish. Values are decimal strings.
 type DivergenceSeriesPoint struct {
 	Bucket    time.Time
 	Reference string
@@ -204,11 +181,9 @@ type DivergenceSeriesPoint struct {
 	Firing    bool
 }
 
-// DivergenceSeriesBucket maps a whitelisted window to its bucket
-// width. Widths are chosen so a series is always ≤ ~360 points
-// regardless of the worker's tick cadence — the read budget is
-// enforced here, not assumed from config. Exported so the API
-// handler can surface the effective bucket width on the wire.
+// DivergenceSeriesBucket maps a whitelisted window to its bucket width, chosen so a series is
+// always ≤ ~360 points regardless of worker cadence: the read budget is enforced here, not
+// assumed from config. Exported so the API handler can surface the bucket width.
 func DivergenceSeriesBucket(days int) time.Duration {
 	switch {
 	case days <= 1:
@@ -220,18 +195,13 @@ func DivergenceSeriesBucket(days int) time.Duration {
 	}
 }
 
-// ListDivergenceSeries returns the bucketed Δ% history of every
-// reference for ONE (asset, quote) pair over the trailing `sinceDays`
-// window, ascending by bucket then reference. The sibling of
-// ListDivergenceLatest: same access path minus the DISTINCT ON.
+// ListDivergenceSeries returns the bucketed Δ% history of every reference for ONE (asset, quote)
+// pair over the trailing `sinceDays` window, ascending by bucket then reference.
 //
-// Index reasoning: divergence_observations_pair_ref_idx
-// (asset_id, quote_id, reference, observed_at DESC) covers the two
-// equality predicates; each of the ≤ 8 references is a range scan over
-// its window (hypertable chunk exclusion applies via the bare
-// observed_at bound — the column is never wrapped in a function in
-// WHERE; time_bucket appears only in SELECT/GROUP BY). The GROUP BY
-// folds the window into ≤ ~360 buckets per reference.
+// divergence_observations_pair_ref_idx (asset_id, quote_id, reference, observed_at DESC) covers
+// the two equality predicates; each of the ≤ 8 references is a range scan over its window.
+// Chunk exclusion needs the bare observed_at bound, so the column is never wrapped in a function
+// in WHERE (time_bucket appears only in SELECT/GROUP BY). GROUP BY folds to ≤ ~360 buckets.
 func (s *Store) ListDivergenceSeries(ctx context.Context, assetID, quoteID string, sinceDays int) ([]DivergenceSeriesPoint, error) {
 	if sinceDays <= 0 {
 		sinceDays = 7

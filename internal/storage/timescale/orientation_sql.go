@@ -25,12 +25,9 @@ const (
 	xlmQuotesBound4 = "'native', $4::text"
 )
 
-// stablecoinInListSQL renders canonical.StablecoinCodes as a sorted,
-// single-quoted SQL IN-list (e.g. "'DAI', 'EURC', …"). Sorted so the
-// generated query string is stable (plan cache + golden tests). The
-// codes are plain ASCII uppercase identifiers from a closed in-repo
-// map — no injection surface — but we still only ever emit them as
-// quoted literals.
+// stablecoinInListSQL renders canonical.StablecoinCodes as a sorted, single-quoted SQL IN-list
+// (e.g. "'DAI', 'EURC', …"). Sorted so the query string is stable for the plan cache and golden
+// tests. The codes come from a closed in-repo map, and are still only emitted as quoted literals.
 func stablecoinInListSQL() string {
 	codes := make([]string, 0, len(canonical.StablecoinCodes))
 	for c := range canonical.StablecoinCodes {
@@ -70,11 +67,9 @@ func stablecoinSACArmSQL(col string) string {
 // canonOrientSQL's (base, quote) does, without the rank CASE.
 const marketKeySQL = `LEAST(base_asset, quote_asset), GREATEST(base_asset, quote_asset)`
 
-// canonLastPriceSQL is a canonical market's newest last_price across its
-// stored orientations, the flipped row's price inverted. Both
-// orientations routinely share a last_trade_at, so the tie goes to the
-// canonically stored row rather than to scan order. flipped is
-// canonOrientSQL's third expression.
+// canonLastPriceSQL is a canonical market's newest last_price across its stored orientations, the
+// flipped row's price inverted. Both orientations routinely share a last_trade_at, so ties go to
+// the canonically stored row rather than scan order. flipped is canonOrientSQL's third expression.
 func canonLastPriceSQL(flipped string) string {
 	return `(array_agg(
                     CASE WHEN ` + flipped + ` AND last_price IS NOT NULL
@@ -84,19 +79,16 @@ func canonLastPriceSQL(flipped string) string {
                   FILTER (WHERE last_price IS NOT NULL))[1]`
 }
 
-// canonOrientSQL returns SQL expressions for the canonical (base,
-// quote) orientation of a market stored as (base_asset, quote_asset), plus a
-// boolean `flipped` — true when the stored row is reversed relative to
-// canonical (so the caller inverts that row's price before combining).
-// Mirrors canonical.Orient: the canonical quote is the higher-quoteRank
-// asset, ties broken by the greater asset_id string. Each returned
-// expression is fully parenthesised and safe to inline.
+// canonOrientSQL returns SQL expressions for the canonical (base, quote) orientation of a market
+// stored as (base_asset, quote_asset), plus a boolean `flipped` that is true when the stored row is
+// reversed, so the caller inverts that row's price before combining. It mirrors canonical.Orient:
+// the canonical quote is the higher-quoteRank asset, ties broken by the greater asset_id string.
+// Each expression is fully parenthesised and safe to inline.
 //
-// Stored orientation is per source family and the families are INVERSE:
-// SDEX stores base = the resting offer's AssetSold (what the taker
-// received), Soroban AMMs (aquarius, comet, phoenix, soroswap) store
-// base = token_in (what the taker sold). The same economic trade lands in
-// opposite orientations, so a read combining sources must orient here.
+// Stored orientation is per source family and the families are inverse: SDEX stores base = the
+// resting offer's AssetSold (what the taker received), Soroban AMMs (aquarius, comet, phoenix,
+// soroswap) store base = token_in (what the taker sold). One economic trade lands in opposite
+// orientations, so any read combining sources must orient here.
 func canonOrientSQL(sacIdx int) (canonBase, canonQuote, flipped string) {
 	const bcol, qcol = "base_asset", "quote_asset"
 	rb, rq := quoteRankSQL(bcol, sacIdx), quoteRankSQL(qcol, sacIdx)

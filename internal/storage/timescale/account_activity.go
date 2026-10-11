@@ -5,24 +5,16 @@ import (
 	"fmt"
 )
 
-// This file is the Postgres read side for GET
-// /v1/accounts/{g_strkey}/activity — the segmented "what has this
-// address been doing" breakdown. Two reads:
+// This file is the Postgres read side for GET /v1/accounts/{g_strkey}/activity. Two reads:
 //
-//   - DefiActionCountsByUser: per-(protocol, action) event counts over
-//     the same per-account served-tier tables the positions endpoint
-//     folds (positions.go), plus blend_auctions.
-//   - BridgeActivityByAddress: rozo_events + cctp_events per-direction
-//     counts.
+//   - DefiActionCountsByUser: per-(protocol, action) event counts over the per-account served-tier
+//     tables the positions endpoint folds (positions.go), plus blend_auctions.
+//   - BridgeActivityByAddress: rozo_events + cctp_events per-direction counts.
 //
-// Honest scope — tables deliberately NOT counted here, because they
-// carry no per-account column at all: phoenix_liquidity (pool-level
-// only), aquarius_liquidity/aquarius_admin (pool/admin-level),
-// comet_liquidity (no user column), soroswap_* (the decoder captures no
-// acting account — see account_trades.go), defindex strategy-layer rows
-// (actor is the vault contract, never a G-account — excluded by the
-// same `layer = 'vault'` discriminator positions.go documents; here the
-// actor = $1 predicate excludes them naturally since $1 is a G-strkey).
+// Tables deliberately NOT counted carry no per-account column: phoenix_liquidity,
+// aquarius_liquidity/admin and comet_liquidity are pool-level, soroswap_* captures no acting account,
+// and defindex strategy-layer rows have the vault contract as actor, which the actor = $1 predicate
+// excludes naturally since $1 is a G-strkey.
 
 // DefiActionCount is one (protocol, action) count for an address.
 type DefiActionCount struct {
@@ -31,14 +23,10 @@ type DefiActionCount struct {
 	Count    int64
 }
 
-// defiActionCountsQuery UNIONs one GROUP BY per per-account table. Every
-// arm except blend_auctions rides the same user-leading index its
-// positions-fold sibling documents (migrations 0044/0050/0090/0099/0107).
-// blend_auctions has no user-leading index but is a small lifecycle
-// table (~10k rows) — a filtered scan, accepted and
-// documented rather than silently absent. sorocredit's credit_events
-// carries no owner column (only collateral_contract), so its only
-// per-account count is positions opened (credit_positions.owner).
+// defiActionCountsQuery UNIONs one GROUP BY per per-account table. Every arm except blend_auctions
+// rides the user-leading index its positions-fold sibling uses. blend_auctions has none but is a
+// small lifecycle table (~10k rows), so a filtered scan is accepted. sorocredit's credit_events has
+// no owner column, so its only per-account count is positions opened (credit_positions.owner).
 const defiActionCountsQuery = `
 	SELECT 'blend' AS protocol, event_kind AS action, count(*) AS n
 	  FROM blend_positions WHERE user_address = $1 GROUP BY event_kind
@@ -103,21 +91,15 @@ type BridgeActivity struct {
 
 // bridgeActivityQuery counts both bridge tables in one round-trip.
 //
-// Neither predicate is index-served and that is a measured, documented
-// decision, not an oversight: rozo_events is a few hundred rows and
-// cctp_events tens of thousands — both orders of magnitude under
-// any threshold where an index or a GIN over the jsonb would pay for
-// itself. CCTP parties live inside the `attributes` jsonb (migration
-// 0038: "a storage blob, not a query surface"):
-//   - deposit_for_burn `depositor` — a Stellar Address strkey
-//     (decode.go: topic[2] via AsAddressStrkey) — matchable.
-//   - mint_and_withdraw `mint_recipient` — a Stellar Address strkey
-//     (topic[1]) — matchable, though often a forwarder CONTRACT rather
-//     than the end-user G-account, in which case the mint doesn't
-//     attribute to the user here (disclosed in the endpoint's note).
-//   - deposit_for_burn `mint_recipient` is a DESTINATION-CHAIN 32-byte
-//     value (hex) — structurally not a Stellar account, so inbound
-//     counts deliberately never match on it.
+// Neither predicate is index-served, deliberately: rozo_events is a few hundred rows and
+// cctp_events tens of thousands, far under where an index or a GIN over the jsonb would pay off.
+// CCTP parties live inside the `attributes` jsonb (a storage blob, not a query surface):
+//   - deposit_for_burn `depositor` is a Stellar Address strkey and matchable.
+//   - mint_and_withdraw `mint_recipient` is a Stellar Address strkey and matchable, though often a
+//     forwarder CONTRACT rather than the user's G-account, so that mint is not attributed to the
+//     user (disclosed in the endpoint's note).
+//   - deposit_for_burn `mint_recipient` is a DESTINATION-CHAIN 32-byte hex value, structurally not
+//     a Stellar account, so inbound counts deliberately never match on it.
 const bridgeActivityQuery = `
 	SELECT
 	  (SELECT count(*) FROM rozo_events WHERE event_type = 'payment' AND from_addr = $1),

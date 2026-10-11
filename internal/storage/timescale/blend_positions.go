@@ -10,26 +10,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
-// InsertBlendPositionEvent appends one money-market position-change
-// event (supply / withdraw / supply_collateral / withdraw_collateral
-// / borrow / repay / flash_loan) to the blend_positions hypertable.
-// Idempotent on the (pool, ledger, tx_hash, op_index, event_kind,
-// event_index, ledger_close_time) PK via a generation-guarded
-// corrective upsert (migration 0110): a re-derive lands only
-// when its derive_generation is >= the stored one, so a stale replay
-// can't revert a later correction.
+// InsertBlendPositionEvent appends one money-market position-change event (supply / withdraw /
+// supply_collateral / withdraw_collateral / borrow / repay / flash_loan) to blend_positions.
+// Idempotent on the (pool, ledger, tx_hash, op_index, event_kind, event_index,
+// ledger_close_time) PK via a generation-guarded corrective upsert: a re-derive lands only when
+// its derive_generation is >= the stored one, so a stale replay cannot revert a correction.
 //
-// i128 amounts are written as decimal strings to the NUMERIC
-// column (ADR-0003 — full precision preserved through Go's
-// *big.Int → decimal-text → NUMERIC chain).
+// i128 amounts are written as decimal strings to the NUMERIC column, keeping full precision
+// through *big.Int -> decimal text -> NUMERIC.
 //
-// Defensive: rejects empty Pool / TxHash, an invalid Kind, and a
-// nil or negative money amount before touching the DB. Mirrors the
-// SQL-boundary magnitude guards the sibling money-market writers
-// carry (comet Amount.Sign() > 0, aquarius reserve >= 0): the sole
-// producer (decode_money_market.go) errors rather than emitting a nil
-// amount, but without this guard at the insert boundary a defaulted/fuzzed
-// struct could land a bad row via the nil-to-"0" coercion.
+// It rejects empty Pool / TxHash, an invalid Kind, and a nil or negative amount before touching
+// the DB, like the sibling money-market writers. The producer errors rather than emit a nil
+// amount, but without this guard a defaulted or fuzzed struct could land a bad row through the
+// nil-to-"0" coercion.
 func (s *Store) InsertBlendPositionEvent(ctx context.Context, e domain.BlendPositionEvent) error {
 	if e.Pool == "" {
 		return errors.New("timescale: InsertBlendPositionEvent: Pool is empty")
@@ -111,11 +104,8 @@ func isBlendPositionKind(kind string) bool {
 	return false
 }
 
-// bigIntToNumericString converts a *big.Int amount to the decimal
-// string the postgres driver hands to a NUMERIC column verbatim.
-// Nil becomes "0" — defensive default to keep the insert successful
-// rather than producing a NOT NULL violation on a malformed event
-// the decoder shouldn't have produced.
+// bigIntToNumericString converts a *big.Int to the decimal string the driver hands to a NUMERIC
+// column verbatim. Nil becomes "0" so a malformed event does not trip a NOT NULL violation.
 func bigIntToNumericString(n *big.Int) string {
 	if n == nil {
 		return "0"

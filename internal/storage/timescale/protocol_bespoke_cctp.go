@@ -8,24 +8,24 @@ import (
 
 // CCTP bespoke analytics.
 //
-// deposit_for_burn = OUTBOUND, mint_and_withdraw = INBOUND; message and
-// admin/config events carry no value and are excluded from flow sums. Division
-// is exact NUMERIC, never a float literal (ADR-0003).
+// deposit_for_burn is OUTBOUND and mint_and_withdraw is INBOUND; message and admin/config events
+// carry no value and are excluded from flow sums. Division is exact NUMERIC, never a float
+// (ADR-0003).
 //
-//  1. VALUE ROWS ARE READ RAW, one transfer per stored event row, with no per-(tx, op)
-//     collapse: cctp_events' PK discriminates on event_index, and collapsing with
-//     max(amount) would HALVE a genuine batched double-transfer in one op.
-//  2. mint_and_forward IS NOT A SEPARATE TRANSFER. It always accompanies
-//     mint_and_withdraw for the SAME funds, at the LOCAL 7-decimal SAC scale
-//     (exactly 10x) while mint_and_withdraw carries the CANONICAL 6-decimal
-//     amount. Inbound sums use mint_and_withdraw ONLY: summing both counts it 11x. deposit_for_burn is canonical too
+//  1. Value rows are read raw, one transfer per stored event row, with no per-(tx, op) collapse:
+//     the cctp_events PK discriminates on event_index, and max(amount) would halve a genuine
+//     batched double-transfer in one op.
+//  2. mint_and_forward is not a separate transfer. It always accompanies mint_and_withdraw for the
+//     same funds at the local 7-decimal SAC scale (exactly 10x) while mint_and_withdraw carries
+//     the canonical 6-decimal amount, so inbound sums use mint_and_withdraw only (summing both
+//     counts it 11x). deposit_for_burn is canonical too
 //     (TestDepositForBurnAmount_IsCanonicalSixDecimals).
 //
-// Inbound source-chain attribution: the same-op message_received row's
-// message_body carries the BurnMessage; its burn-token tail is resolved via
-// cctpBurnTokenChains (see cctp_chains.go). That receive side is the ONE place a
-// per-(tx, op) group survives: the join needs exactly one body row per op or every
-// mint row would fan out (see cctpRecvCTE). Outbound uses counterparty_domain.
+// Inbound source-chain attribution: the same-op message_received row's message_body carries the
+// BurnMessage, whose burn-token tail is resolved via cctpBurnTokenChains (cctp_chains.go). That
+// receive side is the one place a per-(tx, op) group survives, since the join needs exactly one
+// body row per op or every mint row would fan out (see cctpRecvCTE). Outbound uses
+// counterparty_domain.
 
 // cctpSeriesNameInbound / …Outbound are the direction-stable total-series
 // names the frontend pairs on; cctpPerChainPrefix* prefix the per-chain
@@ -67,22 +67,15 @@ func cctpBurnsCTE(windowed bool) string {
 	return q
 }
 
-// cctpRecvCTE returns the message_received subquery: one BurnMessage body
-// per (tx_hash, op_index) — the inbound join side for source-chain
-// attribution.
+// cctpRecvCTE returns the message_received subquery: one BurnMessage body per (tx_hash, op_index),
+// the inbound join side for source-chain attribution.
 //
-// This is the ONE place the per-(tx, op) GROUP BY deliberately survives
-// the raw-read change (file-doc rule 1), because here the JOIN — not twin
-// dedup — needs exactly one row per op: every mint row of the op joins
-// this body row, so a second body row would fan each mint out into a
-// double-counted attribution row. The residual approximation is honest
-// and bounded: if one op ever carried TWO received messages, min(body)
-// attributes all of that op's mints to one message's source chain —
-// totals stay conserved (each mint row still appears exactly once), only
-// the per-chain split within that op can be off.
+// This is the one place the per-(tx, op) GROUP BY deliberately survives (file-doc rule 1), because
+// the join needs exactly one row per op or each mint would fan out into a double-counted row. If
+// one op ever carried two received messages, min(body) attributes all its mints to one source
+// chain: totals stay conserved and only the per-chain split within that op can be off.
 //
-// Always window-bounded: every consumer joins it against a windowed value
-// CTE (the all-time aggregates never need source attribution).
+// Always window-bounded; all-time aggregates never need source attribution.
 func cctpRecvCTE() string {
 	return `SELECT tx_hash, op_index, min(attributes->>'message_body') AS body
 	   FROM cctp_events
@@ -117,15 +110,11 @@ func cctpWindowKPIQuery() string {
 		  (SELECT count(*) FROM b)::text`
 }
 
-// cctpAllTimeKPIQuery is the all-time inbound / outbound / net volumes plus
-// the unique-participant counts. Recipients resolve per op to the
-// forward_recipient when the op forwarded (the final beneficiary) and the
-// mint_recipient otherwise — the per-(tx, op) GROUP BY here is the
-// forward-restatement pairing of file-doc rule 2 (a mint_and_forward row
-// restates its sibling mint_and_withdraw, so the pair must resolve to ONE
-// recipient), not twin dedup. count(DISTINCT r) then makes the "unique
-// recipients" KPI genuinely distinct addresses; a count(*) would count
-// recipient-bearing OPS instead.
+// cctpAllTimeKPIQuery is the all-time inbound / outbound / net volumes plus unique-participant
+// counts. Recipients resolve per op to forward_recipient when the op forwarded (the final
+// beneficiary), else mint_recipient; the per-(tx, op) GROUP BY is the forward-restatement pairing
+// of file-doc rule 2 (the pair must resolve to one recipient), not twin dedup. count(DISTINCT r)
+// makes the KPI distinct addresses; count(*) would count recipient-bearing ops.
 func cctpAllTimeKPIQuery() string {
 	return `
 		WITH m AS (` + cctpMintsCTE(false) + `), b AS (` + cctpBurnsCTE(false) + `)
@@ -141,12 +130,9 @@ func cctpAllTimeKPIQuery() string {
 		      GROUP BY tx_hash, op_index) q WHERE r IS NOT NULL AND r <> '')::text`
 }
 
-// cctpInboundBreakdownQuery groups the window's inbound transfers by
-// burn-token tail (source chain), USDC-weighted descending. LEFT JOIN
-// keeps a transfer whose receive row is missing or malformed in the total
-// (as an empty tail → "Unknown source") so the breakdown always sums to
-// the inbound KPI; the receive side is one row per op (cctpRecvCTE), so
-// no mint row fans out.
+// cctpInboundBreakdownQuery groups the window's inbound transfers by burn-token tail (source
+// chain), USDC-weighted descending. The LEFT JOIN keeps a transfer with a missing or malformed
+// receive row in the total (as "Unknown source") so the breakdown always sums to the inbound KPI.
 func cctpInboundBreakdownQuery() string {
 	return `
 		WITH r AS (` + cctpRecvCTE() + `), m AS (` + cctpMintsCTE(true) + `)

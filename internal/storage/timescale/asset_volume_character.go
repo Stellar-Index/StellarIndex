@@ -10,22 +10,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Volume-character rollup (wash-and-scam-signals design §2). Computes the
-// per-asset account-structure signals over a trailing window from the
-// `trades` hypertable (which carries maker/taker — the ClickHouse lake
-// does not) and derives a `volume_character` label distinguishing honest
-// market activity from wash-painting and issuer wrap corridors.
-//
-// This is DISPLAY / ANALYTICS metadata. It does NOT re-rank anything
-// (that is design §4, operator-policy-gated) — it only exposes the signals
-// §4 would sort on, plus the derived character.
+// Volume-character rollup: per-asset account-structure signals over a trailing window, read
+// from the `trades` hypertable (which carries maker/taker; the ClickHouse lake does not), and
+// a derived `volume_character` label separating honest market activity from wash-painting and
+// issuer wrap corridors. DISPLAY / ANALYTICS metadata only; it never re-ranks anything.
 
 const (
 	// volumeCharacterWindow is the trailing window the signals roll over.
-	// 14 days matches the forensic window that proved the reported scam
-	// AUD wash (design origin note: 108/109 of its 14-day XLM/AUD trades
-	// were one wallet pair). Long enough to be robust to a quiet day,
-	// short enough that a corridor that has since gone honest recovers.
+	// 14 days is long enough to survive a quiet day, short enough that a corridor that has
+	// since gone honest recovers.
 	volumeCharacterWindow = 14 * 24 * time.Hour
 
 	// VolumeCharacterMarket / …Operational / …Concentrated are the wire
@@ -34,12 +27,9 @@ const (
 	VolumeCharacterOperational  = "operational"
 	VolumeCharacterConcentrated = "concentrated"
 
-	// volumeCharacterMinVolumeUSD is the floor below which we do not
-	// editorialize: too little priced volume to tell a quiet legitimate
-	// asset from a pattern, so it stays the neutral default `market`.
-	// Mirrors the explorer's market-cap confidence floor ($1k) and stays
-	// below the census dust-bot example ($5.5k) so real low-value wash is
-	// still caught.
+	// volumeCharacterMinVolumeUSD is the floor below which an asset stays the neutral `market`:
+	// too little priced volume to tell a quiet asset from a pattern. It sits below the known
+	// dust-bot volume so real low-value wash is still caught.
 	volumeCharacterMinVolumeUSD = 1000
 
 	// volumeCharacterConcentrationThreshold — >90% of window volume in a
@@ -77,21 +67,16 @@ type AssetVolumeCharacter struct {
 	Character              string
 }
 
-// trades.maker holds two kinds of identity: the resting-offer account (a
-// G-strkey) on an order-book fill, and the hex pool id on a classic
-// liquidity-pool fill. A pool is not an account, so both the per-asset query
-// and the all-asset rollup read maker through these shared fragments:
-//   - volumeCharacterMakerSQL keeps maker only when it is an account and
-//     flags the pool fill, so a pool never counts as a distinct maker, a
-//     self-cross or an issuer-side leg.
-//   - a row with one known account (a classic pool fill, or a Soroban AMM
-//     swap, which records no maker at all) is keyed on that account, the rule
-//     the priceless-coverage tripwire applies (popularPricelessCandidatesSQL):
-//     one account round-tripping through pools is one concentrated actor.
-//     Only rows with no account on either side stay out of the numerator.
+// trades.maker is either the resting-offer account (G-strkey) on an order-book fill or the hex
+// pool id on a classic liquidity-pool fill. A pool is not an account, so both queries read
+// maker through these shared fragments:
+//   - volumeCharacterMakerSQL keeps maker only when it is an account and flags the pool fill,
+//     so a pool never counts as a distinct maker, self-cross or issuer-side leg.
+//   - a row with one known account (classic pool fill, or a Soroban AMM swap with no maker) is
+//     keyed on that account, as popularPricelessCandidatesSQL does: one account round-tripping
+//     through pools is one concentrated actor. Rows with no account stay out of the numerator.
 //
-// taker is not always a wallet: on a Soroban swap it is the recipient/caller
-// address and may be a contract (C...), so distinct_takers counts addresses.
+// taker may be a contract (C...) on a Soroban swap, so distinct_takers counts addresses.
 const (
 	volumeCharacterMakerSQL = `CASE WHEN maker ~ '^G[A-Z2-7]{55}$' THEN maker END AS maker,
     (maker IS NOT NULL AND maker !~ '^G[A-Z2-7]{55}$') AS pool_fill`
@@ -106,12 +91,9 @@ const (
 //   - $3 = the asset's issuer G-address (empty for native/soroban/fiat,
 //     which collapses the issuer-side predicate to a constant-false no-op).
 //
-// The (maker,taker) account pair is UNORDERED — LEAST/GREATEST folds the
-// two directions of a round-trip into one pair so third-party ping-pong
-// (A→B and B→A) reads as the single concentrated pair it economically is,
-// not two 50% halves. usd_volume rows only: an unpriced trade contributes
-// no volume and can't move a share. maker is read through
-// volumeCharacterMakerSQL, so a classic-pool fill is keyed on its taker.
+// The (maker,taker) pair is UNORDERED: LEAST/GREATEST folds both directions of a round-trip
+// into one pair, so A-B and B-A ping-pong reads as one concentrated pair, not two 50% halves.
+// Only usd_volume rows count; an unpriced trade cannot move a share.
 const assetVolumeCharacterSQL = `
 WITH w AS (
   SELECT
@@ -174,8 +156,8 @@ func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (Asset
 	return volumeCharacterFromSums(totalNum, total, topPair, selfCross, issuerSide, marketStyled, makers, takers), nil
 }
 
-// deriveVolumeCharacter maps the signals to a character. Pure — the design
-// §1 taxonomy table is its test oracle, and it classifies every row of it:
+// deriveVolumeCharacter maps the signals to a character. Pure; the taxonomy below is its test
+// oracle:
 //
 //	species                | signature                          | character
 //	-----------------------|------------------------------------|-------------
@@ -184,16 +166,13 @@ func (s *Store) AssetVolumeCharacter(ctx context.Context, assetID string) (Asset
 //	Third-party ping-pong  | two non-issuer wallets round-trip   | concentrated
 //	Dust-bot               | one account pair, micro trades      | concentrated
 //
-// High issuer-side share ALONE is not wash: a stablecoin mint/redeem corridor is
-// 100% issuer-side by nature. Wash is single-counterparty AND market-styled.
-//
-//   - Below the volume floor → `market` (never badge a quiet asset).
-//   - market-styled AND one account pair owns >90% of volume → `concentrated`.
-//   - NOT market-styled (wrap pair) AND overwhelmingly issuer-side →
-//     `operational` (mint/redeem corridor: USDC↔USDCAllow, AUDD↔AUDR).
-//   - one account pair owns >90% but the issuer is NOT the counterparty →
-//     `concentrated` (third-party ping-pong, fabricated not operational).
-//   - otherwise → `market`.
+// High issuer-side share ALONE is not wash: a stablecoin mint/redeem corridor is 100%
+// issuer-side by nature. Wash is single-counterparty AND market-styled. In order:
+//   - below the volume floor: `market` (never badge a quiet asset).
+//   - market-styled AND one account pair owns >90% of volume: `concentrated`.
+//   - not market-styled (wrap pair) AND overwhelmingly issuer-side: `operational`.
+//   - one pair owns >90% but the issuer is not the counterparty: `concentrated`.
+//   - otherwise `market`.
 func deriveVolumeCharacter(s AssetVolumeCharacter) string {
 	if belowVolumeCharacterFloor(s.VolumeUSD) {
 		return VolumeCharacterMarket

@@ -239,24 +239,18 @@ func strPtrOrNil(s *string) any {
 	return *s
 }
 
-// timedVWAPs1mForChangeSummaryQuery reads both stored orientations of
-// the pair over the CLOSED buckets in [from, to), oldest-first.
+// timedVWAPs1mForChangeSummaryQuery reads both stored orientations of the pair over the closed
+// buckets in [from, to), oldest-first.
 //
-// Closed per ADR-0015: a bucket is admitted only once it has ended by
-// both the caller's `to` and the database clock, so the in-progress
-// minute never becomes current_value or a ratcheted ath/atl (the upsert
-// keeps GREATEST/LEAST for good). Sargable form, as in aggregates.go.
+// Closed per ADR-0015: a bucket is admitted only once it has ended by both the caller's `to` and
+// the database clock, so the in-progress minute never becomes current_value or a ratcheted ath/atl
+// (the upsert keeps GREATEST/LEAST for good). The predicate is sargable, as in aggregates.go.
 //
-// Both directions for the same reason every other pair-bound CAGG read
-// does it (see [dirVWAP] and TestCAGGPairReadsFoldBothDirections): the
-// decoder does not normalise orientation, so the market lands in
-// prices_1m as both (A,B) and (B,A) rows, and filtering one orientation
-// would miss every row stored the other way round.
+// Both directions are read (see [dirVWAP], TestCAGGPairReadsFoldBothDirections): the decoder does
+// not normalise orientation, so the market lands in prices_1m as both (A,B) and (B,A), and one
+// orientation would miss rows stored the other way round.
 //
-// Ordering is ASC here rather than DESC, which
-// [scanCombinedVwap1mRows] handles unchanged — it only requires that
-// rows of the same bucket be adjacent, which any bucket ordering
-// gives.
+// ASC order is fine for [scanCombinedVwap1mRows], which only needs same-bucket rows adjacent.
 const timedVWAPs1mForChangeSummaryQuery = `
 		SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
 		       COALESCE(trade_count, 0), sources
@@ -276,16 +270,12 @@ const timedVWAPs1mForChangeSummaryQuery = `
 		 ORDER BY bucket ASC, base_asset ASC
 	`
 
-// TimedVWAPs1m is a thin adapter so [changesummary.PriceSource] is
-// satisfied by the existing TimedVWAPsForPair1m without dragging the
-// baseline package's TimedVWAP type into the changesummary public
-// surface. Returns oldest-first, each point COMBINED across both
-// stored market directions so the value is the price of Base in Quote.
+// TimedVWAPs1m adapts TimedVWAPsForPair1m to [changesummary.PriceSource] without exposing the
+// baseline package's TimedVWAP type. Points are oldest-first, each combined across both stored
+// directions so the value is the price of Base in Quote.
 //
-// `At` is the bucket END (`bucket + 1 minute`), which is what the
-// change-summary worker timestamps a closed bucket by; the addition is
-// done in Go rather than SQL so the query keeps the raw per-direction
-// shape the combine needs.
+// `At` is the bucket end (`bucket + 1 minute`), which the change-summary worker timestamps a closed
+// bucket by; it is added in Go so the query keeps the raw per-direction shape the combine needs.
 func (s *Store) TimedVWAPs1mForChangeSummary(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]ChangeSummaryPoint, error) {
 	rows, err := s.db.QueryContext(ctx, timedVWAPs1mForChangeSummaryQuery,
 		pair.Base.String(), pair.Quote.String(), from.UTC(), to.UTC())

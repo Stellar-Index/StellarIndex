@@ -9,12 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// PhoenixStakeAction discriminates the stake-contract actions.
-// String values match the phoenix_stake_events.action CHECK
-// constraint (migration 0044, widened by migration 0097) and
-// internal/sources/phoenix's EventActionBond / EventActionUnbond /
-// EventActionWithdrawRewards / EventActionDistributeRewards
-// constants.
+// PhoenixStakeAction discriminates the stake-contract actions. Its values must match the
+// phoenix_stake_events.action CHECK constraint and the EventAction* constants in
+// internal/sources/phoenix.
 type PhoenixStakeAction string
 
 const (
@@ -61,23 +58,16 @@ func (a PhoenixStakeAction) hasToken() bool {
 	return true
 }
 
-// PhoenixStakeEvent is one phoenix_stake_events row — a single
-// observed bond / unbond / withdraw_rewards / distribute_rewards
-// event from a Phoenix per-pool stake contract. Mirrors the
-// migration-0044 columns (widened by migration 0097).
+// PhoenixStakeEvent is one phoenix_stake_events row: a single observed stake-contract event from
+// a Phoenix pool.
 //
-// Amount is a decimal-string numeric (per ADR-0003 i128 ->
-// *big.Int -> string), always positive — the action discriminator
-// carries the direction. Empty for withdraw_rewards /
-// distribute_rewards (NULL column, migration 0097) — neither event
-// carries an amount on the wire.
+// Amount is a decimal string (i128 -> *big.Int -> string), always positive; the action carries
+// the direction. It is empty for withdraw_rewards / distribute_rewards, which carry no amount.
 //
-// LPToken holds the LP share-token address on bond/unbond, and is
-// REPURPOSED to the reward-token / distributed-asset address on
-// withdraw_rewards / distribute_rewards — same column, different
-// per-action meaning, per the "reuse existing columns" preference
-// (see phoenix/events.go doc). User is empty for distribute_rewards and
-// create_distribution_flow (pool-wide); LPToken is empty for migration_*.
+// LPToken is the LP share-token address on bond/unbond but is REPURPOSED to the reward-token /
+// distributed-asset address on withdraw_rewards / distribute_rewards (see phoenix/events.go).
+// User is empty for pool-wide distribute_rewards and create_distribution_flow; LPToken is empty
+// for migration_*.
 type PhoenixStakeEvent struct {
 	StakeContract string
 	Ledger        uint32
@@ -94,23 +84,15 @@ type PhoenixStakeEvent struct {
 	Amount     string // decimal i128; empty for reward actions (NULL column)
 }
 
-// InsertPhoenixStakeEvent appends one phoenix_stake_events row,
-// idempotent on the (ledger_close_time, stake_contract, ledger,
-// tx_hash, op_index, action, event_index) PK (event_index, from
-// migration 0060, keeps two bonds/unbonds in one op from colliding).
-// Re-running the indexer over the same range or replaying a
-// backfill writes the same rows. The upsert is a generation-guarded
-// DO UPDATE, not DO NOTHING: a replay at the SAME generation is a
-// no-op, but a re-derive at a higher generation lands its
-// correction instead of being discarded.
+// InsertPhoenixStakeEvent appends one phoenix_stake_events row, idempotent on the
+// (ledger_close_time, stake_contract, ledger, tx_hash, op_index, action, event_index) PK
+// (event_index keeps two bonds/unbonds in one op from colliding). The upsert is a
+// generation-guarded DO UPDATE, not DO NOTHING: a replay at the SAME generation is a no-op, but a
+// re-derive at a higher generation lands its correction.
 //
-// Defensive: rejects empty StakeContract / TxHash and an invalid Action
-// before touching the DB. User is required unless the action is
-// pool-wide (distribute_rewards, create_distribution_flow); LPToken
-// unless it is a migration_* step. Amount is required only for bond/unbond
-// — withdraw_rewards / distribute_rewards carry no amount on the
-// event itself (migration 0097 made the column nullable for exactly
-// this reason).
+// It rejects empty StakeContract / TxHash and an invalid Action before touching the DB. User is
+// required unless the action is pool-wide; LPToken unless it is a migration_* step; Amount only
+// for bond/unbond, since the reward events carry none (the column is nullable for that reason).
 func (s *Store) InsertPhoenixStakeEvent(ctx context.Context, e PhoenixStakeEvent) error {
 	if e.StakeContract == "" {
 		return errors.New("timescale: InsertPhoenixStakeEvent: StakeContract is empty")
@@ -165,11 +147,9 @@ func (s *Store) InsertPhoenixStakeEvent(ctx context.Context, e PhoenixStakeEvent
 	return nil
 }
 
-// PhoenixStakeSummary is the windowed Phoenix LP-staking activity summary —
-// the READ side of phoenix_stake_events (migration 0044). Amounts are the
-// staked LP-share-token amount in base units (i128/NUMERIC, never int64 —
-// ADR-0003); NetStaked can be negative when unbonds exceed bonds in the
-// window.
+// PhoenixStakeSummary is the windowed Phoenix LP-staking summary, the READ side of
+// phoenix_stake_events. Amounts are LP-share-token base units (i128/NUMERIC, never int64);
+// NetStaked is negative when unbonds exceed bonds in the window.
 type PhoenixStakeSummary struct {
 	Bonds         int64
 	Unbonds       int64
@@ -179,14 +159,11 @@ type PhoenixStakeSummary struct {
 	UniqueStakers int64
 }
 
-// PhoenixStakeWindowStats reads the windowed Phoenix LP-staking summary
-// (bond / unbond volumes + participants) from phoenix_stake_events. Amounts
-// are LP-share-token base units (per-asset decimals), preserved as
-// canonical.Amount (ADR-0003).
+// PhoenixStakeWindowStats reads the windowed bond / unbond volumes and participants from
+// phoenix_stake_events. Amounts stay LP-share-token base units as canonical.Amount.
 //
-// Empty-safe: returns (nil, nil) when no bond/unbond event exists in the
-// window, so the bespoke KPI is omitted cleanly. windowDays <= 0 is treated
-// as 90.
+// It returns (nil, nil) when the window has no bond/unbond event, so the KPI is omitted.
+// windowDays <= 0 means 90.
 func (s *Store) PhoenixStakeWindowStats(ctx context.Context, windowDays int) (*PhoenixStakeSummary, error) {
 	if windowDays <= 0 {
 		windowDays = 90

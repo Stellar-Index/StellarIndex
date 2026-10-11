@@ -39,15 +39,12 @@ func (k UpshiftVaultEventKind) isFlow() bool {
 	return k == UpshiftDeposit || k == UpshiftWithdraw
 }
 
-// UpshiftVaultEvent is one `upshift_vault_events` row. Mirrors the
-// migration-0157 columns.
+// UpshiftVaultEvent is one `upshift_vault_events` row.
 //
-// Which fields are meaningful is a function of Kind, and the writer
-// translates the rest to SQL NULL rather than to zero — a legitimate
-// zero amount and an absent one are different facts, and
-// canonical.Amount deliberately does not distinguish them (its zero
-// value stringifies as "0"). Nullability is therefore keyed off Kind,
-// never off IsZero.
+// Which fields are meaningful depends on Kind, and the writer maps the rest to SQL NULL, not
+// zero: a real zero amount and an absent one are different facts, and canonical.Amount does not
+// distinguish them (zero stringifies as "0"). Nullability is therefore keyed off Kind, never
+// off IsZero.
 type UpshiftVaultEvent struct {
 	ContractID      string
 	Ledger          uint32
@@ -71,21 +68,15 @@ type UpshiftVaultEvent struct {
 	NewAmount canonical.Amount // deployed_assets_changed
 }
 
-// InsertUpshiftVaultEvent appends one Upshift vault event row,
-// idempotent on the (ledger_close_time, contract_id, ledger, tx_hash,
-// op_index, event_index) PK. ON CONFLICT … DO UPDATE guarded by
-// `derive_generation <= EXCLUDED.derive_generation` (migration
-// 0110 convention): a replay at an equal-or-higher generation
-// OVERWRITES the stored value columns, a lower-generation one is
-// refused. Idempotent in row COUNT, deliberately not inert in VALUE —
-// the corrective upsert is what lets a re-derive repair a wrong row.
+// InsertUpshiftVaultEvent appends one Upshift vault event row, idempotent on the
+// (ledger_close_time, contract_id, ledger, tx_hash, op_index, event_index) PK. ON CONFLICT DO
+// UPDATE is guarded by `derive_generation <= EXCLUDED.derive_generation`: a replay at an equal or
+// higher generation OVERWRITES the value columns, a lower one is refused. It is idempotent in row
+// COUNT but deliberately not inert in VALUE, so a re-derive can repair a wrong row.
 //
-// Defensive validation runs before the DB is touched. The decoder
-// already enforces all of it, but a malformed Event arriving from an
-// integration test, a fuzz harness or future operator tooling must not
-// be able to land a row that contradicts its own kind — so the
-// per-kind column population is checked here as well as in the table's
-// CHECK constraint.
+// Validation runs before the DB is touched. The decoder already enforces it, but a malformed
+// Event from a test, fuzz harness or operator tooling must not land a row that contradicts its
+// own kind, so per-kind column population is checked here as well as by the table's CHECK.
 func (s *Store) InsertUpshiftVaultEvent(ctx context.Context, e UpshiftVaultEvent) error {
 	if e.ContractID == "" {
 		return errors.New("timescale: InsertUpshiftVaultEvent: ContractID is empty")
@@ -169,26 +160,18 @@ func (s *Store) InsertUpshiftVaultEvent(ctx context.Context, e UpshiftVaultEvent
 	return nil
 }
 
-// UpshiftVaultShareSupply is one vault's derived share supply and
-// cumulative underlying flow over the whole recorded history.
+// UpshiftVaultShareSupply is one vault's derived share supply and cumulative underlying flow
+// over the whole recorded history.
 //
-// Supply is EXACT rather than an estimate: neither vault has ever
-// emitted a mint or burn outside `deposit` / `withdraw`, so
-// SUM(shares) over deposits minus SUM(shares) over withdrawals is the
-// outstanding share count, and share transfers reassign the claim
-// without changing it.
+// Supply is EXACT: no mint or burn occurs outside `deposit` / `withdraw`, so SUM(shares) over
+// deposits minus withdrawals is the outstanding share count, and transfers only reassign claims.
 //
-// AssetsIn / AssetsOut are the cumulative UNDERLYING moved in and out.
-// Their difference is NET PRINCIPAL FLOW, deliberately not exposed as a
-// balance: yield accrues to the vault without emitting an event, so
-// principal-in minus principal-out understates what the vault holds.
-// TotalAssets — the figure a TVL surface needs — is NOT derivable from
-// these rows at all; the only on-event total is the DEPLOYED leg
-// (deployed_assets_changed.new_amount, carried here as DeployedAssets),
-// and the idle leg is unobservable. A caller that needs TVL must read
-// the vault's own total_assets() through a contract-state read and must
-// report the vault as UNPRICEABLE until it can, never zero-fill the
-// missing leg.
+// AssetsIn / AssetsOut are cumulative UNDERLYING moved in and out. Their difference is NET
+// PRINCIPAL FLOW, not a balance: yield accrues without an event, so it understates what the vault
+// holds. TotalAssets (the TVL figure) is NOT derivable from these rows; the only on-event total is
+// the DEPLOYED leg (DeployedAssets) and the idle leg is unobservable. A TVL caller must read the
+// vault's total_assets() from contract state and report the vault UNPRICEABLE until it can, never
+// zero-fill the missing leg.
 type UpshiftVaultShareSupply struct {
 	ContractID string
 	// Shares outstanding: minted − burned, in the vault's share units
@@ -207,10 +190,8 @@ type UpshiftVaultShareSupply struct {
 	LatestAt         time.Time
 }
 
-// UpshiftVaultShareSupplies returns the derived share supply for every
-// vault with at least one recorded flow, ordered by contract id.
-//
-// Empty-safe: returns (nil, nil) when nothing has been indexed yet.
+// UpshiftVaultShareSupplies returns the derived share supply for every vault with a recorded
+// flow, ordered by contract id, or (nil, nil) when nothing is indexed.
 // unbounded-latest-ok: a vault whose last deployed_assets_changed predates any floor still has that deployment.
 func (s *Store) UpshiftVaultShareSupplies(ctx context.Context) ([]UpshiftVaultShareSupply, error) {
 	const q = `

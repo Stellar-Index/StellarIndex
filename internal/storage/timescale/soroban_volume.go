@@ -7,21 +7,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// sorobanVolume24hUSDQuery derives the trailing-24h USD trade volume for
-// an asset, for pure-Soroban SEP-41 tokens: [Store.Volume24hUSDForAsset]
-// only sees the insert-time `usd_volume` column, so a Soroban token whose
+// sorobanVolume24hUSDQuery derives the trailing-24h USD trade volume for a pure-Soroban SEP-41
+// asset. [Store.Volume24hUSDForAsset] only sees the insert-time `usd_volume`, so a token whose
 // XLM-legged trades were stored unvalued would show a bogus "0".
 //
-// Valuation is per TRADE, never per prices_1m row: each trade contributes
-// its insert-time `usd_volume` when present, else its XLM leg (base_amount
-// or quote_amount, in stroops) at the XLM/USD anchor of the trade's own
-// minute ([xlmUSDAnchorGridCTE]) — never today's rate. A trade with
-// neither (no XLM leg, or no anchor within xlmUSDAnchorMaxAge of it) is
-// excluded and counted, so the caller can flag the sum a lower bound.
+// Valuation is per TRADE, never per prices_1m row: each trade contributes its `usd_volume` when
+// present, else its XLM leg (stroops) at the XLM/USD anchor of the trade's own minute
+// ([xlmUSDAnchorGridCTE]), never today's rate. A trade with neither (no XLM leg, or no anchor
+// within xlmUSDAnchorMaxAge) is excluded and counted so the caller can flag a lower bound.
 //
-// The window is the closed 1-minute buckets of the last 24h (ADR-0015).
-// $1 binds the asset's canonical key (trades.base_asset / quote_asset
-// form, e.g. a `C…` id); $2 the network's native-XLM SAC.
+// The window is the closed 1-minute buckets of the last 24h. $1 binds the asset's canonical key
+// as stored in trades.base_asset / quote_asset (e.g. a `C…` id); $2 the native-XLM SAC.
 //
 //nolint:gosec // G202: fragments are constant SQL built from literals and $N placeholders
 var sorobanVolume24hUSDQuery = `
@@ -49,15 +45,12 @@ var sorobanVolume24hUSDQuery = `
           FROM valued
     `
 
-// SorobanVolume24hUSDForAsset is the XLM-anchored trailing-24h USD-volume
-// variant of [Store.Volume24hUSDForAsset], for pure-Soroban SEP-41 assets
-// whose liquidity is quoted in XLM rather than a USD-pegged classic. See
-// [sorobanVolume24hUSDQuery] for the trade-time valuation.
+// SorobanVolume24hUSDForAsset is the XLM-anchored variant of [Store.Volume24hUSDForAsset] for
+// pure-Soroban SEP-41 assets quoted in XLM; see [sorobanVolume24hUSDQuery] for the valuation.
 //
-// Returns "0" (not an error) when the asset had no valued trades in the
-// window. lowerBound is true when some trade in the window could not be
-// valued and was excluded. `assetKey` is the canonical asset string
-// trades.base_asset / quote_asset stores.
+// It returns "0" (not an error) when no trade in the window could be valued. lowerBound is true
+// when some trade was excluded as unvaluable. `assetKey` is the canonical asset string stored in
+// trades.base_asset / quote_asset.
 func (s *Store) SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (usd string, lowerBound bool, err error) {
 	var unpriced int64
 	if err := s.db.QueryRowContext(ctx, sorobanVolume24hUSDQuery, assetKey, canonical.NativeSACContractID()).Scan(&usd, &unpriced); err != nil {

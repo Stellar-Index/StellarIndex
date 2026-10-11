@@ -8,12 +8,10 @@ import (
 	"time"
 )
 
-// SushiswapV3PositionEvent is one sushiswap_v3_position_events row — a
-// single observed pool `mint`, `burn` or `collect` (migration 0203).
+// SushiswapV3PositionEvent is one pool `mint`, `burn` or `collect` row.
 //
-// Amounts are decimal-string u128 values per ADR-0003, stored verbatim into
-// the NUMERIC columns. Liquidity is "" for a collect (→ SQL NULL); Sender
-// and Recipient are "" when the event does not carry them.
+// Amounts are decimal-string u128 values stored verbatim into NUMERIC columns. Liquidity is ""
+// for a collect (SQL NULL); Sender and Recipient are "" when the event does not carry them.
 type SushiswapV3PositionEvent struct {
 	Pool            string
 	Ledger          uint32
@@ -34,11 +32,9 @@ type SushiswapV3PositionEvent struct {
 	Amount1         string // decimal u128
 }
 
-// InsertSushiswapV3PositionEvent appends one position event, idempotent on
-// the (ledger_close_time, pool, ledger, tx_hash, op_index, event_index,
-// action) PK, with the generation-guarded corrective upsert (migration 0110
-// pattern): a corrected re-derive lands in place when its generation is >=
-// the stored one; a live gen-0 replay can never revert it.
+// InsertSushiswapV3PositionEvent appends one position event, idempotent on the table PK. The
+// generation-guarded upsert lets a corrected re-derive land in place when its generation is >= the
+// stored one, so a live gen-0 replay never reverts it.
 func (s *Store) InsertSushiswapV3PositionEvent(ctx context.Context, e SushiswapV3PositionEvent) error {
 	if err := validateSushiswapV3PositionEvent(e); err != nil {
 		return err

@@ -7,14 +7,11 @@ import (
 )
 
 // DeFiPositionHolder is one (owner, protocol, venue, asset) position as
-// the per-protocol folds report it — the same six folds that back
-// /v1/accounts/{g}/positions, walked for EVERY owner instead of one.
-// Amount is the fold's own decimal string in the fold's own unit: blend
-// token_amount, backstop shares, phoenix LP stake, defindex vault
-// shares, a credit position's latest statement, an aquarius gauge's net
-// delta. It is a magnitude to rank and display, never a settlement
-// figure, and a zero net is still a row (a position that was opened and
-// fully closed) — the consumer decides whether closed positions count.
+// the per-protocol folds report it: the same six folds behind /v1/accounts/{g}/positions,
+// walked for EVERY owner. Amount is the fold's own decimal string in the fold's own unit (token
+// amount, shares, LP stake, statement, gauge delta), a magnitude to rank and display and never
+// a settlement figure. A zero net is still a row (opened then fully closed); the consumer
+// decides whether closed positions count.
 type DeFiPositionHolder struct {
 	Protocol     string
 	PositionKind string
@@ -39,11 +36,9 @@ const (
 )
 
 // DeFiPositionHolders returns every open-or-closed position across the six
-// folds. Sized for a daily rollup, not a request: the six tables hold
-// on the order of 10^5 distinct owners between them, so the whole set is a
-// few hundred thousand rows — small beside the 25M-row cohort membership
-// it is joined to on the ClickHouse side, which is why the join happens
-// there and not here.
+// folds. Sized for a daily rollup, not a request: the set is a few hundred thousand rows,
+// small beside the cohort membership it is joined to on the ClickHouse side, which is why the
+// join happens there and not here.
 func (s *Store) DeFiPositionHolders(ctx context.Context) ([]DeFiPositionHolder, error) {
 	var out []DeFiPositionHolder
 	for _, part := range []struct {
@@ -93,12 +88,10 @@ func (s *Store) scanHolders(ctx context.Context, protocol, kind, q string) ([]De
 }
 
 // blendPositionHolders folds blend_positions per (user, pool, asset) into a
-// supply leg and a borrow leg — the same CASE arithmetic as
-// BlendPositionsByUser, without the user predicate and with the user in
-// the GROUP BY. Uses blend_positions_pool_user_asset_idx. A leg an
-// auction or bad-debt write-off has moved (blendAuctionMovesSQL) is left
-// out: its underlying net no longer describes the position, and the
-// pre-liquidation figure must not rank as an open holding.
+// supply leg and a borrow leg, with the same CASE arithmetic as BlendPositionsByUser but the
+// user in the GROUP BY. Uses blend_positions_pool_user_asset_idx. A leg an auction or bad-debt
+// write-off has moved (blendAuctionMovesSQL) is left out: its net no longer describes the
+// position and the pre-liquidation figure must not rank as an open holding.
 func (s *Store) blendPositionHolders(ctx context.Context) ([]DeFiPositionHolder, error) {
 	const supply = `
 		SELECT pool, asset, user_address,
@@ -169,10 +162,9 @@ func (s *Store) defindexVaultHolders(ctx context.Context) ([]DeFiPositionHolder,
 }
 
 // creditPositionHolders reports each position's LATEST statement amount,
-// one row per position not yet withdrawn. "Withdrawn" is judged the way
-// CreditPositionsByOwner judges it — a withdrawal event on the
-// collateral contract — so a cohort row and the per-account page agree.
-// Positions with no statement yet carry '0'.
+// one row per position not yet withdrawn. "Withdrawn" is judged as CreditPositionsByOwner does
+// (a withdrawal event on the collateral contract) so a cohort row and the per-account page
+// agree. Positions with no statement yet carry '0'.
 func (s *Store) creditPositionHolders(ctx context.Context) ([]DeFiPositionHolder, error) {
 	const q = `
 		SELECT p.collateral_contract, '' AS asset, p.owner,
