@@ -12,26 +12,18 @@ import (
 //
 // Joins each asset's issuer G-address (a contract token's own C-address)
 // against account_directory and stamps issuer_directory_{tags,domain,name}
-// onto AssetDetail.
+// onto AssetDetail. DISPLAY-ONLY, except for SCAM-CLASS tags
+// (malicious/unsafe/fraud/scam/hack/phishing):
 //
-// DISPLAY-ONLY, with two exceptions for SCAM-CLASS tags
-// (malicious/unsafe/fraud/scam/hack/phishing). Tags never affect verified
-// status or the substance/decimals gates.
+//  1. WITHHOLD every published dollar figure on the row (price, market cap,
+//     listing reference/valuation pair) via suppressScamIssuerPricing and
+//     pricingguard.ScamGate: a scam token must not lend itself legitimacy.
+//  2. DEMOTE the asset in the /v1/assets listing (listingRankTierExpr); the row
+//     and its warning fields stay.
 //
-//  1. A scam-class tag WITHHOLDS every published dollar figure on the row
-//     (price, market cap, listing reference/valuation pair) via
-//     suppressScamIssuerPricing and the reader-seam pricingguard.ScamGate:
-//     a scam token must not lend itself legitimacy with a price.
-//  2. A scam-class tag DEMOTES the asset in the /v1/assets listing
-//     (timescale's listingRankTierExpr), whatever the sort key. The row and
-//     its warning fields stay: we refuse to rank a flagged asset, never hide it.
-//
-// Raw trade surfaces stay visible. Labels are best-effort: a nil reader, an
-// unlisted issuer or a lookup failure omits the fields and never fails the
-// response. Price suppression is not: a failed lookup means nobody checked, so
-// the rows it covered are marked issuerDirectoryUnchecked and withheld like a
-// flagged row. A nil reader (no directory wired) still prices normally, and the
-// SQL demotion fails open.
+// Labels are best-effort: a nil reader, unlisted issuer or failed lookup omits
+// the fields. A failed lookup still withholds pricing (issuerDirectoryUnchecked).
+// A nil reader prices normally; the SQL demotion fails open.
 
 // stampIssuerDirectory copies one curated directory label onto the
 // detail. Tags are set only when non-empty so an unlabelled entry

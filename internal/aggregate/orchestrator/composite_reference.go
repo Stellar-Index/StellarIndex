@@ -24,24 +24,20 @@ import (
 //
 // A pair like crypto:XLM/fiat:GBP is quoted by one or two venues, so the
 // ADR-0019 phase-2 freeze (confidence < 0.45 AND z > 5 AND source_count <= 1)
-// fires on every large move, venue-specific or market-wide. Its triangulation
-// chain can tell them apart: XLM/USD (deep) × USD/GBP (massive.com FX) is a
-// good reference for XLM/GBP fair value. It is evaluated on the CURRENT bucket to CORROBORATE or REFUTE the
+// fires on every large move. Its triangulation chain (XLM/USD × USD/GBP from
+// massive.com FX) is evaluated on the CURRENT bucket to CORROBORATE or REFUTE the
 // freeze: within [CompositeReferenceConfig.ToleranceBps] of the direct print
 // means a market-wide move, so the fire is SUPPRESSED (corroboration_basis=
 // composite); disagreement or an unavailable composite freezes as before.
 //
-// CURRENT bucket, never a prior tick's sample: a tick-lagged composite that
-// agreed with the pre-spike print certified the pre-spike LEVEL and
-// suppressed a z≈50 single-venue manipulation that must freeze.
+// CURRENT bucket, never a prior tick's sample: a tick-lagged composite
+// certified the pre-spike LEVEL and suppressed a z≈50 manipulation.
 //
-// Hard invariants (pinned by composite_reference_test.go):
-//   - the composite NEVER contributes to VWAP and NEVER raises the served or
-//     freeze-leg source_count ([distinctSourceCount]); it only changes the
-//     freeze VERDICT;
-//   - the reference is only as strong as its weakest leg: the priced leg
-//     needs >= MinLegSources venues, the FX leg must be fresh within
-//     FXMaxAge and from the FX source class;
+// Invariants (pinned by composite_reference_test.go):
+//   - the composite NEVER contributes to VWAP and NEVER raises source_count
+//     ([distinctSourceCount]); it only changes the freeze VERDICT;
+//   - the priced leg needs >= MinLegSources venues, the FX leg must be fresh
+//     within FXMaxAge and from the FX source class;
 //   - targets with >= 2 real venues on the bucket are never evaluated.
 
 // CompositeReferenceConfig gates and tunes the composite-reference

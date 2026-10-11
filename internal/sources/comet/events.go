@@ -2,18 +2,11 @@
 // implementation of Balancer v1's weighted-AMM design (N >= 2 tokens,
 // arbitrary weights).
 //
-// Wire shape (comet-contracts-v1 contracts/src/c_pool/event.rs):
-// topic[0] = Symbol("POOL"), topic[1] = Symbol("<event_name>"), body a
-// Map. Exactly five events are emitted:
-//
-//   - "swap" -> a canonical.Trade
-//   - "join_pool" / "exit_pool" -> a LiquidityEvent per token (an
-//     N-token join produces N rows)
-//   - "deposit" / "withdraw" -> single-asset add / remove
-//     (withdraw carries pool_amount_in, the BPT shares burned)
-//
-// Any other POOL topic is rejected with ErrNotCometEvent. BPT
-// transfers belong to internal/sources/sep41_supply.
+// Wire shape: topic[0] = Symbol("POOL"), topic[1] = Symbol("<event_name>"),
+// body a Map. Five events: "swap" -> a canonical.Trade; "join_pool" /
+// "exit_pool" -> a LiquidityEvent per token; "deposit" / "withdraw" ->
+// single-asset add / remove. Any other POOL topic is rejected with
+// ErrNotCometEvent. BPT transfers belong to internal/sources/sep41_supply.
 //
 // `POOL` is shared by every Balancer-v1-derived contract, so ROUTING is
 // by topic bytes but ATTRIBUTION is gated on contract identity
