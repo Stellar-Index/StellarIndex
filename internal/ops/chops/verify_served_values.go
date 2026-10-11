@@ -21,7 +21,8 @@ import (
 // node_exporter textfile gauges: XLM circulating and total supply vs the SDF lumen API, USDC
 // total supply vs Stellar Expert, and the configured SDF reserve-account list vs SDF's
 // published list (sdf_reserve_list.go). Every truth is point-in-time state, never a windowed
-// counter. Empty -textfile prints to stdout; empty -config skips the list check.
+// counter. -textfile (served_values.prom) empty prints to stdout; empty -config skips the list
+// check.
 func verifyServedValues(args []string) error {
 	fs := flag.NewFlagSet("verify-served-values", flag.ContinueOnError)
 	apiBase := fs.String("api", "http://127.0.0.1:3000", "Base URL of our API (loopback on r1)")
