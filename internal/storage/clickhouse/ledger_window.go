@@ -4,15 +4,6 @@ package clickhouse
 // starts at lo, for a walk over [from, to] in windows of `window` ledgers.
 // It is the one walk step shared by every windowed, resumable lake job here.
 //
-// The caller's loop is always:
-//
-//	for lo := from; ; {
-//	    hi := ledgerWindowHi(lo, to, window)
-//	    ... do the window ...
-//	    if hi >= to { return }
-//	    lo = hi + 1
-//	}
-//
 // Two properties a naive `hi := lo + window - 1` breaks:
 //
 //   - The FINAL window is never dropped and never over-runs `to`: when fewer

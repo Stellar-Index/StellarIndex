@@ -161,8 +161,7 @@ func (r *ExplorerReader) BulkAccountAuthFlags(ctx context.Context, gStrkeys []st
 // Scoped single-ledger read, not a key scan: an unbounded `key_xdr IN (?)` over
 // ledger_entry_changes leans on idx_lec_key_xdr, a bloom skip-index over a 150B-row
 // table whose false-positive rate is a pruning floor. The removal ledger is already
-// in ledger_entries_current and the lake records the PRE-IMAGE in that same ledger
-// (a merge leaves `state` then `updated` rows ending in `removed`), so the read is
+// in ledger_entries_current and the lake records the PRE-IMAGE in that same ledger, so the read is
 // partition-pruned to the removal ledgers.
 //
 // change_type != 'removed' admits `state` rows on purpose: the `state` row before

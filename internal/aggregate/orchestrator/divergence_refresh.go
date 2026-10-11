@@ -24,7 +24,6 @@ import (
 // if a few ticks fail, the API still serves stale-but-valid data.
 //
 // Outcome labels:
-//   - `ok`            — cache entry written (pinned or not).
 //   - `no_vwap`       — VWAP cache miss for this pair (frozen, empty
 //     window, transient cache error). Skip.
 //   - `parse_error`   — cached value not parseable as float; a writer
@@ -32,8 +31,6 @@ import (
 //   - `refresh_error` — the refresher failed (all references down,
 //     marshal or cache write failure). The entry is NOT updated; the
 //     previous entry's TTL keeps counting down.
-//
-// Skipped silently when DivergenceRefresher or Windows is nil/empty.
 func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) {
 	// The divergence cross-check is a SECONDARY, best-effort guard; a
 	// panic in it (or the references it fans out to) must never crash the

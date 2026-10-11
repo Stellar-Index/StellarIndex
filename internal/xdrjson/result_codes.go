@@ -12,12 +12,7 @@ import (
 // This file turns the raw XDR result-code integers the lake stores
 // (stellar.transactions.result_code and stellar.operation_results.result_code)
 // into stable, human-readable slugs, so a FAILED transaction is self-explaining
-// on the API and in the explorer UI — never a bare, unexplained integer. It
-// lives in xdrjson (the network-explorer classic-XDR→human decoder, ADR-0038)
-// alongside the op-body/key/entry decoders — the same category of non-SCVal
-// classic-XDR semantics, so the explorer serving layer stays xdr-free. The
-// slugs are Horizon-aligned where a precedent exists (e.g. tx_no_source_account,
-// op_no_source_account) so they read familiarly to Stellar developers.
+// on the API and in the explorer UI — never a bare, unexplained integer.
 //
 // Design note (transparency, not suppression): failed transactions ARE indexed
 // and ARE served (an on-chain, fee-charged, permanent record — many explorers
