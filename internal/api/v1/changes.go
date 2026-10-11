@@ -341,10 +341,8 @@ func changeSummaryLegs(entityType, entityID string) (base, quote canonical.Asset
 // flagged only after it has already been trading. Normalising at write
 // would switch a row's scale mid-life and leave the ratchet pinned to an
 // extreme from the other scale for good. Keeping the table raw and
-// scaling here keeps one scale per row for ever, follows the table the
-// moment a row is confirmed or corrected, and matches how every other
-// CAGG-derived surface is handled (the CAGGs stay raw; serving
-// normalises).
+// scaling here keeps one scale per row for ever and follows the table the
+// moment a row is confirmed or corrected; the CAGGs stay raw everywhere.
 func (s *Server) changeSummaryResponse(row timescale.ChangeSummaryRow) ChangeSummaryResponse {
 	scale := s.changeSummaryValueScale(row.EntityType, row.EntityID)
 	resp := ChangeSummaryResponse{

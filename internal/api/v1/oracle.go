@@ -46,9 +46,8 @@ type oracleAtReader interface {
 // oracleAssetCandidates expands the user-facing asset identifier into every key
 // form the oracle layer might have stored under.
 //
-// Reflector, the only on-chain oracle publishing per-asset readings, keys
-// observations by the global crypto ticker (`crypto:XLM`, `crypto:USDC`, ...)
-// rather than the per-network canonical asset_id; without this expansion
+// Reflector keys observations by the global crypto ticker (`crypto:XLM`, ...)
+// rather than the canonical asset_id; without this expansion
 // `/v1/oracle/latest?asset=native` returns empty.
 //
 // The `crypto:<TICKER>` translation is IDENTITY-GATED. Firing on the CODE alone

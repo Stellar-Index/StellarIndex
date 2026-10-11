@@ -103,14 +103,12 @@ const closedStreamGateBudget = tipStreamTickTimeout
 // disable_substance_gate=true to diagnose a coverage complaint would otherwise
 // start fanning out a flagged issuer's VWAP.
 //
-// Keyed on the requested (asset, quote): the substance gate measures the pair's
-// ALIAS UNION and the scam gate resolves each leg to its canonical family form, so
+// Keyed on the requested (asset, quote): both gates resolve aliases themselves, so
 // one consultation covers every alias spelling the connection subscribes to.
 //
 // BOTH LEGS on the scam side, via [scamWithheld]: a flagged issuer named as the
-// QUOTE would otherwise open the stream and be fanned its own market's price,
-// inverted, once per closed bucket. The fold over legs belongs inside
-// pricingguard, never at a call site.
+// QUOTE would otherwise be fanned its own market's price, inverted, once per
+// closed bucket. The fold over legs belongs inside pricingguard.
 //
 // The scam gate is asked first so a pair both refuse is reported under the flag,
 // not as a thin market (see [writePriceWithheldProblem]). Nil gates (operator
