@@ -2274,8 +2274,7 @@ func (t *inProcessLoginThrottle) Allow(ctx context.Context, ip, email string) (b
 	// distinct target address, and localStore's fixed 100k-key cap folds
 	// every key beyond that into a single shared overflow bucket sized to
 	// ONE per-email limit (5) — so filling the store denies magic-link
-	// sends to every not-yet-tracked email for the rest of the window
-	// (CA2-A30-correct-4).
+	// sends to every not-yet-tracked email for the rest of the window.
 	if allowed && email != "" {
 		// dashboardauth.LoginThrottle's doc requires implementations to
 		// hash the (canonicalised) email before keying on it. Uses
