@@ -4,11 +4,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// Auction events emitted by the Blend Decoder. These are NOT
-// canonical.Trade rows — Blend doesn't generate spot-trade prices.
-// Each is a directional / state-change signal the indexer's sink
-// routes to per-protocol Blend storage (auctions table, separate
-// from the trades hypertable).
+// Auction events emitted by the Blend Decoder. These are NOT canonical.Trade rows (Blend has no
+// spot prices); the sink routes them to the per-protocol auctions table, not trades.
 
 // NewAuctionEventKind / FillAuctionEventKind / DeleteAuctionEventKind
 // are stable strings used by the sink's type-switch + by metrics

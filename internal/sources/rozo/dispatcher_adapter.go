@@ -8,27 +8,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing view of Rozo v1 Payment. It is a
-// stateless topic Decoder — each payment / flush event decodes
-// independently into one rozo_events row, no correlation state.
+// Decoder is the dispatcher-facing view of Rozo v1 Payment: a stateless topic Decoder where each
+// payment / flush event decodes independently into one rozo_events row.
 //
-// Matching is by topic[0] symbol AND contract id. docs/architecture/domain-traps.md (ADR-0035;
-// Comet's shared topic) warns that `symbol_short!` gives no protocol
-// namespace, so another contract could emit "payment" / "flush" —
-// Matches gates on the event coming from a known Rozo v1 contract.
+// Matching is by topic[0] symbol AND contract id (ADR-0035): `symbol_short!` has no protocol
+// namespace, so another contract could emit "payment" / "flush".
 type Decoder struct{}
 
 // NewDecoder constructs a Rozo Decoder. Stateless — the returned
 // value is safe to share.
 func NewDecoder() *Decoder { return &Decoder{} }
 
-// withIndex stamps the intra-op event index onto the projected Event and
-// wraps it as the decoder's single-event output. EventIndex is the
-// rozo_events PK discriminator (migration 0112) that keeps two events of
-// the SAME event_type emitted by ONE operation from collapsing to a single
-// row. idx comes from the source events.Event.EventIndex, which
-// the production dispatcher populates from the LCM and the re-derive path
-// reads back from the lake's event_index column.
+// withIndex stamps the intra-op event index onto the projected Event. EventIndex is the
+// rozo_events PK discriminator that keeps two events of the SAME event_type from ONE operation
+// from collapsing to a single row; it comes from the dispatcher live and from the lake's
+// event_index column on re-derive.
 func withIndex(idx int, e Event) []consumer.Event {
 	e.EventIndex = uint32(idx) //nolint:gosec // EventIndex is non-negative by Soroban spec.
 	return []consumer.Event{e}
@@ -37,11 +31,8 @@ func withIndex(idx int, e Event) []consumer.Event {
 // Compile-time check that *Decoder satisfies dispatcher.Decoder.
 var _ dispatcher.Decoder = (*Decoder)(nil)
 
-// rozoContracts is the set of v1 Payment contract C-strkeys this
-// decoder claims, built from [MainnetPaymentContracts]. All
-// deployments emit the identical PaymentEvent / FlushEvent schema
-// (verified by shared WASM hash — see [MainnetPaymentContracts]'s
-// doc comment for the per-contract evidence trail).
+// rozoContracts is the set of v1 Payment contract C-strkeys this decoder claims; all share one
+// WASM hash and thus one event schema (see [MainnetPaymentContracts]).
 var rozoContracts = func() map[string]struct{} {
 	m := make(map[string]struct{}, len(MainnetPaymentContracts))
 	for _, c := range MainnetPaymentContracts {
@@ -96,11 +87,7 @@ func (*Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		}
 		return withIndex(ev.EventIndex, eventFromFlush(f, observedAt)), nil
 	}
-	// Unreachable while Classify and this switch stay in lockstep —
-	// Classify already returned non-empty above, and every kind it
-	// can return has a case. Returning the sentinel makes the
-	// defensive guard real: if a future Classify case lands without a
-	// matching switch arm, the dispatcher counts it as a decode error
-	// rather than silently dropping the event.
+	// Unreachable while Classify and this switch stay in lockstep. Returning the sentinel makes a
+	// future Classify case without a switch arm a counted decode error, not a silent drop.
 	return nil, fmt.Errorf("%w: %s", ErrUnknownEvent, kind)
 }

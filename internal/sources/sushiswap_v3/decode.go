@@ -11,11 +11,9 @@ import (
 
 // SwapFields is the decoded body of a pool `swap` event.
 //
-// Amount0 / Amount1 are SIGNED deltas from the POOL's point of view, which
-// is what makes the direction derivable from the body alone: a positive
-// delta is a token the pool RECEIVED (the trader sold it) and a negative
-// delta a token the pool PAID OUT (the trader bought it). Exactly one of
-// each is what a price-forming swap looks like.
+// Amount0 / Amount1 are signed deltas from the pool's point of view, so direction is derivable
+// from the body alone: positive is a token the pool received (the trader sold it), negative one
+// it paid out (the trader bought it). A price-forming swap has exactly one of each.
 type SwapFields struct {
 	Amount0      canonical.Amount // i128 — signed pool delta of token0
 	Amount1      canonical.Amount // i128 — signed pool delta of token1
@@ -44,13 +42,11 @@ var (
 	decodePoolCreated = sdkDecodePoolCreated
 )
 
-// sdkDecodeSwapFields decodes a pool `swap` body. Every field is pulled by
-// NAME from the top-level Map, never by position: the pools have already
-// been through two WASM upgrades (ledgers 61,594,973 and 62,898,378) and a
-// positional decode would break silently the next time one lands a field
-// in a different slot (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
-// Both deployed versions emit the same seven names, so one decoder covers
-// the whole history.
+// sdkDecodeSwapFields decodes a pool `swap` body. Every field is pulled by name from the
+// top-level Map, never by position: the pools have been through two WASM upgrades and a
+// positional decode would break silently when one moves a field
+// (docs/architecture/ingest-pipeline.md#contract-schema-evolution). Both versions emit the same
+// seven names, so one decoder covers the whole history.
 func sdkDecodeSwapFields(valueB64 string) (SwapFields, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
@@ -90,16 +86,12 @@ func sdkDecodeSwapFields(valueB64 string) (SwapFields, error) {
 	}
 	out.Recipient = addr
 
-	// liquidity, sqrt_price_x96, tick, and sender are decoded best-effort:
-	// decodeSwap never reads them — only Amount0, Amount1, and Recipient
-	// feed a trade (see decodeSwap below) — so a parse failure on one of
-	// these must not drop an otherwise-good, price-forming swap. A field
-	// that fails to parse is left at its zero value rather than failing
-	// the whole decode.
+	// liquidity, sqrt_price_x96, tick and sender are decoded best-effort: only Amount0, Amount1
+	// and Recipient feed a trade (see decodeSwap), so a parse failure here must not drop an
+	// otherwise-good swap; the field is left at its zero value.
 	//
-	// sqrt_price_x96 is a U256 (a Q64.96 fixed-point square root of the
-	// price), not an i128 — it routinely exceeds 2^96 and must keep full
-	// width. Carried, never floated.
+	// sqrt_price_x96 is a U256 (Q64.96 square root of the price), not an i128: it routinely
+	// exceeds 2^96 and must keep full width, never floated.
 	if liqSv, err := scval.MustMapField(entries, "liquidity"); err == nil {
 		out.Liquidity, _ = scval.AsAmountFromU128(liqSv)
 	}
@@ -199,11 +191,10 @@ type PositionFields struct {
 
 var decodePositionFields = sdkDecodePositionFields
 
-// sdkDecodePositionFields decodes a mint / burn / collect body by field
-// NAME. owner, both ticks and both token amounts are required for every
-// action (a missing one is ErrMalformedPayload, never a zero-filled row);
-// `amount` is required for mint / burn only, `sender` is read on a mint and
-// `recipient` on a collect when present.
+// sdkDecodePositionFields decodes a mint / burn / collect body by field name. owner, both ticks
+// and both token amounts are required (a missing one is ErrMalformedPayload, never a zero-filled
+// row); `amount` is required for mint / burn only; `sender` (mint) and `recipient` (collect) are
+// read when present.
 func sdkDecodePositionFields(kind, valueB64 string) (PositionFields, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
@@ -293,17 +284,14 @@ func negate(a canonical.Amount) canonical.Amount {
 //	amount0 > 0 && amount1 < 0 → the trader SOLD token0 and BOUGHT token1
 //	amount1 > 0 && amount0 < 0 → the trader SOLD token1 and BOUGHT token0
 //
-// so the base leg is the positive (pool-received) delta and the quote leg
-// is the magnitude of the negative (pool-paid) delta — the same
-// base=sold / quote=bought orientation every other AMM source in this
-// repo records, and the same one canonical.Trade.PriceRatio assumes.
-// Amounts stay exact i128 magnitudes in each token's own smallest unit;
-// no decimals are applied and no price is computed here.
+// so the base leg is the positive (pool-received) delta and the quote leg is the magnitude of
+// the negative (pool-paid) delta: the base=sold / quote=bought orientation every AMM source
+// records and canonical.Trade.PriceRatio assumes. Amounts stay exact i128 magnitudes in each
+// token's smallest unit; no decimals or price are applied here.
 //
-// Any other sign combination is refused as [ErrNonDirectionalSwap]. That
-// includes a zero on either side: a swap that took one unit in and paid
-// nothing out has no price, and reporting it as a trade would feed a
-// fabricated ratio into VWAP and OHLC.
+// Any other sign combination, including a zero on either side, is refused as
+// [ErrNonDirectionalSwap]: a swap that took one unit in and paid nothing out has no price, and
+// reporting it would feed a fabricated ratio into VWAP and OHLC.
 func decodeSwap(
 	fields SwapFields,
 	ledger uint32,
@@ -336,13 +324,9 @@ func decodeSwap(
 		Source: SourceName,
 		Ledger: ledger,
 		TxHash: txHash,
-		// Fan out by the swap event's own index. A router multi-hop and a
-		// split route both invoke SEVERAL pools inside ONE operation, so
-		// every one of those swaps shares op_index and would collide on the
-		// trades primary key, leaving all but one silently dropped by the
-		// writer's ON CONFLICT. The lake proves the shape is real here: the
-		// swaps in tx f6fb00ef…c308 land at event indices 2 and 14 of the
-		// same operation.
+		// Fan out by the swap event's own index: a router multi-hop or split route invokes several
+		// pools in one operation, so their swaps share op_index and would collide on the trades
+		// primary key, all but one silently dropped by ON CONFLICT.
 		OpIndex:     canonical.FanoutOpIndex(opIndex, eventIndex),
 		Timestamp:   closedAt,
 		Pair:        pair,

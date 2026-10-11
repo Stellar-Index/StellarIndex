@@ -54,11 +54,9 @@ const (
 	TopicBeaconUpdated         = "BeaconUpdated"
 	TopicSupportedAssetAdded   = "SupportedAssetAdded"
 	TopicCollateralHashUpdated = "CollateralHashUpdated"
-	// TopicTreasuryUpdated is a config event rotating the protocol treasury
-	// pointer: 1 real lake event on the main contract at ledger 63,847,367 that classify()
-	// dropped, tripping recognition_ok=FALSE. Body is Vec[Address, Address]
-	// (old → new treasury) — captured verbatim like BeaconUpdated /
-	// CollateralHashUpdated; no promoted column (see decodeConfigBody).
+	// TopicTreasuryUpdated is a config event rotating the treasury pointer. Body is
+	// Vec[Address, Address] (old, new), kept verbatim like BeaconUpdated / CollateralHashUpdated
+	// with no promoted column (see decodeConfigBody).
 	TopicTreasuryUpdated = "TreasuryUpdated"
 )
 
@@ -76,13 +74,9 @@ var (
 	topicSymTreasuryUpdated       = scval.MustEncodeSymbol(TopicTreasuryUpdated)
 )
 
-// topicClassifications is the single source of truth pairing each
-// tracked topic[0] symbol with the [EventType] it decodes to. classify()
-// (decode.go) and EventSymbols() are both derived from this table so
-// they cannot fall out of lockstep — this is exactly the failure mode
-// that dropped TreasuryUpdated recognition under ADR-0033 (see
-// TopicTreasuryUpdated above): the symbol was added to one hand-written
-// list but not the other.
+// topicClassifications is the single source of truth pairing each tracked topic[0] symbol with its
+// [EventType]. classify() (decode.go) and EventSymbols() both derive from it so they cannot drift
+// apart, which would drop an event from recognition (ADR-0033).
 var topicClassifications = []struct {
 	Topic string
 	Sym   string
@@ -108,11 +102,9 @@ var classifyBySym = func() map[string]EventType {
 	return m
 }()
 
-// EventSymbols returns the eight topic[0] symbol strings this source
-// consumes, for the projector's SQL topic prefilter (topic_0_sym IN …).
-// These are distinctive (not part of the CAP-67 classic-token firehose),
-// so a topic prefilter pulls exactly this source's events and the
-// identity gate then rejects the two look-alike emitters.
+// EventSymbols returns the eight topic[0] symbols this source consumes, for the projector's SQL
+// topic prefilter. They are distinctive (not in the CAP-67 classic-token firehose), so the
+// prefilter pulls this source's events and the identity gate then rejects the look-alike emitters.
 func EventSymbols() []string {
 	syms := make([]string, len(topicClassifications))
 	for i, c := range topicClassifications {
@@ -164,17 +156,14 @@ var (
 	ErrMalformedPayload = errors.New("sorocredit: malformed event payload")
 )
 
-// Event is the single [consumer.Event] this source emits — one per
-// decoded contract event. The [EventType] discriminator routes it to one
-// of four served-tier tables (credit_positions / credit_statements /
-// credit_settlements / credit_events); the sink type-switches on this
-// Go type once and branches on EventType internally.
+// Event is the single [consumer.Event] this source emits, one per decoded contract event. The
+// [EventType] routes it to one of four served-tier tables (credit_positions / credit_statements /
+// credit_settlements / credit_events); the sink type-switches on this Go type once and branches on
+// EventType.
 //
-// Promoted string fields are strkeys / decimal-i128 strings; an empty
-// value means "this event type carries no such field" and the writer
-// stores SQL NULL. Amount is a decimal i128 string (ADR-0003 — NEVER
-// int64). Attributes holds the event-type-specific remainder (settlement
-// extra vectors; config-event bodies) as a jsonb blob.
+// Promoted string fields are strkeys / decimal-i128 strings; empty means the event type carries no
+// such field and the writer stores SQL NULL. Amount is a decimal i128 string (ADR-0003, NEVER
+// int64). Attributes holds the event-specific remainder as a jsonb blob.
 type Event struct {
 	// Universal identity (from events.Event).
 	ContractID string
@@ -200,11 +189,9 @@ type Event struct {
 	Attributes map[string]any
 }
 
-// EventKind implements [consumer.Event]. Dynamic on EventType so each
-// of the four tables' events carries a distinct kind string — this is
-// what lets the ADR-0033 reconciliation catalogue attribute re-derived
-// counts per table (and gives metrics/logs a precise label). All start
-// with the "sorocredit." prefix.
+// EventKind implements [consumer.Event]. It varies with EventType so the ADR-0033 reconciliation
+// catalogue can attribute re-derived counts per table and metrics get a precise label; all kinds
+// start with "sorocredit.".
 func (e Event) EventKind() string { return SourceName + "." + string(e.EventType) }
 
 // Source implements [consumer.Event] — matches [SourceName].

@@ -1,13 +1,10 @@
 // Package blend ingests events from the Blend Capital Soroban lending protocol.
 //
-// Blend is not a spot venue: auctions and position changes are NOT emitted as
-// canonical.Trade. The sink writes auctions, money-market positions,
-// credit-risk and admin events to per-protocol Blend storage, not trades.
-// Auction stress-prices serve only as reference points on the asset detail
-// surface; they never enter VWAP.
+// Blend is not a spot venue: auctions and position changes are NOT emitted as canonical.Trade; the
+// sink writes them to per-protocol Blend storage. Auction stress-prices serve only as reference
+// points on the asset detail surface and never enter VWAP.
 //
-// Verified against pool/src/events.rs + pool-factory/src/events.rs in
-// .discovery-repos/blend-contracts.
+// Verified against pool/src/events.rs and pool-factory/src/events.rs in blend-contracts.
 package blend
 
 import (
@@ -22,21 +19,12 @@ import (
 const SourceName = "blend"
 
 // Event names — topic[0] of every Blend pool / pool-factory event,
-// as a Soroban Symbol on the wire. Verified against
-// blend-contracts-v2 commit c19abee5b9be4f49e0cda9057e87d343e5dcc095.
+// as a Soroban Symbol on the wire (blend-contracts-v2 c19abee5b9be4f49e0cda9057e87d343e5dcc095).
 //
-// The money-market / credit-risk / admin / pool-factory kinds (all
-// but the three auction ones) are also the persisted `event_kind`
-// column value in blend_positions / blend_emissions / blend_admin,
-// so their canonical definition lives in [domain.BlendEventSupply]
-// and its siblings (internal/storage/timescale validates against
-// these values and must not import upward into this package to do
-// so); the const names below are aliases so every existing caller
-// of blend.EventSupply etc. is unaffected. The three auction
-// consts have no storage-side validation switch (blend_auctions.go
-// keeps its blend import regardless, for
-// blend.ParseReserveConfigMetadata + the API-shared blend.ReserveConfig
-// — see internal/domain/blend.go), so they stay defined here only.
+// All kinds except the three auction ones are also the persisted `event_kind` value in
+// blend_positions / blend_emissions / blend_admin, so they are defined in [domain.BlendEventSupply]
+// and siblings (storage validates against them and cannot import this package); the names below
+// alias those. The auction consts have no storage-side validation switch, so they live only here.
 const (
 	// Auction events (PRIMARY — directional price signals).
 	EventNewAuction    = "new_auction"
@@ -87,49 +75,34 @@ const (
 	// MainnetPoolFactory is the documented Pool Factory V2. Blend was
 	// REDEPLOYED, so this is not the only factory — see MainnetPoolFactories.
 	MainnetPoolFactory = "CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU"
-	// MainnetPoolFactoryV1 is the earlier pool factory. Verified
-	// empirically from the r1 lake: it emits `deploy` events with an
-	// ScVal::Address body (the blend deploy shape) and its children
-	// include 4 of the 9 known auction-emitting Blend pools (CDVQVKOY,
-	// CBP7NO6F, CDE65QK2, CAQF5KNO) — pools a V2-only gate would silently
-	// drop. Its first deploy is at ledger 51_499_915.
+	// MainnetPoolFactoryV1 is the earlier pool factory. It emits `deploy` events with an
+	// ScVal::Address body and deployed 4 of the 9 known auction-emitting pools, which a V2-only
+	// gate would silently drop. Its first deploy is at ledger 51_499_915.
 	MainnetPoolFactoryV1 = "CCZD6ESMOGMPWH2KRO4O7RGTAPGTUPFWFQBELQSS7ZUK63V3TZWETGAG"
-	// MainnetBackstop is the Backstop V2 singleton. Like the pool
-	// factories, the backstop was REDEPLOYED: V1 is below. Backstop
-	// events (queue_withdrawal/deposit/claim/distribute/donate/
-	// gulp_emissions/rw_zone*…) are a DIFFERENT event surface from the
-	// pools, decoded by internal/sources/blend_backstop. Do NOT add
-	// backstops to the pool gate registry: pool decode paths would
-	// mis-decode their bodies.
+	// MainnetBackstop is the Backstop V2 singleton (V1 is below; it was redeployed). Backstop
+	// events are a different surface decoded by internal/sources/blend_backstop. Do NOT add
+	// backstops to the pool gate registry: pool decode paths would mis-decode their bodies.
 	MainnetBackstop = "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7"
-	// MainnetBackstopV1 — found by lake enumeration after a Dune dashboard
-	// (mootz12/blend-v2-events) surfaced the backstop event surface; its
-	// profile (queue_withdrawal/gulp_emissions/…, ledgers 51.49M→62.08M)
-	// matches the backstop signature in the V1 era.
+	// MainnetBackstopV1 is the V1-era backstop, identified from the lake by its backstop event
+	// profile (queue_withdrawal/gulp_emissions/...).
 	MainnetBackstopV1 = "CAO3AGAMZVRMHITL36EJ2VZQWKYRPWMQAPDQD5YEOF3GIF7T44U4JAL3"
 )
 
 // MainnetPoolFactories is the COMPLETE, empirically-verified set of Blend
-// pool factories on mainnet (ADR-0035). A protocol can have more than one
-// factory (Blend was redeployed); gating the `deploy` event on a single
-// factory silently drops the other factory's pools. Derived by decoding
-// every `deploy` event in the lake, keeping the emitters whose body is an
-// ScVal::Address (the blend deploy shape), and confirming their children
-// cover all 9 known Blend pools — both factories together deploy 27 pools,
-// all 9 active ones accounted for (verification: decode `deploy` bodies and
-// cross-reference the auction-emitting contracts; re-run if a third factory
-// appears). Order is irrelevant (set membership).
+// pool factories on mainnet (ADR-0035). Blend was redeployed, so gating `deploy` on a single
+// factory silently drops the other's pools. Derived by decoding every lake `deploy` event whose
+// body is an ScVal::Address and confirming the children cover all 9 known pools; re-run if a third
+// factory appears. Order is irrelevant (set membership).
 var MainnetPoolFactories = []string{
 	MainnetPoolFactoryV1,
 	MainnetPoolFactory,
 }
 
 // FactoryGenesisLedger is a lower bound on any Blend pool factory `deploy`:
-// the ledger Blend's mainnet rollout first instantiated a contract (the
-// backstop Comet pool), 369 ledgers before the V1 factory's first deploy at
-// 51_499_915. The pool-registry genesis seed (ADR-0035) walks every
-// factory's deploy events from here, the ADR-0033 reconcile uses it as the
-// blend source genesis, and documented replays start here (doc_parity_test).
+// the ledger of Blend's first mainnet contract (the backstop Comet pool), 369 ledgers before the V1
+// factory's first deploy. The pool-registry genesis seed (ADR-0035) walks factory deploys from
+// here, the ADR-0033 reconcile uses it as the blend source genesis, and documented replays start
+// here (doc_parity_test).
 const FactoryGenesisLedger uint32 = 51_499_546
 
 // Pre-encoded base64 SCVal::Symbol blobs, computed at init via

@@ -8,47 +8,30 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// ErrUnknownEvent flags an event whose topic[0] symbol doesn't
-// match either of the two v1 Payment topics this decoder handles.
-// The dispatcher routes events to this decoder when topic[0]
-// matches the registered Symbol bytes; this is a defensive
-// double-check for the (rare) case where the dispatcher gets a
-// topic-bytes match against a different protocol that happens to
-// use the same symbol (Soroban's symbol_short! gives no protocol
-// namespace, so collisions are possible — see AGENTS.md's
-// "Comet uses a shared ('POOL', <event>) topic" warning).
+// ErrUnknownEvent flags an event whose topic[0] matches neither v1 Payment topic. It is a
+// defensive double-check: symbol_short! has no protocol namespace, so another protocol can
+// collide on the same symbol bytes (cf. Comet's shared ('POOL', <event>) topic).
 var ErrUnknownEvent = errors.New("rozo: unknown event topic")
 
-// ErrMalformedBody flags a v1 Payment / Flush event whose ScMap
-// body doesn't have the field names the contract docs specify.
-// Per the contract source (v1/stellar/payment/src/lib.rs), the
-// fields are stable: { from, destination, amount, memo } for
-// PaymentEvent, { token, destination, amount } for FlushEvent.
-// A mismatch surfaces here rather than silently producing a
-// half-populated event.
+// ErrMalformedBody flags a Payment / Flush event whose ScMap body lacks the contract's field
+// names ({ from, destination, amount, memo } / { token, destination, amount }), so a mismatch
+// surfaces instead of producing a half-populated event.
 var ErrMalformedBody = errors.New("rozo: malformed event body")
 
-// Classify reports which v1 event the given Event is, or empty
-// string if the topic doesn't match. The dispatcher uses this to
-// route to the right decoder; classify is also exported so tests
-// can verify topic-byte equality at the package boundary.
+// Classify reports which v1 event e is, or "" if the topic does not match. It is exported so
+// tests can verify topic-byte equality at the package boundary.
 //
-// Contract-id filtering happens DOWNSTREAM — the topic
-// `symbol_short!("payment")` could collide with any future
-// contract emitting the same symbol bytes, so the consumer is
-// expected to drop events whose ContractID isn't a known Rozo
-// contract before invoking the decoder.
+// Contract-id filtering happens DOWNSTREAM: a topic symbol can collide with any contract emitting
+// the same bytes, so the consumer must drop events whose ContractID is not a known Rozo contract
+// before decoding.
 func Classify(e *events.Event) string {
 	if len(e.Topic) < 1 {
 		return ""
 	}
 	switch e.Topic[0] {
 	case TopicSymbolPayment, TopicSymbolPaymentEvent:
-		// Both the source-suggested short-form symbol_short!("payment") and
-		// the live long-form ScSymbol "payment_event" route to the same
-		// field-name-based body decode (DecodePayment). The deployed mainnet
-		// contract emits the long form; a short-form-only match would never
-		// fire live and would leave rozo_events empty.
+		// The deployed contract emits the long form "payment_event"; a short-form-only match
+		// would never fire live and would leave rozo_events empty.
 		return EventPayment
 	case TopicSymbolFlush, TopicSymbolFlushEvent:
 		return EventFlush
@@ -56,24 +39,13 @@ func Classify(e *events.Event) string {
 	return ""
 }
 
-// DecodePayment turns one PaymentEvent-shaped Event into a
-// canonical Payment value.
+// DecodePayment turns one PaymentEvent-shaped Event into a canonical Payment. The body is an
+// ScMap { amount: I128, destination: Address, from: Address, memo: String }; fields are looked
+// up by name with scval.MustMapField so map ordering never matters.
 //
-// On-wire body shape (ScMap from Soroban's #[contracttype] macro):
-//
-//	{ "amount": ScVal(I128), "destination": ScVal(Address),
-//	  "from": ScVal(Address), "memo": ScVal(String) }
-//
-// Field order in the ScMap is alphabetical (Soroban macro
-// behaviour); the decoder uses scval.MustMapField for explicit
-// field lookup so ordering changes don't break us.
-//
-// Payment.Memo is the memo in its scval.ToText form: the literal memo
-// when that is valid NUL-free UTF-8 (every ordinary deposit tag), and
-// `\x` + hex of its bytes otherwise. scval.FromText recovers the
-// on-chain bytes. It is the only contract-chosen free-form value in a
-// v1 event — from / destination / token are strkeys rendered by
-// scval.AsAddressStrkey and amount is a decimal i128, all ASCII.
+// Payment.Memo is in scval.ToText form: the literal memo when valid NUL-free UTF-8, otherwise
+// `\x` + hex of its bytes (scval.FromText recovers them). It is the only free-form,
+// contract-chosen value in a v1 event; the rest are strkeys or a decimal i128.
 func DecodePayment(e *events.Event) (Payment, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -115,11 +87,9 @@ func DecodePayment(e *events.Event) (Payment, error) {
 	if err != nil {
 		return Payment{}, fmt.Errorf("%w: missing 'memo': %w", ErrMalformedBody, err)
 	}
-	// AsText, not AsString: the memo is the payer's bytes, not text, and
-	// it is bound to the rozo_events.memo `text` column. A NUL or an
-	// invalid UTF-8 sequence there is refused by Postgres (SQLSTATE
-	// 22021) on every attempt, so a one-stroop pay() would cost the row
-	// for good. AsText keeps every byte (see scval.ToText).
+	// AsText, not AsString: the memo is the payer's bytes bound to a `text` column, and Postgres
+	// refuses a NUL or invalid UTF-8 (SQLSTATE 22021) on every attempt, so a one-stroop pay()
+	// would lose the row for good. AsText keeps every byte (see scval.ToText).
 	memo, err := scval.AsText(memoSV)
 	if err != nil {
 		return Payment{}, fmt.Errorf("rozo: payment 'memo' string: %w", err)
@@ -138,13 +108,8 @@ func DecodePayment(e *events.Event) (Payment, error) {
 	}, nil
 }
 
-// DecodeFlush turns one FlushEvent-shaped Event into a canonical
-// Flush value.
-//
-// On-wire body shape (ScMap):
-//
-//	{ "amount": ScVal(I128), "destination": ScVal(Address),
-//	  "token": ScVal(Address) }
+// DecodeFlush turns one FlushEvent-shaped Event into a canonical Flush. The body is an ScMap
+// { amount: I128, destination: Address, token: Address }.
 func DecodeFlush(e *events.Event) (Flush, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {

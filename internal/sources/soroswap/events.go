@@ -1,8 +1,7 @@
 // Package soroswap ingests trade events from the Soroswap Soroban DEX.
 //
-// Design reference: internal/sources/soroswap/README.md and
-// docs/protocols/soroswap.md. See especially the Q1–Q6
-// quirk notes in the README before modifying the correlation logic.
+// Design reference: internal/sources/soroswap/README.md and docs/protocols/soroswap.md; read the
+// Q1-Q6 quirk notes before modifying the correlation logic.
 package soroswap
 
 import (
@@ -16,14 +15,9 @@ import (
 // and config.IngestionConfig.EnabledSources. Must be stable.
 const SourceName = "soroswap"
 
-// Event names — topic[1] of every Soroswap pair/factory event is a
-// Symbol SCVal with one of these literal values. (topic[0] is the
-// contract-prefix String, see EventPrefix* below.)
-//
-// Verified against soroswap-core/contracts/pair/src/event.rs
-// + contracts/factory/src/event.rs — each e.events().publish takes a
-// 2-tuple `(prefix_literal, symbol_short!(event_name))`. The prefix
-// serializes as ScvString; the event-name as ScvSymbol.
+// Event names: topic[1] of every pair/factory event is a Symbol SCVal with one of these values
+// (topic[0] is the prefix String, see Prefix* below). Each publish in soroswap-core
+// (pair/src/event.rs, factory/src/event.rs) is a 2-tuple of ScvString prefix and ScvSymbol name.
 const (
 	EventSwap     = "swap"
 	EventSync     = "sync"
@@ -34,25 +28,16 @@ const (
 	// Emitted by the factory contract.
 	EventNewPair = "new_pair"
 
-	// EventPairToken is the classify() kind for the pair contract's
-	// LP-SHARE (pair-token) SEP-41 events: `transfer` / `mint` /
-	// `burn` / `approve` with Symbol topic[0] (NOT the
-	// String-"SoroswapPair"-prefixed protocol namespace). A Soroswap
-	// pair IS a SEP-41 token for its LP shares, and the lake proves
-	// registered pairs emit these (a sweep over all 230 registered pairs
-	// found 1,622 mint / 907 transfer / 333 burn events all-time;
-	// `approve` is in the token interface but had never fired).
-	// Enumerated here so classify() covers every topic the
-	// gated pair WASM can emit (the EVERY-event principle) — but the
-	// soroswap Decoder deliberately does NOT claim them: see the
-	// EventPairToken arm in [Decoder.Matches].
+	// EventPairToken is the classify() kind for the pair's LP-share SEP-41 events (`transfer`,
+	// `mint`, `burn`, `approve`), which carry Symbol topic[0] rather than the "SoroswapPair"
+	// String prefix. A pair IS a SEP-41 token for its LP shares and registered pairs emit these.
+	// They are classified to cover every topic the pair WASM can emit, but the Decoder
+	// deliberately does NOT claim them: see the EventPairToken arm in [Decoder.Matches].
 	EventPairToken = "pair_token"
 )
 
-// Topic-prefix string values (topic[0]). Soroswap uses String-typed
-// SCVals for the contract-prefix slot, NOT Symbol — because the Rust
-// contracts write `("SoroswapPair", symbol_short!("swap"))` where the
-// first element is a string literal (→ ScvString on-wire).
+// Topic-prefix string values (topic[0]). The prefix slot is a String SCVal, NOT a Symbol, because
+// the contracts publish `("SoroswapPair", symbol_short!("swap"))` with a string literal first.
 const (
 	PrefixPair    = "SoroswapPair"
 	PrefixFactory = "SoroswapFactory"
@@ -67,24 +52,15 @@ const (
 	MainnetFactory = "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2"
 	MainnetRouter  = "CAG5LRYQ5JVEUI5TEID72EYOVX44TTUJT5BQR2J6J77FH65PCCFAJDDH"
 
-	// MainnetPairWASMHash lets us identify Soroswap pair contracts by
-	// hashing their wasm rather than walking factory events.
-	// Useful for backfill short-cuts.
+	// MainnetPairWASMHash identifies pair contracts by WASM hash instead of walking factory events.
 	MainnetPairWASMHash = "18051456816b66f12e773a56f77c5794fac1b1fb7ab6e22d4fad5a412770f73e"
 )
 
-// MainnetFactories is the COMPLETE, empirically-verified set of Soroswap
-// factories on mainnet (ADR-0035). Like Blend, Soroswap has more than one
-// factory: the primary CA4HEQTL plus three early (launch-era) factories.
-// Verified from the r1 lake by decoding every `SoroswapFactory:new_pair`
-// event — the early factories created 21 pairs between them, but NONE of
-// those pairs had any swap event (they're defunct launch-era pairs), so
-// a primary-factory-only gate would drop no real trades. They are
-// included so the `new_pair` gate honors every factory (directive: all
-// factories + all factory-created contracts) and the reconcile
-// self-seeds the early pairs; a future trade on one of them would then
-// be captured rather than dropped. Re-run the enumeration if a new
-// factory appears.
+// MainnetFactories is the COMPLETE, lake-verified set of Soroswap factories on mainnet
+// (ADR-0035): the primary CA4HEQTL plus three early factories whose 21 pairs never had a swap.
+// They are included so the `new_pair` gate honors every factory and the reconcile self-seeds
+// those pairs, so a future trade on one is captured rather than dropped. Re-run the
+// `SoroswapFactory:new_pair` enumeration if a new factory appears.
 var MainnetFactories = []string{
 	MainnetFactory,
 	"CCIQM2O3YJQEKS7I77AS5IO3CU6UCBAUWHLWRBWVV336ZCSTKRNBKPHW", // early, 11 pairs
@@ -103,15 +79,9 @@ func IsMainnetFactory(contractID string) bool {
 	return false
 }
 
-// Pre-encoded base64 SCVal blobs — byte-identical to what the
-// contract emits on topic positions. Computed at package init via
-// scval.MustEncodeString / MustEncodeSymbol. Used for byte-equality
-// classification against dispatched events (classify()) — no SCVal
-// parse on the hot path.
-//
-// Golden wire-format regression lives in internal/scval/scval_test.go
-// (TestGolden_symbolBytes). If the SDK encoder shifts, that test
-// fires before this package ships.
+// Pre-encoded base64 SCVal blobs, byte-identical to what the contract emits on topic positions, so
+// classify() compares bytes with no SCVal parse on the hot path. The golden wire-format test
+// (TestGolden_symbolBytes in internal/scval/scval_test.go) fires if the SDK encoder shifts.
 var (
 	TopicPrefixPair    = scval.MustEncodeString(PrefixPair)    // topic[0] for pair events
 	TopicPrefixFactory = scval.MustEncodeString(PrefixFactory) // topic[0] for factory events
@@ -139,47 +109,28 @@ var (
 	// (trades/sync we care about; others we ignore).
 	ErrUnknownEvent = errors.New("soroswap: unknown event topic")
 
-	// ErrSwapWithoutSync — a swap that didn't get its following
-	// sync. The dispatcher feeds events in-order; the decoder's
-	// swap+sync correlation buffer should pair them. Surfacing this
-	// means a bug or a truncated event stream.
+	// ErrSwapWithoutSync - a swap with no following sync. The dispatcher feeds events in order, so
+	// surfacing this means a bug or a truncated event stream.
 	ErrSwapWithoutSync = errors.New("soroswap: swap without sync")
 
 	// ErrMalformedPayload — event fields don't match the expected
 	// Soroswap schema (arity, types, contract).
 	ErrMalformedPayload = errors.New("soroswap: malformed event payload")
 
-	// ErrNonDirectionalSwap — the swap event's four amounts decoded
-	// cleanly but carry NO cross-token exchange: neither (0_in>0 &&
-	// 1_out>0) nor (1_in>0 && 0_out>0) holds. The assumption that "a
-	// well-formed Soroswap swap has exactly one in/out pair non-zero —
-	// never both" is disproven by the lake: pair.swap() is directly
-	// invokable Uniswap-v2-style, and any argument combination that keeps
-	// K non-decreasing succeeds — e.g. mainnet ledger 57,403,300 (pair
-	// CAM7DY…, tx be7028b9…) settled with amount_1_in=265, amount_1_out=70
-	// and both token0 amounts zero: value moved within ONE token side
-	// only. That is a real, recognized on-chain event but NOT a trade —
-	// there is no (base, quote, price) to derive — so [Decoder.Decode]
-	// treats this error as a RECOGNIZED NO-OP (zero projected rows, nil
-	// error out), mirroring redstone's empty write_prices batches.
-	// Treating it as a decode error would hold the ADR-0033 completeness
+	// ErrNonDirectionalSwap - the four swap amounts decoded cleanly but carry NO cross-token
+	// exchange: neither (0_in>0 && 1_out>0) nor (1_in>0 && 0_out>0) holds. pair.swap() is directly
+	// invokable Uniswap-v2-style and any argument mix that keeps K non-decreasing succeeds (mainnet
+	// ledger 57,403,300 moved value within ONE token side). That is a real event but NOT a trade,
+	// with no (base, quote, price) to derive, so [Decoder.Decode] treats it as a RECOGNIZED NO-OP
+	// (zero rows, nil error). Treating it as a decode error would leave the ADR-0033 completeness
 	// re-derive blind (undecodable-but-matched) on that ledger.
 	ErrNonDirectionalSwap = errors.New("soroswap: non-directional swap (no cross-token exchange)")
 
-	// ErrAmbiguousSwapDirection — THREE OR MORE of the four amounts are
-	// non-zero (overlapping in/out legs), so more than one direction arm
-	// can hold at once. Taking the first arm (0→1) would decode a trade
-	// that reports a GROSS `in` amount while dropping the extra leg
-	// entirely — a half-decoded row presented as a clean trade that
-	// fabricates a price into VWAP/OHLC. That holds for the all-four shape
-	// and for its three-non-zero sibling (e.g. 0_in,1_in,1_out). Like
-	// the single-sided case above, pair.swap() accepts any argument
-	// combination that keeps K non-decreasing, so these shapes can settle
-	// on-chain; there is no single derivable (base, quote, price), so we
-	// refuse the whole event rather than half-decode it. Wraps
-	// ErrNonDirectionalSwap so [Decoder.Decode]'s recognized-no-op
-	// handling (zero projected rows, nil error out — the ADR-0033
-	// completeness re-derive counts it as expected-zero) covers it via
-	// errors.Is without a second dispatch arm.
+	// ErrAmbiguousSwapDirection - THREE OR MORE of the four amounts are non-zero (overlapping in/out
+	// legs, e.g. 0_in,1_in,1_out), so more than one direction arm holds. Taking the first would
+	// report a GROSS `in` and drop the extra leg, fabricating a price into VWAP/OHLC. These shapes
+	// can settle on-chain, so the whole event is refused rather than half-decoded. It wraps
+	// ErrNonDirectionalSwap so the recognized-no-op handling in [Decoder.Decode] (counted as
+	// expected-zero by the ADR-0033 re-derive) covers it via errors.Is.
 	ErrAmbiguousSwapDirection = fmt.Errorf("%w: ambiguous direction (overlapping in/out legs)", ErrNonDirectionalSwap)
 )

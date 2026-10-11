@@ -18,24 +18,20 @@ type PoolTokens struct {
 	Token1 canonical.Asset
 }
 
-// Decoder is the dispatcher-facing view of SushiSwap V3 (ADR-0035
-// factory-anchored gating). It owns two pieces of state that must never
-// disagree:
+// Decoder is the dispatcher-facing view of SushiSwap V3 (ADR-0035 factory-anchored gating). It
+// owns two pieces of state that must never disagree:
 //
-//  1. reg: the contract-identity gate (factory roots plus every factory-created
-//     pool), which Matches consults.
-//  2. poolTokens: pool -> (token0, token1). Token identities exist ONLY in the
-//     factory's `pool_created` body, so a gated swap cannot be priced without it.
+//  1. reg: the contract-identity gate (factory roots plus every factory-created pool).
+//  2. poolTokens: pool -> (token0, token1). Token identities exist only in the factory's
+//     `pool_created` body, so a gated swap cannot be priced without it.
 //
-// Both are seeded from the curated [MainnetPools] table, the protocol_contracts
-// DB warm (contractid.WithSeed) and live `pool_created` events. The DB warm
-// reaches the gate only; a pool admitted that way has no token mapping unless the
-// sushiswap_v3_pools row (contractid.WithAttrSeed) carries it, and its swaps fail
-// closed and are counted ([Decoder.SkippedUnknownPool]) rather than written with
+// Both are seeded from [MainnetPools], the protocol_contracts DB warm (contractid.WithSeed) and
+// live `pool_created` events. The warm reaches the gate only; a pool admitted that way has no
+// token mapping unless its sushiswap_v3_pools row (contractid.WithAttrSeed) carries it, and its
+// swaps fail closed and are counted ([Decoder.SkippedUnknownPool]) rather than written with
 // invented assets.
 //
-// No correlation buffer: a V3 `swap` body is self-contained, unlike Soroswap
-// (swap+sync) or Phoenix (8 field events).
+// No correlation buffer: a V3 `swap` body is self-contained.
 type Decoder struct {
 	reg *contractid.Registry
 
@@ -62,10 +58,9 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 		tok0, err0 := canonical.NewSorobanAsset(meta.Token0)
 		tok1, err1 := canonical.NewSorobanAsset(meta.Token1)
 		if err0 != nil || err1 != nil {
-			// Unreachable for the curated table (TestMainnetPools_AllTokensAreValidAssets
-			// proves every entry converts). Skipping rather than panicking keeps a
-			// hand-edit mistake from taking the whole indexer down; the pool stays
-			// gated and its swaps fail closed into the counted ErrUnknownPool gap.
+			// Unreachable for the curated table (TestMainnetPools_AllTokensAreValidAssets).
+			// Skipping rather than panicking keeps a hand-edit mistake from taking the
+			// indexer down; the pool stays gated and its swaps fail closed (ErrUnknownPool).
 			continue
 		}
 		d.poolTokens[pool] = PoolTokens{Token0: tok0, Token1: tok1}
@@ -94,32 +89,26 @@ func (d *Decoder) seedPersistedPools() {
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// GatedContractSet returns the factory trust roots plus every registered
-// pool — the tightest sound contract-id prefilter for a lake read over
-// this decoder. The projector reads it every cycle as Source.ContractIDsFunc so a
-// far-behind catch-up window never streams the CAP-67 firehose: this
-// protocol emits `mint` and `burn`, which are 33% and 12% of all pubnet
-// contract events, so the topic-exclusion the other DEX sources use would
-// have to drop this source's own events to be effective.
+// GatedContractSet returns the factory trust roots plus every registered pool, the tightest
+// sound contract-id prefilter for a lake read. The projector reads it every cycle as
+// Source.ContractIDsFunc so a far-behind catch-up never streams the CAP-67 firehose: `mint` and
+// `burn` are so common that the topic exclusion other DEX sources use would drop this source's
+// own events.
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
-// Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY, not
-// topic bytes (ADR-0035).
+// Matches implements [dispatcher.Decoder]. Gates on contract identity, not topic bytes
+// (ADR-0035). The gate is the whole safety story: every topic is a one-element generic Symbol
+// and any contract may emit a Map body under `swap`, so a topic-only decoder would misattribute
+// foreign traffic and let an arbitrary contract mint trades at prices of its choosing.
 //
-// The gate is the whole safety story: every topic is a one-element generic
-// Symbol, and any contract may emit a Map body under a `swap` symbol. A
-// topic-only decoder would misattribute network token traffic to SushiSwap and
-// let an arbitrary contract mint trades at prices of its choosing.
+//   - `pool_created` matches only from one of [MainnetFactories], the trust root; otherwise any
+//     contract could seed itself into the registry with token identities of its choosing.
+//   - every other event matches only from a registered pool.
 //
-//   - `pool_created` matches ONLY from one of [MainnetFactories], the trust
-//     root; otherwise any contract could seed itself into the registry with
-//     token identities of its choosing.
-//   - every other event matches ONLY from a REGISTERED pool.
-//
-// Registry completeness is load-bearing: an un-seeded real pool has its events
-// dropped. Three seeds hold it ([MainnetPools], the protocol_contracts warm, and
-// the factory's own `pool_created` events in the lake, ADR-0033 Claim 1). A
-// missed pool fails CLOSED into a visible gap, never a mis-attribution.
+// Registry completeness is load-bearing: an un-seeded real pool has its events dropped. Three
+// seeds hold it ([MainnetPools], the protocol_contracts warm, and the factory's own
+// `pool_created` events in the lake, ADR-0033 Claim 1). A missed pool fails closed into a
+// visible gap, never a mis-attribution.
 func (d *Decoder) Matches(ev events.Event) bool {
 	kind := classify(&ev)
 	if kind == "" {
@@ -133,11 +122,9 @@ func (d *Decoder) Matches(ev events.Event) bool {
 
 // Decode implements [dispatcher.Decoder].
 //
-// `swap` produces a trade; `mint` / `burn` / `collect` (the
-// concentrated-liquidity position lifecycle) produce a PositionEvent. The
-// pool lifecycle (`init` / `upgraded` / `migrated`) is recognized, gated and
-// deliberately projected as ZERO rows, so the ADR-0033 re-derive counts it
-// as expected-zero rather than going blind on those ledgers.
+// `swap` produces a trade; `mint` / `burn` / `collect` produce a PositionEvent. The pool
+// lifecycle (`init` / `upgraded` / `migrated`) is recognized, gated and deliberately projected
+// as zero rows, so the ADR-0033 re-derive counts it as expected-zero rather than going blind.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	switch kind := classify(&ev); kind {
 	case EventPoolCreated:
@@ -151,11 +138,10 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	}
 }
 
-// seedFromCreation registers a newly created pool in BOTH the identity
-// gate and the token map. Matches has already proven the event came from a
-// canonical factory, so the pool address in the body is trustworthy.
-// Idempotent: the factory re-emits `pool_created` for two pools inside
-// their own creation transaction, and a replay re-observes every event.
+// seedFromCreation registers a newly created pool in both the identity gate and the token map.
+// Matches has already proven the event came from a canonical factory, so the body's pool address
+// is trustworthy. Idempotent: the factory re-emits `pool_created` for a pool inside its creation
+// transaction, and a replay re-observes every event.
 func (d *Decoder) seedFromCreation(ev events.Event) error {
 	fields, err := decodePoolCreated(ev.Value)
 	if err != nil {
@@ -204,15 +190,11 @@ func (d *Decoder) emitTrade(ev events.Event) ([]consumer.Event, error) {
 
 	tokens, known := d.poolTokensFor(ev.ContractID)
 	if !known {
-		// Gated in (the DB warm admitted this pool) but no token
-		// mapping yet — the creation event hasn't been replayed since
-		// restart. Fail closed (no invented assets) but, unlike
-		// ErrNonDirectionalSwap below, this gap must be VISIBLE: return
-		// the sentinel so the dispatcher's decode-error counter (and
-		// obs.SourceDecodeErrorsTotal) surfaces it, same idiom as
-		// redstone's ErrMissingOpArgs. Silently returning nil here
-		// would make a swap-coverage gap indistinguishable from a
-		// protocol with nothing left to decode.
+		// Gated in (the DB warm admitted this pool) but no token mapping yet: the creation
+		// event hasn't been replayed since restart. Fail closed (no invented assets), but
+		// unlike ErrNonDirectionalSwap this gap must be visible: return the sentinel so
+		// obs.SourceDecodeErrorsTotal surfaces it. Returning nil would make a swap-coverage
+		// gap indistinguishable from a protocol with nothing left to decode.
 		d.bumpUnknownPool()
 		return nil, ErrUnknownPool
 	}
@@ -274,11 +256,9 @@ func (d *Decoder) emitPosition(ev events.Event, kind string) ([]consumer.Event, 
 	}}, nil
 }
 
-// poolTokensFor reads the token map under the read lock. One helper for
-// every reader so the release is a defer in exactly one place — the
-// dispatcher RECOVERS a decoder panic and carries on, so an Unlock left on
-// the line after a panicking statement would wedge the dispatch goroutine
-// for the life of the process.
+// poolTokensFor reads the token map under the read lock. One helper for every reader keeps the
+// release a defer in one place: the dispatcher recovers a decoder panic, so an Unlock after a
+// panicking statement would wedge the dispatch goroutine for the life of the process.
 func (d *Decoder) poolTokensFor(contractID string) (PoolTokens, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -320,11 +300,9 @@ func (d *Decoder) SkippedUnknownPool() int {
 	return d.skippedUnknownPool
 }
 
-// UnknownContractDrops implements the dispatcher's duck-typed reporter
-// interface (mirrors soroswap.Decoder.EvictedOrphans) so a gated swap
-// dropped for want of a token mapping is surfaced to
-// obs.SourceDecodeErrorsTotal instead of vanishing with no error, log
-// or metric.
+// UnknownContractDrops implements the dispatcher's duck-typed reporter interface (like
+// soroswap.Decoder.EvictedOrphans) so a gated swap dropped for want of a token mapping reaches
+// obs.SourceDecodeErrorsTotal instead of vanishing.
 func (d *Decoder) UnknownContractDrops() int {
 	return d.SkippedUnknownPool()
 }

@@ -17,12 +17,10 @@ import (
 // / Liquidation reference by `position_uuid`.
 const collateralNamePrefix = "Collateral-"
 
-// classify maps topic[0] to the decoder-side [EventType], or "" for an
-// event this source doesn't track. Byte-equality lookup against
-// classifyBySym (events.go, built from topicClassifications) — no
-// per-event SCVal re-decode. Contract-identity filtering happens in the
-// dispatcher adapter's Matches, NOT here: these symbols are also emitted
-// by two look-alike contracts, so classify alone never decides a match.
+// classify maps topic[0] to the decoder-side [EventType], or "" for an untracked event, via a
+// byte-equality lookup in classifyBySym (events.go) with no SCVal re-decode. Contract identity is
+// gated in the dispatcher adapter's Matches, NOT here: two look-alike contracts emit the same
+// symbols, so classify alone never decides a match.
 func classify(e *events.Event) EventType {
 	if len(e.Topic) == 0 {
 		return ""
@@ -64,11 +62,9 @@ func addrTopic(e *events.Event, field string) (string, error) {
 	return addr, nil
 }
 
-// strTopic decodes topic[i] as a String in its scval.ToText form: the
-// UUIDs it carries are contract-chosen bytes bound to `text NOT NULL`
-// columns, and Postgres refuses a NUL / invalid UTF-8 there (SQLSTATE
-// 22021) on every attempt, costing the row for good (cf. the rozo memo
-// fix).
+// strTopic decodes topic[i] as a String in its scval.ToText form: the UUIDs are contract-chosen
+// bytes bound to `text NOT NULL` columns, and Postgres rejects NUL / invalid UTF-8 there
+// (SQLSTATE 22021) on every retry, which would lose the row permanently.
 func strTopic(e *events.Event, i int, field string) (string, error) {
 	sv, err := scval.Parse(e.Topic[i])
 	if err != nil {
@@ -88,10 +84,9 @@ func strTopic(e *events.Event, i int, field string) (string, error) {
 //	topics = [Symbol("NewCollateralContract"), Address(child collateral C-addr)]
 //	data   = Vec[ String("Collateral-<uuid>"), Address(owner G-addr) ]
 //
-// topic[1] is the newly-deployed child contract's C-address — the value
-// the childgate seeds. The body's String is the child's symbolic name;
-// the UUID after "Collateral-" is the position identity that statements
-// and settlements reference.
+// topic[1] is the new child contract's C-address, the value the childgate seeds. The body's String
+// is its symbolic name; the UUID after "Collateral-" is the position identity that statements and
+// settlements reference.
 func decodeNewCollateralContract(e *events.Event) (decoded, error) {
 	if len(e.Topic) < 2 {
 		return decoded{}, fmt.Errorf("%w: NewCollateralContract needs 2 topics, got %d", ErrMalformedPayload, len(e.Topic))
@@ -117,11 +112,9 @@ func decodeNewCollateralContract(e *events.Event) (decoded, error) {
 	if err != nil {
 		return decoded{}, fmt.Errorf("%w: NewCollateralContract name: %w", ErrMalformedPayload, err)
 	}
-	// TrimPrefix silently returns the whole string when the prefix is
-	// absent — a malformed/renamed position would then get PositionUUID
-	// == PositionName, which never matches the real UUID a StatementPublished
-	// / Liquidation topic carries. That row would sit forever looking like
-	// "no statement yet" instead of the decode failure it actually is.
+	// TrimPrefix would return the whole string when the prefix is absent, giving PositionUUID ==
+	// PositionName, which never matches the UUID in statement / settlement topics; the row would
+	// look like "no statement yet" instead of the decode failure it is.
 	if !strings.HasPrefix(name, collateralNamePrefix) {
 		return decoded{}, fmt.Errorf("%w: NewCollateralContract name %q missing %q prefix", ErrMalformedPayload, name, collateralNamePrefix)
 	}
@@ -143,9 +136,8 @@ func decodeNewCollateralContract(e *events.Event) (decoded, error) {
 //	topics = [Symbol, String(statement_uuid), String(position_uuid)]
 //	data   = Vec[ i128(amount), Address(collateral_contract), u64(timestamp) ]
 //
-// closedAt is the ledger close time (already parsed by decodeOne, which
-// fails the whole event before reaching here if it can't be); it is
-// canonical.SafeUnixSeconds's bound and its out-of-range fallback.
+// closedAt is the ledger close time (decodeOne fails the event earlier if it can't parse); it is
+// canonical.SafeUnixSeconds's bound and out-of-range fallback.
 func decodeStatement(e *events.Event, closedAt time.Time) (decoded, error) {
 	if len(e.Topic) < 3 {
 		return decoded{}, fmt.Errorf("%w: StatementPublished needs 3 topics, got %d", ErrMalformedPayload, len(e.Topic))
@@ -197,19 +189,16 @@ func decodeStatement(e *events.Event, closedAt time.Time) (decoded, error) {
 }
 
 // decodeSettlement decodes the on-wire "Liquidation" event as a
-// SCHEDULED SETTLEMENT (see the package doc — it is NOT a distressed
-// liquidation).
+// SCHEDULED SETTLEMENT (see the package doc; it is NOT a distressed liquidation).
 //
 //	topics = [Symbol("Liquidation"), Address(collateral_contract),
 //	          String(position_uuid), String(statement_uuid)]
 //	data   = Vec[ Address(settler/keeper), Vec[Address](debt_assets),
 //	              Vec[i128](amounts), 4 protocol-internal trailing fields ]
 //
-// The settler (data[0]) is the single recurring keeper. debt_asset +
-// settled_amount are the FIRST element of the parallel debt-asset /
-// amount vectors (USDC-only book — one element in practice). The full
-// body — every trailing field — is captured in Attributes["body"] so
-// nothing is dropped even though only the primary leg is promoted.
+// The settler (data[0]) is the single recurring keeper. debt_asset + settled_amount are the FIRST
+// element of the parallel asset / amount vectors (USDC-only book, so one element in practice). The
+// full body is kept in Attributes["body"], so nothing is dropped beyond the promoted leg.
 func decodeSettlement(e *events.Event) (decoded, error) {
 	if len(e.Topic) < 4 {
 		return decoded{}, fmt.Errorf("%w: Liquidation needs 4 topics, got %d", ErrMalformedPayload, len(e.Topic))
@@ -243,12 +232,9 @@ func decodeSettlement(e *events.Event) (decoded, error) {
 	if err != nil {
 		return decoded{}, fmt.Errorf("%w: Liquidation settler: %w", ErrMalformedPayload, err)
 	}
-	// Verbatim, not scval.Display: Display truncates long fragments and
-	// degrades exotic types to their type name (lossy by design — see its
-	// godoc), which would silently contradict the "nothing is dropped"
-	// promise below. e.Value is already the base64-encoded XDR body, so
-	// storing it directly is the lossless capture; scval.Parse decodes it
-	// back on demand.
+	// Verbatim, not scval.Display: Display is lossy (truncates long fragments, degrades exotic
+	// types to their name), which would contradict "nothing is dropped". e.Value is the base64 XDR
+	// body, so storing it directly is lossless; scval.Parse decodes it on demand.
 	attrs := map[string]any{"body": e.Value}
 	asset, amount := settlementLeg(vec[1], vec[2], attrs)
 	return decoded{
@@ -266,10 +252,9 @@ func decodeSettlement(e *events.Event) (decoded, error) {
 const settlementBodyLen = 7
 
 // settlementLeg promotes the primary (debt_asset, settled_amount) leg from
-// the parallel data[1] Vec[Address] / data[2] Vec[i128]. A shape mismatch
-// degrades into an attribute note rather than failing the whole row; so
-// does a length mismatch, because index pairing is then unproven and
-// promoting amounts[0] could stamp it on the wrong asset.
+// the parallel data[1] Vec[Address] / data[2] Vec[i128]. A shape or length mismatch degrades into
+// an attribute note rather than failing the row; on a length mismatch index pairing is unproven,
+// and promoting amounts[0] could stamp it on the wrong asset.
 func settlementLeg(assetsSV, amountsSV scval.ScVal, attrs map[string]any) (asset, amount string) {
 	assets, aerr := scval.AsVec(assetsSV)
 	amounts, merr := scval.AsVec(amountsSV)
@@ -370,8 +355,8 @@ func decodeWithdrawal(e *events.Event) (decoded, error) {
 //	topics = [Symbol, Address(asset)]
 //	data   = Vec[…config params…]
 //
-// Promotes the asset (topic[1]); the config vector's semantics are
-// protocol-internal, captured verbatim into Attributes["body"].
+// Promotes the asset (topic[1]); the config vector is protocol-internal and kept verbatim in
+// Attributes["body"].
 func decodeSupportedAssetAdded(e *events.Event) (decoded, error) {
 	if len(e.Topic) < 2 {
 		return decoded{}, fmt.Errorf("%w: SupportedAssetAdded needs 2 topics, got %d", ErrMalformedPayload, len(e.Topic))
@@ -386,12 +371,10 @@ func decodeSupportedAssetAdded(e *events.Event) (decoded, error) {
 	}, nil
 }
 
-// decodeConfigBody handles the config events that carry no promoted
-// column (BeaconUpdated, CollateralHashUpdated) — the body is captured
-// verbatim into Attributes["body"]. topic[0] is the only required topic.
-// The error return is always nil today, but the (decoded, error)
-// signature keeps it uniform with the other per-event decoders so
-// decodeOne's dispatch switch treats every arm identically.
+// decodeConfigBody handles config events with no promoted column (BeaconUpdated,
+// CollateralHashUpdated); the body is kept verbatim in Attributes["body"] and topic[0] is the only
+// required topic. The error is always nil; the signature stays uniform so decodeOne's switch
+// treats every arm identically.
 //
 //nolint:unparam // uniform decoder signature; see godoc.
 func decodeConfigBody(e *events.Event) (decoded, error) {

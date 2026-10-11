@@ -17,14 +17,9 @@ import (
 //	topic[2] = Address(user)
 const auctionTopicArity = 3
 
-// classify picks the event kind from topic[0]. Returns "" for
-// non-Blend events so the dispatcher skips cheaply.
-//
-// classify covers only the three auction topics. The dispatcher
-// adapter routes through classifyAny (decode_money_market.go), which
-// also maps the money-market / admin / credit-risk topics. classify is
-// the narrow auction-only fast path used by the auction decode_test.go
-// cases.
+// classify picks the event kind from topic[0], returning "" for non-Blend events so the dispatcher
+// skips cheaply. It covers only the three auction topics; the dispatcher adapter routes through
+// classifyAny (decode_money_market.go), which also maps money-market / admin / credit-risk topics.
 func classify(e *events.Event) string {
 	if len(e.Topic) == 0 {
 		return ""
@@ -50,25 +45,16 @@ type AssetAmount struct {
 	// the entry. Native-XLM SAC contracts surface as a SorobanAsset
 	// — Blend treats every asset uniformly via its contract id.
 	Asset canonical.Asset
-	// Amount is the i128 quantity. For UserLiquidation auctions:
-	// `bid` is dTokens, `lot` is bTokens. For BadDebt: bid is
-	// dTokens, lot is underlying (backstop). For Interest: bid is
-	// underlying (backstop), lot is underlying. The semantic
-	// difference is encoded in the auction_type discriminator
-	// (topic[1]) — the decoder doesn't transform amounts.
+	// Amount is the i128 quantity, stored untransformed. Its meaning depends on auction_type
+	// (topic[1]): UserLiquidation bid is dTokens and lot is bTokens; BadDebt bid is dTokens and
+	// lot is underlying (backstop); Interest bid and lot are both underlying.
 	Amount *big.Int
 }
 
 // AuctionData mirrors `pool/src/auctions/auction.rs::AuctionData`.
-// On the wire it serialises as a 3-tuple of (bid, lot, block) per
-// the soroban-sdk #[contracttype] tuple-shape rule for tuple-shaped
-// structs — but Blend's struct uses NAMED fields, so wire form is
-// ScvMap with three entries keyed by symbol.
-//
-// The shape is confirmed at the contract source level and against real
-// lake bytes: docs/operations/wasm-audits/blend.md ("AuctionData shape")
-// and the test/fixtures/blend/v1-pool-auctions captures pinned by
-// v1_pool_auction_test.go.
+// Blend's struct has NAMED fields, so on the wire it is an ScvMap of three symbol-keyed entries
+// (bid, lot, block), not a tuple. Shape is pinned by docs/operations/wasm-audits/blend.md
+// ("AuctionData shape") and the v1-pool-auctions fixtures in v1_pool_auction_test.go.
 type AuctionData struct {
 	// Bid is the map of (asset, amount) pairs the filler spends
 	// to clear the auction.
@@ -101,11 +87,9 @@ type NewAuctionEvent struct {
 	Timestamp  time.Time
 }
 
-// FillAuctionEvent is the decoded form of `fill_auction`. Each
-// auction may produce multiple fill events as different fillers
-// pick up partial percentages; the cumulative `fill_percent` over
-// (auction_type, user, pool) sums to 100% by the time the auction
-// is closed.
+// FillAuctionEvent is the decoded form of `fill_auction`. An auction may emit several fills as
+// fillers take partial percentages; `fill_percent` over (auction_type, user, pool) sums to 100%
+// by close.
 type FillAuctionEvent struct {
 	Pool        string
 	AuctionType uint32
@@ -118,9 +102,8 @@ type FillAuctionEvent struct {
 	Ledger  uint32
 	TxHash  string
 	OpIndex uint32
-	// EventIndex — per-event discriminator (blend_auctions PK, migration
-	// 0058). A liquidation that fills several positions in one op emits
-	// multiple fill_auction events.
+	// EventIndex is the per-event discriminator in the blend_auctions PK: one op can emit several
+	// fill_auction events when a liquidation fills multiple positions.
 	EventIndex uint32
 	Timestamp  time.Time
 }
@@ -275,11 +258,8 @@ func decodeDeleteAuction(e *events.Event, closedAt time.Time) (DeleteAuctionEven
 	}, nil
 }
 
-// decodeAuctionType reads topic[1] of an auction event — a u32
-// discriminator. Rejects values outside the documented set so a
-// contract upgrade introducing a new auction type surfaces as a
-// fail-loud audit signal rather than silently routing to the
-// wrong handler.
+// decodeAuctionType reads topic[1], a u32 discriminator. Values outside the documented set are
+// rejected so a contract upgrade adding an auction type fails loud instead of misrouting.
 func decodeAuctionType(topicB64 string) (uint32, error) {
 	sv, err := scval.Parse(topicB64)
 	if err != nil {

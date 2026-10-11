@@ -1,20 +1,15 @@
-// Package sorobanevents is the catch-all raw-event landing zone for Soroban
-// contract events (ADR-0029).
+// Package sorobanevents is the catch-all raw-event landing zone for Soroban contract events
+// (ADR-0029). Every contract event the dispatcher routes is also captured as a raw row in the
+// `soroban_events` hypertable, so decoders shipped AFTER an event was emitted can backfill via SQL
+// instead of MinIO re-walks.
 //
-// Every contract event the dispatcher routes is also captured as a raw row in
-// the `soroban_events` hypertable (migration 0041), so decoders shipped AFTER an
-// event was emitted can backfill via SQL instead of MinIO re-walks.
+// [RawEventSink] fires AFTER the per-source decoders for every contract event, with no filter.
+// [Capture] converts a [events.Event] into a [Row]; an [AsyncSink] batches Rows into
+// [timescale.Store.InsertSorobanEventsBatch].
 //
-// [RawEventSink] is the dispatcher's [dispatcher.SetRawEventSink] hook; it fires
-// AFTER the per-source decoders for every Soroban contract event, with no
-// topic[0] or contract_id filter. [Capture] converts a [events.Event] into a
-// [Row]; an [AsyncSink] batches Rows into [timescale.Store.InsertSorobanEventsBatch].
-//
-// Topics 0-3 and the body are raw XDR; topic_0_sym is set when topic[0] decodes
-// to a Symbol or String. op_args_xdr is the marshalled xdr.ScVec of the
-// originating InvokeContract op's args, NULL for other origins.
-// `contract_id` is the C-strkey for human SQL; `contract_id_hex` the raw 32
-// bytes for index-efficient byte-equality joins.
+// Topics and body are raw XDR; topic_0_sym is set when topic[0] is a Symbol or String.
+// `contract_id` is the C-strkey for human SQL; `contract_id_hex` the raw 32 bytes for
+// index-efficient byte-equality joins.
 package sorobanevents
 
 import (
@@ -30,49 +25,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// SourceName is the registry key for this catch-all source. Used
-// only by metrics / log attribution — soroban-events does not
-// register with the dispatcher's per-source `Decoder` chain (it
-// hooks via [dispatcher.RawEventSink] instead, which sees every
-// event regardless of per-source matching).
+// SourceName is the registry key for this catch-all source, used only for metrics / log
+// attribution: it hooks in via [dispatcher.RawEventSink], not the per-source `Decoder` chain.
 const SourceName = "soroban-events"
 
-// Row is one captured soroban_events row, ready for batched insert.
-// Fields map 1:1 to the columns in migration 0041; *string / *[]byte
-// represent nullable columns.
-//
-// Canonical definition lives in [domain.SorobanEventRow] (D8 M0-1:
-// internal/storage/timescale reads/writes this shape and must not
-// import upward into this package to do so); this is a transparent
-// alias so every existing caller of sorobanevents.Row is unaffected.
+// Row is one captured soroban_events row, ready for batched insert; fields map 1:1 to the table
+// columns and pointer types are nullable columns. It aliases [domain.SorobanEventRow] because
+// internal/storage/timescale uses this shape and must not import upward into this package.
 type Row = domain.SorobanEventRow
 
-// ErrSkip is returned by [Capture] for events the soroban_events
-// table never stores (non-"contract" types: system / diagnostic, or
-// events without a valid ContractID). Callers MUST treat this as a
-// silent skip (not a counted error) — the only way it fires is on
-// inputs the dispatcher already filtered out, so it represents
-// defence-in-depth.
+// ErrSkip is returned by [Capture] for events the table never stores (non-"contract" types, or no
+// valid ContractID). Callers MUST treat it as a silent skip: it only fires on inputs the
+// dispatcher already filtered, so it is defence in depth.
 var ErrSkip = errors.New("sorobanevents: event not eligible for capture")
 
-// Capture projects one [events.Event] into a [Row] ready for
-// insert. Returns [ErrSkip] for inputs that should never be
-// captured (non-contract events, malformed ContractID).
-//
-// Decoding rules:
-//
-//   - tx_hash is the 32-byte raw hash (the hex-string on
-//     events.Event is decoded here so the indexed column stays
-//     binary-equality-comparable).
-//   - contract_id is preserved as the wire C-strkey; contract_id_hex
-//     is the strkey-decoded 32 bytes.
-//   - topic_0_sym is populated when topic[0] decodes to a Symbol or
-//     String; empty otherwise.
-//   - topic_N_xdr / body_xdr are the raw XDR bytes (base64-decoded
-//     from the events.Event wire shape).
-//   - op_args_xdr is the XDR-marshalled ScVec of the args; nil when
-//     ev.OpArgs is empty (the event didn't come from an
-//     InvokeContract op or the dispatcher had no args to surface).
+// Capture projects one [events.Event] into a [Row], returning [ErrSkip] for non-contract events
+// or a missing ContractID. tx_hash is stored as 32 raw bytes so the indexed column stays
+// binary-comparable; topics and body are base64-decoded raw XDR; op_args_xdr is nil when the
+// event did not come from an InvokeContract op.
 func Capture(ev events.Event) (Row, error) {
 	if ev.Type != "contract" {
 		return Row{}, ErrSkip
@@ -81,11 +51,8 @@ func Capture(ev events.Event) (Row, error) {
 		return Row{}, ErrSkip
 	}
 	if len(ev.Topic) == 0 {
-		// Defensive: every Soroban contract event has at least
-		// topic[0]. A zero-topic event is malformed; skip rather
-		// than insert a row with NULL topic_0_xdr (which would
-		// violate the migration's NOT NULL constraint and abort
-		// the whole batch on COMMIT).
+		// A zero-topic event is malformed; a NULL topic_0_xdr would violate the NOT NULL
+		// constraint and abort the whole batch on COMMIT.
 		return Row{}, ErrSkip
 	}
 
@@ -125,14 +92,9 @@ func Capture(ev events.Event) (Row, error) {
 		LedgerCloseTime: observedAt.UTC(),
 		TxHash:          txHashRaw,
 		OpIndex:         int16(ev.OperationIndex),
-		// event_index is the event's position within its operation's
-		// contract-event list, threaded from the dispatcher
-		// (ADR-0033). It is the final component of the soroban_events
-		// PK; without it an op emitting ≥2 events (Phoenix: 8 per
-		// swap) collides on (ledger, tx_hash, op_index, 0) and the
-		// writer's ON CONFLICT DO NOTHING silently drops all but the
-		// first. RPC-sourced events leave it 0, but only the
-		// dispatcher populates soroban_events in production.
+		// event_index is the event's position within its operation, and the final PK component:
+		// without it an op emitting 2+ events (Phoenix: 8 per swap) collides on
+		// (ledger, tx_hash, op_index, 0) and ON CONFLICT DO NOTHING silently drops all but the first.
 		EventIndex:    int16(ev.EventIndex),
 		ContractID:    ev.ContractID,
 		ContractIDHex: contractIDRaw,
@@ -150,14 +112,9 @@ func Capture(ev events.Event) (Row, error) {
 	}, nil
 }
 
-// decodeTopics base64-decodes EVERY topic slot from the wire into an
-// ordered slice — no truncation. The first
-// four also populate the fixed topic_0..3 columns (back-compat + the
-// topic_0_sym index fast-path); the full slice is persisted in the
-// topics_xdr array column (migration 0114) so events with 5+ topics —
-// e.g. Aquarius multi-token pool events — keep every topic rather than
-// silently dropping topics 5+. (Soroban's contractevent macro caps at
-// 4, but custom-emitted events exceed that.) topic_count still records
+// decodeTopics base64-decodes EVERY topic into an ordered slice, never truncating. The first four
+// also fill the fixed topic_0..3 columns; the full slice goes to topics_xdr so events with 5+
+// topics (custom-emitted, e.g. Aquarius multi-token pools) keep every topic. topic_count records
 // the full arity.
 func decodeTopics(topics []string) ([][]byte, error) {
 	out := make([][]byte, len(topics))
@@ -181,16 +138,10 @@ func topicAt(xs [][]byte, i int) []byte {
 	return nil
 }
 
-// tryDecodeSymbolOrString returns the decoded Symbol/String value
-// of `b64Topic` when the underlying SCVal is one of those types;
-// returns "" otherwise (the catch-all sink writes SQL NULL).
-//
-// This is purely a convenience for index fast-paths — downstream
-// correctness reads topic_0_xdr. The result is persisted as a
-// Postgres text column, so a String topic goes through AsText: a
-// contract-supplied String is arbitrary bytes and may carry a NUL or
-// invalid UTF-8, which a raw AsString would hand to the server as
-// SQLSTATE 22021 (a permanent, batch-poisoning data error).
+// tryDecodeSymbolOrString returns the Symbol/String value of b64Topic, or "" (stored as SQL NULL)
+// otherwise. It is an index convenience only; correctness reads topic_0_xdr. A String goes through
+// AsText because a contract-supplied String may carry a NUL or invalid UTF-8, which AsString would
+// send to Postgres as SQLSTATE 22021 (a permanent, batch-poisoning error).
 func tryDecodeSymbolOrString(b64Topic string) string {
 	sv, err := scval.Parse(b64Topic)
 	if err != nil {
@@ -205,13 +156,9 @@ func tryDecodeSymbolOrString(b64Topic string) string {
 	return ""
 }
 
-// encodeOpArgsAsScVec marshals the dispatcher-provided op args
-// (each already base64-encoded XDR of one ScVal) into a single
-// XDR-marshalled ScVec. Returns nil when args is empty so the
-// caller writes SQL NULL rather than an empty-vec blob.
-//
-// Delegates to [scval.EncodeArgsAsScVec] so the xdr-dependency
-// stays inside internal/scval (lint-imports B/xdr-scoped-to-scval).
+// encodeOpArgsAsScVec marshals base64 ScVal op args into one XDR ScVec, nil when empty so the
+// caller writes SQL NULL. It delegates to scval to keep xdr scoped there
+// (lint-imports B/xdr-scoped-to-scval).
 func encodeOpArgsAsScVec(args []string) ([]byte, error) {
 	return scval.EncodeArgsAsScVec(args)
 }

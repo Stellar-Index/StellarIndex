@@ -8,14 +8,13 @@
 //     ScvString("DeFindexVault"); the body carries the end-user G-strkey,
 //     multi-asset `amounts` (Vec<i128>) and share deltas (i128).
 //
-// Both layers are needed: end-user attribution lives in the 100+
-// factory-deployed wrappers. Topic only classifies an event; a match also
-// requires contract identity (ADR-0035/0040): flows only from a registered
-// vault or strategy (MainnetGatedSet + protocol_contracts), factory events only
-// from MainnetFactories. An unregistered emitter fails closed.
+// Both layers are needed: end-user attribution lives in the 100+ factory-deployed wrappers.
+// Topic only classifies an event; a match also requires contract identity (ADR-0035/0040).
+// Flows come only from a registered vault or strategy, factory events only from
+// MainnetFactories, and an unregistered emitter fails closed.
 //
-// Flows are attribution only: never price-discovery, never in VWAP. Out of scope:
-// factory `create`/`n_fee`, vault `rebalance` and `n_wasm` (docs/operations/wasm-audits/defindex.md).
+// Flows are attribution only: never price-discovery, never in VWAP. Out of scope: factory
+// `create`/`n_fee`, vault `rebalance` and `n_wasm` (docs/operations/wasm-audits/defindex.md).
 package defindex
 
 import (
@@ -39,33 +38,21 @@ const SourceName = "defindex"
 // "SoroswapPair"). Confirmed on-chain via scan-soroban-events.
 const PrefixStrategy = "BlendStrategy"
 
-// PrefixVault is topic[0] for every DeFindex vault-wrapper event
-// (user-facing layer). Also 13 chars, also ScvString-encoded.
-// Confirmed on-chain via Soroban-RPC getEvents on a known wrapper
-// (CCA2ZJP5… runs WASM ae3409a4…468b, emits this topic on every
-// user deposit/withdraw with a G-strkey `depositor`/`withdrawer`).
+// PrefixVault is topic[0] for every DeFindex vault-wrapper event (user-facing layer).
+// Also 13 chars, so also ScvString-encoded; emitted on every user deposit/withdraw with a
+// G-strkey `depositor`/`withdrawer`.
 const PrefixVault = "DeFindexVault"
 
-// PrefixFactory is topic[0] for the DeFindex *factory* contract's
-// events. The factory (`CDKFHFJI…NFKI`) emits `create` once per
-// vault spawn and `n_fee` on protocol-fee-recipient governance
-// updates. 15 chars → ScvString-encoded (same shape as
-// PrefixStrategy / PrefixVault).
+// PrefixFactory is topic[0] for the DeFindex *factory* contract's events: `create` once per
+// vault spawn and `n_fee` on fee-recipient governance updates. ScvString-encoded.
 //
-// We classify these but do NOT decode bodies today — they don't
-// drive a Trade or a flow record. Recognising them is what the
-// EVERY-event policy requires (project_every_event_principle):
-// classify() must enumerate every topic the source can emit so the
-// dispatcher's drop-counter doesn't silently file factory events as
-// "unmatched topic." Body decode is out of scope (it would give us a
-// live notification feed for new wrapper deployments).
+// Bodies are classified but not decoded: they drive no Trade or flow record. classify() must
+// still enumerate every topic the source can emit (EVERY-event policy) so the dispatcher's
+// drop-counter does not file factory events as "unmatched topic".
 const PrefixFactory = "DeFindexFactory"
 
-// Topic[1] symbols for the user-facing flow events we decode. The
-// strategy layer also decodes `harvest` as a StrategyFlow, and the
-// strategy contract publishes more (keeper admin / …). The vault layer
-// reuses the same two flow symbols (`deposit`, `withdraw`) — they're
-// shared between layers, so neither needs its own constants.
+// Topic[1] symbols for the user-facing flow events we decode. The vault and strategy layers
+// share `deposit` and `withdraw`, so neither needs its own constants.
 const (
 	EventDeposit  = "deposit"
 	EventWithdraw = "withdraw"
@@ -73,12 +60,8 @@ const (
 	// StrategyFlow (DirectionHarvest), kept apart from user deposits and
 	// withdrawals.
 	EventHarvest = "harvest"
-	// Vault-layer governance / admin events. Per the WASM audit doc:
-	//   rescue, paused, unpaused, nreceiver, nmanager, nemanager,
-	//   rbmanager, dfees, rebalance
-	// `dfees` is modelled as [DFee] and the seven role/pause/rescue
-	// topics as [VaultAdmin], each from real lake bodies; `rebalance`
-	// remains classification-only.
+	// Vault-layer governance / admin events (WASM audit doc). `dfees` is modelled as [DFee] and
+	// the seven role/pause/rescue topics as [VaultAdmin]; `rebalance` is classification-only.
 	EventRescue    = "rescue"
 	EventPaused    = "paused"
 	EventUnpaused  = "unpaused"
@@ -88,36 +71,21 @@ const (
 	EventRBManager = "rbmanager"
 	EventDFees     = "dfees"
 	EventRebalance = "rebalance"
-	// EventNWasm is the n_wasm vault topic. A read-only lake
-	// topic census against the gated vault set found 2 real n_wasm
-	// events classifyVault didn't recognize. Likely a WASM-upgrade
-	// announcement ("new wasm"), matching the n_receiver/n_manager/
-	// n_emanager "new-X" naming convention among the vault's other
-	// admin topics — but that reading is inferred from the name, not
-	// from a captured body (2 lake occurrences was too small a count
-	// to justify the ClickHouse scan cost to pull them: several
-	// contract_id + array-index-filtered queries against the raw
-	// 233M-row contract_events table each timed out past 400s without
-	// a supporting skip index on non-contract_id predicates). Recognised
-	// so classifyVault's drop-counter doesn't file it as "unmatched
-	// topic" (EVERY-event policy) — no decoder/flow yet, same as the
-	// other 9 admin topics below.
+	// EventNWasm is the n_wasm vault topic, likely a WASM-upgrade announcement ("new wasm") by
+	// the n_receiver/n_manager naming convention. That meaning is inferred from the name, not a
+	// captured body: array-index filters on contract_events have no supporting skip index and
+	// time out. Recognised only so classifyVault's drop-counter does not file it as "unmatched
+	// topic" (EVERY-event policy); no decoder or flow yet.
 	EventNWasm = "n_wasm"
-	// Factory-layer events. `create` fires once per vault spawn
-	// (body holds roles / vault_fee / assets but NOT the new vault
-	// address — see audit doc "Surprising gotcha #2"); `n_fee`
-	// fires on protocol-fee-recipient governance updates.
+	// Factory-layer events. `create` fires once per vault spawn (its body does NOT carry the new
+	// vault address); `n_fee` fires on fee-recipient governance updates.
 	EventCreate = "create"
 	EventNFee   = "n_fee"
 )
 
-// Pre-encoded base64 SCVal blobs — byte-identical to what the
-// contract emits — for cheap byte-equality classification on the
-// hot path (no SCVal parsing for events we don't decode).
-//
-// Golden wire-format regression covered by
-// internal/scval/scval_test.go::TestGolden_symbolBytes — if the SDK
-// encoder shifts under us, that test fires before this ships.
+// Pre-encoded base64 SCVal blobs, byte-identical to what the contract emits, so the hot path
+// classifies by byte equality without parsing events we do not decode. TestGolden_symbolBytes
+// in internal/scval catches an SDK encoder shift.
 var (
 	TopicPrefixStrategy = scval.MustEncodeString(PrefixStrategy)
 	TopicPrefixVault    = scval.MustEncodeString(PrefixVault)
@@ -141,19 +109,12 @@ var (
 	TopicSymbolNFee      = scval.MustEncodeSymbol(EventNFee)
 )
 
-// StrategyFlow is the canonical wire shape for one Blend strategy
-// deposit or withdraw. Both directions share an identical body
-// (`{from, amount}` — verified on-chain), so a single struct with a
-// Direction discriminator is the natural shape.
+// StrategyFlow is one Blend strategy deposit, withdraw or harvest. Both flow directions share
+// the body `{from, amount}`, so one struct carries a Direction discriminator.
 //
-// From is the caller moving capital — for these strategies it is
-// typically the vault/router *contract* address (a C-strkey), not
-// the end-user; end-user attribution requires correlating with
-// the same-tx vault event. It can also be a plain account
-// G-strkey; scval.AsAddressStrkey renders both.
-//
-// Amount is the underlying-asset delta as a big-int-backed
-// canonical.Amount (i128, never truncated — ADR-0003).
+// From is typically the vault/router *contract* address (C-strkey), not the end user; user
+// attribution needs the same-tx vault event. It can also be a G-strkey; scval.AsAddressStrkey
+// renders both. Amount is a canonical.Amount (i128, never truncated; ADR-0003).
 type StrategyFlow struct {
 	Source     string
 	Ledger     uint32
@@ -173,32 +134,21 @@ type Direction string
 const (
 	DirectionDeposit  Direction = "deposit"
 	DirectionWithdraw Direction = "withdraw"
-	// DirectionHarvest is strategy yield realised into the vault — not a
-	// user flow. Position sums exclude it by construction (their CASE
-	// arms name deposit/withdraw only); NAV math must include it
-	// (reconstructing NAV from deposit+withdraw alone under-counts by
-	// the full harvested yield).
+	// DirectionHarvest is strategy yield realised into the vault, not a user flow. Position sums
+	// exclude it (their CASE arms name deposit/withdraw only); NAV math must include it or it
+	// under-counts by the harvested yield.
 	DirectionHarvest Direction = "harvest"
 )
 
-// RebalanceMethod is the multiplexed sub-type of a
-// ("DeFindexVault","rebalance") event. Four rebalance actions share
-// the single `rebalance` topic; per docs/operations/wasm-audits/
-// defindex.md (surprising-gotcha #3) they are discriminated by a
-// `rebalance_method` Symbol field inside the event body.
+// RebalanceMethod is the multiplexed sub-type of a ("DeFindexVault","rebalance") event. Four
+// rebalance actions share the single topic, discriminated by a `rebalance_method` Symbol field
+// in the body.
 //
-// SCOPE / HONESTY (do-not-invent; AGENTS.md "Soroban DeFi contracts
-// upgrade in place"): the discriminator FIELD NAME + method values
-// below come from upstream research, NOT from an observed on-chain
-// sample — a lake census found ZERO ("DeFindexVault","rebalance")
-// emits, so this is forward-looking scaffolding.
-// [DecodeRebalanceMethod] reads only this one discriminator field and
-// returns the raw Symbol verbatim (so a real sample validates the
-// exact wire spelling — snake_case vs CamelCase is unconfirmed); the
-// per-method PAYLOAD (amounts, swap legs, routes) is deliberately NOT
-// modelled because inventing field layouts is forbidden. When a real
-// rebalance sample lands, the per-method decode slots in behind the
-// discriminator here.
+// The field name and method values come from upstream research, not an observed on-chain
+// sample (the lake holds zero rebalance emits), so this is forward-looking scaffolding.
+// [DecodeRebalanceMethod] returns the raw Symbol verbatim so a real sample can confirm the
+// wire spelling. The per-method payload is deliberately not modelled: field layouts must not
+// be invented.
 type RebalanceMethod string
 
 const (
@@ -243,19 +193,13 @@ func (e Event) EventKind() string {
 // Source implements [consumer.Event].
 func (e Event) Source() string { return SourceName }
 
-// VaultFlow is the canonical wire shape for one user-facing DeFindex vault
-// wrapper deposit or withdraw. Each user deposit yields one VaultFlow, one
-// StrategyFlow and one Blend Pool supply event in the same tx (correlate by
+// VaultFlow is one user-facing vault-wrapper deposit or withdraw. Each user deposit yields one
+// VaultFlow, one StrategyFlow and one Blend Pool supply event in the same tx (correlate by
 // tx_hash + op_index).
 //
-// User is the end user: a G-strkey, or a C-strkey when routed via another
-// aggregator. The strategy layer's `from` is always the vault.
-//
-// Amounts is a Vec because vaults can be multi-asset (one entry per basket
-// asset); the decoder makes no length assumption.
-//
-// DfTokens is the share-token delta (`df_tokens_minted` on deposit,
-// `df_tokens_burned` on withdraw), i128 per ADR-0003, never truncated.
+// User is the end user: a G-strkey, or a C-strkey when routed via an aggregator; the strategy
+// layer's `from` is always the vault. Amounts is a Vec because vaults can be multi-asset, so
+// the decoder assumes no length. DfTokens is the share-token delta, i128 per ADR-0003.
 type VaultFlow struct {
 	Source     string
 	Ledger     uint32
@@ -283,23 +227,15 @@ func (e VaultEvent) EventKind() string {
 // Source implements [consumer.Event].
 func (e VaultEvent) Source() string { return SourceName }
 
-// DFee is one per-asset entry of a vault-layer `dfees` protocol-fee
-// distribution. Body shape PROVEN from live r1-lake
-// blobs (decoded with internal/scval — never invented):
+// DFee is one per-asset entry of a vault-layer `dfees` protocol-fee distribution. The body
+// shape is taken from real lake blobs:
 //
 //	Map{ distributed_fees: Vec[ (token Address<contract>, amount i128) ] }
 //
-// PER-ASSET, not per-recipient: each Vec entry names the fee TOKEN
-// contract (the captured samples are SACs, e.g. USDC's CCW67TSZ…MI75)
-// and the i128 amount distributed in it. The Vec has 0..N entries; an
-// EMPTY vec is a real observed shape (a distribution ran with nothing
-// to distribute) and emits zero events.
-//
-// Lake facts at capture: 12,785 events on 27 vault
-// contracts, ledgers 60,903,337 → tip, still firing live — every
-// sample in the SAME op as the vault deposit/withdraw flow, which is
-// why dfees lands in its own table (defindex_fees, migration 0146)
-// with FeeIndex discriminating the one-event → N-entries fan-out.
+// Entries are per-asset, not per-recipient: each names the fee token contract and the i128
+// amount distributed in it. An empty Vec is a real shape (nothing to distribute) and emits zero
+// events. dfees fires in the same op as the vault deposit/withdraw flow, so it lands in its own
+// table (defindex_fees) with FeeIndex discriminating the one-event to N-entries fan-out.
 type DFee struct {
 	Vault      string // the emitting DeFindex vault-wrapper contract C-strkey
 	Ledger     uint32
@@ -378,13 +314,9 @@ var (
 	ErrMalformedPayload = errors.New("defindex: malformed event payload")
 )
 
-// MainnetFactories is the DeFindex factory trust-root SET (ADR-0035:
-// multi-factory is universal — DeFindex has been redeployed; all four
-// emit DeFindexFactory events in the r1 lake). CDKFHFJI… is the
-// current factory (also the one the team's own
-// mainnet.contracts.json names); the other three are earlier
-// deployments whose vaults still hold funds and emit events.
-// A lake census found no fifth DeFindexFactory emitter.
+// MainnetFactories is the DeFindex factory trust-root SET (ADR-0035: multi-factory is
+// universal). CDKFHFJI... is the current factory; the other three are earlier deployments
+// whose vaults still hold funds and emit events.
 var MainnetFactories = []string{
 	"CDKFHFJIET3A73A2YN4KV7NSV32S6YGQMUFH3DNJXLBWL4SKEGVRNFKI", // current (108 events, 57.06M → 62.97M)
 	"CDHPT7OBQKIUFHIJMLI4W7TNOQUHEVOOVMCW7HA4O5SPFNLDRCE6DQ5F", // 10 events, 60.95M → 60.97M (n_fee only)
@@ -397,22 +329,19 @@ var MainnetFactories = []string{
 // (ADR-0031) and gap-detector floor; a later value hides early-history gaps.
 const GenesisLedger uint32 = 55_484_403
 
-// MainnetVaults is the curated gated vault-wrapper set (ADR-0040 §1 mechanism
-// 2). The factory `create` event does NOT carry the new vault's address, so the
-// deploy-graph cannot self-register vaults and this in-code seed is the trust
-// root. Every entry carries at least one of four independent proofs, recorded
-// per-contract in docs/protocols/defindex.md ("Verification" section):
+// MainnetVaults is the curated gated vault-wrapper set (ADR-0040 section 1, mechanism 2). The
+// factory `create` event does not carry the new vault's address, so the deploy graph cannot
+// self-register vaults and this in-code seed is the trust root. Every entry carries at least
+// one independent proof, recorded per-contract in docs/protocols/defindex.md:
 //
 //	A. first event inside a factory create transaction;
 //	B. listed in a factory create event body (strategies);
-//	C. runs the team-published vault WASM ae3409a4…468b
-//	   (mainnet.contracts.json "hashes".defindex_vault);
+//	C. runs the team-published vault WASM;
 //	D. listed in the team's own Dune vault registry.
 //
-// Emitters with none of the four proofs are deliberately EXCLUDED. A real vault
-// missing here fail-closes into an ADR-0033 recognition gap (visible, never
-// silently mis-attributed); the unblock is an operator INSERT into
-// protocol_contracts (DB warm) or extending this seed.
+// Emitters with no proof are deliberately excluded. A real vault missing here fail-closes into
+// a visible ADR-0033 recognition gap, never silent mis-attribution; the unblock is an operator
+// INSERT into protocol_contracts or extending this seed.
 var MainnetVaults = []string{
 	"CA25XTGHKQ6PUMFJ4SDNRFMUABIFX46U7VAZBFDZKAOX5C3KZXUAR2KQ",
 	"CA2FIPJ7U6BG3N7EOZFI74XPJZOEOD4TYWXFVCIO5VDCHTVAGS6F4UKK",
@@ -501,12 +430,9 @@ var MainnetVaults = []string{
 	"CDYH7U7YYI4AGRXK3NFEN637TR6ID7WP2PW47QZ7KSVPU35LB2ZNDIDG",
 }
 
-// MainnetStrategies is the curated gated strategy set (same
-// evidence chain as MainnetVaults; strategies are deployed
-// independently and referenced by vault configs, so proof B —
-// appearing in a factory create body — is the primary signal,
-// plus the team-published strategy WASM 11329c24…988 and the 7
-// strategies mainnet.contracts.json names).
+// MainnetStrategies is the curated gated strategy set, on the same evidence chain as
+// MainnetVaults. Strategies are deployed independently and referenced by vault configs, so
+// appearing in a factory create body (proof B) is the primary signal.
 var MainnetStrategies = []string{
 	"CA33NXYN7H3EBDSA3U2FPSULGJTTL3FQRHD2ADAAPTKS3FUJOE73735A",
 	"CA3SO5RRKOONAPWVR5XY6CMOYZGN4M4QKVIGX5DFRIIJUJW2SFSELBXL",

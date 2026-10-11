@@ -7,26 +7,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing view of the sorocredit protocol
-// (ADR-0035 contract-identity gating). The protocol has a single trust
-// root — the main contract ([MainnetContract]) — which emits every
-// business + config event AND deploys the per-position `Collateral-<uuid>`
-// child contracts (via NewCollateralContract).
+// Decoder is the dispatcher-facing view of sorocredit (ADR-0035 contract-identity gating). The
+// single trust root is the main contract ([MainnetContract]), which emits every business + config
+// event and deploys the per-position `Collateral-<uuid>` children (via NewCollateralContract).
 //
-// The gate is a childgate (blend-style): NewCollateralContract is honored
-// only from the trust root, and each one announces a child C-address that
-// the decoder Seeds into the registry; every other event is honored from
-// the trust root OR a registered child.
+// The gate is a blend-style childgate: NewCollateralContract is honored only from the trust root
+// and announces a child C-address that the decoder Seeds; every other event is honored from the
+// trust root OR a registered child.
 //
-// COVERAGE NOTE: in practice ALL eight event types are emitted by the
-// trust root and the child contracts emit NOTHING (verified against the
-// r1 lake), so the trust-root check (IsFactory) is what gates. The childgate
-// is forward-compat defense-in-depth for a future contract version that
-// might route events through the per-position children — which is also
-// why this source is NOT registered in pipeline.gatedSources
-// (protocol_contracts DB-warm/persist): DB-warming ~139k+ never-emitting
-// children would be pure overhead with zero coverage benefit, unlike
-// blend where the seeded pools DO emit. Live in-memory seeding suffices.
+// In practice all eight event types come from the trust root and the children emit NOTHING, so the
+// IsFactory check is what gates; the childgate is forward-compat defense for a contract version
+// that routes events through children. For the same reason this source is NOT in
+// pipeline.gatedSources: DB-warming ~139k never-emitting children is pure overhead, unlike blend
+// whose seeded pools do emit. Live in-memory seeding suffices.
 type Decoder struct {
 	reg *contractid.Registry
 }
@@ -51,18 +44,13 @@ func (*Decoder) Name() string { return SourceName }
 // lake read to it, so a child's events are counted exactly as live admits them.
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
-// Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY,
-// not the topic symbol (ADR-0035): the eight symbols are distinctive but
-// two other mainnet contracts emit them, so a non-trust-root emitter must
-// NOT be attributed to this source.
+// Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY, not the topic symbol
+// (ADR-0035): two other mainnet contracts emit the same eight symbols.
 //
-//   - NewCollateralContract matches ONLY from the trust root (IsFactory):
-//     only the protocol root announces a new position, so a child or a
-//     look-alike emitting this topic can't inject a contract into the
-//     registry.
-//   - every other event matches from the trust root OR a registered
-//     child (Has) — the child branch is forward-compat (see the Decoder
-//     doc: children emit nothing today).
+//   - NewCollateralContract matches ONLY from the trust root (IsFactory), so a child or look-alike
+//     emitting this topic can't inject a contract into the registry.
+//   - every other event matches from the trust root OR a registered child (Has); the child branch
+//     is forward-compat (see the Decoder doc).
 func (d *Decoder) Matches(ev events.Event) bool {
 	kind := classify(&ev)
 	if kind == "" {
@@ -74,11 +62,9 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return d.reg.IsFactory(ev.ContractID) || d.reg.Has(ev.ContractID)
 }
 
-// Decode implements [dispatcher.Decoder]. Returns exactly one
-// consumer.Event per recognised event. On a NewCollateralContract it also
-// Seeds the announced child collateral C-address into the registry so the
-// childgate's Has() branch would recognise it (Matches already guaranteed
-// the deploy came from the trust root, so the child is genuine).
+// Decode implements [dispatcher.Decoder], returning one consumer.Event per recognised event. A
+// NewCollateralContract also Seeds the announced child C-address so the childgate's Has() branch
+// recognises it (Matches already guaranteed the trust root emitted it, so the child is genuine).
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	outs, err := project(&ev)
 	if err != nil {

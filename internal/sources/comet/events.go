@@ -8,12 +8,10 @@
 // single-asset add / remove. Any other POOL topic is rejected with
 // ErrNotCometEvent. BPT transfers belong to internal/sources/sep41_supply.
 //
-// `POOL` is shared by every Balancer-v1-derived contract, so ROUTING is
-// by topic bytes but ATTRIBUTION is gated on contract identity
-// (ADR-0035/0040): Decoder.Matches only claims an event whose
-// ContractID is in the curated registry (MainnetGatedSet +
-// protocol_contracts warm). A comet-shaped event from an unregistered
-// contract is left for the recognition audit, never attributed.
+// `POOL` is shared by every Balancer-v1-derived contract, so routing is by topic bytes but
+// attribution is gated on contract identity (ADR-0035/0040): Decoder.Matches claims only events
+// from the curated registry. A comet-shaped event from an unregistered contract is left for the
+// recognition audit, never attributed.
 package comet
 
 import (
@@ -26,30 +24,21 @@ import (
 // package emits. Single source — Comet has no versioned variants.
 const SourceName = "comet"
 
-// MainnetBackstopPool is the single known Comet pool on mainnet —
-// Blend's BLND/USDC backstop. Comet-the-protocol is not run as a
-// standalone DEX on Stellar; it is Blend's backstop library, and the
-// wasm-audit census (docs/operations/wasm-audits/comet.md) found
-// exactly one deployed pool. WASM hash
-// 8abc28913035c07411ed5d134e6bfeab4723d97ddd4d1a22a0605d35c94d1a36.
+// MainnetBackstopPool is the single known Comet pool on mainnet, Blend's BLND/USDC backstop.
+// Comet is not run as a standalone DEX on Stellar; the wasm-audit census
+// (docs/operations/wasm-audits/comet.md) found exactly one deployed pool.
 const MainnetBackstopPool = "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVGRVEAM"
 
-// MainnetGatedSet is the curated Comet pool allowlist the decoder
-// seeds — the ADR-0040 gate trust root (curated-set mechanism; comet
-// has NO factory namespace, so there is no deploy event to anchor
-// on). A genuinely new Comet pool must be operator-admitted (a
-// protocol_contracts row via seed-protocol-contracts, or a new entry
-// here) before its events are attributed — fail-closed, surfaced as
-// an ADR-0033 recognition gap rather than silently attributed. Comet
-// is curated only (ADR-0040 §1 mechanism 3): no WASM-hash sweep exists;
-// wasm-drift alerts on drift but never admits a pool.
+// MainnetGatedSet is the curated Comet pool allowlist the decoder seeds, the ADR-0040 gate trust
+// root (comet has no factory namespace, so no deploy event to anchor on). A new pool must be
+// operator-admitted (a protocol_contracts row or a new entry here) before its events are
+// attributed; until then it fail-closes as a visible ADR-0033 recognition gap. No WASM-hash
+// sweep admits pools (ADR-0040 section 1, mechanism 3).
 func MainnetGatedSet() []string { return []string{MainnetBackstopPool} }
 
-// cometTopicArity is the minimum topic count on every Comet event:
-// [Symbol("POOL"), Symbol("<event_name>")]. classify checks a floor
-// (len(e.Topic) < cometTopicArity), not equality, so a future event
-// with extra trailing topics still classifies on its first two — the
-// contract-identity gate in Matches, not arity, is what we trust.
+// cometTopicArity is the minimum topic count on every Comet event: [Symbol("POOL"),
+// Symbol("<event_name>")]. classify checks a floor, not equality, so an event with extra trailing
+// topics still classifies on its first two; the identity gate in Matches, not arity, is trusted.
 const cometTopicArity = 2
 
 // LiquidityKind discriminates the four liquidity-mutating Comet
@@ -58,16 +47,13 @@ const cometTopicArity = 2
 // (migration 0042).
 type LiquidityKind string
 
-// Liquidity kinds. `add` (join_pool / deposit) grows pool reserves
-// for the named token; `remove` (exit_pool / withdraw) shrinks them.
-// The four kinds map cleanly to two directions:
+// Liquidity kinds map to two directions:
 //
-//	join_pool / deposit  → direction = "add"
-//	exit_pool / withdraw → direction = "remove"
+//	join_pool / deposit  -> direction = "add"    (grows the named token's reserves)
+//	exit_pool / withdraw -> direction = "remove" (shrinks them)
 //
-// We keep the per-kind distinction in the row so a follow-up
-// reserve-tracker can tell "multi-token join (one event per token,
-// must group by tx)" apart from "single-asset deposit (standalone)".
+// The per-kind distinction stays in the row so a reserve-tracker can tell a multi-token join
+// (one event per token, group by tx) from a standalone single-asset deposit.
 const (
 	LiquidityJoinPool LiquidityKind = "join_pool"
 	LiquidityExitPool LiquidityKind = "exit_pool"
@@ -109,13 +95,9 @@ const (
 	EventWithdraw = "withdraw"
 )
 
-// Pre-encoded base64 SCVal::Symbol blobs for topic[0] / topic[1].
-// `symbol_short!("POOL")` and the per-event symbols in the Rust
-// source — the Soroban-SDK Symbol marshaller matches
-// scval.MustEncodeSymbol byte-for-byte (pinned by
-// internal/scval/scval_test.go). All five event names are ≤ 9
-// chars so they go through `symbol_short!` (compact wire form);
-// the encoder picks the right form by length automatically.
+// Pre-encoded base64 SCVal::Symbol blobs for topic[0] / topic[1]. The Soroban-SDK marshaller
+// matches scval.MustEncodeSymbol byte-for-byte (pinned in internal/scval); all names are at most
+// 9 chars, so they take the compact `symbol_short!` form, which the encoder picks by length.
 var (
 	TopicSymbolPool     = scval.MustEncodeSymbol(EventTopic0)
 	TopicSymbolSwap     = scval.MustEncodeSymbol(EventSwap)
@@ -127,45 +109,30 @@ var (
 
 // Errors returned by the decode path.
 var (
-	// ErrNotCometSwap — topic[0..1] doesn't match (POOL, swap).
-	// Returned by the `decodeSwap` entry point when invoked
-	// against a non-swap event. New decoders should prefer
-	// ErrNotCometEvent.
+	// ErrNotCometSwap - topic[0..1] doesn't match (POOL, swap); returned by `decodeSwap` on a
+	// non-swap event. New decoders should prefer ErrNotCometEvent.
 	ErrNotCometSwap = errors.New("comet: not a Comet POOL.swap event")
 
-	// ErrNotCometEvent — topic[0..1] doesn't match any known Comet
-	// (POOL, <kind>) tuple. Skip: another Comet variant added in a
-	// future contract upgrade, or an unrelated contract entirely.
-	// NOTE: unknown kinds are rejected in Matches (classify == ""), so they
-	// land in the dispatcher's GLOBAL unmatched tally (decoder_stats_5m) —
-	// comet implements no EvictedOrphans() reporter, so the per-source
-	// `stellarindex_source_orphan_events_total{source="comet"}` series
-	// never populates and no alert fires on it. The real live signal
-	// for a new kind on the gated pool is the ADR-0033 recognition
-	// audit ("no decoder matches" → system-wide unattributed bucket,
-	// RecognitionOK=false).
+	// ErrNotCometEvent - topic[0..1] doesn't match any known Comet (POOL, <kind>) tuple: a
+	// variant from a future upgrade, or an unrelated contract. Unknown kinds are rejected in
+	// Matches, so they land in the dispatcher's global unmatched tally (decoder_stats_5m); comet
+	// has no EvictedOrphans() reporter, so the per-source orphan series never populates and
+	// nothing alerts on it. The live signal for a new kind on the gated pool is the ADR-0033
+	// recognition audit (RecognitionOK=false).
 	ErrNotCometEvent = errors.New("comet: not a recognised Comet POOL event")
 
 	// ErrMalformedPayload — body didn't decode to the expected
 	// Map shape for the matched event kind.
 	ErrMalformedPayload = errors.New("comet: malformed event payload")
 
-	// ErrNonPositiveAmounts — token_amount_in or token_amount_out
-	// is zero / negative. A valid swap always has positive amounts
-	// on both sides; zero-amount is either a contract bug or an
-	// edge case we'd rather skip+count than emit. Liquidity events
-	// also reject non-positive amounts. CAVEAT (traced in the upstream
-	// Rust): the wdr_tokn_amt_in_get_lp_tokns_out withdraw variant
-	// asserts pool_amount_in > 0 but NOT token_amount_out > 0, so a
-	// dust BPT withdraw with min_amount_out=0 can emit
-	// {token_amount_out: 0, pool_amount_in: >0} while genuinely
-	// burning BPT — a real state change this reject drops. The drop
-	// is honest-blind, not silent: the event Matches but fails
-	// Decode, so the ADR-0033 reconcile counts it blind.Undecodable
-	// and flips the comet verdict complete=false. Accepting
-	// zero-out withdraws end-to-end would need the writer + the
-	// migration-0042 CHECK(amount > 0) relaxed too — a policy call,
-	// deliberately not taken unilaterally. Never observed on the one
-	// mainnet pool to date.
+	// ErrNonPositiveAmounts - token_amount_in or token_amount_out is zero or negative. A valid
+	// swap has positive amounts on both sides, and liquidity events reject them too.
+	// CAVEAT: the wdr_tokn_amt_in_get_lp_tokns_out withdraw variant asserts pool_amount_in > 0
+	// but not token_amount_out > 0, so a dust BPT withdraw with min_amount_out=0 can burn BPT
+	// with token_amount_out: 0, a real state change this reject drops. The drop is honest-blind,
+	// not silent: the event Matches but fails Decode, so the ADR-0033 reconcile counts it
+	// blind.Undecodable and flips the comet verdict to complete=false. Accepting zero-out
+	// withdraws would also need the writer and the comet_liquidity CHECK(amount > 0) relaxed, a
+	// policy call not taken unilaterally.
 	ErrNonPositiveAmounts = errors.New("comet: amounts must be positive")
 )

@@ -9,22 +9,18 @@ import (
 )
 
 // V1 pool WASM (baf978f10efdbcd85747868bef8832845ea6809f7643b67a4ac0cd669327fc2c,
-// the four V1-factory pools, never upgraded) emits three auction-family
-// events in a different shape from V2. Verified against every such event in
-// the r1 lake (737 fill / 435 new / 3 bad_debt, ledgers 51,612,222..62,625,124);
-// samples in test/fixtures/blend/v1-pool-auctions/.
+// the four V1-factory pools, never upgraded) emits three auction-family events in a different
+// shape from V2, verified against every such lake event; samples in
+// test/fixtures/blend/v1-pool-auctions/.
 //
 //	new_auction:  [Symbol, u32(auction_type)]            body AuctionData Map{bid, block, lot}
 //	fill_auction: [Symbol, Address(user), u32(type)]     body (filler: Address, fill_percent: i128)
 //	bad_debt:     [Symbol, Address(user)]                body (asset: Address, d_tokens: i128)
 //
-// V1 emits new_auction only for BadDebt and Interest auctions (user
-// liquidations use new_liquidation_auction), and stores those auctions keyed
-// on the pool's backstop, so the auctioned "user" is the V1 backstop: every
-// V1 BadDebt/Interest fill_auction in the lake names it in topic[1]. V1 has
-// no partial backstop auctions: the bid is the backstop's whole liability
-// (the fixture's bad_debt d_tokens sum to the following new_auction bid), so
-// percent is 100, as V2 emits for every BadDebt/Interest new_auction.
+// V1 emits new_auction only for BadDebt and Interest auctions (user liquidations use
+// new_liquidation_auction) and keys them on the pool's backstop, so the auctioned "user" is the V1
+// backstop, named in topic[1] of every such fill_auction. V1 has no partial backstop auctions: the
+// bid is the backstop's whole liability, so percent is 100, as V2 emits for these auction types.
 const (
 	v1NewAuctionTopicArity = 2
 	v1BadDebtTopicArity    = 2

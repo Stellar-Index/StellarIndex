@@ -7,43 +7,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// SourceName is the canonical identifier for classic-movement rows.
-// Stamped as MovementEvent.Source() and as the implicit writer
-// identity of stellar.account_movements rows — that table has no
-// `source` column (unlike `trades`) because it has exactly one
-// writer (ADR-0031 "one writer per domain"; ADR-0047 D2), so nothing
-// needs to discriminate rows by writer.
+// SourceName is the canonical identifier for classic-movement rows, stamped as
+// MovementEvent.Source(). stellar.account_movements has no `source` column because it has exactly
+// one writer, so nothing needs to discriminate rows by writer.
 const SourceName = "classic-movements"
 
-// P23StartLedger is ADR-0047 D2's hard upper bound: the first ledger
-// of Protocol 23 (Whisk), from which every
-// classic-asset movement already emits a unified CAP-67 event
-// (internal/sources/sep41_transfers) — this package's pre-P23
-// reconstruction has nothing to do at or beyond this ledger.
-// README.md's "Protocol boundaries" table confirms this exact value.
+// P23StartLedger is the first ledger of Protocol 23, the hard upper bound of this package's
+// reconstruction: from there every classic-asset movement emits a unified CAP-67 event
+// (internal/sources/sep41_transfers).
 //
-// The canonical, exported home for this value: internal/ops/chops's
-// classic-movements-backfill clamp and ADR-0048 D5's
-// /v1/accounts/{g}/movements merge (internal/api/v1/explorer/movements.go,
-// timescale.SEP41MovementsFloorLedger) both key off it — the latter
-// via a same-VALUE constant rather than an import, since
-// internal/storage sits below internal/sources in the repo's import
-// direction (scripts/ci/lint-imports.sh's L/storage-below-compute
-// rule); TestP23BoundaryConstantsAgree (internal/api/v1/explorer/movements_test.go)
-// pins the two together so they can't silently drift.
+// The /v1/accounts/{g}/movements merge (timescale.SEP41MovementsFloorLedger) keys off the same
+// value via a duplicate constant, because internal/storage sits below internal/sources in the
+// import direction. TestP23BoundaryConstantsAgree pins the two together.
 const P23StartLedger uint32 = 58_762_517
 
-// Kind discriminates a movement's semantic type. The ten values
-// match migration 0103's movement_kind CHECK constraint — ALL TEN
-// are admitted by the schema from Phase 1 on (ADR-0047 D1), even
-// though this package's Decode only ever emits KindPayment /
-// KindCreateAccount today. Phases 2-4 add the remaining decode
-// arms; see recognition_test.go for the guard that forces each
-// phase's author to extend this deliberately.
+// Kind discriminates a movement's semantic type. The ten values match migration 0103's
+// movement_kind CHECK constraint. recognition_test.go forces each new decode arm to be added
+// deliberately.
 type Kind string
 
-// The ten ADR-0047 D1 movement kinds, in the same order as the
-// migration 0103 CHECK constraint.
+// The ten movement kinds, in the same order as the migration 0103 CHECK constraint.
 const (
 	KindPayment                  Kind = "payment"
 	KindCreateAccount            Kind = "create_account"
@@ -77,12 +60,8 @@ const (
 	// written — reconstructed from the ClickHouse lake per ADR-0047.
 	ProvenanceClassicDerived Provenance = "classic_derived"
 
-	// ProvenanceCAP67Event is RESERVED (ADR-0047 D1) for a possible
-	// future normalization of post-P23 sep41_transfers 'transfer'
-	// rows into the movement store. No writer emits it today —
-	// present here only so callers building attributes maps have
-	// the exact wire value on hand if that normalization ever
-	// lands.
+	// ProvenanceCAP67Event is reserved for a possible normalization of post-P23 sep41_transfers
+	// rows into the movement store. No writer emits it today.
 	ProvenanceCAP67Event Provenance = "cap67_event"
 )
 
@@ -96,12 +75,9 @@ func (p Provenance) IsValid() bool {
 	return false
 }
 
-// Movement is one reconstructed two-party classic-asset movement —
-// ADR-0047 D1's decode-time row shape, which now feeds
-// stellar.account_movements (ADR-0048 D2).
-// LegIndex disambiguates multiple rows produced by the SAME op
-// (e.g. a liquidity-pool deposit's two asset legs, Phase 4); Phase
-// 1's two kinds are always single-leg, so it is always 0 there.
+// Movement is one reconstructed two-party classic-asset movement, the decode-time shape of a
+// stellar.account_movements row. LegIndex disambiguates multiple rows from the SAME op (e.g. a
+// liquidity-pool deposit's two asset legs); single-leg kinds use 0.
 type Movement struct {
 	Kind            Kind
 	Provenance      Provenance
@@ -115,35 +91,20 @@ type Movement struct {
 	FromAddress     string
 	ToAddress       string
 
-	// Attributes is the kind-specific remainder, shaped for migration
-	// 0105's (since-dropped, 0113) `attributes jsonb` column (empty/nil
-	// marshals to '{}', matching that column's DEFAULT). Phase 1's two
-	// kinds never populate it. From Phase 2 on: both path_payment legs
-	// carry the whole op (send_asset/send_amount, dest_asset/
-	// dest_amount, from/to) since each leg's Asset/Amount holds only
-	// its own side (ADR-0047 Phase 2); claimable
-	// balance kinds carry balance_id (+ a claimants summary on
-	// create); the CAP-0038 liquidity_pool_withdraw revocation edge
-	// case (Phase 4) marks its provenance here. Values are strings
-	// (decimal amounts, hex ids, asset ids) or simple slices thereof
-	// — never a raw i128, per ADR-0003's "decimal string, not a JSON
-	// number" rule applied uniformly.
+	// Attributes is the kind-specific remainder. Both path_payment legs carry the whole op
+	// (send/dest asset and amount, from/to) since each leg's Asset/Amount holds only its own side;
+	// claimable-balance kinds carry balance_id (plus claimants on create); the CAP-0038 revocation
+	// edge case marks its provenance here. Values are strings (decimal amounts, hex ids, asset
+	// ids) or slices of them, never a raw i128 or JSON number, to keep full precision.
 	Attributes map[string]any
 }
 
-// MovementEvent is the consumer.Event this package emits — the
-// same "wrap the canonical row in a thin Source()/EventKind()
-// shell" pattern as sdex.TradeEvent.
+// MovementEvent is the consumer.Event this package emits, a thin wrapper like sdex.TradeEvent.
 //
-// This type deliberately has NO persist arm in internal/pipeline/
-// sink.go's HandleEvent: movements are historical-only and are
-// written to ClickHouse stellar.account_movements (ADR-0048 D2) by the
-// dedicated `stellarindex-ops classic-movements-backfill` batch
-// writer, never through the live dispatcher / pipeline.HandleEvent
-// path (the Postgres classic_movements table was dropped by 0113). See
-// internal/pipeline/lockstep_ast_test.go's notSunkEvents entry for
-// "classicmovements.MovementEvent" — that registration is this
-// design decision made mechanically enforceable.
+// It deliberately has NO persist arm in pipeline's HandleEvent: movements are historical-only and
+// are written to ClickHouse stellar.account_movements by the `stellarindex-ops
+// classic-movements-backfill` batch writer, never the live dispatcher. The notSunkEvents entry in
+// lockstep_ast_test.go enforces this.
 type MovementEvent struct {
 	Movement Movement
 }
@@ -154,14 +115,10 @@ func (MovementEvent) EventKind() string { return "classicmovements.movement" }
 // Source implements consumer.Event.
 func (MovementEvent) Source() string { return SourceName }
 
-// PendingClaimableBalanceRef is a ClaimClaimableBalance /
-// ClawbackClaimableBalance op whose asset/amount couldn't be
-// resolved from Decoder's in-run BalanceId index — see
-// dispatcher_adapter.go's Decoder doc and
-// Decoder.TakePendingClaimableBalances. FromAddress/ToAddress are
-// already resolved (they don't depend on the correlated create row);
-// only Asset/Amount/Provenance/Attributes remain to be filled in by
-// ResolvePendingClaimableBalance once the create is found.
+// PendingClaimableBalanceRef is a claim/clawback op whose asset/amount could not be resolved from
+// Decoder's in-run BalanceId index (see Decoder.TakePendingClaimableBalances). FromAddress and
+// ToAddress are already resolved; ResolvePendingClaimableBalance fills in the rest once the create
+// is found.
 type PendingClaimableBalanceRef struct {
 	Kind            Kind // KindClaimableBalanceClaim or KindClaimableBalanceClawback
 	BalanceIDHex    string
@@ -173,14 +130,10 @@ type PendingClaimableBalanceRef struct {
 	ToAddress       string
 }
 
-// ResolvePendingClaimableBalance builds the Movement for a
-// pending claim/clawback now that its create row's
-// asset/amount/creator have been found — typically via a ClickHouse
-// second-pass lookup (clickhouse.FindClaimableBalanceCreates —
-// ADR-0048 D2)
-// run by the caller after Decoder.TakePendingClaimableBalances,
-// since this package stays storage-agnostic (mirrors
-// internal/sources/sdex never importing a storage package).
+// ResolvePendingClaimableBalance builds the Movement for a pending claim/clawback once its create
+// row's asset/amount/creator are found, typically by the caller's ClickHouse second-pass lookup
+// (clickhouse.FindClaimableBalanceCreates) after Decoder.TakePendingClaimableBalances. This
+// package stays storage-agnostic.
 func ResolvePendingClaimableBalance(ref PendingClaimableBalanceRef, asset string, amount canonical.Amount, createdBy string) Movement {
 	return Movement{
 		Kind:            ref.Kind,
@@ -204,21 +157,14 @@ func ResolvePendingClaimableBalance(ref PendingClaimableBalanceRef, asset string
 
 // Errors returned by the decode path.
 var (
-	// ErrUnsupportedOpType is returned by Decode when handed an
-	// operation type outside the current phase's scope. Matches()
-	// gates the op type BEFORE Decode is ever called in the normal
-	// backfill loop, so this should never fire there — its only job
-	// is the ADR-0047 D4.2 recognition guard: it forces a future
-	// phase's author to extend Matches AND the Decode switch
-	// together, rather than let an unhandled op type silently
-	// produce zero rows. See recognition_test.go.
+	// ErrUnsupportedOpType is returned by Decode for an op type outside scope. Matches() gates the
+	// type before Decode in the backfill loop, so this should never fire there; it exists so a
+	// future author must extend Matches AND the Decode switch together instead of an unhandled op
+	// type silently producing zero rows (recognition_test.go).
 	ErrUnsupportedOpType = errors.New("classicmovements: unsupported op type for this phase")
 
-	// ErrMalformedMovement — a decoded field failed validation
-	// (non-positive amount, unresolvable address, unrecognized
-	// asset shape). Indicates a protocol assumption this package
-	// hasn't audited, not routine "op failed" — a failed op is
-	// filtered out earlier via the result's success code and never
-	// reaches this error path.
+	// ErrMalformedMovement means a decoded field failed validation (non-positive amount,
+	// unresolvable address, unrecognized asset shape): an unaudited protocol assumption, not a
+	// routine failed op, which the result's success code filters out earlier.
 	ErrMalformedMovement = errors.New("classicmovements: malformed movement")
 )
