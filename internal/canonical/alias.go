@@ -140,28 +140,23 @@ func (r *AliasRegistry) familyMap() map[string][]Asset {
 	return r.families
 }
 
-// NewAliasRegistry builds the process registry from the operator's SAC
-// wrapper map (`[supply].sac_wrappers`: SAC contract C-strkey →
-// classic `CODE:ISSUER`) on the network identified by passphrase. The
-// result is the compile-time baseline PLUS one two-form family per wrapper,
-// with the SAC form ordered LAST so a thin Soroban pool can never outrank
-// the classic asset's depth on a classic-keyed read (the invariant
-// [AssetAliases] documents).
+// NewAliasRegistry builds the process registry from the operator's SAC wrapper
+// map (`[supply].sac_wrappers`: SAC contract C-strkey → classic `CODE:ISSUER`) on
+// the network identified by passphrase. The result is the compile-time baseline
+// PLUS one two-form family per wrapper, with the SAC form ordered LAST so a thin
+// Soroban pool can never outrank the classic asset's depth on a classic-keyed
+// read (the invariant [AssetAliases] documents).
 //
-// It is strict, and every rejection is returned as an error rather than
-// silently dropped, because a dropped wrapper is invisible under-counted
-// volume and a wrong one merges an arbitrary contract into a classic
-// asset's identity:
+// It is strict: every rejection is returned as an error rather than silently
+// dropped, because a dropped wrapper is invisible under-counted volume and a
+// wrong one merges an arbitrary contract into a classic asset's identity:
 //   - a malformed contract id or asset key;
-//   - a SAC id that is not the deterministic SAC derivation of its
-//     classic asset on this network (a mis-paired wrapper would alias an
-//     arbitrary contract — e.g. a scam token — onto the classic asset);
+//   - a SAC id that is not the deterministic SAC derivation of its classic asset
+//     on this network (e.g. a scam token aliased onto the classic asset);
 //   - a wrapper that would claim a form already in another family.
 //
-// Entries whose asset key equals their contract id (the pure-SEP-41
-// `contract_id → contract_id` convention) are a single identity with
-// nothing to alias and are skipped. A verified XLM SAC → `native` entry
-// is already the baseline's family and is likewise a no-op.
+// Entries whose asset key equals their contract id (the pure-SEP-41 convention)
+// and a verified XLM SAC → `native` entry (already in the baseline) are no-ops.
 func NewAliasRegistry(passphrase string, sacWrappers map[string]string) (*AliasRegistry, error) {
 	if passphrase == "" {
 		return nil, fmt.Errorf("alias registry: empty network passphrase")
@@ -312,29 +307,24 @@ func (r *AliasRegistry) AliasStrings(asset Asset) []string {
 	return out
 }
 
-// AssetAliases returns every canonical FORM equivalent to `asset` that a read
-// path should try, in priority order: the literal input first, then the rest of
-// its equivalence class in canonical order. An asset with no known second form
-// returns just itself, so callers can loop unconditionally.
+// AssetAliases returns every canonical FORM equivalent to `asset` that a read path
+// should try: the literal input first, then the rest of its class in canonical
+// order. An asset with no known second form returns just itself.
 //
-// XLM has three identities, all the SAME asset: `native` (the per-network classic
-// form; SDEX rows, prices_1m, the CAGGs), `crypto:XLM` (the cross-network
-// global-ticker form, ADR-0014; every CEX venue and Reflector's CEX oracle) and
-// the Stellar Asset Contract wrapping native XLM (`CAS3J7GY…`; Soroban AMMs). A
-// read keyed by one form that does not try the others silently omits every venue
-// publishing under an alias.
+// XLM has three identities, all the SAME asset: `native` (per-network classic
+// form; SDEX rows, prices_1m, the CAGGs), `crypto:XLM` (global-ticker form,
+// ADR-0014; CEX venues and Reflector's CEX oracle) and the SAC wrapping native
+// XLM (`CAS3J7GY…`; Soroban AMMs). A read keyed by one form that does not try
+// the others silently omits every venue publishing under an alias.
 //
-// The SAC form is LAST, deliberately. Read paths that loop these aliases take the
-// FIRST form that produces an answer, and Soroban XLM pools are orders of
-// magnitude thinner than SDEX and the CEX feeds; anywhere but last, one small
-// pool could become THE served XLM price. A caller who names the C-address still
-// gets that form first. Set-shaped callers (v1.sourceStatsAliases) ignore order
-// but need COMPLETENESS: omitting the SAC literal undercounts Soroban XLM volume.
+// The SAC form is LAST, deliberately: read paths take the FIRST form that
+// answers, and Soroban XLM pools are far thinner than SDEX and the CEX feeds, so
+// one small pool could become THE served XLM price. A caller naming the
+// C-address still gets it first; set-shaped callers need COMPLETENESS, not order.
 //
-// Other SAC-wrapped classic assets are operator data in `[supply].sac_wrappers`
-// ([Asset.SacContractID] is a hash and cannot be inverted), built by
-// [NewAliasRegistry] and published by [InstallAliasRegistry]. Until one is
-// installed the baseline for [InstallNetworkPassphrase]'s network applies.
+// Other SAC-wrapped classic assets come from operator `[supply].sac_wrappers`
+// via [NewAliasRegistry] and [InstallAliasRegistry]; until one is installed the
+// baseline for [InstallNetworkPassphrase]'s network applies.
 func AssetAliases(asset Asset) []Asset {
 	return activeAliasRegistry().Aliases(asset)
 }

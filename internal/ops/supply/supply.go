@@ -309,30 +309,21 @@ func supplySnapshotMaybeEmitFailure(textfileOut, assetRaw string, startedAt time
 	return cause
 }
 
-// resolveSnapshotLedger picks the ledger to attribute the snapshot
-// to AND resolves that ledger's real on-chain close time to stamp as
-// ObservedAt. Operator-supplied -ledger wins; otherwise we use the max
-// last_ledger across all ingestion cursors.
+// resolveSnapshotLedger picks the ledger to attribute the snapshot to AND
+// resolves that ledger's real on-chain close time to stamp as ObservedAt.
+// Operator-supplied -ledger wins; otherwise the max last_ledger across all
+// ingestion cursors.
 //
-// ObservedAt is the chosen ledger's close_time from ClickHouse
-// stellar.ledgers — NEVER time.Now(). A re-derived HISTORICAL
-// snapshot (the operator re-derives supply constantly) stamped
-// with the wall-clock write-time silently corrupts point-in-time
-// supply/observation queries. Fail-closed: if the ledger has no
-// stellar.ledgers row we return an error rather than falling back
-// to time.Now() — a real snapshot ledger (an operator-named
-// -ledger or a live ingestion cursor) MUST exist in the
-// dual-sink-populated lake, so its absence is a genuine lake gap
-// worth surfacing, not a wall-clock guess.
+// ObservedAt is the ledger's close_time from ClickHouse stellar.ledgers, NEVER
+// time.Now(): a wall-clock stamp on a re-derived HISTORICAL snapshot silently
+// corrupts point-in-time supply queries. Fail-closed: a missing stellar.ledgers
+// row is a genuine lake gap worth surfacing, not a wall-clock guess.
 //
-// KNOWN LIMIT: a stalled supply observer can leave a component
-// balance behind the snapshot ledger; the per-component reader's
-// at-or-before query silently returns an older row. The matching
-// long-form note lives on `supplyAggregatorLedgers` in
-// cmd/stellarindex-aggregator/main.go — full fix needs per-component
-// ledger threading into snapshot acceptance (the per-row Ledger is
-// already returned by AccountObservationRow et al, so it's a refactor
-// of the Refresher + Supply shapes, not a new storage primitive).
+// KNOWN LIMIT: a stalled supply observer can leave a component balance behind
+// the snapshot ledger; the per-component reader's at-or-before query silently
+// returns an older row. See `supplyAggregatorLedgers` in
+// cmd/stellarindex-aggregator/main.go; the full fix needs per-component ledger
+// threading into snapshot acceptance.
 func resolveSnapshotLedger(ctx context.Context, store cursorReader, closeTimes ledgerCloseTimeReader, opLedger uint32) (uint32, time.Time, error) {
 	ledger := opLedger
 	if ledger == 0 {
@@ -392,27 +383,21 @@ func resolveSnapshotLedger(ctx context.Context, store cursorReader, closeTimes l
 	return ledger, closeTime, nil
 }
 
-// autoSnapshotLedger picks the chain position a `-ledger`-less supply
-// snapshot is stamped at, and names the cursor it came from. Pure, so it is
-// testable without Postgres.
+// autoSnapshotLedger picks the chain position a `-ledger`-less supply snapshot is
+// stamped at, and names the cursor it came from. Pure, so it is testable without
+// Postgres.
 //
-// It must not be MAX(last_ledger) over ingestion_cursors: that table holds
-// JOB positions, not chain positions. Only `ledgerstream` (the live indexer's
-// walk) means "how far the data behind a supply component has been ingested";
-// the rest (backfill/<from>-<to>, projector/<source>, census-backfill, ...)
-// are ops jobs' progress through operator-chosen ranges. With the indexer
-// stopped or behind while an operator backfills near the tip, MAX would pick
-// the backfill cursor and stamp the snapshot "as of ledger Y" while every
-// component balance was observed at the indexer's lower position: a real
-// number with a wrong ledger attribution, on the most-consumed number the
-// product serves.
+// It must not be MAX(last_ledger) over ingestion_cursors: that table holds JOB
+// positions, not chain positions. Only `ledgerstream` (the live indexer's walk)
+// means "how far the data behind a supply component has been ingested"; the rest
+// (backfill/<from>-<to>, projector/<source>, ...) are ops jobs' progress through
+// operator-chosen ranges. MAX could stamp the snapshot "as of ledger Y" while
+// every component balance was observed at the indexer's lower position: a real
+// number with a wrong ledger attribution, on the most-consumed number we serve.
 //
-// The ledgerstream cursor wins whenever it exists. The MAX fallback covers a
-// host whose indexer has not yet written a ledgerstream row; its source is
-// named in the returned string, which the caller prints.
-//
-// This does not lift the KNOWN LIMIT on resolveSnapshotLedger (a stalled
-// per-component observer can still lag the chosen ledger).
+// The ledgerstream cursor wins whenever it exists. The MAX fallback covers a host
+// whose indexer has not yet written a ledgerstream row; its source is named in the
+// returned string. The KNOWN LIMIT on resolveSnapshotLedger still applies.
 func autoSnapshotLedger(cursors []timescale.Cursor) (ledger uint32, source string) {
 	for _, c := range cursors {
 		if c.Source == chainCursorSource {

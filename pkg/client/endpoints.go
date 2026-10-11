@@ -107,29 +107,24 @@ type PriceTipQuery struct {
 	WindowSeconds int    // optional; default 5; outside [1, 60] → 400
 }
 
-// PriceTip fetches the live "rolling-window" price per ADR-0018.
-// Two in-contract branches the caller distinguishes via
-// `PriceSnapshot.PriceType`:
+// PriceTip fetches the live rolling-window price (ADR-0018). Callers
+// distinguish two in-contract branches via `PriceSnapshot.PriceType`:
 //
-//   - "vwap" with `WindowSeconds=N` — at least one trade in the
-//     last N seconds; rolling-window VWAP. When the requested window
-//     is empty and shorter than 30s, the server retries once at 30s,
-//     so the returned `WindowSeconds` can exceed the requested one;
-//     read it from the response rather than assuming your input.
-//   - "last_trade" — window was empty; the most recent observation
-//     as-is. Caller reads `ObservedAt` to decide if it's fresh
-//     enough for their use case.
+//   - "vwap" with `WindowSeconds=N`: at least one trade in the last N seconds.
+//     When the requested window is empty and shorter than 30s, the server retries
+//     once at 30s, so the returned `WindowSeconds` can exceed the requested one;
+//     read it from the response.
+//   - "last_trade": the window was empty; the most recent observation as-is.
+//     Read `ObservedAt` to decide if it is fresh enough.
 //
-// Unlike `/v1/price` (closed-bucket, ADR-0015), the tip surface has
-// no cross-region consistency contract — two clients in different
-// regions may see different rolling-window VWAPs depending on which
-// trades have replicated. Use Price for "every consumer sees the
-// same number"; use PriceTip for "freshest possible signal."
+// Unlike `/v1/price` (closed-bucket, ADR-0015), the tip surface has no
+// cross-region consistency contract: clients in different regions may see
+// different VWAPs. Use Price for "every consumer sees the same number"; use
+// PriceTip for "freshest possible signal."
 //
-// `flags.stale` on the envelope is ALWAYS false here per ADR-0018:
-// both branches are in-contract on this surface. `flags.frozen`
-// also stays unset (freeze is a closed-bucket concept).
-// `flags.divergence_warning` and `flags.single_source` apply.
+// `flags.stale` is ALWAYS false here (ADR-0018) and `flags.frozen` stays unset
+// (a closed-bucket concept). `flags.divergence_warning` and `flags.single_source`
+// apply.
 func (c *Client) PriceTip(ctx context.Context, q PriceTipQuery) (*Envelope[PriceSnapshot], error) {
 	if q.Asset == "" {
 		return nil, &APIError{Status: 400, Title: "asset required"}
@@ -358,27 +353,22 @@ type OHLCQuery struct {
 	OutlierSigma *float64
 }
 
-// OHLC fetches a single open/high/low/close bar over the
-// [From, To) window. Per the V1 historical chart
-// requirements, this is the surface backing candlestick UIs.
+// OHLC fetches a single open/high/low/close bar over the [From, To) window; it
+// backs candlestick UIs.
 //
 // Window semantics:
-//   - Both From + To zero: server defaults to now-1h .. now,
-//     clamped to a closed-bucket boundary (every region answers
-//     the same window per ADR-0015).
-//   - From zero, To set: server uses To-1h .. To, no clamp
-//     (caller pinned an explicit end).
-//   - From set, To zero: server uses From .. now (clamped).
-//   - Both set: server uses [From, To) verbatim; caller asserts
-//     a specific historical range.
+//   - Both From + To zero: server defaults to now-1h .. now, clamped to a
+//     closed-bucket boundary (every region answers the same window, ADR-0015).
+//   - From zero, To set: To-1h .. To, no clamp.
+//   - From set, To zero: From .. now (clamped).
+//   - Both set: [From, To) verbatim.
 //
-// Returns ErrNoTrades / 404 (translated to APIError 404) when no
-// trades fell in the window.
+// Returns ErrNoTrades / 404 (translated to APIError 404) when no trades fell in
+// the window.
 //
-// Truncation: when the window holds more trades than the server's
-// cap (10000 today), the response's `Truncated` flag is true and
-// High / Low may not be the actual extremes. Narrow the range to
-// reach an untruncated bar.
+// Truncation: when the window holds more trades than the server's cap (10000
+// today), the response's `Truncated` flag is true and High / Low may not be the
+// actual extremes. Narrow the range to reach an untruncated bar.
 func (c *Client) OHLC(ctx context.Context, q OHLCQuery) (*Envelope[OHLCBar], error) {
 	if q.Base == "" {
 		return nil, &APIError{Status: 400, Title: "base required"}

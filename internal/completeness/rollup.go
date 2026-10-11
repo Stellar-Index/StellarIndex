@@ -5,28 +5,23 @@ import (
 	"sort"
 )
 
-// This file adds the fourth ADR-0033 integrity check, complementing the
-// substrate / recognition / projection reconciles: the DERIVED-CHECKPOINT
-// reconcile. The first three prove the raw rows are captured and became
-// table rows; this one proves that an *incrementally-maintained running
-// total* folded from those rows still equals the authoritative re-sum of
-// them.
+// This file adds the fourth ADR-0033 integrity check: the DERIVED-CHECKPOINT
+// reconcile. The substrate / recognition / projection reconciles prove raw rows
+// are captured and became table rows; this one proves that an
+// *incrementally-maintained running total* folded from those rows still equals
+// the authoritative re-sum of them.
 //
-// Why it exists. `sep41_supply_rollup` (migration
-// 0085) holds a per-contract mint/burn/clawback running total advanced
-// INCREMENTALLY by a watermark worker (AdvanceSEP41SupplyRollup: sum only
-// `ledger > last_ledger`, add in). A full-history re-derive rewrote a
-// contract's raw `sep41_supply_events` BELOW an existing checkpoint
-// without resetting the rollup's fold checkpoint, so the worker
-// re-folded already-counted history and the served supply came out
-// exactly 2×. The row-count reconciles (reconcile.go) could NOT catch it:
-// the raw rows were correct — only the derived checkpoint was doubled.
+// `sep41_supply_rollup` (migration 0085) holds a per-contract mint/burn/clawback
+// running total advanced by a watermark worker (AdvanceSEP41SupplyRollup: sum
+// only `ledger > last_ledger`). A history re-derive that rewrote raw
+// `sep41_supply_events` BELOW an existing checkpoint, without resetting it, made
+// the worker re-fold counted history (served supply exactly 2×). The row-count
+// reconciles (reconcile.go) could not catch it: the raw rows were correct.
 //
-// The guard here is the missing invariant, made auditable: for every
-// checkpointed contract, checkpoint.total == Σ(raw rows this checkpoint
-// folds). A double-fold shows up as checkpoint = k×truth (Delta > 0); a
-// dropped-below-checkpoint edit the worker never re-summed shows up as
-// checkpoint > truth or < truth. Zero tolerance catches both exactly.
+// The invariant: for every checkpointed contract, checkpoint.total == Σ(raw
+// rows this checkpoint folds). A double-fold shows up as checkpoint = k×truth;
+// a dropped-below-checkpoint edit as checkpoint != truth. Zero tolerance
+// catches both exactly.
 
 // RunningTotals is a per-kind i128-safe supply total (mint / burn /
 // clawback) a SEP-41 contract's incremental checkpoint carries. Each
@@ -53,29 +48,24 @@ type TotalsDrift struct {
 	Delta      *big.Int // Checkpoint − Truth (>0 over-count, <0 under-count)
 }
 
-// ReconcileRunningTotals is the DERIVED-CHECKPOINT reconcile: it diffs a
-// served incremental checkpoint (`checkpoint`, e.g. sep41_supply_rollup's
-// stored per-contract totals) against the AUTHORITATIVE re-sum of the
-// exact rows that checkpoint folds (`truth`, e.g. Σ sep41_supply_events
-// .amount FILTER (event_kind=…) up to the checkpoint's last_ledger). It
-// returns every (contract, kind) whose values differ by strictly more
-// than tolerance (abs), sorted by (contract, kind) for deterministic output.
+// ReconcileRunningTotals is the DERIVED-CHECKPOINT reconcile: it diffs a served
+// incremental checkpoint (`checkpoint`, e.g. sep41_supply_rollup's per-contract
+// totals) against the AUTHORITATIVE re-sum of the exact rows it folds (`truth`),
+// up to the checkpoint's last_ledger. It returns every (contract, kind) whose
+// values differ by strictly more than tolerance (abs), sorted by (contract, kind).
 //
 // TRUTH SOURCE. `truth` MUST be the same-source re-sum of the rows the
 // checkpoint folds, NOT the network-wide ClickHouse `supply_flows` lake. The PG
 // SEP-41 observer is watched-set-gated and bare-i128-only; the CH lake is
-// network-wide and map-variant-aware, so their per-contract totals
-// legitimately differ (migration 0085). Comparing straight to the lake would
-// false-positive on every map-variant token. The projection reconcile
-// (reconcile.go) separately proves `sep41_supply_events` faithful to the lake
-// row-for-row, so checkpoint == PG re-sum ⇒ checkpoint == lake truth.
+// network-wide and map-variant-aware, so their totals legitimately differ
+// (migration 0085) and comparing to the lake would false-positive on every
+// map-variant token. The projection reconcile (reconcile.go) separately proves
+// `sep41_supply_events` faithful to the lake, so checkpoint == PG re-sum ⇒
+// checkpoint == lake truth.
 //
 // tolerance nil is treated as exact (zero): the rollup sums the same integer
-// amounts the re-sum does, so any nonzero difference is a real fold error. A
-// caller MAY pass a small tolerance to absorb an in-flight advance racing the
-// re-sum snapshot.
-//
-// Pure, no IO: the caller fetches `checkpoint` and `truth`.
+// amounts the re-sum does. A caller MAY pass a small tolerance to absorb an
+// in-flight advance racing the re-sum snapshot. Pure, no IO.
 func ReconcileRunningTotals(checkpoint, truth map[string]RunningTotals, tolerance *big.Int) []TotalsDrift {
 	tol := tolerance
 	if tol == nil {

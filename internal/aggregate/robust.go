@@ -87,25 +87,15 @@ func madRat(vals []*big.Rat, centre *big.Rat) *big.Rat {
 // zeroScaleRelFloor is the fraction of the centre used as the robust
 // scale when the measured MAD is 0.
 //
-// MAD is 0 whenever a strict MAJORITY of vals sit at one exact price —
-// a routine shape for a bucket of trades filling against the same
-// resting order, or a pegged pair. Left at 0 the σ-equivalent band
-// collapses to the single point `centre`, so the filter dropped EVERY
-// honestly-differing print in the window (a 100.01 next to four 100s)
-// and handed VWAP the majority price alone. Substituting a relative
-// floor keeps the outlier rejection that the zero-MAD case exists to
-// provide while letting genuine price discovery through.
+// MAD is 0 whenever a strict MAJORITY of vals sit at one exact price (fills
+// against one resting order, a pegged pair). The sigma band then collapses to
+// the point `centre` and the filter dropped EVERY honestly-differing print. A
+// relative floor keeps the outlier rejection while letting real price
+// discovery through. Mirrors [robustBand] in served_guard.go.
 //
-// This mirrors [robustBand] in served_guard.go, which already solved
-// the same degeneracy by UNIONing the MAD band with a ratio band so a
-// collapsed MAD can never shrink the acceptance interval to a point.
-//
-// 1/200 = 0.5% of the centre. At the shipped default sigma of 4
-// (config `aggregate.outlier_sigma_threshold`) that is a ±2%
-// acceptance band around the majority price: comfortably wider than
-// the spread honest fills sit inside, and far tighter than the
-// fat-finger / wash prints the filter exists to remove (the M5 proof
-// case, a 2× print, is 100% away and is still dropped).
+// 1/200 = 0.5% of the centre. At the default sigma of 4 that is a +-2% band:
+// wider than honest fill spread, far tighter than fat-finger / wash prints (a
+// 2x print is still dropped).
 var zeroScaleRelFloor = big.NewRat(1, 200)
 
 // robustCentreScale returns the robust centre (median) and the
@@ -138,24 +128,19 @@ func robustCentreScale(vals []*big.Rat) (centre, scale *big.Rat) {
 // symmetricDev returns the deviation of p from centre measured symmetrically in
 // RATIO (log) space, in the same price units as the σ-equivalent scale.
 //
-// Why: an ADDITIVE band `|p − centre| > K·scale` is one-sided-blind. `p` can only
-// ever be `centre` below the centre, so once `K·scale >= centre` NO downward
-// print can exceed the threshold: a crash print or a decimal-shift fat finger
-// (on the served guard, even an exact 0) scores inside the band while the
-// mirror-image up-move is rejected. It goes blind at a relative scale of 1/K
-// (16.9 % for [FilterOutliers] at σ=4, 6.75 % for [robustBand] at K=10).
+// An ADDITIVE band `|p - centre| > K·scale` is blind below the centre: once
+// `K·scale >= centre` no downward print can exceed it, so a crash or
+// decimal-shift print (even an exact 0) passes while the mirror up-move is
+// rejected.
 //
-// Price noise is MULTIPLICATIVE (ADR-0046 §1: "a half-size print is exactly as
-// outlying as a double-size one"), so a price below the centre is first mirrored
-// to the up-move at the same log distance (centre²/p) and then measured from the
-// centre. The resulting band is
+// Price noise is MULTIPLICATIVE (ADR-0046 §1), so a price below the centre is
+// mirrored to the up-move at the same log distance (centre²/p) and measured
+// from the centre. The band is
 //
 //	[ centre² / (centre + K·scale) , centre + K·scale ]
 //
-// — geometrically symmetric, strictly positive, and IDENTICAL to the additive
-// band above the centre; below it the mirrored edge is never lower than the
-// additive one, so it only tightens the downward side. Exact *big.Rat
-// (ADR-0003): no logarithm, no float64.
+// identical to the additive band above the centre, tighter below it. Exact
+// *big.Rat (ADR-0003): no logarithm, no float64.
 //
 // Returns nil for a non-positive p against a positive centre (callers treat nil
 // as "rejected"); a non-positive centre returns the plain additive deviation.
