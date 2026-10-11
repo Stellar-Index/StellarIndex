@@ -1,33 +1,24 @@
 #!/usr/bin/env bash
-# render-sla-proof.sh — turn one k6 summary export into the durable,
-# self-describing SLA proof report the weekly run is supposed to leave
-# behind.
+# render-sla-proof.sh — turn one k6 summary export into the durable SLA proof
+# report the weekly run leaves behind.
 #
-# WHY THIS EXISTS. A weekly run that measures NOTHING goes red, and one
-# that does exports `summary.json` into the job summary. Neither closes
-# the loop, because the step that makes the evidence DURABLE — promoting the
-# numbers to docs/operations/sla-proof-<YYYY-MM-DD>.md, which is the only
-# thing scripts/ci/check-sla-evidence.sh counts as evidence — cannot be a
-# manual procedure over Grafana/promql that depends on an unset secret.
+# Why: the step that makes the evidence durable (promoting numbers to
+# docs/operations/sla-proof-<YYYY-MM-DD>.md, the only thing
+# scripts/ci/check-sla-evidence.sh counts) cannot be a manual procedure that
+# depends on an unset secret. Deterministic and offline (no network, k6 or
+# gh), so scripts/ci/render-sla-proof-test.sh runs it on every PR.
 #
-# This script is that step. It is deterministic and offline (no
-# network, no k6, no gh), so it is exercised on every PR by
-# scripts/ci/render-sla-proof-test.sh rather than once a week.
-#
-# THE RULE IT ENFORCES: an unlabelled number is not evidence. The report
-# is refused outright (rc 2, nothing written) unless the run can name its
-# own provenance — target, window, method, scenario, commit, k6 version —
-# and unless the export actually carries the numbers the claim is about.
-# A run that cannot produce evidence must fail loudly; it must never
-# publish a partial report that reads as a pass.
+# Rule: an unlabelled number is not evidence. The report is refused (rc 2,
+# nothing written) unless the run names its provenance (target, window,
+# method, scenario, commit, k6 version) and the export carries the numbers
+# the claim is about. Never publish a partial report that reads as a pass.
 #
 # Usage:
 #   render-sla-proof.sh --summary <k6-summary.json> [--out-dir <dir>]
 #
-# The filename is DERIVED from SLA_PROOF_ENDED_AT, never passed in: a
-# report whose name disagrees with the window it measured is the
-# mislabelling this script exists to prevent. The written path is echoed
-# as the last line of stdout.
+# The filename is derived from SLA_PROOF_ENDED_AT, never passed in, so a name
+# cannot disagree with the measured window. The written path is the last
+# stdout line.
 #
 # Required provenance (env; every one must be non-empty):
 #   SLA_PROOF_TARGET      base URL that was measured
@@ -42,15 +33,13 @@
 #   SLA_PROOF_PROM_SINK   remote-write sink description (default: none)
 #   SLA_PROOF_NOTE        free text appended to "Notes / caveats"
 #
-# Exit codes — the workflow branches on all three, so they are a contract:
+# Exit codes (the workflow branches on all three):
 #   0  PASS     report written; every declared k6 threshold held.
-#   1  FAIL     report written; at least one declared threshold was
-#               BREACHED. Still evidence — a failing proof is a real
-#               measurement and must be retained — but the run is red.
-#   2  REFUSED  nothing written: the inputs cannot support a labelled
-#               claim (missing/unparseable export, missing provenance,
-#               zero requests, absent headline metric, credential in the
-#               target URL).
+#   1  FAIL     report written; a declared threshold was BREACHED. Still
+#               retained as evidence, but the run is red.
+#   2  REFUSED  nothing written: missing/unparseable export, missing
+#               provenance, zero requests, absent headline metric, or a
+#               credential in the target URL.
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
@@ -96,9 +85,8 @@ EOF
 fi
 
 # ── Provenance gate ─────────────────────────────────────────────────────
-# Every field here answers one of "what, against what, when, by which
-# method, at which commit". A report missing any of them is a number
-# without a claim attached.
+# A report missing any of what/where/when/method/commit is a number without
+# a claim attached.
 missing=""
 for v in SLA_PROOF_TARGET SLA_PROOF_SCENARIO SLA_PROOF_K6_VERSION \
          SLA_PROOF_COMMIT SLA_PROOF_STARTED_AT SLA_PROOF_ENDED_AT; do
@@ -116,9 +104,8 @@ EOF
   exit 2
 fi
 
-# A committed report is public. The target is recorded verbatim, so a URL
-# carrying userinfo would publish a credential. Refuse rather than
-# silently strip: the caller must fix the input.
+# Committed reports are public and record the target verbatim, so userinfo
+# would publish a credential. Refuse rather than strip.
 case "$SLA_PROOF_TARGET" in
   *"@"*)
     cat >&2 <<'EOF'
@@ -146,8 +133,8 @@ done
 
 mkdir -p "$OUT_DIR"
 
-# Ties the report to the exact bytes it was rendered from. `shasum -a 256`
-# is present on macOS and on the ubuntu runner; sha256sum is not on macOS.
+# Pins the report to the bytes it was rendered from; sha256sum is absent on
+# macOS.
 if command -v shasum >/dev/null 2>&1; then
   SUMMARY_SHA="$(shasum -a 256 "$SUMMARY")"
 else
@@ -159,9 +146,7 @@ export SUMMARY_SHA
 export SLA_PROOF_SUMMARY_PATH="$SUMMARY"
 export SLA_PROOF_OUT_DIR="$OUT_DIR"
 
-# Export explicitly so the renderer below sees them whether the caller
-# exported them, set them inline, or assigned them as plain shell
-# variables in a wrapper.
+# Export explicitly so the renderer sees them however the caller set them.
 export SLA_PROOF_TARGET SLA_PROOF_SCENARIO SLA_PROOF_K6_VERSION
 export SLA_PROOF_COMMIT SLA_PROOF_STARTED_AT SLA_PROOF_ENDED_AT
 export SLA_PROOF_RUN_URL="${SLA_PROOF_RUN_URL:-}"

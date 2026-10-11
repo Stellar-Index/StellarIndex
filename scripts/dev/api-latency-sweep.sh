@@ -1,21 +1,18 @@
 #!/usr/bin/env bash
 #
-# api-latency-sweep.sh — granular latency profile of the entire
-# anonymous public GET surface. The "kitchen sink": hit every
-# non-streaming, non-auth endpoint N times, compute p50/p95/p99/max,
-# rank slowest-first, flag anything over the SLO (p95 < 200 ms)
+# api-latency-sweep.sh — latency profile of the whole anonymous public GET
+# surface: hit every non-streaming, non-auth endpoint N times, compute
+# p50/p95/p99/max, rank slowest-first, flag anything over the SLO (p95 < 200 ms)
 # and a hard "cause for concern" ceiling (>1 s).
 #
-# This is a DIAGNOSTIC, not a contract test — r1-smoke.sh pins
-# behaviour/shape; this measures *speed* and surfaces what to fix.
-# Non-2xx is reported (ok%), never a hard fail by itself; the exit
-# code counts only endpoints over the CRIT latency ceiling so cron /
-# Healthchecks.io can consume it.
+# A DIAGNOSTIC, not a contract test (r1-smoke.sh pins behaviour/shape). Non-2xx
+# is reported (ok%), never a failure by itself; the exit code counts only
+# endpoints over the CRIT ceiling, for cron / Healthchecks.io.
 #
-# Isolation matters:
-#   - Run ON the host against localhost  → pure server compute
+# Where you run it decides what it measures:
+#   - On the host against localhost → pure server compute
 #       ssh root@r1 'bash -s' < scripts/dev/api-latency-sweep.sh
-#   - Run from a VPS against the public URL → + network + edge/Caddy
+#   - From a VPS against the public URL → + network + edge/Caddy
 #       API_BASE_URL=https://api.stellarindex.io bash …api-latency-sweep.sh
 #   - Point at r2/r3 the same way → cross-region comparison
 #
@@ -23,15 +20,13 @@
 #   API_BASE_URL   default http://localhost:3000
 #   ITERS          samples per endpoint (default 20)
 #   SWEEP_TIMEOUT  per-request cap, seconds (default 15)
-#   CACHE_BUST=1   append a unique query param each hit → exposes the
-#                  UNCACHED server cost (the "should be cached but
-#                  isn't" signal). Off = realistic warm behaviour.
+#   CACHE_BUST=1   unique query param per hit → exposes UNCACHED server cost
+#                  (the "should be cached but isn't" signal); off = warm
 #   WARMUP=1       discard the first hit per endpoint (prime caches)
-#   JSON=1         emit a JSON array instead of the table (machine /
-#                  cross-region diffing)
+#   JSON=1         emit a JSON array instead of the table (cross-region diffing)
 #
-# Flags:  --spec-check   list OpenAPI GET paths NOT covered here
-#                         (anti-rot; run from a repo checkout) then exit
+# Flags:  --spec-check   list OpenAPI GET paths NOT covered here (anti-rot; run
+#                        from a repo checkout) then exit
 #
 set -uo pipefail
 
@@ -51,16 +46,15 @@ if [ -t 1 ] && [ "$JSON" != "1" ]; then
   B="$(printf '\033[1m')"; D="$(printf '\033[2m')"; O="$(printf '\033[0m')"
 else G=""; Y=""; R=""; B=""; D=""; O=""; fi
 
-# A real on-chain asset that exists on pubnet with history (the USDC
-# issuer r1-smoke.sh uses) + an issuer strkey for the issuer route.
+# A real pubnet asset with history (the USDC issuer r1-smoke.sh uses) and its
+# issuer strkey for the issuer route.
 U="USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 ISS="GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
-# name|path  — the anonymous, non-streaming GET surface. Streaming
-# SSE (/v1/*/stream, /v1/oracle/streams) and auth-gated routes
-# (/v1/account/*, /v1/dashboard/*, /v1/auth/*, /v1/signup/*) are
-# intentionally excluded (they'd hang or 401 — meaningless here).
-# --spec-check diffs this against the OpenAPI spec so it can't rot.
+# name|path — the anonymous, non-streaming GET surface. SSE (/v1/*/stream,
+# /v1/oracle/streams) and auth-gated routes (/v1/account/*, /v1/dashboard/*,
+# /v1/auth/*, /v1/signup/*) are excluded: they hang or 401. --spec-check diffs
+# this list against the OpenAPI spec so it cannot rot.
 ENDPOINTS=(
   "healthz|/v1/healthz"
   "readyz|/v1/readyz"

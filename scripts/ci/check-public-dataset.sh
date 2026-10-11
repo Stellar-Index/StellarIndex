@@ -2,51 +2,40 @@
 # check-public-dataset.sh — AWS Public Blockchain dataset drift tripwire
 # (ADR-0043 §2).
 #
-# r1's own galexie-archive was capacity-trimmed below ledger 49,984,000
-# (ADR-0027 hot floor; galexie-archive-trim deletes only
-# after the AWS object HEADs OK). So the "second independent raw-LCM
-# archive" ADR-0043 relies on for deep-history re-derive is
-# s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ — a dataset
-# published by the AWS Open Data Sponsorship program that we do NOT
-# control. Nothing watched it. This script is the decision core for
-# .github/workflows/public-dataset-check.yml: it takes the bucket's
-# top-level partition listing + its .config.json manifest and asserts
-# the dataset still has the shape every consumer in this repo assumes
-# (galexie-archive-fill.sh, galexie-archive-trim, ADR-0027 cold reads).
+# r1's galexie-archive is trimmed below ledger 49,984,000 (ADR-0027 hot
+# floor; galexie-archive-trim deletes only after the AWS object HEADs OK), so
+# deep-history re-derive relies on s3://aws-public-blockchain/v1.1/stellar/
+# ledgers/pubnet/, a dataset we do not control. Decision core for
+# .github/workflows/public-dataset-check.yml: asserts the bucket's partition
+# listing and .config.json manifest still have the shape the consumers
+# assume (galexie-archive-fill.sh, galexie-archive-trim, ADR-0027 cold reads).
 #
-# Assertions (any failure → exit 1, all are reported, first failure does
-# not short-circuit the rest):
-#   1. manifest unchanged — networkPassphrase pubnet, ledgersPerBatch 1,
+# Assertions (any failure exits 1; all are reported, none short-circuit):
+#   1. manifest unchanged: networkPassphrase pubnet, ledgersPerBatch 1,
 #      batchesPerPartition 64000, compression zstd.
-#   2. every partition prefix is `HEX--start-end` with end-start+1 ==
-#      64000, start aligned to 64000, and HEX == 0xFFFFFFFF - start
-#      (the descending-hex sort key galexie names partitions with).
-#   3. contiguous coverage from ledger 0 to the last partition's end
-#      (no gap, no overlap, no duplicate start).
-#   4. our trimmed range [TRIM_LO, TRIM_HI] is fully inside that
-#      contiguous coverage — this is the range r1 can no longer serve
-#      from its own storage.
-#   5. the last partition's end >= tip - 2 partitions, where tip comes
-#      from PUBLIC_DATASET_TIP (or Horizon's history_latest_ledger when
-#      unset). An unreachable tip source SKIPS this assertion with a
-#      warning — a Horizon outage is not dataset drift.
+#   2. every prefix is `HEX--start-end` with end-start+1 == 64000, start
+#      aligned to 64000, HEX == 0xFFFFFFFF - start (galexie's descending-hex
+#      sort key).
+#   3. contiguous coverage from ledger 0 to the last end (no gap, overlap
+#      or duplicate start).
+#   4. the trimmed range [TRIM_LO, TRIM_HI], which r1 can no longer serve
+#      locally, lies inside that contiguous coverage.
+#   5. last end >= tip - 2 partitions; tip is PUBLIC_DATASET_TIP or Horizon's
+#      history_latest_ledger. An unreachable tip SKIPS this with a warning
+#      (a Horizon outage is not dataset drift).
 #
-# Inputs (all optional; the workflow sets the FIXTURE-less live path):
-#   PUBLIC_DATASET_LISTING  path to a file of partition prefixes, one per
-#                           line — either bare (`FFFFFFFF--0-63999`) or
-#                           raw `aws s3 ls` lines (`PRE FFFFFFFF--0-63999/`).
-#                           Unset → the script runs `aws s3 ls
-#                           --no-sign-request` itself.
-#   PUBLIC_DATASET_MANIFEST path to the .config.json. Unset → fetched.
-#   PUBLIC_DATASET_TIP      integer ledger tip. Unset → Horizon.
-#   TRIM_LO / TRIM_HI       trimmed range (default 64000 / 49983999 —
-#                           the [genesis-chunk, hot-floor) window from
+# Inputs (all optional):
+#   PUBLIC_DATASET_LISTING  file of partition prefixes, one per line, bare
+#                           (`FFFFFFFF--0-63999`) or raw `aws s3 ls` lines
+#                           (`PRE FFFFFFFF--0-63999/`). Unset: runs
+#                           `aws s3 ls --no-sign-request`.
+#   PUBLIC_DATASET_MANIFEST path to the .config.json. Unset: fetched.
+#   PUBLIC_DATASET_TIP      integer ledger tip. Unset: Horizon.
+#   TRIM_LO / TRIM_HI       trimmed range (default 64000 / 49983999, the
+#                           [genesis-chunk, hot-floor) window of
 #                           docs/architecture/ha-plan.md §3.2).
-#   GITHUB_OUTPUT           when set, partition_count= / last_partition=
-#                           / tip= / verdict= are appended for the
-#                           workflow's step summary.
-#
-# Exit code: 0 = dataset intact, 1 = DRIFT. Report on stdout either way.
+#   GITHUB_OUTPUT           when set, partition_count= / last_partition= /
+#                           contiguous_to= / tip= are appended.
 set -euo pipefail
 
 BUCKET_PREFIX="s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
@@ -88,17 +77,15 @@ if [ -n "${PUBLIC_DATASET_LISTING:-}" ]; then
 else
   raw="$(aws s3 ls --no-sign-request "$BUCKET_PREFIX/")"
 fi
-# Normalise: last whitespace-separated field, strip trailing '/', drop
-# dotfiles (.config.json) and blanks. Sort numerically by start ledger.
+# Normalise: last field, strip trailing '/', drop dotfiles and blanks.
 prefixes="$(printf '%s\n' "$raw" | awk 'NF{print $NF}' | sed 's:/$::' | grep -v '^\.' | grep -v '^$' || true)"
 count="$(printf '%s\n' "$prefixes" | grep -c . || true)"
 if [ "$count" -eq 0 ]; then
   problem "listing is EMPTY — no partition prefixes under $BUCKET_PREFIX/"
 fi
 
-# sort_by_start — order prefixes by their start ledger. Prefixes that do
-# not parse keep a key of -1 so they reach the shape check (and are
-# reported as malformed) instead of being silently dropped here.
+# Orders prefixes by start ledger. Unparseable ones get key -1 so the shape
+# check reports them instead of dropping them.
 sort_by_start() {
   awk '{
     key = -1
@@ -141,8 +128,8 @@ while IFS= read -r p; do
 done < <(printf '%s\n' "$prefixes" | sort_by_start)
 
 # ── 4. Trimmed range must be inside contiguous coverage ──
-# Coverage is contiguous 0..first_gap-1; compute that bound directly so
-# a gap ABOVE the trimmed range does not mask a hole inside it.
+# Compute the contiguous bound directly so a gap ABOVE the trimmed range
+# does not mask a hole inside it.
 contig_end=-1
 prev_end=-1
 while IFS= read -r p; do

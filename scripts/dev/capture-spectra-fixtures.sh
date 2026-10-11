@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Capture real Spectra events (registry, PT, YT) from a live stellar-rpc.
 # Writes one fixture JSON per event under
-# test/fixtures/spectra/<wasm_hash>/<kind>_*.json, where <kind> is the
-# event's topic[0] symbol (pt_minted, redeem, transfer, ...) and
-# <wasm_hash> is the emitting contract's own executable hash, resolved
-# via getLedgerEntries (the registry, PTs and YTs have different hashes).
+# test/fixtures/spectra/<wasm_hash>/<kind>_*.json: <kind> is the event's
+# topic[0] symbol (pt_minted, redeem, transfer, ...), <wasm_hash> the
+# emitting contract's own executable hash from getLedgerEntries (registry,
+# PTs and YTs differ).
 #
 # Needs python3 (strkey decode + instance-key encode) beside jq/curl.
 # stellar-rpc is for fixture capture only (AGENTS.md invariant 6).
@@ -19,21 +19,20 @@
 #   -s  Start ledger (default: the RPC's oldest retained ledger).
 #
 # Environment:
-#   WASM_HASH   Fallback directory label when a contract's hash cannot be
-#               resolved (default: "unknown-wasm-hash").
+#   WASM_HASH   Fallback directory label when a hash cannot be resolved
+#               (default: "unknown-wasm-hash").
 #   MAX_PAGES   getEvents pages per contract (default: 40).
 #
-# Lake mode (history older than the RPC's ~7 days): set LAKE_SSH to a host
-# running ClickHouse (native port 9300, read-only SELECTs) and the events
-# are exported from stellar.contract_events instead; the emitting
-# contract's hash comes from stellar.contract_instance_changes. One
-# fixture per (wasm_hash, kind) for the earliest event, plus the
-# LAKE_PICKS exemplars (ledger:tx12:event_index) the golden tests cite.
-# Fixtures also carry op_index and event_index.
+# Lake mode (history older than the RPC's ~7 days): set LAKE_SSH to a
+# ClickHouse host (native port 9300, read-only SELECTs). Events come from
+# stellar.contract_events, the emitting hash from
+# stellar.contract_instance_changes. One fixture per (wasm_hash, kind) for
+# the earliest event, plus the LAKE_PICKS exemplars (ledger:tx12:event_index)
+# the golden tests cite; fixtures also carry op_index and event_index.
 #   LAKE_SSH=root@136.243.90.96 scripts/dev/capture-spectra-fixtures.sh
 #
-# Contract ids: PT/YT/IBT are from Spectra's operator API
-# (app.spectra.finance/api/v1/stellar/pools); the registry, factory, order
+# Contract ids: PT/YT/IBT from Spectra's operator API
+# (app.spectra.finance/api/v1/stellar/pools); registry, factory, order
 # engines, router and Blend wrappers from the lake (docs/protocols/spectra.md).
 
 set -euo pipefail
@@ -46,8 +45,8 @@ JQ="${JQ:-jq}"
 CURL="${CURL:-curl}"
 WASM_HASH="${WASM_HASH:-unknown-wasm-hash}"
 
-# role|contract|market decimals. IBT wrappers are included for their
-# own transfer/mint/burn shape.
+# role|contract|market decimals. IBT wrappers are here for their own
+# transfer/mint/burn shape.
 CONTRACTS="
 registry|CCUGRASBWD5SXDYMS7NM437FQ7KNKHFX74D2VRJVTRU4J2TWDMURUW3V|
 factory|CC4ZVRIYM33M5FVAUDFWK7JXO3PWIVSKKEBXVEEC5E6KPYISXIMLUJCP|
@@ -83,10 +82,9 @@ fixture_capture_setup_outdir spectra
 FIXTURE_ROOT="$(dirname "$OUT_DIR")"
 rmdir "$OUT_DIR" 2>/dev/null || true
 
-# Exemplars beyond the earliest-per-kind: pt_deployed at three durations
-# (90d, 30d, 180d), pt_minted by an EOA and by the order engine, a redeem,
-# an order's register/fill/cancel, a Blend wrapper deposit/withdraw and the
-# second limit_order_engine_change.
+# Exemplars beyond earliest-per-kind: pt_deployed at three durations, pt_minted
+# by an EOA and by the order engine, a redeem, an order's register/fill/cancel,
+# a Blend wrapper deposit/withdraw, the second limit_order_engine_change.
 LAKE_PICKS="${LAKE_PICKS:-63782624:dc730b2a132e:6 64453034:e896e7e581db:6 64453038:8f0b4559a79b:6 63812811:f2b685315023:2 64347726:c94f952f9867:20 63812816:2a008c6241e0:3 64347726:c94f952f9867:4 64347726:c94f952f9867:23 64347750:6ea1aaca35d6:0 64270260:1ffd3ba58efb:3 64270260:1ffd3ba58efb:8 63780164:ae5298ae3817:0}"
 
 if [[ -n "${LAKE_SSH:-}" ]]; then
@@ -138,8 +136,8 @@ PY
   exit 0
 fi
 
-# rpc_retry is rpc() retried while the reply is not JSON (public RPCs
-# answer rate limits with plain text).
+# rpc_retry: rpc() retried while the reply is not JSON (public RPCs answer
+# rate limits with plain text).
 rpc_retry() {
   local out try
   for try in 1 2 3 4 5; do

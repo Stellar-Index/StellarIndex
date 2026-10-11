@@ -2,27 +2,22 @@
 # lint-ansible-tasks.sh — two structural guards over configs/ansible/**.
 #
 # Rule 1: pipefail-needs-bash. `ansible.builtin.shell` runs its body via
-#   /bin/sh, which is dash on every host this role targets (Ubuntu noble).
-#   dash < 0.5.13 rejects `set -o pipefail` ("set: Illegal option -o
-#   pipefail", rc=2) BEFORE the first real statement, so the task fails and
-#   the play aborts on every host. Any shell task whose body
-#   sets pipefail MUST declare `executable: /bin/bash`. Scripts shipped via
-#   `copy: content:` carry their own shebang and are not shell tasks, so
-#   they are out of scope.
+#   /bin/sh, which is dash on every target host (Ubuntu noble). dash < 0.5.13
+#   rejects `set -o pipefail` (rc=2) before the first real statement, failing
+#   the task and aborting the play on every host. A shell task whose body sets
+#   pipefail MUST declare `executable: /bin/bash`. Scripts shipped via
+#   `copy: content:` carry their own shebang and are out of scope.
 #
-# Rule 2: secret-on-argv. A vault secret interpolated into `argv:` / `cmd:`
-#   of a command/shell task is visible to every local uid in
-#   /proc/<pid>/cmdline (+ ps, + auditd execve records) for the life of the
-#   process; `no_log: true` hides it from Ansible's OWN output only. Feed
-#   secrets via `stdin:` or `environment:` instead. Same rule for shipped
-#   shell scripts: `mc alias set` / `mc admin user add` must take the
-#   secret on stdin, not as a positional argument (galexie-append.sh ran
-#   the argv form on every galexie restart).
+# Rule 2: secret-on-argv. A vault secret interpolated into `argv:` / `cmd:` of
+#   a command/shell task is visible to every local uid in /proc/<pid>/cmdline
+#   (+ ps, + auditd execve records) for the life of the process; `no_log: true`
+#   hides it from Ansible's OWN output only. Feed secrets via `stdin:` or
+#   `environment:`. Same for shipped shell scripts: `mc alias set` /
+#   `mc admin user add` must take the secret on stdin, not as an argument.
 #
 # Both rules are line-oriented (awk), deliberately conservative, and
-# self-tested by lint-ansible-tasks-test.sh. Exit code = number of
-# findings (0 = clean). Prints a self-accounting line so a scan of zero
-# files cannot pass silently.
+# self-tested by lint-ansible-tasks-test.sh. Exit code = number of findings.
+# Prints a self-accounting line so a scan of zero files cannot pass silently.
 
 set -uo pipefail
 
@@ -36,7 +31,7 @@ if [ ! -d "$ANSIBLE_DIR" ]; then
   exit 1
 fi
 
-# (bash 3.2 on macOS has no mapfile — fill the arrays with read loops.)
+# bash 3.2 on macOS has no mapfile: fill the arrays with read loops.
 yml_files=()
 while IFS= read -r f; do yml_files+=("$f"); done < <(
   find "$ANSIBLE_DIR" -type f \( -name '*.yml' -o -name '*.yaml' \) ! -path '*/inventory/*' | sort)
@@ -49,11 +44,10 @@ if [ "${#yml_files[@]}" -eq 0 ]; then
   exit 1
 fi
 
-# Grandfathered violations (shrink-only; lint-baseline-growth.sh
-# watches scripts/ci/*.baseline). Format: `<rule>\t<path>` per line. A
-# baselined (rule, path) pair is reported but not counted; a baseline entry
-# with NO matching finding is STALE and fails the gate so the list can only
-# shrink.
+# Grandfathered violations (shrink-only; lint-baseline-growth.sh watches
+# scripts/ci/*.baseline). Format: `<rule>\t<path>` per line. A baselined
+# (rule, path) pair is reported but not counted; an entry with NO matching
+# finding is STALE and fails the gate, so the list can only shrink.
 BASELINE="${BASELINE:-scripts/ci/lint-ansible-tasks.baseline}"
 baseline_entries=()
 if [ -f "$BASELINE" ]; then
@@ -68,10 +62,9 @@ findings=0
 report=""   # accumulated finding lines: "<file>:<line>: <rule>: …"
 
 # ── Rule 1 + Rule 2 over task files ─────────────────────────────────────
-# A "task block" starts at a `- name:` (or an unnamed `- module:`) list item
-# and runs to the next one. Within a block we track the module and, by
-# indentation, which top-level task key (argv/cmd/environment/stdin/…) the
-# current line belongs to.
+# A task block starts at a `- name:` (or unnamed `- module:`) list item and
+# runs to the next. Within it we track the module and, by indentation, which
+# task key (argv/cmd/environment/stdin/…) the current line belongs to.
 for f in "${yml_files[@]}"; do
   out="$(awk -v file="$f" '
     function flush() {
@@ -130,8 +123,8 @@ for f in "${yml_files[@]}"; do
 done
 
 # ── Rule 2 over shipped shell scripts ───────────────────────────────────
-# Join backslash continuations so `mc alias set live "$URL" \
-#   "$KEY" "$SECRET"` is judged as one command.
+# Join backslash continuations so a multi-line `mc alias set …` is judged as
+# one command.
 for f in ${sh_files[@]+"${sh_files[@]}"}; do
   out="$(awk -v file="$f" '
     { buf = buf $0; ln = (ln ? ln : NR)

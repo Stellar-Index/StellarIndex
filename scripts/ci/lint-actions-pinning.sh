@@ -1,40 +1,25 @@
 #!/usr/bin/env bash
-# lint-actions-pinning.sh — enforce SHA-pinning policy for third-
-# party GitHub Actions.
+# lint-actions-pinning.sh — third-party GitHub Actions must be pinned to a
+# 40-hex commit SHA (with a version comment).
 #
-# Without SHA-pinning, a
-# compromised tag on a third-party action repo can land arbitrary
-# code on every CI run. `actions/*` is hosted by GitHub itself
-# (still mutable but a single trust boundary); everything else
-# must be pinned by SHA + version comment.
+# A compromised tag on a third-party action repo would otherwise run arbitrary
+# code on every CI run. `actions/*` and `github/*` are GitHub's own (mutable,
+# but one trust boundary) and exempt.
 #
-# The gate enumerates `uses:` lines across the workflow tree and
-# fails when a third-party one is not pinned to a 40-hex commit SHA.
+# Scans the whole workflow tree, not a diff: a diff-only arm
+# (`git diff origin/main -- .github/workflows/*.yml`) is empty on a
+# push-to-main checkout, where HEAD *is* origin/main, so an unpinned action
+# would pass. A tree scan is true on every event.
 #
-# WHY THE WHOLE TREE AND NOT A DIFF. A diff-only hard-fail arm
-# (`git diff origin/main -- .github/workflows/*.yml`) would judge the tree
-# against the ref it is standing on: on a push-to-main checkout HEAD *is*
-# origin/main, the diff is empty and the arm never evaluates, so a commit
-# introducing an unpinned action would pass. Scanning the tree is one grep per workflow file and is
-# true on every event, so there is no diff base to get wrong.
+# Workflow: Dependabot (.github/dependabot.yml) opens the bump PR; the
+# reviewer resolves the tag with `gh api repos/<owner>/<repo>/commits/<tag>
+# --jq .sha` and writes the SHA with the version as a trailing comment; this
+# gate refuses the merge until that is done.
 #
-# Workflow:
-#   1. Dependabot (already configured for github-actions, see
-#      .github/dependabot.yml) opens PRs against third-party actions
-#      when the upstream cuts a new version.
-#   2. The operator reviewing the Dependabot PR resolves the tag to a
-#      commit SHA via `gh api repos/<owner>/<repo>/commits/<tag>
-#      --jq .sha` and updates the `uses:` line to that SHA (with the
-#      version as a trailing comment).
-#   3. This gate refuses the merge until that step has happened.
-#
-# The repository-policy half (allowed_actions=selected,
-# require_sha_pinning) is meant to be set in the GitHub admin UI, but is
-# NOT: `gh api repos/<owner>/<repo>/actions/permissions` returns
-# `allowed_actions: "all"`, `sha_pinning_required: false` on this repo. See
-# docs/operations/audit-remediation-operator-actions.md for the operator
-# steps. This script enforces only the workflow-side
-# discipline (the `uses:` lines below); it cannot enforce the repo setting.
+# Not enforced here: the repo-level setting (allowed_actions=selected,
+# require_sha_pinning). It is unset on this repo
+# (`gh api repos/<owner>/<repo>/actions/permissions` shows "all" / false);
+# see docs/operations/audit-remediation-operator-actions.md.
 #
 # Usage:
 #   bash scripts/ci/lint-actions-pinning.sh              # .github/workflows
@@ -49,8 +34,8 @@ ROOTS=("${@:-.github/workflows}")
 # A pin is a SHA when it's 40 hex chars after the `@`.
 SHA_RE='@[0-9a-f]{40}([[:space:]]|$)'
 
-# Both extensions: GitHub honours `.yaml` too, and a gate that reads
-# only `.yml` can be stepped around by the file name alone.
+# Both extensions: GitHub honours `.yaml` too, and reading only `.yml` can be
+# bypassed by file name alone.
 FILES=()
 while IFS= read -r f; do
   FILES+=("$f")
@@ -68,18 +53,14 @@ for f in "${FILES[@]}"; do
   while IFS= read -r hit; do
     lineno="${hit%%:*}"
     body="${hit#*:}"
-    # Anchor on a YAML key boundary. An unanchored `uses:` also matches
-    # the tail of ordinary prose — "Usual causes: sshd ..." inside an
-    # error message parsed as the action `sshd` and hard-failed the PR
-    # that introduced it. A `uses:` key is always at the start of a line
-    # or a list item.
+    # Anchor on a YAML key boundary: an unanchored `uses:` matched the tail of
+    # prose ("Usual causes: sshd ...") and parsed `sshd` as an action.
     if ! [[ "$body" =~ (^|[[:space:]]|-)uses:[[:space:]]+([^[:space:]]+) ]]; then
       continue
     fi
     ref="${BASH_REMATCH[2]}"
     USES=$((USES + 1))
-    # actions/* and github/* are GitHub's own namespaces — one trust
-    # boundary, exempted deliberately. Everything else is third-party.
+    # actions/* and github/* are GitHub's own namespaces, exempt by design.
     short="${ref%@*}"
     if [[ "$short" == actions/* || "$short" == github/* ]]; then
       continue

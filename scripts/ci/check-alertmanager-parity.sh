@@ -2,48 +2,41 @@
 # check-alertmanager-parity.sh — the two Alertmanager apply paths must
 # render the same routing.
 #
-# WHY THIS EXISTS. /etc/prometheus/alertmanager.yml has two producers:
-#
+# /etc/prometheus/alertmanager.yml has two producers:
 #   configs/alertmanager/alertmanager.r1.yml   (+ apply.sh, the r1 path)
 #   configs/ansible/roles/prometheus/templates/alertmanager.yml.j2
 #                                              (the role, for new hosts)
+# A routing fix made in one file is silently reverted by the next apply of
+# the other (e.g. back to `silent`, a receiver with no *_configs block that
+# accepts alerts and delivers them to nobody).
 #
-# A routing fix made in one file only is silently reverted by the next
-# apply of the other path (e.g. back to `silent`, a receiver with no
-# *_configs block that accepts alerts and delivers them to nobody).
+# Parity: rendered with identical inputs, the two agree on `global`, `route`
+# (whole tree), `inhibit_rules` and `receivers`, including the Discord Go
+# templates, whose payload bounds keep an alert group under Discord's
+# 4096-character embed limit (past it every ticket alert is dropped, HTTP 400).
 #
-# WHAT PARITY MEANS. Rendered with identical inputs, the two must agree
-# on `global`, `route` (the whole tree), `inhibit_rules` and `receivers`
-# — including the Discord Go templates, whose payload bounds are what
-# keep a large alert group under Discord's 4096-character embed limit;
-# past it every ticket alert is dropped with HTTP 400.
+# Both render branches are compared, because they fail differently:
+#   wired — every URL set. Catches routing or template divergence.
+#   dark  — every URL empty. Catches divergence in the DEGRADED shape:
+#           apply.sh strips the `*_configs:` block with a line-based Python
+#           walker, the template with `{% if %}`, and the two can disagree
+#           about what is left. Invisible until a URL is unset.
 #
-# BOTH RENDER BRANCHES are compared, because they fail differently:
+# `alertmanager_pagerduty_key` is rendered EMPTY: the template's optional
+# PagerDuty leg on chat-page has no r1 equivalent. That is a deliberate
+# multi-host extra, not drift. If the r1 path grows one, set the key here.
 #
-#   wired — every URL set. Catches a routing or template divergence.
-#   dark  — every URL empty. Catches a divergence in the DEGRADED shape:
-#           apply.sh strips the `*_configs:` block with a line-based
-#           Python walker, the template drops it with `{% if %}`, and
-#           the two mechanisms can disagree about what is left behind.
-#           Getting this wrong is invisible until the day a URL is unset.
-#
-# `alertmanager_pagerduty_key` is rendered EMPTY. The template carries an
-# optional PagerDuty leg on chat-page that the r1 file has no equivalent
-# for; that is a deliberate multi-host-only extra, not drift, so parity
-# is defined at the shape both files can express. If the r1 path ever
-# grows a PagerDuty leg, set the key here and the gate covers it too.
-#
-# Rendering uses apply.sh's OWN `--render-only` mode rather than a second
-# copy of the block-stripper: a parity gate that reimplements the thing
-# it checks proves only that the two copies agree.
+# Rendering uses apply.sh's own `--render-only` rather than a second copy of
+# the block-stripper: a parity gate that reimplements what it checks proves
+# only that the two copies agree.
 #
 # Environment:
-#   AM_PARITY_ROOT  repo root to check (default: this repo). The
-#                   self-test points it at a fixture tree.
+#   AM_PARITY_ROOT  repo root to check (default: this repo); the self-test
+#                   points it at a fixture tree.
 #
-# Exit: 0 = the two paths agree, 1 = they diverge (or the gate could not
-# run in CI). Skips with 0 locally when no python3 with jinja2 + PyYAML
-# is available, matching lint-jinja-templates.sh; CI is fail-closed.
+# Exit: 0 = the paths agree, 1 = they diverge (or the gate could not run in
+# CI). Skips with 0 locally when no python3 with jinja2 + PyYAML is
+# available, like lint-jinja-templates.sh; CI is fail-closed.
 set -euo pipefail
 
 ROOT="${AM_PARITY_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
@@ -61,9 +54,8 @@ for f in "$J2" "$APPLY" "$R1"; do
 done
 
 # ── interpreter discovery ──────────────────────────────────────────
-# Same three candidates as lint-jinja-templates.sh, plus PyYAML: ansible
-# ships its own interpreter with both, which is what makes this runnable
-# on a workstation that has ansible but no system jinja2.
+# Same candidates as lint-jinja-templates.sh, plus PyYAML; ansible's own
+# interpreter has both, so this runs on a workstation without system jinja2.
 PY=""
 for cand in python3 /opt/homebrew/bin/python3; do
   if command -v "$cand" >/dev/null 2>&1 &&
@@ -89,9 +81,8 @@ TMPD=$(mktemp -d)
 trap 'rm -rf "$TMPD"' EXIT
 
 # ── render the r1 path, both branches, through apply.sh itself ─────
-# The dummy URLs are shaped like the real ones (hc-ping.com /
-# discord.com/api/webhooks) so a renderer that ever grows a
-# host-specific rule fails here rather than in production.
+# Dummy URLs are shaped like the real ones so a renderer that grows a
+# host-specific rule fails here, not in production.
 cat > "$TMPD/secrets.wired" <<'EOF'
 HEALTHCHECKS_DEADMANSSWITCH_URL=https://hc-ping.com/00000000-0000-0000-0000-00000000dead
 HEALTHCHECKS_ALERT_DELIVERY_URL=https://hc-ping.com/00000000-0000-0000-0000-0000000de117
