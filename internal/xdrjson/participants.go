@@ -19,23 +19,20 @@ import (
 // the fields that are genuine account addresses (payment/path-payment
 // destination, allow-trust / set-trust-line-flags trustor, clawback `from`,
 // account-merge / create-account destination, create-claimable-balance
-// claimant destinations, begin-sponsoring-future-reserves and
-// revoke-sponsorship sponsorship targets, and muxed destinations resolved to
-// their underlying G-account).
+// claimant destinations, sponsorship targets, and muxed destinations resolved
+// to their underlying G-account).
 // Opaque free-text fields (a manage_data name/value, a memo, a contract string
 // arg) are NEVER interpreted as participants even when they happen to spell a
 // valid G-strkey — a per-type allowlist is the only safe way to keep an
 // attacker-controlled blob out of a victim account's history. Soroban
-// InvokeContract ops contribute NOTHING here: both the call arguments and the
-// SorobanAuthorizationEntry auth entries are attacker-controllable at this
-// XDR-decode layer — an auth-entry signature is verified only by the network
-// during apply (and only for consumed require_auth entries on SUCCESSFUL txs),
-// while the indexer also decodes failed-tx op bodies — so neither an arg- nor an
-// auth-derived address can establish participation. Truthful Soroban received-
-// activity belongs to the event-based /movements path (SEP-41 transfer events),
-// not to arg derivation. The operation's own source account is handled
-// separately (it's a lake column), so it is NOT returned here. Deduplicated +
-// sorted (deterministic → idempotent re-derive).
+// InvokeContract ops contribute NOTHING here: call arguments and auth entries
+// are attacker-controllable at this XDR-decode layer (an auth-entry signature
+// is verified only by the network during apply, while the indexer also decodes
+// failed-tx op bodies), so no arg- or auth-derived address can establish
+// participation. Soroban received-activity belongs to the event-based
+// /movements path (SEP-41 transfer events). The operation's own source account
+// is a lake column, so it is NOT returned here. Deduplicated + sorted
+// (deterministic → idempotent re-derive).
 func ParticipantAccounts(bodyB64 string) ([]string, error) {
 	var body xdr.OperationBody
 	if err := scval.UnmarshalBase64(bodyB64, &body); err != nil {

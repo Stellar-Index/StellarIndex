@@ -36,23 +36,18 @@ func assetCode(assetID string) string {
 // while XLM/AQUA orients as base=AQUA, quote=XLM (AQUA priced in XLM).
 //
 // ISSUER-AGNOSTIC BY DESIGN. Rank 3 keys on the bare asset CODE, so ANY
-// classic token calling itself "USDC" — including a scam issued by an
-// attacker — ranks as a stablecoin here. That is deliberate and safe
-// ONLY because ranking decides ORIENTATION and nothing else: which side
-// of a market is quoted in the other. It never asserts the asset is
-// worth a dollar.
+// classic token calling itself "USDC" — including a scam — ranks as a
+// stablecoin here. That is safe ONLY because ranking decides ORIENTATION and
+// nothing else; it never asserts the asset is worth a dollar.
 //
-// The safety therefore rests on an invariant OUTSIDE this function:
-// every downstream substitution of a stablecoin for its fiat peg
-// re-checks issuer identity. Concretely, aggregate.FiatProxy accepts
-// only the abstract `crypto:<TICKER>` form and refuses every classic
-// asset — even Circle's real USDC — precisely so a code match can
-// never become a USD claim (pinned by
-// TestFiatProxy_NonCryptoAssetsReturnFalse), and the classic USD-peg
-// path is an operator-declared spec carrying full CODE-ISSUER
-// identity. If you ever add a path that maps a rank-3 asset to a
-// fiat value, it MUST do its own issuer check; this ranking is not
-// one.
+// The safety rests on an invariant OUTSIDE this function: every downstream
+// substitution of a stablecoin for its fiat peg re-checks issuer identity.
+// aggregate.FiatProxy accepts only the abstract `crypto:<TICKER>` form and
+// refuses every classic asset (pinned by
+// TestFiatProxy_NonCryptoAssetsReturnFalse), and the classic USD-peg path is an
+// operator-declared spec carrying full CODE-ISSUER identity. Any new path that
+// maps a rank-3 asset to a fiat value MUST do its own issuer check; this
+// ranking is not one.
 //
 // A SAC declared in `[supply].sac_wrappers` ranks as the classic asset it
 // wraps, so a market traded through the SAC orients the same way as its

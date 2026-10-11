@@ -59,30 +59,23 @@ type TotalsDrift struct {
 // exact rows that checkpoint folds (`truth`, e.g. Σ sep41_supply_events
 // .amount FILTER (event_kind=…) up to the checkpoint's last_ledger). It
 // returns every (contract, kind) whose values differ by strictly more
-// than tolerance (abs), sorted by (contract, kind) so the output is
-// deterministic and diffable across runs.
+// than tolerance (abs), sorted by (contract, kind) for deterministic output.
 //
-// TRUTH SOURCE — read this before wiring a caller. `truth` MUST be the
-// same-source re-sum of the rows the checkpoint folds, NOT the
-// network-wide ClickHouse `supply_flows` lake. The PG SEP-41 observer is
-// watched-set-gated and bare-i128-only; the CH lake is network-wide and
-// map-variant-aware, so their per-contract totals legitimately differ
-// (migration 0085 spells this out). Comparing the checkpoint straight to
-// the lake would false-positive on every map-variant token. The
-// composition that IS sound: the projection reconcile (reconcile.go)
-// separately proves `sep41_supply_events` faithful to the lake row-for-
-// row, so checkpoint == PG re-sum ⇒ checkpoint == lake truth transitively
-// — without importing the lake's methodology into this check.
+// TRUTH SOURCE. `truth` MUST be the same-source re-sum of the rows the
+// checkpoint folds, NOT the network-wide ClickHouse `supply_flows` lake. The PG
+// SEP-41 observer is watched-set-gated and bare-i128-only; the CH lake is
+// network-wide and map-variant-aware, so their per-contract totals
+// legitimately differ (migration 0085). Comparing straight to the lake would
+// false-positive on every map-variant token. The projection reconcile
+// (reconcile.go) separately proves `sep41_supply_events` faithful to the lake
+// row-for-row, so checkpoint == PG re-sum ⇒ checkpoint == lake truth.
 //
-// tolerance nil is treated as exact (zero) — the expected posture, since
-// the rollup sums the same integer amounts the re-sum does and any
-// nonzero difference is a real fold error, not rounding. A caller MAY
-// pass a small nonzero tolerance to absorb an in-flight advance racing
-// the re-sum snapshot.
+// tolerance nil is treated as exact (zero): the rollup sums the same integer
+// amounts the re-sum does, so any nonzero difference is a real fold error. A
+// caller MAY pass a small tolerance to absorb an in-flight advance racing the
+// re-sum snapshot.
 //
-// Pure and deterministic (like ComputeWatermark / ReconcileCounts): same
-// inputs → same drifts, so the check is re-runnable and auditable. It
-// does no IO; a caller fetches `checkpoint` and `truth` and hands them in.
+// Pure, no IO: the caller fetches `checkpoint` and `truth`.
 func ReconcileRunningTotals(checkpoint, truth map[string]RunningTotals, tolerance *big.Int) []TotalsDrift {
 	tol := tolerance
 	if tol == nil {

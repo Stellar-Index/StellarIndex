@@ -1,31 +1,25 @@
 // Package sorobanevents is the catch-all raw-event landing zone for Soroban
 // contract events (ADR-0029).
 //
-// Every contract event the dispatcher routes is also captured as a raw row in the
-// `soroban_events` hypertable (migration 0041), orthogonal to the per-source
-// decoders. It exists so decoders shipped AFTER an event was emitted can backfill
-// via SQL over soroban_events instead of MinIO re-walks.
+// Every contract event the dispatcher routes is also captured as a raw row in
+// the `soroban_events` hypertable (migration 0041), so decoders shipped AFTER an
+// event was emitted can backfill via SQL instead of MinIO re-walks.
 //
 // # Wiring
 //
-//   - [RawEventSink] is what the dispatcher's [dispatcher.SetRawEventSink] hook
-//     accepts. It fires AFTER the per-source decoders for every Soroban contract
-//     event, with no topic[0] or contract_id filter.
-//   - [Capture] converts a [events.Event] into a [Row] for batched insert.
-//   - The consumer (cmd/stellarindex-indexer / stellarindex-ops backfill) wires an
-//     [AsyncSink] that batches Rows into [timescale.Store.InsertSorobanEventsBatch].
+//   - [RawEventSink] is the dispatcher's [dispatcher.SetRawEventSink] hook. It
+//     fires AFTER the per-source decoders for every Soroban contract event,
+//     with no topic[0] or contract_id filter.
+//   - [Capture] converts a [events.Event] into a [Row]; an [AsyncSink] batches
+//     Rows into [timescale.Store.InsertSorobanEventsBatch].
 //
 // # Encoding
 //
-// Topics 0-3 are raw XDR bytes; topic_0_sym is populated when topic[0] decodes to a
-// Symbol or String. The body is raw XDR. op_args_xdr is the marshalled xdr.ScVec of
-// the originating InvokeContract op's args, NULL for other origins (system events,
-// CAP-67 classic-op events).
-//
-// # Contract ID encoding
-//
-// `contract_id` is the C-strkey for human SQL; `contract_id_hex` the raw 32 bytes
-// for index-efficient byte-equality joins.
+// Topics 0-3 and the body are raw XDR; topic_0_sym is set when topic[0] decodes
+// to a Symbol or String. op_args_xdr is the marshalled xdr.ScVec of the
+// originating InvokeContract op's args, NULL for other origins.
+// `contract_id` is the C-strkey for human SQL; `contract_id_hex` the raw 32
+// bytes for index-efficient byte-equality joins.
 package sorobanevents
 
 import (

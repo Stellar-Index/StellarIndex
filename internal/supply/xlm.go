@@ -108,31 +108,25 @@ func readReserveTotal(ctx context.Context, r ReserveBalanceReader, accounts []st
 // [ReserveBalanceReader] that reports a freshness anchor for the
 // configured SDF reserve accounts at or before the snapshot ledger.
 //
-// It is the XLM leg of the supply-snapshot freshness gate, alongside
-// the classic and SEP41 legs. Without an XLM freshness signal,
-// the Refresher's stale-component gate stays permissive on
-// every native-XLM snapshot — a backfilled-reserve observer
-// that drifts hours behind tip would still produce snapshots
-// stamped at the fresh ledger.
+// It is the XLM leg of the supply-snapshot freshness gate, alongside the
+// classic and SEP41 legs. Without it the Refresher's stale-component gate stays
+// permissive on every native-XLM snapshot, so an observer drifting hours behind
+// tip would still produce snapshots stamped at the fresh ledger.
 //
 // Implementations:
-//   - [LCMReserveBalanceReader] checks that every account is
-//     observed and returns the account observer's watermark.
-//   - [ConfigReserveBalanceReader] DELIBERATELY does NOT
-//     implement this — the static config has no per-ledger
-//     freshness concept. The computer never probes when the balance
-//     came from the static arm, so that snapshot has no anchor and
-//     strict mode refuses it.
+//   - [LCMReserveBalanceReader] checks that every account is observed and
+//     returns the account observer's watermark.
+//   - [ConfigReserveBalanceReader] DELIBERATELY does NOT implement this — the
+//     static config has no per-ledger freshness concept, so that snapshot has
+//     no anchor and strict mode refuses it.
 //
-// The XLM computer probes for this interface via a type
-// assertion; if not satisfied, MinComponentLedger stays 0 and
-// the Refresher's gate stays permissive — same
-// shape as classic/SEP41 when their MinComponentLedger is 0.
+// The XLM computer probes via a type assertion; if not satisfied,
+// MinComponentLedger stays 0 and the gate stays permissive, as for
+// classic/SEP41.
 //
-// Zero return value means "no observation found for at least
-// one account at-or-before `asOfLedger`" and is the gate's
-// permissive bypass signal. A non-zero return is the actual
-// MIN across observed accounts.
+// Zero return means "no observation found for at least one account at-or-before
+// `asOfLedger`" (the permissive bypass signal). Non-zero is the MIN across
+// observed accounts.
 type ReserveBalanceFreshnessReader interface {
 	MinReserveAccountLedger(ctx context.Context, accounts []string, asOfLedger uint32) (uint32, error)
 }

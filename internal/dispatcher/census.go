@@ -14,28 +14,20 @@ import (
 
 // Census is the decoder-independent count of a single ledger's
 // completeness-relevant primitives, plus its hash-chain anchors.
-// It is computed directly from the LedgerCloseMeta WITHOUT decoding
-// any event body — the LCM's own ground truth (ADR-0033 Claim 1).
-//
-// The two counts are the checksums the completeness model reconciles
-// against:
+// It is computed from the LedgerCloseMeta WITHOUT decoding any event
+// body — the LCM's own ground truth (ADR-0033 Claim 1).
 //
 //   - SorobanEventCount MUST equal COUNT(soroban_events WHERE
 //     ledger=seq) — any shortfall is a capture/persistence gap.
 //
 //   - ClassicTradeEffectCount counts ClaimAtoms exactly the way
-//     internal/sources/sdex produces one trade per atom.
-//
-//     It does NOT equal COUNT(trades WHERE source='sdex' AND
-//     ledger=seq). The decoder deliberately emits one-side-zero fills
-//     (one leg rounded to 0 stroops, ~55-60/day). The writer stores them
-//     (unpriceable), but ledgers written before they were admitted
-//     hold none, so the SDEX reconcile in internal/ops/chops compares
-//     priceable fills only: the decoder re-derive drops them
-//     (sdexServedCensus) and the served COUNT carries the matching
-//     priceable filter (reconTarget.countFilter). Both filters go once a
-//     full-history `ch-rebuild -sdex` has landed the historic fills. No
-//     projection oracle reads this counter.
+//     internal/sources/sdex produces one trade per atom. It does NOT
+//     equal COUNT(trades WHERE source='sdex' AND ledger=seq): the decoder
+//     deliberately emits one-side-zero fills (one leg rounded to 0
+//     stroops), which the writer stores (unpriceable) but older ledgers
+//     lack, so the SDEX reconcile in internal/ops/chops compares
+//     priceable fills only (sdexServedCensus, reconTarget.countFilter).
+//     No projection oracle reads this counter.
 //
 //     The lockstep test that guards this comment compares the counter to
 //     the DECODER, never to the writer.

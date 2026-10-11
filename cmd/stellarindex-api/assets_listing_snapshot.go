@@ -19,34 +19,25 @@ import (
 
 // /v1/assets listing snapshots — the boot seed.
 //
-// The prewarm cannot win the startup race. Measured on r1 at a restart:
-// "starting" 03:50:22.985 →
-// "http listening" 03:50:22.997 (+12 ms) → first /v1/assets listing
-// request at +3.5 s → first browser request at +4.0 s, answered
-// 11,658 ms later. Warming faster does not help, because the cost IS
-// the first fill of a cold slot and traffic arrives seconds before any
-// fill can finish.
+// The prewarm cannot win the startup race: the first /v1/assets listing request
+// arrives ~3.5 s after the listener is up, before any fill of a cold slot can
+// finish (~11 s on r1). Warming faster does not help, because the cost IS the
+// first fill.
 //
-// So the last-good page-set outlives the process. Every prewarm cycle
-// writes each warmed listing key here; the next boot reads them back
-// and seeds [v1.CachedAssetsReader] BEFORE the listener starts, so the
-// first request takes the cache's stale-while-revalidate branch —
-// instant answer, honest `flags.stale`, one detached refresh behind it
-// — instead of blocking on the ~11 s aggregate.
+// So the last-good page-set outlives the process. Every prewarm cycle writes
+// each warmed listing key here; the next boot reads them back and seeds
+// [v1.CachedAssetsReader] BEFORE the listener starts, so the first request
+// takes the cache's stale-while-revalidate branch — instant answer, honest
+// `flags.stale`, one detached refresh behind it.
 //
 // KEY GRAMMAR. `internal/cachekeys` is the canonical home for Redis key
 // families (ADR-0007) and has no builder for this shape (its
-// `assets:list:<cursor>:<limit>` family belongs to a different reader,
-// carries a different payload type, and has no `order` dimension). This
-// family is therefore declared here, with the binary that is its sole
-// reader and writer — the same narrowly-scoped, package-owned shape
-// `internal/ratelimit` ("rl:") and `internal/usage` ("usage:") use, and
-// which cachekeys' own package doc records as an accepted exception. It
-// keeps ADR-0007's actual guarantees: a named key type that will not
-// implicitly convert to another family's, a single builder (no
-// concatenation at call sites), and a golden-string test. Promoting it
-// to internal/cachekeys is the right move the moment a second binary
-// needs to read it.
+// `assets:list:<cursor>:<limit>` family is a different reader and payload
+// type, with no `order` dimension). The family is declared here, with its sole
+// reader and writer, like `internal/ratelimit` ("rl:") and `internal/usage`
+// ("usage:"). It keeps ADR-0007's guarantees: a named key type, a single
+// builder, and a golden-string test. Promote it to internal/cachekeys the
+// moment a second binary needs to read it.
 
 // assetsListingSnapshotKey is the typed Redis key for the
 // `assets:listing-snapshot:<schema>:<order>:<limit>` family.
