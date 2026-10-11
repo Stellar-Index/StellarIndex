@@ -73,7 +73,7 @@ func NewMetricsSnapshot() *MetricsSnapshot {
 //
 // Operator workflow per ADR-0017 §"Prometheus surface": a systemd timer
 // runs `archive-completeness verify -textfile-output PATH`, PATH being
-// node_exporter's textfile_collector directory; alerts in
+// node_exporter's textfile_collector/archive_completeness.prom; alerts in
 // `deploy/monitoring/rules/archive-completeness.yml` fire on thresholds.
 //
 // Atomic write protocol: the caller writes `<PATH>.tmp` then renames into
