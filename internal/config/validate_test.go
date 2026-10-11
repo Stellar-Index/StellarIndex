@@ -179,13 +179,10 @@ func TestValidate_RPCEndpointErrorsOmitURL(t *testing.T) {
 	}
 }
 
-// TestDefault_BackgroundStatementTimeoutIsGenerousBackstop pins that the indexer/aggregator pools must ship with a
-// non-zero, GENEROUS SQL-side statement_timeout backstop out of the box.
-// Zero would leave those pools unbounded; a tight value would
-// clip legitimate heavy work. It must
-// also comfortably exceed the request-path serving bound — a background
-// runaway is expected to run far longer than any serving query before it is
-// unambiguously stuck.
+// TestDefault_BackgroundStatementTimeoutIsGenerousBackstop pins that the indexer/aggregator
+// pools ship with a non-zero, generous SQL-side statement_timeout. Zero leaves them unbounded;
+// a tight value clips legitimate heavy work. It must also comfortably exceed the request-path
+// serving bound, so a stuck background query is unambiguous.
 func TestDefault_BackgroundStatementTimeoutIsGenerousBackstop(t *testing.T) {
 	got := config.Default().Storage.BackgroundStatementTimeout
 	if got != 30*time.Minute {
@@ -279,14 +276,10 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"serving_statement_timeout",
 		},
 
-		// The same ordering rule one layer up: request_timeout must
-		// EXCEED the longest per-handler budget. At or below it the
-		// blanket deadline is what fires on every slow read, so the
-		// per-handler `…-timeout` 503 branches are unreachable and the
-		// ceilings they advertise are fiction — the operator-settable
-		// half of the bodyless-200 class, which the compile-time guard
-		// in internal/api/v1 cannot see because it only ever checks
-		// against the 15s DEFAULT.
+		// request_timeout must EXCEED the longest per-handler budget. At or below it the
+		// blanket deadline fires on every slow read and the per-handler `…-timeout` 503
+		// branches are unreachable. The compile-time guard in internal/api/v1 cannot see
+		// this because it only checks against the 15s default.
 		"request timeout equals the longest handler budget": {
 			func(c *config.Config) { c.API.RequestTimeout = config.APIMaxHandlerBudget },
 			"request_timeout",
@@ -348,12 +341,9 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"not a canonical asset id",
 		},
 
-		// ADR-0019 §"Freeze duration" the auto-unfreeze band
-		// must not overlap the fire band on the z axis, or a signal
-		// hovering at the trigger flaps the pair frozen/unfrozen every
-		// bucket — republishing, each time it unfreezes, the value the
-		// freeze just refused. That is the flapping behaviour, so
-		// it must not be reachable by config.
+		// ADR-0019 §"Freeze duration": the auto-unfreeze band must not overlap the fire band
+		// on the z axis, or a signal at the trigger flaps the pair every bucket and
+		// republishes the value the freeze just refused.
 		"anomaly phase2 unfreeze z band overlaps the fire band": {
 			func(c *config.Config) {
 				c.Anomaly.Phase2.ZScoreMinFreeze = 5.0
@@ -385,12 +375,10 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			"divergence.chainlink.feeds",
 		},
 
-		// ADR-0027 cold tier: the *_key_env pair
-		// is all-or-nothing, because EMPTY is a meaningful value here
-		// (it selects anonymous reads on the public
-		// aws-public-blockchain bucket). Half a pair would force
-		// pipeline.NewColdDataStore to guess, and guessing "anonymous"
-		// against a private bucket is a silent downgrade.
+		// ADR-0027 cold tier: the *_key_env pair is all-or-nothing because empty is
+		// meaningful (anonymous reads on the public aws-public-blockchain bucket). A half
+		// pair would make pipeline.NewColdDataStore guess, and guessing anonymous against a
+		// private bucket is a silent downgrade.
 		"cold access key env without secret": {
 			func(c *config.Config) { c.Storage.S3ColdAccessKeyEnv = "STELLARINDEX_S3_COLD_ACCESS_KEY" },
 			"s3_cold_access_key_env",
@@ -622,16 +610,10 @@ func TestValidate_OracleStalenessOverrideAccepted(t *testing.T) {
 	}
 }
 
-// TestValidate_RejectsBadOracleStalenessOverride covers every way a
-// per-asset budget can be written down and silently do nothing.
-//
-// The override's only job is to change one alert's threshold, and each
-// row below changes NOTHING while looking like it does: a source
-// nothing emits, an asset spelled differently from the metric's label,
-// a budget that would ticket on every evaluation, an unexplained
-// claim, or two rows fighting over one pair. None of them produce a
-// runtime error — the alert just keeps firing on its old schedule
-// while the config reads as if it were handled — so they have to fail
+// TestValidate_RejectsBadOracleStalenessOverride covers every way a per-asset budget can be
+// written down and silently do nothing: a source nothing emits, an asset spelled differently
+// from the metric's label, a budget that would ticket on every evaluation, an unexplained
+// claim, or two rows fighting over one pair. None raises a runtime error, so each must fail
 // at startup.
 func TestValidate_RejectsBadOracleStalenessOverride(t *testing.T) {
 	base := config.OracleStalenessOverrideConfig{
@@ -734,14 +716,10 @@ func TestValidate_RejectsBadOracleStalenessOverride(t *testing.T) {
 	}
 }
 
-// [api] status_services declares the background services a
-// deployment actually runs, and /v1/status reports + rolls up exactly
-// those. The lean test-net inventories render `["indexer"]` (they already
-// set run_aggregator: false), which must load and validate — and a typo'd
-// service name must be rejected at boot, because a name Prometheus never
-// publishes a heartbeat for can never be reported down and would hold
-// `overall` at "degraded" forever, i.e. the exact symptom the field exists
-// to remove.
+// [api] status_services declares the background services a deployment runs, and /v1/status
+// rolls up exactly those. A lean `["indexer"]` list must validate, but a typo'd name must be
+// rejected at boot: Prometheus never publishes a heartbeat for it, so it would hold `overall`
+// at "degraded" forever.
 func TestValidate_StatusServices(t *testing.T) {
 	t.Run("lean test-net shape validates", func(t *testing.T) {
 		c := config.Default()
@@ -771,23 +749,16 @@ func TestValidate_StatusServices(t *testing.T) {
 	})
 }
 
-// A config-validation failure is fatal at boot, so its message lands on
-// stderr -> journald -> promtail -> Loki, where anyone with Grafana read
-// access can read it for the 720h retention. That makes a validation
-// branch that formats the offending VALUE into its message a credential
-// leak whenever the value can be a credential — and the branches below
-// are exactly the ones that fire on the paste-the-secret-where-the-name-
-// goes mistake they exist to catch.
+// A config-validation failure is fatal at boot, so its message reaches stderr, journald and
+// Loki, readable by anyone with Grafana access. A validation branch that formats the offending
+// value into its message therefore leaks a credential whenever the value can be one, and the
+// branches below fire on exactly the paste-the-secret-where-the-name-goes mistake.
 //
-// Every case here is a real operator misconfiguration, not a contrived
-// one:
+// Each case is a real operator misconfiguration:
 //
-//   - a managed-Redis URI (Upstash / Redis Cloud / Railway / Heroku all
-//     issue rediss://default:<password>@host:port, never the bare
-//     host:port storage.redis_addr wants) pasted into redis_addr or a
-//     sentinel entry. net.SplitHostPort rejects it with an *net.AddrError
-//     that embeds the whole address, so a `: %w` wrap re-leaks it even
-//     when the %q is redacted.
+//   - a managed-Redis URI (rediss://default:<password>@host:port) pasted into redis_addr or a
+//     sentinel entry. net.SplitHostPort rejects it with an *net.AddrError that embeds the
+//     whole address, so a `: %w` wrap re-leaks it even when the %q is redacted.
 //   - a real DSN with an inline password under a scheme we don't accept.
 //   - an S3 secret key pasted where the env-var NAME belongs.
 func TestValidate_FatalErrorsDoNotEchoCredentials(t *testing.T) {
@@ -901,13 +872,10 @@ func TestValidate_RedactedErrorsStillIdentifyTheSetting(t *testing.T) {
 	}
 }
 
-// TestValidate_EnvVarNameSwapStillEchoesTheName pins the deliberate
-// exception to the no-echo rule, so a later tightening pass does not
-// redact a message whose entire diagnostic is the value. The
-// redis_password / clickhouse_serving_password branches fire
-// ONLY when the value matched `^STELLARINDEX_[A-Z0-9_]+$` — i.e. it is
-// provably one of this project's own env-var NAMES and provably not the
-// password the field is supposed to hold.
+// TestValidate_EnvVarNameSwapStillEchoesTheName pins the deliberate exception to the no-echo
+// rule, so a tightening pass does not redact a message whose whole diagnostic is the value.
+// The redis_password / clickhouse_serving_password branches fire only when the value matches
+// `^STELLARINDEX_[A-Z0-9_]+$`, so it is provably an env-var name and not the password.
 func TestValidate_EnvVarNameSwapStillEchoesTheName(t *testing.T) {
 	for field, mutate := range map[string]func(*config.Config){
 		"storage.redis_password": func(c *config.Config) {

@@ -19,28 +19,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The measured defect this file guards (seen on r1).
+// classic_lake_supply.go warms itself from the request path only: a listing request kicks a
+// detached refresh for classicLakeSupplyBatch of the assets it asked about and serves the
+// trustline sum for the rest. With no consumer traffic the cache never converges, entries expire
+// unread at classicLakeSupplyTTL, and /v1/assets and /v1/rwa/assets fall back to the
+// trustline-only sum, which is blind to claimable-balance, LP-reserve and SAC-held supply and so
+// understates supply badly. Every test here asks whether the cache is filled without any request.
 //
-// classic_lake_supply.go warms itself from the REQUEST path only: a listing
-// request kicks a detached refresh for classicLakeSupplyBatch of the assets it
-// asked about and serves the trustline sum for the rest. Under sustained
-// traffic that converges, and the served figures match Horizon's all-component
-// totals to within 0.012%. r1 carries no consumer traffic, so it never
-// converges there — entries expire unread at classicLakeSupplyTTL and both
-// /v1/assets and /v1/rwa/assets fall back to the trustline-only sum, which is
-// blind to claimable-balance, LP-reserve and SAC-held supply by construction.
-// Measured ~19 h after the last request:
-//
-//	PYUSD  served  3,149,454   lake  11,778,001   (73% understated)
-//	XRF    served 21,895,149   lake 118,333,629   (82% understated)
-//
-// Nothing about the readings or the preference chain was wrong; the warming
-// was. So every test here asks the same question in a different way: is the
-// cache filled WITHOUT anyone having made a request?
-//
-// The CETES shape from classic_lake_supply_test.go is reused for the numbers
-// (a trustline sum of 100.0000000 against a true supply of 136.6000000, a
-// 36.6% uplift sitting where a trustline query structurally cannot look).
+// The CETES shape from classic_lake_supply_test.go supplies the numbers: a trustline sum of
+// 100.0000000 against a true supply of 136.6000000.
 
 // discardLakeLogger keeps the prewarm's debug lines out of the test output.
 func discardLakeLogger() *slog.Logger {
@@ -147,17 +134,11 @@ func classicListingRow(code string) timescale.AssetRow {
 	}
 }
 
-// lakeSupplyPrewarmServer builds a Server through the PRODUCTION constructor
-// ([New]) with the same three seams cmd/stellarindex-api/main.go wires:
-// TokenSupply (production: *clickhouse.SupplyReader via NewSupplyReaderAuth),
-// AssetsReader (production: *v1.CachedAssetsReader over *timescale.Store) and
-// Explorer (production: *clickhouse.ExplorerReader, here the trustline-only
-// sum it really is).
-//
-// Constructed rather than struct-literalled deliberately. A prewarm that works
-// against a hand-assembled Server and not against New(Options{…}) is the
-// green-suite-dangerous-branch shape this project has been bitten by: the
-// wiring IS the thing under test here.
+// lakeSupplyPrewarmServer builds a Server through the production constructor ([New]) with the
+// three seams cmd/stellarindex-api/main.go wires: TokenSupply, AssetsReader and Explorer (here
+// the trustline-only sum it really is). It is constructed, not struct-literalled, because a
+// prewarm that works on a hand-assembled Server but not via New(Options{…}) is a green suite
+// hiding a dangerous branch; the wiring is the thing under test.
 func lakeSupplyPrewarmServer(
 	t *testing.T, rows []timescale.AssetRow, lakeTotals map[string]string,
 ) (*Server, *prewarmLakeStub, *prewarmListingAssets) {
@@ -199,20 +180,16 @@ func lakeSupplyPrewarmServer(
 }
 
 // oneShapeOpts is the single listing shape these tests warm. Production passes
-// assetListingPrewarmOptions() (cmd/stellarindex-api), whose byte-identity
-// with the handler's own options is pinned by prewarm_parity_test.go there;
-// what THIS package owns is that whatever shapes it is handed, the assets
-// those pages serve end up cached.
+// assetListingPrewarmOptions() (cmd/stellarindex-api), whose parity with the handler's options
+// is pinned by prewarm_parity_test.go there; this package owns that whatever shapes it is
+// handed, the assets those pages serve end up cached.
 var oneShapeOpts = []timescale.ListAssetsOptions{{
 	Limit: 501, Order: timescale.AssetsOrderObservationCountDesc,
 }}
 
-// TestPrewarmClassicLakeSupplyFillsTheCacheWithNoRequest is the regression for
-// the measured defect: the cache must hold the complete lake reading with
-// nothing having been served.
-//
-// Red before the prewarm existed — s.lakeSupply stays empty until a request
-// populates it, which on a service with no consumer traffic is never.
+// TestPrewarmClassicLakeSupplyFillsTheCacheWithNoRequest pins that the cache holds the complete
+// lake reading before anything is served; s.lakeSupply otherwise stays empty until a request
+// populates it, which never happens without consumer traffic.
 func TestPrewarmClassicLakeSupplyFillsTheCacheWithNoRequest(t *testing.T) {
 	t.Parallel()
 
@@ -244,11 +221,9 @@ func TestPrewarmClassicLakeSupplyFillsTheCacheWithNoRequest(t *testing.T) {
 			entry.value, cetesTrueSupply, cetesTrustlineOnly)
 	}
 
-	// The contract read must be the deterministically derived SAC — the same
-	// resolution asset_supply.go performs for GET /v1/assets/{id}/supply. A
-	// mis-derived address returns nothing and degrades silently to today's
-	// behaviour, which is exactly the failure this test cannot distinguish
-	// from success unless it checks.
+	// The contract read must be the deterministically derived SAC, as asset_supply.go resolves
+	// it. A mis-derived address returns nothing and degrades silently, indistinguishable from
+	// success unless checked.
 	sac, err := mustSACFor(cetesAsset)
 	if err != nil {
 		t.Fatal(err)
@@ -258,17 +233,12 @@ func TestPrewarmClassicLakeSupplyFillsTheCacheWithNoRequest(t *testing.T) {
 	}
 }
 
-// TestPrewarmedCacheServesTheFirstListingWithoutReadingTheLake is the
-// arg-parity guard, expressed as behaviour rather than as restated arithmetic.
-//
-// A prewarm only helps if it warms the slot the HANDLER looks up. Three
-// production bugs in this codebase came from a prewarm computing its key
-// independently and drifting (Order, Sources, Limit) — each warmed a phantom
-// slot, logged success, and left every real request paying the cold fill. A
-// test that recomputed the expected key here would agree with the prewarm and
-// be wrong in the same direction, so instead: prewarm, then run the real
-// listing fill, and require that it needed NO further lake read. That can only
-// hold if the keys coincide.
+// TestPrewarmedCacheServesTheFirstListingWithoutReadingTheLake is the arg-parity guard, as
+// behaviour rather than restated arithmetic. A prewarm only helps if it warms the slot the
+// handler looks up; a prewarm computing its key independently can drift (Order, Sources, Limit),
+// warming a phantom slot while every real request pays the cold fill. A test recomputing the key
+// would drift the same way, so it prewarms, runs the real listing fill, and requires no further
+// lake read, which only holds if the keys coincide.
 func TestPrewarmedCacheServesTheFirstListingWithoutReadingTheLake(t *testing.T) {
 	t.Parallel()
 
@@ -307,13 +277,10 @@ func TestPrewarmedCacheServesTheFirstListingWithoutReadingTheLake(t *testing.T) 
 	}
 }
 
-// TestPrewarmClassicLakeSupplyCoversTheWholeListingPageInBoundedBatches — a
-// listing page asks about up to 500 assets and the request path only ever
-// warms classicLakeSupplyBatch of them per request, which is why the tail
-// never warms without traffic. One prewarm pass must cover the whole page,
-// and it must still do it a bounded batch at a time: the cost of a
-// supply_flows sum scales with the flow count of the contracts in it, and a
-// mature token carries millions of rows.
+// TestPrewarmClassicLakeSupplyCoversTheWholeListingPageInBoundedBatches: a listing page covers up
+// to 500 assets but the request path warms only classicLakeSupplyBatch per request. One prewarm
+// pass must cover the whole page, still in bounded batches, since a supply_flows sum scales with
+// the flow count of its contracts and a mature token carries millions of rows.
 func TestPrewarmClassicLakeSupplyCoversTheWholeListingPageInBoundedBatches(t *testing.T) {
 	t.Parallel()
 
@@ -346,12 +313,10 @@ func TestPrewarmClassicLakeSupplyCoversTheWholeListingPageInBoundedBatches(t *te
 	}
 }
 
-// TestPrewarmClassicLakeSupplyStopsOnLakeFailure — a refresh caches an entry
-// for every asset in its batch on success and nothing at all on a read error,
-// so a failing lake is a pass that makes no progress. It must abandon the pass
-// rather than walk the rest of the population into the same failure: retrying
-// a failing supply_flows read per unit of work is the outage shape
-// classicLakeSupplyRetryGap exists to prevent on the request path.
+// TestPrewarmClassicLakeSupplyStopsOnLakeFailure: a refresh caches nothing on a read error, so a
+// failing lake makes no progress. The pass must be abandoned rather than walk the remaining
+// assets into the same failure, the outage shape classicLakeSupplyRetryGap prevents on the
+// request path.
 func TestPrewarmClassicLakeSupplyStopsOnLakeFailure(t *testing.T) {
 	t.Parallel()
 
@@ -378,11 +343,9 @@ func TestPrewarmClassicLakeSupplyStopsOnLakeFailure(t *testing.T) {
 	}
 }
 
-// TestPrewarmClassicLakeSupplyNeverLowersTheServedFigure — the floor guard is
-// load-bearing and the prewarm must not route around it. An under-seeded lake
-// reading warmed in the background has to leave the listing serving the
-// trustline sum, exactly as an under-seeded reading fetched on the request
-// path does.
+// TestPrewarmClassicLakeSupplyNeverLowersTheServedFigure: the prewarm must not route around the
+// floor guard. An under-seeded lake reading warmed in the background must leave the listing
+// serving the trustline sum, as on the request path.
 func TestPrewarmClassicLakeSupplyNeverLowersTheServedFigure(t *testing.T) {
 	t.Parallel()
 
@@ -404,11 +367,9 @@ func TestPrewarmClassicLakeSupplyNeverLowersTheServedFigure(t *testing.T) {
 	}
 }
 
-// TestPrewarmClassicLakeSupplyDegradesWhenNoReaderIsWired — the prewarm runs
-// on a detached goroutine at startup, before anything has proven the readers
-// exist. Every seam it needs may be absent (test builds, a deployment without
-// a lake) and none of them may panic that goroutine: an unrecovered panic
-// there takes the whole API process with it.
+// TestPrewarmClassicLakeSupplyDegradesWhenNoReaderIsWired: the prewarm runs on a detached
+// goroutine at startup, so any absent seam (test builds, no lake) must not panic it, since an
+// unrecovered panic there takes the whole API process down.
 func TestPrewarmClassicLakeSupplyDegradesWhenNoReaderIsWired(t *testing.T) {
 	t.Parallel()
 

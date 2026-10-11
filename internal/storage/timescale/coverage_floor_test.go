@@ -16,16 +16,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestEarliestBucket_RejectsUnboundedAndDegenerateWindows pins the two
-// guards that run BEFORE the query and therefore need no database: an
-// unknown granularity, and a window that isn't strictly increasing.
-//
-// The window guard is the one that matters for the caller. A probe
-// whose `to` collapsed onto (or behind) its `from` must not come back
-// as "this pair has no coverage" — that answer would be handed
-// straight to a client as `outside_coverage`, an assertion about the
-// data, derived from a bug in the caller. Erroring is what turns it
-// into no signal at all.
+// TestEarliestBucket_RejectsUnboundedAndDegenerateWindows pins the two pre-query guards (unknown
+// granularity, non-increasing window), which need no database. A probe whose `to` collapsed onto
+// or behind `from` must error, not answer "no coverage", which would reach a client as
+// `outside_coverage`, an assertion about the data derived from a caller bug.
 func TestEarliestBucket_RejectsUnboundedAndDegenerateWindows(t *testing.T) {
 	s := &Store{} // no db — every case must return before the query
 	pair, err := canonical.NewPair(canonical.NativeAsset(), canonical.Asset{Type: canonical.AssetFiat, Code: "USD"})
@@ -71,19 +65,13 @@ func TestEarliestBucket_RejectsUnboundedAndDegenerateWindows(t *testing.T) {
 	}
 }
 
-// TestEarliestBucketLegs_NarrowsOnlyTheQuoteLeg pins the ONE difference
-// between the two reads that share [earliestBucketSQL], which no
-// assertion on the SQL text can see: the bound quote array.
-//
-// The fiat-quoted /v1/ohlc series reads each USD-pegged constituent
-// under the one quote spelling the peg expansion named it in
-// ([Store.OHLCSeries] takes the pair it is given), so a floor folded
-// across that quote's alias family would measure a market the surface
-// cannot serve — on r1 that is a Soroban pool quoted in a declared
-// peg's SAC wrapper, whose first bucket would be published as the
-// surface's floor and its silent window called quiet. The base leg
-// keeps its family in both reads because every caller enumerates the
-// base spellings itself.
+// TestEarliestBucketLegs_NarrowsOnlyTheQuoteLeg pins the one difference between the two reads
+// sharing [earliestBucketSQL] that SQL-text assertions cannot see: the bound quote array. The
+// fiat-quoted /v1/ohlc series reads each USD-pegged constituent under the single quote spelling
+// the peg expansion named ([Store.OHLCSeries] takes the pair it is given), so a floor folded
+// across that quote's alias family would measure a market the surface cannot serve (for example
+// a pool quoted in a peg's SAC wrapper). The base leg keeps its family in both reads because
+// callers enumerate the base spellings themselves.
 func TestEarliestBucketLegs_NarrowsOnlyTheQuoteLeg(t *testing.T) {
 	// XLM carries three canonical forms with no registry installed, so
 	// this needs no fixture: as the QUOTE leg it is the fold under test.
@@ -117,19 +105,12 @@ func TestEarliestBucketLegs_NarrowsOnlyTheQuoteLeg(t *testing.T) {
 	}
 }
 
-// TestEarliestBucketSQL_IsPairIndexShaped guards the ONE property the
-// probe's cost depends on and no unit test can measure: the pair
-// predicate must be a plain equality against a bound alias form, never
-// `= ANY(array)`.
-//
-// Measured on r1 (EXPLAIN ANALYZE against prices_1d): the
-// array form is planned as a bucket-ordered scan with the pair as a
-// post-filter — 5 666 ms and ~4.2M rows discarded for XLM/USD — while
-// the cross-joined equality form reaches prices_1d_pair_bucket_idx as
-// an Index Only Scan and runs in 6.9 ms. Since the probe is reachable
-// anonymously, a well-meaning "simplification" back to `= ANY` is a
-// three-order-of-magnitude regression on a public path, so the shape is
-// asserted rather than left to a comment.
+// TestEarliestBucketSQL_IsPairIndexShaped guards the property the probe's cost depends on: the
+// pair predicate must be a plain equality against a bound alias form, never `= ANY(array)`.
+// EXPLAIN ANALYZE against prices_1d showed the array form planned as a bucket-ordered scan with
+// the pair as a post-filter (seconds, millions of rows discarded), while the cross-joined
+// equality form reaches prices_1d_pair_bucket_idx as an Index Only Scan (milliseconds). The probe
+// is anonymously reachable, so the shape is asserted rather than left to a comment.
 func TestEarliestBucketSQL_IsPairIndexShaped(t *testing.T) {
 	if strings.Contains(earliestBucketSQL, "ANY(") {
 		t.Errorf("earliestBucketSQL uses `= ANY(...)` on the pair columns; that plan " +
@@ -141,12 +122,9 @@ func TestEarliestBucketSQL_IsPairIndexShaped(t *testing.T) {
 		"unnest($1::text[])", // alias family of the base leg
 		"unnest($2::text[])", // alias family of the quote leg
 		"p.bucket >= $3",     // bounded below
-		// The upper bound's cast is not decoration: an untyped $4 whose
-		// first use is beside `- INTERVAL` is resolved by PostgreSQL as
-		// `interval - interval`, and the statement fails to parse
-		// (42883) — which the probe would swallow as "no signal". The
-		// integration test executes the statement; this pins the
-		// spelling so the cast cannot be tidied away between runs.
+		// The cast is load-bearing: an untyped $4 beside `- INTERVAL` resolves as
+		// `interval - interval` and fails with 42883, which the probe would swallow as "no
+		// signal". The integration test executes the statement; this pins the spelling.
 		"$4::timestamptz - INTERVAL", // bounded above, typed at the bind
 	} {
 		if !strings.Contains(earliestBucketSQL, want) {
@@ -161,11 +139,9 @@ func TestEarliestBucketSQL_IsPairIndexShaped(t *testing.T) {
 	}
 }
 
-// TestEarliestBucketStoredSQL_SpansOneOrientation pins the property
-// that makes the stored-orientation variant honest for /v1/history: it
-// carries the requested arm with the same index-shaped predicate and
-// the same typed bounds, and it carries NO flipped arm — a flipped arm
-// here would hand the raw-trade page a floor for rows its read never
+// TestEarliestBucketStoredSQL_SpansOneOrientation pins that the stored-orientation variant for
+// /v1/history carries the requested arm with the same index-shaped predicate and typed bounds,
+// and no flipped arm, which would give the raw-trade page a floor for rows its read never
 // returns.
 func TestEarliestBucketStoredSQL_SpansOneOrientation(t *testing.T) {
 	for _, want := range []string{
@@ -187,12 +163,10 @@ func TestEarliestBucketStoredSQL_SpansOneOrientation(t *testing.T) {
 	}
 }
 
-// TestEarliestBucketSQL_RendersWithoutFormatResidue executes the bind
-// the store performs — two operands into templates that consume them a
-// different number of times — and checks the rendered statements carry
-// no fmt residue. An `%!(EXTRA …)` or `%!s(MISSING)` in the text is a
-// syntax error PostgreSQL reports at parse time, which the probe would
-// swallow as "no signal" and every unit test above would miss.
+// TestEarliestBucketSQL_RendersWithoutFormatResidue executes the store's bind (two operands into
+// templates that consume them different numbers of times) and checks for no fmt residue. An
+// `%!(EXTRA …)` or `%!s(MISSING)` is a parse-time syntax error that the probe would swallow as
+// "no signal" and the unit tests above would miss.
 func TestEarliestBucketSQL_RendersWithoutFormatResidue(t *testing.T) {
 	for name, tmpl := range map[string]string{
 		"either": earliestBucketSQL,
@@ -213,11 +187,9 @@ func TestEarliestBucketSQL_RendersWithoutFormatResidue(t *testing.T) {
 
 var earliestBucketClosedGuard = regexp.MustCompile(`p\.bucket <= \$4::timestamptz - INTERVAL '(\d+) (\w+)'`)
 
-// TestEarliestBucket_IssuedStatementCarriesTheClosedBucketGuard reads
-// the ADR-0015 closed-bucket guard out of the statement the store
-// actually issues: `to` binds as $4 unshifted, and every arm subtracts
-// exactly one bucket of the requested granularity from it. A guard
-// narrower than one bucket admits the in-progress bucket as a floor.
+// TestEarliestBucket_IssuedStatementCarriesTheClosedBucketGuard reads the ADR-0015 closed-bucket
+// guard from the issued statement: `to` binds as $4 unshifted and every arm subtracts exactly one
+// bucket of the requested granularity. A narrower guard admits the in-progress bucket as a floor.
 func TestEarliestBucket_IssuedStatementCarriesTheClosedBucketGuard(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	to := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)

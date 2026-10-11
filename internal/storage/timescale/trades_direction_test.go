@@ -124,11 +124,9 @@ func pairBoundArm(a, b int) *regexp.Regexp {
 		`base_asset\s*=\s*\$` + strconv.Itoa(a) + `\s+AND\s+quote_asset\s*=\s*\$` + strconv.Itoa(b))
 }
 
-// TestLatestTradePerSource_ServesAMarketRecordedTheOtherWayRound is the
-// /v1/observations case from row 1.16: the market exists only as
-// USDC/AQUA and the caller asks for AQUA/USDC. Before the fold the read
-// bound the requested orientation alone and the endpoint answered `[]`
-// while /v1/history served the same market from the same rows.
+// TestLatestTradePerSource_ServesAMarketRecordedTheOtherWayRound is the /v1/observations case:
+// the market exists only as USDC/AQUA and the caller asks for AQUA/USDC. Binding the requested
+// orientation alone would answer `[]` while /v1/history serves the same market from the same rows.
 func TestLatestTradePerSource_ServesAMarketRecordedTheOtherWayRound(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 	ts := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
@@ -182,15 +180,10 @@ func TestLatestTradePerSource_LeavesTheRequestedOrientationUntouched(t *testing.
 	}
 }
 
-// TestLatestTradePerSource_OneRowPerSourceAcrossDirections is the case
-// the fold has to get right rather than merely survive: ONE source with
-// a trade in each stored direction.
-//
-// "Latest per source" means one row, so the two are folded to whichever
-// trade came later — and the answer must not depend on which arm of the
-// union the database happened to return first, because that order flips
-// with the requested orientation. Each case is therefore driven twice,
-// with the two rows arriving in both possible orders.
+// TestLatestTradePerSource_OneRowPerSourceAcrossDirections covers one source with a trade in each
+// stored direction. "Latest per source" is one row, the later trade, and the answer must not
+// depend on which union arm the database returns first, since that order flips with the
+// requested orientation. Each case is driven twice, with the rows in both orders.
 func TestLatestTradePerSource_OneRowPerSourceAcrossDirections(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 	ts := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
@@ -265,11 +258,10 @@ func TestLatestTradePerSource_OneRowPerSourceAcrossDirections(t *testing.T) {
 	}
 }
 
-// TestLatestTradesForPair_ServesAMarketRecordedTheOtherWayRound is the
-// /v1/price last-trade arm. Its snapshot echoes the row's OWN legs and
-// derives the price from the row's own amounts, so a flipped row served
-// unre-expressed would report `asset_id: USDC, quote: AQUA` at 5 for a
-// request that asked what one AQUA is worth in USDC.
+// TestLatestTradesForPair_ServesAMarketRecordedTheOtherWayRound is the /v1/price last-trade arm.
+// Its snapshot echoes the row's own legs and derives price from its own amounts, so a flipped row
+// served unre-expressed would report `asset_id: USDC, quote: AQUA` at 5 for a request asking what
+// one AQUA is worth in USDC.
 func TestLatestTradesForPair_ServesAMarketRecordedTheOtherWayRound(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 	ts := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
@@ -321,16 +313,11 @@ func TestLatestTradesForPair_ClampsLimit(t *testing.T) {
 	}
 }
 
-// TestRawTradeReadsSpanBothStoredDirections is the query-shape half, and
-// the cross-surface statement: these two reads now span exactly what
-// /v1/history's page read spans, so the three surfaces agree about
-// whether a market exists.
-//
-// The scripted driver replays its rows whatever the SQL says, so no
-// behavioural test above can prove the flipped rows were FETCHED. This
-// one reads the statement each method actually issued and requires both
-// arms, in the same shape TestCAGGPairReadsFoldBothDirections requires
-// of the CAGG readers.
+// TestRawTradeReadsSpanBothStoredDirections is the query-shape half: these reads span exactly
+// what /v1/history's page read spans, so the surfaces agree on whether a market exists. The
+// scripted driver replays rows whatever the SQL says, so no behavioural test above proves the
+// flipped rows were fetched; this reads each issued statement and requires both arms, as
+// TestCAGGPairReadsFoldBothDirections does for the CAGG readers.
 func TestRawTradeReadsSpanBothStoredDirections(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 
@@ -435,24 +422,18 @@ func latestUnboundedPair(t *testing.T) canonical.Pair {
 	return pair
 }
 
-// tsLowerBound matches a lower bound on `ts` in any spelling a recency
-// window could arrive in — `ts >= $4`, `ts > now() - …`, `ts BETWEEN …`.
-// An UPPER bound (`ts <= $3`, what [Store.FXQuoteAtOrBefore] binds as
-// its cutoff) is deliberately not matched: it caps how NEW a row may be,
-// which cannot hide an old one.
-// No trailing \b after the operator: `>=` ends in `=`, which is not a
-// word character, so `>=\b` never matches anything (it silently passed
-// the first mutation run this test was written against).
+// tsLowerBound matches a lower bound on `ts` in any spelling a recency window could arrive in
+// (`ts >= $4`, `ts > now() - …`, `ts BETWEEN …`). An upper bound (`ts <= $3`, as
+// [Store.FXQuoteAtOrBefore] binds) is deliberately not matched: it caps how new a row may be and
+// cannot hide an old one. No trailing \b after the operator: `>=` ends in a non-word character,
+// so `>=\b` never matches.
 var tsLowerBound = regexp.MustCompile(`(?i)\bts\s*(?:>=|>|between\b)`)
 
-// TestLatestTradeReadsTakeNoRecencyBound is the guard. Both channels a
-// bound could arrive on are checked, because the repo's own idiom
-// forbids one of them and would otherwise route around this test: the
-// twin fix binds its floor Go-side as a `time.Time` parameter precisely
-// so the planner can prune chunks at plan time, and
-// TestHasAsset_ProbeWindowIsTheListingWindow forbids the `now() -
-// INTERVAL` form. So a window here is either a bound time.Time or a
-// now() in the SQL, and both are refused.
+// TestLatestTradeReadsTakeNoRecencyBound is the guard. Both channels a bound could arrive on are
+// checked, since the repo idiom forbids one: floors are bound Go-side as a `time.Time` so the
+// planner can prune chunks at plan time, and TestHasAsset_ProbeWindowIsTheListingWindow forbids
+// the `now() - INTERVAL` form. A window here is a bound time.Time or a now() in the SQL; both are
+// refused.
 func TestLatestTradeReadsTakeNoRecencyBound(t *testing.T) {
 	t.Parallel()
 
@@ -537,16 +518,10 @@ and say why here. Do not delete it.`
 	}
 }
 
-// TestLatestTradePerSource_AnswersAMarketQuietForYears is the
-// behavioural companion. It cannot see a window in the SQL — the
-// scripted driver replays its row whatever the statement says — but it
-// does pin the CONTRACT the guard above protects: a trade from years
-// before any plausible window is returned, at its real timestamp, not
-// dropped and not re-stamped.
-//
-// It is here because the guard is a shape assertion, and a shape
-// assertion with no statement of what the shape is FOR reads as
-// arbitrary to whoever hits it next.
+// TestLatestTradePerSource_AnswersAMarketQuietForYears is the behavioural companion to the
+// guard above. It cannot see a window in the SQL (the scripted driver replays its row regardless),
+// but pins the contract the guard protects: a trade from years before any plausible window is
+// returned at its real timestamp, not dropped or re-stamped.
 func TestLatestTradePerSource_AnswersAMarketQuietForYears(t *testing.T) {
 	t.Parallel()
 

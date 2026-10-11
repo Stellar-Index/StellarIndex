@@ -10,22 +10,18 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// The fixtures are VERBATIM rows from the certified lake on r1, captured
-// from stellar.ledger_entries_current FINAL, with the answers
-// checked there before they were written down here.
+// The fixtures are VERBATIM rows from the certified lake (stellar.ledger_entries_current FINAL).
 //
-// contract_storage_caocxwnx.tsv is the COMPLETE storage of one private-credit
-// deal token (CAOCXWNX…): all 26 entries, not a curated six. That is the point
-// of it — the decoder has to pick the balances out of the same neighbours it
-// meets in production, including the two shapes that look like balances and are
+// contract_storage_caocxwnx.tsv is the COMPLETE storage of one private-credit deal token
+// (CAOCXWNX…), not a curated subset: the decoder has to pick the balances out of the same
+// neighbours it meets in production, including the two shapes that look like balances and are
 // not (see TestContractStorageSupplyIgnoresLookalikeKeys).
 //
 //go:embed testdata/contract_storage_caocxwnx.tsv
 var caocxwnxStorageTSV string
 
-// contract_storage_kale_sac.tsv is a Stellar Asset Contract's instance entry
-// plus three of its holder balances — KALE (CB23WRDQ…), whose balances are
-// map-shaped rather than bare i128.
+// contract_storage_kale_sac.tsv is a Stellar Asset Contract's instance entry plus three holder
+// balances (KALE, CB23WRDQ…), whose balances are map-shaped rather than bare i128.
 //
 //go:embed testdata/contract_storage_kale_sac.tsv
 var kaleSACStorageTSV string
@@ -34,11 +30,8 @@ const (
 	// caocxwnxContractID is the deal token the fixture was taken from.
 	caocxwnxContractID = "CAOCXWNXCG63U43DCJSS52FDAFT2ZXY2T2UZF3ZYVZ4LLLFVFRF2GM6Z"
 
-	// caocxwnxRawTotal is Σ of its six Balance entries, in the token's
-	// smallest unit. Verified on r1 three independent ways before being
-	// written here: by summing the decoded entries, against the contract's own
-	// `TotalSupply` instance field, and against the $34.5M order of magnitude
-	// a third-party dashboard publishes for this deal.
+	// caocxwnxRawTotal is the sum of its six Balance entries in the token's smallest unit,
+	// cross-checked against the contract's own `TotalSupply` instance field.
 	caocxwnxRawTotal = "344995973100000"
 
 	// caocxwnxHolders is both the number of Balance entries in the fixture and
@@ -98,16 +91,11 @@ func TestContractStorageSupplyReproducesVerifiedTotal(t *testing.T) {
 	}
 }
 
-// TestContractStorageSupplyIgnoresLookalikeKeys is the regression test for the
-// bug that was actually written first.
-//
-// `BalanceCheckpoints(Address)` holds a VECTOR of a holder's past balances and
-// `Eligible(Address)` holds a bool, and both are keyed by a two-element vector
-// whose leading symbol starts with the text `Balance` / sits beside an Address
-// exactly like the real key. A matcher that compared the symbol by PREFIX swept
-// BalanceCheckpoints in; one that only checked "two elements, second is an
-// Address" swept Eligible in. This contract carries six of each, so either
-// mistake corrupts the figure rather than failing loudly.
+// TestContractStorageSupplyIgnoresLookalikeKeys: `BalanceCheckpoints(Address)` holds a VECTOR of
+// past balances and `Eligible(Address)` holds a bool, and both are keyed by a two-element vector
+// shaped like the real key. A matcher comparing the symbol by PREFIX sweeps BalanceCheckpoints
+// in; one checking only "two elements, second is an Address" sweeps Eligible in. Either mistake
+// corrupts the figure rather than failing loudly.
 func TestContractStorageSupplyIgnoresLookalikeKeys(t *testing.T) {
 	var checkpoints, eligible, balances int
 	for _, line := range strings.Split(strings.TrimSpace(caocxwnxStorageTSV), "\n") {
@@ -153,15 +141,11 @@ func TestContractStorageSupplyIgnoresLookalikeKeys(t *testing.T) {
 	}
 }
 
-// TestContractStorageSupplyRefusesStellarAssetContract pins the refusal that
-// keeps a 6.8x understatement off the wire.
-//
-// A SAC's storage holds only the slice of a classic asset wrapped into Soroban.
-// Measured on r1, KALE's storage summed to 471,938,508,419,832
-// against an event-derived 3,224,226,487,856,012. Nothing about the storage sum
-// looks wrong on its own — which is exactly why the refusal has to be
-// structural, keyed on the instance executable, rather than a plausibility check
-// on the number.
+// TestContractStorageSupplyRefusesStellarAssetContract pins the refusal that keeps a large
+// understatement off the wire. A SAC's storage holds only the slice of a classic asset wrapped
+// into Soroban (KALE's storage sum was roughly 7x below its event-derived supply). The sum
+// looks plausible on its own, so the refusal is structural, keyed on the instance executable,
+// not a plausibility check on the number.
 func TestContractStorageSupplyRefusesStellarAssetContract(t *testing.T) {
 	got := foldFixture(t, kaleSACContractID, kaleSACStorageTSV)
 	if !got.isSAC {
@@ -174,13 +158,10 @@ func TestContractStorageSupplyRefusesStellarAssetContract(t *testing.T) {
 	}
 }
 
-// TestContractStorageSupplyRefusesBalancesWithNoInstance pins that the SAC
-// check must be RUN, not merely not fire.
-//
-// The instance entry is the only evidence separating a Wasm token from a
-// Stellar Asset Contract. If the lake never captured one, a SAC's balances and
-// a token's balances are indistinguishable, and the reading that looks fine is
-// the one that understates a classic asset by whatever never entered Soroban.
+// TestContractStorageSupplyRefusesBalancesWithNoInstance pins that the SAC check must be RUN,
+// not merely not fire. The instance entry is the only evidence separating a Wasm token from a
+// SAC; without it the two are indistinguishable and a plausible reading understates a classic
+// asset by whatever never entered Soroban.
 func TestContractStorageSupplyRefusesBalancesWithNoInstance(t *testing.T) {
 	var withoutInstance []string
 	for _, line := range strings.Split(strings.TrimSpace(caocxwnxStorageTSV), "\n") {
@@ -225,12 +206,9 @@ func TestBalanceAmountDecodesBothLiveShapes(t *testing.T) {
 	}
 }
 
-// TestBalanceAmountI128LowWordHighBit pins the i128 reassembly.
-//
-// An i128 arrives as a signed high word and an UNSIGNED low word. Reading Lo as
-// signed corrupts every value whose low word has its top bit set — about half of
-// all values — and the corruption is a near-doubling or a sign flip, not a
-// rounding error.
+// TestBalanceAmountI128LowWordHighBit pins the i128 reassembly. An i128 arrives as a signed high
+// word and an UNSIGNED low word; reading Lo as signed corrupts every value whose low word has its
+// top bit set (about half), as a near-doubling or sign flip rather than a rounding error.
 func TestBalanceAmountI128LowWordHighBit(t *testing.T) {
 	val := xdr.ScVal{
 		Type: xdr.ScValTypeScvI128,
@@ -282,16 +260,11 @@ func TestContractStorageSupplySelfConsistentCatchesMissingHolder(t *testing.T) {
 	}
 }
 
-// TestContractDataKeyPrefixAndMarkersMatchRealKeys is the test that would have
-// caught an off-by-one in the SQL.
-//
-// The reader's server-side filter is three magic numbers — a 52-character
-// primary-key prefix and two fixed base64 windows at a fixed offset — none of
-// which the Go type system checks and none of which a unit test of the decoder
-// would exercise. A wrong offset does not error: it matches nothing, the sum
-// comes back 0, and 0 is indistinguishable from a fully-burned token. So the
-// constants are checked here against real keys and against the SDK's own
-// marshalling.
+// TestContractDataKeyPrefixAndMarkersMatchRealKeys guards the SQL's magic numbers: the reader's
+// server-side filter is a 52-character primary-key prefix and two fixed base64 windows at a fixed
+// offset, which neither the type system nor a decoder test exercises. A wrong offset matches
+// nothing and the sum comes back 0, indistinguishable from a fully-burned token. So the
+// constants are checked against real keys and the SDK's own marshalling.
 func TestContractDataKeyPrefixAndMarkersMatchRealKeys(t *testing.T) {
 	prefix, err := contractDataKeyPrefix(caocxwnxContractID)
 	if err != nil {

@@ -9,33 +9,21 @@ import (
 
 // ─── Golden real-lake decode-VALUE tests ───────────────────
 //
-// See internal/sources/defindex/golden_realbytes_test.go for the full
-// statement of the convention. In one line: capture the EXACT on-chain
-// bytes of one real event, drive the REAL production decoder through
-// BOTH seams — Decoder.Matches (the ADR-0035 contract-identity gate)
-// and Decoder.Decode (classify + body decode + consumer.Event wrap) —
-// and assert the EXACT decoded field VALUES of the emitted
-// consumer.Event. This is the axis ADR-0033 completeness does not
-// cover: recognition (Matches) and projection (row count) can BOTH pass
-// while the decoded values are wrong.
+// See internal/sources/defindex/golden_realbytes_test.go for the convention: capture the exact
+// on-chain bytes of one real event, drive the real decoder through both seams, Decoder.Matches
+// (the ADR-0035 contract-identity gate) and Decoder.Decode, and assert the exact decoded field
+// values. Recognition and row counts can both pass while the decoded values are wrong.
 //
-// decode_admin_test.go already pins these governance bodies at the
-// decodeAdminEvent() helper level; the tests below are the strictly
-// additive complement — they prove the SAME real bytes survive the
-// WHOLE production path, i.e. the registry gate admits the emitting
-// POOL (not just the router) AND the arity-decoded values reach the
-// consumer.Event. That end-to-end gate+value pairing is what a
-// projection/recognition check alone can't see.
+// decode_admin_test.go pins these governance bodies at the decodeAdminEvent() level; these tests
+// prove the same bytes survive the whole path: the registry gate admits the emitting POOL (not
+// just the router) and the arity-decoded values reach the consumer.Event.
 //
-// All fixtures are byte-identical to what r1's ClickHouse lake
-// (stellar.contract_events) stores; each cites its ledger_seq /
-// tx_hash / op_index / event_index for re-verification.
+// Fixtures are byte-identical to the lake's stellar.contract_events rows; each cites its
+// ledger_seq / tx_hash / op_index / event_index for re-verification.
 
-// mainnetPool is a curated Aquarius pool (in MainnetPools) that emitted
-// the arity-sensitive governance events below during the protocol-wide
-// staged WASM upgrade. Because it is registered, Matches() admits its
-// pool-emitted governance events (reg.Has) — the exact path a
-// router-only gate fails closed into an ADR-0033 recognition gap.
+// mainnetPool is a curated Aquarius pool (in MainnetPools) that emitted the arity-sensitive
+// governance events below. Being registered, Matches() admits its events (reg.Has); a
+// router-only gate would fail closed into a recognition gap.
 const mainnetPool = "CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP"
 
 // decodeOneAdmin drives a real governance event through the production
@@ -63,14 +51,12 @@ func decodeOneAdmin(t *testing.T, ev events.Event) AdminEvent {
 	return av
 }
 
-// TestGolden_aquariusPoolApplyUpgrade2Hash_ledger56505116 — the
-// headline arity surface. A POOL apply_upgrade carries a
-// 2-element Vec[Bytes] (applied hash + one staged predecessor). The
-// old `len != 1` guard rejected every pool body (686 apply_upgrade
-// events / 320 pools dropped). By arity: element[0] → Target,
-// element[1] → Attributes["wasm_hash_1"], and NO wasm_hash_2.
+// TestGolden_aquariusPoolApplyUpgrade2Hash_ledger56505116 is the headline arity surface. A POOL
+// apply_upgrade carries a 2-element Vec[Bytes] (applied hash + one staged predecessor), so a
+// `len != 1` guard would reject every pool body. By arity: element[0] → Target,
+// element[1] → Attributes["wasm_hash_1"], and no wasm_hash_2.
 //
-//	ledger_seq 56,505,116 (2025-04-07 08:42:31 UTC)
+//	ledger_seq 56,505,116
 //	tx_hash    f38a9207f724b9624ce39e15a1aef59197db4913bdc7cf74867db3906ef7a852
 //	op 0, event 2, pool CDKVJYMN…
 func TestGolden_aquariusPoolApplyUpgrade2Hash_ledger56505116(t *testing.T) {
@@ -104,12 +90,11 @@ func TestGolden_aquariusPoolApplyUpgrade2Hash_ledger56505116(t *testing.T) {
 	}
 }
 
-// TestGolden_aquariusPoolCommitUpgrade3Hash_ledger62265929 — the busiest
-// arity variation: a POOL commit_upgrade with a 3-element body (proposed
-// hash + two staged). element[0] → Target, [1] → wasm_hash_1,
-// [2] → wasm_hash_2.
+// TestGolden_aquariusPoolCommitUpgrade3Hash_ledger62265929 covers the busiest arity variation: a
+// POOL commit_upgrade with a 3-element body (proposed hash + two staged). element[0] → Target,
+// [1] → wasm_hash_1, [2] → wasm_hash_2.
 //
-//	ledger_seq 62,265,929 (2026-04-24 13:25:37 UTC)
+//	ledger_seq 62,265,929
 //	tx_hash    f9bfe04a5b82777e669d0a7571e6912273a52957149ab41f9d51004790890e54
 //	op 0, event 7, pool CDKVJYMN…
 func TestGolden_aquariusPoolCommitUpgrade3Hash_ledger62265929(t *testing.T) {
@@ -142,13 +127,11 @@ func TestGolden_aquariusPoolCommitUpgrade3Hash_ledger62265929(t *testing.T) {
 	}
 }
 
-// TestGolden_aquariusPoolSetPrivilegedAddrs_ledger57697794 — the third
-// governance shape (the "at least one of…" requirement): a POOL
-// set_privileged_addrs in its 5-element (post-57.7M) wire generation.
-// Exercises the richest admin decode: three role addresses + an
-// addr_list Vec + the v2 trailing addr_3.
+// TestGolden_aquariusPoolSetPrivilegedAddrs_ledger57697794 covers the third governance shape: a
+// POOL set_privileged_addrs in its 5-element (post-57.7M) wire generation, the richest admin
+// decode (three role addresses + an addr_list Vec + the v2 trailing addr_3).
 //
-//	ledger_seq 57,697,794 (2025-06-24 17:08:38 UTC)
+//	ledger_seq 57,697,794
 //	tx_hash    30ba5813f4e584ce152865799460d53d5d16830450f7d2bedfa582373d3f6e1d
 //	op 0, event 0, pool CBL7MWLE…
 func TestGolden_aquariusPoolSetPrivilegedAddrs_ledger57697794(t *testing.T) {
@@ -183,15 +166,12 @@ func TestGolden_aquariusPoolSetPrivilegedAddrs_ledger57697794(t *testing.T) {
 	}
 }
 
-// TestGolden_aquariusPoolTrade_ledger55436194 — a real pool trade,
-// decoded to exact token_in/token_out identities + sold/bought amounts
-// + taker. This is the value axis for the price-bearing event: an
-// arity/positional bug in the 3-i128 tuple (sold, bought, fee), or a
-// topic-slot mix-up (token_in vs token_out), would produce the right
-// row COUNT with wrong prices, which only a golden value assertion
-// catches.
+// TestGolden_aquariusPoolTrade_ledger55436194 is a real pool trade decoded to exact
+// token_in/token_out identities, sold/bought amounts and taker. A positional bug in the 3-i128
+// tuple (sold, bought, fee) or a topic-slot mix-up (token_in vs token_out) yields the right row
+// count with wrong prices, which only a golden value assertion catches.
 //
-//	ledger_seq 55,436,194 (2025-01-25 12:42:09 UTC)
+//	ledger_seq 55,436,194
 //	tx_hash    90565c41f4a73a443e861e01ba725ae44b38bf1f5a25e12a69b68dcc20c793ff
 //	op 0, event 7, pool CDKVJYMN…
 //	sold  180307530471 of CAUIKL3I…  (token_in / topic[1])
@@ -274,36 +254,19 @@ func TestGolden_aquariusPoolTrade_ledger55436194(t *testing.T) {
 
 // ─── Golden real-lake decode-VALUE test: set_protocol_fee Vec body ──
 //
-// The migration-0129 decoder only handled the Map body shape
-// (Map[fee_protocol{0,1}_{new,old}: u32]) — the shape sampled from the
-// three lake-wide events on contracts that are NOT registered Aquarius
-// pools. But EVERY set_protocol_fee event on a REGISTERED Aquarius pool
-// carries a DIFFERENT body: a single-element Vec[u32] holding the new
-// pool-wide protocol-fee fraction. 163 such events exist lake-wide, all
-// byte-identical Vec[u32(5000)] (the June-2025 governance sweep that set
-// 160 registered pools in one tx at ledger 57,697,910, plus later
-// stragglers). Under the ADR-0035 contract-identity gate ONLY registered
-// pools reach the decoder, so in production the Vec form is the ONLY
-// set_protocol_fee shape that arrives — and the Map-only decoder dropped
-// every one of them (scval.AsMap fails on a Vec), leaving them
-// "undecodable-but-matched" and blocking aquarius completeness
-// certification.
+// A set_protocol_fee event on a registered Aquarius pool carries a single-element Vec[u32] with
+// the new pool-wide protocol-fee fraction, not the Map[fee_protocol{0,1}_{new,old}: u32] shape
+// seen on unregistered contracts. Under the ADR-0035 gate only registered pools reach the
+// decoder, so the Vec form is the only shape that arrives; a Map-only decoder (scval.AsMap fails
+// on a Vec) leaves every event "undecodable-but-matched" and blocks completeness certification.
 //
-// This test captures the EXACT on-chain bytes of two real registered-
-// pool events and drives them through BOTH production seams —
-// Decoder.Matches (the registry gate) and Decoder.Decode (classify +
-// body decode + consumer.Event wrap) — asserting the exact decoded
-// FeeEvent field values. Fixtures byte-identical to r1's ClickHouse lake
-// (stellar.contract_events).
+// Two real registered-pool events are driven through Decoder.Matches and Decoder.Decode,
+// asserting the exact FeeEvent values.
 //
-// Wire shape / semantics (see decodeSetProtocolFee): the Aquarius pool
-// contract's fee API is a single set_protocol_fee_fraction /
-// get_protocol_fee_fraction with a `new_fraction` topic (verified across
-// every pool-WASM generation's disassembly — docs/operations/wasm-audits),
-// so the one u32 is the new
-// fraction for the WHOLE pool: Fee0New == Fee1New == fraction. The body
-// carries NO old value, so HasOldFee is false (the sink lands the *_old
-// columns NULL, never a fabricated 0).
+// Wire semantics (see decodeSetProtocolFee): the pool's fee API is a single
+// set_protocol_fee_fraction with a `new_fraction` topic (docs/operations/wasm-audits), so the one
+// u32 is the new fraction for the whole pool: Fee0New == Fee1New == fraction. The body carries
+// no old value, so HasOldFee is false (the sink lands *_old columns NULL, never a fabricated 0).
 
 // realVecSetFeeBody is the data_xdr of every registered-pool
 // set_protocol_fee event: SCV_VEC of length 1 holding SCV_U32(5000)
@@ -339,9 +302,8 @@ func decodeOneFee(t *testing.T, ev events.Event) FeeEvent {
 	return fe
 }
 
-// TestGolden_aquariusSetProtocolFeeVec_ledger57697910 — the headline
-// fix. Two registered pools (both in MainnetPools) had their protocol
-// fee set in one governance tx; the decoder must land BOTH.
+// TestGolden_aquariusSetProtocolFeeVec_ledger57697910: two registered pools (both in
+// MainnetPools) had their protocol fee set in one governance tx; the decoder must land both.
 //
 //	ledger 57,697,910
 //	tx     f06be70b03e1a32fe5584aa014e55858e299d0a40d2bb7dcdbbabb4a6822bc7e

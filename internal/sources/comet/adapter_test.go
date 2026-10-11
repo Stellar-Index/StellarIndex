@@ -106,13 +106,10 @@ func TestDecoder_Decode_MalformedBodyReturnsError(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_SelfPairSwap_NoEventNoError pins the completeness
-// verdict fix: a self-pair swap (token_in == token_out — the 2026-08
-// Blend/Comet exploit's primitive) decodes cleanly but maps to ZERO rows,
-// so Decode must return (nil, nil) — NOT an error. Returning an error made
-// the completeness re-derive count each as an undecodable blind spot and
-// hold the `comet` source `complete=false` forever (the 36 exploit
-// self-swaps).
+// TestDecoder_Decode_SelfPairSwap_NoEventNoError: a self-pair swap (token_in == token_out, the
+// exploit primitive) decodes cleanly but maps to ZERO rows, so Decode must return (nil, nil), NOT
+// an error. An error would make the completeness re-derive count each as an undecodable blind spot
+// and hold the `comet` source `complete=false` forever.
 func TestDecoder_Decode_SelfPairSwap_NoEventNoError(t *testing.T) {
 	d := NewDecoder()
 	caller := accountStrkeyFromSeed(t, 0x10)
@@ -146,11 +143,9 @@ func mustTime(t *testing.T, s string) time.Time {
 	return tm
 }
 
-// TestDecoder_Decode_SelfPairSwap_IncrementsDetectionMetric pins the
-// exploit-shaped detector (4.4c): a dropped self-pair swap must bump
-// obs.AMMSelfPairSwapTotal{source="comet"} so the burst is observable even
-// though the row never reaches the served trades table. Detection only — the
-// (nil, nil) drop behaviour is unchanged.
+// TestDecoder_Decode_SelfPairSwap_IncrementsDetectionMetric pins that a dropped self-pair swap
+// bumps obs.AMMSelfPairSwapTotal{source="comet"}, so the burst is observable although the row
+// never reaches the served trades table. Detection only; the (nil, nil) drop is unchanged.
 func TestDecoder_Decode_SelfPairSwap_IncrementsDetectionMetric(t *testing.T) {
 	d := NewDecoder()
 	// Pin wall-clock just after the event's close time so the recency gate
@@ -182,12 +177,9 @@ func TestDecoder_Decode_SelfPairSwap_IncrementsDetectionMetric(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_SelfPairSwap_ReplayDoesNotIncrement is the concern-1
-// guard: a backfill or completeness re-derive re-runs Decode over the
-// HISTORICAL exploit window, whose ledger close time is far in the past
-// relative to wall-clock now. The recency gate must NOT bump the metric there
-// — else the re-derive would re-fire the burst alert in present time for a
-// non-event. The (nil, nil) drop is still unchanged.
+// TestDecoder_Decode_SelfPairSwap_ReplayDoesNotIncrement: a backfill or completeness re-derive
+// re-runs Decode over HISTORICAL ledgers, so the recency gate must NOT bump the metric there, or
+// the burst alert would re-fire in present time for a non-event. The (nil, nil) drop is unchanged.
 func TestDecoder_Decode_SelfPairSwap_ReplayDoesNotIncrement(t *testing.T) {
 	d := NewDecoder()
 	// Wall-clock ~26h after the event's close time — the replay/re-derive case.
@@ -217,14 +209,10 @@ func TestDecoder_Decode_SelfPairSwap_ReplayDoesNotIncrement(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_NonPositiveAmounts_IncrementsDetectionMetric is the
-// non-positive-amount analog of TestDecoder_Decode_SelfPairSwap_
-// IncrementsDetectionMetric: a swap whose body decodes cleanly but
-// carries a zero/negative amount is the sibling "decoded, zero honest rows"
-// drop shape to a self-pair swap, and must bump
-// obs.AMMNonPositiveSwapTotal{source="comet"} the same way, so an operator
-// can tell "armed but quiet" from "never wired" the same as the self-pair
-// counter.
+// TestDecoder_Decode_NonPositiveAmounts_IncrementsDetectionMetric is the non-positive-amount
+// analog of the self-pair metric test: a cleanly decoded swap with a zero/negative amount yields
+// zero honest rows and must bump obs.AMMNonPositiveSwapTotal{source="comet"}, so an operator can
+// tell "armed but quiet" from "never wired".
 func TestDecoder_Decode_NonPositiveAmounts_IncrementsDetectionMetric(t *testing.T) {
 	d := NewDecoder()
 	d.now = func() time.Time { return mustTime(t, "2026-08-25T03:56:02Z") } // +5m, LIVE case
@@ -255,16 +243,10 @@ func TestDecoder_Decode_NonPositiveAmounts_IncrementsDetectionMetric(t *testing.
 	}
 }
 
-// TestDecoder_Decode_NonPositiveAmounts_ReplayDoesNotIncrement is the
-// non-positive-amount analog of TestDecoder_Decode_SelfPairSwap_
-// ReplayDoesNotIncrement: a backfill or completeness
-// re-derive re-runs Decode over a HISTORICAL window whose ledger close
-// time is far in the past relative to wall-clock now.
-// reconciliation_catalogue.go and verify_decoders.go construct their own
-// un-disabled comet.NewDecoder() to replay history — without the recency
-// gate, every completeness sweep would inflate this counter and defeat its
-// "happening now" signal, exactly the failure mode the self-pair sibling
-// metric was already gated against.
+// TestDecoder_Decode_NonPositiveAmounts_ReplayDoesNotIncrement is the non-positive-amount analog
+// of the self-pair replay test. reconciliation_catalogue.go and verify_decoders.go build their own
+// un-disabled comet.NewDecoder() to replay history; without the recency gate every completeness
+// sweep would inflate this counter and defeat its "happening now" signal.
 func TestDecoder_Decode_NonPositiveAmounts_ReplayDoesNotIncrement(t *testing.T) {
 	d := NewDecoder()
 	d.now = func() time.Time { return mustTime(t, "2026-08-26T06:00:00Z") } // ~26h later, replay case
@@ -294,13 +276,10 @@ func TestDecoder_Decode_NonPositiveAmounts_ReplayDoesNotIncrement(t *testing.T) 
 	}
 }
 
-// TestDecoder_WithoutMetrics_SuppressesBothDetectionCounters pins why: the
-// projector builds an INDEPENDENT comet.Decoder alongside the dispatcher's
-// whenever comet is enabled and the projector is also running (ADR-0032
-// Phase-3 parallel double-write) — both decode the same live event. Without
-// an opt-out, self-pair / non-positive-amount detections would be counted
-// twice per real occurrence. WithoutMetrics must suppress BOTH counters
-// while leaving the (nil, nil) drop behaviour unchanged.
+// TestDecoder_WithoutMetrics_SuppressesBothDetectionCounters: the projector builds an INDEPENDENT
+// comet.Decoder beside the dispatcher's (ADR-0032 parallel double-write), and both decode the same
+// live event, so without an opt-out detections count twice. WithoutMetrics must suppress BOTH
+// counters while leaving the (nil, nil) drop unchanged.
 func TestDecoder_WithoutMetrics_SuppressesBothDetectionCounters(t *testing.T) {
 	d := NewDecoder().WithoutMetrics()
 	d.now = func() time.Time { return mustTime(t, "2026-08-25T03:56:02Z") } // LIVE case
@@ -374,16 +353,11 @@ func TestDecoder_Decode_HappyPath_NoDetectionMetric(t *testing.T) {
 	}
 }
 
-// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040 (the FLIP
-// of a former
-// TestDecoder_Decode_NoContractIDDiscrimination, whose comment
-// required exactly this inversion): Comet's `("POOL", "swap")` topic
-// shape is the Balancer-v1 contract event family, shared by EVERY
-// deployment of that WASM — forgeable by construction. A
-// perfect swap shape from an unregistered contract must NOT be
-// attributed to comet, while the same event from the curated pool
-// (Blend's backstop) must. Decode itself remains shape-only — the
-// gate lives in Matches, which the dispatcher consults first.
+// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040: Comet's `("POOL", "swap")` topic is
+// the Balancer-v1 event family shared by EVERY deployment of that WASM, so it is forgeable. A
+// perfect swap shape from an unregistered contract must NOT be attributed to comet, while the same
+// event from the curated pool (Blend's backstop) must. Decode stays shape-only; the gate lives in
+// Matches, which the dispatcher consults first.
 func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 	d := NewDecoder() // production gate: in-code curated set only
 	caller := accountStrkeyFromSeed(t, 0x10)
@@ -427,12 +401,9 @@ func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 }
 
 func TestDecoder_Decode_FailsClosedOnMissingClosedAt(t *testing.T) {
-	// LedgerClosedAt is empty — the adapter must FAIL CLOSED (return
-	// the error) rather than substituting time.Now(). A wall-clock
-	// fallback would mis-timestamp the row during a backfill replay,
-	// stamping every event with the replay run's time instead of the
-	// historical ledger close. Matches the blend/phoenix/defindex
-	// siblings. Production always populates LedgerClosedAt.
+	// With LedgerClosedAt empty the adapter must FAIL CLOSED (return the error), not substitute
+	// time.Now(), which would stamp backfill replays with the replay run's time. Matches the
+	// blend/phoenix/defindex siblings; production always populates it.
 	d := NewDecoder()
 	caller := accountStrkeyFromSeed(t, 0x10)
 	tokenIn := contractStrkeyFromSeed(t, 0x20)

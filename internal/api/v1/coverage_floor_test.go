@@ -32,30 +32,22 @@ const aquaClassicID = "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67
 
 // coverageFloorProbe is the CoverageFloorReader test double.
 //
-// It enforces the SAME window contract the real store does — `to` must
-// be strictly after `from` — because that guard is the whole reason the
-// probe has an explicit window at all. A fake that shrugged at a
-// degenerate range would let a handler bug ("probe from now to now")
-// pass every test here while, in production, timescale.Store returned
-// an error and the signal silently vanished. Recording the breach as
-// well as returning the error means a test can assert on the shape
-// directly rather than inferring it from a missing flag.
+// It enforces the same window contract as the real store (`to` strictly after `from`): a fake
+// that accepted a degenerate range would let a "probe from now to now" handler bug pass here
+// while timescale.Store errored in production and the signal silently vanished. The breach is
+// recorded as well as returned so a test can assert on it directly.
 //
-// Two fixture shapes. The flat `floor`/`found`/`err` triple answers
-// every pair alike, for the tests that pin the annotation's arithmetic.
-// `byPair`, when set, answers per pair and models the real store's
+// Two fixture shapes. The flat `floor`/`found`/`err` triple answers every pair alike, for the
+// annotation arithmetic. `byPair`, when set, answers per pair and models the real store's
 // folds, per method:
 //
-//   - EarliestBucket looks a key up under the alias-canonical form of
-//     each leg, in both orders — so a fixture stored as USDC/AQUA is
+//   - EarliestBucket looks a key up under the alias-canonical form of each leg, in both
+//     orders, so a fixture stored as USDC/AQUA is found by AQUA/USDC.
+//   - EarliestBucketAsStored does the same in the given order only, so that fixture is NOT
 //     found by AQUA/USDC.
-//   - EarliestBucketAsStored does the same in the given order only, so
-//     that fixture is NOT found by AQUA/USDC.
-//   - EarliestBucketLiteralQuote folds the base leg onto its family and
-//     takes the quote leg's LITERAL spelling, in both orders — so a
-//     fixture stored under a peg's SAC wrapper is invisible to a probe
-//     that named the peg's classic form, exactly as prices_1d would
-//     answer a query whose quote array holds one string.
+//   - EarliestBucketLiteralQuote folds the base leg onto its family and takes the quote leg's
+//     literal spelling, in both orders, so a fixture stored under a peg's SAC wrapper is
+//     invisible to a probe that named the peg's classic form, as prices_1d would answer.
 type coverageFloorProbe struct {
 	mu sync.Mutex
 
@@ -79,21 +71,18 @@ type coverageFloorProbe struct {
 	badWindows    int
 }
 
-// probeKey is the double's per-market fixture key: the two legs in the
-// literal spellings the rung would hold them under, in the stored
-// order. Literal rather than alias-canonical because which SPELLINGS a
-// read reaches is the property under test — a market held only under a
-// declared peg's SAC wrapper must be findable by one read and not by
-// another.
+// probeKey is the double's per-market fixture key: the two legs in the literal spellings the
+// rung holds them under, in stored order. It is literal rather than alias-canonical because
+// which spellings a read reaches is the property under test: a market held only under a
+// declared peg's SAC wrapper must be findable by one read and not another.
 func probeKey(base, quote canonical.Asset) string {
 	return base.String() + "/" + quote.String()
 }
 
-// probeSpanKeys enumerates every stored market one read would look at,
-// modelling the statement's cross-join: the base leg's alias family
-// crossed with the quote leg's family — or, for the quote-literal read,
-// with the one spelling it was given — and, unless the read is bound to
-// one orientation, the flipped arm as well.
+// probeSpanKeys enumerates every stored market one read would look at, modelling the
+// statement's cross-join: the base leg's alias family crossed with the quote leg's family (or
+// the one given spelling, for the quote-literal read), plus the flipped arm unless the read is
+// bound to one orientation.
 func probeSpanKeys(pair canonical.Pair, span string) []string {
 	quotes := []canonical.Asset{pair.Quote}
 	if span != "literal_quote" {
@@ -237,11 +226,9 @@ func (p *coverageFloorProbe) heal(floor time.Time) {
 	p.err, p.floor, p.found = nil, floor, true
 }
 
-// coverageMeta is the wire projection the assertions below read: the
-// envelope-level annotation plus the one flag it explains. `data` is
-// deliberately not modelled — the three surfaces under test return
-// three different body shapes, which is why the annotation lives on the
-// envelope in the first place.
+// coverageMeta is the wire projection the assertions read: the envelope-level annotation plus
+// the flag it explains. `data` is not modelled because the three surfaces return different
+// body shapes, which is why the annotation lives on the envelope.
 type coverageMeta struct {
 	CoverageFrom *time.Time `json:"coverage_from"`
 	Flags        struct {
@@ -259,11 +246,9 @@ type coverageEnvelope struct {
 	} `json:"data"`
 }
 
-// xlmCoverageFloor is the live floor of crypto:XLM / fiat:USD on the
-// daily aggregate, measured on r1. The fixtures below are
-// built around it so the windows under test are the real ones: 2016 is
-// genuinely below it, and the pair's daily candles genuinely have a
-// multi-year hole ABOVE it.
+// xlmCoverageFloor is the live floor of crypto:XLM / fiat:USD on the daily aggregate. The
+// fixtures are built around it: 2016 is below it, and the pair's daily candles have a
+// multi-year hole above it.
 var xlmCoverageFloor = time.Date(2018, 7, 1, 0, 0, 0, 0, time.UTC)
 
 func ohlcCoverageServer(t *testing.T, probe *coverageFloorProbe) *testServer {
@@ -294,26 +279,18 @@ func ohlcCoverageGetPair(t *testing.T, ts *testServer, pairQS, from, to string) 
 	return env
 }
 
-// TestCoverageFloorProbe_IsBoundedAndDaily pins the read the handler
-// actually issues for a pair served from itself: one probe, on the
-// DAILY rung, over a window bounded at both ends and strictly
+// TestCoverageFloorProbe_IsBoundedAndDaily pins the read the handler issues for a pair served
+// from itself: one probe, on the daily rung, over a window bounded at both ends and strictly
 // increasing.
 //
-// The rung is not the requested interval on purpose. prices_1d carries
-// no retention policy — migration 0031 removed the ones migration 0002
-// had placed on prices_1m / prices_15m, and migration 0156 attaches one
-// to prices_1m and to nothing else (90 days, shipped disabled). So the
-// minute rung is the only rung whose bottom edge can move with the
-// clock, and only where that policy is armed; nothing in the daily rung
-// has been dropped by age. It is also the coarsest, holds the fewest
-// rows per pair, and is the cheapest to prove empty — so a handler that
-// probed at the requested grain would spend more to describe a rung
-// whose contents follow its own refresh schedule, and on the minute
-// grain could describe one a retention run had truncated.
+// The rung is not the requested interval on purpose. prices_1d has no retention policy, so
+// nothing in it is dropped by age, while the minute rung's bottom edge can move with the clock
+// where its policy is armed. The daily rung is also the coarsest and cheapest to prove empty,
+// so probing at the requested grain would cost more and could describe a rung a retention run
+// had truncated.
 //
-// The fixture is a stablecoin-quoted pair, which the series read serves
-// from the pair itself; a fiat-quoted pair is served from a constituent
-// set and probes each constituent (see
+// The fixture is a stablecoin-quoted pair, which the series read serves from the pair itself; a
+// fiat-quoted pair is served from a constituent set and probes each constituent (see
 // TestCoverageFloor_ProbedOncePerConstituentFamily).
 func TestCoverageFloorProbe_IsBoundedAndDaily(t *testing.T) {
 	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
@@ -430,11 +407,10 @@ func TestCoverageFloor_UnwiredReaderChangesNothing(t *testing.T) {
 	}
 }
 
-// TestPriceAt_NotFoundCarriesCoverageExtensions — /v1/price/at answers
-// "nothing there" with a 404, which has no envelope to annotate, so the
-// two members ride on the problem body as RFC 9457 §3.2 extensions. An
-// instant below the floor is a coverage answer; an instant inside it
-// (the pair's real 2021-2026 daily hole) is a market one.
+// TestPriceAt_NotFoundCarriesCoverageExtensions — /v1/price/at answers a miss with a 404,
+// which has no envelope to annotate, so the two members ride on the problem body as RFC 9457
+// §3.2 extensions. An instant below the floor is a coverage answer; one inside it is a market
+// answer.
 func TestPriceAt_NotFoundCarriesCoverageExtensions(t *testing.T) {
 	probe := &coverageFloorProbe{floor: xlmCoverageFloor, found: true}
 	ts := httpTestServer(t, v1.New(v1.Options{
@@ -503,15 +479,12 @@ var drainedHistoryCursor = base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprin
 
 // ─── Fiat quotes: the floor is the served constituent set's ───────
 //
-// Nothing on chain quotes in `fiat:USD`. A fiat-quoted request is
-// answered from the USD-pegged constituents each surface enumerates —
-// /v1/ohlc combines them, /v1/chart walks a proxy list and then derives
-// through XLM, /v1/price/at retries the declared pegs — so the floor
-// behind an empty fiat-quoted answer must be measured over that same
-// set. A floor read on the literal pair alone is wrong in both
-// directions: a constituent with earlier buckets makes a served-and-
-// quiet window look uncovered, and a literal bucket no constituent read
-// would return makes an uncovered window look quiet.
+// Nothing on chain quotes in `fiat:USD`. A fiat-quoted request is answered from the USD-pegged
+// constituents each surface enumerates (/v1/ohlc combines them, /v1/chart walks a proxy list
+// then derives through XLM, /v1/price/at retries the declared pegs), so the floor behind an
+// empty answer must be measured over that same set. A floor on the literal pair alone is wrong
+// both ways: a constituent with earlier buckets makes a quiet window look uncovered, and a
+// literal bucket no constituent read returns makes an uncovered window look quiet.
 
 var (
 	pegFloor2021    = time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -600,42 +573,29 @@ func TestPriceAt_FiatQuoteFloorIsThePegSet(t *testing.T) {
 
 // ─── /v1/history: the floor spans the directions the page read spans ──
 //
-// The raw-trade page walks both legs' alias families and reads each
-// form in BOTH stored directions, folding the flipped rows into the
-// requested orientation. So a market the decoder recorded only as
-// USDC/AQUA IS served under `base=AQUA&quote=USDC`, and the floor over
-// both orientations is a claim about rows the page returns — the same
-// population, and the same floor, the CAGG-backed surfaces measure.
+// The raw-trade page walks both legs' alias families and reads each form in both stored
+// directions, folding flipped rows into the requested orientation. So a market recorded only
+// as USDC/AQUA is served under `base=AQUA&quote=USDC`, and the floor over both orientations is
+// a claim about rows the page returns, the same population the CAGG-backed surfaces measure.
 //
-// The correspondence is the invariant, not the width: while the page
-// read took the stored orientation as given, this probe was narrowed to
-// match it and that market carried no floor here at all. Widening the
-// read without widening the probe would under-report the history the
-// page can serve, exactly as the reverse over-promised it.
+// The invariant is that probe and read correspond, not the width: widening the read without
+// the probe under-reports servable history, and the reverse over-promises it.
 
 // ─── Fiat quotes: the probe spans what the combine reads, no more ───
 //
-// The fiat-quoted /v1/ohlc series is combined from the USD-pegged
-// constituents, and each constituent is read under the ONE quote
-// spelling the peg expansion named it in — a declared peg in its
-// classic form, an abstract backer, or the fiat itself.
-// [Store.OHLCSeries] takes that spelling literally, so a declared peg's
-// SAC wrapper is out of this surface's reach. Soroban AMMs quote in
-// exactly that wrapper and their decoders stamp BOTH legs of a pool
-// trade as contract addresses, so a pool sits under
-// `<AQUA SAC>/<USDC SAC>` while the SDEX book sits under
-// `AQUA/USDC-GA5Z…`.
+// The fiat-quoted /v1/ohlc series is combined from the USD-pegged constituents, each read
+// under the one quote spelling the peg expansion named it in (a declared peg in classic form,
+// an abstract backer, or the fiat itself). [Store.OHLCSeries] takes that spelling literally, so
+// a declared peg's SAC wrapper is out of reach. Soroban AMM decoders stamp both legs of a pool
+// trade as contract addresses, so a pool sits under `<AQUA SAC>/<USDC SAC>` while the SDEX
+// book sits under `AQUA/USDC-GA5Z…`.
 //
-// Two consequences, both pinned below. The book is never displaced: a
-// thin pool cannot set a served bar's high, low, count or volume,
-// because the pool's spelling is never requested at all. And an asset
-// whose only USD depth is such a pool serves an empty series — with NO
-// floor, because the probe is scoped to the spellings the combine
-// requests rather than to the quote's alias family. A quote-alias fold
-// there would name the pool's first bucket as the surface's floor and
-// call the window quiet; the gap is left visible
-// instead of being papered over by a probe that spans more than the
-// read.
+// Two consequences, both pinned below. The book is never displaced: a thin pool cannot set a
+// served bar's high, low, count or volume, because its spelling is never requested. And an
+// asset whose only USD depth is such a pool serves an empty series with no floor, because the
+// probe is scoped to the spellings the combine requests, not the quote's alias family. A
+// quote-alias fold would name the pool's first bucket as the floor and call the window quiet,
+// hiding the gap.
 
 // installUSDCSACRegistry publishes a registry declaring ONLY the USDC
 // SAC wrapper, so the base under test keeps a single spelling and every
@@ -668,10 +628,9 @@ type fiatSeriesEnvelope struct {
 	} `json:"data"`
 }
 
-// assertBookBar pins that a served bar carries one fixture bar's own
-// count, volumes and prices — nothing summed in from a second
-// constituent. Prices and quote volume are compared numerically because
-// the combine re-renders them at its own fixed precision; count and
+// assertBookBar pins that a served bar carries one fixture bar's own count, volumes and
+// prices, with nothing summed in from a second constituent. Prices and quote volume are
+// compared numerically because the combine re-renders them at its own precision; count and
 // base volume are integer strings it reproduces exactly.
 func assertBookBar(t *testing.T, got, want v1.OHLCSeriesBar) {
 	t.Helper()
@@ -712,12 +671,11 @@ func fiatSeriesGet(t *testing.T, ts *testServer, base string) fiatSeriesEnvelope
 	return env
 }
 
-// assertSACQuotedSeriesReadLast is the series twin of the ordering
-// [assertNoSACQuotedRead] pins on the point side. The fiat combine DOES read a declared peg's SAC wrapper — that is
-// where a Soroban pool's USD leg lives — but it must read every established spelling
-// of every family FIRST, because a held-back bar is admitted only into a
-// bucket none of them answered. Interleaving the two would let one
-// family's thin pool be consulted before another family's deep book.
+// assertSACQuotedSeriesReadLast is the series twin of the ordering [assertNoSACQuotedRead] pins
+// on the point side. The fiat combine does read a declared peg's SAC wrapper (where a Soroban
+// pool's USD leg lives), but only after every established spelling of every family, because a
+// held-back bar is admitted only into a bucket none of them answered. Interleaving would let
+// one family's thin pool be consulted before another family's deep book.
 func assertSACQuotedSeriesReadLast(t *testing.T, reads []string) {
 	t.Helper()
 	firstSAC := -1
@@ -772,14 +730,11 @@ func coverageSetDiff(a, b map[string]bool) []string {
 	return out
 }
 
-// TestCoverageFloor_UnfinishedProbeIsNotMemoised — a probe that did not
-// finish established nothing about the pair. Memoised as failed, it
-// would answer every request for the pair with silence for the TTL:
-// thirty minutes of no signal because one client hung up, or because
-// one response's probe ceiling ran out. Only a probe the database
-// answered is memoised — an error there is a fact about the read, and
-// re-issuing it on every empty window is the cost the memo exists to
-// bound.
+// TestCoverageFloor_UnfinishedProbeIsNotMemoised — a probe that did not finish established
+// nothing about the pair, and memoising it as failed would silence every request for the pair
+// for the TTL because one client hung up or one probe ceiling ran out. Only a probe the
+// database answered is memoised; an error there is a fact about the read, and re-issuing it on
+// every empty window is the cost the memo exists to bound.
 func TestCoverageFloor_UnfinishedProbeIsNotMemoised(t *testing.T) {
 	// A stablecoin-quoted pair: one probe per empty answer.
 	const pairQS = "base=crypto:XLM&quote=" + usdcClassicID

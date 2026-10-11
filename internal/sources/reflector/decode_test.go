@@ -21,19 +21,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// These tests exercise the real (non-stub) SCVal decoder path with
-// SDK-encoded fixtures. They cover the two Asset variants Reflector
-// emits in each update_data pair — Asset::Stellar(Address) and
-// Asset::Other(Symbol) — plus the topic[2] u64 timestamp. The SDK's
-// encoder is treated as ground truth for the wire format; the
-// golden bytes pinned in internal/scval/scval_test.go catch the
-// scenario where an SDK upgrade quietly changes encoding.
-//
-// Once we have real mainnet captures from r1 (via
-// scripts/capture-reflector-fixtures.sh), those replace the
-// SDK-encoded fixtures here and this file becomes a pure
-// regression harness. Fixture-capture path lives in
-// test/fixtures/reflector/README.md.
+// These tests exercise the real SCVal decoder with SDK-encoded fixtures covering both Asset
+// variants Reflector emits per update_data pair (Asset::Stellar(Address), Asset::Other(Symbol))
+// and the topic[2] u64 timestamp. The SDK encoder is ground truth for the wire format; golden
+// bytes in internal/scval/scval_test.go catch an SDK upgrade that changes encoding. Real captures
+// are described in test/fixtures/reflector/README.md.
 
 // ─── Encoding helpers — build the exact xdr shapes Reflector emits ─
 
@@ -58,14 +50,12 @@ func zeroContractStrkey(t *testing.T) string {
 	return s
 }
 
-// encodeUpdateBody builds the base64-encoded SCVal for the Reflector
-// UpdateEvent body. Real wire shape (verified against mainnet
-// fixtures in test/fixtures/reflector/v6-2026-04-23/):
+// encodeUpdateBody builds the base64 SCVal for the UpdateEvent body, matching the mainnet wire
+// shape:
 //
 //	Map { "update_data": Vec<(Val, i128)> }
 //
-// `assets` and `prices` must be the same length; each entry
-// produces one 2-tuple inside the inner Vec.
+// `assets` and `prices` must be the same length; each pair becomes one 2-tuple.
 func encodeUpdateBody(t *testing.T, assets []xdr.ScVal, prices []*big.Int) string {
 	t.Helper()
 	if len(assets) != len(prices) {
@@ -239,11 +229,8 @@ func TestRealDecoder_unknownSymbolAllUnknownRecordedAsRaw(t *testing.T) {
 }
 
 func TestRealDecoder_unknownSymbolPartialEventRecordsRawInPlace(t *testing.T) {
-	// Mixed payload — one valid fiat symbol + one unknown. The valid
-	// entry comes through exactly as before; the unknown one is now
-	// recorded verbatim as raw:NOTACURRENCY at ITS OWN vector slot
-	// (slot stability: the raw row takes the position the pre-totality Skip
-	// placeholder consumed, so the USD row's OpIndex does not move).
+	// Mixed payload: the valid fiat symbol decodes normally; the unknown one is recorded
+	// verbatim as raw:NOTACURRENCY at its own vector slot, so the USD row's OpIndex does not move.
 	usd := xdr.ScSymbol("USD")
 	usdSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &usd}
 	madeUp := xdr.ScSymbol("NOTACURRENCY")
@@ -284,13 +271,9 @@ func TestRealDecoder_unknownSymbolPartialEventRecordsRawInPlace(t *testing.T) {
 	}
 }
 
-// TestRealDecoder_nonPositivePriceSkippedIsObservable is the
-// regression for the LOW finding that a non-positive price entry was
-// skipped silently — no log, no counter — unlike the sibling
-// unknown-symbol skip. The skip BEHAVIOR is correct (Reflector filters
-// zero prices at the contract level; we skip defensively); the fix only
-// makes it observable via a WARN log so a partial event that loses a
-// zero/negative slot isn't invisible.
+// TestRealDecoder_nonPositivePriceSkippedIsObservable pins that skipping a non-positive price
+// (Reflector filters zeros at the contract level; the skip is defensive) emits a WARN log, so a
+// partial event that loses a slot is not invisible.
 func TestRealDecoder_nonPositivePriceSkippedIsObservable(t *testing.T) {
 	// Capture slog's default logger for the duration of this test.
 	var buf bytes.Buffer
@@ -414,12 +397,10 @@ func TestTopicSymbolsMatchEncodedContractTopics(t *testing.T) {
 	}
 }
 
-// TestRealDecoder_DEXRowQuotedInUSDCSAC_SelfPriceSanity: a reflector-dex
-// UpdateEvent carrying the native-XLM SAC priced at 0.2002 (14 decimals).
-// The DEX oracle (CALI2BYU…) denominates in the USDC SAC — its SEP-40
-// base() — so this is XLM-in-USDC ≈ 0.20, NOT XLM-in-XLM (exactly 1.0).
-// The quote must be the USDC SAC: native misreads 0.2002 as a self-price,
-// and fiat:USD normalises a stablecoin at ingest, hiding a USDC depeg.
+// TestRealDecoder_DEXRowQuotedInUSDCSAC_SelfPriceSanity: a reflector-dex update with the
+// native-XLM SAC at 0.2002 (14 decimals). The DEX oracle denominates in the USDC SAC (its SEP-40
+// base()), so this is XLM-in-USDC, not a self-price. The quote must be the USDC SAC: native
+// misreads it as a self-price, and fiat:USD normalises a stablecoin at ingest, hiding a depeg.
 func TestRealDecoder_DEXRowQuotedInUSDCSAC_SelfPriceSanity(t *testing.T) {
 	xlmSAC := contractAddressFromStrkey(t,
 		"CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA")
@@ -473,13 +454,9 @@ func TestRealDecoder_DEXRowQuotedInUSDCSAC_SelfPriceSanity(t *testing.T) {
 // a function return.
 func ptrScAddr(a xdr.ScAddress) *xdr.ScAddress { return &a }
 
-// TestVERSIONSMd_FiatFXAddressMatchesRealContract pins VERSIONS.md's
-// abbreviated Reflector Fiat FX row against the real contract ID this
-// package's fixtures decode against (docs/protocols/reflector.md:36
-// and the ContractID literals above). VERSIONS.md drifted to a stale
-// suffix (…KOMJRN63) while both the protocol doc and these tests kept
-// the real address — catch that class of drift here instead of
-// relying on someone diffing the table by eye.
+// TestVERSIONSMd_FiatFXAddressMatchesRealContract pins VERSIONS.md's abbreviated Reflector Fiat
+// FX row against the real contract ID the fixtures decode against, so a stale suffix is caught
+// here rather than by eye.
 func TestVERSIONSMd_FiatFXAddressMatchesRealContract(t *testing.T) {
 	const realContractID = "CBKGPWGKSKZF52CFHMTRR23TBWTPMRDIYZ4O2P5VS65BMHYH4DXMCJZC"
 	wantPrefix := realContractID[:8]
@@ -519,17 +496,10 @@ func contractAddressFromStrkey(t *testing.T, cStrkey string) xdr.ScAddress {
 	return xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &cid}
 }
 
-// Regression for an r1 page of
-// stellarindex_ingestion_oracle_unknown_symbols: every reflector-fx
-// event carries a VES and an XAU slot, and the decoder
-// recorded them as raw:VES / raw:XAU (7 rows each in 2h) and bumped
-// the unknown-symbols counter on every event. The cause was the
-// allow-lists, not the decoder: VES is ISO-4217 fiat (ADR-0010) and
-// XAU is the spot-gold commodity in the rwa: namespace (ADR-0028).
-// Pins that the two slots now decode to fiat:VES / rwa:XAU at their
-// original vector positions (op_index unchanged, so the
-// generation-guarded upsert rewrites the raw: row in place on replay)
-// and that the alert's counter no longer increments for them.
+// TestRealDecoder_fxVESAndXAUMappedNotRaw pins that every reflector-fx event's VES and XAU slots
+// decode to fiat:VES (ISO-4217, ADR-0010) and rwa:XAU (ADR-0028), not raw:, without bumping the
+// unknown-symbols counter. The vector position (op_index) is unchanged, so the
+// generation-guarded upsert rewrites a raw: row in place on replay.
 func TestRealDecoder_fxVESAndXAUMappedNotRaw(t *testing.T) {
 	ves := xdr.ScSymbol("VES")
 	vesSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &ves}
@@ -537,20 +507,10 @@ func TestRealDecoder_fxVESAndXAUMappedNotRaw(t *testing.T) {
 	xauSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &xau}
 	bodyB64 := encodeUpdateBody(t,
 		[]xdr.ScVal{vesSv, xauSv},
-		// Synthetic magnitudes at the 14-decimal scale, NOT the live
-		// feed's: the real mainnet capture decodes to VES ≈ 2.07e-3
-		// and XAU ≈ 4720.90.
-		//
-		// The constants are left as they are on purpose. This test
-		// asserts round-trip identity of whatever it encodes, and
-		// sdkDecodeUpdateBody has no magnitude-dependent branch — the
-		// only price predicate on the whole path is Price.Sign() <= 0 —
-		// so a 7.3e-6 input exercises byte-identical code to a 2.07e-3
-		// one. Restating them would be churn that buys no coverage.
-		//
-		// Real-magnitude coverage is real_fixture_test.go, which runs
-		// the actual captures and pins zero raw rows on FX with rwa:XAU
-		// as the only non-fiat slot.
+		// Synthetic magnitudes at the 14-decimal scale, not the live feed's. The test asserts
+		// round-trip identity and the decode path's only price predicate is Price.Sign() <= 0,
+		// so magnitude adds no coverage. Real magnitudes are covered by real_fixture_test.go,
+		// which pins zero raw rows on FX with rwa:XAU as the only non-fiat slot.
 		// Values below: 1 VES ≈ 7.3e-6 USD; 1 XAU ≈ 4,100 USD.
 		[]*big.Int{big.NewInt(730_000_000), big.NewInt(410_000_000_000_000_000)},
 	)

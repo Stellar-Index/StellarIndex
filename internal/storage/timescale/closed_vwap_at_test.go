@@ -12,11 +12,9 @@ import (
 	"time"
 )
 
-// TestPriceAtResolutionLadder pins the finest-first CAGG ladder used
-// by ClosedVWAPAtOrBefore: recent instants probe prices_1m first;
-// week-old instants start at prices_1h; year-old instants read
-// prices_1d only. Every ladder is ordered finest→coarsest so the
-// first in-window hit is the finest resolution that has the data.
+// TestPriceAtResolutionLadder pins the CAGG ladder used by ClosedVWAPAtOrBefore: recent instants
+// start at prices_1m, week-old at prices_1h, year-old at prices_1d. Each ladder is ordered
+// finest to coarsest so the first in-window hit is the finest resolution holding the data.
 func TestPriceAtResolutionLadder(t *testing.T) {
 	cases := []struct {
 		name string
@@ -74,15 +72,11 @@ func TestHistoryGranularityBucketDuration(t *testing.T) {
 	}
 }
 
-// TestClosedVWAPAtOrBeforeQueryShape guards the sargability + both-
-// directions invariants of the point-in-time query WITHOUT a database.
-// A regression to the non-sargable `bucket + INTERVAL <= …` form (the
-// latency-burn shape) or dropping a stored direction would
-// silently degrade the endpoint; this turns either into a test
-// failure.
-// nonSargableClosedGuard matches the `bucket + INTERVAL '…' <= now()`
-// spelling of the ADR-0015 closed-bucket guard. Arithmetic on the column
-// defeats the (…, bucket DESC) index — the 446 ms → 26 ms incident.
+// TestClosedVWAPAtOrBeforeQueryShape guards the sargability and both-directions invariants of the
+// point-in-time query without a database: the non-sargable `bucket + INTERVAL <= …` form or a
+// dropped stored direction would silently degrade the endpoint.
+// nonSargableClosedGuard matches the `bucket + INTERVAL '…' <= now()` spelling of the
+// closed-bucket guard. Arithmetic on the column defeats the (…, bucket DESC) index.
 var nonSargableClosedGuard = regexp.MustCompile(`(?i)\+\s*INTERVAL\s*'[^']*'\s*<=?\s*now\(\)`)
 
 // TestClosedBucketGuardSpelling scans every non-test source in the package,
@@ -117,17 +111,12 @@ func TestClosedBucketGuardSpelling(t *testing.T) {
 	}
 }
 
-// assertLiteralCount fails t unless literal appears in q exactly want
-// times — catching a slot silently dropped from one UNION branch while
-// the others still carry it, which a plain strings.Contains cannot
-// (a two-slot template's lower bound checked with one Contains
-// stays green after one slot is deleted).
+// assertLiteralCount fails t unless literal appears in q exactly want times, catching a slot
+// dropped from one UNION branch while the others still carry it (a plain strings.Contains
+// stays green).
 //
-// want MUST be a hardcoded expectation, never derived from
-// strings.Count(tmpl, placeholder) on the same template being rendered:
-// deleting a "%[1]s" occurrence from the template shrinks that count in
-// lockstep with the rendered query's, so the two would always agree —
-// the exact tautology that let the original bug hide.
+// want MUST be hardcoded, never derived from strings.Count(tmpl, placeholder) on the template
+// being rendered: deleting a "%[1]s" shrinks both counts in lockstep, so they would always agree.
 func assertLiteralCount(t *testing.T, q, literal string, want int) {
 	t.Helper()
 	got := strings.Count(q, literal)
@@ -148,11 +137,9 @@ func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 	if strings.Contains(q, "bucket + INTERVAL") {
 		t.Error("query uses non-sargable `bucket + INTERVAL` form (function on indexed column)")
 	}
-	// The upper bound (%[2]s) is injected into both branches of the
-	// `latest` max(bucket) UNION ALL (2 occurrences); the lower bound
-	// (%[3]s) is injected into those SAME two branches AND both branches
-	// of the `r` point-read UNION ALL (4 occurrences) — every branch
-	// prunes chunks on its own bound independently.
+	// The upper bound (%[2]s) sits in both `latest` max(bucket) branches (2 occurrences); the
+	// lower bound (%[3]s) sits in those same two plus both `r` point-read branches (4), because
+	// every branch prunes chunks on its own bound.
 	assertLiteralCount(t, q, "2024-01-01 00:00:00+00", 2)
 	assertLiteralCount(t, q, "2023-12-01 00:00:00+00", 4)
 	// Both stored directions of the market are read.
@@ -167,11 +154,9 @@ func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 	if !strings.Contains(q, "COALESCE(volume_priced, 0)::text AS volume_priced") {
 		t.Error("query does not select each direction's volume (needed for the volume-weighted union)")
 	}
-	// The SQL must NOT weight or invert the directions itself. Both of
-	// these are the wrong shape: `1.0 / vwap` rounds the flipped leg
-	// to the division's NUMERIC scale before weighting, and a weight
-	// of trade COUNT — a trade-count-weighted mean of {vwap, 1/vwap}
-	// is not the union VWAP.
+	// The SQL must NOT weight or invert the directions itself: `1.0 / vwap` rounds the flipped
+	// leg to the division's NUMERIC scale before weighting, and a trade-count-weighted mean of
+	// {vwap, 1/vwap} is not the union VWAP.
 	if strings.Contains(q, "1.0 / NULLIF(vwap, 0)") {
 		t.Error("query still inverts the flipped leg in SQL; the exact combine belongs to combineDirVWAP")
 	}
@@ -180,12 +165,11 @@ func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 	}
 }
 
-// TestRecentClosedVWAP1mExistsQueryShape guards the recent-existence
-// gate LatestClosedVWAP1mForPair runs BEFORE its value walk (empty-alias latency incident). The gate is what keeps an EMPTY pair
-// (native/fiat:USD, read as an alias on every XLM query) off the full
-// ~400-day walk, so it MUST stay sargable + literal-cutoff-bounded +
-// both-directions + LIMIT 1. A regression on any of these silently
-// reintroduces the cold-start timeout.
+// TestRecentClosedVWAP1mExistsQueryShape guards the recent-existence gate that
+// LatestClosedVWAP1mForPair runs before its value walk. The gate keeps an EMPTY pair
+// (native/fiat:USD, read as an alias on every XLM query) off the full ~400-day walk, so it MUST
+// stay sargable, literal-cutoff-bounded, both-directions and LIMIT 1, or the cold-start timeout
+// returns.
 func TestRecentClosedVWAP1mExistsQueryShape(t *testing.T) {
 	lower := "AND bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'\n"
 	q := fmt.Sprintf(recentClosedVWAP1mExistsTemplate, lower)
@@ -222,14 +206,11 @@ func TestRecentClosedVWAP1mExistsQueryShape(t *testing.T) {
 	}
 }
 
-// TestRecentClosedVWAP1mCombinedQueryShape guards the trailing-baseline
-// query that feeds the /v1/price serving-sanity guard. It MUST stay
-// sargable (closed-bucket guard as a constant on the RHS, never a function
-// on the indexed bucket column), literal-cutoff-bounded (plan-time chunk
-// pruning), both-directions (a flipped-only pair still contributes), and
-// it MUST hand the raw per-direction rows to the same Go combine the
-// served candidate uses — otherwise the guard's baseline drifts off the
-// served value's own combine and would false-positive.
+// TestRecentClosedVWAP1mCombinedQueryShape guards the trailing-baseline query behind the
+// /v1/price serving-sanity guard. It MUST stay sargable (closed-bucket guard as a constant on the
+// RHS), literal-cutoff-bounded (plan-time chunk pruning) and both-directions (a flipped-only pair
+// still contributes), and it MUST hand raw per-direction rows to the same Go combine the served
+// candidate uses, or the baseline drifts off the served value and false-positives.
 func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
 	lower := "AND bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'\n"
 	q := fmt.Sprintf(recentClosedVWAP1mCombinedTemplate, lower)
@@ -273,13 +254,10 @@ func TestRecentClosedVWAP1mCombinedQueryShape(t *testing.T) {
 	}
 }
 
-// TestLatestClosedVWAP1mQueryShape guards latestClosedVWAP1mTemplate —
-// LatestClosedVWAP1mForPair's value-walk query — which needs a shape
-// test. Its four %[1]s slots (both
-// UNION ALL branches of the `latest` max(bucket) CTE, plus both UNION
-// ALL branches of the `r` point-read CTE) each carry the literal lower
-// bound independently; a slot silently dropped from any one of them
-// still renders valid SQL.
+// TestLatestClosedVWAP1mQueryShape guards latestClosedVWAP1mTemplate, the value-walk query of
+// LatestClosedVWAP1mForPair. Its four %[1]s slots (both UNION ALL branches of the `latest`
+// max(bucket) CTE and of the `r` point-read CTE) each carry the literal lower bound
+// independently; a slot dropped from any one still renders valid SQL.
 func TestLatestClosedVWAP1mQueryShape(t *testing.T) {
 	lower := "AND bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'\n"
 	q := fmt.Sprintf(latestClosedVWAP1mTemplate, lower)
@@ -311,19 +289,11 @@ func TestLatestClosedVWAP1mQueryShape(t *testing.T) {
 	assertLiteralCount(t, q, "bucket >= TIMESTAMPTZ '2026-06-01 00:00:00+00'", 4)
 }
 
-// TestRecentClosedVWAP1mForPairQueryShape extends the sargability guard
-// to the SEP-40 prices() passthrough read.
-//
-// This query used `bucket + INTERVAL '1 minute' <= now()` — a function
-// on the indexed column, so the planner can neither use the bucket index
-// nor prune chunks at plan time. Its sibling
-// [recentClosedVWAP1mCombinedTemplate] already had the sargable form.
-//
-// It drifted because it was an inline `const q` inside the function
-// body: the guards above assert over PACKAGE-LEVEL templates, so an
-// in-function query is invisible to them however careful the author.
-// Hoisting it is what makes this test possible at all, and is the
-// durable half of the fix.
+// TestRecentClosedVWAP1mForPairQueryShape extends the sargability guard to the SEP-40 prices()
+// passthrough read. A `bucket + INTERVAL '1 minute' <= now()` form is a function on the indexed
+// column, so the planner can neither use the bucket index nor prune chunks at plan time.
+// The query must stay a package-level template: the guards assert over those, and an inline
+// `const q` is invisible to them.
 func TestRecentClosedVWAP1mForPairQueryShape(t *testing.T) {
 	q := recentClosedVWAP1mForPairQuery
 
@@ -346,19 +316,11 @@ func TestRecentClosedVWAP1mForPairQueryShape(t *testing.T) {
 	}
 }
 
-// TestDailyMarketDaysQueryShape extends the sargability guard to
-// DailyMarketDays' daily rollup read.
-//
-// This query used `bucket + INTERVAL '1 hour' <= now()` — a function on
-// the indexed column, so the planner can neither use the bucket index
-// nor prune chunks at plan time over the day/hour GROUP BY's full scan.
-//
-// It drifted because it was an inline `const q` inside the function
-// body: the guards in this file assert over PACKAGE-LEVEL templates, so
-// an in-function query stayed invisible to them (`rg DailyMarketDays
-// internal/storage/timescale/*_test.go` returned nothing before this).
-// Hoisting it to [dailyMarketDaysQuery] is what makes this test
-// possible at all, and is the durable half of the fix.
+// TestDailyMarketDaysQueryShape extends the sargability guard to DailyMarketDays' daily rollup
+// read. A `bucket + INTERVAL '1 hour' <= now()` form is a function on the indexed column, so the
+// planner can neither use the bucket index nor prune chunks ahead of the day/hour GROUP BY scan.
+// The query must stay the package-level [dailyMarketDaysQuery]; an inline `const q` is invisible
+// to these guards.
 func TestDailyMarketDaysQueryShape(t *testing.T) {
 	q := dailyMarketDaysQuery
 
@@ -372,12 +334,10 @@ func TestDailyMarketDaysQueryShape(t *testing.T) {
 	}
 }
 
-// TestDailyMarketDaysQueryReadsWholeLastDay pins the upper bound to the
-// END of the `to` day. prices_1h holds hour buckets, so `bucket <= $4`
-// with `to` at a day start read the last day from its 00:00 hour alone:
-// the premium caller's newest complete day could never clear the
-// two-hour floor and was reported as withheld or reference-only.
-// The bound stays on the parameter, so it stays sargable.
+// TestDailyMarketDaysQueryReadsWholeLastDay pins the upper bound to the END of the `to` day.
+// prices_1h holds hour buckets, so `bucket <= $4` with `to` at a day start would read the last
+// day from its 00:00 hour alone and never clear the two-hour floor. The bound stays on the
+// parameter, so it stays sargable.
 func TestDailyMarketDaysQueryReadsWholeLastDay(t *testing.T) {
 	q := dailyMarketDaysQuery
 

@@ -84,13 +84,9 @@ func TestDecoder_Matches(t *testing.T) {
 	}
 }
 
-// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040:
-// the bare Symbol("trade") 4-topic shape is forgeable — the r1 lake
-// contains a parallel non-registry router deployment and a
-// foreign-WASM look-alike emitting the identical shape
-// (docs/protocols/aquarius.md, flagged sets). A perfect trade shape
-// from an unregistered contract must NOT be attributed to aquarius,
-// while the same event from a curated registry pool must.
+// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040: the bare Symbol("trade") 4-topic
+// shape is forgeable (a parallel router and a foreign-WASM look-alike emit it). It must not be
+// attributed to aquarius from an unregistered contract, but must be from a registry pool.
 func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 	d := NewDecoder() // production gate: curated registry set only
 	topics := []string{
@@ -165,20 +161,13 @@ func TestDecoder_AddPoolRegistersNewPool(t *testing.T) {
 	}
 }
 
-// TestDecoder_ChHashOrderCanDropRegisteredPoolTrade pins Q040's hazard at the
-// Decoder: its registry grows live from add_pool alone, so a same-ledger trade
-// delivered BEFORE its pool's add_pool is permanently missed (Matches() false,
-// and the projector's processEventSafely treats that as a silent skip).
-// stellar.contract_events sorts a ledger by tx_hash, a lexical order that can
-// put the trade first; the lake readers therefore re-sort each ledger into
-// transaction apply order (internal/storage/clickhouse/apply_order.go, tested
-// by TestApplyOrderer_SameLedgerAddPoolPrecedesTrade). This test keeps the
-// decoder-side reason that ordering is load-bearing.
-//
-// This test proves the divergence exists deterministically, at the
-// Decoder alone, independent of any live ClickHouse connection: same
-// two events, only the callback ORDER changes, with the same outcome
-// the lake's tx_hash sort would produce.
+// TestDecoder_ChHashOrderCanDropRegisteredPoolTrade pins Q040's hazard at the Decoder: its
+// registry grows live from add_pool alone, so a same-ledger trade delivered before its pool's
+// add_pool is permanently missed (Matches() false, a silent skip in processEventSafely).
+// stellar.contract_events sorts a ledger by tx_hash, which can put the trade first, so lake
+// readers re-sort into apply order (internal/storage/clickhouse/apply_order.go, tested by
+// TestApplyOrderer_SameLedgerAddPoolPrecedesTrade). This test shows deterministically, with no
+// ClickHouse, that only the event order changes the outcome.
 func TestDecoder_ChHashOrderCanDropRegisteredPoolTrade(t *testing.T) {
 	newPool := makeContractStrkey(t, 0x9C)
 	announce := events.Event{
@@ -227,24 +216,17 @@ func TestDecoder_ChHashOrderCanDropRegisteredPoolTrade(t *testing.T) {
 	if hashOrder.Matches(trade) {
 		t.Fatal("hash order: Matches(trade) = true before add_pool was ever seen — test setup invalid")
 	}
-	// The projector's caller treats this Matches()=false miss as
-	// (0, false, nil) — no error, no count (internal/projector/
-	// projector.go processEventSafely) — so this trade is now gone:
-	// the cursor advances past it and it is never offered again.
-	//
-	// The pool DOES register once its own add_pool is later seen, but
-	// that is too late for the trade that already came and went.
+	// The projector treats this Matches()=false miss as (0, false, nil), no error and no count,
+	// so the cursor advances and the trade is never offered again. The pool registers once its
+	// add_pool is seen, but too late for this trade.
 	if _, err := hashOrder.Decode(announce); err != nil {
 		t.Fatalf("hash order: Decode(add_pool): %v", err)
 	}
 	if !hashOrder.Matches(trade) {
 		t.Fatal("hash order: pool never registered — test setup invalid")
 	}
-	// The point: a real one-pass forward stream calls Matches()/Decode()
-	// once per event, in stream order, and never replays a miss. The
-	// registration succeeding on a SECOND look proves the trade's
-	// original miss was a stream-ordering artifact, not a real
-	// unregistered-pool rejection — exactly the silent loss Q040 names.
+	// A one-pass stream never replays a miss. Registration succeeding on a second look shows
+	// the original miss was a stream-ordering artifact, not a real unregistered-pool rejection.
 }
 
 // TestDecoder_AddPoolMalformedBody: a router add_pool whose body
@@ -324,12 +306,9 @@ func TestDecoder_Decode_MalformedClosedAtReturnsError(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_UnrecognizedKindFailsClosed pins Q041: Decode()'s
-// switch must fail closed on a kind it has no explicit case for, not
-// force it through decodeTrade just because the topic shape happens to
-// resemble one. An event whose topic[0] classify()
-// doesn't recognize — but which otherwise has trade-shaped topics/body —
-// must not be silently decoded as a genuine trade (ADR-0035 violation).
+// TestDecoder_Decode_UnrecognizedKindFailsClosed pins Q041: Decode() must fail closed on a kind
+// it has no case for. An event with an unrecognized topic[0] but trade-shaped topics/body must
+// not be decoded as a trade (ADR-0035).
 func TestDecoder_Decode_UnrecognizedKindFailsClosed(t *testing.T) {
 	d := NewDecoder()
 	tokenIn := makeContractStrkey(t, 0x01)
@@ -377,12 +356,9 @@ func TestDecoder_Decode_MalformedBodyReturnsError(t *testing.T) {
 	}
 }
 
-// TestDecoder_MatchesRewards_gated pins that the rewards-gauge events
-// (migration 0099) are gated on contract identity
-// IDENTICALLY to trade/liquidity/reserves: a REGISTERED pool matches,
-// an unregistered look-alike emitting the exact same topic does not.
-// Uses real captured bytes (see decode_rewards_test.go) for the topic
-// shapes, swapping only the ContractID — Matches() never reads e.Value.
+// TestDecoder_MatchesRewards_gated pins that rewards-gauge events are gated on contract identity
+// like trade/liquidity/reserves: a registered pool matches, an unregistered look-alike with the
+// same topic does not. Only the ContractID is swapped; Matches() never reads e.Value.
 func TestDecoder_MatchesRewards_gated(t *testing.T) {
 	d := NewDecoder()
 	registered := MainnetPools[0]
@@ -412,13 +388,10 @@ func TestDecoder_MatchesRewards_gated(t *testing.T) {
 	}
 }
 
-// TestDecoder_MatchesAdmin_routerOnlyGated pins that the two
-// ROUTER-SCOPED governance kinds (config_rewards, pool_gauge_switch_token
-// — migration 0100) stay gated on the CANONICAL ROUTER
-// trust root only: a full-history r1 census finds ZERO
-// pool-emitted occurrences of either, so a registered pool (and any
-// arbitrary contract) must NOT match — see decode_admin.go's package
-// doc.
+// TestDecoder_MatchesAdmin_routerOnlyGated pins that the router-scoped governance kinds
+// (config_rewards, pool_gauge_switch_token) are gated on the canonical router trust root only.
+// No pool emits them, so a registered pool or arbitrary contract must not match (see
+// decode_admin.go's package doc).
 func TestDecoder_MatchesAdmin_routerOnlyGated(t *testing.T) {
 	d := NewDecoder()
 	pool := MainnetPools[0]
@@ -457,20 +430,12 @@ func TestDecoder_MatchesAdmin_routerOnlyGated(t *testing.T) {
 	}
 }
 
-// TestDecoder_MatchesPoolGovernance_recognized is the recognition
-// regression for the pool-governance decoder gap (fix
-// fix/aquarius-pool-governance-events). The seven POOL-EMITTABLE
-// governance kinds — apply_upgrade, commit_upgrade, set_privileged_addrs,
-// apply_transfer_ownership, commit_transfer_ownership,
-// enable_emergency_mode, disable_emergency_mode — are legitimately
-// emitted by the REGISTERED Aquarius pools (a protocol-wide staged WASM
-// upgrade + pool-level ownership/emergency actions, ~1,679 real events).
-// A gate of reg.IsFactory ONLY would make every pool-emitted
-// occurrence return Matches()==false — an ADR-0033 recognition gap
-// that also dropped the event from Decode. This pins that a REGISTERED
-// pool AND the router now match, while a foreign contract and the
-// flagged parallel router still fail-closed. Matches() reads
-// only topic[0], so a bare topic[0] proves the gate.
+// TestDecoder_MatchesPoolGovernance_recognized pins the seven pool-emittable governance kinds
+// (apply_upgrade, commit_upgrade, set_privileged_addrs, apply/commit_transfer_ownership,
+// enable/disable_emergency_mode). Registered pools legitimately emit them, so a reg.IsFactory-only
+// gate would be an ADR-0033 recognition gap. A registered pool and the router must match; a
+// foreign contract and the flagged parallel router must fail closed. Matches() reads only
+// topic[0], so a bare topic[0] proves the gate.
 func TestDecoder_MatchesPoolGovernance_recognized(t *testing.T) {
 	d := NewDecoder()
 	pool := MainnetPools[0]
@@ -515,12 +480,9 @@ func TestDecoder_MatchesPoolGovernance_recognized(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_PoolApplyUpgrade_endToEnd drives the full
-// dispatcher seam (Matches gate → Decode → AdminEvent) for a REGISTERED
-// pool's real 2-hash apply_upgrade, proving the recognition gap fix
-// carries the event all the way to a projectable AdminEvent stamped with
-// the POOL's contract_id (the aquarius_admin emitter column that
-// distinguishes pool rows from router rows).
+// TestDecoder_Decode_PoolApplyUpgrade_endToEnd drives Matches gate, Decode and AdminEvent for a
+// registered pool's real apply_upgrade, which must be stamped with the pool's contract_id (the
+// aquarius_admin emitter column that distinguishes pool rows from router rows).
 func TestDecoder_Decode_PoolApplyUpgrade_endToEnd(t *testing.T) {
 	d := NewDecoder()
 	const poolID = "CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP"
@@ -638,11 +600,8 @@ func TestDecoder_Decode_RewardsAndAdmin_endToEnd(t *testing.T) {
 	})
 }
 
-// TestDecoder_MatchesLiquidityReserves_gated pins that the new
-// liquidity/reserves events are gated on contract identity IDENTICALLY
-// to trades: a REGISTERED pool matches, an unregistered look-alike
-// emitting the exact same topics does NOT (so it can't inject
-// fabricated reserves).
+// TestDecoder_MatchesLiquidityReserves_gated pins that liquidity/reserves events are gated on
+// contract identity like trades, so an unregistered look-alike cannot inject fabricated reserves.
 func TestDecoder_MatchesLiquidityReserves_gated(t *testing.T) {
 	d := NewDecoder() // production seed — MainnetPools[0] is registered.
 	registered := MainnetPools[0]

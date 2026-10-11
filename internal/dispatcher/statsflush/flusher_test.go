@@ -28,10 +28,8 @@ type stubStatsSource struct {
 func (s *stubStatsSource) Stats() dispatcher.Stats { return s.stats }
 
 // fakeStatsWriter is a [statsWriter] fake that fails on demand.
-// *timescale.Store can't play this role in a unit test: Store.Open
-// pings the DB before returning, so there's no way to construct one
-// that succeeds and then fails a later call without a real reachable
-// Postgres.
+// *timescale.Store cannot play this role: Store.Open pings the DB, so a store that succeeds and
+// then fails a later call needs a real reachable Postgres.
 type fakeStatsWriter struct {
 	fail  bool
 	calls [][]timescale.DecoderStatsBucket
@@ -56,16 +54,12 @@ func newTestFlusher(source StatsSource, store statsWriter) *Flusher {
 	return New(source, store, slog.New(slog.NewTextHandler(io.Discard, nil)), Options{Interval: 5 * time.Minute})
 }
 
-// TestFlushAt_WriteFailure_RetainsLastSnapshot pins that flushAt does not advance f.last
-// when InsertDecoderStats fails — that would permanently
-// discard that window's counter deltas the moment the next tick
-// computed its own delta against the now-advanced (but never durably
-// written) snapshot.
+// TestFlushAt_WriteFailure_RetainsLastSnapshot pins that flushAt does not advance f.last when
+// InsertDecoderStats fails; that would permanently discard the window's deltas, since the next
+// tick would diff against a snapshot that was never durably written.
 //
-// Drives two ticks where the write fails, then a third where it
-// succeeds, and asserts the THIRD (successful) write's row carries
-// the FULL cumulative delta across all three windows — proof that
-// nothing from the two failed windows was silently dropped.
+// Two failing ticks then a successful one: the third write must carry the full cumulative delta
+// across all three windows.
 func TestFlushAt_WriteFailure_RetainsLastSnapshot(t *testing.T) {
 	src := &stubStatsSource{stats: dispatcher.Stats{
 		EventsSeen: map[string]int{"band": 10},
@@ -97,15 +91,10 @@ func TestFlushAt_WriteFailure_RetainsLastSnapshot(t *testing.T) {
 		t.Errorf("after successful flush 3, f.last.EventsSeen[band] = %d, want 40 (snapshot must advance on success)", got)
 	}
 
-	// InsertDecoderStats is attempted on every tick regardless of
-	// outcome (the fake records all 3 attempts), but only the THIRD
-	// call's rows durably landed (fail=false at that point). Its delta
-	// must be the FULL 40 (from the zero-value baseline before flush
-	// 1) — not just 15 (band=40 minus the never-durable band=25
-	// snapshot flush 2 would have left behind under the bug): flush 1
-	// fails but "advances" to 10, flush 2 fails but "advances" to 25 as
-	// its own last, flush 3 succeeds and computes its delta against 25
-	// → reports 15, silently losing the first 25 events forever.
+	// InsertDecoderStats is attempted on every tick (the fake records all 3), but only the third
+	// call's rows landed. Its delta must be the full 40 from the zero baseline, not 15: if failed
+	// flushes advanced the snapshot (10, then 25), flush 3 would diff against 25 and lose the
+	// first 25 events forever.
 	if len(w.calls) != 3 {
 		t.Fatalf("InsertDecoderStats called %d times, want 3 (attempted on every tick)", len(w.calls))
 	}
@@ -146,17 +135,12 @@ func TestFlushAt_WriteSuccess_AdvancesSnapshot(t *testing.T) {
 	}
 }
 
-// TestRun_ShutdownDrain_UsesLiveContext guards the shutdown drain: Run's ctx.Done() arm
-// must not call f.flush(ctx) with the very context that just fired. database/sql checks
-// ctx.Err() before acquiring a connection, so the "one last flush
-// before exiting so a clean shutdown captures the final partial
-// bucket" would never write anything — every indexer restart would drop
-// up to a full interval of events_seen / decode_errors / orphan_events
-// while logging the retain-snapshot warning, a promise the exiting
-// process cannot keep.
+// TestRun_ShutdownDrain_UsesLiveContext guards the shutdown drain: Run's ctx.Done() arm must not
+// call f.flush(ctx) with the context that just fired. database/sql checks ctx.Err() before
+// acquiring a connection, so the final flush would never write and every restart would drop up
+// to a full interval of events_seen / decode_errors / orphan_events.
 //
-// Asserts the drain both happens AND carries a context that is still
-// live at write time.
+// Asserts the drain happens and carries a context still live at write time.
 func TestRun_ShutdownDrain_UsesLiveContext(t *testing.T) {
 	src := &stubStatsSource{stats: dispatcher.Stats{
 		EventsSeen: map[string]int{"band": 7},
@@ -188,11 +172,9 @@ func TestRun_ShutdownDrain_UsesLiveContext(t *testing.T) {
 }
 
 // TestFlushAt_PromotesDispatcherCountersToPrometheus pins that
-// TxReadErrors, TxEventReadErrors and EntryMetaUnsupported are not
-// WARN-log-only: each needs a Prometheus series an alert rule or
-// dashboard can key off. A single flush
-// window with all three nonzero must both log the WARN (unchanged
-// behaviour) and add the exact delta to the matching counter.
+// TxReadErrors, TxEventReadErrors and EntryMetaUnsupported are not WARN-log-only: each needs a
+// Prometheus series an alert rule can key off. One window with all three nonzero must log the
+// WARN and add the exact delta to the matching counter.
 func TestFlushAt_PromotesDispatcherCountersToPrometheus(t *testing.T) {
 	before := struct{ txRead, txEvent, entryMeta float64 }{
 		testutil.ToFloat64(obs.DispatcherTxReadErrorsTotal),
@@ -265,16 +247,11 @@ func TestFlushAt_PromotesLedgerUpgradeEntries(t *testing.T) {
 }
 
 // TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch pins that the
-// end-of-flush snapshot includes EntryMetaUnsupported; otherwise
-// f.last.EntryMetaUnsupported stays 0 forever and the delta at every subsequent tick equalled the full
-// cumulative total — the WARN fired on every flush window for the
-// life of the process instead of only when NEW occurrences appeared
-// in that window.
+// end-of-flush snapshot includes EntryMetaUnsupported; otherwise f.last stays 0, every delta
+// equals the full cumulative total, and the WARN fires every window instead of only on new
+// occurrences.
 //
-// Drives two ticks with the SAME cumulative EntryMetaUnsupported value
-// (i.e. no new occurrences between them) and asserts the WARN appears
-// exactly once — from the first tick, which had a genuine delta — not
-// twice.
+// Two ticks with the same cumulative value must WARN exactly once, from the first.
 func TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch(t *testing.T) {
 	src := &stubStatsSource{stats: dispatcher.Stats{EntryMetaUnsupported: 4}}
 	w := &fakeStatsWriter{}
@@ -299,18 +276,12 @@ func TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch(t *testing.T) {
 }
 
 // TestFlushAt_ObsCounters_SurviveWriteFailure_NoLatch pins that flushAt does not derive the
-// dispatcher-level obs-counter deltas (TxReadErrors,
-// TxEventReadErrors, EntryMetaUnsupported) from the SAME baseline
-// (f.last) that is deliberately held back on an
-// InsertDecoderStats failure. A failed-insert tick followed by a
-// stable-count tick (no new occurrences) then recomputed the
-// identical positive delta a second time, re-emitting the same
-// obs.Add and WARN.
+// dispatcher-level obs-counter deltas (TxReadErrors, TxEventReadErrors, EntryMetaUnsupported)
+// from f.last, which is deliberately held back on an InsertDecoderStats failure; otherwise the
+// next stable-count tick recomputes the same positive delta and re-emits obs.Add and the WARN.
 //
-// Drives a failing tick with a fresh TxReadErrors delta, then a
-// second tick where the store recovers but the counter hasn't moved,
-// and asserts both the Prometheus counter and the WARN fire only
-// once — from the first tick.
+// A failing tick with a fresh delta, then a recovered tick with no movement, must fire the
+// counter and the WARN once, from the first tick.
 func TestFlushAt_ObsCounters_SurviveWriteFailure_NoLatch(t *testing.T) {
 	before := testutil.ToFloat64(obs.DispatcherTxReadErrorsTotal)
 

@@ -78,15 +78,11 @@ func TestAsyncSink_DrainsToRecorder(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_DedupsRepeatedHits — repeat pushes for the same
-// (ContractID, EventType) inside a single process don't each occupy a
-// channel slot (the rest are counted in SkippedCount, this is the
-// production-rate-protection path: r1 evidence showed 99%
-// of Pushes were duplicates of already-discovered contracts), but the
-// skipped observations are NOT discarded: Stop flushes them as one
-// extra Record call per key carrying the true accumulated count,
-// so every push is still accounted for in
-// totalCount even though most never touch the channel.
+// TestAsyncSink_DedupsRepeatedHits: repeat pushes for the same (ContractID, EventType) in one
+// process do not each occupy a channel slot (most pushes are duplicates, so this protects
+// production rate; they are counted in SkippedCount). The skipped observations are not
+// discarded: Stop flushes one extra Record call per key with the true accumulated count, so
+// totalCount accounts for every push.
 func TestAsyncSink_DedupsRepeatedHits(t *testing.T) {
 	rec := &fakeRecorder{}
 	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 16})
@@ -148,11 +144,9 @@ func TestAsyncSink_DropsOnFullBuffer(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_DropRollsBackSeen — when a Push is dropped because
-// the buffer is full, the seen-mark is rolled back so a later Push
-// for the same key can retry. Otherwise a transient Postgres outage
-// during cold-start would permanently lose every newly-discovered
-// contract.
+// TestAsyncSink_DropRollsBackSeen: a Push dropped on a full buffer rolls back its seen-mark so a
+// later Push for the key can retry; otherwise a transient Postgres outage at cold start would
+// permanently lose every newly discovered contract.
 func TestAsyncSink_DropRollsBackSeen(t *testing.T) {
 	hold := make(chan struct{})
 	rec := &fakeRecorder{hold: hold}
@@ -257,13 +251,9 @@ func TestAsyncSink_StartTwice_IsNoOp(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_DedupsAcrossKindsIndependently — the widened dedup
-// key (ContractID + Kind + EventType + Symbol) must treat a
-// KindOracleEvent hit and a KindOracleCall hit on the SAME contract
-// with DIFFERENT symbols as distinct records, while still
-// deduplicating repeats of the identical (Kind, Symbol) pair. Guards
-// the sink.go change that generalized the legacy
-// ContractID+EventType key.
+// TestAsyncSink_DedupsAcrossKindsIndependently: the dedup key (ContractID + Kind + EventType +
+// Symbol) must keep a KindOracleEvent hit and a KindOracleCall hit on the same contract with
+// different symbols distinct, while still deduplicating repeats of an identical (Kind, Symbol).
 func TestAsyncSink_DedupsAcrossKindsIndependently(t *testing.T) {
 	rec := &fakeRecorder{}
 	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 16})
@@ -295,12 +285,9 @@ func TestAsyncSink_DedupsAcrossKindsIndependently(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_LegacySEP41DedupKeyUnchanged — a Hit built the old
-// way (only ContractID + EventType, no Kind/Symbol — e.g. from a
-// caller that never sets them) must still dedup on EventType alone:
-// two Hits with the SAME EventType collapse to one record,
-// two Hits with DIFFERENT EventTypes on the same contract stay
-// distinct.
+// TestAsyncSink_LegacySEP41DedupKeyUnchanged: a Hit with only ContractID + EventType (no
+// Kind/Symbol) must still dedup on EventType alone. Same EventType collapses to one record;
+// different EventTypes on the same contract stay distinct.
 func TestAsyncSink_LegacySEP41DedupKeyUnchanged(t *testing.T) {
 	rec := &fakeRecorder{}
 	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 16})
@@ -375,13 +362,10 @@ func (r *errorOnceRecorder) recorded() []string {
 	return append([]string(nil), r.success...)
 }
 
-// TestAsyncSink_RecordFailureRollsBackSeen is the
-// regression. The seen-set is marked at Push time, so a Record that
-// FAILS left the key marked forever — and every later event for that
-// contract was silently skipped as a duplicate. A contract first
-// sighted during a recorder outage was therefore dropped from
-// discovery permanently, for the life of the process, which the
-// buffer-full path already knew to roll back.
+// TestAsyncSink_RecordFailureRollsBackSeen pins that a failed Record rolls back the seen-mark,
+// which is set at Push time. Otherwise every later event for the contract is skipped as a
+// duplicate and a contract first seen during a recorder outage is lost to discovery for the life
+// of the process, as the buffer-full path already avoids.
 func TestAsyncSink_RecordFailureRollsBackSeen(t *testing.T) {
 	rec := &errorOnceRecorder{fails: 1}
 	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 8})
@@ -418,12 +402,9 @@ func TestAsyncSink_RecordFailureRollsBackSeen(t *testing.T) {
 	}
 }
 
-// TestAsyncSink_PushRacingStopDoesNotPanic is the
-// AGT-lifecycle-race regression: Push sent on s.ch with no guard
-// against Stop having closed it, so a dispatcher still pushing while
-// shutdown ran could panic on send-to-closed-channel — taking the
-// indexer down at exactly the moment it was trying to exit cleanly.
-// Run under -race.
+// TestAsyncSink_PushRacingStopDoesNotPanic pins that a dispatcher still pushing during shutdown
+// cannot panic with send-on-closed-channel when Stop closes s.ch, which would take the indexer
+// down mid clean exit. Run under -race.
 func TestAsyncSink_PushRacingStopDoesNotPanic(t *testing.T) {
 	for attempt := 0; attempt < 50; attempt++ {
 		rec := &fakeRecorder{}
@@ -469,16 +450,9 @@ func (r *stallRecorder) Record(ctx context.Context, _ discovery.Hit) error {
 
 func (r *stallRecorder) IsKnown(_ context.Context, _ string) (bool, error) { return false, nil }
 
-// TestAsyncSink_StopFlushesTrueEventCountAndLastLedger is the
-// A contract's
-// event_count and last_seen_ledger only ever reflected the FIRST
-// observation per process lifetime — every repeat Push for the same
-// key was silently skipped by in-process dedup and never reached the
-// Recorder at all, so a token that emitted thousands of events
-// between restarts was recorded with event_count stuck at 1 and
-// last_seen_ledger frozen at the first-sighting ledger. Stop must now
-// flush one delta Record call per deduped key carrying the true
-// accumulated count and the LATEST observed ledger, not the first.
+// TestAsyncSink_StopFlushesTrueEventCountAndLastLedger pins that in-process dedup does not
+// freeze event_count at 1 and last_seen_ledger at the first sighting. Stop must flush one delta
+// Record call per deduped key carrying the true accumulated count and the latest observed ledger.
 func TestAsyncSink_StopFlushesTrueEventCountAndLastLedger(t *testing.T) {
 	rec := &fakeRecorder{}
 	sink := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{BufferSize: 16})

@@ -2,11 +2,9 @@ package v1
 
 // Unit tests for the pure decisions behind GET /v1/rwa/premium.
 //
-// Three things here cannot be reached from the HTTP surface and are
-// exactly the three most worth pinning: the ORDER the pre-read gates
-// run in (the scam flag before the binding), the numbers the per-day
-// thin-market floor is made of, and the join that refuses to carry
-// either leg.
+// Three things not reachable from the HTTP surface are pinned here: the ORDER of the pre-read
+// gates (scam flag before the binding), the numbers the per-day thin-market floor is made of, and
+// the join that refuses to carry either leg.
 
 import (
 	"context"
@@ -45,12 +43,10 @@ func premRat(s string) *big.Rat {
 
 // TestRWAPremiumCandidates_SuppressesAFlaggedIssuerBeforeReadingTheBinding.
 //
-// The member here is BOUND — the curated table ties this exact
-// (code, issuer) to the USTRY feed — and it carries a scam-class
-// directory tag. If the binding were consulted first, an impersonator
-// would be handed a real instrument's net asset value and a premium
-// measured against it, which is the attacker-authored-pricing class in
-// a new coordinate. The order is the defence, so the order is the test.
+// The member is BOUND (the curated table ties this exact (code, issuer) to the USTRY feed) and
+// carries a scam-class directory tag. If the binding were consulted first, an impersonator would
+// get a real instrument's net asset value and a premium against it. The order is the defence, so
+// the order is the test.
 func TestRWAPremiumCandidates_SuppressesAFlaggedIssuerBeforeReadingTheBinding(t *testing.T) {
 	m := rwaMembership{members: []rwaMember{{
 		code:    "USTRY",
@@ -113,22 +109,14 @@ func TestRWAPremiumCandidates_ReadsNoSupply(t *testing.T) {
 
 // TestRWAPremiumDayFloorTracksServingDefaults.
 //
-// Two of the day floor's three legs are the serving substance gate's
-// own numbers and MUST stay them: both windows are 24 hours long, so
-// the dollar-volume minimum means the same thing, and the wall-clock
-// span leg is grain-independent. If someone lowers the serving floor,
-// this fails rather than letting the two drift apart quietly — a
-// history that published a claim the live surface refuses is the
-// failure this whole gate exists to prevent.
+// Two of the day floor's three legs are the serving substance gate's own numbers and MUST stay
+// them: both windows are 24 hours, so the dollar-volume minimum means the same thing, and the span
+// leg is grain-independent. Lowering the serving floor fails this rather than letting the two
+// drift, since a history publishing a claim the live surface refuses is what the gate prevents.
 //
-// This compares against an operator-configured policy that DIFFERS
-// from the pricingguard package defaults — comparing against the
-// defaults themselves would pass unconditionally regardless of whether
-// [Server.rwaPremiumDayFloorFor] ever reads the configured value at
-// all.
-//
-// The bucket leg is deliberately NOT the serving default and is pinned
-// separately below, with the reason.
+// It compares against an operator-configured policy that DIFFERS from the pricingguard defaults;
+// comparing against the defaults would pass even if [Server.rwaPremiumDayFloorFor] never read the
+// configured value. The bucket leg is deliberately NOT the serving default and is pinned below.
 func TestRWAPremiumDayFloorTracksServingDefaults(t *testing.T) {
 	configured := pricingguard.SubstancePolicy{
 		MinVolumeUSD: new(big.Rat).SetInt64(pricingguard.DefaultSubstanceMinVolumeUSD * 7),
@@ -150,13 +138,10 @@ func TestRWAPremiumDayFloorTracksServingDefaults(t *testing.T) {
 	if got.Window != 24*time.Hour {
 		t.Errorf("Window = %v, want 24h — a calendar day", got.Window)
 	}
-	// The serving gate counts MINUTE buckets, of which a day holds
-	// 1440; this counts HOUR buckets, of which a day holds 24, because
-	// the hour aggregate is the coarsest-reaching grain that still says
-	// when inside a past day the trading happened. Inheriting the
-	// configured minute count here would demand more hours than a day
-	// has and blank every series, so this leg deliberately stays fixed
-	// regardless of what MinBuckets the operator configured.
+	// The serving gate counts MINUTE buckets (1440 a day); this counts HOUR buckets (24 a day),
+	// the coarsest-reaching grain that still says when in a past day trading happened. Inheriting
+	// the configured minute count would demand more hours than a day has and blank every series,
+	// so this leg stays fixed regardless of the operator's MinBuckets.
 	if got.MinBuckets != 2 {
 		t.Errorf("MinBuckets = %d, want 2 hour buckets", got.MinBuckets)
 	}
@@ -201,11 +186,9 @@ func premGoodDay(n int, vwap string) timescale.MarketDay {
 	}
 }
 
-// TestRWAPremiumJoin_PublishesOnlyDaysBothLegsWereObserved is the
-// endpoint in one function. Day 1 has both legs; day 2 has a market and
-// no published value; day 3 has a published value and no market.
-// Exactly one point may come out, and the two absences must be
-// distinguishable afterwards.
+// TestRWAPremiumJoin_PublishesOnlyDaysBothLegsWereObserved is the endpoint in one function. Day 1
+// has both legs, day 2 a market and no published value, day 3 a published value and no market.
+// Exactly one point may come out, and the two absences must stay distinguishable.
 func TestRWAPremiumJoin_PublishesOnlyDaysBothLegsWereObserved(t *testing.T) {
 	ref := &rwaFeedSeries{source: "redstone", days: map[time.Time]*big.Rat{
 		premDay(1): premRat("107/100"),
@@ -249,13 +232,11 @@ func TestRWAPremiumJoin_AThinDayIsWithheldNotPriced(t *testing.T) {
 
 // TestRWAPremiumJoin_CountsNoUntradedDaysBeforeTheFirstObservedMarket.
 //
-// The oracle has priced this instrument since day 1; the token's first
-// observed market day is day 4. Days 1–3 are NOT reported as days it
-// did not trade, because from here "did not trade", "did not exist
-// yet" and "the hour aggregate is not materialised that far back" are
-// one thing — and migrations 0115/0147 dropped the price aggregates
-// and left re-materialisation to the operator, so the third is a live
-// possibility rather than a hypothetical.
+// The oracle has priced this instrument since day 1; the token's first observed market day is day
+// 4. Days 1-3 are NOT reported as days it did not trade, because "did not trade", "did not exist
+// yet" and "the hour aggregate is not materialised that far back" are indistinguishable here, and
+// the third is live: the price aggregates were dropped and re-materialisation is left to the
+// operator.
 func TestRWAPremiumJoin_CountsNoUntradedDaysBeforeTheFirstObservedMarket(t *testing.T) {
 	ref := &rwaFeedSeries{source: "redstone", days: map[time.Time]*big.Rat{
 		premDay(1): premRat("107/100"),
@@ -422,14 +403,10 @@ func TestRWAPremiumSeriesRows_OrdersByAbsoluteDispersion(t *testing.T) {
 
 // TestCachedRWAPremiumHistory_RecoversFromAPanicInsteadOfWedgingTheFlight.
 //
-// A bound candidate with s.OracleHistory left nil drives buildRWAPremiumHistory
-// straight into a nil-interface panic in rwaPremiumReferenceDays. Without the
-// recover, that panic escapes cachedRWAPremiumHistory with
-// s.rwaPremFlight still pointing at a channel nobody would ever close — every
-// later caller queued on it and /v1/rwa/premium never served again for the
-// life of the process. This proves the
-// single-flight gate clears and a following call is served rather than
-// hanging.
+// A bound candidate with s.OracleHistory nil drives buildRWAPremiumHistory into a nil-interface
+// panic in rwaPremiumReferenceDays. Without the recover, s.rwaPremFlight keeps pointing at a
+// channel nobody closes, every later caller queues on it and /v1/rwa/premium never serves again.
+// This proves the single-flight gate clears and a following call is served rather than hanging.
 func TestCachedRWAPremiumHistory_RecoversFromAPanicInsteadOfWedgingTheFlight(t *testing.T) {
 	s := &Server{
 		rwaCache: &rwaMembership{

@@ -46,12 +46,9 @@ func listingEntriesN(n int) []ListingEntry {
 	return out
 }
 
-// TestBuildListingUpsert_PlaceholderLayout — 5 params per row plus
-// exactly one shared source param at the tail position every row
-// references. A drifted placeholder count corrupts column/value
-// alignment silently (the driver reports nothing when the counts still
-// happen to match), and here the misalignment would be between a price
-// and a timestamp.
+// TestBuildListingUpsert_PlaceholderLayout pins 5 params per row plus one shared source param at
+// the tail. A drifted placeholder count misaligns columns silently (here a price against a
+// timestamp) because the driver reports nothing when the counts still match.
 func TestBuildListingUpsert_PlaceholderLayout(t *testing.T) {
 	t.Parallel()
 
@@ -93,12 +90,9 @@ func TestBuildListingUpsert_PlaceholderLayout(t *testing.T) {
 	}
 }
 
-// TestBuildListingUpsert_PriceAndTimeTravelTogether — the writer must
-// never bind a price without its publication time, nor a time without a
-// price. A price with no verifiable age is exactly the value the 24h
-// bound exists to refuse, and binding it with a NULL `priced_at` would
-// store a row the price bound can never reject and the table CHECK would
-// refuse outright.
+// TestBuildListingUpsert_PriceAndTimeTravelTogether pins that the writer never binds a price
+// without its publication time, nor a time without a price. A price with no verifiable age is
+// what the staleness bound exists to refuse, and the table CHECK rejects the NULL `priced_at`.
 func TestBuildListingUpsert_PriceAndTimeTravelTogether(t *testing.T) {
 	t.Parallel()
 
@@ -154,13 +148,9 @@ func TestBuildListingUpsert_PriceAndTimeTravelTogether(t *testing.T) {
 	}
 }
 
-// TestBuildListingUpsert_CarriesPriceAsDecimalString is the ADR-0003
-// guard on this path: the upstream price is a JSON number, and any
-// float64 anywhere between the wire and the NUMERIC column silently
-// rewrites its low digits. The literal below has more significant digits
-// than a float64 can hold, so a round-trip through one would show up
-// here as changed text rather than as a value someone notices months
-// later.
+// TestBuildListingUpsert_CarriesPriceAsDecimalString is the money-precision guard: any float64
+// between the wire and the NUMERIC column rewrites the low digits. The literal below has more
+// significant digits than a float64 holds, so a round-trip shows up as changed text.
 func TestBuildListingUpsert_CarriesPriceAsDecimalString(t *testing.T) {
 	t.Parallel()
 
@@ -177,12 +167,9 @@ func TestBuildListingUpsert_CarriesPriceAsDecimalString(t *testing.T) {
 	}
 }
 
-// TestDedupListingEntriesByAddress — two upstream coin ids naming one
-// Stellar address would put the same conflict key twice into one
-// multi-row upsert chunk, which Postgres rejects ("ON CONFLICT DO UPDATE
-// command cannot affect row a second time"), aborting the whole sync
-// transaction. ReplaceListingDirectory must collapse them (last-wins)
-// before chunking.
+// TestDedupListingEntriesByAddress pins last-wins collapsing before chunking: two upstream coin
+// ids naming one Stellar address would repeat a conflict key in one multi-row upsert, which
+// Postgres rejects ("ON CONFLICT DO UPDATE command cannot affect row a second time").
 func TestDedupListingEntriesByAddress(t *testing.T) {
 	t.Parallel()
 
@@ -221,11 +208,9 @@ func TestDedupListingEntriesByAddress(t *testing.T) {
 	}
 }
 
-// TestReplaceListingDirectory_RefusesEmptySet — an empty set means the
-// fetch broke, not that the platform delisted every Stellar asset in one
-// hour. Syncing it would prune the whole source and report success. Must
-// error before touching the DB (s.db is nil here — a DB call would
-// panic, so reaching the guard at all proves the order).
+// TestReplaceListingDirectory_RefusesEmptySet pins that an empty set means the fetch broke, not
+// that every asset was delisted; syncing it would prune the whole source and report success.
+// It must error before touching the DB (s.db is nil, so a DB call would panic).
 func TestReplaceListingDirectory_RefusesEmptySet(t *testing.T) {
 	t.Parallel()
 
@@ -244,10 +229,8 @@ func TestReplaceListingDirectory_RefusesEmptySet(t *testing.T) {
 // TestListingDirectory_BothBoundsAreEnforcedInSQL pins the fail-closed
 // half of the cache's contract, and the separation of the two clocks.
 //
-// Asserting the RENDERED predicates, not just the constants: a constant
-// nothing splices in bounds nothing. That is the same reason
-// TestAssetPriceSnapshot_StalenessBoundIsEnforcedInSQL asserts the
-// listing's join text rather than the value of assetPriceSnapshotMaxAge.
+// It asserts the rendered predicates, not just the constants: a constant nothing splices in
+// bounds nothing (as in TestAssetPriceSnapshot_StalenessBoundIsEnforcedInSQL).
 func TestListingDirectory_BothBoundsAreEnforcedInSQL(t *testing.T) {
 	t.Parallel()
 
@@ -280,11 +263,9 @@ func TestListingDirectory_BothBoundsAreEnforcedInSQL(t *testing.T) {
 		}
 	}
 
-	// The recognition bound belongs to the read's WHERE (it decides
-	// whether the row exists for the reader); the price bound belongs to
-	// the projected CASE (it decides only whether the row carries a
-	// price). Swapping them would delete an address from the recognised
-	// set every time its price went quiet.
+	// The recognition bound belongs in WHERE (whether the row exists for the reader); the price
+	// bound belongs in the projected CASE (whether it carries a price). Swapping them would drop
+	// an address from the recognised set whenever its price went quiet.
 	whereIdx := strings.Index(listingDirectoryContractsSQL, " WHERE ")
 	if whereIdx < 0 {
 		t.Fatal("contracts read has no WHERE clause")
@@ -298,11 +279,9 @@ func TestListingDirectory_BothBoundsAreEnforcedInSQL(t *testing.T) {
 	}
 }
 
-// TestListingPriceFresh_HasAFutureCeiling — the price bound is a floor
-// on `priced_at`, so a timestamp ahead of now() would pass it for as long
-// as it stays ahead. Every read that decides "priced" must also carry the
-// ceiling, and its SQL spelling must match the Go allowance the ingest
-// sync rejects against.
+// TestListingPriceFresh_HasAFutureCeiling pins the ceiling: the price bound is only a floor on
+// `priced_at`, so a timestamp ahead of now() would pass while it stays ahead. Its SQL spelling
+// must match the Go allowance the ingest sync rejects against.
 func TestListingPriceFresh_HasAFutureCeiling(t *testing.T) {
 	t.Parallel()
 
@@ -329,14 +308,10 @@ func TestListingPriceFresh_HasAFutureCeiling(t *testing.T) {
 	}
 }
 
-// TestListingBounds_AreParseableIntervalsAndCorrectlyOrdered — the two
-// constants are spliced into SQL as literal intervals, so a typo is a
-// runtime syntax error on a timer-driven read path rather than a compile
-// failure. And their ORDER is the design: recognition (an identity
-// mapping, human cadence) must be the wider of the two, price (a market
-// number) the tighter. A price bound wider than the recognition bound
-// would be unreachable — no row could ever be recognised long enough to
-// exercise it.
+// TestListingBounds_AreParseableIntervalsAndCorrectlyOrdered: the two constants are spliced into
+// SQL as literal intervals, so a typo is a runtime syntax error rather than a compile failure.
+// Recognition (an identity mapping) must be the wider bound and price the tighter; a wider price
+// bound would be unreachable.
 func TestListingBounds_AreParseableIntervalsAndCorrectlyOrdered(t *testing.T) {
 	t.Parallel()
 
@@ -372,15 +347,11 @@ func TestListingBounds_AreParseableIntervalsAndCorrectlyOrdered(t *testing.T) {
 // TestListingAddressFormsSQL_AreExhaustiveAndNotPrefixTests is the
 // misclassification guard.
 //
-// `LIKE 'C%'` looks like a perfectly good contract test and is not: a
-// classic asset CODE may itself begin with C, and the live upstream
-// carries two that do. The census would still balance while filing both
-// under the wrong arm — the quiet kind of wrong.
+// `LIKE 'C%'` is not a contract test: a classic asset CODE may itself begin with C, and the
+// census would still balance while filing it under the wrong arm.
 //
-// The predicates are Postgres POSIX regexes; the Go RE2 engine agrees
-// with Postgres on these (anchors, character classes and bounded
-// repetition only, no backreferences or lookaround), so compiling the
-// same literal here tests the expression that actually ships.
+// The predicates are Postgres POSIX regexes; Go RE2 agrees with Postgres on these (anchors,
+// character classes, bounded repetition only), so compiling the same literal tests what ships.
 func TestListingAddressFormsSQL_AreExhaustiveAndNotPrefixTests(t *testing.T) {
 	t.Parallel()
 
@@ -460,15 +431,9 @@ func TestListingDirectoryCensus_Check(t *testing.T) {
 	}
 }
 
-// TestListingDirectoryByAddressSQL_ServesBothForms — the by-address read
-// exists BECAUSE the contract read cannot answer for a classic asset,
-// and the one way to get it wrong is to copy the contract read's
-// address-form predicate along with everything else.
-//
-// Against the live upstream, six of the ten
-// catalogue assets it names are named by their CLASSIC ids (EURC, AQUA,
-// SHX, VELO, BLND, yUSDC). A read that kept the contract filter would
-// drop every one of them and look like a working query while doing it.
+// TestListingDirectoryByAddressSQL_ServesBothForms: the by-address read exists because the
+// contract read cannot answer for a classic asset. Copying the contract read's address-form
+// predicate would silently drop every classic-id asset while still looking like a working query.
 func TestListingDirectoryByAddressSQL_ServesBothForms(t *testing.T) {
 	t.Parallel()
 

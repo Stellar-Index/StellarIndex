@@ -23,12 +23,9 @@ type tvlReconcileLeg struct {
 	raw      int64  // reserve in the token's base units
 }
 
-// tvlReconcileFixture mirrors tvlTestSources()'s pool reserves exactly:
-// every leg of every pool of every protocol, in base units. This is the
-// "per-pool data we already store" side of the reconciliation —
-// edit tvlTestSources and this must be edited in lockstep, which is the
-// whole point of keeping it a separate, independently-summed statement
-// of the same reserves.
+// tvlReconcileFixture mirrors tvlTestSources()'s pool reserves exactly: every leg of every pool
+// of every protocol, in base units. It is the independently-summed per-pool side of the
+// reconciliation, so editing tvlTestSources means editing this in lockstep.
 var tvlReconcileFixture = []tvlReconcileLeg{
 	// soroswap pair A: 20 XLM + 10.5 USDC.
 	{"soroswap", "native", 200_000_000},
@@ -47,13 +44,11 @@ var tvlReconcileFixture = []tvlReconcileLeg{
 	{"comet", tvlTestUSDCSAC, 21_000_000},
 }
 
-// tvlReconcileExpected sums tvlReconcileFixture per protocol using the
-// two documented valuation identities and NOTHING from dex_tvl_cache.go:
+// tvlReconcileExpected sums tvlReconcileFixture per protocol using the two documented valuation
+// identities and nothing from dex_tvl_cache.go:
 //
-//   - a declared USD peg (USDC here, 7 decimals) is worth exactly
-//     $1 × raw / 10^decimals;
-//   - anything else is raw × rate / 10^7, the anchor-scale identity in
-//     tvlValuer.legUSD's contract.
+//   - a declared USD peg (USDC here, 7 decimals) is worth exactly $1 × raw / 10^decimals;
+//   - anything else is raw × rate / 10^7, the anchor-scale identity in tvlValuer.legUSD.
 //
 // An unpriceable leg contributes exactly zero (the lower-bound rule).
 func tvlReconcileExpected() (map[string]*big.Rat, *big.Rat) {
@@ -82,17 +77,14 @@ func tvlReconcileExpected() (map[string]*big.Rat, *big.Rat) {
 	return perProtocol, grand
 }
 
-// TestDEXTVLTotal_ReconcilesAgainstPoolReserves is the acceptance
-// criterion "a reconciliation test against pool reserves". It
-// re-derives every protocol's figure AND the headline total straight
-// from the fixture's reserve legs, then asserts three separate things:
+// TestDEXTVLTotal_ReconcilesAgainstPoolReserves re-derives every protocol's figure and the
+// headline total straight from the fixture's reserve legs, then asserts:
 //
 //  1. each published per-protocol tvl_usd equals its reserves;
 //  2. the published total equals the reserves of every included pool;
-//  3. the published total is byte-identical to the sum of the published
-//     PARTS — the property a consumer actually checks, and the one that
-//     would break the moment the total were computed from the unrounded
-//     rationals instead of from what we serve.
+//  3. the published total is byte-identical to the sum of the published parts, the property a
+//     consumer checks, which breaks if the total is computed from unrounded rationals instead of
+//     from what is served.
 func TestDEXTVLTotal_ReconcilesAgainstPoolReserves(t *testing.T) {
 	c := NewDEXTVLCache(tvlTestSources())
 	if err := c.Refresh(context.Background()); err != nil {
@@ -152,11 +144,8 @@ func TestDEXTVLTotal_ReconcilesAgainstPoolReserves(t *testing.T) {
 	}
 }
 
-// TestDEXTVLSnapshot_StampsTheChainHighWater pins as_of_ledger — the
-// acceptance criterion "per-protocol TVL + total, each with as-of
-// ledger". Before this the cache discarded every reader's ledger and
-// the only stamp was the refresh wall-clock, which says nothing about
-// the chain position the reserves were read at.
+// TestDEXTVLSnapshot_StampsTheChainHighWater pins as_of_ledger on per-protocol TVL and the total.
+// The refresh wall-clock says nothing about the chain position the reserves were read at.
 func TestDEXTVLSnapshot_StampsTheChainHighWater(t *testing.T) {
 	c := NewDEXTVLCache(tvlTestSources())
 	if err := c.Refresh(context.Background()); err != nil {
@@ -185,12 +174,9 @@ func TestDEXTVLSnapshot_StampsTheChainHighWater(t *testing.T) {
 	}
 }
 
-// TestDEXTVLTotal_RefusesACarriedForwardProtocol is the divergence
-// check: when a protocol's reserve read fails, Refresh carries
-// its PREVIOUS figure forward, and that figure cannot honestly be
-// published under this refresh's as_of. The total must drop it, name
-// it, and shrink — not absorb it and serve a total whose as_of no
-// component honours.
+// TestDEXTVLTotal_RefusesACarriedForwardProtocol: when a protocol's reserve read fails, Refresh
+// carries its previous figure forward, which cannot honestly be published under this refresh's
+// as_of. The total must drop it, name it and shrink, not absorb it.
 func TestDEXTVLTotal_RefusesACarriedForwardProtocol(t *testing.T) {
 	divergentBefore := testutil.ToFloat64(obs.DEXTVLReconcileTotal.WithLabelValues("divergent"))
 	src := tvlTestSources()
@@ -316,18 +302,13 @@ func TestDEXTVLTotal_ColdStartHasNoTotal(t *testing.T) {
 	}
 }
 
-// TestDEXTVLTotal_AllRefusedPublishesNoTotal — when reconciliation admits
-// NOTHING, the total must be absent, not "0.00".
+// TestDEXTVLTotal_AllRefusedPublishesNoTotal: when reconciliation admits nothing, the total must
+// be absent, not "0.00".
 //
-// This is the shape the sibling refusal tests do not reach: they each
-// refuse one protocol out of several, so a real number always survives.
-// Refuse every one and the summing loop lands on an empty *big.Rat,
-// which renders as a perfectly plausible "$0.00" — the single reading
-// that is definitely wrong, since the per-protocol figures sitting right
-// beside it on the same response are non-zero. `tvl_total` is a pointer
-// with `omitempty` precisely so it can be absent; a consumer that reads
-// tvl_usd without also reading basis and excluded then gets silence
-// rather than a fabricated zero.
+// The sibling refusal tests each refuse one protocol, so a real number always survives. Refuse
+// every one and the summing loop lands on an empty *big.Rat, which renders as a plausible "$0.00"
+// next to non-zero per-protocol figures. `tvl_total` is a pointer with `omitempty` so it can be
+// absent, giving a consumer silence rather than a fabricated zero.
 func TestDEXTVLTotal_AllRefusedPublishesNoTotal(t *testing.T) {
 	at := time.Now().UTC()
 	stamp := at.Format(time.RFC3339)

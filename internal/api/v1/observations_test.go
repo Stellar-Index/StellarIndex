@@ -82,12 +82,9 @@ func TestObservations_IdentityPair_Returns400(t *testing.T) {
 	}
 }
 
-// TestObservations_UnknownSource400 — `?source=` with a name that
-// isn't in the in-memory `external.Registry` returns 400 instead
-// of an empty page. The silent-empty-page anti-pattern (a typo
-// looking identical to "this source has no trades for the pair")
-// sends callers chasing nonexistent data; same fail-fast guard
-// added to /v1/markets.
+// TestObservations_UnknownSource400 — `?source=` naming a source absent from the in-memory
+// `external.Registry` returns 400, not an empty page, so a typo cannot look like "this source
+// has no trades for the pair". /v1/markets has the same fail-fast guard.
 func TestObservations_UnknownSource400(t *testing.T) {
 	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
 	tsv := startHTTPTest(t, srv.Handler())
@@ -267,19 +264,12 @@ func TestObservations_EmptyArrayWhenNoData(t *testing.T) {
 	}
 }
 
-// TestObservations_EmptyHintsTriangulationWhenAvailable exercises
-// the empty-result hint. /v1/observations is the raw per-source surface (ADR-0018
-// Surface 3), so a triangulated pair has no rows to return — but
-// the empty result is genuinely confusing when /v1/price WOULD
-// have served a value via the same Redis VWAP fallback.
-//
-// Without a hint (verified live on r1), an empty `data: []` and
-// `triangulated: false` look indistinguishable from "this pair
-// is unpriced", which sends integrators chasing nonexistent data.
-// The handler probes the triangulation cache when its own
-// result is empty + no source filter, and surfaces
-// `triangulated: true` so consumers know to query /v1/price for
-// the proxied value.
+// TestObservations_EmptyHintsTriangulationWhenAvailable exercises the empty-result hint.
+// /v1/observations is the raw per-source surface (ADR-0018 Surface 3), so a triangulated pair
+// has no rows, yet /v1/price would serve a value via the same Redis VWAP fallback. Without a
+// hint, an empty `data: []` with `triangulated: false` looks like "this pair is unpriced". The
+// handler probes the triangulation cache when its result is empty and unfiltered, and sets
+// `triangulated: true` so consumers query /v1/price.
 func TestObservations_EmptyHintsTriangulationWhenAvailable(t *testing.T) {
 	hist := &stubHistoryReader{observations: nil}
 	looker := &stubTriangulatedPriceLooker{
@@ -303,12 +293,9 @@ func TestObservations_EmptyHintsTriangulationWhenAvailable(t *testing.T) {
 	}
 }
 
-// TestObservations_EmptyDoesNotHintWhenSourceFiltered confirms the
-// triangulation hint never fires when the caller asked for a
-// specific source. A source-filtered query is asking "did THIS
-// venue see a trade?" — answering "no, but a triangulated price
-// exists" would be irrelevant noise (triangulated values aren't
-// attributable to any single source).
+// TestObservations_EmptyDoesNotHintWhenSourceFiltered confirms the triangulation hint never
+// fires for a source-filtered query, which asks "did THIS venue see a trade?"; triangulated
+// values are not attributable to any single source.
 func TestObservations_EmptyDoesNotHintWhenSourceFiltered(t *testing.T) {
 	hist := &stubHistoryReader{observations: nil}
 	looker := &stubTriangulatedPriceLooker{
@@ -346,12 +333,9 @@ func TestObservations_InternalError(t *testing.T) {
 	}
 }
 
-// observationsCallTracker is a HistoryReader that counts
-// LatestTradePerSource calls and serves `rows` back. The call count is
-// the assertion vehicle for the fast-path short-circuit guards: that
-// short-circuit answered whole quote families from memory, so a quote
-// that never reaches storage can never return the observation a venue
-// actually recorded for it.
+// observationsCallTracker is a HistoryReader that counts LatestTradePerSource calls and serves
+// `rows` back. The count asserts the fast-path short-circuit guards: a quote that never
+// reaches storage can never return the observation a venue actually recorded for it.
 type observationsCallTracker struct {
 	calls atomic.Int64
 	rows  []canonical.Trade
@@ -386,13 +370,11 @@ func (h *observationsCallTracker) OHLCSeries(_ context.Context, _ canonical.Pair
 	return nil, nil
 }
 
-// TestObservations_FiatUSDQuoteReachesStorage — `fiat:USD` is this
-// endpoint's DEFAULT quote AND a real stored trade quote: the CEX
-// connectors write XLM-USD / BTC-USD / ETH-USD straight against it, so
-// trades carrying quote_asset "fiat:USD" exist and /v1/observations/stream
-// (same computeObservations, no short-circuit) serves them. The residual
-// a fast path would answer the request endpoint from memory instead, making
-// the default quote the one quote that could never return an observation.
+// TestObservations_FiatUSDQuoteReachesStorage — `fiat:USD` is this endpoint's default quote
+// and a real stored trade quote: CEX connectors write XLM-USD / BTC-USD / ETH-USD against it,
+// and /v1/observations/stream (same computeObservations, no short-circuit) serves them. A fast
+// path answering from memory would make the default quote the one that never returns an
+// observation.
 func TestObservations_FiatUSDQuoteReachesStorage(t *testing.T) {
 	hist := &observationsCallTracker{
 		rows: []canonical.Trade{
@@ -418,11 +400,9 @@ func TestObservations_FiatUSDQuoteReachesStorage(t *testing.T) {
 	}
 }
 
-// TestObservations_RealCexQuotesHitStorage pins that CEX connectors
-// write genuine trades quoted in crypto:USDT / crypto:BTC / fiat:EUR, so
-// observations for those quotes must NOT be short-circuited — they have
-// to query storage (the previous all-fiat/all-crypto short-circuit
-// silently suppressed live CEX observations on the rawest surface).
+// TestObservations_RealCexQuotesHitStorage pins that CEX connectors write genuine trades
+// quoted in crypto:USDT / crypto:BTC / fiat:EUR, so those quotes must query storage; an
+// all-fiat/all-crypto short-circuit would silently suppress live CEX observations.
 func TestObservations_RealCexQuotesHitStorage(t *testing.T) {
 	for _, q := range []string{"crypto:USDT", "crypto:BTC", "fiat:EUR"} {
 		hist := &observationsCallTracker{}
@@ -473,13 +453,10 @@ func (r *aliasKeyedHistoryReader) LatestTradePerSource(
 	return r.byPair[pair.String()], nil
 }
 
-// TestObservations_AliasFanIn — the XLM dual-form regression:
-// CEX observations are stored
-// under XLM's `crypto:XLM` spelling, and the literal single-pair
-// lookup made `?asset=native` silently blind to them. The handler must
-// scan every alias spelling and merge per source. (Quote is
-// crypto:USDT, not fiat:USD — that quote short-circuits to the
-// triangulation hint before any scan.)
+// TestObservations_AliasFanIn — the XLM dual-form regression: CEX observations are stored under
+// `crypto:XLM`, so a literal single-pair lookup leaves `?asset=native` blind to them. The
+// handler must scan every alias spelling and merge per source. (Quote is crypto:USDT, not
+// fiat:USD, which short-circuits to the triangulation hint before any scan.)
 func TestObservations_AliasFanIn(t *testing.T) {
 	now := time.Unix(1745000000, 0).UTC()
 	usdt, _ := canonical.ParseAsset("crypto:USDT")
@@ -560,16 +537,12 @@ func TestObservations_AliasScansRunConcurrently(t *testing.T) {
 	}
 }
 
-// TestObservations_DivergenceCheckedStructurallyFalse — the raw
-// per-source surface carries no aggregated value for the base-level
-// cross-reference verdict to vouch for, so `divergence_checked` is false
-// here BY DESIGN and the DivergenceLooker is never consulted. A verdict
-// under EVERY spelling of the base — firing, no less — must leave both
-// divergence flags false and the looker untouched. That false
-// reads as "this surface does not verify", which is the truth. If this
-// test starts failing because the surface now consults the looker, the
-// comment block in handleObservations and the OpenAPI text need the
-// same decision reversed alongside it.
+// TestObservations_DivergenceCheckedStructurallyFalse — the raw per-source surface carries no
+// aggregated value for the base-level cross-reference verdict to vouch for, so
+// `divergence_checked` is false by design and the DivergenceLooker is never consulted. A firing
+// verdict under every spelling of the base must leave both divergence flags false and the
+// looker untouched. If this starts failing because the surface now consults the looker, the
+// comment in handleObservations and the OpenAPI text must change with it.
 func TestObservations_DivergenceCheckedStructurallyFalse(t *testing.T) {
 	now := time.Unix(1745000000, 0).UTC()
 	hist := &stubHistoryReader{

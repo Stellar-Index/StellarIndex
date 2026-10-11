@@ -15,27 +15,20 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Money path: the fiat-combine point path (Server.fiatCombinedTrades)
-// merges every usdPeggedConstituent into ONE slice fed to aggregate.VWAP —
-// and those constituents span source scales. On-chain DEX legs
-// (native/USDC-classic) stamp amounts at 7 decimals; CEX legs
-// (crypto:XLM/crypto:USDT) at 8. A trade's PRICE (quote/base) is
-// scale-invariant, but its WEIGHT in Σquote/Σbase is its raw base amount =
-// real_volume × 10^scale, so the 8dp CEX leg is over-weighted 10× versus an
-// equal-real-volume 7dp on-chain leg. The served VWAP was therefore dragged
-// toward the CEX price. Server.fiatCombinedTrades now lifts every trade to the
-// common (max) scale before returning, restoring the true
-// real-volume-weighted mean.
+// Money path: fiatCombinedTrades merges every usdPeggedConstituent into one slice fed to
+// aggregate.VWAP, and those constituents span source scales (on-chain 7dp, CEX 8dp). A trade's
+// price is scale-invariant but its VWAP weight is its raw base amount, so an 8dp CEX leg is
+// over-weighted 10x against an equal-volume 7dp leg unless every trade is lifted to the common
+// (max) scale first.
 //
-// Fixture — one 1h bucket, two constituents of the native/fiat:USD target,
-// equal REAL volume (1000 XLM each), different scales:
+// Fixture: one 1h bucket, two constituents of the native/fiat:USD target, equal real volume
+// (1000 XLM each), different scales:
 //
 //	native/<USDC-classic>   source=sdex    (7dp)  10^10 base / 10^9  quote → 0.10
 //	crypto:XLM/crypto:USDT  source=binance (8dp)  10^11 base / 1.2·10^10 quote → 0.12
 //
-// True equal-volume mean = 0.11. Unnormalised VWAP = (10^9 + 1.2·10^10) /
-// (10^10 + 10^11) = 13/110 ≈ 0.1181818… — the 10×-over-weighted-CEX value
-// (the wire renders it 0.1181818181, ratToDecimal truncating at 10 digits).
+// True equal-volume mean = 0.11. Unnormalised VWAP = 13/110, which the wire renders as
+// 0.1181818181 (ratToDecimal truncates at 10 digits).
 
 const (
 	scaleNormWantVWAP   = "0.1100000000" // real-volume-weighted midpoint (fixed)
@@ -71,14 +64,9 @@ func scaleNormPow10(n int) *big.Int {
 	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
 }
 
-// TestFiatVWAPMixedScaleNormalized is the regression test. It goes through
-// the real /v1/vwap handler over a mixed-scale constituent set and asserts the
-// corrected, real-volume-weighted price.
-//
-// Non-vacuous by construction: reverting the fix (dropping the
-// NormalizeAmountScale call in fiatCombinedTrades) makes this serve
-// scaleNormPreFixVWAP and the assertion fails; it uses only pre-existing
-// symbols, so it compiles against the un-fixed tree.
+// TestFiatVWAPMixedScaleNormalized drives the real /v1/vwap handler over a mixed-scale
+// constituent set and asserts the real-volume-weighted price. Dropping the
+// NormalizeAmountScale call in fiatCombinedTrades makes it serve scaleNormPreFixVWAP.
 func TestFiatVWAPMixedScaleNormalized(t *testing.T) {
 	usdc, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -136,11 +124,9 @@ func TestFiatVWAPMixedScaleNormalized(t *testing.T) {
 	}
 }
 
-// TestFiatVWAPUniformOnChainUnchanged is the byte-identical guard at the
-// handler layer: an all-on-chain (uniform 7dp) constituent set must serve the
-// exact same VWAP with the normalization in place as without it. Two 7dp
-// constituents, 0.10 and 0.20 on equal 1000-XLM base → 0.15 exactly, and the
-// raw base volume (2·10^10) is preserved unchanged (no rescale to 8dp).
+// TestFiatVWAPUniformOnChainUnchanged guards that an all-on-chain (uniform 7dp) constituent set
+// serves the same VWAP as without normalization: 0.10 and 0.20 on equal base give 0.15, and the
+// raw base volume (2·10^10) is not rescaled to 8dp.
 func TestFiatVWAPUniformOnChainUnchanged(t *testing.T) {
 	usdc, _ := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	usdcCrypto, _ := canonical.ParseAsset("crypto:USDC")
@@ -187,13 +173,9 @@ func TestFiatVWAPUniformOnChainUnchanged(t *testing.T) {
 	}
 }
 
-// TestAliasVWAPMixedScaleNormalized is the non-fiat twin of
-// TestFiatVWAPMixedScaleNormalized. The alias walk reads ONE pair, which in
-// practice carries one venue class, but nothing in the type stopped a pair
-// that mixed 7dp and 8dp sources from being summed raw: the same fixture
-// keyed under native/USDC-classic served 0.1181818181 (CEX over-weighted
-// 10×) with a base_volume of incommensurable integers. The window must be
-// lifted once, exactly as on the fiat path.
+// TestAliasVWAPMixedScaleNormalized is the non-fiat twin of TestFiatVWAPMixedScaleNormalized.
+// The alias walk reads one pair, but nothing stops a pair from mixing 7dp and 8dp sources, so
+// the window must be lifted once to a common scale, exactly as on the fiat path.
 func TestAliasVWAPMixedScaleNormalized(t *testing.T) {
 	usdc, _ := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	xlmNative, _ := canonical.ParseAsset("native")
@@ -239,12 +221,10 @@ func TestAliasVWAPMixedScaleNormalized(t *testing.T) {
 	}
 }
 
-// TestVWAPStatesVolumeScale pins that /v1/vwap names the smallest-unit scale
-// its base_volume/quote_volume are in. The same 2000 XLM serves as
-// 200000000000 in a mixed CEX+on-chain fiat window and 20000000000 in an
-// on-chain-only one (the two tests above); without a stated scale a client
-// dividing by one constant is off tenfold on one of them. The outlier case
-// pins that the scale is taken before FilterOutliers: dropping the only CEX
+// TestVWAPStatesVolumeScale pins that /v1/vwap names the smallest-unit scale of its
+// base_volume/quote_volume: the same 2000 XLM serves as 200000000000 in a mixed window and
+// 20000000000 on-chain only, so a client dividing by one constant would be off tenfold. The
+// outlier case pins that the scale is taken before FilterOutliers, so dropping the only CEX
 // print leaves the surviving on-chain volumes lifted to 8dp.
 func TestVWAPStatesVolumeScale(t *testing.T) {
 	usdc, _ := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
@@ -347,15 +327,10 @@ func TestVWAPStatesVolumeScale(t *testing.T) {
 	}
 }
 
-// TestPriceTipMixedScaleNormalized pins the same fix on the live /v1/price/tip
-// surface. tipWindowVWAP MERGES the XLM alias pairs — on-chain native/<q>
-// (7dp) with CEX crypto:XLM/<q> (8dp) — into one slice before aggregate.VWAP,
-// so an asset cross-listed on both venues had its tip price dragged toward the
-// finer-scaled CEX leg. Same fixture as the fiat case: 1000 XLM @0.10 on-chain
-// + 1000 XLM @0.12 CEX → true tip 0.11.
-//
-// Non-vacuous: reverting the NormalizeAmountScale call in tipWindowVWAP serves
-// 0.1181818181 and fails this; it uses only pre-existing symbols.
+// TestPriceTipMixedScaleNormalized pins the same fix on /v1/price/tip. tipWindowVWAP merges
+// the XLM alias pairs (on-chain 7dp with CEX 8dp) before aggregate.VWAP, so without the
+// NormalizeAmountScale call the tip is dragged toward the CEX leg (0.1181818181 instead of
+// 0.11 on the fiat-case fixture).
 func TestPriceTipMixedScaleNormalized(t *testing.T) {
 	xlmNative, _ := canonical.ParseAsset("native")
 	xlmTicker, _ := canonical.ParseAsset("crypto:XLM")
@@ -403,21 +378,18 @@ func TestPriceTipMixedScaleNormalized(t *testing.T) {
 
 // ── the SERIES arm of the same defect ───────────────────────────────────
 //
-// Everything above tests paths that merge raw TRADES, each row carrying its
-// own Source. Server.ohlcSeriesFiatCombined merges continuous-aggregate
-// BARS instead, over the identical constituent set
-// (Server.usdPeggedConstituents), and a bar is a sum of smallest-unit
-// amounts in units only its contributing venues identify. Reading that
-// column and lifting every bar to one common scale is what these pin.
+// The tests above cover paths that merge raw trades, each carrying its own Source.
+// ohlcSeriesFiatCombined merges continuous-aggregate bars over the same constituent set, and a
+// bar is a sum of smallest-unit amounts whose scale only its contributing venues identify, so
+// every bar must be lifted to one common scale.
 //
-// Same fixture as TestFiatVWAPMixedScaleNormalized, so the point answer and
-// the series answer are computed from one population and must agree:
+// Same fixture as TestFiatVWAPMixedScaleNormalized, so point and series answers come from one
+// population and must agree:
 //
 //	native/<USDC classic>   sdex    (7dp)  10^10 base / 10^9  quote → 0.10
 //	crypto:XLM/crypto:USDT  binance (8dp)  10^11 base / 1.2·10^10 quote → 0.12
 //
-// Both legs are 1000 XLM, so the true bar is 2000 XLM at the common 8dp
-// scale with a volume-weighted open/close of exactly 0.11.
+// The true bar is 2000 XLM at the common 8dp scale with a volume-weighted open/close of 0.11.
 const (
 	scaleNormWantSeriesVBase  = "200000000000" // 2000 XLM at the common 8dp scale
 	scaleNormWantSeriesVQuote = "22000000000"  // 220 USD at the same scale
@@ -474,15 +446,9 @@ func fetchMixedScaleSeriesBar(t *testing.T, base string) v1.OHLCSeriesBar {
 	return env.Data.Intervals[0]
 }
 
-// TestFiatSeriesMixedScaleNormalized is the regression test on the series
-// arm. It goes through the real /v1/ohlc?interval= handler over a
-// constituent set that genuinely spans two scales and asserts the corrected
-// bar, value by value.
-//
-// Non-vacuous: against the un-fixed combine — which sums each constituent
-// bar's raw v_base straight into one total — this serves v_base
-// 110000000000 and a volume-weighted open/close of 0.1181818181, the 7dp
-// leg counted at a tenth of the volume it traded.
+// TestFiatSeriesMixedScaleNormalized drives the real /v1/ohlc?interval= handler over a
+// two-scale constituent set. Summing each bar's raw v_base would serve v_base 110000000000
+// and 0.1181818181, counting the 7dp leg at a tenth of its traded volume.
 func TestFiatSeriesMixedScaleNormalized(t *testing.T) {
 	ts := httpTestServer(t, mixedScaleFiatServer(t))
 	bar := fetchMixedScaleSeriesBar(t, ts.URL)
@@ -532,15 +498,11 @@ func TestFiatSeriesMixedScaleNormalized(t *testing.T) {
 	}
 }
 
-// TestFiatMixedScalePointMatchesSeries is the point-vs-series invariant under the
-// condition that makes it bite. TestFiatVWAPPointMatchesSeries pins point
-// against series too, but every trade in its fixture is stamped `sdex`, so
-// both sides are single-scale and the invariant holds whether or not the
-// series lifts anything. Give the two constituents different scales and the
-// un-normalised series answers 0.1181818181 on 110000000000 base while the point
-// path — which normalises — answers 0.11 on 200000000000:
-// two surfaces, one question, two populations, which is the exact defect
-// the parity test exists to forbid.
+// TestFiatMixedScalePointMatchesSeries pins the point-vs-series invariant under mixed scales.
+// TestFiatVWAPPointMatchesSeries uses only `sdex` trades, so it holds whether or not the series
+// lifts anything. With two scales an un-normalised series answers 0.1181818181 on 110000000000
+// base while the normalising point path answers 0.11 on 200000000000: two surfaces, one
+// question, two populations.
 func TestFiatMixedScalePointMatchesSeries(t *testing.T) {
 	ts := httpTestServer(t, mixedScaleFiatServer(t))
 	bar := fetchMixedScaleSeriesBar(t, ts.URL)

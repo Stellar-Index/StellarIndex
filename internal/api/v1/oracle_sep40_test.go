@@ -66,13 +66,9 @@ func TestOracleLastPrice_NotFound404(t *testing.T) {
 	}
 }
 
-// TestOracleLastPrice_RedisVWAPFallback — when prices_1m has no
-// row for native/fiat:USD (typical when XLM trades against USDC
-// not direct USD, and the aggregator's stablecoin-proxy rewrite
-// lives only in the Redis cache), the SEP-40 lastprice handler
-// falls through to the same TriangulatedPriceLooker /v1/price
-// uses. Without it the SEP-40 path would skip the fallback and
-// 404 in steady state.
+// TestOracleLastPrice_RedisVWAPFallback: when prices_1m has no native/fiat:USD row (XLM trades
+// against USDC, and the stablecoin-proxy rewrite lives only in the Redis cache), SEP-40
+// lastprice must fall through to the TriangulatedPriceLooker /v1/price uses, or it 404s.
 func TestOracleLastPrice_RedisVWAPFallback(t *testing.T) {
 	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
 	looker := &stubTriangulatedPriceLooker{
@@ -96,13 +92,9 @@ func TestOracleLastPrice_RedisVWAPFallback(t *testing.T) {
 	}
 }
 
-// TestOracleLastPrice_StablecoinFiatProxyFallback — when the
-// Redis VWAP cache also misses but the operator declared classic
-// USD pegs, the SEP-40 lastprice handler walks the pegs and returns
-// the rewritten X/<peg> snapshot. Mirrors the /v1/price fallback.
-// Without this, an on-chain integrator drop-in-replacing
-// SEP-40 lastprice() against XLM gets 404 even though /v1/coins
-// shows $0.16 fine.
+// TestOracleLastPrice_StablecoinFiatProxyFallback: when the Redis VWAP cache also misses but the
+// operator declared classic USD pegs, SEP-40 lastprice walks the pegs and returns the rewritten
+// X/<peg> snapshot, mirroring /v1/price, instead of 404ing for a priced asset.
 func TestOracleLastPrice_StablecoinFiatProxyFallback(t *testing.T) {
 	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -148,11 +140,8 @@ func TestOracleLastPrice_StablecoinFiatProxyFallback(t *testing.T) {
 	}
 }
 
-// TestOracleXLastPrice_StablecoinFiatProxyFallback — the
-// /v1/oracle/x_last_price?base=native&quote=fiat:USD case mirrors
-// the /v1/oracle/lastprice fix above. Without this, an integrator
-// asking for XLM/USD via the SEP-40 cross-pair surface gets the
-// same out-of-the-box 404.
+// TestOracleXLastPrice_StablecoinFiatProxyFallback: the x_last_price?base=native&quote=fiat:USD
+// cross-pair case needs the same stablecoin-proxy fallback as /v1/oracle/lastprice above.
 func TestOracleXLastPrice_StablecoinFiatProxyFallback(t *testing.T) {
 	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -192,12 +181,9 @@ func TestOracleXLastPrice_StablecoinFiatProxyFallback(t *testing.T) {
 	}
 }
 
-// TestOracleLastPrice_FallbackSetsStaleFlag pins the
-// contract: when the SEP-40 lastprice handler serves any priceFallback
-// branch (Redis VWAP / stablecoin proxy / fiat cross), it MUST set
-// flags.stale=true — the chain itself is the staleness signal.
-// Forcing stale=false on these branches would ship
-// degraded data labelled fresh.
+// TestOracleLastPrice_FallbackSetsStaleFlag pins that any priceFallback branch (Redis VWAP /
+// stablecoin proxy / fiat cross) sets flags.stale=true; the chain itself is the staleness signal,
+// and stale=false would label degraded data fresh.
 func TestOracleLastPrice_FallbackSetsStaleFlag(t *testing.T) {
 	t.Run("redis vwap fallback", func(t *testing.T) {
 		reader := &stubPriceReader{err: v1.ErrPriceNotFound}
@@ -244,11 +230,8 @@ func TestOracleLastPrice_FallbackSetsStaleFlag(t *testing.T) {
 	})
 }
 
-// TestOracleLastPrice_AliasResolvesXLM pins, on the SEP-40
-// lastprice surface: querying asset=native must resolve a snapshot
-// published under the crypto:XLM alias key (and vice-versa), exactly
-// like handlePrice's primary read. Querying only the literal form would
-// return 404 while /v1/price serves fresh.
+// TestOracleLastPrice_AliasResolvesXLM pins that asset=native resolves a snapshot published under
+// the crypto:XLM alias key (and vice versa), like handlePrice. The literal form alone would 404.
 func TestOracleLastPrice_AliasResolvesXLM(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	reader := &stubPriceReader{
@@ -584,12 +567,9 @@ func TestOraclePrices_HappyPath(t *testing.T) {
 }
 
 // TestOraclePrices_AliasResolvesXLM is the /v1/oracle/prices analogue of
-// TestOracleLastPrice_AliasResolvesXLM. Only the crypto:XLM alias
-// form has closed buckets (CEX trades write it); the literal
-// native/fiat:USD key has none. recentClosedWithStablecoinFallback must not
-// read only the literal form and returned an empty array here even though
-// /v1/oracle/lastprice?asset=native (which does loop aliases) would have
-// served a price for the same underlying market.
+// TestOracleLastPrice_AliasResolvesXLM. Only the crypto:XLM alias form has closed buckets (CEX
+// trades write it), so recentClosedWithStablecoinFallback must loop aliases rather than read the
+// literal native/fiat:USD key and return an empty array.
 func TestOraclePrices_AliasResolvesXLM(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	reader := &stubPriceReader{
@@ -642,14 +622,10 @@ func TestOraclePrices_EmptyAsArray(t *testing.T) {
 	}
 }
 
-// TestOraclePrices_StablecoinFiatProxyFallback — when the literal
-// asset/fiat:USD pair has no closed buckets but the operator
-// declared classic USD pegs, the handler walks the pegs and
-// returns the rewritten asset/<peg> snapshots. Mirrors the
-// fallback shipped on /v1/oracle/lastprice and the other
-// X/fiat:USD surfaces. Without this,
-// /v1/oracle/prices?asset=native silently returned an empty data
-// array on Stellar mainnet.
+// TestOraclePrices_StablecoinFiatProxyFallback: when the literal asset/fiat:USD pair has no
+// closed buckets but the operator declared classic USD pegs, the handler walks the pegs and
+// returns the rewritten asset/<peg> snapshots, as /v1/oracle/lastprice does, instead of an
+// empty data array.
 func TestOraclePrices_StablecoinFiatProxyFallback(t *testing.T) {
 	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -736,11 +712,9 @@ type oracleFlagsEnvelope struct {
 }
 
 // TestOracleLastPrice_FallbackCrossSetsTriangulated pins that the SEP-40
-// lastprice surface carries priceFallback's triangulated verdict: a
-// declared USD peg with no fiat:USD market is served through its XLM
-// cross, a composed value, and the envelope says so on the same flag
-// /v1/price sets. Writing `Flags{Stale: stale}` alone would
-// send the composed 0.95 out labelled `triangulated: false`.
+// lastprice surface carries priceFallback's triangulated verdict: a declared USD peg with no
+// fiat:USD market is served through its XLM cross, a composed value, and the envelope must say so
+// on the flag /v1/price sets rather than send it out as `triangulated: false`.
 func TestOracleLastPrice_FallbackCrossSetsTriangulated(t *testing.T) {
 	reader, usdcClassic := oracleFallbackCrossReader()
 	srv := v1.New(v1.Options{

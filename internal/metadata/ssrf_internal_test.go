@@ -10,13 +10,10 @@ import (
 	"time"
 )
 
-// TestIsBlocked_CoversCloudMetadataAndReservedRanges pins the deny-list
-// against a grid of real-world SSRF pivot addresses. The stdlib
-// helpers (IsLoopback, IsLinkLocalUnicast, IsPrivate) cover most
-// classes; the extraBlockedNets list closes the cloud-metadata gaps
-// that fall outside RFC 1918 / 3927 / 4193.
-//
-// If this table shrinks, an attacker just got a new SSRF target.
+// TestIsBlocked_CoversCloudMetadataAndReservedRanges pins the deny-list against real-world SSRF
+// pivot addresses. The stdlib helpers cover most classes; extraBlockedNets closes the
+// cloud-metadata gaps outside RFC 1918 / 3927 / 4193. If this table shrinks, an attacker just
+// got a new SSRF target.
 func TestIsBlocked_CoversCloudMetadataAndReservedRanges(t *testing.T) {
 	d := &ssrfDialer{}
 	cases := []struct {
@@ -79,14 +76,11 @@ func TestIsBlocked_CoversCloudMetadataAndReservedRanges(t *testing.T) {
 	}
 }
 
-// TestResolverTransportDisablesProxy: the SEP-1 fetch transport MUST NOT
-// honour HTTP(S)_PROXY: with a proxy
-// configured, the transport dials the PROXY (which passes our
-// DialContext SSRF guard) and hands it the issuer-controlled target
-// host, so the guard never validates the real target — letting an
-// attacker who controls a home-domain reach internal hosts straight
-// through the proxy. Pin Proxy == nil so every fetch is forced
-// through our own SSRF-checked dialer.
+// TestResolverTransportDisablesProxy: the SEP-1 fetch transport must not honour HTTP(S)_PROXY.
+// With a proxy configured it dials the proxy (which passes our DialContext SSRF guard) and hands
+// it the issuer-controlled target host, so the guard never validates the real target and an
+// attacker controlling a home-domain reaches internal hosts. Pin Proxy == nil so every fetch
+// goes through our own SSRF-checked dialer.
 func TestResolverTransportDisablesProxy(t *testing.T) {
 	r := NewResolver(Options{})
 	tr, ok := r.client.Transport.(*http.Transport)
@@ -111,15 +105,10 @@ func TestIsBlocked_AllowPrivateIPsBypass(t *testing.T) {
 	}
 }
 
-// TestDialContext_EmptyResolutionErrorsNotPanics is the Finding 3
-// regression. A resolver that returns (empty, nil) — no addresses but
-// no error — must yield an error, NOT an index-out-of-range panic on
-// ips[0] that would abort the whole sep1-refresh batch. Without the
-// len(ips)==0 guard this test panics; with it, it returns a clean
-// error. The injected lookupIP reproduces the (empty, nil) case
-// deterministically (the stdlib resolver normally returns a
-// no-such-host error instead, so the branch is only reachable this
-// way — it is a defensive guard).
+// TestDialContext_EmptyResolutionErrorsNotPanics: a resolver returning (empty, nil) must yield
+// an error, not an index-out-of-range panic on ips[0] that would abort the whole sep1-refresh
+// batch. The injected lookupIP reproduces the case deterministically; the stdlib resolver
+// normally returns a no-such-host error, so the len(ips)==0 guard is defensive.
 func TestDialContext_EmptyResolutionErrorsNotPanics(t *testing.T) {
 	d := &ssrfDialer{
 		inner: &net.Dialer{},
@@ -140,16 +129,11 @@ func TestDialContext_EmptyResolutionErrorsNotPanics(t *testing.T) {
 	}
 }
 
-// TestDialContext_BlocksResolvedLoopback pins the DIAL-LAYER SSRF guard:
-// the guard blocks whatever IP the resolver hands it, regardless of the
-// hostname's syntax. It replaces the former TestResolver_SSRFBlocksLoopback
-// (metadata_test), which proved the same guarantee by resolving the
-// literal "localhost" through the real resolver — a guarantee that broke
-// once "localhost" became syntactically invalid (reserved TLD, rejected
-// before ever reaching the dialer). Injecting lookupIP for a plain,
-// non-reserved hostname keeps the dial-layer guarantee mutation-tested
-// independently of the syntax gate: delete the isBlocked check below and
-// this goes red with a live connection instead of ErrSSRFBlocked.
+// TestDialContext_BlocksResolvedLoopback pins the dial-layer SSRF guard: it blocks whatever IP
+// the resolver returns, regardless of hostname syntax. Injecting lookupIP for a plain,
+// non-reserved hostname keeps this independent of the syntax gate (which rejects "localhost"
+// before the dialer): delete the isBlocked check below and this goes red with a live connection
+// instead of ErrSSRFBlocked.
 func TestDialContext_BlocksResolvedLoopback(t *testing.T) {
 	d := &ssrfDialer{
 		inner: &net.Dialer{},
@@ -166,18 +150,11 @@ func TestDialContext_BlocksResolvedLoopback(t *testing.T) {
 	}
 }
 
-// TestResolverTransportUsesSSRFGuardedDialer pins the WIRING, not just
-// the predicate.
-//
-// The other SSRF assertions in this package test the guard's decision
-// function; this one asserts that the HTTP transport actually calls it,
-// since deleting `DialContext: (&ssrfDialer{...}).DialContext` from the
-// transport would otherwise leave `go test ./...` green. The sibling
-// TestResolverTransportDisablesProxy reaches into the transport the same
-// way. The dialer is the guard that matters most:
-// `home_domain` is attacker-controlled on-chain data, so this is what
-// stands between a malicious issuer and a GET against 169.254.169.254
-// from the sep1-refresh cron.
+// TestResolverTransportUsesSSRFGuardedDialer pins the wiring, not just the predicate: the other
+// SSRF tests exercise the decision function, while this asserts the HTTP transport actually
+// calls it, since deleting `DialContext: (&ssrfDialer{...}).DialContext` would otherwise leave
+// `go test ./...` green. `home_domain` is attacker-controlled on-chain data, so this dialer
+// stands between a malicious issuer and a GET against 169.254.169.254 from the sep1-refresh cron.
 func TestResolverTransportUsesSSRFGuardedDialer(t *testing.T) {
 	r := NewResolver(Options{})
 	tr, ok := r.client.Transport.(*http.Transport)
@@ -237,11 +214,10 @@ func TestResolverRedirectPolicy_RejectsPortChange(t *testing.T) {
 	}
 }
 
-// TestDialContext_ProductionRefusesNon443Port pins the dialer-level port
-// guard, which covers every hop regardless of how the URL was built. The
-// context is pre-cancelled so no case ever reaches the network: an
-// allowed port fails with a context error, a refused one with
-// ErrSSRFBlocked before the inner dialer is called.
+// TestDialContext_ProductionRefusesNon443Port pins the dialer-level port guard, which covers
+// every hop however the URL was built. The context is pre-cancelled so no case reaches the
+// network: an allowed port fails with a context error, a refused one with ErrSSRFBlocked
+// before the inner dialer is called.
 func TestDialContext_ProductionRefusesNon443Port(t *testing.T) {
 	d := &ssrfDialer{
 		inner: &net.Dialer{},
