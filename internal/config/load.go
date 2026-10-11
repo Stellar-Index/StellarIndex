@@ -10,13 +10,8 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// Load reads a TOML config file from path and returns a fully-
-// populated [Config] with defaults applied for any field the file
-// omits. File precedence beats the built-in defaults; env-var
-// overrides (see [ApplyEnvOverrides]) beat the file.
-//
-// Returns a wrapped error identifying the path + offending line on
-// parse failure.
+// Load reads a TOML config file and returns a [Config] with defaults for omitted fields.
+// File beats defaults; env overrides ([ApplyEnvOverrides]) beat the file. Parse errors name the path and line.
 func Load(path string) (Config, error) {
 	// G304 false positive: operator-supplied config path is the
 	// whole point of the flag. No user-controlled input reaches
@@ -51,11 +46,8 @@ func LoadReader(r io.Reader, origin string) (Config, error) {
 			"path", origin, "keys", aliased)
 	}
 	if undec := meta.Undecoded(); len(undec) > 0 {
-		// Unknown keys are a hard error — silent typos in config are one
-		// of the most common deployment bugs. A key on RetiredKeys is a
-		// known exception: it once existed and a deployment upgrading
-		// from an old configs/example.toml still carries it, so
-		// warn instead of refusing to boot.
+		// Unknown keys are a hard error (silent typos are a common deployment bug), except keys on RetiredKeys:
+		// an old configs/example.toml still carries them, so warn instead of refusing to boot.
 		var unknown, retired []string
 		for _, k := range undec {
 			path := k.String()
@@ -144,11 +136,8 @@ func applyDeprecatedKeys(doc string, meta toml.MetaData, c *Config) ([]string, e
 	return applied, nil
 }
 
-// retiredKeyMatch reports whether path is covered by RetiredKeys, either
-// directly or as a child of a retired table (toml's Undecoded() lists both
-// the table and its leaves when a whole table was removed from the schema,
-// e.g. "external.retired_source" and "external.retired_source.api_key" for
-// one deleted [external.retired_source] block).
+// retiredKeyMatch reports whether path is in RetiredKeys, directly or under a retired table (toml's Undecoded()
+// lists both the table and its leaves when a whole table was removed).
 func retiredKeyMatch(path string) (string, bool) {
 	if note, ok := RetiredKeys[path]; ok {
 		return note, true
@@ -161,26 +150,9 @@ func retiredKeyMatch(path string) (string, bool) {
 	return "", false
 }
 
-// ApplyEnvOverrides mutates c in place, replacing any field that has
-// an `env:` tag with the env-var's value if that var is set. Returns
-// the config-path (dotted, e.g. "storage.postgres_dsn") of every
-// field an env var actually overrode, in override order — NEVER the
-// values themselves (most of these fields are secrets). Callers
-// that want to know WHICH fields the
-// environment silently replaced — without echoing a secret — use
-// this return value; see [LoadWithEnv] for the standard "log it at
-// boot" consumer.
-//
-// Secret fields follow the `env: "NAME"` convention where NAME is
-// the var holding the actual secret — see
-// [StorageConfig.PostgresDSN] for the canonical example.
-//
-// Unknown / empty env vars are ignored; no field is overwritten with
-// an empty string.
-//
-// Does NOT re-validate. Callers that want env-driven values held to
-// the same invariants as file-driven values should use [LoadWithEnv]
-// or call [Config.Validate] after this.
+// ApplyEnvOverrides replaces every field with an `env:` tag whose env var is set, and returns the dotted
+// config-path of each field overridden, NEVER the values (most are secrets). Secret fields follow `env: "NAME"`
+// where NAME holds the secret. Empty vars are ignored. Does NOT re-validate; use [LoadWithEnv] for that.
 func (c *Config) ApplyEnvOverrides() []string {
 	var overridden []string
 	if v := os.Getenv("STELLARINDEX_POSTGRES_DSN"); v != "" {
@@ -195,13 +167,9 @@ func (c *Config) ApplyEnvOverrides() []string {
 		c.Storage.ClickHouseServingPassword = v
 		overridden = append(overridden, "storage.clickhouse_serving_password")
 	}
-	// NOTE: STELLARINDEX_S3_ACCESS_KEY / STELLARINDEX_S3_SECRET_KEY are
-	// deliberately NOT overridden here. StorageConfig.S3AccessKeyEnv holds the
-	// NAME of the env var, not its value; buildS3Client resolves it via
-	// os.Getenv(name). Overwriting the name with the value here would corrupt
-	// the resolution (os.Getenv("AKIA…")→"") and silently drop S3 static creds.
-	// The fields carry no `env:` tag for the same
-	// reason — see config.go StorageConfig.
+	// STELLARINDEX_S3_ACCESS_KEY / _SECRET_KEY are deliberately NOT overridden: S3AccessKeyEnv holds the NAME of the
+	// env var and buildS3Client resolves it via os.Getenv; overwriting the name with a value would silently drop S3 static creds.
+	// The fields carry no `env:` tag for the same reason.
 	if v := os.Getenv("EXCHANGERATESAPI_KEY"); v != "" {
 		c.External.ExchangeRatesApi.APIKey = v
 		overridden = append(overridden, "external.exchangeratesapi.api_key")
@@ -243,35 +211,18 @@ func (c *Config) ApplyEnvOverrides() []string {
 	}
 	if v := os.Getenv("CHAINLINK_RPC_URL"); v != "" {
 		c.External.Chainlink.RPCUrl = v
-		// The divergence Chainlink reference is a SECOND consumer of the
-		// same Ethereum JSON-RPC endpoint (internal/divergence/chainlink.go).
-		// An env-less rpc_url of its own would silently fall back to a
-		// public RPC that answers eth_call with a Cloudflare
-		// JS-challenge HTML page instead of JSON, failing every
-		// LookupPrice's JSON decode (the divergence service recorded 0
-		// chainlink rows that way). Point both
-		// consumers at the one operator-provided endpoint so a single
-		// CHAINLINK_RPC_URL keeps the cross-check working.
+		// The divergence Chainlink reference is a second consumer of this Ethereum JSON-RPC endpoint. An env-less rpc_url
+		// would fall back to a public RPC that answers eth_call with a Cloudflare JS-challenge HTML page (0 chainlink rows),
+		// so point both consumers at the one CHAINLINK_RPC_URL.
 		c.Divergence.Chainlink.RPCURL = v
 		overridden = append(overridden, "external.chainlink.rpc_url", "divergence.chainlink.rpc_url")
 	}
 	return overridden
 }
 
-// LoadWithEnv is [Load] + [ApplyEnvOverrides] + a second [Validate].
-// Use this in binaries so a bad env-var value (e.g., malformed
-// STELLARINDEX_POSTGRES_DSN overriding a known-good DSN from the file)
-// fails fast with the same ErrInvalidConfig error as a bad file,
-// instead of opening the pool and getting a confusing DB error
-// at connect time.
-//
-// Logs (at Info, via the package-default slog logger — this runs
-// before the binary constructs its own obs-configured logger from
-// [Config.Obs]) the field-path list [ApplyEnvOverrides] returns, so an
-// operator debugging "why is this deployment using the wrong DSN" can
-// see that the environment, not the TOML file, won.
-// Field VALUES are never logged, only paths — most overridden fields
-// are secrets by construction (see ApplyEnvOverrides's doc).
+// LoadWithEnv is [Load] + [ApplyEnvOverrides] + a second [Validate], so a bad env value fails fast with ErrInvalidConfig
+// instead of a confusing DB error at connect time. It logs at Info (default slog logger, before obs is configured)
+// the override field PATHS only, never values: most are secrets.
 func LoadWithEnv(path string) (Config, error) {
 	c, err := Load(path)
 	if err != nil {
