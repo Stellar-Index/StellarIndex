@@ -292,40 +292,24 @@ func (b *Bucket) Take(ctx context.Context, key string) (Result, error) {
 
 // Charge spends cost tokens against key's counter for the current
 // window in ONE atomic step and reports whether the request still fits.
-// `Take(ctx, key)` is exactly `Charge(ctx, key, 1, 0)`. Charge exists
-// because a request's price must track the work it buys: a batch route
-// that resolves 1000 ids for the single token a one-id request pays
-// turns the per-minute ceiling into a 1000x amplifier.
+// `Take(ctx, key)` is exactly `Charge(ctx, key, 1, 0)`. A request's price
+// must track the work it buys: a 1000-id batch for the token a one-id
+// request pays would be a 1000x amplifier.
 //
 // cost and limit are different axes. limit > 0 replaces the bucket's
-// max for this call only — a per-subject ceiling such as an API key's
-// `rate_limit_per_min` — and ≤ 0 uses the bucket's max. Callers MUST
-// pass a stable limit for any given key: flipping it between calls
-// races the shared counter against inconsistent thresholds. cost is
-// what this call spends. There is deliberately no take with one extra
-// int: whether that int is a cost or a ceiling is a guess at every call
-// site, and a wrong guess silently rewrites the key's limit.
+// max for this call only (a per-subject ceiling such as an API key's
+// `rate_limit_per_min`); ≤ 0 uses the bucket's max. Callers MUST pass a
+// stable limit for any given key: flipping it races the shared counter
+// against inconsistent thresholds. There is deliberately no take with one
+// extra int: a wrong guess at cost vs ceiling silently rewrites the limit.
 //
 // One round-trip whatever the cost (INCRBY). Never weight a request by
-// calling Take in a loop: that is cost round-trips, and no longer
-// atomic against concurrent callers.
+// looping Take: that is not atomic against concurrent callers.
 //
-// Cost is normalised into [1, effective limit]:
-//
-//   - cost < 1 charges 1. A caller that computes a zero or negative
-//     weight still spends a token; there is no free request, and a
-//     negative INCRBY would REFUND budget.
-//   - cost > the effective limit charges the whole limit. A request
-//     priced above the ceiling would otherwise be unservable in every
-//     window — a 1000-id batch against a 60/min limit could never
-//     succeed, and its Retry-After would be a lie. Clamped, it fits
-//     only an untouched window and leaves nothing behind it, which is
-//     the strongest statement a fixed window can make.
-//
-// A denied charge is still counted, exactly as a denied Take always
-// has been (the script increments, then compares). Nothing is lost by
-// that: the denial's Retry-After already names the end of the window,
-// which is when the counter resets.
+// Cost is clamped to [1, effective limit]: below 1 charges 1 (a negative
+// INCRBY would REFUND budget); above the limit charges the whole limit
+// (else a 1000-id batch on a 60/min limit could never succeed).
+// A denied charge is still counted; its Retry-After names the window end.
 func (b *Bucket) Charge(ctx context.Context, key string, cost, limit int) (Result, error) {
 	effectiveMax := b.max
 	if limit > 0 {

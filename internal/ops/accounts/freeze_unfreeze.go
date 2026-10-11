@@ -20,32 +20,25 @@ import (
 )
 
 // FreezeUnfreeze is the OPERATOR half of ADR-0019's freeze lifecycle: the manual
-// unfreeze that an ESCALATED freeze (one that climbed the whole extension ladder)
-// waits for.
+// unfreeze an ESCALATED freeze (one that climbed the whole ladder) waits for.
 //
 // It appends a "freeze.unfreeze" audit_log row (actor, reason) and writes the
-// freeze:override tombstone, so the aggregator counts the release as an operator one.
-// Then, in order:
+// freeze:override tombstone, so the aggregator counts the release as an operator
+// one. Then, in order:
 //
-//  1. delete the Redis marker (freeze.Writer.Clear), the serving path's authority for
-//     `flags.frozen`, so the price republishes immediately;
+//  1. delete the Redis marker (freeze.Writer.Clear), the serving path's authority
+//     for `flags.frozen`, so the price republishes immediately;
 //  2. stamp `recovered_at` on the open `freeze_events` row
 //     (FreezeEventSink.MarkRecovered), the timeline /anomalies reads.
 //
-// Step 1 alone would be healed by the recovery worker's ~60 s poll; doing both makes
-// the action complete when the command exits and says which half failed.
-// Idempotent: clearing an absent marker is a no-op and MarkRecovered on a closed pair
-// reports "no open row".
+// Idempotent: clearing an absent marker is a no-op; MarkRecovered on a closed
+// pair reports "no open row".
 //
-// Usage:
-//
-//	stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml -list
 //	stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
-//	    -asset native -quote 'USDC-GA5ZS…' -reason "oracle recovered, verified by hand"
+//	    -asset native -quote 'USDC-GA5ZS…' -reason "oracle recovered"
 //
-// -reason is REQUIRED for a mutation (as X-Reason is on admin writes): an unfreeze
-// overrides an automated safety control on a money surface, so who and why must be
-// recorded.
+// -reason is REQUIRED: an unfreeze overrides an automated safety control on
+// a money surface, so who and why must be recorded.
 func FreezeUnfreeze(args []string) error {
 	fs := flag.NewFlagSet("freeze-unfreeze", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -194,23 +187,20 @@ type markerPresenceReader interface {
 // firing, how far up the extension ladder it got, and — the operationally
 // important column — WHICH authority is holding it.
 //
-// The STATE column has three values, and since migration 0119 collapsing
-// them would be actively misleading:
+// The STATE column has three values; collapsing them would be misleading:
 //
 //	live        the Redis marker is present. Normal running freeze.
 //	rehydrated  the marker is GONE but the durable ladder is still inside
-//	            its hold, so Redis lost the marker and the aggregator will
-//	            re-write it on its next tick. The pair IS still frozen to
-//	            every API caller. A row of these right after a Redis
-//	            restart is the expected shape; a slow trickle with Redis
-//	            healthy means markers are being evicted or expiring early.
+//	            its hold, so the aggregator will re-write it on its next
+//	            tick. The pair IS still frozen to every API caller. A row of
+//	            these right after a Redis restart is expected; a slow trickle
+//	            with Redis healthy means markers are evicted or expiring early.
 //	GONE        neither authority holds it — already unfrozen on the
 //	            serving path, just waiting for the recovery worker to close
 //	            the row.
 //
-// Reporting a rehydrated pair as `live` would be defensible (it is frozen);
-// reporting it as `GONE` — which is what a marker-only probe would say —
-// is not, because an operator reads GONE as "nothing to do here" on exactly
+// Reporting a rehydrated pair as `GONE` — which is what a marker-only probe would say —
+// is wrong: an operator reads GONE as "nothing to do here" on exactly
 // the pair whose marker just evaporated. An ESCALATED pair is one that will
 // never clear on its own.
 func listOpenFreezes(ctx context.Context, lister openFreezeLister, states freezeStateReader, markers markerPresenceReader) error {

@@ -15,42 +15,25 @@ import (
 )
 
 // RedisLoginThrottle implements [dashboardauth.LoginThrottle] — the
-// magic-link send throttle. The /v1/auth/login
-// endpoint fires an outbound email per accepted request, bounded only by
-// the global anonymous per-IP rate-limit. That lets a single IP
-// (a) bomb one victim inbox and (b) burn the deployment's email-send quota
-// / sender reputation. This adds two sliding-window caps — per IP and per
-// TARGET email — and denies the send when EITHER is exhausted.
-//
-// Defaults: 10 sends/hour/IP, 5 sends/hour/email. A legitimate user almost
-// never needs >5 links/hour to their own inbox; an IP fronting a small team
-// stays under 10. Operators tune via [LoginThrottleOptions].
+// magic-link send throttle. /v1/auth/login emails per accepted request,
+// bounded only by the global anonymous per-IP limit, so one IP could bomb
+// a victim inbox and burn the email quota and sender reputation. Two
+// sliding-window caps, per IP and per TARGET email, deny the send when
+// EITHER is exhausted (10/hour/IP, 5/hour/email; see [LoginThrottleOptions]).
 //
 // # Redis outage: degrade, don't disappear
 //
 // The handler falls open on a throttle error, so a Redis-only throttle
-// would drop the per-target-email cap for as long as Redis is down, and
-// one IP could pump unbounded magic-link mail at one inbox (victim
-// harassment, plus sender-reputation and email-quota burn that outlives
-// the outage). An attacker who can hold Redis down, or who merely waits
-// for a fail-over, would disable the control by definition.
-//
+// would drop the per-email cap while Redis is down, and an attacker who
+// can hold Redis down (or waits for a fail-over) would disable the control.
 // Every increment is therefore also applied to an in-process fixed-window
-// counter with the SAME caps. While Redis answers it stays authoritative
-// (fleet-wide accounting); when it errors, the in-process count decides.
-// A legitimate user needs ≤5 links/hour and never notices; a bomber is
-// capped per process instead of not at all. That is deliberately chosen
-// over the signup throttle's dwell-time fail-CLOSED inversion, which
-// would take dashboard login fully offline for the duration of a
-// Redis blip — a worse outcome than the nuisance it prevents, and
-// unnecessary when the cap can simply keep being enforced locally.
-//
-// Consequently Allow returns (false, nil) — a definitive DENY, not a
-// fall-open error — once the degraded cap is exhausted, because the
-// handler inspects the error first and would otherwise send anyway. The
-// handler's over-quota branch already skips the send while still
-// returning the generic 200 {status:"sent"}, so the anti-enumeration
-// contract holds.
+// counter with the SAME caps: Redis stays authoritative while it answers,
+// the in-process count decides when it errors. This is chosen over the
+// signup throttle's dwell-time fail-CLOSED inversion, which would take
+// dashboard login offline for a Redis blip. Once the degraded cap is
+// exhausted Allow returns (false, nil), a definitive DENY, because the
+// handler inspects the error first; the over-quota branch skips the send
+// but still returns the generic 200, so anti-enumeration holds.
 type RedisLoginThrottle struct {
 	counter    *ratelimit.FixedWindowCounter
 	fallback   *ratelimit.LocalFixedWindowCounter

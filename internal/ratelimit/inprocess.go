@@ -10,47 +10,25 @@ import (
 )
 
 // localStore is the in-process fixed-window counter that backs a
-// [Bucket] constructed with a nil Redis client. It is the fail-CLOSED
-// fallback for a boot without Redis, which would otherwise omit the
-// rate-limit middleware and leave the whole API uncapped. With
-// this fallback the anon / key tiers stay enforced — degraded to
-// single-instance accounting, which is correct for the R1
-// single-instance deployment.
+// [Bucket] constructed with a nil Redis client: the fail-CLOSED fallback
+// for a boot without Redis, which would otherwise omit the rate-limit
+// middleware and leave the API uncapped. Tiers stay enforced, degraded to
+// single-instance accounting.
 //
-// Semantics match [Bucket]'s Redis path: a per-(key × window) integer
-// counter, where the window is `unix_seconds / window_seconds`. The
-// Nth+1 request inside a window is rejected. Unlike the Redis path it
-// can never fail open — there is no backend to error, so
-// [Bucket.Charge] on a local bucket always returns a nil error and an
-// authoritative allow/deny.
+// Semantics match [Bucket]'s Redis path (per-(key × window) counter; the
+// Nth+1 request is rejected) but it can never fail open.
 //
 // # Memory bound
 //
-// Stale entries (whose window has rolled over) are swept lazily at most
-// once per window — never more often, because a second sweep inside the
-// SAME window is provably incapable of freeing anything (every entry
-// left after a sweep names the current window, and every entry written
-// since names it too). A size-triggered branch would re-run a full O(n) map scan under the global
-// mutex on EVERY call once the map passed [localStoreMaxKeys], deleting
-// nothing and turning the fallback limiter into a self-inflicted DoS at
-// exactly the moment it was under flood.
+// Stale entries are swept lazily, once per window: a second sweep in the SAME
+// window frees nothing, and a size-triggered one would rescan O(n) under the
+// global mutex on EVERY call past [localStoreMaxKeys].
 //
-// Growth inside a window is bounded instead by a hard cap: once the map
-// holds [localStoreMaxKeys] entries, a key that isn't already tracked is
-// routed to ONE shared overflow bucket ([localOverflowKey]) rather than
-// inserted. Overflow is therefore fail-CLOSED — past the cap the whole
-// overflow population shares a single limit-sized budget for the rest of
-// the window — which is the right degradation for a limiter whose only
-// job is to survive a flood, and already-tracked clients keep their own
-// independent counters. Resident memory is bounded to localStoreMaxKeys+1
-// entries (a few MB), plus at most as many per-/48 counters.
-//
-// Anonymous keys resolve to the forge-resistant client IP, masked to /64
-// for IPv6. That makes 100k keys only ~1.5 /48 allocations, so a single
-// cheap IPv6 holder could fill the cap and push every NEW client into the
-// shared bucket. Each IPv6 /48 may therefore insert at most
-// [localStoreMaxKeysPer48] keys per window; its further /64s share one
-// per-/48 bucket, and filling the cap takes ~100 distinct /48s.
+// Growth is capped: at [localStoreMaxKeys] entries an untracked key goes to
+// ONE shared fail-CLOSED overflow bucket ([localOverflowKey]); tracked clients
+// keep their own. IPv6 keys are masked to /64, so one cheap IPv6 holder could
+// fill the cap and starve NEW clients: each /48 may insert at most
+// [localStoreMaxKeysPer48] keys per window, then shares a per-/48 bucket.
 type localStore struct {
 	mu      sync.Mutex
 	entries map[string]localEntry

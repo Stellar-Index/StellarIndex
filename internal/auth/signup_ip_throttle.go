@@ -35,32 +35,24 @@ const DefaultSignupThrottleDwellTime = 30 * time.Second
 const signupThrottleIncrTimeout = 5 * time.Second
 
 // RedisSignupIPThrottle implements [v1.SignupIPThrottle] (the per-IP
-// signup rate-limit boundary, declared in v1 to keep the v1 package
-// the source of truth for its own boundaries) with a sliding-window
-// Redis counter.
+// signup rate-limit boundary) with a sliding-window Redis counter.
 //
-// The signup endpoint sees one request per attempted account; the
-// global anonymous rate limit caps at 6000/min per IP (r1's
-// configured value) — plenty for
-// browsing the public surfaces but lets a single IP bulk-mint
-// 6000 accounts/min × 60 min = 360,000/hr of email→key_id pairs.
-// The default 5/hour cap here closes that vector while still
-// letting a legitimate operator onboarding a small team through a
-// single shared egress complete normally. The cap is set only through
-// [SignupIPThrottleOptions]; there is no config key for it.
+// The global anonymous rate limit (6000/min per IP on r1) would let a
+// single IP bulk-mint 360,000 email→key_id pairs/hour. The default
+// 5/hour cap here closes that vector while letting an operator onboarding
+// a small team through one shared egress complete normally. It is set
+// only through [SignupIPThrottleOptions]; there is no config key.
 //
 // # Dwell-time fail-open inversion
 //
 // On a Redis transport failure CheckIP starts a dwell-time clock.
-// Errors observed inside the window (default 30s, see
-// [DefaultSignupThrottleDwellTime]) propagate as wrapped Redis
-// errors and the handler falls open. Once the window is
-// exceeded — i.e. Redis has been failing continuously for longer
-// than the dwell-time — CheckIP returns [ErrThrottleUnavailable]
-// and the handler returns 503 + Retry-After instead. The clock
-// resets after a dwell-time of unbroken successes, or on a success
-// that follows a dwell-time with no failure; a single success amid
-// ongoing errors does not reset it.
+// Errors inside the window (default 30s, see
+// [DefaultSignupThrottleDwellTime]) propagate as wrapped Redis errors and
+// the handler falls open. Once Redis has failed continuously for longer
+// than the dwell-time, CheckIP returns [ErrThrottleUnavailable] and the
+// handler returns 503 + Retry-After. The clock resets after a dwell-time
+// of unbroken successes, or on a success that follows a dwell-time with
+// no failure; a single success amid ongoing errors does not reset it.
 type RedisSignupIPThrottle struct {
 	counter   *ratelimit.FixedWindowCounter
 	max       int
@@ -165,33 +157,24 @@ func (t *RedisSignupIPThrottle) CheckIP(ctx context.Context, ip string) error {
 		return nil
 	}
 	// The shared counter uses the same window-bucket trick as
-	// ratelimit.Bucket (round the current time to the window) and owns
-	// the first-touch drain TTL. Sliding-window approximate; gives at
-	// most 2× the cap during a window-crossing burst, which is
-	// acceptable for an abuse-prevention threshold (not for a strict
-	// billing meter).
+	// ratelimit.Bucket and owns the first-touch drain TTL. Sliding-window
+	// approximate: at most 2× the cap during a window-crossing burst,
+	// acceptable for an abuse-prevention threshold (not a billing meter).
 	//
 	// The address is masked to its throttle-key identity first — see
-	// [ratelimit.ThrottleIPKey]. Keying on the caller's exact IPv6 /128 would
-	// make this cap free to bypass: one delegated /64 is 2^64 distinct
-	// addresses, each landing on its own empty bucket, so the
-	// bulk-account-mint vector this throttle exists to close would be open
-	// to anyone with IPv6.
+	// [ratelimit.ThrottleIPKey]. Keying on the exact IPv6 /128 would make
+	// this cap free to bypass: one delegated /64 is 2^64 addresses, each on
+	// its own empty bucket.
 	//
-	// The increment runs on the caller's VALUES without its
-	// cancellation, bounded by [signupThrottleIncrTimeout].
-	//
-	// Two reasons, both load-bearing. First, this counter cannot tell a
-	// caller-cancelled call from a Redis outage: every error below arms
-	// the dwell clock and resets the recovery streak, so a client that
-	// connects, posts a signup and immediately RSTs a few times a second
-	// keeps the clock armed forever — the 30 s unbroken-success streak
-	// that disarms it can never accumulate — and past the window CheckIP
-	// returns ErrThrottleUnavailable, taking signup offline for
-	// EVERYONE while Redis is healthy. Second, an attempt that errors out
-	// is an attempt that was never counted: aborting mid-flight would
-	// otherwise buy unlimited uncounted signup attempts, which is
-	// exactly the bulk-mint vector this throttle exists to close.
+	// The increment runs on the caller's VALUES without its cancellation,
+	// bounded by [signupThrottleIncrTimeout], for two load-bearing reasons.
+	// First, this counter cannot tell a caller-cancelled call from a Redis
+	// outage: every error arms the dwell clock and resets the recovery
+	// streak, so a client that posts a signup and RSTs a few times a second
+	// keeps it armed, and past the window CheckIP returns
+	// ErrThrottleUnavailable, taking signup offline for EVERYONE. Second, an
+	// attempt that errors out was never counted, so aborting mid-flight
+	// would buy unlimited uncounted signup attempts (the bulk-mint vector).
 	incrCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), signupThrottleIncrTimeout)
 	defer cancel()
 	count, err := t.counter.Incr(incrCtx, t.keyPrefix+ratelimit.ThrottleIPKey(ip))

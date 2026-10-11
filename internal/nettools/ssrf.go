@@ -25,49 +25,23 @@ import (
 // extraBlockedNets covers ranges the net.IP stdlib predicates don't flag.
 // Parsed once — a bad CIDR here is a programmer bug.
 //
-//   - 100.64.0.0/10  — RFC 6598 CGNAT / shared address space. Includes
-//     Alibaba Cloud's metadata IP 100.100.100.200.
-//   - 192.0.0.0/24   — IETF Protocol Assignments. Includes Oracle Cloud's
-//     metadata IP 192.0.0.192.
-//   - 198.18.0.0/15  — RFC 2544 benchmarking; not internet-routable.
-//   - 0.0.0.0/8      — RFC 1122 "this host on this network".
-//   - 64:ff9b::/96   — RFC 6052 well-known NAT64 prefix, and
-//   - 64:ff9b:1::/48 — RFC 8215 local-use NAT64 prefix. These EMBED an
-//     IPv4 address in the low bits, so `64:ff9b::a9fe:a9fe` is the cloud
-//     metadata IP 169.254.169.254 wearing an IPv6 costume. Go's
-//     IsLinkLocalUnicast / IsPrivate do NOT unwrap the NAT64 prefix (only
-//     the ::ffff:0:0/96 IPv4-mapped form), so without these entries every
-//     v4 range above is bypassable by translating it — whenever a NAT64
-//     gateway is on the egress path.
-//   - 2002::/16      — RFC 3056 6to4. Bits 16..48 EMBED a v4 address, so
-//     `2002:a9fe:a9fe::` is 169.254.169.254, `2002:7f00:1::` is 127.0.0.1.
-//     First byte is 0x20, so Go's IsPrivate / IsLinkLocal* don't flag it —
-//     the exact 6to4 mirror of the NAT64 bypass above.
-//   - ::/96          — RFC 4291 deprecated IPv4-compatible IPv6 (`::a.b.c.d`).
-//     The low 32 bits EMBED a v4 address (`::a9fe:a9fe` = 169.254.169.254);
-//     To4() unwraps only the ::ffff:0:0/96 mapped form, NOT this one, so it
-//     reads as generic global-unicast v6 and slips every v4 range above.
-//     `::1` (loopback) and `::` (unspecified) are numerically inside ::/96
-//     but are already blocked by the IsLoopback / IsUnspecified checks that
-//     run BEFORE this list, so they stay blocked for the right reason; real
-//     v4 (e.g. 8.8.8.8) can never match ::/96 because To4() shortens it to
-//     4 bytes and net.IPNet.Contains rejects the length mismatch.
-//   - fec0::/10      — RFC 3879 deprecated site-local unicast. Matches
-//     neither IsLinkLocalUnicast (fe80::/10) nor IsPrivate (fc00::/7).
-//   - ::ffff:0:0:0/96 — RFC 2765 "IPv4-translated" form (distinct from the
-//     standard ::ffff:a.b.c.d IPv4-MAPPED form To4() already unwraps): the
-//     v4 address sits in bits 96-127 but the 0xffff marker sits in bits
-//     64-79 with a zero group at 80-95, e.g. `::ffff:0:7f00:1` for
-//     127.0.0.1. To4() looks for the marker at bytes[10:12], not
-//     bytes[8:10], so this form reads as plain global-unicast v6 and
-//     bypasses every v4 range above exactly like the NAT64/6to4 forms.
-//   - 2001::/32      — RFC 4380 Teredo tunneling. A Teredo relay can be
-//     coerced into forwarding to an embedded (obfuscated) destination
-//     address, so the whole prefix is blocked rather than decoded.
-//   - 240.0.0.0/4    — IANA "Reserved for future use"; not internet-routable.
-//   - 255.255.255.255/32 — RFC 919 limited broadcast.
-//   - 192.88.99.0/24 — RFC 3068 6to4 relay anycast; deprecated (RFC 7526)
-//     and not a legitimate customer destination.
+//   - 100.64.0.0/10 CGNAT (RFC 6598; Alibaba metadata 100.100.100.200) and
+//     192.0.0.0/24 IETF assignments (Oracle metadata 192.0.0.192).
+//   - 198.18.0.0/15, 0.0.0.0/8, 240.0.0.0/4, 255.255.255.255/32 and
+//     192.88.99.0/24 (deprecated 6to4 relay) — not internet-routable.
+//   - 64:ff9b::/96 and 64:ff9b:1::/48 — NAT64 (RFC 6052/8215). They EMBED
+//     a v4 address: `64:ff9b::a9fe:a9fe` is 169.254.169.254. Go unwraps
+//     only ::ffff:0:0/96, so without these every v4 range is bypassable.
+//   - 2002::/16 — 6to4 (RFC 3056); bits 16..48 EMBED a v4 address
+//     (`2002:a9fe:a9fe::` is 169.254.169.254).
+//   - ::/96 — IPv4-compatible (RFC 4291); low 32 bits EMBED a v4 address.
+//     `::1` and `::` are caught earlier by IsLoopback / IsUnspecified.
+//   - fec0::/10 — site-local (RFC 3879); matches neither IsLinkLocalUnicast
+//     nor IsPrivate.
+//   - ::ffff:0:0:0/96 — IPv4-translated (RFC 2765), not the MAPPED form To4()
+//     unwraps: `::ffff:0:7f00:1` is 127.0.0.1 and bypasses every v4 range.
+//   - 2001::/32 — Teredo (RFC 4380); a relay can forward to an embedded,
+//     obfuscated destination, so the whole prefix is blocked.
 var extraBlockedNets = func() []*net.IPNet {
 	out := make([]*net.IPNet, 0, 14)
 	for _, cidr := range []string{

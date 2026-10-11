@@ -1,7 +1,6 @@
 // Binary stellarindex-migrate applies and rolls back TimescaleDB
-// schema migrations under migrations/. Thin wrapper over
-// golang-migrate/migrate with our project's env-based DSN resolution
-// and safety rails.
+// schema migrations under migrations/, wrapping golang-migrate/migrate
+// with env-based DSN resolution and safety rails.
 //
 // Subcommands:
 //
@@ -18,8 +17,7 @@
 // running migrations against "whatever DB happens to be local" is
 // how people wipe production.
 //
-// Locking: golang-migrate grabs a Postgres advisory lock before
-// applying, so two concurrent runners serialise safely.
+// Locking: a Postgres advisory lock serialises concurrent runners.
 package main
 
 import (
@@ -353,21 +351,18 @@ func closeSilent(m *migrate.Migrate) {
 // errf is where this binary writes a diagnostic of its own, and it goes
 // through [stderr], which strips inline credentials on the way out. The
 // only other writer is printUsage's fixed text, which interpolates
-// nothing an operator typed; the flag package's own output is pointed at
+// nothing an operator typed; the flag package's own output goes to
 // io.Discard in main, because it echoes the argument it rejects.
 //
-// What errf is handed must already be safe to print. Every message above
-// that names an argument does so through [describeArg] or by position,
-// and the redaction below is for the text this binary did not compose.
+// Messages that name an argument do so through [describeArg] or by
+// position; the redaction here covers text this binary did not compose.
 //
-// This tool is handed the production DSN — password included — on every
-// deploy, and its stderr is captured by the deploy job, journald and
-// Loki. The leak is not in the format strings above: golang-migrate
+// This tool is handed the production DSN, password included, and its
+// stderr is captured by the deploy job, journald and Loki. golang-migrate
 // rejects an unparseable database URL by wrapping net/url's *url.Error,
 // which renders the WHOLE URL, so a password containing an unescaped
-// `%`, `#` or space printed the live credential in full. Redacting the
-// two call sites that exist today would leave the next one to remember;
-// redacting at the write inherits it.
+// `%`, `#` or space printed the live credential in full. Redacting at the
+// write covers every call site, including future ones.
 //
 // Scrubbing output is a backstop, not a licence to format a secret on
 // purpose — see internal/redact for which helper renders a value we
@@ -517,38 +512,23 @@ func parseArgv(fs *flag.FlagSet, argv []string) []string {
 	// Flags are accepted BEFORE the verb or AFTER the verb's positionals,
 	// and an unknown token is a parse error either way.
 	//
-	// THE DEFECT THIS REPLACES. Go's flag package stops parsing at the
-	// first non-flag argument, so a single `fs.Parse(os.Args[1:])` over
-	// the whole argv stops at the verb and leaves everything after it
-	// unparsed. In
+	// Go's flag package stops parsing at the first non-flag argument, so a
+	// single `fs.Parse(os.Args[1:])` over the whole argv leaves everything
+	// after the verb unparsed. In
 	//
 	//	stellarindex-migrate down 1 -dsn postgres://staging/…
 	//
-	// the -dsn was never parsed, landed in fs.Args(), was silently
-	// dropped, and the DSN fell back to $STELLARINDEX_POSTGRES_DSN — so
-	// an operator dropping a migration on what they believed was staging
-	// dropped it on production, and the command printed success.
-	// Reproduced by building the binary and watching which host it
-	// dialled: the flag AFTER the verb resolved the env host, the same
-	// flag BEFORE it resolved the flag's host. All four verbs were
-	// affected, and so was -migrations. Nothing had fired only because
-	// deploy-binary.yml happens to put -migrations first.
+	// the -dsn lands in fs.Args(), is silently dropped, and the DSN falls back
+	// to $STELLARINDEX_POSTGRES_DSN — so a migration dropped on what the
+	// operator believed was staging hit production, and the command printed
+	// success.
 	//
-	// WHY THIS SHAPE, rather than refusing the trailing form. The trap is
-	// a shared CAUSE with one this repo has already solved once:
-	// cmd/stellarindex-ops hands every leaf its own FlagSet over args[1:]
-	// precisely so a flag after the verb is honoured, and documents this
-	// same stop-at-first-positional behaviour at length. Refusing here
-	// would have left the two binaries disagreeing about where flags go —
-	// which is the inconsistency that produces the mistake in the first
-	// place. Accepting both placements removes the trap instead of
-	// posting a sign next to it.
-	//
-	// The verb's leading positionals (down's N, force's V) are taken
-	// first, then the remainder is parsed by the SAME flag set. Anything
-	// still left after that is a hard error: `down -dsn X 1` is ambiguous
-	// about whether 1 is a value or a count, so it is refused rather than
-	// guessed.
+	// Both placements are accepted rather than the trailing form refused:
+	// cmd/stellarindex-ops likewise hands every leaf its own FlagSet over
+	// args[1:], and two binaries disagreeing about where flags go is what
+	// produces the mistake. The verb's leading positionals (down's N, force's
+	// V) are taken first, then the remainder is parsed by the SAME flag set.
+	// Anything left is a hard error: `down -dsn X 1` is ambiguous.
 	rest := args[1:]
 	nPos := 0
 	for nPos < len(rest) && !strings.HasPrefix(rest[nPos], "-") {

@@ -15,25 +15,21 @@ import (
 //
 // Ops jobs and the aggregator contend INSIDE clickhouse-server; cgroup caps do
 // not help, but a separate CH user lets CH's scheduler deprioritise ops. Every
-// ops-side connection here resolves its Auth through [chAuth], from the ENVIRONMENT:
+// ops-side connection resolves its Auth through [chAuth], from the ENVIRONMENT:
 //
 //	STELLARINDEX_CLICKHOUSE_OPS_USER      (e.g. "ops_batch")
 //	STELLARINDEX_CLICKHOUSE_OPS_PASSWORD
 //
 // Environment, not argv (world-readable via /proc, lands in the journal), and
 // not config (not all ops subcommands load it). The `ops_batch` user is
-// provisioned by 20-clickhouse-serving-profile.yml.
-//
-// Live daemons may use a named `live_daemon` user (same `default` settings
-// profile) so `default` can be locked down later; also environment.
+// provisioned by 20-clickhouse-serving-profile.yml. Live daemons may use a
+// named `live_daemon` user the same way.
 //
 // Precedence ([chAuthFrom]): ops pair, then live pair, then CH `default`. Ops
 // first because batch units source both env files. Every pair unset is
-// byte-for-byte the unconfigured behaviour (an empty Auth.Username is CH's
-// `default` user), so a binary can ship before the CH user exists. The ops pair
-// must reach ONLY batch jobs: each live-daemon unit strips it with
-// `UnsetEnvironment=`, pinned by TestOpsBatchIdentityNeverReachesLiveDaemons.
-// See docs/operations/clickhouse-ops-batch-profile.md.
+// byte-for-byte the unconfigured behaviour (empty Auth.Username is CH's
+// `default` user). The ops pair must reach ONLY batch jobs: each live-daemon
+// unit strips it with `UnsetEnvironment=` (TestOpsBatchIdentityNeverReachesLiveDaemons).
 const (
 	// OpsUserEnv names the env var holding the ops-batch CH username.
 	OpsUserEnv = "STELLARINDEX_CLICKHOUSE_OPS_USER"

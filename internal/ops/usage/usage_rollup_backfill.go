@@ -21,16 +21,13 @@ import (
 // package speaks (Redis key suffix, DetailRow.Date, RollupRow.Day).
 const usageRollupDateLayout = "2006-01-02"
 
-// RollupBackfill re-folds the Redis per-endpoint usage counters
-// into the `usage_daily` Timescale hypertable for an operator-chosen
-// UTC date range.
+// RollupBackfill re-folds the Redis per-endpoint usage counters into the
+// `usage_daily` Timescale hypertable for an operator-chosen UTC date range.
 //
-// The in-process rollup worker ([usage.Rollup.Run], API binary)
-// re-folds on its own every retained day an outage skipped, a bounded
-// batch per sweep. This is the manual path for when that is not
-// enough or not soon enough: no API process running a rollup, an
-// operator who wants a range folded now, or a re-fold to check.
-// It cannot reach past the Redis counters' 35-day TTL either.
+// The in-process rollup worker ([usage.Rollup.Run], API binary) re-folds
+// skipped days on its own, a bounded batch per sweep. This is the manual
+// path for when that is not enough or not soon enough. It cannot reach
+// past the Redis counters' 35-day TTL.
 //
 // Usage:
 //
@@ -38,17 +35,12 @@ const usageRollupDateLayout = "2006-01-02"
 //	  -config /etc/stellarindex.toml \
 //	  -from YYYY-MM-DD -to YYYY-MM-DD -write
 //
-// Omitting -write runs a dry pass: it scans Redis and reports what it
-// would upsert without touching usage_daily (see [opsutil.RegisterWriteGate]).
+// Omitting -write runs a dry pass that reports what it would upsert (see
+// [opsutil.RegisterWriteGate]).
 //
-// Safe to re-run: [timescale.Store.UpsertUsageDaily] is a GREATEST()
-// merge over the cumulative per-day counters, so a repeat pass is a
-// no-op and can never regress a row a live sweep already wrote.
-//
-// Each day is folded by [usage.Rollup.SweepDays], the same fold the
-// live worker's Sweep runs, so the rows this writes are byte-identical
-// to the rows the worker would have written rather than a second
-// implementation of the grouping that could drift.
+// Safe to re-run: [timescale.Store.UpsertUsageDaily] is a GREATEST() merge
+// over cumulative per-day counters, so a repeat pass never regresses a row a
+// live sweep wrote. Days fold via [usage.Rollup.SweepDays].
 func RollupBackfill(args []string) error {
 	fs := flag.NewFlagSet("usage-rollup-backfill", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

@@ -1,36 +1,23 @@
-// Package usage provides per-subject request counters backed by
-// Redis, plus the rollup worker that persists them into the
-// `usage_daily` Timescale hypertable. Increments fire from
-// middleware.UsageTracker on every authenticated request; reads
-// back the wire shapes /v1/account/usage emits.
+// Package usage provides per-subject request counters backed by Redis, plus
+// the rollup worker that persists them into `usage_daily`. Increments come
+// from middleware.UsageTracker.
 //
-// `subject` is the OWNER-ACCOUNT key middleware.UsageKeyForSubject
-// derives ("id:acct:<slug>"; "key:<KeyID>" only for a credential whose
-// store stamped no owner reference), so every credential an account
-// holds shares one counter — the monthly ceiling is a plan budget, and
-// keying it per credential let a customer multiply it by minting keys
-// and reset it by rotating one.
+// `subject` is the OWNER-ACCOUNT key from middleware.UsageKeyForSubject
+// ("id:acct:<slug>"; "key:<KeyID>" only when the store stamped no owner), so
+// an account's credentials share one counter; per-credential keying let a
+// customer multiply the monthly ceiling by minting keys.
 //
-// Storage shape — two key families per (subject, day):
+// Two key families per (subject, day):
 //
-//	usage:<sub>:<YYYY-MM-DD>     → INCRBY-counted request-unit total
-//	                               (BILLABLE traffic only; the
-//	                               MonthlyQuota input — excludes
-//	                               429 and 5xx other than a timed-
-//	                               out read, see ClassThrottled)
-//	usage:ep:<sub>:<YYYY-MM-DD>  → HASH of per-endpoint outcome
-//	                               counters; fields are
-//	                               "<route-pattern>|<class>" with
-//	                               class ∈ {ok, 4xx, 429, 5xx}
+//	usage:<sub>:<YYYY-MM-DD>     → INCRBY request-unit total (BILLABLE
+//	                               only: the MonthlyQuota input; excludes
+//	                               429 and 5xx other than a timed-out
+//	                               read, see ClassThrottled)
+//	usage:ep:<sub>:<YYYY-MM-DD>  → HASH of per-endpoint counters, fields
+//	                               "<route-pattern>|<class>" (ok, 4xx, 429, 5xx)
 //
-// Each key carries a 35-day TTL so the 30d-window read always
-// has the floor data without needing manual cleanup; [Rollup]
-// folds the detail hashes into Timescale for durable per-endpoint
-// history beyond the TTL. Subject strings are url-encoded before
-// they reach Redis — same convention as the rate-limit Bucket so
-// the keys never collide on a `:` byte inside an IPv6 address or
-// similar (and so the literal "ep:" infix can't be spoofed by a
-// subject).
+// Keys have a 35-day TTL; [Rollup] folds the detail into Timescale. Subjects
+// are url-encoded so a `:` in an IPv6 address can't collide or spoof "ep:".
 package usage
 
 import (
@@ -209,22 +196,17 @@ type DetailRow struct {
 // into one slice. SCAN-based so it never blocks Redis; the key
 // population is bounded by (#active subjects × len(dates)). Kept for
 // callers that want the whole batch (tests, one-off ops reads); a
-// production sweep over the live subject population should use
-// [Counter.ScanDetailFunc] instead so it never buffers a whole day's
-// rows in memory.
+// production sweep should use [Counter.ScanDetailFunc] so it never
+// buffers a whole day's rows in memory.
 //
 // Keys are de-duplicated per date. Redis SCAN guarantees only that
-// every key present for the whole iteration is returned AT LEAST once
-// — a rehash mid-cursor can return the same key again, and this Redis
-// is shared with the rate limiter's high-churn per-minute keys, so
-// rehashes are routine. Without the seen-set, one duplicate re-read
-// the same hash into a second DetailRow, the rollup's groupDetails
-// SUMMED both, and usage_daily's GREATEST() merge made the inflated
-// count PERMANENT for a closed day (no later sweep can produce a
-// larger true value to correct it) — a customer's usage history
-// doubled by a Redis implementation detail.
-// A repeat key is always a re-read of the same (subject, day) hash,
-// never distinct data, so keeping the first read is exact.
+// every key present for the whole iteration is returned AT LEAST once,
+// and this Redis is shared with the rate limiter's high-churn keys, so
+// rehash repeats are routine. Without the seen-set, a duplicate re-read
+// became a second DetailRow, the rollup's groupDetails SUMMED both, and
+// usage_daily's GREATEST() merge made the inflated count PERMANENT for a
+// closed day. A repeat key is always a re-read of the same (subject, day)
+// hash, so keeping the first read is exact.
 func (c *Counter) ScanDetail(ctx context.Context, dates []string) ([]DetailRow, error) {
 	if c == nil {
 		return nil, nil

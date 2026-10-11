@@ -51,8 +51,7 @@ import (
 // racing one range.
 //
 // Checkpoints are per-window ingestion_cursors rows written after each
-// window completes, so -resume picks up exactly where a crash left off
-// whichever worker claimed which window.
+// window completes, so -resume picks up where a crash left off.
 func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse+validate, build the live decoder, the live-cursor guard, run, report — splitting scatters the guard rationale away from its call site.
 	fs, gate := opsutil.NewMutatingFlagSet("projected-rebuild")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")

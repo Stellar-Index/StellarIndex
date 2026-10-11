@@ -19,22 +19,20 @@ import (
 // records does this owner hold" (ListKeysForIdentifier) and "which
 // record carries this KeyID" (RevokeKeyByID, UpdateRateLimit,
 // MarkEmailVerified). Walking `apikey:*` with one GET per credential
-// in the deployment would put that cost on request paths any
-// anonymously registered key can drive.
+// would put that cost on request paths any anonymously registered key
+// can drive.
 //
 // They read [cachekeys.APIKeyIndex] instead: one HASH holding a pointer
 // per KeyID, a record list per owner, and a `ready` marker. See the
 // family comment in internal/cachekeys/keys.go for why it is ONE key
 // (allkeys-lru eviction must take the marker with the entries).
 //
-// The index is only trusted while `ready` is readable. Anything else
-// — the hash was evicted, a lockdown ACL does not admit the family
-// yet (NOPERM), it was never built — means "walk the keyspace", which
-// is always correct. A reader that finds the index absent tries to
-// build it, so the walk is the transitional path, not the steady one.
-// A build marks `ready` only if its generation survived the walk, and
-// the API drops both at startup, so neither a hash lost mid-build nor
-// records written raw by a rolled-back binary leave a trusted gap.
+// The index is only trusted while `ready` is readable; otherwise (evicted,
+// NOPERM under a lockdown ACL, never built) readers walk the keyspace,
+// which is always correct, and try to build it. A build marks `ready` only
+// if its generation survived the walk, and the API drops both at startup,
+// so neither a hash lost mid-build nor records written raw by a
+// rolled-back binary leave a trusted gap.
 
 const (
 	keyIndexReadyField  = "ready"

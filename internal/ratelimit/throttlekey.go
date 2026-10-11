@@ -6,25 +6,22 @@ package ratelimit
 import "net/netip"
 
 // ThrottleIPKey masks a client IP down to the network block the caller
-// actually controls: the exact (unmapped) address for IPv4, the /64
-// prefix for IPv6. Returns ip unchanged (including "") when it doesn't
-// parse.
+// actually controls: the exact (unmapped) address for IPv4, the /64 prefix
+// for IPv6. Returns ip unchanged when it doesn't parse.
 //
 // SECURITY: keying a per-IP throttle on a full IPv6 /128 is NOT the
-// analogue of keying an IPv4 throttle on its /32. Residential, mobile and
-// hosting providers hand a single customer an entire /64 (often a /56 or
-// /48), so an attacker with one routable IPv6 allocation mints a fresh
-// /128 — and therefore a fresh, empty throttle bucket — per request.
-// Aggregating to /64, the smallest block an ISP delegates per RFC 7421
-// §2.1, makes the key match the unit an attacker can cheaply rotate
-// within. IPv4 has no equivalent cheap-rotation problem at attacker
-// scale, so it keeps its full address.
+// analogue of keying an IPv4 throttle on its /32. Providers hand a single
+// customer an entire /64 (often a /56 or /48), so an attacker with one
+// routable IPv6 allocation mints a fresh /128 — and a fresh, empty
+// throttle bucket — per request. Aggregating to /64 (the smallest block an
+// ISP delegates, RFC 7421 §2.1) matches the unit an attacker can cheaply
+// rotate within. IPv4 has no equivalent problem.
 //
 // This is the ONE definition of the throttle identity: every per-IP cap
-// (the API rate limiter, the signup and login throttles, the streaming
-// and tip-producer per-caller caps) keys through it, so a request cannot
-// hold two budgets at two layers by spelling one address two ways.
-// TestThrottleIPMaskHasOneDefinition fails on a second copy.
+// (API rate limiter, signup and login throttles, streaming and
+// tip-producer caps) keys through it, so a request cannot hold two budgets
+// by spelling one address two ways. TestThrottleIPMaskHasOneDefinition
+// fails on a second copy.
 //
 // NEVER use this for audit logging, admin display, or an IP allowlist
 // check — those want the caller's precise address.

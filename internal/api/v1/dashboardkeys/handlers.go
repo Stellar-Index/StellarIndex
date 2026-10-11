@@ -674,27 +674,21 @@ func validateCIDROrIP(entry string) string {
 // unlimited" sentinel.
 //
 //   - requested <= 0 WITH an account override: pass through unchanged.
-//     0 stays the "inherit the account override" sentinel the auth
-//     cascade keys on (internal/auth/apikey_postgres.go), and that
-//     override is the mechanism for issuing a higher-cap key — set it on
-//     the account, mint with the quota unset, the key inherits it.
+//     0 is the "inherit the account override" sentinel the auth cascade
+//     keys on (internal/auth/apikey_postgres.go); that override is how a
+//     higher-cap key is issued.
 //   - requested <= 0 with NO override: fall back to the tier ceiling.
-//     Passing 0 through here too would meter the key by NOTHING:
-//     apikey_postgres resolves 0 → the account override → 0, and the
-//     monthly-quota middleware treats <= 0 as pass-through. The tier
-//     ladder would then bind only customers who volunteered a number,
-//     and a free key minted with the natural body ({"name": "..."})
-//     could run its per-minute budget around the clock with no monthly
-//     cap. The sibling clampRateLimitToTier has no such hole because
-//     parseCreateRequest gives rate_limit_per_min a positive default,
-//     so its clamp always bites.
+//     Passing 0 through would meter the key by nothing (apikey_postgres
+//     resolves 0 → override → 0, and the monthly-quota middleware passes
+//     <= 0 through), so a free key minted with just {"name": "..."} would
+//     have no monthly cap. clampRateLimitToTier has no such hole:
+//     parseCreateRequest gives rate_limit_per_min a positive default.
 //   - requested > 0: clamp to min(requested, ceiling), where the
 //     ceiling is the operator's [platform.Account.MonthlyRequestQuotaOverride]
 //     when set (> 0), else the tier default [platform.Tier.MaxMonthlyQuota].
 //
-// This makes the operator's account-level cap a HARD ceiling the customer can
-// only lower — the CEILING analogue of the rate-limit FLOOR
-// (clampRateLimitToTier + the account rate-limit override at auth time).
+// The operator's account-level cap is thus a HARD ceiling the customer can
+// only lower, the analogue of the rate-limit floor in clampRateLimitToTier.
 func clampMonthlyQuotaToAccount(requested int64, acct platform.Account) int64 {
 	if requested <= 0 && acct.MonthlyRequestQuotaOverride > 0 {
 		// Inherit the operator's explicit override at auth time.

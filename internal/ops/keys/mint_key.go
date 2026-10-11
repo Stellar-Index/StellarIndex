@@ -73,11 +73,9 @@ type keyMinter interface {
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
 }
 
-// Mint issues an API key directly via the Redis API-key store.
-// Operator-only path used to bootstrap a customer's first key
-// before the self-service /v1/account/keys flow can be hit (which
-// itself requires a pre-existing authenticated subject — chicken
-// and egg).
+// Mint issues an API key directly via the Redis API-key store: the
+// operator-only bootstrap for a customer's first key, before the
+// self-service /v1/account/keys flow is usable.
 //
 // Usage:
 //
@@ -90,16 +88,11 @@ type keyMinter interface {
 //	  -reason 'onboarding ticket 1234' \
 //	  -write
 //
-// Every mint lands a "key.mint" audit_log row (actor, reason, tier,
-// scopes, budget, expiry), the same record POST /v1/admin/keys writes; a
-// mint whose row cannot be written is revoked and its plaintext never
-// shown. -tier operator also needs -confirm-operator. Without -write the
-// grant is validated and printed, and nothing is minted.
-//
-// The plaintext key is printed to stdout ONCE — the store hashes
-// it before persistence and there is no recovery path. Operators
-// should pipe stdout to a secure transport (encrypted email, vault,
-// 1Password) immediately.
+// Every mint lands a "key.mint" audit_log row (actor, reason, tier, scopes,
+// budget, expiry); a mint whose row cannot be written is revoked and its
+// plaintext never shown. -tier operator also needs -confirm-operator.
+// Without -write nothing is minted. The plaintext key is printed to stdout
+// ONCE (the store keeps only its hash); pipe it to a secure transport.
 func Mint(args []string) error {
 	opts, err := parseMintKeyFlags(args)
 	if err != nil {

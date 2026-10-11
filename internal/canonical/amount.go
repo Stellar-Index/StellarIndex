@@ -25,10 +25,9 @@ import (
 // lose precision above 2^53. See [Amount.MarshalJSON].
 //
 // Parse-side DoS guard: [FromString] rejects inputs longer than
-// [MaxAmountStringLen] digits (512 — far past any legitimate i128
-// or Postgres NUMERIC value). Prevents a multi-MB decimal string
-// from an untrusted source (future POST body, malformed JSON)
-// triggering an unbounded big.Int allocation.
+// [MaxAmountStringLen] digits (512, far past any legitimate i128 or
+// Postgres NUMERIC value), so an untrusted multi-MB decimal string
+// cannot trigger an unbounded big.Int allocation.
 type Amount struct {
 	// value is never nil after a successful construction. Helpers
 	// below guard against nil by constructing on demand.

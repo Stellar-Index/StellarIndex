@@ -27,10 +27,8 @@ type keyRebudgeter interface {
 	UpdateRateLimit(ctx context.Context, keyID string, newRateLimitPerMin int) (auth.APIKeyRecord, error)
 }
 
-// Upgrade lifts (or lowers) the per-minute rate-limit on an
-// existing API key. Used by operators to set manual / partner
-// rate-limit budgets (calls the internal
-// `auth.RedisAPIKeyStore.UpdateRateLimit` path).
+// Upgrade lifts (or lowers) the per-minute rate limit on an existing API
+// key, for manual / partner budgets (via `auth.RedisAPIKeyStore.UpdateRateLimit`).
 //
 // Usage:
 //
@@ -41,24 +39,12 @@ type keyRebudgeter interface {
 //	  -reason 'partner contract renewal' \
 //	  -write
 //
-// Without -write it prints the change and touches nothing.
-//
 // Every change lands a "key.ratelimit.update" audit_log row (actor,
 // reason, old and new budget); a change whose row cannot be written is
-// rolled back.
+// rolled back. Without -write it prints the change and touches nothing.
 //
-// Tier suggestion (matches the /signup page tier table):
-//
-//	 1000  — Starter (free; what /v1/signup hands out)
-//	10000  — Pro (paid)
-//	50000  — Business (paid)
-//	custom — Enterprise (per-deployment)
-//
-// Exit codes:
-//
-//	0 — upgraded
-//	1 — error (Redis unreachable, key not found, etc.)
-//	2 — usage error (missing flag)
+// Exit codes: 0 upgraded; 1 error (Redis unreachable, key not found,
+// etc.); 2 usage error (missing flag).
 func Upgrade(args []string) error {
 	opts, err := parseUpgradeKeyFlags(args)
 	if err != nil {
