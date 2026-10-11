@@ -9,15 +9,12 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Regression tests for the ContractEventsRecent and EventsByTx reads of
-// stellar.contract_events — a ReplacingMergeTree. Without FINAL / LIMIT 1 BY /
-// uniqExact, an un-merged duplicate part would be served as a duplicate EVENT
-// during a merge window. Same class as the other ReplacingMergeTree reads, same query-SHAPE
-// proof idiom: the stubConn/stubRows harness (tx_hash_index_test.go) does not
-// implement real ReplacingMergeTree semantics, so these assert the emitted SQL
-// carries the dedup construct the siblings use — the live-ClickHouse proof that
-// the merge actually collapses the duplicate is
-// TestClickHouseContractEventsRMTDedup (test/integration, tagged integration).
+// Regression tests for the ContractEventsRecent and EventsByTx reads of stellar.contract_events,
+// a ReplacingMergeTree. Without FINAL / LIMIT 1 BY / uniqExact an un-merged duplicate part is
+// served as a duplicate EVENT during a merge window. The stubConn/stubRows harness
+// (tx_hash_index_test.go) has no real ReplacingMergeTree semantics, so these assert the emitted
+// SQL carries the dedup construct; the live proof is TestClickHouseContractEventsRMTDedup
+// (test/integration, tagged integration).
 
 // contractEventRecentRowFor builds the 9-column ContractActivityRow that
 // ContractEventsRecent's scan expects (ledger_seq, close_time, tx_hash,
@@ -31,12 +28,10 @@ func contractEventRecentRowFor(seq uint32, opIndex, eventIndex uint32) []any {
 	}
 }
 
-// TestContractEventsRecent_FastPathKeepsReadInOrder — the fast query must
-// carry NEITHER `FINAL` (defeats the contract_id bloom skip-index for
-// quiet contracts) NOR `LIMIT 1 BY` (disables the reverse read-in-order
-// early exit for busy ones — measured 16.3s vs 0.16s on r1,
-// the CCW5IBJ7… contract-page 503). Dedup is a
-// Go-side adjacent-row collapse.
+// TestContractEventsRecent_FastPathKeepsReadInOrder: the fast query must carry NEITHER `FINAL`
+// (defeats the contract_id bloom skip-index for quiet contracts) NOR `LIMIT 1 BY` (disables the
+// reverse read-in-order early exit for busy ones, 16.3s vs 0.16s). Dedup is a Go-side
+// adjacent-row collapse.
 func TestContractEventsRecent_FastPathKeepsReadInOrder(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
@@ -82,11 +77,9 @@ func TestContractEventsRecent_FastPathKeepsReadInOrder(t *testing.T) {
 	}
 }
 
-// TestContractEventsRecent_DupStormFallsBackToInCHDedup — when the raw
-// fetch returns the full over-fetch and dedup still can't fill the page,
-// a short page would falsely read as "last page" (the handler keys
-// next_cursor on a full page). The reader must then issue the legacy
-// LIMIT 1 BY shape.
+// TestContractEventsRecent_DupStormFallsBackToInCHDedup: when the raw fetch returns the full
+// over-fetch and dedup still cannot fill the page, a short page would falsely read as "last page"
+// (the handler keys next_cursor on a full page), so the reader must issue the LIMIT 1 BY shape.
 func TestContractEventsRecent_DupStormFallsBackToInCHDedup(t *testing.T) {
 	const limit = 2
 	fetch := limit + contractEventsDedupHeadroom
@@ -145,12 +138,10 @@ func TestContractEventsRecent_CursorShapes(t *testing.T) {
 	}
 }
 
-// TestContractEventsRecent_ActiveLedgerBound — with the
-// contract_active_ledgers index present, the reader walks the contract's
-// recent active ledgers and bounds the events read to them (the
-// quiet-contract fix). A NON-EMPTY walk bounds
-// the events read; an EMPTY walk is NOT authoritative.
-// See TestContractEventsRecent_EmptyWalkFallsThrough.
+// TestContractEventsRecent_ActiveLedgerBound: with the contract_active_ledgers index present,
+// the reader walks the contract's recent active ledgers and bounds the events read to them. A
+// NON-EMPTY walk bounds the read; an EMPTY walk is NOT authoritative
+// (see TestContractEventsRecent_EmptyWalkFallsThrough).
 func TestContractEventsRecent_ActiveLedgerBound(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
@@ -215,14 +206,11 @@ func TestContractEventsRecent_PartialWalkShortPageFallsThrough(t *testing.T) {
 	}
 }
 
-// TestContractEventsRecent_EmptyWalkFallsThrough is the
-// empty-walk regression: the contract_active_ledgers probe is a
-// LIMIT-1 table-global emptiness check that cannot see PARTIAL backfill
-// coverage. When the index is present-but-still-backfilling, a quiet
-// contract's per-contract walk comes back EMPTY even though its events
-// exist in contract_events. The reader must NOT short-circuit to "no
-// events" — it must fall through to the UNBOUNDED contract_events scan
-// (the source of truth) and serve the real events.
+// TestContractEventsRecent_EmptyWalkFallsThrough: the contract_active_ledgers probe is a LIMIT-1
+// table-global emptiness check that cannot see PARTIAL backfill coverage, so a quiet contract's
+// walk can come back EMPTY while its events exist in contract_events. The reader must NOT
+// short-circuit to "no events"; it falls through to the UNBOUNDED contract_events scan (the
+// source of truth).
 func TestContractEventsRecent_EmptyWalkFallsThrough(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
@@ -285,16 +273,11 @@ func TestEventsByTx_UsesFinal(t *testing.T) {
 	}
 }
 
-// TestSACAssetFromEvents_ActiveLedgerBound — the /wasm 404 path asks
-// "is this contract a SAC?" for every contract with no captured
-// instance, i.e. the COMMON case. Unbounded, that probe is the
-// quiet-contract reverse-scan trap: `contract_id = ? ORDER BY
-// ledger_seq DESC LIMIT 1` walks the whole key range backwards, cost
-// ~0.34s idle and 8s (the request deadline) under a page's own
-// concurrency — 23 of 25 cold random contract pages breached the 1s
-// budget on this single call. With the
-// index present the read MUST be bounded to the contract's own recent
-// active ledgers.
+// TestSACAssetFromEvents_ActiveLedgerBound: the /wasm 404 path asks "is this contract a SAC?" for
+// every contract with no captured instance, the COMMON case. Unbounded, that probe is the
+// quiet-contract reverse-scan trap: `contract_id = ? ORDER BY ledger_seq DESC LIMIT 1` walks the
+// whole key range backwards and hits the request deadline under a page's own concurrency. With
+// the index present the read MUST be bounded to the contract's own recent active ledgers.
 func TestSACAssetFromEvents_ActiveLedgerBound(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
@@ -316,11 +299,9 @@ func TestSACAssetFromEvents_ActiveLedgerBound(t *testing.T) {
 	}
 }
 
-// TestSACAssetFromEvents_NoActiveLedgersSkipsScan — a contract the
-// index knows has NO active ledgers has no events to inspect, so the
-// answer is authoritative and the events table must not be touched at
-// all. Falling back to the unbounded scan here would reintroduce the
-// full cost on exactly the contracts that are cheapest to answer.
+// TestSACAssetFromEvents_NoActiveLedgersSkipsScan: a contract the index knows has NO active
+// ledgers has no events to inspect, so the answer is authoritative and the events table must not
+// be touched; an unbounded fallback would cost most on the cheapest contracts to answer.
 func TestSACAssetFromEvents_NoActiveLedgersSkipsScan(t *testing.T) {
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
@@ -344,13 +325,10 @@ func TestSACAssetFromEvents_NoActiveLedgersSkipsScan(t *testing.T) {
 	}
 }
 
-// TestContractInteractions_BusyContractWindowNarrows — both halves of
-// the interactions read scale with the ledger SPAN they cover, so over
-// the default 90 days a busy contract cost 3-6s and was the slowest
-// panel left on the contract page. The window is anchored to the
-// contract's own recent activity instead, and the EFFECTIVE floor must
-// be returned so the response's since_ledger describes what was
-// actually served rather than what was asked for.
+// TestContractInteractions_BusyContractWindowNarrows: both halves of the interactions read scale
+// with the ledger SPAN they cover, so a busy contract is slow over the default window. The
+// window is anchored to the contract's own recent activity, and the EFFECTIVE floor must be
+// returned so since_ledger describes what was served, not what was asked for.
 func TestContractInteractions_BusyContractWindowNarrows(t *testing.T) {
 	const window = 500
 	conn := &stubConn{}
@@ -409,13 +387,10 @@ func TestContractInteractions_QuietContractKeepsFullWindow(t *testing.T) {
 	}
 }
 
-// TestContractInteractions_CapsDistinctTxsNotEventRows: the
-// subject-tx cap subquery needs DISTINCT, or the 50k LIMIT is consumed by
-// EVENT rows, not transactions — a contract emitting ~10-20 events/tx would
-// sample only ~2.5-5k txs from the newest handful of ledgers, undercounting
-// the shared-tx ranking. The inner (ledger_seq, tx_hash) collection must be
-// SELECT DISTINCT so the cap counts transactions, as its comment and the
-// shared_txs column name have always claimed.
+// TestContractInteractions_CapsDistinctTxsNotEventRows: the subject-tx cap subquery needs
+// DISTINCT, or the LIMIT is consumed by EVENT rows, not transactions, and a multi-event contract
+// undercounts the shared-tx ranking. The inner (ledger_seq, tx_hash) collection must be SELECT
+// DISTINCT so the cap counts transactions, as the shared_txs column name claims.
 func TestContractInteractions_CapsDistinctTxsNotEventRows(t *testing.T) {
 	if !strings.Contains(contractInteractionsQuery,
 		"SELECT DISTINCT ledger_seq, tx_hash FROM stellar.contract_events") {

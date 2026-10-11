@@ -39,17 +39,13 @@ func sample(labels map[string]any, v float64) promSample {
 
 func d(dur time.Duration) *time.Duration { return &dur }
 
-// TestFreshnessVerdict pins the SLO judgement: an age past the SLO is
-// "stale", within it "ok", and no data is "unknown" — never a fresh
-// zero (the web-status-1 class).
+// TestFreshnessVerdict pins the SLO judgement: an age past the SLO is "stale", within it "ok", and
+// no data is "unknown", never a fresh zero.
 //
-// The future-dated rows are the regression case: a stamp past
-// backupClockSkewTolerance must read "unknown" carrying its RAW
-// negative age, NOT "ok" with a clamped 0 — a forward-skewed host
-// clock or a corrupt future-dated backup label would otherwise paint
-// an arbitrarily stale backup green on the public status page.
-// Ordinary sub-tolerance skew still floors to 0 and keeps its verdict:
-// a stamp a few seconds ahead bounds the true age at a few seconds.
+// The future-dated rows matter: a stamp past backupClockSkewTolerance must read "unknown" with its
+// RAW negative age, NOT "ok" with a clamped 0, or a forward-skewed host clock or corrupt future
+// label would paint an arbitrarily stale backup green on the public status page. Sub-tolerance
+// skew still floors to 0 and keeps its verdict, since it bounds the true age at a few seconds.
 func TestFreshnessVerdict(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -129,11 +125,9 @@ func TestParseBackupLabelTime(t *testing.T) {
 	}
 }
 
-// TestBuildBackupsSnapshot_Projection feeds a fully-populated exporter
-// shape and pins every wire field the status panel reads: timestamps
-// derived from the exporter's since-last ages, the newest full's size
-// + repo, per-repo newest backup from the label, drill result, and the
-// per-item verdicts.
+// TestBuildBackupsSnapshot_Projection feeds a fully-populated exporter shape and pins every wire
+// field the status panel reads: timestamps from the since-last ages, the newest full's size and
+// repo, per-repo newest backup from the label, drill result, and per-item verdicts.
 func TestBuildBackupsSnapshot_Projection(t *testing.T) {
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	stanza := "stellarindex"
@@ -300,14 +294,11 @@ func TestBuildBackupsSnapshot_AbsentAndFailed(t *testing.T) {
 	}
 }
 
-// TestBuildBackupsSnapshot_FutureDatedOffsite is the regression test at
-// document level: every source is fresh EXCEPT the off-site repo,
-// whose pgBackRest label is stamped 8d 14h in the future (forward host
-// clock, or a corrupt label). Without the check that row would render
-// "ok · 0s ago" and the whole panel went green — an arbitrarily stale
-// off-site copy behind an all-clear. It must read "unknown"
-// carrying the raw negative age, and drag the roll-up off "ok" (which
-// is also what sets flags.stale on the wire).
+// TestBuildBackupsSnapshot_FutureDatedOffsite is the document-level guard: every source is fresh
+// EXCEPT the off-site repo, whose pgBackRest label is stamped days in the future (forward host
+// clock or corrupt label). Unchecked, it would render "ok · 0s ago" and an arbitrarily stale
+// off-site copy would sit behind an all-clear. It must read "unknown" with the raw negative age
+// and drag the roll-up off "ok", which also sets flags.stale on the wire.
 func TestBuildBackupsSnapshot_FutureDatedOffsite(t *testing.T) {
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	stanza := "stellarindex"
@@ -368,11 +359,10 @@ func TestBackupsPromQL(t *testing.T) {
 	}
 }
 
-// TestHandleDiagnosticsBackups_EndToEnd round-trips the handler
-// through a canned Prometheus HTTP fake, pinning the wire JSON field
-// names the explorer panel consumes, the 60 s cache header, the
-// flags.stale mirror, and that the second request is served from the
-// in-process cache (one Prometheus round of queries, not two).
+// TestHandleDiagnosticsBackups_EndToEnd round-trips the handler through a canned Prometheus HTTP
+// fake, pinning the wire JSON field names the explorer panel consumes, the 60 s cache header, the
+// flags.stale mirror, and that a second request is served from the in-process cache (one round of
+// Prometheus queries, not two).
 func TestHandleDiagnosticsBackups_EndToEnd(t *testing.T) {
 	var hits atomic.Int64
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -463,14 +453,10 @@ func TestHandleDiagnosticsBackups_EndToEnd(t *testing.T) {
 	}
 }
 
-// TestBuildBackupsSnapshot_PanickingQueryCountsAsFailed is the
-// regression proof for the silent-degrade shape: a query
-// goroutine that panics must count toward `failed` (and so degrade
-// SourceStatus) exactly like a query that returned an error. Before
-// the fix, a panic left both results[i] and errs[i] at their zero
-// value, which buildBackupsSnapshot's failed-count loop reads as "the
-// query simply returned nothing" — SourceStatus stayed "ok" even
-// though one Prometheus query never actually ran.
+// TestBuildBackupsSnapshot_PanickingQueryCountsAsFailed: a query goroutine that panics must count
+// toward `failed` (and so degrade SourceStatus) like one that returned an error. A panic leaves
+// results[i] and errs[i] at zero values, which the failed-count loop would read as "returned
+// nothing" and keep SourceStatus "ok" though a Prometheus query never ran.
 func TestBuildBackupsSnapshot_PanickingQueryCountsAsFailed(t *testing.T) {
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	src := &fakeBackupMetrics{
@@ -501,16 +487,11 @@ func (b *blockingBackupMetrics) queryVector(ctx context.Context, _ string) ([]pr
 	return nil, nil
 }
 
-// TestHandleDiagnosticsBackups_LeaderCtxCancelDoesNotPoisonSharedCache
-// is the regression proof for the leader-ctx hazard: handleDiagnosticsBackups ran
-// buildBackupsSnapshot's Prometheus fan-out on context.WithTimeout(r.Context(), ...)
-// — the ctx of whichever request happened to hold s.backups.mu when
-// the cache was stale. That build result is then cached and served to
-// EVERY request behind it, so if the triggering ("leader") request's
-// own client disconnected mid-flight, its canceled ctx failed every
-// query, and the resulting "unknown" snapshot was cached and handed
-// to a totally unrelated follower request whose own context was never
-// touched — the same shape as CachedOracleReader.fetch.
+// TestHandleDiagnosticsBackups_LeaderCtxCancelDoesNotPoisonSharedCache guards the leader-ctx
+// hazard: the Prometheus fan-out must not run on the ctx of whichever request holds s.backups.mu
+// when the cache is stale. The result is cached for EVERY request behind it, so if that leader's
+// client disconnected mid-flight, its canceled ctx would fail every query and an "unknown"
+// snapshot would be served to unrelated followers. Same shape as CachedOracleReader.fetch.
 func TestHandleDiagnosticsBackups_LeaderCtxCancelDoesNotPoisonSharedCache(t *testing.T) {
 	proceed := make(chan struct{})
 	src := &blockingBackupMetrics{proceed: proceed}
@@ -591,15 +572,10 @@ func (s *switchableBackupMetrics) queryVector(_ context.Context, expr string) ([
 	return nil, nil
 }
 
-// TestHandleDiagnosticsBackups_KeepsPreviousSnapshotOnAllFailedRebuild
-// is the regression proof: an all-failed rebuild (every
-// Prometheus query erroring, e.g. an outage or a starved fan-out)
-// must not clobber a known-good cached snapshot with an
-// all-"unknown" document. If buildBackupsSnapshot's
-// output unconditionally replaced s.backups.snap regardless of its
-// own SourceStatus, a transient all-query failure round would paint
-// the public backups status "unknown" even though the previous
-// rebuild, seconds earlier, was healthy.
+// TestHandleDiagnosticsBackups_KeepsPreviousSnapshotOnAllFailedRebuild: an all-failed rebuild
+// (every Prometheus query erroring) must not clobber a known-good cached snapshot with an
+// all-"unknown" document. Replacing s.backups.snap regardless of SourceStatus would let one
+// transient failure round paint the public backups status "unknown" over a healthy previous build.
 func TestHandleDiagnosticsBackups_KeepsPreviousSnapshotOnAllFailedRebuild(t *testing.T) {
 	fake := &switchableBackupMetrics{}
 	srv := New(Options{BackupMetrics: fake})

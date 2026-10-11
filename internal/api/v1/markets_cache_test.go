@@ -56,11 +56,9 @@ func (f *fakeMarketsReader) GetPairsVolumeHistory24hBatch(ctx context.Context, p
 	return nil, nil
 }
 
-// expireMarketsEntries walks every cached entry back past any ttl, so
-// the next read takes the stale-while-revalidate branch. It replaces
-// sleeping past a deliberately tiny ttl: the test below needs the entry
-// a refresh WRITES to stay fresh while it asserts on it, which a 25 ms
-// ttl cannot promise.
+// expireMarketsEntries walks every cached entry back past any ttl, so the next read takes the
+// stale-while-revalidate branch. It replaces sleeping past a tiny ttl, which cannot keep the
+// entry a refresh writes fresh while the test asserts on it.
 func expireMarketsEntries(c *CachedMarketsReader) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -139,11 +137,9 @@ func TestCachedMarketsReader_AllPoolsErrorIsNotCached(t *testing.T) {
 	}
 }
 
-// readCacheCounter pulls the current stellarindex_api_cache_ops_total
-// value for one (cache, op, result) combination. Returns 0 when the
-// label set hasn't been incremented yet (Prometheus auto-creates on
-// first .Inc()). Lets the metric tests read absolute values without
-// depending on test ordering.
+// readCacheCounter returns the current stellarindex_api_cache_ops_total value for one
+// (cache, op, result) combination, or 0 before the label set is first incremented, so metric
+// tests read absolute values without depending on test ordering.
 func readCacheCounter(t *testing.T, cache, op, result string) float64 {
 	t.Helper()
 	m := &dto.Metric{}
@@ -153,14 +149,9 @@ func readCacheCounter(t *testing.T, cache, op, result string) float64 {
 	return m.Counter.GetValue()
 }
 
-// TestCachedMarketsReader_HitMissCounter pins the contract:
-// AllPools' miss-on-first-call + hit-on-repeat-call increments the
-// stellarindex_api_cache_ops_total counter on the right label set.
-// Detection target: a future refactor that drops the metric inc on
-// either branch. Three earlier session bugs (the Order, Sources and
-// Limit dimensions) were prewarm-key drifts; this test guards the
-// OBSERVABILITY of future drifts by ensuring the counter actually
-// moves.
+// TestCachedMarketsReader_HitMissCounter pins that AllPools' miss on the first call and hit on
+// a repeat increment stellarindex_api_cache_ops_total on the right label set. Prewarm-key
+// drifts are otherwise silent, so this guards that the counter moves on both branches.
 func TestCachedMarketsReader_HitMissCounter(t *testing.T) {
 	up := &fakeMarketsReader{}
 	c := NewCachedMarketsReader(up, 60*time.Second)
@@ -192,22 +183,11 @@ func TestCachedMarketsReader_HitMissCounter(t *testing.T) {
 	}
 }
 
-// TestCachedMarketsReader_AllPoolsLeaderFailsWaitersDontPanic pins the
-// regression for a runtime panic observed on r1 production
-// (GET /v1/markets):
-//
-//	panic: runtime error: invalid memory address or nil pointer
-//	dereference
-//	  …markets_cache.go: out := c.entries[key]
-//	  …                  return out.pairs, out.cursor, nil
-//
-// Root cause: under single-flight, the leader's failing upstream call
-// removed the entry from the map (we don't TTL-cache errors) BEFORE
-// closing the flight chan. Waiters then woke and re-read
-// c.entries[key], got nil, and derefed `out.pairs`.
-//
-// Fix: waiters hold a pointer to the SAME entry they joined on and
-// read entry.err / entry.pairs there, surviving the leader's delete.
+// TestCachedMarketsReader_AllPoolsLeaderFailsWaitersDontPanic pins a nil-pointer panic in
+// GET /v1/markets. Under single-flight, the leader's failing upstream call removed the entry
+// from the map (errors are not TTL-cached) before closing the flight chan, so waiters re-read
+// c.entries[key], got nil, and dereferenced `out.pairs`. Waiters must hold a pointer to the
+// same entry they joined on and read entry.err / entry.pairs there, surviving the delete.
 func TestCachedMarketsReader_AllPoolsLeaderFailsWaitersDontPanic(t *testing.T) {
 	up := &fakeMarketsReader{
 		delay: 100 * time.Millisecond,
@@ -274,25 +254,20 @@ func toString(v any) string {
 	return "unknown"
 }
 
-// swrPoolsStaleTrades / swrPoolsFreshTrades are what tell the pool row
-// a cold fetch cached from the row a refresh replaces it with: the
-// stub moves the pool's 24h trade count on every call after the first,
-// which is what a re-scan of the trades window returning later data
-// looks like. A stub returning one fixed row, identical before
-// and after a refresh, would leave nothing but a stopwatch to separate a caller
-// served the cached entry from one handed the refresh's result.
+// swrPoolsStaleTrades / swrPoolsFreshTrades tell the pool row a cold fetch cached from the row
+// a refresh replaces it with: the stub moves the pool's 24h trade count on every call after the
+// first, as a re-scan returning later data would. A fixed row would leave only a stopwatch to
+// separate a caller served the cached entry from one handed the refresh's result.
 const (
 	swrPoolsStaleTrades = 100
 	swrPoolsFreshTrades = 200
 )
 
-// swrPoolsUpstream is a race-safe configurable AllPools stub for the
-// stale-while-revalidate tests: atomic call counter, an optional
-// hold that parks a call until the test releases it, and an atomic
-// "fail on call >= 2" toggle (deterministic by call number → no
-// mid-test field mutation, so `go test -race` is clean even under the
-// concurrent background refresh). Embeds *fakeMarketsReader for the
-// other interface methods.
+// swrPoolsUpstream is a race-safe AllPools stub for the stale-while-revalidate tests: an atomic
+// call counter, an optional hold parking a call until released, and an atomic "fail on call >=
+// 2" toggle. Failing by call number avoids mid-test field mutation, keeping `go test -race`
+// clean under the concurrent background refresh. Embeds *fakeMarketsReader for the other
+// interface methods.
 type swrPoolsUpstream struct {
 	*fakeMarketsReader
 	calls   atomic.Int64
@@ -315,26 +290,18 @@ func (s *swrPoolsUpstream) AllPools(ctx context.Context, _ timescale.PoolsFilter
 	return []Pool{{Source: "aquarius", Base: "native", TradeCount24h: trades}}, "c", nil
 }
 
-// TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight: every one
-// of 20 concurrent reads of an expired pools entry is served THE STALE
-// ROW while exactly one single-flighted background refresh runs (the
-// SWR path), and the row that refresh returns is what replaces it.
+// TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight: every one of 20 concurrent reads of
+// an expired pools entry is served the stale row while exactly one single-flighted background
+// refresh runs, and the row that refresh returns replaces it.
 //
-// What a stale read is served is a value, so it is asserted as one.
-// A stub returning one fixed row would make the row before the refresh
-// and the row after it the same row, and no assertion here could
-// tell a read served the entry from a read handed the refresh's
-// result — the 120 ms ceiling on each reader was the whole evidence,
-// and what it measured was how quickly the runner rescheduled 20
-// goroutines. The stub now moves the pool's 24h trade count on the
-// refresh, and the refresh is HELD until every read has returned, so a
-// read that waited for it could only be holding the refreshed count
-// and a read served the entry can only be holding the stale one — on
-// any runner at any load.
+// The served value is asserted as a value, not by latency: a read-time ceiling would only
+// measure how fast the runner reschedules 20 goroutines. The stub moves the pool's 24h trade
+// count on the refresh, and the refresh is held until every read has returned, so a read that
+// waited for it can only hold the refreshed count and a read served the entry can only hold the
+// stale one, on any runner at any load.
 //
-// The tail releases the hold and pins the refreshed row, which is what
-// keeps the assertion above a discrimination rather than a restatement
-// of the fixture.
+// The tail releases the hold and pins the refreshed row, keeping the assertion above a
+// discrimination rather than a restatement of the fixture.
 func TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight(t *testing.T) {
 	hold := newUpstreamHold(2) // the cold leader runs free; the refresh is parked
 	t.Cleanup(hold.release)
@@ -395,13 +362,10 @@ func TestCachedMarketsReader_PoolsSWRServesStaleSingleFlight(t *testing.T) {
 		t.Fatalf("single-flight violated: %d upstream calls for %d concurrent stale reads, want 2 (1 cold + 1 refresh)", got, reads)
 	}
 
-	// Released, the one refresh settles the entry. Polling by READ adds
-	// no upstream call of its own: a stale read looks at the in-flight
-	// marker, which the refresh holds until it has written what it
-	// found, so every poll before that point is served the stale entry
-	// and the poll that succeeds is served the refreshed one. Because
-	// the ttl outlives the test, the entry then stays fresh and the
-	// call count is final.
+	// Released, the one refresh settles the entry. Polling by read adds no upstream call: a
+	// stale read checks the in-flight marker, which the refresh holds until it has written its
+	// result, so earlier polls get the stale entry and the first success gets the refreshed
+	// one. The ttl outlives the test, so the entry then stays fresh and the call count is final.
 	hold.release()
 	var fresh []Pool
 	var freshErr error
@@ -455,11 +419,9 @@ func (f *fakeMarketsReader) FirstTradeBatch(_ context.Context, _ [][2]string) (m
 	return map[string]time.Time{}, nil
 }
 
-// TestCachedMarketsReader_AllPoolsSourcesOrderCollapse is the
-// end-to-end proof of the fix: AllPools with the same Sources set in
-// two different orders must hit ONE upstream call — the drift bug this
-// hardening closes would show 2. Uses the fakeMarketsReader defined in
-// markets_cache_test.go (same package).
+// TestCachedMarketsReader_AllPoolsSourcesOrderCollapse: AllPools with the same Sources set in
+// two different orders must make ONE upstream call; key drift would make two. Uses the
+// fakeMarketsReader defined in markets_cache_test.go.
 func TestCachedMarketsReader_AllPoolsSourcesOrderCollapse(t *testing.T) {
 	up := &fakeMarketsReader{}
 	c := NewCachedMarketsReader(up, 60*time.Second)

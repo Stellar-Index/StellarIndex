@@ -236,15 +236,10 @@ func TestOracleLatest_negativePricePreservesSign(t *testing.T) {
 	}
 }
 
-// TestOracleLatest_NativeExpandsToCryptoXLM pins the user-facing
-// → oracle-internal asset translation. /v1/oracle/latest?asset=native
-// should also query against `crypto:XLM` because Reflector keys
-// observations by the global crypto ticker, not by the per-network
-// `native` form. Without this the endpoint returns an empty array
-// even though Reflector publishes XLM continuously.
-// TestOracleLatest_NativeExpandsToCryptoXLM pins the full XLM family:
-// reflector-dex publishes XLM only under the XLM SAC C-address, so a
-// `native` query that omits it hides that oracle's reading.
+// TestOracleLatest_NativeExpandsToCryptoXLM pins the user-facing to oracle-internal asset
+// translation and the full XLM family: /v1/oracle/latest?asset=native must also query `crypto:XLM`
+// (Reflector keys by global ticker) and the XLM SAC C-address (reflector-dex publishes only under
+// it). Omitting either returns an empty array or hides that oracle's reading.
 func TestOracleLatest_NativeExpandsToCryptoXLM(t *testing.T) {
 	reader := &stubOracleReader{}
 	srv := v1.New(v1.Options{Oracle: reader})
@@ -265,17 +260,12 @@ func TestOracleLatest_NativeExpandsToCryptoXLM(t *testing.T) {
 	}
 }
 
-// TestOracleLatest_ClassicExpandsToCryptoTicker pins the same
-// translation for stablecoin classic credit assets — Reflector
-// publishes USDC under the global `crypto:USDC` ticker rather
-// than per-issuer.
+// TestOracleLatest_ClassicExpandsToCryptoTicker pins the same translation for stablecoin classic
+// credit assets: Reflector publishes USDC under the global `crypto:USDC` ticker, not per issuer.
 //
-// The asset id here is Circle's real Stellar issuance, and because of the identity gate
-// that is load-bearing rather than incidental: the expansion is gated
-// on the verified-currency catalogue, so the catalogue is now part of
-// the fixture. The ASSERTION is unchanged — a verified issuer still
-// gets its ticker; TestOracleLatest_ImpersonatorGetsNoVerifiedTicker
-// (below) pins that nobody else does.
+// The asset id is Circle's real Stellar issuance because the expansion is gated on the
+// verified-currency catalogue, which is part of the fixture. A verified issuer gets its ticker;
+// TestOracleLatest_ImpersonatorGetsNoVerifiedTicker pins that nobody else does.
 func TestOracleLatest_ClassicExpandsToCryptoTicker(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {
@@ -331,11 +321,9 @@ func TestOracleLatest_VerifiedEURCReachesEUROCFeeds(t *testing.T) {
 	}
 }
 
-// TestOracleLatest_EveryAliasFamilyMemberCoversItsFamily is the guard
-// against a hand-rolled expander drifting from the alias registry: with a
-// configured classic↔SAC pair installed, querying ANY member of ANY
-// installed family must bind the whole family, whichever form the
-// oracle stored it under.
+// TestOracleLatest_EveryAliasFamilyMemberCoversItsFamily guards against a hand-rolled expander
+// drifting from the alias registry: with a classic and SAC pair installed, querying ANY member of
+// ANY family must bind the whole family, whichever form the oracle stored it under.
 func TestOracleLatest_EveryAliasFamilyMemberCoversItsFamily(t *testing.T) {
 	const usdcClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	const usdcSACContract = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
@@ -380,11 +368,9 @@ func TestOracleLatest_EveryAliasFamilyMemberCoversItsFamily(t *testing.T) {
 
 // ─── /v1/oracle/streams handler tests ───
 
-// TestOracleStreams_EmptyArrayWhenReaderNil pins the degradation
-// posture: nil OracleReader returns a 200 with `data: []`, not a
-// 503. Consistent with /v1/oracle/latest's "nothing to report"
-// branch — the explorer's /oracles page renders an empty table
-// rather than an error state when no readings have arrived.
+// TestOracleStreams_EmptyArrayWhenReaderNil pins the degradation posture: a nil OracleReader
+// returns 200 with `data: []`, not 503, matching /v1/oracle/latest, so the explorer's /oracles
+// page renders an empty table rather than an error state.
 func TestOracleStreams_EmptyArrayWhenReaderNil(t *testing.T) {
 	srv := v1.New(v1.Options{})
 	ts := httpTestServer(t, srv)
@@ -402,13 +388,11 @@ func TestOracleStreams_EmptyArrayWhenReaderNil(t *testing.T) {
 	}
 }
 
-// TestOracleStreams_FiltersToOracleClass pins the source-class
-// filter that's baked into the handler: rows from sources that
-// are NOT ClassOracle (e.g. CoinGecko = ClassAggregator,
-// ECB = ClassAuthoritySanity) write into the same oracle_updates
-// hypertable for divergence-comparison purposes, but they must
-// not appear on the public /oracles page. The class is a registry
-// fact, not a per-row flag — filtering happens at the wire boundary.
+// TestOracleStreams_FiltersToOracleClass pins the handler's source-class filter: rows from
+// non-ClassOracle sources (CoinGecko = ClassAggregator, ECB = ClassAuthoritySanity) share the
+// oracle_updates hypertable for divergence comparison but must not appear on the public /oracles
+// page. The class is a registry fact, not a per-row flag, so filtering happens at the wire
+// boundary.
 func TestOracleStreams_FiltersToOracleClass(t *testing.T) {
 	reader := &stubOracleReader{
 		updates: []canonical.OracleUpdate{
@@ -453,11 +437,9 @@ func TestOracleStreams_FiltersToOracleClass(t *testing.T) {
 	}
 }
 
-// TestOracleStreams_RendersPriceAtDeclaredDecimals pins the same
-// scaling contract as /v1/oracle/latest — `price_raw` carries the
-// integer + `price` carries the decimal-scaled human string. A
-// regression that bypasses scaledDecimalString (e.g. raw passthrough
-// on the streams path) would surface as a 14-decimal-off price.
+// TestOracleStreams_RendersPriceAtDeclaredDecimals pins the /v1/oracle/latest scaling contract:
+// `price_raw` carries the integer and `price` the decimal-scaled string. Bypassing
+// scaledDecimalString on the streams path would serve a price off by the decimals factor.
 func TestOracleStreams_RendersPriceAtDeclaredDecimals(t *testing.T) {
 	reader := &stubOracleReader{
 		updates: []canonical.OracleUpdate{
@@ -490,12 +472,9 @@ func TestOracleStreams_RendersPriceAtDeclaredDecimals(t *testing.T) {
 	}
 }
 
-// TestOracleStreams_ReaderError500 — an unexpected error from the
-// hypertable scan surfaces as a 500. Same posture as
-// /v1/oracle/latest. (The timeout/clientAborted branches are
-// covered by handler unit-tests where a context can be cancelled
-// before the handler returns; here we only assert the generic
-// error surface.)
+// TestOracleStreams_ReaderError500: an unexpected hypertable scan error surfaces as 500, as in
+// /v1/oracle/latest. Only the generic error surface is asserted here; the timeout and
+// clientAborted branches need a cancellable context and are covered by handler unit tests.
 func TestOracleStreams_ReaderError500(t *testing.T) {
 	reader := &stubOracleReader{err: errors.New("scan failed")}
 	srv := v1.New(v1.Options{Oracle: reader})
@@ -570,11 +549,9 @@ func TestOracleStreams_CacheUnavailable503(t *testing.T) {
 	assertCacheUnavailable(t, resp)
 }
 
-// TestOracleLatest_ImpersonatorGetsNoVerifiedTicker is the identity-gate
-// regression. Before the identity gate, oracleAssetCandidates appended
-// `crypto:<CODE>` for ANY classic asset, so a USDC-coded token issued by
-// AQUA's issuer was served Circle's oracle prices — attacker-authored
-// pricing on a "priced by Band / Reflector / RedStone" surface.
+// TestOracleLatest_ImpersonatorGetsNoVerifiedTicker is the identity-gate regression: appending
+// `crypto:<CODE>` for ANY classic asset would serve Circle's oracle prices to a USDC-coded token
+// from another issuer, which is attacker-authored pricing on an oracle-attributed surface.
 func TestOracleLatest_ImpersonatorGetsNoVerifiedTicker(t *testing.T) {
 	reader, srv := oracleGateFixture(t)
 	ts := httpTestServer(t, srv)
@@ -613,11 +590,9 @@ func TestOracleLatest_VerifiedIssuerKeepsItsTicker(t *testing.T) {
 	}
 }
 
-// TestOracleLatest_ReferenceOnlyTickerIsNeverGranted covers the second
-// impersonation shape: USDT is a `reference_only` catalogue entry with no
-// Stellar issuance at all, so EVERY classic `USDT-G…` is by construction
-// an impersonator (currency.indexTickerOnlyEntry). An ungated helper would
-// translate all of them.
+// TestOracleLatest_ReferenceOnlyTickerIsNeverGranted covers the second impersonation shape: USDT
+// is a `reference_only` catalogue entry with no Stellar issuance, so EVERY classic `USDT-G…` is an
+// impersonator (currency.indexTickerOnlyEntry), and an ungated helper would translate all of them.
 func TestOracleLatest_ReferenceOnlyTickerIsNeverGranted(t *testing.T) {
 	reader, srv := oracleGateFixture(t)
 	ts := httpTestServer(t, srv)
@@ -681,12 +656,10 @@ func TestOracleLatest_NoCatalogueFailsClosed(t *testing.T) {
 	}
 }
 
-// TestOracleStreams_UnmappedRowsOptIn pins the /v1/oracle/streams
-// contract under oracle capture-totality: the storage read is
-// unfiltered, so a raw row reaches the handler; by default it is
-// omitted (public row set unchanged for API consumers), and
-// include_unmapped=true — the explorer's opt-in — lists it with
-// mapped:false while mapped rows carry mapped:true.
+// TestOracleStreams_UnmappedRowsOptIn pins the /v1/oracle/streams contract under capture-totality:
+// the storage read is unfiltered, so a raw row reaches the handler. It is omitted by default, and
+// include_unmapped=true (the explorer's opt-in) lists it with mapped:false while mapped rows
+// carry mapped:true.
 func TestOracleStreams_UnmappedRowsOptIn(t *testing.T) {
 	reader := &stubOracleReader{
 		updates: []canonical.OracleUpdate{
@@ -764,11 +737,9 @@ func TestOracleLatest_EmitsMapped(t *testing.T) {
 
 // Identity fixtures for the /v1/oracle/latest ticker gate.
 //
-// circleUSDCAssetID is the verified catalogue's own USDC issuance
-// (internal/currency/data/seed.yaml). impersonatorUSDCAssetID wears the
-// same CODE over AQUA's issuer — an asset that does not exist on
-// Stellar, and the exact id that would pull
-// Circle's four oracle rows out of the un-gated helper.
+// circleUSDCAssetID is the verified catalogue's own USDC issuance (internal/currency/data/
+// seed.yaml). impersonatorUSDCAssetID wears the same CODE over AQUA's issuer, the id that would
+// pull Circle's oracle rows out of an un-gated helper.
 const (
 	circleUSDCAssetID       = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	impersonatorUSDCAssetID = "USDC-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
@@ -779,11 +750,10 @@ const (
 	unrelatedContractID = "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
 )
 
-// keyedOracleReader answers only for the asset keys it is ASKED for —
-// the property `WHERE asset = ANY($1)` has in storage. Recording the
-// candidate set alone would let a test pass on a mock's bookkeeping; a
-// keyed reader makes the assertion behavioural: an id that is never
-// translated to `crypto:USDC` cannot be answered with a crypto:USDC row.
+// keyedOracleReader answers only for the asset keys it is ASKED for, as `WHERE asset = ANY($1)`
+// does in storage. Recording the candidate set alone would pass on mock bookkeeping; a keyed
+// reader makes it behavioural: an id never translated to `crypto:USDC` cannot get a crypto:USDC
+// row.
 type keyedOracleReader struct {
 	rows map[string][]canonical.OracleUpdate
 	// asked records the candidate keys the handler expanded to, so a

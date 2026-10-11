@@ -139,18 +139,12 @@ func TestRunProbe_FailsOn5xx(t *testing.T) {
 	}
 }
 
-// TestRunProbe_DeadlineCancelledSamplesNotCountedAsFailures proves
-// that the run-duration deadline does not turn a request
-// still in flight into a failure. The fake server here always
-// returns 200 after a delay that guarantees every worker is
-// mid-request when the short run window closes — so any
-// availability < 100% would be a phantom failure the probe inflicted
-// on itself. This is exactly what tripped
-// stellarindex_sla_probe_unit_failed on r1 (the slowest endpoint,
-// /v1/issuers, took the blame because it held the widest in-flight
-// window). The deadline stops new requests; in-flight ones complete
-// and count, which TestRunProbe_RequestHangingAtDeadlineIsAFailure
-// pins from the other side.
+// TestRunProbe_DeadlineCancelledSamplesNotCountedAsFailures proves the run deadline does not
+// turn an in-flight request into a failure. The fake server always returns 200 after a delay that
+// leaves every worker mid-request when the window closes, so availability < 100% would be a
+// phantom failure the probe inflicted on itself (it tripped stellarindex_sla_probe_unit_failed,
+// blaming the slowest endpoint). The deadline stops new requests; in-flight ones complete and
+// count, which TestRunProbe_RequestHangingAtDeadlineIsAFailure pins from the other side.
 func TestRunProbe_DeadlineCancelledSamplesNotCountedAsFailures(t *testing.T) {
 	url := serve(t, func(w http.ResponseWriter, _ *http.Request) {
 		// Long enough that at end-of-run every worker is reliably
@@ -262,12 +256,9 @@ func TestEndpointFailures_PerEndpointFreshnessOverride(t *testing.T) {
 	}
 }
 
-// TestEndpointFailures_CriticalEndpointFailsOnAnyError proves the
-// doc-comment contract on endpoint.Critical ("a single failure here
-// fails the whole run"): 2 errors out of 2400 /readyz samples clears
-// the blanket 99.9% availability target (99.917%) but must still fail
-// because /readyz is Critical. Without the Critical hard-fail branch
-// this run reads "pass".
+// TestEndpointFailures_CriticalEndpointFailsOnAnyError proves endpoint.Critical's contract ("a
+// single failure here fails the whole run"): 2 errors in 2400 /readyz samples clear the blanket
+// 99.9% target (99.917%) but must still fail, or the run reads "pass".
 func TestEndpointFailures_CriticalEndpointFailsOnAnyError(t *testing.T) {
 	sla := slaTargets{P95MS: 1000, P99MS: 1000, FreshnessSec: 30, AvailabilityPct: 99.9}
 
@@ -338,18 +329,12 @@ func abs(x float64) float64 {
 	return x
 }
 
-// TestRunProbe_FreshnessMeasuredAtSampleTime is the end-to-end guard for
-// a bad reading: the probe recorded
-// stellarindex_sla_probe_freshness_sec{endpoint="price-tip"} ≈ 15 s
-// every run while the live tip served an observed_at that was
-// sub-second old. Freshness was computed as time.Since(observedAt)
-// inside aggregateEndpointStats, which runs ONCE after the whole run,
-// so each sample was charged the gap between its own request and the
-// end of the run — a median bias of duration/2.
+// TestRunProbe_FreshnessMeasuredAtSampleTime guards that freshness is measured at each sample's
+// receipt. Computing time.Since(observedAt) inside aggregateEndpointStats, which runs once after
+// the whole run, charges every sample the gap to the end of the run: a median bias of duration/2.
 //
-// The fake API stamps observed_at at the instant it answers, so the
-// TRUE freshness of every sample is the localhost round trip: well
-// under a millisecond. Anything near duration/2 is the bias.
+// The fake API stamps observed_at as it answers, so true freshness is the localhost round trip,
+// well under a millisecond; anything near duration/2 is the bias.
 //
 // PROVEN-RED: restore
 //
@@ -387,11 +372,9 @@ func TestRunProbe_FreshnessMeasuredAtSampleTime(t *testing.T) {
 	}
 }
 
-// TestAggregateEndpointStats_FreshnessUsesSampleReceiptInstant pins the
-// exact corrected value with no wall-clock dependency: 121 samples over
-// a 120 s run, every one of them read exactly 2 s after its own
-// observed_at. The stalest freshness IS 2 s. Charging each sample to the
-// end of the run instead yields ~122 s for the oldest sample.
+// TestAggregateEndpointStats_FreshnessUsesSampleReceiptInstant pins the exact value with no
+// wall-clock dependency: 121 samples over a 120 s run, each read 2 s after its own observed_at,
+// so the stalest freshness is 2 s, not the ~122 s from charging samples to the end of the run.
 func TestAggregateEndpointStats_FreshnessUsesSampleReceiptInstant(t *testing.T) {
 	runStart := time.Now().Add(-2 * time.Minute)
 	const observedAge = 2 * time.Second
@@ -467,11 +450,9 @@ func TestRunProbe_HardOutageEmitsNoLatency(t *testing.T) {
 	}
 }
 
-// TestRunProbe_RequestHangingAtDeadlineIsAFailure: the
-// API answers three requests, then accepts the fourth and never replies.
-// The run deadline must stop new requests, not cancel and discard the
-// hanging one; otherwise every run straddling a hang reads 100 % and
-// every later run records zero samples.
+// TestRunProbe_RequestHangingAtDeadlineIsAFailure: the API answers three requests, then accepts
+// the fourth and never replies. The run deadline must stop new requests, not cancel and discard
+// the hanging one; otherwise runs straddling a hang read 100 % and later runs record no samples.
 func TestRunProbe_RequestHangingAtDeadlineIsAFailure(t *testing.T) {
 	var served atomic.Int32
 	release := make(chan struct{})
@@ -529,12 +510,10 @@ func TestAggregateEndpointStats_FreshnessIsStalestResponse(t *testing.T) {
 	}
 }
 
-// TestRunProbe_PairEndpointsRejectBodiesThatBreakTheirContract pins
-// that a 2xx whose body cannot carry the measurement is not a
-// success. A price surface without a parseable observed_at would
-// otherwise drop the freshness series (and its alert) with no signal,
-// and /oracle/latest answering `{"data":[]}` during an oracle outage
-// would read 100 % available.
+// TestRunProbe_PairEndpointsRejectBodiesThatBreakTheirContract pins that a 2xx whose body cannot
+// carry the measurement is not a success. Without it a missing observed_at silently drops the
+// freshness series and its alert, and /oracle/latest answering `{"data":[]}` during an oracle
+// outage would read 100 % available.
 func TestRunProbe_PairEndpointsRejectBodiesThatBreakTheirContract(t *testing.T) {
 	url := serve(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -608,14 +587,10 @@ func TestMain_RejectsOutOfRangeNumericFlags(t *testing.T) {
 	}
 }
 
-// TestRunProbe_MultiPairDoesNotMergeSamples is the regression guard for
-// with two -pair flags, both pairs' endpoints share the
-// bare names "price"/"price-tip"/"oracle-latest". Samples must not be
-// keyed by ep.Name alone, or native's fresh price-tip samples and
-// USDC's 600s-stale ones landed in the same bucket and every PerEndpoint
-// row for a given name was fed that merged slice — the stale pair's
-// freshness became invisible (or was reported as a duplicate row
-// indistinguishable from the fresh pair's).
+// TestRunProbe_MultiPairDoesNotMergeSamples: with two -pair flags both pairs' endpoints share the
+// bare names "price"/"price-tip"/"oracle-latest". Samples must not be keyed by ep.Name alone, or
+// a fresh pair's and a stale pair's samples merge and the stale pair's freshness becomes
+// invisible.
 //
 // PROVEN-RED: keying samples[ep.Name] (main.go collectSamples/runProbe)
 // instead of samples[sampleKey(ep)] makes this fail: both pairs'

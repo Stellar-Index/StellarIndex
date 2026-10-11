@@ -11,17 +11,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin the guards on the protocol-detail
-// analytics path: a degraded FAST-failing rebuild must never displace a
-// good cached entry; the daily-pre-aggregation probe must not
-// latch a transient error for the process lifetime; and the three
-// analytics fills must share one tip read + one fast-vs-raw decision.
+// These tests pin the guards on the protocol-detail analytics path: a FAST-failing rebuild must
+// never displace a good cached entry; the daily-pre-aggregation probe must not latch a
+// transient error for the process lifetime; and the three analytics fills must share one tip
+// read and one fast-vs-raw decision.
 
-// TestProtoDetailRefresh_FastFailKeepsGoodEntry: a rebuild that fails
-// FAST (store down → enrich errors in ms, rctx.Err() == nil) must keep
-// the good entry — an rctx.Err()-only guard would
-// let one prewarm sweep during a ClickHouse outage blank every protocol
-// page while stamping the blanks fresh.
+// TestProtoDetailRefresh_FastFailKeepsGoodEntry: a rebuild that fails FAST (store down, enrich
+// errors in ms, rctx.Err() == nil) must keep the good entry; an rctx.Err()-only guard would let
+// one prewarm sweep during a ClickHouse outage blank every protocol page and stamp it fresh.
 func TestProtoDetailRefresh_FastFailKeepsGoodEntry(t *testing.T) {
 	srv := New(Options{})
 	key := protocolDetailCacheKey("cctp", protocolActivityWindowDays)
@@ -176,11 +173,10 @@ func (s *scriptedFastStub) ProtocolEventBreakdown(context.Context, []string, uin
 	return nil, nil
 }
 
-// TestFastActivity_TransientProbeErrorIsNotLatched: a transient error on
-// the FIRST availability probe (definitive=false) must degrade only that
-// call — the next call re-probes and can settle on the fast path. Before
-// the fix a sync.Once latched the first answer forever (raw 12B-row
-// scans for the process lifetime after one ClickHouse blip).
+// TestFastActivity_TransientProbeErrorIsNotLatched: a transient error on the FIRST availability
+// probe (definitive=false) must degrade only that call; the next call re-probes and can settle
+// on the fast path. Latching the first answer would force raw scans for the process lifetime
+// after one ClickHouse blip.
 func TestFastActivity_TransientProbeErrorIsNotLatched(t *testing.T) {
 	stub := &scriptedFastStub{answers: []probeAnswer{{false, false}, {true, true}}}
 	srv := New(Options{ProtocolActivity: stub})
@@ -255,12 +251,10 @@ func (*blockingFastStub) ProtocolContractActivityFast(context.Context, []string,
 	return nil, nil
 }
 
-// TestFastActivity_UnsettledProbeDoesNotSerializeConcurrentCalls is the
-// regression test that fastActivity does not hold
-// protocolFastMu across DailyActivityAvailable, so a wedged ClickHouse —
-// which never definitively settles — serialised every concurrent detail
-// build's fast-vs-raw decision behind the one stuck probe. A second call
-// must return promptly while the first is still blocked inside the probe.
+// TestFastActivity_UnsettledProbeDoesNotSerializeConcurrentCalls: fastActivity must not hold
+// protocolFastMu across DailyActivityAvailable, or a wedged ClickHouse, which never settles,
+// serialises every concurrent detail build behind one stuck probe. A second call must return
+// promptly while the first is still blocked inside the probe.
 func TestFastActivity_UnsettledProbeDoesNotSerializeConcurrentCalls(t *testing.T) {
 	stub := &blockingFastStub{started: make(chan struct{}), release: make(chan struct{})}
 	srv := New(Options{ProtocolActivity: stub})
@@ -320,12 +314,9 @@ func (r erroringCompletenessReader) ListCompletenessSnapshots(context.Context) (
 	return nil, r.err
 }
 
-// TestBuildProtocolDetail_ContractCountErrorDegradesStatus: a failed
-// contract-count read must flip analytics.status to "unavailable" even
-// when the lake analytics and bespoke block both build healthy — before
-// the fix detailContractCount degraded to len(roster) silently and never
-// fed the failure into status, so the page read "ok" while serving a
-// wrong contract_count.
+// TestBuildProtocolDetail_ContractCountErrorDegradesStatus: a failed contract-count read must
+// flip analytics.status to "unavailable" even when the lake analytics and bespoke block build
+// healthy; silently degrading to len(roster) would read "ok" over a wrong contract_count.
 func TestBuildProtocolDetail_ContractCountErrorDegradesStatus(t *testing.T) {
 	meta, ok := protocolByName("cctp")
 	if !ok {
@@ -343,12 +334,10 @@ func TestBuildProtocolDetail_ContractCountErrorDegradesStatus(t *testing.T) {
 	}
 }
 
-// erroringRosterReader is a contracts reader whose roster ENUMERATION always
-// fails and has no count-without-enumeration path wired (no
-// CountSourceContracts, so it does not satisfy protocolContractCounter) —
-// the common shape for a source with no counter (every source except
-// sorocredit). Isolates a bare roster-read failure from the count-reader
-// failure erroringCountReader exercises above.
+// erroringRosterReader is a contracts reader whose roster ENUMERATION always fails and has no
+// count-without-enumeration path (no CountSourceContracts, so it does not satisfy
+// protocolContractCounter), the common shape for a source without a counter. It isolates a bare
+// roster-read failure from the count-reader failure erroringCountReader exercises.
 type erroringRosterReader struct{ err error }
 
 func (r erroringRosterReader) ListProtocolContracts(context.Context, string) ([]timescale.ProtocolContract, error) {
@@ -363,12 +352,10 @@ func (erroringRosterReader) ProtocolContractIndex(context.Context) (map[string]s
 	return nil, nil
 }
 
-// TestBuildProtocolDetail_RosterReadErrorDegradesStatus is the
-// regression guard: a roster read failure degrades to the
-// same shape as a genuinely empty roster (protocolRoster swallowed it to
-// []ProtocolContractView{}), so buildProtocolDetail must not stamp the page
-// "ok" on it — a failed read is not a true empty, and an "ok" status
-// displaces a healthy cached entry (protoDetailRefreshLocked).
+// TestBuildProtocolDetail_RosterReadErrorDegradesStatus: a roster read failure degrades to the
+// same shape as a genuinely empty roster (protocolRoster swallows it to an empty slice), so
+// buildProtocolDetail must not stamp the page "ok": a failed read is not a true empty, and an
+// "ok" status displaces a healthy cached entry (protoDetailRefreshLocked).
 func TestBuildProtocolDetail_RosterReadErrorDegradesStatus(t *testing.T) {
 	meta, ok := protocolByName("cctp")
 	if !ok {
@@ -386,11 +373,9 @@ func TestBuildProtocolDetail_RosterReadErrorDegradesStatus(t *testing.T) {
 	}
 }
 
-// TestBuildProtocolDetail_Events24hErrorDegradesStatus: a failed
-// events_24h read must flip analytics.status to "unavailable" even when
-// the lake analytics and bespoke block both build healthy — before the
-// fix protocolEvents24h degraded to a nil map silently (every protocol
-// serves 0) and never fed the failure into status.
+// TestBuildProtocolDetail_Events24hErrorDegradesStatus: a failed events_24h read must flip
+// analytics.status to "unavailable" even when the lake analytics and bespoke block build
+// healthy; silently degrading to a nil map would serve 0 for every protocol.
 func TestBuildProtocolDetail_Events24hErrorDegradesStatus(t *testing.T) {
 	meta, ok := protocolByName("cctp")
 	if !ok {
@@ -472,11 +457,9 @@ func TestEnrichProtocolAnalytics_SharedPlanSingleTipRead(t *testing.T) {
 	}
 }
 
-// closeTimeActivityStub models a synthetic, deliberately NON-theoretical
-// ledger close cadence (6s, i.e. 14,400/day — distinct from a hardcoded
-// 17,280/day) so protocolWindowFloor's close_time boundary
-// produces a DIFFERENT, independently-computable answer than a
-// ledger-count arithmetic.
+// closeTimeActivityStub models a deliberately NON-theoretical close cadence (6s, 14,400/day, not
+// a hardcoded 17,280/day) so protocolWindowFloor's close_time boundary gives a different,
+// independently computable answer than ledger-count arithmetic.
 type closeTimeActivityStub struct {
 	prewarmActivityStub
 	tip uint32
@@ -523,12 +506,10 @@ func (s closeTimeActivityStub) LedgerBySeq(_ context.Context, seq uint32) (click
 	return clickhouse.LedgerHeader{Seq: seq, CloseTime: protocolWindowCloseTime(seq)}, true, nil
 }
 
-// TestProtocolWindowFloor_UsesCloseTimeNotLedgerCount is the
-// regression guard: the raw analytics readers' window
-// cutoff must be derived from the tip's close_time minus
-// protocolActivityWindowDays days, not a ledger-count multiple of the
-// theoretical 17,280/day cadence — which on a real chain overshoots the
-// requested number of days.
+// TestProtocolWindowFloor_UsesCloseTimeNotLedgerCount: the raw analytics readers' window cutoff
+// must be the tip's close_time minus protocolActivityWindowDays days, not a ledger-count
+// multiple of the theoretical 17,280/day cadence, which overshoots the requested days on a real
+// chain.
 func TestProtocolWindowFloor_UsesCloseTimeNotLedgerCount(t *testing.T) {
 	const tip = uint32(10_000_000)
 	srv := New(Options{ProtocolActivity: closeTimeActivityStub{tip: tip}})
@@ -564,14 +545,12 @@ func TestProtocolWindowFloor_GapFarFromBoundary(t *testing.T) {
 	}
 }
 
-// TestEnrichProtocolAnalytics_FastBreakdownErrorForcesBothToRaw pins
-// that a fast breakdown error must not leave the series on
-// the fast (day-grain) window while the breakdown falls back alone to the
-// raw (ledger-window) source — the two windows differ, and the wire's
-// sum(EventBreakdown)==EventsTotal invariant assumes one shared window
-// per build. protocolBreakdown and protocolSeries must not each
-// fall back fast->raw independently: on this exact script (fast series ok,
-// fast breakdown erroring) that leaves rawBreak==1 but rawSeries==0 — a split.
+// TestEnrichProtocolAnalytics_FastBreakdownErrorForcesBothToRaw pins that a fast breakdown error
+// must not leave the series on the fast (day-grain) window while the breakdown falls back alone
+// to the raw (ledger-window) source. The wire's sum(EventBreakdown)==EventsTotal invariant
+// assumes one shared window per build, so protocolBreakdown and protocolSeries must not fall
+// back independently (a fast series with an erroring fast breakdown would leave rawBreak==1,
+// rawSeries==0).
 func TestEnrichProtocolAnalytics_FastBreakdownErrorForcesBothToRaw(t *testing.T) {
 	stub := &scriptedFastStub{
 		answers:      []probeAnswer{{true, true}},
@@ -625,13 +604,10 @@ func TestEnrichProtocolAnalytics_FastContractActivityErrorFallsBackToRaw(t *test
 	}
 }
 
-// TestBuildProtocolDetail_VerdictReadErrorDegradesStatus pins
-// A completeness-verdict read error must flip
-// analytics.status to "unavailable" — protocolVerdicts must not
-// collapse a read error and a genuinely-absent snapshot to the identical
-// nil map, or a transient Postgres error would build (and could cache) a view
-// stamped "ok" with no completeness block, indistinguishable from "this
-// protocol has never been audited".
+// TestBuildProtocolDetail_VerdictReadErrorDegradesStatus pins that a completeness-verdict read
+// error flips analytics.status to "unavailable". protocolVerdicts must not collapse a read error
+// and a genuinely absent snapshot to the same nil map, or a transient Postgres error could cache
+// an "ok" view with no completeness block, indistinguishable from "never audited".
 func TestBuildProtocolDetail_VerdictReadErrorDegradesStatus(t *testing.T) {
 	meta, ok := protocolByName("cctp")
 	if !ok {
@@ -649,11 +625,8 @@ func TestBuildProtocolDetail_VerdictReadErrorDegradesStatus(t *testing.T) {
 	}
 }
 
-// TestBuildProtocolDetail_BespokeSurvivesFailingBattery is the regression
-// guard for the grounding incident: once a page has built, a later
-// rebuild whose bespoke battery blows its budget must NOT return a view
-// without the suite ("protocol bespoke build failed … context deadline
-// exceeded" → CCTP page missing its visual suite).
+// TestBuildProtocolDetail_BespokeSurvivesFailingBattery: once a page has built, a later rebuild
+// whose bespoke battery blows its budget must NOT return a view without the suite.
 func TestBuildProtocolDetail_BespokeSurvivesFailingBattery(t *testing.T) {
 	stub := &bespokeStub{}
 	srv := New(Options{ProtocolActivity: prewarmActivityStub{}, ProtocolBespoke: stub})
@@ -704,11 +677,9 @@ func TestBuildProtocolDetail_StaleBespokeIsHonestAndStillComplete(t *testing.T) 
 	waitBespokeIdle(t, srv, key)
 }
 
-// TestBuildProtocolDetail_DegradationIsExplicit verifies a build whose
-// analytics components are missing stamps analytics.status
-// "unavailable" — absence/zeros must be distinguishable from real zeros
-// on the wire — and that stale-serving such an entry keeps the worse
-// state (unavailable, not stale).
+// TestBuildProtocolDetail_DegradationIsExplicit verifies a build with missing analytics
+// components stamps analytics.status "unavailable" (absence must be distinguishable from real
+// zeros on the wire) and that stale-serving such an entry keeps the worse state, unavailable.
 func TestBuildProtocolDetail_DegradationIsExplicit(t *testing.T) {
 	srv := New(Options{}) // no analytics readers wired at all
 	meta, ok := protocolByName("cctp")

@@ -17,12 +17,9 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// stubCheck is a ReadyChecker that returns a configurable error.
-// An optional `flight` joins the probe to a rendezvous shared with
-// its siblings, so a test can count how many checkers the readyz
-// handler holds in flight at once (TestReadyz_ProbesRunInParallel).
-// `critical` defaults to true (the legacy behaviour); regression
-// tests set it to false to exercise the
+// stubCheck is a ReadyChecker that returns a configurable error. An optional `flight` joins the
+// probe to a rendezvous shared with its siblings so a test can count probes in flight at once
+// (TestReadyz_ProbesRunInParallel). `critical` defaults to true; set it false to exercise the
 // degraded-but-serving path.
 type stubCheck struct {
 	name     string
@@ -42,21 +39,14 @@ func (s *stubCheck) Ping(ctx context.Context) error {
 func (s *stubCheck) Name() string   { return s.name }
 func (s *stubCheck) Critical() bool { return s.critical }
 
-// probeRendezvousBailout bounds how long one probe waits for siblings
-// that never come. Only a serialised handler ever reaches it — a
-// parallel round clears the rendezvous in microseconds — so it is a
-// hang guard rather than a budget, and nothing asserts on it. It sits
-// above computeReadyz's own 2 s shared deadline, which cancels a
-// stuck round first in practice.
+// probeRendezvousBailout bounds how long one probe waits for siblings that never come. Only a
+// serialised handler reaches it, so it is a hang guard, not a budget. It sits above
+// computeReadyz's 2 s shared deadline, which cancels a stuck round first.
 const probeRendezvousBailout = 5 * time.Second
 
-// probeFlight is the rendezvous the readiness stubs share: every
-// probe reports itself in flight on entry and waits there until
-// `width` of them are in flight together, so the peak is forced
-// rather than raced past — the shape
-// TestForEachBounded_RespectsConcurrencyLimit already uses to
-// saturate a semaphore. maxFlight is what survives the round and what
-// a test asserts on.
+// probeFlight is the rendezvous the readiness stubs share: each probe reports itself in flight
+// and waits until `width` are in flight together, so the peak is forced rather than raced past.
+// maxFlight is what a test asserts on.
 type probeFlight struct {
 	width     int
 	inFlight  atomic.Int32
@@ -69,11 +59,8 @@ func newProbeFlight(width int) *probeFlight {
 	return &probeFlight{width: width, gate: make(chan struct{})}
 }
 
-// arrive records one probe in flight and blocks until every sibling
-// stands beside it, returning nil once they do. A handler that pings
-// its checkers one after another never assembles them: the first waits
-// alone until the round's context is cancelled, and the count it
-// leaves behind is 1.
+// arrive records one probe in flight and blocks until every sibling is beside it. A handler that
+// pings checkers sequentially never assembles them, so the first waits alone and the peak is 1.
 func (f *probeFlight) arrive(ctx context.Context) error {
 	n := f.inFlight.Add(1)
 	defer f.inFlight.Add(-1)
@@ -202,13 +189,9 @@ func TestReadyz_CriticalFailureReturns503(t *testing.T) {
 	}
 }
 
-// TestReadyz_NonCriticalFailureReturns200Degraded pins the
-// contract: a Redis-only failure produces a
-// 200 with status="degraded" so HAProxy keeps the backend in
-// service while the response body tells operators what's down.
-// A 503 here would make HAProxy drain every
-// healthy API backend during a Redis outage even though
-// Timescale fallback keeps the customer surface serving.
+// TestReadyz_NonCriticalFailureReturns200Degraded pins that a Redis-only failure yields 200 with
+// status="degraded". A 503 would make HAProxy drain every healthy API backend during a Redis
+// outage even though the Timescale fallback keeps the surface serving.
 func TestReadyz_NonCriticalFailureReturns200Degraded(t *testing.T) {
 	ts := newTestServer(t,
 		&stubCheck{name: "postgres", critical: true},
@@ -233,35 +216,14 @@ func TestReadyz_NonCriticalFailureReturns200Degraded(t *testing.T) {
 	}
 }
 
-// TestReadyz_ProbesRunInParallel pins the fan-out in computeReadyz:
-// every registered ReadyChecker is pinged at once, so a readiness
-// round costs the slowest dependency rather than the sum of all of
-// them. The handler's own note puts three serial 500 ms checks at
-// 1.5 s of its 2 s budget, past the ~1 s LB probe timeout that flaps
-// the backend.
+// TestReadyz_ProbesRunInParallel pins the fan-out in computeReadyz: every ReadyChecker is pinged
+// at once, so a readiness round costs the slowest dependency, not the sum. Three serial 500 ms
+// checks would eat 1.5 s of the 2 s budget, past the ~1 s LB probe timeout that flaps the backend.
 //
-// How many probes are in flight TOGETHER is a count, not a duration,
-// so it is counted — the shape
-// TestAccountPositions_FoldsRunConcurrently uses for the same claim
-// about the positions folds. Each stub reports itself in flight and
-// waits for its siblings: a parallel round assembles all three at the
-// rendezvous, while a handler that pings in sequence leaves a peak of
-// 1 on any runner, at any load, and reports it as a count rather than
-// as a wall clock.
-//
-// The 900 ms ceiling that stood here was the only evidence for the
-// claim, and it was evidence about the machine rather than about the
-// handler: three 400 ms sleeps ran in 403 ms idle and in 1.01-1.21 s
-// under CPU load against an unchanged handler, red 4 of 20 runs, each
-// failure naming a "serial execution regression" that had not
-// happened. It is removed rather than widened — with the probes
-// counted there is no second claim left for it to carry, and the
-// round's real latency bound is computeReadyz's 2 s shared deadline,
-// which is code-defined and cancels the round rather than being
-// measured by it. The count also reaches further than the ceiling
-// did: a handler fanning out two checkers at a time finished three
-// 400 ms probes in 810 ms and passed the ceiling, where the peak
-// stops at 2 and fails here.
+// Concurrency is asserted as a count of probes in flight together, not a wall-clock ceiling:
+// each stub waits for its siblings, so a sequential handler leaves a peak of 1 on any runner at
+// any load. A timing ceiling flaked under CPU load, and the count also catches partial fan-out
+// (two at a time) that a ceiling would pass.
 func TestReadyz_ProbesRunInParallel(t *testing.T) {
 	const probes = 3
 	flight := newProbeFlight(probes)
@@ -356,11 +318,8 @@ func TestUnknownRouteReturns404(t *testing.T) {
 }
 
 func TestUnknownRoute_CacheControlIsNoStore(t *testing.T) {
-	// /v1/assets is tagged `public, max-age=60, s-maxage=300` by the
-	// cache-control middleware. /v1/assets/X-malformed-id falls
-	// through to the catch-all 404 — the response MUST NOT inherit
-	// that catalogue directive (a CDN would otherwise cache the
-	// transient 404 and replay it on the same key).
+	// /v1/assets carries `public, max-age=60, s-maxage=300`. The catch-all 404 for a malformed id
+	// MUST NOT inherit it, or a CDN would cache the transient 404 and replay it.
 	ts := newTestServer(t)
 	resp, err := http.Get(ts.URL + "/v1/assets/X-malformed-id")
 	if err != nil {
@@ -538,12 +497,9 @@ var ioReadAll = func(r interface{ Read([]byte) (int, error) }) ([]byte, error) {
 	}
 }
 
-// TestRobotsTxt pins the robots.txt response — every API origin
-// should disallow crawler indexing of /v1/* JSON endpoints (the
-// indexable content lives on the companion subdomains). Without
-// this handler Cloudflare's auto-managed robots.txt is served on
-// GET but the API origin returns 404 on HEAD; the inconsistency
-// makes a missing handler visible.
+// TestRobotsTxt pins that the API origin disallows crawler indexing of /v1/* JSON (indexable
+// content lives on the companion subdomains). Without the handler, GET gets Cloudflare's managed
+// robots.txt while HEAD 404s, which makes a missing handler visible.
 func TestRobotsTxt(t *testing.T) {
 	ts := newTestServer(t)
 	resp, err := http.Get(ts.URL + "/robots.txt")
@@ -573,17 +529,9 @@ func TestRobotsTxt(t *testing.T) {
 	}
 }
 
-// TestMetricsLoopbackOnly_NonLoopbackReturns404 pins the
-// defense-in-depth gate at the Go layer: /metrics from a non-
-// loopback RemoteAddr must 404. The intended posture is that
-// Caddy 404s /metrics from public hosts at the edge; this guard
-// catches the case where the Caddyfile config is stale.
-//
-// Test exercises the gate directly by calling ServeHTTP with a
-// synthetic request whose RemoteAddr is a public IP. Spinning up
-// a real httptest server can't exercise this path — every
-// httptest.Server connects via 127.0.0.1 so the gate would
-// always pass.
+// TestMetricsLoopbackOnly_NonLoopbackReturns404 pins the Go-layer gate behind Caddy: /metrics from
+// a non-loopback RemoteAddr must 404, covering a stale Caddyfile. It calls ServeHTTP directly with
+// a public RemoteAddr because httptest.Server connects via 127.0.0.1 and would always pass.
 func TestMetricsLoopbackOnly_NonLoopbackReturns404(t *testing.T) {
 	srv := v1.New(v1.Options{})
 	handler := srv.Handler()
@@ -668,13 +616,9 @@ func TestSecurityTxt(t *testing.T) {
 	}
 }
 
-// TestReadyz_SchemaMismatchDrainsBackend is the end-to-end gate
-// demonstration: with the schema critical checker wired into the
-// readiness round reporting an applied head one below the binary's
-// expectation, /v1/readyz returns 503 (unready) and names the schema
-// failure; without the check the same node answered 200. Postgres
-// itself is up (its stub passes), so the 503 is attributable solely to
-// the schema/binary mismatch.
+// TestReadyz_SchemaMismatchDrainsBackend: a schema critical checker reporting an applied head one
+// below the binary's expectation makes /v1/readyz return 503 naming the schema failure. Postgres
+// itself is up, so the 503 is attributable solely to the schema/binary mismatch.
 func TestReadyz_SchemaMismatchDrainsBackend(t *testing.T) {
 	stale := fakeSchemaReader{version: v1.ExpectedSchemaVersion - 1}
 	ts := newTestServer(t,

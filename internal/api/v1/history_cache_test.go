@@ -13,27 +13,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// histStaleLedger / histFreshLedger are what tell the trade a cold
-// fill cached from the trade a refresh replaces it with: the fake
-// moves the latest trade forward a ledger on every call after the
-// first, which is what a "latest trade per source" read moving on
-// looks like. A stub returning one fixed row, identical before
-// and after a refresh, would leave nothing but a stopwatch to separate a caller
-// served the cached entry from one handed the refresh's result.
+// histStaleLedger / histFreshLedger tell the trade a cold fill cached from the trade a refresh
+// replaces it with: the fake moves the latest trade forward a ledger on every call after the
+// first. A fixed-row stub would leave only a stopwatch to tell a cached read from a refreshed one.
 const (
 	histStaleLedger = 100
 	histFreshLedger = 200
 )
 
-// fakeHist is a HistoryReader whose only real method is
-// LatestTradePerSource. The embedded interface is nil — every other
-// method would panic, but these tests only exercise the cached one.
-// Call accounting is atomic and the failure toggle is keyed on call
-// number (no mid-test field mutation) so `go test -race` stays
-// clean under the concurrent detached fill. An optional hold parks a
-// call inside the fake until the test releases it, which is how the
-// tests below order a caller against a fill still in flight instead
-// of racing one against the other on a clock.
+// fakeHist is a HistoryReader whose only real method is LatestTradePerSource; the embedded
+// interface is nil, so any other method panics. Call accounting is atomic and the failure toggle
+// is keyed on call number so `go test -race` stays clean under the detached fill. An optional hold
+// parks a call until the test releases it, ordering a caller against an in-flight fill without
+// a clock.
 type fakeHist struct {
 	HistoryReader
 	calls   atomic.Int64
@@ -75,12 +67,9 @@ func histTestPair(t *testing.T) canonical.Pair {
 	return p
 }
 
-// expireHistoryEntries walks every cached entry back past any ttl, so
-// the next read takes the stale-while-revalidate branch. It replaces
-// sleeping past a deliberately tiny ttl: the tests below need the
-// entry a refresh WRITES to stay fresh while they assert on it, which
-// a 25 ms ttl cannot promise, and the positions cache tests seed their
-// entry directly for the same reason.
+// expireHistoryEntries walks every cached entry back past any ttl so the next read takes the
+// stale-while-revalidate branch. Sleeping past a tiny ttl cannot keep the entry a refresh WRITES
+// fresh while the test asserts on it.
 func expireHistoryEntries(c *CachedHistoryReader) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -123,36 +112,16 @@ func TestCachedHistoryReader_ColdThenFreshHit(t *testing.T) {
 // deadline expires first, and nothing asserts on this number.
 const coldCallerDeadline = 30 * time.Millisecond
 
-// TestCachedHistoryReader_DetachedColdFillWarms pins that a
-// cold caller whose ctx deadline is shorter than the upstream query
-// gets ctx.Err() (the handler 503s) while the fill it started keeps
-// running on its OWN budget, so the next poll is served from the entry
-// that fill wrote — and the timed-out caller never spawns a second
-// upstream call.
+// TestCachedHistoryReader_DetachedColdFillWarms pins that a cold caller whose ctx deadline is
+// shorter than the upstream query gets ctx.Err() (the handler 503s) while the fill it started
+// keeps running on its OWN budget, so the next poll is served from the entry that fill wrote, and
+// the timed-out caller never spawns a second upstream call.
 //
-// Both halves are claims about the ORDER of two events, and both used
-// to be raced rather than ordered, so the test failed for reasons that
-// had nothing to do with the cache — red 2 of 40 runs under CPU load
-// against an unchanged cache, once on each half, and the two failures
-// are different diseases:
-//
-//   - The upstream slept 200 ms against a 30 ms request ctx, so under
-//     starvation the caller was rescheduled with BOTH arms of its
-//     select ready and Go picked between them uniformly: it returned
-//     the fill's rows and a nil error, and the test failed asserting a
-//     deadline it never got. That is not a threshold that can be
-//     widened, it is a coin toss.
-//   - "Returned at its own ctx" was a 120 ms ceiling on wall time,
-//     which measures how quickly the runner rescheduled the caller
-//     after its deadline had already fired. It read 329.57 ms in that
-//     window and 606 ms in an earlier one.
-//
-// The fill is now HELD inside the store until the test lets it go, so
-// the order is constructed instead of raced: the fill has provably not
-// completed, its flight channel has provably not closed, and the only
-// edge the caller can wake on is its own expired deadline. A cache
-// that waited for the fill does not return late, it does not return at
-// all, and it fails on the sentence that says so.
+// Both halves are claims about the ORDER of two events, so the fill is HELD inside the store until
+// the test releases it. The order is then constructed, not raced: the fill has provably not
+// completed and the only edge the caller can wake on is its own expired deadline. Sleeping against
+// a short ctx lets a starved caller see both select arms ready, and wall-time ceilings only
+// measure runner scheduling.
 func TestCachedHistoryReader_DetachedColdFillWarms(t *testing.T) {
 	hold := newUpstreamHold(1) // the cold fill is parked from its first call
 	t.Cleanup(hold.release)
@@ -208,26 +177,15 @@ func TestCachedHistoryReader_DetachedColdFillWarms(t *testing.T) {
 	}
 }
 
-// TestCachedHistoryReader_SWRServesStaleSingleFlight: every one of 20
-// concurrent reads of an expired entry is served THE STALE TRADE while
-// exactly one single-flighted detached refresh runs, and the trade
-// that refresh returns is what replaces it.
+// TestCachedHistoryReader_SWRServesStaleSingleFlight: every one of 20 concurrent reads of an
+// expired entry is served THE STALE TRADE while exactly one single-flighted detached refresh runs,
+// and the trade that refresh returns replaces it.
 //
-// What a stale read is served is a value, so it is asserted as one.
-// A fake returning one fixed row would make the trade before the
-// refresh and the trade after it the same trade, and no assertion
-// here could tell a read served the entry from a read handed the
-// refresh's result — the 120 ms ceiling on each reader was the whole
-// evidence, and what it measured was how quickly the runner
-// rescheduled 20 goroutines. The fake now moves the latest trade
-// forward a ledger on the refresh, and the refresh is HELD until every
-// read has returned, so a read that waited for it could only be
-// holding ledger 200 and a read served the entry can only be holding
-// ledger 100 — on any runner at any load.
-//
-// The tail releases the hold and pins the refreshed trade, which is
-// what keeps the assertion above a discrimination rather than a
-// restatement of the fixture.
+// The assertion is on the served value, not timing: the fake moves the latest trade forward a
+// ledger on the refresh and the refresh is HELD until every read returns, so a read that waited
+// for it could only hold ledger 200 and a stale read only ledger 100, at any load. The tail
+// releases the hold and pins the refreshed trade, so the check discriminates rather than restating
+// the fixture.
 func TestCachedHistoryReader_SWRServesStaleSingleFlight(t *testing.T) {
 	hold := newUpstreamHold(2) // the cold fill runs free; the refresh is parked
 	t.Cleanup(hold.release)
@@ -288,13 +246,10 @@ func TestCachedHistoryReader_SWRServesStaleSingleFlight(t *testing.T) {
 		t.Fatalf("single-flight violated: %d calls for %d concurrent stale reads, want 2 (1 cold + 1 refresh)", got, reads)
 	}
 
-	// Released, the one refresh settles the entry. Polling by READ adds
-	// no upstream call of its own: a stale read looks at the in-flight
-	// marker, which the refresh holds until it has written what it
-	// found, so every poll before that point is served the stale entry
-	// and the poll that succeeds is served the refreshed one. Because
-	// the ttl outlives the test, the entry then stays fresh and the
-	// call count is final.
+	// Released, the one refresh settles the entry. Polling by READ adds no upstream call: the
+	// in-flight marker is held until the refresh has written, so earlier polls get the stale
+	// entry and the successful one the refreshed entry. The ttl outlives the test, so the call
+	// count is then final.
 	hold.release()
 	var fresh []canonical.Trade
 	var freshErr error
@@ -304,11 +259,9 @@ func TestCachedHistoryReader_SWRServesStaleSingleFlight(t *testing.T) {
 	}) {
 		t.Fatalf("after the refresh: rows=%d err=%v, want 1 row at the refreshed ledger %d", len(fresh), freshErr, histFreshLedger)
 	}
-	// Nothing further may reach the upstream: the refresh re-stamped
-	// the entry and the ttl outlives this test, so the read above was a
-	// hit rather than a second stale serve. See upstreamSettleWindow
-	// for why an absence gets a window and why that window fails
-	// nothing correct.
+	// Nothing further may reach the upstream: the refresh re-stamped the entry, so the read above
+	// was a hit, not a second stale serve. See upstreamSettleWindow for why an absence needs a
+	// window.
 	if waitFor(upstreamSettleWindow, func() bool { return up.calls.Load() != 2 }) {
 		t.Fatalf("single-flight violated: %d upstream calls once the refresh had settled, want 2 (1 cold + 1 refresh)", up.calls.Load())
 	}
@@ -370,29 +323,17 @@ func TestCachedHistoryReader_FreshContextBypassesCache(t *testing.T) {
 	}
 }
 
-// TestCachedHistoryReader_ColdFillPanic_SurfacesErrorAndStaysRetryable pins
-// what happens AFTER the panic is recovered, which is the part a bare
-// `defer worker.Recover(...)` would have got wrong.
+// TestCachedHistoryReader_ColdFillPanic_SurfacesErrorAndStaysRetryable pins what happens AFTER
+// the panic is recovered. The detached cold fill's waiter wakes on close(done); a bare
+// recover-and-return leaves entry.err nil and entry.flight set, so the waiter gets an empty result
+// with a NIL error (a 200 with no trades) and every later request re-joins the closed flight.
 //
-// The cold fill runs detached and its waiter wakes on close(done), reading
-// entry.err / entry.trades across that edge. Recover-and-return leaves
-// entry.at zero, entry.err nil and entry.flight set, so the waiter reads an
-// EMPTY result with a NIL error — a 200 OK carrying no trades — and every
-// later request re-joins the same already-closed flight and gets the same
-// empty answer for the life of the process. Silent, permanent, and strictly
-// worse than the crash it replaced.
-//
-// So this asserts the CORRECTED values, not merely that nothing crashed:
+// So it asserts the corrected values:
 //
 //  1. the waiter gets errHistoryFillPanicked, not (nil, nil);
-//  2. the very next call re-runs the upstream — the entry was dropped, not
-//     poisoned — and returns the real row;
-//  3. stellarindex_worker_panics_total{worker="api-history-latest-per-source-fill"}
-//     moved, which is what makes the dead refresher page an operator.
-//
-// Red without the fix: with only `defer close(done)` present the first call
-// returns (nil, nil) and the second returns (nil, nil) without ever calling
-// upstream again.
+//  2. the next call re-runs the upstream (entry dropped, not poisoned) and returns the row;
+//  3. stellarindex_worker_panics_total{worker="api-history-latest-per-source-fill"} moved, so the
+//     dead refresher pages an operator.
 func TestCachedHistoryReader_ColdFillPanic_SurfacesErrorAndStaysRetryable(t *testing.T) {
 	const workerName = "api-history-latest-per-source-fill"
 	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName))
@@ -430,12 +371,10 @@ func TestCachedHistoryReader_ColdFillPanic_SurfacesErrorAndStaysRetryable(t *tes
 	}
 }
 
-// TestCachedHistoryReader_StaleRefreshPanic_KeepsStaleAndRetries is the
-// (A') half: there IS a prior good value, so the correct degradation is to
-// keep serving it and clear the in-flight marker so the next expiry
-// retries. Recover-and-return would leave entry.flight set, and (A') only
-// kicks a refresh when e.flight == nil — the key would serve that one stale
-// value for the life of the process, never refreshing again.
+// TestCachedHistoryReader_StaleRefreshPanic_KeepsStaleAndRetries is the (A') half: with a prior
+// good value, the correct degradation is to keep serving it and clear the in-flight marker so the
+// next expiry retries. (A') only kicks a refresh when e.flight == nil, so a leftover flight would
+// pin the key to one stale value forever.
 func TestCachedHistoryReader_StaleRefreshPanic_KeepsStaleAndRetries(t *testing.T) {
 	up := &panickingHist{}
 	c := NewCachedHistoryReader(up, 20*time.Millisecond)

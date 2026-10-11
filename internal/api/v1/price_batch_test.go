@@ -118,11 +118,8 @@ func TestPriceBatch_OmitsMissingAssets(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_AliasResolvesXLM pins, on the batch surface:
-// asset_ids=native must resolve a snapshot published under the
-// crypto:XLM alias key, exactly like handlePrice's primary read.
-// Querying the literal form only would silently
-// drop the row while /v1/price?asset=native serves fresh.
+// TestPriceBatch_AliasResolvesXLM pins that asset_ids=native resolves a snapshot published under
+// the crypto:XLM alias key, like handlePrice. The literal form alone would silently drop the row.
 func TestPriceBatch_AliasResolvesXLM(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	reader := &stubPriceReader{
@@ -154,12 +151,9 @@ func TestPriceBatch_AliasResolvesXLM(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_RedisFallbackForRewrittenPair — when the
-// PriceReader returns ErrPriceNotFound (typical for an aggregator-
-// rewritten pair like XLM/fiat:USD whose literal form isn't in
-// prices_1m), the batch path falls through to the Redis VWAP cache.
-// Without this fix the batch endpoint silently omitted the headline
-// pair even though /v1/price served it just fine.
+// TestPriceBatch_RedisFallbackForRewrittenPair: when the PriceReader returns ErrPriceNotFound
+// (typical for an aggregator-rewritten pair like XLM/fiat:USD, absent from prices_1m), the batch
+// path must fall through to the Redis VWAP cache, as /v1/price does.
 func TestPriceBatch_RedisFallbackForRewrittenPair(t *testing.T) {
 	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
 	looker := &stubTriangulatedPriceLooker{
@@ -186,15 +180,9 @@ func TestPriceBatch_RedisFallbackForRewrittenPair(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_StablecoinFallback exercises the X / fiat:USD →
-// X / <USD-pegged classic> retry inside fetchBatchRow. Mirrors
-// /v1/price's tryStablecoinFiatProxy.
-//
-// Without it, a batch path that inlined only the Redis-VWAP and
-// fiat-cross-rate fallbacks would drop an asset_id whose only price
-// comes via the stablecoin-proxy chain (e.g. USDT-G… / USDC-G… on a
-// deployment with [aggregate].enable_stablecoin_fiat_proxy=false):
-// /v1/price would return 200 while the batch envelope omits it.
+// TestPriceBatch_StablecoinFallback exercises the X / fiat:USD → X / <USD-pegged classic> retry
+// inside fetchBatchRow, mirroring /v1/price's tryStablecoinFiatProxy. Without it an asset_id
+// priced only via the stablecoin-proxy chain is omitted from the batch while /v1/price returns 200.
 func TestPriceBatch_StablecoinFallback(t *testing.T) {
 	usdc, err := canonical.NewClassicAsset(
 		"USDC",
@@ -315,25 +303,18 @@ func TestPriceBatch_ReaderError500(t *testing.T) {
 	}
 }
 
-// A server-side request deadline (middleware.RequestTimeout) firing mid-
-// batch must NOT be treated as a client abort. lookupPriceBatch must not
-// test `ctx.Err() != nil` after wg.Wait() and return without writing
-// anything on ANY done context — including DeadlineExceeded — or net/http
-// answers with an implicit 200 and an empty body: an authoritative-
-// looking empty result for what is actually a blown server budget.
+// A server-side request deadline (middleware.RequestTimeout) firing mid-batch must not be treated
+// as a client abort. Returning without writing on any done context, DeadlineExceeded included,
+// makes net/http send an implicit 200 with an empty body for what is a blown server budget.
 //
-// This holds the reader open past a deliberately tiny RequestTimeout so
-// the blanket deadline fires while the client is still connected (not
-// cancelled), then releases it — mirroring the CanceledRequestWritesNothing
-// / ExpiredRequestDeadlineUpgrades500To503 split in
-// envelope_test.go, at the batch endpoint.
+// The reader is held open past a tiny RequestTimeout so the deadline fires while the client is
+// still connected, mirroring the CanceledRequestWritesNothing /
+// ExpiredRequestDeadlineUpgrades500To503 split in envelope_test.go.
 func TestPriceBatch_ExpiredRequestDeadlineReturns503NotBlank200(t *testing.T) {
-	// No startedCh: `native` walks multiple aliases (assetAliases), each
-	// alias a SEPARATE sequential LatestPrice call once released — a
-	// buffered startedCh drained only once would fill back up on a later
-	// alias's send and deadlock. A flat sleep before closing release is
-	// simpler and sufficient: it only needs to outlast both the request
-	// reaching the reader and the 20ms deadline below.
+	// No startedCh: `native` walks several aliases, each a separate sequential LatestPrice call,
+	// so a startedCh drained once would fill on a later alias's send and deadlock. A flat sleep
+	// before closing release only needs to outlast the request reaching the reader and the 20ms
+	// deadline below.
 	release := make(chan struct{})
 	reader := &stubPriceReader{
 		err:       errors.New("boom"),
@@ -412,14 +393,9 @@ func TestPriceBatchPost_OmitsMissingAssets(t *testing.T) {
 }
 
 func TestPriceBatchPost_LargeBatchAccepted(t *testing.T) {
-	// 200 distinct Classic assets, all known. Verifies the POST
-	// ceiling is genuinely larger than GET's 100 (200 > 100, would
-	// have 400'd on the GET path) and that the shared core logic
-	// handles the larger batch without bottlenecking.
-	//
-	// Synthesise alphanumeric 4-char codes "BAAA"..."BHRR" (200
-	// unique combinations) paired with one well-known issuer; that
-	// passes both validateClassicAssetCode and the strkey CRC check.
+	// 200 distinct known Classic assets: the POST ceiling must exceed GET's 100 and the shared
+	// core must handle the larger batch. Codes "BAAA"..."BHRR" with one well-known issuer pass
+	// both validateClassicAssetCode and the strkey CRC check.
 	const issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	snapshots := make(map[string]v1.PriceSnapshot, 200)
@@ -495,16 +471,10 @@ func TestPriceBatch_PairsAcceptedAsAssetIdsAlias(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_EchoesRequestedAssetNotStoreAlias pins that a batch row's
-// asset_id is the id the CLIENT asked for, not whichever XLM alias the
-// store happened to be keyed under.
-//
-// Guards against readPriceWithAliases returning the snapshot built from
-// the winning alias, so `?asset_ids=native,crypto:XLM` would produce TWO rows
-// both stamped "crypto:XLM". Since the batch route omits misses rather
-// than returning null rows, `asset_id` is the only mapping the wire shape
-// supports — a client keying the response by it would lose `native`
-// entirely.
+// TestPriceBatch_EchoesRequestedAssetNotStoreAlias pins that a batch row's asset_id is the id the
+// client asked for, not whichever XLM alias the store was keyed under. Otherwise
+// `?asset_ids=native,crypto:XLM` yields two rows both stamped "crypto:XLM", and since misses are
+// omitted, a client keying by asset_id would lose `native` entirely.
 func TestPriceBatch_EchoesRequestedAssetNotStoreAlias(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	// Only the crypto:XLM key is populated; `native` must resolve through
@@ -569,11 +539,9 @@ func TestPriceBatch_NonstandardDecimals_Normalizes(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_ChargesOneTokenPerID is the rate-limit regression.
-// One rate-limit token must not buy a whole batch: a 40-id GET left 99
-// of 100 tokens, so the per-minute ceiling bounded HTTP requests while
-// the work behind them was the caller's to choose. A batch must cost
-// its id count.
+// TestPriceBatch_ChargesOneTokenPerID is the rate-limit regression: one token must not buy a
+// whole batch, or the per-minute ceiling bounds requests while the work is the caller's choice.
+// A batch must cost its id count.
 func TestPriceBatch_ChargesOneTokenPerID(t *testing.T) {
 	ts, reader := newBatchLimitedServer(t, 100)
 	url := ts.URL + "/v1/price/batch?asset_ids=" + strings.Join(batchIDs(40), ",")
@@ -624,12 +592,10 @@ func TestPriceBatch_POSTChargesPerID(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_OverCeilingBatchSpendsTheWindow pins the decision for
-// a batch priced above the caller's whole budget (1000 ids against the
-// 60/min default). It is served into an untouched window — refusing it
-// in every window would make the documented 1000-id ceiling unusable
-// behind a Retry-After that never comes true — and it takes the entire
-// window with it, so the next request of any size is denied.
+// TestPriceBatch_OverCeilingBatchSpendsTheWindow pins the rule for a batch priced above the
+// caller's whole budget (1000 ids vs the 60/min default): it is served into an untouched window,
+// since refusing it always would make the 1000-id ceiling unusable behind a Retry-After that
+// never comes true, and it consumes the entire window so the next request is denied.
 func TestPriceBatch_OverCeilingBatchSpendsTheWindow(t *testing.T) {
 	ts, _ := newBatchLimitedServer(t, 60)
 
@@ -647,11 +613,9 @@ func TestPriceBatch_OverCeilingBatchSpendsTheWindow(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_ChargeFollowsTheWorkDone pins what the cost is a count
-// OF: the de-duplicated ids the handler will resolve. Forty copies of
-// one id are one resolution and cost one token; a request rejected as
-// malformed does no resolution and costs only the base token every
-// request pays.
+// TestPriceBatch_ChargeFollowsTheWorkDone pins that cost counts the de-duplicated ids the handler
+// resolves: forty copies of one id cost one token, and a request rejected as malformed costs
+// only the base token.
 func TestPriceBatch_ChargeFollowsTheWorkDone(t *testing.T) {
 	ts, reader := newBatchLimitedServer(t, 100)
 
@@ -694,11 +658,9 @@ func TestPriceBatch_UnlimitedDeploymentIsUncharged(t *testing.T) {
 	}
 }
 
-// TestPriceBatch_MetersOneUsageUnitPerID pins that the monthly meter
-// must not count HTTP requests, or a 1000-id POST /v1/price/batch cost one unit
-// of a quota sold in price lookups. Each batch must advance BOTH the
-// billable total MonthlyQuota reads and the per-endpoint detail counter
-// by its de-duplicated id count, and a single-price call stays at one.
+// TestPriceBatch_MetersOneUsageUnitPerID pins that the monthly meter counts price lookups, not
+// HTTP requests. Each batch advances both the billable total MonthlyQuota reads and the
+// per-endpoint detail counter by its de-duplicated id count; a single-price call stays at one.
 func TestPriceBatch_MetersOneUsageUnitPerID(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

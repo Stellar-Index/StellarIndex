@@ -14,39 +14,32 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Regression suite for
-// the served-VWAP direction combine.
+// Regression suite for the served-VWAP direction combine.
 //
-// SDEX stores the same market in BOTH orientations — the decoder files
-// each trade in the venue's observed base/quote ordering rather than
-// re-orienting it — so every serving read has to fold two directions
-// into the one the caller asked for. Two defects to avoid:
+// SDEX stores the same market in BOTH orientations (the decoder files each trade in the venue's
+// observed base/quote ordering), so every serving read must fold two directions into the one
+// the caller asked for. Two defects to avoid:
 //
-//	Count weighting: a fold must not weight the two directions' prices by TRADE
-//	  COUNT. A count-weighted mean of {vwap, 1/vwap_flipped} is provably
-//	  not the union's VWAP: it lets N dust trades outvote one whale.
-//	Single orientation: /v1/history and the default /v1/chart didn't fold at all —
-//	  they read one stored orientation and silently dropped every trade
-//	  recorded the other way round.
+//	Count weighting: a fold must not weight the two directions' prices by TRADE COUNT. A
+//	  count-weighted mean of {vwap, 1/vwap_flipped} is not the union's VWAP: N dust trades
+//	  outvote one whale.
+//	Single orientation: /v1/history and the default /v1/chart must fold, not read one stored
+//	  orientation and silently drop every trade recorded the other way round.
 //
-// The canonical fixture below is one bucket of a two-sided XLM/USDC
-// market whose correct union VWAP (0.4) and count-weighted answer (0.23)
-// are far apart, so any regression to a count-weighted (or single-
-// direction) combine is a loud failure rather than a rounding wobble.
+// The canonical fixture is one bucket of a two-sided XLM/USDC market whose correct union VWAP
+// (0.4) and count-weighted answer (0.23) are far apart, so a regression is a loud failure.
 
-// combineFixture is one bucket of a two-sided market, in the shape the
-// CAGG stores it. Requested orientation is XLM/USDC.
+// combineFixture is one bucket of a two-sided market, in the shape the CAGG stores it.
+// Requested orientation is XLM/USDC.
 //
 //	stored XLM/USDC (unflipped): vwap 0.5, volume 100
 //	    → 100 XLM changed hands for 50 USDC
 //	stored USDC/XLM (flipped)  : vwap 5,   volume 10
 //	    → 10 USDC changed hands for 50 XLM (its own vwap is XLM-per-USDC)
 //
-// Union: 60 USDC / 150 XLM = 0.4 USDC per XLM, exactly.
-//
-// A count-weighted answer, with the flipped side inverted to
-// 1/5 = 0.2 and the counts below, is (0.5·1 + 0.2·9) / 10 = 0.23 — off by
-// 42%, and driven entirely by how many prints each side happened to make.
+// Union: 60 USDC / 150 XLM = 0.4 USDC per XLM, exactly. A count-weighted answer, with the
+// flipped side inverted to 1/5 = 0.2 and the counts below, is (0.5·1 + 0.2·9) / 10 = 0.23, driven
+// entirely by how many prints each side made.
 var combineFixture = []dirVWAP{
 	{vwapText: "0.5", volumeText: "100", flipped: false},
 	{vwapText: "5", volumeText: "10", flipped: true},
@@ -78,11 +71,9 @@ func TestCombineDirVWAP_VolumeWeightedUnion(t *testing.T) {
 			want: combineFixtureUnionVWAP,
 		},
 		{
-			// A whale on the flipped side against a dust print on the
-			// requested side. Volume weighting puts the answer next to the
-			// whale's price (1.0); ANY count-based weighting drags it
-			// halfway to the dust print's 2.0. This is the economic shape
-			// of the defect.
+			// A whale on the flipped side against a dust print on the requested side. Volume
+			// weighting lands next to the whale's price (1.0); ANY count-based weighting drags
+			// it halfway to the dust print's 2.0.
 			name: "whale-flipped-vs-dust-unflipped",
 			rows: []dirVWAP{
 				{vwapText: "2", volumeText: "1", flipped: false},
@@ -91,15 +82,14 @@ func TestCombineDirVWAP_VolumeWeightedUnion(t *testing.T) {
 			want: "1.001",
 		},
 		{
-			// the count-weighting scenario verbatim: ONE large forward fill against
-			// MANY tiny flipped fills at a different price.
+			// the count-weighting scenario: ONE large forward fill against MANY tiny flipped
+			// fills at a different price.
 			//   forward: 999 900 XLM @ 0.1 USDC  →  99 990 USDC / 999 900 XLM
 			//   flipped:      25 USDC @ 0.25     →      25 USDC /     100 XLM
-			// Union = 100 015 / 1 000 000 = 0.100015 — within 0.015% of the
-			// whale's price, as a VWAP must be. A count-weighted
-			// answer, with 1 forward print against 100 flipped ones, was
-			// (0.1·1 + 0.25·100)/101 ≈ 0.2485 — 2.5× the true price, and
-			// movable at will by anyone willing to emit dust prints.
+			// Union = 100 015 / 1 000 000 = 0.100015, within 0.015% of the whale's price as a
+			// VWAP must be. A count-weighted answer with 1 forward print against 100 flipped
+			// ones is (0.1·1 + 0.25·100)/101 ≈ 0.2485, 2.5x the true price and movable by
+			// anyone willing to emit dust prints.
 			name: "one-whale-forward-vs-many-dust-flipped",
 			rows: []dirVWAP{
 				{vwapText: "0.1", volumeText: "999900", flipped: false},
@@ -218,17 +208,14 @@ func TestBucketRowCap(t *testing.T) {
 // -----------------------------------------------------------------
 // End-to-end reads over a canned driver.
 //
-// These drive the real Store methods (query text, scan, fold) and assert
-// the VALUE they serve, so a regression anywhere along the path — not
-// just in combineDirVWAP — fails.
+// These drive the real Store methods (query text, scan, fold) and assert the VALUE served, so a
+// regression anywhere along the path, not just in combineDirVWAP, fails.
 // -----------------------------------------------------------------
 
-// TestHistoryPoints_CombinesBothStoredDirections: /v1/history
-// (and the default /v1/chart, via HistoryPointsInRange) must read BOTH
-// stored orientations and serve their volume-weighted union. A single-direction
-// read would filter `base_asset = $1 AND quote_asset = $2` and served 0.5 —
-// the requested-orientation rows alone, with the 50 XLM traded the other
-// way round silently discarded.
+// TestHistoryPoints_CombinesBothStoredDirections: /v1/history (and the default /v1/chart, via
+// HistoryPointsInRange) must read BOTH stored orientations and serve their volume-weighted union.
+// A single-direction read filters `base_asset = $1 AND quote_asset = $2` and serves 0.5, silently
+// discarding the 50 XLM traded the other way round.
 func TestHistoryPoints_CombinesBothStoredDirections(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	bucket := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
@@ -269,11 +256,9 @@ func TestHistoryPoints_CombinesBothStoredDirections(t *testing.T) {
 	}
 }
 
-// TestHistoryPoints_FlippedOnlyBucketIsServed is the other half of
-// A bucket that traded ONLY in the reverse orientation must not
-// vanish from /v1/history and /v1/chart entirely — the chart showed a
-// gap where a real market had traded. It must be served, at the
-// exact inverse of the stored price.
+// TestHistoryPoints_FlippedOnlyBucketIsServed is the other half of the combine: a bucket that
+// traded ONLY in the reverse orientation must not vanish from /v1/history and /v1/chart, leaving
+// a gap where a real market traded. It is served at the exact inverse of the stored price.
 func TestHistoryPoints_FlippedOnlyBucketIsServed(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	bucket := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
@@ -400,11 +385,9 @@ func TestClosedVWAPAtOrBefore_VolumeWeightedUnion(t *testing.T) {
 	}
 }
 
-// TestRecentClosedVWAP1mCombined_PerBucketUnion pins the union VWAP on the
-// trailing baseline behind the /v1/price serving-sanity guard. Buckets
-// must stay separate (one row per bucket, newest first) AND each must be
-// the volume-weighted union — the guard compares this series against the
-// served candidate, so a different combine here false-positives.
+// TestRecentClosedVWAP1mCombined_PerBucketUnion pins the union VWAP on the trailing baseline
+// behind the /v1/price serving-sanity guard. Buckets stay separate (one row per bucket, newest
+// first) AND each is the volume-weighted union; a different combine false-positives the guard.
 func TestRecentClosedVWAP1mCombined_PerBucketUnion(t *testing.T) {
 	pair := testXLMUSDCPair(t)
 	newer := time.Date(2026, 7, 23, 12, 1, 0, 0, time.UTC)

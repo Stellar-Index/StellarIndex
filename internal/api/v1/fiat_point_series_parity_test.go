@@ -17,37 +17,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// A fiat-quoted POINT quote and the fiat-quoted
-// SERIES it belongs to were computed over different trade populations.
+// A fiat-quoted POINT quote and the fiat-quoted SERIES it belongs to must be computed over the
+// same trade population, or a point quote cannot be reconciled against its series.
 //
-//   - SERIES (`/v1/ohlc?interval=…`) COMBINES every constituent of
-//     usdPeggedConstituents — the direct fiat pair, every base alias, the
-//     crypto stablecoin backers and the operator's classic pegs — which is
-//     the live aggregator's own source set.
-//   - POINT (`/v1/vwap`, `/v1/twap`, single-bar `/v1/ohlc`) read the LITERAL
-//     pair and, only if that came back empty, walked the classic pegs and
-//     took the FIRST non-empty one. Exactly one constituent, no base
-//     aliases, no crypto backers.
-//
-// So the same `?base=native&quote=fiat:USD` question answered differently
-// depending on whether the client asked for a point or a series, and a
-// published point quote could not be reconciled against the published
-// series through which it runs. These tests pin the unification: the point
-// path derives from the identical constituent selection.
+//   - SERIES (`/v1/ohlc?interval=…`) combines every constituent of usdPeggedConstituents: the
+//     direct fiat pair, every base alias, the crypto stablecoin backers and the classic pegs.
+//   - POINT (`/v1/vwap`, `/v1/twap`, single-bar `/v1/ohlc`) must derive from the identical
+//     constituent selection rather than the literal pair or the first non-empty classic peg.
 
 // ── fixture ────────────────────────────────────────────────────────────
 //
-// One 1h bucket, three constituents that all really exist on pubnet, each
-// with a single trade so every constituent bar is exact:
+// One 1h bucket, three constituents, each with a single trade so every constituent bar is exact:
 //
-//	t0+00m  native/<USDC-classic>   7000 base / 1260 quote → 0.18  (SDEX depth;
-//	                                the ONLY leg the literal-pair fallback reaches,
-//	                                and only when the literal pair was empty)
-//	t0+05m  native/fiat:USD         1000 base /  200 quote → 0.20  (direct fiat;
-//	                                non-empty, so a literal-only read stops here)
-//	t0+10m  crypto:XLM/fiat:USD     2000 base /  380 quote → 0.19  (the CEX
-//	                                stream, which lives under the alias form and
-//	                                was unreachable from ?base=native)
+//	t0+00m  native/<USDC-classic>   7000 base / 1260 quote → 0.18  (SDEX depth; the only leg
+//	                                a literal-pair fallback reaches)
+//	t0+05m  native/fiat:USD         1000 base /  200 quote → 0.20  (direct fiat; a literal-only
+//	                                read stops here)
+//	t0+10m  crypto:XLM/fiat:USD     2000 base /  380 quote → 0.19  (CEX stream under the alias
+//	                                form, unreachable from ?base=native)
 //
 // Combined: Σbase = 10000, Σquote = 1840 → VWAP = 1840/10000 = 0.184 exactly.
 // A point path off the series population would serve 200/1000 = 0.20 on 1000 base volume.
@@ -64,11 +51,9 @@ func fiatParityBucketStart() time.Time {
 	return time.Date(2026, 3, 4, 5, 0, 0, 0, time.UTC)
 }
 
-// fiatConstituentReader serves raw trades per pair AND models the
-// prices_<n> continuous aggregate over those SAME rows, so the CAGG the
-// series reads and the trades the point path reads cannot disagree by
-// construction — any divergence the tests below observe is the handlers'
-// methodology, not the fixture's.
+// fiatConstituentReader serves raw trades per pair and models the prices_<n> continuous aggregate
+// over those same rows, so any divergence the tests observe is the handlers' methodology, not
+// the fixture's.
 type fiatConstituentReader struct {
 	stubHistoryReader
 	tradesByPair map[string][]canonical.Trade
@@ -95,14 +80,11 @@ func (r *fiatConstituentReader) TradesInRange(
 	return r.inWindow(pair, from, to), nil
 }
 
-// OHLCSeries derives each constituent's bar from that constituent's own
-// trades exactly as migration 0147's aggregate does: open/close are the
-// chronological first/last price, high/low the extremes, v_base/v_quote the
-// raw sums, n the count, and Sources the array_agg(DISTINCT source) over
-// the contributing rows — the column the combine resolves each bar's
-// smallest-unit scale from. 1h and 1m are modelled: 1h is what most parity
-// tests request, and 1m is the grain the point path's held-back gate
-// resolves at, so the two can be compared exactly.
+// OHLCSeries derives each constituent's bar from its own trades as the SQL aggregate does:
+// open/close are the chronological first/last price, high/low the extremes, v_base/v_quote the
+// raw sums, n the count, and Sources the distinct sources (the combine resolves each bar's
+// smallest-unit scale from them). 1h and 1m are modelled; 1m is the grain the point path's
+// held-back gate resolves at.
 func (r *fiatConstituentReader) OHLCSeries(
 	_ context.Context, pair canonical.Pair, interval string, from, to time.Time, _ int,
 ) ([]v1.OHLCSeriesBar, error) {
@@ -236,13 +218,9 @@ func fetchFiatSeriesBar(t *testing.T, base string) v1.OHLCSeriesBar {
 	return env.Data.Intervals[0]
 }
 
-// TestFiatVWAPPointMatchesSeries is the point-vs-series regression: /v1/vwap must be
-// computed over the same constituent population the series combines, so its
-// price equals the series bar's own Σquote/Σbase and its volumes equal the
-// bar's volumes exactly.
-//
-// A mismatched point path would serve 0.2000000000 on base_volume 1000 — the literal
-// native/fiat:USD pair alone — against a series bar summing 10000 base.
+// TestFiatVWAPPointMatchesSeries: /v1/vwap must use the series' constituent population, so its
+// price equals the series bar's Σquote/Σbase and its volumes match exactly. A mismatched point
+// path would serve the literal native/fiat:USD pair alone (0.20 on 1000 base vs 10000).
 func TestFiatVWAPPointMatchesSeries(t *testing.T) {
 	srv := newFiatParityServer(t)
 	ts := httpTestServer(t, srv)
@@ -295,20 +273,15 @@ func TestFiatVWAPPointMatchesSeries(t *testing.T) {
 	}
 }
 
-// TestFiatSingleBarOHLCMatchesSeriesExtremes pins the same unification for
-// the single-bar /v1/ohlc branch: its high/low and volumes must equal the
-// combined series bar's.
+// TestFiatSingleBarOHLCMatchesSeriesExtremes pins the same unification for the single-bar
+// /v1/ohlc branch: its high/low and volumes must equal the combined series bar's.
 //
-// outlier_sigma=0 because the single-bar branch defaults to a 4σ MAD filter
-// the CAGG series has no equivalent of — a separate, still-open divergence
-// that must not be conflated with the constituent-set one
-// under test here.
+// outlier_sigma=0 because the single-bar branch defaults to a 4σ MAD filter the CAGG series
+// lacks, a separate divergence from the constituent-set one under test.
 //
-// open/close are deliberately NOT compared: the series' combined open/close
-// are base-volume-weighted across constituents (a CAGG cannot know the
-// cross-constituent chronological order), which ohlcSeriesFiatCombined
-// documents as its one approximation. The point path's are the true
-// first/last prints.
+// open/close are not compared: the series' combined open/close are base-volume-weighted across
+// constituents (a CAGG cannot know the cross-constituent order), while the point path's are the
+// true first/last prints.
 func TestFiatSingleBarOHLCMatchesSeriesExtremes(t *testing.T) {
 	srv := newFiatParityServer(t)
 	ts := httpTestServer(t, srv)
@@ -351,11 +324,9 @@ func TestFiatSingleBarOHLCMatchesSeriesExtremes(t *testing.T) {
 	}
 }
 
-// TestFiatTWAPPointUsesAllConstituents covers the third point endpoint,
-// which shares the same fetch. Time-weighted over the merged, chronologically
-// ordered population: 0.18 for [t0, t0+5m), 0.20 for [t0+5m, t0+10m), 0.19
-// for [t0+10m, windowEnd=t0+1h) — a 5/5/50-minute weighting that is only
-// expressible if all three constituents are present and correctly ordered.
+// TestFiatTWAPPointUsesAllConstituents covers the third point endpoint, which shares the fetch.
+// The 5/5/50-minute weighting below (0.18, 0.20, 0.19 to windowEnd) is only expressible if all
+// three constituents are present and chronologically ordered.
 //
 //	(0.18·5 + 0.20·5 + 0.19·50) / 60 = 11.4/60 = 0.19
 func TestFiatTWAPPointUsesAllConstituents(t *testing.T) {
@@ -380,11 +351,9 @@ func TestFiatTWAPPointUsesAllConstituents(t *testing.T) {
 	}
 }
 
-// TestFiatPointConstituentReadErrorFailsClosed pins the deliberate
-// fail-closed posture: a constituent whose read errors is NOT skipped.
-// Skipping would silently narrow the methodology back to a subset — the
-// exact defect the shared population removes — and serve a quietly-wrong money value
-// instead of an error the operator can see.
+// TestFiatPointConstituentReadErrorFailsClosed pins fail-closed: a constituent whose read errors
+// is not skipped. Skipping would silently narrow the population to a subset and serve a
+// quietly-wrong money value instead of a visible error.
 func TestFiatPointConstituentReadErrorFailsClosed(t *testing.T) {
 	usdc, _ := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	xlmNative, _ := canonical.ParseAsset("native")
@@ -414,14 +383,10 @@ func TestFiatPointConstituentReadErrorFailsClosed(t *testing.T) {
 	}
 }
 
-// TestFiatEURPointServesLikeSeries is the divergence in its most extreme
-// form. The old point path was hard-gated on `quote.Code == "USD"` while the
-// series path gates on `quote.Type == AssetFiat`, so for a EUR-quoted asset
-// with real EURC depth the SERIES returned a full bar and the POINT returned
-// a flat 404 — the same question, one answered and one refused.
-//
-// The unified point path resolves fiat:EUR through the same EUR backers
-// (aggregate.FiatBackers("EUR") → EURC/EUROC/EUROB) the series combines.
+// TestFiatEURPointServesLikeSeries: the point path must gate on `quote.Type == AssetFiat` like
+// the series, not on `quote.Code == "USD"`, or a EUR-quoted asset with real EURC depth gets a
+// series bar but a point 404. It resolves fiat:EUR through the same backers the series
+// combines (aggregate.FiatBackers("EUR") → EURC/EUROC/EUROB).
 func TestFiatEURPointServesLikeSeries(t *testing.T) {
 	xlmNative, _ := canonical.ParseAsset("native")
 	eurc, err := canonical.ParseAsset("crypto:EURC")

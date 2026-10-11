@@ -233,16 +233,10 @@ func TestStatus_FreshnessCounts_ServedZeroVsFailedQuery(t *testing.T) {
 	}
 }
 
-// A FAILED Alertmanager query must NOT serialise as an
-// all-clear. Before the tri-state, `if incErr == nil { out.Incidents
-// = incidents }` left the counts at their zero value with no signal
-// that the query failed, so the incidents block was byte-identical to
-// "no alerts firing" — and DegradedBanner's `active_count ?? 0`
-// published "0 active alerts" while alerting was blind. The response
-// must now carry incidents_status="unknown" on a query error, and the
-// counts must remain zero (not be invented). We decode the raw wire
-// JSON — not the Go struct — so the assertion pins what a customer's
-// browser actually receives.
+// A FAILED Alertmanager query must NOT serialise as an all-clear: zero counts with no failure
+// signal would read as "0 active alerts" while alerting is blind. The response must carry
+// incidents_status="unknown" on a query error, with counts left at zero (not invented). The raw
+// wire JSON is decoded so the assertion pins what a customer's browser receives.
 func TestStatus_IncidentsQueryError_ReportsUnknownNotZero(t *testing.T) {
 	srv := New(Options{
 		RegionName: "r1",
@@ -365,12 +359,9 @@ func TestPrometheusStatusBackend_QueryShape(t *testing.T) {
 	}
 }
 
-// TestPrometheusStatusBackend_HeartbeatQueryIgnoresFailedScrapes pins the
-// PromQL query shape: Prometheus writes an up=0 sample (with the scrape's
-// own timestamp) on a FAILED scrape too, so a query that takes
-// timestamp(up{...}) without filtering on the value never goes stale for a
-// crashed target. The query must filter on `== 1` (successful scrapes
-// only) before taking the timestamp.
+// TestPrometheusStatusBackend_HeartbeatQueryIgnoresFailedScrapes pins the PromQL shape: a FAILED
+// scrape still writes an up=0 sample with a fresh timestamp, so timestamp(up{...}) without a value
+// filter never goes stale for a crashed target. The query must filter on `== 1` first.
 func TestPrometheusStatusBackend_HeartbeatQueryIgnoresFailedScrapes(t *testing.T) {
 	var gotQuery string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -470,12 +461,9 @@ func TestPrometheusStatusBackend_IncidentsDedupesByAlertname(t *testing.T) {
 	}
 }
 
-// TestPrometheusStatusBackend_IncidentsNormalizesUnknownSeverity pins
-// The `severity` alert label is operator-controlled (any
-// alertname can set it to anything) and is published verbatim on the
-// public /v1/status JSON. A value outside the three documented
-// severities (page/ticket/informational) must be normalized before it
-// reaches ActiveIncident, not passed through unvalidated.
+// TestPrometheusStatusBackend_IncidentsNormalizesUnknownSeverity pins that the operator-controlled
+// `severity` label, published on the public /v1/status JSON, is normalized to page/ticket/
+// informational before it reaches ActiveIncident.
 func TestPrometheusStatusBackend_IncidentsNormalizesUnknownSeverity(t *testing.T) {
 	const body = `{
 		"status":"success",
@@ -508,13 +496,9 @@ func TestPrometheusStatusBackend_IncidentsNormalizesUnknownSeverity(t *testing.T
 	}
 }
 
-// TestStatus_OverallRollup pins that the
-// customer-facing `overall` field is computed from the worst-case
-// per-service state plus the two cross-cutting canaries
-// (backend-error, page-firing). Each table row exercises one
-// branch of the precedence chain in rollupOverall; flags.stale is
-// asserted as the inverse of overall=="ok" so the wire envelope
-// stays consistent with the rollup verdict.
+// TestStatus_OverallRollup pins that `overall` is the worst per-service state plus the two
+// cross-cutting canaries (backend-error, page-firing). Each row hits one branch of rollupOverall;
+// flags.stale must be the inverse of overall=="ok".
 func TestStatus_OverallRollup(t *testing.T) {
 	now := time.Now().UTC()
 	recent := now.Add(-3 * time.Second) // within 60s threshold
@@ -616,12 +600,9 @@ func TestStatus_OverallRollup(t *testing.T) {
 	}
 }
 
-// TestRollupOverall_AllUnknownBranch exercises the
-// every-service-is-unknown branch of rollupOverall directly. The
-// http-level tests can't easily synthesise this state because the
-// handler always stamps an "ok" api entry; this unit test pokes
-// rollupOverall with a synthetic services slice so the "unknown"
-// branch (distinct from "down" and from "ok") is pinned.
+// TestRollupOverall_AllUnknownBranch exercises the all-services-unknown branch of rollupOverall
+// directly, since the handler always stamps an "ok" api entry and HTTP tests cannot reach it. The
+// "unknown" verdict is distinct from "down" and "ok".
 func TestRollupOverall_AllUnknownBranch(t *testing.T) {
 	// All three services unknown, no canary trips → overall=unknown.
 	// This is the pure evidence-from-prod state: every signal
@@ -656,14 +637,8 @@ func TestRollupOverall_AllUnknownBranch(t *testing.T) {
 	}
 }
 
-// TestRollupOverallLatencyBreach is a regression guard:
-// a green roll-up must be impossible while the latency SLO the same
-// response advertises is breached.
-//
-// Production once served overall="ok" — headline "All systems
-// operational · Every service is reporting healthy" — alongside p95 840ms
-// against a 200ms target and p99 2096ms against 500ms, both drawn in red
-// directly beneath that banner. The roll-up judged only service liveness.
+// TestRollupOverallLatencyBreach guards that a green roll-up is impossible while the latency SLO
+// the same response advertises is breached; the roll-up must not judge service liveness alone.
 func TestRollupOverallLatencyBreach(t *testing.T) {
 	t.Parallel()
 	healthy := []StatusService{
@@ -705,21 +680,11 @@ func TestStatusLatencyBreached(t *testing.T) {
 	}
 }
 
-// TestStatus_TicketIncidentsDoNotMoveOverall pins the documented
-// precedence in rollupOverall against the one pressure it is most likely
-// to be "fixed" under. `overall` escalates on a service fault, a
-// metrics-backend error, a breached latency SLO, or a `page`-severity
-// alert — and on nothing else. Ticket- and informational-severity alerts
-// are an operator backlog rather than a customer-facing fault, so they
-// leave `overall` at "ok" (and flags.stale false) however many are firing.
-//
-// The guard is here because /v1/status serves those counts in the SAME
-// body as the verdict: r1 once read overall "ok" beside 30 ticket
-// + 1 informational alerts, which reads as a contradiction even though it
-// is the rule working. The status banner now names that backlog in words,
-// which is a presentation change only. Folding tickets into the roll-up
-// instead would change what "ok" PROMISES on a public surface — a decision,
-// not a patch — and it fails here first.
+// TestStatus_TicketIncidentsDoNotMoveOverall pins the rollupOverall precedence: `overall`
+// escalates only on a service fault, a metrics-backend error, a breached latency SLO, or a
+// `page`-severity alert. Ticket and informational alerts are an operator backlog, so they leave
+// `overall` "ok" (flags.stale false) however many fire. The counts share a body with the verdict
+// and can look contradictory, but folding tickets in would change what "ok" promises publicly.
 func TestStatus_TicketIncidentsDoNotMoveOverall(t *testing.T) {
 	now := time.Now().UTC()
 	recent := now.Add(-3 * time.Second) // within the 60s heartbeat threshold
@@ -819,17 +784,10 @@ func TestStatus_TicketIncidentsDoNotMoveOverall(t *testing.T) {
 	}
 }
 
-// The lean test-net deployments run NO aggregator (ansible
-// inventory `run_aggregator: false`) — its absence is a deliberate
-// deployment shape, not an outage. The handler nevertheless hardcoded
-// {"indexer","aggregator"} as the services to report, so the aggregator
-// sat at "unknown" forever, the mixed known/unknown branch of
-// rollupOverall pinned `overall` at "degraded", and the public status
-// page for testnet.stellarindex.io was red by construction on a
-// perfectly healthy deployment.
-//
-// With the deployment's own service list declared, a healthy indexer
-// alone rolls up to "ok" and the aggregator is not reported at all.
+// Lean test-net deployments run no aggregator (`run_aggregator: false`); that is a deployment
+// shape, not an outage. A hardcoded {"indexer","aggregator"} list would leave the aggregator
+// "unknown" forever and pin `overall` at "degraded". With the deployment's own service list, a
+// healthy indexer alone rolls up to "ok" and the aggregator is not reported.
 func TestStatus_DeclaredServicesOnly_AbsentAggregatorIsNotDegraded(t *testing.T) {
 	now := time.Now().UTC()
 	srv := New(Options{
@@ -860,11 +818,9 @@ func TestStatus_DeclaredServicesOnly_AbsentAggregatorIsNotDegraded(t *testing.T)
 	}
 }
 
-// The opt-out must not become a blindfold: a service the deployment
-// DOES declare and whose heartbeat is missing is still partial
-// visibility, so `overall` degrades exactly as before. This is the
-// fail-closed half of the fix — without it, dropping a service from
-// status_services would silently hide a real outage.
+// The opt-out must not become a blindfold: a declared service with a missing heartbeat is still
+// partial visibility, so `overall` degrades. Fail-closed, or dropping a service from
+// status_services would hide a real outage.
 func TestStatus_DeclaredServiceWithNoHeartbeat_StillDegrades(t *testing.T) {
 	srv := New(Options{
 		RegionName:     "testnet",

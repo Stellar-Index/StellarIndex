@@ -177,12 +177,9 @@ func TestRecordLedgerIngest_CensusReadErrorsMeterUndercount(t *testing.T) {
 	}
 }
 
-// TestAggregatorPairsFromCatalogue_ReportsSkippedTickers pins that
-// a catalogue ticker with a coingecko_id that canonical.NewCryptoAsset
-// rejects (not on the ADR-0014 allow-list) must be excluded from the
-// aggregator pair set AND surfaced — via the skipped-tickers gauge and
-// a warn log naming it — rather than silently dropped by a bare
-// `continue`.
+// TestAggregatorPairsFromCatalogue_ReportsSkippedTickers pins that a ticker whose coingecko_id
+// canonical.NewCryptoAsset rejects is excluded from the pair set and surfaced (gauge plus warn
+// log naming it), not silently dropped.
 func TestAggregatorPairsFromCatalogue_ReportsSkippedTickers(t *testing.T) {
 	y := `verified_currencies:
   - ticker: BTC
@@ -228,13 +225,9 @@ func TestAggregatorPairsFromCatalogue_ReportsSkippedTickers(t *testing.T) {
 	}
 }
 
-// TestMergeAggregatorPairs_SupplementsRatherThanReplaces pins that
-// a catalogue yielding even one pair must not silently replace the
-// hardcoded defaultAggregatorPairs() set — it supplements it. Before
-// the fix, `len(aggregatorPairs) == 0` was the only fallback trigger,
-// so a catalogue with a single ticker (e.g. only BTC) would drop
-// every other hardcoded ticker (XLM, ETH, ADA, ...) from aggregator
-// polling.
+// TestMergeAggregatorPairs_SupplementsRatherThanReplaces pins that a catalogue yielding even one
+// pair supplements defaultAggregatorPairs() rather than replacing it, so a one-ticker catalogue
+// cannot drop every other default ticker from aggregator polling.
 func TestMergeAggregatorPairs_SupplementsRatherThanReplaces(t *testing.T) {
 	t.Parallel()
 
@@ -324,16 +317,10 @@ func invalidLedgerCloseMeta(seq uint32) sdkxdr.LedgerCloseMeta {
 	}
 }
 
-// validLedgerCloseMeta returns a minimal but XDR-ENCODABLE LCM with
-// the given ledger sequence — unlike invalidLedgerCloseMeta (used
-// elsewhere in this file to exercise dispatcher error paths before
-// any encoding happens), this one must survive MarshalBinary because
-// recordHashdb calls it directly. An empty tx-set phase list encodes
-// cleanly; invalidLedgerCloseMeta's zero-value TransactionEnvelope
-// inside a non-empty phase list does not (its union discriminant is
-// unset, which panics deep in the generated EncodeTo — exactly the
-// kind of malformed input dispatcher.ProcessLedger is meant to
-// reject early, before ever reaching an encode).
+// validLedgerCloseMeta returns a minimal XDR-encodable LCM for the given sequence. Unlike
+// invalidLedgerCloseMeta it must survive MarshalBinary, because recordHashdb calls that directly;
+// an empty tx-set phase list encodes, whereas a zero-value envelope with an unset union
+// discriminant panics in EncodeTo.
 func validLedgerCloseMeta(seq uint32) sdkxdr.LedgerCloseMeta {
 	return sdkxdr.LedgerCloseMeta{
 		V: 1,
@@ -400,15 +387,10 @@ func TestRecordHashdb_OK(t *testing.T) {
 	}
 }
 
-// TestRecordHashdb_AppendErrorIsFailureTolerant is the load-bearing
-// test for the hashdb contract: a hashdb write failure
-// must log + count, and MUST NOT propagate or otherwise stall/fail
-// ingest. Forces hashdb.Append to fail with ErrOutOfRange (ledger
-// below the file's startLedger) and confirms recordHashdb returns
-// normally (no panic, no return value to check — it's void by
-// design) while incrementing the error outcome and leaving
-// lastAppended untouched (the verify sweep must never believe a
-// ledger was durably recorded when it wasn't).
+// TestRecordHashdb_AppendErrorIsFailureTolerant pins the hashdb contract: a write failure is
+// logged and counted but never stalls or fails ingest. An out-of-range Append must bump the error
+// outcome and leave lastAppended untouched, so the verify sweep never believes an unrecorded
+// ledger was durably recorded.
 func TestRecordHashdb_AppendErrorIsFailureTolerant(t *testing.T) {
 	t.Parallel()
 
@@ -443,22 +425,18 @@ func TestRecordHashdb_AppendErrorIsFailureTolerant(t *testing.T) {
 	}
 }
 
-// validLedgerCloseMetaWithBaseFee is validLedgerCloseMeta with a
-// non-zero BaseFee — a scalar header field cheap to vary so two calls
-// for the SAME seq encode to different bytes (and therefore different
-// hashdb hashes), simulating a re-ingested ledger whose upstream
-// bytes changed underneath it.
+// validLedgerCloseMetaWithBaseFee is validLedgerCloseMeta with a non-zero BaseFee, so two calls
+// for the same seq encode to different hashes, simulating a re-ingested ledger whose upstream
+// bytes changed.
 func validLedgerCloseMetaWithBaseFee(seq uint32, baseFee uint32) sdkxdr.LedgerCloseMeta {
 	lcm := validLedgerCloseMeta(seq)
 	lcm.V1.LedgerHeader.Header.BaseFee = sdkxdr.Uint32(baseFee)
 	return lcm
 }
 
-// TestRecordHashdb_ReingestSameBytesDoesNotDoubleAppend confirms that
-// re-ingesting an already-recorded ledger with IDENTICAL bytes goes
-// through Verify (not a blind Append): lastAppended still advances,
-// but the stored record is untouched (same hash either way, but this
-// pins that the append path is now read-first).
+// TestRecordHashdb_ReingestSameBytesDoesNotDoubleAppend pins that re-ingesting a recorded ledger
+// with identical bytes goes through Verify, not a blind Append: lastAppended advances and the
+// stored record is untouched.
 func TestRecordHashdb_ReingestSameBytesDoesNotDoubleAppend(t *testing.T) {
 	// Not t.Parallel(): asserts an exact delta on the process-global
 	// HashdbAppendTotal counter, which the other hashdb append tests
@@ -493,16 +471,10 @@ func TestRecordHashdb_ReingestSameBytesDoesNotDoubleAppend(t *testing.T) {
 	}
 }
 
-// TestRecordHashdb_DriftOnReingestDoesNotOverwrite is the load-bearing
-// regression test for recordHashdb, which must not call
-// hashdb.Append unconditionally on every live ledger: re-ingesting
-// an already-recorded ledger with DIFFERENT bytes (upstream rewrite,
-// or a restart replaying past the last committed cursor) would silently
-// clobber the original fingerprint — destroying the exact tamper
-// evidence the hashdb drift detector exists to preserve. This asserts
-// the second, differing-content call for the SAME seq leaves the
-// FIRST hash on disk, increments HashdbDriftTotal, and does NOT
-// advance lastAppended for that call.
+// TestRecordHashdb_DriftOnReingestDoesNotOverwrite pins that recordHashdb never appends blindly:
+// re-ingesting a recorded ledger with different bytes would clobber the original fingerprint,
+// destroying the tamper evidence the drift detector exists to keep. The first hash must stay on
+// disk, HashdbDriftTotal must increment, and lastAppended must not advance.
 func TestRecordHashdb_DriftOnReingestDoesNotOverwrite(t *testing.T) {
 	// Not t.Parallel(): see TestRecordHashdb_ReingestSameBytesDoesNotDoubleAppend.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -570,12 +542,9 @@ func TestOpenOrCreateHashDB_CreatesWhenMissing(t *testing.T) {
 	}
 }
 
-// TestOpenOrCreateHashDB_OpensExisting confirms a restart (the file
-// already exists from a prior run) opens the existing file rather
-// than erroring or re-creating — and that the ORIGINAL startLedger
-// wins, not whatever this call happened to pass (a restart passes
-// the CURRENT resolved `from`, which drifts over time as the indexer
-// catches up; that must never re-stamp the file's coverage floor).
+// TestOpenOrCreateHashDB_OpensExisting pins that a restart opens the existing file and the
+// original startLedger wins: a restart passes the current resolved `from`, which drifts, and must
+// never re-stamp the file's coverage floor.
 func TestOpenOrCreateHashDB_OpensExisting(t *testing.T) {
 	t.Parallel()
 
@@ -599,11 +568,9 @@ func TestOpenOrCreateHashDB_OpensExisting(t *testing.T) {
 	}
 }
 
-// TestOpenOrCreateHashDB_RecreatesTruncatedFile confirms a file
-// shorter than the 16-byte header — the residue of a Create whose
-// header never reached disk (power loss in the writeback window) —
-// is recreated rather than crash-looping the daemon. No record can
-// exist in a headerless file, so recreating loses nothing.
+// TestOpenOrCreateHashDB_RecreatesTruncatedFile pins that a file shorter than the 16-byte header
+// (a Create whose header never reached disk) is recreated rather than crash-looping the daemon.
+// A headerless file holds no records, so nothing is lost.
 func TestOpenOrCreateHashDB_RecreatesTruncatedFile(t *testing.T) {
 	t.Parallel()
 
@@ -652,15 +619,10 @@ func TestOpenOrCreateHashDB_BadMagicFailsClosed(t *testing.T) {
 	}
 }
 
-// TestHashDBSweepComplete_AllMissingIsNotComplete: a window
-// where hashdb has no record for ANY ledger (e.g. an append gap, or a
-// window that landed entirely before any baseline existed) must not
-// be reported as a complete/clean sweep — nothing was actually
-// compared. `complete` must require more than every ledger being
-// accounted for (Verified+Drifted+Missing+OutOfRange == window size),
-// which an all-Missing window satisfies trivially; otherwise
-// hashDBVerifySweep logs "hashdb verify sweep clean" with outcome="ok"
-// despite Verified==0.
+// TestHashDBSweepComplete_AllMissingIsNotComplete: a window with no hashdb record for any ledger
+// must not report a clean sweep, since nothing was compared. `complete` needs more than every
+// ledger being accounted for (an all-Missing window satisfies that trivially); otherwise
+// hashDBVerifySweep logs "hashdb verify sweep clean" with outcome="ok" despite Verified==0.
 func TestHashDBSweepComplete_AllMissingIsNotComplete(t *testing.T) {
 	t.Parallel()
 
@@ -688,28 +650,12 @@ func TestHashDBSweepComplete_AllMissingIsNotComplete(t *testing.T) {
 	}
 }
 
-// TestRecordHashdb_DurationExcludesMarshal is the regression guard for
-// HashdbAppendDurationSeconds documents itself (internal/obs/
-// metrics.go) as the latency of hashdb.Append's single O(1) WriteAt —
-// no seek, no fsync, no network I/O — not of marshaling the ledger.
+// TestRecordHashdb_DurationExcludesMarshal guards that HashdbAppendDurationSeconds times only
+// hashdb.Append's single WriteAt, not marshaling the ledger.
 //
-// Structural, not wall-clock-ratio: a prior version built an
-// implausibly large LCM and compared the OBSERVED metric against
-// time.Since(wallStart)/2 for the whole call. Under load a single
-// scheduler/fsync stall inside the (cheap) WriteAt was enough to push
-// that ratio past 50% with the marshal untouched — flaked in CI
-// despite passing 5/5 in isolation. Comparing
-// two real wall-clock measurements of a fast operation is inherently
-// noisy on a loaded machine.
-//
-// Here the test controls the marshal's cost directly via
-// marshalLedgerCloseMeta (a slow hook injecting a fixed, large sleep)
-// instead of relying on LCM size to make marshaling slow, and never
-// measures wall-clock time at all: it asserts the OBSERVED metric
-// stays far below the injected delay. If recordHashdb's timer started
-// before the marshal, observed would include the injected sleep and
-// blow the absolute ceiling by orders of magnitude — no ratio, no
-// load-sensitive baseline.
+// Structural rather than a wall-clock ratio, which is noisy under load. A slow
+// marshalLedgerCloseMeta hook injects a fixed large sleep, and the observed metric must stay far
+// below it; a timer started before the marshal would blow that ceiling by orders of magnitude.
 func TestRecordHashdb_DurationExcludesMarshal(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	path := filepath.Join(t.TempDir(), "drift.db")
@@ -740,11 +686,8 @@ func TestRecordHashdb_DurationExcludesMarshal(t *testing.T) {
 	if observed <= 0 {
 		t.Fatalf("HashdbAppendDurationSeconds{ok} did not advance")
 	}
-	// The write itself is a handful of microseconds even on a loaded CI
-	// runner. Require observed to stay a small fraction of the delay we
-	// deliberately injected into the marshal — comfortable headroom
-	// above realistic WriteAt jitter, nowhere near the injected 200ms a
-	// timer-placement regression would leak in.
+	// The write takes microseconds even on a loaded runner; the ceiling leaves headroom for
+	// WriteAt jitter yet sits far below the injected 200ms a timer-placement regression leaks.
 	const maxWantedObserved = 20 * time.Millisecond
 	if observed > maxWantedObserved.Seconds() {
 		t.Errorf("HashdbAppendDurationSeconds{ok} observed=%.6fs exceeds %.3fs — timer includes the LedgerCloseMeta marshal (which this test made take >= %.3fs), not just hashdb.Append's WriteAt",
@@ -752,11 +695,8 @@ func TestRecordHashdb_DurationExcludesMarshal(t *testing.T) {
 	}
 }
 
-// bloatedLedgerCloseMeta returns a valid, XDR-ENCODABLE LCM (same
-// minimal shape as validLedgerCloseMeta in main_test.go). Used below to
-// exercise recordHashdb with a realistic (if not literally huge) LCM;
-// the marshal's actual cost no longer matters to the test — see
-// TestRecordHashdb_DurationExcludesMarshal.
+// bloatedLedgerCloseMeta returns a valid XDR-encodable LCM shaped like validLedgerCloseMeta.
+// Its marshal cost is irrelevant; see TestRecordHashdb_DurationExcludesMarshal.
 func bloatedLedgerCloseMeta(seq uint32, phases int) sdkxdr.LedgerCloseMeta {
 	components := []sdkxdr.TxSetComponent{}
 	ps := make([]sdkxdr.TransactionPhase, phases)

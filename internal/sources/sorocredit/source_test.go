@@ -21,10 +21,9 @@ import (
 
 // ─── real-lake golden frames (base64 SCVal) ──────────────────────────
 //
-// Captured verbatim from real mainnet ledgers emitted by the main
-// contract (MainnetContract) on the r1 ClickHouse lake.
-// These PIN the decoded schemas: if a decode helper drifts, the asserted
-// promoted fields change. topics_xdr / data_xdr are the raw event bytes.
+// Captured verbatim from real mainnet ledgers emitted by MainnetContract. These PIN the decoded
+// schemas: if a decode helper drifts, the asserted promoted fields change. topics_xdr / data_xdr
+// are the raw event bytes.
 
 var goldenFrames = map[string]struct {
 	topics []string
@@ -202,12 +201,9 @@ func TestGolden_NewCollateralContract(t *testing.T) {
 	}
 }
 
-// TestDecode_NewCollateralContract_MissingPrefixRejected proves that
-// TrimPrefix silently returns the whole string when the "Collateral-"
-// prefix is absent, which would mint a PositionUUID that could never
-// match a real StatementPublished/Liquidation topic — a permanent join
-// miss disguised as "no statement yet". A body name lacking the prefix
-// must now fail decode instead of fabricating a bogus UUID.
+// TestDecode_NewCollateralContract_MissingPrefixRejected: TrimPrefix returns the whole string when
+// the "Collateral-" prefix is absent, minting a PositionUUID that never joins a real
+// StatementPublished/Liquidation topic. A body name lacking the prefix must fail decode.
 func TestDecode_NewCollateralContract_MissingPrefixRejected(t *testing.T) {
 	t.Parallel()
 	child := contractStrkey(t, 0x02)
@@ -285,13 +281,10 @@ func TestGolden_ConfigEvents(t *testing.T) {
 	}
 }
 
-// TestGolden_BodyCapturedVerbatim pins the "nothing is dropped" / "captured
-// verbatim" promise made by decodeSettlement, decodeSupportedAssetAdded and
-// decodeConfigBody's godocs: Attributes["body"] must equal the event's raw
-// base64 XDR payload byte-for-byte, not a rendering of it. scval.Display is
-// lossy by design (120-rune truncation, depth-3 cap, exotic types degrade
-// to their type name) — running the audit-trail capture through it would
-// silently violate the promise for any body that trips those limits.
+// TestGolden_BodyCapturedVerbatim pins the "captured verbatim" promise of decodeSettlement,
+// decodeSupportedAssetAdded and decodeConfigBody: Attributes["body"] must equal the raw base64 XDR
+// payload byte-for-byte. scval.Display is lossy by design (truncation, depth cap), so routing the
+// audit-trail capture through it would silently break the promise.
 func TestGolden_BodyCapturedVerbatim(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{
@@ -372,12 +365,9 @@ func TestClassify_UnknownAndEmpty(t *testing.T) {
 	}
 }
 
-// TestEventSymbols_MatchesClassify guards the historical failure mode
-// that dropped TreasuryUpdated recognition under ADR-0033: EventSymbols()
-// and classify() were two independently hand-written lists of the same
-// topics, and one could gain an entry the other lacked. This test is
-// driven off EventSymbols() itself (not a second hardcoded list), so a
-// topic present there but unrecognized by classify() fails loudly.
+// TestEventSymbols_MatchesClassify guards against EventSymbols() and classify() drifting apart
+// (ADR-0033 completeness depends on both). It iterates EventSymbols() itself, not a second
+// hardcoded list, so a topic classify() does not recognize fails loudly.
 func TestEventSymbols_MatchesClassify(t *testing.T) {
 	t.Parallel()
 	syms := EventSymbols()
@@ -519,14 +509,10 @@ func TestDecode_LargeI128_NoTruncation(t *testing.T) {
 
 // ─── Q074: NUL/invalid-UTF8 UUID and u64 epoch overflow ──────────────
 
-// TestDecode_StatementPublished_NULUUIDSurvivesAsHexText proves Q074's
-// poison-pill fix: a statement_uuid/position_uuid is bytes chosen by
-// whoever calls the contract, bound to a `text NOT NULL` column. Before
-// the fix, strTopic decoded it through scval.AsString and bound the raw
-// bytes unchecked — a NUL or invalid-UTF8 value there would be refused by
-// Postgres (SQLSTATE 22021) and the row lost for good. It must now come
-// back as scval.ToText's lossless hex form, never the raw NUL-bearing
-// string.
+// TestDecode_StatementPublished_NULUUIDSurvivesAsHexText: a statement_uuid/position_uuid is
+// caller-chosen bytes bound to a `text NOT NULL` column, and Postgres refuses NUL or invalid UTF-8
+// (SQLSTATE 22021), losing the row for good. It must come back as scval.ToText's lossless hex
+// form, never the raw NUL-bearing string.
 func TestDecode_StatementPublished_NULUUIDSurvivesAsHexText(t *testing.T) {
 	t.Parallel()
 	rawUUID := "bad\x00uuid-not-utf8-\xff"
@@ -557,13 +543,9 @@ func TestDecode_StatementPublished_NULUUIDSurvivesAsHexText(t *testing.T) {
 	}
 }
 
-// TestDecode_StatementPublished_TimestampOverflowFallsBackToClosedAt
-// proves Q074's other half: decodeStatement cast the on-wire u64
-// timestamp straight to int64 with a //nolint:gosec silencing the
-// overflow check. A value above math.MaxInt64 wraps negative under that
-// cast (the same overflow class as the router deadline_ts bug) and would
-// stamp a bogus 1969 StatementTime. It must instead fall back to the
-// ledger close time.
+// TestDecode_StatementPublished_TimestampOverflowFallsBackToClosedAt: an on-wire u64 timestamp
+// above math.MaxInt64 wraps negative under a bare int64 cast and would stamp a bogus 1969
+// StatementTime. It must fall back to the ledger close time.
 func TestDecode_StatementPublished_TimestampOverflowFallsBackToClosedAt(t *testing.T) {
 	t.Parallel()
 	closedAtRFC := "2026-07-06T00:00:00Z"
@@ -681,12 +663,10 @@ func b64Symbol(t *testing.T, s string) string {
 	return b64(t, symbolSV(s))
 }
 
-// TestDecode_Settlement_MalformedAmountCountsDegrade proves Q072's fix:
-// a Liquidation body whose amounts leg (data[2]) isn't a non-empty
-// Vec[i128] must still decode (nil error, row kept — see package doc)
-// but now increments obs.SourceAmountDegradedTotal{source="sorocredit",
-// field="settled_amount"} so the resulting NULL settled_amount is no
-// longer invisible.
+// TestDecode_Settlement_MalformedAmountCountsDegrade: a Liquidation body whose amounts leg
+// (data[2]) isn't a non-empty Vec[i128] must still decode (nil error, row kept; see package doc)
+// but increment obs.SourceAmountDegradedTotal{source="sorocredit", field="settled_amount"}, so the
+// resulting NULL settled_amount is not invisible.
 func TestDecode_Settlement_MalformedAmountCountsDegrade(t *testing.T) {
 	before := testutil.ToFloat64(obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount"))
 

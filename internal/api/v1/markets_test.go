@@ -290,12 +290,9 @@ func TestMarkets_SparklineFailureIsBestEffort(t *testing.T) {
 	}
 }
 
-// swrStaleMarketsUpstream is a MarketsReader whose DistinctPairsExt
-// succeeds on the cold fill then errors once failNow is set — so, wrapped
-// in the real CachedMarketsReader, it drives the SWR stale-serve path (an
-// expired entry served while its background refresh keeps failing).
-// Embeds *stubMarketsReader for the rest of the interface. Atomics keep
-// `go test -race` clean under the concurrent background refresh.
+// swrStaleMarketsUpstream is a MarketsReader whose DistinctPairsExt succeeds on the cold fill
+// then errors once failNow is set, so inside the real CachedMarketsReader it drives the SWR
+// stale-serve path. Atomics keep `go test -race` clean under the background refresh.
 type swrStaleMarketsUpstream struct {
 	*stubMarketsReader
 	calls   atomic.Int64
@@ -310,17 +307,10 @@ func (u *swrStaleMarketsUpstream) DistinctPairsExt(ctx context.Context, cursor s
 	return u.stubMarketsReader.DistinctPairsExt(ctx, cursor, limit, order)
 }
 
-// TestMarkets_SWRStaleServeStampsHonestFlags is the
-// regression: /v1/markets served from the cache's
-// stale-while-revalidate path — an expired entry served while its
-// background refresh keeps failing — MUST report flags.stale=true and
-// as_of = the served rows' ACTUAL observation time, never stale:false /
-// as_of=now over arbitrarily-old rows. A fresh serve stays stale:false
-// with a recent as_of. Mirrors the /v1/contracts stale-serve test.
-//
-// Red against code that dropped the flags: handleMarkets built Envelope{Flags:Flags{}}
-// and writeEnvelope stamped as_of=now, so the stale serve reported
-// stale:false and an as_of that did NOT equal the old fill time.
+// TestMarkets_SWRStaleServeStampsHonestFlags: /v1/markets served from the stale-while-revalidate
+// path (an expired entry served while its background refresh keeps failing) must report
+// flags.stale=true and as_of = the rows' actual observation time, never stale:false / as_of=now
+// over old rows. A fresh serve stays stale:false. Mirrors the /v1/contracts stale-serve test.
 func TestMarkets_SWRStaleServeStampsHonestFlags(t *testing.T) {
 	const ttl = 40 * time.Millisecond
 	up := &swrStaleMarketsUpstream{
@@ -450,14 +440,10 @@ func TestPools_SWRStaleServeStampsHonestFlags(t *testing.T) {
 	}
 }
 
-// TestMarkets_LastTradeAtVsBucketCloseAt.
-// Pins the wire contract: BOTH `last_trade_at` (minute-precise) AND
-// `bucket_close_at` (daily bucket-start) ship on every row, and they
-// are distinct values. The `last_trade_at` field must not carry the
-// daily bucket-start (midnight UTC) for ALL rows; clients computing
-// staleness saw spuriously-large values. The test feeds a stub where
-// `last_trade_at` is mid-bucket and `bucket_close_at` is midnight,
-// then asserts both fields surface on the wire and are not collapsed.
+// TestMarkets_LastTradeAtVsBucketCloseAt pins the wire contract: every row ships both
+// `last_trade_at` (minute-precise) and `bucket_close_at` (daily bucket-start) as distinct
+// values. `last_trade_at` must not carry the midnight bucket-start, or clients computing
+// staleness see spuriously large values.
 func TestMarkets_LastTradeAtVsBucketCloseAt(t *testing.T) {
 	// 2026-05-25T14:23:00Z — mid-bucket, NOT midnight.
 	lastTrade := time.Date(2026, 5, 25, 14, 23, 0, 0, time.UTC)
@@ -535,12 +521,9 @@ func TestMarkets_ReaderError500(t *testing.T) {
 	}
 }
 
-// TestMarkets_UnknownSource400 — `?source=` with a name that isn't
-// in the in-memory `external.Registry` returns 400 instead of an
-// empty page. The silent-empty-page anti-pattern (a typo looking
-// identical to "this source has no trades") sends callers chasing
-// nonexistent data; failing fast is the contract on every other
-// listing handler in this package.
+// TestMarkets_UnknownSource400: `?source=` naming a source absent from `external.Registry`
+// returns 400, not an empty page, which a typo would make look like "this source has no trades".
+// Failing fast is the contract on every listing handler here.
 func TestMarkets_UnknownSource400(t *testing.T) {
 	srv := v1.New(v1.Options{Markets: &stubMarketsReader{}})
 	ts := httpTestServer(t, srv)
@@ -659,14 +642,9 @@ func TestPools_InvalidAsset400(t *testing.T) {
 	}
 }
 
-// TestMarkets_DefaultOrderIsVolumeDesc pins the default order, 24h
-// USD volume descending. An alphabetical default would surface spam
-// tokens (`0-…`, `0TAX-…`) at the top of every cold listing, and
-// every consumer would pass `?order_by=volume_24h_usd_desc` to work
-// around it.
-//
-// Callers paginating the entire universe of pairs in lex order
-// can still pass `?order_by=pair` explicitly.
+// TestMarkets_DefaultOrderIsVolumeDesc pins the default order, 24h USD volume descending. An
+// alphabetical default would surface spam tokens (`0-…`, `0TAX-…`) atop every cold listing.
+// Callers paginating in lex order can still pass `?order_by=pair`.
 func TestMarkets_DefaultOrderIsVolumeDesc(t *testing.T) {
 	t.Run("no order_by → volume desc", func(t *testing.T) {
 		reader := &stubMarketsReader{}
@@ -827,12 +805,9 @@ func TestMarkets_SourceFilterOmitsPairWideEnrichments(t *testing.T) {
 	}
 }
 
-// The ?asset= filter must reach SQL in its CANONICAL spelling. ParseAsset
-// accepts bare "XLM"/"NATIVE" and the Horizon-style "CODE:ISSUER", but the
-// stores hold only the canonical form and compare with `=` — so validating
-// and then discarding the parsed value served an authoritative HTTP 200
-// with an empty list for those documented aliases (measured on r1:
-// ?asset=XLM returned 0 rows while ?asset=native returned 5).
+// The ?asset= filter must reach SQL in its canonical spelling. ParseAsset accepts bare
+// "XLM"/"NATIVE" and the Horizon-style "CODE:ISSUER", but the stores compare the canonical form
+// with `=`, so discarding the parsed value would serve a 200 with an empty list for those aliases.
 func TestMarkets_AssetFilterIsCanonicalised(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"XLM", "native"},
@@ -861,13 +836,10 @@ func TestMarkets_AssetFilterIsCanonicalised(t *testing.T) {
 	}
 }
 
-// TestMarkets_CachedRows_IncludeEnrichmentDoesNotLeakAcrossRequests —
-// the enrichment leg (the decimals leg is in
-// markets_cache_shared_rows_test.go, whose production-shaped server this
-// reuses). ?include=sparkline,inception wrote volume_history_24h /
-// first_trade_at onto the rows the cache had handed out — which were the
-// cache entry's own — so every later request for the same page was served
-// enrichment it never opted into (`include` is not part of the cache key).
+// TestMarkets_CachedRows_IncludeEnrichmentDoesNotLeakAcrossRequests is the enrichment leg (the
+// decimals leg is in markets_cache_shared_rows_test.go). ?include=sparkline,inception must not
+// write volume_history_24h / first_trade_at onto the cache entry's own rows, or later requests
+// for the page get enrichment they never opted into (`include` is not in the cache key).
 func TestMarkets_CachedRows_IncludeEnrichmentDoesNotLeakAcrossRequests(t *testing.T) {
 	ts, up := sharedRowsServer(t)
 

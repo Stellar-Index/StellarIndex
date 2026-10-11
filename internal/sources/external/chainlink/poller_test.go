@@ -153,13 +153,10 @@ func TestRoundCache_dedup(t *testing.T) {
 	}
 }
 
-// TestRoundCache_phaseRollover_resumesEmission is the phase-rollover
-// regression: a Chainlink proxy phase upgrade resets the aggregator-
-// local roundId to ~1 while the phaseId increments. With a
-// low-64-bit dedup key the post-upgrade round=1 reads as <= prev=<big>
-// and the feed silently stops emitting until restart. Keying on the
-// FULL uint80 (phaseId<<64|aggRound) keeps the wide id monotonic, so
-// emission resumes.
+// TestRoundCache_phaseRollover_resumesEmission: a Chainlink proxy phase upgrade resets the
+// aggregator-local roundId to ~1 while phaseId increments. A low-64-bit dedup key would read the
+// new round as <= the previous one and silently stop emitting until restart. Keying on the FULL
+// uint80 (phaseId<<64|aggRound) keeps the id monotonic.
 func TestRoundCache_phaseRollover_resumesEmission(t *testing.T) {
 	t.Parallel()
 	c := newRoundCache()
@@ -205,11 +202,9 @@ func TestDecodeLatestRoundData_phaseBits(t *testing.T) {
 	}
 }
 
-// TestPollOnce_allFeedsFailed_returnsError is the G10-02 liveness
-// regression: when every feed errors and zero updates result, PollOnce
-// must surface the error rather than returning (nil,nil,nil). The old
-// "skip" path made the runner bump LastSuccessUnix and the staleness
-// gauge stayed green while the poller was wedged.
+// TestPollOnce_allFeedsFailed_returnsError is a liveness guard: when every feed errors and zero
+// updates result, PollOnce must surface the error, not (nil,nil,nil). A silent skip would make the
+// runner bump LastSuccessUnix and keep the staleness gauge green over a wedged poller.
 func TestPollOnce_allFeedsFailed_returnsError(t *testing.T) {
 	t.Parallel()
 	// Server that always 500s → every eth_call fails.
@@ -322,24 +317,18 @@ func TestPollOnce_emitsOracleUpdate(t *testing.T) {
 	}
 }
 
-// TestPollOnce_projectFailureDoesNotStrandRound is the RNC26
-// regression: a project() failure occurring AFTER decode/resolveDecimals
-// have already succeeded (here, an Invert quotient that floors to zero
-// because the raw answer exceeds 10^(2*decimals)) must not mark the
-// round emitted. If it does, a later, otherwise-healthy poll of the
-// SAME round (on-chain answer corrected, roundId unchanged) silently
-// produces zero updates forever — the feed is wedged until process
-// restart even though nothing is actually wrong with it anymore.
+// TestPollOnce_projectFailureDoesNotStrandRound: a project() failure AFTER decode/resolveDecimals
+// succeeded (here an Invert quotient flooring to zero because the raw answer exceeds
+// 10^(2*decimals)) must not mark the round emitted. Otherwise a later healthy poll of the SAME
+// round (answer corrected, roundId unchanged) produces zero updates until process restart.
 func TestPollOnce_projectFailureDoesNotStrandRound(t *testing.T) {
 	t.Parallel()
 	const feedAddr = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"
 	updatedAt := uint64(1767225600)
 
-	// First answer is decode-valid (positive) but, once inverted at
-	// 8-dec scale (10^16 / answer), floors to zero because answer
-	// exceeds 10^16 — project()'s post-invert non-positive guard
-	// refuses it. The SAME roundId later reports a healthy answer
-	// that inverts to a positive price.
+	// The first answer is decode-valid but inverts at 8-dec scale (10^16 / answer) to zero, since
+	// answer exceeds 10^16, so project()'s post-invert non-positive guard refuses it. The SAME
+	// roundId later reports a healthy answer that inverts to a positive price.
 	answer := big.NewInt(200_000_000_000_000_000) // 2e17 > 1e16 → quotient floors to 0
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -446,11 +435,9 @@ func buildLatestRoundDataReturn(t *testing.T, roundID uint64, answer *big.Int, s
 	return "0x" + hex.EncodeToString(buf[:])
 }
 
-// buildProxyRoundDataReturn assembles the same 5-tuple but encodes a
-// FULL uint80 proxy roundId = (phaseID<<64)|aggRound across bytes
-// 22..32 of word 0. Used by the phase-rollover test
-// to reproduce the case where aggRound resets to ~1 but phaseID
-// increments — the wide id still strictly increases.
+// buildProxyRoundDataReturn assembles the same 5-tuple but encodes a FULL uint80 proxy roundId
+// = (phaseID<<64)|aggRound across bytes 22..32 of word 0, for the phase-rollover test where
+// aggRound resets to ~1 but phaseID increments and the wide id still strictly increases.
 func buildProxyRoundDataReturn(t *testing.T, phaseID uint16, aggRound uint64, answer *big.Int, updatedAt uint64) string {
 	t.Helper()
 	var buf [160]byte
@@ -572,11 +559,9 @@ func decimalsReturn(v uint8) string {
 	return "0x" + hex.EncodeToString(buf[:])
 }
 
-// fakeRPC is a selector-dispatching JSON-RPC fake: eth_call
-// latestRoundData() answers roundHex, eth_call decimals() answers the
-// current decimalsValue (or the configured HTTP status when != 200),
-// eth_getLogs answers an empty list and eth_blockNumber a small head.
-// Call kinds are counted so tests can assert the read cadence.
+// fakeRPC is a selector-dispatching JSON-RPC fake: latestRoundData() answers roundHex, decimals()
+// answers decimalsValue (or the configured HTTP status when != 200), eth_getLogs an empty list and
+// eth_blockNumber a small head. Call kinds are counted so tests can assert the read cadence.
 type fakeRPC struct {
 	srv            *httptest.Server
 	roundHex       string
@@ -722,11 +707,9 @@ func TestPollOnce_decimalsEqualFlows(t *testing.T) {
 	}
 }
 
-// TestPollOnce_decimalsMismatchRefusedAndCounted — configured 8 but
-// the chain says 18: the feed is refused every tick (ErrDecimalsMismatch,
-// no row, no price read), each refusal increments the counter, decimals()
-// is re-read only after the retry interval, and rows resume once config
-// and chain agree.
+// TestPollOnce_decimalsMismatchRefusedAndCounted: with 8 configured but 18 on chain, the feed is
+// refused every tick (ErrDecimalsMismatch, no row, no price read), each refusal increments the
+// counter, decimals() is re-read only after the retry interval, and rows resume once they agree.
 func TestPollOnce_decimalsMismatchRefusedAndCounted(t *testing.T) {
 	t.Parallel()
 	pair := testPair("LINK", "USD")
@@ -926,11 +909,10 @@ func TestDecodeDecimals(t *testing.T) {
 	}
 }
 
-// TestResolveDecimals_sharedAddressVerdictIsPerPair — two canonical
-// pairs mapped to one feed address (the invert pattern) with different
-// configured decimals must each get the verdict for THEIR OWN spec,
-// whichever resolves first. The on-chain value is cached per address;
-// a mismatch verdict must not be.
+// TestResolveDecimals_sharedAddressVerdictIsPerPair: two canonical pairs mapped to one feed
+// address (the invert pattern) with different configured decimals must each get the verdict for
+// THEIR OWN spec, whichever resolves first. The on-chain value is cached per address; a mismatch
+// verdict must not be.
 func TestResolveDecimals_sharedAddressVerdictIsPerPair(t *testing.T) {
 	t.Parallel()
 	const feedAddr = "0x00000000000000000000000000000000000000c7"
@@ -1128,11 +1110,9 @@ func TestPollOnce_carriedForwardRoundRefused(t *testing.T) {
 	}
 }
 
-// A stale sibling contributing zero updates must not flip a tick
-// to "error" when another feed is CURRENT this tick — and "current"
-// means emitted OR unchanged, not just emitted. Unchanged sends nothing
-// to PollOnce's fan-in, so without tracking it separately the stale
-// feed's error became firstErr even though the tick was healthy.
+// A stale sibling contributing zero updates must not flip a tick to "error" when another feed is
+// CURRENT, meaning emitted OR unchanged. Unchanged sends nothing to PollOnce's fan-in, so it must
+// be tracked separately or the stale feed's error becomes firstErr on a healthy tick.
 func TestPollOnce_staleFeedBesideUnchangedSiblingStaysGreen(t *testing.T) {
 	t.Parallel()
 	start := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
@@ -1316,22 +1296,13 @@ func TestPollOnce_acceptsUpdatedAtWithinSkew(t *testing.T) {
 	}
 }
 
-// NS10 — the per-feed fan-out's panic guard must RELEASE what the feed
-// holds, not merely contain the panic.
-//
-// PollOnce acquires the concurrency semaphore in the CALLER's frame
-// (`sem <- struct{}{}` before the `go`) and a WaitGroup slot with it, so a
-// recover that swallows the panic without running the `<-sem` and wg.Done
-// defers first converts a loud whole-process crash into a silent permanent
-// hang: the loop blocks forever handing out the next slot, the join
-// goroutine never closes `results`, and the runner's tick never returns.
-// That is strictly worse than the crash it replaces, and it is invisible to
-// a single-feed test — with one feed the slot is never re-acquired and the
-// WaitGroup is never waited on under contention.
-//
-// So: more feeds than slots, and every one of them panics. The panic is the
-// real one a struct-literal Poller produces (resolveDecimals dereferences
-// p.decimals, which only NewPoller populates).
+// The per-feed fan-out's panic guard must RELEASE what the feed holds, not merely contain the
+// panic. PollOnce acquires the concurrency semaphore and a WaitGroup slot in the CALLER's frame,
+// so a recover that skips the `<-sem` and wg.Done defers turns a loud crash into a silent
+// permanent hang: the loop blocks on the next slot and `results` is never closed. A single-feed
+// test cannot see it, so this uses more feeds than slots and every one panics. The panic is the
+// real one a struct-literal Poller produces (resolveDecimals dereferences p.decimals, which only
+// NewPoller populates).
 func TestPollOnce_PanickingFeedReleasesItsSlotAndWaiter(t *testing.T) {
 	const (
 		workerName = "external-chainlink-feed-poll"
@@ -1401,21 +1372,17 @@ func TestPollOnce_PanickingFeedReleasesItsSlotAndWaiter(t *testing.T) {
 	}
 }
 
-// PollOnce fans out one detached goroutine per feed plus a join
-// goroutine, and an unrecovered panic in ANY goroutine terminates the WHOLE
-// process. Without the guard this test does not fail, it CRASHES the test
-// binary; that crash is the production harm.
+// PollOnce fans out one detached goroutine per feed plus a join goroutine, and an unrecovered
+// panic in ANY goroutine terminates the WHOLE process. Without the guard this test CRASHES the
+// test binary, which is the production harm.
 //
-// The assertion is not merely "it survived". A panicking feed that is only
-// CONTAINED disappears from `results` entirely, so the tick ends with zero
-// updates and zero errors — which PollOnce's own G10-02 comment calls a
-// healthy skip, bumping ExternalPollerLastSuccessUnix and leaving the
-// staleness gauge green over a poller that is actually dead. So the panic
-// must be reported as a per-feed FAILURE, and an all-feeds-panicking tick
-// must surface an error.
+// Surviving is not enough: a panicking feed that is only CONTAINED vanishes from `results`, so the
+// tick ends with zero updates and zero errors, reads as a healthy skip, bumps
+// ExternalPollerLastSuccessUnix and keeps the staleness gauge green over a dead poller. The panic
+// must be reported as a per-feed FAILURE, and an all-feeds-panicking tick must surface an error.
 //
-// The panic is the real one a struct-literal Poller produces: resolveDecimals
-// dereferences p.decimals, which only NewPoller populates.
+// The panic is the real one a struct-literal Poller produces: resolveDecimals dereferences
+// p.decimals, which only NewPoller populates.
 func TestPollOnce_PanickingFeedIsReportedNotSilentlySkipped(t *testing.T) {
 	const workerName = "external-chainlink-feed-poll"
 	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName))

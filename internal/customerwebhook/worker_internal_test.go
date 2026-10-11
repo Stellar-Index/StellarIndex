@@ -42,14 +42,10 @@ func (nopStore) MarkAttemptFailed(context.Context, uuid.UUID, string, int, time.
 	return nil
 }
 
-// TestBatchLimit_WorstCaseSerialUnderLease is the MEDIUM double-delivery
-// guard. The worker drains a batch SERIALLY, and the
-// store leases each claimed row for storeLeaseDuration (5m). If the
-// worst-case serial batch time (BatchLimit × per-request Timeout) can
-// exceed that lease, a second worker re-claims the un-processed tail and
-// DOUBLE-delivers. This pins the default BatchLimit × Timeout comfortably
-// under the 5-minute lease; a regression that bumps BatchLimit back to
-// 100 (100 × 10s = 1000s ≫ 300s) fails here.
+// TestBatchLimit_WorstCaseSerialUnderLease guards against double delivery. The worker drains a
+// batch serially and the store leases each claimed row for storeLeaseDuration, so a worst-case
+// batch time (BatchLimit × Timeout) past the lease lets a second worker re-claim the tail.
+// The default BatchLimit × Timeout must stay comfortably under the lease.
 func TestBatchLimit_WorstCaseSerialUnderLease(t *testing.T) {
 	w := New(nopStore{}, Options{})
 
@@ -64,12 +60,9 @@ func TestBatchLimit_WorstCaseSerialUnderLease(t *testing.T) {
 	}
 }
 
-// TestScheduleRetry_ExponentialBackoff pins the retry schedule (30s, 1m,
-// 2m, 4m, … doubling, capped at 1h) and the INFO overflow clamp. Every
-// delay is now full-jittered into [cap/2, cap], so we assert band
-// membership rather than an exact value. A regression that dropped the
-// cap, mis-shifted the exponent, or let `base << n` wrap int64 for a
-// large attempt number would push a delay out of band and fail here.
+// TestScheduleRetry_ExponentialBackoff pins the retry schedule (30s doubling, capped at 1h) and
+// the overflow clamp. Delays are full-jittered into [cap/2, cap], so it asserts band membership;
+// a dropped cap, a mis-shifted exponent or a wrapped `base << n` falls out of band.
 func TestScheduleRetry_ExponentialBackoff(t *testing.T) {
 	base := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
 	w := &Worker{opts: Options{Clock: func() time.Time { return base }}}
@@ -106,12 +99,9 @@ func TestScheduleRetry_ExponentialBackoff(t *testing.T) {
 	}
 }
 
-// TestScheduleRetry_Jitter is the LOW thundering-herd guard: the retry
-// delay is jittered, so two calls at the SAME attempt land in the
-// full-jitter band [delay/2, delay] AND vary across samples. Without
-// jitter, scheduleRetry(8) returns exactly 1h every time — the
-// distinct-value assertion below would then see one value and fail,
-// which is what makes this test non-vacuous.
+// TestScheduleRetry_Jitter is the thundering-herd guard: calls at the same attempt must land in
+// the band [delay/2, delay] and vary across samples. Without jitter every call returns the same
+// value, which the distinct-value assertion catches.
 func TestScheduleRetry_Jitter(t *testing.T) {
 	base := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
 	w := &Worker{opts: Options{Clock: func() time.Time { return base }}}
@@ -134,12 +124,8 @@ func TestScheduleRetry_Jitter(t *testing.T) {
 	}
 }
 
-// TestSignHMACSHA256_BindsTimestamp is the replay-defence
-// guard: the signature MUST cover "<unix_ts>." + body, not the body
-// alone (a body-only signature made a captured delivery replayable
-// forever). We recompute the expected HMAC and assert the exact
-// value, then assert that a body-only signature differs — proving
-// the timestamp is genuinely mixed in.
+// TestSignHMACSHA256_BindsTimestamp is the replay-defence guard: the signature must cover
+// "<unix_ts>." + body, since a body-only signature leaves a captured delivery replayable forever.
 func TestSignHMACSHA256_BindsTimestamp(t *testing.T) {
 	secret := []byte("whsec_test_key")
 	ts := int64(1_751_720_400)
@@ -179,17 +165,12 @@ func TestSignHMACSHA256_BindsTimestamp(t *testing.T) {
 
 // TestWorker_retryClassification pins retry classification.
 //
-// A 4xx must not be terminal on the FIRST attempt: a 429 from any
-// endpoint behind a rate-limiting gateway permanently destroyed the
-// event — next_attempt_at NULL, dropped out of the pending predicate,
-// with no dead-letter, no retry and no alert (the rules match only
-// server_error/network_error/exhausted, so client_error is unmonitored).
-// A SEV-1 notification coincident with a freeze burst was lost that way.
+// A 4xx must not be terminal on the first attempt: a 429 from a rate-limiting gateway would
+// drop the event from the pending predicate with no dead-letter, retry or alert (alert rules
+// match only server_error/network_error/exhausted).
 //
-// Conversely 3xx was classified "transient" and retried 15 times over
-// ~8h even though redirects are deliberately disabled by the SSRF
-// defence, so it could never succeed — and the recorded reason said
-// "transient", which is false.
+// A 3xx must not be retried as transient: redirects are disabled by the SSRF defence, so it can
+// never succeed and the recorded reason would be false.
 func TestWorker_retryClassification(t *testing.T) {
 	for _, tc := range []struct {
 		status    int
@@ -216,20 +197,13 @@ func TestWorker_retryClassification(t *testing.T) {
 }
 
 // TestNew_DefaultClientWiresSSRFGuardAndRefusesRedirects pins the
-// WIRING of the delivery-time SSRF defence, not just its
-// predicate.
+// WIRING of the delivery-time SSRF defence, not just its predicate: ssrf_test.go covers
+// ssrfGuardedDialContext, but only this test fails if the default client stops using it.
+// Webhook URLs are customer-supplied and registration-time validation cannot catch DNS
+// rebinding, which is why the delivery-time guard exists.
 //
-// ssrf_test.go tests ssrfGuardedDialContext rigorously — 8 blocked
-// ranges, error text asserted. Nothing asserted that the default HTTP
-// client actually USES it, so deleting `DialContext:
-// ssrfGuardedDialContext` from the transport left the whole repo's
-// `go test ./...` green. The webhook URL is
-// customer-supplied, and registration-time validation cannot catch DNS
-// rebinding between registration and delivery — which is the entire
-// reason the delivery-time guard exists.
-//
-// Also pins CheckRedirect: without it a 302 from a public host to an
-// internal one is followed automatically, routing around the dialer.
+// Also pins CheckRedirect: otherwise a 302 from a public host to an internal one is followed,
+// routing around the dialer.
 func TestNew_DefaultClientWiresSSRFGuardAndRefusesRedirects(t *testing.T) {
 	w := New(nopStore{}, Options{})
 	c := w.opts.HTTPClient
@@ -268,13 +242,10 @@ func TestNew_DefaultClientWiresSSRFGuardAndRefusesRedirects(t *testing.T) {
 	}
 }
 
-// TestNew_RejectsOptionsThatBreakTheLeaseInvariant pins that the
-// compile-time guard beside the defaults (storeLeaseDuration vs
-// defaultBatchLimit/defaultHTTPTimeout/markWriteTimeout) only protects the
-// DEFAULT values. A caller-supplied BatchLimit or HTTPClient.Timeout that
-// pushes the worst-case serial batch time at or past the store's claim
-// lease must be refused at construction, not silently accepted to double-
-// deliver in production once the lease expires mid-batch.
+// TestNew_RejectsOptionsThatBreakTheLeaseInvariant pins that the compile-time lease guard covers
+// only the default values. A caller-supplied BatchLimit or HTTPClient.Timeout that pushes the
+// worst-case serial batch time to or past the claim lease must be refused at construction, or
+// it double-delivers once the lease expires mid-batch.
 func TestNew_RejectsOptionsThatBreakTheLeaseInvariant(t *testing.T) {
 	defer func() {
 		if recover() == nil {
@@ -333,11 +304,8 @@ func (*panicOnOneStore) WebhookAccountStatus(context.Context, uuid.UUID) (platfo
 	return platform.AccountActive, nil
 }
 
-// TestTick_PanicInOneDeliveryDoesNotStopTheBatch pins the recover(): tick had no
-// recover() anywhere between it and deliverOne, so a panic on one row
-// (a decode edge case, a nil dereference) killed the poll loop for the
-// rest of the process — every OTHER pending delivery, including ones
-// already claimed in the same batch, silently stopped being drained.
+// TestTick_PanicInOneDeliveryDoesNotStopTheBatch pins the recover(): without it a panic on one
+// row would kill the poll loop and silently stop draining every other pending delivery.
 func TestTick_PanicInOneDeliveryDoesNotStopTheBatch(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -366,11 +334,9 @@ func TestTick_PanicInOneDeliveryDoesNotStopTheBatch(t *testing.T) {
 	}
 }
 
-// ctxHonouringStore is a DeliveryStore that treats its context the way
-// a database driver does: a write attempted on a dead context fails
-// with the context's error and changes nothing. The package's other
-// fake ignores ctx entirely, which is why a mark write running on an
-// already-expired context went unseen.
+// ctxHonouringStore is a DeliveryStore that behaves like a database driver: a write on a dead
+// context fails with the context's error and changes nothing. The package's other fake ignores
+// ctx, which hides mark writes running on an expired context.
 type ctxHonouringStore struct {
 	mu sync.Mutex
 
@@ -463,18 +429,10 @@ func newLifetimeStore(url string) *ctxHonouringStore {
 	}
 }
 
-// TestTick_TimedOutPOSTStillRecordsTheAttempt exercises the webhook leg at
-// the worker's real entry point (tick → deliverOne → handleFailure →
-// the store write).
-//
-// A customer endpoint that hangs is the ordinary way a delivery fails.
-// The attempt context's deadline started before the webhook lookup and
-// the POST, so by the time the POST had exhausted the client timeout the
-// context was already dead, and the write recording the failed attempt
-// ran on it and failed. attempt_count never advanced, so the row kept
-// its claim lease and was re-POSTed every lease interval — into the same
-// timeout, forever, with MaxAttempts powerless because nothing was ever
-// counted.
+// TestTick_TimedOutPOSTStillRecordsTheAttempt runs the hung-endpoint case through the real entry
+// point (tick → deliverOne → handleFailure → store write). The failed attempt must be recorded
+// on a live context even after the POST burned the attempt deadline; otherwise attempt_count
+// never advances and the row is re-POSTed every lease forever, with MaxAttempts powerless.
 func TestTick_TimedOutPOSTStillRecordsTheAttempt(t *testing.T) {
 	release := make(chan struct{})
 	hang := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
@@ -542,11 +500,9 @@ func (c cancelOnResponse) RoundTrip(*http.Request) (*http.Response, error) {
 	}, nil
 }
 
-// TestTick_ShutdownDuringDeliveryStillRecordsIt — the other half of the
-// same wrong lifetime. The attempt context's cancellation is the
-// worker's shutdown signal; an event the customer has ALREADY accepted
-// must be recorded delivered, or it is sent to them a second time when
-// the lease expires.
+// TestTick_ShutdownDuringDeliveryStillRecordsIt is the shutdown half of the same lifetime rule.
+// Cancelling the attempt context is the shutdown signal, but an event the customer already
+// accepted must still be recorded delivered, or it is re-sent when the lease expires.
 func TestTick_ShutdownDuringDeliveryStillRecordsIt(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

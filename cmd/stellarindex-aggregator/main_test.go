@@ -25,12 +25,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// TestDefaultPairs_IncludesBothXLMForms guards against regression of
-// the on-r1 launch finding: the abstract `crypto:XLM` ticker and the
-// Stellar-protocol `native` form are different cache keys, and the
-// aggregator must publish for both so a customer query under either
-// form lands on a populated key. On-chain DEX/SDEX trades store
-// `native` quote-asset; off-chain CEX trades emit `crypto:XLM`.
+// TestDefaultPairs_IncludesBothXLMForms guards that the aggregator publishes under both XLM
+// forms: `crypto:XLM` and `native` are different cache keys, so a query under either must land
+// on a populated key. On-chain DEX/SDEX trades store `native`; off-chain CEX trades emit
+// `crypto:XLM`.
 func TestDefaultPairs_IncludesBothXLMForms(t *testing.T) {
 	got := defaultPairs()
 
@@ -58,12 +56,9 @@ func TestDefaultPairs_IncludesBothXLMForms(t *testing.T) {
 	}
 }
 
-// TestResolveUSDPeggedSorobanAssets — Guard 1: the SAC
-// twin of config.TradesConfig.USDPeggedClassics. A SAC contract inherits a USD
-// peg ONLY when BOTH: its underlying classic ("CODE:ISSUER"/
-// "CODE-ISSUER") is on the operator's usd_pegged_classic_assets list
-// AND it's registered in [supply].sac_wrappers. No new TOML knob —
-// this derives entirely from the two existing operator inputs.
+// TestResolveUSDPeggedSorobanAssets covers the SAC twin of config.TradesConfig.USDPeggedClassics.
+// A SAC contract inherits a USD peg ONLY when BOTH its underlying classic ("CODE:ISSUER" or
+// "CODE-ISSUER") is on usd_pegged_classic_assets AND it is registered in [supply].sac_wrappers.
 func TestResolveUSDPeggedSorobanAssets(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	const usdcClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -131,14 +126,10 @@ func TestResolveUSDPeggedSorobanAssets(t *testing.T) {
 	})
 }
 
-// TestBuildTriangulations_RespectsTriangulationEnabled pins down the
-// aggregate.triangulation_enabled master switch — if no production
-// code consulted the field, an operator
-// setting it false would still get triangulation. The wiring lives in
-// buildTriangulations: when the switch is false, return nil so the
-// orchestrator's `len(cfg.Triangulations) == 0` short-circuit skips
-// the triangulation tick. Validation still runs first so a malformed
-// row is caught regardless of the switch state.
+// TestBuildTriangulations_RespectsTriangulationEnabled pins the aggregate.triangulation_enabled
+// master switch: buildTriangulations returns nil when it is false, so the orchestrator's
+// `len(cfg.Triangulations) == 0` short-circuit skips the tick. Validation still runs first so a
+// malformed row is caught regardless of the switch.
 func TestBuildTriangulations_RespectsTriangulationEnabled(t *testing.T) {
 	row := config.TriangulationChainConfig{
 		Target: "crypto:XLM/fiat:EUR",
@@ -195,16 +186,9 @@ func TestBuildTriangulations_RespectsTriangulationEnabled(t *testing.T) {
 	})
 }
 
-// TestRunSupplyRefresh_DurationMetricRecorded pins the
-// latency-histogram wiring on the supply-refresh
-// loop.
-//
-// Setup: build a real *supply.Refresher with stub
-// LedgerLookup/SnapshotComputer/SnapshotInserter (the supply
-// package's own interfaces — production impls are timescale-
-// backed, the test ones are in-memory). Pre-cancel the context
-// so the immediate first tick runs once and the ticker loop
-// exits via <-ctx.Done() without firing.
+// TestRunSupplyRefresh_DurationMetricRecorded pins the latency-histogram wiring on the
+// supply-refresh loop. It uses a real *supply.Refresher over in-memory stubs and a pre-cancelled
+// context, so the immediate first tick runs once and the ticker loop exits via <-ctx.Done().
 func TestRunSupplyRefresh_DurationMetricRecorded(t *testing.T) {
 	r := supply.NewRefresher(
 		stubSupplyLedgers{ledger: 50_000_000, observedAt: time.Unix(1_770_000_000, 0).UTC()},
@@ -232,11 +216,8 @@ func TestRunSupplyRefresh_DurationMetricRecorded(t *testing.T) {
 
 // ─── stubs for TestRunSupplyRefresh_DurationMetricRecorded ──────
 //
-// Mirror the (unexported) stubs in internal/supply/refresher_test.go.
-// Re-implemented here since the supply package's stubs are
-// package-private; the cost of duplicating ~25 lines beats either
-// exporting test fixtures or adding a separate testfixture
-// subpackage.
+// Mirror the unexported stubs in internal/supply/refresher_test.go; duplicating them beats
+// exporting test fixtures or adding a testfixture subpackage.
 
 type stubSupplyLedgers struct {
 	ledger     uint32
@@ -262,18 +243,14 @@ type stubSupplyInserter struct{}
 
 func (*stubSupplyInserter) InsertSupply(_ context.Context, _ supply.Supply) error { return nil }
 
-// TestRunSEP41SupplyRollup_AdvancesSeriallyAndRecordsOutcomes drives the
-// migration-0085 rollup worker through one fold pass against a fake
-// advancer and pins the two properties the rollup
-// depends on:
+// TestRunSEP41SupplyRollup_AdvancesSeriallyAndRecordsOutcomes drives the rollup worker through
+// one fold pass against a fake advancer and pins two properties:
 //
-//  1. Every watched contract is advanced and the (contract_id, outcome)
-//     counter + paired duration histogram record the right outcome
-//     (ok / noop / error).
-//  2. The worker advances contracts ONE AT A TIME. A cold contract's
-//     first fold is a full-history sum; if the worker fanned them out it
-//     would recreate the concurrent full-table scans that saturated
-//     Postgres — so the fake asserts it is never entered re-entrantly.
+//  1. Every watched contract is advanced and the (contract_id, outcome) counter and duration
+//     histogram record the right outcome (ok / noop / error).
+//  2. Contracts advance ONE AT A TIME. A cold contract's first fold is a full-history sum, so
+//     fanning out would recreate concurrent full-table scans on Postgres; the fake asserts it
+//     is never entered re-entrantly.
 func TestRunSEP41SupplyRollup_AdvancesSeriallyAndRecordsOutcomes(t *testing.T) {
 	const (
 		cOK   = "CROLLUPOK00000000000000000000000000000000000000000000000"
@@ -384,11 +361,10 @@ func waitForRollup(t *testing.T, cond func() bool) {
 	t.Fatal("timed out waiting for rollup worker to advance all contracts")
 }
 
-// TestRunSEP41SupplyRollup_AbsentCursorIsNoCursorNotNoop pins that a pass
-// that folds nothing because the projector's sep41_supply cursor row is
-// absent leaves the fold pinned and every supply read on the full-history
-// scan. It must count as outcome="no_cursor" (never the steady-state "noop"
-// a dormant token produces) and WARN once per contract, not every cadence.
+// TestRunSEP41SupplyRollup_AbsentCursorIsNoCursorNotNoop pins that a pass folding nothing because
+// the projector's sep41_supply cursor row is absent (fold pinned, supply reads on the
+// full-history scan) counts as outcome="no_cursor", never the steady-state "noop" of a dormant
+// token, and WARNs once per contract, not every cadence.
 func TestRunSEP41SupplyRollup_AbsentCursorIsNoCursorNotNoop(t *testing.T) {
 	const cPinned = "CROLLUPNOCURSOR0000000000000000000000000000000000000000"
 	fake := &fakeRollupAdvancer{
@@ -445,15 +421,10 @@ func TestSEP41RollupOutcome(t *testing.T) {
 	}
 }
 
-// TestBuildSupplyPolicy_TranslatesConfig.
-// buildClassicRefreshers/buildSEP41Refreshers must not hardcode
-// supply.Policy{} at both NewClassicComputer/NewSEP41Computer call
-// sites: an operator-configured per_asset_locked_sets /
-// max_supply_overrides would never reach the computer despite existing
-// in config and being fully implemented in internal/supply.Policy.
-// Asserts the corrected value: the built Policy actually carries the
-// configured PerAsset locked-set entries and a working
-// MaxSupplyOverride lookup — not just "no error."
+// TestBuildSupplyPolicy_TranslatesConfig: buildClassicRefreshers/buildSEP41Refreshers must not
+// hardcode supply.Policy{} at the NewClassicComputer/NewSEP41Computer call sites, or configured
+// per_asset_locked_sets / max_supply_overrides never reach the computer. Asserts the built
+// Policy carries the configured PerAsset entries and a working MaxSupplyOverride lookup.
 func TestBuildSupplyPolicy_TranslatesConfig(t *testing.T) {
 	// Dash form, as watched_classic_assets spells it: the computers
 	// look entries up by the colon supply.AssetKey, so the built Policy
@@ -642,15 +613,11 @@ func TestDivergenceLedgerAdapter_LatestLedger_FailsOpenOnError(t *testing.T) {
 	}
 }
 
-// TestLazyCloseTimeReader_RetriesTransientDialFailure covers the case where the
-// supply refresher's ClickHouse close-time reader must not dial once,
-// synchronously, at boot — any error (including the transient cold-boot
-// race clickhouse-server's metadata load causes) would abort the whole
-// aggregator process. newLazyCloseTimeReader must instead retry in the
-// background until the dial succeeds, exactly like the decimals-guard
-// and SAC-resolver readers already do. A dial stub that fails twice
-// then succeeds proves the retry happened: a single-shot
-// dial has no such loop to observe.
+// TestLazyCloseTimeReader_RetriesTransientDialFailure: the supply refresher's ClickHouse
+// close-time reader must not dial once, synchronously, at boot, or a transient cold-boot error
+// (clickhouse-server still loading metadata) aborts the whole aggregator. newLazyCloseTimeReader
+// retries in the background until the dial succeeds; a stub failing twice then succeeding
+// proves the retry loop exists.
 func TestLazyCloseTimeReader_RetriesTransientDialFailure(t *testing.T) {
 	origMin, origMax := decimalsResolverRetryMin, decimalsResolverRetryMax
 	decimalsResolverRetryMin = time.Millisecond
