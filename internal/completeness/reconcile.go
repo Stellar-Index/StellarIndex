@@ -67,28 +67,20 @@ type ProjectionGap struct {
 }
 
 // BlindSpots records the raw rows a re-derive could not turn into a
-// comparable expectation at all — the rows it SKIPPED rather than counted.
+// comparable expectation at all: the rows it SKIPPED rather than counted.
 //
-// The skip is a soft-fail that deliberately
-// mirrors the projector's: a row the projector could not decode produced no
-// served row, and a row the re-derive cannot decode produces no expected
-// row, so ReconcileCounts sees expected == actual == 0 and reports the
-// ledger CLEAN. That symmetry is the defect. The two sides fail for the SAME
-// reason — the same Decode, on the same bytes — so a decoder bug or a
-// truncated payload silently nets to zero and certifies `projection_ok` on a
-// ledger where rows were provably dropped from the served tier.
+// The skip deliberately mirrors the projector's: a row the projector could not
+// decode produced no served row, and a row the re-derive cannot decode produces
+// no expected row, so ReconcileCounts sees expected == actual == 0 and reports
+// the ledger CLEAN. Both sides fail for the SAME reason (same Decode, same
+// bytes), so a decoder bug or truncated payload nets to zero and certifies
+// `projection_ok` on a ledger where rows were provably dropped.
 //
-// Row counts alone cannot detect this class by construction: the check is
-// "expected == actual" and both sides are blind in the same place. The only
-// honest signal is the blindness itself, which is why it is returned rather
-// than logged — a caller certifying completeness must treat "I could not
-// evaluate this ledger" as NOT-clean, never as clean.
-//
-// The old comment claimed "the recognition audit catches shape issues". That
-// is true for UNRECOGNISED contract/topic shapes — events no decoder claims.
-// It is NOT true for this class: an event the decoder DOES claim
-// (Matches == true) and then fails to Decode is, to the recognition audit, a
-// recognised event. Nothing else looks at it.
+// Row counts alone cannot detect this class. The only honest signal is the
+// blindness itself, which is why it is returned rather than logged: a caller
+// certifying completeness must treat "I could not evaluate this ledger" as
+// NOT-clean. The recognition audit does not cover it: an event the decoder
+// claims (Matches == true) and then fails to Decode is a recognised event.
 type BlindSpots struct {
 	// Ledgers holds every ledger with at least one blind row, ascending and
 	// deduped. Callers whose branch pins the watermark on problem ledgers

@@ -31,27 +31,22 @@ func assetCode(assetID string) string {
 
 // quoteRank scores how "quote-like" (numeraire-like) an asset is.
 // Higher = more likely to be the quote in a canonical pair:
-// fiat (4) > stablecoin (3) > XLM (2) > any other token (1). This is
-// what makes XLM/USDC orient as base=XLM, quote=USDC (price in USDC),
-// while XLM/AQUA orients as base=AQUA, quote=XLM (AQUA priced in XLM).
+// fiat (4) > stablecoin (3) > XLM (2) > any other token (1). So XLM/USDC
+// orients as base=XLM, quote=USDC, while XLM/AQUA orients as base=AQUA, quote=XLM.
 //
 // ISSUER-AGNOSTIC BY DESIGN. Rank 3 keys on the bare asset CODE, so ANY
-// classic token calling itself "USDC" — including a scam — ranks as a
+// classic token calling itself "USDC", including a scam, ranks as a
 // stablecoin here. That is safe ONLY because ranking decides ORIENTATION and
 // nothing else; it never asserts the asset is worth a dollar.
 //
-// The safety rests on an invariant OUTSIDE this function: every downstream
-// substitution of a stablecoin for its fiat peg re-checks issuer identity.
-// aggregate.FiatProxy accepts only the abstract `crypto:<TICKER>` form and
-// refuses every classic asset (pinned by
-// TestFiatProxy_NonCryptoAssetsReturnFalse), and the classic USD-peg path is an
-// operator-declared spec carrying full CODE-ISSUER identity. Any new path that
-// maps a rank-3 asset to a fiat value MUST do its own issuer check; this
-// ranking is not one.
+// Every downstream substitution of a stablecoin for its fiat peg re-checks
+// issuer identity: aggregate.FiatProxy refuses every classic asset (pinned by
+// TestFiatProxy_NonCryptoAssetsReturnFalse), and the classic USD-peg path
+// carries full CODE-ISSUER identity. Any new path that maps a rank-3 asset to
+// a fiat value MUST do its own issuer check.
 //
 // A SAC declared in `[supply].sac_wrappers` ranks as the classic asset it
-// wraps, so a market traded through the SAC orients the same way as its
-// classic twin; an undeclared C-address cannot be inverted and ranks 1.
+// wraps; an undeclared C-address cannot be inverted and ranks 1.
 func quoteRank(assetID string) int {
 	if strings.HasPrefix(assetID, "fiat:") {
 		return 4

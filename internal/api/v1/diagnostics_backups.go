@@ -15,9 +15,7 @@ import (
 
 // BackupsDiagnostics is the wire shape of GET /v1/diagnostics/backups, the
 // status page's "Backups" panel: a snapshot of backup and DR-evidence freshness
-// for the region, judged against the SLO thresholds echoed in `slo` (as
-// StatusLatency's P95TargetMs does: the API declares its thresholds, the UI
-// carries no literals).
+// for the region, judged against the SLO thresholds echoed in `slo`.
 //
 // SOURCE OF TRUTH: Prometheus via the same [PrometheusStatusBackend] as
 // /v1/status. The API never shells out to pgbackrest.
@@ -27,15 +25,11 @@ import (
 //   - node_exporter textfile collector: `stellarindex_restore_drill_*`
 //     (scripts/ops/restore-drill.sh) and `stellarindex_ch_schema_snapshot_*`
 //     (scripts/ops/ch-schema-snapshot.sh), plus `node_textfile_mtime_seconds`
-//     for the drill's last-run time (the script stamps last_success ONLY on a
-//     clean run, so mtime is the only "it ran at all" signal).
+//     for the drill's last-run time (last_success is stamped ONLY on a clean
+//     run, so mtime is the only "it ran at all" signal).
 //
-// Every timestamp / age is a pointer: nil means "no data" (series absent or
-// query failed) and the freshness verdict is "unknown", rendered grey, never as
-// a fresh zero.
-//
-// No secrets, paths or hostnames: repo keys are pgBackRest `repoN` ordinals,
-// backup labels are its own `YYYYMMDD-HHMMSS[F|D|I]` names.
+// Every timestamp / age is a pointer: nil means "no data" and the freshness
+// verdict is "unknown", never a fresh zero. No secrets, paths or hostnames.
 type BackupsDiagnostics struct {
 	// SourceStatus is the tri-state trust signal for the whole
 	// document (same rationale as StatusResponse.IncidentsStatus):

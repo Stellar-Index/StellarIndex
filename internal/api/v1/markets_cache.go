@@ -18,23 +18,19 @@ import (
 // 24h-trades-hypertable scan, hit by the explorer on every /markets, /pools and
 // /dexes page load.
 //
-// Cache key: a stable string derived from the call's args, so the most-trafficked
-// queries share one upstream call. Single-flight + error-not-cached match the
-// SourcesStatsReader wrapper. Per-pair lookups (PairMarket) and the sparkline
-// batch are pass-through: keyed too narrowly to benefit and already fast.
+// Cache key: a stable string derived from the call's args. Single-flight +
+// error-not-cached match the SourcesStatsReader wrapper. Per-pair lookups
+// (PairMarket) and the sparkline batch are pass-through.
 //
 // Ownership: the cache owns what it stores, the caller owns what it gets. Every
 // serving branch of fetchPairs / fetchPools returns a COPY of the entry's row
-// slice. handleMarkets and handlePools write their rows in place (the
-// dex-nonstandard-decimals last_price correction, plus ?include=sparkline /
-// inception enrichment), and the correction is not idempotent: handed the shared
-// array, every hit would re-multiply the corrected price by K (41.32 -> 4132 ->
-// 413200 ...), opt-in enrichment would leak into requests that never asked for
-// it, and concurrent requests would race.
+// slice, because handleMarkets and handlePools write rows in place (the
+// dex-nonstandard-decimals last_price correction is not idempotent: a shared
+// array would re-multiply the price on every hit).
 //
-// The copy is one level deep (the row structs). Pointer and slice FIELDS
-// (LastPrice, Volume24hUSD, VolumeHistory24h, ...) still alias the cached values,
-// so a caller may REPLACE a field on its row but must never write THROUGH one.
+// The copy is one level deep. Pointer and slice FIELDS (LastPrice,
+// Volume24hUSD, VolumeHistory24h, ...) still alias the cached values, so a
+// caller may REPLACE a field on its row but must never write THROUGH one.
 type CachedMarketsReader struct {
 	// logger sinks a panic recovered in a detached refresh goroutine.
 	// It is the PROCESS DEFAULT rather than the API Server's logger:

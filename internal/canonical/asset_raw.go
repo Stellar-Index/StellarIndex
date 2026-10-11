@@ -1,28 +1,24 @@
 package canonical
 
-// Oracle-published raw symbol helpers — see
+// Oracle-published raw symbol helpers; see
 // docs/design/oracle-capture-totality-design.md.
 //
 // The Asset type carries an AssetOracleRaw variant for a symbol an
 // indexed on-chain oracle (Reflector / RedStone / Band) published
-// that maps to NO canonical asset. The record layer must be total —
-// every price entry the oracle wrote on-chain is recorded — while
-// only the interpretation layer is selective. Without this variant an
-// unmapped symbol would be dropped at decode time and recovering it
-// would need a code change AND a lake replay.
+// that maps to NO canonical asset. The record layer must be total while
+// only the interpretation layer is selective: a symbol dropped at decode time
+// would need a code change AND a lake replay to recover.
 //
-// Wire form: `raw:<symbol>` (e.g. `raw:NOTACOIN`,
-// `raw:SolvBTC.BBN_FUNDAMENTAL/USD`). The symbol is stored VERBATIM;
-// source scoping comes from oracle_updates.source, not from the
-// code. There is deliberately no allow-list: the whole point is to
-// hold what we could not map.
+// Wire form: `raw:<symbol>` (e.g. `raw:NOTACOIN`). The symbol is stored
+// VERBATIM; source scoping comes from oracle_updates.source. There is
+// deliberately no allow-list.
 //
 // Record-layer ONLY. A raw asset is never a Pair leg (Pair.Validate
 // refuses it), never a VWAP input, never compared by the
 // interpretation layer, and never a supply key. Consumers that scan
 // oracle_updates without keying by canonical asset must exclude it
-// via [Asset.IsMapped] or `asset NOT LIKE 'raw:%'`. Orientation of
-// an unmapped feed is unknown, so a raw row carries no Invert.
+// via [Asset.IsMapped] or `asset NOT LIKE 'raw:%'`. An unmapped feed's
+// orientation is unknown, so a raw row carries no Invert.
 
 // rawSymbolMaxLen caps the verbatim symbol. Reflector/Band symbols
 // are ScSymbol (≤ 32 bytes); RedStone feed_ids are ScString and the

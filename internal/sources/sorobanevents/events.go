@@ -5,15 +5,10 @@
 // the `soroban_events` hypertable (migration 0041), so decoders shipped AFTER an
 // event was emitted can backfill via SQL instead of MinIO re-walks.
 //
-// # Wiring
-//
-//   - [RawEventSink] is the dispatcher's [dispatcher.SetRawEventSink] hook. It
-//     fires AFTER the per-source decoders for every Soroban contract event,
-//     with no topic[0] or contract_id filter.
-//   - [Capture] converts a [events.Event] into a [Row]; an [AsyncSink] batches
-//     Rows into [timescale.Store.InsertSorobanEventsBatch].
-//
-// # Encoding
+// [RawEventSink] is the dispatcher's [dispatcher.SetRawEventSink] hook; it fires
+// AFTER the per-source decoders for every Soroban contract event, with no
+// topic[0] or contract_id filter. [Capture] converts a [events.Event] into a
+// [Row]; an [AsyncSink] batches Rows into [timescale.Store.InsertSorobanEventsBatch].
 //
 // Topics 0-3 and the body are raw XDR; topic_0_sym is set when topic[0] decodes
 // to a Symbol or String. op_args_xdr is the marshalled xdr.ScVec of the

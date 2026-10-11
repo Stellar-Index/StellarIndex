@@ -174,21 +174,17 @@ func (c *DEXTVLCache) Total() *DEXTVLTotalView {
 // Refusals:
 //
 //   - stale: Refresh's carryPrev keeps a protocol's PREVIOUS entry when its
-//     reserve read fails, so `snapshot` can hold an earlier cycle's figure
-//     (the live failure mode whenever stellarindex_dex_tvl_refresh_failing is
-//     true). Refresh NAMES carried protocols instead of inferring staleness
-//     from a stamp comparison: RFC3339 is second-resolution, so a carried
-//     figure could share an as_of and pass an equality test.
+//     reserve read fails (the live failure mode whenever
+//     stellarindex_dex_tvl_refresh_failing is true). Refresh NAMES carried
+//     protocols instead of comparing stamps: RFC3339 is second-resolution, so a
+//     carried figure could share an as_of and pass an equality test.
 //   - unparseable: the sum must be exact; a part that is not a non-negative
 //     decimal has no defined contribution.
 //   - pool accounting: every pool is priced XOR unpriced, so pools_total must
-//     equal their sum; otherwise money and coverage came from different
-//     accountings and the lower-bound claim is unprovable.
+//     equal their sum; otherwise the lower-bound claim is unprovable.
 //
-// at is the refresh instant, carried names protocols serving a previous
-// cycle's figure, unavailable names derived protocols with no figure in
-// snapshot; each is listed in `excluded` and makes the total a lower bound.
-// Returns nil for an empty snapshot.
+// carried and unavailable protocols are listed in `excluded` and make the total
+// a lower bound. Returns nil for an empty snapshot.
 func reconcileDEXTVLTotal(snapshot map[string]ProtocolTVLView, at time.Time, carried []string, unavailable []DEXTVLExclusion) *DEXTVLTotalView {
 	if len(snapshot) == 0 {
 		return nil

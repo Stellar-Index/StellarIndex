@@ -16,25 +16,21 @@ import (
 // UNAUTHENTICATED explorer reads whose cost is set by the size of the lake,
 // not the request: GET /v1/assets/{asset_id}/holders and the GET /v1/contracts
 // directory. A client looping either would otherwise hold every connection of
-// the shared explorer pool; explorerReadTimeout bounds one request but does
-// not prevent that.
+// the shared explorer pool.
 //
 //   - A short TTL cache with a bounded entry count, keyed on the query's
-//     expensive dimension (as accountStateCache, opsDirCache, opTypeStatsCache).
+//     expensive dimension.
 //   - Per-key single-flight, so a burst of misses launches ONE scan.
 //   - `limit` is deliberately NOT in the cache key: one warm entry holds the
 //     maximum page and every request size slices from it (see
-//     AccountsByWealthCached). The cost is set by the scan, not by LIMIT.
+//     AccountsByWealthCached).
 //
-// Refresh model: both scans can outlast the 8s request budget, so the request
-// path cannot be what fills the cache. Scans run DETACHED from any request
-// context on their own budget. A request (a) serves a fresh entry, (b) serves a
-// STALE entry (200 + flags.stale + the entry's real as_of) while a
-// single-flight refresh runs, or (c) on a stone-cold key waits for the detached
-// compute up to its own deadline; if the scan outlives it, THIS request 503s but
-// the compute continues, so the retry lands warm. A failed refresh keeps the
-// previous entry: old-but-real beats blank. PrewarmContractsDirectory keeps the
-// directory's default rung warm off the 5-minute prewarm loop.
+// Both scans can outlast the 8s request budget, so they run DETACHED from any
+// request context. A request serves a fresh entry, a STALE entry (200 +
+// flags.stale + the entry's real as_of) while a single-flight refresh runs, or
+// on a stone-cold key waits up to its own deadline (then 503s while the compute
+// continues, so the retry lands warm). A failed refresh keeps the previous
+// entry. PrewarmContractsDirectory keeps the directory's default rung warm.
 
 // perKeyFlight collapses concurrent work for the same key. Derived from the
 // clickhouse-package helper of the same name (this package cannot import an

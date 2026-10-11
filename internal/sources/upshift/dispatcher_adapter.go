@@ -50,25 +50,18 @@ func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 // Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY,
 // never on topic bytes alone (ADR-0035).
 //
-// The gate is the whole safety story for this protocol. `deposit`,
-// `withdraw` and `transfer` are generic Soroban symbols with no
-// protocol namespace — a bounded 20,000-ledger pubnet census
-// (63,000,000–63,020,000) found four distinct contracts emitting
-// `deposit`, the vaults being a minority of them, and `transfer` is the
-// single most common event on the network. A topic-only decoder would
-// therefore record strangers' vault flows under this source and would
-// let any contract publish share and asset figures in this protocol's
-// name — the ADR-0035 mis-attribution failure, which also corrupts the
-// ADR-0033 re-derive (both the served table and the re-derived
-// expectation would include the foreign rows and agree with each other
-// over polluted data).
+// `deposit`, `withdraw` and `transfer` are generic Soroban symbols with no
+// protocol namespace: a bounded 20,000-ledger pubnet census
+// (63,000,000-63,020,000) found four distinct contracts emitting `deposit`,
+// the vaults a minority of them. A topic-only decoder would record strangers'
+// vault flows under this source, and corrupt the ADR-0033 re-derive (served
+// table and re-derived expectation would agree over polluted data).
 //
-// Coverage note (ADR-0035): the trade is one failure mode for another.
-// An un-admitted real vault's events are DROPPED, so [MainnetVaults]
-// completeness is load-bearing — held by the bespoke-symbol sweep
-// described in the package doc plus the `protocol_contracts` warm. A
-// vault the curated set misses fails CLOSED into a visible recognition
-// gap (ADR-0033 Claim 2a); it is never silently mis-attributed.
+// Coverage trade (ADR-0035): an un-admitted real vault's events are DROPPED, so
+// [MainnetVaults] completeness is load-bearing, held by the bespoke-symbol
+// sweep in the package doc plus the `protocol_contracts` warm. A missed vault
+// fails CLOSED into a visible recognition gap (ADR-0033 Claim 2a), never a
+// silent mis-attribution.
 func (d *Decoder) Matches(ev events.Event) bool {
 	if classify(&ev) == "" {
 		return false
