@@ -13,17 +13,9 @@ import (
 // CachedAssetsReader wraps a [AssetsReader] with a small per-key TTL
 // cache for the methods that back high-traffic listing endpoints —
 // ListAssetsExt and the batched price-history calls used by
-// /v1/assets?limit=200&include=sparkline. /v1/assets sources its data
-// through this seam. The unified listing fires that exact request
-// on every page load and the underlying SQL takes ~1.1s; without
-// this cache the explorer's time-to-interactive is gated on it.
-//
-// All other AssetsReader methods (single-asset lookups, ATH, market
-// counts) pass through unchanged — they're keyed too narrowly to
-// benefit and most are already fast.
-//
-// Single-flight: concurrent callers during a refetch share one
-// upstream call, mirroring the SourcesStats / Markets caches.
+// /v1/assets?limit=200&include=sparkline, which every explorer page load fires and whose SQL
+// takes ~1.1s. Other AssetsReader methods pass through unchanged (keyed too narrowly to
+// benefit). Concurrent callers during a refetch share one upstream call (single-flight).
 type CachedAssetsReader struct {
 	// logger sinks a panic recovered in a detached refresh goroutine.
 	// It is the PROCESS DEFAULT rather than the API Server's logger:
@@ -49,19 +41,10 @@ type CachedAssetsReader struct {
 
 // assetsCacheMaxEntries bounds the entry map.
 //
-// Cache keys carry client-controlled components — notably `cursor`,
-// which is validated for SHAPE ONLY (it need merely contain the right
-// delimiter; there is no allowlist, HMAC or canonical round-trip), plus
-// free-text `q` and asset ids. Without eviction, one anonymous caller
-// inside the documented 6000/min budget could mint a permanent,
-// full-page entry per distinct cursor — hundreds of MB per minute of
-// unreclaimable heap, walking the process to its 8G MemoryMax and into
-// a systemd restart-storm.
-//
-// The cap + oldest-first eviction matches the bounded siblings
-// (historyCacheMaxEntries, accountStateCacheMax, assetDetail) and sits
-// far above the real working set: the prewarmer covers a handful of
-// shapes and legitimate pagination walks a bounded number of pages.
+// Cache keys carry client-controlled components (`cursor` is validated for shape only, plus
+// free-text `q` and asset ids). Without eviction one anonymous caller could mint a permanent
+// full-page entry per distinct cursor and walk the process to its MemoryMax. The cap sits far
+// above the real working set, which is a handful of prewarmed shapes and bounded pagination.
 const assetsCacheMaxEntries = 4096
 
 // evictOldestAssetsEntry drops the oldest-filled entry when the map is at
@@ -484,16 +467,10 @@ func (c *CachedAssetsReader) fetchRows(
 // fetchRowsAt is fetchRows plus the OBSERVATION TIME of the rows it
 // returns, read under the same lock acquisition as the rows themselves.
 //
-// The pairing is the point. Sampling `e.at` before calling fetchRows
-// and pairing that timestamp with whatever rows come back is a race: a
-// refresh landing in between returns FRESH rows stamped with the STALE
-// entry's time and `stale=true`. A caller would then publish correct
-// data under a wrong `as_of` and a wrong freshness flag, which is the
-// same honesty class as serving stale data as fresh, just inverted.
-//
-// A zero `at` means the rows did not come from a cache entry (cache
-// disabled, or a cold fill whose entry was not retained), which callers
-// read as "answered live".
+// The pairing is the point: sampling `e.at` before fetchRows races with a refresh, which would
+// publish fresh rows under a stale `as_of` and `stale=true`. A zero `at` means the rows did not
+// come from a cache entry (cache disabled, or a cold fill not retained); callers read it as
+// "answered live".
 func (c *CachedAssetsReader) fetchRowsAt(
 	ctx context.Context,
 	op, key string,

@@ -18,19 +18,14 @@ import (
 // 24h-trades-hypertable scan, hit by the explorer on every /markets, /pools and
 // /dexes page load.
 //
-// Cache key: a stable string derived from the call's args. Single-flight +
-// error-not-cached match the SourcesStatsReader wrapper. Per-pair lookups
-// (PairMarket) and the sparkline batch are pass-through.
+// Cache key: a stable string derived from the call's args. Single-flight; errors are not cached.
+// Per-pair lookups (PairMarket) and the sparkline batch are pass-through.
 //
-// Ownership: the cache owns what it stores, the caller owns what it gets. Every
-// serving branch of fetchPairs / fetchPools returns a COPY of the entry's row
-// slice, because handleMarkets and handlePools write rows in place (the
-// dex-nonstandard-decimals last_price correction is not idempotent: a shared
-// array would re-multiply the price on every hit).
-//
-// The copy is one level deep. Pointer and slice FIELDS (LastPrice,
-// Volume24hUSD, VolumeHistory24h, ...) still alias the cached values, so a
-// caller may REPLACE a field on its row but must never write THROUGH one.
+// Ownership: every serving branch of fetchPairs / fetchPools returns a COPY of the entry's row
+// slice, because handleMarkets and handlePools write rows in place and the
+// dex-nonstandard-decimals last_price correction is not idempotent. The copy is one level deep:
+// pointer and slice fields (LastPrice, Volume24hUSD, ...) still alias the cache, so callers may
+// REPLACE a field but must never write THROUGH one.
 type CachedMarketsReader struct {
 	// logger sinks a panic recovered in a detached refresh goroutine.
 	// It is the PROCESS DEFAULT rather than the API Server's logger:
@@ -51,19 +46,10 @@ type CachedMarketsReader struct {
 
 // marketsCacheMaxEntries bounds the entry map.
 //
-// Cache keys carry client-controlled components — notably `cursor`,
-// which is validated for SHAPE ONLY (it need merely contain the right
-// delimiter; there is no allowlist, HMAC or canonical round-trip), plus
-// free-text `q` and asset ids. Without eviction, one anonymous caller
-// inside the documented 6000/min budget could mint a permanent,
-// full-page entry per distinct cursor — hundreds of MB per minute of
-// unreclaimable heap, walking the process to its 8G MemoryMax and into
-// a systemd restart-storm.
-//
-// The cap + oldest-first eviction matches the bounded siblings
-// (historyCacheMaxEntries, accountStateCacheMax, assetDetail) and sits
-// far above the real working set: the prewarmer covers a handful of
-// shapes and legitimate pagination walks a bounded number of pages.
+// Cache keys carry client-controlled components (`cursor` is validated for shape only, plus
+// free-text `q` and asset ids). Without eviction one anonymous caller could mint a permanent
+// full-page entry per distinct cursor and walk the process to its MemoryMax. The cap sits far
+// above the real working set, which is a handful of prewarmed shapes and bounded pagination.
 const marketsCacheMaxEntries = 4096
 
 // evictOldestMarketsEntry drops the oldest-filled entry when the map is at
@@ -148,15 +134,10 @@ func (c *CachedMarketsReader) DistinctPairsExt(ctx context.Context, cursor strin
 }
 
 // DistinctPairsExtAt is DistinctPairsExt plus the served row-set's
-// observed-at timestamp and staleness flag. /v1/markets uses it to stamp
-// an honest as_of (the served data's real observation time) and
-// flags.stale, instead of the SWR stale-serve path silently asserting
-// stale:false / as_of=now over arbitrarily-old rows when refreshes keep
-// failing (the same posture as /v1/contracts).
-//
-// observedAt is the zero time (→ caller stamps as_of=now, not stale) when
-// the cache is disabled: an uncached read comes straight from upstream and
-// is live-fresh.
+// observed-at timestamp and staleness flag, so /v1/markets stamps an honest as_of and
+// flags.stale instead of the SWR stale-serve path asserting as_of=now over old rows when
+// refreshes keep failing. observedAt is the zero time (caller stamps as_of=now, not stale)
+// when the cache is disabled, since an uncached read is live-fresh.
 func (c *CachedMarketsReader) DistinctPairsExtAt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error) {
 	if c.ttl <= 0 {
 		rows, next, err := c.upstream.DistinctPairsExt(ctx, cursor, limit, order)
@@ -274,16 +255,10 @@ func (c *CachedMarketsReader) fetchPairs(
 		return slices.Clone(out), next, at, false, nil
 	}
 
-	// (A') Stale-while-revalidate. A prior SUCCESSFUL fetch exists
-	// (e.at non-zero — failed cold fetches delete the entry) but is
-	// expired. Serve the stale rows immediately; kick exactly one
-	// background refresh if none is running. Concurrent callers
-	// during the refresh also get stale — nobody waits on upstream.
-	//
-	// The served rows carry their ORIGINAL e.at (never re-stamped to
-	// now): a run of failing refreshes rides out on old-but-real data,
-	// and the returned observedAt/stale=true let the handler tell the
-	// truth about it rather than claiming freshness now() can't back.
+	// (A') Stale-while-revalidate. A prior SUCCESSFUL fetch exists (e.at non-zero; failed cold
+	// fetches delete the entry) but is expired. Serve it immediately and kick exactly one
+	// background refresh; nobody waits on upstream. Rows keep their ORIGINAL e.at so failing
+	// refreshes ride out on old-but-real data and observedAt/stale=true tell the truth.
 	if ok && !e.at.IsZero() {
 		out, next, at := e.pairs, e.cursor, e.at
 		if e.flight == nil {

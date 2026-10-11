@@ -11,46 +11,28 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// CoverageVerdictView is the wire shape of one source's row on
-// GET /v1/coverage — the public projection of the ADR-0033
-// completeness verdict (substrate continuity + recognition +
-// projection reconciliation), straight from completeness_snapshots.
+// CoverageVerdictView is the wire shape of one source's row on GET /v1/coverage: the public
+// projection of the ADR-0033 completeness verdict, straight from completeness_snapshots, so
+// API consumers can audit the "verified complete" claim.
 //
-// This endpoint is the API half of the product's trust story: the
-// explorer's Coverage center renders it, and API consumers can audit
-// the same claim the demo makes ("every protocol, verified complete")
-// rather than taking a marketing badge on faith.
-//
-// Two axes (ADR-0033/ADR-0034 two-axis verdict):
-//   - LakeComplete: the certified ClickHouse ARCHIVE is contiguous +
-//     hash-chained + recognition-complete from genesis to tip
-//     (substrate ∧ recognition only).
-//   - Complete: the SERVED tier additionally reconciles against that
-//     archive within its retention window (substrate ∧ recognition ∧
-//     projection). Postgres is the served/working-set tier, not the
-//     archive (ADR-0034), so Complete can be false for a source whose
-//     LakeComplete is true.
+// Two axes (ADR-0033/ADR-0034):
+//   - LakeComplete: the certified ClickHouse ARCHIVE is contiguous + hash-chained +
+//     recognition-complete from genesis to tip (substrate and recognition only).
+//   - Complete: the SERVED tier additionally reconciles against that archive within its
+//     retention window. Postgres is the working-set tier, not the archive, so Complete can be
+//     false for a source whose LakeComplete is true.
 type CoverageVerdictView struct {
 	// Source is the logical source name (soroswap, blend, sdex, …) —
 	// the same identifiers /v1/sources uses.
 	Source string `json:"source"`
-	// Complete is the SERVED/combined verdict: substrate ∧ recognition ∧
-	// projection, all holding from genesis to the watermark. Projection
-	// reconcile is retention-scoped by design (ADR-0034: Postgres is the
-	// served tier, not the archive), so Complete for a trade-emitting
-	// source reflects only what's PROJECTED into the served tier — it
-	// can be false even when the certified ClickHouse archive is
-	// genesis-complete. See LakeComplete for that claim.
+	// Complete is the SERVED verdict: substrate, recognition and projection all holding from
+	// genesis to the watermark. Projection reconcile is retention-scoped (Postgres is the served
+	// tier), so it reflects only what is PROJECTED and can be false while the ClickHouse archive
+	// is genesis-complete. See LakeComplete.
 	Complete bool `json:"complete"`
-	// LakeComplete is the LAKE (archive) axis: substrate ∧ recognition
-	// only, genesis-to-tip, decoupled from the retention-scoped
-	// projection reconcile. This is "the certified ClickHouse archive is
-	// contiguous + hash-chained + recognition-complete from genesis to
-	// tip for this source's domain" — the ADR-0033/ADR-0034 two-axis
-	// verdict.
-	// A source can be lake_complete=true, complete=false: the archive is
-	// genesis-proven even though the served tier only holds a retention
-	// window of it.
+	// LakeComplete is the archive axis: substrate and recognition only, genesis-to-tip,
+	// decoupled from the retention-scoped projection reconcile. A source can be
+	// lake_complete=true, complete=false.
 	LakeComplete bool `json:"lake_complete"`
 	// SubstrateOK / RecognitionOK / ProjectionOK are the three ADR-0033
 	// claims, reported separately so a consumer can see WHICH claim
@@ -64,21 +46,14 @@ type CoverageVerdictView struct {
 	GenesisLedger   uint32 `json:"genesis_ledger"`
 	WatermarkLedger uint32 `json:"watermark_ledger"`
 	TipLedger       uint32 `json:"tip_ledger"`
-	// ProjectionVerifiedFrom is the PROJECTION axis's floor: the bottom of
-	// the range ProjectionOK — and therefore Complete — is a claim about.
-	// It is GenesisLedger unless the source's served tier is a declared
-	// working-set window, where it is the lowest served row: on pubnet,
-	// sdex publishes genesis_ledger 2 with a served tier that begins ~61.6M.
-	// Reading complete/coverage_pct/genesis_ledger without this field
-	// overstates the served claim by that whole span. The audit's own
-	// `detail` string has always named the range in prose; this is the
-	// same number, typed.
+	// ProjectionVerifiedFrom is the PROJECTION axis's floor: the bottom of the range ProjectionOK
+	// (and therefore Complete) is a claim about. It is GenesisLedger unless the served tier is a
+	// declared working-set window, where it is the lowest served row (pubnet sdex: genesis 2,
+	// served tier from ~61.6M); reading complete/coverage_pct without it overstates the served
+	// claim by that span.
 	//
-	// Omitted when the audit recorded no floor — a verdict written
-	// before the field existed, or a run whose projection axis was not
-	// evaluated because an earlier claim already failed at genesis
-	// (`projection_ok` is false in that case). Absent means UNKNOWN, not
-	// "from ledger 0".
+	// Omitted when the audit recorded no floor (an older verdict, or a run that failed an earlier
+	// claim before evaluating projection). Absent means UNKNOWN, not "from ledger 0".
 	ProjectionVerifiedFrom uint32 `json:"projection_verified_from,omitempty"`
 	// ProjectionReconciledFrom is the lowest ledger the run that produced
 	// this verdict reconciled itself; anything from ProjectionVerifiedFrom
@@ -113,17 +88,14 @@ type NotApplicableSourceView struct {
 // RecognitionAxisView is the ADR-0033 RECOGNITION audit axis: distinct on-chain event shapes in the
 // certified lake that sit on contracts NO indexed source owns.
 //
-// It is deliberately NOT a [CoverageVerdictView], although compute-completeness writes it to the
-// same completeness_snapshots table under the reserved source name "recognition". As a row in
-// `sources[]` the headline would count it as one more failed source, and its per-source fields
-// would be fiction: substrate_ok/projection_ok hardcoded true, complete/lake_complete false
-// PERMANENTLY BY CONSTRUCTION (true only if no un-indexed Soroban contract exists anywhere), and
-// coverage_pct only ever decreasing. A permanently-red row teaches readers to ignore the board.
-// The deployed metrics already draw this line: the two `WHERE source <> 'recognition'` clauses in
-// configs/ansible/roles/archival-node/files/data-freshness.sh.
+// It is deliberately NOT a [CoverageVerdictView], although compute-completeness stores it in
+// completeness_snapshots under the reserved source name "recognition". As a `sources[]` row the
+// headline would count it as a failed source and its per-source fields would be fiction
+// (complete/lake_complete false permanently by construction), teaching readers to ignore the
+// board; data-freshness.sh draws the same line with `WHERE source <> 'recognition'`.
 //
-// It is not missing data and not a gap in any published source. A source silently dropping its OWN
-// events surfaces as `recognition_ok: false` on THAT source's row in Sources, and fails the headline.
+// It is not a gap in any published source: a source dropping its OWN events surfaces as
+// `recognition_ok: false` on THAT source's row in Sources, and fails the headline.
 type RecognitionAxisView struct {
 	// AllShapesRecognized is true when every event shape in the audited
 	// lake belongs to a contract some indexed source owns — i.e. the
@@ -316,12 +288,8 @@ const coverageIngestStallAge = 10 * time.Minute
 // audit runs (manually or on its timer), so a 60s public cache is
 // generous to edges without hiding anything meaningful.
 //
-// `flags.stale` carries the live-tip gate: true when the
-// published verdicts no longer describe the current chain. See
-// [Server.coverageVerdictsStale] — without it this surface would serve
-// "15/15 complete" forever after the audit died, since every field on
-// the row (including tip_ledger and coverage_pct) is frozen at the
-// verdict's own compute time and reads perfectly healthy in isolation.
+// `flags.stale` carries the live-tip gate (see [Server.coverageVerdictsStale]): every row field
+// is frozen at compute time, so without it a dead audit would keep serving "complete" forever.
 func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) {
 	if s.CompletenessReader == nil {
 		writeProblem(w, r,
@@ -500,16 +468,10 @@ func (s *Server) coverageVerdictsStale(ctx context.Context, snaps []timescale.Co
 	return false
 }
 
-// liveTip returns the live ingest frontier — the ledgerstream cursor's
-// last ledger and write time, the same values /v1/ledger/tip serves; the
-// ledger is the one compute-completeness resolves its tip from. ok=false when no
-// CursorsReader is wired, the cursor row doesn't exist yet, or the read
-// failed; callers must degrade rather than fail, since this is a
-// freshness annotation on someone else's response.
-//
-// The read is bounded at 5s — matching /v1/diagnostics/cursors' own
-// ListCursors ceiling — so a slow Postgres can't hold a public GET open
-// past the point where the annotation is worth waiting for.
+// liveTip returns the ledgerstream cursor's last ledger and write time (the values
+// /v1/ledger/tip serves). ok=false when no CursorsReader is wired, the cursor row is missing,
+// or the read failed; callers degrade rather than fail, since this is only a freshness
+// annotation. The read is bounded at 5s so a slow Postgres cannot hold a public GET open.
 func (s *Server) liveTip(ctx context.Context) (LedgerTipView, bool) {
 	if s.Cursors == nil {
 		return LedgerTipView{}, false

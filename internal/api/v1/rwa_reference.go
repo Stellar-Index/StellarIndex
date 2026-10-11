@@ -18,54 +18,43 @@ import (
 //
 // The gap between an oracle's NAV for a tokenized treasury and the Stellar market price needs the
 // oracle stream and the gated market price together. Five rules gate it; each blocks a number that
-// means something other than what it says.
+// would mean something other than what it says.
 //
-// R-0 bound to this (code, issuer): anyone may issue a USTRY, and a code-only join would publish an
-// unrelated $0.20 token at an 81% discount to a real security ([rwa.InstrumentFeed], ADR-0040). R-A
-// quoted in dollars: a bare `_FUNDAMENTAL` feed is a ratio in the reserve asset (once served a
-// BTC-backed token at $1.00); the stored quote must be `fiat:USD`. R-B prices one token (`rwa:XAU`,
+// R-0 bound to this (code, issuer): a code-only join would price an unrelated token against a real
+// security ([rwa.InstrumentFeed], ADR-0040). R-A quoted in dollars: a bare `_FUNDAMENTAL` feed is a
+// ratio in the reserve asset, so the stored quote must be `fiat:USD`. R-B prices one token (`rwa:XAU`,
 // `rwa:SPXU` are not bindable). R-C published by an [external.ClassOracle]; aggregators share the
 // hypertable and a premium against one compares the market with itself. R-D the market price is
-// observed; a `price_basis` price is a peg or derivation.
-// A refused row names its rule and never carries a zero.
-// `reference_valuation` is the reference times the float (most RWAs are held, not traded). It rides
-// R-0 through R-C but not R-D, so it is published under its own name and total, beside
-// `market_cap_usd` and never inside it. `premium.status` and `reference_valuation.status` are
-// assigned from the same constant on the same line, so a shared refusal cannot read as two events;
-// they differ only when the reasons do.
+// observed, not a `price_basis` peg or derivation. A refused row names its rule and never carries a zero.
+//
+// `reference_valuation` is the reference times the float. It rides R-0 through R-C but not R-D, so it
+// is published under its own name and total, beside `market_cap_usd` and never inside it.
+// `premium.status` and `reference_valuation.status` are assigned from the same constant, so a shared
+// refusal cannot read as two events.
 
 // rwaReferenceTTL bounds the reuse of one oracle-stream snapshot.
 //
-// The RWA feeds publish on a cadence of seconds to minutes, so 30s keeps
-// the surface off a per-request hypertable scan while never showing a
-// figure materially older than an uncached read would have. Deliberately
-// far shorter than [rwaMembershipTTL]: membership moves daily, a price
-// does not.
+// The feeds publish every seconds to minutes, so 30s keeps the surface off a per-request hypertable
+// scan. Far shorter than [rwaMembershipTTL]: membership moves daily, a price does not.
 const rwaReferenceTTL = 30 * time.Second
 
 // rwaReferenceStaleAfter is the age past which a reference is served
 // with `stale: true`.
 //
-// 72 hours is the longest ordinary gap between two strikes of a
-// real-world instrument's value: a Friday figure read on the following
-// Monday, plus one public holiday. Shorter would flag every weekend on a
-// treasury fund, whose value is struck on business days by construction.
+// 72 hours is the longest ordinary gap between two strikes of an instrument's value (a Friday figure
+// read on Monday plus a holiday); shorter would flag every weekend on a treasury fund.
 //
-// It LABELS, it does not withhold. A NAV struck last Friday is the
-// current NAV on Monday morning, and suppressing it would hide the only
-// independent valuation the surface has. The absolute outer bound is
-// [rwaReferenceMaxAge].
+// It LABELS, it does not withhold: last Friday's NAV is still the current NAV on Monday. The absolute
+// outer bound is [rwaReferenceMaxAge].
 const rwaReferenceStaleAfter = 72 * time.Hour
 
 // rwaReferenceMaxAge is the age past which an observation is not served
 // at all.
 //
-// Seven days is not a threshold chosen here: it is the window
-// LatestOracleStreams defines an ACTIVE stream by, so a live read can
-// never return anything older. The check exists because a snapshot is
-// carried forward across a failed read, and a sustained outage would
-// otherwise let the carried rows age past the bound this file and
-// docs/methodology/rwa-definition.md both claim is absolute.
+// Seven days is the window LatestOracleStreams defines an ACTIVE stream by, so a live read never
+// returns anything older. The check exists because a snapshot is carried forward across a failed read,
+// and a sustained outage would otherwise let carried rows age past the bound that
+// docs/methodology/rwa-definition.md claims is absolute.
 const rwaReferenceMaxAge = 7 * 24 * time.Hour
 
 // rwaFundNAVMaxAge is the oldest fund NAV the fund arm serves. A NAV is
@@ -118,30 +107,16 @@ type RWAReference struct {
 	// carries the response's own as_of, so the two vintages are
 	// separately visible.
 	AsOf WireTime `json:"as_of"`
-	// Stale marks a reference older than 72h — served, but labelled. On
-	// a [RWAReferenceProspectusCNAV] reference it marks instead that
-	// the binding has passed its review date: the prescribed NAV does
-	// not age, but the reading of it does, and past
-	// [rwa.ConstantNAVReviewInterval] the row says so.
+	// Stale marks a reference older than 72h, served but labelled. On a [RWAReferenceProspectusCNAV]
+	// reference it marks a binding past [rwa.ConstantNAVReviewInterval]: the NAV does not age, the
+	// reading of it does.
 	Stale bool `json:"stale,omitempty"`
-	// Provenance names WHAT KIND of figure this is. Five are published
-	// and they are not the same claim, so the field is mandatory on
-	// every served reference rather than defaulted.
-	//
-	// [RWAReferenceOracleNAV] is an oracle's published valuation of the
-	// INSTRUMENT, which the token declares it anchors to one-for-one.
-	// [RWAReferenceFundNAV] is the fund's own published daily NAV per
-	// share, for a token that is one share of that fund.
-	// [RWAReferenceListingPrice] is a listing platform's aggregate of
-	// what the TOKEN trades at across the venues it tracks.
-	// [RWAReferenceProspectusCNAV] is the issuer's own prescribed NAV
-	// for a share class whose fund rules fix it. [RWAReferenceCuratorPrice]
-	// is a curator's own uploaded price, weaker still — a party's typed
-	// figure rather than a market aggregate. The first is a statement
-	// about the backing; the other three are statements about the
-	// token or its curator. Folding them under one name would let a
-	// summary total describe itself with the wrong provenance, which
-	// is the exact defect the summary basis prose exists to prevent.
+	// Provenance names WHAT KIND of figure this is. The five kinds are different claims, so the field
+	// is mandatory on every served reference. [RWAReferenceOracleNAV] is an oracle's valuation of the
+	// INSTRUMENT; [RWAReferenceFundNAV] the fund's own daily NAV per share; [RWAReferenceListingPrice]
+	// a listing platform's aggregate of what the TOKEN trades at; [RWAReferenceProspectusCNAV] the
+	// issuer's prescribed NAV; [RWAReferenceCuratorPrice] a curator's typed figure, weakest of all.
+	// Folding them under one name would let a summary total describe itself with the wrong provenance.
 	Provenance string `json:"provenance"`
 	// DecimalsPublished is the precision the publisher states the value
 	// at, when it is coarser than the wire scale suggests. Set on a
@@ -164,43 +139,23 @@ const (
 	// and the correspondence to one token is the issuer's own
 	// domain-bound declaration.
 	RWAReferenceOracleNAV = "oracle_instrument_nav"
-	// RWAReferenceListingPrice — the independent listing directory's own USD price for the token, from
-	// the same source that corroborated the address at C2.
+	// RWAReferenceListingPrice is the independent listing directory's own USD price for the token.
 	//
-	// Weaker than the oracle arm in one specific and stated way: it prices the TOKEN, not the
-	// instrument. It therefore carries no claim that one token is one unit of anything, and it cannot
-	// produce a premium, because a premium against an aggregate of the markets is the market compared
-	// with itself.
-	//
-	// Available to any contract row the listing directory NAMES, whichever C2 arm admitted it. That is
-	// deliberately not the same set as "admitted on [rwa.RecognitionListingCorroborated]": four
-	// addresses are named by both sources, and one of those admitted by the curated directory on its
-	// own is still an address an independent listing bound a price to. Refusing it would withhold a
-	// figure this surface can correctly make.
-	//
-	// What the listing entry supplies is the same in both cases — a USD price bound to a 56-character
-	// address by a party that did not read our directory — so the prose describes THAT rather than the
-	// requirement the row happened to satisfy. A contract the listing never named has no listing price
-	// to serve, which is the same fact that refuses it at C2 when nothing else names it either.
+	// It prices the TOKEN, not the instrument, so it claims no one-to-one correspondence and cannot
+	// produce a premium: a premium against an aggregate of the markets is the market compared with
+	// itself. It is available to any contract row the directory NAMES, whichever C2 arm admitted it,
+	// because the entry is a USD price bound to a 56-character address by a party that did not read our
+	// directory. A contract the listing never named has no price to serve.
 	RWAReferenceListingPrice = "listing_platform_price"
-	// RWAReferenceProspectusCNAV — the issuer's published NAV for a
-	// share class whose fund rules fix it (a CNAV money market fund),
-	// bound on the exact (code, issuer) in rwa.ConstantNAV. Weaker than
-	// the oracle arm — nobody independent measured it — and stronger
-	// than nothing in the one way that matters: the value is prescribed
-	// by an authorised prospectus and published daily by the issuer.
-	// Taken only when neither an oracle binding nor a usable listing
-	// price (positive, parseable, inside the reference bound) exists
-	// for the row.
+	// RWAReferenceProspectusCNAV is the issuer's published NAV for a share class whose fund rules fix
+	// it, bound on the exact (code, issuer) in rwa.ConstantNAV. Nobody independent measured it, but the
+	// value is prescribed by a prospectus. Taken only when neither an oracle binding nor a usable
+	// listing price (positive, parseable, inside the reference bound) exists for the row.
 	RWAReferenceProspectusCNAV = "prospectus_constant_nav"
-	// RWAReferenceFundNAV — the fund's own published daily NAV per share
-	// (the SEC-reported figure, via Tiingo), bound on the exact (code,
-	// issuer) in rwa.FundNAVTicker for a token that is one share of that
-	// fund. Ranked below the oracle arm — the value is the issuer's
-	// statement, relayed by a vendor, rather than an independent oracle's
-	// publication — and above the listing arm, because it values the
-	// share rather than aggregating the token's own markets. Published to
-	// the cent, which the reference states in `decimals_published`.
+	// RWAReferenceFundNAV is the fund's own daily NAV per share (the SEC-reported figure, via Tiingo),
+	// bound on the exact (code, issuer) in rwa.FundNAVTicker. It ranks below the oracle arm (the
+	// issuer's statement relayed by a vendor) and above the listing arm (it values the share, not the
+	// token's own markets). Published to the cent, stated in `decimals_published`.
 	RWAReferenceFundNAV = "fund_nav"
 )
 
@@ -208,18 +163,11 @@ const (
 // price (the oracle's value of the instrument), not at anything the market was
 // observed paying.
 //
-// It is the deliberate opposite of `valuation.market_cap_usd` and the two are never
-// folded together: that one is adversarially verified (thin-market substance gate,
-// dust-liquidity guard, scam-issuer suppression) and backed by a settled trade.
-// This figure is a CLAIM: the oracle states what the backing is worth, the issuer's
-// domain-bound declaration says one token is one unit of it. Nothing was paid, no
-// liquidity gate can measure it, and a token with no market carries it at full
-// size, which is why it may not be reported as a market capitalisation.
-//
-// The distinction is carried three ways: the field is named for the reference, every
-// figure names its feed and vintage in the sibling `reference` block, and
-// `summary.reference_valuation.basis` says in prose that nobody was observed
-// paying it.
+// It is the opposite of `valuation.market_cap_usd` and the two are never folded together: that one
+// is gated (thin-market substance, dust liquidity, scam-issuer suppression) and backed by a settled
+// trade. This figure is a CLAIM: nothing was paid and no liquidity gate can measure it, so it may not
+// be reported as a market capitalisation. The distinction is carried by the field name, by the
+// sibling `reference` block naming feed and vintage, and by `summary.reference_valuation.basis`.
 type RWAReferenceValuation struct {
 	// Status is the single authority on why there is no figure. Where a
 	// rule refuses the reference itself it carries the SAME string as
@@ -240,23 +188,14 @@ const (
 	// RWAReferenceValuationPublished — a reference price and a supply
 	// reading were both available.
 	RWAReferenceValuationPublished = "published"
-	// RWAReferenceValuationDecimalsUnknown — a reference and a supply
-	// both exist and the token's own declared SCALE does not, so there
-	// is no exponent to divide the float by.
-	//
-	// The same refusal [RWAValuationDecimalsUnknown] makes on the market
-	// basis, for the same reason and with more at stake: this basis
-	// values tokens that never trade, so it is the figure most likely to
-	// be the only number on the row. Defaulting the exponent would
-	// publish a dollar total wrong by a factor of ten to the something,
-	// silently, under `status: published`.
+	// RWAReferenceValuationDecimalsUnknown — a reference and a supply exist but the token's declared
+	// SCALE does not, so there is no exponent to divide the float by. Same refusal as
+	// [RWAValuationDecimalsUnknown], with more at stake: this basis may be the only number on the
+	// row, and defaulting the exponent would publish a total wrong by a power of ten as published.
 	RWAReferenceValuationDecimalsUnknown = "decimals_unavailable"
-	// RWAReferenceValuationNoSupply — a reference exists but no
-	// circulating-supply reading does, so there is no float to value. A
-	// non-numeric or negative reading is treated the same way: it is
-	// not a supply. The premium is unaffected by it — a premium
-	// compares two prices and needs no supply at all — which is why
-	// this status is the valuation's own.
+	// RWAReferenceValuationNoSupply — a reference exists but no usable circulating-supply reading
+	// does (non-numeric or negative counts as none). The premium is unaffected, since it compares
+	// two prices and needs no supply, which is why this status is the valuation's own.
 	RWAReferenceValuationNoSupply = "supply_unavailable"
 )
 
@@ -282,35 +221,22 @@ const (
 	// including a third party's: an impersonator handed a real
 	// instrument's NAV is exactly the claim the flag exists to deny.
 	RWAPremiumIssuerFlagged = "withheld_issuer_flagged"
-	// RWAPremiumContractNotBound: the member is CONTRACT-issued and nothing binds a
-	// contract address to an oracle feed.
+	// RWAPremiumContractNotBound: the member is CONTRACT-issued and nothing binds a contract address
+	// to an oracle feed. Separate from [RWAPremiumNotBound], which names a (code, issuer) pair.
 	//
-	// Reported apart from [RWAPremiumNotBound] because that status names a
-	// (code, issuer) pair, which a contract row lacks.
-	//
-	// The obvious join is REFUSED. A contract admitted on [rwa.BasisContractOracleFeed]
-	// got in via its on-chain SEP-41 symbol, but the contract authors that symbol
-	// itself, so pricing by it is the code-keyed join this file exists to refuse.
-	// Recognising the address establishes who deployed it, not that one token is one
-	// unit of the instrument an oracle prices under that name. The curated set
-	// ([rwa.ContractInstrumentBindings]) records instrument and class, not a feed, so
-	// it cannot answer either.
+	// The symbol join is REFUSED: a contract admitted on [rwa.BasisContractOracleFeed] got in via
+	// its on-chain SEP-41 symbol, but the contract authors that symbol itself, so pricing by it is
+	// the code-keyed join this file exists to refuse. [rwa.ContractInstrumentBindings] records
+	// instrument and class, not a feed, so it cannot answer either.
 	RWAPremiumContractNotBound = "reference_contract_not_bound"
-	// RWAPremiumNotBound — no curated binding ties this exact
-	// (code, issuer) to an oracle feed. The commonest cause by far is
-	// that the pair is a code collision: a token wearing an instrument's
-	// ticker that the oracle has never priced. It also covers a genuine
-	// issuer nobody has bound yet, which is why the refusal is reported
-	// rather than absorbed.
+	// RWAPremiumNotBound — no curated binding ties this exact (code, issuer) to an oracle feed.
+	// Usually a code collision (a token wearing an instrument's ticker); it also covers a genuine
+	// issuer nobody has bound yet, which is why the refusal is reported rather than absorbed.
 	RWAPremiumNotBound = "reference_not_bound"
-	// RWAPremiumReferenceISINMismatch — the ISIN the issuer's SEP-1
-	// declares for this pair contradicts the constant-NAV table: the
-	// pair is bound to a different share class, or the declared ISIN
-	// belongs to a class bound on another pair. Valuing the row would
-	// attach one security's NAV to a row naming another, and an issuer
-	// changing its declaration is the strongest signal that the class
-	// was reorganised — so nothing is served until the binding is
-	// re-verified.
+	// RWAPremiumReferenceISINMismatch — the ISIN the issuer's SEP-1 declares contradicts the
+	// constant-NAV table (bound to a different class, or the ISIN belongs to a class bound on
+	// another pair). Valuing it would attach one security's NAV to a row naming another, and a
+	// changed declaration suggests a reorganised class, so nothing is served until re-verified.
 	RWAPremiumReferenceISINMismatch = "reference_isin_mismatch"
 	// RWAPremiumNoReference — the pair IS bound, but the oracle stream
 	// carries no row for its feed. Means exactly that and nothing else.
@@ -346,42 +272,23 @@ const (
 	// RWAPremiumReferenceNotPositive — the oracle published a
 	// non-positive value. Nothing is divided by it.
 	RWAPremiumReferenceNotPositive = "reference_not_positive"
-	// RWAPremiumReferenceNotOracle — the row carries a reference, and it is a LISTING PRICE rather
-	// than an oracle's valuation of the instrument, so no premium may be computed against it.
-	//
-	// This is R-C applied to the new arm, and it is one of the statuses on this list that refuse the
-	// premium while the reference valuation beside it is PUBLISHED. A premium is the gap between what
-	// the market pays and what the backing is independently worth. A listing price is an aggregate of
-	// the same markets our own price comes from, so the gap between them measures the disagreement
-	// between two samples of one market — not a premium to anything, and it would be published under a
-	// name that says it is.
-	//
-	// The obvious arithmetic is available and is refused, for the same reason
-	// [RWAPremiumContractNotBound] refuses the symbol join: a number that can be computed is not
-	// thereby a number that means something.
-	//
-	// Reserved for rows whose reference is actually a listing price.
+	// RWAPremiumReferenceNotOracle — the reference is a LISTING PRICE, not an oracle's valuation of
+	// the instrument, so no premium is computed (R-C). The reference valuation beside it can still
+	// be PUBLISHED. A listing price aggregates the same markets our own price comes from, so the gap
+	// would measure two samples of one market, not a premium. The arithmetic is available and
+	// refused anyway: a number that can be computed does not thereby mean something.
 	// [RWAPremiumReferenceNotOracleCNAV] and [RWAPremiumReferenceNotOracleCurator] carry the same
-	// refusal for the two other non-oracle provenances, so the wire value always names the figure that
-	// was actually refused rather than collapsing three different claims into one string.
+	// refusal for the other provenances so the wire value names the figure actually refused.
 	RWAPremiumReferenceNotOracle = "reference_is_a_listing_price"
-	// RWAPremiumReferenceNotOracleCNAV — the row carries a reference,
-	// and it is a prospectus's constant NAV rather than an oracle's
-	// valuation of the instrument, so no premium may be computed
-	// against it. [RWAPremiumReferenceNotOracle] applied here would
-	// tell a reader the figure was a listing price, which it is not —
-	// see [RWAReferenceProspectusCNAV].
+	// RWAPremiumReferenceNotOracleCNAV — the reference is a prospectus constant NAV, not an oracle
+	// valuation, so no premium is computed. See [RWAReferenceProspectusCNAV].
 	RWAPremiumReferenceNotOracleCNAV = "reference_is_a_prospectus_nav"
-	// RWAPremiumReferenceNotOracleCurator — the row carries a
-	// reference, and it is a curator's uploaded price rather than an
-	// oracle's valuation of the instrument, so no premium may be
-	// computed against it. See [RWAReferenceCuratorPrice] in
-	// rwa_curated.go.
+	// RWAPremiumReferenceNotOracleCurator — the reference is a curator's uploaded price, not an
+	// oracle valuation, so no premium is computed. See [RWAReferenceCuratorPrice] in rwa_curated.go.
 	RWAPremiumReferenceNotOracleCurator = "reference_is_a_curator_price"
-	// RWAPremiumReferenceNotOracleFundNAV — the row carries a fund's
-	// published NAV, and no premium is computed against it: a NAV rounded
-	// to the cent carries up to half a cent of error, which on a
-	// one-dollar share is a half-percent premium the market never paid.
+	// RWAPremiumReferenceNotOracleFundNAV — the reference is a fund's published NAV, and no premium
+	// is computed: a NAV rounded to the cent carries half a cent of error, which on a one-dollar
+	// share is a half-percent premium the market never paid.
 	RWAPremiumReferenceNotOracleFundNAV = "reference_is_a_fund_nav"
 )
 
@@ -432,13 +339,10 @@ func (r *rwaReferences) addSideFeed(u canonical.OracleUpdate) bool {
 // rwaReferenceSnapshot reduces one oracle-stream read to the references
 // this surface may publish.
 //
-// It runs over the SAME rows /v1/oracle/streams serves — one per
-// (source, asset, quote) in the trailing 7d — rather than a per-code
-// query, for two reasons. One read serves the whole set, so the surface
-// costs the lake a single scan however many members it has. And the 7d
-// window is then not a threshold invented here: a feed absent from that
-// window is not an active stream, and the row correctly carries no
-// reference instead of a figure from a source that has gone quiet.
+// It runs over the SAME rows /v1/oracle/streams serves (one per (source, asset, quote) in the
+// trailing 7d) rather than a per-code query: one read serves the whole set at a single scan, and a
+// feed absent from that window is not an active stream, so the row carries no reference instead of a
+// figure from a quiet source.
 func rwaReferenceSnapshotFrom(updates []canonical.OracleUpdate) rwaReferences {
 	out := rwaReferences{
 		byFeed:    map[string]rwaReference{},
@@ -565,11 +469,9 @@ func ratFromScaledInt(value *big.Int, decimals uint8) *big.Rat {
 // once per TTL window and shared across concurrent requests by a
 // single-flight gate — the same shape [Server.cachedRWAMembership] uses.
 //
-// On a failed read it serves the last good snapshot when there is one,
-// and an UNAVAILABLE snapshot when there is not. Unavailable is not the
-// same as empty: an empty snapshot would tell every row "no oracle
-// publishes your instrument", which is a finding, and a read that did
-// not answer is not entitled to make it.
+// On a failed read it serves the last good snapshot, else an UNAVAILABLE one. Unavailable is not
+// empty: an empty snapshot would tell every row "no oracle publishes your instrument", a finding a
+// failed read may not make.
 func (s *Server) cachedRWAReferences(ctx context.Context) rwaReferences {
 	if s.Oracle == nil {
 		return rwaReferences{}
@@ -618,19 +520,10 @@ func (s *Server) cachedRWAReferences(ctx context.Context) rwaReferences {
 	return snap
 }
 
-// fillRWAReferences runs the oracle-stream read and unconditionally
-// releases the single-flight gate, even on panic, before returning.
-//
-// If it ran inline on the waking caller's ctx with the release at the
-// tail of a straight-line function, a panic out of LatestOracleStreams or
-// rwaReferenceSnapshotFrom (recovered one frame up, by net/http's
-// per-request handler) would leave rwaRefFlight pointing at a channel
-// nobody would ever close, so every later call would queue on it until
-// its own deadline and /v1/rwa/assets would never serve a real answer
-// for the life of the process. It is detached onto its own budget for
-// the same reason oracleFetchBudget is: the fill is shared by every
-// queued caller, so one caller's disconnect must not abort it for the
-// rest.
+// fillRWAReferences runs the oracle-stream read and releases the single-flight gate even on panic.
+// A panic out of LatestOracleStreams that skipped the release would leave rwaRefFlight pointing at
+// a channel nobody closes, wedging /v1/rwa/assets for the life of the process. It runs on its own
+// budget, like oracleFetchBudget, because one caller's disconnect must not abort a shared fill.
 func (s *Server) fillRWAReferences(done chan struct{}) {
 	defer close(done)
 	defer func() {
@@ -666,10 +559,8 @@ func (s *Server) fillRWAReferences(done chan struct{}) {
 // rwaApplyReference attaches the oracle reference and the premium to one
 // served row, or the reason neither is there.
 //
-// The order of the refusals is the order of the rules, and it is
-// load-bearing for the reason reported: a flagged issuer is answered as
-// flagged before anything else is consulted, because that refusal is
-// about who is asking rather than about what the data holds.
+// The order of the refusals is the order of the rules and is load-bearing for the reason reported:
+// a flagged issuer is answered as flagged first, since that is about the issuer, not the data.
 func rwaApplyReference(
 	a *RWAAsset,
 	snap rwaReferences,
@@ -677,23 +568,15 @@ func rwaApplyReference(
 	classicListings map[string]timescale.ListingEntry,
 	now time.Time,
 ) {
-	// The scam-flag suppression comes first and covers the reference
-	// too. /v1/assets withholds this issuer's own price; handing it a
-	// real instrument's independent NAV instead would publish a larger
-	// claim through the gap — a dollar figure on an impersonator, from a
-	// source that never named it.
+	// The scam-flag suppression comes first and covers the reference too: /v1/assets withholds this
+	// issuer's price, and handing it a real instrument's NAV instead would publish a larger claim.
 	if a.Valuation.Status == RWAValuationIssuerFlagged {
 		rwaRefuseReference(a, RWAPremiumIssuerFlagged)
 		return
 	}
-	// A contract-issued member, answered BEFORE the oracle snapshot is
-	// consulted. It never falls through to the (code, issuer) binding
-	// below, which would answer with a reason naming an identity this
-	// row does not have — and it must not be answered by the oracle
-	// read's availability either, because a contract row's reference
-	// does not come from the oracle stream at any point. Reporting an
-	// oracle outage on a row the oracle could never have priced would
-	// withhold a figure for a reason that has nothing to do with it.
+	// A contract-issued member is answered BEFORE the oracle snapshot is consulted: it has no
+	// (code, issuer) identity to bind, and its reference never comes from the oracle stream, so an
+	// oracle outage must not withhold its figure.
 	if a.ContractID != "" {
 		rwaApplyContractReference(a, listings[a.ContractID], now)
 		return
@@ -708,13 +591,10 @@ func rwaApplyReference(
 	// a real instrument cannot be handed that instrument's valuation.
 	feed, bound := rwa.InstrumentFeed(a.Code, a.Issuer)
 	if !bound {
-		// Both refusals withhold. They differ in what they tell a reader,
-		// and the more specific one is worth reporting: a token coded XAU
-		// is not unbound by oversight — the oracle of that name prices a
-		// troy ounce of metal, which is not a quantity any token has.
-		// A fund share's own published NAV outranks the listing and
-		// prospectus arms. With no NAV in the snapshot the row falls
-		// through to them unchanged.
+		// Both refusals withhold, but the specific one is worth reporting: a token coded XAU is not
+		// unbound by oversight, the oracle of that name prices a troy ounce of metal. A fund share's
+		// own NAV outranks the listing and prospectus arms; with none in the snapshot the row falls
+		// through to them.
 		if rwaApplyFundNAVReference(a, snap, now) {
 			return
 		}
@@ -722,54 +602,34 @@ func rwaApplyReference(
 		if rwa.OffChainReferenceCode(a.Code) {
 			notFound = RWAPremiumNotInstrumentScoped
 		}
-		// The listing row for this exact asset, resolved by the SAME
-		// rule /v1/assets uses ([listingEntryIn]): the `CODE-GISSUER`
-		// id first, then the Stellar Asset Contract address derived
-		// from it. The directory publishes each asset under ONE of
-		// those forms with no pattern (measured: EURC, AQUA and SHX by
-		// classic id; USDC, PYUSD and USDT0 by SAC only), so a
-		// classic-only key would refuse a SAC-listed member as unbound
-		// while the snapshot in hand names its address.
+		// The listing row for this exact asset, resolved by the SAME rule /v1/assets uses
+		// ([listingEntryIn]): the `CODE-GISSUER` id first, then the derived Stellar Asset Contract
+		// address. The directory lists each asset under ONE of those forms with no pattern, so a
+		// classic-only key would refuse a SAC-listed member as unbound.
 		//
-		// Never the code: this network carries twenty-six assets coded
-		// BENJI and one of them is Franklin Templeton's. A code-keyed
-		// lookup here would be the attacker-authored-pricing class in a
-		// new coordinate, which is the same reason [rwa.InstrumentFeed]
-		// is keyed on the pair above. Both address forms are functions
-		// of the exact (code, issuer), so neither widens the key.
+		// Never the code: many assets share a code (BENJI), and a code-keyed lookup is the
+		// attacker-authored-pricing class, the same reason [rwa.InstrumentFeed] is keyed on the pair.
+		// Both address forms derive from the exact (code, issuer), so neither widens the key.
 		listing, _, _ := listingEntryIn(classicListings, a.AssetID)
-		// Neither an oracle nor the listing directory prices this pair,
-		// but its prospectus may: a CNAV share class bound in
-		// rwa.ConstantNAV is valued at the NAV its fund rules fix, under
-		// its own provenance. A listing price wins only when it is a
-		// VALUATION the listing arm would serve — a third party's zero,
-		// garbage or expired row must not erase the prospectus figure.
+		// A CNAV share class bound in rwa.ConstantNAV is valued at its prospectus NAV. A listing
+		// price wins only when it is a VALUATION the listing arm would serve; a zero, garbage or
+		// expired third-party row must not erase the prospectus figure.
 		if _, refusal := rwaListingPrice(listing, notFound, now); refusal != "" {
 			if cnav, ok := rwa.ConstantNAV(a.Code, a.Issuer); ok {
 				rwaApplyConstantNAVReference(a, cnav, now)
 				return
 			}
 		}
-		// Nothing binds this pair to an ORACLE. That is a statement
-		// about one source, and the independent listing directory is
-		// another — the same directory, the same bound, the same
-		// address-exact key that already prices the contract arm.
-		//
-		// Reading it here is not a new kind of evidence, it is the
-		// SAME evidence reaching a row the surface was not offering it
-		// to. Measured on r1, the directory held 33 recognised classic
-		// rows, every one of them priced, against 17 contract rows — so
-		// two-thirds of it would otherwise be read by nothing while rows
-		// beside it were reported as unpriced.
+		// No oracle binds this pair, which is a statement about one source only. The listing
+		// directory is the same address-exact evidence that already prices the contract arm, so
+		// classic rows read it too rather than being reported unpriced.
 		rwaApplyListingReference(a, listing, notFound, now)
 		return
 	}
 
-	// A read that did not answer knows nothing either way. Reporting it
-	// as an absence would publish a finding the read did not earn, and on
-	// the wire it would be indistinguishable from a genuine one. Only an
-	// oracle-bound row is refused on it: the unbound arm above falls
-	// through to the listing arm when the read holds no fund NAV.
+	// A read that did not answer knows nothing either way; reporting an absence would publish a
+	// finding it did not earn. Only an oracle-bound row is refused on it: the unbound arm above
+	// falls through to the listing arm.
 	if !snap.available {
 		rwaRefuseReference(a, RWAPremiumReferenceUnavailable)
 		return
@@ -784,12 +644,8 @@ func rwaApplyReference(
 		return
 	}
 
-	// A live read cannot return an observation older than the 7-day
-	// window, but a snapshot carried forward across a sustained read
-	// failure can age past it. Enforce the bound on the OBSERVATION
-	// rather than on the snapshot, so the documented claim — a feed
-	// silent for seven days leaves the row with no reference — holds
-	// however the row reached us.
+	// A snapshot carried forward across a sustained read failure can age past the 7-day window, so
+	// the bound is enforced on the OBSERVATION, not the snapshot.
 	if now.Sub(ref.asOf) > rwaReferenceMaxAge {
 		rwaRefuseReference(a, RWAPremiumReferenceExpired)
 		return
@@ -805,10 +661,8 @@ func rwaApplyReference(
 		Provenance: RWAReferenceOracleNAV,
 	}
 	a.Reference.NAVDisagreement = rwaFundNAVDisagrees(a, snap, ref.priceUSD, now)
-	// Only now, with the reference attached and its provenance on the
-	// row beside it. A supply-valued figure whose feed and vintage were
-	// not published would be a dollar total with no traceable source,
-	// which on this surface is worse than no figure at all.
+	// Only with the reference attached: a supply-valued figure whose feed and vintage were not
+	// published would be a dollar total with no traceable source.
 	a.ReferenceValuation = rwaReferenceValuationOf(a, ref)
 
 	market := ratFromOptionalString(a.Valuation.PriceUSD)
@@ -834,39 +688,26 @@ func rwaApplyReference(
 // rwaApplyContractReference attaches the LISTING-priced reference to a contract member, or the
 // reason there is none.
 //
-// Nothing binds a contract ADDRESS to an oracle feed (symbol and instrument name are code-keyed
-// joins, which R-0 refuses). An independent listing directory row instead NAMES the exact address
-// and publishes a USD price for it, bound in one row by a party that did not read our curated
-// directory. No code is matched, so a token wearing a bound instrument's symbol gets nothing here.
-// It applies to any contract row the listing names, not only ones it ADMITTED: gating on how the
-// row got in would withhold a correct figure for a reason unrelated to the price.
+// Nothing binds a contract ADDRESS to an oracle feed (symbol joins are code-keyed, which R-0
+// refuses). A listing directory row instead NAMES the exact address and publishes a USD price for
+// it, so no code is matched. It applies to any contract row the listing names, not only ones it
+// ADMITTED: gating on how the row got in would withhold a correct figure.
 //
-// It is a listing platform's aggregate of what the TOKEN trades at, not an oracle's valuation of
-// the INSTRUMENT. So the reference carries [RWAReferenceListingPrice], the summary basis prose
-// describes the mixture, and NO PREMIUM is published ([RWAPremiumReferenceNotOracle]): a premium
-// against an aggregate of the same markets our own price samples is the market compared with
-// itself.
-//
-// This is the only path where the premium is refused while the reference valuation beside it is
-// PUBLISHED: a reference and a supply exist, an oracle does not. That is the case the file header
-// allows the two fields to differ.
+// The figure is a listing aggregate of what the TOKEN trades at, so the reference carries
+// [RWAReferenceListingPrice] and NO PREMIUM is published ([RWAPremiumReferenceNotOracle]): it would
+// compare the market with itself. This is the case where the premium is refused while the reference
+// valuation beside it is PUBLISHED.
 func rwaApplyContractReference(a *RWAAsset, entry timescale.ListingEntry, now time.Time) {
 	rwaApplyListingReference(a, entry, RWAPremiumContractNotBound, now)
 }
 
-// rwaApplyListingReference is the body both arms share. `notFound` is
-// the refusal to keep when the directory names nothing, because the two
-// arms refuse for differently-shaped reasons: a contract row has no
-// (code, issuer) to be unbound ON, and a classic row's oracle refusal
-// already says something more specific than "no listing either".
+// rwaApplyListingReference is the body both arms share. `notFound` is the refusal to keep when the
+// directory names nothing: a contract row has no (code, issuer) to be unbound ON, and a classic
+// row's oracle refusal is more specific than "no listing either".
 //
-// The classic arm reaches this only AFTER the oracle arm has refused,
-// and only when that refusal was "nobody bound this pair" rather than a
-// finding about a feed that IS bound. An expired feed, a non-USD feed or
-// a non-positive net asset value are observations about a binding this
-// index made, and a listing price does not overturn them — it answers a
-// different question. Substituting one for the other would publish a
-// figure while suppressing the finding that refused it.
+// The classic arm reaches this only when the oracle refusal was "nobody bound this pair". An
+// expired, non-USD or non-positive feed is a finding about a binding this index made, and a listing
+// price does not overturn it; substituting one would publish a figure while suppressing the finding.
 func rwaApplyListingReference(a *RWAAsset, entry timescale.ListingEntry, notFound string, now time.Time) {
 	price, refusal := rwaListingPrice(entry, notFound, now)
 	if refusal != "" {
@@ -908,10 +749,8 @@ func rwaListingPrice(entry timescale.ListingEntry, notFound string, now time.Tim
 		// the oracle path refuses a non-positive net asset value.
 		return nil, RWAPremiumReferenceNotPositive
 	}
-	// The storage reader enforces the price bound in SQL, so a row that
-	// arrives here is already inside it. Re-checked on the OBSERVATION
-	// anyway: the bound this surface documents has to hold however the
-	// row reached it, not only on the path expected to deliver it.
+	// The storage reader enforces the price bound in SQL; the age is re-checked here so the
+	// documented bound holds however the row arrived.
 	if entry.PricedAt.IsZero() || now.Sub(entry.PricedAt) > rwaReferenceMaxAge {
 		return nil, RWAPremiumReferenceExpired
 	}
@@ -921,10 +760,8 @@ func rwaListingPrice(entry timescale.ListingEntry, notFound string, now time.Tim
 // rwaListingReferencesOf indexes the admitted contract members' listing
 // rows by address, for the per-row reference pass.
 //
-// Built from the MEMBERSHIP rather than from a second read of the
-// listing directory: the row that priced an asset must be the same row
-// that recognised it, or the surface could publish a price from a
-// snapshot in which the address was not named.
+// Built from the MEMBERSHIP, not a second listing read: the row that priced an asset must be the
+// row that recognised it, or a price could come from a snapshot that did not name the address.
 func rwaListingReferencesOf(members []rwaContractMember) map[string]timescale.ListingEntry {
 	out := make(map[string]timescale.ListingEntry, len(members))
 	for _, m := range members {
@@ -936,20 +773,14 @@ func rwaListingReferencesOf(members []rwaContractMember) map[string]timescale.Li
 	return out
 }
 
-// rwaRefuseReference records ONE refusal in BOTH places it must appear. Every rule
-// here refuses the premium and the reference-priced valuation together; writing
-// both from a single argument at a single call site keeps them from telling two
-// stories (the funnel reads only `reference_valuation.status`).
+// rwaRefuseReference records ONE refusal in BOTH places it must appear (premium and
+// reference valuation), so the two cannot tell different stories; the funnel reads only
+// `reference_valuation.status`.
 //
 // rwaApplyConstantNAVReference prices a share class at the NAV its prospectus fixes
-// (rwa.ConstantNAV). The reference is dated now, not at the verification date: the
-// value is a standing rule of the fund, not an observation that ages; the
-// verification date travels in Source.
-//
-// Reading it is still bounded: past the binding's ReviewBy (VerifiedOn plus
-// [rwa.ConstantNAVReviewInterval]) the row is served `stale: true` with Source
-// saying re-verification is due. Labelled, not withheld, like the 72-hour oracle
-// bound: the prescribed NAV is the current NAV until the fund changes regime.
+// (rwa.ConstantNAV). The reference is dated now because the value is a standing rule of the fund,
+// not an observation that ages; the verification date travels in Source. Past the binding's
+// ReviewBy the row is served `stale: true`, labelled not withheld, like the 72-hour oracle bound.
 func rwaApplyConstantNAVReference(a *RWAAsset, b rwa.ConstantNAVBinding, now time.Time) {
 	price := ratFromOptionalString(&b.NAVUSD)
 	if price == nil || price.Sign() <= 0 {
@@ -1040,16 +871,11 @@ func rwaRefuseReference(a *RWAAsset, status string) {
 // rwaReferenceValuationOf values one row's float at the reference
 // price, or states why it cannot.
 //
-// Called only on a row that already carries a published reference, so
-// the refusals here are about the OTHER two inputs — the oracle's value
-// and the chain's supply — and never about whether a reference was
-// admissible, which [rwaApplyReference] has already decided.
+// Called only on a row that already carries a published reference, so the refusals here concern the
+// price value and the supply, never whether a reference was admissible ([rwaApplyReference]).
 func rwaReferenceValuationOf(a *RWAAsset, ref rwaReference) RWAReferenceValuation {
-	// A zero or negative net asset value is bad data, not a valuation of
-	// zero. The premium path refuses to divide by it; this path refuses
-	// to multiply a float by it, and for the same reason: the result
-	// would be a number the oracle did not claim. The premium reports
-	// the same refusal below when a market price exists to compare.
+	// A zero or negative net asset value is bad data, not a valuation of zero; the premium path
+	// refuses to divide by it and this path refuses to multiply by it.
 	if ref.priceUSD == nil || ref.priceUSD.Sign() <= 0 {
 		return RWAReferenceValuation{Status: RWAPremiumReferenceNotPositive}
 	}
@@ -1072,22 +898,12 @@ func rwaReferenceValuationOf(a *RWAAsset, ref rwaReference) RWAReferenceValuatio
 // rwaReferenceValueUSD = (circulating / 10^decimals) x referencePrice,
 // as a 2-dp decimal string. Empty on any input that is not a valuation.
 //
-// EXACT rational arithmetic end to end (ADR-0003). Both inputs arrive
-// exact and stay exact: the supply is an integer count of the smallest
-// unit, and the reference price is already held as a [big.Rat] built
-// from the oracle's own scaled integer by [ratFromScaledInt], so
-// nothing on this path is ever a float. The 2-dp rounding happens once,
-// at the end, which is what lets the summary total be the exact sum of
-// the per-row strings a reader can add up by hand.
+// Exact rational arithmetic end to end (ADR-0003), never a float. The 2-dp rounding happens once,
+// at the end, so the summary total is the exact sum of the per-row strings.
 //
-// The scale is the ASSET's own decimals, never a constant. A wrong scale
-// is not a display error on this path: a 6-decimal token valued at 7
-// publishes a tenth of the real figure and an 18-decimal one publishes
-// a hundred billion times it. Contract-issued members make that live
-// rather than theoretical, since a SEP-41 token declares its own scale.
-// Guarded rather than assumed: a negative scale is not a scale, and
-// [big.Int.Exp] answers a negative exponent with 1, which would publish
-// the raw smallest-unit count as dollars.
+// The scale is the ASSET's own decimals, never a constant: a SEP-41 token declares its own, and a
+// wrong one is off by powers of ten. A negative scale is refused because [big.Int.Exp] answers a
+// negative exponent with 1, which would publish the raw smallest-unit count as dollars.
 func rwaReferenceValueUSD(circRaw string, decimals int, unit *big.Rat) string {
 	if unit == nil || decimals < 0 {
 		return ""

@@ -14,60 +14,45 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// CoverageFloorReader answers one question for a pair: when does this deployment's served history
-// for it BEGIN? An empty series is two different answers in the same wire shape ("the market was
-// quiet" vs "the window is before anything held for this pair"), and no serving read can tell them
-// apart. Production wiring is timescale.Store: one bounded, index-backed `min(bucket)` over
-// prices_<granularity>. The methods differ only in WHICH stored rows they span, and a surface picks
-// the one its own serving read spans, never a wider one: a floor over rows a surface cannot serve
-// is a coverage claim about bars that will never arrive.
-//   - EarliestBucket folds both legs' alias families and both stored directions,
-//     matching reads that walk the spellings of both legs (chartMergeAliasPairs,
-//     lookupPriceAt, the non-fiat ohlcSeriesWithAliases,
-//     tradesInRangeAfterWithAliases) and combine base/quote and quote/base rows.
+// CoverageFloorReader answers when this deployment's served history for a pair BEGINS. An empty
+// series is otherwise ambiguous ("the market was quiet" vs "the window predates anything held").
+// Production wiring is timescale.Store: one bounded, index-backed `min(bucket)` over
+// prices_<granularity>. The methods differ only in which stored rows they span, and a surface
+// picks the one its own serving read spans, never a wider one: a floor over rows a surface cannot
+// serve is a coverage claim about bars that will never arrive.
+//   - EarliestBucket folds both legs' alias families and both stored directions, matching reads
+//     that walk both legs' spellings (chartMergeAliasPairs, lookupPriceAt, the non-fiat
+//     ohlcSeriesWithAliases, tradesInRangeAfterWithAliases).
 //   - EarliestBucketAsStored reads the requested orientation only (no surface uses it today).
-//   - EarliestBucketLiteralQuote drops the alias fold on the quote leg, matching
-//     the fiat combine (ohlcSeriesFiatCombined), which reads each USD-pegged
-//     constituent under the one quote spelling the peg expansion named.
+//   - EarliestBucketLiteralQuote drops the alias fold on the quote leg, matching the fiat combine
+//     (ohlcSeriesFiatCombined), which reads each constituent under one named quote spelling.
 //
-// [from, to) is half-open and `to` MUST be after `from`; the store rejects a degenerate window
-// rather than reporting it empty, so a bad probe range fails loudly instead of claiming a pair has
-// no coverage.
+// [from, to) is half-open and `to` MUST be after `from`; the store rejects a degenerate window so a
+// bad probe range fails loudly instead of claiming a pair has no coverage.
 type CoverageFloorReader interface {
 	EarliestBucket(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error)
 	EarliestBucketAsStored(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error)
 	EarliestBucketLiteralQuote(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error)
 }
 
-// coverageProbeSpan names which stored rows a set's probes read. It is
-// the one knob that keeps a floor a property of the read it explains:
-// each surface's coverageSet declares the span its own serving read
-// covers, and [Server.coverageFloor] picks the matching
-// [CoverageFloorReader] method.
+// coverageProbeSpan names which stored rows a set's probes read, keeping a floor a property of the
+// read it explains. Each coverageSet declares its serving read's span and [Server.coverageFloor]
+// picks the matching [CoverageFloorReader] method.
 type coverageProbeSpan uint8
 
 const (
-	// spanAliasedBothDirections: both legs' alias families, both stored
-	// directions. The default, and what a read that walks the spellings
-	// of both legs over a direction-folding store read spans.
+	// spanAliasedBothDirections: both legs' alias families, both stored directions. The default.
 	spanAliasedBothDirections coverageProbeSpan = iota
-	// spanAliasedAsStored: both legs' alias families, the requested
-	// orientation only. No surface selects it today — /v1/history did
-	// while its page read took the stored orientation as given, and
-	// moved to the default span when that read began folding both
-	// directions. It stays as the reader capability a single-orientation
-	// read would need, and [Store.EarliestBucketAsStored] behind it.
+	// spanAliasedAsStored: both legs' alias families, the requested orientation only. No surface
+	// selects it today; it is the capability a single-orientation read would need.
 	spanAliasedAsStored
-	// spanLiteralQuote: the base leg's alias family and the quote leg's
-	// literal spelling, both stored directions — the fiat /v1/ohlc
-	// combine, which enumerates every base spelling itself and names
-	// each constituent's quote in exactly one form.
+	// spanLiteralQuote: the base leg's alias family and the quote leg's literal spelling, both
+	// stored directions. Used by the fiat /v1/ohlc combine, which names each constituent's quote
+	// in exactly one form.
 	spanLiteralQuote
 )
 
-// String names the span in a probe warning, so an operator reading the
-// log knows which of the three reads failed without inferring it from
-// the surface.
+// String names the span in a probe warning so an operator can tell which read failed.
 func (s coverageProbeSpan) String() string {
 	switch s {
 	case spanAliasedAsStored:
@@ -82,55 +67,30 @@ func (s coverageProbeSpan) String() string {
 // Coverage-floor probe envelope. Every constant here exists to bound
 // what an ANONYMOUS caller can spend by asking for empty windows.
 const (
-	// coverageFloorGranularity is the CAGG rung the floor is measured
-	// on. The daily rung, always — not the grain the request happened
-	// to ask for. prices_1d carries no retention policy — migration
-	// 0156 attaches one to prices_1m and to NOTHING else (90 days,
-	// shipped disabled), so the minute rung is the only rung whose
-	// bottom edge can move with the clock, and only on a deployment
-	// that has armed it. The daily rung still holds everything it ever
-	// materialised — so nothing in it has been dropped by age; and
-	// prices_1d is the coarsest
-	// rung, holds the fewest rows per pair, and is the cheapest to
-	// prove empty on a path an anonymous caller can drive. The floor is
-	// a statement about the rung the probe reads, not about the tree:
-	// every prices_* view is materialized_only and the minute rungs are
-	// refreshed on their own schedule (the backfill refresh set leaves
-	// them out — timescale.CAGGsLiveForever), so a finer rung holds what
-	// its own refreshes have materialised, which can be less of the
-	// history than the daily rung holds.
+	// coverageFloorGranularity is the CAGG rung the floor is measured on: always the daily rung,
+	// not the grain requested. prices_1d has no retention policy (only prices_1m can, and ships
+	// disabled), and it is the coarsest rung with the fewest rows per pair, so it is the cheapest to
+	// prove empty on a path an anonymous caller can drive. Finer rungs are materialized_only and
+	// refreshed on their own schedule (timescale.CAGGsLiveForever), so they can hold less history.
 	coverageFloorGranularity = "1d"
 
-	// coverageFloorTTL is how long one answer is reused. The floor is
-	// close to immutable — it moves once, when a pair's first bucket
-	// materialises, and again only if a historical backfill lands
-	// earlier rows — so the TTL is set by how quickly a NEW pair should
-	// stop being described as uncovered, not by drift.
+	// coverageFloorTTL is how long one answer is reused. The floor is close to immutable (it moves
+	// when a pair's first bucket materialises or a backfill lands earlier rows), so the TTL is set
+	// by how quickly a NEW pair should stop being described as uncovered.
 	coverageFloorTTL = 30 * time.Minute
 
-	// coverageFloorFailedTTL is how long a probe the database answered
-	// with an error is memoised as failed. Short, and distinct from
-	// coverageFloorTTL: a transient store error (a dropped connection,
-	// a reset) is not a fact about the pair the way a real answer is,
-	// so it must not poison the advisory coverage_from/outside_coverage
-	// annotation for the same thirty minutes a genuine floor earns. It
-	// still bounds re-issuing the same failing read on every empty
-	// window, just over a window a recovered store clears quickly.
+	// coverageFloorFailedTTL is how long a probe error is memoised. Short, because a transient
+	// store error is not a fact about the pair and must not poison the advisory annotation for the
+	// full TTL, yet it still bounds re-issuing the failing read on every empty window.
 	coverageFloorFailedTTL = 45 * time.Second
 
-	// coverageFloorProbeTimeout caps EVERY probe behind one response,
-	// together. A fiat-quoted pair's floor is measured over its whole
-	// constituent set (see [coverageSet]), and each constituent that
-	// misses the memo is one read — measured at ~5 ms execution on r1's
-	// prices_1d — so the ceiling is per response rather than per read.
-	// A degraded database therefore costs the response nothing but the
-	// signal, however many constituents the set holds.
+	// coverageFloorProbeTimeout caps ALL probes behind one response together. A fiat-quoted pair's
+	// floor spans its whole constituent set (see [coverageSet]) and each memo miss is one read, so
+	// the ceiling is per response. A degraded database costs the response only the signal.
 	coverageFloorProbeTimeout = 2 * time.Second
 
-	// coverageFloorCacheMax bounds the entry count. A caller can mint
-	// unlimited DISTINCT pairs, so the map must not grow with them;
-	// past this size admitting a key evicts one, which the `evicted`
-	// metric result makes visible as the key-enumeration signature.
+	// coverageFloorCacheMax bounds the entry count, since a caller can mint unlimited distinct
+	// pairs. Past it, admitting a key evicts one; the `evicted` metric shows key enumeration.
 	coverageFloorCacheMax = 4096
 )
 
@@ -140,13 +100,9 @@ const (
 // end.
 var coverageFloorEpoch = time.Date(2015, 9, 30, 0, 0, 0, 0, time.UTC)
 
-// coverageFloorOutcome is what one probe established about one pair.
-// The three states are distinct on purpose: a floor that was READ AND
-// ABSENT can be skipped when a set of constituents is folded — the
-// constituent holds no daily bucket — while a probe that FAILED means
-// nothing is known about that constituent, and a fold that skipped it
-// could publish a floor later than the truth, which is the one error
-// direction the whole signal is built to avoid.
+// coverageFloorOutcome is what one probe established about one pair. A floor read and absent can
+// be skipped when folding a set, but a FAILED probe means nothing is known, and skipping it could
+// publish a floor later than the truth, the one error direction this signal must avoid.
 type coverageFloorOutcome uint8
 
 const (
@@ -155,10 +111,9 @@ const (
 	coverageFloorFailed
 )
 
-// coverageFloorEntry is one cached probe outcome. An absent or failed
-// probe is cached exactly like a hit so a repeated request for an
-// uncovered pair costs one read per TTL, not one per request — with one
-// exception, a probe that never finished (see [Server.coverageFloor]).
+// coverageFloorEntry is one cached probe outcome. Absent and failed probes are cached like hits so
+// an uncovered pair costs one read per TTL, except a probe that never finished (see
+// [Server.coverageFloor]).
 type coverageFloorEntry struct {
 	floor   time.Time
 	outcome coverageFloorOutcome
@@ -173,25 +128,18 @@ type coverageFloorCache struct {
 	entries map[string]coverageFloorEntry
 }
 
-// coverageFloorKey folds a pair onto the one identity its floor is a property of UNDER THE GIVEN SPAN. A leg the span
-// reads alias-complete folds onto its family; a leg the span reads literally keeps its own spelling, or two probes
-// with different answers would share an entry. Three folds, each load-bearing, and each done with a SINGLE registry
-// lookup per leg rather than a walk over alias combinations:
-//   - Alias family. `native`, `crypto:XLM` and the XLM SAC are the same
-//     asset; a probe that reads all of their forms in one query must
-//     resolve every spelling of that leg to the same cache entry or the
-//     same answer would be re-read up to nine times per pair. Under
+// coverageFloorKey folds a pair onto the one identity its floor is a property of under the given
+// span. A leg read alias-complete folds onto its family; a leg read literally keeps its spelling,
+// or two probes with different answers would share an entry. Each fold uses a single registry
+// lookup per leg:
+//   - Alias family. `native`, `crypto:XLM` and the XLM SAC are one asset, so every spelling must
+//     resolve to the same entry or the same answer is re-read up to nine times. Under
 //     [spanLiteralQuote] this applies to the base leg only.
-//   - Direction — for the both-orientations, both-legs-aliased probe
-//     only. That probe reads both stored market directions over two
-//     symmetric alias arrays, so A/B and B/A have the same floor by
-//     construction; ordering the two ids makes them one entry. The
-//     stored-orientation probe is a different question with a different
-//     answer for A/B and B/A. So is the literal-quote probe: its two
-//     legs are read with different completeness, so swapping them
-//     changes the query. Both keep the order.
-//   - Span. Each span gets its own prefix, so two reads that span
-//     different rows can never share an entry.
+//   - Direction, for the both-orientations, both-legs-aliased probe only: it reads both stored
+//     directions over symmetric alias arrays, so A/B and B/A share a floor and are ordered into one
+//     entry. The stored-orientation and literal-quote probes answer differently per orientation and
+//     keep the order.
+//   - Span. Each span has its own prefix so reads spanning different rows never share an entry.
 func coverageFloorKey(pair canonical.Pair, span coverageProbeSpan) string {
 	base := canonical.CanonicalAsset(pair.Base).String()
 	switch span {
@@ -208,10 +156,8 @@ func coverageFloorKey(pair canonical.Pair, span coverageProbeSpan) string {
 	return "either\x00" + base + "\x00" + quote
 }
 
-// lookup returns a live cached entry, or ok=false when the key is
-// absent or expired. Expired entries are left in place for `store` to
-// sweep — a read path that deletes would need the write lock on every
-// miss.
+// lookup returns a live cached entry, or ok=false when absent or expired. Expired entries are left
+// for `store` to sweep, since deleting here would need the write lock on every miss.
 func (c *coverageFloorCache) lookup(key string, now time.Time) (coverageFloorEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -222,10 +168,9 @@ func (c *coverageFloorCache) lookup(key string, now time.Time) (coverageFloorEnt
 	return e, true
 }
 
-// store admits an entry, first dropping expired keys and then, if the
-// map is still at its ceiling, one arbitrary key. Go's map iteration
-// order is unspecified, which is the property wanted here: a caller
-// enumerating pairs cannot steer which victim it evicts.
+// store admits an entry, first dropping expired keys and then, if still at the ceiling, one
+// arbitrary key. Unspecified map iteration order is wanted here: a caller enumerating pairs cannot
+// steer the victim.
 func (c *coverageFloorCache) store(key string, e coverageFloorEntry, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -246,57 +191,47 @@ func (c *coverageFloorCache) store(key string, e coverageFloorEntry, now time.Ti
 	c.entries[key] = e
 }
 
-// coverageSet is the population a surface's serving read for one pair draws on — and therefore what
-// that surface's floor is a property of.
+// coverageSet is the population a surface's serving read for one pair draws on, and so what that
+// surface's floor is a property of.
 //
-// A fiat quote is the case that makes this a SET rather than a pair. Nothing on chain quotes in
-// `fiat:USD`; the surfaces answer a fiat-quoted request from the USD-pegged constituents (the
-// direct pair, the abstract stablecoin backers, the operator-declared classic pegs, and on
-// /v1/chart a derivation through XLM), each surface with its own enumeration. A floor read on the
-// LITERAL pair alone describes the wrong population twice over: a constituent whose buckets predate
-// the direct pair's makes a served-and-empty window look uncovered, and a direct pair with buckets
-// no constituent read would find makes an uncovered window look quiet. So the floor is measured
-// over exactly the pairs the serving read enumerates, obtained from the same helpers that read uses
-// — [Server.usdPeggedConstituents], [Server.chartFiatProxyPairs], [fiatCrossLegsThroughXLM],
-// [Server.priceAtUSDPegPairs] — so the two cannot drift apart by editing one of them.
+// A fiat quote makes this a SET: nothing on chain quotes in `fiat:USD`, so surfaces answer from
+// USD-pegged constituents (the direct pair, stablecoin backers, declared classic pegs, and on
+// /v1/chart a derivation through XLM). A floor on the literal pair alone describes the wrong
+// population twice over: earlier constituent buckets make a served-and-empty window look
+// uncovered, and direct buckets no constituent read would find make an uncovered window look
+// quiet. So the floor is measured over exactly the pairs the serving read enumerates, via the same
+// helpers ([Server.usdPeggedConstituents], [Server.chartFiatProxyPairs], [fiatCrossLegsThroughXLM],
+// [Server.priceAtUSDPegPairs]) so the two cannot drift apart.
 //
-// Enumerating the same pairs is only half of it: a probe also spans more or fewer SPELLINGS of each
-// pair than the read that requested it, which is what `span` pins. See [coverageProbeSpan].
+// A probe may also span more or fewer spellings of each pair than the read; `span` pins that. See
+// [coverageProbeSpan].
 type coverageSet struct {
-	// direct pairs. The serving read answers from any one of them that
-	// holds buckets, so the set's floor is the EARLIEST of their floors.
+	// direct pairs. The serving read answers from any one that holds buckets, so the set's floor is
+	// the EARLIEST of their floors.
 	direct []canonical.Pair
-	// derived series. Each entry is the legs of one series composed
-	// bucket by bucket, which exists only where EVERY leg does — so a
-	// derived series' floor is the LATEST of its legs' floors, and that
-	// single value then competes with the direct floors. Folding a leg
-	// into the direct set instead would hand every non-XLM asset with
+	// derived series. Each entry is the legs of one series composed bucket by bucket, which exists
+	// only where EVERY leg does, so its floor is the LATEST of its legs' floors and that value then
+	// competes with the direct floors. Folding a leg into direct would hand every non-XLM asset with
 	// any XLM market the floor of XLM's own fiat series.
 	derived [][]canonical.Pair
-	// span is which stored rows each probe reads — matched to what the
-	// surface's own serving read spans. See [coverageProbeSpan].
+	// span is which stored rows each probe reads, matched to the surface's serving read.
 	span coverageProbeSpan
 }
 
 // ohlcCoverageSet mirrors [Server.ohlcSeriesWithAliases].
 //
-// A non-fiat quote is served by the alias walk in that function, over a store
-// read that folds both stored directions, so the pair under the default span is
-// exactly its population.
+// A non-fiat quote is served by the alias walk over a store read that folds both stored
+// directions, so the pair under the default span is exactly its population.
 //
-// A fiat quote is served by [Server.ohlcSeriesFiatCombined], which reads the
-// LITERAL pairs [Server.usdPeggedConstituents] enumerates: every base spelling
-// crossed with the peg expansion, each quote in every canonical form (established
-// spellings, then held-back SAC wrappers). Those literal pairs are the set and
-// [spanLiteralQuote] is the span, because [Store.OHLCSeries] takes the quote
-// spelling it is given. The base leg keeps its fold, and the memo collapses
-// repeats to one read per quote spelling.
+// A fiat quote is served by [Server.ohlcSeriesFiatCombined], which reads the literal pairs
+// [Server.usdPeggedConstituents] enumerates: every base spelling crossed with the peg expansion,
+// each quote in every canonical form (established, then held-back SAC wrappers). Those are the set
+// and [spanLiteralQuote] the span, because [Store.OHLCSeries] takes the quote spelling it is given.
 //
-// The held-back spellings belong in the set even though the combine admits their
-// bars only into buckets nothing established answered: the floor is consulted
-// ONLY on an empty answer, which by construction means every constituent was read
-// and returned nothing. Leaving them out would put the probe behind the read. A
-// test pins the probed and requested populations equal.
+// Held-back spellings belong in the set even though the combine admits their bars only into
+// buckets nothing established answered: the floor is consulted only on an empty answer, meaning
+// every constituent was read, and omitting them would put the probe behind the read. A test pins
+// the probed and requested populations equal.
 func (s *Server) ohlcCoverageSet(pair canonical.Pair) coverageSet {
 	if pair.Quote.Type != canonical.AssetFiat {
 		return coverageSet{direct: []canonical.Pair{pair}}
@@ -310,17 +245,13 @@ func (s *Server) ohlcCoverageSet(pair canonical.Pair) coverageSet {
 // cross [Server.fiatSeriesThroughXLM] derives — its two legs as one derived entry, since the cross
 // exists only where both legs do.
 //
-// The set is built from the read's OWN enumeration helpers, so the two cannot drift by editing one
-// of them. That the probe and the serving read now agree on the SAC-quoted pool is a property of
-// the read, not of this list: the list has always named `<base>/<peg SAC>` pairs, but until the
-// merge became per bucket the serving read short-circuited on the first source pair holding any
-// bucket at all, and a pool named after that pair was enumerated and never read. A floor is
-// consulted only on an EMPTY answer, and an empty answer is one where every pair in the list came
-// back empty — which is now true of the read as well as of the list.
+// The set is built from the read's own enumeration helpers so the two cannot drift. A floor is
+// consulted only on an EMPTY answer, which requires that every pair in the list came back empty,
+// so the read must actually read every listed pair (the merge is per bucket for that reason).
 //
 // The default span (both legs' aliases, both directions) is what this chain spans: every entry is
 // read through [Server.chartSeriesPoints], which crosses both base aliases with every canonical
-// form of each declared peg ([Server.chartFiatProxyQuotes]'s established pass then held-back pass).
+// form of each declared peg ([Server.chartFiatProxyQuotes]'s established then held-back pass).
 func (s *Server) chartCoverageSet(pair canonical.Pair) coverageSet {
 	set := coverageSet{direct: s.chartAliasPairs(pair)}
 	if pair.Quote.Type != canonical.AssetFiat {
@@ -333,51 +264,33 @@ func (s *Server) chartCoverageSet(pair canonical.Pair) coverageSet {
 	return set
 }
 
-// priceAtCoverageSet mirrors [Server.handlePriceAt]: the pair itself
-// ([Server.lookupPriceAt]), then for a `fiat:USD` quote the declared
-// USD pegs [Server.lookupPriceAtStablecoinFallback] retries.
-//
-// Every entry is read through [Server.lookupPriceAt], which walks both
-// legs' alias families over a store read
-// ([Store.ClosedVWAPAtOrBefore]) that folds the two stored directions
-// — the default span exactly.
+// priceAtCoverageSet mirrors [Server.handlePriceAt]: the pair itself, then for a `fiat:USD` quote
+// the declared USD pegs [Server.lookupPriceAtStablecoinFallback] retries. Every entry is read
+// through [Server.lookupPriceAt], which walks both legs' alias families over a store read
+// ([Store.ClosedVWAPAtOrBefore]) folding both stored directions: the default span exactly.
 func (s *Server) priceAtCoverageSet(pair canonical.Pair) coverageSet {
 	return coverageSet{direct: append([]canonical.Pair{pair}, s.priceAtUSDPegPairs(pair.Base, pair.Quote)...)}
 }
 
-// historyCoverageSet mirrors [Server.tradesInRangeAfterWithAliases]:
-// the pair itself. The raw-trade page has no fiat fallback, so one
-// entry is the whole set.
+// historyCoverageSet mirrors [Server.tradesInRangeAfterWithAliases]: the pair itself, since the
+// raw-trade page has no fiat fallback.
 //
-// The DEFAULT span, because that walk crosses both legs' alias families
-// and reads each form in both stored directions
-// ([Server.tradesInRangeAfterBothDirections]), re-expressing the flipped
-// rows into the requested orientation. A market the decoder recorded
-// only as USDC/AQUA is therefore served under `base=AQUA&quote=USDC`,
-// and its floor is a claim about rows this page returns. While the page
-// read spanned one orientation the probe was narrowed to match it, so
-// that market carried no floor here at all; the two moved together
-// because a floor measured over rows a surface cannot serve is a
-// coverage claim it cannot keep, and one measured over fewer rows than
-// it serves under-reports what it holds.
+// The default span, because that walk crosses both legs' alias families and reads each form in both
+// stored directions ([Server.tradesInRangeAfterBothDirections]), re-expressing flipped rows into
+// the requested orientation. A market recorded only as USDC/AQUA is thus served under
+// `base=AQUA&quote=USDC`, so its floor must cover those rows: a floor over rows a surface cannot
+// serve over-claims, and one over fewer rows than it serves under-reports.
 func historyCoverageSet(pair canonical.Pair) coverageSet {
 	return coverageSet{direct: []canonical.Pair{pair}}
 }
 
-// coverageFloor is one memoised probe: the instant the daily rung's
-// history for `pair` begins under the requested orientation span, and
-// whether that is known at all.
+// coverageFloor is one memoised probe: when the daily rung's history for `pair` begins under the
+// span, and whether that is known at all.
 //
-// `ctx` carries the response-wide probe deadline set by
-// [Server.coverageFloorOf]. A probe the database answered with an error
-// is cached as failed for the TTL, so a broken read is not re-attempted
-// on every subsequent empty window for the pair. A probe that did NOT
-// finish — the caller went away, or the response-wide deadline ran out
-// — is not cached: it established nothing about the pair, and a memo
-// entry written from one client's disconnect would describe every
-// request for that pair as unknowable for the next thirty minutes. Not
-// caching it costs at most one more bounded attempt per empty answer,
-// under the same deadline.
+// `ctx` carries the response-wide probe deadline set by [Server.coverageFloorOf]. A probe the
+// database answered with an error is cached as failed for the short TTL. A probe that did NOT
+// finish (caller went away, or the deadline ran out) is not cached: it established nothing, and
+// one client's disconnect must not make every request for that pair unknowable for the full TTL.
 func (s *Server) coverageFloor(ctx context.Context, pair canonical.Pair, span coverageProbeSpan) (time.Time, coverageFloorOutcome) {
 	key := coverageFloorKey(pair, span)
 	now := time.Now().UTC()
@@ -429,29 +342,18 @@ func (s *Server) coverageFloor(ctx context.Context, pair canonical.Pair, span co
 	return floor, outcome
 }
 
-// coverageFloorOf returns the instant this deployment's served history
-// for `set` begins, and whether it is known at all.
+// coverageFloorOf returns when the served history for `set` begins, and whether that is known.
 //
-// Called ONLY from an already-empty answer, so the probes ride on a
-// read that has just proved it has nothing to return — they add a
-// bounded second read per constituent to a request that was going to
-// be cheap-and-empty or expensive-and-empty either way, and the TTL
-// cache collapses a repeat of the same question to nothing.
+// Called only from an already-empty answer, so the probes add one bounded read per constituent to
+// a request that was empty anyway, and the TTL cache collapses repeats.
 //
-// The fold is strict about what it does not know. Every direct
-// constituent that was read and holds no bucket is skipped; a derived
-// series with any leg absent cannot be served and is skipped too. But
-// a single FAILED probe anywhere in the set makes the whole floor
-// unknown: the constituent that failed might have held the earliest
-// bucket, and a floor computed without it could be too LATE — the one
-// direction that turns a served-and-quiet window into a false coverage
-// claim. Staying silent costs an unannotated empty window, exactly what
-// callers had before the signal existed.
+// The fold is strict about what it does not know. A direct constituent read and found empty is
+// skipped, as is a derived series with any leg absent. But one FAILED probe makes the whole floor
+// unknown: that constituent might hold the earliest bucket, and a floor that is too LATE turns a
+// served-and-quiet window into a false coverage claim. Silence only costs an unannotated window.
 func (s *Server) coverageFloorOf(ctx context.Context, set coverageSet) (time.Time, bool) {
-	// The memo is required, not optional: without it the probes are
-	// reads per request on a path an anonymous caller controls. A
-	// Server assembled field-by-field rather than through [New] has no
-	// cache, and the honest answer there is no signal.
+	// The memo is required: without it every probe is a read on a path an anonymous caller drives.
+	// A Server assembled without [New] has no cache, and the honest answer there is no signal.
 	if s.CoverageFloor == nil || s.coverageFloorCache == nil {
 		return time.Time{}, false
 	}
@@ -502,22 +404,17 @@ func (s *Server) coverageFloorOf(ctx context.Context, set coverageSet) (time.Tim
 	return floor, known
 }
 
-// coverageAnnotation is what a handler stamps on an empty answer: the
-// floor to echo as `coverage_from`, and whether the requested range
-// provably sits below it.
+// coverageAnnotation is what a handler stamps on an empty answer: the floor to echo as
+// `coverage_from`, and whether the requested range provably sits below it.
 //
-// `end` is the requested range's EXCLUSIVE upper bound — a series
-// window's `to`, or, for a point-in-time lookup, the instant itself
-// (the daily bucket that STARTS at the floor has not closed at that
-// instant, so an instant exactly at the floor is still uncovered).
+// `end` is the range's EXCLUSIVE upper bound: a series window's `to`, or for a point-in-time lookup
+// the instant itself (the daily bucket starting at the floor has not closed then, so an instant
+// exactly at the floor is still uncovered).
 //
-// outside is true ONLY when a floor is known AND the whole range ends
-// at or before it. A range that STRADDLES the floor is not flagged: it
-// contains covered time, so its emptiness is a genuine quiet-market
-// answer for that part and mislabelling it would be the same lie in the
-// other direction. A set with NO known floor is not flagged either —
-// absence of a daily bucket is not proof of absence of history (a pair
-// whose first trades landed an hour ago has none yet).
+// outside is true only when a floor is known AND the whole range ends at or before it. A range
+// straddling the floor contains covered time, so its emptiness is a genuine quiet-market answer.
+// An unknown floor is not flagged either: a missing daily bucket is not proof of no history (a
+// pair whose first trades landed an hour ago has none yet).
 func (s *Server) coverageAnnotation(ctx context.Context, set coverageSet, end time.Time) (from *time.Time, outside bool) {
 	floor, known := s.coverageFloorOf(ctx, set)
 	if !known {
@@ -527,14 +424,9 @@ func (s *Server) coverageAnnotation(ctx context.Context, set coverageSet, end ti
 	return &f, !end.After(floor)
 }
 
-// coverageAnnotationIfEmpty is [Server.coverageAnnotation] with the
-// gate that decides whether to probe at all folded in, so every call
-// site is one statement.
-//
-// `empty` is the handler's own judgement that this response is the
-// ambiguous one — no bars, no points, no rows, no price — and it is the
-// cost bound of the whole signal: a populated answer explains itself,
-// and the probes never run behind one.
+// coverageAnnotationIfEmpty is [Server.coverageAnnotation] gated on `empty`, the handler's
+// judgement that the response is the ambiguous one. That gate is the cost bound of the whole
+// signal: a populated answer explains itself and the probes never run behind one.
 func (s *Server) coverageAnnotationIfEmpty(
 	ctx context.Context, set coverageSet, end time.Time, empty bool,
 ) (from *time.Time, outside bool) {
@@ -544,38 +436,24 @@ func (s *Server) coverageAnnotationIfEmpty(
 	return s.coverageAnnotation(ctx, set, end)
 }
 
-// historyPageIsAmbiguous reports whether an empty /v1/history page is
-// the ambiguous kind.
-//
-// An empty FIRST page means the caller's window held no trades — the
-// answer that reads identically whether the market was dead or the
-// window predates the held history. An empty page reached by CURSOR
-// means something else entirely: the caller paginated past the last
-// row. The cursor also shadows `from`, so the window the signal would
-// describe is not the window that was read.
+// historyPageIsAmbiguous reports whether an empty /v1/history page is the ambiguous kind. An empty
+// first page reads the same whether the market was dead or the window predates the history. An
+// empty page reached by cursor means the caller paginated past the last row, and the cursor shadows
+// `from`, so the window the signal would describe is not the window that was read.
 func historyPageIsAmbiguous(rows int, afterTS time.Time) bool {
 	return rows == 0 && afterTS.IsZero()
 }
 
-// writeChartSeries emits a /v1/chart response with its coverage
-// annotation and its interior-gap signal attached. It is one call rather
-// than an annotate-then-write pair because the retention-truncation
-// signal handleChart already carries is computed from points[0] and so
-// says nothing at all about an EMPTY series — this is the surface's only
-// account of that case, and it belongs with the write.
+// writeChartSeries emits a /v1/chart response with its coverage annotation and interior-gap signal.
+// The truncation signal handleChart carries comes from points[0] and says nothing about an EMPTY
+// series, so coverage is the only account of that case. [ChartSeries.markDiscontinuity] is stamped
+// here because points[0] likewise says nothing about a hole in the MIDDLE; coverage speaks for the
+// empty answer and the gap signal for the holed one, and both ride the write so neither is
+// forgotten.
 //
-// [ChartSeries.markDiscontinuity] is stamped here for the mirror reason:
-// points[0] says nothing about a hole in the MIDDLE of a populated
-// series either. The two signals partition the ambiguity — coverage
-// speaks for the empty answer, the gap signal for the holed one — and
-// both ride the write so a handler cannot forget either.
-//
-// The chart's window always ends at NOW, so it structurally cannot sit
-// below the floor and `outside_coverage` never fires here. The floor
-// itself is the whole answer on this surface: an empty 24h series with
-// a `coverage_from` value says the pair has been quiet; the same
-// series with the field absent says this deployment holds nothing for
-// the pair at all. Without the field both would render as `points: []`.
+// The window always ends at NOW, so `outside_coverage` never fires here; the floor is the whole
+// answer. An empty series with `coverage_from` says the pair has been quiet; with the field absent,
+// this deployment holds nothing for it. Without the field both render as `points: []`.
 func (s *Server) writeChartSeries(
 	w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair, series ChartSeries, walk chartWalkResult,

@@ -18,17 +18,10 @@ import (
 type Envelope struct {
 	Data any      `json:"data"`
 	AsOf WireTime `json:"as_of"`
-	// CoverageFrom is the earliest instant this deployment holds
-	// served-tier price history at for the pair the request named — the
-	// bottom of the range the response's emptiness can speak for.
-	//
-	// It lives on the ENVELOPE rather than inside `data` because the
-	// surfaces that need it return three different body shapes (a bar
-	// series, a point series, a bare trade array) and one of them has no
-	// object to hang it on. Present only on the surfaces that probe it
-	// (/v1/ohlc, /v1/history, /v1/chart, /v1/price/at) and only when the
-	// probe reached an answer; absent means UNKNOWN, never "from the
-	// beginning of time".
+	// CoverageFrom is the earliest instant the served tier holds price history for the requested
+	// pair: the bottom of the range an empty response can speak for. It sits on the envelope
+	// because one of the surfaces that need it returns a bare trade array with no object to hang
+	// it on. Absent means UNKNOWN, never "from the beginning of time".
 	CoverageFrom *WireTime `json:"coverage_from,omitempty"`
 	// Withheld names the requested ids a batch surface omitted from
 	// `data` because a serving gate declined to publish their price —
@@ -50,66 +43,49 @@ type Envelope struct {
 //     via a pivot (typically USD), not a directly-traded pair.
 //   - DivergenceWarning: cross-reference/anomaly detection saw a meaningful divergence (ADR-0019).
 //   - Frozen: anomaly detection refused the new bucket; the response carries the held
-//     last-known-good value with its own observed_at, and Stale set (ADR-0019). On
-//     /v1/price, /v1/price/batch and SEP-40 lastprice/x_last_price; tip +
-//     observations ignore freeze. FrozenChecked separates "confirmed not frozen" from
-//     "marker read failed" (as DivergenceChecked).
-//   - OutsideCoverage: the range ends at or before the pair's `coverage_from`, so the
-//     empty answer is a coverage statement. Only on the four windowed surfaces, only
-//     when the floor is KNOWN, never on a range straddling it.
+//     last-known-good value with its own observed_at, and Stale set (ADR-0019). On /v1/price,
+//     /v1/price/batch and SEP-40 lastprice/x_last_price; tip and observations ignore freeze.
+//   - OutsideCoverage: the range ends at or before the pair's `coverage_from`, so the empty answer
+//     is a coverage statement. Only on the windowed surfaces, only when the floor is KNOWN, never
+//     on a range straddling it.
 //   - SingleSource: one contributing source; with Frozen, the manipulation signature.
-//   - Diverged / Rerouted / PivotUnverified: only on the /v1/price triangulated path.
-//     Diverged: routes DISAGREED. Rerouted: SUBSTITUTED around a dry configured leg.
-//     PivotUnverified: a leg priced only from par-valued stablecoin prints, with no
-//     own-quote prints to check a de-peg against.
+//   - Diverged / Rerouted / PivotUnverified: only on the /v1/price triangulated path. Routes
+//     DISAGREED / SUBSTITUTED around a dry leg / a leg priced only from par-valued stablecoin
+//     prints, with no own-quote prints to check a de-peg against.
 type Flags struct {
 	Stale             bool `json:"stale"`
 	ReducedRedundancy bool `json:"reduced_redundancy"`
 	Triangulated      bool `json:"triangulated"`
 	DivergenceWarning bool `json:"divergence_warning"`
-	// DivergenceChecked is true only when a live cross-reference check ran
-	// (>= `min_sources_for_warning` responding references, the SAME quorum the
-	// worker gates its verdict on). When false the check is blind (references dark, or
-	// no record yet), so a `false` warning must not be read as "prices agree"; a
-	// `true` warning is then the last verdict carried forward through the outage.
+	// DivergenceChecked is true only when a live cross-reference check ran (>=
+	// `min_sources_for_warning` responding references, the same quorum the worker gates on). When
+	// false the check is blind, so a `false` warning must not be read as "prices agree"; a `true`
+	// warning is then the last verdict carried forward.
 	//
-	// Set only on surfaces that consult the verdict: /v1/price, its ?window= variant,
-	// /v1/price/tip and /v1/price/tip/stream, each asking for the exact (base, quote)
-	// spelling served, never another alias's market (lookupDivergenceFlag). The
-	// ?window= variant carries it only when the window is the one the verdict was
-	// computed over (the aggregator's shortest). Elsewhere the field is false and means
-	// "not consulted", never "checked and clean": /v1/price/at, /v1/vwap,
-	// /v1/price/batch, /v1/twap, the SEP-40 passthroughs, and /v1/observations (raw
-	// per-source rows carry no aggregated value for a verdict to vouch for).
+	// Set only on surfaces that consult the verdict: /v1/price, its ?window= variant (only when the
+	// window is the one the verdict was computed over), /v1/price/tip and its stream, each looking
+	// up the exact (base, quote) spelling served, never another alias's market
+	// (lookupDivergenceFlag). Elsewhere false means "not consulted", never "checked and clean".
 	//
-	// On /v1/price/tip/stream the lookup has its own short budget
-	// ([tipStreamDivergenceBudget]); a verdict store too slow leaves the field false on
-	// that event. The stream degrades the flag, never the cadence.
+	// On the tip stream the lookup has its own short budget ([tipStreamDivergenceBudget]); a slow
+	// verdict store leaves the field false on that event. The stream degrades the flag, never the
+	// cadence.
 	DivergenceChecked bool `json:"divergence_checked"`
-	// OutsideCoverage marks an empty answer whose requested range ends
-	// at or before the envelope's `coverage_from` — the window predates
-	// this deployment's history for the pair, so nothing was there to
-	// return. Without it an empty series and a quiet market are the same
-	// bytes. omitempty hides it when false, which includes every request
-	// whose coverage floor could not be established.
+	// OutsideCoverage marks an empty answer whose range ends at or before `coverage_from`. Without
+	// it an empty series and a quiet market are the same bytes. It stays false when the floor
+	// could not be established.
 	OutsideCoverage bool `json:"outside_coverage,omitempty"`
 	Frozen          bool `json:"frozen,omitempty"`
-	// FrozenChecked is true only when the freeze marker was actually
-	// read (looker wired and the read succeeded) — same two-valued
-	// posture as DivergenceChecked. When false, `frozen` is NOT
-	// meaningful: the check never ran, so `frozen: false` must not be
-	// read as "confirmed not frozen".
+	// FrozenChecked is true only when the freeze marker was actually read. When false, `frozen`
+	// is NOT meaningful and must not be read as "confirmed not frozen" (same posture as
+	// DivergenceChecked).
 	FrozenChecked bool `json:"frozen_checked,omitempty"`
 	SingleSource  bool `json:"single_source,omitempty"`
-	// Diverged marks a triangulated composite whose contributing routes
-	// disagreed (the aggregator's router divergence signal, persisted to
-	// cachekeys.VWAPCompositeMeta). Surfaced on the /v1/price
-	// triangulated serve path only; omitempty hides it when false.
+	// Diverged marks a triangulated composite whose contributing routes disagreed
+	// (cachekeys.VWAPCompositeMeta). Set on the /v1/price triangulated path only.
 	Diverged bool `json:"diverged,omitempty"`
-	// Rerouted marks a triangulated composite that substituted around a
-	// DRY configured chain leg — the price came via an alternative path,
-	// not the documented direct chain (R3). Surfaced on the /v1/price
-	// triangulated serve path only; omitempty hides it when false.
+	// Rerouted marks a triangulated composite that substituted around a DRY configured chain leg,
+	// so the price came via an alternative path. Set on the /v1/price triangulated path only.
 	Rerouted bool `json:"rerouted,omitempty"`
 	// PivotUnverified: a composite leg was all stablecoin prints at par, so a de-peg in it went unchecked.
 	PivotUnverified bool `json:"pivot_unverified,omitempty"`
@@ -121,37 +97,22 @@ type Flags struct {
 	// that a declared USD peg is $1, and any declared peg's observed dollar
 	// price is more than 2% from $1.
 	ProxyDeviation bool `json:"proxy_deviation,omitempty"`
-	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the
-	// requested asset's code matches a verified currency's Stellar
-	// ticker but its issuer doesn't match the verified entry — i.e.
-	// someone issued their own "USDC" on Stellar. The matching
-	// `unverified_warning` payload on the AssetDetail body carries
-	// the pointer to the verified asset. See
+	// UnverifiedTickerCollision fires on `/v1/assets/{id}` when the asset's code matches a verified
+	// currency's ticker but its issuer does not (someone issued their own "USDC"). The
+	// `unverified_warning` body points at the verified asset. See
 	// docs/architecture/supply-pipeline.md#asset-identity.
 	UnverifiedTickerCollision bool `json:"unverified_ticker_collision,omitempty"`
-	// FiltersIgnored names the row-narrowing query parameters the
-	// response did NOT apply, spelled as the caller sent them
-	// ("type", "code", "issuer", "q"). Empty — and omitted — when
-	// everything supplied was applied.
-	//
-	// A listing that DROPPED a filter and one that genuinely matched
-	// on it are otherwise the same 200 over the same wire shape, so a
-	// client re-filtering the page, or a person reading a search
-	// result, has nothing to key on but the spec's prose. `/v1/assets`
-	// sets it where the rows come from a source that cannot narrow:
-	// the class-scoped catalogue listings
-	// (`asset_class=fiat|stablecoin|crypto`) and the lean AssetReader
-	// fallback.
+	// FiltersIgnored names the row-narrowing query parameters the response did NOT apply, spelled
+	// as the caller sent them. A listing that dropped a filter and one that matched on it are
+	// otherwise the same 200, so clients need this to tell them apart. `/v1/assets` sets it where
+	// the row source cannot narrow (class-scoped catalogue listings and the lean AssetReader
+	// fallback).
 	FiltersIgnored []string `json:"filters_ignored,omitempty"`
-	// Degraded marks a 200 whose body this process is carrying forward or
-	// serving partially (a stale-while-revalidate entry past its TTL, a
-	// last-good value after a failed refresh, a held frozen price, a dropped
-	// best-effort section) — an answer the origin replaces once the fault
-	// clears. Never on the wire: writeEnvelopeStatus turns it into
-	// `Cache-Control: no-store`, so a shared cache cannot keep serving it
-	// for its route's full band after recovery. It is set explicitly at
-	// each such exit, never derived from Stale, which also covers fresh
-	// reads of a lagging source that a cache may hold safely.
+	// Degraded marks a 200 whose body is carried forward or partial (stale-while-revalidate past
+	// TTL, last-good after a failed refresh, a held frozen price, a dropped best-effort section).
+	// Never on the wire: writeEnvelopeStatus turns it into `Cache-Control: no-store` so a shared
+	// cache cannot keep serving it after recovery. It is set explicitly at each such exit, never
+	// derived from Stale, which also covers fresh reads of a lagging source a cache may hold.
 	Degraded bool `json:"-"`
 }
 
@@ -160,21 +121,12 @@ type Pagination struct {
 	Next string `json:"next,omitempty"`
 }
 
-// Problem is the RFC 9457 error payload. Custom fields are
-// snake_case; `Instance` is typically the request URL.
+// Problem is the RFC 9457 error payload. Custom fields are snake_case; `Instance` is typically
+// the request URL.
 //
-// RequestID is an extension field per RFC 9457 §3.2 (unknown
-// members allowed). It echoes the X-Request-ID header so clients
-// can correlate a failure they saw with server logs without
-// parsing headers separately — and so bug reports that include
-// the body are sufficient for support to find the trace.
-// CoverageFrom / OutsideCoverage are the same two extension members the
-// 2xx envelope carries, on the one windowed surface whose empty answer
-// is an ERROR rather than an empty body: /v1/price/at answers "no
-// closed bucket at that instant" with a 404, which is the identical
-// ambiguity — dead market or before the history held — in
-// problem+json clothing. RFC 9457 §3.2 admits unknown members, so they ride here
-// rather than forcing that endpoint's contract to 200.
+// RequestID echoes X-Request-ID so a body alone is enough to find the server-side trace.
+// CoverageFrom / OutsideCoverage repeat the 2xx envelope members on /v1/price/at, whose "no closed
+// bucket" answer is a 404 with the same dead-market-or-before-history ambiguity.
 type Problem struct {
 	Type            string    `json:"type"`
 	Title           string    `json:"title"`
@@ -271,20 +223,17 @@ func writeEnvelopeStatus(w http.ResponseWriter, status int, env Envelope) {
 // human headline; status is the HTTP code; detail is the freeform
 // per-request message (optional).
 //
-// A 500 whose request deadline has ALREADY expired is rewritten to the
-// canonical retryable timeout problem — see requestDeadlineExpired. That
-// covers the BLANKET middleware deadline only; an error path holding the
-// error from a handler's OWN budget must call writeProblemErr instead.
+// A 500 whose request deadline has already expired becomes the retryable timeout problem (see
+// requestDeadlineExpired). That covers the blanket middleware deadline only; a path holding the
+// error from a handler's own budget must call writeProblemErr.
 func writeProblem(w http.ResponseWriter, r *http.Request, typeURL, title string, status int, detail string) {
 	writeProblemCoverage(w, r, typeURL, title, status, detail, nil, false, nil, "")
 }
 
-// writeProblemCoverage is [writeProblem] carrying the coverage-floor
-// extension members. Only /v1/price/at uses it — the one windowed
-// surface whose "nothing there" answer is a 404 body rather than an
-// empty array. Every rewrite rule writeProblem applies (deadline →
-// retryable 503, no-store, the 401 challenge) applies here identically,
-// which is why this is the shared body and writeProblem the thin call.
+// writeProblemCoverage is [writeProblem] carrying the coverage-floor extension members, used by
+// /v1/price/at, whose "nothing there" answer is a 404 rather than an empty array. It is the shared
+// body, so every rewrite rule writeProblem applies (deadline to 503, no-store, 401 challenge)
+// applies here identically.
 func writeProblemCoverage(
 	w http.ResponseWriter, r *http.Request,
 	typeURL, title string, status int, detail string,
@@ -308,27 +257,16 @@ func writeProblemCoverage(
 		Reason:          reason,
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
-	// Errors override the cache-control middleware's per-route
-	// directive: never cache an error. Otherwise a CDN serving
-	// /v1/coins (which the middleware tags `public, max-age=60,
-	// s-maxage=300`) would cache a transient 400/404/500 for the
-	// next 5 minutes and replay it to other anonymous clients on
-	// the same cache key.
+	// Errors override the per-route cache-control directive, or a CDN would cache a transient
+	// 400/404/500 and replay it to other anonymous clients on the same cache key.
 	w.Header().Set("Cache-Control", "no-store")
-	// RFC 7235 §3.1: every 401 response MUST include a
-	// WWW-Authenticate header naming at least one challenge the
-	// client can use; without it programmatic clients have no way
-	// to discover the accepted scheme. Our authenticated endpoints all
-	// accept Bearer (API key + SEP-10 token); the magic-link cookie path
-	// is parallel and doesn't have a standard challenge token, so we
-	// advertise Bearer only.
+	// RFC 7235 section 3.1 requires a WWW-Authenticate challenge on every 401. The magic-link
+	// cookie path has no standard challenge token, so only Bearer is advertised.
 	if status == http.StatusUnauthorized {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="stellarindex.io"`)
 	}
-	// Keyed on the TYPE, not the status: writeProblemErr rewrites its own
-	// upgrade before calling in, so by the time it reaches here the status
-	// is already 503 and only the type still identifies the condition.
-	// Both upgrade legs therefore carry the hint.
+	// Keyed on the type, not the status: writeProblemErr rewrites before calling in, so only the
+	// type still identifies the condition. Both upgrade legs thus carry the hint.
 	if typeURL == requestTimeoutType {
 		middleware.MarkReadDeadline(r.Context())
 		w.Header().Set("Retry-After", retryAfterRequestTimeout)
@@ -343,63 +281,44 @@ func writeProblemCoverage(
 const (
 	requestTimeoutType  = "https://api.stellarindex.io/errors/request-timeout"
 	requestTimeoutTitle = "Request timed out"
-	// No budget figure in the detail: the effective bound is the
-	// deployment's api.request_timeout, not a constant this package can
-	// quote truthfully.
+	// No budget figure in the detail: the bound is the deployment's api.request_timeout, which
+	// this package cannot quote truthfully.
 	requestTimeoutDetail = "the request exceeded this server's request budget before " +
 		"the handler could answer; retry shortly."
-	// A 503 whose body says "retry shortly" but carries no Retry-After
-	// leaves every client to guess, and the guess is "immediately" —
-	// precisely the retry storm a server that just ran out of budget must
-	// not receive. 5s is the in-process busy-ness value the rest of the
-	// API already uses (the explorer's retryAfterBusy, writeChartTimeout);
-	// the 30s figure is reserved for a dependency outage
-	// (writeCacheUnavailableProblem), which a blown request budget is not.
+	// Without Retry-After clients guess "immediately", a retry storm against a server that just ran
+	// out of budget. 5s is the in-process busy value used elsewhere in the API; 30s is reserved
+	// for a dependency outage (writeCacheUnavailableProblem).
 	retryAfterRequestTimeout = "5"
 )
 
 // requestDeadlineExpired reports whether the blanket middleware.RequestTimeout
 // deadline on r.Context() has already fired.
 //
-// It lets writeProblem upgrade a 500 to a retryable 503 in ONE place. About fifty
-// handler error paths reach writeProblem with StatusInternalServerError and no
-// timeout branch, and those that hand r.Context() straight to a store have no
-// per-call context for handlerTimedOut to inspect. A deadline is retryable
-// capacity, not an internal fault (the sla-probe's availability_pct books a 500
-// as a failure a retry would clear).
-// It keys on r.Context(), so a tighter per-handler budget still reaches its own
-// `...-timeout` branch first. Only 500 is rewritten; a 400/404 decided on the
-// request's merits stays the client's answer.
-// LIMIT, and why writeProblemErr exists: a handler capping its read with
-// context.WithTimeout(r.Context(), 8s) under a 15s global blows the INNER budget
-// first while r.Context() is still alive, so this is false and the deadline books a
-// 500. Inner budgets are the dominant shape, so this check alone closes the
-// smaller half.
-// Trade-off: a genuine internal fault reported after the deadline is relabelled a
-// timeout; the handler's ERROR log still carries the real error.
+// It lets writeProblem upgrade a 500 to a retryable 503 in one place, since many handler error
+// paths have no timeout branch. A deadline is retryable capacity, not an internal fault (the
+// sla-probe books a 500 as a failure a retry would clear). Only 500 is rewritten.
+//
+// Limit, and why writeProblemErr exists: a handler capping its read with
+// context.WithTimeout(r.Context(), 8s) under a 15s global blows the inner budget while
+// r.Context() is still alive, so this is false. Inner budgets are the dominant shape.
+// Trade-off: a genuine fault reported after the deadline is relabelled a timeout; the handler's
+// ERROR log still carries the real error.
 func requestDeadlineExpired(r *http.Request) bool {
 	return errors.Is(r.Context().Err(), context.DeadlineExceeded)
 }
 
-// writeProblemErr is writeProblem for a call site that has the failing error in
-// hand. It rewrites a FAULT status to the retryable request-timeout 503 when the
-// ERROR is a deadline: the case requestDeadlineExpired cannot see, because a
-// handler's own context.WithTimeout(r.Context(), ...) budget expires while
-// r.Context() still has budget left. The store returns context.DeadlineExceeded,
-// the site has no timeout branch, and the request books `errors/internal` 500 for
-// a condition a retry clears.
+// writeProblemErr is writeProblem for a call site holding the failing error. It rewrites a fault
+// status to the retryable request-timeout 503 when the error is a deadline, the case
+// requestDeadlineExpired cannot see because a handler's own context.WithTimeout budget expires
+// while r.Context() still has budget left.
 //
-// Both fault statuses are rewritten. 500 blames this server and 502 its upstream,
-// and a deadline is neither (the supply endpoint's 8s lake-read ceiling rendered
-// as "Supply read failed" sent readers looking at ClickHouse for a bound this
-// process imposed). A 4xx stays the client's answer; an already-retryable 503
+// Both 500 and 502 are rewritten: a deadline is a bound this process imposed, neither this
+// server's fault nor the upstream's. A 4xx stays the client's answer; an already-retryable 503
 // keeps its own more specific type.
 //
-// Keyed on errors.Is over the error, not a context: a driver that RE-PHRASES the
-// cancellation (Postgres SQLSTATE 57014) is not caught here; that is what
-// handlerTimedOut and its per-call context are for. A site with a per-call ctx and
-// a named timeout type should branch on handlerTimedOut; this is the fallback for
-// sites with neither.
+// Keyed on errors.Is over the error, so a driver that re-phrases the cancellation (Postgres
+// SQLSTATE 57014) is not caught; sites with a per-call ctx should branch on handlerTimedOut and
+// use this only as the fallback.
 func writeProblemErr(
 	w http.ResponseWriter, r *http.Request, err error,
 	typeURL, title string, status int, detail string,
@@ -417,20 +336,16 @@ func writeProblemErr(
 // client is gone, and obs.HTTPMetrics labels it 499 rather than the 500 a
 // writeProblem would produce.
 //
-// Rule: the request context must be done AND its cause CANCELLATION
-// ([context.Canceled], what net/http sets when the peer hangs up).
+// The request context must be done AND its cause cancellation ([context.Canceled], set when the
+// peer hangs up). A done context with [context.DeadlineExceeded] is a server-side budget expiring
+// with the client still on the wire; treating it as an abort would return silently and net/http
+// would emit a bodyless 200, an authoritative-looking empty result. Deadlines belong on the 503
+// problem+json path.
 //
-// A done context with [context.DeadlineExceeded] is a SERVER-side budget expiring
-// with the client still on the wire. Testing only `Err() != nil` would conflate it:
-// the handler would return silently and net/http would emit a BODYLESS 200, an
-// authoritative-looking empty result (a Blend pool with real supply would render
-// "0 reserves / $0 TVL"). Deadlines belong on the 503 problem+json path.
-//
-// The 499 relabel can't cover it: obs.HTTPMetrics sits OUTSIDE
-// middleware.RequestTimeout, so its context is un-deadlined and the recorder's
-// default 200 stands, counting into the latency SLO's success numerator.
-// Handler order: clientAborted -> handlerTimedOut (503 timeout) -> 500.
-// `err` is unused for the decision but kept so call sites stay stable.
+// The 499 relabel cannot cover it: obs.HTTPMetrics sits outside middleware.RequestTimeout, so the
+// recorder's default 200 would count into the latency SLO's success numerator.
+// Handler order: clientAborted, handlerTimedOut (503), then 500. `err` is unused but kept so call
+// sites stay stable.
 func clientAborted(r *http.Request, _ error) bool {
 	return errors.Is(r.Context().Err(), context.Canceled)
 }
@@ -441,18 +356,13 @@ func clientAborted(r *http.Request, _ error) bool {
 // even when the driver returns its own statement-cancellation error rather than
 // wrapping context.DeadlineExceeded.
 //
-// Why: the Postgres driver propagates a Go context cancellation via the v3
-// cancel-request protocol, then returns `canceling statement due to user request`
-// (SQLSTATE 57014), which does NOT unwrap to [context.DeadlineExceeded]. So
-// `errors.Is(err, context.DeadlineExceeded)` misses every case where a per-call
-// deadline fired and the driver beat the caller to noticing. The per-call
-// context's Err() is the reliable signal.
+// Why: the Postgres driver cancels via the v3 cancel-request protocol and returns `canceling
+// statement due to user request` (SQLSTATE 57014), which does NOT unwrap to
+// [context.DeadlineExceeded], so errors.Is alone misses per-call deadlines. The per-call
+// context's Err() is the reliable signal; the OR keeps drivers that do wrap on the same branch.
 //
-// The OR with errors.Is keeps drivers that DO wrap correctly (Timescale's
-// hypercore extension does in some paths) on the same branch.
-//
-// A true verdict is also recorded for usage metering
-// ([middleware.MarkReadDeadline]): a timed-out read is billable.
+// A true verdict is also recorded for usage metering ([middleware.MarkReadDeadline]): a timed-out
+// read is billable.
 func handlerTimedOut(callCtx context.Context, err error) bool {
 	timedOut := errors.Is(err, context.DeadlineExceeded) ||
 		callCtx.Err() == context.DeadlineExceeded
@@ -466,36 +376,23 @@ func handlerTimedOut(callCtx context.Context, err error) bool {
 // infrastructure hiccup rather than a server bug. Handlers SHOULD map true to a
 // retryable 503, since the sla-probe's availability_pct counts 5xx as failure.
 //
-// It catches:
-//   - SQLSTATE 57014 NOT carried by a context cancellation: Postgres
-//     `canceling statement due to user request` on server-side statement_timeout,
-//     lock_timeout or idle_in_transaction_session_timeout, which trip neither
-//     [clientAborted] nor [handlerTimedOut].
-//   - `driver: bad connection`: a backend killed between checkout and execution.
-//   - EOF / broken pipe between the api binary and postgres or redis.
+// It catches SQLSTATE 57014 not carried by a context cancellation (server-side statement_timeout,
+// lock_timeout, idle_in_transaction_session_timeout, which trip neither [clientAborted] nor
+// [handlerTimedOut]), `driver: bad connection`, and EOF / broken pipe to postgres or redis.
 //
-// The SQLSTATE match is INTENTIONALLY string-based to avoid widening the handler
-// layer's dependency on pgconn's typed error. `57014` is stable wire format (pgx
-// renders `(SQLSTATE 57014)`).
+// The SQLSTATE match is intentionally string-based to avoid widening the handler layer's
+// dependency on pgconn's typed error; `57014` is stable wire format.
 //
 // Caller order: clientAborted, handlerTimedOut, transientStorageErr, then 500.
 func transientStorageErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	// Postgres UNREACHABLE, not merely slow. Every substring
-	// arm below describes a connection that EXISTED and then misbehaved;
-	// none of them matches pgx's failure to establish one in the first
-	// place, which is what a restarting/downed/failed-over Postgres
-	// actually produces:
-	//
-	//	failed to connect to `host=127.0.0.1 user=si database=si`:
-	//	  dial error (dial tcp 127.0.0.1:5432: connect: connection refused)
-	//
-	// So the ONE dependency-outage shape most likely to hit every handler
-	// at once was the one shape that fell through to a 500 "Internal
-	// error" — an outage indistinguishable from a bug in the logs, in the
-	// 5xx SLA probe, and in every alert built on them.
+	// Postgres UNREACHABLE, not merely slow. The substring arms below describe a connection that
+	// existed and then misbehaved; none matches pgx's failure to establish one ("failed to connect
+	// to ...: dial error ... connection refused"), which is what a restarting or failed-over
+	// Postgres produces. Without this arm an outage hitting every handler would be a 500
+	// indistinguishable from a bug.
 	if unreachableStorageErr(err) {
 		return true
 	}
@@ -519,24 +416,14 @@ func transientStorageErr(err error) bool {
 	return false
 }
 
-// unreachableStorageErr reports whether err is a failure to REACH the
-// storage dependency — the dial was refused, the socket died, or the host
-// stopped resolving. Structural first, substrings second:
+// unreachableStorageErr reports whether err is a failure to reach the storage dependency (dial
+// refused, socket died, host stopped resolving). Structural checks come first because they survive
+// rewording: pgx v5 wraps its dial failure in *pgconn.ConnectError, which unwraps to the
+// *net.OpError. The substrings are the fallback for drivers, pool wrappers or multi-errors that
+// render the cause into a string, as the sibling classifiers do (IsCacheUnavailable).
 //
-//   - Structural (errors.As/Is) is exact and survives rewording. pgx
-//     v5 wraps its dial failure in *pgconn.ConnectError, which Unwraps to
-//     the *net.OpError, so errors.As reaches it through the chain.
-//   - The substrings are the belt to that braces: a driver, a pool
-//     wrapper or an aggregating multi-error is free to render the cause
-//     into a string instead of preserving the chain, and pgx's own
-//     "failed to connect to …: dial error (…)" text is stable enough to
-//     match on. Matching both ways is what the sibling classifiers do
-//     (IsCacheUnavailable in cache_errors.go pairs a *net.OpError check
-//     with a MISCONF substring for exactly this reason).
-//
-// Kept in step with the ClickHouse-side lakeUnreachable
-// (internal/api/v1/explorer/reader.go) — same rule, different dependency;
-// that package can't import this one (v1.Server embeds its Handler).
+// Kept in step with the ClickHouse-side lakeUnreachable (internal/api/v1/explorer/reader.go), which
+// cannot import this package (v1.Server embeds its Handler).
 func unreachableStorageErr(err error) bool {
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {

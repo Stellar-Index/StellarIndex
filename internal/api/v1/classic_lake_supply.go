@@ -16,25 +16,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// # Why a classic asset needs a supply reading that is not a trustline sum
+// The classic supply map ([Server.cachedClassicSupply]) sums trustline balances, but a classic
+// asset's supply sits in FOUR places: trustlines, claimable balances, liquidity-pool reserves and
+// SAC balances held by CONTRACT holders. `stellar.ledger_entries_current` fills `asset` for
+// trustlines ONLY.
 //
-// The classic supply map ([Server.cachedClassicSupply]) sums trustline balances
-// from the lake's current-state projection. A trustline is one of FOUR places a
-// classic asset's supply can sit; the others are claimable balances,
-// liquidity-pool reserves and SAC balances held by CONTRACT holders.
-// `stellar.ledger_entries_current` fills `asset` for trustlines ONLY.
+// A pool row holds two assets and a SAC balance entry names its CONTRACT, never its asset, so
+// widening the state query cannot work. The lake reads `stellar.supply_flows` instead (i128):
+// Σmint − Σburn − Σclawback over the asset's SAC, as GET /v1/assets/{id}/supply does.
 //
-// # Why the fix reads flows rather than widening the state query
-//
-// A liquidity pool holds two assets in one row, and a SAC balance entry names its
-// CONTRACT, never its asset. So the lake reads `stellar.supply_flows` (i128):
-// Σmint − Σburn − Σclawback over the asset's SAC (as GET /v1/assets/{id}/supply).
-//
-// # Why it can only ever raise the served figure
-//
-// The trustline sum is a PROVABLE LOWER BOUND on issued supply. A flows total
-// BELOW it means incompletely seeded flows, so [higherClassicSupply] keeps the
-// trustline figure; cachedClassicSupply stops serving the map past classicSupplyMaxAge.
+// The trustline sum is a PROVABLE LOWER BOUND on issued supply. A flows total BELOW it means
+// incompletely seeded flows, so [higherClassicSupply] keeps the trustline figure and the lake
+// can only ever raise the served number. cachedClassicSupply stops serving the map past
+// classicSupplyMaxAge.
 
 const (
 	// classicLakeSupplyTTL bounds how long one asset's lake-flows reading is
@@ -68,23 +62,13 @@ const (
 	// one is served from cache.
 	classicLakeSupplyColdWait = 750 * time.Millisecond
 
-	// preciseSupplyMaxAge bounds how old an ADR-0011 supply observation may
-	// be and still outrank the lake arms.
+	// preciseSupplyMaxAge bounds how old a supply observation may be and still outrank the lake
+	// arms. The widest observed gap between observations of any asset was 40 minutes, so six
+	// hours survives restarts and slow passes while a stopped observer hands over within a
+	// working morning.
 	//
-	// The observer writes every asset on its watch-list every few minutes;
-	// measured on r1 over a fourteen-day window the widest gap
-	// between consecutive observations of any asset was 40 minutes. Six
-	// hours is nine times that worst case, so a restart, a redeploy or a
-	// slow pass never costs an asset its observation, while an observer
-	// that has genuinely stopped hands the asset to the lake arms within
-	// one working morning rather than indefinitely.
-	//
-	// The bound is load-bearing in BOTH directions and neither is
-	// hypothetical. Too loose and a dead observer keeps publishing a figure
-	// nobody is computing: an arm with no vintage bound served USDC at
-	// 354,858,863.57 against 375,766,247.91 outstanding. Too tight and a healthy asset is
-	// handed to an arm that read BLND +11.53% and PHO +156.79% high on the
-	// same day (see [classicSupplyReading]).
+	// Too loose and a dead observer keeps publishing a figure nobody is computing; too tight and
+	// a healthy asset falls to the lake arm, which over-counts (see [classicSupplyReading]).
 	preciseSupplyMaxAge = 6 * time.Hour
 
 	// classicLakeSupplyPrewarmGap spaces the background prewarm's batches.
@@ -147,17 +131,12 @@ func classicSACContractID(assetID string) (string, bool) {
 // preferring `lake` on a tie or when only one is present, together with the
 // basis that produced the winner.
 //
-// The asymmetry is the floor guard described at the top of this file: a lake
-// figure below the trustline sum is incomplete seeding, so the trustline sum
-// wins; a lake figure at or above it includes the claimable / LP / SAC-held
-// supply the trustline sum cannot see, so the lake wins. An unparseable
-// reading is treated as absent rather than as zero.
+// A lake figure below the trustline sum is incomplete seeding, so the trustline sum wins; at or
+// above it the lake wins because it includes supply the trustline sum cannot see. An
+// unparseable reading is treated as absent, not zero.
 //
-// It returns the basis rather than only the number because the two arms are
-// not the same KIND of answer and the wire could not tell them apart: the lake
-// sum covers all four holding domains, while the trustline sum is blind to
-// three of them and is therefore a LOWER BOUND. An empty basis accompanies an
-// empty value and means no reading at all.
+// The basis is returned because the arms differ in KIND: the lake sum covers all four holding
+// domains, the trustline sum is a LOWER BOUND. An empty basis means no reading at all.
 func higherClassicSupply(lake, trustline string) (string, supply.Basis) {
 	l, lok := new(big.Int).SetString(lake, 10)
 	t, tok := new(big.Int).SetString(trustline, 10)
@@ -178,22 +157,17 @@ func higherClassicSupply(lake, trustline string) (string, supply.Basis) {
 // classicSupplyReading resolves one listing row's circulating supply and names
 // the basis that produced it.
 //
-// It is the ONE place the listing path's preference order lives
-// ([Server.fillRowMarketCap], [Server.rwaFillMissingSupply] call it); two copies
-// could publish a floor and a four-domain total under the same field name.
+// It is the ONE place the listing path's preference order lives ([Server.fillRowMarketCap],
+// [Server.rwaFillMissingSupply] call it); two copies could publish a floor and a four-domain
+// total under the same field name.
 //
-// Order: the ADR-0011 supply observation, then the lake-flows total, then the
-// trustline sum, never below the trustline floor. A served figure below both the
-// lake and Horizon looks like a reason to invert this, and is not: the lake arm
-// over-counts when its flow history carries replayed mints whose burns are
-// missing (BLND +11.53%, PHO +156.79%), which no completeness check in the
-// reading can see (see [supply.BasisClassicLakeFlows]), while the observation
-// matched Horizon.
+// Order: the supply observation, then the lake-flows total, then the trustline sum, never below
+// the trustline floor. Do not invert it: the lake arm over-counts when its flow history carries
+// replayed mints whose burns are missing, which no completeness check can see (see
+// [supply.BasisClassicLakeFlows]), while the observation matched Horizon.
 //
-// The observation's weakness is VINTAGE, so the read takes the observer's live
-// row (timescale.Store.LatestSupplyObservations) bounded by [preciseSupplyMaxAge];
-// an older observation is not offered, so a stale reading cannot outrank a live
-// lake figure that disagrees with it.
+// The observation's weakness is VINTAGE, so it is bounded by [preciseSupplyMaxAge]; a stale
+// reading is not offered and so cannot outrank a live lake figure that disagrees with it.
 func classicSupplyReading(
 	assetID string, precise map[string]timescale.SupplyObservation, lake, broad map[string]string,
 ) (string, supply.Basis) {
@@ -442,18 +416,16 @@ func (s *Server) endClassicLakeSupplyFlight(done chan struct{}) {
 // supply /v1/assets and /v1/rwa/assets publish does not depend on how recently
 // somebody looked.
 //
-// Request-path warming converges only under traffic. Without it, entries expire
-// at [classicLakeSupplyTTL] and the listing falls back to the trustline-only
-// sum, which misses claimable balances, LP reserves and SAC-held supply. It
-// lives in the API process because s.lakeSupply is per-process memory.
+// Request-path warming converges only under traffic; without it entries expire at
+// [classicLakeSupplyTTL] and the listing falls back to the trustline-only sum. It lives in the
+// API process because s.lakeSupply is per-process memory.
 //
-// Coverage is the pages `opts` names plus the /v1/rwa/assets membership: asking
-// each surface which assets it serves cannot drift from what it serves, and
-// "every classic asset" would be 450k+ SAC lookups. RWA members are chosen by
-// attestation, not rank, so listing pages alone left them cold.
+// Coverage is the pages `opts` names plus the /v1/rwa/assets membership: asking each surface
+// what it serves cannot drift from it, and "every classic asset" would be 450k+ SAC lookups. RWA
+// members are chosen by attestation, not rank, so listing pages alone leave them cold.
 //
-// Best-effort: a missing reader or capability, or a listing or lake error,
-// leaves the cache as it was.
+// Best-effort: a missing reader or capability, or a listing or lake error, leaves the cache as
+// it was.
 func (s *Server) PrewarmClassicLakeSupply(ctx context.Context, opts []timescale.ListAssetsOptions) {
 	if s.TokenSupply == nil || s.AssetsReader == nil {
 		return
@@ -478,17 +450,14 @@ func (s *Server) PrewarmClassicLakeSupply(ctx context.Context, opts []timescale.
 // rwaClassicPrewarmSet asks the RWA surface which classic assets it serves, so
 // a member that never appears on a ranked listing page is warmed anyway.
 //
-// It goes through [Server.cachedRWAMembership], so it behaves like a request:
-// a stale set is served as-is while a detached, single-flighted rebuild is
-// kicked behind it, and a cache that has NEVER been built waits for the
-// in-flight first build (bounded by ctx) rather than returning nothing. Only
-// a never-built cache whose build attempt is gapped out, or a ctx that ends
-// first, yields no members — and then the sweep covers the listing alone.
+// It goes through [Server.cachedRWAMembership], so it behaves like a request: a stale set is
+// served while a detached, single-flighted rebuild runs, and a never-built cache waits for the
+// in-flight first build (bounded by ctx). Only a gapped-out build or an expired ctx yields no
+// members, and then the sweep covers the listing alone.
 //
-// The reduction is the REQUEST PATH's own ([classicLakeSupplyCandidates]), the
-// same one the listing side uses, so this cannot warm an asset the read path
-// would not look up: native and contract-issued members drop out here, and the
-// contract arm has its own reader.
+// The reduction is the request path's own ([classicLakeSupplyCandidates]), so this cannot warm
+// an asset the read path would not look up: native and contract-issued members drop out, and
+// the contract arm has its own reader.
 func (s *Server) rwaClassicPrewarmSet(ctx context.Context) map[string]string {
 	m := s.cachedRWAMembership(ctx)
 	if len(m.members) == 0 {
@@ -547,18 +516,14 @@ func (s *Server) classicLakeSupplyPrewarmSet(
 // warmClassicLakeSupply fills `wanted` one bounded batch at a time until every
 // asset in it has a cache entry.
 //
-// Serial by construction — one batch in flight, then a pause, then the next —
-// because the cost of a supply_flows sum scales with the FLOW COUNT of the
-// contracts in it and a mature token carries millions of rows.
+// Serial by construction (one batch in flight, then a pause) because a supply_flows sum scales
+// with the FLOW COUNT of the contracts in it and a mature token carries millions of rows.
 //
-// It stops on the first batch that made no progress. That test is exact rather
-// than approximate: [Server.refreshClassicLakeSupply] writes an entry for
-// EVERY asset in its batch on success (an empty one where the lake had no
-// usable answer) and writes nothing at all on a read error, so "the missing
-// set did not shrink after a batch of ours" is precisely "the lake read
-// failed". The answer to a failing supply_flows read is to stop and let the
-// next sweep retry, not to walk the rest of the population into the same
-// failure — the lesson classicLakeSupplyRetryGap encodes for the request path.
+// It stops on the first batch that made no progress. That test is exact:
+// [Server.refreshClassicLakeSupply] writes an entry for EVERY asset in its batch on success
+// (empty where the lake had no usable answer) and nothing on a read error, so "the missing set
+// did not shrink" means "the lake read failed". Stop and let the next sweep retry rather than
+// walk the rest of the population into the same failure (see classicLakeSupplyRetryGap).
 func (s *Server) warmClassicLakeSupply(
 	ctx context.Context, rd classicLakeSupplyReader, wanted map[string]string,
 ) {

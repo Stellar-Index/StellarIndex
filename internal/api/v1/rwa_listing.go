@@ -9,23 +9,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// C2's second arm on the read path: the independent listing directory and the
-// candidate population it opens up. The RULE, and why a listing map
-// corroborates rather than attests, lives in internal/rwa/contract.go.
+// C2's second arm on the read path: the independent listing directory and the candidate
+// population it opens up. The rule, and why a listing map corroborates rather than attests,
+// lives in internal/rwa/contract.go.
 //
-// # The population this arm exists to reach
+// The population is the UNION of the directory's addresses and every address the in-repo
+// binding set names. Enumerating is not admitting: a curated binding must still be named by
+// the listing directory to pass C2, and its refusal is reported under
+// contract_curated_binding_without_independent_listing.
 //
-// So the population is the UNION of the directory's addresses and every address
-// the in-repo binding set names. Enumerating is NOT admitting: a curated binding
-// must still be named by the listing directory to pass C2. Enumeration makes its
-// refusal REPORTED under contract_curated_binding_without_independent_listing.
-//
-// # Why the two arms are reported separately
-//
-// The candidate sets are made DISJOINT: an address
-// the curated directory recognises is evaluated by the directory arm and
-// removed here, or the served set would carry it twice (a double-counted
-// market cap).
+// The two arms' candidate sets are DISJOINT: an address the curated directory recognises is
+// evaluated by the directory arm and removed here, or the served set would carry it twice
+// (a double-counted market cap).
 
 // ─── storage seam ───────────────────────────────────────────────────
 
@@ -59,30 +54,18 @@ type rwaListing struct {
 	// past its bound. Either way no naming was established, so none may
 	// be assumed and every candidate needing one is refused.
 	available bool
-	// wired reports that a listing reader is CONFIGURED, whatever it
-	// answered. The distinction is the one this whole surface is built
-	// on: an unwired reader means nobody looked, and an arm of zeros
-	// would assert that no independent party names any of these
-	// addresses. A wired reader that failed DID look, and its failure
-	// is a measured, reportable shrink of the set — which is the state
-	// the funnel has to be loudest about, because it is the one an
-	// operator can fix.
+	// wired reports that a listing reader is CONFIGURED, whatever it answered. Unwired means
+	// nobody looked, and an arm of zeros would wrongly assert that no independent party names
+	// these addresses. A wired reader that failed DID look; its failure is a measured shrink
+	// of the set that the funnel must report loudly, since an operator can fix it.
 	wired bool
-	// read reports that the directory ANSWERED, which is what makes
-	// `census` a real observation rather than a zero value. A failed
-	// read leaves both false, and the difference matters on the wire:
-	// zero entries observed says the table has never been synced, while
-	// a read that did not complete has observed nothing and must not be
-	// published as a count of anything.
+	// read reports that the directory ANSWERED, which makes `census` a real observation. A
+	// failed read has observed nothing and must not be published as a count of anything,
+	// whereas zero entries observed means the table was never synced.
 	read bool
-	// observedAt is when the read that produced `census` was taken.
-	//
-	// It is the one fact on this struct that cannot be recovered later.
-	// Every count beside it can be re-derived by querying the table
-	// again; the moment the served set looked at that table cannot be,
-	// and it is the only thing that distinguishes "the directory is
-	// empty" from "this set was built before the directory filled".
-	// Zero when nothing was observed.
+	// observedAt is when the read that produced `census` was taken. Counts can be re-derived;
+	// this moment cannot, and it distinguishes "the directory is empty" from "this set was
+	// built before the directory filled". Zero when nothing was observed.
 	observedAt time.Time
 }
 
@@ -99,17 +82,10 @@ func (l rwaListing) names(contractID string) bool {
 
 // rwaListingSnapshot reads the listing directory once per rebuild.
 //
-// Fails CLOSED in the strong sense: a failed read yields an UNAVAILABLE
-// snapshot and never a carried-forward one. The oracle reference path
-// one file over deliberately carries its last good snapshot across a
-// failed read, and the difference between the two is the difference
-// between a price and a permission. Serving a slightly old price is a
-// labelled approximation; serving an old RECOGNITION is admitting an
-// asset on the strength of a fact nobody re-established, which is the
-// one thing C2 exists to prevent.
-//
-// The staleness bound itself is enforced in SQL by the reader, so a
-// snapshot that arrives here is already inside it.
+// Fails CLOSED: a failed read yields an UNAVAILABLE snapshot, never a carried-forward one.
+// A slightly old price is a labelled approximation, but an old recognition admits an asset on
+// a fact nobody re-established, which is what C2 exists to prevent. The staleness bound is
+// enforced in SQL by the reader, so a snapshot arriving here is already inside it.
 func (s *Server) rwaListingSnapshot(ctx context.Context) rwaListing {
 	if s.RWAListings == nil {
 		return rwaListing{}
@@ -122,25 +98,13 @@ func (s *Server) rwaListingSnapshot(ctx context.Context) rwaListing {
 	out := rwaListing{
 		byAddress: make(map[string]timescale.ListingEntry, len(rows)),
 		census:    census,
-		// A snapshot carrying NO fresh contract rows cannot support the
-		// finding "nobody independent names this address", whatever the
-		// reason it is empty. The storage reader drops every row past
-		// the recognition bound, so a table that has gone entirely
-		// stale arrives here as zero rows beside a non-zero Stale
-		// count — indistinguishable, from this side, from a listing
-		// that genuinely names nothing.
-		//
-		// The two are NOT the same statement and the difference is the
-		// whole fail-closed guarantee. Treated as available, an aged-out
-		// snapshot would refuse every binding under
-		// contract_curated_binding_without_independent_listing — a
-		// finding about the world — when the truth is that our copy
-		// expired. Reported as unavailable it refuses them under
-		// independent_listing_unavailable, which names an outage an
-		// operator can fix.
-		//
-		// A table nobody has ever synced lands in the same branch and
-		// deserves the same answer: zero fresh rows is zero evidence.
+		// Zero fresh rows cannot support "nobody independent names this address": the reader
+		// drops rows past the recognition bound, so a fully stale table looks like a listing
+		// that names nothing. Treated as available it would refuse bindings under
+		// contract_curated_binding_without_independent_listing (a finding about the world)
+		// when our copy merely expired; unavailable, they are refused under
+		// independent_listing_unavailable, an outage an operator can fix. A never-synced table
+		// takes the same branch: zero fresh rows is zero evidence.
 		available:  len(rows) > 0,
 		wired:      true,
 		read:       true,
@@ -185,23 +149,12 @@ type rwaListingCensus struct {
 	// alsoInDirectoryArm counts bindings the first arm already
 	// evaluates. Removed here so no address is evaluated twice.
 	alsoInDirectoryArm int
-	// listingUnavailable counts bindings refused because the LISTING
-	// read did not answer. One source, named exactly.
-	//
-	// A failed curated-tag lookup does not land here, because that
-	// conflation is wrong in the way this surface exists to prevent.
-	// The two reads are unrelated sources with unrelated failure modes,
-	// and they are not even correlated: the curated directory can be
-	// unreadable while the listing directory sits there perfectly
-	// fresh. Folded together, the funnel would report an outage of the
-	// source that ANSWERED and send an operator to a working sync.
+	// listingUnavailable counts bindings refused because the LISTING read did not answer.
+	// A failed curated-tag lookup is counted apart (tagsUnavailable): the two sources fail
+	// independently, and folding them would send an operator to a working sync.
 	listingUnavailable int
-	// tagsUnavailable counts bindings refused because the CURATED
-	// DIRECTORY's tag read did not answer, leaving C3 unevaluated.
-	//
-	// Counted apart from listingUnavailable because a refusal reason is
-	// an instruction to somebody, and these two send that somebody to
-	// different systems.
+	// tagsUnavailable counts bindings refused because the CURATED DIRECTORY's tag read did
+	// not answer, leaving C3 unevaluated.
 	tagsUnavailable int
 	// notListed counts bindings the listing directory does not name.
 	// The refusal that holds independence up.
@@ -218,37 +171,21 @@ type rwaListingCensus struct {
 	// available is false when the arm was not walked at all.
 	available bool
 
-	// dir is the storage layer's account of the listing directory
-	// ITSELF — every row it holds, not just the ones this arm narrowed
-	// — carried so the arm can publish the EVIDENCE for its verdict and
-	// not only the verdict. The sibling of [rwaContractCensus].dir, and
-	// there for the same reason.
+	// dir is the storage layer's census of the whole listing directory, carried so the arm
+	// publishes evidence and not only a verdict. A zero corroborated count is ambiguous
+	// (never synced, sync stopped, or a healthy directory this set predates); these counts
+	// separate the three:
 	//
-	// The verdict alone is ambiguous in the one direction that costs an
-	// operator an afternoon. `listing_corroborated_contracts: 0` is
-	// produced by a directory nobody has ever synced, by a sync that
-	// died two days ago, and by a healthy directory this set simply
-	// predates — three states with three different responses, and
-	// the verdict alone does not separate them. These counts do:
+	//   - Entries 0                 -> never synced
+	//   - Entries > 0, Stale = all  -> the sync stopped
+	//   - Entries > 0, Stale 0      -> healthy, and this set predates it
 	//
-	//   - Entries 0                 → never synced
-	//   - Entries > 0, Stale = all  → the sync stopped
-	//   - Entries > 0, Stale 0      → healthy, and this set predates it
-	//
-	// Zero when nothing was observed; observedAt below is what says
-	// which.
+	// Zero when nothing was observed; observedAt says which.
 	dir timescale.ListingDirectoryCensus
-	// observedAt is when the read behind `dir` was taken, and it is the
-	// load-bearing half of this pair. The counts are a convenience —
-	// anyone holding a database prompt can re-derive them at will. The
-	// moment the served set looked cannot be re-derived by anyone,
-	// afterwards, at any cost, and without it a reader comparing a
-	// healthy directory against a closed arm has no way to tell that
-	// the two observations are of different moments.
-	//
-	// Zero means nothing was observed: no reader wired, or a read that
-	// did not answer. Never confused with the Unix epoch, because a
-	// zero time publishes no evidence at all rather than a timestamp.
+	// observedAt is when the read behind `dir` was taken. The counts can be re-derived later;
+	// the moment this served set looked cannot, and readers need it to compare observations.
+	// Zero means nothing was observed (no reader wired, or the read failed) and publishes no
+	// timestamp rather than the Unix epoch.
 	observedAt time.Time
 }
 
@@ -256,19 +193,10 @@ type rwaListingCensus struct {
 // binding the first arm is not already evaluating, with the curated tags
 // C3 needs.
 //
-// The directory lookup is a REQUIREMENT of this arm, not a decoration.
-// C3 refuses a scam-flagged address whatever named it, and the only
-// place a scam flag exists is the curated directory — so a candidate
-// whose tags could not be read has not had C3 evaluated and must not be
-// admitted. A failed lookup therefore closes the arm exactly as a failed
-// listing read does — under its OWN reason, never the listing's.
-//
-// Two sources, two reasons. They are unrelated systems with unrelated
-// failure modes, and a refusal reason is an instruction about where to
-// go and look. Under one reason the funnel could report an outage of
-// the listing directory while that directory sat there perfectly
-// fresh — an alarm naming a working sync, raised by the failure of
-// something else entirely.
+// The curated-directory lookup is required: C3 refuses scam-flagged addresses and scam flags
+// exist only there, so a candidate whose tags could not be read has not had C3 evaluated and
+// must not be admitted. A failed lookup closes the arm under its OWN refusal reason, never
+// the listing's, because a refusal reason tells an operator which system to inspect.
 func (s *Server) rwaListingCandidates(
 	ctx context.Context, listing rwaListing, directoryEvaluated map[string]struct{},
 ) ([]rwaListingCandidate, rwaListingCensus) {

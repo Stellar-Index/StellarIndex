@@ -55,21 +55,14 @@ type StatusResponse struct {
 	// query and MUST NOT be read as an all-clear.
 	Incidents StatusIncidents `json:"incidents"`
 
-	// IncidentsStatus is the explicit tri-state trust signal for the
-	// Incidents block. It exists because the counts alone are
-	// ambiguous: a failed Alertmanager query zeroes them, which is
-	// byte-identical to "no alerts firing". A public banner reading
-	// active_count via `?? 0` would then publish "0 active alerts"
-	// while alerting is blind. The tri-state
-	// disambiguates on the wire:
+	// IncidentsStatus is the tri-state trust signal for the Incidents block. A failed Alertmanager
+	// query zeroes the counts, which is byte-identical to "no alerts firing", so a banner reading
+	// active_count would publish "0 active alerts" while alerting is blind.
 	//   - "ok":       query succeeded, no alerts firing.
-	//   - "degraded": query succeeded, one or more alerts firing
-	//                 (see the counts + Active list).
-	//   - "unknown":  the alerts query FAILED, or no metrics backend
-	//                 is wired — the counts are NOT trustworthy and
-	//                 the UI must render "unknown", not "0 active".
-	// Always present (no omitempty) so consumers never confuse an
-	// omitted field for a zero count.
+	//   - "degraded": query succeeded, one or more alerts firing.
+	//   - "unknown":  the query FAILED or no metrics backend is wired; the counts are NOT
+	//                 trustworthy and the UI must render "unknown", not "0 active".
+	// Always present (no omitempty) so an omitted field is never mistaken for a zero count.
 	IncidentsStatus string `json:"incidents_status"`
 
 	// FreshnessStatus is the trust signal for the Freshness block, for
@@ -318,19 +311,15 @@ func (p *PrometheusStatusBackend) Latency(ctx context.Context) (StatusLatency, e
 // invariant between them (numerator a strict subset of denominator) can be
 // asserted without a Prometheus.
 //
-// The numerator MUST join on stellarindex_source_enabled. Without it the counts
-// come from different populations and the ratio can exceed 1: six always-on supply
-// observers (trustlines, sep41_supply, sep41_transfers, sac_balances,
-// liquidity_pools, claimable_balances) emit events but carry no `enabled` flag
-// (a public page read "26 / 25").
+// The numerator MUST join on stellarindex_source_enabled. Otherwise the counts come from
+// different populations and the ratio can exceed 1: the always-on supply observers emit events
+// but carry no `enabled` flag.
 //
-// The population is every scraped stellarindex_source_enabled series, whichever
-// binary emits it (the indexer, and the `massive` FX worker from the API binary).
-// A feed with no gauge is counted on NEITHER side. Both queries count series,
-// assuming one scrape target per source: a second scraped API replica would count
-// `massive` twice. deploy/monitoring/rule-tests/status-source-counts_test.yml
-// evaluates both under promtool, and TestStatusSourceCountQueries_MatchPromtoolFixture
-// holds that fixture to these exact strings.
+// The population is every scraped stellarindex_source_enabled series, whichever binary emits it.
+// A feed with no gauge is counted on NEITHER side. Both queries count series, assuming one scrape
+// target per source: a second scraped API replica would count `massive` twice.
+// deploy/monitoring/rule-tests/status-source-counts_test.yml evaluates both under promtool, and
+// TestStatusSourceCountQueries_MatchPromtoolFixture holds that fixture to these exact strings.
 const activeSourcesQuery = `count(
 	(rate(stellarindex_source_events_total[7d]) > 0)
 	and on (source) (stellarindex_source_enabled == 1)
@@ -641,17 +630,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 
 	// Background-service heartbeats — the services this deployment declares it runs.
-	// A nil map here means "we could not look", and the wire cannot say so: heartbeatServices renders
+	// A nil map means "we could not look", and the wire cannot say so: heartbeatServices renders
 	// every declared service "unknown" either way, and rollupOverall turns that into "degraded".
-	// Backend-unreachable and backend-answered-with-nothing are INDISTINGUISHABLE to a reader.
+	// Backend-unreachable and backend-answered-with-nothing are INDISTINGUISHABLE to a reader, so
+	// an unreachable Prometheus reports `overall: degraded` while every unit is active.
 	//
-	// A deployment whose Prometheus is unreachable takes this path on every request and reports
-	// `overall: degraded` while every unit is active.
-	//
-	// The conservatism is deliberate — refusing to claim "ok" when nothing is known beats a false
-	// all-clear. What the wire lacks is the REASON: an additive `services_status` ("ok" /
-	// "unavailable"), like `incidents_status`, would let such a deployment report honestly. That is a
-	// wire change on a public surface, so it is a decision rather than a cleanup.
+	// The conservatism is deliberate: refusing to claim "ok" beats a false all-clear. An additive
+	// `services_status` like `incidents_status` would carry the REASON, but that is a wire change
+	// on a public surface.
 	if hbErr != nil {
 		hb = nil
 	}
@@ -755,9 +741,9 @@ const statusHeartbeatStaleAfter = 60 * time.Second
 // TICKET incidents are deliberately NOT an input: `page` means customers are affected, `ticket`
 // means look during working hours. Changing that changes what "ok" PROMISES on a public surface.
 //
-// An active-source SHORTFALL (freshness.active_sources < total_sources) is likewise not an input:
-// the count is over a 7-day window, so it describes ingest coverage, not whether customers are
-// served now. It surfaces only as freshness_status "degraded"; a failed query degrades via backendErr.
+// An active-source SHORTFALL is likewise not an input: the count is over a 7-day window, so it
+// describes ingest coverage, not whether customers are served now. It surfaces only as
+// freshness_status "degraded"; a failed query degrades via backendErr.
 func rollupOverall(services []StatusService, backendErr, pageFiring, latencyBreached bool) string {
 	var anyDown, anyDegraded, anyOK, anyUnknown bool
 	for _, svc := range services {

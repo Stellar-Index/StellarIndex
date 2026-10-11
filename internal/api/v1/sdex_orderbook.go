@@ -69,17 +69,13 @@ const (
 	// SDEXOrderBookAdvanceTimeout caps one tick's Advance + VerifyPending.
 	SDEXOrderBookAdvanceTimeout = 2 * time.Minute
 	// SDEXOrderBookReloadInterval is how often the book is rebuilt
-	// wholesale from the lake's current-state projection. Advance is only
-	// as good as the change stream above its cursor: a change that lands
-	// BELOW the cursor (a hole older than the load's lookback that is
-	// healed later, a re-backfilled range) or that Advance could not apply
-	// (an undecodable entry) is otherwise wrong until the process
-	// restarts. Daily bounds that to a day for about the cost of one
-	// deploy's restart — the same scan, under the same work-shape bound.
+	// wholesale from the lake's current-state projection. Advance is only as good as the change
+	// stream above its cursor: a change landing BELOW the cursor (a hole healed later, a
+	// re-backfilled range) or one Advance could not apply (an undecodable entry) stays wrong
+	// until restart, so daily bounds that to a day under the same work-shape bound.
 	//
-	// Periodic rather than triggered by the crossed-pairs gauge: a
-	// sustained crossed pair is a lake coverage gap a re-load cannot
-	// heal, so re-firing a multi-minute scan on it would only add load.
+	// Periodic rather than triggered by the crossed-pairs gauge: a sustained crossed pair is a
+	// lake coverage gap a re-load cannot heal, so re-firing a multi-minute scan would only add load.
 	SDEXOrderBookReloadInterval = 24 * time.Hour
 	// SDEXOrderBookReloadRetry spaces re-load attempts after a FAILED
 	// re-load. The book keeps serving and advancing meanwhile, so there is
@@ -108,18 +104,13 @@ type SDEXOfferBookReader interface {
 // microseconds). Before the first Load completes the handler serves an
 // honest 503 "snapshot loading" problem, never fabricated emptiness.
 //
-// Trust discipline (what keeps the book from crossing): a loaded offer
-// whose winning version carries intra_ledger_seq == 0 is AMBIGUOUS —
-// either a pre-intra-era backfill row whose same-ledger siblings
-// (including a possible removal) lost the ReplacingMergeTree version
-// tie arbitrarily, or a modern row that happens to be its ledger's
-// first change. Such offers are quarantined in `pending` — excluded
-// from every served snapshot — until [VerifyPending] proves against
-// the ledger_entry_changes stream that no removal exists at their
-// ledger. Proven-dead offers are dropped for good (offer LedgerKeys
-// are never reused); proven-live ones graduate into the served book.
-// Without this, ~46k phantom XLM/USDC bids from 2021 served a crossed
-// book (best bid 0.4327 vs best ask 0.1722).
+// Trust discipline (what keeps the book from crossing): a loaded offer whose winning version has
+// intra_ledger_seq == 0 is AMBIGUOUS: either a pre-intra-era backfill row whose same-ledger
+// siblings (possibly a removal) lost the ReplacingMergeTree version tie arbitrarily, or a modern
+// row that is its ledger's first change. Such offers are quarantined in `pending`, excluded from
+// every served snapshot, until [VerifyPending] proves against the ledger_entry_changes stream
+// that no removal exists at their ledger. Proven-dead offers are dropped for good (offer
+// LedgerKeys are never reused); proven-live ones graduate into the served book.
 type SDEXOrderBookCache struct {
 	reader SDEXOfferBookReader
 	logger Logger
@@ -217,13 +208,10 @@ func observeMaintainOutcome(outcome string, start time.Time) {
 // re-applies everything above it by version. A failed re-Load leaves the
 // previous book serving.
 //
-// A re-Load keeps the verification verdicts already earned: a
-// version-tie suspect (intra_ledger_seq == 0) that is ALREADY served at
-// the identical version was either proven live by [VerifyPending] or
-// applied from the ordered change stream, and neither proof is weakened
-// by reading the same row again. Re-quarantining it would pull every
-// long-resting pre-intra-era offer out of the served book for the hours
-// the probe backlog takes to drain — once a day.
+// A re-Load keeps verification verdicts already earned: a version-tie suspect already served at
+// the identical version was proven live by [VerifyPending] or applied from the ordered change
+// stream, and re-reading the row does not weaken either proof. Re-quarantining it would pull
+// every long-resting pre-intra-era offer out of the served book while the probe backlog drains.
 func (c *SDEXOrderBookCache) Load(ctx context.Context) (err error) {
 	start := time.Now()
 	defer func() { observeMaintain("load", start, err) }()

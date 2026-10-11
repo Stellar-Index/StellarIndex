@@ -15,18 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// SupplyLooker is the read-side interface the v1 server uses to
-// populate the F2 fields on /v1/assets/{id}. Production
-// implementation: a thin adapter around
-// timescale.Store.LatestSupply, returning ErrSupplyNotFound when
-// the asset has no recorded snapshot.
-//
-// Returns the most-recent persisted [supply.Supply] for the asset
-// or [ErrSupplyNotFound] when no snapshot exists. Real errors
-// (Postgres unreachable, parse failures) propagate as-is so the
-// handler can log them at WARN — the F2 fields then stay null on
-// the response (the asset-detail itself still serves; F2 is
-// best-effort overlay).
+// SupplyLooker is the read-side interface behind the F2 fields on /v1/assets/{id}. LatestSupply
+// returns the most recent persisted [supply.Supply] or [ErrSupplyNotFound]. Real errors propagate
+// so the handler can log them at WARN; the F2 fields then stay null (F2 is a best-effort overlay).
 type SupplyLooker interface {
 	LatestSupply(ctx context.Context, assetKey string) (supply.Supply, error)
 	// DailyCirculatingSupply returns daily last-known circulating
@@ -36,99 +27,56 @@ type SupplyLooker interface {
 	DailyCirculatingSupply(ctx context.Context, assetKey string, from, to time.Time) ([]timescale.SupplyDayPoint, error)
 }
 
-// ErrSupplyNotFound is what [SupplyLooker.LatestSupply] returns when
-// the asset has no recorded supply snapshot. The handler treats this
-// as "feature unavailable for this asset" — F2 fields stay null,
-// no error logged, the asset-detail body still serves.
+// ErrSupplyNotFound is what [SupplyLooker.LatestSupply] returns when the asset has no snapshot.
+// The handler treats it as "unavailable for this asset": F2 fields stay null, nothing is logged.
 var ErrSupplyNotFound = errors.New("api: supply snapshot not found")
 
-// Change24hReader returns the asset's USD price as of approximately
-// 24 hours ago, used by /v1/assets/{id}.change_24h_pct to compute
-// the trailing percentage change against the current USD price.
-//
-// Production implementation: thin adapter around
-// timescale.Store.ClosedVWAP1mAtOrBefore — picks the latest closed
-// prices_1m bucket whose bucket-end is ≤ now-24h.
-//
-// Returns [ErrChange24hUnavailable] when no closed bucket exists in
-// the lookback window (e.g. the asset was first traded < 24h ago,
-// or trade history was retention-pruned). The handler treats that
-// as "feature unavailable for this asset" — change_24h_pct stays
-// null, no error logged, the asset-detail body still serves.
-//
-// Real errors (Postgres unreachable, parse failures) propagate
-// as-is so the handler can log them at WARN.
+// Change24hReader returns the asset's USD price from about 24 hours ago, the baseline for
+// change_24h_pct. It picks the latest closed prices_1m bucket whose bucket-end is at or before
+// now-24h. [ErrChange24hUnavailable] means no closed bucket exists in the window (e.g. first
+// traded under 24h ago); change_24h_pct then stays null and nothing is logged. Real errors
+// propagate so the handler can log them at WARN.
 type Change24hReader interface {
 	USDPrice24hAgo(ctx context.Context, asset canonical.Asset) (string, error)
 }
 
-// ErrChange24hUnavailable is what [Change24hReader.USDPrice24hAgo]
-// returns when no comparison price exists in the 24h-ago window.
-// Distinct from a real Postgres / parse error — silent fall-through
-// for the handler.
+// ErrChange24hUnavailable is what [Change24hReader.USDPrice24hAgo] returns when no comparison
+// price exists in the 24h-ago window; unlike a real read error, the handler falls through silently.
 var ErrChange24hUnavailable = errors.New("api: change_24h_pct comparison price unavailable")
 
-// VolumeReader is the read-side interface the v1 server uses to
-// populate the volume_24h_usd field on /v1/assets/{id}. Production
-// implementation: a thin adapter around
-// timescale.Store.Volume24hUSDForAsset.
-//
-// Returns the trailing-24h USD-denominated trade volume for the
-// asset (summed across every pair where it appears as base or
-// quote) as a decimal string. "0" is a valid value (asset tracked,
-// no trades). Errors propagate so the handler can log them at
-// WARN — the volume field stays null on any failure, the asset-
-// detail body still serves cleanly.
-//
-// Trades with no trade-time `usd_volume` contribute 0 to the sum;
-// lowerBound reports that at least one was excluded.
+// VolumeReader backs volume_24h_usd on /v1/assets/{id}: the trailing-24h USD trade volume summed
+// across every pair where the asset is base or quote, as a decimal string ("0" is valid). Trades
+// with no trade-time usd_volume contribute 0 and lowerBound reports that one was excluded.
+// Errors propagate so the handler can log them; the field then stays null.
 type VolumeReader interface {
 	Volume24hUSDForAsset(ctx context.Context, assetKey string) (usd string, lowerBound bool, err error)
 }
 
-// SorobanVolumeReader is OPTIONALLY implemented by the wired
-// [VolumeReader] to provide the XLM-anchored 24h USD volume for
-// pure-Soroban SEP-41 assets. The plain Volume24hUSDForAsset only
-// sees the insert-time `usd_volume` column — populated when a trade's
-// quote is a USD-pegged classic — so a Soroban token that trades against
-// XLM or another SEP-41 token reports a bogus "0". This variant keeps the
-// USD-pegged legs AND values the XLM-legged trades through the on-chain
-// XLM/USD VWAP (pure SEP-41/SEP-41 legs still need a per-token oracle and
-// contribute 0). Production implementation:
-// timescale.Store.SorobanVolume24hUSDForAsset. Same "0"-not-null
-// convention + assetKey shape as VolumeReader; a reader that doesn't
-// implement it leaves Soroban assets on the plain path.
+// SorobanVolumeReader is OPTIONALLY implemented by the wired [VolumeReader] to give pure-Soroban
+// SEP-41 assets an XLM-anchored 24h USD volume. The plain reader only sees the insert-time
+// usd_volume column (set when the quote is a USD-pegged classic), so a token trading against XLM
+// or another SEP-41 reports a bogus "0". This variant keeps the USD-pegged legs and values
+// XLM-legged trades through the on-chain XLM/USD VWAP; pure SEP-41/SEP-41 legs still contribute 0.
+// Same "0"-not-null convention and assetKey shape as VolumeReader.
 type SorobanVolumeReader interface {
 	SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (usd string, lowerBound bool, err error)
 }
 
-// applyF2Fields populates the F2 supply / market-cap / FDV fields
-// on detail by consulting the [SupplyLooker] (for supply numbers)
-// and the [PriceReader] (for USD price). Best-effort — all fields
-// remain null on any failure, the asset-detail body still serves.
-//
-// Per ADR-0011 "we don't fabricate": every field is only set when
-// a defensible value exists. max_supply nil → fdv_usd nil; no USD
-// price → market_cap_usd + fdv_usd nil; no supply snapshot → all
-// six F2 fields nil.
+// applyF2Fields populates the F2 supply / market-cap / FDV fields on detail, best-effort. Per
+// ADR-0011 nothing is fabricated: no max_supply means no fdv_usd, no USD price means no
+// market_cap_usd or fdv_usd, and no supply snapshot leaves all six F2 fields nil.
 func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
 	key, keyErr := supply.AssetKey(asset)
 
-	// The F2 overlay fans out to up to four independent DB-bound
-	// reads — 24h volume, 24h change, USD price, supply snapshot.
-	// Each is 50ms–2s; run serially, a cold /v1/assets/{id} would
-	// pay the SUM. They touch disjoint
-	// AssetDetail fields (volume/change/price each write one field;
-	// the snapshot writes none), so they run concurrently here and
-	// the cold cost collapses to the slowest single read. Every
-	// populate* helper is individually best-effort — a failure logs,
-	// leaves its field null and is folded into detail.f2ReadFailed.
+	// The overlay fans out to up to four independent DB reads (24h volume, 24h change, USD price,
+	// supply snapshot), each 50ms-2s; run serially a cold /v1/assets/{id} would pay the sum. They
+	// write disjoint AssetDetail fields, so they run concurrently and the cost is the slowest
+	// read. Each populate* helper is best-effort: a failure logs, leaves its field null and folds
+	// into detail.f2ReadFailed.
 	//
-	// IMPORTANT: pass asset.String() to populateVolume24h — the
-	// canonical wire form trades.base_asset stores — NOT
-	// supply.AssetKey(asset). The two diverge for native: AssetKey
-	// returns "XLM" (ADR-0011), trades stores "native", so passing
-	// the supply key makes the volume lookup match no trade rows.
+	// IMPORTANT: pass asset.String() to populateVolume24h (the wire form trades.base_asset stores),
+	// NOT supply.AssetKey(asset): for native AssetKey returns "XLM" but trades stores "native", so
+	// the supply key would match no trade rows.
 	var (
 		snap             supply.Supply
 		haveSnap         bool
@@ -142,18 +90,13 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// These run on child goroutines, which middleware.Recoverer
-			// does NOT cover — an unrecovered panic here takes down the
-			// whole API process, not just this request. Each populate*
-			// is best-effort (failure → field stays null), so a panic
-			// degrades to the same: log it and leave the field unset.
+			// Child goroutines are not covered by middleware.Recoverer, so an unrecovered panic
+			// would take down the whole API process. Degrade to best-effort: log and leave the
+			// field unset.
 			defer func() {
 				if p := recover(); p != nil {
-					// worker.Report, not a bare log: this is the counter
-					// the stellarindex_worker_panics_total page rule
-					// reads, so a populator that starts panicking on
-					// every request is visible to an operator rather
-					// than only to whoever greps the logs.
+					// worker.Report feeds the stellarindex_worker_panics_total page rule, so a
+					// populator that panics on every request is visible to an operator.
 					worker.Report(s.logger, "api-asset-detail-populator", p)
 				}
 			}()
@@ -162,50 +105,32 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	}
 	run(func() { volFailed = s.populateVolume24h(ctx, detail, asset) })
 	run(func() { changeFailed = s.populateChange24h(ctx, detail, asset) })
-	// Inline price_usd independent of supply availability so
-	// wallet UIs that just want the price don't pay a second /v1/price
-	// RT. populateMarketCap (phase 2) re-uses detail.PriceUSD, plus the
-	// venue count captured here for the dust-liquidity valuation guard.
+	// price_usd is inlined independent of supply so wallet UIs need no second /v1/price round
+	// trip; populateMarketCap (phase 2) reuses it plus the venue count for the dust-liquidity guard.
 	run(func() { priceSourceCount = s.populatePriceUSD(ctx, detail, asset) })
-	// Supply snapshot only when a supply reader is wired and the
-	// asset has a supply key — off-chain assets (fiat / crypto-pure)
-	// have no snapshot, matching the pre-parallelisation early-return.
+	// Only with a supply reader and a supply key: off-chain assets have no snapshot.
 	if s.Supply != nil && keyErr == nil {
 		run(func() { snap, haveSnap, supplyFailed = s.fetchSupplySnapshot(ctx, key) })
 	}
 	wg.Wait()
 
-	// SEP-41 fallback: a Soroban token has no LCM observer snapshot unless its
-	// contract is on the operator watch-list — impractical at 10k+ tokens, so
-	// the watch-list is empty and Algorithm 3 produces nothing here. Fall back
-	// to the lake-derived per-token supply (stellar.supply_flows, summed live —
-	// Σmint−Σburn−Σclawback over the certified ClickHouse lake, no rollup
-	// refresh needed) so EVERY SEP-41 token's total_supply is served + complete
-	// from the full archive — the same source GET /v1/assets/{id}/supply
-	// already uses. Only fires when no observer snapshot exists (classic assets
-	// keep their Algorithm-2 snapshot), so it adds a CH read only for Soroban
-	// tokens.
-	// A stale observer snapshot yields to the live lake reading too, as the
-	// listing's precise arm yields to its lake arms past the same bound.
+	// SEP-41 fallback: a Soroban token has no observer snapshot unless its contract is on the
+	// operator watch-list, impractical at 10k+ tokens. Fall back to the lake-derived supply
+	// (stellar.supply_flows, summed live as mint minus burn minus clawback), the same source
+	// GET /v1/assets/{id}/supply uses, so every SEP-41 token's total_supply is served from the full
+	// archive. Classic assets keep their snapshot, so this adds a ClickHouse read only for Soroban
+	// tokens. A stale snapshot yields to the lake reading, as the listing's precise arm does.
 	now := time.Now()
 	if (!haveSnap || supplyObservationStale(snap, now)) && s.TokenSupply != nil && asset.Type == canonical.AssetSoroban && asset.ContractID != "" {
-		// ts.Incomplete means the lake-flows net total is negative
-		// (Σ(burn+clawback) > Σmint) — the token's supply_flows are
-		// incompletely seeded (e.g. pre-Soroban SAC-wrapper mints not yet
-		// CAP-67-replayed), NOT that supply is negative. Treat it as
-		// UNAVAILABLE: skip the fallback so total_supply/circulating_supply
-		// stay null (both are *string,omitempty), mirroring how
-		// SEP41Computer.Compute REFUSES a negative rather than publishing a
-		// physically-impossible reading. We deliberately do NOT clamp to 0 —
-		// that would read as a real "fully burned" supply and understate the
-		// token (ADR-0003; migration 0005's total_supply >= 0).
+		// ts.Incomplete means the net total is negative (burns exceed mints): supply_flows are
+		// incompletely seeded (e.g. SAC-wrapper mints not yet replayed), NOT that supply is
+		// negative. Treat it as UNAVAILABLE so total_supply/circulating_supply stay null, as
+		// SEP41Computer.Compute refuses a negative. Never clamp to 0: that would read as a real
+		// "fully burned" supply (ADR-0003; migration 0005's total_supply >= 0).
 		//
-		// Bounded by tokenMetadataReadTimeout, like every other best-effort
-		// token-metadata read. This one runs AFTER the wg.Wait barrier, on
-		// the handler goroutine, so unbounded a slow supply_flows sum would
-		// extend /v1/assets/{id} by its full duration on top of the parallel
-		// phase — for an overlay whose failure mode is simply a null
-		// total_supply.
+		// Bounded by tokenMetadataReadTimeout: this runs AFTER the wg.Wait barrier on the handler
+		// goroutine, so an unbounded slow sum would extend /v1/assets/{id} for an overlay whose
+		// failure mode is just a null total_supply.
 		sctx, scancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
 		defer scancel()
 		if ts, terr := s.TokenSupply.TokenSupply(sctx, asset.ContractID); terr == nil && ts.Total != nil && !ts.Incomplete {
@@ -221,17 +146,11 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	}
 	detail.f2ReadFailed = volFailed || changeFailed || supplyFailed
 
-	// ADR-0011 max_supply precedence, step 2 — the SEP-1 declared
-	// max. Step 1 (operator override) surfaces as snap.MaxSupply
-	// already non-nil; when it didn't fire, overlay the issuer's
-	// stellar.toml [[CURRENCIES]] max_number / fixed_number
-	// declaration. applySep1Overlay (which runs before applyF2Fields
-	// in handleAssetGet) stamped those fields on detail in DISPLAY
-	// units; the resolver scales them to raw units by
-	// detail.Decimals. An applied overlay sets
-	// max_supply_basis="sep1_declared_max" so consumers can see the cap
-	// (and the FDV derived from it) is issuer-self-declared, not
-	// on-chain enforced; supply_basis keeps naming the circulating policy.
+	// ADR-0011 max_supply precedence, step 2: the SEP-1 declared max. Step 1 (operator override)
+	// already shows as a non-nil snap.MaxSupply; otherwise overlay the issuer's stellar.toml
+	// max_number / fixed_number, which applySep1Overlay stamped on detail in DISPLAY units and the
+	// resolver scales to raw units by detail.Decimals. max_supply_basis="sep1_declared_max" tells
+	// consumers the cap (and the FDV derived from it) is issuer-declared, not on-chain enforced.
 	if haveSnap && snap.MaxSupply == nil {
 		overlaid, applied, err := supply.Overlay(ctx, snap, asset, sep1DeclaredMaxResolver{detail: detail})
 		if err != nil {
@@ -241,10 +160,8 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 		}
 	}
 
-	// Phase 2 — pure compute (no DB), so it runs on this goroutine
-	// once the parallel reads have joined. populateMarketCap reads
-	// detail.PriceUSD (set by populatePriceUSD) + the snapshot; the
-	// wg.Wait barrier makes both safely visible.
+	// Phase 2 is pure compute, run once the parallel reads have joined; the wg.Wait barrier makes
+	// detail.PriceUSD and the snapshot safely visible to populateMarketCap.
 	if haveSnap {
 		detail.SupplyStale = supplyObservationStale(snap, now)
 		populateSupplyFields(detail, snap)
@@ -252,19 +169,12 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	}
 }
 
-// populateVolume24h fills detail.VolumeUSD24h via the [VolumeReader].
-// Best-effort — failure logs WARN, the field stays null, the rest
-// of the body still serves cleanly.
-//
-// For pure-Soroban SEP-41 assets the plain reader reports a bogus "0"
-// (it only sees the insert-time usd_volume, which XLM-quoted Soroban
-// trades never populate), so when the reader exposes the XLM-anchored
-// [SorobanVolumeReader] variant we use it — it values the XLM-legged
-// trades at their own minute's XLM/USD on top of any USD-pegged legs.
-// A Soroban lookup ERROR falls back to the plain reader so a
-// transient failure of the richer path can't zero out a figure the plain
-// path could still supply; that figure omits the XLM-legged trades, so it is
-// served flagged as a lower bound. Reports whether the plain read failed.
+// populateVolume24h fills detail.VolumeUSD24h via the [VolumeReader], best-effort. For
+// pure-Soroban SEP-41 assets the plain reader reports a bogus "0" (XLM-quoted Soroban trades
+// never populate usd_volume), so the XLM-anchored [SorobanVolumeReader] is used when available. A
+// Soroban lookup ERROR falls back to the plain reader so a transient failure cannot zero out a
+// figure the plain path could supply; that figure omits XLM-legged trades, so it is flagged as a
+// lower bound. Reports whether the plain read failed.
 func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
 	if s.Volume == nil {
 		return false
@@ -300,10 +210,8 @@ func (s *Server) populateVolume24h(ctx context.Context, detail *AssetDetail, ass
 	return false
 }
 
-// fetchSupplySnapshot wraps the SupplyLooker call with the
-// best-effort error policy: ErrSupplyNotFound is silent, real
-// errors are logged at WARN and reported as failed, client-cancel
-// doesn't log.
+// fetchSupplySnapshot wraps the SupplyLooker call with the best-effort error policy:
+// ErrSupplyNotFound is silent, real errors log at WARN and report failed, client cancel is not logged.
 func (s *Server) fetchSupplySnapshot(ctx context.Context, key string) (snap supply.Supply, ok, failed bool) {
 	snap, err := s.Supply.LatestSupply(ctx, key)
 	if errors.Is(err, ErrSupplyNotFound) {
@@ -360,15 +268,10 @@ func supplyObservationStale(snap supply.Supply, now time.Time) bool {
 	return !snap.ObservedAt.IsZero() && now.Sub(snap.ObservedAt) > preciseSupplyMaxAge
 }
 
-// populatePriceUSD inlines detail.PriceUSD via the lookupUSDPrice
-// path. Idempotent: if the asset-catalogue overlay or another caller already
-// set PriceUSD, this is a no-op (the two paths can't fight).
-//
-// Returns the number of DISTINCT venues that backed the price — the liquidity
-// signal populateMarketCap needs for the dust-liquidity valuation guard. 0
-// when no price was found or PriceUSD was already set by another path (on the
-// /v1/assets/{id} detail path this runs before any overlay, so a found price
-// always yields the real count).
+// populatePriceUSD inlines detail.PriceUSD via the lookupUSDPrice path; a no-op if another path
+// already set PriceUSD. It returns the number of DISTINCT venues that backed the price, the
+// liquidity signal for the dust-liquidity valuation guard; 0 when no price was found or one was
+// already set.
 func (s *Server) populatePriceUSD(ctx context.Context, detail *AssetDetail, asset canonical.Asset) int {
 	if s.Prices == nil || detail.PriceUSD != nil {
 		return 0
@@ -443,16 +346,12 @@ func (s *Server) thinDetailPricePass(ctx context.Context, detail *AssetDetail, a
 	}
 }
 
-// marketCapRefused is the pre-figure half of the valuation guards shared by
-// the detail cap and the market-cap chart, so the two cannot disagree on
-// whether an asset has a market valuation at all.
-//
-// An unverified ticker collision refuses outright: a look-alike of a verified
-// currency must not publish price × supply as a headline valuation — see the
-// matching guard in fillRowMarketCap (listing path) for the full rationale.
-// Single-venue sub-floor trading refuses as low liquidity. The turnover
-// ceiling tests the computed figure, so each caller applies
-// [capExceedsObservedTurnover] to its own.
+// marketCapRefused is the pre-figure half of the valuation guards shared by the detail cap and
+// the market-cap chart, so they cannot disagree on whether an asset has a valuation. An
+// unverified ticker collision refuses outright (a look-alike of a verified currency must not
+// publish price x supply; see fillRowMarketCap). Single-venue sub-floor trading refuses as low
+// liquidity. The turnover ceiling tests the computed figure, so each caller applies
+// [capExceedsObservedTurnover] itself.
 func (s *Server) marketCapRefused(asset canonical.Asset, priceSourceCount int, volume24hUSD *string) (refused, lowLiquidity bool) {
 	if s.VerifiedCurrencies != nil && asset.Type == canonical.AssetClassic {
 		if _, collision := s.VerifiedCurrencies.StellarCollision(asset.Code, asset.Issuer); collision {
@@ -466,60 +365,44 @@ func (s *Server) marketCapRefused(asset canonical.Asset, priceSourceCount int, v
 	return false, false
 }
 
-// populateMarketCap fills market_cap_usd + fdv_usd from the supply
-// snapshot and the already-populated detail.PriceUSD. Re-uses the
-// inlined price (set by populatePriceUSD or the asset-catalogue overlay path)
-// to avoid a second prices_1m lookup. Compute failures log at WARN;
-// the field stays nil so the rest of the body still serves cleanly.
+// populateMarketCap fills market_cap_usd + fdv_usd from the supply snapshot and the
+// already-populated detail.PriceUSD, avoiding a second prices_1m lookup. Compute failures log at
+// WARN and leave the field nil.
 func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, asset canonical.Asset, snap supply.Supply, key string, priceSourceCount int) {
 	if detail.PriceUSD == nil {
-		// populatePriceUSD ran first and didn't find a price (no
-		// prices reader wired OR lookupUSDPrice returned !ok).
-		// market_cap / fdv have no value to compute against.
+		// No price (no reader wired, or lookup found none): nothing to compute against.
 		return
 	}
 	if detail.SupplyStale {
-		// Today's price times a supply nobody has observed for longer
-		// than preciseSupplyMaxAge is not a market cap. supply_as_of
-		// says how old it is; flags.stale marks the body.
+		// Today's price times a supply unobserved for longer than preciseSupplyMaxAge is not a
+		// market cap; supply_as_of says how old it is and flags.stale marks the body.
 		return
 	}
 	if detail.MarketCapDecimalsMismatch || detail.DecimalsUnresolved {
-		// DecimalsUnresolved: the lake read failed and no projection row
-		// vouches for the scale, so detail.Decimals is a guess.
+		// DecimalsUnresolved: the lake read failed and no projection row vouches for the scale, so
+		// detail.Decimals is a guess.
 		//
-		// Decimals lockstep refusal (applyTokenDecimals): the USD price
-		// above was normalised through the nonstandard_decimals_assets
-		// projection while detail.Decimals is the lake's reading, and the
-		// two disagree for this token. usdMarketValue would divide a
-		// supply on one scale by a price on another — wrong by
-		// 10^|difference| with both inputs looking plausible. The flag is
-		// the machine-readable reason; price_usd and the supply fields
-		// still serve as the per-scale facts they are. Deliberately
-		// before the liquidity guards: this is not a liquidity verdict
-		// and must not be reported as one.
+		// Decimals lockstep refusal (applyTokenDecimals): the price was normalised through the
+		// nonstandard_decimals_assets projection while detail.Decimals is the lake's reading, and
+		// they disagree. usdMarketValue would divide a supply on one scale by a price on another,
+		// wrong by 10^|difference| with both inputs plausible. price_usd and supply still serve.
+		// Placed before the liquidity guards because this is not a liquidity verdict.
 		return
 	}
 	usdPrice := *detail.PriceUSD
 	_ = ctx
-	// Valuation-integrity guard: when the backing price came from a single venue
-	// AND trailing-24h USD volume is below the operator floor, suppress BOTH
-	// market_cap_usd and fdv_usd (null) and flag it: one dust trade must not
-	// present an obscure asset as worth billions. detail.VolumeUSD24h is populated
-	// by the concurrent populateVolume24h before this join. price_usd still
-	// serves; we guard the valuation, not the price.
+	// Valuation-integrity guard: when the price came from a single venue AND trailing-24h USD
+	// volume is below the operator floor, suppress BOTH market_cap_usd and fdv_usd and flag it, so
+	// one dust trade cannot present an obscure asset as worth billions. price_usd still serves;
+	// only the valuation is guarded. VolumeUSD24h is set by populateVolume24h before this join.
 	//
-	// Native carve-out for list/detail parity: the listing SQL forces native XLM's
-	// source_count to NULL (asset_catalogue.go), so XLM is NEVER dust-suppressed
-	// there. Mirror that so /v1/assets/native and the listing cannot disagree.
+	// Native carve-out for list/detail parity: the listing SQL forces native XLM's source_count to
+	// NULL, so XLM is NEVER dust-suppressed there; mirror that so /v1/assets/native agrees.
 	//
-	// Known residual: for NON-native assets the endpoints derive the venue count
-	// from DIFFERENT fallback routes. Detail counts the venues backing its served
-	// price (direct fiat:USD via readPriceWithAliases, else the USDC proxy in
-	// lookupUSDPriceWithSources); the listing SQL COALESCEs direct fiat:USD then
-	// asset/XLM triangulation. An asset can suppress on one and not the other. The
-	// detail path is deliberately the STRICTER and must not be weakened to match;
-	// full parity needs unifying the price bases at the aggregator/SQL layer.
+	// Known residual: for non-native assets the endpoints count venues via DIFFERENT fallbacks
+	// (detail: direct fiat:USD, else the USDC proxy; listing SQL: direct fiat:USD, else XLM
+	// triangulation), so an asset can suppress on one and not the other. Detail is deliberately the
+	// STRICTER and must not be weakened; full parity needs unified price bases in the aggregator.
 	if refused, lowLiquidity := s.marketCapRefused(asset, priceSourceCount, detail.VolumeUSD24h); refused {
 		detail.MarketCapLowLiquidity = lowLiquidity
 		return
@@ -529,10 +412,8 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 			s.logger.Warn("market_cap_usd compute failed",
 				"err", err, "asset_key", key, "price", usdPrice)
 		} else if capExceedsObservedTurnover(mc, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
-			// The ceiling is a test of the computed FIGURE, so unlike the
-			// floor above it can only run here. The detail page and the
-			// listing must agree on the verdict or the same asset reads as
-			// valued on one surface and unvalued on the other.
+			// The ceiling tests the computed FIGURE, so unlike the floor it can only run here;
+			// detail and listing must agree on the verdict.
 			detail.MarketCapLowLiquidity = true
 		} else {
 			detail.MarketCapUSD = &mc
@@ -543,42 +424,27 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 			s.logger.Warn("fdv_usd compute failed",
 				"err", err, "asset_key", key, "price", usdPrice)
 		} else if capExceedsObservedTurnover(fdv, detail.VolumeUSD24h, s.MaxMarketCapVolumeRatio) {
-			// FDV is the cap computed over MAX supply, so it is >= market_cap_usd
-			// and can breach the ceiling on its own even when circulating supply
-			// did not — maxSupply > circulatingSupply is the common case for an
-			// issuer with a declared cap above what has vested. Flagging here too
-			// matches the mc branch above: a withheld fdv_usd with no flag would
-			// be indistinguishable from "no max_supply on record".
+			// FDV is computed over MAX supply, so it can breach the ceiling even when the cap did
+			// not. Flag it as the cap branch does: a withheld fdv_usd with no flag would read as
+			// "no max_supply on record".
 			detail.MarketCapLowLiquidity = true
 		} else {
-			// FDV is the cap computed over MAX supply, so it is the larger
-			// of the two figures and clears the ceiling strictly less often
-			// than the cap does. Withholding the cap while still publishing
-			// an even bigger FDV beside it would defeat the guard on the
-			// same row.
+			// FDV is the larger figure, so it clears the ceiling less often than the cap; withholding
+			// the cap yet publishing a bigger FDV beside it would defeat the guard.
 			detail.FDVUSD = &fdv
 		}
 	}
 }
 
-// lookupUSDPrice consults the PriceReader for the asset's USD price.
-// Returns ("", false) on any failure (no data, asset is fiat:USD
-// itself, etc.) — caller treats this as "market_cap unavailable".
+// lookupUSDPrice consults the PriceReader for the asset's USD price, returning ("", false) on any
+// failure; callers treat that as "market_cap unavailable".
 //
-// On the canonical Stellar deployment NO on-chain trade quotes in
-// fiat:USD — every USD-flavoured trade quotes in classic USDC or
-// one of the operator's other declared pegs. So a literal
-// LatestPrice(asset, fiat:USD) lookup against the prices_1m CAGG
-// returns ErrPriceNotFound for nearly every asset on-chain, and the
-// downstream F2 fields (market_cap_usd, fdv_usd, change_24h_pct)
-// silently stay null on /v1/assets/{id}. We fix this by mirroring
-// the handler's tryStablecoinFiatProxy fallback at the reader-call
-// level: when the literal lookup misses, walk the operator's
-// usd_pegged_classic_assets and rewrite asset/fiat:USD to
-// asset/<peg>. Same shape as the handler-side fallback;
-// here it lives at the F2-population layer where the handler's
-// priceFallback isn't reachable (the supply / change-24h paths
-// bypass the /v1/price handler entirely).
+// No on-chain trade quotes in fiat:USD (USD-flavoured trades quote in classic USDC or another
+// declared peg), so a literal LatestPrice(asset, fiat:USD) returns ErrPriceNotFound for nearly
+// every asset and the F2 fields would silently stay null. This mirrors the handler's
+// tryStablecoinFiatProxy at the reader-call level: on a miss, walk usd_pegged_classic_assets and
+// rewrite asset/fiat:USD to asset/<peg>. The F2 paths bypass the /v1/price handler, so its
+// fallback is unreachable here.
 func (s *Server) lookupUSDPrice(ctx context.Context, asset canonical.Asset) (string, bool) {
 	l := s.lookupUSDPriceWithSources(ctx, asset)
 	return l.price, l.price != ""
@@ -593,18 +459,13 @@ type usdPriceLookup struct {
 	withheld PriceWithheldReason
 }
 
-// lookupUSDPriceWithSources is [Server.lookupUSDPrice] plus the number of
-// DISTINCT venues that backed the returned price — the liquidity signal the
-// market-cap valuation guard needs (see [dustLiquiditySuppressed]) — and the
-// withholding verdict. It is the single implementation; lookupUSDPrice is the
-// thin (price, ok) wrapper for callers (lending, change-24h) that may only
-// use a served price and have no field to report a withholding on.
+// lookupUSDPriceWithSources is [Server.lookupUSDPrice] plus the number of DISTINCT venues behind
+// the price (the liquidity signal for [dustLiquiditySuppressed]) and the withholding verdict.
+// lookupUSDPrice wraps it for callers that can only use a served price.
 func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.Asset) usdPriceLookup {
 	if s.Prices == nil {
-		// Options documents Prices as independently optional ("nil →
-		// 503"); populatePriceUSD guards this, but populateChange24h
-		// reaches us via a different path. Guard here so a
-		// Prices==nil,Change24h!=nil wiring can't nil-panic.
+		// Prices is independently optional, and populateChange24h reaches here without
+		// populatePriceUSD's guard; a Prices==nil, Change24h!=nil wiring must not nil-panic.
 		return usdPriceLookup{}
 	}
 	if asset.Equal(defaultPriceQuote) {
@@ -612,16 +473,10 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 		// short-circuit before the reader rejects it.
 		return usdPriceLookup{}
 	}
-	// Alias-aware read — the SAME resolution /v1/price uses. XLM
-	// surfaces in two canonical forms (`native` per-network and
-	// `crypto:XLM` global ticker); the aggregator writes the fresh
-	// CEX VWAP under whichever matches its configured pair set. A bare
-	// LatestPrice(native, fiat:USD) misses that VWAP and falls through
-	// to the stablecoin-proxy SDEX bucket below, so /v1/assets/native
-	// diverged from /v1/price?asset=native by ~0.2% (they read
-	// different pairs). readPriceWithAliases makes both dual-forms
-	// resolve to the same canonical USD price. Non-aliased assets are
-	// unaffected (assetAliases returns [asset] for everything else).
+	// Alias-aware read, the SAME resolution /v1/price uses. XLM has two canonical forms (`native`
+	// and `crypto:XLM`) and the aggregator writes the fresh CEX VWAP under whichever matches its
+	// pair set; a bare LatestPrice(native, fiat:USD) would miss it and fall to the SDEX proxy,
+	// diverging /v1/assets/native from /v1/price by ~0.2%. Non-aliased assets are unaffected.
 	snap, sources, _, err := s.readPriceWithAliases(ctx, s.Prices, asset, defaultPriceQuote)
 	if errors.Is(err, ErrPriceWithheld) {
 		// Withheld beats every fallback, as on /v1/price: the proxy below
@@ -629,19 +484,15 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 		return usdPriceLookup{withheld: priceWithheldReason(err)}
 	}
 	if err == nil && snap.Price != "" {
-		// dex-nonstandard-decimals forward normalization (M2):
-		// readPriceWithAliases returns the RAW asset/fiat:USD ratio. This is
-		// the sub-chokepoint for all THREE F2 USD fields — price_usd,
-		// market_cap_usd and fdv_usd all derive from this return (the caps via
-		// usdMarketValue(supply, thisPrice, decimals)), so correcting it here
-		// fixes every one at once. Byte-identical no-op for a 7dp asset. (The
-		// proxy branch below self-normalizes inside tryStablecoinFiatProxy.)
+		// readPriceWithAliases returns the RAW asset/fiat:USD ratio. This is the chokepoint for all
+		// THREE F2 USD fields (price_usd, market_cap_usd, fdv_usd), so normalizing decimals here
+		// fixes each at once; it is a no-op for a 7dp asset. The proxy branch below normalizes
+		// itself.
 		s.normalizeRawPriceSnapshot(&snap, asset, defaultPriceQuote)
 		return usdPriceLookup{price: snap.Price, sources: len(sources)}
 	}
-	// Read-time stablecoin-fiat proxy fallback (matches the
-	// handler-side tryStablecoinFiatProxy). Already
-	// decimals-normalized inside tryStablecoinFiatProxy — do NOT re-apply.
+	// Stablecoin-fiat proxy fallback, already decimals-normalized inside tryStablecoinFiatProxy:
+	// do NOT re-apply.
 	proxy, proxySources, ok, withheld := s.tryStablecoinFiatProxy(ctx, asset, defaultPriceQuote)
 	if ok && proxy.Price != "" {
 		return usdPriceLookup{price: proxy.Price, sources: len(proxySources)}
@@ -653,17 +504,10 @@ func (s *Server) lookupUSDPriceWithSources(ctx context.Context, asset canonical.
 	return usdPriceLookup{}
 }
 
-// populateChange24h fills detail.Change24hPct via the
-// [Change24hReader] and the existing [PriceReader] used by
-// market_cap. Best-effort: no current USD price OR no 24h-ago
-// comparison bucket leaves the field null. Real Postgres errors
-// log at WARN; all other failure modes are silent.
-//
-// We deliberately ignore the asset==fiat:USD short-circuit that
-// market_cap uses — pricing USD-against-USD over time is
-// meaningless, lookupUSDPrice already returns ("", false) for
-// that case, and the early-return below kicks in without logging.
-// Reports whether the 24h-ago read failed.
+// populateChange24h fills detail.Change24hPct via the [Change24hReader] and the market-cap
+// [PriceReader]. Best-effort: no current price or no 24h-ago bucket leaves the field null, and
+// only real read errors log at WARN. USD-against-USD is meaningless; lookupUSDPrice already
+// returns ("", false) for it. Reports whether the 24h-ago read failed.
 func (s *Server) populateChange24h(ctx context.Context, detail *AssetDetail, asset canonical.Asset) (failed bool) {
 	if s.Change24h == nil {
 		return false
@@ -694,16 +538,9 @@ func (s *Server) populateChange24h(ctx context.Context, detail *AssetDetail, ass
 	return false
 }
 
-// pctChange returns `(now - then) / then * 100` as a signed decimal
-// string with two fractional digits — e.g. "+1.27", "-0.05",
-// "0.00". Both inputs must parse as decimals; `then` must be > 0
-// (a zero anchor would divide-by-zero, and a negative price is
-// nonsensical for an asset).
-//
-// Pure big.Rat math — no float — so very large or very small
-// prices stay precise. The leading "+" on positive deltas is
-// emitted explicitly so consumers can distinguish "0.00" (no
-// change) from a missing field.
+// pctChange returns (now - then) / then * 100 as a signed decimal string with two fractional
+// digits ("+1.27", "-0.05", "0.00"). `then` must be > 0. Pure big.Rat math, so extreme prices stay
+// precise; the explicit "+" lets consumers tell "0.00" (no change) from a missing field.
 func pctChange(nowStr, thenStr string) (string, error) {
 	now, ok := new(big.Rat).SetString(nowStr)
 	if !ok {
@@ -720,10 +557,8 @@ func pctChange(nowStr, thenStr string) (string, error) {
 	pct := new(big.Rat).Quo(delta, then)
 	pct.Mul(pct, big.NewRat(100, 1))
 	out := pct.FloatString(2)
-	// A sub-cent delta in either direction reads as flat at two
-	// decimals: FloatString takes the '-' from the Rat's sign, not the
-	// rounded digits, so "-0.00" must collapse to "0.00" just as the
-	// positive branch never emits "+0.00".
+	// FloatString takes the '-' from the Rat's sign, not the rounded digits, so a sub-cent negative
+	// delta must collapse "-0.00" to "0.00", as the positive branch never emits "+0.00".
 	switch {
 	case out == "-0.00":
 		out = "0.00"
@@ -733,31 +568,21 @@ func pctChange(nowStr, thenStr string) (string, error) {
 	return out, nil
 }
 
-// sep1DeclaredMaxResolver adapts the SEP-1 [[CURRENCIES]] fields the
-// applySep1Overlay step already stamped on the AssetDetail into the
-// [supply.MetadataResolver] contract, so [supply.Overlay] can apply
-// the ADR-0011 SEP-1 max_supply precedence step at serving time
-// without a second issuers-table read.
+// sep1DeclaredMaxResolver adapts the SEP-1 [[CURRENCIES]] fields already stamped on the
+// AssetDetail into [supply.MetadataResolver], so [supply.Overlay] can apply the ADR-0011 SEP-1
+// max_supply step without a second issuers-table read.
 //
-// Precedence within the declaration: max_number beats fixed_number
-// (a fixed total implies the cap); an explicit is_unlimited=true
-// blocks both (the issuer says the supply is uncapped — a declared
-// number alongside it is contradictory junk we don't publish).
+// Precedence: max_number beats fixed_number (a fixed total implies the cap); is_unlimited=true
+// blocks both, since a declared number beside it is contradictory and not published.
 //
-// Unit contract: SEP-1 declares supply in DISPLAY units (whole
-// tokens); the supply snapshot carries RAW units (stroops for
-// classic, token-decimals scale for SEP-41). The resolver scales by
-// 10^detail.Decimals before handing the value to Overlay — passing
-// the display value through unscaled would understate max_supply
-// (and FDV) by 10^7 for every classic asset.
+// Units: SEP-1 declares DISPLAY units but the snapshot carries RAW units, so the resolver scales
+// by 10^detail.Decimals; unscaled it would understate max_supply and FDV by 10^7 for classic assets.
 type sep1DeclaredMaxResolver struct {
 	detail *AssetDetail
 }
 
-// SEP1MaxSupply implements [supply.MetadataResolver]. Never errors —
-// every junk shape (unparseable, negative, fractional raw units)
-// degrades to ok=false per the "publish nil rather than fabricate"
-// policy.
+// SEP1MaxSupply implements [supply.MetadataResolver]. It never errors: every junk shape
+// (unparseable, negative, fractional raw units) degrades to ok=false rather than fabricating.
 func (r sep1DeclaredMaxResolver) SEP1MaxSupply(_ context.Context, _ canonical.Asset) (string, bool, error) {
 	d := r.detail
 	if d == nil {
@@ -783,15 +608,11 @@ func (r sep1DeclaredMaxResolver) SEP1MaxSupply(_ context.Context, _ canonical.As
 	return raw, true, nil
 }
 
-// sep1DisplayToRawUnits converts a SEP-1 display-unit decimal string
-// (e.g. "500000000" or "21000000.5") to a raw-unit integer string at
-// the asset's decimals. Returns ok=false for anything that doesn't
-// yield a non-negative INTEGER raw amount: unparseable strings,
-// negatives, and declarations with more fractional digits than the
-// asset has decimals (fractional stroops don't exist — that's junk,
-// not a roundable value). Rational syntax ("1/3") and e-notation are
-// rejected outright: stellar.toml numerics are plain decimals, and
-// big.Rat.SetString would otherwise silently accept both.
+// sep1DisplayToRawUnits converts a SEP-1 display-unit decimal string to a raw-unit integer string
+// at the asset's decimals. ok=false unless the result is a non-negative INTEGER: unparseable
+// input, negatives, and more fractional digits than the asset has decimals (fractional stroops
+// are junk, not roundable). Rational ("1/3") and e-notation are rejected because stellar.toml
+// numerics are plain decimals and big.Rat.SetString would silently accept both.
 func sep1DisplayToRawUnits(display string, decimals int) (string, bool) {
 	if decimals < 0 || strings.ContainsAny(display, "/eE") {
 		return "", false
@@ -808,23 +629,14 @@ func sep1DisplayToRawUnits(display string, decimals int) (string, bool) {
 	return rat.Num().String(), true
 }
 
-// usdMarketValue computes amountStroops × usdPriceStr / 10^decimals,
-// formatted as a decimal string with two fractional digits (USD
-// cents). Pure big.Rat math — no float — so very large supplies +
-// very small prices stay precise.
+// usdMarketValue computes amountStroops x usdPriceStr / 10^decimals as a decimal string with two
+// fractional digits. Pure big.Rat math, so huge supplies and tiny prices stay precise. It errors
+// on an unparseable price or negative decimals; amountStroops==0 yields "0.00", a legitimate
+// "no circulating supply".
 //
-// Returns an error when usdPriceStr isn't a parseable decimal or
-// decimals is negative. amountStroops==0 produces "0.00" (legitimate
-// "asset has no circulating supply" reading, not an error).
-//
-// A NEGATIVE result is rejected with an error — the same Sign()<0 guard
-// [computeMarketCapUSD] applies on the listing path (it returns ""). A
-// legitimate supply/price is never negative; a negative circulating supply
-// is a data error (Σburn > Σmint), and serving a negative market_cap_usd /
-// fdv_usd would be worse than omitting it. Every caller
-// (populateMarketCap, chart.go, lending.go) already leaves the field / point
-// unset on error, so a negative result surfaces as an OMITTED field, not a
-// negative one.
+// A NEGATIVE result is an error, matching [computeMarketCapUSD] on the listing path: a negative
+// supply is a data error (burns exceed mints) and serving a negative market_cap_usd / fdv_usd is
+// worse than omitting it. Every caller leaves the field unset on error.
 func usdMarketValue(amountStroops *big.Int, usdPriceStr string, decimals int) (string, error) {
 	if amountStroops == nil {
 		return "", errors.New("usdMarketValue: amountStroops is nil")
