@@ -31,9 +31,9 @@ import (
 // compute-completeness. Every ground truth here is point-in-time state, never
 // a windowed counter, so both sides measure the same thing.
 //
-// Flags: -api, -config, -textfile. Empty -textfile prints to stdout; empty
-// -config skips the reserve-list check. Exits 1 when any check failed or every
-// VALUE check was skipped (servedValuesExitError).
+// Flags: -api, -config, -textfile (served_values.prom). Empty -textfile prints
+// to stdout; empty -config skips the reserve-list check. Exits 1 when any
+// check failed or every VALUE check was skipped (servedValuesExitError).
 func verifyServedValues(args []string) error {
 	fs := flag.NewFlagSet("verify-served-values", flag.ContinueOnError)
 	apiBase := fs.String("api", "http://127.0.0.1:3000", "Base URL of our API (loopback on r1)")
