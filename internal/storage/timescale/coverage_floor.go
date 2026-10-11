@@ -18,33 +18,24 @@ import (
 // form of both legs AND both stored market directions, inside the half-open
 // window [$3, $4).
 //
-// Shape: the obvious `WHERE base_asset = ANY($1) AND quote_asset = ANY($2)`
-// does NOT reach prices_<g>_pair_bucket_idx. A ScalarArrayOpExpr on the
-// leading index columns is planned as a bucket-ordered scan with the pair as
-// a post-filter, so proving a sparse or absent direction empty walks every
-// chunk. On r1 against prices_1d the array form ran 5 666 ms (~4.2M rows) for
-// XLM/USD; one correlated `min(bucket)` per (form, form, direction)
-// combination, each an equality lookup the index satisfies as an Index Only
-// Scan, ran 6.9 ms. Same answer, same single round trip.
+// Shape: `WHERE base_asset = ANY($1) AND quote_asset = ANY($2)` does NOT
+// reach prices_<g>_pair_bucket_idx. A ScalarArrayOpExpr on the leading index
+// columns is planned as a bucket-ordered scan with the pair as a post-filter,
+// so proving a sparse direction empty walks every chunk (5 666 ms on r1
+// prices_1d). One correlated `min(bucket)` per (form, form, direction)
+// combination is an equality lookup the index satisfies as an Index Only Scan
+// (6.9 ms). The alias arrays are cross-joined here so the SQL text is STATIC.
 //
-// The alias forms arrive as bound arrays and are cross-joined here, so the
-// SQL text is STATIC: no per-request arm generation, no injection surface,
-// one prepared plan for every pair.
+// Both window bounds are Go-side literals rather than now(): run-time chunk
+// exclusion for now() leaves the PLANNER enumerating every chunk (see
+// [Store.LatestClosedVWAP1mForPair]). The ADR-0015 closed-bucket guard rides
+// on that bound as `bucket <= $4 - INTERVAL`, never `bucket + INTERVAL <= $4`.
 //
-// The window is required and both bounds are Go-side literals rather than
-// now(): TimescaleDB's run-time chunk exclusion for now() leaves the PLANNER
-// enumerating every chunk (the trap [Store.LatestClosedVWAP1mForPair]
-// documents). The ADR-0015 closed-bucket guard rides on that bound as
-// `bucket <= $4 - INTERVAL`, the sargable spelling, never
-// `bucket + INTERVAL <= $4`.
-//
-// Both bounds are bound with an explicit `::timestamptz`, and the cast on $4
-// is load-bearing: its FIRST use is the operand of `- INTERVAL`, and
-// PostgreSQL resolves a binary operator with one untyped operand by assuming
-// the other operand's type, so an uncast $4 parses as `interval - interval`
+// The explicit `::timestamptz` cast on $4 is load-bearing: its first use is
+// the operand of `- INTERVAL`, so uncast it parses as `interval - interval`
 // and fails with 42883 before a row is read. A probe error is silent by
-// design (no signal, one warning), which is why the integration test in
-// test/integration must execute this statement.
+// design (one warning), which is why the integration test in test/integration
+// must execute this statement.
 const earliestBucketSQL = `
 	SELECT min(m) FROM (
 	    SELECT (SELECT min(p.bucket)
@@ -84,39 +75,25 @@ const earliestBucketStoredSQL = `
 
 // EarliestBucket returns the START of the oldest CLOSED bucket the
 // prices_<granularity> CAGG holds for the pair inside [from, to), and whether
-// one exists at all. It is the coverage-FLOOR primitive behind the API's
-// outside-coverage signal: an empty series is only worth annotating if the
-// server can say when its own history for that pair begins.
+// one exists. It is the coverage-FLOOR primitive behind the API's
+// outside-coverage signal.
 //
-// Alias-complete on BOTH legs and BOTH stored directions. The serving reads
+// Alias-complete on BOTH legs and BOTH stored directions: the serving reads
 // this floor explains ([Store.OHLCSeries], [Store.HistoryPoints],
-// [Store.HistoryPointsInRange]) each take ONE literal spelling per leg; the
-// API layer walks canonical.AssetAliases across both legs and serves
-// whatever the first populated spelling holds. XLM's native / crypto:XLM /
-// SAC forms are disjoint venue populations, and the SDEX decoder records a
-// market in whichever orientation the venue used, so the floor of what the
-// API serves is the floor across that whole walk. A floor read against one
-// spelling of one direction would report a floor too LATE, making a caller's
-// window look like it predates the held history when it does not.
+// [Store.HistoryPointsInRange]) take ONE spelling per leg, and the API walks
+// canonical.AssetAliases across both. XLM's native / crypto:XLM / SAC forms
+// are disjoint venue populations and the SDEX decoder records a market in
+// whichever orientation the venue used, so a floor read against one spelling
+// of one direction would be too LATE.
 //
-// The direction fold matches the CAGG-backed series reads, which combine both
-// stored orientations into the requested one. A surface whose serving read
-// spans ONE stored orientation must not use this fold; see
-// [Store.EarliestBucketAsStored].
-//
-// The alias fold on the QUOTE leg is the same conditional claim: it belongs
-// to surfaces that walk the quote's spellings (/v1/chart, /v1/price/at and
-// the non-fiat /v1/ohlc series). The fiat-quoted /v1/ohlc series reads each
-// USD-pegged constituent in one named quote spelling, so it takes
-// [Store.EarliestBucketLiteralQuote] instead.
+// A surface reading ONE stored orientation must use
+// [Store.EarliestBucketAsStored]; the fiat-quoted /v1/ohlc series, which
+// reads each USD-pegged constituent in one named quote spelling, must use
+// [Store.EarliestBucketLiteralQuote].
 //
 // [from, to) is mandatory and half-open; `to` must be strictly after `from`
-// (the guard [Store.OHLCSeries] applies: a degenerate window is a caller
-// bug, not an empty answer). Callers pass the network's first possible
-// bucket as `from` and a Go-side `now` as `to`, keeping the read bounded at
-// both ends and the plan flat.
-//
-// Returns (zero, false, nil) when the pair has no bucket in the window.
+// (same guard as [Store.OHLCSeries]). Returns (zero, false, nil) when the
+// pair has no bucket in the window.
 func (s *Store) EarliestBucket(
 	ctx context.Context,
 	p canonical.Pair,

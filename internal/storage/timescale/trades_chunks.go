@@ -144,35 +144,26 @@ func (s *Store) compressTradesChunk(ctx, live context.Context, c TradeChunk) err
 //
 // A pending AccessExclusiveLock request queues every LATER request for the
 // object behind it, however compatible. On r1 a restamp's decompress_chunk
-// queued behind an aggregator cold-start read holding AccessShareLock on
-// `trades` for 18+ minutes, and postgres_exporter's scrapes queued behind the
-// decompress: alerting went blind and /v1/status went `degraded`. A heavy
-// read colliding with a restamp's decompress/compress phase can recur beside
-// any deploy.
+// queued behind an aggregator read holding AccessShareLock on `trades` for
+// 18+ minutes, and postgres_exporter's scrapes queued behind it: alerting went
+// blind and /v1/status went `degraded`.
 //
 // `SET LOCAL lock_timeout` (5 s) bounds EVERY lock request in the attempt,
 // including the late AccessExclusiveLock on the chunk that compress and
 // decompress take after their work, because the API's request timeout is
 // 15 s. It does not touch a statement that holds its locks and is working;
-// no `statement_timeout` is used, so a 1.5-hour outlier decompress runs.
+// no `statement_timeout` is used, so a long decompress runs.
 //
-// A refused late request throws that work away, so two things keep it rare
-// and visible: a lock holder older than [longLockHolderAge] is waited out
-// with no request of ours pending, and each attempt first takes the
-// functions' opening locks with `LOCK TABLE`, so a refusal there is cheap.
+// A refused late request throws that work away, so two things keep it rare:
+// a lock holder older than [longLockHolderAge] is waited out with no request
+// of ours pending, and each attempt first takes the functions' opening locks
+// with `LOCK TABLE`, so a refusal there is cheap.
 //
-// Each attempt is one transaction, so a refusal rolls back atomically (a
-// refused decompress leaves the chunk compressed, a refused compress leaves
-// it decompressed and readable). Between attempts nothing of ours is pending
-// for [lockWaitPolicy.drain]. The budget charges only waiting, never work,
-// and a retry after costly work starts only if the last attempt's length fits
-// in the remaining wall-clock budget, so a SIGTERM stop window is not
-// overrun. A SIGKILLed attempt rolls back (safe).
-//
-// Not covered: a convoy headed by someone else's exclusive request (the
-// stellarindex_pg_lock_convoy alert), writers blocked by a decompress that
-// holds its locks, and long holders in a role whose pg_stat_activity rows
-// this role cannot read.
+// Each attempt is one transaction, so a refusal rolls back atomically. The
+// budget charges only waiting, never work, and a retry after costly work
+// starts only if the last attempt fits the remaining wall-clock budget, so a
+// SIGTERM stop window is not overrun. A convoy headed by someone else's
+// exclusive request is not covered (stellarindex_pg_lock_convoy alert).
 
 // lockWaitPolicy is how hard one statement may ask for its locks: `wait`
 // per request, `drain` of clear air between attempts, `budget` of total

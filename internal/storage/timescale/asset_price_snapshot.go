@@ -144,12 +144,10 @@ func priceChangePctExpr(lookback string) string {
 // prices_1m holds raw smallest-unit ratios, so for a token whose decimals()
 // is not 7 every arm is off by the same 10^(7 - decimals); one factor
 // corrects whichever arm answered, as v1.Server.normalizeCatalogueUSD does.
-//
-// It normalises at write, unlike prices_1m and change_summary_5m, because
-// nothing ratchets (the table is overwritten each pass), every listing reader
-// and the RWA market cap read this one column, and the column is unrounded
-// NUMERIC, so correcting before the listing's ROUND(price_usd, 10) keeps an
-// 18-decimals token's 1e-11 raw ratio from rounding to zero.
+// It normalises at write because the table is overwritten each pass, every
+// listing reader and the RWA market cap read this one column, and correcting
+// before the listing's ROUND(price_usd, 10) keeps an 18-decimals token's
+// 1e-11 raw ratio from rounding to zero.
 //
 // A READER OF THIS COLUMN MUST NOT NORMALISE IT AGAIN. The change columns
 // need no factor: the scale cancels in each ratio.
@@ -161,7 +159,7 @@ func priceChangePctExpr(lookback string) string {
 //
 // The CASE, rather than a COALESCE'd factor of 1, keeps unconfirmed assets'
 // stored value byte-identical; power(numeric, numeric) with an integral
-// exponent is exact, so money stays NUMERIC (ADR-0003).
+// exponent is exact (ADR-0003).
 const snapshotNormalizedPriceUSDExpr = `CASE WHEN nda.decimals IS NULL
 		         THEN ` + snapshotPriceUSDExpr + `
 		         ELSE ` + snapshotPriceUSDExpr + `
@@ -194,21 +192,17 @@ const (
 // venues behind them.
 //
 // prices_1m keeps a market in whichever direction its source wrote it
-// (Soroban AMMs store base = token_in; SDEX stores base = the offer's sold
-// asset, the inverse, so both directions), and `vwap` is always base priced
-// in quote. So each row is re-expressed as two legs in the arm's
-// (asset, quote) orientation and the leg sums are re-divided, the SQL form of
+// (Soroban AMMs: base = token_in; SDEX: the inverse) and `vwap` is always
+// base priced in quote. So each row is re-expressed as two legs in the arm's
+// (asset, quote) orientation and the leg sums re-divided, the SQL form of
 // [combineDirVWAP]:
 //
 //	(asset, q) row: asset leg = volume_priced,         q leg = vwap × volume_priced
 //	(q, asset) row: asset leg = vwap × volume_priced,  q leg = volume_priced
 //
 // volume_priced, not volume: vwap covers only trades with both legs > 0
-// (migration 0187), so its weight must too.
-//
-// Reading or preferring one direction prices an asset from whichever side of
-// its book last traded in that orientation: days old, or one-sided, while the
-// other side was live.
+// (migration 0187), so its weight must too. Preferring one direction prices
+// an asset from a side of its book that may be days stale.
 //
 // asset is "" for every asset (the rollup) or a scalar SQL expression that
 // pins the arm to one asset (the detail query).

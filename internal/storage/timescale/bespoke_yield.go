@@ -10,30 +10,24 @@ package timescale
 // Built from defindex_flows (migration 0050), which records BOTH layers of
 // every protocol flow.
 //
-//   - VAULT layer (who/when): actor is the end-user (G-strkey, occasionally
-//     a routing C-strkey), contract_id is the vault. The amount lives in
-//     amounts_vec — one entry per asset in the vault's basket. 78,665 of
-//     78,671 vault rows carry a single-entry vector (single-asset vaults);
-//     6 rows across 2 vaults carry two entries.
+//   - VAULT layer (who/when): actor is the end-user, contract_id the vault.
+//     The amount lives in amounts_vec, one entry per asset in the vault's
+//     basket (nearly all vaults are single-asset).
 //   - STRATEGY layer (how much capital moved): actor is the vault contract,
-//     contract_id the strategy, amount a single-asset scalar — the actual
-//     capital deployed into/out of Blend.
+//     contract_id the strategy, amount a single-asset scalar.
 //
-// Amount honesty rules encoded below (the mixed-asset-sum trap):
+// Amount honesty rules (the mixed-asset-sum trap):
 //
-//   1. Per-vault amounts are shown ONLY for vaults whose every window flow
-//      carries a single-entry amounts_vec — those sums are the vault's OWN
-//      asset in base units. A vault with any multi-asset (or missing)
-//      vector shows '—' instead of a fabricated cross-asset sum.
-//   2. Amounts are NEVER summed ACROSS vaults or strategies into one
-//      number-with-a-unit: different vaults hold different assets. The
-//      cross-vault headline numbers are therefore COUNTS; the
-//      cross-strategy gross-volume KPIs carry a "summed base units across
-//      strategies" caveat in the Notes.
+//  1. Per-vault amounts are shown ONLY for vaults whose every window flow
+//     carries a single-entry amounts_vec. A vault with any multi-asset (or
+//     missing) vector shows '—' instead of a fabricated cross-asset sum.
+//  2. Amounts are NEVER summed ACROSS vaults or strategies into one
+//     number-with-a-unit: different vaults hold different assets. Cross-vault
+//     headlines are COUNTS; cross-strategy gross-volume KPIs carry a "summed
+//     base units across strategies" caveat in the Notes.
 //
 // Every windowed query is bounded by ledger_close_time > now() -
-// $1::interval; the one all-time read is a count over the small (~160k
-// rows) table. Series follow the shared bridgeSeriesGrain rule: hourly
+// $1::interval. Series follow the shared bridgeSeriesGrain rule: hourly
 // buckets at the 24h window, daily otherwise, with window-stable names.
 
 import (
