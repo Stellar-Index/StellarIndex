@@ -9,45 +9,27 @@ import (
 	"sort"
 )
 
-// SnapshotReader is the storage primitive the [CrossCheckRefresher]
-// uses to fetch the most-recent snapshot for an asset_key. Production
-// impl is timescale.Store.LatestSupply; the asset_key form is the
-// supply-package canonical key (see [AssetKey]).
-//
-// Implementations MUST return a wrapped sentinel that satisfies
-// `errors.Is(err, ErrNoSnapshot)` when the asset has no recorded
-// snapshot — the refresher distinguishes that from transient read
-// errors so the bootstrap state (no snapshot yet) doesn't surface as
-// a read failure on the dashboard.
+// SnapshotReader fetches the latest snapshot for an asset_key (production: timescale.Store.LatestSupply).
+// Implementations MUST return an error satisfying errors.Is(err, ErrNoSnapshot) when none exists,
+// so bootstrap isn't reported as a read failure.
 type SnapshotReader interface {
 	LatestSupply(ctx context.Context, assetKey string) (Supply, error)
 }
 
-// ErrNoSnapshot is the sentinel a [SnapshotReader] returns when the
-// asset has no rows in `asset_supply_history` yet. Callers wrap this
-// (e.g. `fmt.Errorf("…: %w", ErrNoSnapshot)`) so `errors.Is` keeps
-// working through the wrap chain.
-//
-// Production storage maps timescale.ErrNotFound → ErrNoSnapshot via
-// the supplyStorageReader adapter in cmd/stellarindex-aggregator —
-// the supply package itself doesn't import timescale.
+// ErrNoSnapshot is what a [SnapshotReader] returns when the asset has no asset_supply_history rows;
+// wrap it with %w. The supplyStorageReader adapter in cmd/stellarindex-aggregator maps
+// timescale.ErrNotFound to it, since supply doesn't import timescale.
 var ErrNoSnapshot = errors.New("supply: no snapshot for asset_key")
 
-// CrossCheckPair binds a classic asset's supply.AssetKey form (the
-// "CODE:ISSUER" colon-separated key — produced by [AssetKey] for a
-// classic asset) to its SAC-wrapper contract id (a bare C-strkey).
-// Both must already be in the watched-set so the per-asset refreshers
-// produce snapshots for them; the cross-check refresher reads those
-// snapshots back.
+// CrossCheckPair binds a classic asset's [AssetKey] ("CODE:ISSUER") to its SAC-wrapper contract
+// id (bare C-strkey). Both must be in the watched-set so their refreshers produce the snapshots
+// this refresher reads back.
 type CrossCheckPair struct {
 	ClassicKey string
 	SACKey     string
 
-	// WrapClass selects which invariant [CrossCheckForClass] checks
-	// for this pair. Zero value ("") normalizes to [WrapClassPartial]
-	// — the safe default — via [normalizeWrapClass], so existing
-	// callers that don't set this field get the subset-bound check
-	// rather than the equality compare.
+	// WrapClass selects the invariant [CrossCheckForClass] checks. The zero value normalizes to
+	// [WrapClassPartial] (subset bound, the safe default) via [normalizeWrapClass].
 	WrapClass WrapClass
 }
 
@@ -68,12 +50,8 @@ const (
 	// supply_cross_check_divergence alert fires after `for: 5m`.
 	CrossCheckOutcomeOver CrossCheckOutcomeKind = "over"
 
-	// CrossCheckOutcomeMissing — at least one of (classic, SAC) has
-	// no snapshot in storage yet. Common during early bring-up
-	// before either side's refresher has produced its first row.
-	// The pair's gauge series is CLEARED — operators see the bootstrap
-	// signal via the counter (and its alert) rather than a zero or a
-	// stale reading that would imply "checked, agreed".
+	// CrossCheckOutcomeMissing: at least one side has no snapshot yet (early bring-up). The gauge
+	// series is CLEARED so a zero or stale reading can't imply "checked, agreed".
 	CrossCheckOutcomeMissing CrossCheckOutcomeKind = "missing_snapshot"
 
 	// CrossCheckOutcomeReadError — a transient storage error fired
@@ -82,43 +60,21 @@ const (
 	// sustained read-failure rate.
 	CrossCheckOutcomeReadError CrossCheckOutcomeKind = "read_error"
 
-	// CrossCheckOutcomeMisaligned — both snapshots loaded, but their
-	// LedgerSequences are further apart than
-	// [CrossCheckLedgerTolerance], so the invariant is not evaluable.
-	// Neither passes nor pages: the gauge series is CLEARED
-	// (a stale reading must not be served as agreement) and no
-	// divergence is computed (a lagging snapshot on either side makes
-	// the subset bound meaningless in BOTH directions — a stale
-	// classic total can sit below a fresh SAC total with no over-mint
-	// whatsoever, and a stale SAC total can hide a real one).
-	// Operators chart and alert on this via the counter.
+	// CrossCheckOutcomeMisaligned: both snapshots loaded but further apart than
+	// [CrossCheckLedgerTolerance], so the invariant is not evaluable. The gauge series is CLEARED
+	// and no divergence is computed: a lagging snapshot on either side makes the subset bound
+	// meaningless in both directions.
 	CrossCheckOutcomeMisaligned CrossCheckOutcomeKind = "misaligned"
 
-	// CrossCheckOutcomeUnchecked — a partial-wrap pair whose classic
-	// snapshot carries no SACWrappedStroops, so leg 2 (the only leg that
-	// feeds the divergence) was never evaluated. That is the steady state
-	// for any asset with no sac_balance_observations row, so it is not a
-	// transient. Like Missing / Misaligned the gauge series is CLEARED:
-	// a divergence of 0 here would read as "checked, agreed".
+	// CrossCheckOutcomeUnchecked: a partial-wrap pair whose classic snapshot has no SACWrappedStroops,
+	// so leg 2 (the only leg feeding the divergence) never ran; steady state for assets with no
+	// sac_balance_observations row. The gauge series is CLEARED: 0 would read as "checked, agreed".
 	CrossCheckOutcomeUnchecked CrossCheckOutcomeKind = "unchecked"
 )
 
-// CrossCheckLedgerTolerance is the largest |classic.LedgerSequence −
-// sac.LedgerSequence| gap at which the two snapshots are still treated
-// as describing the same moment.
-//
-// The refresher reads each side's LATEST snapshot independently, so
-// nothing in the read path guarantees they were computed at the same
-// ledger; without a bound the comparison silently pits an hours-old
-// total against a fresh one.
-//
-// 1000 ledgers (~1.4h at 5s close times) is comfortably wider than the
-// 5m aggregator refresh cadence that produces both sides, so steady
-// state never trips it. It bounds snapshot-ledger ALIGNMENT, not
-// component age, so it is deliberately its own constant: the
-// configurable stale-component thresholds (supply.stale_component_ledgers
-// and its per-asset overrides) gate each snapshot's components and do
-// not move it.
+// CrossCheckLedgerTolerance is the largest |classic.LedgerSequence - sac.LedgerSequence| at which two
+// independently-read LATEST snapshots still describe the same moment. 1000 ledgers (~1.4h) exceeds the
+// 5m refresh cadence; it bounds alignment, not component age.
 const CrossCheckLedgerTolerance uint32 = 1000
 
 // ledgerGap returns |a − b| for two ledger sequences without the
@@ -130,11 +86,8 @@ func ledgerGap(a, b uint32) uint32 {
 	return b - a
 }
 
-// CrossCheckOutcome is the per-pair result of one tick. The
-// refresher emits one Outcome per configured pair regardless of
-// success/failure — the per-tick slice has stable length so
-// aggregator-level counter cardinality stays bounded by the pair
-// count.
+// CrossCheckOutcome is the per-pair result of one tick. One is emitted per configured pair
+// regardless of outcome, keeping counter cardinality bounded by the pair count.
 type CrossCheckOutcome struct {
 	Pair   CrossCheckPair
 	Kind   CrossCheckOutcomeKind
@@ -142,34 +95,18 @@ type CrossCheckOutcome struct {
 	Err    error            // populated on Missing / ReadError / Misaligned
 }
 
-// CrossCheckEmitter is the metric-emission seam — kept as an
-// interface so the refresher stays Prometheus-agnostic and unit
-// tests can capture emitted values without a registry.
-//
-// Production impl wraps obs.SupplyCrossCheckDivergenceStroops +
-// obs.SupplyCrossCheckTotal; the wiring lives in
-// cmd/stellarindex-aggregator/main.go where the supply package
-// can stay free of the obs dependency.
+// CrossCheckEmitter is the metric-emission seam, keeping the refresher Prometheus-agnostic; the
+// production impl (obs.SupplyCrossCheck*) is wired in cmd/stellarindex-aggregator/main.go.
 type CrossCheckEmitter interface {
-	// Divergence sets the per-asset gauge to the stroop divergence,
-	// labelled by the pair's WrapClass. Called only on Within / Over
-	// outcomes. Negative values are a caller bug ([CrossCheck] /
-	// [CrossCheckSubsetBound] always return a non-negative value).
-	//
-	// wrapClass is carried through as a metric label so operators can
-	// see which invariant produced a given reading. It is purely
-	// observational: the alert threshold
-	// doesn't need to filter on it, because DivergenceStroops itself
-	// is already zero in the benign partial-wrap case (see
+	// Divergence sets the per-asset gauge to the stroop divergence, labelled by WrapClass. Called
+	// only on Within / Over; the value is non-negative. The label is observational only: alerts
+	// needn't filter on it because the benign partial-wrap divergence is already zero (see
 	// [CrossCheckSubsetBound]).
 	Divergence(classicKey string, wrapClass WrapClass, stroops float64)
 
-	// ClearDivergence removes the pair's gauge series. Called on
-	// every outcome that evaluated nothing (Missing / ReadError /
-	// Misaligned): a gauge left at its last value is re-exported on
-	// every scrape, so a stalled pair would read as its last verdict
-	// indefinitely. Absence is the honest state; the outcome counter
-	// carries the reason.
+	// ClearDivergence removes the pair's gauge series on outcomes that evaluated nothing (Missing /
+	// ReadError / Misaligned): a gauge left at its last value is re-exported on every scrape, so a
+	// stalled pair would read as its last verdict. The outcome counter carries the reason.
 	ClearDivergence(classicKey string, wrapClass WrapClass)
 
 	// Outcome increments the per-outcome counter, labelled by
@@ -179,14 +116,9 @@ type CrossCheckEmitter interface {
 	Outcome(kind CrossCheckOutcomeKind, wrapClass WrapClass)
 }
 
-// CrossCheckRefresher runs one cross-check cycle per [Tick] call.
-// Loads the most-recent snapshot for each side of every configured
-// pair, runs [CrossCheck] on the pair, and emits the result.
-//
-// The refresher is policy-free: it neither chooses pairs nor decides
-// tolerance. Pairs come from the aggregator at construction time
-// (derived from `[supply].sac_wrappers` ∩ watched-sets) and the
-// tolerance is the package-level [CrossCheckTolerance].
+// CrossCheckRefresher runs one cross-check cycle per [Tick]: it loads the latest snapshot for each
+// side of every pair, runs [CrossCheck], and emits the result. It is policy-free: pairs come from
+// the aggregator (`[supply].sac_wrappers` intersect watched-sets), tolerance is [CrossCheckTolerance].
 type CrossCheckRefresher struct {
 	pairs   []CrossCheckPair
 	reader  SnapshotReader
@@ -194,12 +126,9 @@ type CrossCheckRefresher struct {
 	logger  *slog.Logger
 }
 
-// NewCrossCheckRefresher constructs the refresher. Empty pairs is
-// valid (the operator hasn't configured any SAC wrappers in the
-// watched set yet) — Tick is a no-op and emits no outcomes in that
-// case. Returns an error on duplicate pairs to surface operator
-// config bugs early; sorts the input so per-tick emission order is
-// stable across process restarts.
+// NewCrossCheckRefresher constructs the refresher. Empty pairs is valid (Tick is a no-op).
+// Duplicate pairs are an error to surface config bugs; input is sorted so emission order is
+// stable across restarts.
 func NewCrossCheckRefresher(pairs []CrossCheckPair, reader SnapshotReader, emitter CrossCheckEmitter, logger *slog.Logger) (*CrossCheckRefresher, error) {
 	if reader == nil {
 		return nil, errors.New("supply: cross-check refresher needs a SnapshotReader")
@@ -234,11 +163,8 @@ func NewCrossCheckRefresher(pairs []CrossCheckPair, reader SnapshotReader, emitt
 	}, nil
 }
 
-// Tick runs one cycle across every configured pair. Per-pair errors
-// don't bubble up — they're logged and surfaced via the outcome
-// slice so a single transient storage hiccup doesn't drop the
-// remaining pairs' cross-checks. The slice has stable length =
-// len(pairs) so callers can size dashboards accordingly.
+// Tick runs one cycle across every pair. Per-pair errors are logged and surfaced in the outcome
+// slice (length = len(pairs)) so one storage hiccup doesn't drop the other pairs' checks.
 func (r *CrossCheckRefresher) Tick(ctx context.Context) []CrossCheckOutcome {
 	if len(r.pairs) == 0 {
 		return nil

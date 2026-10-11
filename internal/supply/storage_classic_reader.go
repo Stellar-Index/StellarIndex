@@ -11,61 +11,31 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ClassicSupplyStore is the storage-side primitive set the
-// [StorageClassicSupplyReader] consumes. Production impl is
-// *timescale.Store; tests pass in-memory fakes.
-//
-// Each method takes (asset_key, ledger) and returns a non-nil
-// *big.Int representing the post-removal-aware sum of the
-// component at or before the supplied ledger. Per-account /
-// per-contract lookups for the issuer + locked-set components
-// take the entity identifier in addition.
+// ClassicSupplyStore is the storage primitive set the [StorageClassicSupplyReader] consumes. Each sum
+// is a non-nil *big.Int, removal-aware, at or before the ledger.
 type ClassicSupplyStore interface {
 	SumTrustlineBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error)
 	SumClaimableBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error)
 	SumLPReservesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error)
 	SumSACBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error)
 
-	// SACBalanceObservationsExist reports whether at least one
-	// sac_balance_observations row exists for the asset at-or-before
-	// asOfLedger, regardless of value. SumSACBalancesAtOrBefore alone
-	// cannot distinguish "no rows, COALESCEd to zero" from "rows exist
-	// and genuinely sum to zero" — this method supplies that signal so
-	// [ClassicSupplyComponents.SACObserved] (and in turn
-	// [Supply.SACWrappedStroops]'s nil-ness) reflects reality.
+	// SACBalanceObservationsExist reports whether any sac_balance_observations row exists at-or-before
+	// asOfLedger, regardless of value: Sum* COALESCEs "no rows" to zero, so this feeds
+	// [ClassicSupplyComponents.SACObserved].
 	SACBalanceObservationsExist(ctx context.Context, assetKey string, asOfLedger uint32) (bool, error)
 
 	TrustlineBalanceForAccountAtOrBefore(ctx context.Context, accountID, assetKey string, asOfLedger uint32) (*big.Int, error)
 	SACBalanceForContractAtOrBefore(ctx context.Context, contractHolder, assetKey string, asOfLedger uint32) (*big.Int, error)
 
-	// MinClassicComponentLedger returns the lowest "most-recent
-	// observation ledger" across the four classic-supply component
-	// tables for `assetKey`. Powers the Refresher's stale-component freshness gate.
-	// Zero = no observations in any component table for this
-	// asset (treated as "no signal" by the gate). Optional —
-	// implementations that don't surface it can return (0, nil)
-	// and the gate stays permissive.
+	// MinClassicComponentLedger returns the lowest most-recent observation ledger across the four
+	// component tables, for the Refresher's stale-component gate. Zero means no signal; implementations
+	// that cannot surface it may return (0, nil) and the gate stays permissive.
 	MinClassicComponentLedger(ctx context.Context, assetKey string, asOfLedger uint32) (uint32, error)
 }
 
-// StorageClassicSupplyReader satisfies [ClassicSupplyReader] by
-// composing the four classic-supply hypertables populated
-// by the trustlines / claimable_balances / liquidity_pools /
-// sac_balances observers. Per ADR-0022, this is the
-// Algorithm 2 producer pipeline.
-//
-// Issuer-balance handling: Algorithm 2 subtracts the asset
-// issuer's own holding from circulating. The reader looks up
-// the issuer's trustline-observation row (which is a normal
-// account-as-holder observation) for the asset; an issuer that
-// doesn't hold their own asset returns zero, the typical case.
-//
-// LockedSet-balance handling: per-asset
-// [LockedSet.Accounts] members produce per-account trustline
-// lookups summed in Go; [LockedSet.Contracts] members produce
-// per-contract SAC lookups summed in Go. These are typically
-// single-digit list sizes, so the per-entity round-trip cost is
-// dominated by the four big Sum* queries above.
+// StorageClassicSupplyReader satisfies [ClassicSupplyReader] from the four classic-supply hypertables
+// (ADR-0022). The issuer's own holding is read as a normal trustline observation (zero if absent);
+// [LockedSet] accounts/contracts are looked up per entity and summed in Go (short lists).
 type StorageClassicSupplyReader struct {
 	store  ClassicSupplyStore
 	logger *slog.Logger
@@ -93,17 +63,8 @@ func NewStorageClassicSupplyReader(store ClassicSupplyStore, opts ClassicSupplyR
 	return &StorageClassicSupplyReader{store: store, logger: logger}
 }
 
-// ClassicSupplyAt implements [ClassicSupplyReader]. Performs the
-// six storage queries (4 sums + issuer trustline +
-// per-account/per-contract locked lookups), composes them into a
-// [ClassicSupplyComponents], and validates the result before
-// returning.
-//
-// Error semantics: any single sub-query failure returns an
-// error — the caller receives no partial Components, which the
-// computer treats as an unobservable supply for this tick. We do
-// NOT mix "partial sum + nil component" — that would silently
-// publish wrong totals.
+// ClassicSupplyAt implements [ClassicSupplyReader]. Any sub-query failure returns an error with no
+// partial Components: a partial sum would silently publish wrong totals.
 func (r *StorageClassicSupplyReader) ClassicSupplyAt(ctx context.Context, asset canonical.Asset, locked LockedSet, ledger uint32) (ClassicSupplyComponents, error) {
 	if asset.Type != canonical.AssetClassic {
 		return ClassicSupplyComponents{}, fmt.Errorf("supply: StorageClassicSupplyReader: %w: got type %q", ErrNotClassic, asset.Type)
@@ -210,12 +171,8 @@ func (r *StorageClassicSupplyReader) sumPerContractSAC(ctx context.Context, cont
 // Compile-time check.
 var _ ClassicSupplyReader = (*StorageClassicSupplyReader)(nil)
 
-// AssetBoundClassicComputer adapts a [ClassicComputer] to the
-// [SnapshotComputer] interface (the [Refresher]'s computer
-// contract) by baking in a fixed [canonical.Asset]. The aggregator
-// constructs one per watched classic asset so it can run a
-// dedicated [Refresher] goroutine per asset alongside the
-// XLM-only refresher.
+// AssetBoundClassicComputer adapts a [ClassicComputer] to [SnapshotComputer] by baking in a fixed
+// [canonical.Asset], so the aggregator can run one [Refresher] per watched classic asset.
 type AssetBoundClassicComputer struct {
 	inner *ClassicComputer
 	asset canonical.Asset

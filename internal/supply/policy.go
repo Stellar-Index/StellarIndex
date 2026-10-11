@@ -8,20 +8,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// LockedSet is the operator-configurable list of accounts/contracts
-// whose holdings should be excluded from circulating_supply for one
-// asset. Per ADR-0011:
-//
-//   - Algorithm 2 default locked-set is just the issuer's own
-//     balance.
-//   - Algorithm 3 default locked-set is the token's admin
-//     account/contract balance.
-//   - Operators extend per-asset via the supply-policy YAML to
-//     include known reserve / treasury multisigs and vesting
-//     contracts.
-//
-// LP-reserve balances are NEVER in the locked-set — the underlying
-// asset is still circulating; LP-token holders own it pro-rata.
+// LockedSet lists accounts/contracts whose holdings are excluded from circulating_supply for one
+// asset (ADR-0011). Defaults: issuer balance (algorithm 2), admin balance (algorithm 3); operators
+// extend via the supply-policy YAML. LP-reserve balances are NEVER locked: the asset still circulates.
 type LockedSet struct {
 	// Accounts are G-strkey addresses (classic accounts, SAC admin
 	// G-addresses, treasury multisigs) whose XLM / classic-asset
@@ -34,29 +23,16 @@ type LockedSet struct {
 	Contracts []string
 }
 
-// IsEmpty reports whether this set excludes nothing — used by the
-// per-algorithm computers to short-circuit the locked-balance
-// lookup. (An empty LockedSet is meaningfully different from "no
-// override" in YAML — the operator may have explicitly opted in to
-// the per-algorithm default by leaving the entry off.)
+// IsEmpty reports whether this set excludes nothing, letting computers skip the locked-balance
+// lookup. Not the same as "no override" in YAML, where the per-algorithm default applies.
 func (l LockedSet) IsEmpty() bool {
 	return len(l.Accounts) == 0 && len(l.Contracts) == 0
 }
 
-// Policy is the operator configuration for the supply package,
-// loaded from YAML at process start. Per-algorithm computers consult
-// it for SDF-reserve accounts (XLM), per-asset locked-set overrides
-// (classic + SEP-41), and max_supply overrides.
-//
-// Defaults — when a field is missing from YAML — preserve the
-// per-algorithm default behaviour: empty SDFReserveAccounts means
-// "no exclusion" (the cluster is running without curated SDF
-// account list); missing PerAsset entries fall back to issuer-only /
-// admin-only locked-set; missing MaxSupplyOverrides leaves the
-// max_supply field at the SEP-1 declaration if present, nil
-// otherwise.
-//
-// Policy is read-only after load; concurrent reads are safe.
+// Policy is the operator configuration loaded from YAML at start: SDF-reserve accounts (XLM),
+// per-asset locked-set overrides, and max_supply overrides. Missing fields keep the per-algorithm
+// defaults (no SDF exclusion; issuer/admin-only locked-set; SEP-1 max_supply or nil).
+// Read-only after load; concurrent reads are safe.
 type Policy struct {
 	// SDFReserveAccounts is the G-address list whose XLM balances
 	// are excluded from XLM circulating_supply per Algorithm 1.
@@ -64,24 +40,13 @@ type Policy struct {
 	// controlled in the deployment repo.
 	SDFReserveAccounts []string
 
-	// PerAsset overrides the per-algorithm default locked-set for
-	// specific assets. Key is [AssetKey] form: "CODE:G..." for
-	// classic, "C..." for SEP-41 Soroban tokens. Native XLM is not a
-	// valid key — Algorithm 1 never reads this map.
-	//
-	// A present-but-empty entry (LockedSet{} with both slices nil)
-	// means "no exclusions for this asset" — overrides the default
-	// issuer-only / admin-only locked-set with explicit nothing.
-	// Missing key falls back to the per-algorithm default.
+	// PerAsset overrides the default locked-set per asset, keyed by [AssetKey] ("CODE:G...", "C...");
+	// native XLM is not a valid key. A present-but-empty entry means explicitly no exclusions; a
+	// missing key falls back to the per-algorithm default.
 	PerAsset map[string]LockedSet
 
-	// MaxSupplyOverrides force a max_supply for a specific asset,
-	// beating both the SEP-1 declaration and the per-algorithm
-	// default (nil for classic, nil for SEP-41 without
-	// declaration). Keyed like PerAsset (no XLM). Value is a decimal
-	// string in the asset's base unit (stroops for classic,
-	// contract-defined units for SEP-41). Empty string means "fall
-	// through to next source" (equivalent to omitting the key).
+	// MaxSupplyOverrides force a max_supply per asset (same keys as PerAsset), beating the SEP-1
+	// declaration. Values are decimal strings in base units; empty falls through to the next source.
 	MaxSupplyOverrides map[string]string
 }
 
@@ -98,13 +63,9 @@ func (p Policy) MaxSupplyOverride(assetKey string) (*big.Int, bool, error) {
 	if !ok {
 		return nil, false, fmt.Errorf("supply: max_supply override for %q is not a decimal integer (got %q)", assetKey, raw)
 	}
-	// SetString happily parses a leading '-', so a sign typo would pass
-	// Validate() and then fail forever at the write boundary: the computers
-	// set it as MaxSupply with BasisOverride, and asset_supply_history's
-	// `CHECK (max_supply IS NULL OR max_supply >= 0)` rejects the row on
-	// EVERY tick. The asset's last good snapshot is then served
-	// indefinitely while the operator's first stop — config validation —
-	// reports the config is fine.
+	// SetString accepts a leading '-', and a negative override would pass Validate() then be rejected
+	// by asset_supply_history's `CHECK (max_supply >= 0)` on every tick, serving the last good
+	// snapshot forever while config validation reports fine.
 	if n.Sign() < 0 {
 		return nil, false, fmt.Errorf(
 			"supply: max_supply override for %q is negative (got %q) — supply is unsigned and the store rejects it",
@@ -113,16 +74,9 @@ func (p Policy) MaxSupplyOverride(assetKey string) (*big.Int, bool, error) {
 	return n, true, nil
 }
 
-// validateDistinctNonEmpty reports one error per empty entry and one per
-// duplicate, naming the index it first appeared at.
-//
-// Duplicates are REJECTED, not deduped. Every reserve/locked-set reader
-// sums per slice element with no dedup, so a repeated address is
-// subtracted twice from circulating supply — one duplicate of a real r1
-// reserve account (4.108B XLM) drops served circulating supply by 12% and
-// market cap by ~$699M, with supply_basis unchanged and no alert anywhere.
-// Silently deduping would hide an operator error in the file that IS the
-// source of truth.
+// validateDistinctNonEmpty reports one error per empty entry and per duplicate. Duplicates are
+// REJECTED, not deduped: readers sum per element, so a repeated address is subtracted twice from
+// circulating supply (one duplicate reserve account cut it 12%) with no alert.
 func validateDistinctNonEmpty(label string, items []string) []error {
 	var errs []error
 	seen := make(map[string]int, len(items))
@@ -142,11 +96,8 @@ func validateDistinctNonEmpty(label string, items []string) []error {
 	return errs
 }
 
-// validateStrkeys applies [validateDistinctNonEmpty] and additionally
-// rejects any entry that is not a CRC-valid strkey of the expected
-// version: a typo'd or wrong-kind address matches no holder, so its
-// balance silently contributes 0 to the exclusion and circulating
-// supply is overstated with no error.
+// validateStrkeys also rejects entries that are not CRC-valid strkeys of the expected kind: a typo
+// matches no holder, contributes 0 to the exclusion, and overstates circulating supply silently.
 func validateStrkeys(label, kind string, valid func(string) bool, items []string) []error {
 	errs := validateDistinctNonEmpty(label, items)
 	for i, v := range items {

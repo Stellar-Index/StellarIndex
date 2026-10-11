@@ -9,11 +9,8 @@ import (
 	"time"
 )
 
-// LedgerLookup is the storage-side primitive the [Refresher] uses
-// to resolve "what's the most recent known chain ledger." Production
-// impl takes the `ledgerstream` ingestion cursor and clamps it to
-// the newest landed stellar.ledgers row at or before it; tests pass
-// in-memory fakes.
+// LedgerLookup resolves the most recent known chain ledger: the `ledgerstream` cursor clamped to the
+// newest landed stellar.ledgers row at or before it.
 type LedgerLookup interface {
 	LatestKnownLedger(ctx context.Context) (uint32, time.Time, error)
 }
@@ -61,33 +58,15 @@ const (
 	OutcomeKindStaticReserve    OutcomeKind = "static_reserve"    // snapshot inserted, but its reserve balances came from the dated static map (BasisXLMSDFReserveExclusionStatic), not the live observer. Not benign: counted by the error_dominant alert so a sustained fallback pages.
 )
 
-// DefaultStaleComponentLedgers is the freshness threshold
-// the Refresher applies when none is operator-configured: a
-// snapshot whose MinComponentLedger lags the snapshot ledger by
-// more than 1000 ledgers (~85 min at 5s ledger close cadence)
-// is rejected. Operators tune via [WithStaleComponentLedgers].
-//
-// Conservative default — most operator deployments see all
-// supply observers complete within one ledger of the trade
-// indexer, so 1000 is large enough to never false-reject under
-// normal load while small enough to catch a genuinely stalled
-// observer before the supply table accrues misleading rows.
+// DefaultStaleComponentLedgers is the freshness threshold when none is configured: a snapshot whose
+// MinComponentLedger lags by more than 1000 ledgers (~85 min) is rejected. Large enough to never
+// false-reject under normal load, small enough to catch a stalled observer. See [WithStaleComponentLedgers].
 const DefaultStaleComponentLedgers uint32 = 1000
 
-// DefaultMaxDormantComponentLedgers bounds how long the dormancy carve-out
-// re-stamps an unchanged component observation as the current supply: 17280
-// ledgers (~24 h at 5s). Operators tune via
-// [WithMaxDormantComponentLedgers].
-//
-// An unchanged MinComponentLedger does NOT separate a dormant asset from a
-// STALLED observer: a dead producer looks dormant forever, and unbounded the
-// carve-out would republish a frozen supply at the advancing tip under the
-// benign `dormant` outcome the supply-refresh alert excludes. The two are
-// indistinguishable from this signal, so the benefit of the doubt is bounded
-// in time; past it the snapshot is refused as stale_component (ADR-0011: do
-// not fabricate freshness on the market-cap/FDV surface).
-//
-// 24 h is generous: the longest dormant run measured on pubnet is ~4 h.
+// DefaultMaxDormantComponentLedgers bounds how long the dormancy carve-out re-stamps an unchanged
+// component observation as current: 17280 ledgers (~24 h; longest dormant run measured is ~4 h). An
+// unchanged MinComponentLedger cannot separate a dormant asset from a STALLED observer, so past this
+// it is refused as stale_component (ADR-0011: don't fabricate freshness).
 const DefaultMaxDormantComponentLedgers uint32 = 17_280
 
 // WriteBandFactor bounds the tick-over-tick total_supply move the
@@ -95,16 +74,8 @@ const DefaultMaxDormantComponentLedgers uint32 = 17_280
 // 10x a young token, so a breach is recorded, never refused.
 const WriteBandFactor = 10
 
-// Refresher runs one supply-snapshot cycle per [Refresher.Tick]
-// call. Composes ledger resolution + computer + inserter; the
-// aggregator drives it via a ticker in its own goroutine,
-// mirroring the baseline-refresher shape.
-//
-// One Refresher instance is bound to one watched asset (the
-// aggregator constructs a dedicated Refresher per asset in
-// buildSupplyRefreshers), so the per-asset dormancy memory below
-// is single-keyed in practice; we still key by AssetKey for
-// safety against a future shared-Refresher caller.
+// Refresher runs one supply-snapshot cycle per Tick, bound to one watched asset; per-asset dormancy
+// memory is keyed by AssetKey anyway, in case a Refresher is ever shared.
 type Refresher struct {
 	ledgers                   LedgerLookup
 	computer                  SnapshotComputer
@@ -115,17 +86,10 @@ type Refresher struct {
 	strictFreshnessRequired   bool
 	maxDormantComponentLedger uint32
 
-	// lastComponentLedger remembers, per asset_key, the
-	// MinComponentLedger of the most recent snapshot the gate
-	// evaluated. The stale-component gate compares the
-	// (always-advancing) chain tip against MinComponentLedger,
-	// which for a DORMANT asset (no balance changes) freezes — so
-	// the gap grows past the threshold and stays there forever,
-	// permanently rejecting every future tick and silently
-	// freezing the asset's supply row. An UNCHANGED value
-	// tick-over-tick is therefore accepted (OutcomeKindDormant) up
-	// to the dormancy horizon; a moved or first-seen lagging value
-	// is rejected. The unchanged case covers a dead producer too.
+	// lastComponentLedger remembers each asset's last-evaluated MinComponentLedger. A DORMANT asset's
+	// value freezes while the tip advances, which would reject every future tick; an UNCHANGED value is
+	// therefore accepted (OutcomeKindDormant) up to the dormancy horizon. A moved or first-seen lagging
+	// value is rejected.
 	lastComponentLedger map[string]uint32
 
 	// lastWrittenTotal is the total_supply of the last snapshot this
@@ -136,30 +100,17 @@ type Refresher struct {
 // RefresherOption tunes a [Refresher].
 type RefresherOption func(*Refresher)
 
-// WithStaleComponentLedgers overrides the freshness threshold. The Refresher rejects
-// a snapshot when (snap.LedgerSequence - snap.MinComponentLedger)
-// exceeds this value AND MinComponentLedger > 0 (zero means the
-// computer didn't populate the field, so the gate skips). Set to 0 to disable the gate.
+// WithStaleComponentLedgers overrides the freshness threshold: a snapshot is rejected when
+// LedgerSequence - MinComponentLedger exceeds it AND MinComponentLedger > 0. Zero disables the gate.
 func WithStaleComponentLedgers(maxLag uint32) RefresherOption {
 	return func(r *Refresher) {
 		r.staleComponentLedger = maxLag
 	}
 }
 
-// WithStaleComponentLedgersFor sets a per-asset override of the
-// stale-component threshold. Low-activity governance tokens like PHO see their trustline
-// observer lag the snapshot ledger by ~1200 ledgers (~100 min) —
-// past the 1000-ledger global default. A per-asset override lets
-// operators relax the gate for known-low-activity assets without
-// loosening it for high-traffic XLM / USDC. Pass assetKey in the
-// [AssetKey] form the computers stamp on each snapshot ("XLM",
-// "PHO:GAX5TXB5...", or a bare contract id); lookup is exact-match,
-// so normalise operator input via [CanonicalizeStaleComponentLedgers].
-// Repeated calls layer additively; the last per-asset value wins.
-//
-// A zero per-asset value disables the gate for that asset alone
-// (the global default still applies to other assets); use the
-// option twice to mix relaxed + tightened per-asset thresholds.
+// WithStaleComponentLedgersFor sets a per-asset stale-component threshold, e.g. to relax low-activity
+// assets (PHO lags ~1200 ledgers) without loosening XLM / USDC. assetKey is exact-match in [AssetKey]
+// form (normalise via [CanonicalizeStaleComponentLedgers]); zero disables the gate for that asset.
 func WithStaleComponentLedgersFor(assetKey string, maxLag uint32) RefresherOption {
 	return func(r *Refresher) {
 		if r.staleComponentByAsset == nil {
@@ -169,40 +120,18 @@ func WithStaleComponentLedgersFor(assetKey string, maxLag uint32) RefresherOptio
 	}
 }
 
-// WithMaxDormantComponentLedgers overrides the dormancy horizon: how far the snapshot ledger
-// may run ahead of a FROZEN MinComponentLedger before the Refresher
-// stops treating it as a dormant asset and starts treating it as a
-// stalled component observer (rejecting with
-// [OutcomeKindStaleComponent] rather than re-stamping the frozen
-// value at the current ledger).
-//
-// Set to 0 to disable the horizon, leaving the dormancy carve-out
-// unbounded. That is appropriate only for deployments that watch
-// assets legitimately dormant for very long stretches AND monitor
-// their component observers by some other means, since it re-opens
-// the "dead observer looks dormant forever" hole this bound closes.
+// WithMaxDormantComponentLedgers overrides the dormancy horizon: how far the snapshot ledger may run
+// ahead of a FROZEN MinComponentLedger before it is treated as a stalled observer
+// ([OutcomeKindStaleComponent]). Zero leaves the carve-out unbounded, re-opening the "dead observer looks dormant" hole.
 func WithMaxDormantComponentLedgers(maxDormant uint32) RefresherOption {
 	return func(r *Refresher) {
 		r.maxDormantComponentLedger = maxDormant
 	}
 }
 
-// WithStrictFreshnessRequired flips the Refresher into the
-// strict posture:
-// a snapshot whose `MinComponentLedger == 0` is rejected with
-// [OutcomeKindMissingFreshness] rather than passing the gate.
-// Default false keeps the permissive interpretation
-// of zero ("no freshness signal — let it through") so
-// deployments running the static-XLM fallback or where one of
-// the freshness producers can transiently fail (Postgres
-// timeout, Redis blip) keep publishing snapshots.
-//
-// Operators turn this on after every freshness producer is
-// confirmed wired AND every reader is shown to never
-// fail-open under steady-state load — typically post-launch,
-// after a few weeks of green snapshot timers. Once enabled,
-// the supply table only ever accumulates rows whose component
-// observations are demonstrably anchored to a recent ledger.
+// WithStrictFreshnessRequired rejects snapshots with `MinComponentLedger == 0`
+// ([OutcomeKindMissingFreshness]) instead of passing them. Default false so static-XLM or
+// transiently-failing freshness producers keep publishing; enable once every producer is wired.
 func WithStrictFreshnessRequired(strict bool) RefresherOption {
 	return func(r *Refresher) {
 		r.strictFreshnessRequired = strict
@@ -232,16 +161,9 @@ func NewRefresher(ledgers LedgerLookup, computer SnapshotComputer, inserter Snap
 	return r
 }
 
-// Tick runs one refresh cycle:
-//
-//  1. Resolve the latest known chain ledger.
-//  2. Compute the supply at that ledger.
-//  3. Insert the snapshot (idempotent on conflict).
-//
-// Returns an [Outcome] for metric emission. Tick does NOT bubble
-// errors — it logs them and returns the outcome so the
-// surrounding goroutine never crashes the aggregator's whole
-// loop on a transient supply-side issue.
+// Tick runs one refresh cycle (resolve the latest ledger, compute, insert idempotently) and returns an
+// [Outcome] for metrics. It logs rather than returns errors so a transient supply-side issue never
+// crashes the aggregator loop.
 func (r *Refresher) Tick(ctx context.Context) Outcome {
 	ledger, observedAt, err := r.ledgers.LatestKnownLedger(ctx)
 	if err != nil {
@@ -251,18 +173,10 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 
 	snap, err := r.computer.Compute(ctx, ledger, observedAt)
 	if err != nil {
-		// Distinguish the "no observation" outcome (which the
-		// ChainReader surfaces with ErrNoObservation when both live
-		// AND static fall through) from generic compute errors so
-		// operators can chart the bootstrap-progress signal.
-		//
-		// ErrNegativeTotalMissingBaseline is a
-		// benign bootstrap-like state — a SAC-wrapper whose pre-Soroban
-		// opening balance hasn't been seeded yet reads Σburn > Σmint over
-		// the Soroban-era window. Route it to `missing_baseline` (excluded
-		// from error_dominant) so it prompts a seed instead of paging;
-		// once seeded, a still-negative total surfaces as ErrNegativeTotalSupply
-		// → compute_error, which DOES page (genuine inconsistency).
+		// ErrNoObservation (live AND static fell through) is split from generic compute errors for the
+		// bootstrap-progress signal. ErrNegativeTotalMissingBaseline (SAC-wrapper opening balance not seeded
+		// so Σburn > Σmint) routes to `missing_baseline`, excluded from error_dominant; once seeded, a still-negative
+		// total is ErrNegativeTotalSupply -> compute_error, which pages.
 		kind := OutcomeKindComputeError
 		switch {
 		case errors.Is(err, ErrNoObservation):
@@ -275,14 +189,8 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 		return Outcome{Kind: kind, Err: err}
 	}
 
-	// Strict mode rejects snapshots that arrive with NO freshness
-	// signal (MinComponentLedger == 0), instead of the permissive
-	// interpretation ("no signal — let it through").
-	// Default off, for deployments on
-	// the static-XLM fallback or with transiently-failing
-	// freshness producers. Operators turn it on once every
-	// producer is wired + every reader is shown to never
-	// fail-open under steady-state load.
+	// Strict mode rejects snapshots with NO freshness signal (MinComponentLedger == 0), or built from the
+	// static reserve map, instead of the permissive "let it through".
 	staticReserve := snap.Basis == BasisXLMSDFReserveExclusionStatic
 	if r.strictFreshnessRequired && (snap.MinComponentLedger == 0 || staticReserve) {
 		err := fmt.Errorf("supply: strict-freshness mode — snapshot has no MinComponentLedger anchor (basis %s)", snap.Basis)
@@ -293,16 +201,8 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 		return Outcome{Kind: OutcomeKindMissingFreshness, Err: err, Snapshot: snap}
 	}
 
-	// Reject snapshots whose per-component observations lag the
-	// snapshot ledger by more than the configured threshold.
-	// MinComponentLedger == 0 means the computer didn't populate the
-	// field; we don't gate in that case, so deployments without
-	// freshness-aware computers are unaffected.
-	//
-	// Per-asset overrides via
-	// staleComponentByAsset[snap.AssetKey] win over the global
-	// staleComponentLedger when present. A zero per-asset value
-	// disables the gate for that asset alone.
+	// Reject snapshots whose component observations lag the snapshot ledger by more than the threshold;
+	// a per-asset staleComponentByAsset entry wins over the global one, and zero disables the gate.
 	if outcome, handled := r.applyStaleComponentGate(ctx, snap); handled {
 		return outcome
 	}
@@ -328,23 +228,10 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 	return Outcome{Kind: OutcomeKindOK, Snapshot: snap, BandBreach: breach}
 }
 
-// applyStaleComponentGate runs the stale-component freshness gate for a
-// computed snapshot. It returns (outcome, true) when the gate decides the
-// tick (stale-component REJECTION, or dormant-asset ACCEPT which inserts
-// here) and (zero, false) when the caller should proceed to its normal insert.
-//
-// Per-asset staleComponentByAsset overrides win over the global threshold;
-// zero disables the gate for that asset. The gap is the advancing tip minus
-// the change-driven MinComponentLedger, so a dormant asset would otherwise
-// be rejected forever. Past the threshold the decision uses the watermark:
-//   - CHANGED since the last tick (or first tick already lagging): reject,
-//     OutcomeKindStaleComponent.
-//   - UNCHANGED: re-stamp as current (OutcomeKindDormant) while the frozen
-//     gap is within the dormancy horizon; reject past it.
-//
-// "No balance change" and "no observer" are the same signal, so a producer
-// that dies is accepted as dormant until [DefaultMaxDormantComponentLedgers]
-// is crossed; the horizon is what bounds a dead producer.
+// applyStaleComponentGate returns (outcome, true) when the gate decides the tick (stale-component
+// REJECTION, or dormant ACCEPT which inserts here), else (zero, false). Past the threshold: CHANGED since
+// the last tick (or first tick lagging) rejects; UNCHANGED re-stamps (OutcomeKindDormant) within the
+// dormancy horizon. A dead producer reads as dormant until [DefaultMaxDormantComponentLedgers].
 func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (Outcome, bool) {
 	threshold := r.staleComponentLedger
 	thresholdSource := "default"
@@ -385,15 +272,9 @@ func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (O
 			"first_observation", !seen)
 		return Outcome{Kind: OutcomeKindStaleComponent, Err: err, Snapshot: snap}, true
 	}
-	// The dormancy carve-out is BOUNDED. A
-	// frozen MinComponentLedger is exactly what a dead component
-	// observer looks like, so past the horizon we stop giving it the
-	// benefit of the doubt and fail closed rather than republish a
-	// frozen supply stamped at the current tip. Reported as
-	// stale_component (not the alert-excluded `dormant`) so the
-	// existing per-asset supply-refresh alert fires on it, and logged
-	// at WARN with the knob name so the operator can tell a genuinely
-	// long-dormant asset from a stalled producer and act.
+	// The dormancy carve-out is BOUNDED: a frozen MinComponentLedger is what a dead observer looks like,
+	// so past the horizon fail closed as stale_component (not the alert-excluded `dormant`) and WARN with
+	// the knob name so the operator can tell a long-dormant asset from a stalled producer.
 	if r.maxDormantComponentLedger > 0 &&
 		snap.LedgerSequence-snap.MinComponentLedger > r.maxDormantComponentLedger {
 		err := fmt.Errorf("supply: stalled component observer — min component ledger %d frozen for %d ledgers (snapshot ledger %d), past dormancy horizon %d",

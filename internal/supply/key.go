@@ -11,21 +11,9 @@ import (
 
 const nativeAssetKey = "XLM"
 
-// AssetKey produces the supply-package canonical key for a
-// [canonical.Asset]. Output shape per ADR-0011:
-//
-//   - native XLM         → "XLM"
-//   - classic (CODE:G…)  → "CODE:ISSUER"   (colon, matches the ADR
-//     schema; canonical.Asset
-//     uses dash for the API
-//     surface, supply uses
-//     colon for storage)
-//   - SEP-41 Soroban     → "<contract_id>" (bare C-strkey)
-//
-// Off-chain assets (fiat, crypto-pure, RWA) and raw oracle symbols
-// have no on-chain supply we publish; AssetKey returns ("", error)
-// for those — the supply package never derives values for them, so
-// the key is meaningless.
+// AssetKey produces the supply-package key for a [canonical.Asset] (ADR-0011): native is "XLM",
+// classic is "CODE:ISSUER" (colon for storage; canonical.Asset uses dash on the API), SEP-41 is the
+// bare C-strkey. Off-chain assets and raw oracle symbols have no supply and return ("", error).
 func AssetKey(a canonical.Asset) (string, error) {
 	switch a.Type {
 	case canonical.AssetNative:
@@ -41,18 +29,10 @@ func AssetKey(a canonical.Asset) (string, error) {
 	}
 }
 
-// CanonicalizeWatchedClassic converts operator-config entries
-// (canonical "CODE-ISSUER" wire form, per the [supply]
-// watched_classic_assets doc) into the CODE:ISSUER AssetKey form the
-// classic-supply observers' decoders produce. Passing the raw config
-// strings straight into the observers' watched sets would never match:
-// dash-form entries do not match colon-form decoded keys, so the
-// trustline / claimable / LP observers would silently observe NOTHING
-// and every classic asset's served supply would degrade to its
-// SAC-held slice (USDC would read 40M vs ~266M real, an 85% under-read).
-// Colon-form entries are parsed too (never passed through verbatim);
-// anything unparseable or non-classic is a loud error so a config typo
-// can never silently zero a supply component.
+// CanonicalizeWatchedClassic converts operator-config "CODE-ISSUER" entries into the CODE:ISSUER
+// form the observers' decoders produce. Raw dash-form strings would never match, so the trustline /
+// claimable / LP observers would observe NOTHING and classic supply would degrade to its SAC slice
+// (USDC 40M vs ~266M). Colon-form is parsed too; unparseable or non-classic entries are a loud error.
 func CanonicalizeWatchedClassic(entries []string) ([]string, error) {
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -68,11 +48,9 @@ func CanonicalizeWatchedClassic(entries []string) ([]string, error) {
 	return out, nil
 }
 
-// SACWrapperAssetKey is the asset_key the sac_balances observer stamps
-// on a [supply] sac_wrappers entry's balance rows: the CODE:ISSUER key
-// of a SAC-wrapped classic asset (classic=true), else the value verbatim
-// (a pure SEP-41 contract → contract self-map). Readers resolve through
-// it too, so they query the key the writer wrote.
+// SACWrapperAssetKey is the asset_key the sac_balances observer stamps on a sac_wrappers entry's
+// rows: CODE:ISSUER for a SAC-wrapped classic asset (classic=true), else the value verbatim (pure
+// SEP-41 contract). Readers resolve through it so they query the key the writer wrote.
 func SACWrapperAssetKey(value string) (key string, classic bool, err error) {
 	if !strings.ContainsAny(value, "-:") {
 		return value, false, nil
@@ -112,11 +90,9 @@ func ParseAssetKey(raw string) (string, error) {
 	return AssetKey(a)
 }
 
-// CanonicalizeStaleComponentLedgers re-keys an operator's
-// [supply] stale_component_ledgers_by_asset map onto [AssetKey] form,
-// the exact-match key the Refresher's per-asset gate reads. An
-// unparseable key, or two spellings of one asset, is an error: either
-// would otherwise leave the global threshold silently in force.
+// CanonicalizeStaleComponentLedgers re-keys stale_component_ledgers_by_asset onto [AssetKey] form,
+// the exact-match key of the Refresher's per-asset gate. An unparseable key or two spellings of
+// one asset is an error, else the global threshold would silently stay in force.
 func CanonicalizeStaleComponentLedgers(byAsset map[string]uint32) (map[string]uint32, error) {
 	return canonicalizeAssetKeys(byAsset)
 }

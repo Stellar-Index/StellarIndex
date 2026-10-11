@@ -10,15 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ClassicSupplyComponents is the per-asset breakdown the
-// [ClassicSupplyReader] returns at one ledger boundary. Per ADR-0011
-// Algorithm 2, total_supply is the sum of the four downstream-
-// holdings components; circulating is total minus the locked-set.
-//
-// All four are non-nil *big.Int (zero is a valid component value —
-// e.g. an asset with no LP exposure has LPReserve == 0). The
-// IssuerBalance is broken out separately so the computer can
-// subtract it as the default locked-set member without re-querying.
+// ClassicSupplyComponents is the per-asset Algorithm 2 breakdown (ADR-0011) at one ledger: total is
+// the sum of the four holding components, circulating is total minus the locked-set. All are non-nil
+// *big.Int (zero is valid); IssuerBalance is separate so the default locked-set member needs no re-query.
 type ClassicSupplyComponents struct {
 	// Trustline is Σ trustline_balance for the asset across every
 	// classic account that holds it. There is no issuer filter: the
@@ -35,36 +29,21 @@ type ClassicSupplyComponents struct {
 	// (NOT the asset's full LP-token holding side).
 	LPReserve *big.Int
 
-	// SACWrapped is Σ contract_data balance for the asset's SAC
-	// wrapper, when the asset has a Stellar-Asset-Contract
-	// deployment. Zero when no SAC is deployed OR when SACObserved is
-	// false (the reader's SQL COALESCEs a missing sum to zero either
-	// way — see SACObserved for the disambiguator).
+	// SACWrapped is Σ contract_data balance for the asset's SAC wrapper. Zero when no SAC is deployed
+	// OR SACObserved is false (the reader's SQL COALESCEs a missing sum to zero).
 	SACWrapped *big.Int
 
-	// SACObserved is true when the reader found at least one real
-	// SAC-balance observation for this asset at-or-before the read
-	// ledger, as distinct from SACWrapped==0 meaning "no observation
-	// exists at all". [ClassicComputer.Compute] uses this to decide
-	// whether [Supply.SACWrappedStroops] is populated or left nil.
-	// Without it, a COALESCE-to-zero sum is indistinguishable from a
-	// genuine zero reading, and the escrow-bound gate in
-	// [CrossCheckSubsetBound] would be evaluated even when nothing had
-	// been observed.
+	// SACObserved is true when the reader found a real SAC-balance observation at-or-before the read
+	// ledger. [ClassicComputer.Compute] uses it to populate [Supply.SACWrappedStroops]; without it a
+	// COALESCE-to-zero sum would run the [CrossCheckSubsetBound] escrow gate on nothing.
 	SACObserved bool
 
-	// IssuerBalance is the amount the issuer is currently holding
-	// (typically zero — the canonical "I'm not on my own
-	// trustline" pattern — but pre-net or freezer-asset issuers
-	// may hold a non-trivial amount). Subtracted from circulating
-	// per the default locked-set policy.
+	// IssuerBalance is the amount the issuer holds (usually zero), subtracted from circulating per the
+	// default locked-set policy.
 	IssuerBalance *big.Int
 
-	// LockedAccountBalances is Σ trustline_balance across the
-	// per-asset locked-set Accounts configured in [Policy.PerAsset].
-	// Returned by the reader so the computer doesn't need a
-	// separate per-account query path. Zero when the locked-set
-	// is empty or matches no holders.
+	// LockedAccountBalances is Σ trustline_balance across the per-asset locked-set Accounts in
+	// [Policy.PerAsset], returned by the reader to avoid a per-account query path.
 	LockedAccountBalances *big.Int
 
 	// LockedContractBalances is Σ contract_data balance across the
@@ -73,35 +52,19 @@ type ClassicSupplyComponents struct {
 	// LockedAccountBalances.
 	LockedContractBalances *big.Int
 
-	// MinComponentLedger is the lowest ledger any of the per-
-	// component observations contributing to this aggregate was
-	// last updated at. Used by the [Refresher] to detect snapshots
-	// whose components lag the snapshot ledger by more than a
-	// threshold. Readers that can compute this should populate it;
-	// readers that can't leave zero, which the gate treats as "no
-	// freshness signal" and skips the check.
+	// MinComponentLedger is the lowest ledger of any contributing component observation; the [Refresher]
+	// uses it to detect lagging snapshots. Zero means no freshness signal and skips the check.
 	MinComponentLedger uint32
 }
 
-// ClassicSupplyReader is the read-side interface the
-// [ClassicComputer] needs. Production implementation: a Postgres-
-// backed reader against the trustline / claimable / LP / SAC
-// hypertables maintained by the indexer.
-//
-// The reader is responsible for asset-key derivation; it accepts a
-// [canonical.Asset] directly so a caller can't accidentally pass an
-// asset_key string mismatching the indexer's storage shape. Returns
-// non-nil components on success; storage errors propagate as-is.
+// ClassicSupplyReader is the read-side interface the [ClassicComputer] needs. It takes a
+// [canonical.Asset] so a caller cannot pass an asset_key mismatching the indexer's storage shape.
 type ClassicSupplyReader interface {
 	ClassicSupplyAt(ctx context.Context, asset canonical.Asset, locked LockedSet, ledger uint32) (ClassicSupplyComponents, error)
 }
 
-// ClassicComputer derives Algorithm 2 supply for classic credit
-// assets. Wraps a [Policy] (for per-asset locked-set + max_supply
-// overrides) and a [ClassicSupplyReader] for component lookups.
-//
-// Safe for concurrent Compute() calls — fields are read-only after
-// construction.
+// ClassicComputer derives Algorithm 2 supply for classic credit assets from a [Policy] and a
+// [ClassicSupplyReader]. Safe for concurrent Compute() calls: fields are read-only after construction.
 type ClassicComputer struct {
 	policy Policy
 	reader ClassicSupplyReader
@@ -123,21 +86,9 @@ func NewClassicComputer(policy Policy, reader ClassicSupplyReader) (*ClassicComp
 // this one silently produce garbage.
 var ErrNotClassic = errors.New("supply: asset is not a classic credit asset")
 
-// Compute returns the [Supply] for a classic credit asset at the
-// supplied ledger. Per Algorithm 2:
-//
-//   - total_supply = Σ trustline + Σ claimable + Σ LP-reserve +
-//     Σ SAC-wrapped (the four holding-domain components — see
-//     [ClassicSupplyComponents]).
-//   - max_supply = Policy.MaxSupplyOverrides[key] if set, else nil
-//     (uncapped issuer; the SEP-1 declaration overlay — [Overlay] —
-//     applies at the API serving layer, not here).
-//   - circulating_supply = total − (issuer balance + locked-account
-//     balances + locked-contract balances). The issuer's own balance
-//     is always excluded; per-asset locked-set extends that.
-//
-// Basis is BasisOverride when MaxSupplyOverrides supplied a value,
-// BasisIssuerExclusion otherwise.
+// Compute returns the [Supply] for a classic asset (Algorithm 2): total is trustline + claimable +
+// LP-reserve + SAC-wrapped; circulating subtracts issuer, locked-account and locked-contract balances;
+// max_supply is the Policy override or nil (SEP-1 overlay applies at the API layer).
 func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, ledger uint32, observedAt time.Time) (Supply, error) {
 	if asset.Type != canonical.AssetClassic {
 		return Supply{}, fmt.Errorf("%w: got type %q", ErrNotClassic, asset.Type)
@@ -202,18 +153,9 @@ func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, le
 		Basis:             basis,
 		LedgerSequence:    ledger,
 		ObservedAt:        observedAt.UTC(),
-		// Carry the SACWrapped addend OUT of the fold as well as into
-		// it: total_supply keeps including it, and
-		// [Supply.SACWrappedStroops] additionally preserves it so the
-		// cross-check can compare it against the SAC's own Algorithm-3
-		// total — the same-quantity, two-independent-paths compare that
-		// the folded total structurally cannot express. Defensive copy:
-		// the returned Supply must not alias the reader's component,
-		// which a caller could otherwise mutate under us.
-		//
-		// nil unless SACObserved: a COALESCE-to-zero sum with no real
-		// observation must surface as the "unchecked" state, not as a
-		// false green "escrow ≤ minted" pass.
+		// SACWrapped is carried OUT of the fold as well as into it so the cross-check can compare it with
+		// the SAC's Algorithm-3 total. Defensive copy (no aliasing the reader's component). nil unless
+		// SACObserved: a COALESCE-to-zero sum must read "unchecked", not a false green.
 		SACWrappedStroops:  sacWrappedStroops(comps),
 		MinComponentLedger: comps.MinComponentLedger,
 	}, nil
@@ -230,11 +172,8 @@ func sacWrappedStroops(comps ClassicSupplyComponents) *big.Int {
 	return new(big.Int).Set(comps.SACWrapped)
 }
 
-// validateClassicComponents catches a misbehaving reader returning
-// nil component pointers — would otherwise nil-pointer the Add/Sub
-// chain. Cheap; runs once per Compute. Negative values are also
-// rejected: classic-asset balances are non-negative by definition,
-// and a negative reading means the indexer mis-summed somewhere.
+// validateClassicComponents rejects nil or negative components: nil would panic the Add/Sub chain,
+// and classic balances are non-negative so a negative reading means the indexer mis-summed.
 func validateClassicComponents(c ClassicSupplyComponents) error {
 	type field struct {
 		name string

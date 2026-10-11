@@ -8,23 +8,9 @@ import (
 	"time"
 )
 
-// ConfigReserveBalanceReader is a [ReserveBalanceReader] backed by a static
-// operator-supplied balance map (`[supply] reserve_balances_stroops`), used as the
-// bootstrap fallback in the chained-reader pattern (docs/architecture/supply-pipeline.md
-// "The chained-fallback reader pattern"): the live [LCMReserveBalanceReader] takes
-// precedence when every watched account has an observation; this reader fills the
-// gap when the AccountEntry observer hasn't backfilled yet (or on storage error).
-//
-// Limitations (as a fallback):
-//
-//   - Static map, no refresh. The map carries its own as-of date and the reader
-//     refuses to answer once that date is more than maxAge old (or was never set),
-//     so a forgotten snapshot fails closed instead of being re-stamped at every
-//     new ledger as the current reserve.
-//   - No per-account ledger versioning: it ignores the `ledger` argument.
-//
-// Answers are tagged [ReserveSourceStatic]; [XLMComputer] publishes them as
-// [BasisXLMSDFReserveExclusionStatic] with no freshness anchor.
+// ConfigReserveBalanceReader is a [ReserveBalanceReader] over a static operator-supplied
+// balance map, the bootstrap fallback behind [LCMReserveBalanceReader]. It refuses to answer
+// once asOf is older than maxAge (or unset), so a stale snapshot fails closed; it ignores `ledger`.
 type ConfigReserveBalanceReader struct {
 	balances map[string]*big.Int
 	asOf     time.Time
@@ -37,20 +23,9 @@ type ConfigReserveBalanceReader struct {
 // or older than its configured maximum age.
 var ErrStaticReserveSnapshotExpired = errors.New("supply: static reserve-balance snapshot is undated or older than its maximum age")
 
-// NewConfigReserveBalanceReader constructs a reader from a balance
-// map. Stroop values are decimal strings (NUMERIC-safe per
-// ADR-0003) parsed at construction so a malformed entry fails fast
-// at startup rather than mid-snapshot.
-//
-// Empty input is valid — yields a reader that returns zero for any
-// account list (equivalent to "no reserves to exclude"). The
-// XLMComputer treats a zero-account input as a configuration where
-// the operator hasn't enumerated reserves yet; circulating equals
-// total.
-//
-// asOf is when the balances were taken. A zero asOf is accepted here,
-// so an undated map does not stop the process booting, but every
-// non-empty read then refuses. maxAge must be positive.
+// NewConfigReserveBalanceReader parses decimal-string stroop balances (ADR-0003) at construction
+// so a bad entry fails at startup. Empty input is valid (nothing to exclude). A zero asOf boots
+// but makes every non-empty read refuse; maxAge must be positive.
 func NewConfigReserveBalanceReader(balancesStroops map[string]string, asOf time.Time, maxAge time.Duration) (*ConfigReserveBalanceReader, error) {
 	if maxAge <= 0 {
 		return nil, fmt.Errorf("supply: ConfigReserveBalanceReader: max age %v must be positive", maxAge)
@@ -72,15 +47,9 @@ func NewConfigReserveBalanceReader(balancesStroops map[string]string, asOf time.
 	return &ConfigReserveBalanceReader{balances: parsed, asOf: asOf, maxAge: maxAge, now: time.Now}, nil
 }
 
-// ReserveBalanceTotal sums the configured balances for the supplied
-// account list. Missing accounts return an error — silently treating
-// an unknown account as zero would yield an over-stated circulating
-// supply, which is exactly the failure mode ADR-0011 says we don't
-// publish. A non-empty request against an undated or over-age map
-// returns [ErrStaticReserveSnapshotExpired].
-//
-// The `ledger` argument is currently unused; see type-level docstring
-// for why.
+// ReserveBalanceTotal sums the configured balances. An unknown account is an error: treating it
+// as zero would overstate circulating supply (ADR-0011). An undated or over-age map returns
+// [ErrStaticReserveSnapshotExpired]. The `ledger` argument is unused.
 func (r *ConfigReserveBalanceReader) ReserveBalanceTotal(_ context.Context, accounts []string, _ uint32) (*big.Int, error) {
 	if len(accounts) > 0 {
 		if err := r.checkAge(); err != nil {

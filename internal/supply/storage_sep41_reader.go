@@ -10,41 +10,23 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// SEP41SupplyStore is the storage-side primitive set the
-// [StorageSEP41SupplyReader] consumes. Production impl is
-// *timescale.Store; tests pass in-memory fakes.
-//
-// SEP41KindTotalsAtOrBefore returns the per-kind running sums
-// (mint / burn / clawback). SACBalanceForContractAtOrBefore is
-// reused from ADR-0022's classic-supply storage — pure SEP-41
-// contracts share the same `DataKey::Balance(Address) → i128`
-// shape as the SAC wrapper, so once an operator adds the
-// SEP-41 contract to `[supply.sac_wrappers]` the same observer
-// populates locked-set lookups for it. A SAC's rows are stored under
-// its classic CODE:ISSUER key, and its G holders' balances are
-// trustlines, hence TrustlineBalanceForAccountAtOrBefore.
+// SEP41SupplyStore is the storage primitive set of [StorageSEP41SupplyReader]. SEP-41 contracts share
+// the SAC `DataKey::Balance(Address) -> i128` shape; a SAC's rows sit under its classic CODE:ISSUER key
+// and its G holders' balances are trustlines (TrustlineBalanceForAccountAtOrBefore).
 type SEP41SupplyStore interface {
 	SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string, asOfLedger uint32) (SEP41KindTotals, error)
 	SACBalanceForContractAtOrBefore(ctx context.Context, contractHolder, assetKey string, asOfLedger uint32) (*big.Int, error)
 	TrustlineBalanceForAccountAtOrBefore(ctx context.Context, accountID, assetKey string, asOfLedger uint32) (*big.Int, error)
 
-	// MinSEP41ComponentLedger returns the producer-wide watermark,
-	// MAX(ledger) across all of sep41_supply_events, for a contract that
-	// has events at or before asOfLedger. It feeds the Refresher's
-	// stale-component freshness gate: a quiet contract is not stale, a
-	// stalled producer is. Zero = the contract has no events yet
-	// (gate-skip signal). Optional: returning (0, nil) keeps the gate
-	// permissive.
+	// MinSEP41ComponentLedger returns MAX(ledger) across sep41_supply_events for a contract with
+	// events at or before asOfLedger: the producer-wide watermark for the stale-component gate (a
+	// quiet contract is not stale, a stalled producer is). 0 means no events yet; (0, nil) keeps
+	// the gate permissive.
 	MinSEP41ComponentLedger(ctx context.Context, contractID string, asOfLedger uint32) (uint32, error)
 
-	// SEP41GenesisBaselineSeeded reports whether a pre-Soroban
-	// genesis baseline has been seeded for the contract (migration
-	// 0088). Feeds the computer's negative-total
-	// guard so a not-yet-seeded SAC-wrapper's negative Soroban-era
-	// total is reported as the benign `missing_baseline` outcome
-	// rather than a paging `compute_error`. Returning (false, nil)
-	// when unimplemented treats the contract as not seeded (negative
-	// total → ErrNegativeTotalMissingBaseline).
+	// SEP41GenesisBaselineSeeded reports whether a pre-Soroban genesis baseline is seeded (migration
+	// 0088), so a not-yet-seeded SAC wrapper's negative total is the benign `missing_baseline`
+	// outcome rather than a paging `compute_error`. (false, nil) means not seeded.
 	SEP41GenesisBaselineSeeded(ctx context.Context, contractID string) (bool, error)
 }
 
@@ -58,22 +40,9 @@ type SEP41KindTotals struct {
 	Clawback *big.Int
 }
 
-// StorageSEP41SupplyReader satisfies [SEP41SupplyReader] by
-// composing the SEP41 event-sum totals (sep41_supply_events) plus the
-// SAC-balance per-contract lookup primitive. Per ADR-0023, this is the
-// algorithm 3 reader path.
-//
-// AdminBalance handling: set_admin is not tracked; operators put the admin's
-// strkey in the per-asset LockedSet, so AdminBalance is always 0 here and the
-// effect on circulating is identical, but only once the locked-set HAS been
-// configured. With none, nothing is subtracted, so stamping
-// `basis:"admin_exclusion"` would claim an exclusion that never happened.
-// [SEP41Computer.Compute] emits [BasisSEP41TotalOnly] for that case. Do NOT
-// "fix" this by returning a non-zero placeholder here.
-//
-// LockedAccount/LockedContract handling: per-entity SAC-balance
-// lookups summed in Go. Per-asset LockedSet sizes are typically
-// single-digit, so the round-trip cost is bounded.
+// StorageSEP41SupplyReader satisfies [SEP41SupplyReader] from sep41_supply_events totals plus per-holder
+// SAC-balance lookups (ADR-0023). AdminBalance is always 0 (set_admin is untracked; operators use the
+// per-asset LockedSet), so [SEP41Computer.Compute] emits [BasisSEP41TotalOnly] unless one is set. Do NOT "fix" with a placeholder.
 type StorageSEP41SupplyReader struct {
 	store SEP41SupplyStore
 	// sacClassicKeys is [SACClassicKeys] of the observer's sac_wrappers.
@@ -87,12 +56,8 @@ func NewStorageSEP41SupplyReader(store SEP41SupplyStore, sacClassicKeys map[stri
 	return &StorageSEP41SupplyReader{store: store, sacClassicKeys: sacClassicKeys}
 }
 
-// SEP41SupplyAt implements [SEP41SupplyReader]. Performs the
-// kind-totals query plus per-(account, contract) SAC-balance
-// lookups for the locked set. AdminBalance is returned as 0 —
-// see the type-level docstring for the rationale, and for why the
-// computer must (and does) report that as [BasisSEP41TotalOnly]
-// rather than [BasisAdminExclusion].
+// SEP41SupplyAt implements [SEP41SupplyReader]: kind totals plus per-holder balances for the
+// locked set. AdminBalance is 0 (see the type docstring; the computer reports [BasisSEP41TotalOnly]).
 func (r *StorageSEP41SupplyReader) SEP41SupplyAt(ctx context.Context, asset canonical.Asset, locked LockedSet, ledger uint32) (SEP41SupplyComponents, error) {
 	if asset.Type != canonical.AssetSoroban {
 		return SEP41SupplyComponents{}, fmt.Errorf("supply: StorageSEP41SupplyReader: %w: got type %q", ErrNotSoroban, asset.Type)
@@ -159,11 +124,9 @@ func (r *StorageSEP41SupplyReader) sumPerHolder(ctx context.Context, holders []s
 	return total, nil
 }
 
-// holderBalance reads holder's balance of contractID where the observers
-// wrote it. A pure SEP-41 contract keeps every holder's balance in its own
-// ContractData, stored under the contract id. A SAC keeps only contract
-// holders there, under its classic key; a G holder's balance is a trustline.
-// Config validation guarantees each configured holder is so observed.
+// holderBalance reads holder's balance where the observers wrote it: a pure SEP-41 contract keeps
+// all balances under its contract id; a SAC keeps only contract holders there, under its classic
+// key, and a G holder's balance is a trustline. Config validation guarantees each holder is observed.
 func (r *StorageSEP41SupplyReader) holderBalance(ctx context.Context, holder, contractID string, ledger uint32) (*big.Int, error) {
 	classicKey, isSAC := r.sacClassicKeys[contractID]
 	if !isSAC {
@@ -190,12 +153,8 @@ func (r *StorageSEP41SupplyReader) holderBalance(ctx context.Context, holder, co
 // Compile-time check.
 var _ SEP41SupplyReader = (*StorageSEP41SupplyReader)(nil)
 
-// AssetBoundSEP41Computer adapts a [SEP41Computer] to the
-// [SnapshotComputer] interface (the [Refresher]'s computer
-// contract) by baking in a fixed [canonical.Asset]. Mirrors
-// [AssetBoundClassicComputer]; the aggregator
-// constructs one per watched SEP-41 contract for its dedicated
-// Refresher goroutine.
+// AssetBoundSEP41Computer adapts a [SEP41Computer] to [SnapshotComputer] by baking in a fixed
+// [canonical.Asset]; the aggregator builds one per watched SEP-41 contract.
 type AssetBoundSEP41Computer struct {
 	inner *SEP41Computer
 	asset canonical.Asset

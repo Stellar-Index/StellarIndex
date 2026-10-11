@@ -11,16 +11,10 @@ import (
 	"time"
 )
 
-// metricLastSuccessTimestamp is the staleness key the
-// `stellarindex_supply_snapshot_stale` (36 h ticket) and
-// `_critical_stale` (72 h page) alerts in
-// deploy/monitoring/rules/supply-snapshot.yml consume as
-// `time() - <metric>`. node_exporter's textfile collector re-reads
-// the whole `.prom` file on every scrape, so a write that omits
-// this series DELETES it from the exposition — `time() - <missing>`
-// is no-data and neither alert can ever fire again. Every write
-// through this package therefore carries the previous file's
-// samples for this family forward unless it emits fresh ones.
+// metricLastSuccessTimestamp is the series the snapshot_stale (36 h) and _critical_stale (72 h)
+// alerts in deploy/monitoring/rules/supply-snapshot.yml read as `time() - <metric>`. node_exporter
+// re-reads the whole `.prom` file per scrape, so a write omitting it deletes the series and the
+// alerts can never fire; every write therefore carries the previous samples forward.
 const metricLastSuccessTimestamp = "stellarindex_supply_snapshot_last_success_timestamp"
 
 const helpLastSuccessTimestamp = "Unix timestamp of the most recent successful snapshot."
@@ -33,41 +27,19 @@ const metricVerifyRollupLastSuccessTimestamp = "stellarindex_supply_verify_rollu
 
 const helpVerifyRollupLastSuccessTimestamp = "Unix timestamp of the most recent verify-rollup run with 0 drift and 0 missing checkpoints."
 
-// WriteSnapshotTextfile renders a [Supply] snapshot to path in the
-// Prometheus textfile-collector format used by node_exporter.
-//
-// pass=true → emits the success metric set including a fresh
-// `last_success_timestamp` gauge that the staleness alert keys on.
-// pass=false → the metric set carries no fresh timestamp, so the
-// previous file's samples are carried forward (see
-// [metricLastSuccessTimestamp]); the failure path proper should
-// still use [WriteSnapshotFailureTextfile], which has no Supply to
-// report value gauges from.
-//
-// Atomic write protocol matches the established pattern in
-// internal/archivecompleteness/metrics.go::WriteTextfileAtomic and
-// cmd/stellarindex-sla-probe/textfile.go::writeTextfileAtomic —
-// `<path>.tmp` first, rename into place. node_exporter skips
-// `.tmp` files, so a partial write never appears in a scrape.
+// WriteSnapshotTextfile renders a [Supply] snapshot in node_exporter textfile format. pass=false
+// emits no fresh `last_success_timestamp`, so the previous samples are carried forward (see
+// [metricLastSuccessTimestamp]); the failure path proper is [WriteSnapshotFailureTextfile].
+// Written to `<path>.tmp` then renamed; node_exporter skips `.tmp`, so a partial write never scrapes.
 func WriteSnapshotTextfile(path string, snap Supply, durationSec float64, pass bool) error {
 	return writeAtomicCarryingLastSuccess(path, metricLastSuccessTimestamp, helpLastSuccessTimestamp, func(w io.Writer) error {
 		return writeSnapshotMetrics(w, snap, durationSec, pass)
 	})
 }
 
-// WriteSnapshotFailureTextfile is the failure-path emit. Writes
-// `unit_failed=1` and the run-duration gauge; it has no successful
-// run to stamp, so the `last_success_timestamp` samples already in
-// `path` are carried through verbatim (nothing is emitted when no
-// prior file exists, which is what the `_never_initialized` alert
-// keys on). Without that carry a single failed run would erase the
-// series the 36 h ticket and the 72 h page both depend on.
-//
-// `assetRaw` is the operator-supplied -asset flag value (e.g.
-// "native" / "USDC-G…"). It is resolved to its [AssetKey] ("XLM") for
-// the `unit_failed` label, so the failure sample shares one asset_key
-// with the carried `last_success_timestamp` and the success path; a
-// value that does not parse is labelled verbatim rather than dropped.
+// WriteSnapshotFailureTextfile writes `unit_failed=1` and the duration gauge, carrying the existing
+// last_success_timestamp samples through verbatim (none if no prior file, which `_never_initialized`
+// keys on) so a failed run can't erase the series both stale alerts need. assetRaw labels via [AssetKey].
 func WriteSnapshotFailureTextfile(path, assetRaw string, durationSec float64) error {
 	assetKey, err := ParseAssetKey(assetRaw)
 	if err != nil {
@@ -78,49 +50,28 @@ func WriteSnapshotFailureTextfile(path, assetRaw string, durationSec float64) er
 	})
 }
 
-// WriteVerifyRollupTextfile renders a `supply verify-rollup` run to path in
-// the Prometheus textfile-collector format, mirroring [WriteSnapshotTextfile]'s
-// contract: pass=true emits a fresh `verify_rollup_last_success_timestamp`;
-// pass=false carries the previous file's forward (see
-// [writeAtomicCarryingLastSuccess]) rather than erasing it on one bad run.
-//
-// missingCount is watched SEP-41 contracts with no sep41_supply_rollup
-// checkpoint row — unexamined, not clean (see [rollupExitDecision]) — kept
-// distinct from driftCount because a stale-report investigation and a
-// deleted-row investigation start in different places.
+// WriteVerifyRollupTextfile renders a `supply verify-rollup` run, mirroring [WriteSnapshotTextfile]:
+// pass=false carries the previous success timestamp forward. missingCount (contracts with no
+// sep41_supply_rollup checkpoint; unexamined, not clean, see [rollupExitDecision]) is kept distinct
+// from driftCount because the investigations start in different places.
 func WriteVerifyRollupTextfile(path string, checked, driftCount, missingCount int, durationSec float64, pass bool) error {
 	return writeAtomicCarryingLastSuccess(path, metricVerifyRollupLastSuccessTimestamp, helpVerifyRollupLastSuccessTimestamp, func(w io.Writer) error {
 		return writeVerifyRollupMetrics(w, checked, driftCount, missingCount, durationSec, pass)
 	})
 }
 
-// WriteVerifyRollupFailureTextfile is the failure-path emit for a run that
-// errored before it had checked/drift/missing counts to report (config
-// load, storage open, a re-sum query error). Only `unit_failed` and the
-// run-duration gauge; the previous file's `verify_rollup_last_success_timestamp`
-// is carried forward untouched.
+// WriteVerifyRollupFailureTextfile is the failure-path emit for a run that errored before it had
+// counts: only `unit_failed` and the duration gauge; the previous success timestamp is carried forward.
 func WriteVerifyRollupFailureTextfile(path string, durationSec float64) error {
 	return writeAtomicCarryingLastSuccess(path, metricVerifyRollupLastSuccessTimestamp, helpVerifyRollupLastSuccessTimestamp, func(w io.Writer) error {
 		return writeVerifyRollupFailureMetrics(w, durationSec)
 	})
 }
 
-// writeSnapshotMetrics emits the full success-path metric set:
-//
-//	stellarindex_supply_snapshot_total_xlm{asset_key=}
-//	stellarindex_supply_snapshot_circulating_xlm{asset_key=}
-//	stellarindex_supply_snapshot_max_xlm{asset_key=}              (only when set)
-//	stellarindex_supply_snapshot_ledger{asset_key=}
-//	stellarindex_supply_snapshot_observed_at_seconds{asset_key=}
-//	stellarindex_supply_snapshot_run_duration_seconds
-//	stellarindex_supply_snapshot_unit_failed{asset_key=}          0
-//	stellarindex_supply_snapshot_last_success_timestamp{asset_key=}
-//
-// XLM units (not stroops) for human-readable Grafana panels —
-// stroops × 10^-7. NUMERIC stroop precision is preserved in
-// asset_supply_history; the textfile loses sub-stroop precision in
-// the float64 conversion, which is fine for monitoring (the alerts
-// don't read sub-XLM precision).
+// writeSnapshotMetrics emits the success-path set, stellarindex_supply_snapshot_{total_xlm,
+// circulating_xlm,max_xlm (only when set),ledger,observed_at_seconds,run_duration_seconds,
+// unit_failed,last_success_timestamp}. Values are XLM (stroops x 10^-7) as float64: sub-stroop
+// precision is lost, fine for monitoring; NUMERIC precision stays in asset_supply_history.
 func writeSnapshotMetrics(w io.Writer, snap Supply, durationSec float64, pass bool) error {
 	asset := snap.AssetKey
 
@@ -184,11 +135,8 @@ func writeSnapshotMetrics(w io.Writer, snap Supply, durationSec float64, pass bo
 	return nil
 }
 
-// writeFailureMetrics emits a minimal failure-path block. Only
-// `unit_failed` and the run-duration gauge — no value gauges (we
-// don't have a Supply to report) and no `last_success_timestamp`
-// (there was no success to stamp; the previous file's samples are
-// carried forward by [writeAtomicCarryingLastSuccess] instead).
+// writeFailureMetrics emits only `unit_failed` and the duration gauge: no value gauges (no Supply)
+// and no last_success_timestamp (the previous one is carried by [writeAtomicCarryingLastSuccess]).
 func writeFailureMetrics(w io.Writer, assetKey string, durationSec float64) error {
 	if err := writeGaugeInt(w,
 		"stellarindex_supply_snapshot_unit_failed",
@@ -227,15 +175,8 @@ func writeGaugeIntNoLabel(w io.Writer, name, help string, value int64) error {
 	return err
 }
 
-// writeVerifyRollupMetrics emits the full success-path metric set for a
-// `supply verify-rollup` run:
-//
-//	stellarindex_supply_verify_rollup_checked_total
-//	stellarindex_supply_verify_rollup_drift_total
-//	stellarindex_supply_verify_rollup_missing_total
-//	stellarindex_supply_verify_rollup_run_duration_seconds
-//	stellarindex_supply_verify_rollup_unit_failed                 0
-//	stellarindex_supply_verify_rollup_last_success_timestamp
+// writeVerifyRollupMetrics emits stellarindex_supply_verify_rollup_{checked_total,drift_total,
+// missing_total,run_duration_seconds,unit_failed,last_success_timestamp} for a verify-rollup run.
 func writeVerifyRollupMetrics(w io.Writer, checked, driftCount, missingCount int, durationSec float64, pass bool) error {
 	if err := writeGaugeIntNoLabel(w,
 		"stellarindex_supply_verify_rollup_checked_total",
@@ -314,22 +255,10 @@ func stroopsToXLM(stroops *big.Int) float64 {
 	return f
 }
 
-// writeAtomicCarryingLastSuccess writes `body` through [writeAtomic],
-// appending the `last_success_timestamp` samples already present in
-// `path` whenever `body` emits none of its own.
-//
-// The textfile collector serves exactly what this file contains, so
-// a rewrite that drops the family retires the series and silently
-// disarms the staleness alerts (they evaluate `time() - <missing>`,
-// which is no-data, not "very old"). Carrying the previous samples
-// through verbatim keeps the timestamp truthful — it still names the
-// last genuinely successful run — so the 36 h ticket and 72 h page
-// fire on schedule while runs keep failing.
-//
-// A prior file that exists but cannot be read is NOT overwritten:
-// destroying a readable staleness key is worse than missing one
-// scrape of `unit_failed`, since `_stale` still escalates on the
-// surviving series while an erased one escalates never.
+// writeAtomicCarryingLastSuccess writes `body` via [writeAtomic], appending the existing
+// last_success_timestamp samples when `body` emits none: a rewrite dropping the family leaves the
+// staleness alerts evaluating `time() - <missing>` (no-data, never fires). An unreadable prior
+// file is NOT overwritten: erasing the staleness key is worse than missing one unit_failed scrape.
 func writeAtomicCarryingLastSuccess(path, metricName, help string, body func(io.Writer) error) error {
 	carried, err := readLastSuccessSamples(path, metricName)
 	if err != nil {
@@ -375,12 +304,9 @@ func readLastSuccessSamples(path, metricName string) ([]string, error) {
 	return lastSuccessSamples(body, metricName)
 }
 
-// lastSuccessSamples extracts the sample lines (labels and value
-// verbatim) of the metricName family from textfile content, skipping
-// `# HELP` / `# TYPE` metadata — the caller re-emits those so the family
-// is declared exactly once. A scan error is returned rather than
-// swallowed: reporting "no samples" for an unreadable file is exactly the
-// erasure this guards.
+// lastSuccessSamples extracts the metricName sample lines verbatim, skipping HELP/TYPE (the caller
+// re-emits them once). A scan error is returned: "no samples" for an unreadable file is the erasure
+// this guards against.
 func lastSuccessSamples(body []byte, metricName string) ([]string, error) {
 	var out []string
 	sc := bufio.NewScanner(bytes.NewReader(body))

@@ -16,15 +16,9 @@ import (
 // other variants.
 const xlmAssetKey = "XLM"
 
-// XLMTotalSupplyStroops is the frozen-2019 native XLM total supply
-// in stroops: 50_001_806_812 XLM × 10^7 stroops/XLM. The figure
-// comprises the 50 B genesis lumens plus the inflation pool that
-// was frozen by network vote in October 2019. Per ADR-0011 it does
-// not move; only circulating changes (when SDF reserve account
-// balances change).
-//
-// Constructed once at package init via init(); exposed as a function
-// rather than a `var` to prevent accidental mutation by callers.
+// XLMTotalSupplyStroops is the frozen-2019 pubnet native XLM total in stroops: 50_001_806_812 XLM
+// x 10^7 (50 B genesis plus the inflation pool frozen by the October 2019 vote; ADR-0011). It
+// never moves; only circulating does. A function returning a copy so callers can't mutate it.
 func XLMTotalSupplyStroops() *big.Int {
 	return new(big.Int).Set(xlmTotalSupplyStroops)
 }
@@ -37,34 +31,21 @@ var xlmTotalSupplyStroops = new(big.Int).Mul(
 	big.NewInt(10_000_000), // 10^7 stroops per XLM
 )
 
-// xlmTestNetworkTotalSupplyStroops is the native XLM total on the SDF
-// test networks (testnet + futurenet): the 100 B genesis lumens
-// (stellar-core's default genesis `totalCoins`), which is exactly the
-// ledger-header `total_coins` those chains report — a reset test
-// network never ran inflation and never had the 2019 pubnet vote, so
-// the frozen pubnet figure is simply the wrong number there
-// (api.testnet served 50.0 B against a 100 B ledger).
+// xlmTestNetworkTotalSupplyStroops is the testnet/futurenet native total: 100 B genesis lumens,
+// equal to the ledger-header total_coins. Reset test networks never ran inflation or the 2019
+// vote, so the pubnet figure is wrong there.
 var xlmTestNetworkTotalSupplyStroops = new(big.Int).Mul(
 	big.NewInt(100_000_000_000),
 	big.NewInt(10_000_000), // 10^7 stroops per XLM
 )
 
-// ErrUnknownNetwork is returned by [XLMTotalSupplyStroopsForNetwork]
-// (and so [NewXLMComputerForNetwork]) for a passphrase that is not
-// pubnet / testnet / futurenet. Fail-closed on purpose: silently
-// serving the pubnet constant for an unrecognised network is exactly
-// the defect this guards against.
+// ErrUnknownNetwork is returned for a passphrase that is not pubnet/testnet/futurenet. Fail-closed:
+// serving the pubnet constant for an unrecognised network is the defect this guards against.
 var ErrUnknownNetwork = errors.New("supply: no native XLM total known for network passphrase")
 
-// XLMTotalSupplyStroopsForNetwork returns the native XLM total supply
-// in stroops for the network identified by passphrase:
-//
-//   - pubnet    → the frozen-2019 figure ([XLMTotalSupplyStroops]).
-//   - testnet   → 100 B genesis lumens (== ledger total_coins).
-//   - futurenet → 100 B genesis lumens (== ledger total_coins).
-//
-// Any other passphrase returns [ErrUnknownNetwork]. Always hands back
-// a fresh copy, like [XLMTotalSupplyStroops].
+// XLMTotalSupplyStroopsForNetwork returns the native XLM total in stroops for the passphrase:
+// pubnet is the frozen-2019 figure, testnet and futurenet are 100 B genesis lumens (== ledger
+// total_coins). Anything else is [ErrUnknownNetwork]. Always returns a fresh copy.
 func XLMTotalSupplyStroopsForNetwork(passphrase string) (*big.Int, error) {
 	switch passphrase {
 	case canonical.PubnetPassphrase:
@@ -75,21 +56,10 @@ func XLMTotalSupplyStroopsForNetwork(passphrase string) (*big.Int, error) {
 	return nil, fmt.Errorf("%w: %q", ErrUnknownNetwork, passphrase)
 }
 
-// ReserveBalanceReader is the read-side interface the [XLMComputer]
-// needs: given a list of G-strkey account addresses, return their
-// summed XLM balance in stroops as observed at LedgerSequence.
-//
-// Production implementation: a Postgres-backed reader against the
-// trustline-delta indexer's per-account running totals (the same
-// hypertable Algorithm 2 will read for classic asset supply). The
-// reader is responsible for its own caching; the computer makes one
-// call per Compute() invocation.
-//
-// Returns the summed balance as a non-nil *big.Int (zero is a valid
-// answer — the SDF reserves could be empty in a hypothetical
-// future). Returns an error when the storage layer can't satisfy
-// the request; the computer surfaces that error rather than
-// fabricating a partial answer.
+// ReserveBalanceReader is the [XLMComputer]'s read side: the summed XLM balance in stroops of
+// the given G-strkey accounts as of a ledger, as a non-nil *big.Int (zero is valid). The reader
+// owns its caching (one call per Compute). On storage error it returns an error; the computer
+// surfaces it rather than fabricating a partial answer.
 type ReserveBalanceReader interface {
 	ReserveBalanceTotal(ctx context.Context, accounts []string, ledger uint32) (*big.Int, error)
 }
@@ -104,35 +74,16 @@ func readReserveTotal(ctx context.Context, r ReserveBalanceReader, accounts []st
 	return v, ReserveSourceLive, err
 }
 
-// ReserveBalanceFreshnessReader is the optional extension to
-// [ReserveBalanceReader] that reports a freshness anchor for the
-// configured SDF reserve accounts at or before the snapshot ledger.
-//
-// It is the XLM leg of the supply-snapshot freshness gate. Without it the
-// stale-component gate stays permissive on every native-XLM snapshot.
-//
-//   - [LCMReserveBalanceReader] checks that every account is observed and
-//     returns the account observer's watermark.
-//   - [ConfigReserveBalanceReader] DELIBERATELY does NOT implement this: static
-//     config has no per-ledger freshness, so strict mode refuses it.
-//
-// The XLM computer probes via a type assertion; if not satisfied,
-// MinComponentLedger stays 0 and the gate stays permissive.
-//
-// Zero return means "no observation found for at least one account at-or-before
-// `asOfLedger`" (the permissive bypass signal). Non-zero is the MIN across
-// observed accounts.
+// ReserveBalanceFreshnessReader extends [ReserveBalanceReader] with a freshness anchor for the SDF
+// reserve accounts (the XLM leg of the freshness gate). [ConfigReserveBalanceReader] DELIBERATELY does
+// not implement it (strict mode refuses static config); zero means unobserved (permissive bypass).
 type ReserveBalanceFreshnessReader interface {
 	MinReserveAccountLedger(ctx context.Context, accounts []string, asOfLedger uint32) (uint32, error)
 }
 
-// XLMComputer derives Algorithm 1 supply for native XLM. Wraps a
-// configured reserve-account list (from [Policy.SDFReserveAccounts])
-// + a [ReserveBalanceReader] that resolves balances on demand.
-//
-// Safe for concurrent Compute() calls — fields are read-only after
-// construction; the underlying ReserveBalanceReader is required to
-// be concurrent-safe by contract.
+// XLMComputer derives Algorithm 1 supply for native XLM from [Policy.SDFReserveAccounts] and a
+// [ReserveBalanceReader]. Safe for concurrent Compute calls: fields are read-only after
+// construction and the reader must be concurrent-safe.
 type XLMComputer struct {
 	reserveAccounts []string
 	reader          ReserveBalanceReader
@@ -142,26 +93,16 @@ type XLMComputer struct {
 	total *big.Int
 }
 
-// NewXLMComputer constructs an Algorithm 1 computer for PUBNET —
-// the frozen-2019 total. Production wiring should prefer
-// [NewXLMComputerForNetwork] with cfg.Stellar.Passphrase() so a
-// testnet / futurenet deployment computes against its own ledger
-// total instead of the mainnet constant.
-//
-// reader MAY be nil when reserveAccounts is empty — Compute() then
-// short-circuits the lookup. A nil reader with a non-empty
-// reserveAccounts list is a configuration error and returns ErrNilReader.
+// NewXLMComputer builds an Algorithm 1 computer for PUBNET (frozen-2019 total); production should
+// use [NewXLMComputerForNetwork] so test networks use their own total. reader MAY be nil only
+// when reserveAccounts is empty; otherwise ErrNilReader.
 func NewXLMComputer(reserveAccounts []string, reader ReserveBalanceReader) (*XLMComputer, error) {
 	return NewXLMComputerForNetwork(canonical.PubnetPassphrase, reserveAccounts, reader)
 }
 
-// NewXLMComputerForNetwork constructs an Algorithm 1 computer whose
-// total_supply / max_supply are the native XLM total of the network
-// identified by passphrase (see [XLMTotalSupplyStroopsForNetwork]).
-// An unrecognised passphrase returns [ErrUnknownNetwork] rather than
-// falling back to the pubnet figure.
-//
-// Same reader / reserveAccounts contract as [NewXLMComputer].
+// NewXLMComputerForNetwork builds a computer whose total/max supply is the native XLM total of
+// the passphrase's network; an unrecognised passphrase is [ErrUnknownNetwork], never a pubnet
+// fallback. Same reader contract as [NewXLMComputer].
 func NewXLMComputerForNetwork(passphrase string, reserveAccounts []string, reader ReserveBalanceReader) (*XLMComputer, error) {
 	total, err := XLMTotalSupplyStroopsForNetwork(passphrase)
 	if err != nil {
@@ -186,24 +127,10 @@ func NewXLMComputerForNetwork(passphrase string, reserveAccounts []string, reade
 // exclusion applied) — fail loudly at construction instead.
 var ErrNilReader = errors.New("supply: reserve-balance reader is nil but reserve accounts are configured")
 
-// Compute returns the [Supply] for native XLM at the supplied
-// ledger. Per Algorithm 1:
-//
-//   - total_supply = the configured network's native total (constant
-//     per network — [XLMTotalSupplyStroopsForNetwork]).
-//   - max_supply = total_supply (XLM is hard-capped).
-//   - circulating_supply = total_supply − Σ(SDF reserve balances).
-//
-// observedAt should be the close time of `ledger` in UTC; callers
-// pass the ledger-meta timestamp directly. Compute does NOT consult
-// wall-clock time.
-//
-// Returns the underlying error (wrapped) when the
-// [ReserveBalanceReader] fails. The computer does NOT fall back to
-// "publish total as circulating" — the partial answer would be
-// indistinguishable on the wire from a healthy zero-reserve state,
-// so we surface the error and let the caller decide whether to skip
-// this snapshot or retry.
+// Compute returns the native XLM [Supply] at ledger (Algorithm 1): total = the network's native
+// total, max = total (hard-capped), circulating = total - sum(SDF reserve balances). observedAt is
+// the ledger close time; wall-clock is not consulted. A reader failure is returned wrapped: falling
+// back to "total as circulating" would be indistinguishable on the wire from a healthy zero-reserve state.
 func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt time.Time) (Supply, error) {
 	total := new(big.Int).Set(c.total)
 
@@ -225,23 +152,15 @@ func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt tim
 	}
 
 	circulating := new(big.Int).Sub(total, reserved)
-	// Clamp at zero, exactly as Algorithm 2 (classic.go) and
-	// Algorithm 3 (sep41.go) do. A reserve total exceeding the
-	// hard-capped XLM total is only reachable through operator misconfig
-	// (a non-SDF whale listed in `reserve_accounts`) or a reader bug, but
-	// the crown-jewel asset is precisely where a negative circulating
-	// supply — and the negative market cap it implies downstream — must
-	// not reach the wire.
+	// Clamp at zero like Algorithm 2 and 3: a reserve total above the hard-capped XLM total (operator
+	// misconfig or reader bug) must not put a negative circulating supply, and the negative market
+	// cap it implies, on the wire.
 	if circulating.Sign() < 0 {
 		circulating.SetInt64(0)
 	}
 
-	// Only claim an SDF-reserve exclusion when we actually
-	// excluded reserves. With no reserve accounts configured,
-	// circulating == total; labelling that "xlm_sdf_reserve_exclusion"
-	// would tell every consumer an exclusion happened when it didn't,
-	// overstating circulating supply + market cap. Emit an honest basis
-	// instead so the misconfiguration is self-evident on the API.
+	// Claim an SDF-reserve exclusion only when reserves were excluded: with none configured,
+	// circulating == total, and the exclusion label would overstate circulating supply and market cap.
 	basis := BasisXLMSDFReserveExclusion
 	switch {
 	case len(c.reserveAccounts) == 0:
@@ -250,14 +169,10 @@ func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt tim
 		basis = BasisXLMSDFReserveExclusionStatic
 	}
 
-	// If the reader implements
-	// [ReserveBalanceFreshnessReader], probe it for the
-	// per-account observation freshness signal. A failure here
-	// is non-fatal: the gate falls back to permissive
-	// (MinComponentLedger=0) the same way classic/SEP41 do on
-	// transient freshness-query errors. Never probed for a static-arm
-	// balance: the observer watermark says nothing about a hand-entered
-	// map, and anchoring it would let strict mode publish it.
+	// Probe [ReserveBalanceFreshnessReader] if implemented; a failure is non-fatal and leaves the gate
+	// permissive (MinComponentLedger=0), as for classic/SEP41. Never probed for a static-arm balance:
+	// the observer watermark says nothing about a hand-entered map, and anchoring it would let strict
+	// mode publish it.
 	var minLedger uint32
 	if fr, ok := c.reader.(ReserveBalanceFreshnessReader); ok && len(c.reserveAccounts) > 0 && source == ReserveSourceLive {
 		if got, ferr := fr.MinReserveAccountLedger(ctx, c.reserveAccounts, ledger); ferr == nil {
