@@ -1,19 +1,7 @@
 #!/usr/bin/env bash
-# Doc-code consistency linter for Stellar Index.
-#
-# Runs in CI; fails the build if docs have drifted from code.
-# Based on the pattern from ~/code/loop-app/scripts/lint-docs.sh —
-# adapted for our Go + OpenAPI + Stellar-specific surface.
-#
-# Design principles (docs/engineering-standards.md §5):
-#
-#   1. Never two sources of truth.
-#   2. Explain why, not what.
-#   3. Decisions go in ADRs; narrative docs don't record decisions.
-#   4. Every config option / metric / endpoint must round-trip
-#      between code and reference docs.
-#
-# This script enforces (1) + (4). The others are reviewer-enforced.
+# Doc-code consistency linter: fails the build when docs drift from code.
+# Enforces one source of truth and code<->reference round-trips
+# (docs/engineering-standards.md section 5). Run: bash scripts/ci/lint-docs.sh
 
 set -euo pipefail
 
@@ -30,15 +18,8 @@ err() {
 }
 
 # ─── 0. Load-bearing source-of-truth inputs must exist ──────────────────────
-#
-# Every check below is gated on `if [ -f X ] && [ -f Y ]`, which turns a
-# missing/renamed load-bearing input into a SILENT SKIP: the check's body
-# never runs, the error counter stays 0, and the script prints "passed".
-# Renaming (say) config.go or the OpenAPI spec would hollow out its doc-sync
-# check with no signal. Assert the load-bearing config/source/spec paths up
-# front so a rename fails the lint instead. Optional/best-effort inputs
-# (runbooks, incidents, web CSP headers, R1 overlays) are intentionally NOT
-# listed here — they are legitimately absent in some checkouts.
+# Checks below are gated on `[ -f X ]`, so a renamed input would silently skip its check
+# and still print "passed". Optional inputs (runbooks, incidents, overlays) are not listed.
 
 require_path() { # require_path <-f|-d> <path>
   case "$1" in
@@ -58,15 +39,10 @@ require_path -f docs/reference/metrics/README.md
 
 # ─── 1. Every config `toml:"..."` tag must appear in the generated ref ──────
 #
-# The generated reference (docs/reference/config/README.md) uses the
-# TOML field name (`toml:"xxx_yyy"` → "xxx_yyy" in the table), not the
-# Go field identifier. So we check TOML names, not Go field names —
-# the wire contract is what operators see.
+# The reference table uses TOML names, not Go field names: that is what operators see.
 
 echo "Checking config reference sync..."
 if [ -f internal/config/config.go ] && [ -f docs/reference/config/README.md ]; then
-  # Extract every `toml:"name"` tag value from config.go. Keeps only
-  # the name (no commas, no omitempty).
   # Digits included: tags like s3_*, sep10, sep41 and phase2 must be checked too.
   grep -oE 'toml:"[a-z0-9_]+"' internal/config/config.go | \
     sed -E 's/toml:"([a-z0-9_]+)"/\1/' | sort -u | while read -r tomlname; do
@@ -78,17 +54,13 @@ fi
 
 # ─── 2. Every API route handler must be in OpenAPI ──────────────────────────
 #
-# Matches the idiom the v1 Server uses:
-#   s.mux.HandleFunc("GET /v1/<path>", s.handleX)
-# The OpenAPI spec lists routes WITHOUT the /v1 prefix (that's the
-# server's base URL), so we strip /v1 before comparing.
+# The spec lists routes without the /v1 prefix (the server base URL), so strip it first.
 
 echo "Checking API routes vs OpenAPI..."
 if [ -d internal/api/v1 ] && [ -f openapi/stellar-index.v1.yaml ]; then
-  # Forward: handlers that aren't in the spec (client misses them).
-  # Match BOTH HandleFunc("VERB /v1…") and mux.Handle("VERB /v1…"); the latter
-  # registers middleware-wrapped routes. internal_routes_re allow-lists routes
-  # deliberately kept out of the spec; empty until one is, and each needs a reason.
+  # Match both HandleFunc("VERB /v1...") and mux.Handle(...): the latter registers
+  # middleware-wrapped routes. internal_routes_re allow-lists routes kept out of the spec,
+  # each needing a reason.
   internal_routes_re='^$'
   # handlePublic( and public.Handle(mux, mount credential-optional routes, handleAdmin( the operator
   # tier; tests register fixtures.
@@ -98,18 +70,13 @@ if [ -d internal/api/v1 ] && [ -f openapi/stellar-index.v1.yaml ]; then
     sort -u | while IFS= read -r route; do
       [ -z "$route" ] && continue
       if [[ "$route" =~ $internal_routes_re ]]; then continue; fi
-      # OpenAPI path entries look like `  /ohlc:` at 2-space indent.
       if ! grep -qE "^  ${route}:" openapi/stellar-index.v1.yaml; then
         err "Route '$route' is registered in handlers but missing from OpenAPI spec"
       fi
   done
 
-  # Reverse: spec entries that have no handler (clients 404).
-  # The planned_regex below is the explicit allow-list of
-  # "documented but not yet shipped" — deliberately adjusted in
-  # a docs PR when endpoints land or get cut. Empty today —
-  # every spec path has a handler. If you add a new doc-but-stub
-  # endpoint, add it here and remove it once the handler lands.
+  # Reverse: spec entries with no handler. planned_regex allow-lists documented-but-unshipped
+  # routes; remove an entry once its handler lands.
   planned_regex='^$'
   grep -oE "^  /[^:]+:" openapi/stellar-index.v1.yaml | \
     sed -E 's|^  ||; s|:$||' | sort -u | while IFS= read -r route; do
@@ -117,13 +84,9 @@ if [ -d internal/api/v1 ] && [ -f openapi/stellar-index.v1.yaml ]; then
       if [[ "$route" =~ $planned_regex ]]; then
         continue
       fi
-      # Fixed-string search (no regex) so Go 1.22 path params
-      # like /assets/{asset_id} don't get interpreted as regex
-      # quantifiers. Enumerate methods we use today — extend the
-      # list when we add write verbs.
+      # Fixed-string search so path params like /assets/{asset_id} are not read as regex.
       found=0
       for method in GET POST PUT PATCH DELETE; do
-        # Check both HandleFunc( and mux.Handle( registrations.
         if grep -qrF --exclude='*_test.go' \
           -e "HandleFunc(\"${method} /v1${route}\"" -e "Handle(\"${method} /v1${route}\"" \
           -e "handlePublic(\"${method} /v1${route}\"" -e ".Handle(mux, \"${method} /v1${route}\"" \
@@ -141,13 +104,8 @@ fi
 
 # ─── 2b. Generated API reference must be in sync with the source spec ────────
 #
-# `make docs-api` copies openapi/stellar-index.v1.yaml verbatim next to the
-# rendered index.html. CI's `openapi` job enforces this too — but that job is
-# PR-only + path-filtered, so a direct-to-main push that edits the spec
-# without re-running `make docs-api` slips the desync onto main (observed
-# once: the reference was 66 paths while the spec shipped 73). This lint
-# runs inside verify.sh on every push, so the gap is closed locally
-# regardless of the CI trigger.
+# CI's openapi job is PR-only and path-filtered, so a direct push to main could desync the
+# copy made by `make docs-api`; this runs in verify.sh on every push.
 
 echo "Checking generated API reference sync..."
 if [ -f openapi/stellar-index.v1.yaml ] && [ -f docs/reference/api/stellar-index.v1.yaml ]; then
@@ -156,19 +114,9 @@ if [ -f openapi/stellar-index.v1.yaml ] && [ -f docs/reference/api/stellar-index
   fi
 fi
 
-# Resolved-parameter uniqueness. An operation that declares a parameter
-# INLINE and also $refs the shared component for the same (name, in)
-# pair ships a spec with two conflicting definitions of one parameter —
-# /v1/assets carried an inline `limit` with no default alongside
-# `$ref: Limit` which has default 100. Generators pick one
-# arbitrarily, so the rendered docs, the Postman collection and the
-# explorer's generated types can each disagree about the same field.
-#
-# Spectral DOES flag this (operation-parameters) — at severity WARN,
-# and CI runs the action at its default --fail-severity=error, so it
-# never failed the build. Enforcing it here makes it a hard gate without
-# re-tuning Spectral's global severity floor, which would light up
-# unrelated warnings.
+# Resolved-parameter uniqueness: an operation must not declare a parameter inline and also
+# $ref the shared component for the same (name, in); generators pick one arbitrarily.
+# Spectral only warns on this and CI fails on error, so it is enforced here.
 echo "Checking OpenAPI parameter uniqueness..."
 if [ -f openapi/stellar-index.v1.yaml ] && command -v python3 >/dev/null 2>&1; then
   dup_out=$(python3 - <<'PY' 2>&1 || true
@@ -245,48 +193,16 @@ PY
   fi
 fi
 
-# Migration self-citation. A migration's own header comment should cite
-# its OWN number. 0125_projection_dirty_windows.up.sql opened with
-# "0124 up", and 0096_create_blend_emitter_events.up.sql with "0095 up"
-# — both real but DIFFERENT migrations, so a reader following the
-# reference lands on an unrelated change.
-#
-# This check originally EXEMPTED those two on the grounds that an
-# applied migration is immutable and even a comment-only edit changes
-# its checksum, so the drift could only be recorded. That reasoning was
-# wrong, and it contradicted the other precedent on main (febf720a
-# edited nine shipped downs and refreshed the baseline). The rule is now
-# written down once, in migrations/README.md "Amending a shipped
-# migration":
-#
-#   A shipped migration's UP body is immutable; its DOWN body and its
-#   header COMMENTS may be corrected through the baseline-refresh path
-#   (lint-migration-immutability --write) and said so in the commit
-#   message; anything stored in the database (COMMENT ON, defaults)
-#   needs a new migration.
-#
-# A `--` line above BEGIN; is not executed, so correcting one cannot
-# make an applied database diverge from a fresh one — and the checksum
-# baseline still moves in the same diff, so the edit is visible rather
-# than silent. There is NO exemption list: every up.sql must cite its own
-# number, with no grandfathered set to grow.
-#
-# Deliberately narrow: it checks the mechanical half — a file
-# disagreeing with its own filename — not "does every `migration NNNN`
-# mention in the tree point at the right subject", which needs judgement
-# about what each migration is FOR. internal/storage/timescale/
-# freeze_events.go cites 0124 and is CORRECT (0124 really is
-# freeze_reason_other); a blanket find-and-replace would have broken it.
+# Migration self-citation: an up.sql header must cite its OWN number, so a reader
+# following the reference does not land on a different migration. Header comments may be
+# corrected on shipped migrations (migrations/README.md "Amending a shipped migration"); no exemption list.
 echo "Checking migration self-citation..."
 for mig in migrations/[0-9][0-9][0-9][0-9]_*.up.sql; do
   [ -f "$mig" ] || continue
   base=$(basename "$mig")
   num=$(printf '%s' "$base" | cut -c1-4)
   first=$(head -1 "$mig")
-  # Strip ADR-NNNN / CS-NNN / F-NNNN ids first: they are four digits but
-  # are not migration numbers. The first draft flagged
-  # 0048_source_coverage_snapshots.up.sql, whose header opens "ADR-0031:",
-  # and a lint that flags correct files gets disabled.
+  # Strip ADR-NNNN / CS-NNN / F-NNNN ids first: they are four digits but not migration numbers.
   cited=$(printf '%s' "$first" | sed -E 's/(ADR|CS|F)-[0-9]+//g' \
           | grep -oE '\b[0-9]{4}\b' || true)
   cited="${cited%%$'\n'*}"   # first token; slicing a captured value cannot
@@ -300,12 +216,8 @@ done
 
 echo "Checking metrics registry..."
 if [ -d internal/obs ] && [ -f docs/reference/metrics/README.md ]; then
-  # Every metric registered in internal/obs must appear in the
-  # reference doc. Scope is all prometheus `Name: "..."` fields —
-  # not just stellarindex_*/ctx_* — so `http_requests_total` and
-  # `http_request_duration_seconds` (unprefixed per standard
-  # Prometheus convention) are also enforced.
-  # BSD sed (macOS default) doesn't support \s — use [[:space:]].
+  # Scope is every prometheus `Name: "..."` field, including unprefixed ones such as
+  # http_requests_total. BSD sed lacks \s, so use [[:space:]].
   grep -rhE 'Name:[[:space:]]*"[a-z][a-z0-9_]+"' internal/obs/ 2>/dev/null | \
     sed -E 's|.*Name:[[:space:]]*"([^"]+)".*|\1|' | sort -u | while read -r metric; do
       if ! grep -qF "$metric" docs/reference/metrics/README.md; then
@@ -323,7 +235,6 @@ stale_patterns=(
   "ctx-indexer\|ctx-aggregator\|ctx-api\|ctx-ops\|ctx-migrate" # old binary names (we use stellarindex- prefix now — adjust if you change the policy)
   "CTX Rates"                    # old project name (now "Stellar Index")
   # Citations whose PR/issue number now resolves to an unrelated item.
-  # Scoped to the original phrase where the number is also cited legitimately;
   # (–|-) alternation because the en-dash is 3 UTF-8 bytes and CI greps in C locale.
   "\(#1004\)"
   "#1001"
@@ -411,8 +322,7 @@ done
 echo "Checking TODO discipline..."
 # Every TODO/FIXME/XXX in Go code must be of the form TODO(#N):
 if [ -d internal ] || [ -d cmd ]; then
-  # Match EVERY TODO/FIXME/XXX, then exempt only the tracked `(#123)` form,
-  # so `TODO(later):`, `FIXME(nobody)` and a bare `// TODO` all fail.
+  # Match every TODO/FIXME/XXX, then exempt only `(#123)`, so `TODO(later):` and a bare `// TODO` fail.
   bad_todos=$(grep -rnE '//[[:space:]]*(TODO|FIXME|XXX)' \
     internal/ cmd/ pkg/ 2>/dev/null | \
     grep -vE '//\s*(TODO|FIXME|XXX)\(#[0-9]+\)' || true)
@@ -426,32 +336,14 @@ fi
 # ─── 6. Frontmatter freshness on 'current' docs ─────────────────────────────
 
 echo "Checking doc frontmatter freshness..."
-# ISO dates compare correctly as strings, so age each stamp against two
-# precomputed cutoffs instead of forking `date` per file.
+# ISO dates compare as strings, so age each stamp against two precomputed cutoffs instead of forking `date`.
 today=$(date -u +%s)
 stale_cut=$(date -u -r $((today - 90 * 86400)) +%F 2>/dev/null || date -u -d "@$((today - 90 * 86400))" +%F)
 fail_cut=$(date -u -r $((today - 180 * 86400)) +%F 2>/dev/null || date -u -d "@$((today - 180 * 86400))" +%F)
 
-# Iterate over 'current' docs: architecture/, operations/, contributing/,
-# protocols/ and methodology/. Under all but architecture/ and design/ a
-# MISSING last_verified is an error, so opting out by omitting it fails.
-#
-# docs/adr is OUT of this find-root: ADRs are immutable and gated by §8
-# (status/superseded_by/index-row). Add a §8 check if amendment banners
-# ever need aging.
-#
-# RECORD subtrees are exempt by design: evidence/, postmortems/,
-# incidents/, notes/ and wasm-audits/ are dated artefacts of a moment,
-# not living procedure. So is any file whose NAME ends in a date
-# (`*-YYYY-MM-DD.md`) — a campaign ledger or remediation record names the
-# day it describes, and stamping it `last_verified` would either lie
-# about re-verification or hard-fail at 180 days for being exactly what
-# it is. The date must be in the FILENAME, so a living procedure cannot
-# opt out by accident. A freshness stamp on a post-mortem would
-# demand periodic re-verification of something that must never change,
-# and would hard-fail at 180 days for being exactly what it is.
-# One awk pass emits `path<TAB>generated<TAB>last_verified` per file; it
-# reads each file with getline so an empty doc still gets a row.
+# 'current' docs only. Outside architecture/ and design/ a MISSING last_verified is an error.
+# Exempt: docs/adr (gated by section 8), RECORD subtrees (evidence, postmortems, incidents, notes,
+# wasm-audits) and files named `*-YYYY-MM-DD.md`; the date must be in the filename so a living doc cannot opt out.
 find docs/architecture docs/operations docs/design docs/contributing \
      docs/protocols docs/methodology -type f -name '*.md' -print0 2>/dev/null | \
   xargs -0 awk 'BEGIN {
@@ -465,7 +357,6 @@ find docs/architecture docs/operations docs/design docs/contributing \
       print f "\t" gen "\t" v
     }
   }' | while IFS=$'\t' read -r f gen verified; do
-  # Skip generated docs, archive, templates.
   if [ "$gen" = 1 ]; then continue; fi
   if [[ "$f" == *"_archive"* ]] || [[ "$f" == *"_template"* ]]; then continue; fi
 
@@ -495,19 +386,11 @@ done
 
 # ─── 7. Generated-file banner intact ────────────────────────────────────────
 #
-# Only the three generated subdirs under docs/reference/ are machine-
-# produced. docs/reference/*.md at the top level is hand-written
-# narrative (e.g. api-design.md).
+# Only the generated subdirs under docs/reference/ are machine-produced; top-level *.md there is hand-written.
 
 echo "Checking generated-file banners..."
-# docs/reference/metrics/README.md is the ONLY hand-written file
-# under docs/reference/ — there's no metrics generator yet (would
-# need a Prometheus-registry walker). It's still lint-enforced
-# for drift via section 3. Exempt only by exact path.
-#
-# Enumerate only existing subdirs — `find` errors on missing ones
-# with set -e + pipefail, silently killing the script before later
-# sections run.
+# docs/reference/metrics/README.md is hand-written (no generator; drift is checked by section 3): exempt by exact path.
+# Enumerate only existing subdirs: `find` on a missing one would kill the script under set -e + pipefail.
 gen_dirs=()
 for d in docs/reference/api docs/reference/config docs/reference/metrics; do
   [ -d "$d" ] && gen_dirs+=("$d")
@@ -541,17 +424,13 @@ if [ -d docs/adr ]; then
   done
 fi
 
-# Every ADR file must have a row in docs/adr/README.md's index table — the
-# per-file loop above only validates an ADR's OWN frontmatter, so a new ADR
-# landing without a README row (or a renumber that drops one) went undetected.
+# Every ADR file needs a row in docs/adr/README.md's index; the loop above only checks its own frontmatter.
 if [ -d docs/adr ] && [ -f docs/adr/README.md ]; then
   index_section=$(awk '/^## Index/{flag=1} flag' docs/adr/README.md)
   for adr in docs/adr/[0-9]*.md; do
     [ -f "$adr" ] || continue
     num=$(basename "$adr" | grep -oE '^[0-9]+')
-    # A row is either linked ("| [0051](...)") or plain ("| 0036 | ..." for
-    # archived ADRs kept out of docs/adr) — match the table cell, not any
-    # mention of the number (a "supersedes 0016" aside must not count).
+    # A row is linked ("| [0051](...)") or plain ("| 0036 | ..."); match the table cell, not any mention.
     if ! grep -qE "^\| (\[$num\]|$num \|)" <<<"$index_section"; then
       err "ADR '$adr' (ADR-$num) has no row in docs/adr/README.md's Index table"
     fi
@@ -560,18 +439,8 @@ fi
 
 # ─── 9. Every alert rule's runbook_url must live in ANNOTATIONS + exist ─────
 #
-# Prometheus alert rules ship with `runbook_url` so the pager routes
-# oncall to a specific diagnosis page. Two things must hold:
-#   (a) it lives under `annotations:`, NOT `labels:` — Alertmanager keeps
-#       .Labels and .Annotations strictly separate and both Discord
-#       templates render the runbook line from .Annotations.runbook_url,
-#       so a runbook_url stashed in `labels:` renders nothing;
-#   (b) a local runbook target points at a file that exists — a 404 URL
-#       dumps the responder on a GitHub error page at 3 AM.
-# The pre-C4-1 version of this check was a blind grep over raw text, so it
-# matched a `runbook_url:` string in either block and never noticed (a).
-# This now delegates to the YAML-aware scripts/ci/lint-runbook-annotations.py
-# which PARSES each rule and asserts (a) + (b) per alert across both trees.
+# runbook_url must sit under `annotations:` (templates read .Annotations; in `labels:` it renders nothing)
+# and a local target must exist. lint-runbook-annotations.py parses each rule and asserts both.
 
 echo "Checking alert-rule runbook_url annotations..."
 if runbook_out=$(python3 scripts/ci/lint-runbook-annotations.py 2>&1); then
@@ -588,10 +457,7 @@ fi
 
 # ─── 10. Every alert rule must have a row in the alerts catalogue ──────────
 #
-# Catalogue is docs/operations/alerts-catalog.md; every rule file's
-# `alert: <name>` must appear verbatim somewhere in that doc. This grep is
-# name-presence only; scripts/ci/lint-alerts-catalog.py checks the SEVERITY
-# column and name parity in BOTH directions across BOTH rule trees.
+# Name presence only; scripts/ci/lint-alerts-catalog.py checks severity and parity both ways.
 
 echo "Checking alerts-catalog drift..."
 if [ -d deploy/monitoring/rules ] && [ -f docs/operations/alerts-catalog.md ]; then
@@ -606,8 +472,7 @@ fi
 
 echo "Checking alerts-catalog severity parity..."
 if catalog_out=$(python3 scripts/ci/lint-alerts-catalog.py 2>&1); then
-  # Echo the "checked N of M" line even when green: a silent pass looks
-  # identical to a gate that never ran.
+  # Echo "checked N of M" even when green: a silent pass looks like a gate that never ran.
   printf '  %s\n' "$(printf '%s\n' "$catalog_out" | grep 'problem(s) found' || true)"
 else
   while IFS= read -r line; do
@@ -621,49 +486,17 @@ fi
 
 # ─── 11. Runbook body references to obs-owned metric namespaces ─────────────
 #
-# Narrow rule: only the `stellarindex_*` namespaces fully owned by
-# internal/obs/metrics.go (see RUNBOOK_METRIC_PREFIXES). External-
-# exporter metrics (stellarindex_stellar_core_*, pgbackrest_*, …) and
-# namespaces the vendored SDK also writes into
-# (stellarindex_ledgerstream_* — the BufferedStorageBackend registers
-# its own buffer_* series under that prefix) are deliberately OUT of
-# scope: nothing in this repo declares their names, so enforcing them
-# would be all false positives.
-#
-# ledgerstream-tier-both-missing.md — a P1 page — told responders to
-# read `stellarindex_indexer_ledger_lag_seconds` and
-# `stellarindex_backfill_cursor` for months. Neither has ever been
-# registered, so the documented triage for a P1 was "grep for a series
-# that cannot exist". The `_source_`-only rule could not see either.
-# A prefix here is a PROMISE that internal/obs is the only writer of
-# that TIME-SERIES namespace; add one only when that is true, never to
-# launder a name that has no producer. Each alternative needs its
-# trailing `_`, which is also what keeps the multi-host SCRAPE-JOB
-# label `job="stellarindex_indexer"` (no trailing underscore) out of
-# scope — lint-metric-refs.sh skips job matchers for the same reason.
-#
-# The promise is about METRICS, not about the `stellarindex_` word:
-# ansible's inventory namespace overlaps it (today exactly one
-# collision, `stellarindex_backfill_from_ledger` in
-# configs/ansible/roles/archival-node/defaults/main.yml, already cited
-# by docs/operations/{testnet-futurenet-reset-runbook,archival-node-
-# bringup}.md — both outside runbooks/, so §11 is green today). A
-# runbook that legitimately names such a var would otherwise red CI as
-# a false positive, so declared ansible variables are subtracted from
-# the token set below. That set is DERIVED from the repo, not an
-# allowlist: a phantom metric name is not an ansible variable, so it
-# cannot be used to launder one (`stellarindex_backfill_cursor` — the
-# gauge that motivated this widening — is still caught).
+# Only `stellarindex_*` prefixes that internal/obs alone writes (RUNBOOK_METRIC_PREFIXES). Exporter and
+# SDK-shared namespaces are out of scope; add a prefix only when obs is the sole writer, each with its
+# trailing `_` so scrape-job labels like job="stellarindex_indexer" stay out. Declared ansible vars that share
+# the prefix are subtracted (derived from the repo, not an allowlist), so a phantom metric is still caught.
 
 RUNBOOK_METRIC_PREFIXES='stellarindex_(source|cursor|indexer|backfill|trade|postgres_ping)_'
 
 echo "Checking runbook metric-name freshness..."
 if [ -d docs/operations/runbooks ] && [ -f internal/obs/metrics.go ]; then
-  # Build the allowed set: names registered in obs.metrics.go +
-  # alert names in Prometheus rules, BOTH trees (runbooks use either).
-  # `|| true` because under set -e + pipefail, grep returning 1 for
-  # no-match would kill the whole script — we explicitly want an empty
-  # set if no matches.
+  # Allowed set: names registered in obs/metrics.go plus alert names in both rule trees.
+  # `|| true` keeps a no-match grep from aborting under set -e + pipefail.
   allowed=$(mktemp)
   {
     (grep -hE "Name:[[:space:]]*\"${RUNBOOK_METRIC_PREFIXES}[a-z0-9_]+\"" internal/obs/metrics.go 2>/dev/null || true) | \
@@ -672,16 +505,13 @@ if [ -d docs/operations/runbooks ] && [ -f internal/obs/metrics.go ]; then
       sed -E 's|.*alert:[[:space:]]*||'
   } | sort -u > "$allowed"
 
-  # Ansible inventory variables that share the prefix namespace — not
-  # metrics, and not phantoms either (see the note above). Declared as
-  # `name:` at column 0 in a role's defaults/vars, which is how ansible
-  # itself declares them.
+  # Ansible inventory variables sharing the prefix: not metrics, not phantoms.
+  # Declared as `name:` at column 0 in a role's defaults/vars.
   notmetrics=$(mktemp)
   (grep -rhoE "^${RUNBOOK_METRIC_PREFIXES}[a-z0-9_]+" configs/ansible/ 2>/dev/null || true) | \
     sort -u > "$notmetrics"
 
-  # Extract every in-scope metric token from runbook bodies. Histogram
-  # child series (_bucket/_sum/_count) resolve to their parent.
+  # Histogram child series (_bucket/_sum/_count) resolve to their parent.
   (grep -rhoE "${RUNBOOK_METRIC_PREFIXES}[a-z0-9_]+" docs/operations/runbooks/ 2>/dev/null || true) | \
     sed -E 's/_(bucket|sum|count)$//' | \
     sort -u | while IFS= read -r metric; do
@@ -696,60 +526,25 @@ fi
 
 # ─── 11b. A runbook's heavy-job command must actually write ────────────────
 #
-# `/usr/local/sbin/run-heavy-job.sh` is r1's COMMIT wrapper: it takes
-# the per-job singleton flock, the MemoryMax=20G scope and the
-# ClickHouse ops_batch identity because the payload is about to do real
-# work. Nothing about a preview needs any of that — so a write-gated
-# stellarindex-ops subcommand invoked under the wrapper without
-# `-write` is, without exception, a bug in the runbook.
-#
-# This is the class this file exists to stop being repeatable. The
-# shared gate (internal/ops/opsutil/opsutil.go) makes DRY RUN the
-# default: `DryRun() { return !*write }`. rehydrate-galexie-archive
-# then buckets every not-in-hot path as `copied` in dry-run mode
-# WITHOUT asking cold whether it holds the object, so a commit step
-# missing `-write` logs `"rehydrate complete" … copied=N
-# missing_in_cold=0 errors=0` and exits 0 — a success-shaped report
-# having rehydrated nothing, handed to a responder mid-P1. The same
-# omission on projector-replay rewinds no projector.
-#
-# The gated set is DERIVED from the source (files that register the
-# shared gate or their own `-write` bool, keyed by the flagset name,
-# which is the subcommand name) so a new gated subcommand is covered
-# the day it lands. Scope is docs/operations/runbooks/ — the surface an
-# operator copy-pastes from under pressure. Wrapper invocations
-# elsewhere in docs/ are out of scope here; see §11's note on why this
-# file stays narrow.
+# run-heavy-job.sh is the COMMIT wrapper. Write-gated stellarindex-ops subcommands default to DRY RUN, so one
+# run under it without `-write` reports success (e.g. rehydrate "complete ... errors=0") having written nothing.
+# The gated set is derived from source so new subcommands are covered; scope is docs/operations/runbooks/.
 
 echo "Checking runbook heavy-job commands pass -write..."
 if [ -d docs/operations/runbooks ] && [ -d internal/ops ]; then
   gated=$(mktemp)
-  # `|| true` on both greps: no-match is exit 1, which set -e + pipefail
-  # would turn into a script abort rather than an empty set.
+  # `|| true` on both greps: no-match (exit 1) must mean an empty set, not an abort.
   for gf in $(grep -rlE 'opsutil\.RegisterWriteGate\(|Bool\("write"' \
                 --include='*.go' internal/ops cmd/stellarindex-ops 2>/dev/null || true); do
     case "$gf" in *_test.go) continue ;; esac
-    # `[a-z0-9 -]+`, WITH a space. Five write-gated subcommands declare
-    # two-word flagsets — "supply snapshot", "supply seed-observations",
-    # "supply seed-sac-balances", "supply seed-claimable-balances",
-    # "supply seed-sep41-genesis" — and the old `[a-z0-9-]+` could not
-    # match a space, so every one of them was silently absent from the
-    # gated set. A runbook telling a responder to run
-    # `run-heavy-job.sh … stellarindex-ops supply snapshot -asset native`
-    # without -write produced NO finding, while the identical omission on
-    # a one-word subcommand was caught. That is exactly the failure this
-    # check exists to stop: the command reports "complete … errors=0",
-    # is success-shaped, and has written nothing.
+    # `[a-z0-9 -]+` WITH a space: two-word flagsets ("supply snapshot", "supply seed-...") would otherwise
+    # be missing from the gated set and their missing `-write` go unflagged.
     (grep -ohE 'flag\.NewFlagSet\("[a-z0-9 -]+"' "$gf" 2>/dev/null || true) | \
       sed -E 's|.*"(.*)"|\1|'
   done | sort -u > "$gated"
 
-  # Join backslash-continued shell lines so a multi-line invocation is
-  # matched as one command — the wrapper form is always continued — and
-  # keep only wrapper lines, as `path<TAB>command`, in ONE pass over every
-  # runbook: a per-runbook × per-subcommand loop was ~5k pipelines per run.
-  # awk, not the sed `:a;/\\$/N;ta` idiom: the awk form behaves
-  # identically under BSD awk (dev laptops) and gawk (CI runners).
+  # Join backslash-continued lines so a multi-line wrapper invocation matches as one command, in ONE pass
+  # over all runbooks (a per-runbook loop was ~5k pipelines). awk, not sed `:a;/\\$/N;ta`: BSD awk and gawk agree.
   wrapped=$(mktemp)
   for rb in docs/operations/runbooks/*.md; do
     if [ -f "$rb" ]; then printf '%s\0' "$rb"; fi
@@ -765,16 +560,9 @@ if [ -d docs/operations/runbooks ] && [ -d internal/ops ]; then
   }' > "$wrapped"
   while IFS= read -r sub; do
     [ -z "$sub" ] && continue
-    # `|| true`: a no-match grep exits 1, which under set -e +
-    # pipefail would abort the whole lint instead of meaning "clean".
-    #
-    # An EXPLICIT -dry-run is exempt. The forgotten-flag failure this
-    # section exists to catch is a command that looks like it writes
-    # and does not; a command that says -dry-run is a deliberate
-    # preview, and several runbooks correctly show the dry run
-    # immediately before the -write run (see
-    # supply.md §Mitigation). Flagging those
-    # would train responders to ignore this check.
+    # `|| true`: no-match exits 1, which would abort under set -e + pipefail.
+    # An explicit -dry-run is exempt: it is a deliberate preview (often shown just before the -write run),
+    # and flagging it would train responders to ignore this check.
     offenders=$(grep -E "run-heavy-job\.sh.*stellarindex-ops[[:space:]]+${sub}([[:space:]]|\$)" "$wrapped" | \
       grep -vE '(^|[[:space:]])-{1,2}write([[:space:]]|$)' | \
       grep -vE '(^|[[:space:]])-{1,2}dry-run([[:space:]]|$)' || true)
@@ -790,9 +578,7 @@ fi
 
 # ─── 12. Every runbook referenced from alerts-catalog must exist ────────────
 #
-# Symmetric counterpart to §9 (which checks rule-file → runbook). The
-# catalog is the operator-facing index; a stale `runbooks/X.md` link
-# in it means oncall clicks through to a 404.
+# Counterpart to section 9: a stale `runbooks/X.md` link in the catalog sends oncall to a 404.
 
 echo "Checking alerts-catalog runbook link freshness..."
 if [ -f docs/operations/alerts-catalog.md ] && [ -d docs/operations/runbooks ]; then
@@ -806,22 +592,13 @@ fi
 
 # ─── 13. Every operational runbook should be referenced ────────────────────
 #
-# Orphan runbooks are stale by definition — a runbook nobody can
-# find isn't a runbook. Allow-list the four that intentionally
-# stand alone (template, bring-up procedures, dead-man's switch).
-# All other docs/operations/runbooks/*.md must appear in either
-# alerts-catalog.md or sev-playbook.md or be cross-referenced from
-# another runbook (chained-procedure case).
+# Orphans are allow-listed only for standalone ones (template, bring-up, dead-man's switch); all others must appear in
+# alerts-catalog.md, sev-playbook.md or another runbook.
 
 # ─── Prometheus rules: assert each multi-host rule has an R1 sibling ──
 #
-# Multi-host rules in `deploy/monitoring/rules/` use underscored job
-# names (matching the ansible multi-host scrape config). R1's single-
-# host overlay at `configs/prometheus/rules.r1/` mirrors the same
-# alerts with hyphenated job names. Silent drift between the two —
-# editing the multi-host file alone leaves R1 with a stale rule. This
-# check flags any multi-host file that has no matching R1 sibling so
-# reviewers catch the drift at CI time.
+# Multi-host rules use underscored job names, the R1 overlay (configs/prometheus/rules.r1/) hyphenated ones;
+# a multi-host file with no R1 sibling means silent drift.
 
 echo "Checking Prometheus rule pairing (multi-host ↔ R1 overlay)..."
 if [ -d deploy/monitoring/rules ] && [ -d configs/prometheus/rules.r1 ]; then
@@ -840,7 +617,6 @@ if [ -d docs/operations/runbooks ]; then
     case "$fname" in
       _template.md|README.md|bootstrap-archival-node.md|off-site-backup-plan.md) continue ;;
     esac
-    # Look for a reference in alerts-catalog, sev-playbook, or peer runbooks.
     if ! grep -qrF "runbooks/$fname" docs/operations/ 2>/dev/null; then
       err "orphan runbook with no referrer: $r — link from alerts-catalog, sev-playbook, or another runbook"
     fi
@@ -849,20 +625,8 @@ fi
 
 # ─── 14. Alert-runbook section presence ────────────────────────────────────
 #
-# Per the runbook template at docs/operations/runbooks/_template.md
-# (wave 78 refresh + wave 81 normalisation), `## At a glance` and
-# `## Related` are the two universally-required sections on every
-# alert runbook. Without `## At a glance` an operator paged at
-# 3 AM has to read the body prose to learn severity / MTTR /
-# impact; without `## Related` the cross-link graph rots and
-# adjacent runbooks become undiscoverable.
-#
-# Exclude procedural runbooks (bring-up, disaster recovery,
-# SEV-comms procedures, one-off operator notes) — they're
-# legitimately shaped differently. The allow-list mirrors the
-# orphan-lint exclusions above plus three procedural runbooks
-# (`dr-activation`, `sev-status-page-update`, the dated operator
-# note) flagged as not-alert-shaped.
+# Every alert runbook needs `## At a glance` (severity/MTTR/impact for a 3 AM page) and `## Related` (cross-links).
+# Procedural runbooks (bring-up, DR, SEV comms, operator notes) are excluded; the list mirrors the orphan exclusions.
 
 echo "Checking alert-runbook section presence..."
 if [ -d docs/operations/runbooks ]; then
@@ -883,16 +647,8 @@ fi
 
 # ─── 15. Incident post-mortem follow-up forcing function ──────────────────
 #
-# Fail if any user-facing incident (internal/incidents/data/*.md,
-# served by /v1/incidents) is older than 30 days AND still has
-# unchecked `[ ]` checkboxes in its body, so follow-ups that rot let the
-# same cascade recur. Close them within a month or mark them accepted
-# debt (`[~]` counts as checked).
-#
-# Date is sourced from the filename slug `<YYYY-MM-DD>-<slug>.md`
-# — matches the convention enforced by `internal/incidents`
-# (frontmatter `started_at:` may be richer, but filename is the
-# stable surface and the only thing this lint reads).
+# Fail if an incident (internal/incidents/data/*.md) is older than 30 days with unchecked `[ ]` boxes; `[~]` counts as
+# accepted. The date comes from the filename slug `<YYYY-MM-DD>-<slug>.md`, the only thing read.
 
 echo "Checking incident post-mortem follow-ups..."
 INCIDENT_DIR="internal/incidents/data"
@@ -902,24 +658,18 @@ if [ -d "$INCIDENT_DIR" ]; then
   for incident in "$INCIDENT_DIR"/*.md; do
     [ -f "$incident" ] || continue
     fname="${incident##*/}"
-    # Skip templates / underscored scratch files (mirrors
-    # internal/incidents/incidents.go Load() behaviour).
     case "$fname" in
       _*) continue ;;
     esac
-    # Extract YYYY-MM-DD from the slug; bail if no leading date.
     date_str=$(echo "$fname" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)
     [ -z "$date_str" ] && continue
-    # BSD-first date parse (matches section 6 convention).
     incident_epoch=$(date -u -j -f "%Y-%m-%d" "$date_str" +%s 2>/dev/null || \
                      date -u -d "$date_str" +%s 2>/dev/null || echo "")
     [ -z "$incident_epoch" ] && continue
     if [ "$incident_epoch" -ge "$THIRTY_DAYS_AGO" ]; then
-      # Inside the 30-day grace window — unchecked items still OK.
       continue
     fi
-    # Count unchecked `[ ]` checkboxes (markdown task-list shape).
-    # `[x]` / `[X]` / `[~]` are all treated as done/acknowledged.
+    # `[x]` / `[X]` / `[~]` count as done or acknowledged.
     unchecked=$(grep -cE '^[[:space:]]*-[[:space:]]+\[ \]' "$incident" || true)
     if [ "$unchecked" -gt 0 ]; then
       err "incident '$incident' is older than 30 days and has $unchecked unchecked '[ ]' follow-up checkbox(es) — close them, mark as acknowledged with '[~]', or rewrite the action item."
@@ -929,12 +679,7 @@ fi
 
 # ─── 16. Production CSP must not permit http://localhost ──────────────────
 #
-# An earlier revision left `http://localhost:3000` in the Cloudflare
-# Pages CSP `connect-src` of the explorer + status sites as a
-# dev-convenience that leaked into production. The Next dev server
-# doesn't apply _headers anyway, so the dev-build use case is moot;
-# permitting localhost in prod CSP is pure config drift between dev and
-# prod. This guard fails CI if it regresses.
+# A dev-convenience localhost origin in the Pages CSP `connect-src` leaked to production; the dev server ignores _headers.
 
 for hf in web/explorer/public/_headers web/status/public/_headers; do
   if [ -f "$hf" ] && grep -qE 'Content-Security-Policy:.*localhost' "$hf"; then
@@ -944,10 +689,7 @@ done
 
 # ─── 16b. The explorer runbook must describe the _headers that ship ────────
 #
-# docs/operations/explorer-deployment.md once documented a /* CSP with
-# `frame-ancestors 'none'` and a single connect-src origin long after the
-# file dropped the first (it made every embed unframeable) and grew to
-# three origins, and _headers pointed at a runbook that did not exist.
+# The runbook once documented a CSP and connect-src origins that _headers no longer matched.
 
 EXPLORER_HEADERS="web/explorer/public/_headers"
 EXPLORER_RUNBOOK="docs/operations/explorer-deployment.md"
@@ -969,28 +711,13 @@ fi
 
 # ─── 17. k6 AlertManager-silence matchers must exist and be non-paging ─────
 #
-# test/load/scenarios/lib/alertmanager.js hardcodes the default silence
-# matchers the 99-spike load scenario posts to AlertManager. This is a
-# two-sided drift risk:
-#   (a) an alertname that matches NO deployed alert -> the silence is a
-#       silent no-op and on-call pages during the planned burst (the
-#       original finding: defaults were 'APIHighLatencyP95' when the
-#       real alert is 'stellarindex_api_latency_p95_high').
-#   (b) an alertname that IS deployed but carries `severity: page` ->
-#       the silence masks a real SEV-1 for the run's duration (the
-#       inverse, over-silencing failure — a stray
-#       'alertname=stellarindex_api_error_rate_critical' shipped this
-#       exact bug for several weeks).
-# Both classes are re-derived here from the rule files (the source of
-# truth), not hand-verified once, so a future alert rename or
-# severity bump can't silently reopen either one.
+# test/load/scenarios/lib/alertmanager.js hardcodes silence matchers. An alertname matching no deployed alert is a no-op
+# (pages during the burst); one carrying `severity: page` masks a real SEV-1. Both are re-derived from the rule files.
 
 echo "Checking k6 AlertManager-silence matcher targets..."
 AM_JS="test/load/scenarios/lib/alertmanager.js"
 if [ -f "$AM_JS" ]; then
-  # Pull only the alertname=... tokens out of the `const matchers = (...)`
-  # assignment — NOT the amtool dry-run example in the header comment,
-  # which intentionally lists the same names for operator copy-paste.
+  # Only the alertname=... tokens in the `const matchers = (...)` assignment, not the amtool example in the header.
   matcher_block=$(awk '/^const matchers = \(ENV\.ALERTMANAGER_SILENCE_MATCHERS/,/\.split\(.,.\);/' "$AM_JS")
   alertnames=$(echo "$matcher_block" | grep -oE 'alertname=[A-Za-z0-9_]+' | sed 's/alertname=//' | sort -u)
   if [ -z "$alertnames" ]; then
@@ -1007,14 +734,8 @@ if [ -f "$AM_JS" ]; then
       err "$AM_JS default matcher 'alertname=$name' does not match any '- alert: $name' rule in:$missing — the 99-spike silence would be a no-op for this alert and on-call pages during the planned burst"
       continue
     fi
-    # Extract the alert's own rule block (from its `- alert: NAME` line
-    # up to the next `- alert:`/`- record:` line) and pull `severity:`
-    # from inside it. A fixed -A context window is NOT safe here: a
-    # multi-line `expr: |` block pushes `labels:`/`severity:` past a
-    # small window (e.g. p95_high's severity line is the 7th line after
-    # `alert:`, not the 6th) — an under-sized window makes the lookup
-    # grep match nothing, and under `set -eo pipefail` that silently
-    # aborts the whole lint script instead of just this check.
+    # Take severity from the alert's own rule block (to the next `- alert:`/`- record:`). A fixed -A window is unsafe:
+    # a long `expr: |` pushes `severity:` past it, the grep matches nothing and set -eo pipefail aborts the lint.
     sev=$(awk -v name="$name" '
       $0 ~ ("alert: " name "$") { infile=1; next }
       infile && /^ *- (alert|record):/ { exit }
@@ -1030,23 +751,9 @@ fi
 
 # ─── 18. r1's ZFS `data` pool topology — ONE source of truth ───────────────
 #
-# r1's `data` pool is single-parity raidz1. Docs describing it as raidz2
-# promise a second drive of margin that does not exist and size capacity
-# plans off the wrong usable figure.
-#
-# AUTHORITY: `zfs_data_pool_type` in configs/ansible/inventory/r1.example.yml
-# — the machine-readable value that would actually rebuild the pool, so
-# doc drift and IaC drift are the same check. Not a literal in this
-# script: that would just be a third source of truth.
-#
-# RULE: in the r1-scoped files below, a PARAGRAPH that names any raidz
-# level must also name the live one. That permits deliberate contrast
-# and dated history ("raidz2 at bringup; raidz1 since <date>") and
-# rejects what actually drifts — a bare, unqualified assertion of the
-# wrong level. Dated decision records (ADR-0016/0027, the superseded
-# first-archival-node-deployment runbook (deleted), docs/audit/**) are NOT listed:
-# they record what was decided/believed at a date and carry inline
-# corrections instead.
+# AUTHORITY: `zfs_data_pool_type` in configs/ansible/inventory/r1.example.yml (not a literal here: that would be a third
+# source). RULE: in the r1-scoped files below, a PARAGRAPH naming any raidz level must also name the live one; dated
+# decision records (ADRs, audit docs) are not listed because they carry inline corrections.
 
 echo "Checking r1 ZFS pool topology (single source of truth)..."
 R1_INVENTORY="configs/ansible/inventory/r1.example.yml"
@@ -1055,7 +762,6 @@ r1_pool_type=$(awk -F'"' '/^[[:space:]]*zfs_data_pool_type:[[:space:]]*"/{print 
 if [ -z "$r1_pool_type" ]; then
   err "could not read zfs_data_pool_type from $R1_INVENTORY — that value is the authority for r1's pool topology; restore it or update scripts/ci/lint-docs.sh §18"
 else
-  # Files that describe r1's pool AS IT RUNS TODAY.
   r1_topology_files=(
     "$R1_INVENTORY"
     configs/prometheus/rules.r1/infra.yml
@@ -1073,8 +779,7 @@ else
     docs/operations/runbooks/postgres.md
     configs/ansible/inventory/r3.example.yml
   )
-  # …and the subset that must SAY it, so the gate can't be satisfied by
-  # gutting every mention (or by flipping the authority alone).
+  # …and the subset that must SAY it, so gutting every mention cannot satisfy the gate.
   r1_topology_must_state=(
     configs/prometheus/rules.r1/infra.yml
     deploy/monitoring/rules/infra.yml
@@ -1089,7 +794,6 @@ else
       continue
     fi
     r1_files_checked=$((r1_files_checked + 1))
-    # Paragraph = run of non-blank lines. Report the paragraph's first line.
     bad=$(awk -v auth="$r1_pool_type" '
       function flush() {
         if (para != "" && para ~ /raidz[0-9]/ && index(para, auth) == 0)
@@ -1111,10 +815,8 @@ else
       err "$f no longer states r1's pool topology ('$r1_pool_type') anywhere — deleting the statement is how this fact went missing for a year (#289); it must be stated, not merely not-contradicted"
     fi
   done
-  # The ansible role default is deliberately raidz2 (right shape for a
-  # FRESH node) — so the defaults file is not paragraph-scanned. What IS
-  # checked is its per-region comment, which is where the false "r1 =
-  # raidz2" claim lived.
+  # The role default is deliberately raidz2 (right for a fresh node), so the defaults file is not
+  # paragraph-scanned; only its per-region comment is checked.
   ANSIBLE_DEFAULTS="configs/ansible/roles/archival-node/defaults/main.yml"
   r1_comment=$(grep -E '^#[[:space:]]+r1 = ' "$ANSIBLE_DEFAULTS" 2>/dev/null || true)
   if [ -z "$r1_comment" ]; then
@@ -1127,28 +829,12 @@ fi
 
 # ─── 19. Agent-orientation docs: the claims a machine can re-derive ────────
 #
-# AGENTS.md is the first thing an agent reads, so a false claim there
-# misleads every later session. One claim is mechanically checkable:
-#
-#   (b) The status page moved into the explorer (web/explorer/src/app/
-#       status/, stellarindex.io/status) and web/status/ became a
-#       redirect-only Cloudflare Pages stub — but AGENTS.md's repo map
-#       still located the shipped page at web/status/, sending every
-#       agent that reads it to the stub. Scope is deliberately the
-#       three orientation docs a reader consults to learn WHERE things
-#       live: the operational docs (cf-pages-setup, status-page-setup,
-#       rollback, sev-playbook, the CF Pages bootstrap runbooks) name
-#       web/status/ legitimately, because the Pages project that serves
-#       the 301 is still real and still deployed. The check is
-#       per-DOCUMENT, not per-line, so prose can be worded freely, and
-#       it disarms itself if the page ever moves back.
+# (b) The status page lives in the explorer (web/explorer/src/app/status/); web/status/ is a redirect-only stub. The three
+# orientation docs must not locate the shipped page at web/status/. Checked per document; ops docs may name the stub.
 
 echo "Checking agent-orientation doc claims..."
 
 # (a) retired: the two orientation docs merged into one AGENTS.md.
-#
-# If a second orientation doc is ever reintroduced, restore this check
-# with it; the parity problem it caught was real.
 
 # (b) While web/status/ is a redirect stub, an orientation doc that
 # names it must also say where the status page actually lives.
@@ -1168,17 +854,8 @@ fi
 
 # ─── 20. The self-hosting path: what a stranger types in their first hour ──
 #
-# README's second paragraph headlines "Self-hostable", and
-# docs/operations/self-hosting.md is the document that has to make that word
-# true. Everything it tells a reader to type is a claim about a file in this
-# repo, and four of those claims had drifted far enough to brick the bring-up:
-# a `cd` into a directory the clone never creates, a `make dev` banner
-# advertising an API and a docs site the compose file does not define, a guide
-# the README never linked at all, and prose calling the ClickHouse dual-sink
-# opt-in three months after ADR-0041 turned it on. Each is re-derivable from
-# the repo, so each is re-derived here instead of trusted. The config KEYS the
-# guide names are checked separately, against the real schema, by
-# internal/config's TestSelfHostingGuide_ConfigRefs.
+# Everything docs/operations/self-hosting.md tells a reader to type is a claim about this repo, so each is re-derived here.
+# Config KEYS are checked against the schema by internal/config's TestSelfHostingGuide_ConfigRefs.
 
 echo "Checking the self-hosting path..."
 SELF_HOSTING="docs/operations/self-hosting.md"
@@ -1186,9 +863,8 @@ if [ ! -f "$SELF_HOSTING" ]; then
   err "REQUIRED input missing: '$SELF_HOSTING' not found — it is the only end-to-end bring-up guide this repo ships; restore it or update lint-docs.sh §20"
 fi
 
-# (a) `git clone <url>` followed by `cd <dir>`. git names the checkout after
-# the URL's basename, so `cd stellar-index` after cloning StellarIndex.git
-# works only on a case-insensitive filesystem — and only by accident.
+# (a) `git clone <url>` then `cd <dir>`: git names the checkout after the URL basename, so a mismatched
+# `cd` works only on a case-insensitive filesystem.
 if [ -f "$SELF_HOSTING" ]; then
   cd_drift=$(awk '
     /git clone [^ ]+/ {
@@ -1214,13 +890,11 @@ if [ -f "$SELF_HOSTING" ]; then
   done
 fi
 
-# (b) `make dev` prints where the stack is. Every localhost:<port> the banner
-# advertises must be a port deploy/docker-compose/dev.yaml actually publishes.
+# (b) Every localhost:<port> the `make dev` banner advertises must be published by deploy/docker-compose/dev.yaml.
 DEV_COMPOSE="deploy/docker-compose/dev.yaml"
 if [ -f Makefile ] && [ -f "$DEV_COMPOSE" ]; then
   dev_recipe=$(awk '/^dev:/ { f = 1; next } /^[^\t]/ { f = 0 } f' Makefile)
-  # Normalise compose's ${VAR:-1234} host-port defaults before splitting, so
-  # the ':-' inside them isn't mistaken for a port separator.
+  # Normalise compose's ${VAR:-1234} host-port defaults so ':-' is not read as a port separator.
   published=$(sed -E 's/\$\{[A-Za-z_]+:-([0-9]+)\}/\1/g' "$DEV_COMPOSE" |
     awk -F: '/^[[:space:]]*-[[:space:]]*"?[0-9.]+:[0-9]+:[0-9]+"?/ { gsub(/"/, "", $(NF - 1)); print $(NF - 1) }')
   advertised=$(printf '%s\n' "$dev_recipe" | grep -oE 'localhost:[0-9]+' | cut -d: -f2 | sort -u || true)
@@ -1231,18 +905,13 @@ if [ -f Makefile ] && [ -f "$DEV_COMPOSE" ]; then
   done
 fi
 
-# (c) README's "Self-hostable." has to lead somewhere: the README that makes
-# the claim must link the guide, not only docs/getting-started.md.
+# (c) The README that claims "Self-hostable." must link the guide.
 if [ -f README.md ] && ! grep -q "operations/self-hosting.md" README.md; then
   err "README.md advertises the project as self-hostable but never links $SELF_HOSTING — a reader who takes the claim seriously has nowhere to go. Link it from the 'Start here' list."
 fi
 
-# (d) A default has one authority: Default() in internal/config/config.go
-# (TestDefault_MatchesStructTags pins the `default:` tags to it). Prose is the
-# part nothing checked — ADR-0041 turned the ClickHouse dual-sink and the
-# projector feed-switch ON and left both comments reading "off by default", so
-# an operator who believed them stood up no ClickHouse and watched the indexer
-# die at boot dialling 127.0.0.1:9300.
+# (d) A default has one authority: Default() in internal/config/config.go. Prose claiming "off by default"
+# for a knob that is on is the part nothing else checked.
 for knob in ClickHouseLiveSink:clickhouse_live_sink ClickHouseProjectorSource:clickhouse_projector_source; do
   go_name=${knob%%:*}
   toml_name=${knob##*:}
@@ -1256,9 +925,7 @@ for knob in ClickHouseLiveSink:clickhouse_live_sink ClickHouseProjectorSource:cl
   [ "$knob_default" = "true" ] || continue
   for f in internal/config/config.go cmd/stellarindex-indexer/main.go "$SELF_HOSTING"; do
     [ -f "$f" ] || continue
-    # Proximity, not paragraph: an "off by default" within a few lines of the
-    # knob's name is documenting THAT knob. A wider window would sweep in
-    # Default()'s body, where every field in the struct is one blank-free run.
+    # Proximity, not paragraph: a wider window would sweep in Default()'s body, one blank-free run.
     bad=$(awk -v gn="$go_name" -v tn="$toml_name" -v window=6 '
       { line[FNR] = $0 }
       END {
@@ -1279,12 +946,8 @@ done
 
 # ─── 21. Phoenix's synthetic XLM SAC test-fixture id must not resurface ─────
 #
-# internal/sources/phoenix/events.go documents CDLZFC3SY… as the synthetic
-# id used across test/integration fixtures — NOT the XLM SAC on any network.
-# A README that
-# republishes it as a verified mainnet address silently reopens the booby
-# trap that removal closed: the moment code reads it, XLM stops being XLM.
-# Fixtures are exempt; prose docs (READMEs) are not.
+# phoenix/events.go documents CDLZFC3SY… as a synthetic fixture id, not the XLM SAC. A README republishing it as a
+# mainnet address reopens that trap. Fixtures are exempt; prose docs are not.
 
 echo "Checking Phoenix's synthetic XLM SAC test-fixture id hasn't resurfaced in a README..."
 PHOENIX_FAKE_XLM_SAC="CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
@@ -1293,20 +956,13 @@ while IFS= read -r -d '' readme; do
   if grep -q "$PHOENIX_FAKE_XLM_SAC" "$readme"; then
     err "$readme republishes '$PHOENIX_FAKE_XLM_SAC' as if it were a real address — internal/sources/phoenix/events.go documents this as the synthetic test/integration-fixture id, NOT a real XLM SAC on any network. Use aquarius.MainnetXLMSAC or canonical.Asset.SacContractID() instead; do not print this id in a README."
   fi
-# Tracked files only: `find .` also walked .claude/worktrees/ (thousands of
-# agent-checkout READMEs), costing ~25s and letting an untracked copy redden the lint.
+# Tracked files only: `find .` also walked .claude/worktrees/ (~25s) and let untracked copies redden the lint.
 done < <(git ls-files -z -- ':(glob)**/README.md')
 
 # ─── Explorer README claims must match package.json and src/app ────────────
 #
-# web/explorer/README.md said the customer account lived at `/account/*`
-# (it is src/app/dashboard/), that blog posts used `@next/mdx` (never a
-# dependency) and that `pnpm lint` ran `next lint` (it runs `eslint .`).
-# Each is a claim a reader acts on, so each is checked against its source:
-# a documented `pnpm <script>  # <cmd>` must be a real script whose value
-# starts with <cmd> when <cmd> names a tool; a backticked `@scope/pkg`, or
-# an external-link package name in the Stack list, must be a declared
-# dependency; a backticked `/<route>/*` must be a directory under src/app.
+# A documented `pnpm <script>  # <cmd>` must be a real script starting with <cmd>; a backticked `@scope/pkg` or Stack-list
+# package must be a declared dependency; a backticked `/<route>/*` must be a directory under src/app.
 
 echo "Checking web/explorer docs against package.json and src/app..."
 if [ -f web/explorer/README.md ] && [ -f web/explorer/package.json ] && command -v python3 >/dev/null 2>&1; then
@@ -1349,9 +1005,7 @@ fi
 
 # ─── 22. deploy/comms/README.md's "calls X.md" claims must be true ─────────
 #
-# The comms README tells an operator which runbook step sends which
-# template. A runbook that never links its template leaves the operator
-# drafting from a blank page mid-incident, so each claim is re-derived.
+# A runbook that never links its template leaves the operator drafting from a blank page mid-incident.
 echo "Checking customer-comms template callers..."
 COMMS_README="deploy/comms/README.md"
 if [ ! -f "$COMMS_README" ]; then
@@ -1396,9 +1050,7 @@ fi
 
 # ─── Every internal/ and pkg/ package has a package comment ─────────────────
 #
-# engineering-standards.md §4.2/§14.10: the package comment is where an agent
-# reads "what is this package" first. Parsed here rather than via `go list`
-# because this job has no Go toolchain; untracked files count, as in `make fmt`.
+# engineering-standards.md section 4.2: parsed here, not via `go list`, because this job has no Go toolchain.
 echo "Checking package doc comments..."
 if pkgdoc_out=$(git ls-files -z --cached --others --exclude-standard -- 'internal/*.go' 'pkg/*.go' | python3 -c '
 import os, re, sys
@@ -1432,10 +1084,7 @@ fi
 
 # ─── Documented make targets exist ───────────────────────────────────────────
 #
-# A contributor or operator page that says `make X` is an instruction to run
-# it; a target the Makefile lacks fails with "No rule to make target". Scans
-# inline `make X` and `make X` lines inside fenced blocks; "no `make X`" is
-# the one phrasing that documents an absence and is exempt.
+# A documented `make X` must exist in the Makefile; "no `make X`" documents an absence and is exempt.
 if [ -f Makefile ]; then
   make_targets=$(grep -oE '^[A-Za-z0-9_.-]+:' Makefile | tr -d ':' | sort -u)
   # shellcheck disable=SC2016  # awk program: literal backticks and $, not shell
@@ -1464,9 +1113,7 @@ fi
 
 # ─── CHANGELOG.md stays a rolling window ─────────────────────────────────────
 #
-# A multi-MB changelog is read by every agent that edits it and was the
-# repo's top rebase-conflict file. Newest five release sections only; the
-# 1 MiB cap drops to 200 KiB once [Unreleased] is regenerated at the cut.
+# Newest five release sections only; the 1 MiB cap drops to 200 KiB once [Unreleased] is regenerated at the cut.
 if [ -f CHANGELOG.md ]; then
   sections=$(grep -c '^## \[v' CHANGELOG.md || true)
   if [ "$sections" -gt 5 ]; then

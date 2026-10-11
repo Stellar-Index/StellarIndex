@@ -1,20 +1,10 @@
 #!/usr/bin/env bash
-# config-assertions.sh — asserts that the load-bearing hand-applied /
-# ansible-codified guard configs are actually LIVE on this host.
-#
-# Ansible does not auto-run against r1, so a fix codified in ansible can
-# be absent from the host (codified is not applied), and a live-only fix
-# is one ansible run from being erased. Neither direction is
-# self-healing — this check makes a gap in EITHER direction visible
-# within an hour instead of at the next incident.
-#
-# Emits node_exporter textfile gauges:
-#   stellarindex_config_assertion_ok{assertion="..."} 0|1
-# Alert: stellarindex_config_assertion_failed (storage.yml, both trees).
-#
-# Adding an assertion: one `assert_*` line in main(). Assert the
-# CONTENT that matters (grep), not just file existence — a truncated
-# or reverted file should fail.
+# config-assertions.sh - asserts the load-bearing guard configs are LIVE on this host.
+# Ansible does not auto-run against r1, so a codified fix can be absent and a live-only fix can be
+# erased by the next run; this makes a gap in either direction visible within an hour.
+# Emits textfile gauges stellarindex_config_assertion_ok{assertion="..."} 0|1; alert is
+# stellarindex_config_assertion_failed. To add one, put an `assert_*` line in the body and assert
+# CONTENT (grep), not just file existence.
 set -u
 # CH as ops_monitor once the role renders this file; /dev/null (no
 # credential, CH `default`) until then, so no deploy order strands this script.
@@ -42,34 +32,20 @@ assert_cmd() { # assert_cmd <assertion> <command...>
   if "${@:2}" >/dev/null 2>&1; then emit "$1" 1; else emit "$1" 0; fi
 }
 
-# ── host-shape applicability ─────────────────────────────────────────
-# Some assertions guard a layer a given host does not HAVE. A test-net
-# libvirt VM (and r2/r3 on EBS/Object-Storage) runs with
-# zfs_data_pool_type="" and no pool at all — asserting ZFS integrity
-# there reports FAIL forever for a layer that is absent by design, which
-# trains the operator to ignore a page that exists to catch a pool one
-# reboot from gone.
-#
-# `skip` emits an EXPLICIT _skipped series rather than omitting the
-# assertion silently, so "deliberately not applicable on this host" stays
-# distinguishable from "this check vanished in a refactor". The alert is
-# `stellarindex_config_assertion_ok == 0`, so a skipped assertion cannot
-# fire it, and the staleness alert reads the file mtime, which still
-# updates.
+# Host-shape applicability: some assertions guard a layer a host lacks by design (e.g. no ZFS pool
+# on test-net VMs), where a permanent FAIL would train operators to ignore the page. `skip` emits
+# an explicit _skipped series, so "not applicable" stays distinct from "check vanished"; it cannot
+# fire the ok==0 alert.
 skip() { # skip <assertion>
   echo "stellarindex_config_assertion_skipped{assertion=\"$1\"} 1" >> "$TMP"
   echo "config-assertions: SKIP $1 (layer not present on this host)" >&2
 }
 
-# True only where a real ZFS data pool is live. Deliberately checks the
-# POOL, not just the binary: a host with zfsutils installed but no pool
-# is still a no-ZFS host for these assertions' purposes.
+# True only where a real ZFS data pool is live (the pool, not just the binary).
 have_zfs() { command -v zpool >/dev/null 2>&1 && zpool list data >/dev/null 2>&1; }
 
-# The Stellar network this host indexes, read from the same config the
-# binaries read. Empty if unreadable — callers must treat empty as
-# "assume pubnet" so an unreadable config can never SILENCE a check on
-# r1 (fail-closed: unknown host shape keeps the strict assertions).
+# Network this host indexes. Empty (unreadable config) is treated as pubnet so a bad read can
+# never silence a check on r1.
 STELLAR_TOML="${STELLAR_TOML:-/etc/stellarindex.toml}"
 stellar_network() {
   sed -nE 's/^[[:space:]]*network[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
@@ -80,11 +56,7 @@ is_pubnet() { [[ "$(stellar_network)" != "testnet" && "$(stellar_network)" != "f
 {
   echo "# HELP stellarindex_config_assertion_ok 1 when a load-bearing guard config is live with expected content."
   echo "# TYPE stellarindex_config_assertion_ok gauge"
-  # _skipped is written by skip() below and had no header of its own, so it
-  # arrived untyped. Declared here, beside _ok, and unconditionally: a host
-  # that skips nothing renders the header with no samples under it, which is
-  # a well-formed (and correct) "this family exists, it is empty" — the same
-  # reason every other family here is declared before its first sample.
+  # Declared unconditionally so the _skipped family is typed even when nothing is skipped.
   echo "# HELP stellarindex_config_assertion_skipped 1 when an assertion was deliberately not run because the layer it guards is absent on this host shape."
   echo "# TYPE stellarindex_config_assertion_skipped gauge"
 } > "$TMP"
@@ -101,17 +73,12 @@ assert_grep ch_logs_on_zfs /etc/clickhouse-server/config.d/zzz-logpath.xml \
 assert_grep syslog_maxsize /etc/logrotate.d/rsyslog \
   'maxsize'
 
-# ── ZFS integrity (an ansible apply that breaks the userspace or
-# deletes the dkms module leaves the pool one reboot from gone) ──
+# ── ZFS integrity (a broken userspace or deleted dkms module leaves the pool one reboot from gone) ──
 if have_zfs; then
   assert_cmd zfs_userspace_works zpool status data
-  # Requires the unit to NOT set ProtectKernelModules (see the comment in
-  # deploy/systemd/config-assertions.service): that flag makes
-  # /lib/modules inaccessible, and every formulation of this check — ls,
-  # modinfo, dkms status — reads that tree, so with it set the assertion
-  # reports FAIL on every service run while passing by hand. Checking the
-  # module is merely LOADED would not substitute: a deleted module stays
-  # resident until reboot, which is exactly the trap this guards.
+  # Needs the unit to NOT set ProtectKernelModules (it hides /lib/modules, so every check form
+  # fails under the service while passing by hand). A merely-loaded module would not do: a deleted
+  # one stays resident until reboot.
   # shellcheck disable=SC2016  # $(uname -r) must expand in the INNER sh, not here
   assert_cmd zfs_module_on_disk sh -c 'ls /lib/modules/$(uname -r)/updates/dkms/zfs.ko* >/dev/null'
   assert_cmd zfs_packages_held sh -c 'apt-mark showhold | grep -q zfs-dkms'
@@ -139,26 +106,11 @@ else
   skip supply_reserve_accounts_nonempty
 fi
 
-# ── MinIO galexie-writer credential drift (rotation follow-up:
-# docs/operations/credential-rotation.md) ─────────────────────────────
-# There's no way to read a MinIO/S3 secret back and diff it against
-# the vault — servers only ever accept/reject a signed request, they
-# never expose a stored secret for comparison. So instead of an
-# assert_grep content check, this probes whether the AWS_* creds
-# currently templated into /etc/default/galexie still authenticate
-# against the live MinIO server with ListBucket rights on
-# galexie-live — exactly the capability galexie itself needs on
-# every upload. A rotation that updated one side (the vault or the
-# live MinIO user) but not the other fails this within the hour
-# instead of surfacing as galexie's SignatureDoesNotMatch / upload
-# stall. Never prints the secret: mc
-# reads it from the MC_HOST_* env var directly, nothing is written
-# to a config file on disk or echoed, and assert_cmd itself already
-# redirects all output to /dev/null.
-# bash -c, not sh -c: the body uses [[ ]], which dash rejects with
-# "[[: not found" (exit 127) — under sh this assertion would report
-# FAIL on every run regardless of the creds' actual validity. Same
-# bashism-under-dash class as the deploy backup-freshness gate.
+# ── MinIO galexie-writer credential drift (docs/operations/credential-rotation.md) ──
+# Servers never expose a stored secret to diff against the vault, so probe instead that the AWS_*
+# creds in /etc/default/galexie still authenticate with ListBucket on galexie-live. Catches a
+# rotation applied to only one side. Never prints the secret: mc reads MC_HOST_* from env.
+# bash -c, not sh -c: the body uses [[ ]], which dash rejects (exit 127, permanent FAIL).
 # shellcheck disable=SC2016  # the body is a script for the INNER bash; expanding it here would resolve every variable in the caller
 assert_cmd galexie_writer_creds_valid bash -c '
   export HOME=/root
@@ -174,24 +126,11 @@ assert_cmd galexie_writer_creds_valid bash -c '
   /usr/local/bin/mc ls cfgassert/galexie-live >/dev/null 2>&1
 '
 
-# ── Compression-policy backfill status ───────────────────────────────
-# scripts/ops/add-missing-compression-policies.sql is a deliberate
-# NON-migration operator script (must run AFTER the Phase D backfill —
-# see its own header for why) with no execution tracking of its own:
-# without this check nothing notices if an operator forgot to run it, or
-# if a table is added to its eligible-tables list without a matching
-# policy actually landing. The want-list MUST track that script's list
-# exactly: migration 0152 dropped aggregator_exposures /
-# classic_asset_stats_5m / tvl_observations as never-wired scaffolds, and
-# a dropped table has no policy job, so leaving it here would fail this
-# assertion on r1 forever for a table that is gone on purpose. Tables the
-# script excludes for a near-unique segment-by are excluded here too, or
-# this pages for them.
-# Reuses the SAME stellarindex_config_assertion_ok gauge +
-# the existing stellarindex_config_assertion_failed alert every other
-# assertion here uses — no new alert rule needed. Expected to page
-# (severity: ticket, not page) until the operator runs that script
-# post-Phase-D; that visibility IS the point — otherwise the gap is silent.
+# ── Compression-policy backfill status ──
+# add-missing-compression-policies.sql is a deliberate non-migration operator script with no
+# execution tracking; this notices a forgotten run. The want-list MUST track that script's list
+# exactly, including exclusions, or dropped tables fail here forever. Expected to ticket-page
+# until the operator runs it; that visibility is the point.
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 compression_policies_applied() {
   [[ -r /etc/stellarindex/postgres-password.txt ]] || return 1
@@ -210,35 +149,20 @@ compression_policies_applied() {
       );
     " 2>/dev/null | grep -qx 0
 }
-# The want-list above is MAINNET-shaped: it names protocol-integration
-# hypertables (blend/cctp/rozo/defindex …) that a lean SDEX-only test net
-# never creates, so on those hosts the check fails for tables that are
-# absent by design rather than for a missing compression policy. Gated on
-# pubnet rather than "only check tables that exist", because the latter
-# would ALSO weaken r1 — a hypertable silently disappearing there would
-# start passing. r1 semantics are unchanged; is_pubnet treats an
-# unreadable config as pubnet so this can never silence r1.
+# The want-list is mainnet-shaped (protocol hypertables a lean test net never creates), so gate on
+# pubnet rather than "check tables that exist", which would also weaken r1.
 if is_pubnet; then
   assert_cmd compression_policies_applied compression_policies_applied
 else
   skip compression_policies_applied
 fi
 
-# ── Postgres background-worker headroom (timescale-job-failures-
-# climbing runbook) ────────────────────────────────────────────────────
-# max_worker_processes is postmaster-level (see postgresql.conf.j2's own
-# comment): an ansible apply that renders the file to 32 does nothing to
-# the RUNNING server until Postgres restarts, so grepping the file alone
-# would report "fixed" while the scheduler is still starved at the old
-# value. Check both: the file
-# (codified) and a live SHOW (in effect right now), same
-# codified-vs-applied pairing as supply_reserve_accounts above.
-# Paths are overridable (like TEXTFILE_DIR above) so this pair is
-# testable without root or a live Postgres.
+# ── Postgres background-worker headroom ──
+# max_worker_processes is postmaster-level: a rendered file does nothing until restart, so check
+# both the file (codified) and a live SHOW (in effect). Paths are overridable for tests.
 PG_CONF_FILE="${PG_CONF_FILE:-/etc/postgresql/15/main/postgresql.conf}"
 PG_PASSWORD_FILE="${PG_PASSWORD_FILE:-/etc/stellarindex/postgres-password.txt}"
-# The test nets have no password file; the local postgres superuser reads the
-# same server-wide values (nothing here is a per-role setting).
+# Test nets have no password file; the local postgres superuser reads the same server-wide values.
 # shellcheck disable=SC2317,SC2329  # invoked from the functions below
 query_pg() { # query_pg <sql>
   if [[ -r "$PG_PASSWORD_FILE" ]]; then
@@ -259,18 +183,11 @@ pg_max_worker_processes_live() {
 }
 assert_cmd pg_max_worker_processes_live pg_max_worker_processes_live
 
-# ── Every continuous aggregate has a refresh policy ──────────────────
-# The timescale-jobs probe enumerates refresh POLICIES (jobs where
-# proc_name = 'policy_refresh_continuous_aggregate'), so a CAGG whose
-# policy was dropped emits no stellarindex_cagg_last_refresh_unix series
-# and stellarindex_timescale_cagg_stale cannot fire for it. This
-# enumerates the AGGREGATES instead. No want-list: every CAGG the
-# migrations create carries a policy on every network. A refresh job's
-# jobs.hypertable_* is the view on TimescaleDB 2.26 and was the
-# materialization hypertable on older 2.x, so either matches. The SQL is
-# executed against migrated TimescaleDB by
-# TestCAGGRefreshPolicyAssertionSQL (test/integration/migrations_test.go),
-# which reads it from this variable; keep it free of double quotes.
+# ── Every continuous aggregate has a refresh policy ──
+# The timescale-jobs probe enumerates policies, so a CAGG with a dropped policy emits no series
+# and the stale alert cannot fire; this enumerates the aggregates instead. jobs.hypertable_* is the
+# view on 2.26 and the materialization hypertable on older 2.x, so either matches. The SQL is run
+# by TestCAGGRefreshPolicyAssertionSQL from this variable; keep it free of double quotes.
 CAGGS_WITHOUT_REFRESH_POLICY_SQL="
 SELECT count(*) FROM timescaledb_information.continuous_aggregates ca
  WHERE NOT EXISTS (
@@ -287,16 +204,10 @@ caggs_have_refresh_policy() {
 }
 assert_cmd caggs_have_refresh_policy caggs_have_refresh_policy
 
-# ── The trades compression policy is scheduled ───────────────────────
-# `usd-volume-restamp -chunks -write` pauses this policy for its run and
-# re-enables it on exit; a SIGKILL skips the re-enable and trades stops
-# compressing with nothing else flagging it. A pause is honoured only
-# while the run's advisory lock (hashtext('usd-volume-restamp:trades'),
-# timescale.USDVolumeRestampLockName) is held: the server drops it with
-# the killed run's connection. A missing policy counts as a failure too.
-# The policy is the custom job trades_compression_policy (migration 0205).
-# Executed against migrated TimescaleDB by
-# TestTradesCompressionScheduledAssertionSQL; keep it free of double quotes.
+# ── The trades compression policy is scheduled ──
+# `usd-volume-restamp -chunks -write` pauses this policy and a SIGKILL skips the re-enable. A
+# pause counts only while the run's advisory lock (hashtext('usd-volume-restamp:trades')) is held;
+# a missing policy fails too. Run by TestTradesCompressionScheduledAssertionSQL; no double quotes.
 TRADES_COMPRESSION_SCHEDULED_SQL="
 SELECT count(*) FROM timescaledb_information.jobs j
  WHERE j.proc_schema = current_schema()
@@ -314,14 +225,8 @@ trades_compression_policy_scheduled() {
 }
 assert_cmd trades_compression_policy_scheduled trades_compression_policy_scheduled
 
-# ── Postgres idle-in-transaction reaper ───────────────────────────────
-# Same codified-vs-applied pairing as max_worker_processes above, for
-# the GUC that is the only thing that ever terminates a session an app
-# bug left BEGIN'd and abandoned: idle_in_transaction_session_timeout
-# is a reload-only setting (no restart needed, unlike
-# max_worker_processes), so in steady state both checks should agree
-# quickly — a codified-but-not-live gap here means "reload never ran"
-# rather than "awaiting the next maintenance restart".
+# ── Postgres idle-in-transaction reaper ──
+# Codified-vs-live pairing as above; this GUC is reload-only, so a gap means a reload never ran.
 assert_grep pg_idle_in_transaction_timeout_codified \
   "$PG_CONF_FILE" \
   '^idle_in_transaction_session_timeout[[:space:]]*=[[:space:]]*30min'
@@ -333,32 +238,13 @@ pg_idle_in_transaction_timeout_live() {
 }
 assert_cmd pg_idle_in_transaction_timeout_live pg_idle_in_transaction_timeout_live
 
-# ── tx_hash_index parity probe (explorer 404 authority) ──────────────
-# GET /v1/tx/{hash} treats a stellar.tx_hash_index MISS as an
-# AUTHORITATIVE not-found (there is no bloom-scan fallback for index
-# misses; the 10.2B-row ch-txindex-backfill verified genesis→tip parity
-# once — a one-time check).
-# The index is maintained by a materialized view over
-# stellar.transactions, and NOTHING else re-detects future divergence: a
-# tx_hash_index_mv DROP/recreate window, or any load path that inserts
-# into stellar.transactions without firing MVs (ATTACH-PARTITION-style
-# loads), silently turns real transactions into 404s.
-#
-# Probe shape: sampled parity over the trailing 10k ledgers, NOT a
-# windowed count comparison — tx_hash_index is ORDER BY tx_hash with no
-# ledger_seq index, so "count rows WHERE ledger_seq > tip-10k" on the
-# index side is an unbounded full-column scan over 20B+ rows, exactly
-# the read class the index exists to avoid. Instead: draw 500 random
-# tx hashes from the window's transactions partitions (partition-pruned,
-# sub-second) and require EVERY one to resolve in the index via
-# primary-key point lookups (µs each; 500 scattered lookups measured
-# 0.77s on r1). A dropped-MV window of W ledgers inside the probe window
-# escapes one run with probability (1-W/10000)^500 — negligible by the
-# second hourly run for any outage worth catching. DISTINCT on the
-# sample because transactions is a ReplacingMergeTree (unmerged
-# duplicate rows must not double-count). CH via HTTP :8123 with curl —
-# dependency-light, and the clickhouse-client default native port on r1
-# famously hits MinIO (:9000), not CH (:9300).
+# ── tx_hash_index parity probe (explorer 404 authority) ──
+# GET /v1/tx/{hash} treats an index MISS as authoritative not-found, and nothing else re-detects
+# divergence (an MV drop/recreate window, or loads that bypass MVs). Sampled parity over the
+# trailing 10k ledgers: 500 random hashes from pruned transactions partitions must all resolve
+# by primary-key lookup (a windowed count on the index would be an unbounded scan). DISTINCT
+# because transactions is a ReplacingMergeTree. CH over HTTP :8123: the client's default native
+# port on r1 hits MinIO (:9000), not CH (:9300).
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 tx_hash_index_parity() {
   local ch="http://127.0.0.1:8123/"
@@ -372,8 +258,7 @@ tx_hash_index_parity() {
     WHERE ledger_seq > ${floor}
     ORDER BY rand() LIMIT 500
     SETTINGS max_threads = 4, max_memory_usage = 4294967296") || return 1
-  # An empty sample means the lake has no transactions in the trailing
-  # 10k ledgers — itself never-true on mainnet, so fail loud.
+  # Empty sample is never true on mainnet, so fail loud.
   n=$(printf '%s\n' "$sample" | grep -cE '^[0-9a-f]{64}$')
   [[ "$n" -gt 0 ]] || return 1
   in_list=$(printf '%s\n' "$sample" | grep -E '^[0-9a-f]{64}$' \
@@ -386,20 +271,11 @@ tx_hash_index_parity() {
 }
 assert_cmd tx_hash_index_parity tx_hash_index_parity
 
-# ── ClickHouse ops-batch identity, both halves live ──────────────────
-# The low-priority `ops_batch` profile only protects the aggregator /
-# indexer from a heavy stellarindex-ops job when BOTH the CH-side user
-# (users.d/ops-batch.xml, --tags clickhouse-ops-batch-profile) and the
-# env pair the jobs authenticate with (/etc/default/stellarindex-ops,
-# --tags minio) are in place. Applying one tag without the other is
-# either a silent no-op (user, no env: every job still runs as
-# `default` at serving priority) or a hard break (env,
-# no user: the next job fails auth). Skipped, not failed, while the
-# profile is not provisioned on this host (the flag defaults false).
-# Third leg: the pair must NEVER reach the service env — the
-# ansible-templated stellarindex-{indexer,aggregator,api} units source
-# /etc/default/stellarindex, and the same package seam would demote the
-# live sink + supply refresher to lowest priority (the inverse fault).
+# ── ClickHouse ops-batch identity, both halves live ──
+# The low-priority ops_batch profile protects serving only when BOTH the CH user
+# (users.d/ops-batch.xml) and the env pair in /etc/default/stellarindex-ops exist; one without
+# the other is a silent no-op or an auth break. Skipped while unprovisioned. The pair must NEVER
+# reach /etc/default/stellarindex, or live services would be demoted to lowest priority.
 if [[ -f /etc/clickhouse-server/users.d/ops-batch.xml ]]; then
   assert_grep ch_ops_batch_env_pair /etc/default/stellarindex-ops \
     '^STELLARINDEX_CLICKHOUSE_OPS_USER=.+'
@@ -409,16 +285,10 @@ fi
 assert_cmd ch_ops_batch_not_in_service_env bash -c \
   '! grep -qE "^STELLARINDEX_CLICKHOUSE_OPS_(USER|PASSWORD)=" /etc/default/stellarindex 2>/dev/null'
 
-# ── ClickHouse destructive-DDL size guard, EFFECTIVE value ────
-# 21-clickhouse-drop-guard.yml pins max_{table,partition}_size_to_drop
-# and verifies the live value once, at apply time. r1 ran both at 1 TiB
-# for weeks from a hand-written config.d file nothing re-read; the
-# reloader applies such a file within seconds, so only a recurring read
-# of system.server_settings sees it. Pass = both present and in
-# (0, ceiling]: 0 means unlimited, and stricter than pinned is safe.
-# The ceiling mirrors the role's clickhouse_max_*_size_to_drop
-# (lockstep-tested in config-assertions_test.sh). Skipped where the
-# role would not apply the guard either: no ClickHouse config dir.
+# ── ClickHouse destructive-DDL size guard, EFFECTIVE value ──
+# The role verifies max_{table,partition}_size_to_drop once at apply time; a hand-written
+# config.d file can override it unseen, so read system.server_settings recurringly. Pass = both in
+# (0, ceiling] (0 is unlimited); ceiling mirrors the role (lockstep-tested). Skipped without CH.
 CH_CONFIG_DIR="${CH_CONFIG_DIR:-/etc/clickhouse-server}"
 CH_DROP_GUARD_MAX_BYTES="${CH_DROP_GUARD_MAX_BYTES:-53687091200}"
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
@@ -429,8 +299,7 @@ ch_drop_guard_live() {
     WHERE name IN ('max_partition_size_to_drop', 'max_table_size_to_drop')
     ORDER BY name FORMAT TSV") || return 1
   while IFS=$'\t' read -r name value; do
-    # Length cap before arithmetic: bash wraps past 2^63, which would
-    # turn a huge limit into a small or negative one that passes.
+    # Length cap before arithmetic: bash wraps past 2^63 and a huge limit could pass.
     [[ "$value" =~ ^[0-9]{1,18}$ ]] || return 1
     ((10#$value > 0 && 10#$value <= CH_DROP_GUARD_MAX_BYTES)) || return 1
     seen+="$name,"
@@ -443,17 +312,10 @@ else
   skip ch_drop_guard_live
 fi
 
-# ── galexie-archive-trim delete identity ──────────
-# Without this, trim ran as stellarindex-reader (read-only) and every
-# DeleteObject came back AccessDenied — "deleted 0/N" on every run,
-# silently, since the unit's own exit code covers list/enumerate
-# failures but not a delete that "succeeds" by being denied per-object.
-# Two checks: (1) the rendered policy actually grants s3:DeleteObject —
-# catches a policy edit that regresses to read-only; (2) the trim env
-# file sets a DIFFERENT access key than stellarindex-reader's — catches
-# the exact bug this finding reported (both files present, both wired,
-# but pointing at the same read-only identity). Skipped where the trim
-# unit isn't installed at all (cold tiering never enabled on this host).
+# ── galexie-archive-trim delete identity ──
+# A trim running as the read-only reader gets AccessDenied per object yet exits clean. Check the
+# policy grants s3:DeleteObject and the trim env uses a different access key than the reader's.
+# Skipped where the trim unit is not installed.
 if [[ -f /etc/default/galexie-archive-trim ]]; then
   assert_grep archive_trimmer_policy_has_delete \
     /etc/minio/policies/stellarindex-archive-trimmer.json \
@@ -476,16 +338,10 @@ else
   skip archive_trimmer_uses_distinct_identity
 fi
 
-# ── MinIO Prometheus bearer token ────────────────────────────────────
-# /etc/prometheus/minio.token goes stale on a MinIO root rotation (the
-# file keeps the pre-rotation signature and minio_exporter_down pages);
-# 16-prometheus-exporters.yml's Group D produces it. That task only
-# mints the file when it is ABSENT (a svcacct secret is shown once, so it
-# can never safely overwrite one), so a hand-provisioned file (r1's is
-# root:prometheus 0640) stays as-is rather than converging to the
-# fresh-bootstrap target (prometheus:prometheus 0400) — both keep the
-# secret out of "other", which is the property that actually matters.
-# Never read the content here — stat-only.
+# ── MinIO Prometheus bearer token ──
+# The token goes stale on a MinIO root rotation. The role mints it only when absent, so a
+# hand-provisioned file keeps its owner; either layout keeps it out of "other". Stat-only.
+# Never read the content.
 if [[ -x /usr/local/bin/minio ]]; then
   # shellcheck disable=SC2016  # the body is a script for the INNER bash
   assert_cmd minio_prometheus_token_present bash -c '
@@ -500,13 +356,9 @@ else
   skip minio_prometheus_token_present
 fi
 
-# ── Loki stays loopback-only ─────────────────────────────────────────
-# Loki runs with auth_enabled: false, so the only access control is where
-# it listens. loki.r1.yml is hand-copied to /etc/loki/config.yml and
-# listen addresses are read at start, so a repo pin can sit un-applied
-# behind a pending restart. Check the file (codified) and the live
-# sockets (in effect); a listener on :3100/:9096 bound off loopback fails.
-# Skipped where no Loki config is installed.
+# ── Loki stays loopback-only ──
+# Loki has auth disabled, so listen addresses are the only access control, and they are read at
+# start. Check the file (codified) and the live sockets (in effect). Skipped without a Loki config.
 LOKI_CONFIG="${LOKI_CONFIG:-/etc/loki/config.yml}"
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 loki_loopback_bound() {

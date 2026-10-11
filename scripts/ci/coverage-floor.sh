@@ -1,42 +1,11 @@
 #!/usr/bin/env bash
-# Coverage floor for Stellar Index.
+# Coverage floor: compares total statement coverage in coverage.txt to a checked-in floor.
+# Report-only by default (warning, exit 0); CI sets COVERAGE_ENFORCE=1 so a drop fails the PR.
 #
-# `coverage.txt` has been produced by CI and uploaded as an artifact
-# since the unit-test job existed, and nothing has ever read it. This
-# turns it into a signal: compare total statement coverage against a
-# checked-in floor and say so out loud.
-#
-# Report-only by default
-# ----------------------
-# Without COVERAGE_ENFORCE=1 a total under the floor is a WARNING
-# (exit 0), which is what a local `make` run gets. CI's unit-test job
-# sets COVERAGE_ENFORCE=1, so there a drop under the floor fails the PR.
-#
-# What is NOT report-only
-# -----------------------
-# The distinction that makes this worth having: report-only applies to
-# the coverage JUDGEMENT, never to the gate's own liveness. A gate that
-# passes because it measured nothing is worse than no gate — vacuous CI
-# gates and a stale all-green weekly SLA artifact have both shipped here.
-# So the following are HARD failures regardless of
-# COVERAGE_ENFORCE:
-#
-#   - the profile is missing, empty, or has no `mode:` header
-#   - the profile parses to zero statements
-#   - the computed total disagrees with `go tool cover -func`, when the
-#     toolchain and source tree are present for that cross-check
-#   - the profile covers FEWER packages than MIN_PACKAGES
-#
-# That last one is the important one, and it is the reason this script
-# exists rather than a one-line `awk` in the workflow. Coverage is a
-# ratio, so the cheapest way to make it go up is to measure less: narrow
-# `./...` to `./internal/api/...`, and the total leaps while the tree
-# gets no safer. A floor on the DENOMINATOR is what stops that, and it
-# cannot be satisfied by writing tests.
-#
-# Every run prints a self-accounting line — packages measured, statements
-# counted, floor, verdict — so a reader can check the gate against the
-# tree instead of trusting a green tick.
+# Hard failures even in report-only mode, because a gate that measured nothing must not pass:
+# missing/empty profile or no `mode:` header, zero statements, a total that disagrees with
+# `go tool cover -func`, or fewer packages than MIN_PACKAGES. The package floor stops
+# "narrow ./... to raise the ratio"; writing tests cannot satisfy it.
 #
 # Usage:
 #   bash scripts/ci/coverage-floor.sh                    # report-only
@@ -45,17 +14,9 @@
 set -euo pipefail
 
 PROFILE="${COVERAGE_PROFILE:-coverage.txt}"
-# Raise the floor deliberately; never lower it to make a red PR green —
-# that is the anti-fix this gate exists to make visible.
-# The whole tree measured 55.7% (go test ./... -covermode=atomic).
-# 54.0 leaves ~1.7 points of headroom
-# for the run-to-run wobble of atomic counters under -race, which is an
-# order of magnitude more than that wobble actually is.
+# Raise deliberately; never lower it to turn a red PR green. Headroom covers atomic-counter wobble.
 FLOOR="${COVERAGE_FLOOR:-54.0}"
-# Denominator floor. 135 packages carry statements today; 120 absorbs
-# ordinary package churn (and the odd package losing its last test)
-# while still being far above any plausible "someone narrowed ./... to
-# one subtree".
+# Denominator floor: absorbs package churn but catches someone narrowing ./... to one subtree.
 MIN_PACKAGES="${MIN_PACKAGES:-120}"
 
 die() {
@@ -71,18 +32,9 @@ die() {
 head -n 1 "$PROFILE" | grep -q '^mode:' ||
 	die "coverage profile '$PROFILE' has no 'mode:' header — not a Go coverage profile"
 
-# The total is computed FROM THE PROFILE rather than by shelling out to
-# `go tool cover -func`, for one reason: `go tool cover` resolves each
-# package against the source tree, so it cannot be pointed at a
-# synthetic profile — which would make every interesting branch of this
-# gate untestable, and an untestable gate is the thing being guarded
-# against. The arithmetic is the same ratio the tool prints (covered
-# statements / total statements); verified byte-equal against
-# `go tool cover -func` on the real repo profile,
-# and cross-checked on every run below whenever the toolchain can run —
-# and when it can, the tool's own total is the one the floor is judged on.
-#
-# Field 2 is the statement count for the block, field 3 the hit count.
+# Total is computed from the profile, not `go tool cover -func`, because the tool resolves
+# packages against the source tree and cannot be pointed at a synthetic profile (untestable gate).
+# Fields: 2 = statements in the block, 3 = hit count.
 read -r TOTAL COVERED STATEMENTS <<EOF
 $(awk 'NR > 1 {
 		# A profile merged across packages lists a shared block once per
@@ -104,21 +56,9 @@ EOF
 [ "$STATEMENTS" -gt 0 ] ||
 	die "coverage profile has 0 statement blocks — the coverage floor did NOT run"
 
-# Cross-check against the tool when it can actually run (real profile,
-# real source tree, Go on PATH), and when it can, let the tool's figure
-# be the one the floor is judged on: it is what every developer sees
-# locally. The profile arithmetic above then serves the package count and
-# the synthetic-fixture case, where the tool cannot run.
-#
-# The two figures are compared at one decimal, and they legitimately
-# differ by a rounding step: the tool totals by function (a block outside
-# any function is not in its denominator) and rounds a different float,
-# so 56.15 can print as 56.2 here and 56.1 there. A gap of at most 0.1
-# is that rounding step; anything wider means this script's arithmetic
-# has drifted from the tool, and that is a hard failure.
-#
-# NOT piped into head/tail: a gate's error text arrives on the channel a
-# pipeline throws away, and this repo has been bitten by exactly that.
+# Cross-check against the tool when it can run, and judge the floor on its figure (what
+# developers see locally). Gaps up to 0.1 are rounding (the tool totals by function); wider is drift.
+# Not piped into head/tail: a pipeline would swallow the gate's error text.
 if command -v go >/dev/null 2>&1; then
 	FUNC_OUT="$(mktemp)"
 	trap 'rm -f "$FUNC_OUT"' EXIT
@@ -136,17 +76,8 @@ The gate's arithmetic has drifted from the tool; fix the gate, not the floor."
 	fi
 fi
 
-# Distinct packages represented. Profile lines look like
-#   <module>/<pkg>/<file>.go:<from>,<to> <stmts> <count>
-# so the package is the path with the file component stripped.
-#
-# The trailing component is removed with split(), not with a
-# `sub(/\/[^/]*$/, ...)` regex: an unescaped `/` inside a bracket
-# expression terminates the regex literal in BSD awk (macOS), and
-# escaping it is not portable the other way. The first draft here used
-# the regex, produced ZERO packages on macOS, and was caught only
-# because the scope floor then fired — a reminder that this gate's
-# fail-closed behaviour is load-bearing, not decoration.
+# Distinct packages: profile lines are <module>/<pkg>/<file>.go:<from>,<to> <stmts> <count>.
+# split() rather than a bracket-expression regex, whose unescaped / breaks BSD awk.
 PACKAGES="$(awk 'NR > 1 {
 		sub(/:[0-9]+\.[0-9]+,.*$/, "")
 		n = split($0, a, "/")

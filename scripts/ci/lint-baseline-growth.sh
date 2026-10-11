@@ -1,73 +1,22 @@
 #!/usr/bin/env bash
-# lint-baseline-growth.sh — the anti-self-bypass tripwire.
+# lint-baseline-growth.sh - anti-self-bypass tripwire for self-editable lint escape hatches:
+#   scripts/ci/*.baseline, the KNOWN_INERT array in lint-metric-refs.sh, .gitleaksignore,
+#   .gitleaks.toml allowlists, scripts/ci/govulncheck-allow.txt, .golangci.yml exclusions,
+#   configs/ansible/.ansible-lint skip_list, deploy/systemd/ORPHANS, and (mutations only,
+#   since new migrations append freely) scripts/ci/migration-immutability.sha256.
 #
-# The lint gates in this repo carry self-editable escape hatches:
-#   - scripts/ci/*.baseline               (grandfathered violations:
-#                                          imports, lexicon, migration-compat,
-#                                          rule-equivalence, ansible-drift)
-#   - scripts/ci/lint-metric-refs.sh     (the KNOWN_INERT allowlist array)
-#   - .gitleaksignore                     (per-finding secret-scan fingerprints)
-#   - .gitleaks.toml                      ([allowlist]/[[rules.allowlists]]
-#                                          path/regex exemptions)
-#   - scripts/ci/govulncheck-allow.txt    (accepted-risk vuln ids — a .txt,
-#                                          missed by the *.baseline glob)
-#   - .golangci.yml                       (linters.exclusions.rules —
-#                                          per-path/linter lint exemptions)
-#   - configs/ansible/.ansible-lint       (skip_list — grandfathered
-#                                          ansible-lint rule classes,
-#                                          auto-discovered by ansible-lint
-#                                          rather than named in any CI
-#                                          yaml)
-#   - deploy/systemd/ORPHANS              (declared-orphan unit exemptions
-#                                          for lint-deploy-systemd-
-#                                          authority.sh)
-#   - scripts/ci/migration-immutability.sha256 (watched for a MUTATED
-#                                          hash on an existing basename,
-#                                          not a new one — new migrations
-#                                          are meant to append freely)
-#
-# Each is designed to shrink monotonically, and the linters already
-# fail on STALE entries — but nothing stopped a commit from GROWING
-# the allowlist in the same change that introduces the violation it
-# hides (e.g. a gitleaks ignore fingerprint or broad path allowlist that
-# silences a REAL leak in the same diff). This check closes that
-# hole: any commit range that ADDS entries to a baseline/allowlist fails
-# unless a commit message in the range carries an explicit, auditable
-# trailer that NAMES the grown file:
+# Linters fail on stale entries, but nothing stopped one commit from growing an allowlist while
+# introducing the violation it hides. Any range that ADDS entries fails unless a commit message
+# in the range carries a trailer naming the grown file:
 #
 #     Baseline-Growth: <watched-path> — <reason>
 #
-# The trailer doesn't make growth "allowed by default" — it makes it
-# impossible to do SILENTLY. A reviewer (or the operator reading
-# `git log`) sees the declaration next to the change.
-#
-# TWO properties this gate must hold:
-#
-#   1. PER-FILE SCOPING. A trailer excuses growth ONLY in the file it
-#      names, so one innocuous trailer cannot blanket-approve growth in
-#      every watched file at once.
-#
-#   2. NO SELF-HEAL ON DIRECT-PUSH. On direct-push-to-main the caller
-#      passes BASE_SHA=github.event.before. A push that grows a baseline
-#      undeclared reds exactly one run — but the FAILED commit still lands
-#      on main, and the NEXT push's `before` is that failed tip, so its
-#      diff window starts ABOVE the growth and the gate goes green with no
-#      trailer ever consulted. We defend by re-deriving a
-#      trustworthy base: walk BASE_SHA's first-parent chain back past any
-#      tip commit that ITSELF introduced watched growth not declared in
-#      its OWN message (a failed/undeclared tip), landing on the last
-#      commit whose allowlist state was clean-or-declared, and diff from
-#      there. So an undeclared growth stays caught on every push until it
-#      is declared — it cannot heal by being pushed over.
-#
-#      NB: a *durable* last-green base (a stateless script cannot see
-#      which past run was green, only the git shape) would additionally
-#      close a slower adversarial heal — an actor who lands one or more
-#      allowlist-free commits ON TOP of the failed growth before the next
-#      push moves `before` onto a clean tip the walk stops at. Closing
-#      that fully needs the workflow to supply a durable base (e.g. the
-#      last successful run's sha) rather than github.event.before; see
-#      the CID-1 note in .github/workflows/ci.yml's BASE_SHA env.
+# Properties:
+#   1. Per-file scoping: a trailer excuses growth only in the file it names.
+#   2. No self-heal on direct push: BASE_SHA (github.event.before) can be a failed tip, which
+#      would hide its growth from the next run. So the base is re-derived by walking first-parent
+#      history back past tips that add undeclared growth. A durable last-green base from the
+#      workflow would also close the case where clean commits land on top of the growth.
 #
 # Usage: BASE_SHA=<sha> ./scripts/ci/lint-baseline-growth.sh
 #   BASE_SHA — the comparison base (PR base sha, or the push event's
@@ -90,9 +39,7 @@ if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
   exit 0
 fi
 
-# added_entries <base> <head> <file> <grep-pattern-for-entry-lines>
-# Prints lines ADDED to <file> between <base> and <head> that match the
-# entry pattern (ignoring comments/blank lines).
+# added_entries <base> <head> <file> <pattern>: non-comment lines added to <file> matching <pattern>.
 added_entries() {
   local base="$1" head="$2" file="$3" pattern="$4"
   git diff "${base}...${head}" -- "$file" \
@@ -102,12 +49,8 @@ added_entries() {
     | grep -E "$pattern" || true
 }
 
-# golangci_exclusions_block <rev>
-# Prints just the `linters.exclusions:` block of .golangci.yml at <rev> —
-# from the "  exclusions:" line up to (not including) the next 0-indent
-# top-level key. Scoping to this block, rather than diffing the whole
-# file, keeps unrelated changes (enabled linters, complexity settings)
-# from being read as growth.
+# golangci_exclusions_block <rev>: the `linters.exclusions:` block only, so unrelated
+# .golangci.yml changes are not read as growth.
 golangci_exclusions_block() {
   local rev="$1"
   git show "${rev}:.golangci.yml" 2>/dev/null | awk '
@@ -117,10 +60,7 @@ golangci_exclusions_block() {
   '
 }
 
-# golangci_exclusions_added_lines <base> <head>
-# Non-comment/blank lines ADDED to the exclusions block between <base>
-# and <head> — a new `- path: …` / `linters: […]` entry widens what
-# golangci-lint skips, the same shape as the other watched surfaces.
+# golangci_exclusions_added_lines <base> <head>: non-comment lines added to that block.
 golangci_exclusions_added_lines() {
   local base="$1" head="$2" b h result
   b="$(mktemp)"; h="$(mktemp)"
@@ -134,17 +74,9 @@ golangci_exclusions_added_lines() {
   printf '%s' "$result"
 }
 
-# mutated_migration_hash_entries <base> <head>
-# Unlike the other surfaces, a brand-new line in
-# scripts/ci/migration-immutability.sha256 is the NORMAL, append-only
-# case (a new migration — "New migrations are append-only: allowed
-# freely", lint-migration-immutability.sh) and must not need a trailer.
-# The hazard this gate exists to catch is a MUTATED line: an EXISTING
-# basename's recorded hash rewritten to match an edited shipped
-# migration in the same commit, which defeats lint-migration-
-# immutability.sh's own check the same way a grown .gitleaksignore
-# defeats gitleaks. So this emits only entries whose
-# basename existed at <base> with a DIFFERENT hash at <head>.
+# mutated_migration_hash_entries <base> <head>: new lines in migration-immutability.sha256
+# are normal (new migration); the hazard is an existing basename's hash rewritten to match an
+# edited shipped migration, so emit only entries whose hash changed.
 mutated_migration_hash_entries() {
   local base="$1" head="$2" file="scripts/ci/migration-immutability.sha256" b h
   b="$(mktemp)"; h="$(mktemp)"
@@ -164,19 +96,13 @@ mutated_migration_hash_entries() {
   rm -f "$b" "$h"
 }
 
-# detect_growth <base> <head>
-# Emits one TAB-separated "<watched-file>\t<added-entry>" line for every
-# entry ADDED to any watched baseline/allowlist between <base> and <head>.
-# The nine surfaces below are exactly the escape hatches this gate exists
-# to keep shrink-only; each contributes its file path as the scope token
-# a Baseline-Growth trailer must name.
+# detect_growth <base> <head>: emits "<watched-file>\t<added-entry>" for each entry added to a
+# watched surface; the file path is the scope token a trailer must name.
 detect_growth() {
   local base="$1" head="$2" f added line
 
-  # 1) scripts/ci/*.baseline: every non-comment line is an entry. Enumerate
-  #    the baseline files that actually changed in the range (a working-tree
-  #    glob would be wrong here — this runs against arbitrary base/head pairs,
-  #    including the parent..commit windows the base-walk below inspects).
+  # 1) scripts/ci/*.baseline: enumerate files changed in the range, not a working-tree glob,
+  #    since this runs against arbitrary base/head pairs.
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     added="$(added_entries "$base" "$head" "$f" '.')"
@@ -185,86 +111,59 @@ detect_growth() {
     done <<<"$added"
   done < <(git diff --name-only "${base}...${head}" -- 'scripts/ci/*.baseline' 2>/dev/null)
 
-  # 2) KNOWN_INERT allowlist inside lint-metric-refs.sh: entries are bare
-  #    stellarindex_* metric names. Matching on the metric-name shape (rather
-  #    than parsing the array) keeps this robust to reformatting; a comment
-  #    mentioning a metric is excluded by the comment filter in added_entries.
+  # 2) KNOWN_INERT in lint-metric-refs.sh: match the stellarindex_* name shape, not the array.
   added="$(added_entries "$base" "$head" scripts/ci/lint-metric-refs.sh '^\s*stellarindex_[a-z0-9_]+\s*$')"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/lint-metric-refs.sh "$line"
   done <<<"$added"
 
-  # 3) .gitleaksignore: every non-comment line is a per-finding fingerprint
-  #    (commit:path:rule:line) that exempts a secret-scan hit — the same
-  #    shrink-only allowlist shape as a *.baseline. Adding one in
-  #    the same change that introduces the leak it hides silently defeats the
-  #    gitleaks gate.
+  # 3) .gitleaksignore: each non-comment line is a finding fingerprint.
   added="$(added_entries "$base" "$head" .gitleaksignore '.')"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' .gitleaksignore "$line"
   done <<<"$added"
 
-  # 4) .gitleaks.toml: the [allowlist]/[[rules.allowlists]] path & regex
-  #    exemptions. The file is "allowlists only, no custom rules" (its own
-  #    header), so every array-element line — one beginning with a quote after
-  #    optional whitespace — is an exemption that WIDENS what gitleaks ignores;
-  #    table headers ([...]), key=value lines (description=, paths=, id=) and
-  #    comments all start with a non-quote char and are excluded.
+  # 4) .gitleaks.toml: allowlists-only file, so each quoted array element widens what is ignored.
   local gitleaks_toml_entry=$'^[[:space:]]*[\x27"]'
   added="$(added_entries "$base" "$head" .gitleaks.toml "$gitleaks_toml_entry")"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' .gitleaks.toml "$line"
   done <<<"$added"
 
-  # 5) scripts/ci/govulncheck-allow.txt: one accepted-risk OSV/GO-id per
-  #    line (an inline `# reason` comment is part of the entry, not
-  #    stripped) — the same "silence this specific finding" shape as the
-  #    others. A *.baseline glob misses it because it's a .txt.
+  # 5) govulncheck-allow.txt: one accepted-risk id per line (a .txt, so the *.baseline glob misses it).
   added="$(added_entries "$base" "$head" scripts/ci/govulncheck-allow.txt '^GO-')"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/govulncheck-allow.txt "$line"
   done <<<"$added"
 
-  # 6) .golangci.yml's linters.exclusions.rules block: a new path/linter
-  #    exemption silently turns a real violation off for a file pattern
-  #    See golangci_exclusions_added_lines() for the block-scoping.
+  # 6) .golangci.yml exclusions; see golangci_exclusions_added_lines().
   added="$(golangci_exclusions_added_lines "$base" "$head")"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' .golangci.yml "$line"
   done <<<"$added"
 
-  # 7) configs/ansible/.ansible-lint's skip_list: each entry silences a
-  #    whole ansible-lint rule class repo-wide — the same
-  #    shrink-only shape, but auto-discovered by ansible-lint rather than
-  #    named in any CI yaml, so nothing else points a reader at it.
+  # 7) .ansible-lint skip_list: each entry silences a rule class repo-wide, found by auto-discovery.
   added="$(added_entries "$base" "$head" configs/ansible/.ansible-lint '^\s*-\s+\S')"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' configs/ansible/.ansible-lint "$line"
   done <<<"$added"
 
-  # 8) deploy/systemd/ORPHANS: declaring a unit here silences
-  #    lint-deploy-systemd-authority.sh's orphan check for it (LID-7) —
-  #    the same "declare an exemption" shape as a *.baseline entry.
+  # 8) deploy/systemd/ORPHANS: declaring a unit silences the orphan check for it.
   added="$(added_entries "$base" "$head" deploy/systemd/ORPHANS '.')"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' deploy/systemd/ORPHANS "$line"
   done <<<"$added"
 
-  # 9) scripts/ci/migration-immutability.sha256: watched for MUTATED
-  #    entries only, not appended ones — see mutated_migration_hash_entries().
+  # 9) migration-immutability.sha256: mutated entries only.
   added="$(mutated_migration_hash_entries "$base" "$head")"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/migration-immutability.sha256 "$line"
   done <<<"$added"
 }
 
-# has_scoped_trailer <watched-file> <log-body>
-# True iff <log-body> carries a Baseline-Growth trailer whose value NAMES
-# <watched-file>. Both greps read from here-strings (a REDIRECTION, not a
-# pipeline element) so `grep -q` closing its input early cannot make
-# `set -o pipefail` observe a SIGPIPE'd writer — the exact trap the
-# range-size case in lint-baseline-growth-test.sh pins. Piping into
-# grep -q here, in any form, reintroduces it.
+# has_scoped_trailer <watched-file> <log-body>: true iff a Baseline-Growth trailer names the file.
+# Greps read here-strings, not pipes: grep -q closing early would SIGPIPE a writer under pipefail
+# (pinned in lint-baseline-growth-test.sh).
 has_scoped_trailer() {
   local file="$1" body="$2" trailers
   trailers="$(grep -iE '^Baseline-Growth:[[:space:]]*\S' <<<"$body" || true)"
@@ -272,12 +171,8 @@ has_scoped_trailer() {
   grep -Fq -- "$file" <<<"$trailers"
 }
 
-# commit_has_undeclared_growth <commit>
-# True iff <commit> itself ADDED a watched-allowlist entry that its OWN
-# commit message does not declare with a scoped trailer. Such a commit is a
-# failed/undeclared tip that a moving BASE_SHA must not be allowed to skip
-# over (the direct-push self-heal). A root commit (no parent) is treated as
-# not-undeclared so the walk terminates.
+# commit_has_undeclared_growth <commit>: true iff the commit added a watched entry its own message
+# does not declare. A root commit counts as clean so the walk terminates.
 commit_has_undeclared_growth() {
   local c="$1" parent grown file entry msg
   parent="$(git rev-parse -q --verify "${c}^" 2>/dev/null)" || return 1
@@ -291,11 +186,8 @@ commit_has_undeclared_growth() {
   return 1
 }
 
-# Re-derive a trustworthy base (CID-1 heal defence). Walk BASE_SHA's
-# first-parent chain back past every tip commit that introduced undeclared
-# watched growth, landing on the last commit whose allowlist state was
-# clean or properly declared. The guard bounds the walk so a pathological
-# history can never spin.
+# Re-derive a trustworthy base: walk back past tips with undeclared growth to the last clean or
+# declared commit. The step cap stops a pathological history from spinning.
 effective_base="$BASE_SHA"
 walk_steps=0
 while git rev-parse -q --verify "${effective_base}^{commit}" >/dev/null 2>&1 \
@@ -312,8 +204,7 @@ if [[ "$effective_base" != "$BASE_SHA" ]]; then
        "re-derived base ${effective_base} (CID-1 anti-heal)."
 fi
 
-# Range log body, captured into a variable rather than piped into grep -q
-# (see has_scoped_trailer for the SIGPIPE-under-pipefail reason).
+# Captured into a variable, not piped into grep -q (SIGPIPE under pipefail; see has_scoped_trailer).
 log_body="$(git log --format=%B "${effective_base}..HEAD")"
 
 fail=0
