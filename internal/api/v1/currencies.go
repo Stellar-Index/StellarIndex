@@ -6,14 +6,8 @@ import (
 	"time"
 )
 
-// CurrenciesReader exposes the latest in-memory forex snapshot.
-// Used by /v1/price for fiat-cross-rate triangulation. The forex
-// package's *Cache implements it via Latest; the interface keeps
-// the dependency direction (forex doesn't import v1).
-//
-// The legacy /v1/currencies HTTP surface has been removed (no
-// production consumers); this reader stays alive as the in-process
-// FX-rate seam.
+// CurrenciesReader exposes the latest in-memory forex snapshot for /v1/price fiat cross-rate
+// triangulation. The forex *Cache implements it; the interface keeps forex from importing v1.
 type CurrenciesReader interface {
 	// Latest returns the most recent forex snapshot, or nil if no
 	// fetch has completed yet (warming up).

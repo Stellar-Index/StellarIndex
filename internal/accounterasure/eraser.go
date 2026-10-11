@@ -269,10 +269,10 @@ type AbandonedLister interface {
 }
 
 // SweepAbandonedRegistrations erases the accounts l lists as unused
-// registrations created before createdBefore, skipping any that gained a
-// member or still has a validator record in Redis since a record that has
-// not expired may belong to a key in use whose last_used_at touch was
-// dropped. It needs Redis to prove that, and returns how many it erased.
+// registrations created before createdBefore. It skips any that gained a member
+// or still has a validator record in Redis, since an unexpired record may belong
+// to a key in use whose last_used_at touch was dropped. It needs Redis to prove
+// that, and returns how many it erased.
 func (e *Eraser) SweepAbandonedRegistrations(ctx context.Context, l AbandonedLister, createdBefore time.Time) (int64, error) {
 	if e.Redis == nil {
 		return 0, errors.New("account erasure: abandoned-registration sweep needs Redis")

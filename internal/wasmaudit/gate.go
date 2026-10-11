@@ -307,12 +307,10 @@ func walkFactory(ctx context.Context, es completeness.EventStreamer, source stri
 	return nil
 }
 
-// sorocreditEmittingChildren returns every Collateral child the sorocredit
-// decoder admits an event from by tip. Its childgate honours any child the
-// root announced, so a child that emits runs WASM the decoder reads; gating
-// the ~139k silent children instead would cost one lake read each for no
-// coverage. The lake orders a ledger by tx hash, not apply order, so a
-// child's event can precede its announcement: emitters and announcements are
+// sorocreditEmittingChildren returns every Collateral child the sorocredit decoder admits an
+// event from by tip. Only emitting children run WASM the decoder reads; gating the ~139k silent
+// ones would cost a lake read each for no coverage. The lake orders a ledger by tx hash, not
+// apply order, so an event can precede its child's announcement: emitters and announcements are
 // collected separately and intersected after the walk.
 func sorocreditEmittingChildren(ctx context.Context, es completeness.EventStreamer, tip uint32) ([]string, error) {
 	if sorocredit.GenesisLedger >= tip {

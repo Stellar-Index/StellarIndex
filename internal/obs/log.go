@@ -12,21 +12,16 @@ import (
 //
 // Configuration comes from the operator's [obs] block:
 //
-//   - LogLevel: case-insensitive; "debug" / "info" / "warn"
-//     (alias "warning") / "error". Anything else falls back to
-//     info.
-//   - LogFormat: case-insensitive; "console" or "text" emits the
-//     human-friendly text handler; anything else (including the
-//     default "json") emits the structured JSON handler.
+//   - LogLevel: case-insensitive "debug", "info", "warn" (alias "warning") or "error";
+//     anything else falls back to info.
+//   - LogFormat: case-insensitive "console" or "text" emits the text handler; anything
+//     else (including the default "json") emits the JSON handler.
 //
-// Every logger is stamped with a `binary` attribute so a unified
-// log aggregator (Loki) can filter per-binary without grepping
-// path prefixes. binaryName is what gets stamped — pass the
-// program's basename (e.g. "stellarindex-indexer").
+// Every logger carries a `binary` attribute (pass the program basename, e.g.
+// "stellarindex-indexer") so the log aggregator can filter per binary.
 //
-// Output goes to stderr because that's what systemd's StandardError
-// captures into the journal by default; stdout is reserved for
-// human-targeted CLI output (e.g. the ops binary's tabular reports).
+// Output goes to stderr, which systemd captures into the journal; stdout is reserved for
+// human-targeted CLI output.
 func NewLogger(cfg config.ObsConfig, binaryName string) *slog.Logger {
 	level := slog.LevelInfo
 	switch strings.ToLower(cfg.LogLevel) {

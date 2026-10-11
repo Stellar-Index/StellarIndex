@@ -72,14 +72,9 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 
 // Mount installs the dashboard price-alert-management routes.
 //
-// Every route is wrapped in [dashboardauth.RequireSession], so an
-// anonymous request is refused before any other layer runs; the
-// handlers still read the session for its account.
-//
-// Every mutation is wrapped in [middleware.RequireSameSiteWrite]:
-// these routes authenticate with the session COOKIE, so a cross-site
-// page could otherwise drive them on a logged-in customer's behalf.
-// Reads stay unwrapped — safe methods change nothing.
+// Every route is wrapped in [dashboardauth.RequireSession]. Every mutation is also wrapped in
+// [middleware.RequireSameSiteWrite]: these routes authenticate with the session COOKIE, so a
+// cross-site page could otherwise drive them for a logged-in customer. Reads stay unwrapped.
 func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	session := dashboardauth.RequireSession()
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)

@@ -2,12 +2,10 @@
 // tokenisation protocol (PT/YT split of an interest-bearing token, IBT).
 // See docs/protocols/spectra.md.
 //
-// Only (role, kind) pairs observed on mainnet are classified, each pinned
-// by a lake fixture under test/fixtures/spectra; `unwrap` is the one
-// exception, decoded from the published source because it shares wrap's
-// body. Every other topic is NOT claimed: Matches returns false and the
-// recognition audit surfaces it, rather than a guessed shape being
-// recorded as expected-zero.
+// Only (role, kind) pairs observed on mainnet are classified, each pinned by a lake fixture;
+// `unwrap` is the exception, decoded from published source because it shares wrap's body. Any
+// other topic is NOT claimed: Matches returns false and the recognition audit surfaces it,
+// rather than a guessed shape being recorded as expected-zero.
 package spectra
 
 import (

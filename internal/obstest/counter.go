@@ -8,21 +8,15 @@ import (
 // CounterValue returns the current value of a plain (unlabelled)
 // prometheus.Counter.
 //
-// These counters are PROCESS-GLOBAL: every test in the binary shares one
-// instance, and nothing resets it between tests. So an assertion on an
-// absolute value passes on the first run and fails under `go test -count=2`,
-// and its result depends on which other tests ran first. Always take a
-// before/after pair and assert on the DELTA:
+// These counters are PROCESS-GLOBAL and never reset between tests, so an absolute assertion
+// fails under `go test -count=2` or depends on test order. Assert on the DELTA of a
+// before/after pair, which also survives parallel siblings:
 //
 //	before := obstest.CounterValue(obs.MyCounter)
 //	// ... exercise the code path ...
 //	if obstest.CounterValue(obs.MyCounter)-before == 0 {
 //		t.Fatal("counter did not advance")
 //	}
-//
-// That pattern is what makes such a test survive repeat runs and parallel
-// siblings; it is the same reason HistogramSampleCount above is documented
-// with a before/after pair rather than a fixed expectation.
 func CounterValue(c prometheus.Counter) float64 {
 	m := &io_prom_dto.Metric{}
 	if err := c.Write(m); err != nil {

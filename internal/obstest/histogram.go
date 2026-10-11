@@ -1,14 +1,9 @@
-// Package obstest contains helpers for asserting against
-// Prometheus metrics from regression tests. It exists because
-// `prometheus.HistogramVec.WithLabelValues(...)` returns a
-// `prometheus.Observer` (not a `prometheus.Collector`), so the
-// official `testutil.CollectAndCount` cannot act on a per-label
-// child directly.
+// Package obstest contains helpers for asserting against Prometheus metrics in regression tests.
+// HistogramVec.WithLabelValues returns an Observer, not a Collector, so testutil.CollectAndCount
+// cannot act on a per-label child directly.
 //
-// Cross-package test helpers carry an import-cycle risk for some
-// shapes; this package deliberately depends only on the upstream
-// Prometheus client libraries, so it's import-safe from every test
-// package.
+// It depends only on the upstream Prometheus client libraries so it cannot create an import
+// cycle from any test package.
 package obstest
 
 import (
@@ -18,16 +13,11 @@ import (
 	io_prom_dto "github.com/prometheus/client_model/go"
 )
 
-// HistogramSampleCount returns the cumulative sample count of
-// the histogram series identified by the given label key/value.
-// Sums across every series whose label-set contains
-// `(labelKey, labelValue)` — equivalent to what the wire-format
-// `_count` suffix exposes per-series.
+// HistogramSampleCount returns the cumulative sample count summed across every series whose
+// label set contains (labelKey, labelValue), like the wire-format `_count`.
 //
-// Use this when a regression test needs to assert a histogram
-// observation was recorded for a specific label combination,
-// independent of the bucket values (which depend on
-// test-machine performance). The typical pattern is:
+// Use it to assert an observation was recorded, independent of bucket values, which depend on
+// test-machine speed. Typical pattern:
 //
 //	before := obstest.HistogramSampleCount(t,
 //		obs.MyHistogram, "outcome", "ok")

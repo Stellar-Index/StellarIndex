@@ -2,34 +2,21 @@ package v1
 
 import "github.com/Stellar-Index/StellarIndex/internal/canonical"
 
-// knownScams flags G-strkeys that stellar.expert's directory marks
-// as malicious, scam, or unsafe. Until we wire a runtime fetch
-// against api.stellar.expert/explorer/public/directory/<g> (which
-// would couple our API to a third-party uptime), this hand-curated
-// list catches the high-volume offenders that show up in
-// /v1/issuers and /v1/coins listings — issuers we'd otherwise
-// surface to clients without a warning.
+// knownScams flags G-strkeys that stellar.expert's directory marks as malicious or unsafe.
+// It is hand-curated rather than fetched at runtime so the API does not depend on a
+// third-party's uptime.
 //
-// Sourcing rule: a G-strkey is added here ONLY when stellar.expert's
-// directory entry includes a `tags` array containing "malicious"
-// OR "unsafe". The `Reason` field carries the directory's `name`
-// when present; otherwise a one-line justification.
-//
-// To verify an entry: `curl https://api.stellar.expert/explorer/
-// public/directory/<g>` and confirm the `tags` array.
-//
-// A new entry cites its stellar.expert lookup.
+// Sourcing rule: add a G-strkey only when its directory entry (api.stellar.expert/explorer/
+// public/directory/<g>) has a `tags` array containing "malicious" or "unsafe". Reason carries
+// the directory's `name` when present, otherwise a one-line justification.
 type scamFlag struct {
 	Reason string // human-readable label rendered in the warning badge
 }
 
 // scamIssuers is the curated set. Keep alphabetised by G-strkey.
 //
-// Each entry is sourced by sweeping the top observation-count
-// uncurated G-strkeys (no home_domain in /v1/issuers) against
-// api.stellar.expert/explorer/public/directory/<g> and adding any
-// row whose tags include "malicious" or "unsafe". The Reason
-// captures the directory's `name` field.
+// Entries come from checking the highest-volume uncurated issuers (no home_domain in
+// /v1/issuers) against the stellar.expert directory.
 var scamIssuers = map[string]scamFlag{
 	// "Scam Assets" — malicious, unsafe.
 	"GA2XZLXNLAL26VBCA2OESAIMXTRH5GXKLHYZMDGNCR2SYS5QZWWNBLCK": {

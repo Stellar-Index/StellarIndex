@@ -37,11 +37,9 @@ type assetListEntry struct {
 }
 
 // assetListResponseCache is the response-level cache for the default
-// /v1/assets listing (handleAssetListFromAssets). The page's overlays fan
-// out to Postgres and ClickHouse per request (supply, issuer directory,
-// substance re-measurement, token decimals); caching the rendered page is
-// the one place that covers all of them, as assetDetailResponseCache does
-// for the detail route.
+// /v1/assets listing (handleAssetListFromAssets). The overlays (supply, issuer directory,
+// substance re-measurement, token decimals) fan out to Postgres and ClickHouse per request;
+// caching the rendered page covers all of them, as assetDetailResponseCache does for detail.
 type assetListResponseCache struct {
 	mu      sync.Mutex
 	entries map[string]*assetListEntry

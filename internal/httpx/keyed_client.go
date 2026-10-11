@@ -23,12 +23,10 @@ func NewKeyedClient(tag string, timeout time.Duration) *http.Client {
 // KeyedSameOriginRedirect is the CheckRedirect policy for a client that
 // sends a vendor API key in a request header.
 //
-// Go's redirect header copier re-sends every custom header verbatim on
-// each hop, and keeps Authorization whenever the hostname matches — even
-// across a port or an https -> http change. A hop is followed only when it
-// keeps the scheme and host (port included), so the key goes nowhere it has
-// not already been sent. The hop cap keeps a self-redirecting origin from
-// re-issuing keyed requests until the client timeout.
+// Go's redirect header copier re-sends every custom header on each hop, and keeps Authorization
+// whenever the hostname matches, even across a port or https -> http change. A hop is followed
+// only when it keeps scheme and host (port included), so the key goes nowhere new. The hop cap
+// stops a self-redirecting origin re-issuing keyed requests until the client timeout.
 func KeyedSameOriginRedirect(tag string) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if len(via) >= keyedRedirectLimit {

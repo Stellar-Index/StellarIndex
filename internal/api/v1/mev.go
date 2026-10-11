@@ -10,11 +10,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// validMEVKinds is the openapi ?kind= enum: the detectors' own
-// exported Kind* constants (so live kinds can't drift from what the
-// workers write to mev_events.kind) plus oracle_deviation, reserved
-// in the spec for a detector that doesn't exist yet — a filter on it
-// is valid and just yields no rows, not a 400.
+// validMEVKinds is the openapi ?kind= enum: the detectors' exported Kind*
+// constants, so kinds cannot drift from mev_events.kind, plus oracle_deviation,
+// reserved for a detector that does not exist yet. Filtering on it is valid and
+// yields no rows rather than a 400.
 var validMEVKinds = map[string]bool{
 	mev.KindArbitrage:          true,
 	mev.KindSandwich:           true,
@@ -30,11 +29,10 @@ type MEVReader interface {
 	ListMEVEvents(ctx context.Context, kind string, limit int) ([]timescale.MEVEventRow, error)
 }
 
-// MEVEventView is the wire shape for /v1/mev entries. detail is the
-// pattern's per-kind evidence object (legs / roles / oracle refs /
-// fills, plus a note stating what is and is not claimed). profit_usd
-// is null when not meaningful for the kind — no current detector
-// estimates profit (trade direction is ambiguous in the served rows).
+// MEVEventView is the wire shape for /v1/mev entries. detail is the per-kind
+// evidence object plus a note stating what is and is not claimed. profit_usd is
+// null because no detector estimates profit: trade direction is ambiguous in
+// the served rows.
 type MEVEventView struct {
 	EventID          string          `json:"event_id"`
 	DetectedAt       string          `json:"detected_at"`
@@ -48,14 +46,11 @@ type MEVEventView struct {
 	ProfitUSD        *string         `json:"profit_usd"`
 }
 
-// handleMEVEvents serves GET /v1/mev — the auto-flagged MEV-event
-// feed, newest first. ?kind= filters to one pattern (arbitrage /
-// sandwich / oracle_sandwich / liquidation_cascade / wash_trade);
-// ?limit= (default 50, max 500).
+// handleMEVEvents serves GET /v1/mev, the auto-flagged MEV-event feed, newest
+// first. ?kind= filters to one pattern; ?limit= defaults to 50, max 500.
 //
-// 200 + empty array when no MEVReader is wired or nothing's been
-// detected — the same feature-gated-reader degradation as /v1/markets
-// and /v1/lending/pools.
+// Returns 200 with an empty array when no MEVReader is wired or nothing has
+// been detected, like /v1/markets and /v1/lending/pools.
 func (s *Server) handleMEVEvents(w http.ResponseWriter, r *http.Request) {
 	if s.MEV == nil {
 		writeJSON(w, []MEVEventView{}, Flags{})

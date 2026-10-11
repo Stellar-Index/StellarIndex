@@ -9,24 +9,18 @@ import (
 )
 
 // BackfillCoverageReader is the seam the per-source coverage cache
-// reads through. timescale.Store satisfies it via
-// BackfillCoverageStats. Hot-path of that query is 2–3s on a
-// populated trades hypertable, so callers go through CoverageCache
-// rather than hitting the reader directly.
+// reads through. That query takes 2–3s on a populated trades hypertable, so
+// callers go through CoverageCache rather than the reader directly.
 type BackfillCoverageReader interface {
 	BackfillCoverageStats(ctx context.Context) ([]timescale.BackfillCoverage, error)
 }
 
 // CoverageCache wraps a [BackfillCoverageReader] with a read-mostly
-// snapshot. Production wiring spawns a background refresher
-// (cmd/stellarindex-api/main.go) that calls Refresh every
-// CoverageRefreshInterval; handlers read with Snapshot which is
-// O(1) under an RLock.
+// snapshot. A background refresher calls Refresh every CoverageRefreshInterval;
+// handlers read Snapshot, O(1) under an RLock.
 //
-// First-pass cold-start (snapshot empty) returns nil + zero time;
-// the handler treats that as "coverage data not yet computed" and
-// renders an empty section. Background refresh fills it in within
-// the first interval after process start.
+// Before the first refresh Snapshot returns nil and a zero time, which the
+// handler renders as "coverage data not yet computed".
 type CoverageCache struct {
 	mu        sync.RWMutex
 	snapshot  []timescale.BackfillCoverage
@@ -35,11 +29,9 @@ type CoverageCache struct {
 	logger    Logger
 }
 
-// CoverageRefreshInterval is the cadence the background goroutine
-// in main.go calls Refresh at. 5 minutes is a deliberate trade-off:
-// long enough that the 2-3s SQL hit is amortised across many
-// status-page polls, short enough that a stalled backfill shows up
-// in the diagnostic surface within one refresh window.
+// CoverageRefreshInterval is the background Refresh cadence. 5 minutes
+// amortises the 2-3s SQL across many status-page polls while a stalled backfill
+// still shows up within one window.
 const CoverageRefreshInterval = 5 * time.Minute
 
 // Logger is the minimal logging surface CoverageCache needs.

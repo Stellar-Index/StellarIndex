@@ -56,12 +56,9 @@ func (a changeSummarySink) UpsertChangeSummary(ctx context.Context, row changesu
 }
 
 // buildChangeSummaryEntities maps the aggregator's configured pairs
-// into changesummary.Entity rows. We emit two entities per pair: a
-// "coin" keyed on the base asset's canonical id (the explorer
-// /coins/{slug} page reads this), and a "pair" keyed on the full
-// "base/quote" form (the explorer /pairs/{base}/{quote} page reads
-// this). The same source pair drives both — the rollup math is
-// identical.
+// into changesummary.Entity rows, two per pair: a "coin" keyed on the base asset's canonical id
+// (read by /coins/{slug}) and a "pair" keyed on "base/quote" (read by /pairs/{base}/{quote}).
+// The rollup math is identical for both.
 func buildChangeSummaryEntities(pairs []canonical.Pair) []changesummary.Entity {
 	out := make([]changesummary.Entity, 0, 2*len(pairs))
 	seenCoins := make(map[string]struct{}, len(pairs))

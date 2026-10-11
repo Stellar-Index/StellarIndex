@@ -7,10 +7,9 @@ import (
 
 // ProtocolPoolTokensReader maps a pool-based protocol's contracts to the
 // token contract C-strkeys each holds, so the /v1/protocols/{name} roster can
-// render a human asset pair ("XLM/USDC") instead of two raw C-strkeys.
-// Production wiring is timescale.Store.PoolTokens behind poolTokensCache.
-// Nil / a nil result → the roster still serves, just without the pair label
-// (soroswap keeps its own token0/token1 path). Never fails the roster.
+// render a human asset pair ("XLM/USDC"). Production wiring is
+// timescale.Store.PoolTokens behind poolTokensCache. A nil reader or result
+// leaves the pair label off and never fails the roster.
 type ProtocolPoolTokensReader interface {
 	// PoolTokens returns pool contract_id → ordered token contract C-strkeys
 	// for `source`, or (nil, nil) for a source without a per-token table.
@@ -18,11 +17,10 @@ type ProtocolPoolTokensReader interface {
 }
 
 // tokenSymbolResolver turns a token contract C-strkey into a human display
-// symbol ("XLM", "USDC", "AQUA", …), caching within its lifetime because a
-// protocol's pools share the same handful of tokens. It resolves entirely
-// in-memory off the verified-currency catalogue (SAC → classic/native asset
-// → ticker) — no lake read — and NEVER fails: an unresolvable token degrades
-// to a short truncated contract ("CAS3…OWMA"), so the roster always renders.
+// symbol ("XLM", "USDC", "AQUA", …), caching because a protocol's pools share a
+// handful of tokens. It resolves in memory off the verified-currency catalogue
+// (SAC → classic/native asset → ticker), with no lake read, and never fails: an
+// unresolvable token degrades to a truncated contract ("CAS3…OWMA").
 type tokenSymbolResolver struct {
 	s     *Server
 	cache map[string]string
@@ -77,15 +75,13 @@ func truncContract(c string) string {
 }
 
 // enrichContractTokens fills the human-pair fields (Tokens / TokenSymbols /
-// Pair) on every roster row of a pool-based protocol. Contract order:
-//   - soroswap rows already carry Token0/Token1 → those become Tokens;
-//   - other pool protocols look their tokens up in the PoolTokens map;
-//   - lending (blend) rows resolve their reserve-asset set the same way.
+// Pair) on every roster row of a pool-based protocol. Soroswap rows already
+// carry Token0/Token1; other pool and lending rows look tokens up in the
+// PoolTokens map.
 //
-// Best-effort and empty-safe: a nil reader, a read error, or a pool with no
-// resolvable tokens leaves that row's pair fields absent — the roster always
-// renders. The symbol resolver is shared across the roster so shared tokens
-// resolve once. Reports false when the pool-token read failed.
+// Best-effort: a nil reader, read error or unresolvable pool leaves that row's
+// pair fields absent. One symbol resolver is shared so shared tokens resolve
+// once. Reports false when the pool-token read failed.
 func (s *Server) enrichContractTokens(ctx context.Context, meta ProtocolMeta, contracts []ProtocolContractView) (ok bool) {
 	if len(contracts) == 0 {
 		return true

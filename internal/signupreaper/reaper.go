@@ -1,24 +1,14 @@
 // Package signupreaper deletes the orphan "speculative-account" rows
 // that the lost-signup-race recovery path leaves behind.
 //
-// Background: two concurrent
-// /v1/auth/callback provisions for the same just-verified email can
-// both pass the GetUserByEmail check and both create an `accounts`
-// row, but only one CreateUser wins on the `users_email_idx` unique
-// index. The loser's account has no user attached and never will; the
-// recovery path in internal/api/v1/dashboardauth marks it Suspended
-// with a `signup-race:` reason so it carries an unambiguous,
-// machine-matchable signal instead of accumulating as a
-// never-recovered row. This package is the reaper that consumes that
-// signal.
+// Two concurrent /v1/auth/callback provisions for the same email can both create an `accounts`
+// row, but only one CreateUser wins on `users_email_idx`. The loser's account never gets a user;
+// the recovery path in internal/api/v1/dashboardauth marks it Suspended with a `signup-race:`
+// reason, and this reaper consumes that machine-matchable signal.
 //
-// The worker is a small ticker loop (usage.Rollup / pricealerts.Worker
-// shape): sweep once immediately, then every Interval, deleting rows
-// that are Suspended with the signup-race reason, older than MinAge,
-// and — belt-and-suspenders — have no child users or api_keys. It runs
-// in the API binary alongside the customer-webhook + usage-rollup
-// workers and is bounded to the process's root context for graceful
-// shutdown.
+// The worker sweeps once immediately, then every Interval, deleting rows that are Suspended with
+// the signup-race reason, older than MinAge and, as a second guard, have no child users or
+// api_keys. It is bound to the process root context for graceful shutdown.
 package signupreaper
 
 import (
@@ -52,13 +42,9 @@ type OrphanStore interface {
 	// returning the number of rows removed. Conservative predicate —
 	// see the implementation.
 	ReapSuspendedOrphans(ctx context.Context, reasonPrefix string, olderThan time.Time) (int64, error)
-	// CountAccounts returns the current row count of the accounts
-	// table. Unlike ReapSuspendedOrphans this is not a delete surface —
-	// it exists so the reaper's sweep can publish [obs.AccountRows]:
-	// POST /v1/register (ADR-0049) is unauthenticated and mints a
-	// permanent account on every accepted call, and the reaper's own
-	// sweep never touches those rows (only signup-race orphans), so
-	// this gauge is the only visibility into that table's growth.
+	// CountAccounts returns the accounts row count, not a delete surface. It feeds
+	// [obs.AccountRows]: POST /v1/register is unauthenticated and mints a permanent account
+	// per call, which the sweep never touches, so this gauge is the only view of growth.
 	CountAccounts(ctx context.Context) (int64, error)
 	// CountAPIKeys returns the current row count of the api_keys
 	// table, published as [obs.APIKeyRows]. Register mints one durable
@@ -157,13 +143,9 @@ func (r *Reaper) Sweep(ctx context.Context) {
 	obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperSignup).Set(float64(r.now().Unix()))
 }
 
-// refreshRowGauges publishes the current accounts/api_keys row counts
-// (obs.AccountRows / obs.APIKeyRows). Both tables are durably written
-// by the unauthenticated, friction-free POST /v1/register path
-// (ADR-0049) and neither is bounded by this reaper — it deletes only
-// signup-race orphans — so this is the only per-deployment signal of
-// registration volume. A count failure is logged, not treated as a
-// sweep failure: the delete's own outcome already drives the alert.
+// refreshRowGauges publishes the accounts/api_keys row counts. Unauthenticated POST /v1/register
+// grows both and this reaper bounds neither, so they are the only registration-volume signal.
+// A count failure is logged, not a sweep failure: the delete's own outcome drives the alert.
 func (r *Reaper) refreshRowGauges(ctx context.Context) {
 	if n, err := r.store.CountAccounts(ctx); err != nil {
 		if !errors.Is(err, context.Canceled) {

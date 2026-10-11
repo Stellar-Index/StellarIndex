@@ -1,19 +1,12 @@
-// Package pgarray adapts Postgres array columns to the database/sql API
-// under the jackc/pgx v5 stdlib driver.
+// Package pgarray adapts Postgres array columns to database/sql under the pgx v5 stdlib driver.
 //
-// Why this exists: unlike lib/pq, pgx's stdlib driver surfaces an array
-// column to database/sql as its Postgres TEXT representation (e.g.
-// "{a,b,c}"), which database/sql cannot assign to a plain Go slice —
-// rows.Scan(&[]string{}) fails with "unsupported Scan, storing driver.Value
-// type string into type *[]string". For query ARGUMENTS pgx encodes Go
-// slices ([]string, [][]byte, …) as Postgres arrays natively, so no wrapper
-// is needed on the arg side; only SCAN destinations need an adapter.
+// pgx's stdlib driver surfaces an array column as its TEXT form ("{a,b,c}"), which database/sql
+// cannot scan into a plain Go slice ("unsupported Scan, storing driver.Value type string into
+// type *[]string"). Query ARGUMENTS need no wrapper (pgx encodes Go slices natively); only SCAN
+// destinations do.
 //
-// These adapters implement [sql.Scanner] by delegating the parse to pgx's
-// own pgtype array codec — no hand-rolled array-text parsing — so they are
-// byte-for-byte faithful to how the wire value is produced, matching the
-// former pq.StringArray / pq.ByteaArray semantics: SQL NULL decodes to a
-// nil slice, and an empty array "{}" decodes to a non-nil zero-length slice.
+// The adapters implement [sql.Scanner] by delegating to pgx's pgtype array codec rather than
+// hand-parsing array text. SQL NULL decodes to a nil slice, and "{}" to a non-nil empty slice.
 package pgarray
 
 import (

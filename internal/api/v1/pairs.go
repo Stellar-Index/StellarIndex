@@ -9,17 +9,12 @@ import (
 
 // handlePairs serves GET /v1/pairs?base=<id>&quote=<id>.
 //
-// Returns a [Market] array containing zero or one entries:
-// the activity summary for the requested pair if any trade has
-// been seen, otherwise an empty array. The 0-or-1-element array
-// shape matches the OpenAPI PairsEnvelope (data: array of
-// MarketRow) — a missing pair is NOT a 404, it's an empty list,
-// so clients can distinguish "no such pair" from a malformed
-// request without branching on status code.
+// Returns a [Market] array of zero or one entries (the OpenAPI PairsEnvelope shape): the
+// activity summary if any trade has been seen, otherwise an empty array. A missing pair is NOT
+// a 404, so clients can tell "no such pair" from a malformed request by status code.
 //
-// Reuses the [MarketsReader] interface — /v1/pairs and
-// /v1/markets share the same storage shape, just with different
-// access patterns (full pageable scan vs single-pair lookup).
+// Reuses [MarketsReader]: /v1/pairs and /v1/markets share a storage shape, differing only in
+// access pattern (pageable scan vs single-pair lookup).
 func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 	rawBase := r.URL.Query().Get("base")
 	if rawBase == "" {
@@ -89,26 +84,20 @@ func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 
 	out := []Market{}
 	if found {
-		// Scam-issuer gate + dex-nonstandard-decimals forward
-		// normalization — see markets.go's adjustListingPrice. Both
-		// resolve against the ACTUAL matched alias legs (native vs
-		// crypto:XLM vs the SAC), not the requested spelling — same
-		// precedent as lookupPriceAt's post-alias resolve.
+		// Scam-issuer gate and nonstandard-decimals normalization (markets.go's
+		// adjustListingPrice) resolve against the matched alias legs (native vs crypto:XLM vs
+		// the SAC), not the requested spelling.
 		market.LastPrice = s.adjustListingPrice(r.Context(), matchedBase, matchedQuote, market.LastPrice, "pairs")
 		out = append(out, market)
 	}
 	writeJSON(w, out, Flags{})
 }
 
-// pairMarketWithAliases resolves the single-pair market trying each XLM
-// dual-form alias combination of base and quote and returning
-// the FIRST form with a row — the same first-hit gate
-// [Server.ohlcSeriesWithAliases] applies on the series side. An
-// XLM-flavoured pair lives under whichever id the contributing trades
-// carried (native vs crypto:XLM vs the SAC), so a literal lookup on the
-// requested spelling alone returns an empty list for a valid-but-aliased
-// input. The matched legs are returned so the caller resolves
-// dex-nonstandard-decimals against the pair that actually produced the row.
+// pairMarketWithAliases resolves the single-pair market by trying each XLM alias combination
+// of base and quote and returning the first form with a row, like
+// [Server.ohlcSeriesWithAliases]. An XLM pair lives under whichever id its trades carried
+// (native, crypto:XLM or the SAC), so a literal lookup misses valid aliased input. The matched
+// legs are returned so the caller resolves decimals against the pair that produced the row.
 func (s *Server) pairMarketWithAliases(
 	ctx context.Context, reader MarketsReader, base, quote canonical.Asset,
 ) (Market, canonical.Asset, canonical.Asset, bool, error) {

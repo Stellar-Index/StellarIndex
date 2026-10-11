@@ -1,15 +1,13 @@
 // Copyright (c) 2026 Stellar Index contributors.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package httpx holds tiny shared HTTP helpers: response writers for
-// handler packages that do NOT speak the enveloped public v1 surface (the
-// dashboard session-auth packages: dashboardauth / dashboardkeys /
-// dashboardwebhooks), and the redirect-safe client for outbound calls
-// that carry a vendor API key ([NewKeyedClient]).
+// Package httpx holds shared HTTP helpers: response writers for the dashboard
+// session-auth packages, which do not speak the enveloped public v1 surface,
+// and the redirect-safe client for outbound calls carrying a vendor API key
+// ([NewKeyedClient]).
 //
-// The public v1 envelope + problem writers stay canonical in
-// internal/api/v1/envelope.go — do not use this package for enveloped
-// v1 responses.
+// Enveloped v1 responses use the writers in internal/api/v1/envelope.go, not
+// this package.
 package httpx
 
 import (

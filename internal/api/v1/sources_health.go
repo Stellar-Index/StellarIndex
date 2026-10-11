@@ -10,21 +10,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// handleSourceHealth serves GET /v1/sources/{name}/health — one
-// source's live health row: the same [SourceHealthRow] shape the
-// `sources` section of /v1/diagnostics/ingestion carries (registry
-// metadata + trailing-24h entries / trades / volume / markets), but
-// addressable per source so the explorer's /sources/{name} page can
-// poll a single venue without pulling the full operator snapshot.
+// handleSourceHealth serves GET /v1/sources/{name}/health, one source's
+// [SourceHealthRow], the same shape /v1/diagnostics/ingestion carries, so the
+// explorer can poll a single venue without the full operator snapshot.
 //
-// Data path: the background-refreshed ingestion snapshot (15s cadence,
-// see StartIngestionSnapshotRefresh) when populated — sub-millisecond;
-// falls back to an inline buildSourceHealth (8s ceiling, soft-fails to
-// zeroed stats) right after process start.
+// Data path: the background-refreshed ingestion snapshot (15s cadence, see
+// StartIngestionSnapshotRefresh) when populated; otherwise an inline
+// buildSourceHealth (8s ceiling, soft-fails to zeroed stats) right after start.
 //
-// Unknown source, or one that does not exist on the configured network
-// (sourcenet.Applicable) → 404, so this agrees with /v1/sources. The
-// registry is static per binary, so the 404 set only changes on deploy.
+// An unknown source, or one absent on the configured network
+// (sourcenet.Applicable), is a 404 to agree with /v1/sources. The registry is
+// static per binary, so that set only changes on deploy.
 func (s *Server) handleSourceHealth(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	detail := ""
@@ -47,11 +43,9 @@ func (s *Server) handleSourceHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(rows) == 0 {
 		asOf = WireTime{}
-		// Cold start, or the refresher has died and gone stale (see
-		// freshIngestionSnapshot). Same ceiling as the snapshot's
-		// sources filler; buildSourceHealth soft-fails its stat reads
-		// so the worst case is registry metadata with zeroed counters,
-		// not an error.
+		// Cold start, or a dead refresher left the snapshot stale (see
+		// freshIngestionSnapshot). buildSourceHealth soft-fails its stat reads, so
+		// the worst case is registry metadata with zeroed counters, not an error.
 		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 		defer cancel()
 		rows = buildSourceHealth(ctx, s)
