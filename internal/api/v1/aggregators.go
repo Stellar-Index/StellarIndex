@@ -17,17 +17,12 @@ type AggregatorsReader interface {
 	AggregatorRollup(ctx context.Context, since time.Time) ([]timescale.AggregatorRollupRow, error)
 }
 
-// AggregatorRow is the wire shape for one /v1/aggregators entry: a
-// routers-registry row (router or aggregator-vault contract) plus
-// its routed-via attribution rollup over the trailing 24 h.
+// AggregatorRow is the wire shape for one /v1/aggregators entry: a routers-registry row plus its
+// routed-via attribution over the trailing 24 h.
 //
-// RoutedVolume24hUSD is a decimal string (ADR-0003), null when none
-// of the window's routed trades carried a USD valuation (usd_volume
-// is aggregator-backfilled and can lag) — distinct from "0", which
-// never appears (a zero-trade router reports routed_trades_24h=0
-// and a null volume). Vault-kind rows always report zero routed
-// trades today: per-tx routed_via tagging applies to kind='router'
-// only; vault capital state lives on the protocol surfaces.
+// RoutedVolume24hUSD is a decimal string, null (never "0") when no routed trade in the window
+// carried a USD valuation, since usd_volume is backfilled and can lag. Vault-kind rows always
+// report zero routed trades: routed_via tagging applies to kind='router' only.
 type AggregatorRow struct {
 	ContractID     string `json:"contract_id"`
 	Name           string `json:"name"`
@@ -45,11 +40,9 @@ type AggregatorRow struct {
 	Notes []string `json:"notes,omitempty"`
 }
 
-// aggregatorRowNotes returns the coverage caveat(s) for a registry
-// row, or nil when none apply. auto_discovered rows (the migration 0103
-// aggregator-exec seed) are evidence-observed, not vendor- or
-// WASM-audit-verified. Other router rows count direct calls and calls
-// wrapped by an unregistered contract under one name
+// aggregatorRowNotes returns the coverage caveats for a registry row, or nil. auto_discovered
+// rows are evidence-observed, not vendor- or WASM-audit-verified. Other router rows count direct
+// calls and calls wrapped by an unregistered contract under one name
 // (timescale.TagTradesRoutedVia), which the API cannot separate.
 func aggregatorRowNotes(kind string, autoDiscovered bool) []string {
 	switch {
@@ -71,24 +64,16 @@ func aggregatorRowNotes(kind string, autoDiscovered bool) []string {
 
 // handleAggregators serves GET /v1/aggregators.
 //
-// Lists the routers registry (Soroswap router, aggregator wrappers
-// observed calling it, DeFindex vaults, …) with each entry's
-// routed-via attribution over the trailing 24 h: how many trades —
-// and how much USD volume — arrived at the underlying venues via
-// that router or wrapper. The window is a rolling observation over
-// the trades hypertable (recomputed per request, cheap via the
-// partial routed_via index), NOT a closed-bucket series — treat the
-// numbers like /v1/network/stats, not /v1/vwap.
+// Lists the routers registry with each entry's routed-via attribution (trade count and USD
+// volume) over the trailing 24 h. The window is a rolling observation over the trades
+// hypertable, recomputed per request via the partial routed_via index, NOT a closed-bucket
+// series: treat it like /v1/network/stats, not /v1/vwap.
 //
-// A router call observed as a sub-invocation (migration 0101) is
-// attributed to its outermost wrapping contract when that contract is
-// itself a registered 'router'-kind entry
-// (timescale.TagTradesRoutedVia); otherwise it falls back to the
-// plain router's name. Each row's Notes explain that degrade —
-// see aggregatorRowNotes.
+// A sub-invocation router call is attributed to its outermost wrapping contract when that is
+// itself a registered 'router'-kind entry (timescale.TagTradesRoutedVia); otherwise it falls
+// back to the plain router's name. Row Notes explain the degrade (aggregatorRowNotes).
 //
-// Every routers row is a migration-seeded pubnet contract, so a test net
-// serves an empty list rather than routers that do not exist there.
+// Every routers row is a seeded pubnet contract, so a test net serves an empty list.
 func (s *Server) handleAggregators(w http.ResponseWriter, r *http.Request) {
 	if !s.servesPubnetReference() {
 		writeJSON(w, []AggregatorRow{}, Flags{})

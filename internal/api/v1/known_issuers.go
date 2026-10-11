@@ -2,26 +2,12 @@ package v1
 
 import "context"
 
-// knownIssuers is a hand-curated fallback map from issuer
-// G-strkey to (home_domain, org_name). The production
-// `issuers.home_domain` column stays empty until an issuer-upsert
-// path lands that propagates from `account_observations` —
-// without that, every /v1/issuers row renders home_domain=null
-// and the explorer shows just a truncated G-strkey.
+// knownIssuers is a hand-curated fallback map from issuer G-strkey to (home_domain, org_name),
+// applied at the wire boundary while `issuers.home_domain` is empty so top issuers render with
+// readable names. Each entry is sourced from the issuer's public stellar.toml.
 //
-// Until that pipeline lands, fall back to this map at the wire
-// boundary so the top issuers (USDC, AQUA, yXLM, SHX, …) render
-// with readable names. Each entry is sourced from the issuer's
-// public stellar.toml at the cited domain — operator can
-// re-verify with `curl https://<domain>/.well-known/stellar.toml`.
-//
-// To add an issuer: append a new entry below. Do NOT add an
-// entry without first verifying the G-strkey controls the
-// home_domain (e.g. via a stellar.toml ACCOUNTS array
-// listing the G-account). A wrong mapping is worse than a null.
-//
-// Once the AccountEntry observer writes the `issuers` table, this
-// map becomes redundant and can be removed.
+// Never add an entry without verifying the G-strkey controls the home_domain (for example via
+// the stellar.toml ACCOUNTS array). A wrong mapping is worse than a null.
 type knownIssuer struct {
 	HomeDomain string
 	OrgName    string
@@ -85,11 +71,8 @@ var knownIssuers = map[string]knownIssuer{
 		HomeDomain: "assets.fxdao.io",
 		OrgName:    "FxDAO",
 	},
-	// Ultra Capital (Ultra Stellar) — acquired apay.io's wrapped
-	// BTC/ETH issuers. Both accounts' on-chain home_domain is
-	// ultracapital.xyz and its stellar.toml lists them as the
-	// tethered BTC/ETH issuers; apay.io is a dead anchor's identity
-	// and the wrong domain to SEP-1-verify against.
+	// Ultra Capital (Ultra Stellar) acquired apay.io's wrapped BTC/ETH issuers. Their on-chain
+	// home_domain is ultracapital.xyz; apay.io is a dead anchor and the wrong SEP-1 domain.
 	"GDPJALI4AZKUU2W426U5WKMAT6CN3AJRPIIRYR2YM54TL2GDWO5O2MZM": {
 		HomeDomain: "ultracapital.xyz",
 		OrgName:    "Ultra Capital",
@@ -167,20 +150,12 @@ var knownIssuers = map[string]knownIssuer{
 	},
 }
 
-// onChainHomeDomain returns the issuer account's live self-declared
-// home_domain from the CH account state, and whether an ATTEMPTED
-// read came back untrustworthy (the read errored — a deadline
-// included). No explorer reader wired is a deliberate deployment
-// shape, not a failure: it never attempts a read, so it reports
-// degraded=false and callers fall through to the curated map exactly
-// as before. "" with degraded=false also covers a read that
-// succeeded and found no domain (or no account); that is a verified
-// absence. Callers use on-chain-first AHEAD of the curated
-// knownIssuers map: the on-chain field is signed by the account's
-// own keys and follows anchor acquisitions/rebrands, while the map
-// is a hand-maintained snapshot that goes stale silently (one sweep
-// found 8 of 27 entries diverged from chain), and a stale domain is
-// also what SEP-1 verification would resolve against.
+// onChainHomeDomain returns the issuer account's live self-declared home_domain from the CH
+// account state, and whether an attempted read was untrustworthy (errored, deadline included).
+// No explorer reader wired never attempts a read, so degraded=false and callers fall through to
+// the curated map. "" with degraded=false is a verified absence. On-chain is consulted ahead of
+// knownIssuers because the field is signed by the account's keys and follows rebrands, while the
+// map goes stale silently and SEP-1 verification would resolve against a stale domain.
 func (s *Server) onChainHomeDomain(ctx context.Context, issuer string) (domain string, degraded bool) {
 	if s.Explorer == nil {
 		return "", false
@@ -195,20 +170,13 @@ func (s *Server) onChainHomeDomain(ctx context.Context, issuer string) (domain s
 	return st.HomeDomain, false
 }
 
-// backfillHomeDomain fills an empty detail.HomeDomain for a classic
-// asset: live on-chain account state first, then the operator-static
-// map (s.StaticHomeDomain), curated knownIssuers map as last resort. Shared by both asset-detail surfaces
-// (handleAssetGet + the metadata route) so they stay in lockstep on
-// the domain their SEP-1 overlays verify against.
+// backfillHomeDomain fills an empty detail.HomeDomain for a classic asset: on-chain account
+// state first, then s.StaticHomeDomain, then the curated knownIssuers map. Both asset-detail
+// surfaces share it so their SEP-1 overlays verify against the same domain.
 //
-// Returns degraded=true when the on-chain read itself failed (reader
-// unwired, deadline, store error) rather than genuinely finding no
-// domain. On a degraded read the curated map is deliberately NOT
-// consulted: falling back to it would serve a stale hand-maintained
-// domain — and let SEP-1 verify against it — under the same 200 a
-// confirmed live read gets, indistinguishable from real data.
-// The caller is expected to fold degraded into the response's stale
-// flag rather than silently accept a fallback value.
+// degraded=true means the on-chain read itself failed (unwired, deadline, store error). The
+// curated map is then deliberately NOT consulted: it would serve a stale domain, and let SEP-1
+// verify against it, under the same 200 as a live read. Callers fold degraded into the stale flag.
 func (s *Server) backfillHomeDomain(ctx context.Context, detail *AssetDetail) (degraded bool) {
 	if detail.HomeDomain != nil && *detail.HomeDomain != "" {
 		return false
@@ -232,12 +200,8 @@ func (s *Server) backfillHomeDomain(ctx context.Context, detail *AssetDetail) (d
 	return false
 }
 
-// enrichIssuer fills empty home_domain / org_name fields on the
-// passed entry with the curated fallback when one exists. Returns
-// the (possibly mutated) values. Pass-through when the DB already
-// populated them — DB wins, since an operator with a real
-// `stellarindex-ops sep1-refresh` cron has more current data than
-// the static map.
+// enrichIssuer fills empty home_domain / org_name with the curated fallback. Values the DB
+// already populated win, since a sep1-refresh cron is more current than the static map.
 func enrichIssuer(gStrkey, homeDomain, orgName string) (string, string) {
 	if homeDomain != "" && orgName != "" {
 		return homeDomain, orgName

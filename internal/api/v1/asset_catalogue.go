@@ -6,15 +6,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// AssetsReader is the seam the /v1/assets handlers read through to
-// surface asset-catalogue data (price / volume / market_cap /
-// sparkline / ATH). The legacy /v1/coins HTTP surface has been
-// removed (no production consumers); this interface stays because
-// /v1/assets sources the same data through it.
-//
-// timescale.Store satisfies it via ListAssetsExt + GetAssetBySlug
-// + GetNativeAssetRow + GetAssetTopMarkets + GetAssetPriceHistory24h
-// + GetAssetMarketsCount.
+// AssetsReader is the seam the /v1/assets handlers read asset-catalogue data
+// through (price / volume / market_cap / sparkline / ATH). timescale.Store
+// satisfies it via ListAssetsExt, GetAssetBySlug, GetNativeAssetRow,
+// GetAssetTopMarkets, GetAssetPriceHistory24h and GetAssetMarketsCount.
 type AssetsReader interface {
 	ListAssetsExt(ctx context.Context, opts timescale.ListAssetsOptions) ([]timescale.AssetRow, error)
 	GetAssetBySlug(ctx context.Context, slug string) (timescale.AssetRow, error)

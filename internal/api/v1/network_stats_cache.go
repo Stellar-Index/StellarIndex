@@ -17,24 +17,16 @@ import (
 // maps it to a 500 — same outcome as an uncached upstream error.
 var errNetworkStatsColdFailed = errors.New("network stats: cold fetch failed")
 
-// CachedNetworkStatsReader wraps a [NetworkStatsReader] with a single-key
-// stale-while-revalidate cache. GetNetworkStats runs a network-wide 24h
-// aggregate over the served tier (~485ms p95 on r1, the slowest /v1 route)
-// for /v1/network/stats — the explorer's network strip. The figures
-// (24h volume, market/asset counts, latest ledger) move slowly, so the
-// SWR contract — serve the cached value instantly, revalidate in a single
-// background flight, never block a request on the slow upstream — keeps it
-// off the request path with no material staleness. Same shape as the
+// CachedNetworkStatsReader wraps a [NetworkStatsReader] with a single-key stale-while-revalidate
+// cache. GetNetworkStats is a network-wide 24h aggregate over the served tier (the slowest /v1
+// route), but its figures move slowly: serve the cached value instantly and revalidate in one
+// background flight, so no request ever blocks on the slow upstream. Same shape as the
 // coins/markets caches (asset_catalogue_cache.go), reduced to one key.
 type CachedNetworkStatsReader struct {
-	// logger sinks a panic recovered in a detached refresh goroutine.
-	// It is the PROCESS DEFAULT rather than the API Server's logger:
-	// these reader wrappers are constructed directly in
-	// cmd/stellarindex-api/main.go before the Server exists, and
-	// widening the exported constructor would churn every caller for a
-	// sink that ends up in the same journal either way. The
-	// load-bearing signal is stellarindex_worker_panics_total, which
-	// worker.Report moves regardless of the sink.
+	// logger sinks a panic recovered in a detached refresh goroutine. It is the process default,
+	// not the Server's logger, because readers are built before the Server exists. The
+	// load-bearing signal is stellarindex_worker_panics_total, which worker.Report moves
+	// regardless of the sink.
 	logger *slog.Logger
 
 	upstream NetworkStatsReader
@@ -64,14 +56,10 @@ func (c *CachedNetworkStatsReader) GetNetworkStats(ctx context.Context) (timesca
 	return v, err
 }
 
-// GetNetworkStatsAt is GetNetworkStats plus honest freshness: it returns
-// the served value's observation time and whether it came from the SWR
-// stale-serve path (the value is a prior success the cache kept past its
-// TTL while a refresh is pending/failing). The handler stamps flags.stale
-// + an honest as_of from these, instead of silently asserting stale:false
-// / as_of=now over data a failing refresh has let age (mirrors
-// CachedMarketsReader.SourceMarketsAt). A zero observedAt means "live /
-// uncached read" — the handler defaults as_of to now and stale=false.
+// GetNetworkStatsAt is GetNetworkStats plus freshness: the value's observation time and whether
+// it was served stale (a prior success kept past its TTL while a refresh is pending or failing).
+// The handler stamps flags.stale and as_of from these rather than asserting stale:false over
+// aged data. A zero observedAt means a live, uncached read (as_of=now, stale=false).
 func (c *CachedNetworkStatsReader) GetNetworkStatsAt(ctx context.Context) (timescale.NetworkStats, time.Time, bool, error) {
 	if c.ttl <= 0 {
 		v, err := c.upstream.GetNetworkStats(ctx)
@@ -99,10 +87,8 @@ func (c *CachedNetworkStatsReader) GetNetworkStatsAt(ctx context.Context) (times
 			c.mu.Unlock()
 			obs.APICacheOpsTotal.WithLabelValues("network_stats", "get", "stale").Inc()
 			//nolint:gosec,contextcheck // G118 / contextcheck: intentional —
-			// the SWR background refresh MUST use a fresh context
-			// (runDetachedFill), NOT the request ctx, which is cancelled the
-			// instant the stale response is written; reusing it would abort
-			// every refresh, defeating the point of serving stale.
+			// the refresh must use a fresh context (runDetachedFill), not the request ctx,
+			// which is cancelled as soon as the stale response is written.
 			go runDetachedFill(c.logger, "api-network-stats-refresh", cacheFillBudget, done, c.upstream.GetNetworkStats, c.settle)
 			return v, at, true, nil
 		}

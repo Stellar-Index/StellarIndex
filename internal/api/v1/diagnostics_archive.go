@@ -8,21 +8,13 @@ import (
 	"os"
 )
 
-// ArchiveReportView is the wire shape of GET /v1/diagnostics/archive —
-// the latest ADR-0017 archive-completeness report. It mirrors
-// internal/archivecompleteness.Report field-for-field but is declared
-// locally so the public wire contract stays decoupled from the
-// daemon's internal struct (same rationale as Source vs
-// external.Metadata in sources.go): the JSON tags below ARE the
-// contract, and an internal-only field added to the daemon's Report
-// won't leak onto the wire.
+// ArchiveReportView is the wire shape of GET /v1/diagnostics/archive, the latest archive
+// completeness report. It mirrors internal/archivecompleteness.Report but is declared locally
+// so the JSON tags stay the contract and an internal-only field cannot leak onto the wire.
 //
-// The report is produced by `stellarindex-ops archive-completeness
-// verify` (daily systemd timer) which writes its JSON report to the
-// path the API serves here (Options.ArchiveReportPath). The API is a
-// pure read-through: no re-scan, no freshness synthesis — `scanned_at`
-// is the daemon's own timestamp, so a stale value is itself the signal
-// that the timer stopped firing.
+// The API is a pure read-through of the file the daily verify timer writes (no re-scan, no
+// freshness synthesis): `scanned_at` is the daemon's own timestamp, so a stale value is itself
+// the signal that the timer stopped firing.
 type ArchiveReportView struct {
 	// Schema is the daemon's report wire-format version ("1").
 	Schema string `json:"schema"`
@@ -73,20 +65,14 @@ type ArchiveGapRangeView struct {
 	End   uint32 `json:"end"`
 }
 
-// handleDiagnosticsArchive serves GET /v1/diagnostics/archive — the
-// latest archive-completeness report (ADR-0017), read from the JSON
-// file the daily `archive-completeness verify` timer writes.
+// handleDiagnosticsArchive serves GET /v1/diagnostics/archive from the report file.
 //
 // Degradation ladder:
 //   - Options.ArchiveReportPath empty → 503 (deployment opted out).
-//   - File doesn't exist → 404 (daemon hasn't produced a report yet —
-//     a legitimate state on a fresh host, not a server bug).
-//   - File unreadable / unparseable → 500 with a log line (the file
-//     exists but something is wrong: permissions, torn write, schema
-//     drift).
+//   - File missing → 404 (no report yet; legitimate on a fresh host, not a server bug).
+//   - File unreadable / unparseable → 500 with a log line (permissions, torn write, drift).
 //
-// Caching: covered by the `/v1/diagnostics/` prefix rule in
-// middleware/cachecontrol.go (`private, no-cache, must-revalidate`).
+// Caching is covered by the `/v1/diagnostics/` prefix rule in middleware/cachecontrol.go.
 func (s *Server) handleDiagnosticsArchive(w http.ResponseWriter, r *http.Request) {
 	if s.ArchiveReportPath == "" {
 		writeProblem(w, r,

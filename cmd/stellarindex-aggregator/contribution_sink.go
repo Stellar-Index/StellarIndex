@@ -7,16 +7,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// contributionSink adapts the timescale Store to the
-// orchestrator.ContributionSink interface. Lives in the binary
-// rather than the storage package to avoid an import cycle
-// (storage already imports nothing from aggregate; the orchestrator
-// imports storage for triangulate, so a storage→orchestrator import
-// would close the loop).
-//
-// Translates each [orchestrator.ContributionRecord] into a batch
-// of [timescale.PriceSourceContribution] rows and forwards to the
-// store.
+// contributionSink adapts the timescale Store to orchestrator.ContributionSink, writing each
+// [orchestrator.ContributionRecord] as a batch of [timescale.PriceSourceContribution] rows.
+// It lives in the binary because the orchestrator imports storage, so a storage-to-orchestrator
+// import would close an import cycle.
 type contributionSink struct {
 	store *timescale.Store
 }
@@ -41,13 +35,9 @@ const contributionScale = 18
 // carried onto every row: it is the only thing telling the 5m, 1h and
 // 24h breakdowns of one pair apart.
 func contributionRows(rec orchestrator.ContributionRecord) []timescale.PriceSourceContribution {
-	// Read per-source USD volume directly from the post-filter
-	// breakdown the orchestrator supplies. SourceUSDVolume sums
-	// per-trade USD over the same surviving trade slice that computed
-	// Contributions[].Weight, so the persisted `volume_usd` matches the
-	// published contribution set even when outliers/class-filter
-	// dropped rows. Sources with no positive SourceUSDVolume entry get
-	// NULL rather than a fabricated value.
+	// SourceUSDVolume sums USD over the same post-filter trade slice that produced
+	// Contributions[].Weight, so volume_usd matches the published set even when outlier or
+	// class filters dropped rows. Sources without a positive entry get NULL, not a made-up value.
 	rows := make([]timescale.PriceSourceContribution, 0, len(rec.Contributions))
 	for _, c := range rec.Contributions {
 		row := timescale.PriceSourceContribution{

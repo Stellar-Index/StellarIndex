@@ -11,43 +11,29 @@ import (
 )
 
 // readFanoutConcurrency bounds per-request fan-out in handlers that
-// run one DB-bound read per row of a listing (catalogue market caps,
-// per-page price fills, slug-expansion market merges). Mirrors
-// priceBatchConcurrency's rationale: the underlying reads are
-// individually cheap, so the win from parallelism saturates around
-// the DB pool size — while an UNbounded per-row fan-out is a
-// self-inflicted connection-pool exhaustion vector the moment the
-// row count grows (the verified-currency catalogue is hand-curated
-// and small today, but nothing in the handler enforces that).
+// run one DB-bound read per row of a listing. Mirrors priceBatchConcurrency: the reads are
+// individually cheap, so parallelism saturates near the DB pool size, while an unbounded
+// per-row fan-out exhausts the connection pool as soon as the row count grows.
 const readFanoutConcurrency = 16
 
 // fanoutRowWorker is the worker label a panicking per-row fan-out
-// reports under. One label for every caller of [forEachBounded] is
-// deliberate: the label set of stellarindex_worker_panics_total must
-// stay bounded, and the stack in the accompanying log line carries the
-// handler that fanned out.
+// reports under. One shared label keeps the label set of stellarindex_worker_panics_total
+// bounded; the stack in the log line identifies the handler that fanned out.
 const fanoutRowWorker = "api-fanout-row"
 
 // forEachBounded runs fn(i) for every i in [0, n), allowing at most
 // `limit` invocations to run concurrently. It blocks until all
 // invocations return.
 //
-// This is the ONLY sanctioned shape for per-row fan-out in handlers:
-// every goroutine must write only its own index-keyed slot (disjoint
-// memory, no lock) and the semaphore caps concurrent DB round-trips.
-// Rows that need skipping are an early `return` inside fn — cheaper
-// than special-casing the loop. See lookupPriceBatch in price.go for
-// the original pattern this factors out.
+// This is the only sanctioned shape for per-row fan-out in handlers: each goroutine writes
+// only its own index-keyed slot (disjoint memory, no lock) and the semaphore caps concurrent
+// DB round-trips. Skip a row with an early return inside fn.
 //
-// A panic in fn(i) is CONTAINED here rather than allowed to kill the
-// process. These goroutines are detached from the handler's, so
-// middleware.Recoverer — which wraps only the handler goroutine — does
-// not cover them, and an unrecovered panic in ANY goroutine terminates
-// the whole binary. Containing it leaves row i's slot at its ZERO
-// value, which is the same outcome every caller already handles for a
-// row whose read failed, and the other n-1 rows still land. logger is
-// threaded in (rather than defaulted) so the panic is attributable to
-// the deployment's configured sink; it may be nil in tests.
+// A panic in fn(i) is contained here. These goroutines are detached from the handler's, so
+// middleware.Recoverer does not cover them and an unrecovered panic would terminate the whole
+// binary. Row i's slot stays at its zero value, the outcome callers already handle for a
+// failed read, and the other rows still land. logger is passed in so the panic reaches the
+// deployment's configured sink; it may be nil in tests.
 func forEachBounded(logger *slog.Logger, n, limit int, fn func(i int)) {
 	if n <= 0 {
 		return

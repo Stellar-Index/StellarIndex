@@ -1,12 +1,6 @@
-// Package version exposes build-time version metadata injected
-// via -ldflags at build time, plus VCS info read from the Go
-// build system at startup. See Makefile `LD_FLAGS`.
-//
-// Values default to "dev" / "unknown" for unbuilt or test runs;
-// at production-build time the Makefile injects real values via
-// -ldflags. The Commit / Dirty fields come from
-// runtime/debug.ReadBuildInfo(), populated by `go build
-// -buildvcs=true` (the Makefile's default).
+// Package version exposes build metadata injected via -ldflags (see Makefile `LD_FLAGS`),
+// plus VCS info from runtime/debug.ReadBuildInfo (populated by `go build -buildvcs=true`).
+// Values default to "dev" / "unknown" for unbuilt or test runs.
 package version
 
 import (

@@ -1,14 +1,10 @@
-// Package redisclient builds a [redis.UniversalClient] from
-// [config.StorageConfig], picking Sentinel-aware FailoverClient
-// when the operator configured Sentinel addresses (production
-// topology per ADR-0024) and falling back to a plain Client
-// against [config.StorageConfig.RedisAddr] for dev / single-node.
+// Package redisclient builds a [redis.UniversalClient] from [config.StorageConfig]: a
+// Sentinel-aware FailoverClient when Sentinel addresses are configured (production), else a
+// plain Client against RedisAddr for dev / single-node.
 //
-// Both binaries (cmd/stellarindex-api, cmd/stellarindex-aggregator)
-// use this builder so the Sentinel migration happens in one
-// place, not two. Tests hit a real redis via miniredis or the
-// integration harness — neither path uses Sentinel, so the
-// FailoverClient branch is exercised only in deployment.
+// The API and aggregator share this builder so Sentinel handling lives in one place. Tests use
+// miniredis or the integration harness, so the FailoverClient branch is exercised only in
+// deployment.
 package redisclient
 
 import (
@@ -18,21 +14,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// Build returns a [redis.UniversalClient] suitable for both API
-// and aggregator binaries.
+// Build returns a [redis.UniversalClient] for the API and aggregator binaries.
 //
 // Selection rule:
-//   - cfg.RedisSentinelAddrs non-empty → FailoverClient (asks
-//     Sentinel for the current primary; survives failover without
-//     a config change). cfg.RedisAddr is ignored in this mode.
-//   - cfg.RedisSentinelAddrs empty AND cfg.RedisAddr non-empty →
-//     plain Client. Dev / single-node deployments.
-//   - both empty → returns nil. Caller decides whether that's
-//     fatal (aggregator) or tolerable (API: SEP-1 cache + account
-//     store fall through gracefully).
+//   - cfg.RedisSentinelAddrs non-empty → FailoverClient (survives failover without a config
+//     change); cfg.RedisAddr is ignored.
+//   - Sentinel empty AND cfg.RedisAddr non-empty → plain Client.
+//   - both empty → nil; the caller decides whether that is fatal (aggregator) or tolerable
+//     (API caches fall through gracefully).
 //
-// The returned client is safe for concurrent use; close it via
-// [redis.UniversalClient.Close] on shutdown.
+// The client is safe for concurrent use; close it on shutdown.
 func Build(cfg config.StorageConfig) redis.UniversalClient {
 	// Username is empty by default (Redis's default-user path) and set
 	// to "stellarindex" (or per-component) when the operator sets

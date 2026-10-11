@@ -13,14 +13,12 @@ import (
 // vwapBreakdownSource is the only accepted ?breakdown= value.
 const vwapBreakdownSource = "source"
 
-// VWAPSourceBreakdown is one venue's contribution to one bucket of a
-// /v1/vwap window. Volumes are in the same units as the response's
-// base_volume / quote_volume, so a bucket's sources sum to the bucket.
+// VWAPSourceBreakdown is one venue's contribution to one bucket of a /v1/vwap window, in the
+// same units as the response's base_volume / quote_volume, so a bucket's sources sum to it.
 //
-// Weight is the source's post-filter quote volume over the bucket's total
-// post-filter quote volume, as a decimal string floored to 10 places (a
-// bucket's weights therefore sum to 1 only to that precision). Price is
-// null when the outlier filter left the source no trades in the bucket.
+// Weight is the source's post-filter quote volume over the bucket's, as a decimal string floored
+// to 10 places (weights sum to 1 only to that precision). Price is null when the outlier filter
+// left the source no trades in the bucket.
 type VWAPSourceBreakdown struct {
 	Source           string  `json:"source"`
 	Price            *string `json:"price"`
@@ -31,9 +29,8 @@ type VWAPSourceBreakdown struct {
 	OutliersExcluded int     `json:"outliers_excluded"`
 }
 
-// VWAPBreakdownBucket is one time bucket. Only buckets holding at least
-// one fetched trade appear. Start/End are the bucket's UTC-aligned bounds
-// (not clamped to the window).
+// VWAPBreakdownBucket is one time bucket; only buckets holding a fetched trade appear.
+// Start/End are UTC-aligned bounds, not clamped to the window.
 type VWAPBreakdownBucket struct {
 	Start       WireTime              `json:"start"`
 	End         WireTime              `json:"end"`
@@ -42,11 +39,9 @@ type VWAPBreakdownBucket struct {
 	Sources     []VWAPSourceBreakdown `json:"sources"`
 }
 
-// VWAPBreakdown is the opt-in ?breakdown=source block. Truncated mirrors
-// the response's `truncated`: the fetch cap was hit, so the breakdown
-// covers only the newest trades of the window and is a lower bound.
-// Interval is null when no ?interval= was given (one bucket spans the
-// whole window).
+// VWAPBreakdown is the opt-in ?breakdown=source block. Truncated mirrors the response's
+// `truncated`: the fetch cap was hit, so only the newest trades are covered and the breakdown is
+// a lower bound. Interval is null when no ?interval= was given (one bucket spans the window).
 type VWAPBreakdown struct {
 	Interval  *string               `json:"interval"`
 	Truncated bool                  `json:"truncated"`
@@ -124,10 +119,9 @@ type vwapBucketTrades struct {
 	pre, post  []canonical.Trade
 }
 
-// buildVWAPBreakdown buckets the pre- and post-outlier-filter trade slices
-// and reduces each bucket per source with [aggregate.SourceContributions].
-// Exclusions are pre minus post per (bucket, source): the filter records
-// nothing, so they are derived here. adjust applies the same
+// buildVWAPBreakdown buckets the pre- and post-outlier-filter trades and reduces each bucket per
+// source with [aggregate.SourceContributions]. Exclusions are pre minus post per (bucket,
+// source), derived here because the filter records none. adjust applies the same
 // nonstandard-decimals price correction as the headline price.
 func buildVWAPBreakdown(
 	pre, post []canonical.Trade, interval ohlcInterval, from, to time.Time,

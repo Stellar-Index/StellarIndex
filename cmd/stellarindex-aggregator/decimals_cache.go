@@ -10,11 +10,8 @@ import (
 )
 
 // decimalsCacheRefreshInterval mirrors internal/api/v1.NonstandardDecimalsRefreshInterval
-// (not imported directly — the aggregator binary has no dependency on the
-// api/v1 package, per D8 layering; the two caches are independent mirrors
-// of the same tiny `nonstandard_decimals_assets` table, matching the
-// existing pattern of the API process running its own mirror rather than
-// sharing one in-process cache across binaries).
+// (not imported: the aggregator binary must not depend on api/v1). The two caches are
+// independent in-process mirrors of the same tiny `nonstandard_decimals_assets` table.
 const decimalsCacheRefreshInterval = 60 * time.Second
 
 // decimalsAssetReader is the storage seam this cache consults. Satisfied
@@ -24,24 +21,17 @@ type decimalsAssetReader interface {
 }
 
 // decimalsCache is the aggregator-binary mirror of
-// internal/api/v1.NonstandardDecimalsCache — an in-process, periodically-
-// refreshed snapshot of `nonstandard_decimals_assets` (migration 0093),
-// wired into orchestrator.Config.DecimalsLookup so the orchestrator's
-// published VWAP is decimals-normalized for any confirmed non-7-decimals
-// leg (docs/operations/runbooks/dex.md).
+// internal/api/v1.NonstandardDecimalsCache: a periodically refreshed snapshot of
+// `nonstandard_decimals_assets`, wired into orchestrator.Config.DecimalsLookup so the published
+// VWAP is decimals-normalized for any confirmed non-7-decimals leg
+// (docs/operations/runbooks/dex.md).
 //
-// Kept as a small standalone type here (not a shared package with
-// internal/api/v1's cache) deliberately: internal/aggregate/orchestrator's
-// existing Store/FXStore/Cache seams are all storage-agnostic local
-// interfaces, and this binary is the natural place to own the DB-aware
-// wiring that satisfies aggregate.DecimalsLookup structurally — exactly
-// how FXStore: store and Baselines: baselineLookupAdapter{...} are wired
-// a few lines below in run().
+// It is a standalone type because the orchestrator's seams are storage-agnostic interfaces and
+// this binary owns the DB-aware wiring that satisfies aggregate.DecimalsLookup structurally.
 //
-// Fail-open by construction, same as the API-side cache: a read error or
-// an unrefreshed cache leaves Lookup reporting "nothing flagged" (via the
-// zero-value map), so a Postgres blip degrades to "normalization not yet
-// applied for a brand-new offender" rather than blocking VWAP publication.
+// Fail-open by construction, like the API-side cache: a read error or unrefreshed cache reports
+// "nothing flagged", so a Postgres blip delays normalization for a brand-new offender rather
+// than blocking VWAP publication.
 type decimalsCache struct {
 	mu     sync.RWMutex
 	assets map[string]int

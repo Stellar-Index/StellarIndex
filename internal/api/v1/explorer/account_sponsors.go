@@ -6,23 +6,16 @@ import (
 	"time"
 )
 
-// AccountSponsorsView is the wire response for GET /v1/accounts/sponsors
-// — the sponsor league table: which accounts have paid the base
-// reserves for other accounts' ledger entries.
+// AccountSponsorsView is the wire response for GET /v1/accounts/sponsors, the sponsor league
+// table of accounts that paid base reserves for other accounts' ledger entries.
 //
-// EVERY FIGURE HERE IS HISTORY. It is derived by replaying sponsorship
-// operations, so it says what an account has DONE, never what is
-// currently in force. A sponsorship also lapses when the sponsored entry
-// is simply deleted or the sponsored account merges away, and neither
-// emits a sponsorship operation — so a "currently sponsoring" number
-// computed from this source would overstate. Observing the live set
-// needs the sponsoringID carried inside each ledger entry, which this
-// API does not serve. Nothing in this response is a live-state figure.
+// EVERY FIGURE HERE IS HISTORY, derived by replaying sponsorship operations. A sponsorship also
+// lapses when the entry is deleted or the sponsored account merges, and neither emits a
+// sponsorship operation, so a "currently sponsoring" number would overstate. Live state needs the
+// sponsoringID inside each ledger entry, which this API does not serve.
 //
-// This is the counterpart of GET /v1/accounts/creators, and the two must
-// not be summed: creation is immutable and one-off, sponsorship is
-// revocable and repeatable, and an account can legitimately appear high
-// on both boards.
+// It is the counterpart of GET /v1/accounts/creators; do not sum the two boards: creation is
+// immutable and one-off, sponsorship is revocable and repeatable.
 type AccountSponsorsView struct {
 	Sponsors []AccountSponsorV `json:"sponsors"`
 	Totals   struct {

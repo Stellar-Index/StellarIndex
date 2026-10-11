@@ -13,38 +13,29 @@ import (
 )
 
 // TLSCertProbeInterval is the cadence at which [RunTLSCertProbe]
-// re-probes a host's leaf cert. The gauge feeds an alert that fires at
-// 14-days-remaining; a 6 h
-// cadence means we re-confirm the expiry timestamp 56× before the
-// alert fires, so a single failed probe never starves the
-// gauge.
+// re-probes a host's leaf cert. The expiry alert fires at 14 days remaining, so
+// a 6 h cadence re-confirms the timestamp 56 times first and a single failed
+// probe never starves the gauge.
 const TLSCertProbeInterval = 6 * time.Hour
 
-// tlsCertProbeTimeout caps each individual probe. Public TLS
-// handshakes against Let's Encrypt + Caddy typically complete in
-// < 300 ms; 10 s is generous head room for a transient network
-// blip without holding the goroutine open through a deeper
-// outage.
+// tlsCertProbeTimeout caps each probe. Handshakes against Caddy typically take
+// under 300 ms; 10 s absorbs a network blip without holding the goroutine open
+// through a deeper outage.
 const tlsCertProbeTimeout = 10 * time.Second
 
 // RunTLSCertProbe blocks until ctx is cancelled, periodically
 // probing the configured hostnames via TLS handshake and emitting
 // the leaf cert's NotAfter as a Prometheus gauge.
 //
-// Public TLS is fronted by Caddy, which auto-renews Let's Encrypt
-// 30 days before expiry. A failed renewal (DNS, rate limit, ACME
-// quota) is otherwise silent until the cert expires. This probe gives a
-// `stellarindex_tls_cert_not_after_unix` gauge that an alert can
-// chart against `time()` to catch a stuck renewal cycle.
+// Caddy auto-renews Let's Encrypt 30 days before expiry; a failed renewal (DNS,
+// rate limit, ACME quota) is otherwise silent until the cert expires. The
+// `stellarindex_tls_cert_not_after_unix` gauge lets an alert catch a stuck
+// renewal against `time()`.
 //
-// Failure semantics: the gauge is NOT cleared on probe failure —
-// the last-known value stays put. Operators rely on the paired
-// `stellarindex_tls_cert_probe_total{outcome}` counter to detect
-// a sustained probe error (e.g. host unreachable for >24 h).
-//
-// First probe runs immediately on goroutine start so a fresh
-// process has a non-empty gauge before the first interval
-// elapses.
+// The gauge is NOT cleared on probe failure: the last-known value stays, and
+// the paired `stellarindex_tls_cert_probe_total{outcome}` counter detects a
+// sustained probe error. The first probe runs immediately so a fresh process
+// has a gauge before the first interval.
 func RunTLSCertProbe(ctx context.Context, hosts []string, logger *slog.Logger) error {
 	if len(hosts) == 0 {
 		return nil

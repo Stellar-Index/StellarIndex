@@ -10,17 +10,12 @@ import (
 )
 
 // CachedSourcesStatsReader wraps a [SourcesStatsReader] with a
-// per-process TTL cache. The underlying SQL aggregations scan ~24h
-// of the trades hypertable (millions of rows) and take 5-10s; for
-// /v1/sources?include=stats they fire on every page load. Caching
-// the result for ttl=60s drops p95 from seconds to microseconds
-// without making the data measurably less fresh — these are 24h-
-// trailing aggregates that don't move materially in 60s.
+// per-process TTL cache. The underlying SQL aggregations scan ~24h of the
+// trades hypertable (millions of rows) and take 5-10s, so a 60s TTL is needed;
+// these 24h-trailing aggregates do not move materially in that time.
 //
-// Single-flight: concurrent callers during a refetch share one
-// upstream call, not N. Important when the perf-bug page-load
-// triggers two parallel fetches in the explorer (the table + the
-// home strip both want stats).
+// Single-flight: concurrent callers during a refetch share one upstream call,
+// which matters because the explorer's table and home strip both want stats.
 type CachedSourcesStatsReader struct {
 	upstream SourcesStatsReader
 	ttl      time.Duration
@@ -83,12 +78,11 @@ func (c *CachedSourcesStatsReader) GetSourceVolumeHistory7dAt(ctx context.Contex
 	return fetchSourcesSlot(ctx, c, &c.hist7d, "volume_history_7d", c.upstream.GetSourceVolumeHistory7d)
 }
 
-// fetchSourcesSlot is the TTL + single-flight loop shared by the three
-// methods. A stale or empty slot joins the running fill or starts one,
-// then waits on it OR this caller's ctx. The fill runs detached
-// (runDetachedFill), so one caller's abort cannot fail the others. The
-// waiter reads the fill's error, never the slot contents alone, so a
-// failed fill is not served as a successful empty result.
+// fetchSourcesSlot is the TTL + single-flight loop shared by the three methods.
+// A stale slot joins the running fill or starts one, then waits on it or the
+// caller's ctx. The fill runs detached (runDetachedFill) so one caller's abort
+// cannot fail the others. Waiters read the fill's error, not the slot alone, so
+// a failed fill is never served as an empty success.
 func fetchSourcesSlot[T any](
 	ctx context.Context,
 	c *CachedSourcesStatsReader,
