@@ -122,14 +122,10 @@
       when: current_stat.stat.exists
 
     - name: "[{{ binary }}] Stamp backup mtime to now (backup time, not the binary's original copy time)"
-      # `mv` on the same filesystem is a rename — it does NOT touch the
-      # file's mtime, so the backup above inherits whatever mtime the
-      # now-superseded binary already had (its own deploy/copy time,
-      # possibly much older than "now"). The prune task below sorts
-      # backups by mtime to decide what's oldest; without this stamp, a
-      # revert-to-an-older-version run creates a backup that already
-      # LOOKS old and can be pruned in this same run — the opposite of
-      # "keep the latest 5".
+      # `mv` on one filesystem is a rename and keeps the old binary's mtime, so
+      # the backup would look old to the prune task below (which sorts by mtime)
+      # and a revert-to-older-version run could prune it in the same run. Stamp
+      # it so "keep the latest 5" holds.
       ansible.builtin.file:
         path: "{{ install_dir }}/{{ binary }}.prev-{{ backup_tag }}"
         state: touch
@@ -152,16 +148,11 @@
         group: root
         mode: "0644"
 
-    # CLI tools (ops, migrate, sla-probe) are one-shot binaries
-    # with no daemon to restart. Each CLI has a different
-    # version convention (ops uses `version` subcommand,
-    # migrate too, sla-probe uses `-version` flag), so per-CLI
-    # version flags can't be a uniform smoke. Use ansible.stat
-    # to confirm the file is present + executable + non-empty,
-    # which catches the "scp truncated mid-upload" / "wrong
-    # arch" / "missing chmod +x" failure modes a runtime probe
-    # would catch — without depending on any external tooling
-    # being installed on the host.
+    # CLI tools (ops, migrate, sla-probe) are one-shot binaries with no
+    # daemon, and their version flags differ (`version` subcommand vs
+    # `-version`), so no uniform smoke exists. Stat for present + executable +
+    # non-empty, which catches a truncated scp, wrong arch or missing chmod +x
+    # without depending on host tooling.
     - name: "[{{ binary }}] Smoke-test CLI binary (executable + non-empty)"
       when: binary in cli_binaries
       ansible.builtin.stat:
@@ -209,17 +200,11 @@
       delay: 3
       until: daemon_probe.status is defined and daemon_probe.status == 200
 
-    # The two probes above stop at the FIRST 200. A binary that panics
-    # ~15-30s after start —
-    # after the grace period and first successful probe — passes cleanly:
-    # `Record successful swap` runs, systemd's own Restart=on-failure
-    # (RestartSec=10s) brings it back up crash-looping, and neither the
-    # per-binary rescue block nor the whole-deploy rollback ever triggers,
-    # because the probe task didn't fail. Hold for one more grace window
-    # and require BOTH an unchanged restart count and a still-passing
-    # probe before calling it healthy, so a post-probe crash fails this
-    # task and runs the existing rollback machinery instead of silently
-    # shipping a crash-looping daemon.
+    # The probes above stop at the FIRST 200, so a binary that panics ~15-30s
+    # after start passes: systemd's Restart=on-failure brings it back
+    # crash-looping, the probe task never failed, and no rollback runs. Hold one
+    # more grace window and require an unchanged restart count AND a passing
+    # probe, so a post-probe crash fails this task and triggers rollback.
     - name: "[{{ binary }}] Capture restart count for stability check"
       when: binary not in cli_binaries
       ansible.builtin.command:
@@ -263,13 +248,10 @@
         status_code: 200
         timeout: 5
 
-    # Migrations are applied once for the whole
-    # deploy up-front, but each binary swap+probe is independent — record
-    # every binary that reached a HEALTHY new version in this run so that
-    # if a LATER binary in binary_list fails, the rescue block below can
-    # roll ALL of them back together, not just the failing one. Facts
-    # persist across include_tasks loop iterations (host-scoped, not
-    # loop-scoped), so this accumulates across the whole binary_list loop.
+    # Migrations are applied once up-front, but each binary swap+probe is
+    # independent: record every binary that reached a HEALTHY new version so a
+    # LATER failure in binary_list rolls ALL of them back. Facts are host-scoped,
+    # so this accumulates across the include_tasks loop.
     #
     # The value is the restore RECORD built before this binary was touched,
     # not the backup tag: the rescue must be able to tell "roll
@@ -280,10 +262,8 @@
         swapped_binaries: "{{ (swapped_binaries | default({})) | combine({binary: rollback_record}) }}"
 
   rescue:
-    # Neither of these narrate an OUTCOME: at this point the rescue has
-    # not run, and whether there is anything to roll back to depends on
-    # the record. The "FAIL the play" task at the end of the rescue
-    # is the one that reports what actually happened.
+    # No outcome is narrated here: whether there is anything to roll back to
+    # depends on the record. The "FAIL the play" task reports what happened.
     - name: "[{{ binary }}] FAILURE — rolling back"
       ansible.builtin.debug:
         msg: >-
@@ -397,13 +377,11 @@
       when: item.key not in cli_binaries
       ignore_errors: true
 
-    # Nothing is moved aside unless the exact backup the forward path
-    # recorded is on disk at this moment; the rest are named in the failure
-    # instead of being deleted. For a binary this run installed for the
-    # FIRST time no .prev-<tag> exists, so moving it aside and restoring
-    # with ignore_errors would fail silently and leave the install path
-    # EMPTY while the play reports it rolled back — turning a bad deploy
-    # into an outage for a binary that was healthy.
+    # Nothing is moved aside unless the exact recorded backup is on disk;
+    # the rest are named in the failure instead of deleted. A binary this run
+    # installed FIRST time has no .prev-<tag>: moving it aside would fail
+    # silently under ignore_errors and leave the install path EMPTY while the
+    # play reports a clean rollback.
     - name: "[{{ binary }}] Whole-deploy rollback — stat each recorded previous binary"
       ansible.builtin.stat:
         path: "{{ item.value.prev_path }}"

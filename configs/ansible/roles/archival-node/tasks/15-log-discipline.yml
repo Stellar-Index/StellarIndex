@@ -214,7 +214,7 @@
     group: root
     mode: "0644"
 
-# ─── ClickHouse-dependent tasks in this file (F128) ──────────────────
+# ─── ClickHouse-dependent tasks in this file ──────────────────
 # Everything below that writes into /etc/clickhouse-{server,client},
 # chowns to the `clickhouse` user or runs clickhouse-client CONFIGURES a
 # ClickHouse this host is assumed to already have — none of it installs
@@ -437,10 +437,8 @@
   tags: [clickhouse, log-discipline]
 
 - name: Assert a bare clickhouse-client can actually reach the server
-  # Proves the drop-in above took effect rather than trusting that it
-  # parsed — the whole defect being fixed was a config that looked right
-  # and was silently inert. No --port here ON PURPOSE: this asserts the
-  # operator's bare-command path, which is the one that broke.
+  # Proves the drop-in took effect rather than trusting that it parsed.
+  # No --port here ON PURPOSE: this asserts the operator's bare-command path.
   # AUTHENTICATION_FAILED here means root's client config and users.d/ops-admin.xml
   # disagree (a killed run); repair with --tags clickhouse-ops-admin-profile.
   ansible.builtin.command:
