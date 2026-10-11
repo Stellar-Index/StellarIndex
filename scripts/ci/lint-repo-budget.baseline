@@ -13,7 +13,6 @@ go-lines cmd/stellarindex-aggregator/main.go 3012
 go-lines cmd/stellarindex-api/main.go 6129
 go-lines cmd/stellarindex-indexer/main.go 2894
 go-lines internal/api/v1/assets.go 5444
-go-lines internal/api/v1/chart.go 2420
 go-lines internal/api/v1/price.go 3927
 go-lines internal/api/v1/rwa.go 2688
 go-lines internal/api/v1/server.go 3639

@@ -20,38 +20,28 @@ import (
 
 // GET /v1/rwa/assets — tokenized real-world assets on Stellar.
 //
-// The membership rule is `internal/rwa` and is documented for readers
-// at docs/methodology/rwa-definition.md; this file is the read path and
-// the wire shape. Two properties of the design are load-bearing:
+// The membership rule lives in `internal/rwa` (docs/methodology/rwa-definition.md); this file is
+// the read path and wire shape. Two properties are load-bearing:
 //
-//  1. MEMBERSHIP IS DECIDED BEFORE VALUATION. The set is built from
-//     identity and attestation only. No number can move an asset in or
-//     out, so a withheld price cannot silently shrink the set and a
-//     large market cap cannot buy a place in it.
+//  1. Membership is decided before valuation, from identity and attestation only, so a withheld
+//     price cannot shrink the set and a large market cap cannot buy a place in it.
 //
-//  2. VALUATION COMES FROM THE EXISTING LISTING PIPELINE, UNCHANGED:
-//     the same store query, substance gate, supply-derived market cap,
-//     dust guard and scam-issuer payload suppression that /v1/assets
-//     runs. This surface adds no price path of its own, so it cannot
-//     publish a figure /v1/assets would have withheld.
+//  2. Valuation reuses the /v1/assets listing pipeline unchanged (store query, substance gate,
+//     supply-derived market cap, dust guard, scam-issuer payload suppression), so this surface
+//     cannot publish a figure /v1/assets would have withheld.
 //
-// Where a valuation is unavailable the row says so in `valuation.status` and
-// carries no number. Nothing here renders a withheld figure as zero.
+// An unavailable valuation is stated in `valuation.status` with no number; a withheld figure is
+// never rendered as zero.
 
-// rwaMembershipTTL bounds how long the membership set is reused before
-// a rebuild. Its inputs move on daily cadences — the SEP-1 refresh cron
-// and the directory sync — so ten minutes keeps the scan off the
-// request path while a newly-recognised issuer still appears the same
-// hour. Matches the SEP-1 logo map beside it.
+// rwaMembershipTTL bounds how long the membership set is reused. Its inputs (SEP-1 refresh,
+// directory sync) move daily, so ten minutes keeps the scan off the request path while a new
+// issuer still appears within the hour.
 const rwaMembershipTTL = 10 * time.Minute
 
-// rwaMaxIssuers bounds the per-issuer listing reads one rebuild will
-// make. The qualifying issuer set is small by construction (four on the
-// production network when measured) because R3 requires an independent
-// party to have named the account; the cap is a guard against a
-// directory sync that suddenly tags thousands of accounts, not an
-// expected condition. When it binds, the surface says so rather than
-// serving a silently truncated set.
+// rwaMaxIssuers bounds the per-issuer listing reads one rebuild makes. The qualifying set is
+// small because R3 requires an independent party to have named the account; the cap only guards
+// against a directory sync that suddenly tags thousands. When it binds, the surface says so
+// rather than serving a silently truncated set.
 const rwaMaxIssuers = 64
 
 // rwaAssetsPerIssuer bounds one issuer's listing page. An issuer with
@@ -59,35 +49,25 @@ const rwaMaxIssuers = 64
 // reported the same way the issuer cap is.
 const rwaAssetsPerIssuer = 500
 
-// Sep1BoundCurrencyReader is the storage seam the membership build
-// reads its attestations through. *timescale.Store satisfies it.
-// Optional: a deployment without it serves an empty set with a stated
-// reason rather than an error, exactly as the logo overlay degrades.
+// Sep1BoundCurrencyReader is the storage seam the membership build reads attestations through;
+// *timescale.Store satisfies it. Optional: without it the surface serves an empty set with a
+// stated reason rather than an error.
 //
-// WHERE THE CANDIDATE POOL COMES FROM, because it is not obvious from
-// here and it silently bounds this surface: the implementation reads
-// `issuers WHERE sep1_payload IS NOT NULL`, and `issuers` rows are
-// created ONLY by the classic-asset registry writer. That writer
-// registers from trades and from trustline holdings, so the pool is the
-// held population — once `asset-registry-backfill`, `issuer-enrich` and
-// `sep1-refresh` have each reached a given issuer. An issuer it has not
-// reached is not refused by a requirement: it is absent from the
-// `refused` counts, invisible.
+// The candidate pool silently bounds this surface: the implementation reads
+// `issuers WHERE sep1_payload IS NOT NULL`, and `issuers` rows are created only by the
+// classic-asset registry writer (from trades and trustline holdings). An issuer that
+// `asset-registry-backfill`, `issuer-enrich` and `sep1-refresh` have not all reached is not
+// refused by a requirement; it is absent from the `refused` counts entirely.
 type Sep1BoundCurrencyReader interface {
 	BoundSep1Currencies(
 		ctx context.Context, keep timescale.Sep1CurrencyFilter,
 	) ([]timescale.Sep1BoundCurrency, timescale.Sep1BoundCensus, error)
 }
 
-// Compile-time proof that the production reader still satisfies the seam —
-// the same guard [Sep1FetchStateReader] and [preciseSupplyReader] carry,
-// for the same reason: an optional seam that stops matching is not a build
-// failure, it is a silent opt-out, and here the opt-out is the whole RWA
-// classic membership going empty with `available: false` and nothing red
-// anywhere. Only the bare store is listed because that is what the binary
-// wires (cmd/stellarindex-api/main.go, `Sep1Cache: store`); a caching
-// wrapper that one day stands in front of this seam must be added here the
-// same day.
+// Compile-time proof that the production reader satisfies the seam. An optional seam that stops
+// matching is a silent opt-out, here the whole classic RWA membership going empty with
+// `available: false` and nothing red. Only the bare store is listed because that is what the
+// binary wires (`Sep1Cache: store`); a caching wrapper in front of it must be added here too.
 var _ Sep1BoundCurrencyReader = (*timescale.Store)(nil)
 
 // ─── wire shape ─────────────────────────────────────────────────────
@@ -125,39 +105,25 @@ type RWAAssetsView struct {
 	// rows have no issuer account and are not in it; ByClass and
 	// Summary still count them.
 	ByIssuer []RWAIssuerTotal `json:"by_issuer"`
-	// Refused counts the candidates each requirement turned away, so
-	// the served set is never mistaken for the whole population of
-	// assets that CLAIM to be real-world assets.
+	// Refused counts the candidates each requirement turned away, so the served set is never
+	// mistaken for the whole population of assets that claim to be real-world assets.
 	//
-	// It is the ORDERED requirement tally over the candidates that
-	// reached the full R1→R4 evaluation. It is NOT the whole
-	// population: the stages upstream of that evaluation — an issuer
-	// with no attestation, a payload that would not decode, an entry
-	// naming somebody else's account — are accounted for in Funnel,
-	// which is the complete narrowing.
+	// It is the ordered requirement tally over candidates that reached the full R1-R4
+	// evaluation only. Earlier drops (no attestation, undecodable payload, an entry naming
+	// somebody else's account) are accounted for in Funnel, the complete narrowing.
 	Refused []RWARefusal `json:"refused"`
 	// Funnel accounts for the ENTIRE population this set was narrowed
 	// from, stage by stage, with a named reason on every drop.
 	Funnel RWAFunnel `json:"funnel"`
-	// UnreachedEntities names curated-directory entities that a third
-	// party recognises as issuing or custodying value, that carry no
-	// scam-class tag, and for which this index holds NO Stellar token at
-	// all — no classic asset ever observed, and no directory entry
-	// naming a contract of theirs.
+	// UnreachedEntities names curated-directory entities that a third party recognises as
+	// issuing or custodying value, carry no scam-class tag, and for which this index holds no
+	// Stellar token at all (no classic asset observed, no directory entry naming a contract).
 	//
-	// They are not refused by any requirement. There is nothing to
-	// refuse: no token of theirs was ever collected, so none was ever
-	// evaluated. Measured on r1, Franklin Templeton and Spiko were both
-	// in this position — recognised, correct domains, and
-	// absent from the issuers table entirely, because that table is
-	// populated only when a CLASSIC asset is registered.
-	//
-	// Serving them is a coverage statement and admits nothing. It exists
-	// so a reader can tell a recognised entity this surface cannot see
-	// from one that does not exist — the same distinction the funnel
-	// draws for candidates, one level further out. The count is exact
-	// (funnel stage `directory_recognised_issuing_accounts`); this list
-	// is a bounded sample of it.
+	// Nothing was collected, so nothing was evaluated and no requirement refused them; the
+	// issuers table is populated only when a classic asset is registered. Serving them is a
+	// coverage statement that admits nothing, letting a reader tell an entity this surface
+	// cannot see from one that does not exist. The count is exact (funnel stage
+	// `directory_recognised_issuing_accounts`); this list is a bounded sample.
 	UnreachedEntities []RWAUnreachedEntity `json:"unreached_entities"`
 }
 
@@ -176,101 +142,70 @@ type RWAUnreachedEntity struct {
 // RWAFunnel is the complete narrowing from every issuer that could
 // carry a SEP-1 attestation down to the assets served.
 //
-// It exists because the set is small and the population is not, and a
-// reader of six rows has no way to tell a network with six real-world
-// assets from a pipeline discarding the other fourteen thousand
-// candidates without saying so. Every stage names what it counts and
-// every drop names why, so the question "where did the rest go?" is
-// answered by this response rather than by a database session.
+// The set is small and the population is not, so a reader of a few rows cannot otherwise tell a
+// network with few real-world assets from a pipeline silently discarding thousands of
+// candidates. Every stage names what it counts and every drop names why.
 type RWAFunnel struct {
 	// Stages is the narrowing in pipeline order, coarse to fine. Each
 	// stage's Dropped reasons account exactly for the difference
 	// between its own count and the next stage's.
 	Stages []RWAFunnelStage `json:"stages"`
-	// Balanced is true when the arithmetic above closes: every stage's
-	// count minus its drops equals the next stage's count. False means
-	// a stage could not be measured and the figures must not be
-	// reconciled — stated rather than hidden, because an accounting
-	// that silently fails to add up is worse than none.
+	// Balanced is true when every stage's count minus its drops equals the next stage's count.
+	// False means a stage could not be measured and the figures must not be reconciled; an
+	// accounting that silently fails to add up is worse than none.
 	Balanced bool `json:"balanced"`
-	// Imbalance names WHAT did not close, and is empty exactly when
-	// Balanced is true — the two are one statement in two forms and
-	// cannot disagree.
+	// Imbalance names what did not close and is empty exactly when Balanced is true.
 	//
-	// Every reason in it comes from a check that already runs: each
-	// census publishes a Check() that returns the invariant it broke, and
-	// each adjacent stage pair reports the arithmetic that failed.
-	// Carrying those sentences here, instead of reducing them to a
-	// boolean and a log line, tells a reader what did not close and not
-	// only that the accounting does not. Semicolon-separated
-	// when more than one check failed, because they are independent and
-	// the first is not necessarily the cause of the rest.
+	// Each reason comes from a check that already runs (a census Check() or an adjacent
+	// stage pair's arithmetic). Reasons are semicolon-separated because the checks are
+	// independent and the first is not necessarily the cause of the rest.
 	Imbalance string `json:"imbalance,omitempty"`
 	// Basis is a one-line statement of what the funnel measured.
 	Basis string `json:"basis"`
-	// ListingDirectory is the EVIDENCE behind the `listing` arm's
-	// verdict: what the independent listing directory held at the
-	// moment this set was built.
+	// ListingDirectory is the evidence behind the `listing` arm's verdict: what the independent
+	// listing directory held when this set was built.
 	//
-	// Omitted when nothing was observed — no listing reader wired, or a
-	// read that did not answer. Its absence is therefore a statement in
-	// its own right and never a default: an arm reporting refusals with
-	// no evidence block beside them is an arm whose source could not be
-	// read at all.
+	// Omitted when nothing was observed (no reader wired, or the read failed); absence is a
+	// statement, never a default.
 	ListingDirectory *RWAListingDirectory `json:"listing_directory,omitempty"`
 }
 
-// RWAMembershipSet dates the SET this response describes: when the rebuild that
-// produced it finished, and whether the copy served is past its lifetime.
+// RWAMembershipSet dates the set this response describes: when its rebuild finished, and whether
+// the copy served is past its lifetime.
 //
-// The envelope's `as_of` is the RESPONSE's instant and moves between requests;
-// read as the set's build time it wrongly suggests continuous refresh. Hence
-// `built_at`: a set is BUILT, a response is AS OF.
+// The envelope's `as_of` is the response's instant and would wrongly suggest continuous refresh
+// if read as build time, hence `built_at`.
 //
-// The cache deliberately serves a lapsed set while a detached rebuild runs behind
-// it (inputs move daily; a request must not wait for an eleven-second rescan).
-// This block makes that visible:
+// The cache deliberately serves a lapsed set while a detached rebuild runs (inputs move daily; a
+// request must not wait for an eleven-second rescan). This block makes that visible:
 //
 //	Stale false                       inside its lifetime
 //	Stale true, RebuildFailedAt nil   lapsed, rebuild running or about to: transient
 //	Stale true, RebuildFailedAt set   lapsed and the last replacement FAILED; the
 //	                                  served set is the last good one. Act on this.
 type RWAMembershipSet struct {
-	// BuiltAt is when the rebuild that produced this set finished —
-	// NOT when the response was rendered, and not when any source was
-	// last written. Compare it against a source's own clock to tell a
-	// set that predates a sync from a set that disagrees with one.
-	//
-	// It is deliberately the same instant the lifetime clock starts
-	// from, so `stale` beside it is never a statement about a different
-	// moment.
+	// BuiltAt is when the rebuild that produced this set finished, not when the response was
+	// rendered or any source was written. It is the instant the lifetime clock starts from, so
+	// `stale` never describes a different moment.
 	BuiltAt WireTime `json:"built_at"`
-	// Stale reports that the set has passed its lifetime and a rebuild
-	// is owed. Served regardless, which is the design: an expired set
-	// is the same set until the inputs move, and a request that waited
-	// for the rescan would pay eleven seconds for an answer that has
-	// not changed.
+	// Stale reports that the set has passed its lifetime and a rebuild is owed. It is served
+	// regardless: an expired set is unchanged until the inputs move, and waiting for the rescan
+	// would cost eleven seconds for the same answer.
 	Stale bool `json:"stale"`
-	// RebuildFailedAt is when the most recent rebuild attempt failed,
-	// present only while that is still the latest thing to have
-	// happened — a successful rebuild clears it.
-	//
-	// Beside Stale it separates a set that is about to be replaced from
-	// one that nothing is replacing. Without it both render as `stale:
-	// true`, and the second is the only one anybody needs to act on.
+	// RebuildFailedAt is when the latest rebuild attempt failed; a successful rebuild clears it.
+	// Beside Stale it separates a set about to be replaced from one nothing is replacing, the
+	// only case that needs action.
 	RebuildFailedAt *WireTime `json:"rebuild_failed_at,omitempty"`
 }
 
-// RWAListingDirectory is what the independent listing directory looked like when
-// the served set was built.
+// RWAListingDirectory is what the independent listing directory looked like when the served set
+// was built.
 //
-// A verdict without its evidence cannot be acted on: a `listing` arm reporting
-// nothing corroborated arises from a directory never synced, a sync that stopped
-// days ago, or a healthy directory this set simply predates, which need three
-// different responses.
+// A `listing` arm reporting nothing corroborated arises from a directory never synced, a sync
+// that stopped, or a healthy directory this set predates, which need three different responses.
 //
-// Entries counts FRESH rows only (`Entries = Contracts + Classic`, Stale counted
-// beside, never inside), so Stale tells the two zero cases apart:
+// Entries counts fresh rows only (`Entries = Contracts + Classic`, Stale counted beside, never
+// inside), so Stale tells the two zero cases apart:
 //
 //	Entries == 0 && Stale == 0     never synced: the table is empty
 //	Entries == 0 && Stale > 0      every row aged out: the sync STOPPED
@@ -281,50 +216,32 @@ type RWAMembershipSet struct {
 // the set predates the rows and the next rebuild carries them; nothing is broken.
 // Evidence and verdict come from the same read, so they cannot contradict.
 type RWAListingDirectory struct {
-	// ObservedAt is when this index read the directory — NOT when the
-	// directory was itself synced, and not when the response was
-	// rendered. It is the field the rest of the block is useless
-	// without.
-	//
-	// Every count below can be recovered afterwards by reading the
-	// table again. This instant cannot be recovered by anyone, at any
-	// point, once the moment has passed — so it is the one fact that
-	// has to be published rather than left to be looked up, and the
-	// only one that lets a reader place a closed arm and a healthy
-	// directory in time relative to each other.
+	// ObservedAt is when this index read the directory, not when the directory was synced or
+	// the response rendered. Counts can be re-read later but this instant cannot, so it must
+	// be published; it places a closed arm and a healthy directory in time relative to each
+	// other.
 	ObservedAt WireTime `json:"observed_at"`
-	// Entries is every FRESH row the directory held, of either address
-	// form — the recognised population, before the contract/classic
-	// split. Rows past the recognition bound are not in it; they are in
-	// Stale.
+	// Entries is every fresh row of either address form, before the contract/classic split.
+	// Rows past the recognition bound are in Stale instead.
 	Entries int `json:"entries"`
-	// Contracts is how many of those rows name a Stellar CONTRACT
-	// address, which is the only form C2's second arm can consult. A
-	// directory full of classic rows and no contract rows closes the
-	// arm while being perfectly healthy, and this is the count that
-	// says so.
+	// Contracts is how many rows name a Stellar contract address, the only form C2's second
+	// arm can consult. A healthy directory of classic rows only still closes the arm, and this
+	// count says so.
 	Contracts int `json:"contracts"`
-	// Stale is how many rows are PRESENT in the directory but past the
-	// recognition bound — counted beside Entries, never inside it. It
-	// is the visible form of the fail-closed guarantee, and the one
-	// number that separates a sync that has stopped from one that has
-	// never run: both leave Entries at zero, and only a dead sync
-	// leaves rows behind to go stale.
+	// Stale is how many rows are present but past the recognition bound, counted beside
+	// Entries and never inside it. It is the visible form of the fail-closed guarantee and
+	// separates a stopped sync from one that never ran: both leave Entries at zero, but only
+	// a stopped sync leaves rows behind to go stale.
 	Stale int `json:"stale"`
 }
 
 // RWAFunnelStage is one population on the way to the served set.
 type RWAFunnelStage struct {
-	// Arm names which membership arm this stage belongs to: `classic`
-	// for the SEP-1 attestation walk, `contract` for the curated
-	// directory walk.
+	// Arm names the membership arm: `classic` for the SEP-1 attestation walk, `contract` for
+	// the curated directory walk.
 	//
-	// The two arms narrow DIFFERENT populations from different roots and
-	// meet only at the served set, so the stage arithmetic reconciles
-	// WITHIN an arm and never across the boundary between them. Without
-	// this field a reader would try to subtract the last classic stage
-	// from the first contract one and find no relation, which is exactly
-	// the misreading the per-stage `unit` prevents one level down.
+	// The arms narrow different populations from different roots and meet only at the served
+	// set, so stage arithmetic reconciles within an arm and never across them.
 	Arm string `json:"arm"`
 	// Stage names the population.
 	Stage string `json:"stage"`
@@ -345,14 +262,10 @@ type RWAFunnelStage struct {
 type RWAFunnelDrop struct {
 	Reason string `json:"reason"`
 	Count  int    `json:"count"`
-	// Actor names who can change this number: `operator` for a drop an
-	// operator could act on (an attestation never fetched, an issuer
-	// missing from the curated directory), `issuer` for one only the
-	// token's issuer can (a domain that serves no attestation at all, a
-	// toml that declares nothing, or declares somebody else),
-	// `definition` for a drop that is the membership
-	// rule working as intended. Served so a reader can tell a coverage
-	// gap from a refusal without knowing the codebase.
+	// Actor names who can change this number: `operator` (an attestation never fetched, an
+	// issuer missing from the curated directory), `issuer` (a domain serving no attestation, or
+	// a toml declaring nothing or somebody else), or `definition` (the membership rule working
+	// as intended). It lets a reader tell a coverage gap from a refusal.
 	Actor string `json:"actor"`
 }
 
@@ -394,13 +307,10 @@ const (
 const (
 	rwaArmClassic  = "classic"
 	rwaArmContract = "contract"
-	// rwaArmListing is C2's SECOND arm: the in-repo curated contract
-	// bindings, narrowed to the ones an independent listing directory
-	// corroborates. A separate arm rather than extra stages on the
-	// contract one because it narrows a different population from a
-	// different root — the contract arm starts at a third party's
-	// directory, this one starts at a table in this repository and
-	// looks for somebody else to agree with it.
+	// rwaArmListing is C2's second arm: the in-repo curated contract bindings narrowed to those an
+	// independent listing directory corroborates. It is separate from the contract arm because it
+	// narrows a different population from a different root (a table in this repository, not a
+	// third party's directory).
 	rwaArmListing = "listing"
 	// rwaArmValuation continues past the served set rather than
 	// narrowing a population toward it: it accounts for which served
@@ -460,84 +370,49 @@ type RWADefinition struct {
 	// ContractRequirements names the four conjunctive requirements of
 	// the CONTRACT arm, in order.
 	//
-	// A separate list, not a widening of the one above, because the
-	// second requirement differs in kind rather than in strictness: a
-	// contract has no (code, issuer) pair for a SEP-1 [[CURRENCIES]]
-	// entry to bind to, so an independent party naming the exact
-	// contract address takes the place of the issuer naming its own
-	// asset. Both lists are served so a consumer can see which rule
-	// admitted which row rather than inferring it from the fields
-	// present.
+	// A separate list because the second requirement differs in kind: a contract has no
+	// (code, issuer) pair for a SEP-1 [[CURRENCIES]] entry to bind to, so an independent party
+	// naming the exact contract address replaces the issuer naming its own asset.
 	ContractRequirements []string `json:"contract_requirements"`
-	// AnchorClasses is the closed SEP-1 anchor_asset_type vocabulary
-	// that admits an asset on the declaration basis.
+	// AnchorClasses is the closed SEP-1 anchor_asset_type vocabulary that admits an asset on the
+	// declaration basis.
 	AnchorClasses []string `json:"anchor_classes"`
-	// ContractAnchorClasses is the vocabulary a CURATED CONTRACT BINDING
-	// may use, which is a superset of the one above. The two arms do not
-	// answer with the same words, and the difference is deliberate.
+	// ContractAnchorClasses is the vocabulary a curated contract binding may use, a superset of
+	// AnchorClasses.
 	//
-	// The classic arm READS an issuer's free-text anchor_asset_type, so
-	// it can only accept terms SEP-1 defines: anything else is an
-	// invented spelling, and the served population carries dozens
-	// (`equity`, `etf`, `metal`, `rwa`, `sovereign`). The contract arm
-	// reads no declaration: a binding's class is this index's own
-	// statement, made in code from a primary source and reviewed as a
-	// change, so it may use a term SEP-1 lacks. `fund` is there because
-	// SEP-1 has no word for a share in a pooled vehicle.
-	//
-	// A wider vocabulary widens what a binding may SAY, not what is
-	// admitted: the identity, recognition and scam requirements are
-	// untouched, and a contract's class is never read until its address
-	// has been named by two independent parties or the curated directory.
+	// The classic arm reads an issuer's free-text anchor_asset_type, so it can only accept terms
+	// SEP-1 defines. The contract arm reads no declaration: a binding's class is this index's own
+	// reviewed statement, so it may use a term SEP-1 lacks (`fund`, a share in a pooled vehicle).
+	// A wider vocabulary widens what a binding may say, not what is admitted; the identity,
+	// recognition and scam requirements are untouched.
 	ContractAnchorClasses []string `json:"contract_anchor_classes"`
-	// RecognitionTags is the curated-directory vocabulary that counts
-	// as independent recognition of the issuer account.
+	// RecognitionTags is the curated-directory vocabulary that counts as independent recognition
+	// of the issuer account.
 	RecognitionTags []string `json:"recognition_tags"`
-	// ContractRecognitionTags is the same vocabulary for a CONTRACT
-	// address, and is deliberately narrower. The upstream directory tags
-	// AMM pools and protocol routers `defi` and `exchange`; on an
-	// account those describe an entity, on a contract address they
-	// describe a piece of infrastructure that issues nothing. Served so
-	// the narrowing is auditable rather than implied.
+	// ContractRecognitionTags is the same vocabulary for a contract address, deliberately
+	// narrower: the directory tags AMM pools and routers `defi` and `exchange`, which describe an
+	// entity on an account but infrastructure that issues nothing on a contract.
 	ContractRecognitionTags []string `json:"contract_recognition_tags"`
-	// ContractRecognitionSources is the closed vocabulary of ways C2
-	// can be satisfied, in the order of their strength. Served for the
-	// same reason every other rule on this block is: a consumer reads
-	// which routes exist from the response rather than inferring them
-	// from whichever rows qualified today, and can tell that a row
-	// admitted on a corroborating pair is not the same claim as one
-	// admitted on a directory attestation.
+	// ContractRecognitionSources is the closed vocabulary of ways C2 can be satisfied, in order
+	// of strength; a row admitted on a corroborating pair is not the same claim as one admitted
+	// on a directory attestation.
 	ContractRecognitionSources []string `json:"contract_recognition_sources"`
 	// ScamFlagTags is the vocabulary that excludes an issuer outright.
 	ScamFlagTags []string `json:"scam_flag_tags"`
-	// BoundInstruments is the CURATED set of (code, issuer) pairs this
-	// surface will compare against an oracle feed, and the feed each is
-	// bound to.
+	// BoundInstruments is the curated set of (code, issuer) pairs compared against an oracle
+	// feed, and the feed each is bound to.
 	//
-	// It is keyed on the pair, never on the code: asset codes are not
-	// unique on Stellar, and a reference joined on the code alone hands
-	// every token wearing an instrument's ticker that instrument's net
-	// asset value. Served in full so a consumer can audit every binding
-	// rather than inferring the rule from which rows carry a figure
-	// today. A pair absent from it gets no reference, whatever it is
-	// called.
+	// Keyed on the pair, never the code: a reference joined on code alone would hand every token
+	// wearing an instrument's ticker that instrument's net asset value. A pair absent from it
+	// gets no reference, whatever it is called.
 	BoundInstruments []RWABoundInstrument `json:"bound_instruments"`
-	// BoundContractInstruments is the CURATED set of contract addresses
-	// this surface will admit on the curated basis, and the real-world
-	// instrument each is bound to.
+	// BoundContractInstruments is the curated set of contract addresses admitted on the curated
+	// basis, and the instrument each is bound to.
 	//
-	// Served in full, and an address appearing here is NOT a statement
-	// that the asset is in the set. The curated binding answers C4 —
-	// which instrument an address holds — while C2 still requires the
-	// curated directory to name that same address, and the candidate
-	// scan upstream only ever enumerates addresses the directory named.
-	// So this list is the surface's verified-identity register: every
-	// address on it has cleared the evidence bar, some of them while
-	// still being refused membership for want of independent
-	// recognition. A consumer reads the rule from this list rather than
-	// inferring it from whichever rows appear today, and compares it
-	// against the admitted rows to see which identities are known but
-	// unvouched-for.
+	// An address here is not a statement that the asset is in the set. The binding answers C4
+	// (which instrument an address holds) while C2 still requires the curated directory to name
+	// the same address, so this is a verified-identity register: some entries are still refused
+	// membership for want of independent recognition.
 	BoundContractInstruments []RWABoundContractInstrument `json:"bound_contract_instruments"`
 	// DocumentationURL points at the prose statement of the rule.
 	DocumentationURL string `json:"documentation_url"`
@@ -662,20 +537,13 @@ func rwaTruncationOf(m rwaMembership, join rwaCatalogueJoin) rwaTruncation {
 
 // RWAReferenceSummary aggregates the reference-priced basis.
 //
-// Every field has a market-cap counterpart in [RWASummary] and behaves
-// the same way, because the discipline that makes the market-cap total
-// readable is not specific to market prices: the total is ABSENT rather
-// than "0.00" when nothing is reference-valued, the contributing and
-// non-contributing rows are counted separately, and LowerBound says
-// whether the total is less than the value of the set.
-//
-// What is NOT shared is the meaning. Nothing summed here was observed
-// being paid.
+// Every field has a market-cap counterpart in [RWASummary] and behaves the same way: the total is
+// absent rather than "0.00" when nothing is reference-valued, contributing and non-contributing
+// rows are counted separately, and LowerBound says whether the total is below the set's value.
+// The meaning differs: nothing summed here was observed being paid.
 type RWAReferenceSummary struct {
-	// ValueUSD is the exact sum of the published per-asset
-	// `reference_valuation.value_usd` strings — add up what you can see
-	// and you land on this number. ABSENT, never "0.00", when no member
-	// is reference-valued.
+	// ValueUSD is the exact sum of the published per-asset `reference_valuation.value_usd`
+	// strings. Absent, never "0.00", when no member is reference-valued.
 	ValueUSD *string `json:"value_usd,omitempty"`
 	// AssetsValued and AssetsUnvalued split the set by whether it
 	// contributed. Counted independently of the market-cap split: the
@@ -687,22 +555,13 @@ type RWAReferenceSummary struct {
 	// valuation or a rebuild cap bound the set, i.e. whenever this total
 	// may be less than the reference-priced value of the set.
 	LowerBound bool `json:"lower_bound"`
-	// Sources names the distinct PUBLISHERS whose published values are
-	// in the total, sorted. Not "oracles": the total can mix three
-	// provenances, and a field that called a listing platform or a
-	// prospectus an oracle would misdescribe part of its own figure.
-	//
-	// A dollar figure that cannot be traced back to a publisher is
-	// worse than an absent one on this surface, and the per-row
-	// `reference` blocks carry the full provenance — kind, feed, quote
-	// and vintage — that this list summarises. Which kind each
-	// publisher contributed is on the row, never inferred from the
-	// name.
+	// Sources names the distinct publishers whose values are in the total, sorted. Not "oracles":
+	// the total can mix three provenances, and calling a listing platform or a prospectus an
+	// oracle would misdescribe part of the figure. The per-row `reference` blocks carry the full
+	// provenance (kind, feed, quote, vintage); a kind is never inferred from a publisher name.
 	Sources []string `json:"sources,omitempty"`
-	// Provenances names the distinct `reference.provenance` values in
-	// the total, sorted. Served so the mixture is visible at the
-	// summary level: a reader of one number must be able to see that it
-	// is not all one kind of claim without walking every row.
+	// Provenances names the distinct `reference.provenance` values in the total, sorted, so the
+	// mixture of claim kinds is visible without walking every row.
 	Provenances []string `json:"provenances,omitempty"`
 	// Basis states in prose what was measured and, more importantly,
 	// what it is not.
@@ -712,14 +571,10 @@ type RWAReferenceSummary struct {
 // RWABothBases totals the members that carry a market cap AND a
 // reference valuation.
 //
-// It exists to stop one specific misreading. `market_cap_usd` and
-// `reference_valuation.value_usd` are sums over DIFFERENT rows — an
-// asset that never trades has the second and not the first — so their
-// difference is not a premium, a discount, or anything else. These two
-// totals are taken over the same rows, so their difference is the
-// aggregate gap between what the market pays for that overlap and what
-// the reference says it is worth. Per asset, the same gap in
-// percentage terms is `premium.pct`.
+// `market_cap_usd` and `reference_valuation.value_usd` are sums over different rows (an asset
+// that never trades has only the second), so their difference means nothing. These two totals
+// share the same rows, so their difference is the aggregate gap between market price and
+// reference over that overlap; per asset the same gap is `premium.pct`.
 type RWABothBases struct {
 	// Assets is how many members carry both figures.
 	Assets int `json:"assets"`
@@ -750,25 +605,16 @@ const (
 	// RWAValuationNoSupply — a price exists but no circulating-supply
 	// reading does, so no market cap can be computed.
 	RWAValuationNoSupply = "supply_unavailable"
-	// RWAValuationDecimalsUnknown — a price and a supply both exist, and
-	// the token's own declared SCALE does not, so there is no exponent
-	// to divide the supply by.
+	// RWAValuationDecimalsUnknown — a price and a supply exist but the token's declared scale
+	// does not, so there is no exponent to divide the supply by.
 	//
-	// Contract rows only. A classic asset is 7 decimals by protocol and
-	// a SAC inherits that; a SEP-41 token declares its own, and when
-	// that declaration cannot be read the catalogue's default of 7 is a
-	// convention rather than a reading. Multiplying by it would publish
-	// a figure wrong by a factor of ten to the something (one hundredth
-	// for the 5-decimal funds, eleven orders of magnitude the other way
-	// for the 18-decimal one).
+	// Contract rows only: a classic asset is 7 decimals by protocol and a SAC inherits that, but
+	// a SEP-41 token declares its own, and the catalogue default of 7 is a convention, not a
+	// reading. Using it would publish a figure wrong by a power of ten. Also reported when the
+	// scale was read but disagrees with the one the DEX price was normalised with.
 	//
-	// Also reported when the scale WAS read but disagrees with the one
-	// the DEX price was normalised with: the supply and the price are then
-	// on different scales and no single exponent is right.
-	//
-	// Refused rather than defaulted because the error is silent and
-	// unbounded: here the exponent IS the number. The circulating supply is
-	// still served beside it; it is a raw chain fact and needs no scale.
+	// Refused rather than defaulted because the error is silent and unbounded. The circulating
+	// supply is still served; it is a raw chain fact and needs no scale.
 	RWAValuationDecimalsUnknown = "decimals_unavailable"
 )
 
@@ -824,25 +670,17 @@ type RWAAsset struct {
 	IssuerDirectoryDomain string   `json:"issuer_directory_domain,omitempty"`
 	// Basis names which requirement-4 arm admitted this asset.
 	Basis string `json:"basis"`
-	// Recognition names WHICH independent party's naming satisfied the
-	// recognition requirement — C2 on a contract-issued row, R3 on a
-	// classic row. Present on every served row. On classic rows it is
-	// `curated_account_directory` when the directory lists this issuer
-	// account itself, or `curated_account_directory_via_domain_sibling`
-	// when it lists another account that the same issuer-bound SEP-1
-	// binds on the same domain (the directory never looked at this
-	// account; the recognised entity named it from its own domain).
+	// Recognition names which independent party's naming satisfied the recognition requirement
+	// (C2 on a contract row, R3 on a classic row). On classic rows it is
+	// `curated_account_directory` when the directory lists this issuer account, or
+	// `curated_account_directory_via_domain_sibling` when it lists another account that the same
+	// issuer-bound SEP-1 binds on the same domain.
 	//
-	// It is on the wire because neither arm's two routes to
-	// recognition are the same strength of evidence. A row reading
-	// `curated_account_directory` was vouched for by an address-level
-	// identity directory that carries scam flags and admits on its own.
-	// A row reading `independent_listing_corroborating_curated_binding`
-	// required TWO sources that do not read each other — a listing
-	// platform naming the address, and an in-repo curated binding
-	// naming the same address — because neither is sufficient alone.
-	// A consumer that wants only directory-attested rows can filter on
-	// this field rather than having to reconstruct the rule.
+	// The routes are not equal evidence: `curated_account_directory` is an address-level identity
+	// directory that carries scam flags and admits on its own, while
+	// `independent_listing_corroborating_curated_binding` needs two sources that do not read each
+	// other (a listing platform and an in-repo binding), neither sufficient alone. Consumers can
+	// filter on this field instead of reconstructing the rule.
 	Recognition string `json:"recognition"`
 	// AnchorClass is the closed-vocabulary class, present only under
 	// the declaration basis.
@@ -879,33 +717,23 @@ type RWAAsset struct {
 	// CirculatingSupply is a raw chain fact and is served even when the
 	// valuation is withheld, in the smallest integer unit.
 	CirculatingSupply *string `json:"circulating_supply,omitempty"`
-	// SupplyBasis names the reading that produced CirculatingSupply —
-	// the ADR-0011 vocabulary, carried verbatim from the listing row.
-	// Absent when no arm answered and no supply is served.
+	// SupplyBasis names the reading that produced CirculatingSupply (ADR-0011 vocabulary, verbatim
+	// from the listing row). Absent when no arm answered.
 	//
-	// It is load-bearing on THIS surface in a way it is not on a plain
-	// listing. Every reference_valuation here is circulating_supply
-	// multiplied by an oracle price, so the completeness of the supply
-	// is half of every total the page publishes; a consumer reconciling
-	// against an issuer's own figure needs to know whether it is
-	// comparing two four-domain totals or a total against a floor.
+	// Every reference_valuation here is circulating_supply times an oracle price, so supply
+	// completeness is half of every total; a consumer reconciling against an issuer's figure needs
+	// to know whether it compares complete totals or a total against a floor.
 	SupplyBasis string `json:"supply_basis,omitempty"`
-	// CirculatingSupplyLowerBound is true when CirculatingSupply is a
-	// provable floor rather than a complete reading — the per-row
-	// sibling of the lower_bound this surface's totals already carry.
-	// DERIVED from SupplyBasis ([supply.Basis.LowerBound]) rather than
-	// carried alongside it, so the two can never disagree.
+	// CirculatingSupplyLowerBound is true when CirculatingSupply is a provable floor, the per-row
+	// sibling of the totals' lower_bound. Derived from SupplyBasis ([supply.Basis.LowerBound]) so
+	// the two cannot disagree.
 	CirculatingSupplyLowerBound bool `json:"circulating_supply_lower_bound,omitempty"`
-	// Decimals is the on-chain smallest-unit scale: 7 for every classic
-	// asset, and whatever a SEP-41 contract declares for a
-	// contract-issued one. Served so both valuations on this row can be
-	// re-derived by hand — circulating_supply / 10^decimals is the
-	// whole-token float that each price multiplies — rather than
-	// leaving a reader to assume a scale that is only sometimes 7.
+	// Decimals is the on-chain smallest-unit scale: 7 for every classic asset, whatever a SEP-41
+	// contract declares otherwise. Served so both valuations can be re-derived by hand
+	// (circulating_supply / 10^decimals times price).
 	//
-	// nil (JSON null) when a contract's scale could not be read: the
-	// catalogue's default of 7 is a convention, not a reading. Both
-	// valuation bases refuse to divide when it is nil.
+	// nil (JSON null) when a contract's scale could not be read: the catalogue default of 7 is a
+	// convention, not a reading, and both valuation bases refuse to divide when it is nil.
 	Decimals *int `json:"decimals"`
 	// Volume24hUSD is the trailing-24h USD trade volume as served on
 	// /v1/assets.
@@ -942,20 +770,11 @@ type RWAGroupTotal struct {
 	// to see which class the difference between the totals came from.
 	ReferenceValueUSD       *string `json:"reference_value_usd,omitempty"`
 	AssetsReferenceUnvalued int     `json:"assets_reference_unvalued"`
-	// Note explains a class name that does not speak for itself.
-	// Present only on `unclassified`, and it is there because the word
-	// reads as a gap in OUR data when it is a statement about the
-	// issuer's: these rows were admitted because an independent oracle
-	// prices the instrument, and nobody declared a class for them in the
-	// SEP-1 vocabulary. Franklin Templeton's own attestation for BENJI
-	// says `anchor_asset_type = "other"`; Ondo's for USDY declares none
-	// at all. Publishing a class here would contradict one issuer on
-	// their own asset and invent one for the other.
-	//
-	// A reader comparing this breakdown with a third party's — which
-	// classifies everything, because it is not reading the issuers —
-	// would otherwise take the largest group on the page for missing
-	// work. Absent on every group that named itself.
+	// Note explains a class name that does not speak for itself. Present only on `unclassified`,
+	// which would read as a gap in our data when it reflects the issuers': these rows were
+	// admitted because an independent oracle prices the instrument, and the SEP-1 attestation
+	// declares no usable class (`other`, or none). Publishing a class would contradict or invent
+	// one on the issuer's behalf.
 	Note string `json:"note,omitempty"`
 }
 
@@ -1005,114 +824,84 @@ type rwaMember struct {
 type rwaMembership struct {
 	members  []rwaMember
 	refusals map[string]int
-	// census accounts for every issuer row and every SEP-1 declaration
-	// the attestation scan walked, including the stages upstream of
-	// rwa.Qualify that no refusal reason can describe.
+	// census accounts for every issuer row and SEP-1 declaration the attestation scan walked,
+	// including stages upstream of rwa.Qualify that no refusal reason can describe.
 	census timescale.Sep1BoundCensus
-	// overIssuerCap counts members rwaMaxIssuers turned away. They met
-	// the definition; the cap is a rebuild guard, so they are counted
-	// apart from the refusals rather than mixed into them.
+	// overIssuerCap counts members rwaMaxIssuers turned away. They met the definition, so they
+	// are counted apart from the refusals.
 	overIssuerCap int
-	// duplicateDeclarations counts candidates naming a (code, issuer)
-	// already admitted. A toml may declare the same asset twice — the
-	// spec does not forbid it — and admitting each declaration as its
-	// own member would serve the asset twice and add its market cap to
-	// every total twice.
+	// duplicateDeclarations counts candidates naming a (code, issuer) already admitted. A toml
+	// may declare an asset twice; admitting both would serve it twice and double its market cap
+	// in every total.
 	duplicateDeclarations int
-	// available is false when no attestation reader is wired, which is
-	// a configuration statement rather than an empty population.
+	// available is false when no attestation reader is wired: a configuration statement, not an
+	// empty population.
 	available bool
-	// readFailed records that an arm which IS wired did not answer —
-	// the attestation scan, the classic arm's directory lookup, or the
-	// contract arm's directory scan returned an error.
+	// readFailed records that a wired arm did not answer (attestation scan, classic directory
+	// lookup, or contract directory scan errored).
 	//
-	// It exists because `available` cannot say this. That field is
-	// false for an unwired reader AND for a read that failed, and the
-	// two need opposite handling at the cache: an unwired arm is a
-	// permanent, honest property of the deployment and its rebuild is
-	// worth caching, while a failed read is an outage whose empty arm
-	// must never be written over a good set. Conflating them is how a
-	// half-empty membership set came to be served, self-certified
-	// fresh, for a full lifetime — see [Server.refreshRWAMembership].
+	// `available` cannot say this: it is false for both an unwired reader and a failed read, which
+	// need opposite cache handling. An unwired arm is a permanent property worth caching, while a
+	// failed read is an outage whose empty arm must never be written over a good set (see
+	// [Server.refreshRWAMembership]).
 	readFailed bool
 
-	// contracts is the CONTRACT arm's admitted set — tokens with no
-	// (code, issuer) pair, drawn from a different population by a
-	// different rule (rwa_contracts.go). It is carried on the same
-	// membership value because both arms share one rebuild, one cache
-	// entry and one TTL: two caches would let the two halves of a single
-	// response come from different moments.
+	// contracts is the contract arm's admitted set: tokens with no (code, issuer) pair
+	// (rwa_contracts.go). It shares this value because both arms share one rebuild, cache entry
+	// and TTL; two caches would let the halves of one response come from different moments.
 	contracts []rwaContractMember
-	// contractCensus accounts for the curated-directory population that
-	// arm narrowed, including the stages upstream of rwa.QualifyContract.
+	// contractCensus accounts for the curated-directory population that arm narrowed, including
+	// stages upstream of rwa.QualifyContract.
 	contractCensus rwaContractCensus
-	// listingCensus accounts for C2's SECOND arm — the curated bindings
-	// an independent listing directory was asked to corroborate.
+	// listingCensus accounts for C2's second arm: curated bindings an independent listing
+	// directory was asked to corroborate.
 	listingCensus rwaListingCensus
-	// contractRefusals and listingRefusals are the two contract-side
-	// tallies kept apart. Both arms run the same rwa.QualifyContract and
-	// can produce the same reason string, so a single tally would let
-	// the funnel attribute one arm's refusal to the other's narrowing.
-	// Their union is already folded into refusals above, which is what
-	// `refused[]` publishes.
+	// contractRefusals and listingRefusals are kept apart because both arms run
+	// rwa.QualifyContract and can produce the same reason string; a single tally would let the
+	// funnel attribute one arm's refusal to the other's narrowing. Their union is already in
+	// refusals, which `refused[]` publishes.
 	contractRefusals map[string]int
 	listingRefusals  map[string]int
-	// listingNotObserved is the same count for C2's second arm, kept
-	// apart for the reason the refusal tallies are: each arm closes its
-	// own arithmetic, and one combined count would leave both unable to.
+	// listingNotObserved is the listing arm's equivalent of contractsNotObserved, kept apart so
+	// each arm closes its own arithmetic.
 	listingNotObserved int
-	// contractsNotObserved counts admitted contracts with no catalogue
-	// row. Recorded on the membership rather than returned beside the
-	// rows because the funnel is built from this value, and a count that
-	// travelled separately could be dropped on a path that forgot it.
+	// contractsNotObserved counts admitted contracts with no catalogue row. It lives on the
+	// membership because the funnel is built from this value and a separately-travelling count
+	// could be dropped on a path that forgot it.
 	contractsNotObserved int
-	// unreached names the recognised issuing entities this index holds
-	// no token for. It admits nothing; see RWAUnreachedEntity.
+	// unreached names the recognised issuing entities this index holds no token for. It admits
+	// nothing; see RWAUnreachedEntity.
 	unreached []rwaUnreachedEntity
 
-	// builtAt is when the rebuild that produced this set finished. Set
-	// once, by that rebuild, and never touched again — so a set carries
-	// its own age wherever it travels and a reader of it can never be
-	// looking at one instant while reasoning about another.
+	// builtAt is when the rebuild that produced this set finished. Set once, so a set carries its
+	// own age wherever it travels.
 	builtAt time.Time
-	// servedStale and rebuildFailedAt are the only two fields here a
-	// rebuild does NOT set. They are properties of this SERVE rather
-	// than of the set, stamped onto a copy on the way out by
-	// [Server.stampRWAServeState] — a set that recorded its own
-	// staleness at build time would say `false` forever, since it is
-	// never stale at the instant it is built.
+	// servedStale and rebuildFailedAt are the only fields a rebuild does not set. They describe
+	// this serve, not the set, and are stamped onto a copy by [Server.stampRWAServeState]; a set
+	// recording its own staleness at build time would say false forever.
 	servedStale     bool
 	rebuildFailedAt time.Time
 }
 
-// rwaCandidateFilter keeps only the bound SEP-1 entries that could
-// possibly satisfy requirement 4, so the scan never materialises the
-// tens of thousands of bound entries that declare an NFT, a crypto
-// token or nothing at all.
+// rwaCandidateFilter keeps only the bound SEP-1 entries that could satisfy requirement 4, so the
+// scan never materialises the tens of thousands that declare an NFT, a crypto token or nothing.
 //
-// Every asset-side input a requirement-4 arm reads goes through: the
-// anchor asset as well as the code and the type. Passing fewer is how
-// the ISIN arm was unreachable for the Franklin share classes (type
-// `other`, ISIN in anchor_asset) — the entries were counted as
-// EntriesFiltered before [Server.admitClassicCandidates] ever saw them.
+// Every asset-side input a requirement-4 arm reads must be passed (anchor asset as well as code
+// and type); otherwise entries such as ISIN-only declarations are counted as EntriesFiltered
+// before [Server.admitClassicCandidates] ever sees them.
 func rwaCandidateFilter(c timescale.Sep1BoundCurrency) bool {
 	return rwa.CouldQualify(c.Code, c.AnchorAssetType, c.AnchorAsset)
 }
 
 // buildRWAMembership runs BOTH arms and returns the combined set.
 //
-// The arms are independent by construction: one walks SEP-1
-// attestations keyed by (code, issuer), the other walks curated
-// directory entries keyed by contract address, and neither can admit
-// what the other admits. Either may be unavailable on its own without
-// emptying the response — the funnel says which was measured — because
-// a deployment missing one reader has not learned that the other's
-// population is empty.
+// The arms are independent: one walks SEP-1 attestations keyed by (code, issuer), the other
+// curated directory entries keyed by contract address. Either may be unavailable without emptying
+// the response (the funnel says which was measured), since a missing reader says nothing about
+// the other arm's population.
 //
-// Refusals from both arms land in one tally. The reason vocabularies are
-// disjoint, so a reader can still tell which rule turned a candidate
-// away, and a single tally keeps `refused[]` a statement about the whole
-// surface rather than about whichever arm a consumer happened to read.
+// Refusals from both arms land in one tally; the reason vocabularies are disjoint, so a reader
+// can still tell which rule applied, and `refused[]` stays a statement about the whole surface.
 func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 	out := s.buildRWAClassicMembership(ctx)
 	c := s.buildRWAContractMembership(ctx)
@@ -1122,23 +911,17 @@ func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 	out.listingCensus = c.listingCensus
 	out.contractRefusals = c.refusals
 	out.listingRefusals = c.listingRefusals
-	// A WIRED contract reader whose scan errored leaves
-	// census.available false in exactly the way an unwired one does,
-	// and only this layer holds the wiring, so only this layer can tell
-	// the two apart. The distinction decides whether the rebuild may be
-	// cached over the last good set — see [rwaMembership.readFailed].
+	// A wired contract reader whose scan errored leaves census.available false just like an
+	// unwired one; only this layer holds the wiring, so only it can tell them apart. That decides
+	// whether the rebuild may be cached over the last good set (see [rwaMembership.readFailed]).
 	//
-	// The LISTING arm is deliberately not folded in here: it fails
-	// CLOSED inside the measured branch, dropping every binding under
-	// `independent_listing_unavailable`, so its outage is already a
-	// stated refusal on the wire rather than a silent absence.
+	// The listing arm is not folded in: it fails closed, dropping every binding under
+	// `independent_listing_unavailable`, so its outage is already a stated refusal.
 	if s.RWAContracts != nil && !c.census.available {
 		out.readFailed = true
 	}
-	// One `refused[]` for the whole surface. The per-arm tallies stay
-	// on the membership for the funnel, which has to attribute a
-	// refusal to the narrowing it belongs to; a consumer counting how
-	// many candidates a requirement turned away does not.
+	// One `refused[]` for the whole surface; the per-arm tallies stay for the funnel, which must
+	// attribute each refusal to its own narrowing.
 	for _, tally := range []map[string]int{c.refusals, c.listingRefusals} {
 		for reason, n := range tally {
 			out.refusals[reason] += n
@@ -1147,12 +930,9 @@ func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 	return out
 }
 
-// buildRWAClassicMembership applies the definition to every issuer-bound
-// SEP-1 attestation and returns the admitted set.
-//
-// Order of work: attestations first (one indexed scan), then ONE batch
-// directory lookup over the candidate issuers (no N+1), then the
-// per-candidate verdict. Nothing here reads a price.
+// buildRWAClassicMembership applies the definition to every issuer-bound SEP-1 attestation.
+// It does one indexed scan, one batch directory lookup (no N+1), then the per-candidate verdict;
+// nothing here reads a price.
 func (s *Server) buildRWAClassicMembership(ctx context.Context) rwaMembership {
 	out := rwaMembership{refusals: map[string]int{}}
 	reader, ok := s.Sep1Cache.(Sep1BoundCurrencyReader)
@@ -1170,21 +950,15 @@ func (s *Server) buildRWAClassicMembership(ctx context.Context) rwaMembership {
 	}
 	out.census = census
 	if why := census.Check(); why != "" {
-		// The funnel will publish itself as unbalanced, which is the
-		// honest wire answer; the log is what names the stage a reader
-		// of the response cannot.
+		// The funnel publishes itself as unbalanced; the log names the stage the response cannot.
 		s.logger.Warn("rwa membership: attestation census does not balance", "why", why)
 	}
-	// The pre-filter drops the bound entries that name no real-world
-	// instrument at all — the NFT, crypto and undeclared majority. They
-	// are refusals under requirement 4 and are counted as such; a
-	// refusal tally that reported only what the scan happened to
-	// materialise would understate the population it narrowed from.
+	// The pre-filter drops bound entries naming no real-world instrument (the NFT, crypto and
+	// undeclared majority). They are counted as requirement-4 refusals, since a tally of only the
+	// materialised rows would understate the population narrowed from.
 	//
-	// This bucket is the ONE place the refusal tally reports a
-	// requirement out of R1→R4 order: these entries were dropped before
-	// requirement 3 was evaluated for them, so some also fail it. The
-	// funnel keeps them as their own stage for exactly that reason.
+	// This is the one bucket reported out of R1-R4 order: they were dropped before requirement 3
+	// was evaluated, so some also fail it. The funnel keeps them as their own stage.
 	if census.EntriesFiltered > 0 {
 		out.refusals[rwa.RejectNoInstrumentClaim] += census.EntriesFiltered
 	}
@@ -1203,12 +977,9 @@ func (s *Server) buildRWAClassicMembership(ctx context.Context) rwaMembership {
 	if s.Directory != nil && len(addrs) > 0 {
 		entries, err = s.Directory.DirectoryEntriesByAddresses(ctx, addrs)
 		if err != nil {
-			// Requirement 3 cannot be evaluated without the directory,
-			// and it is the requirement that keeps impersonators out.
-			// Fail CLOSED here — unlike the display overlay, which fails
-			// open because it only omits a label. Serving the set
-			// without R3 would publish the lookalike-domain population
-			// as real-world assets.
+			// R3 keeps impersonators out and cannot be evaluated without the directory, so fail
+			// closed (unlike the display overlay, which only omits a label); serving without it
+			// would publish the lookalike-domain population as real-world assets.
 			s.logger.Warn("rwa membership: directory batch lookup failed", "n", len(addrs), "err", err)
 			out.available = false
 			out.readFailed = true
@@ -1220,15 +991,10 @@ func (s *Server) buildRWAClassicMembership(ctx context.Context) rwaMembership {
 	return out
 }
 
-// admitClassicCandidates runs the ordered R1→R4 evaluation over the
-// bound declarations and accumulates the admitted set, the refusal
-// tally and the two structural drops onto the membership.
-//
-// Split from [Server.buildRWAClassicMembership] so the scan, the
-// directory read and the verdict loop are each readable on their own —
-// and so the verdict loop, which is the part a reviewer of the
-// definition actually needs to read, is not buried under two pages of
-// read-error handling.
+// admitClassicCandidates runs the ordered R1-R4 evaluation over the bound declarations and
+// accumulates the admitted set, the refusal tally and the two structural drops onto the
+// membership. It is split from [Server.buildRWAClassicMembership] to keep the verdict loop
+// separate from read-error handling.
 func (s *Server) admitClassicCandidates(
 	out *rwaMembership,
 	bound []timescale.Sep1BoundCurrency,
@@ -1334,33 +1100,26 @@ func rwaISINCollisionOf(anchorAsset string, declarers map[string]int) *RWAISINCo
 	return &RWAISINCollision{ISIN: isin, DeclaredByIssuers: declarers[isin]}
 }
 
-// rwaMembershipRetryGap rate-limits rebuild ATTEMPTS, not rebuilds. A
-// rebuild that fails leaves the entry stale, so without a gap the next
-// request would start another one immediately and a broken read would
-// become a scan storm against the same tables that are already
-// struggling. Same role as sep1ImagesRetryGap beside it.
+// rwaMembershipRetryGap rate-limits rebuild attempts, not rebuilds. A failed rebuild leaves the
+// entry stale, so without a gap every request would retry and a broken read would become a scan
+// storm against already-struggling tables.
 const rwaMembershipRetryGap = 60 * time.Second
 
-// rwaMembershipBudget is the DETACHED rebuild's own deadline. It is not
-// a request budget: the whole point of detaching is that no request is
-// waiting on it. It has to exceed the measured build cost with room to
-// spare — the production build measured ~11.5 s — or the
-// refresh that was supposed to keep the entry warm is killed halfway
-// and the entry never warms at all.
+// rwaMembershipBudget is the detached rebuild's own deadline, not a request budget. It must
+// exceed the measured build cost (~11.5 s in production) with room to spare, or the refresh is
+// killed halfway and the entry never warms.
 const rwaMembershipBudget = 2 * time.Minute
 
 // cachedRWAMembership returns the membership set for a request.
 //
-// Once a set has ever been built it NEVER blocks on a rebuild: a stale set is served
-// as-is and a detached rebuild is kicked behind it (inputs move daily). Measured on
-// r1 with the rebuild inline, the route was bimodal (39 of 43 requests under 1 s,
-// the rest over 10 s) because the rebuild scans every issuer-bound SEP-1 payload
-// (1.18M currency entries) plus the curated directory, ~11.5 s paid by whichever
-// request found the entry expired. [Server.readSep1Images] is served the same way.
+// Once a set has been built it never blocks on a rebuild: a stale set is served as-is and a
+// detached rebuild is kicked behind it (inputs move daily). An inline rebuild scans every
+// issuer-bound SEP-1 payload plus the curated directory (~11.5 s), which made the route bimodal
+// for whichever request found the entry expired.
 //
-// The ONE case that waits is a never-filled cache: an empty set there would falsely
-// state that no real-world asset exists on Stellar. [Server.PrewarmRWA] makes the
-// waiter the prewarm goroutine, not a visitor.
+// The one case that waits is a never-filled cache: an empty set would falsely state that no
+// real-world asset exists on Stellar. [Server.PrewarmRWA] makes the prewarm goroutine the waiter,
+// not a visitor.
 func (s *Server) cachedRWAMembership(ctx context.Context) rwaMembership {
 	served, flight := s.readRWAMembership() //nolint:contextcheck // the rebuild is deliberately detached from this request's context — see this function's doc; ctx is honoured by the cold-cache wait below.
 	if served != nil {
@@ -1384,15 +1143,10 @@ func (s *Server) cachedRWAMembership(ctx context.Context) rwaMembership {
 	return rwaMembership{refusals: map[string]int{}}
 }
 
-// rwaMembershipSetOf dates the served set, or returns nil when there is
-// no set to date.
+// rwaMembershipSetOf dates the served set, or returns nil when there is no set to date.
 //
-// Gated on the BUILD INSTANT, for the reason the listing evidence is
-// gated on its read instant: a zero-valued set and a real set that
-// happens to be empty render identically in every other field, and only
-// one of them is an answer. Before the first build has ever completed
-// there is nothing to date, and saying so by omission is more honest
-// than publishing the Unix epoch.
+// Gated on the build instant: a zero-valued set and a real but empty set render identically
+// elsewhere, and only one is an answer. Omission is more honest than publishing the Unix epoch.
 func rwaMembershipSetOf(m rwaMembership) *RWAMembershipSet {
 	if m.builtAt.IsZero() {
 		return nil
@@ -1405,20 +1159,12 @@ func rwaMembershipSetOf(m rwaMembership) *RWAMembershipSet {
 	return out
 }
 
-// stampRWAServeState records, on a COPY of the set, the two facts that
-// belong to this serve rather than to the set: whether the copy has
-// outlived its lifetime, and whether the rebuild that should have
-// replaced it failed.
+// stampRWAServeState records, on a copy of the set, the two facts that belong to this serve
+// rather than the set: whether it has outlived its lifetime, and whether its replacement failed.
+// Both are "as of now" answers, so they cannot live on the cached value.
 //
-// They are stamped here, on the way out, rather than carried on the
-// cached value, because both are answers to "as of now" and the cached
-// value is by definition not from now. A set that recorded its own
-// staleness when it was built would report `false` for the whole of its
-// life, which is exactly backwards.
-//
-// The copy matters: the value returned by [Server.readRWAMembership]
-// points AT the cache. Writing through it would make one request's
-// view of the clock permanent for every later reader.
+// The copy matters: [Server.readRWAMembership] returns a pointer into the cache, and writing
+// through it would make one request's view of the clock permanent for every later reader.
 func (s *Server) stampRWAServeState(m rwaMembership) rwaMembership {
 	s.rwaMu.Lock()
 	defer s.rwaMu.Unlock()
@@ -1433,16 +1179,11 @@ func (s *Server) stampServeStateLocked(m rwaMembership) rwaMembership {
 	return m
 }
 
-// readRWAMembership serves what the cache holds and kicks a detached
-// rebuild when the entry is stale (or absent) and no attempt is already
-// running or too recent. Returns the served set — nil only before the
-// first successful build, possibly stale otherwise, both of which are
-// fine — and the in-flight rebuild's completion channel (nil when no
-// rebuild is running).
-//
-// The channel exists for [Server.PrewarmRWA] and for the cold-cache arm
-// of [Server.cachedRWAMembership]. A warm-or-stale request path takes
-// the set and goes.
+// readRWAMembership serves what the cache holds and kicks a detached rebuild when the entry is
+// stale or absent and no attempt is running or too recent. It returns the served set (nil only
+// before the first successful build) and the in-flight rebuild's completion channel (nil when
+// none is running). The channel is for [Server.PrewarmRWA] and the cold-cache arm of
+// [Server.cachedRWAMembership]; a warm-or-stale request takes the set and goes.
 func (s *Server) readRWAMembership() (*rwaMembership, chan struct{}) {
 	s.rwaMu.Lock()
 	defer s.rwaMu.Unlock()
@@ -1467,14 +1208,12 @@ func (s *Server) readRWAMembership() (*rwaMembership, chan struct{}) {
 	return served, flight
 }
 
-// refreshRWAMembership rebuilds the set on a DETACHED context and swaps
-// it in. On a failed rebuild the previous set is left exactly as it
-// was — a directory or SEP-1 read that fails must not empty a surface
-// whose inputs move on a daily cadence.
+// refreshRWAMembership rebuilds the set on a detached context and swaps it in. A failed rebuild
+// leaves the previous set untouched: a failed read must not empty a surface whose inputs move
+// daily.
 func (s *Server) refreshRWAMembership(done chan struct{}) {
-	// Deferred so a panic in the scan cannot leave the single-flight
-	// marker set — which would freeze the cache for the life of the
-	// process, since a non-nil flight is never replaced.
+	// Deferred so a panic in the scan cannot leave the single-flight marker set, which would
+	// freeze the cache for the life of the process since a non-nil flight is never replaced.
 	defer s.endRWAMembershipFlight(done)
 	defer worker.Recover(s.logger, "api-rwa-membership-refresh")
 
@@ -1482,49 +1221,34 @@ func (s *Server) refreshRWAMembership(done chan struct{}) {
 	defer cancel()
 
 	built := s.buildRWAMembership(ctx)
-	// ONE instant for the set's published age and for the lifetime
-	// clock, so `stale` is never a statement about a different moment
-	// from the `built_at` it is served beside.
+	// One instant for the published age and the lifetime clock, so `stale` always describes the
+	// same moment as the `built_at` beside it.
 	at := time.Now().UTC()
 	built.builtAt = at
 
 	s.rwaMu.Lock()
 	defer s.rwaMu.Unlock()
-	// Every WIRED arm must have answered. An unwired arm is no obstacle, but a wired
-	// arm that did not answer makes this rebuild a PARTIAL measurement, which may not
-	// be published as the set.
+	// Every wired arm must have answered; a wired arm that did not makes this rebuild a partial
+	// measurement, which may not be published as the set. Requiring only either arm is wrong: a
+	// failed classic scan beside a healthy contract scan would overwrite the last good set with
+	// one lacking classic members, re-date it and clear the failure stamp, serving a half-empty
+	// set as fresh.
 	//
-	// Requiring only EITHER arm is not the same rule: a failed classic scan beside a
-	// healthy contract scan would overwrite the last good set with one lacking classic
-	// members, re-date it to now and clear the failure stamp, serving a half-empty set
-	// as `stale: false` with no `rebuild_failed_at`. That is wrong coverage that
-	// certifies itself fresh.
-	//
-	// The good half of a partial rebuild is discarded on purpose: merging one new arm
-	// into an older other arm would put one `built_at` over two moments, and the last
-	// good set is a full measurement, so keeping it and saying it is stale is more
-	// honest. A cold cache with an arm down stays cold and the handler states the
-	// absence (see rwaBasisUnavailable).
+	// The good half of a partial rebuild is discarded on purpose: merging it into an older other
+	// arm would put one `built_at` over two moments. A cold cache with an arm down stays cold and
+	// the handler states the absence (see rwaBasisUnavailable).
 	if built.readFailed || (!built.available && !built.contractCensus.available) {
-		// Not an error path for the caller: the previous set keeps being
-		// served, and rwaAttemptAt (already advanced) is what stops this
-		// becoming a retry storm.
-		//
-		// Recorded rather than only logged. From outside, a lapsed set
-		// that a rebuild is about to replace and a lapsed set that
-		// nothing is replacing are identical — and the second is the
-		// only one anybody needs to act on.
+		// The previous set keeps being served, and rwaAttemptAt (already advanced) stops a retry
+		// storm. The failure is recorded, not only logged, because from outside a lapsed set about
+		// to be replaced and one nothing is replacing look identical.
 		s.rwaFailedAt = at
-		// Which arm went down is named here because it is the one thing
-		// the wire deliberately does not carry: the response says a
-		// rebuild failed, the log says what to go and look at.
+		// The log names which arm went down, which the wire deliberately does not carry.
 		s.logger.Warn("rwa membership rebuild failed (serving the last good set)",
 			"classic_answered", built.available,
 			"contracts_answered", built.contractCensus.available)
 		return
 	}
-	// Cleared on success: the field answers "is the latest thing to
-	// have happened a failure", not "has one ever happened".
+	// Cleared on success: the field means "the latest attempt failed", not "one ever failed".
 	s.rwaFailedAt = time.Time{}
 	s.rwaCache = &built
 	s.rwaAt = at
@@ -1540,25 +1264,19 @@ func (s *Server) endRWAMembershipFlight(done chan struct{}) {
 	close(done)
 }
 
-// PrewarmRWA fills the three caches the /rwa page reads out of band: the membership
-// set shared by all three RWA routes, then the value and premium series behind the
-// page's two history panels (warmed AFTER the membership, which they build on).
-// It keeps entries from going stale and makes the waiter for the very first build
-// the prewarm goroutine rather than the first visitor after a deploy.
+// PrewarmRWA fills the three caches the /rwa page reads out of band: the membership set shared
+// by all RWA routes, then the value and premium series behind the history panels (warmed after
+// the membership, which they build on). The very first build is then paid by this goroutine, not
+// the first visitor after a deploy.
 //
-// No cache key, so nothing to drift: the prewarm rule (byte-identical arguments to
-// the handler, else a different slot is warmed) holds structurally, because the
-// membership set is ONE process-wide entry and this calls [Server.readRWAMembership],
-// the same function [Server.cachedRWAMembership] calls.
+// There is no cache key to drift: the membership set is one process-wide entry and this calls
+// [Server.readRWAMembership], the same function [Server.cachedRWAMembership] calls.
 //
 // Best-effort: no reader wired, or a failed scan, leaves the cache as it was.
 func (s *Server) PrewarmRWA(ctx context.Context) {
-	// The membership set is shared by all three RWA routes and depends
-	// on neither history reader, so it warms on its own terms.
+	// The membership set depends on neither history reader, so it warms on its own terms.
 	if _, flight := s.readRWAMembership(); flight != nil { //nolint:contextcheck // same detachment as the request path; ctx is honoured by the wait below, not by the scan.
-		// Waiting is what makes this a prewarm rather than a nudge: the
-		// caller's next pass should find the entry warm, not find its
-		// own kick still running. Shutdown returns at once and still
+		// Waiting makes this a prewarm rather than a nudge. Shutdown returns at once and still
 		// lets the detached rebuild finish and record what it learned.
 		select {
 		case <-flight:
@@ -1684,19 +1402,13 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	// surface could publish a price from a snapshot in which the
 	// address was not named.
 	listingRefs := rwaListingReferencesOf(m.contracts)
-	// The classic arm's own listing rows, from the SAME cached read
-	// /v1/assets uses, resolved by the SAME rule ([listingEntryIn]):
-	// the `CODE-GISSUER` id first, then the Stellar Asset Contract
-	// address derived from it, because the directory publishes each
-	// asset under ONE of those forms with no pattern. The contract map
-	// above cannot answer for a classic member, because the read behind
-	// it returns C-strkeys the membership named, not the derived ones.
+	// The classic arm's listing rows come from the same cached read and the same rule
+	// ([listingEntryIn]) as /v1/assets: the `CODE-GISSUER` id first, then the derived Stellar
+	// Asset Contract address, because the directory publishes each asset under one of those forms
+	// with no pattern. The contract map above cannot answer for a classic member.
 	//
-	// A snapshot that is not available yields a nil map, and a nil map
-	// answers every lookup with a zero entry — which is the "no listing
-	// named this address" refusal, unchanged. That is the right reading
-	// only because the refusal it produces is the one the row already
-	// had: this read can add a reference and can never remove one.
+	// An unavailable snapshot yields a nil map, which answers every lookup with the unchanged
+	// "no listing named this address" refusal: this read can add a reference, never remove one.
 	classicListingRefs := s.assetListingSnapshot(r.Context()).byAddress
 	now := time.Now()
 	for i := range view.Assets {
@@ -1713,13 +1425,11 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, Envelope{Data: view, Flags: Flags{Stale: degraded || curatedDegraded, Degraded: degraded || curatedDegraded || m.readFailed}})
 }
 
-// rwaVerifiedContractRows values the verified contract arm. A valuation
-// ctx cut short still returns its rows, reported as degraded (served
-// under flags.stale). A failed read fails the response exactly as the
-// classic arm's read failure does, the same way as a swallowed error
-// would publish admitted-but-unread members as never observed. live is
-// false whenever nothing further should be written: either the client
-// has gone, or this already wrote the failure response.
+// rwaVerifiedContractRows values the verified contract arm. A valuation ctx cut short still
+// returns its rows, reported as degraded (flags.stale). A failed read fails the response like the
+// classic arm's does, since a swallowed error would publish admitted-but-unread members as never
+// observed. live is false when nothing further should be written: the client has gone, or the
+// failure response was already written.
 func (s *Server) rwaVerifiedContractRows(
 	ctx context.Context, w http.ResponseWriter, r *http.Request, members []rwaContractMember,
 ) (rows map[string]AssetDetail, degraded, live bool) {
@@ -1784,15 +1494,11 @@ type rwaCatalogueJoin struct {
 	notObserved int
 }
 
-// rwaAssetsCost is the rate-limit price, in tokens, of one
-// /v1/rwa/assets request: one per store listing read it makes. The
-// membership is cached, but the valuation behind it is not — every
-// request runs a /v1/assets listing read and its full post-query
-// pipeline per distinct member issuer, plus one batched catalogue read
-// for the contract arm — so the budget is denominated in those reads,
-// as /v1/price/batch's is in ids. Conservative: the pipeline's own
-// supply and price reads are not counted, nor is the curated arm's
-// catalogue read, whose membership is only known after the listing.
+// rwaAssetsCost is the rate-limit price, in tokens, of one /v1/rwa/assets request: one per store
+// listing read. Membership is cached but valuation is not: every request runs a listing read and
+// the full post-query pipeline per member issuer, plus one batched catalogue read for the
+// contract arm. Conservative: the pipeline's own supply and price reads are not counted, nor is
+// the curated arm's catalogue read.
 func rwaAssetsCost(m rwaMembership) int {
 	cost := len(rwaMemberIssuers(m))
 	if len(m.contracts) > 0 {
@@ -1818,11 +1524,10 @@ func rwaMemberIssuers(m rwaMembership) []string {
 	return issuers
 }
 
-// rwaListingRows reads the member issuers through the SAME listing
-// query /v1/assets uses, one indexed page per issuer, and returns the
-// projected rows keyed by asset_id, plus what the read could not cover.
-// Running the real listing path is what guarantees this surface cannot
-// publish a valuation /v1/assets would have refused.
+// rwaListingRows reads each member issuer through the same listing query /v1/assets uses (one
+// indexed page per issuer) and returns rows keyed by asset_id, plus what the read could not
+// cover. Running the real listing path keeps this surface from publishing a valuation /v1/assets
+// would have refused.
 func (s *Server) rwaListingRows(
 	ctx context.Context, m rwaMembership,
 ) (map[string]AssetDetail, rwaCatalogueJoin, error) {
@@ -1859,34 +1564,25 @@ func (s *Server) rwaListingRows(
 		for _, row := range keep {
 			details = append(details, assetDetailFromAssetRow(row))
 		}
-		// The /v1/assets post-query pipeline, in its order. Every step
-		// is a price producer or a gate, and the order between them is
-		// load-bearing there for reasons that apply identically here:
-		// the collision stamp must precede the market-cap fill (which
-		// reads it), the peg fill must follow both the gate that would
-		// strip it and the fill that must not derive a valuation from
-		// it, and the directory stamp brings the scam suppression.
+		// The /v1/assets post-query pipeline, in its order. The order is load-bearing: the
+		// collision stamp precedes the market-cap fill (which reads it), the peg fill follows both
+		// the gate that would strip it and the fill that must not derive a valuation from it, and
+		// the directory stamp brings the scam suppression.
 		//
-		// Running the whole pipeline rather than a chosen subset is the
-		// point. A surface that ran only the steps it believed it
-		// needed would drift from /v1/assets one omission at a time,
-		// and each omission would show up as this page publishing a
-		// figure that page withholds, or withholding one it publishes.
+		// The whole pipeline runs, not a subset: a surface running only the steps it thought it
+		// needed would drift from /v1/assets one omission at a time, publishing a figure that page
+		// withholds or the reverse.
 		s.stampListingCollisions(details)
 		s.applySubstanceGateToListing(ctx, details, false)
 		s.fillMarketCapsFromSupply(ctx, details, assetRowSourceCounts(keep))
-		// ADDITIVE, and additive only to a raw chain fact. The step
-		// above reads a supply only when it is about to multiply it by
-		// a price, so an asset with no served price keeps no supply on
-		// the listing — which is correct there and wrong here, where
-		// the reference basis values a float that has never traded.
-		// This fills the gap from the SAME supply readers, in the same
-		// preference order, and touches nothing else: no price, no
-		// market cap, no gate.
+		// Additive, and only to a raw chain fact. The step above reads a supply only to multiply
+		// it by a price, so an unpriced asset keeps no supply: right on the listing, wrong here,
+		// where the reference basis values a float that has never traded. This fills the gap from
+		// the same supply readers in the same preference order and touches no price, market cap
+		// or gate.
 		//
-		// The contract arm needs no equivalent: fillContractMarketCaps
-		// reads the lake supply for every contract row before it looks
-		// at a price, so those rows already carry the fact.
+		// The contract arm needs no equivalent: fillContractMarketCaps reads the lake supply
+		// before it looks at a price.
 		s.rwaFillMissingSupply(ctx, details)
 		s.fillDeclaredPegPricesInListing(ctx, details)
 		s.fillIssuerDirectoryTags(ctx, details)
@@ -1900,18 +1596,12 @@ func (s *Server) rwaListingRows(
 // rwaFillMissingSupply attaches circulating supply to the RWA rows the
 // market-cap fill left without one.
 //
-// Only rows with no reading at all are touched, so a supply the
-// pipeline DECIDED on — the dust-suppressed and ticker-collision
-// branches both attach one deliberately — is never overwritten. The
-// only rows this reaches are the ones the market-cap fill returned from
-// early, before it looked a supply up, because the row carried no
-// price to multiply it by.
+// Only rows with no reading at all are touched, so a supply the pipeline decided on (the
+// dust-suppressed and ticker-collision branches attach one deliberately) is never overwritten.
+// These are the rows the market-cap fill returned from early because they carried no price.
 //
-// Filling it changes no valuation and no gate. A circulating supply is
-// a chain fact rather than a price claim, which is why this surface
-// already serves one beside a WITHHELD market cap; the reference basis
-// is the first thing here that needs the fact on a row that has no
-// price at all. Scoped to this surface: /v1/assets is untouched.
+// Filling it changes no valuation and no gate: supply is a chain fact, not a price claim. Scoped
+// to this surface; /v1/assets is untouched.
 func (s *Server) rwaFillMissingSupply(ctx context.Context, rows []AssetDetail) {
 	missing := false
 	for i := range rows {
@@ -1976,12 +1666,9 @@ func rwaMatchMemberRows(codes []string, rows []timescale.AssetRow) ([]timescale.
 	return keep, memberCodes
 }
 
-// rwaAssetRows joins the membership evidence to the valued listing rows
-// and orders the result, returning how many members the join could not
-// place. A member with no listing row is dropped: the asset was
-// attested but has never been observed on chain, and this surface
-// reports what the index holds — but it now reports the drop too,
-// because "admitted then never served" is otherwise invisible.
+// rwaAssetRows joins the membership evidence to the valued listing rows and returns how many
+// members the join could not place. A member with no listing row (attested but never observed on
+// chain) is dropped but counted, because "admitted then never served" is otherwise invisible.
 func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]RWAAsset, int) {
 	out := make([]RWAAsset, 0, len(m.members))
 	notObserved := 0
@@ -2029,18 +1716,15 @@ func (s *Server) rwaAssetRows(m rwaMembership, rows map[string]AssetDetail) ([]R
 	return out, notObserved
 }
 
-// rwaSupplyProvenance carries the listing row's supply basis onto the RWA
-// row, together with whether a figure on that basis is a floor.
+// rwaSupplyProvenance carries the listing row's supply basis onto the RWA row, with whether a
+// figure on that basis is a floor.
 //
-// Both are read off the SAME field, which is the point: the flag is
-// [supply.Basis.LowerBound] applied to the basis actually stamped, not a
-// second fact recorded beside it that a later arm could forget to set.
+// Both come off the same field: the flag is [supply.Basis.LowerBound] applied to the stamped
+// basis, not a second fact a later arm could forget to set.
 //
-// A row with a supply but no basis returns nothing rather than guessing
-// one. That state is reachable — a supply another branch attached
-// deliberately (the dust-suppressed and ticker-collision paths both do)
-// travels without one — and naming an arm that did not answer would be a
-// worse failure than naming none.
+// A row with a supply but no basis returns nothing rather than a guess. That state is reachable
+// (the dust-suppressed and ticker-collision paths attach a supply without one), and naming an arm
+// that did not answer is worse than naming none.
 func rwaSupplyProvenance(d AssetDetail) (string, bool) {
 	if d.CirculatingSupply == nil || d.SupplyBasis == nil {
 		return "", false
@@ -2052,15 +1736,9 @@ func rwaSupplyProvenance(d AssetDetail) (string, bool) {
 // rwaSortAssets applies the served ordering: published market cap
 // descending, then observation count, then asset id.
 //
-// It runs ONCE over the combined set rather than per arm. Sorting each
-// arm and concatenating would rank every classic row above every
-// contract row whatever their valuations, which is a claim about
-// relative size that the concatenation order happened to make and
-// nobody measured.
-//
-// Rows with no published valuation sort after every valued row — an
-// unvalued asset is never ranked above a valued one on a number it does
-// not have.
+// It runs once over the combined set: sorting each arm and concatenating would rank every
+// classic row above every contract row whatever their valuations, a size claim nobody measured.
+// Rows with no published valuation sort after every valued row.
 func rwaSortAssets(out []RWAAsset) {
 	sort.SliceStable(out, func(i, j int) bool {
 		li, lj := ratFromOptionalString(out[i].Valuation.MarketCapUSD), ratFromOptionalString(out[j].Valuation.MarketCapUSD)
@@ -2089,11 +1767,8 @@ func rwaDecimalsOf(d AssetDetail) *int {
 	return &v
 }
 
-// rwaValuationOf reads the valuation OFF the already-gated listing row.
-// It never recomputes a price or a market cap: every withholding
-// decision was made upstream by the gates, and this function only
-// reports which one applied. That is why a withheld figure cannot
-// reappear here as a number.
+// rwaValuationOf reads the valuation off the already-gated listing row. It never recomputes a
+// price or market cap, so a figure withheld upstream cannot reappear here as a number.
 func rwaValuationOf(d AssetDetail) RWAValuation {
 	if pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags) {
 		return RWAValuation{Status: RWAValuationIssuerFlagged}
@@ -2105,9 +1780,8 @@ func rwaValuationOf(d AssetDetail) RWAValuation {
 		if d.MarketCapLowLiquidity {
 			return RWAValuation{Status: RWAValuationLowLiquidity, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}
 		}
-		// Reported before the supply reason, because it is the more
-		// specific finding: a row here HAS a supply and is missing the
-		// exponent, which is a different gap with a different owner.
+		// Reported before the supply reason as the more specific finding: the row has a
+		// supply and lacks the exponent, a different gap with a different owner.
 		if d.DecimalsUnresolved || d.MarketCapDecimalsMismatch {
 			return RWAValuation{Status: RWAValuationDecimalsUnknown, PriceUSD: d.PriceUSD, PriceBasis: d.PriceBasis}
 		}
@@ -2123,11 +1797,9 @@ func rwaValuationOf(d AssetDetail) RWAValuation {
 
 // ─── aggregates ─────────────────────────────────────────────────────
 
-// rwaSumMarketCaps returns the exact sum of the published market caps
-// and how many rows contributed. Exact big.Rat arithmetic over
-// already-rounded 2-dp per-asset figures (ADR-0003), so each level is
-// the exact sum of the level below. Returns nil when nothing was
-// published.
+// rwaSumMarketCaps returns the exact sum of the published market caps and how many rows
+// contributed. big.Rat over already-rounded 2-dp figures (ADR-0003) keeps each level the exact sum
+// of the level below. Returns nil when nothing was published.
 func rwaSumMarketCaps(assets []RWAAsset) (*string, int) {
 	sum := new(big.Rat)
 	valued := 0
@@ -2146,18 +1818,12 @@ func rwaSumMarketCaps(assets []RWAAsset) (*string, int) {
 	return &s, valued
 }
 
-// rwaSumReferenceValues is [rwaSumMarketCaps] on the reference basis:
-// the exact sum of the published per-asset reference valuations, and
-// how many rows contributed. Same big.Rat arithmetic over the same
-// already-rounded 2-dp strings, so this level is likewise the exact sum
-// of the level below. nil when nothing was reference-valued — a zero
-// there would read as "the backing is worth nothing", which is the one
-// reading certain to be wrong.
+// rwaSumReferenceValues is [rwaSumMarketCaps] on the reference basis, with the same exact
+// big.Rat arithmetic. It returns nil when nothing was reference-valued, since a zero would read
+// as "the backing is worth nothing", the one reading certain to be wrong.
 //
-// A separate function rather than a parameterised one because the two
-// bases must stay independently readable: a shared accessor invites a
-// later caller to pass the wrong selector and quietly sum a market cap
-// into the reference total.
+// Kept separate rather than parameterised so a caller cannot pass the wrong selector and quietly
+// sum a market cap into the reference total.
 func rwaSumReferenceValues(assets []RWAAsset) (*string, int) {
 	sum := new(big.Rat)
 	valued := 0
@@ -2176,13 +1842,9 @@ func rwaSumReferenceValues(assets []RWAAsset) (*string, int) {
 	return &s, valued
 }
 
-// rwaBothBases totals the rows carrying BOTH a market cap and a
-// reference valuation, on each basis separately.
-//
-// The restriction to the overlap is the entire point. Summing every
-// market cap and every reference valuation and subtracting compares two
-// different populations of assets, and the difference then reads as a
-// premium or discount that nobody measured.
+// rwaBothBases totals, on each basis separately, the rows carrying both a market cap and a
+// reference valuation. Restricting to the overlap matters: subtracting full sums compares two
+// different populations, and the difference reads as a premium nobody measured.
 func rwaBothBases(assets []RWAAsset) RWABothBases {
 	market := new(big.Rat)
 	reference := new(big.Rat)
@@ -2205,10 +1867,9 @@ func rwaBothBases(assets []RWAAsset) RWABothBases {
 	return RWABothBases{Assets: n, MarketCapUSD: &m, ReferenceValueUSD: &r}
 }
 
-// rwaReferenceSources lists the distinct oracles behind the published
-// reference valuations, sorted. Only the rows that CONTRIBUTED are
-// read: naming a publisher whose figure was refused would attribute to
-// it a number it is not in.
+// rwaReferenceSources lists the distinct oracles behind the published reference valuations,
+// sorted. Only contributing rows count: naming a publisher whose figure was refused would
+// attribute to it a number it is not in.
 func rwaReferenceSources(assets []RWAAsset) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 2)
@@ -2226,11 +1887,9 @@ func rwaReferenceSources(assets []RWAAsset) []string {
 	return out
 }
 
-// rwaReferenceProvenances lists the distinct kinds of claim in the
-// reference total, read off the CONTRIBUTING rows only. A row whose
-// reference was published but whose valuation was refused contributed
-// nothing, so naming its provenance here would describe the total by
-// something not in it.
+// rwaReferenceProvenances lists the distinct kinds of claim in the reference total, from
+// contributing rows only: a row whose valuation was refused contributed nothing, so naming its
+// provenance would describe the total by something not in it.
 func rwaReferenceProvenances(assets []RWAAsset) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, 2)
@@ -2263,23 +1922,18 @@ func rwaSummariseReference(assets []RWAAsset) RWAReferenceSummary {
 	}
 }
 
-// rwaReferenceProvenanceProse describes WHAT KIND of claim is in the
-// total, from the provenances actually present in it.
+// rwaReferenceProvenanceProse describes what kind of claim is in the total, from the provenances
+// actually present. They are claims about different subjects:
 //
-// The provenances are different claims about different subjects:
+//   - an oracle NAV values the instrument; the step to the token rests on the issuer's own
+//     domain-bound declaration that one token is one unit of it;
+//   - a listing price values the token directly and says nothing about the backing;
+//   - a fund NAV is a registered fund's own published daily value per share;
+//   - a prospectus constant NAV is the issuer's own statement of a value its fund rules
+//     prescribe, which nobody independent measured.
 //
-//   - an ORACLE NAV values the INSTRUMENT; the step to the token rests on the
-//     issuer's own domain-bound declaration that one token is one unit of it;
-//   - a LISTING PRICE values the TOKEN directly and makes no claim about the
-//     backing: weaker (nobody independent says what is behind the token) and
-//     stronger (no unstated one-for-one assumption);
-//   - a FUND NAV is a registered fund's own published daily value per share;
-//   - a PROSPECTUS CONSTANT NAV is the issuer's own statement of a value its
-//     fund rules prescribe, which nobody independent measured.
-//
-// The sentence is derived from the rows rather than written once, because a
-// basis string that describes a provenance the total does not contain is
-// exactly as wrong as one that omits a provenance it does.
+// The sentence is derived from the rows because a basis describing a provenance the total lacks
+// is as wrong as one omitting a provenance it has.
 func rwaReferenceProvenanceProse(provenances []string) string {
 	present := make(map[string]bool, len(provenances))
 	for _, p := range provenances {
@@ -2291,8 +1945,7 @@ func rwaReferenceProvenanceProse(provenances []string) string {
 			kinds = append(kinds, k.prose)
 		}
 	}
-	// Zero kinds means no contributing rows and no claim to describe;
-	// the callers state the absence.
+	// Zero kinds means no contributing rows; the callers state the absence.
 	if len(kinds) < 2 {
 		return strings.Join(kinds, "")
 	}
@@ -2302,10 +1955,8 @@ func rwaReferenceProvenanceProse(provenances []string) string {
 
 var rwaReferenceKindCount = map[int]string{2: "TWO", 3: "THREE", 4: "FOUR"}
 
-// rwaReferenceProvenanceProseOrder is every provenance a verified row
-// can carry into the summary total, in the order the basis describes
-// them. Curated rows never enter that total, so the curator provenance
-// is absent.
+// rwaReferenceProvenanceProseOrder is every provenance a verified row can carry into the summary
+// total, in basis order. Curated rows never enter that total, so the curator provenance is absent.
 var rwaReferenceProvenanceProseOrder = []struct{ provenance, prose string }{
 	{RWAReferenceOracleNAV, "Oracle-priced rows (`provenance: oracle_instrument_nav`) are what an independent oracle says one unit " +
 		"of the BACKING is worth, multiplied by the tokens in circulation, resting on the issuer's own domain-bound " +
@@ -2334,16 +1985,10 @@ var rwaReferenceProvenanceProseOrder = []struct{ provenance, prose string }{
 		"it is not an independent valuation of the instrument. "},
 }
 
-// rwaReferenceBasis states what the reference total measured and, at
-// least as importantly, what it is not.
-//
-// The prose carries weight the field name cannot. `market_cap_usd` is a
-// figure somebody was observed paying, filtered by three gates that can
-// each withhold it; this one is an assertion about the value of the
-// backing, and no gate on this platform can corroborate an assertion.
-// A reader who takes the two for the same kind of number will read a
-// claim as a measurement, so the difference is stated rather than
-// implied.
+// rwaReferenceBasis states what the reference total measured and what it is not. `market_cap_usd`
+// is a figure somebody was observed paying, behind three withholding gates; this one is an
+// assertion about the value of the backing that no gate can corroborate. The difference is stated
+// so a reader does not take a claim for a measurement.
 func rwaReferenceBasis(total, valued int, provenances []string) string {
 	var b strings.Builder
 	b.WriteString("Sum of each member's circulating supply times an independent published price for it. ")
@@ -2364,13 +2009,10 @@ func rwaReferenceBasis(total, valued int, provenances []string) string {
 	return b.String()
 }
 
-// rwaIssuerCount is the single definition of "how many issuers" for the
-// RWA set, shared by every endpoint that publishes the count
-// (/v1/rwa/assets, /v1/rwa/history, /v1/rwa/premium). A contract-issued
-// member has no issuer G-address, but it is not the SAME issuer as any
-// other contract either — its address is the whole of its identity — so
-// each admitted contract counts as one issuer of its own, never
-// collapsed into a shared blank bucket.
+// rwaIssuerCount is the single definition of "how many issuers" for the RWA set, shared by
+// /v1/rwa/assets, /v1/rwa/history and /v1/rwa/premium. A contract-issued member has no issuer
+// G-address, but its address is its whole identity, so each admitted contract counts as its own
+// issuer rather than collapsing into a shared blank bucket.
 func rwaIssuerCount(distinctClassicIssuers, contractCount int) int {
 	return distinctClassicIssuers + contractCount
 }
@@ -2437,18 +2079,13 @@ func rwaBasis(total, valued, compared int, trunc rwaTruncation) string {
 		b.WriteString("Assets whose valuation is withheld or unavailable contribute nothing and are counted separately, so the total is a LOWER BOUND on the value of the set.")
 	}
 	if compared > 0 {
-		// The comparison rests on the issuer's own domain-bound
-		// declaration that this token anchors to the named instrument.
-		// That is the evidence that admitted the asset, and it is not a
-		// verified statement of denomination — so the surface says so
-		// beside the figure rather than letting a percentage imply a
-		// certainty nobody established.
+		// The comparison rests on the issuer's own domain-bound declaration that the token anchors
+		// to the instrument, which is not a verified denomination; the surface says so beside the
+		// figure so a percentage does not imply certainty nobody established.
 		b.WriteString(" Premium and discount compare the token's market price against an independent oracle's valuation of the instrument the issuer declares it anchors to; the correspondence between one token and one unit of that instrument is the issuer's own declaration, not an independent measurement.")
 	}
-	// Stated on the market-cap basis as well as on the reference one,
-	// because the misreading to prevent is a reader arriving at THIS
-	// total and assuming it now includes the reference-priced figure.
-	// It does not, and no row moved into or out of it.
+	// Stated here too, to stop a reader of this total assuming it includes the reference-priced
+	// figure.
 	b.WriteString(" Reference-priced valuations are a separate basis and are NOT in this total: summary.reference_valuation carries them under their own name.")
 	rwaWriteTruncation(&b, trunc)
 	return b.String()
