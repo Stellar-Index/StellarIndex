@@ -129,9 +129,6 @@ internal/storage/timescale/topic_samples.go	long-block
 internal/storage/timescale/trades.go	long-block
 internal/storage/timescale/trades_bulk.go	long-block
 internal/storage/timescale/trades_bulk.go	long-block
-internal/storage/timescale/trades_chunks.go	long-block
-internal/storage/timescale/trades_chunks.go	long-block
-internal/storage/timescale/trades_chunks.go	long-block
 internal/storage/timescale/transitive_price.go	long-block
 internal/storage/timescale/transitive_price.go	long-block
 internal/storage/timescale/usd_volume_quote_spec.go	long-block
@@ -139,8 +136,5 @@ internal/storage/timescale/usd_volume_reconcile.go	long-block
 internal/storage/timescale/usd_volume_restamp.go	long-block
 internal/storage/timescale/usd_volume_restamp_cexfx.go	long-block
 internal/storage/timescale/usd_volume_restamp_legs.go	long-block
-internal/storage/timescale/usd_volume_restamp_xlmbase.go	long-block
-internal/storage/timescale/usd_volume_restamp_xlmbase.go	long-block
-internal/storage/timescale/usd_volume_restamp_xlmbase.go	long-block
 internal/storage/timescale/xlm_usd_anchor.go	long-block
 internal/usage/counter.go	long-block
