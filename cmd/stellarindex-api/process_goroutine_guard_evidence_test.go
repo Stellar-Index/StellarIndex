@@ -12,53 +12,20 @@ import (
 
 // Every goroutine in the stellarindex-api process recovers.
 //
-// An unrecovered panic in ANY goroutine terminates the whole Go process; it
-// is not confined to the goroutine that panicked. Two places close that hole, and guarded each with an AST walk:
+// An unrecovered panic in any goroutine kills the whole process. The narrower per-binary and
+// internal/api/v1 walks cover only their own trees, so this one derives its package set from the
+// linker (go list -deps .) and a newly linked package is covered the day it lands.
 //
-//   - cmd/*/main.go, via each binary's TestBackgroundWorkersRecover
-//     (guardscan.ScanFile("main.go", …) — ONE file); and
-//   - internal/api/v1 and its subpackages, via
-//     TestAPIDetachedGoroutinesRecover, whose walk is rooted at "." and so
-//     reaches exactly its own package tree.
+// Containment alone is not enough: each recovery must pair with the release it owns. A flight
+// marker ends from a defer, a drain worker keeps close(done) outermost, and a fan-out member
+// records failure in the slot its joiner reads. Each has its own behavioural test next to the code.
 //
-// Both are narrow BY CONSTRUCTION, and a PASS over a narrow slice reads
-// identical to a PASS over everything: thirteen goroutines elsewhere in the
-// linked binary — the explorer's ClickHouse-side stale-while-revalidate
-// refreshers, the lake and discovery sinks, the Chainlink poller's fan-out,
-// the divergence reference fan-out and the SDEX bulk writer's two
-// WaitGroup-joined pools — recovered nothing at all. So this walk derives
-// its package set from the LINKER's answer (`go list -deps .`) rather than
-// from a tree root someone chose, and a package newly linked into the API is
-// covered the day it lands rather than the day someone remembers to widen a
-// root. It subsumes the two narrower walks without replacing them.
+// Only the shared internal/worker guards are accepted, because they move
+// stellarindex_worker_panics_total, which stellarindex_worker_panicked pages on. A bare recover()
+// would turn a loud crash into a silent dead worker.
 //
-// It does not merely require that a panic be CONTAINED. Containment without
-// release is worse than the crash it replaces — the crash at least ends with
-// a fresh process — so each of those sites pairs its recovery with the
-// release it owns, and each has its own behavioural test next to the code:
-//
-//   - a flight or single-flight marker is ended from a DEFER, or the waiters
-//     block on a channel nobody closes and the cache hands out the same dead
-//     flight for the life of the process
-//     (internal/storage/clickhouse/detached_refresh_panic_test.go);
-//   - a drain worker keeps close(done) as its outermost defer, or Stop()
-//     never returns;
-//   - a fan-out member records its failure in the slot its joiner reads, or
-//     a panicked partition reads as one that landed
-//     (internal/storage/timescale/trades_bulk_panic_guard_test.go).
-//
-// The guards below are the shared internal/worker helpers, so every recovered
-// panic moves stellarindex_worker_panics_total — the series
-// stellarindex_worker_panicked pages on. A bare recover() is deliberately NOT
-// accepted: swallowing a panic without moving that counter turns a loud crash
-// into a silent dead worker, which is the failure this guard exists to
-// prevent.
-//
-// The HTTP listener in this binary is the one deliberate exemption and is
-// excluded BY ITS CONTENT, on the same argument main.go's own guard makes:
-// recovering the accept loop leaves a live process serving nothing. If
-// another site should be fatal, argue it here in content the same way — do
-// not add a name to a list.
+// The HTTP listener is the one exemption, excluded by its content: recovering the accept loop
+// leaves a live process serving nothing. Argue any other fatal site by content, not a name list.
 func TestAPIProcess_EveryGoroutineRecovers(t *testing.T) {
 	// The guards any body in this process may register. A bare recover()
 	// is deliberately not among them: swallowing a panic without moving
@@ -124,10 +91,8 @@ func TestAPIProcess_EveryGoroutineRecovers(t *testing.T) {
 // apiProcessGoFiles lists every non-test .go file in every package of THIS
 // module that the stellarindex-api binary links, in deterministic order.
 //
-// The set comes from `go list -deps .` rather than a hand-picked tree root:
-// the question this test asks is "what can panic inside this process", and
-// only the linker's dependency closure answers it. Packages outside the
-// module are excluded — a third-party goroutine is not ours to guard.
+// The set comes from go list -deps . because only the linker's dependency closure answers what
+// can panic inside this process. Packages outside the module are excluded.
 func apiProcessGoFiles(t *testing.T) []string {
 	t.Helper()
 	const modPath = "github.com/Stellar-Index/StellarIndex"

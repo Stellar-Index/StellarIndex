@@ -17,24 +17,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
-// The lake-flows supply cache (internal/api/v1/classic_lake_supply.go) warms
-// itself from the REQUEST path — 32 assets per request — so a service with no
-// consumer traffic never converges: entries expire unread and /v1/assets and
-// /v1/rwa/assets fall back to the trustline-only sum, which cannot see supply
-// held in claimable balances, LP reserves or SAC contract_data. Measured on r1,
-// ~19 h after the last request, PYUSD served 3,149,454 against a
-// lake reading of 11,778,001 and XRF 21,895,149 against 118,333,629.
+// The lake-flows supply cache (internal/api/v1/classic_lake_supply.go) otherwise warms only from
+// requests, so an idle service never converges and listings fall back to the trustline-only sum,
+// which cannot see supply held in claimable balances, LP reserves or SAC contract_data.
 //
-// The behaviour of the fill lives with the fill (see
-// classic_lake_supply_prewarm_test.go). What THIS package owns is the pair of
-// wiring properties a prewarm dies of:
+// The fill's behaviour is tested in classic_lake_supply_prewarm_test.go. This package owns two
+// wiring properties:
 //
-//  1. It runs at boot rather than one cadence later. That is the same defect
-//     TestPrewarmCaches_FiresBothPassesBeforeTheFirstTick pins for the other
-//     loop, and it recurs on every deploy.
-//  2. It asks about the population the listing actually serves. The prewarm
-//     and the handler compute their arguments independently, and three
-//     production bugs in this file came from those two drifting.
+//  1. It runs at boot rather than one cadence later (as for
+//     TestPrewarmCaches_FiresBothPassesBeforeTheFirstTick).
+//  2. It asks about the population the listing actually serves; the prewarm and the handler
+//     compute their arguments independently and can drift.
 
 // bulkLakeStub is the token-supply reader with the bulk capability
 // classicLakeSupplyReader type-asserts for. Production:
@@ -74,18 +67,11 @@ func (l *listingShapeRecorder) ListAssetsExt(
 }
 
 // TestPrewarmClassicLakeSupply_AsksForTheShapesTheListingPrewarmWarms is the
-// drift guard, and it deliberately does NOT restate the shape set. It runs the
-// real loop against a real v1.Server built by the production constructor
-// (v1.New — the same call cmd/stellarindex-api/main.go makes at run()'s
-// AssetsReader/TokenSupply wiring) and compares what the loop asked the
-// listing for against assetListingPrewarmOptions() itself.
-//
-// That is the whole point: the lake cache is per-ASSET, so the only way to
-// know which assets to warm is to ask which assets the warmed listing pages
-// serve. A hand-maintained id list here, or a second copy of the limit
-// arithmetic, is precisely how prewarmLight's MarketsOrderPair, /v1/pools
-// filter and ?limit=50 phantom slots happened — each warmed a slot nothing
-// looked up, logged success, and left every request paying the cold fill.
+// drift guard, and it deliberately does not restate the shape set. It runs the real loop against
+// a v1.Server built by the production constructor (v1.New, as main.go does) and compares what
+// the loop asked the listing for against assetListingPrewarmOptions() itself. The cache is
+// per-asset, so a hand-maintained id list or a second copy of the limit arithmetic would warm
+// slots nothing looks up.
 func TestPrewarmClassicLakeSupply_AsksForTheShapesTheListingPrewarmWarms(t *testing.T) {
 	t.Parallel()
 
@@ -157,15 +143,9 @@ func TestPrewarmClassicLakeSupply_NilServerIsSafe(t *testing.T) {
 	prewarmClassicLakeSupply(context.Background(), nil)
 }
 
-// TestPrewarmClassicLakeSupply_IsActuallyStarted closes the gap every other
-// test in this file leaves open: they all call the loop themselves, so all of
-// them stay green if run() never starts it. A warmer that exists, is tested,
-// and is never spawned is indistinguishable from no warmer at all — and it is
-// worse, because the tests report otherwise.
-//
-// Derived from the source rather than from a boot, for the reason
-// TestBackgroundWorkersRecover gives: run() needs a database, a Redis and a
-// ClickHouse before it reaches this line.
+// TestPrewarmClassicLakeSupply_IsActuallyStarted closes the gap the other tests leave: they call
+// the loop themselves and stay green if run() never starts it. It reads the source, as
+// TestBackgroundWorkersRecover does, because run() needs a database, Redis and ClickHouse.
 func TestPrewarmClassicLakeSupply_IsActuallyStarted(t *testing.T) {
 	t.Parallel()
 

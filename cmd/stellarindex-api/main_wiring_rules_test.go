@@ -232,26 +232,11 @@ func TestMainWiringRules(t *testing.T) {
 	}
 }
 
-// TestRun_RegistersTheClickhouseCheckOnTheFailedDialPathToo is the
-// wiring guard that a ClickHouse readiness checker must be
-// registered on a path that a FAILED boot dial also takes.
-//
-// The defect it pins is positional, not logical — `checks = append(
-// checks, clickhouseChecker{r: er})` sat inside the `else` of the dial's
-// error check, which is the branch a failed dial does not take. So a
-// ClickHouse that was already down when the API started published no
-// `stellarindex_dependency_up{dependency="clickhouse"}` series at all,
-// the `== 0` alert (deliberately not absent(), per its own in-file
-// rationale) had nothing to match, and the state the annotation calls
-// "the only signal that it is gone" was the state with no signal.
-//
-// The checker is built in the wiring package and registered from run(),
-// so both halves are checked: the wiring package constructs a
-// ClickhouseChecker outside an else-branch, and run() appends
-// wiring.ClickhouseReadyChecks to its checks outside one.
-//
-// Read from the AST so the assertion is about the code rather than
-// about a list someone has to remember to update.
+// TestRun_RegistersTheClickhouseCheckOnTheFailedDialPathToo guards that the ClickHouse readiness
+// checker is registered on a path a failed boot dial also takes. Otherwise a ClickHouse that is
+// down at startup publishes no dependency_up series and the "== 0" alert has nothing to match.
+// Both halves are read from the AST: the wiring package builds the checker outside an else-branch,
+// and run() appends wiring.ClickhouseReadyChecks outside one.
 func ruleClickhouseCheckRegisteredOnFailedDial(t *testing.T) {
 	fset := token.NewFileSet()
 	checkers, err := parser.ParseFile(fset, filepath.Join(wiringDir, "checkers.go"), nil, 0)
@@ -349,19 +334,10 @@ func isClickhouseChecksAppend(n ast.Node) bool {
 	return false
 }
 
-// Source-level tripwire, the API twin of
-// the aggregator rule decimals_refresh_is_fatal — but the two
-// have DIFFERENT verdicts. The aggregator's boot refresh is fatal: it has no readiness surface between it and the orchestrator loop
-// that publishes prices. The API sits behind `/v1/readyz`, so a fatal-on-boot
-// load (make run() return an error) is replaced by a synchronous prime +
-// critical readiness check
-// (wiring.PrimeNonstandardDecimalsCache, see nonstandard_decimals_ready_test.go):
-// a failed first load now keeps the process up but red, instead of
-// putting systemd into a restart loop on a Postgres blip.
-//
-// This guards the other direction: run() must NOT reintroduce a direct,
-// fatal `nonstandardDecimalsCache.Refresh` call, since that would bring
-// the restart-loop failure mode back.
+// Source-level tripwire: unlike the aggregator, the API sits behind /v1/readyz, so a failed first
+// decimals load keeps the process up but red (wiring.PrimeNonstandardDecimalsCache). run() must
+// not call nonstandardDecimalsCache.Refresh directly and fatally, or a Postgres blip would put
+// systemd into a restart loop.
 
 func ruleNonstandardDecimalsRefreshNotFatal(t *testing.T) {
 	fset := token.NewFileSet()
@@ -428,16 +404,10 @@ func blockReturns(body *ast.BlockStmt) bool {
 	return false
 }
 
-// TestRun_SignupReaperBindsToThePostgresAccountStoreNotTheDashboardBundle
-// pins NS02: POST /v1/register (ADR-0049) is wired onto
-// platformAccountStore/registerAccountStore whenever Postgres is
-// reachable — independent of api.dashboard.base_url. The reaper that
-// cleans up its signup-race orphans must bind to that same seam. Asserting
-// the OrphanStore type against dashboardBundle.accounts instead means a
-// Postgres-only, no-dashboard deployment (the shipped example.toml default:
-// no [api.dashboard] base_url) accepts registrations but never runs the
-// reaper, because buildDashboardBundle returns the zero value when
-// BaseURL == "".
+// TestRun_SignupReaperBindsToThePostgresAccountStoreNotTheDashboardBundle pins that the signup
+// orphan reaper binds to the same store POST /v1/register (ADR-0049) uses, which exists whenever
+// Postgres is reachable. Binding to dashboardBundle.accounts would leave a no-dashboard
+// deployment accepting registrations without ever reaping, since the bundle is zero then.
 func ruleSignupReaperBindsToPostgresStore(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "main.go", nil, 0)
@@ -478,21 +448,10 @@ func ruleSignupReaperBindsToPostgresStore(t *testing.T) {
 	}
 }
 
-// TestDEXTVLGateIsWiredThroughTheNilAbleBuilder is the WIRING half.
-//
-// v1.DEXTVLSources.Gate is an interface, and an interface holding a
-// non-pointer struct is never == nil however empty the struct is. Assigning
-// `dexTVLValueGate{…}` as a composite literal unconditionally would make v1's
-// nil-Gate arm — the one that keeps Basis quiet about screens that did not
-// run — unreachable in this binary, leaving
-// TestDEXTVLCache_NoGateKeepsTodaysFigures over in internal/api/v1 pinning a
-// path production never takes.
-//
-// An AST guard rather than a behavioural one because the wiring lives
-// inside main()'s server construction, which needs a live Postgres to
-// run: the property to protect is that the assignment goes through the
-// nil-able builder at all. Same shape as TestPriceServingSeamsAreGated
-// in this package.
+// TestDEXTVLGateIsWiredThroughTheNilAbleBuilder is the wiring half. v1.DEXTVLSources.Gate is an
+// interface, so assigning a struct literal unconditionally is never nil and would make v1's
+// nil-Gate arm unreachable in this binary. It is an AST guard because the wiring sits inside
+// main()'s server construction, which needs a live Postgres.
 func ruleDEXTVLGateViaNilAbleBuilder(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", nil, 0)

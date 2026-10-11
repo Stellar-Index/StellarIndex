@@ -11,13 +11,9 @@ import (
 	"time"
 )
 
-// Ansible leg of the Resend key guard. The env template must not render
-//
-//	STELLARINDEX_RESEND_API_KEY={{ vault_resend_api_key | default('') }}
-//
-// with nothing in front of it: a vault without the key rendered an empty
-// value, the role applied green, and the API booted unable to deliver any
-// sign-in email. These tests read the SHIPPED template, not a copy.
+// Ansible leg of the Resend key guard. The env template must not render the key with a bare
+// default('') in front of it, or an empty vault value applies green and sign-in email fails.
+// These tests read the shipped template, not a copy.
 
 const resendEnvTemplate = "../../configs/ansible/roles/archival-node/templates/stellarindex.env.j2"
 

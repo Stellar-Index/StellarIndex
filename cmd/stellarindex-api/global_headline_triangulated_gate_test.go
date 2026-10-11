@@ -14,24 +14,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// The GlobalAssetView headline has THREE tiers and all must be gated
-// (the `vwap:` keys are not exempt).
+// The GlobalAssetView headline has three tiers and all must be gated; the `vwap:` keys are not
+// exempt. Tier 1 (LatestVWAP, the prices_1m bucket) routes through the wiring.PriceWithheld
+// chokepoint. Tier 3 (LookupTriangulated) reads the aggregator's `vwap:<base>:<quote>:<window>`
+// key and is the tier a Stellar-only token reaches, since its <asset>/fiat:USD pair has no
+// prices_1m rows. An ungated tier 3 would show a price and market cap on a flagged issuer's
+// asset page.
 //
-// wiring.GlobalPriceReader.LatestVWAP — tier 1, the prices_1m bucket — routes
-// through the wiring.PriceWithheld chokepoint. wiring.GlobalPriceReader.
-// LookupTriangulated — tier 3 — reads the aggregator's
-// `vwap:<base>:<quote>:<window>` key and needs the gate,
-// and tier 3 is precisely the tier a Stellar-only token reaches: its
-// literal <asset>/fiat:USD pair has no prices_1m rows, so tier 1 misses
-// by construction and the headline comes from the cache.
-//
-// An ungated tier 3 is the failure this gate exists for:
-// a flagged issuer's ASSET PAGE showing a price and a market cap.
-//
-// The gate here is the scam half only, so this test pins the scam
-// verdict; the substance half is deliberately not asked on this tier
-// (see the call site's comment) and the unflagged case below proves the
-// tier still serves.
+// The gate here is the scam half only, so this test pins the scam verdict; the unflagged case
+// proves the tier still serves.
 
 // headlineFlaggedIssuer is the directory-flagged issuer account. Same
 // fixture the chokepoint's SAC test uses.

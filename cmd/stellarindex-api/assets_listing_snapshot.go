@@ -19,23 +19,15 @@ import (
 
 // /v1/assets listing snapshots — the boot seed.
 //
-// The prewarm cannot win the startup race: the first /v1/assets listing request
-// arrives ~3.5 s after the listener is up, before any fill of a cold slot can
-// finish (~11 s on r1). Warming faster does not help, because the cost IS the
-// first fill.
+// The prewarm cannot win the startup race: the first listing request arrives before a cold
+// fill can finish. So the last-good page-set outlives the process: each prewarm cycle writes
+// its listing keys here and the next boot seeds [v1.CachedAssetsReader] before the listener
+// starts. The first request then takes the stale-while-revalidate branch with an honest
+// `flags.stale`.
 //
-// So the last-good page-set outlives the process. Every prewarm cycle writes
-// each warmed listing key here; the next boot reads them back and seeds
-// [v1.CachedAssetsReader] BEFORE the listener starts, so the first request
-// takes the cache's stale-while-revalidate branch — instant answer, honest
-// `flags.stale`, one detached refresh behind it.
-//
-// KEY GRAMMAR. `internal/cachekeys` is the canonical home for Redis key
-// families (ADR-0007) but has no builder for this shape (its
-// `assets:list:<cursor>:<limit>` family is a different reader and payload type).
-// The family is declared here with its sole reader and writer, keeping ADR-0007's
-// guarantees: a named key type, a single builder, and a golden-string test.
-// Promote it to internal/cachekeys when a second binary needs to read it.
+// The key family is declared here, not in internal/cachekeys (ADR-0007), because it has a sole
+// reader and writer; it keeps a named key type, a single builder and a golden-string test.
+// Promote it when a second binary needs to read it.
 
 // assetsListingSnapshotKey is the typed Redis key for the
 // `assets:listing-snapshot:<schema>:<order>:<limit>` family.
@@ -45,59 +37,38 @@ type assetsListingSnapshotKey string
 func (k assetsListingSnapshotKey) String() string { return string(k) }
 
 // assetsListingSnapshotRedisKey returns the snapshot key for one
-// warmed listing variant.
-//
-// The schema fingerprint is part of the KEY, not the payload, so a
-// binary whose [timescale.AssetRow] shape differs from the writer's
-// simply finds nothing and falls back to the cold path. Encoding it in
-// the payload instead would mean decoding a row-set built from
-// different fields to discover that — and a field added since the
-// snapshot was written would otherwise deserialise silently to its zero
-// value and be served as data. Superseded keys cost nothing: they expire
-// on [assetsListingSnapshotTTL].
+// warmed listing variant. The schema fingerprint is in the key, not the payload, so a binary
+// with a different [timescale.AssetRow] shape finds nothing instead of decoding rows whose
+// added fields would silently read as zero values. Superseded keys expire on
+// [assetsListingSnapshotTTL].
 func assetsListingSnapshotRedisKey(limit int, order timescale.AssetsOrder) assetsListingSnapshotKey {
 	return assetsListingSnapshotKey(fmt.Sprintf("assets:listing-snapshot:%s:%d:%d",
 		assetRowSchemaFingerprint(), int(order), limit))
 }
 
 // assetsListingSnapshotTTL bounds how long a snapshot survives in
-// Redis. Comfortably longer than [assetsListingSeedMaxAge] on purpose:
-// the age check is the authoritative freshness gate, and letting the
-// key outlive it means an over-age snapshot is REFUSED with a log line
-// rather than vanishing into an indistinguishable cache miss.
+// Redis. It is longer than [assetsListingSeedMaxAge] on purpose, so an over-age snapshot is
+// refused with a log line instead of vanishing as an indistinguishable cache miss.
 const assetsListingSnapshotTTL = 30 * time.Minute
 
 // assetsListingSeedMaxAge is the oldest page-set the boot seed will
-// publish. Beyond it the seed is refused and the request pays the cold
-// query, which is today's behaviour.
+// publish. Beyond it the seed is refused and the request pays the cold query.
 //
-// Why 10 minutes: these rows carry price_usd, volume_24h_usd and the
-// change pills, so the bound has to be a freshness decision, not a
-// convenience one. 10 min is the longest horizon THIS handler already
-// accepts for its own enrichment reads (classicSupplyTTL,
-// sep1ImagesTTL are both 10 min), so a seeded page-set is never older
-// than data the same response already carries. It is also ~10x the
-// prewarm cadence and 5x the listing TTL, so it covers every realistic
-// restart — a deploy takes seconds, and the measured snapshot age at
-// boot is bounded by one prewarm cycle plus downtime — while refusing
-// to republish valuations from a genuinely long outage.
+// The rows carry prices and volumes, so the bound is a freshness decision: 10 minutes matches
+// the longest horizon the handler accepts for its own enrichment reads (classicSupplyTTL,
+// sep1ImagesTTL), and covers any realistic restart while refusing to republish valuations
+// from a long outage.
 const assetsListingSeedMaxAge = 10 * time.Minute
 
 // assetsListingSnapshotBudget bounds the whole boot-seed read. It runs
-// on the startup path ahead of ListenAndServe, so it must be incapable
-// of delaying the listener meaningfully: a local Redis answers a dozen
-// GETs in single-digit milliseconds, and anything slower is not worth
-// the wait when the fallback is merely today's behaviour.
+// on the startup path ahead of ListenAndServe, so it must not delay the listener; the
+// fallback is only the cold path.
 const assetsListingSnapshotBudget = 2 * time.Second
 
 // assetsListingSnapshot is the persisted page-set.
 //
-// ObservedAt is the time the rows were READ FROM UPSTREAM, never the
-// time they were written here. That distinction is what keeps the seed
-// honest across generations: when the prewarm reads a stale entry it
-// re-persists the same rows with the same ObservedAt, so a snapshot's
-// age can only be reset by a real refresh, and a page-set cannot be
-// laundered fresh by being copied forward.
+// ObservedAt is when the rows were read from upstream, never when they were written here. A
+// stale entry is re-persisted with the same ObservedAt, so only a real refresh resets its age.
 type assetsListingSnapshot struct {
 	ObservedAt time.Time            `json:"observed_at"`
 	Rows       []timescale.AssetRow `json:"rows"`
@@ -172,19 +143,13 @@ func (s *assetsListingSnapshots) load(
 // previous process's snapshots, and reports how many of the requested variants
 // were seeded.
 //
-// Call this BEFORE the HTTP listener starts: on r1 the listener is up 12 ms after
-// "starting" and human traffic arrives at +3.5 s, so a seed that races the
-// listener loses. It is bounded by [assetsListingSnapshotBudget] so it can be
-// synchronous there.
-//
-// It seeds exactly [assetListingPrewarmOptions], the list the prewarm warms and
-// save() is driven from, so the seed cannot address a variant the prewarm does
-// not maintain; key derivation is shared with the handler
+// Call it before the HTTP listener starts; a seed that races the listener loses. It is bounded
+// by [assetsListingSnapshotBudget] so it can be synchronous. It seeds exactly
+// [assetListingPrewarmOptions], and key derivation is shared with the handler
 // (v1.CachedAssetsReader.SeedListing → listAssetsCacheKey).
 //
-// Returns (seeded, requested) so the caller can log a self-accounting line: zero
-// seeded out of a non-empty request set is a real signal (cold Redis, first
-// deploy, schema change, or a broken path), not silence.
+// Zero seeded out of a non-empty request set is a real signal (cold Redis, first deploy,
+// schema change or a broken path), so the caller logs (seeded, requested).
 func seedAssetListingsFromSnapshots(
 	ctx context.Context, logger *slog.Logger, reader *v1.CachedAssetsReader, snaps *assetsListingSnapshots,
 ) (seeded, requested int) {
@@ -217,14 +182,9 @@ func seedAssetListingsFromSnapshots(
 // assetRowSchemaFingerprint is a stable digest of [timescale.AssetRow]'s
 // exported shape (field names + types, in declaration order).
 //
-// It exists because the snapshot is JSON and JSON is forgiving: a field
-// ADDED to AssetRow since a snapshot was written would deserialise to
-// its zero value and be served as though it were data — a null
-// market_cap or a zeroed source_count presented as observation. Keying
-// on the shape makes that unrepresentable: a binary with a different
-// AssetRow reads a different key, finds nothing, and pays the cold fill.
-//
-// Computed once; the result is a build-invariant of the binary.
+// JSON is forgiving: a field added to AssetRow would deserialise to its zero value and be
+// served as data. Keying on the shape means a binary with a different AssetRow reads a
+// different key and pays the cold fill. Computed once; it is invariant for a build.
 var assetRowSchemaFingerprint = func() func() string {
 	t := reflect.TypeOf(timescale.AssetRow{})
 	h := sha256.New()

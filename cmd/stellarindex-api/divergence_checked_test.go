@@ -15,11 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
 )
 
-// seedCachedDivergence writes `cached` at the real production key for
-// `pair` and registers the quote in the per-base index set, exactly as
-// divergence.Service.RefreshPair does. Using the real key builders +
-// the real CachedResult JSON keeps this a test of the adapter's
-// predicate rather than a test of a mock.
+// seedCachedDivergence writes `cached` at the real production key for `pair` and registers the
+// quote in the per-base index set, as divergence.Service.RefreshPair does, so the test
+// exercises the adapter's predicate rather than a mock.
 func seedCachedDivergence(t *testing.T, rdb *redis.Client, pair canonical.Pair, cached divergence.CachedResult) {
 	t.Helper()
 	ctx := context.Background()
@@ -37,19 +35,10 @@ func seedCachedDivergence(t *testing.T, rdb *redis.Client, pair canonical.Pair, 
 	}
 }
 
-// TestDivergenceAdapter_ChecksMatchWorkerQuorum pins that the API's `divergence_checked` flag must use the
-// same source quorum the divergence worker gates WarningFired on.
-//
-// The worker computes `checked := res.SuccessCount >= s.minSources` and
-// hard-forces WarningFired=false below that floor — a below-quorum run
-// reached NO verdict. An adapter answering `checked =
-// SuccessCount > 0` would let a single responding reference produced
-// `divergence_checked=true, divergence_warning=false`: a clean bill of
-// health the cross-check never issued, which is precisely the
-// misreading the flag exists to prevent.
-//
-// Against the un-fixed `cached.SuccessCount > 0` predicate the
-// below-quorum subtest fails with `checked = true, want false`.
+// TestDivergenceAdapter_ChecksMatchWorkerQuorum pins that the API's `divergence_checked` flag
+// uses the same source quorum the worker gates WarningFired on. A below-quorum run reached no
+// verdict, so reporting checked=true, warning=false would be a clean bill of health the
+// cross-check never issued.
 func TestDivergenceAdapter_ChecksMatchWorkerQuorum(t *testing.T) {
 	const minSources = 2
 
@@ -156,11 +145,8 @@ func TestDivergenceAdapter_ChecksMatchWorkerQuorum(t *testing.T) {
 	}
 }
 
-// TestDivergenceAdapter_QuoteSpecific pins that a diverging
-// XLM/GBP verdict never attaches to an XLM/USD response. A per-asset
-// svc.LookupCached(ctx, asset) reads the per-base index set and ORs every
-// quote's WarningFired together, so a GBP-only divergence would make every
-// quote of XLM, including a clean USD, report firing=true.
+// TestDivergenceAdapter_QuoteSpecific pins that a diverging XLM/GBP verdict never attaches to an
+// XLM/USD response; a per-asset LookupCached ORs every quote's WarningFired together.
 func TestDivergenceAdapter_QuoteSpecific(t *testing.T) {
 	const minSources = 2
 
@@ -215,11 +201,9 @@ func TestDivergenceAdapter_QuoteSpecific(t *testing.T) {
 	}
 }
 
-// TestDivergenceAdapter_UnsetQuorumIsNotAlwaysChecked — an operator who
-// leaves divergence.min_sources_for_warning at 0 or below gets
-// divergence.NewService's own fallback (2), and `checked` follows it: a
-// single responding reference must not read as cross-checked, or the bug
-// reopens for exactly the default-config deployments it matters most on.
+// TestDivergenceAdapter_UnsetQuorumIsNotAlwaysChecked pins that a min_sources_for_warning of 0 or
+// below gets divergence.NewService's fallback (2) and `checked` follows it, so a single
+// responding reference never reads as cross-checked on default-config deployments.
 func TestDivergenceAdapter_UnsetQuorumIsNotAlwaysChecked(t *testing.T) {
 	xlm := canonical.NativeAsset()
 	usd, err := canonical.NewFiatAsset("USD")

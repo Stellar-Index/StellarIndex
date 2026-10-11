@@ -14,16 +14,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestBuildDEXTVLValueGate_ScreensNameOnlyTheWiredGuards pins the
-// composition half of RV1 #3: /v1/protocols' `basis` string is a public
-// claim about which trust screens ran on each TVL reserve leg, and the
-// gate is the only thing that knows which of its sub-guards the
-// operator left wired.
-//
-// buildSubstanceGate returns nil for [pricing_guard]
-// disable_substance_gate = true, and NewScamGate returns nil for a nil
-// directory reader — so all four combinations below are configurations
-// this binary can actually be started in.
+// TestBuildDEXTVLValueGate_ScreensNameOnlyTheWiredGuards pins that /v1/protocols' `basis` string,
+// a public claim about which trust screens ran on each TVL reserve leg, names only the guards
+// actually wired. buildSubstanceGate returns nil for disable_substance_gate = true and
+// NewScamGate returns nil for a nil directory reader, so all four combinations are real.
 func TestBuildDEXTVLValueGate_ScreensNameOnlyTheWiredGuards(t *testing.T) {
 	substance := pricingguard.NewSubstanceGate(nil, pricingguard.SubstanceGateOptions{})
 	scam := pricingguard.NewScamGate(stubScamDirectory{}, pricingguard.ScamGateOptions{})

@@ -11,38 +11,14 @@ import (
 // TestBackgroundWorkersRecover is a guard-coverage test: every detached
 // background goroutine started in this binary must register panic recovery.
 //
-// An unrecovered panic in ANY goroutine terminates the whole Go process — it is
-// not confined to the goroutine that panicked. This main() spawns a fleet of
-// detached workers (forex poller, TLS-cert probe, four cache refreshers, two
-// prewarms, stream publisher + subscriber, customer-webhook sender, usage
-// rollup, three auth reapers, the ingestion-snapshot refresher and the
-// self-prewarm loop) and without this guard NONE of them would recover, so a panic
-// in any one took the entire API down along with every healthy request in
-// flight.
+// An unrecovered panic in any goroutine terminates the whole process, and main() spawns many
+// detached workers. An AST walk, not a behavioural test, derives the worker set from the source
+// so the next worker added without the defer fails too. The walk covers `go namedFunc(…)` as
+// well as `go func(){…}()`; [guardscan] resolves a named callee and fails on one it cannot
+// resolve rather than passing quietly.
 //
-// Why an AST guard rather than a behavioural test: the failure mode that
-// actually bites is the NEXT worker someone adds without the defer. A
-// behavioural test would have to drive each existing worker to panic
-// through a real dependency, and would still only cover the ones that exist
-// today. So this derives the worker set from the source itself and fails if any
-// of them lacks recovery — find every call site of the thing being guarded, not
-// a sample. Same discipline as the v1 package's TestSourceShapeRules/sse_producer_goroutines_recover.
-//
-// The walk must see `go namedFunc(…)` as well as the `go func(){…}()`
-// spelling, or those workers would not count toward this test's own "did I
-// find enough workers?" floor. [guardscan] resolves a named callee to its declaration (this
-// package, or another package of this module, located from go.mod) and
-// checks the guard there; a callee it cannot resolve fails the test rather
-// than passing quietly.
-//
-// The http.Server goroutine is the one deliberate exemption: if the listener
-// dies the process has no reason to live, and recovering would leave a running
-// process serving nothing. It is allow-listed BY ITS CONTENT (it must call
-// ListenAndServe/Serve), not by line number, so the exemption cannot silently
-// widen to cover an unrelated worker.
-//
-// Proven red: deleting any one `defer recoverBackgroundWorker(...)` fails this
-// test naming the enclosing worker's line.
+// The http.Server goroutine is the one exemption, matched by content (it must call
+// ListenAndServe/Serve), not by line: if the listener dies the process should die with it.
 func TestBackgroundWorkersRecover(t *testing.T) {
 	sites, err := guardscan.ScanFile("main.go", guardscan.Config{
 		Guards: []string{"recoverBackgroundWorker"},
@@ -95,25 +71,14 @@ func TestBackgroundWorkersRecover(t *testing.T) {
 	}
 }
 
-// TestBackgroundWorkersJoinShutdownGroup pins the other half of the
-// worker contract: run() waits for its workers before returning, so the
-// process does not exit on top of a worker that is mid-write. The
-// concrete case is the customer-webhook sender, which can be between
-// "the customer accepted the POST" and "MarkDelivered" — exiting there
-// is how a delivery gets repeated on the next boot.
+// TestBackgroundWorkersJoinShutdownGroup pins that run() waits for its workers before returning,
+// so the process does not exit mid-write (the webhook sender between the customer's accept and
+// MarkDelivered would repeat a delivery on the next boot).
 //
-// Scoped to literals started inside run(), because bgWG is declared
-// there. Two content-checked exclusions:
-//
-//   - the listener, which httpSrv.Shutdown drains instead; and
-//   - the goroutine that WAITS on the group, which cannot be a member of
-//     it (it would deadlock).
-//
-// The three warmers started as named functions are excluded by the same
-// scope rule and by design: they hold no durable write to finish, so
-// waiting on them would lengthen every deploy for nothing. That is a
-// judgement about those three specifically — a new worker added as a
-// literal in run() must join.
+// Scoped to literals started inside run(), where bgWG is declared. Excluded by content: the
+// listener (httpSrv.Shutdown drains it) and the goroutine that waits on the group (it would
+// deadlock). The three named-function warmers hold no durable write, so waiting would only slow
+// deploys.
 func TestBackgroundWorkersJoinShutdownGroup(t *testing.T) {
 	sites, err := guardscan.ScanFile("main.go", guardscan.Config{
 		Guards: []string{"recoverBackgroundWorker"},
@@ -144,12 +109,9 @@ func TestBackgroundWorkersJoinShutdownGroup(t *testing.T) {
 			"the discovery has drifted and this test is no longer protecting anything", joined)
 	}
 
-	// Add and Done must balance. A missing Add lets the wait return
-	// while that worker is still running — the defect this group exists
-	// to fix, silently reintroduced; a surplus Add makes every shutdown
-	// burn the full 30s budget waiting for a worker that never started.
-	// Counted on the source text because Add() is written OUTSIDE the
-	// goroutine body it belongs to, so no per-site walk can see the pair.
+	// Add and Done must balance: a missing Add lets the wait return while a worker still runs, and
+	// a surplus Add burns the full 30s shutdown budget. Counted on the source text because Add()
+	// is written outside the goroutine body it belongs to.
 	src, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatalf("read main.go: %v", err)

@@ -13,18 +13,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// snapshotStubReader is the upstream the seeded cache wraps. It counts
-// ListAssetsExt calls so a test can prove the boot seed removed the
-// cold read entirely rather than merely making it look fast. Every
-// other v1.AssetsReader method is an inert stub — none is on this
-// path.
+// snapshotStubReader is the upstream the seeded cache wraps. It counts ListAssetsExt calls so a
+// test can prove the boot seed removed the cold read; the other methods are inert stubs.
 type snapshotStubReader struct {
-	// The cached reader single-flights a cold miss, so concurrent
-	// readers can reach this stub on different goroutines. A bare
-	// int++ here is a data race that `go test -race` fails on — and
-	// the race is in the TEST, which makes it the worst kind: it
-	// reddens CI for a defect that does not exist in the code under
-	// test.
+	// The cached reader single-flights a cold miss, so concurrent readers can reach this stub on
+	// different goroutines; a bare int++ would be a data race in the test itself.
 	mu    sync.Mutex
 	calls int
 }
@@ -147,15 +140,9 @@ func TestAssetsListingSnapshotKeyIsStable(t *testing.T) {
 	}
 }
 
-// TestSeedAssetListingsFromSnapshotsRemovesTheColdRead guards the cold-read fix
-// end to end at the binary's seam: what the prewarm persisted on the
-// previous boot must, on this one, be serving before anything queries
-// Postgres.
-//
-// The upstream call counter is the assertion that matters. Un-seeded,
-// the first ListAssetsExt per variant reaches upstream — on r1 that is
-// the ~11 s aggregate the first browser request waited on. Seeded, it
-// must be zero.
+// TestSeedAssetListingsFromSnapshotsRemovesTheColdRead pins that what the prewarm persisted on
+// the previous boot serves before anything queries Postgres. The upstream call counter must be
+// zero when seeded.
 func TestSeedAssetListingsFromSnapshotsRemovesTheColdRead(t *testing.T) {
 	snaps, _ := newTestSnapshots(t)
 	ctx := context.Background()
@@ -290,15 +277,10 @@ func TestSeedAssetListingsRefusesOverAgeSnapshot(t *testing.T) {
 	}
 }
 
-// TestSnapshotsAreNeverLaunderedFresh is the writer/reader loop guard.
-//
-// The prewarm re-persists on every cycle. If it stamped the WRITE time
-// instead of the observation time, a page-set nothing had re-observed
-// would have its age reset every 60 s — assetsListingSeedMaxAge would
-// never fire, and an indefinitely-stale listing would be seeded as
-// though it were minutes old. The prewarm therefore takes its timestamp
-// from ListAssetsExtAt, and this test drives that exact path: a cache
-// serving a stale entry, re-persisted, must carry the ORIGINAL time.
+// TestSnapshotsAreNeverLaunderedFresh pins that the prewarm stamps the observation time from
+// ListAssetsExtAt, not the write time. Otherwise a stale page-set would have its age reset every
+// cycle and assetsListingSeedMaxAge would never fire. A re-persisted stale entry must carry the
+// original time.
 func TestSnapshotsAreNeverLaunderedFresh(t *testing.T) {
 	snaps, _ := newTestSnapshots(t)
 	ctx := context.Background()
@@ -312,11 +294,8 @@ func TestSnapshotsAreNeverLaunderedFresh(t *testing.T) {
 		}
 	}
 
-	// catalogueLen large enough that catalogueFillPrewarmOptions adds
-	// nothing here — a second lookup on the SAME cache key as
-	// assetListingPrewarmOptions' own userLimit=1 entry would otherwise
-	// race the stale-while-revalidate refresh the first lookup triggers,
-	// which is exactly the laundering this test exists to catch.
+	// catalogueLen is large enough that catalogueFillPrewarmOptions adds nothing: a second lookup
+	// on the same cache key would race the stale-while-revalidate refresh the first one triggers.
 	prewarmAssetListings(ctx, discardLogger(), reader, snaps, noCatalogueFillTestLen)
 
 	for _, o := range assetListingPrewarmOptions() {
@@ -367,11 +346,8 @@ func TestSnapshotUndecodableValueDegrades(t *testing.T) {
 	}
 }
 
-// TestSnapshotSchemaFingerprintKeysOutIncompatibleRows — the JSON
-// payload is field-named, so a row shape that has since gained or lost
-// a field would deserialise silently with zero values and be SERVED as
-// data. The fingerprint is in the key so that is unrepresentable: a
-// different AssetRow reads a different key and finds nothing.
+// TestSnapshotSchemaFingerprintKeysOutIncompatibleRows pins that a different AssetRow shape
+// reads a different key, so rows that gained or lost a field are never served with zero values.
 func TestSnapshotSchemaFingerprintKeysOutIncompatibleRows(t *testing.T) {
 	snaps, mr := newTestSnapshots(t)
 	ctx := context.Background()

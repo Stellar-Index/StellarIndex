@@ -93,15 +93,9 @@ func loginThroughProductionWiring(t *testing.T, logs *bytes.Buffer) (*httptest.R
 	return w, tokens, sender
 }
 
-// TestLogin_EmptyResendKey_IsACountedFailureNeverSent pins, through the
-// production wiring + the production login handler, the empty-Resend-key
-// guard.
-//
-// Without the guard an empty/unset Resend key wired a NoopSender whose Send
-// returns nil: the handler answered 200 {"status":"sent"}, bumped
-// notify_sends_total{result="sent"}, minted a live magic-link row nobody could
-// ever receive, and the failure-ratio alert (failed/total > 0.5) read 0 while
-// no sign-in email could be delivered at all.
+// TestLogin_EmptyResendKey_IsACountedFailureNeverSent pins the empty-Resend-key guard through the
+// production wiring and login handler. A NoopSender whose Send returns nil would count a "sent"
+// email and mint an undeliverable magic link while the failure-ratio alert read 0.
 func TestLogin_EmptyResendKey_IsACountedFailureNeverSent(t *testing.T) {
 	t.Setenv(rlt321MailEnv, "")
 	beforeSent := magicLinkNotifyCount(t, obs.NotifySendResultSent)

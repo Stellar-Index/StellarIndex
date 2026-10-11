@@ -4,20 +4,13 @@ package main
 // point-in-time price reader must apply the serving-sanity guard to a
 // prices_1m answer.
 //
-// storePriceAtReader.PriceAt is the seam behind
-// /v1/price/at AND every /v1/price/changes horizon, and
-// ClosedVWAPAtOrBefore's ladder puts the raw prices_1m CAGG bucket
-// FIRST for any instant inside 48 h — the same bare Σ(quote)/Σ(base)
-// bucket /v1/price serves. It carried the withholding gates but NOT
-// pricingguard, so one extra path segment republished the manipulated
-// minute /v1/price refuses, with pricingguard's own package doc
-// claiming it covered "every raw prices_1m closed-bucket serving path".
+// storePriceAtReader.PriceAt is the seam behind /v1/price/at and every /v1/price/changes horizon,
+// and ClosedVWAPAtOrBefore serves the raw prices_1m bucket first for any instant inside 48 h.
+// Without pricingguard a manipulated minute that /v1/price refuses would be republished.
 //
-// LatestPrice-style end-to-end coverage is not available from this
-// package (storePriceAtReader.s is a concrete *timescale.Store with an
-// unexported db field — see price_freshness_seam_test.go), so this
-// walks main.go's AST and fails if the guard call leaves PriceAt again.
-// The decision itself is proven in internal/pricingguard.
+// End-to-end coverage is not possible here (storePriceAtReader.s is a concrete
+// *timescale.Store; see price_freshness_seam_test.go), so this walks main.go's AST. The
+// decision itself is proven in internal/pricingguard.
 
 import (
 	"go/ast"
@@ -78,11 +71,9 @@ var guardEntryPoints = []string{
 	"GuardServedVWAP1mConfidence", "GuardServedVWAP1mAt", "GuardServedVWAP1mSeries",
 }
 
-// TestRawPrices1mReadersPassTheGuard: every function under cmd/ (including a
-// binary's internal packages) that calls
-// a raw prices_1m store read must call a pricingguard entry point in the
-// same body, and be named in pricingguard's package-doc enumeration — so a
-// new raw-bucket reader cannot reach a response unguarded or undocumented.
+// TestRawPrices1mReadersPassTheGuard: every function under cmd/ that calls a raw prices_1m store
+// read must call a pricingguard entry point in the same body and be named in pricingguard's
+// package-doc enumeration, so a new raw-bucket reader cannot reach a response unguarded.
 func TestRawPrices1mReadersPassTheGuard(t *testing.T) {
 	doc, err := os.ReadFile(filepath.Join("..", "..", "internal", "pricingguard", "guard.go"))
 	if err != nil {

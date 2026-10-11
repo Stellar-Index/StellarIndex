@@ -18,11 +18,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/forex"
 )
 
-// fxUpstream fakes the two massive REST endpoints the forex worker reads.
-// `current` answers today's grouped-daily bar (what the worker treats as
-// the live rate); `dated` answers every earlier date (the trailing-7d
-// series). todayHits counts live-rate fetches so the test can wait for
-// whole refresh cycles instead of sleeping.
+// fxUpstream fakes the two massive REST endpoints the forex worker reads: current is the live
+// rate, dated is the trailing-7d series. todayHits counts live fetches so tests wait for refresh
+// cycles instead of sleeping.
 type fxUpstream struct {
 	mu        sync.Mutex
 	current   map[string]float64
@@ -116,21 +114,10 @@ func getBody(t *testing.T, url string) (int, string) {
 	return resp.StatusCode, string(b)
 }
 
-// TestPriceFiatCrossNeverServesABandRefusedRate pins
-// end to end through everything this binary wires on the fiat path: the
-// real forex.Worker running its production Run loop against a fake
-// upstream, the forex.Cache it installs into, newForexAdapter, and the
-// production /v1/price/tip handler (the one surface that converts at the
-// live snapshot; closed surfaces bind vendor fixings instead).
-//
-// It replays a Massive UZS incident. After one healthy
-// refresh (UZS = 11,800) the live bar turns into 1820 and stays there,
-// while the ticker's dated bars keep saying ~11,790. The band
-// refuses 1820 on every refresh (deviation, then the history-majority
-// confirm veto). Un-fixed, the worker installed the RAW snapshot before
-// the band ran, so the tip served XLM/UZS = 0.25 × 1820 = 455 — 6.5×
-// too low — for as long as the upstream stayed broken, while fx_quotes
-// correctly refused the same bar.
+// TestPriceFiatCrossNeverServesABandRefusedRate pins, end to end through the real forex.Worker,
+// forex.Cache, newForexAdapter and the /v1/price/tip handler, that a rate the band refuses is
+// never served. After a healthy UZS = 11,800 the live bar turns to 1820 while dated bars say
+// about 11,790; the tip must not convert at the raw 1820 snapshot (XLM/UZS 0.25 x 1820 = 455).
 func TestPriceFiatCrossNeverServesABandRefusedRate(t *testing.T) {
 	up := &fxUpstream{
 		current: map[string]float64{"UZS": 11800, "EUR": 0.92},

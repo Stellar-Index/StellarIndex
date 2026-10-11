@@ -28,16 +28,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
-// Coverage for the run() wiring helpers. Every one of
-// these ran only inside run(), which no test calls, so a regression in
-// any of them shipped uncaught.
-//
-// The helpers are pure wiring: their job is to translate config into
-// the objects the server stack holds. That makes the interesting
-// assertions structural — WHICH object came back, and whether the
-// caller's nil-check on it does what the author believed — rather than
-// behavioural. Pattern follows TestBuildDivergenceReferences_* in
-// main_test.go.
+// Coverage for the run() wiring helpers, which run() alone calls. The assertions are structural:
+// which object came back, and whether the caller's nil-check on it behaves as intended.
 
 // ─── logging capture ─────────────────────────────────────────────
 
@@ -88,19 +80,9 @@ func testRedisClient(t *testing.T) redis.UniversalClient {
 
 // ─── nilOrMounter ────────────────────────────────────────────────
 //
-// The typed-nil trap, and the reason this helper exists at all.
-//
-// v1.Server gates every dashboard route family on `if s.dashboardX !=
-// nil` (server.go:2030-2048). A naked `opts.DashboardKeys =
-// bundle.keys` assigns a *dashboardkeys.Handlers into a
-// DashboardAuthMounter INTERFACE — and an interface holding a typed-nil
-// pointer is NOT nil. The guard passes, Mount runs, and the routes go
-// live with a nil receiver behind them: every request to
-// /v1/dashboard/keys then dereferences h.cfg and panics.
-//
-// That is the worst shape this failure takes. It is not a 500 on a
-// misconfigured deployment; it is a route the operator believes is
-// disabled, answering.
+// The typed-nil trap: v1.Server gates each dashboard route family on a nil check, and an
+// interface holding a typed-nil pointer is not nil. Without this helper the routes would go
+// live with a nil receiver behind them, answering on a route the operator believes is disabled.
 
 // TestNilOrMounter_TypedNilBecomesUntypedNil is the direct assertion:
 // what comes back must compare == nil, which the typed nil handed in
@@ -155,15 +137,9 @@ func TestNilOrMounter_NonNilPassesThroughUnchanged(t *testing.T) {
 	}
 }
 
-// TestNilOrMounter_UnwiredBundleLeavesDashboardRoutesUnmounted is the
-// end-to-end proof, and the one that actually catches the regression.
-// It reproduces run()'s exact wiring — an EMPTY dashboardBundle (what
-// buildDashboardBundle returns when base_url is unset) threaded through
-// nilOrMounter into v1.Options — and asserts the routes are absent
-// rather than present-and-panicking.
-//
-// Without nilOrMounter these requests do not 404: they reach a nil
-// receiver and panic the handler goroutine.
+// TestNilOrMounter_UnwiredBundleLeavesDashboardRoutesUnmounted threads an empty dashboardBundle
+// through nilOrMounter into v1.Options, as run() does, and asserts the routes 404 instead of
+// reaching a nil receiver and panicking.
 func TestNilOrMounter_UnwiredBundleLeavesDashboardRoutesUnmounted(t *testing.T) {
 	t.Parallel()
 
@@ -203,19 +179,10 @@ func TestNilOrMounter_UnwiredBundleLeavesDashboardRoutesUnmounted(t *testing.T) 
 
 // ─── buildAuthMiddleware ─────────────────────────────────────────
 
-// TestBuildAuthMiddleware_ModeDispatch pins the auth_mode → middleware
-// mapping. The two directions matter for different reasons:
-//
-//   - a mode that should return nil returning a middleware would make
-//     every anonymous request pay (and possibly fail) an auth check;
-//   - a mode that should return a middleware returning nil is an AUTH
-//     BYPASS: the server stack omits absent middleware entirely, so the
-//     whole API then serves unauthenticated.
-//
-// The unknown-mode arm is deliberately the second shape — it logs and
-// falls through to no-auth, i.e. fail-OPEN. It is pinned here so it
-// stays a visible decision rather than drifting silently, and the
-// companion test below pins the log that is an operator's only warning.
+// TestBuildAuthMiddleware_ModeDispatch pins the auth_mode to middleware mapping. A mode that
+// should return a middleware but returns nil is an auth bypass, since the stack omits absent
+// middleware. The unknown-mode arm logs and falls through to no-auth (fail-open) on purpose;
+// the companion test pins the log, which is the operator's only warning.
 func TestBuildAuthMiddleware_ModeDispatch(t *testing.T) {
 	t.Parallel()
 
@@ -272,13 +239,8 @@ func TestBuildAuthMiddleware_UnknownModeIsNotSilent(t *testing.T) {
 
 // ─── buildDashboardBundle ────────────────────────────────────────
 
-// TestBuildDashboardBundle_UnconfiguredIsNotAnError pins the documented
-// degrade: no base_url means the dashboard simply is not mounted, and
-// the API still serves. Returning an error here would refuse to start
-// every deployment that does not run a dashboard.
-//
-// The all-nil bundle is load-bearing: it is exactly what
-// TestNilOrMounter_UnwiredBundleLeavesDashboardRoutesUnmounted then
+// TestBuildDashboardBundle_UnconfiguredIsNotAnError pins that no base_url means the dashboard is
+// not mounted and the API still serves. The all-nil bundle is what the nilOrMounter test above
 // threads into v1.Options.
 func TestBuildDashboardBundle_UnconfiguredIsNotAnError(t *testing.T) {
 	t.Parallel()
@@ -355,11 +317,8 @@ func TestBuildDashboardBundle_ConfiguredWithoutPostgresFailsClosed(t *testing.T)
 	}
 }
 
-// TestBuildDashboardBundle_ExposesUserStoreForSessionRetention — the
-// retention reaper (retentionReaperTargets, cmd/stellarindex-api/
-// retention_reapers.go) binds to bundle.users and is skipped when it is
-// nil, so a configured dashboard that dropped it would keep every
-// session's IP / user-agent / geo PII forever with nothing failing.
+// TestBuildDashboardBundle_ExposesUserStoreForSessionRetention pins bundle.users being set. The
+// retention reaper is skipped when it is nil, which would keep session PII forever silently.
 func TestBuildDashboardBundle_ExposesUserStoreForSessionRetention(t *testing.T) {
 	// The bundle wires passkeys, which refuse to start without the secret.
 	const secretEnv = "STELLARINDEX_TEST_BUNDLE_CODE_SECRET"
@@ -386,12 +345,8 @@ func TestBuildDashboardBundle_ExposesUserStoreForSessionRetention(t *testing.T) 
 
 // ─── buildWebhookHandlers / buildPriceAlertHandlers ──────────────
 //
-// Both CRUD constructors are reached only from buildDashboardBundle,
-// which needs a live Postgres. Neither touches the *sql.DB at
-// construction, so the construction arm is reachable with a nil handle
-// — and that is the arm worth pinning, because both wrap a NewHandlers
-// validate() and a dropped store would surface as a nil dereference on
-// the first customer request rather than at startup.
+// Neither constructor touches the *sql.DB at construction, so a nil handle reaches them. Pinning
+// that matters because a dropped store would otherwise fail on the first request, not at startup.
 
 func TestBuildWebhookHandlers_ConstructsAndReturnsItsStore(t *testing.T) {
 	t.Parallel()
@@ -423,17 +378,10 @@ func TestBuildPriceAlertHandlers_Constructs(t *testing.T) {
 
 // ─── wireDashboardAuthThrottles ──────────────────────────────────
 
-// TestWireDashboardAuthThrottles_RedisAbsentDegradesToInProcess pins
-// the single-instance fallback. Three things must hold:
-//
-//   - the login throttle is still SET. Leaving it nil would remove the
-//     per-email/per-IP cap on magic-link requests entirely, turning the
-//     endpoint into an open mail relay against arbitrary addresses;
-//   - the two Redis-ONLY guards stay unset, because an in-process email
-//     lock or ceremony guard would claim a fleet-wide guarantee it
-//     cannot make (assertRedisOrSingleInstance is the hard gate);
-//   - the operator is WARNED, because the fallback is only safe on one
-//     instance.
+// TestWireDashboardAuthThrottles_RedisAbsentDegradesToInProcess pins the single-instance
+// fallback. The login throttle stays set, since nil would make magic-link requests an open mail
+// relay. The two Redis-only guards stay unset, since in-process ones cannot give a fleet-wide
+// guarantee. The operator is warned, because the fallback is only safe on one instance.
 func TestWireDashboardAuthThrottles_RedisAbsentDegradesToInProcess(t *testing.T) {
 	t.Parallel()
 
