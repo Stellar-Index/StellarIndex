@@ -19,9 +19,8 @@ import (
 // proxy's `decimals()` view lets a wrong or drifted value scale every
 // reading by 10^(configured-actual) silently, producing a permanent false
 // divergence (or, worse, masking a real one). The reference therefore reads
-// `decimals()` from each feed over the same JSON-RPC path it uses for
-// `latestRoundData()`, on first use and again every
-// chainlinkDecimalsRefreshInterval, and:
+// `decimals()` from each feed over its `latestRoundData()` JSON-RPC path, on
+// first use and every chainlinkDecimalsRefreshInterval, and:
 //
 //   - configured value ABSENT (0) → adopts the on-chain value;
 //   - both present and EQUAL → readings flow;

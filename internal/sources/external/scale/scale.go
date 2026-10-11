@@ -127,8 +127,7 @@ func SciDecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error)
 // scaled integer at the same scale: 10^(2*decimals) / v, ROUNDED
 // HALF-UP. The FX pollers use it to flip a vendor's "1 base = X
 // quote" rate into our canonical "price of quote-currency in base
-// units". v must be > 0 (callers skip non-positive rates before
-// inverting).
+// units". v must be > 0.
 //
 // The rounding is the point. A plain Div truncates toward zero, so
 // every inverted rate lands at or below the true value: a systematic,
