@@ -6,11 +6,9 @@ import (
 	"testing"
 )
 
-// The account_movements' address/counterparty columns are keyed on
-// G-strkey equality (baseAccountAddress resolves every muxed classic
-// counterparty to its base G before write), so a query using the M-strkey
-// an exchange hands out as a deposit address must resolve to the same G
-// rather than 400ing.
+// The account_movements address/counterparty columns are keyed on G-strkey equality
+// (baseAccountAddress resolves muxed counterparties to the base G before write), so a query using
+// an exchange's M-strkey deposit address must resolve to the same G rather than 400.
 func TestParseAccountStrkey_ResolvesMuxedToBaseG(t *testing.T) {
 	h := newProbeHandler(nil, nil)
 	r := httptest.NewRequest(http.MethodGet, "/v1/accounts/"+searchTestMuxedM+"/movements", nil)

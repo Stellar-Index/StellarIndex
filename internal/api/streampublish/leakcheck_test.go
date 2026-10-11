@@ -8,14 +8,8 @@ import (
 
 // TestMain wires goleak around the SSE publisher test suite.
 //
-// The publisher runs a long-lived fan-out goroutine per stream plus the
-// per-subscriber pump goroutines. A subscriber whose goroutine is not
-// reaped on disconnect, or a publisher loop that outlives its context,
-// is a goroutine leak that silently accumulates under real SSE churn.
-// goleak.VerifyTestMain snapshots the goroutine set after the package's
-// tests finish and fails the suite if any publisher/subscriber goroutine
-// is still alive, turning a leak into a red test instead of a slow
-// memory climb in the serving binary.
+// A publisher loop that outlives its context, or a subscriber goroutine not reaped on disconnect,
+// leaks silently under SSE churn; goleak fails the suite if any is still alive afterwards.
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }

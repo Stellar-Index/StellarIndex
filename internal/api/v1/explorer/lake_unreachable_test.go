@@ -14,11 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// dialRefused is the exact error shape a hard-down ClickHouse produces when
-// the driver tries to open a connection: a *net.OpError whose Op is "dial"
-// and whose Timeout() is FALSE (a refused connection answers instantly — it
-// does not time out). This is a value that must not be classified
-// non-retryable and rendered as `errors/internal` 500.
+// dialRefused is the error a hard-down ClickHouse produces on connect: a *net.OpError with Op
+// "dial" and Timeout() FALSE (a refused connection answers instantly). It must not be classified
+// non-retryable and rendered as an `errors/internal` 500.
 func dialRefused() error {
 	return &net.OpError{
 		Op:     "dial",
@@ -29,15 +27,10 @@ func dialRefused() error {
 	}
 }
 
-// TestRetryableColdMiss_LakeUnreachable pins that a TRANSPORT-layer
-// failure below the query layer (dial refused, socket reset mid-query,
-// broken pipe, host stopped resolving) is a dependency outage, not a bug in
-// this process, and must classify retryable — the same class as the
-// saturation sentinels and the driver i/o timeouts already matched.
-//
-// Red without the fix: if retryableColdMiss's last arm were
-// `errors.As(err, &ne) && ne.Timeout()`, every value below has
-// Timeout()==false, so all seven sub-cases would return false.
+// TestRetryableColdMiss_LakeUnreachable pins that a transport-layer failure below the query
+// layer (dial refused, socket reset, broken pipe, resolution failure) is a dependency outage, not
+// a bug here, and classifies retryable. Every case has Timeout()==false, so an arm matching only
+// ne.Timeout() would miss them all.
 func TestRetryableColdMiss_LakeUnreachable(t *testing.T) {
 	ctx := context.Background()
 
@@ -76,17 +69,10 @@ func TestRetryableColdMiss_LakeUnreachable(t *testing.T) {
 	}
 }
 
-// TestAccountState_LakeUnreachableMapsTo503 is the wire-level half of the above
-// case: with ClickHouse hard-down, GET /v1/accounts/{g} must answer 503 with a
-// Retry-After and a detail that says the DEPENDENCY is unreachable — not the
-// 500 "Internal error" a misclassified error would serve, and not the read-budget "timed out"
-// prose either (a refused dial answered in microseconds; sending an operator
-// to look for a slow query that never ran is the same class of lie the
-// saturation split already exists to prevent).
-//
-// Red without the fix: if the handler's retryableColdMiss returned false
-// for a refused dial, it would fall through to WriteProblem(…, 500) and this
-// test fails on `status = 500, want 503`.
+// TestAccountState_LakeUnreachableMapsTo503 is the wire-level half of the above: with ClickHouse
+// hard-down, GET /v1/accounts/{g} answers 503 with Retry-After and a detail saying the dependency
+// is unreachable, not a 500 and not the read-budget "timed out" prose (a refused dial returns in
+// microseconds, so blaming a slow query would misdirect an operator).
 func TestAccountState_LakeUnreachableMapsTo503(t *testing.T) {
 	var rec problemRecord
 	reader := &saturationReader{
@@ -124,16 +110,10 @@ func TestAccountState_LakeUnreachableMapsTo503(t *testing.T) {
 	}
 }
 
-// TestAccountState_GateSaturationMapsTo503 pins recon-R3: when the lake
-// reader's detached-refresh gate is SATURATED it returns
-// clickhouse.ErrRefreshSaturated — a transient, retryable backpressure
-// condition the GET /v1/accounts/{g} handler MUST surface as a 503 (retry),
-// NOT the 500 `errors/internal` a genuine bug gets. A real internal error
-// still maps to 500 so alerts and the 5xx SLA probe stay meaningful.
-//
-// Red without the fix: if the handler only special-cased a read deadline
-// (readTimedOut), clickhouse.ErrRefreshSaturated would fall through to the 500
-// branch and the saturation subtest fails with status 500.
+// TestAccountState_GateSaturationMapsTo503: a saturated detached-refresh gate returns
+// clickhouse.ErrRefreshSaturated, transient backpressure that GET /v1/accounts/{g} must surface
+// as a retryable 503, not a 500. A genuine internal error still maps to 500 so alerts and the
+// 5xx SLA probe stay meaningful.
 func TestAccountState_GateSaturationMapsTo503(t *testing.T) {
 	cases := []struct {
 		name       string

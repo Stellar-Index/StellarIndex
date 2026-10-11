@@ -15,13 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestPriceStreamSpecExampleMatchesTheWire pins the /v1/price/stream
-// OpenAPI example to the frame this bridge actually fans out. The
-// example must not show `as_of` 42 s after a bucket-aligned `observed_at` and a
-// `flags` object on the 300 s series; the wire carries neither — the
-// aggregator stamps each event with the closed bucket's end and the bridge
-// emits it as both timestamps, with no flags. A client that keys on the
-// documented discriminator would read a contract nobody produces.
+// TestPriceStreamSpecExampleMatchesTheWire pins the /v1/price/stream OpenAPI example to the frame
+// this bridge fans out: as_of equals the bucket-aligned observed_at and there is no `flags`
+// object. A client keying on the documented shape would otherwise read a contract nobody produces.
 func TestPriceStreamSpecExampleMatchesTheWire(t *testing.T) {
 	bridged := map[string]map[string]any{
 		"price_update": bridgedFrame(t, func(ctx context.Context, pub *redispub.Publisher, pair canonical.Pair, bucketEnd time.Time) error {

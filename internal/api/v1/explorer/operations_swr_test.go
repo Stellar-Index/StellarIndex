@@ -13,13 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These pin the serving contract for the GET /v1/operations
-// DIRECTORY first page. Measured cause: `opsDirTTL` was 3s and the cache was
-// fill-on-miss, so at r1's real arrival rate nearly every hit missed and paid
-// the (then unbounded) 1.8s lake read on the request deadline — 6h p95
-// 2.238s. The fix bounds the read (storage/clickhouse) AND makes this cache
-// serve stale while ONE detached rebuild runs, so a visitor never waits on a
-// rebuild once any entry exists.
+// These pin the serving contract for the GET /v1/operations directory first page: the lake read is
+// bounded, and the cache serves stale while ONE detached rebuild runs, so a visitor never waits on
+// a rebuild once any entry exists (a fill-on-miss cache would make most hits pay the lake read).
 
 // opsDirReader is a capReader whose RecentOperations is countable and
 // controllable — it can block, fail, and return a chosen page.
@@ -308,14 +304,10 @@ func TestSliceOperationsView_RecomputesCursorFromRetainedRows(t *testing.T) {
 	}
 }
 
-// A NEVER-COMPUTED cache (cold path) must single-flight, exactly like
-// the stale-entry path already does. If operationsDirectory's cold
-// branch fell through to an inline `buildOperationsDirectory` call bound to
-// EACH request's own context — so a burst of concurrent first-page
-// requests arriving before the cache ever filled (a caller sweeping
-// `?limit=` on a cold process, worst case) bought one full lake read PER
-// REQUEST instead of sharing the one the SWR comments already promise
-// ("Only a never-computed entry blocks").
+// A never-computed cache (cold path) must single-flight like the stale-entry path. If the cold
+// branch built inline on each request's own context, a burst of concurrent first-page requests
+// (e.g. a caller sweeping ?limit= on a cold process) would each pay a full lake read instead of
+// sharing one.
 func TestOperationsDirectory_ColdCacheSingleFlightsConcurrentFirstPageRequests(t *testing.T) {
 	// Built directly on newProbeHandler (not newOpsDirHandler): its default
 	// WriteJSON/WriteJSONAt only write the status header, with no shared

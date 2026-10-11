@@ -13,17 +13,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestChannelDropCounter_CountsGoRedisChannelFull reproduces the
-// silent-drop path directly against go-redis's own PubSub.Channel: a
-// stalled reader plus a small buffer/timeout makes go-redis drop a
-// message and log it, and the drop must show up as
-// stellarindex_api_stream_subscribe_total{outcome="dropped_slow_consumer"}
-// rather than existing only in a log line nothing reads.
-//
-// NewSubscriber is called only to install the drop-counting logger (its
-// documented one-time side effect) — the Subscriber itself is not
-// exercised here, since the drop happens inside go-redis's own internal
-// goroutine before any Subscriber code runs.
+// TestChannelDropCounter_CountsGoRedisChannelFull reproduces go-redis's silent PubSub.Channel drop
+// (stalled reader, small buffer/timeout) and requires it to count as
+// stellarindex_api_stream_subscribe_total{outcome="dropped_slow_consumer"}, not only a log line.
+// NewSubscriber is called solely for its side effect of installing the logger; the drop happens in
+// go-redis's goroutine before any Subscriber code runs.
 func TestChannelDropCounter_CountsGoRedisChannelFull(t *testing.T) {
 	mr, rdb := newRedis(t)
 	if _, err := redispub.NewSubscriber(rdb, "install-only", &fakeHub{}, nil); err != nil {

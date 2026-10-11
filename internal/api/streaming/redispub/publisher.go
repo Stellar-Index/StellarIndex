@@ -25,11 +25,8 @@ type RedisPublisher interface {
 
 // Publisher implements
 // [github.com/Stellar-Index/StellarIndex/internal/aggregate/orchestrator.StreamPublisher]
-// by encoding each closed-bucket event as JSON and PUBLISHing it
-// to a configurable Redis channel.
-//
-// Goroutine-safe: fields are read-only after construction; the
-// underlying RedisPublisher is concurrent-safe by contract.
+// by PUBLISHing each closed-bucket event as JSON to a Redis channel. Fields are read-only after
+// construction and the underlying RedisPublisher is concurrent-safe by contract.
 type Publisher struct {
 	cache    RedisPublisher
 	channel  string

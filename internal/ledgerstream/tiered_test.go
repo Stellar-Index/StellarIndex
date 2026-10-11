@@ -132,18 +132,12 @@ func readAllString(rc io.ReadCloser) string {
 	return string(b)
 }
 
-// TestTiered_GetFile_BothMissing_EmitsMetric is the regression
-// guard: a read that misses BOTH tiers must increment
-// obs.LedgerstreamTierReadTotal{outcome="both_missing"} — the metric the
-// ledgerstream-tier `both_missing` page reads. The metric is obs
-// package-level (always registered), so the emit is live regardless of any
-// per-instance wiring; a per-instance CounterVec registered only when a
-// registry is passed would make the increment a nil-guarded no-op and the
-// page could never fire. This test asserts the counter goes up by exactly 1
-// against the live obs metric.
+// TestTiered_GetFile_BothMissing_EmitsMetric guards that a read missing BOTH tiers increments
+// obs.LedgerstreamTierReadTotal{outcome="both_missing"} by exactly 1, the metric the
+// `both_missing` page reads. The metric is package-level so the emit is always live; a
+// registry-gated per-instance counter would be a nil no-op and the page could never fire.
 //
-// Not t.Parallel(): it asserts a delta on the process-global obs counter,
-// so it must not race other tests that also increment it.
+// Not t.Parallel(): it asserts a delta on a process-global counter other tests also increment.
 func TestTiered_GetFile_BothMissing_EmitsMetric(t *testing.T) {
 	hot := newFakeStore("hot")
 	cold := newFakeStore("cold")
@@ -350,12 +344,8 @@ func TestIsNotFound(t *testing.T) {
 		{"os.ErrNotExist", os.ErrNotExist, true},
 		{"sdk ErrNoLedgerFiles", datastore.ErrNoLedgerFiles, true},
 		{"sdk ErrNoValidLedgerFiles", datastore.ErrNoValidLedgerFiles, true},
-		// The SDK's S3DataStore converts AWS typed not-found errors
-		// (types.NoSuchKey / types.NotFound) to os.ErrNotExist via
-		// errors.As before returning. It never surfaces a
-		// bare "NoSuchKey" string — the previous fixtures here
-		// encoded errors no backend actually produces, which is why
-		// the dead string-matching arm looked load-bearing.
+		// The SDK's S3DataStore converts AWS typed not-found errors to os.ErrNotExist and never
+		// surfaces a bare "NoSuchKey" string, so fixtures must not encode one.
 		{"s3 not-found (as the SDK returns it)", fmt.Errorf("hot read %q: %w", "k", os.ErrNotExist), true},
 		{"fs not-found (real PathError)", &os.PathError{Op: "open", Path: "/missing", Err: os.ErrNotExist}, true},
 		{"bare NoSuchKey string (no backend produces this)", errors.New("operation GetObject: NoSuchKey: key not found"), false},
@@ -374,27 +364,15 @@ func TestIsNotFound(t *testing.T) {
 	}
 }
 
-// TestTiered_GetFile_BothMissing_ErrorNamesBothTiers is the
-// regression guard for the tiered-datastore site of the "a short walk
-// reads as full coverage" class.
+// TestTiered_GetFile_BothMissing_ErrorNamesBothTiers guards against "a short walk reads as full
+// coverage". both_missing is the data-integrity page condition (a genuine hole), so the error must
+// name both tiers, not the cold store's error verbatim, which looks identical to a routine hot miss.
+// The SDK wraps it as "ledger object containing sequence N is missing" and, on a bounded ops walk,
+// TolerateTrailingMissing turns that into a clean complete, leaving only a counter nobody reads.
 //
-// both_missing is the data-integrity PAGE condition: neither tier holds
-// the object, so the reader is stalled on a genuine hole. Every other
-// error path in this file carries "tiered:" context; this one returned
-// the COLD store's error verbatim, which is byte-identical to the
-// routine hot miss the fallback exists to absorb and names only the
-// tier that was consulted second. That matters because of what happens
-// to the error next: the SDK wraps it as "ledger object containing
-// sequence N is missing", and on any bounded ops walk
-// TolerateTrailingMissing converts it into a clean walk-complete. The
-// walk then reports a short range as a whole one, and the only surviving
-// trace that BOTH tiers were asked is a counter nobody reads after the
-// fact.
-//
-// The wrap must not change any control flow — IsNotFound and the SDK's
-// own ledger_buffer both branch on errors.Is(err, os.ErrNotExist) to
-// decide between retrying an unbounded range and aborting a bounded one
-// — so this asserts the identity survives as well as the wording.
+// The wrap must not change control flow: IsNotFound and the SDK's ledger_buffer branch on
+// errors.Is(err, os.ErrNotExist) to choose between retrying an unbounded range and aborting a
+// bounded one, so this asserts that identity survives as well as the wording.
 func TestTiered_GetFile_BothMissing_ErrorNamesBothTiers(t *testing.T) {
 	t.Parallel()
 	hot := newFakeStore("hot")

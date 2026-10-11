@@ -10,11 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestMovementsSpecDescribesWatermarkSeam pins getAccountMovements'
-// operation description to the handler's merge seam: the archive has a
-// second writer (ch-cap67-movements, cap67_derived rows past P23) and
-// the CH/PG boundary is its watermark. A description that still claims
-// a single writer hard-clamped at P23 tells an integrator to attribute
+// TestMovementsSpecDescribesWatermarkSeam pins getAccountMovements' description to the merge
+// seam: the archive has a second writer (ch-cap67-movements, cap67_derived rows past P23) and the
+// CH/PG boundary is its watermark. A single-writer P23 claim would make an integrator attribute
 // every post-P23 row to the Postgres tail.
 func TestMovementsSpecDescribesWatermarkSeam(t *testing.T) {
 	raw, err := os.ReadFile("../../../../openapi/stellar-index.v1.yaml")

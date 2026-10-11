@@ -15,15 +15,11 @@ const DefaultChannel = "stellarindex:closed-bucket:v1"
 // the field still decode as prices.
 const KindFrozen = "frozen"
 
-// ClosedBucketEvent is the JSON wire shape published per
-// successful (pair, window) VWAP cache write. Carries the minimum
-// the API-side subscriber needs to reconstruct the SSE topic and
-// payload.
+// ClosedBucketEvent is the JSON wire shape published per (pair, window) VWAP cache write, carrying
+// the minimum the subscriber needs to rebuild the SSE topic and payload.
 //
-// Versioning: schema additions are non-breaking via JSON's
-// "ignore unknown fields" decoding; subscribers tolerant of new
-// fields, no schema bump needed. Removals or type changes are
-// breaking and require a new channel name (see [DefaultChannel]).
+// Additions are non-breaking because decoding ignores unknown fields; removals or type changes
+// require a new channel name (see [DefaultChannel]).
 type ClosedBucketEvent struct {
 	// Asset + Quote echo the canonical asset strings the
 	// aggregator just published a closed bucket for. The
@@ -43,12 +39,10 @@ type ClosedBucketEvent struct {
 	// big.Rat precision the JSON `number` type would lose.
 	ValueDecimal string `json:"value_decimal"`
 
-	// ObservedAt is the end of the closed 1-minute bucket the
-	// aggregator computed this VWAP at; the VWAP covers
-	// [ObservedAt-WindowSeconds, ObservedAt), unless Truncated. RFC 3339 UTC.
-	// With the topic it is the event's identity: the subscriber
-	// forwards one event per (topic, ObservedAt) and drops a repeat or
-	// an older bucket.
+	// ObservedAt is the end of the closed 1-minute bucket the VWAP was computed at, covering
+	// [ObservedAt-WindowSeconds, ObservedAt) unless Truncated. RFC 3339 UTC. With the topic it is
+	// the event's identity: the subscriber forwards one event per (topic, ObservedAt) and drops a
+	// repeat or an older bucket.
 	ObservedAt time.Time `json:"observed_at"`
 
 	// ProducerID names the publishing aggregator process (minted once

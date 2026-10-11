@@ -37,29 +37,18 @@ func (r *panickingHoldersReader) AssetHolders(
 	return []clickhouse.AssetHolder{{AccountID: validTestAccount, Balance: 7}}, 1, nil
 }
 
-// TestAssetHoldersRefreshPanic_EndsFlightAndStaysRetryable pins what
-// happens AFTER a panicking detached refresh is recovered — the part a bare
-// `defer worker.Recover(...)` would have got wrong.
+// TestAssetHoldersRefreshPanic_EndsFlightAndStaysRetryable pins what happens AFTER a panicking
+// detached refresh is recovered. perKeyFlight.end both deregisters the flight and closes its done
+// channel, so recovering without ending the flight leaves a dead flight in perKeyFlight.inGoing:
+// the cold waiter blocks to its deadline and every later begin(key) is handed that flight as a
+// non-owner, so the holders board is never computed again for the life of the process.
 //
-// perKeyFlight.end is what BOTH deregisters the flight and closes its done
-// channel, and it was the last statement on every path rather than a defer.
-// Recover-and-return therefore leaves the flight in perKeyFlight.inGoing
-// forever with a channel that never closes: the cold waiter blocks to its
-// own deadline, and every later request calls begin(key), is handed that
-// same dead flight as a NON-owner, and blocks too. The asset's holders
-// board can never be computed again for the life of the process.
+// It therefore asserts:
 //
-// So this asserts the CORRECTED values, not merely that nothing crashed:
-//
-//  1. the cold waiter is released promptly with errRefreshPanicked rather
-//     than blocking until its context expires;
-//  2. the flight was deregistered, so the NEXT request owns a fresh one and
-//     gets the real board;
-//  3. stellarindex_worker_panics_total{worker="explorer-asset-holders-refresh"}
-//     moved, which is what pages an operator about the dead refresher.
-//
-// Red without the fix: the first call blocks for the full request deadline
-// and returns ctx.Err(), and the second does the same, never re-reading.
+//  1. the cold waiter is released promptly with errRefreshPanicked;
+//  2. the flight was deregistered, so the NEXT request owns a fresh one and gets the real board;
+//  3. stellarindex_worker_panics_total{worker="explorer-asset-holders-refresh"} moved, which pages
+//     an operator about the dead refresher.
 func TestAssetHoldersRefreshPanic_EndsFlightAndStaysRetryable(t *testing.T) {
 	const workerName = "explorer-asset-holders-refresh"
 	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName))

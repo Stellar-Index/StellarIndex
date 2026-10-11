@@ -8,22 +8,16 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// StreamArchiveThenLive reads ledgers in [from, ∞) by chaining two
-// Stream calls: a bounded read from `archive` covering [from, seam-1],
-// then an unbounded read from `live` starting at seam.
+// StreamArchiveThenLive reads ledgers in [from, inf) by chaining a bounded read from `archive`
+// over [from, seam-1] with an unbounded read from `live` starting at seam.
 //
-// Behaviour:
-//   - seam <= 1 or from >= seam → archive bucket unused; plain unbounded
-//     Stream(live, from, 0, ...). (seam==1 is folded in with seam==0
-//     because a bounded read of [from,0] would hit Stream's to==0
-//     UNBOUNDED sentinel and tail the archive forever.)
+//   - seam <= 1 or from >= seam → archive unused; plain unbounded Stream(live, from, 0, ...).
+//     (seam==1 is folded in with seam==0: a bounded read of [from,0] would hit Stream's to==0
+//     unbounded sentinel and tail the archive forever.)
 //   - from < seam → bounded archive read then unbounded live read.
 //
-// Restart safety: each Stream call writes the cursor after every
-// successful batch, so a crash in either phase resumes from cursor+1 and
-// replays the same archive→live progression.
-//
-// logger marks phase boundaries in the journal; if nil, no log lines.
+// Restart safety: the cursor is written after every successful batch, so a crash in either phase
+// resumes from cursor+1 and replays the same progression. A nil logger disables phase logging.
 func StreamArchiveThenLive(
 	ctx context.Context,
 	archive, live Config,
@@ -31,13 +25,8 @@ func StreamArchiveThenLive(
 	logger *slog.Logger,
 	callback func(xdr.LedgerCloseMeta) error,
 ) error {
-	// seam <= 1 has no valid archive phase: the bounded archive range
-	// would be [from, seam-1] = [from, 0], and to==0 is Stream's
-	// UNBOUNDED sentinel — the archive read would tail the archive bucket
-	// forever and never hand off to live. Unreachable today
-	// (resolveStartLedger guarantees from >= 1, so from >= seam holds for
-	// seam==1), but guarded here so a future reuse with from==0 can't
-	// hit that freeze.
+	// seam <= 1 has no valid archive phase: [from, 0] is Stream's unbounded sentinel, so the
+	// archive read would never hand off to live. Guarded for any future caller passing from==0.
 	if seam <= 1 || from >= seam {
 		if logger != nil {
 			logger.Info("ledgerstream: live-only", "from", from, "seam", seam)
@@ -48,22 +37,13 @@ func StreamArchiveThenLive(
 	if logger != nil {
 		logger.Info("ledgerstream: archive phase", "from", from, "to", seam-1)
 	}
-	// Track how far the archive phase actually got. Config carries
-	// TolerateTrailingMissing (set for BOTH buckets by
-	// pipeline.LedgerstreamConfig, because ops backfills legitimately race
-	// the live tip), which makes a trailing hole return SUCCESS rather than
-	// an error. Without this counter the handoff below then jumps to the
-	// fixed `seam` regardless, silently skipping every ledger the archive
-	// never delivered — and skipping it permanently, because the cursor
-	// advances past the gap.
+	// Track how far the archive phase got. TolerateTrailingMissing is set for both buckets (ops
+	// backfills legitimately race the live tip), so a trailing hole returns success; without this
+	// counter the handoff jumps to the fixed seam and permanently skips every ledger the archive
+	// never delivered, because the cursor advances past the gap.
 	//
-	// Deliberately NOT handled by disabling TolerateTrailingMissing for the
-	// archive bucket in the shared helper: internal/ops/ingest/backfill.go
-	// reuses that same helper against the archive bucket for fills that must
-	// survive racing the live tip (a soroban-events walk failed exactly
-	// that way). Narrowing the shared config would regress a
-	// legitimate, battle-tested ops path to fix an indexer-only problem. The
-	// check belongs here, at the one call site that has a hard seam.
+	// The check lives here, not in the shared config: ops backfill reuses that config against the
+	// archive bucket and must keep tolerating a race with the live tip.
 	var lastArchive uint32
 	archiveCB := func(lcm xdr.LedgerCloseMeta) error {
 		if seq := lcm.LedgerSequence(); seq > lastArchive {

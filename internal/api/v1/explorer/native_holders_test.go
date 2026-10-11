@@ -11,14 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin the native-XLM holders behaviour:
-// /v1/assets/native/holders served {"holder_count":0,"holders":[]} instantly
-// and BY CONSTRUCTION, because the holders read was trustline-shaped and
-// native has no trustlines — every account holds XLM in its AccountEntry
-// balance. The handler now folds every non-SAC XLM alias form (native,
-// crypto:XLM, the "XLM" shorthand — the AGENTS.md dual-form rule) down to
-// the single "native" board key, so the reader's account-balance arm runs
-// once and every spelling shares one SWR cache entry.
+// These tests pin the native-XLM holders behaviour. Native has no trustlines (every account holds
+// XLM in its AccountEntry balance), so a trustline-shaped read yields an empty board. The handler
+// folds every non-SAC XLM alias form (native, crypto:XLM, "XLM") to the single "native" board key,
+// so the account-balance arm runs once and every spelling shares one SWR cache entry.
 
 func TestIsNativeHoldersAsset(t *testing.T) {
 	parse := func(s string) canonical.Asset {
@@ -137,13 +133,10 @@ func TestAssetHolders_AliasFormsShareTheNativeBoard(t *testing.T) {
 	}
 }
 
-// TestAssetHolders_HorizonSpellingNormalized: ParseAsset
-// admits the Horizon "CODE:ISSUER" spelling, but the lake stores canonical
-// "CODE-ISSUER". If the RAW request string were used as both the
-// cache key and the query asset, the colon spelling would run a scan that matched
-// nothing and cache an authoritative-looking EMPTY board under a duplicate
-// key. Both spellings must normalize to one canonical key: one reader scan,
-// one shared cache entry, canonical echo on the wire.
+// TestAssetHolders_HorizonSpellingNormalized: ParseAsset admits the "CODE:ISSUER" spelling but the
+// lake stores "CODE-ISSUER". Using the raw string as cache key and query asset would scan for
+// nothing and cache an authoritative-looking EMPTY board under a duplicate key. Both spellings
+// must normalize to one canonical key: one scan, one cache entry, canonical echo on the wire.
 func TestAssetHolders_HorizonSpellingNormalized(t *testing.T) {
 	reader := &holdersKeyReader{capReader: &capReader{probe: &deadlineProbe{}}}
 	h := newProbeHandler(reader, nil)

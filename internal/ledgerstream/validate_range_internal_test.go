@@ -6,12 +6,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/ingest/ledgerbackend"
 )
 
-// TestValidateRange pins the single-ledger fix: a bounded range of
-// exactly one ledger (To == From) is valid — the SDK models it as
-// ledgerbackend.SingleLedgerRange and the walk loop runs one
-// iteration. A `To() <= From()` check would reject it and make
-// ch-live-catchup's tip-extend fail whenever the timer fires exactly one
-// ledger behind the galexie tip.
+// TestValidateRange pins that a bounded range of exactly one ledger (To == From) is valid
+// (ledgerbackend.SingleLedgerRange). A `To() <= From()` check would make ch-live-catchup's
+// tip-extend fail whenever it fires one ledger behind the tip.
 func TestValidateRange(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

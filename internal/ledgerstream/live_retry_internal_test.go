@@ -7,20 +7,14 @@ import (
 	"github.com/stellar/go-stellar-sdk/ingest"
 )
 
-// ─── a MinIO blip must not tear the live tail down ──────────
+// A MinIO blip must not tear the live tail down. The SDK's fetch worker consumes a retry attempt
+// for every non-NotExist datastore error and gives up after RetryLimit, but consumes nothing for
+// "the tip isn't written yet"; both sleep the same RetryWait, so shortening it for tip latency
+// shrinks fault tolerance (5 x 500ms = 2.5s) and a MinIO restart crash-loops the unit.
 //
-// The SDK's fetch worker consumes a retry ATTEMPT for every non-
-// NotExist datastore error and gives up after RetryLimit of them, but
-// it consumes NOTHING for "the tip isn't written yet" (os.ErrNotExist
-// on an unbounded range). Both sleep the same RetryWait. So dropping
-// RetryWait to 500ms for tip latency silently cut fault tolerance to
-// 5 × 500ms = 2.5s, and a MinIO restart exited the indexer over and
-// over until systemd's StartLimit parked the unit in `failed`.
-//
-// The fix expresses tolerance as a TIME budget and derives the attempt
-// count from the wait actually in force. These tests pin both halves:
-// the arithmetic, and the end-to-end behaviour against a datastore that
-// faults N times and then succeeds.
+// Tolerance is expressed as a time budget with the attempt count derived from the wait in force.
+// These tests pin the arithmetic and the end-to-end behaviour against a datastore that faults N
+// times and then succeeds.
 
 func TestLiveRetryLimit_DerivesAttemptsFromBudget(t *testing.T) {
 	for _, tc := range []struct {
@@ -58,11 +52,9 @@ func TestLiveRetryLimit_DerivesAttemptsFromBudget(t *testing.T) {
 	}
 }
 
-// TestApplyLiveRetryPolicy_DerivesLimitFromTheOverriddenWait pins the
-// ordering trap: the attempt count must be derived from the wait the
-// worker will ACTUALLY sleep, not from the SDK's 30s default. Getting
-// this backwards yields a tolerance 60× shorter than configured — the
-// same coupling defect in a new costume.
+// TestApplyLiveRetryPolicy_DerivesLimitFromTheOverriddenWait pins the ordering trap: the attempt
+// count must derive from the wait the worker will actually sleep, not the SDK's 30s default, or
+// tolerance is 60x shorter than configured.
 func TestApplyLiveRetryPolicy_DerivesLimitFromTheOverriddenWait(t *testing.T) {
 	buffered := ingest.DefaultBufferedStorageBackendConfig(1)
 	if buffered.RetryWait != 30*time.Second || buffered.RetryLimit != 5 {

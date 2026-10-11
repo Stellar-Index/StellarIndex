@@ -130,17 +130,9 @@ func openStream(t *testing.T, ts *sseTestServer) (*http.Response, *bufio.Reader)
 	return resp, br
 }
 
-// TestShutdownWithAnAttachedStreamIsPrompt is the regression test for
-// the 30s deploy stall measured on r1: one browser
-// holding /v1/ledger/stream made httpSrv.Shutdown burn the entire 30s
-// budget and return "context deadline exceeded", after which the
-// process exited on top of the still-open connection. A restart of the
-// same binary with no stream attached cost 0.21s.
-//
-// http.Server.Shutdown waits for every active connection to become
-// IDLE. An SSE connection is never idle, so without a shutdown signal
-// the stream writer can see, a single attached stream pins the drain
-// for the full budget.
+// TestShutdownWithAnAttachedStreamIsPrompt guards the 30s deploy stall: http.Server.Shutdown waits
+// for every connection to go IDLE, and an SSE connection never does, so without a shutdown signal
+// the stream writer can see, one attached /v1/ledger/stream pins the drain for the full budget.
 func TestShutdownWithAnAttachedStreamIsPrompt(t *testing.T) {
 	drain := streaming.NewDrain()
 	ts := startSSEServer(t, drain)
@@ -162,15 +154,10 @@ func TestShutdownWithAnAttachedStreamIsPrompt(t *testing.T) {
 	t.Logf("drain with one attached stream: %v", elapsed)
 }
 
-// TestShutdownWithoutTheDrainSignalBurnsTheBudget is the negative
-// control for the test above: it pins the mechanism itself. Remove the
-// drain wiring and the SAME server, the SAME handler and the SAME
-// client connection exhaust the budget and Shutdown reports
-// DeadlineExceeded — the r1 signature.
-//
-// Without this, a version of the prompt-drain test that passes for the
-// wrong reason (a client that disconnected, a handler that returned on
-// its own) would read identical to one that passes for the right one.
+// TestShutdownWithoutTheDrainSignalBurnsTheBudget is the negative control for the test above: with
+// the drain wiring removed, the same server, handler and client exhaust the budget and Shutdown
+// reports DeadlineExceeded. It stops the prompt-drain test passing for the wrong reason, such as a
+// client that disconnected or a handler that returned on its own.
 func TestShutdownWithoutTheDrainSignalBurnsTheBudget(t *testing.T) {
 	ts := startSSEServer(t, nil)
 	openStream(t, ts)
@@ -258,14 +245,10 @@ func TestStreamEndsCleanlyOnDrain(t *testing.T) {
 	}
 }
 
-// TestDrainLeavesOrdinaryRequestsAlone is the executable form of the
-// design decision NOT to reach for http.Server.BaseContext. Deriving
-// every request context from the process root context would end the
-// stream problem by cancelling every in-flight request the instant
-// SIGTERM lands — turning a graceful drain into an abrupt one for the
-// traffic that is not streaming. The drain must be invisible to a
-// slow, ordinary request: it still completes, and Shutdown still waits
-// for it.
+// TestDrainLeavesOrdinaryRequestsAlone encodes the decision NOT to use http.Server.BaseContext:
+// deriving request contexts from the root context would cancel every in-flight request on SIGTERM,
+// making the drain abrupt for non-streaming traffic. A slow ordinary request must still complete,
+// and Shutdown must still wait for it.
 func TestDrainLeavesOrdinaryRequestsAlone(t *testing.T) {
 	drain := streaming.NewDrain()
 	ts := startSSEServer(t, drain)

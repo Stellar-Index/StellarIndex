@@ -435,21 +435,11 @@ func TestHub_PublishVsCancelRace(t *testing.T) {
 	// If we got here without a panic, the race is fixed.
 }
 
-// TestHub_SubscribeKeepsEventsPublishedDuringSubscribe pins the
-// subscribe/publish gap: an event published while Subscribe is running
-// must end up in EITHER the replay OR the live fanout — never neither.
-//
-// A Subscribe that snapshotted every topic's buffer first and
-// only then registered as a live listener would lose an event that landed in
-// between: it is in no snapshot and has no listener, so silently dropped,
-// and indistinguishable at the client from a buffer overrun.
-//
-// The subscription covers many topics because that is what makes the
-// window wide enough to hit reliably (a snapshot-first Subscribe does ALL the
-// replay work before ANY registration). The same gap exists on the
-// single-topic production path — it is just microseconds wide, which
-// is a flaky test, not a safe one. The invariant is
-// structural, so the assertion is an exact zero.
+// TestHub_SubscribeKeepsEventsPublishedDuringSubscribe pins the subscribe/publish gap: an event
+// published while Subscribe runs must land in EITHER the replay OR the live fanout, never neither.
+// A snapshot-first Subscribe would drop it silently, indistinguishable at the client from a buffer
+// overrun. Many topics widen the window enough to hit reliably; the single-topic production path
+// has the same microsecond gap. The invariant is structural, so the assertion is an exact zero.
 func TestHub_SubscribeKeepsEventsPublishedDuringSubscribe(t *testing.T) {
 	const iterations = 200
 	const perIteration = 5
@@ -523,19 +513,11 @@ func TestHub_SubscribeKeepsEventsPublishedDuringSubscribe(t *testing.T) {
 
 // TestHub_ReplayBeyondQueueDepthKeepsConnection pins replay-overflow handling.
 //
-// A Subscribe that pushed the whole replay set into a 32-deep channel before
-// any reader existed, and CLOSED the subscription on overflow, would give a
-// client resuming more than 32 events behind the 32 OLDEST
-// buffered events — the stalest prices in the ring — and then
-// disconnect it: every reconnect would return exactly 32
-// events and close in 6-8ms, so a client 20 minutes behind would grind
-// through ~8 reconnect rounds rendering stale prices as live.
-//
-// The replay must deliver the NEWEST events that fit and keep the
-// subscription open for live delivery. It is also budgeted at HALF the
-// channel capacity a full-capacity replay leaves no headroom,
-// so the very next live Publish would find the channel full and evict the
-// subscriber it had just resumed.
+// Closing the subscription on replay overflow would hand a client resuming more than 32 events
+// behind the 32 OLDEST (stalest) events and disconnect it, so every reconnect repeats that and
+// stale prices render as live. The replay must deliver the NEWEST events that fit and keep the
+// subscription open. It is budgeted at HALF the channel capacity: a full-capacity replay leaves no
+// headroom, so the next live Publish would find the channel full and evict the resumed subscriber.
 func TestHub_ReplayBeyondQueueDepthKeepsConnection(t *testing.T) {
 	h := streaming.NewHub(256)
 	const published = 32 * 3
@@ -812,19 +794,11 @@ func TestHub_OwnCursorEmitsNoStreamGap(t *testing.T) {
 
 // Replay rings are allocated on first PUBLISH, not on subscribe.
 //
-// The reaper evicts only SUBSCRIBER-LESS topics, so the map can hold up
-// to maxTopics subscribed-but-silent topics. With the ring allocated
-// eagerly, that made resident memory scale with
-// concurrent streams × alias fan-out — /v1/price/stream subscribes one
-// connection to assetAliases(base) × assetAliases(quote), up to 9
-// topics, of which the aggregator publishes to at most a few — so the
-// never-published remainder alone reserved ~20 KiB apiece for rings that
-// could never hold an event.
-//
-// Proven red against the unfixed Hub (getOrCreateTopic allocating
-// `buffer: newRing(h.bufferSize)`): BufferedTopicCount reached the full
-// subscribed count and the per-topic cost measured ~20.7 KiB against the
-// 2 KiB budget below.
+// The reaper evicts only SUBSCRIBER-LESS topics, so the map can hold up to maxTopics
+// subscribed-but-silent topics. /v1/price/stream subscribes one connection to
+// assetAliases(base) x assetAliases(quote), up to 9 topics of which few are ever published to;
+// eager rings would reserve ~20 KiB apiece for those, scaling memory with streams x alias fan-out.
+// BufferedTopicCount must stay at the published count, within the 2 KiB per-topic budget below.
 
 // subscriberOnlyTopics is large enough that a 20 KiB-per-topic ring is
 // unmistakable against measurement noise (~400 MiB eager vs ~7 MiB
@@ -975,14 +949,10 @@ func churnTopics(t *testing.T, hub *streaming.Hub, n int) {
 	}
 }
 
-// TestHub_ReapDropsMintedTopicsButKeepsReplayBuffers pins the halves
-// of the retention policy against each other: topics minted
-// by a client and never published to are dropped as soon as they have
-// no subscriber, while a real topic's ring buffer survives the churn
-// so a reconnecting client still gets its Last-Event-ID replay.
-//
-// The cruder "delete the topic whenever its subscriber count hits 0"
-// fix also bounds the map, but fails the replay half of this test.
+// TestHub_ReapDropsMintedTopicsButKeepsReplayBuffers pins both halves of the retention policy:
+// client-minted topics never published to are dropped once subscriber-less, while a real topic's
+// ring survives the churn so a reconnecting client still gets its Last-Event-ID replay. Deleting a
+// topic whenever its subscriber count hits 0 bounds the map but fails the replay half.
 func TestHub_ReapDropsMintedTopicsButKeepsReplayBuffers(t *testing.T) {
 	hub := streaming.NewHub(0)
 

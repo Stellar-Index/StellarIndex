@@ -192,12 +192,9 @@ func TestStream_TopicCapRefusedWith503(t *testing.T) {
 	}
 }
 
-// TestStream_CapRejectsBeforeTopicCreation pins
-// a connection the concurrency caps refuse
-// must never allocate a Hub topic. If Stream() called
-// hub.Subscribe FIRST and only then entered StreamFromChannel where
-// the caps live, every rejected connection would still mint a permanent
-// topic keyed by client-controlled input — the caps would bound sockets
+// TestStream_CapRejectsBeforeTopicCreation pins that a connection the concurrency caps refuse
+// never allocates a Hub topic. If Stream() subscribed before the caps in StreamFromChannel ran,
+// each rejection would still mint a permanent topic from client-controlled input, bounding sockets
 // but not Hub memory.
 func TestStream_CapRejectsBeforeTopicCreation(t *testing.T) {
 	SetMaxStreamsPerIP(1)

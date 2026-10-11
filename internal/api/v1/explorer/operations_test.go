@@ -5,16 +5,11 @@ import (
 	"time"
 )
 
-// TestOpsDirCache covers the /v1/operations directory first-page cache: a miss
-// on empty, a hit within TTL, that the ONE entry serves every limit (a cache
-// keyed by limit would miss on a different accepted limit and
-// buy its own lake read), and that
-// an entry past opsDirTTL is still RETURNED, marked fresh=false, instead of
-// reading as a miss. The stale-serve contract is the point: at
-// 3s fill-on-miss, nearly every production hit missed and paid the lake read
-// inline. Staleness is the caller's judgment (it serves the entry with
-// flags.stale and kicks a detached rebuild), exactly as
-// hot_reads.go / contract_detail_cache.go do.
+// TestOpsDirCache covers the /v1/operations directory first-page cache: a miss on empty, a hit
+// within TTL, ONE entry serving every limit (a per-limit key would buy its own lake read), and an
+// entry past opsDirTTL still RETURNED with fresh=false rather than reading as a miss. Staleness is
+// the caller's judgment (serve with flags.stale and kick a detached rebuild), as in hot_reads.go
+// and contract_detail_cache.go.
 func TestOpsDirCache(t *testing.T) {
 	var c opsDirCache
 

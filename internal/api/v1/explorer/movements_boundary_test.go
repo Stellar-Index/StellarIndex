@@ -10,22 +10,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin the two cap67 merge-boundary defects on
-// GET /v1/accounts/{g}/movements:
+// These tests pin the cap67 merge boundary on GET /v1/accounts/{g}/movements:
 //
-//   - a cap67 watermark READ ERROR must not disable
-//     the ClickHouse ceiling. Setting wm=0 on error and guarding
-//     the CH trim with `if wm > 0` would serve a populated cap67 archive
-//     untrimmed across the whole post-P23 range AND the Postgres tail
-//     would serve the same watched-token transfers — every post-P23 movement
-//     double-listed. It fails closed to the static P23 boundary.
+//   - A cap67 watermark READ ERROR must not disable the ClickHouse ceiling. An untrimmed archive
+//     plus the Postgres tail would double-list every post-P23 movement, so it fails closed to
+//     the static P23 boundary.
 //
-//   - the CH/PG split must not move under a paginated
-//     scroll. The watermark that produced page 1 is pinned into the cursor
-//     and reused on continuation pages; otherwise a mid-session derive
-//     advance re-reads a higher live watermark, moving the boundary and
-//     making the coverage note falsely claim completeness through the new
-//     (higher) watermark.
+//   - The CH/PG split must not move under a paginated scroll. Page 1's watermark is pinned into
+//     the cursor, else a mid-session derive advance moves the boundary and the coverage note
+//     falsely claims completeness through the newer watermark.
 
 // movementsArmReader drives the CH arm and the cap67 watermark directly so
 // the handler's boundary logic can be exercised without a live ClickHouse.
@@ -53,11 +46,9 @@ func (r *movementsArmReader) Cap67SupplyCoverage(context.Context) (uint32, uint3
 func (r *movementsArmReader) AccountMovements(ctx context.Context, _ string, limit int, _ clickhouse.AccountMovementCursor, f clickhouse.AccountMovementFilter) ([]clickhouse.AccountMovementRow, error) {
 	r.probe.record(ctx)
 	r.gotFilter = f
-	// Model the real reader's SQL semantics: the ledger ceiling
-	// is a WHERE predicate applied BEFORE the LIMIT, so a fixture row
-	// above filter.MaxLedger is never returned at all. A fake that
-	// ignored the filter would let a post-read trim in the handler look
-	// indistinguishable from a bounded query.
+	// Mirror the real SQL: the ledger ceiling is a WHERE predicate applied BEFORE the LIMIT, so a
+	// row above filter.MaxLedger is never returned. A fake ignoring the filter could not tell a
+	// post-read trim in the handler from a bounded query.
 	out := make([]clickhouse.AccountMovementRow, 0, len(r.chRows))
 	for _, row := range r.chRows {
 		if f.HasMaxLedger && row.Ledger > f.MaxLedger {

@@ -16,20 +16,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// These tests pin that every explorer handler that reads the shared
-// ClickHouse pool (ExplorerReader) MUST bound the read in a request-scoped
-// context.WithTimeout(explorerReadTimeout) so a handful of slow
-// unauthenticated requests can't hold every connection open and wedge every
-// lake-backed endpoint (the server WriteTimeout does not cancel an in-flight
-// query). The regression these guard against is a handler passing raw
-// r.Context() — which, absent middleware, carries NO deadline — straight to
-// the reader.
+// These tests pin that every explorer handler reading the shared ClickHouse pool bounds the
+// read in context.WithTimeout(explorerReadTimeout). The server WriteTimeout does not cancel an
+// in-flight query, so a handler passing raw r.Context() (no deadline) would let a few slow
+// unauthenticated requests hold every connection and wedge every lake-backed endpoint.
 
-// deadlineProbe records the deadline on the FIRST reader call a handler makes
-// (all of a handler's reads share the same context, and the first sees the full
-// budget). A handler that wraps its reads in context.WithTimeout hands the
-// reader a context whose Deadline() is set ~explorerReadTimeout out; the
-// un-fixed handler hands it r.Context(), which has no deadline.
+// deadlineProbe records the deadline on the FIRST reader call (all of a handler's reads share one
+// context, and the first sees the full budget). A bounded handler yields a Deadline() about
+// explorerReadTimeout out; an unbounded one passes r.Context(), which has none.
 type deadlineProbe struct {
 	mu      sync.Mutex
 	sawCall bool

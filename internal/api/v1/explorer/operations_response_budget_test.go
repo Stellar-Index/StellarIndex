@@ -20,11 +20,9 @@ func (r *ledgerOpsReader) OperationsByLedger(ctx context.Context, _ uint32, _ in
 	return r.rows, nil
 }
 
-// garbageXDR is deliberately undecodable so opView always takes the decode-
-// failure path, which echoes the row's own BodyXDR back onto RawXDR — a
-// clean, deterministic signal that a row was FULLY processed. opViewLight
-// never sets RawXDR at all, so RawXDR == "" cleanly signals the row was
-// served undecoded.
+// garbageXDR is undecodable so opView takes the decode-failure path, which echoes BodyXDR onto
+// RawXDR: a deterministic signal that a row was FULLY processed. opViewLight never sets RawXDR, so
+// RawXDR == "" signals the row was served undecoded.
 func garbageXDR(n int) string {
 	return strings.Repeat("Z", n)
 }
