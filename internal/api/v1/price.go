@@ -1366,6 +1366,12 @@ func (s *Server) resolveUSDLeg(
 	case errors.Is(err, ErrPriceWithheld):
 		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, true
 	case err == nil:
+		// A fallback is served without the handler's normalization, so the raw bucket scales here.
+		base := served
+		if base.IsZero() {
+			base = asset
+		}
+		s.normalizeRawPriceSnapshot(&snap, base, usd)
 		return snap, sources, served, stale, true, false
 	case !errors.Is(err, ErrPriceNotFound):
 		return PriceSnapshot{}, nil, canonical.Asset{}, false, false, false

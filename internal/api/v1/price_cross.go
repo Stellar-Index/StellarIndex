@@ -31,7 +31,7 @@ type crossLeg struct {
 // answer never depends on when or where it is read. The USD leg resolves first so a withheld leg
 // propagates; multiplying a withheld price by a rate would publish it through an ungated door.
 func (s *Server) closedUSDAnchoredFiatCross(ctx context.Context, asset, quote canonical.Asset) fallbackResult {
-	if asset.Type == canonical.AssetFiat || quote.Type != canonical.AssetFiat || quote.Code == "USD" {
+	if asset.Type == canonical.AssetFiat || !asset.IsMapped() || quote.Type != canonical.AssetFiat || quote.Code == "USD" {
 		return fallbackResult{}
 	}
 	usdSnap, usdSources, usdServed, usdStale, ok, withheld := s.resolveUSDLeg(ctx, asset)
@@ -64,7 +64,7 @@ func (s *Server) closedUSDAnchoredFiatCross(ctx context.Context, asset, quote ca
 // [Server.resolveUSDLeg], so a withheld leg withholds the cross. Legs from different buckets are
 // stale: the ratio of two moments is a price at neither.
 func (s *Server) closedUSDAnchoredCryptoCross(ctx context.Context, asset, quote canonical.Asset) fallbackResult {
-	if asset.Type == canonical.AssetFiat || quote.Type != canonical.AssetCrypto || sameAsset(asset, quote) {
+	if asset.Type == canonical.AssetFiat || !asset.IsMapped() || quote.Type != canonical.AssetCrypto || sameAsset(asset, quote) {
 		return fallbackResult{}
 	}
 	var legs cryptoCrossLegs
