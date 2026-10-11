@@ -1,6 +1,6 @@
 -- 0089 up — Aquarius liquidity + reserves event hypertables.
 --
--- Aquarius is the highest-volume Soroban AMM but until now the
+-- Aquarius is the highest-volume Soroban AMM but the
 -- decoder (internal/sources/aquarius) only emitted the `trade` event
 -- to the `trades` hypertable. The pool contracts also emit a large
 -- liquidity/reserves surface that was classified-but-dropped:
@@ -20,7 +20,7 @@
 --                        trailing body element is the LP shares BURNED.
 --
 -- Aquarius has N-token pools (volatile = 2, stableswap = 2/3/4).
--- Verified against the r1 lake 2026-07-06: deposit/withdraw carry
+-- Verified against the r1 lake: deposit/withdraw carry
 -- topic_count 3/4/5 (2/3/4 tokens) and update_reserves body length
 -- tracks the pool's token count. Both tables therefore FAN OUT one row
 -- per token position (token_index) rather than hard-coding a 2-token
@@ -72,7 +72,7 @@ CREATE TABLE aquarius_reserves (
     op_index           integer      NOT NULL CHECK (op_index >= 0),
     -- Per-event discriminator within the op (an op can emit several
     -- update_reserves events — one per pool touched). Same role as the
-    -- comet_liquidity.event_index / phoenix event_index (F-1324).
+    -- comet_liquidity.event_index / phoenix event_index.
     event_index        integer      NOT NULL CHECK (event_index >= 0),
 
     -- Position of this reserve in the pool's canonical token order

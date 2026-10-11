@@ -3,7 +3,7 @@
 --
 -- WHAT IS WRONG TODAY
 --
--- A customer can ask for their account to be erased (GH #809). The rows
+-- A customer can ask for their account to be erased. The rows
 -- that hold them are deleted, but audit_log keeps the customer's IP and
 -- user agent on every row they wrote, and several writers put the account
 -- slug (derived from the email local part), key labels, passkey names and
@@ -39,7 +39,7 @@
 --   * metadata becomes exactly audit_log_erase_metadata(OLD.metadata);
 --   * ip and user_agent are unchanged, or set to NULL on a row whose actor
 --     is not staff. A staff row keeps the staff member's own address and
---     agent: that is what 0179 (GH #969) protects.
+--     agent: that is what 0179 protects.
 --
 -- WHAT THIS DOES NOT PROTECT AGAINST. The GUC is settable by any session
 -- of the app role, and the app role can close an account. A statement

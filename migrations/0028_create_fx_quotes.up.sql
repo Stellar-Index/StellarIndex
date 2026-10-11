@@ -3,14 +3,12 @@
 -- Persistent daily FX rate snapshots, one row per (date, ticker).
 -- Powers the long-running price chart on /currencies/[ticker].
 --
--- Pre-2026-05-08 the forex worker held only a 7-day rolling
+-- Without this table the forex worker holds only a 7-day rolling
 -- in-memory window — fine for the rate display + 7d sparkline
 -- but useless for any longer historical chart. This table makes
 -- fx history persistent + arbitrary-depth.
 --
 -- Writer: `internal/sources/external/forex` calls
---   (the package moved under internal/sources/external/ when the
---   off-chain connectors were consolidated; corrected 2026-09-02, #358)
 --   `(*timescale.Store).InsertFXQuoteBatch` on each refresh tick
 --   so live data backfills as it arrives. Backfill from the
 --   Massive historical endpoint is a separate one-shot script
@@ -38,12 +36,10 @@
 -- (inverse_usd(EUR) = 1.1407 ⟹ €1 = $1.1407). Both NUMERIC.
 --
 -- ⚠ These two are trivially transposable and inverting them corrupts
--- every fiat conversion (24,000x for JPY). This comment previously
--- described rate_usd with inverse_usd's definition; corrected
--- 2026-07-22 against production (JPY 163.09 / VND 26,335 settle the
+-- every fiat conversion (24,000x for JPY). Production values (JPY 163.09 / VND 26,335 settle the
 -- orientation unambiguously — no currency is worth >$1 at those
 -- magnitudes). internal/storage/timescale/fx_quotes.go (usdFiatCode,
--- fxSnapFromRows) is the authority and was always correct.
+-- fxSnapFromRows) is the authority.
 --
 -- `source` is the upstream data provider (typically `massive`)
 -- so the row's provenance is auditable. NULL only on backfill rows
@@ -93,7 +89,7 @@ CREATE INDEX fx_quotes_ticker_idx
 -- create one explicitly here; an explicit `CREATE INDEX
 -- fx_quotes_bucket_idx ON fx_quotes (bucket DESC)` would
 -- collide with Timescale's auto-creation and fail the migration
--- transaction (caught on r1 2026-05-10 — was a duplicate).
+-- transaction.
 
 ALTER TABLE fx_quotes SET (
     timescaledb.compress,

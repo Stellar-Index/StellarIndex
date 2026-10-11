@@ -1,4 +1,4 @@
--- 0059: comet_liquidity — add event_index to the PK (F-1324).
+-- 0059: comet_liquidity — add event_index to the PK.
 --
 -- The PK was (ledger_close_time, contract_id, ledger, tx_hash, op_index,
 -- event_kind, token). (event_kind, token) distinguishes per-token liquidity

@@ -66,7 +66,7 @@ CREATE TABLE soroswap_router_swaps (
 );
 
 -- Hypertable with 30-day chunks (matches the post-merge `trades`
--- interval — see [[chunk-consolidation-2026-06-01]] memory).
+-- interval).
 SELECT create_hypertable(
     'soroswap_router_swaps',
     'ledger_close_time',

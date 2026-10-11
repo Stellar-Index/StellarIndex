@@ -6,7 +6,7 @@
 -- under the deploy's 5-minute statement_timeout, and failing leaves the
 -- DB dirty at 174 with 0164/0166 already committed. No environment we
 -- operate had applied it (r1, testnet and futurenet all measured at
--- schema_migrations 162, 2026-09-28), so the body is neutralised under
+-- schema_migrations 162), so the body is neutralised under
 -- the migrations/README.md "Neutralising an unapplied migration"
 -- exception. The number and both files stay: golang-migrate cannot
 -- advance a database whose current version has no file.

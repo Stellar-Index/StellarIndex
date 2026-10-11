@@ -13,7 +13,7 @@
 -- 404'd two hundred times is therefore re-queued on exactly the same
 -- schedule as one that answers every time.
 --
--- Measured on the production lake, 2026-09-12:
+-- Measured on the production lake:
 --
 --     issuers with a home_domain    76,658
 --     never attempted                    1

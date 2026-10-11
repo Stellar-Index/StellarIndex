@@ -1,11 +1,10 @@
--- 0047 up — `sep41_transfers` hypertable (F-0021 closure).
+-- 0047 up — `sep41_transfers` hypertable.
 --
 -- Materialises every SEP-41 `transfer` event (and the `approve` /
 -- `set_admin` / `set_authorized` administrative events) so per-
 -- account net-position queries become first-class — the Stellar
 -- moat feature CG/CMC structurally cannot offer.
 --
--- Closes the F-0021 partial-scope from audit-2026-05-26.
 -- mint/burn/clawback already live in sep41_supply_events
 -- (Algorithm 3); this table is strictly the audit-trail set.
 --

@@ -1,4 +1,4 @@
--- 0058: blend_auctions — add event_index to the PK (F-1324).
+-- 0058: blend_auctions — add event_index to the PK.
 --
 -- blend_auctions was skipped by the 0053 Blend coarse-PK fix (which covered
 -- blend_positions / blend_emissions / blend_admin). Its PK is

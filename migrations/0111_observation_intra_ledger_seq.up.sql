@@ -1,7 +1,7 @@
 -- 0111 up — add `intra_ledger_seq` to the five balance-observation
 -- hypertables so the FINAL intra-ledger change deterministically wins the
 -- last-writer-wins upsert regardless of the order the parallel PersistEvents
--- workers commit in (audit-2026-07-16 C2-6 — the 8-worker last-writer-wins
+-- workers commit in (the 8-worker last-writer-wins
 -- that persists a NON-final intra-ledger balance).
 --
 -- The problem: PersistEvents runs PersistWorkers (=8) concurrent drain
@@ -33,7 +33,7 @@
 -- deliberately NOT numeric). It is the dispatcher's per-ledger entry-change
 -- counter (internal/dispatcher: LedgerEntryChangeContext.IntraLedgerSeq).
 --
--- SUPERSEDED BY MIGRATION 0120 (C2-032/R-A01-1, audit-2026-07-23). The two
+-- SUPERSEDED BY MIGRATION 0120. The two
 -- paragraphs below described the ORDER as per-transaction ("within each
 -- transaction fee-changes, tx-changes-before, operations …, tx-changes-after")
 -- and claimed it was "the same canonical within-ledger order
@@ -66,7 +66,7 @@
 --     stays corrective. The live counter cannot reach this value (it would
 --     require 4.3e9 entry-changes in one ledger).
 --
--- Composition with the INV-3 `derive_generation` guard (migrations
+-- Composition with the `derive_generation` guard (migrations
 -- 0109/0110): these five observation tables DO NOT carry derive_generation —
 -- 0109/0110 added it to the three core served-tier tables and the protocol
 -- projector tables, not here (the served supply VALUE these components feed

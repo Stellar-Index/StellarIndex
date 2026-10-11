@@ -2,11 +2,8 @@
 --
 -- Stores one row per observed Blend auction event (new_auction,
 -- fill_auction, delete_auction) across every Blend pool deployed
--- on mainnet. Per internal/sources/blend/README.md (the Phase-1
--- discovery note this originally cited, docs/discovery/dexes-amms/
--- blend.md, was removed from the tree with the rest of docs/discovery/
--- and has no successor there; the live equivalents are that README and
--- docs/protocols/blend.md — corrected 2026-09-02, #358), auctions are
+-- on mainnet. Per internal/sources/blend/README.md and
+-- docs/protocols/blend.md, auctions are
 -- the primary directional / state-change signal we extract from
 -- Blend's lending protocol — they're not spot trades, so they
 -- live in their own table rather than the trades hypertable.
@@ -90,10 +87,8 @@ CREATE TABLE blend_auctions (
     -- A single Soroban event is uniquely identified by
     -- (ledger, tx_hash, op_index) but Timescale hypertables
     -- require the partitioning column in the PK, so ts is
-    -- included. Per docs/audit-2026-04-29/05-findings-register.md
-    -- F-0010, the trade table's identity has the same shape; we
-    -- intentionally match for consistency and will revisit if
-    -- F-0010 lands a canonical fix.
+    -- included. The trade table's identity has the same shape; we
+    -- intentionally match for consistency.
     PRIMARY KEY (ledger, tx_hash, op_index, ts)
 );
 

@@ -2,15 +2,12 @@
 --
 -- Backs the `volume_24h_usd` column on the GET /v1/assets listing
 -- (the `per_asset_24h_vol` CTE, which lives in
--- internal/storage/timescale/asset_catalogue.go — the header said
--- coins.go, a file that no longer exists; corrected 2026-09-02, #357
--- F13). The
+-- internal/storage/timescale/asset_catalogue.go). The
 -- live derivation is a per-request SUM(volume_usd) over the prices_1m
 -- continuous aggregate, single-sided per asset (base OR quote) via a
 -- UNION ALL then GROUP BY asset_id. On the UNFILTERED listing that
 -- materialises stats for every asset (~256k rows / ~1.3M buffer hits
--- for a one-page result) — measured ~4.8s cold during the 2026-07-06
--- latency incident.
+-- for a one-page result) — measured ~4.8s cold.
 --
 -- It cannot be a TimescaleDB continuous aggregate: the single-sided
 -- per-asset figure needs a UNION of the base_asset and quote_asset

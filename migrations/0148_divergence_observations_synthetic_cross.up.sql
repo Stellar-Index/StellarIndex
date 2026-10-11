@@ -1,6 +1,6 @@
 -- 0148 — admit 'synthetic-usd-cross' to divergence_observations.reference.
 --
--- PR #149 adds the synthetic USD-cross reference (base/fiat:X :=
+-- The code adds the synthetic USD-cross reference (base/fiat:X :=
 -- oracle base/USD ÷ reflector-fx fiat:X/USD) so EUR/GBP-quoted pairs
 -- get a second reference and the ADR-0019 corroborated-release gate
 -- can auto-release genuine repricings unattended. The verification
@@ -24,7 +24,7 @@ ALTER TABLE divergence_observations
 -- old value set is a strict subset), so the previous released binary —
 -- which writes only the seven pre-existing reference values, all still
 -- admitted — runs unaffected against the new schema. Verified
--- empirically by the PR #149 panel against timescaledb 2.26.4.
+-- empirically against timescaledb 2.26.4.
 ALTER TABLE divergence_observations
     ADD CONSTRAINT divergence_observations_reference_check CHECK (reference IN -- migration-compat:ok pure widening; old value set is a strict subset (see above)
         ('chainlink','coingecko',

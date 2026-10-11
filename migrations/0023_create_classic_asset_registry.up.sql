@@ -32,11 +32,9 @@
 --
 -- Powers `/coins/{slug}` (classic asset detail), `/issuers/{G}`,
 -- `/anchors/{home_domain}` per docs/architecture/explorer-data-inventory.md
--- §7 "Page inventory" (the doc was renamed from
--- showcase-site-data-inventory.md in 6f21cc8f and its §7 subsection
--- numbering did not survive; corrected 2026-09-02).
+-- §7 "Page inventory".
 --
--- NOTE (2026-09-02, #358): the `anchors` table below was never given a
+-- NOTE: the `anchors` table below was never given a
 -- writer and migration 0152 DROPPED it. `classic_assets` and `issuers`
 -- are live.
 

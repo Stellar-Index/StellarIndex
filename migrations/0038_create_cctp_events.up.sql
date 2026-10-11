@@ -1,4 +1,4 @@
--- 0038 up — `cctp_events` hypertable (#40).
+-- 0038 up — `cctp_events` hypertable.
 --
 -- One row per observed Circle CCTP v2 contract event on Stellar.
 -- The four event types (see internal/sources/cctp/decode.go):
@@ -14,7 +14,7 @@
 -- registry entry is Class=ClassBridge, IncludeInVWAP=false).
 --
 -- Storage shape: per-protocol table (vs a shared bridge_events),
--- operator-confirmed 2026-05-22. Rozo (#41) gets its own
+-- operator-confirmed. Rozo gets its own
 -- rozo_events mirror. See docs/architecture/cctp-stellar-coverage.md
 -- §Storage shape.
 --

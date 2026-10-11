@@ -20,8 +20,7 @@
 --     docs/operations/v1-launch-plan.md:2486 already learned the hard
 --     way once (sep41_transfers, migration 0106, same shape). The
 --     original citation, `feedback_no_unbounded_trade_scan.md`, is an
---     agent auto-memory note that has never been in this repo;
---     corrected 2026-09-02, #358.
+--     agent auto-memory note that has never been in this repo.
 --   blend_backstop_events — every existing index leads with contract_id,
 --     event_kind, pool (partial), or ledger (migration 0063); NONE leads
 --     with user_address.

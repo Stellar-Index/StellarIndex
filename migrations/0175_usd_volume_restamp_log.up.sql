@@ -1,8 +1,8 @@
 -- 0175 up — `usd_volume_restamp_log`: the before-image of every in-place
 -- `trades.usd_volume` rewrite made by `stellarindex-ops usd-volume-restamp`.
 --
--- The restamp overwrites a served money column in place. Until now its
--- only trace was the run's `derive_generation` stamped on the row — which
+-- The restamp overwrites a served money column in place. Its
+-- only trace is the run's `derive_generation` stamped on the row — which
 -- says THAT a row was rewritten, not what it held before. Undoing a bad
 -- run meant re-deriving the whole span.
 --

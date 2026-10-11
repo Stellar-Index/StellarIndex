@@ -5,7 +5,7 @@
 -- ContractCallDecoder match-set. Manual seed (auto_discovered =
 -- false) — operator-vetted contract id from
 -- soroswap-core/public/mainnet.contracts.json (cross-checked
--- 2026-04-23 in docs/operations/wasm-audits/soroswap-router.md).
+-- in docs/operations/wasm-audits/soroswap-router.md).
 --
 -- Idempotent: ON CONFLICT DO NOTHING so re-running the migration
 -- against an already-seeded table is a no-op.

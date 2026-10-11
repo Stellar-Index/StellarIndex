@@ -1,26 +1,25 @@
--- 0134 up — populate classic_assets.slug (2026-08-04 identity incident).
+-- 0134 up — populate classic_assets.slug.
 --
 -- Migration 0023 created `slug text UNIQUE` and DOCUMENTED the scheme
 -- ("auto-generated lowercase code; disambiguated with a short issuer
 -- prefix when multiple issuers issue assets with the same code") — but
 -- the writer (asset_registry.go) bound a literal NULL for its whole
--- life. r1 measurement 2026-08-04: 194,057 rows, 0 slugs. Every reader
+-- life. r1 measurement: 194,057 rows, 0 slugs. Every reader
 -- COALESCEs slug to CODE, so the bare CODE became the de-facto public
 -- slug: 5+ unrelated issuers of "USDT" all published slug "USDT", and
 -- the explorer's slug-keyed build cache crowned an arbitrary winner as
 -- /assets/USDT — a dead bridge's discount rendered as Tether's price.
 --
 -- This backfill implements the documented scheme, tightened by the
--- 2026-08-04 identity decision (assets are identified by
+-- identity decision (assets are identified by
 -- (code, issuer), NEVER code alone): EVERY classic asset gets a
 -- disambiguated slug — the bare code is never a classic asset's slug,
 -- not even for a code with a single issuer. A bare-code URL now
 -- resolves through the verified-currency catalogue (which owns
 -- human-name slugs) or 404s, exactly like the API already behaves.
 --
--- Two deterministic tiers (the header said "three" and then enumerated
--- two, matching the two CASE branches below — corrected 2026-09-02,
--- #357 F10), computed in ONE statement because slug is
+-- Two deterministic tiers (matching the two CASE branches below), computed
+-- in ONE statement because slug is
 -- UNIQUE and a multi-statement backfill could trip its own constraint
 -- mid-way:
 --

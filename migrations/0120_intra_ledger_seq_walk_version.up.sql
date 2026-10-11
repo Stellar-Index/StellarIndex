@@ -1,5 +1,4 @@
 -- 0120 up — AMENDMENT to migration 0111's intra_ledger_seq contract
--- (C2-032 / C2-023 / C2-040 / R-A01-1, audit-2026-07-23).
 --
 -- Comment-only. No column is added, dropped, or rewritten; no row is
 -- touched. It exists because 0111 is already applied on r1 and its column

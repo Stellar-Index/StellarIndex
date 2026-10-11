@@ -1,7 +1,7 @@
--- 0141 up — bring `fx_quotes` into the INV-3 generation-guard family
--- (audit-2026-08-14 MR-1). fx_quotes.rate_usd is the denominator of every
+-- 0141 up — bring `fx_quotes` into the generation-guard family
+-- fx_quotes.rate_usd is the denominator of every
 -- fiat-quoted usd_volume (read via fxQuotesSnapAtOrBefore), yet its upsert
--- was the ONLY money-value derived writer the INV-3 fix (migrations
+-- was the ONLY money-value derived writer the generation-guard fix (migrations
 -- 0109/0110) skipped: `ON CONFLICT (ticker,bucket) DO UPDATE` with the
 -- derived value OUTSIDE any generation guard, i.e. pure arrival-order
 -- last-writer-wins. So an operator CORRECTION written by

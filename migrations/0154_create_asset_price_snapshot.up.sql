@@ -12,9 +12,9 @@
 -- whatever page was asked for: four USD-proxy-quoted lookbacks
 -- (`direct_usd`, `_1h`, `_24h`, `_7d`), four XLM-quoted lookbacks each
 -- reading BOTH stored directions via a UNION ALL (`asset_vs_xlm*`), and
--- four scalar XLM/USD lookups (`xlm_usd*`). Measured on r1 2026-09-02:
+-- four scalar XLM/USD lookups (`xlm_usd*`). Measured on r1:
 --
---   pg_stat_statements (since 2026-07-06), unfiltered listing shapes
+--   pg_stat_statements, unfiltered listing shapes
 --     8,019 calls  mean 2,400 ms  max 10,295 ms  380,324 buf hits/call
 --     6,312 calls  mean 2,136 ms  max  9,777 ms  379,026 buf hits/call
 --     2,679 calls  mean 1,461 ms  max  4,774 ms  400,499 buf hits/call

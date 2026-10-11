@@ -1,6 +1,5 @@
 -- 0143 up — store dashboard sessions keyed by a HASH of a random
--- cookie token, not by the raw primary key (audit-2026-08-14
--- W1-auth-passkey-2).
+-- cookie token, not by the raw primary key.
 --
 -- The defect: the session cookie carried sessions.id verbatim and the
 -- middleware looked the row up by that same PK, so sessions were the ONE

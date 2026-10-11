@@ -12,7 +12,7 @@
 -- written only from inside that same function, no issuer row either, so
 -- no SEP-1 fetch and no RWA candidacy.
 --
--- Measured on the production lake, 2026-09-10:
+-- Measured on the production lake:
 --
 --     distinct classic assets with a trustline   512,496
 --     rows in classic_assets                     199,793

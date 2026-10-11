@@ -1,6 +1,6 @@
 -- 0138: admit direction = 'harvest' into defindex_flows.
 --
--- Sources-decode audit 2026-08-04, finding 4 (MEDIUM-HIGH): the
+-- Finding (MEDIUM-HIGH): the
 -- BlendStrategy `harvest` event was recognised-and-dropped on the
 -- premise its body "has never been observed on-chain" — the lake
 -- disproves it (1,018 harvests; body `{amount: i128, from: Address,

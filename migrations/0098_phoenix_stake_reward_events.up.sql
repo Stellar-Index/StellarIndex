@@ -1,7 +1,7 @@
 -- 0098 up — admit withdraw_rewards / distribute_rewards into
 -- phoenix_stake_events.action; make user_addr + amount nullable.
 --
--- ROADMAP #89 residual (2026-07-10): a read-only lake topic census
+-- A read-only lake topic census
 -- against the gated Phoenix stake-contract set found two real
 -- topic[0] action names classifyAny didn't recognize. Real-lake-bytes
 -- verified (ledgers 53588319 / 53587626, stake contracts

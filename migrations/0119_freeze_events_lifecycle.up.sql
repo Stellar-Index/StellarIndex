@@ -18,7 +18,7 @@
 --
 -- What that costs. From `internal/aggregate/orchestrator/phase2_freeze.go`,
 -- a missing marker under a live freeze is read as the ADR-0019 operator
--- override ("force unfreeze"), because until now that was the only way it
+-- override ("force unfreeze"), because that was the only way it
 -- could happen. So a Redis flush does not merely forget the ladder — the
 -- next tick RELEASES every live freeze, and a pair that had climbed the
 -- whole 2-hour ladder to ESCALATED ("stays active until manual unfreeze",

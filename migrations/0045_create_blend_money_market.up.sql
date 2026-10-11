@@ -1,4 +1,4 @@
--- 0045 up — Blend money-market hypertables (#25).
+-- 0045 up — Blend money-market hypertables.
 --
 -- The Blend pool / pool-factory contracts emit 22 distinct event
 -- topics. Migration 0009 covered the 3 auction topics

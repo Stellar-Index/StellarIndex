@@ -1,5 +1,5 @@
 -- 0110 down — drop `derive_generation` from the protocol projector tables,
--- reverting the schema half of the INV-3 wave-2 generation-guarded upsert.
+-- reverting the schema half of the wave-2 generation-guarded upsert.
 --
 -- The post-0110 binary references derive_generation in these writers, so a
 -- rollback of this migration must be paired with a rollback of the binary to

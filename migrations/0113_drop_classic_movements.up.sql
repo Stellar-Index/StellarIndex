@@ -1,8 +1,7 @@
 -- 0113 up — drop the dead classic_movements hypertable
--- (audit-2026-07-16 C2-18 / DAT-03).
 --
 -- The classic_movements table (migration 0105, ADR-0047 D1) was
--- SUPERSEDED by ADR-0048 D2 (2026-07-10): the pre-P23 classic-movement
+-- SUPERSEDED by ADR-0048 D2: the pre-P23 classic-movement
 -- archive moved to ClickHouse-native stellar.account_movements
 -- (deploy/clickhouse/tier1_schema.sql,
 -- internal/storage/clickhouse/account_movements.go). Since then the

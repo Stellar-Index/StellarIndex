@@ -1,8 +1,7 @@
--- 0101: soroswap_router_swaps — call_path / call_depth / call_kind (ROADMAP #11).
+-- 0101: soroswap_router_swaps — call_path / call_depth / call_kind.
 --
--- The dispatcher walks the full Soroban auth tree per op (task #48 Phase 1),
--- so router calls nested inside aggregator contracts ARE captured — but until
--- now every captured row looked identical regardless of WHERE in the tx's call
+-- The dispatcher walks the full Soroban auth tree per op,
+-- so router calls nested inside aggregator contracts ARE captured — but every captured row looked identical regardless of WHERE in the tx's call
 -- tree the router was invoked. These three additive columns record the tree
 -- position:
 --
@@ -25,8 +24,7 @@
 --
 -- HISTORICAL FILL (operator, queued r1 heavy job): the columns backfill via a
 -- focused lake re-derive — the ON CONFLICT DO NOTHING write path cannot update
--- existing NULL rows in place, so the operator order is DELETE + re-derive
--- (same pattern as every ROADMAP §0 correction):
+-- existing NULL rows in place, so the operator order is DELETE + re-derive:
 --
 --   set -a; . /etc/default/stellarindex; set +a
 --   run-heavy-job.sh router-callpath-del \
@@ -39,7 +37,7 @@
 -- (50,746,272 = the router's first-deploy ledger per the WASM audit; the
 -- contract-call pass streams windowed internally, and a soroswap-router-only
 -- invocation skips the buffered event pass, so the full 12M-ledger range is a
--- single invocation. BackfillSafe=true since 2026-05-19: single WASM hash over
+-- single invocation. BackfillSafe=true: single WASM hash over
 -- the contract's entire life — docs/operations/wasm-audits/soroswap-router.md.)
 --
 -- Scope note (EVERY-event principle): this table deliberately covers ONLY the
@@ -58,7 +56,7 @@ ALTER TABLE soroswap_router_swaps ADD COLUMN IF NOT EXISTS call_depth smallint;
 ALTER TABLE soroswap_router_swaps ADD COLUMN IF NOT EXISTS call_kind  text;
 
 -- Internal consistency: kind matches depth; the chain ends in the invoked
--- contract; depth is the chain length minus one. NULL rows (pre-#11) pass.
+-- contract; depth is the chain length minus one. NULL rows (pre-existing) pass.
 ALTER TABLE soroswap_router_swaps ADD CONSTRAINT soroswap_router_swaps_call_kind_check
     CHECK (
         (call_kind IS NULL AND call_depth IS NULL AND call_path IS NULL)

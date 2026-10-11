@@ -1,8 +1,8 @@
 -- 0134 down — revert classic_assets.slug to the pre-backfill state.
 --
 -- Before 0134 every row's slug was NULL (the writer bound a literal
--- NULL from 0023 onward; r1 measured 194,057 rows / 0 slugs on
--- 2026-08-04). The up only wrote rows whose slug was NULL, so the down
+-- NULL from 0023 onward; r1 measured 194,057 rows / 0 slugs).
+-- The up only wrote rows whose slug was NULL, so the down
 -- NULLs only the two forms 0134 computes (tier 1 `code-issuer8`
 -- lower-cased, tier 2 `CODE-ISSUER`); a slug set any other way is a
 -- public URL key 0134 did not write and is kept (GH #1172). Readers

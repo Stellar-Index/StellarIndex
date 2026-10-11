@@ -1,6 +1,6 @@
 -- Migration 0080 — price_alerts
 --
--- BACKLOG #60 (RFP §6, accommodation): customer-configurable
+-- Customer-configurable
 -- price-threshold alerts. A customer registers, per account, a rule
 -- "notify me when <base>/<quote> goes <above|below> <threshold>". The
 -- aggregator's price-alert evaluator (internal/pricealerts) checks each

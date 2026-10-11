@@ -1,7 +1,7 @@
 -- 0097 up — admit the V1 pool-factory's 3 extra event kinds into
 -- blend_emissions.event_kind / blend_admin.event_kind.
 --
--- ROADMAP #89 residual (2026-07-10): a read-only ClickHouse-lake topic
+-- A read-only ClickHouse-lake topic
 -- census scoped to the 27 gated Blend pools + 2 factories found 778
 -- real events across 3 topics that classifyAny (decode_money_market.go)
 -- did not classify — the V1 pool-factory's (CCZD6ESM…) own, simpler

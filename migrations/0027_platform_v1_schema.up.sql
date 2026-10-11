@@ -169,8 +169,7 @@ CREATE INDEX magic_link_tokens_expires_idx ON magic_link_tokens (expires_at);
 -- `key_hash` is sha256(plaintext); same shape as the Redis
 -- record's primary key, so the platform-side migration that
 -- mirrors existing Redis records reuses the hash directly.
--- `key_prefix` is the first 12 chars of plaintext (matches
--- #707).
+-- `key_prefix` is the first 12 chars of plaintext.
 --
 -- `permissions` JSONB defaults to {"all": true}; per-endpoint
 -- enforcement lands when scoped-keys ship in Phase 3.
@@ -222,7 +221,7 @@ CREATE INDEX api_keys_expires_idx ON api_keys (expires_at)
 -- aggregates (api_usage_5m, api_usage_1h, api_usage_1d) which
 -- the next migration creates once the table has data flowing.
 --
--- `client_ip` is an `inet` column. NOTE (PRV-3, audit-2026-08-14):
+-- `client_ip` is an `inet` column. NOTE:
 -- this table is NOT WIRED — no writer exists (internal/platform/
 -- usage.go: the UsageStore interface has zero implementations;
 -- live per-request accounting runs through internal/usage's Redis

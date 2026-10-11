@@ -1,5 +1,4 @@
 -- 0112 up — event_index PK discriminator for cctp_events + rozo_events
--- (audit-2026-07-16 C2-13a).
 --
 -- The 0038 / 0039 primary keys were
 --   (contract_id, ledger, tx_hash, op_index, event_type, ts)

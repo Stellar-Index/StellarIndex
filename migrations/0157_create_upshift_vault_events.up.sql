@@ -1,10 +1,10 @@
--- 0157 up — `upshift_vault_events` hypertable (#503).
+-- 0157 up — `upshift_vault_events` hypertable.
 --
 -- One row per decoded Upshift tokenized-vault event. Upshift vaults are
 -- ERC-4626-shaped: they take one underlying asset and mint proportional
 -- SHARES, and the vault contract IS the share token. Two vaults exist on
 -- pubnet, both curated in internal/sources/upshift (MainnetVaults) and
--- both verified against r1's ClickHouse lake on 2026-09-09:
+-- both verified against r1's ClickHouse lake:
 --
 --   CCL3WITW… earnUSDC — underlying native USDC (SAC CCW67TSZ…)
 --   CC6TRAPQ… earnXLM  — underlying native XLM  (SAC CAS3J7GY…)
@@ -144,7 +144,7 @@ CREATE TABLE upshift_vault_events (
     old_amount         numeric,
     new_amount         numeric,
 
-    -- INV-3 generation guard (migration 0110 convention): a corrected
+    -- Generation guard (migration 0110 convention): a corrected
     -- re-derive lands in place when its generation is >= the stored
     -- one; a live gen-0 replay can never revert it.
     derive_generation  bigint       NOT NULL DEFAULT 0,

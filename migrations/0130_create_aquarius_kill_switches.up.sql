@@ -1,8 +1,8 @@
 -- 0130 up — `aquarius_kill_switches` hypertable.
 --
 -- Aquarius pools emit circuit-breaker toggle events that were
--- classify()'d but Matches()-dropped (recognized-only) until
--- 2026-08-03 — the raw events sat in the ClickHouse lake unserved.
+-- classify()'d but Matches()-dropped (recognized-only) until this
+-- table — the raw events sat in the ClickHouse lake unserved.
 -- This table + the decoder arm close that every-event gap.
 --
 -- Eight kinds — kill_/unkill_ pairs for deposit, swap, claim, and
@@ -17,7 +17,7 @@
 -- identity + the action. There is nothing to decode from the body.
 --
 -- Storage shape: per-protocol table, pool-gated (ADR-0035). No amounts,
--- no VWAP contribution. derive_generation is the INV-3 generation-
+-- no VWAP contribution. derive_generation is the generation-
 -- guarded corrective-upsert column (migration 0110).
 --
 -- Retention: NONE — granular-coverage mission keeps the history forever.

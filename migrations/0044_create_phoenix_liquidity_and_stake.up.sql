@@ -1,13 +1,13 @@
--- 0044 up — Phoenix liquidity + stake event hypertables (#27).
+-- 0044 up — Phoenix liquidity + stake event hypertables.
 --
 -- Phoenix's pool contract (both volatile `contracts/pool/` and
 -- stableswap `contracts/pool_stable/`) emits provide_liquidity (5
 -- events) and withdraw_liquidity (4 events) using the same
 -- N-events-per-action wire shape as `swap` (8 events). The
 -- per-pool stake contract emits bond / unbond (3 events each) for
--- LP-share staking. None of this was previously decoded — events
--- silently dropped at the per-field topic match. Task #27 ships
--- the decoders + the storage these tables back.
+-- LP-share staking. Without decoders these events are
+-- silently dropped at the per-field topic match; these tables back
+-- the decoders.
 --
 -- Two tables, same scoping decision as cctp_events (0038) and
 -- rozo_events (0039) — per-protocol, not a shared "liquidity_events"

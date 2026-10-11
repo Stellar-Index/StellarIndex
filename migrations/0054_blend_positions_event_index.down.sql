@@ -1,7 +1,7 @@
 -- Revert 0054: restore the (asset, user_address) discriminator PK.
 
 -- Refuse before decompressing anything: up added the wider key because
--- events share the old one, so ADD PRIMARY KEY would fail mid-down (#1161).
+-- events share the old one, so ADD PRIMARY KEY would fail mid-down.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM blend_positions GROUP BY pool, ledger, tx_hash, op_index, event_kind, asset, user_address, ledger_close_time HAVING count(*) > 1) THEN

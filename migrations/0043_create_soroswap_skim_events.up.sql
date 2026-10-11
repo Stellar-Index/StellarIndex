@@ -1,4 +1,4 @@
--- 0043 up — `soroswap_skim_events` hypertable (task #28).
+-- 0043 up — `soroswap_skim_events` hypertable.
 --
 -- One row per observed Soroswap pair-contract `skim` event. The 5th
 -- pair-contract event (alongside swap/sync/deposit/withdraw); the
@@ -11,11 +11,8 @@
 -- granular-coverage mission) and so reserve-divergence analytics
 -- can correlate skim with the immediately-following sync event.
 --
--- Body shape per Phase-1 audit (the cited
--- docs/discovery/dexes-amms/soroswap.md was removed from the tree with
--- the rest of docs/discovery/; the live equivalents are
--- internal/sources/soroswap/README.md and docs/protocols/soroswap.md —
--- corrected 2026-09-02, #358):
+-- Body shape per internal/sources/soroswap/README.md and
+-- docs/protocols/soroswap.md:
 --
 --   struct SkimEvent { skimmed_0: i128, skimmed_1: i128 }
 --
@@ -36,7 +33,7 @@
 -- skim events are recoverable by replaying soroban_events (ADR-0029
 -- raw landing zone, migration 0041) filtered to topic_0_sym='skim' +
 -- contract_id matching a known Soroswap pair. Operator runbook ships
--- alongside this migration in CHANGELOG's task #28 follow-up.
+-- in the CHANGELOG.
 --
 -- Volume estimate: skim is rare (caller-initiated when reserves drift
 -- below the actual balance — typically a direct-transfer bug). Phase-1

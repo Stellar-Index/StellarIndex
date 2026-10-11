@@ -6,7 +6,7 @@
 -- isn't materialized until the hour CLOSES (+ the 5-min end_offset).
 -- So the in-progress hour was invisible: /v1/pools read zero for the
 -- current hour until ~5 min past the top of the next hour. Identical
--- symptom + fix to source_volume_1h (migration 0069, 2026-06-19).
+-- symptom + fix to source_volume_1h (migration 0069).
 --
 -- materialized_only=false turns on real-time aggregation: a query
 -- UNIONs the materialized history with a live aggregate of the raw

@@ -5,7 +5,7 @@
 -- fails on duplicates — expected. Decompress first.
 
 -- Refuse before decompressing anything: up added the wider key because
--- events share the old one, so ADD PRIMARY KEY would fail mid-down (#1161).
+-- events share the old one, so ADD PRIMARY KEY would fail mid-down.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM phoenix_liquidity GROUP BY ledger_close_time, pool, ledger, tx_hash, op_index, action HAVING count(*) > 1) THEN

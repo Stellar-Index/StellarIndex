@@ -59,7 +59,7 @@
 -- ─── ⚠ OPERATOR: pools_per_source_1h history this DROP destroys ─────
 -- The dropped pools_per_source_1h (0036) was materialized from `trades`
 -- when `trades` held history it no longer does: on r1 its 2023-06 buckets
--- sum 76,392,293 SDEX trades against 35,624 `trades` rows (2026-09-28),
+-- sum 76,392,293 SDEX trades against 35,624 `trades` rows,
 -- ~96 GB across 2015-11..now. The rebuilt view can only re-derive what
 -- `trades` holds. On a deployment like that, copy the materialization to
 -- a plain table BEFORE applying, with the view's refresh-policy job

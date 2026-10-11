@@ -5,7 +5,7 @@
 -- 0027 describes audit_log as append-only, but only in a comment. Nothing
 -- stops the role that INSERTs the trail from rewriting or deleting it, so
 -- one stray UPDATE, DELETE or TRUNCATE (or one injected statement) can
--- erase the record of who minted a key or lifted a freeze (GH #969).
+-- erase the record of who minted a key or lifted a freeze.
 --
 -- WHAT THIS MIGRATION ADDS
 --

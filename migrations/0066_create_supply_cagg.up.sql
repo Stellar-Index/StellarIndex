@@ -5,8 +5,8 @@
 -- assets). handleChartMarketCap multiplies this day's circulating
 -- supply by the day's USD price (the existing prices_1d / stablecoin-
 -- proxy series the normal chart already serves) to produce a daily
--- market-cap point — unblocking the crypto branch that previously
--- returned HTTP 501.
+-- market-cap point — unblocking the crypto branch that would otherwise
+-- return HTTP 501.
 --
 -- One row per (asset_key, day-bucket): asset_supply_history is
 -- append-only with many snapshots/day, so last() picks the day's

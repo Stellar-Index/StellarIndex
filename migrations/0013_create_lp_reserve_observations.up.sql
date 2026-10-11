@@ -21,9 +21,7 @@ CREATE TABLE lp_reserve_observations (
     -- supply.AssetKey form. CLASSIC ONLY ("CODE:G…"). The observer
     -- returns ErrUnsupportedLPAsset for the native side, so no "XLM"
     -- row can ever exist here despite the shared AssetKey encoding —
-    -- XLM LP reserves are NOT covered by this table. (Corrected
-    -- 2026-08-04: the comment previously listed XLM, which would lead a
-    -- reader to treat native LP reserves as observed.)
+    -- XLM LP reserves are NOT covered by this table.
     asset_key       text         NOT NULL,
 
     ledger          integer      NOT NULL CHECK (ledger >= 0),

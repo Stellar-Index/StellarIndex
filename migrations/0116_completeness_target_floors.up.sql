@@ -1,6 +1,6 @@
 -- 0116 up — remember the lowest ledger each projection target has ever
 -- been verified from, so a bottom-edge truncation stops erasing its own
--- evidence (audit-2026-07-23 N-F2 residual).
+-- evidence.
 --
 -- compute-completeness derives each target's reconcile range from the
 -- served tier's OWN data: `lo = MIN(ledger)` for that target
@@ -49,7 +49,7 @@
 -- prices_1m / prices_15m, 0040 removed it from oracle_updates, and the
 -- only surviving add_retention_policy in the tree is api_usage_events
 -- (0027, 12 months), which is not a reconcile target. Verified against
--- r1's live timescaledb_information.jobs on 2026-07-25. If a retention
+-- r1's live timescaledb_information.jobs. If a retention
 -- policy is ever added to a reconcile target, a rising MIN becomes
 -- legitimate for that target and this rule must be revisited FIRST —
 -- otherwise it will fire continuously and get muted, which is worse than

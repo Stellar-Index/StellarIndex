@@ -1,6 +1,5 @@
 -- 0126 up — add `sample_count` (per-direction MINUTE COVERAGE) to the
--- twap_1h / twap_1d continuous aggregates (audit finding M-B; MNY-06
--- sibling on the TWAP surface).
+-- twap_1h / twap_1d continuous aggregates.
 --
 -- ─── The defect ────────────────────────────────────────────────────────
 -- SDEX stores the same market in BOTH orientations (the decoder files

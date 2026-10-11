@@ -5,7 +5,7 @@
 --
 -- internal/canonical/discovery gained two new sniffers:
 --   - SniffOracleEvent: a broader oracle-suggestive topic[0] symbol
---     set (the exact 2026-07-10 ClickHouse lake census list).
+--     set (the exact ClickHouse lake census list).
 --   - SniffOracleCall: an event-less-oracle sniffer on the
 --     ContractCallContext path (the Band pattern — relay/force_relay
 --     update storage without publishing an event), matching on

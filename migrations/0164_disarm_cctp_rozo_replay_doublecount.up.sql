@@ -32,7 +32,7 @@
 -- cctp/rozo trade-adjacent tables (if any) key off a different PK and
 -- were not part of the 0112 discriminator change.
 --
--- Compression: both tables are compressed on r1 (measured 2026-09-28,
+-- Compression: both tables are compressed on r1 (measured,
 -- timescaledb 2.26.4: cctp_events 148,660 rows in 21 of 23 chunks
 -- compressed, rozo_events 407 rows in 31 of 32; policy_compression jobs
 -- 1063 and 1072 are scheduled), so this file's earlier "no compression

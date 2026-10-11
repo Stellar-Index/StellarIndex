@@ -1,5 +1,4 @@
--- 0060: phoenix_liquidity + phoenix_stake_events — add event_index to the PKs
--- (F-1324).
+-- 0060: phoenix_liquidity + phoenix_stake_events — add event_index to the PKs.
 --
 -- Both PKs were (ledger_close_time, pool|stake_contract, ledger, tx_hash,
 -- op_index, action) — no per-event discriminator. Phoenix reassembles one

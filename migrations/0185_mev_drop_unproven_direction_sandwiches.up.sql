@@ -6,12 +6,12 @@
 -- /v1/mev names an account as a sandwich attacker. A sandwich front-runs and
 -- back-runs in OPPOSITE directions; a same-direction bracket is structurally
 -- impossible. The sandwich detector only began requiring opposition on
--- 2026-08-16 (#81, which measured ~196 of 200 published candidates as
--- same-direction), and the oracle_sandwich detector on 2026-09-25. Neither
+-- a later release (~196 of 200 published candidates were
+-- same-direction), as did the oracle_sandwich detector. Neither
 -- change touched rows already written, and the worker only rescans a
 -- 30-minute window, so those rows are never revisited. The worker's 90-day
 -- pruner, which would eventually have removed them, is removed alongside
--- this migration (#1168), so without this they would be served forever.
+-- this migration, so without this they would be served forever.
 --
 -- WHAT THIS DELETES
 --

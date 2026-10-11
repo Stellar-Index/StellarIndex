@@ -10,7 +10,7 @@
 -- key_prefix is plaintext[:12] = "sip_" + 8 hex. The rename landed in
 -- the code; this constraint was never updated with it.
 --
--- Effect (cold audit 2026-08-03, verified against r1): EVERY INSERT into
+-- Effect (verified against r1): EVERY INSERT into
 -- api_keys from the Postgres-backed store fails with a check_violation
 -- (SQLSTATE 23514), which the handler surfaces as a 500 — dashboard API
 -- key issuance is non-functional against Postgres. r1's api_keys table

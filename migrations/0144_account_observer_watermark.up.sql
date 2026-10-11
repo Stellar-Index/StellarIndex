@@ -1,11 +1,11 @@
 -- 0144 up — `account_observer_watermark`: the account observer's TRUE
 -- processed-ledger watermark for the XLM circulating-supply freshness gate.
 --
--- Why this exists (F-1320 / R-002 / CS-102 tail, live r1 root-cause).
+-- Why this exists.
 -- The XLM freshness gate (internal/supply/refresher.go) rejects a snapshot
 -- when snapshot_ledger − MinComponentLedger exceeds the dormancy horizon. For
 -- native XLM that anchor comes from Store.MaxAccountObservationLedger, which
--- used to compute MAX(ledger) FROM account_observations. That table only gets
+-- computed MAX(ledger) FROM account_observations. That table only gets
 -- a row when a WATCHED account's balance CHANGES, so MAX(ledger) is the most
 -- recent SDF-reserve balance change — NOT how far the observer has processed.
 -- On r1 the 16 reserve accounts move every few days-to-weeks; during any quiet

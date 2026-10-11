@@ -1,5 +1,4 @@
--- 0137: disarm the comet replay double-count (inventory #19; comet audit
--- 2026-08-03, confirming audit-2026-08-01).
+-- 0137: disarm the comet replay double-count.
 --
 -- Migration 0059 added event_index to comet_liquidity's PK and left the
 -- existing rows at event_index=0 on the premise that "a re-derive then

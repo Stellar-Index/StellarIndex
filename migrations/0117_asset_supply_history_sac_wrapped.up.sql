@@ -1,7 +1,6 @@
 -- 0117 up — persist Algorithm 2's SACWrapped component on
 -- `asset_supply_history` so the supply cross-check can run the REAL
--- subset compare instead of only the total-vs-total tripwire
--- (audit E4 / N-F3(b); the "(b) follow-up" BACKLOG #59 left unbuilt).
+-- subset compare instead of only the total-vs-total tripwire.
 --
 -- ── What was missing ──
 --

@@ -1,10 +1,10 @@
 -- 0124 up — admit 'other' into the freeze_events.reason CHECK.
 --
--- mapFreezeReason (internal/storage/timescale/freeze_events.go) used to
+-- mapFreezeReason (internal/storage/timescale/freeze_events.go) mapped
 -- map ANY decision that wasn't a phase2/freeze shape to 'manual' — the
 -- value 0018 reserved for OPERATOR-initiated freezes — so a defensive
 -- fall-through would have recorded an automated decision as a human
--- action on the /v1/anomalies timeline (audit 2026-07-31). The mapper
+-- action on the /v1/anomalies timeline. The mapper
 -- now falls through to 'other', which this migration adds to the
 -- constraint's vocabulary. Existing rows are untouched: 'manual' rows
 -- written before this change all came from the real operator hatch or

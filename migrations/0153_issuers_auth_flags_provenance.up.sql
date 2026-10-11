@@ -1,10 +1,10 @@
--- 0153 up — record HOW an issuer's auth flags were obtained (#374).
+-- 0153 up — record HOW an issuer's auth flags were obtained.
 --
 -- WHY: `stellarindex-ops issuer-flags` resolves an issuer's AccountEntry auth
 -- flags out of the ClickHouse lake and persists them here. Its reader only
 -- ever looked at LIVE entries (`ledger_entries_current … change_type !=
 -- 'removed'`), so every issuer that has MERGED ITS ACCOUNT AWAY stayed
--- unresolved for good: r1 2026-09-02, 10,238 of 59,240 issuers, and a 300-key
+-- unresolved for good: on r1, 10,238 of 59,240 issuers, and a 300-key
 -- sample says 296 of them (98.7%) are merged accounts, not gaps.
 --
 -- Those flags ARE knowable — an account_merge leaves a `state` pre-image in

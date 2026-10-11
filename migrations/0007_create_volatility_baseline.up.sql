@@ -13,7 +13,7 @@
 --   percentile_cont would re-scan the whole 30-day window on every
 --   refresh anyway, with no incremental advantage. Keeping the
 --   compute in Go (where we have a thoroughly-tested baseline
---   package, see PR #246) and writing one flat row per pair is
+--   package) and writing one flat row per pair is
 --   cheaper to read AND easier to backfill.
 --
 -- Current-state semantics: ONE row per pair. Refreshes UPSERT and

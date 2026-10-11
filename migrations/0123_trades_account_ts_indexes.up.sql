@@ -16,7 +16,7 @@
 --
 -- WHY taker/maker, NOT a source_account column: `trades` has never
 -- carried a source_account column (verified against both this
--- migrations directory and the live r1 schema, 2026-07-30). The
+-- migrations directory and the live r1 schema). The
 -- account attribution the table DOES hold is `taker` (the acting
 -- account — the op/tx source for sdex, the user address for
 -- aquarius/phoenix/comet) and `maker` (the resting-offer account,
@@ -36,7 +36,7 @@
 -- in-transaction CREATE INDEX write-locks the table for the whole
 -- build, so ON A LIVE NODE build both by hand FIRST. NOTE: hypertables
 -- REJECT `CREATE INDEX CONCURRENTLY` ("hypertables do not support
--- concurrent index creation" — hit on r1 2026-07-30); the Timescale
+-- concurrent index creation" — hit on r1); the Timescale
 -- equivalent is per-chunk transactions, which lock one chunk at a time:
 --
 --   CREATE INDEX trades_taker_ts_idx

@@ -1,7 +1,7 @@
 -- 0128 up — `aquarius_reserves_sync` hypertable.
 --
 -- Aquarius pools emit a `reserves_sync` event IN ADDITION to
--- `update_reserves`. Until 2026-08-03 it was classify()'d but
+-- `update_reserves`. Before this table it was classify()'d but
 -- Matches() returned false, so it projected no row (recognized-only) —
 -- the raw events sat in the ClickHouse lake unserved. This table + the
 -- decoder arm close that every-event gap.
@@ -22,7 +22,7 @@
 --
 -- Storage shape mirrors aquarius_reserves (per-protocol, fanned per
 -- token position). Aquarius has no published price; these rows never
--- reach VWAP. derive_generation is the INV-3 generation-guarded
+-- reach VWAP. derive_generation is the generation-guarded
 -- corrective-upsert column (migration 0110), same as aquarius_reserves.
 --
 -- Retention: NONE — granular-coverage mission keeps the history forever.

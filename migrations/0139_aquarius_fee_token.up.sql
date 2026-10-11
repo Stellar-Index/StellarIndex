@@ -3,7 +3,7 @@
 -- Corrects migration 0129's premise. 0129 asserted "the token identity
 -- is positional/not in the body — join a recent trade for the pool to
 -- resolve it" and shipped no token column. The lake refutes both
--- halves (sources-decode audit 2026-08-04, finding 5): every sampled
+-- halves: every sampled
 -- claim_protocol_fee event carries an ScvAddress at topic[1] — the
 -- claimed token — and ledger 63,698,651 has one tx claiming TWO
 -- different tokens from one pool with near-identical amounts, so the

@@ -11,7 +11,7 @@
 -- tables the projector (ADR-0031/0032, sole writer) fills.
 --
 -- Four tables model the event surface faithfully (schemas verified
--- against real lake fixtures 2026-07-07):
+-- against real lake fixtures):
 --
 --   credit_positions   ← NewCollateralContract — a position is opened; the
 --                         contract deploys a per-user Collateral-<uuid>
