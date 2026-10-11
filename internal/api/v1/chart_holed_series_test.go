@@ -25,9 +25,13 @@ import (
 // the hole. These fixtures are PARTIALLY populated series (an empty one only
 // certifies the path that already worked); the merge must be per bucket.
 
+// holedToday is read once so a fixture built before UTC midnight and an
+// assertion made after it name the same day.
+var holedToday = time.Now().UTC().Truncate(24 * time.Hour)
+
 // holedDay is a UTC midnight `n` days ago, inside `timeframe=1y`.
 func holedDay(n int) time.Time {
-	return time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -n)
+	return holedToday.AddDate(0, 0, -n)
 }
 
 const (
