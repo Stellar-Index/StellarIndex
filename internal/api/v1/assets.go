@@ -432,17 +432,8 @@ func detailFromAsset(a canonical.Asset) AssetDetail {
 		v := a.Issuer
 		d.Issuer = &v
 	}
-	if a.ContractID != "" {
-		v := a.ContractID
-		d.ContractID = &v
-	}
-	// Classic + native assets carry their SAC address. The derivation
-	// is deterministic and valid even before the SAC is deployed, since
-	// deployment is permissionless and address-stable.
-	if d.ContractID == nil && (a.Type == canonical.AssetClassic || a.Type == canonical.AssetNative) {
-		if sac, err := a.SacContractID(); err == nil {
-			d.ContractID = &sac
-		}
+	if c, ok := a.ContractAddress(); ok {
+		d.ContractID = &c
 	}
 	return d
 }
@@ -1744,6 +1735,9 @@ func assetDetailFromAssetRow(row timescale.AssetRow) AssetDetail {
 	}
 	if err == nil {
 		d.Type = string(asset.Type)
+		if c, ok := asset.ContractAddress(); ok {
+			d.ContractID = &c
+		}
 	}
 	if row.IssuerGStrkey != "" {
 		v := row.IssuerGStrkey
