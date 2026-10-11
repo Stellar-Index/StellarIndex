@@ -22,26 +22,14 @@ import (
 
 // Durable per-email code-guess lockout.
 //
-// Without the lockout, the bound on guessing the 6-digit email code is:
+// The per-token attempt cap resets on every new /v1/auth/login mint, and the mint throttle lives in
+// Redis (with an in-process fallback), which a flush, fail-over or restart clears. That leaves
+// about 25 guesses/hour/email of the 6-digit code with nothing durable counting failures per
+// address.
 //
-//	maxCodeAttempts = 5      per TOKEN — and IncrementLoginCodeAttempts
-//	                         burns one on every live token for the
-//	                         address, so 5 wrong guesses retire the
-//	                         whole candidate set …
-//	                         … but a NEW /v1/auth/login mint starts at 0.
-//	RedisLoginThrottle       5 mints/hour/email — in REDIS, with an
-//	                         in-process fallback. A FLUSHALL, a
-//	                         fail-over or a restart clears it.
-//
-// So the standing budget was ~25 guesses/hour/email forever: ≈ 0.22
-// probability of landing a code over a year of patient grinding on one
-// targeted address, and unbounded if the attacker can wait out (or
-// cause) a Redis reset. Nothing durable counted failures per ADDRESS.
-//
-// These tests pin the durable counter. The load-bearing one is
-// LockoutSurvivesTokenReMint: it drives the attack — mint, guess, mint,
-// guess — and then presents the CORRECT code for a fresh token, which
-// without the lockout signs the attacker in.
+// These tests pin the durable counter. The load-bearing one is LockoutSurvivesTokenReMint: mint,
+// guess, mint, guess, then the correct code for a fresh token, which signs the attacker in
+// without the lockout.
 
 // lockoutRig is newTestRig with a movable clock, so the 24-hour window
 // and lockout can be crossed without sleeping.
@@ -110,12 +98,9 @@ func (lr *lockoutRig) grind(t *testing.T, email string, n int) {
 	}
 }
 
-// TestLockout_SurvivesTokenReMint — the finding, executed.
-//
-// Ten wrong guesses spread across three separate mints (so the per-token
-// cap is reset twice along the way), then the CORRECT code for a
-// brand-new token. Without the lockout that final request mints a session: the fresh
-// token's attempts is 0 and nothing durable remembers the grinding.
+// TestLockout_SurvivesTokenReMint: ten wrong guesses across three mints (resetting the per-token
+// cap twice), then the correct code for a brand-new token. Without the lockout that request mints
+// a session, since the fresh token has 0 attempts and nothing durable remembers the grinding.
 func TestLockout_SurvivesTokenReMint(t *testing.T) {
 	const email = "target@example.com"
 	lr := newLockoutRig(t)
@@ -267,15 +252,10 @@ func lockoutErrors(t *testing.T, op string) float64 {
 	return testutil.ToFloat64(obs.LoginCodeLockoutErrorsTotal.WithLabelValues(op))
 }
 
-// TestLockout_StatusCheckFailureIsCounted — the fail-open above is the
-// right trade, but it means the control is OFF and the HTTP response is
-// byte-identical to the healthy path. A `Logger.Error` is not an
-// observable: nothing pages, nothing graphs, and the exact scenario the
-// fail-open rationale names (migration 0122 lagging a node) would
-// silently disable the lockout fleet-wide for as long as it lasted.
-//
-// So the counter is the control's own accountability, exactly as
-// AdminAuditWriteFailuresTotal is for the audit path.
+// TestLockout_StatusCheckFailureIsCounted: failing open turns the control off while the HTTP
+// response stays identical to the healthy path. A log line neither pages nor graphs, so a lagging
+// migration could silently disable the lockout fleet-wide; the counter is the control's
+// accountability, as AdminAuditWriteFailuresTotal is for the audit path.
 func TestLockout_StatusCheckFailureIsCounted(t *testing.T) {
 	const email = "status-blip@example.com"
 	lr := newLockoutRig(t)
@@ -342,12 +322,10 @@ func TestLockout_HealthyPathLeavesTheErrorCounterAlone(t *testing.T) {
 	}
 }
 
-// burstGate parks every request of a concurrent burst at its first
-// login-code store write until each one has either parked or returned.
-// That is the interleaving network jitter hands an attacker for free:
-// every request has done all of its reads before any has written. A
-// handler whose caps are check-then-act compares every guess in the
-// burst; one that charges the attempt atomically cannot.
+// burstGate parks every request of a concurrent burst at its first login-code store write until
+// each has parked or returned. That is the interleaving network jitter gives an attacker for free:
+// all reads precede any write. A check-then-act cap compares every guess in the burst; one that
+// charges the attempt atomically cannot.
 type burstGate struct {
 	mu       sync.Mutex
 	n        int
@@ -534,11 +512,9 @@ func TestLockout_SpentTokenChargesNothingFurther(t *testing.T) {
 	}
 }
 
-// TestLockout_SignedInBrowserHasOwnBudget — anyone who knows an address can
-// spend its durable code budget, so a stranger's ten wrong codes must not
-// shut the owner's own browser out of code sign-in, and that browser's typos
-// must not spend the budget strangers are held to. The browser is still
-// bounded: its own budget locks after the same number of failures.
+// TestLockout_SignedInBrowserHasOwnBudget: anyone who knows an address can spend its durable code
+// budget, so a stranger's wrong codes must not lock out the owner's browser, nor may that
+// browser's typos spend the strangers' budget. The browser is still bounded by its own budget.
 func TestLockout_SignedInBrowserHasOwnBudget(t *testing.T) {
 	const email = "owner3@example.com"
 	deviceKey := platform.LoginCodeDeviceKey(email)

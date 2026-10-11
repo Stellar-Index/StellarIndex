@@ -48,26 +48,17 @@ func runOnce(t *testing.T, ua string, status int, level slog.Level) *bytes.Buffe
 	if ua != "" {
 		req.Header.Set("User-Agent", ua)
 	}
-	// obs.IsSyntheticRequest trusts the UA only for a request that
-	// arrived directly on loopback (see its doc) — the shape every
-	// legitimate synthetic caller actually uses. httptest.NewRequest's
-	// default RemoteAddr (192.0.2.1, a TEST-NET address) is not that
-	// shape, so set it explicitly rather than let these cases assert
-	// against traffic no real synthetic caller produces.
+	// obs.IsSyntheticRequest trusts the UA only on direct loopback requests, so set RemoteAddr
+	// rather than assert against the TEST-NET default no real synthetic caller produces.
 	req.RemoteAddr = "127.0.0.1:54321"
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	return buf
 }
 
-// The SLA probe drives ~800 requests per endpoint per run across ten
-// endpoints every 15 minutes. Measured on r1, that was
-// 287,914 API journal entries in 5.4 hours — 98% of everything the
-// journal held — which collapsed a configured 14-day retention into
-// about five hours and aged that morning's own outage out of the
-// journal before lunchtime.
-//
-// So a successful request from first-party synthetic traffic logs at
-// DEBUG: emitted, but below the level a production journal stores.
+// The SLA probe sends ~800 requests per endpoint per run across ten endpoints every 15 minutes,
+// enough to crowd real entries out of the journal and collapse its retention. A successful
+// first-party synthetic request therefore logs at DEBUG: emitted, but below the level a
+// production journal stores.
 func TestSuccessfulSyntheticRequestDoesNotSpendJournalRetention(t *testing.T) {
 	for _, ua := range []string{"stellarindex-probe/1", "stellarindex-smoke/1", "stellarindex-prewarm/1"} {
 		t.Run(ua, func(t *testing.T) {
@@ -105,12 +96,9 @@ func TestFailingSyntheticRequestStillReachesTheJournal(t *testing.T) {
 	}
 }
 
-// A User-Agent header is entirely client-controlled, so a request
-// that spoofs a synthetic prefix but actually crossed haproxy (evidenced
-// by the X-Forwarded-For hop haproxy stamps on everything it proxies —
-// see obs.IsSyntheticRequest) must keep its INFO line, exactly like any
-// other customer request. Demoting it to DEBUG would let an external
-// caller erase its own successful requests from the journal for free.
+// User-Agent is client-controlled, so a request spoofing a synthetic prefix that crossed haproxy
+// (evidenced by its X-Forwarded-For hop; see obs.IsSyntheticRequest) must keep its INFO line.
+// Demoting it would let an external caller erase its own successful requests from the journal.
 func TestSpoofedSyntheticUAWithProxyHopStillLogsAtInfo(t *testing.T) {
 	buf := &bytes.Buffer{}
 	logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelInfo}))

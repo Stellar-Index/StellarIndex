@@ -59,31 +59,21 @@ type AdminLookupResponse struct {
 // adminLookupRequest is the staff look-up query. It travels in the request
 // BODY, never the query string.
 //
-// A customer's email address in a URL is copied verbatim into every access
-// log, proxy log, browser-history entry and Referer header along the path.
-// Edge redaction masks OUR Caddy log, but it cannot reach a staff member's
-// browser history, an upstream CDN's log, or a Referer header sent to a
-// third-party origin — so the address has to stop TRAVELLING in the URL,
-// not merely stop being written down at the one hop we happen to control.
-// A POST body is recorded by none of them.
+// A customer's email in a URL is copied into access logs, proxy logs, browser history and Referer
+// headers. Edge redaction only covers our own log, so the address must not travel in the URL at
+// all; a POST body is recorded by none of those.
 //
-// This is also why the handler does not fall back to r.URL.Query(): a
-// tolerated query parameter is an un-redacted channel that would silently
-// re-open the leak the moment any caller used it.
+// The handler therefore never falls back to r.URL.Query(): a tolerated query parameter would be an
+// un-redacted channel that re-opens the leak.
 type adminLookupRequest struct {
 	Email string `json:"email,omitempty"`
 	Slug  string `json:"slug,omitempty"`
 }
 
-// HandleAdminLookup serves POST /v1/account/admin/lookup with a
-// {"email":…}|{"slug":…} body — the staff "Customer look-up" tool (platform
-// spec §6): resolve an account by a user's email or by account slug and
-// return its tier/status plus the users on it. Staff-only: the route is
-// wrapped in RequireSession and this handler additionally gates on the
-// session user's IsStaff flag (a logged-in non-staff customer gets 403, never
-// another customer's data). Read-only despite the POST — the verb is chosen
-// to keep the look-up term out of the URL (see [adminLookupRequest]), not
-// because the call mutates anything.
+// HandleAdminLookup serves POST /v1/account/admin/lookup, the staff customer look-up by email or
+// account slug. Staff-only: besides RequireSession it gates on the session user's IsStaff flag, so
+// a non-staff customer gets 403, never another customer's data. It is read-only; POST only keeps
+// the term out of the URL (see [adminLookupRequest]).
 func (h *Handlers) HandleAdminLookup(w http.ResponseWriter, r *http.Request) {
 	sc, ok := SessionFromContext(r.Context())
 	if !ok {
@@ -153,19 +143,12 @@ func lookupQueryKind(email string) string {
 	return "slug"
 }
 
-// recordAdminLookupAudit persists the "staff.customer.lookup" audit row
-// for a staff read of another customer's PII — account tier/status/billing
-// email plus every user's email and last-login — as a durable
-// [platform.AuditEntry], as every sibling admin surface
-// (`admin_accounts.go`, `admin_keys.go`, `status_notices.go`) does. A log
-// line is not a privacy audit trail: it is rotated on a short retention,
-// is not queryable per-account, and is absent from the dashboard's audit
-// view.
+// recordAdminLookupAudit persists the "staff.customer.lookup" row for a staff read of another
+// customer's PII as a durable [platform.AuditEntry], like every sibling admin surface. A log line
+// is not an audit trail: it is rotated, not queryable per account, and absent from the audit view.
 //
-// Best-effort, matching the sibling contract: the read has already
-// happened by the time this runs, so a sink failure logs at WARN and
-// increments the shared write-failure counter under its own `surface`
-// label rather than failing the request.
+// Best-effort: the read has already happened, so a sink failure logs at WARN and increments the
+// write-failure counter under its own `surface` label instead of failing the request.
 func (h *Handlers) recordAdminLookupAudit(
 	r *http.Request, sc SessionContext, acct platform.Account, queryKind string, usersReturned int,
 ) {

@@ -36,11 +36,8 @@ type idempotencyRecord struct {
 // IdempotencyStore is a process-local, TTL-bounded cache of recent
 // idempotent responses. Safe for concurrent use.
 //
-// Process-local by design: a single API replica loses dedup across a
-// restart or across sibling replicas behind a load balancer. That's
-// an accepted trade for a mint-once endpoint — a retry that
-// lands on a different replica within the TTL mints a second
-// resource, as it would with no idempotency at all, never worse.
+// Process-local by design: dedup is lost across restarts and sibling replicas. A retry landing
+// on another replica mints a second resource, never worse than having no idempotency at all.
 type IdempotencyStore struct {
 	mu      sync.Mutex
 	entries map[string]idempotencyRecord
@@ -101,17 +98,12 @@ func (s *IdempotencyStore) finish(key string) {
 	delete(s.inFlight, key)
 }
 
-// put stores a captured response unless a still-live entry already
-// occupies key — first writer wins, so a burst of near-simultaneous
-// duplicate submissions converges on the FIRST response rather than
-// the last handler to finish clobbering it.
+// put stores a captured response unless a still-live entry already occupies key. First writer
+// wins, so near-simultaneous duplicates converge on the FIRST response.
 //
-// Every call also sweeps expired entries from the whole map. A key
-// that's replayed keeps itself fresh via begin()'s own eviction, but a
-// key used exactly once (create-then-never-replay) has no other
-// removal path — without this sweep it would live for the life of
-// the process. Sweeping here bounds the map to roughly TTL worth of
-// traffic instead of the process lifetime, with no extra goroutine.
+// Every call also sweeps expired entries: a key used exactly once is never replayed, so
+// begin()'s eviction never reaches it, and the map would otherwise grow for the process
+// lifetime. This bounds it to about one TTL of traffic with no extra goroutine.
 func (s *IdempotencyStore) put(key string, status int, header http.Header, body []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -156,24 +148,17 @@ func (rec *idempotencyRecorder) Write(b []byte) (int, error) {
 	return rec.ResponseWriter.Write(b)
 }
 
-// Idempotency returns middleware that lets a client safely retry a
-// state-changing POST. A caller supplying the Idempotency-Key header
-// gets the ORIGINAL captured response replayed verbatim on any repeat
-// within store's TTL, instead of the handler re-running.
+// Idempotency lets a client safely retry a state-changing POST: a repeat carrying the same
+// Idempotency-Key within store's TTL gets the ORIGINAL response replayed instead of re-running
+// the handler.
 //
-// subjectKeyFn scopes the cache to the caller (account/session) so
-// two different callers who happen to pick the same literal key
-// string never collide; the method and path scope it to one route. A
-// nil subjectKeyFn, an empty subject, or a missing/blank header leaves
-// the request to run normally.
+// subjectKeyFn scopes the cache to the caller so two callers picking the same key string never
+// collide; method and path scope it to one route. A nil subjectKeyFn, empty subject, or blank
+// header runs the request normally. A repeat while the first is still running gets a retryable
+// 409.
 //
-// A repeat that arrives while the first request is still running gets
-// a retryable 409 rather than a second run of the handler.
-//
-// Only a 2xx response is cached: a validation failure or a transient
-// 5xx must not be replayed, or a client who fixed the request (or
-// retried past a blip) would keep getting the frozen error for the
-// whole TTL.
+// Only 2xx responses are cached, or a client who fixed a validation error (or retried past a
+// transient 5xx) would keep getting the frozen error for the whole TTL.
 func Idempotency(store *IdempotencyStore, subjectKeyFn func(*http.Request) string) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -218,11 +203,8 @@ func Idempotency(store *IdempotencyStore, subjectKeyFn func(*http.Request) strin
 	}
 }
 
-// stripCORSHeaders removes the headers the CORS middleware owns so a
-// replay never carries the first request's origin decision; the
-// current request's CORS middleware sets them. The Origin token is
-// dropped from Vary, other tokens are kept. It runs both when a
-// record is stored and when it is replayed.
+// stripCORSHeaders removes the CORS-owned headers (and the Origin token from Vary) so a replay
+// never carries the first request's origin decision. It runs on both store and replay.
 func stripCORSHeaders(h http.Header) http.Header {
 	for k := range h {
 		if strings.HasPrefix(k, "Access-Control-") {

@@ -103,12 +103,9 @@ func (s *fakeStore) DeletePriceAlert(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// ClaimPriceAlertFire mirrors the store's conditional UPDATE:
-// it stamps only while the snapshot's rule is unchanged and the alert's own
-// cooldown has elapsed, and reports whether it claimed. Unused by the
-// dashboard handlers — this fake satisfies the whole
-// platform.PriceAlertStore interface, of which the evaluator half is not
-// exercised here.
+// ClaimPriceAlertFire mirrors the store's conditional UPDATE: it stamps only while the snapshot's
+// rule is unchanged and the cooldown has elapsed, and reports whether it claimed. The handlers do
+// not use it; it only satisfies platform.PriceAlertStore.
 func (s *fakeStore) ClaimPriceAlertFire(_ context.Context, snap platform.PriceAlert, firedAt time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -219,11 +216,9 @@ func TestHandleCreate_HappyPath(t *testing.T) {
 	}
 }
 
-// TestHandleCreate_OmittedCooldown_DefaultsNonZero: a
-// create that OMITS cooldown_seconds must not land a 0 cooldown, which the
-// level-triggered evaluator treats as "re-fire every 30s tick while the
-// threshold holds" (a firehose). The omitted case must default to a sane
-// non-zero minimum.
+// TestHandleCreate_OmittedCooldown_DefaultsNonZero: a create omitting cooldown_seconds must not
+// store 0, which the level-triggered evaluator treats as re-firing every 30s tick while the
+// threshold holds. It must default to a non-zero minimum.
 func TestHandleCreate_OmittedCooldown_DefaultsNonZero(t *testing.T) {
 	h, store, sc := newTestRig(t, nil)
 	// A real client that leaves cooldown_seconds out of the JSON entirely.

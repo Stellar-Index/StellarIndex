@@ -2,24 +2,14 @@ package dashboardauth
 
 // Single-use enforcement for WebAuthn ceremony challenges.
 //
-// The ceremony cookie (passkey.go) is integrity-bound and time-bound.
-// Neither property makes it SINGLE-USE: an HMAC stays valid for as
-// long as the payload lives, so a captured `finish-login` request
-// (ceremony cookie + assertion body) could be re-sent for the rest of
-// the challenge's lifetime, minting a fresh session cookie every time.
-// WebAuthn's whole replay story rests on the challenge being spent
-// exactly once; nothing in the protocol enforces that for the relying
-// party — the RP must remember.
+// The ceremony cookie (passkey.go) is integrity-bound and time-bound but not single-use: a
+// captured finish-login request could be re-sent for the challenge's whole lifetime, minting a
+// fresh session each time. WebAuthn leaves replay protection to the relying party, so after an
+// assertion verifies, the ceremony digest claims a slot and a second presentation is refused.
 //
-// So the RP remembers: after an assertion verifies, the ceremony's
-// digest claims a slot, and a second presentation of the same
-// ceremony finds the slot taken and is refused. The mechanism is
-// deliberately the same one the SEP-10 challenge replay guard uses
-// (`internal/auth/sep10/redisreplay.go`): Redis SETNX with a
-// TTL, claimed AFTER signature verification so bogus submissions
-// can't spend slots, and FAIL CLOSED when the store can't be reached
-// — an authentication we cannot prove is fresh is not an
-// authentication we issue a session for.
+// Same mechanism as the SEP-10 replay guard (internal/auth/sep10/redisreplay.go): Redis SETNX
+// with a TTL, claimed after signature verification so bogus submissions cannot spend slots, and
+// fail closed when the store is unreachable.
 
 import (
 	"context"
@@ -39,28 +29,19 @@ import (
 //     single instance; behind more than one instance a replay routed
 //     to a different instance would not be seen.
 type PasskeyCeremonyGuard interface {
-	// Consume claims the one-shot slot for a ceremony digest.
-	// Returns true when the caller is the FIRST to present that
-	// ceremony, false when the slot is already taken (a replay), and
-	// a non-nil error when the backing store could not be reached.
-	// Callers MUST treat the error as "refuse" — see the fail-closed
-	// rationale above.
-	//
-	// ttl bounds how long a spent ceremony is remembered. It only has
-	// to outlive the ceremony itself: once the challenge is expired,
-	// the expiry check refuses it regardless of the spent-set.
+	// Consume claims the one-shot slot for a ceremony digest. It returns true for the first
+	// presenter, false for a replay, and an error when the store is unreachable, which callers
+	// MUST treat as "refuse". ttl only has to outlive the ceremony: after expiry the expiry
+	// check refuses it regardless of the spent-set.
 	Consume(ctx context.Context, digest string, ttl time.Duration) (bool, error)
 }
 
 // inProcessPasskeyCeremonyGuard is the single-instance default: a
 // TTL-bounded set of spent ceremony digests in memory.
 //
-// Memory is bounded by (successful ceremonies per TTL window), not by
-// request volume — only a VERIFIED assertion/attestation spends a
-// slot — so the map holds single digits on a real deployment and the
-// per-call sweep is free. It is deliberately NOT a substitute for the
-// Redis guard on a multi-instance deployment; cmd/stellarindex-api
-// logs a warning when it falls back to this.
+// Only a verified assertion/attestation spends a slot, so memory is bounded by successful
+// ceremonies, not request volume. Not a substitute for the Redis guard on a multi-instance
+// deployment; cmd/stellarindex-api warns when it falls back to this.
 type inProcessPasskeyCeremonyGuard struct {
 	now func() time.Time
 

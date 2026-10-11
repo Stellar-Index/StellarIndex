@@ -31,48 +31,28 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// EmailLocker serialises first-login provisioning per email so concurrent
-// /v1/auth/callback callers can't both create speculative Account rows
-// before the email-unique-index Users insert picks a winner.
+// EmailLocker serialises first-login provisioning per email, so two concurrent callbacks cannot
+// both create an Account before the unique-email Users insert picks a winner (the loser's
+// Account would be orphaned). Production is Redis SETNX; nil falls back to Suspend-on-conflict.
 //
-// Without it, two valid magic links for the same just-verified email both
-// pass `GetUserByEmail → ErrNotFound` and both `Accounts.Create`; only the
-// first `Users.CreateUser` wins and the loser's Account is orphaned. A
-// Suspend-mark on the orphan is defence-in-depth; locking BEFORE
-// Account.Create removes it.
-//
-// Production: Redis SETNX, 30s TTL (`dashboardauth.RedisEmailLocker`).
-// Tests / Redis-less dev: nil, and the Suspend-on-conflict fallback handles
-// the rare race.
-//
-// `Acquire` returns (true, token, …) when the caller holds the lock and
-// must `Release` with the SAME token; (false, "", …) means another caller
-// holds it, so poll `Users.GetUserByEmail` briefly. Errors mean "not
-// acquired": fall through unlocked. `Release` deletes the lock ONLY if it
-// still carries the token, so a holder that overran its TTL cannot delete a
-// successor's lock.
+// Acquire returns (true, token, ...) when the caller holds the lock, and (false, "", ...) when
+// another caller does (poll GetUserByEmail briefly). An error means "not acquired": proceed
+// unlocked. Release deletes the lock only if it still carries the token, so a holder that
+// overran its TTL cannot delete a successor's lock.
 type EmailLocker interface {
 	Acquire(ctx context.Context, emailHash string, ttl time.Duration) (bool, string, error)
 	Release(ctx context.Context, emailHash, token string) error
 }
 
-// LoginThrottle, when set, bounds magic-link sends to prevent inbox
-// email-bombing + sender-reputation / email-quota burn. The global
-// anonymous rate-limit (`[api] anon_rate_limit_per_min`; the deployed
-// figure is stated once, on auth.RedisLoginThrottle) only caps per-IP
-// REQUEST volume and is sized for browsing, orders of magnitude above any
-// sane email rate: a single IP under that ceiling can still bomb one victim
-// inbox or spray many addresses, and each accepted request fires an
-// outbound email. nil disables the check.
+// LoginThrottle, when set, bounds magic-link sends against inbox bombing and sender-reputation
+// burn. The global anonymous rate-limit is sized for browsing, far above any sane email rate,
+// so it cannot do this job. nil disables the check.
 type LoginThrottle interface {
-	// Allow reports whether a magic-link send for (ip, email) is within
-	// quota. On false the handler MUST skip the email yet still return the
-	// generic 200 {status:"sent"} — neither the attacker nor the victim may
-	// learn a throttle fired (the same anti-enumeration contract the
-	// endpoint already keeps). A non-nil error means the backing store is
-	// unavailable; the handler falls OPEN (sends) — availability over a
-	// brief abuse window, mirroring the signup throttle's fail-open. email is
-	// the lowercased address; implementations hash it before keying on it.
+	// Allow reports whether a magic-link send for (ip, email) is within quota. On false the
+	// handler MUST skip the email yet still return the generic 200 {status:"sent"}, so neither
+	// attacker nor victim learns a throttle fired. A non-nil error means the store is
+	// unavailable and the handler falls OPEN (availability over a brief abuse window). email is
+	// lowercased; implementations hash it before keying on it.
 	Allow(ctx context.Context, ip, email string) (bool, error)
 }
 
@@ -104,20 +84,13 @@ type Config struct {
 	// /v1/auth/passkey/* routes unmounted — email-code sign-in
 	// still works.
 	Passkeys platform.WebAuthnCredentialStore
-	// PasskeyCeremonyGuard (optional) makes each WebAuthn ceremony
-	// challenge single-use, so a captured finish-ceremony request
-	// cannot be replayed into a second session.
-	// Production wires the Redis-SETNX adapter so the spent-set is
-	// shared across API instances; nil defaults to the in-process
-	// guard installed by validate() below — never nil at runtime, so
-	// the protection cannot be absent, only single-instance.
+	// PasskeyCeremonyGuard (optional) makes each WebAuthn ceremony challenge single-use, so a
+	// captured finish request cannot be replayed into a second session. Production wires Redis
+	// SETNX (shared across instances); nil defaults to an in-process guard in validate().
 	PasskeyCeremonyGuard PasskeyCeremonyGuard
-	// DashboardBaseURL is the absolute URL of the explorer hosting
-	// the in-site dashboard (typically https://stellarindex.io).
-	// The magic-link callback URL embedded in emails is
-	// `{DashboardBaseURL}/auth/callback?token=<plaintext>` and the
-	// post-login redirect lands on `{DashboardBaseURL}{next}` (next
-	// defaults to "/"; the dashboard itself lives under /dashboard/*).
+	// DashboardBaseURL is the absolute URL of the explorer hosting the dashboard. Emailed links
+	// are {DashboardBaseURL}/auth/callback?token=<plaintext>; post-login redirects land on
+	// {DashboardBaseURL}{next}, with next defaulting to "/".
 	DashboardBaseURL string
 	// EmailFrom is the From: address (e.g.
 	// `Stellar Index <hello@stellarindex.io>`).
@@ -173,11 +146,9 @@ func (c *Config) ensureCodeSecret() error {
 		if c.Passkeys != nil {
 			return errors.New("dashboardauth: passkeys are wired but the server secret is empty — set the api.dashboard.code_secret_env variable")
 		}
-		// The 6-digit code derivation must NEVER run unkeyed (see
-		// [Generator.CodeForHash]). Without passkeys, fall back to a random
-		// per-process secret: still unforgeable, but in-flight codes, magic
-		// links and login-device markers stop verifying on another
-		// instance or after a restart.
+		// The code derivation must NEVER run unkeyed (see [Generator.CodeForHash]). Fall back to
+		// a random per-process secret: unforgeable, but in-flight codes, links and login-device
+		// markers stop verifying on another instance or after a restart.
 		secret := make([]byte, 32)
 		if _, err := c.Generator.Read(secret); err != nil {
 			return fmt.Errorf("dashboardauth: generate code secret: %w", err)
@@ -209,11 +180,9 @@ func (c *Config) validate() error {
 	if c.Now == nil {
 		c.Now = func() time.Time { return time.Now().UTC() }
 	}
-	// Replay protection for passkey ceremonies is never optional —
-	// only its blast radius is. Redis-less deployments get the
-	// in-process spent-set (single-instance accounting), the same
-	// posture the login-throttle fallback takes. Must come
-	// after the Now default: the guard expires records on that clock.
+	// Replay protection is never optional, only its scope: Redis-less deployments get a
+	// single-instance spent-set. Must follow the Now default, since the guard expires records
+	// on that clock.
 	if c.PasskeyCeremonyGuard == nil {
 		c.PasskeyCeremonyGuard = newInProcessPasskeyCeremonyGuard(c.Now)
 	}
@@ -253,17 +222,10 @@ func (c *Config) validate() error {
 // Handlers exposes the auth flow to be mounted in the v1 mux.
 type Handlers struct{ cfg *Config }
 
-// NewHandlers validates cfg IN PLACE and returns a mount-ready
-// Handlers backed by that same pointer.
+// NewHandlers validates cfg IN PLACE and returns Handlers backed by that same pointer.
 //
-// cfg is a *Config, not a value: validate() defaults several
-// fields (Generator.Secret, Logger, Now, PasskeyCeremonyGuard —
-// see validate() below), and a by-value parameter would apply
-// those defaults to a local copy, leaving the caller's own
-// Config — which [Middleware] and [RequireSession] are built
-// from directly, without going through NewHandlers — un-
-// defaulted. Passing the pointer means one validated Config
-// serves every consumer, current and future.
+// cfg is a pointer because validate() installs defaults (secret, Logger, Now, ceremony guard)
+// that [Middleware] and [RequireSession], built from the caller's Config directly, must also see.
 func NewHandlers(cfg *Config) (*Handlers, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -287,34 +249,27 @@ func NewHandlers(cfg *Config) (*Handlers, error) {
 //	GET    /v1/auth/passkey/credentials       — list passkeys (session-gated)
 //	DELETE /v1/auth/passkey/credentials/{id}  — remove one (session-gated)
 //
-// Login entry points mount through public (Auth admits them credential-less
-// in every auth_mode); session-gated routes do not. The three POSTs sit
-// behind [middleware.RequireSameSiteWrite] (login-CSRF primitives); the GET
-// callback has no usable Origin and is bound by [LoginIntentCookieName].
+// Login entry points mount through public (admitted credential-less in every auth_mode);
+// session-gated routes do not. The POSTs sit behind [middleware.RequireSameSiteWrite]
+// (login-CSRF primitives); the GET callback has no usable Origin and is bound by
+// [LoginIntentCookieName].
 func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
 	public.Handle(mux, "POST /v1/auth/login", sameSite(http.HandlerFunc(h.HandleLogin)))
 	public.Handle(mux, "GET /v1/auth/callback", http.HandlerFunc(h.HandleCallback))
 	public.Handle(mux, "POST /v1/auth/verify-code", sameSite(http.HandlerFunc(h.HandleVerifyCode)))
 	public.Handle(mux, "POST /v1/auth/logout", sameSite(http.HandlerFunc(h.HandleLogout)))
-	// Staff customer look-up — session-gated (RequireSession) AND staff-gated
-	// (HandleAdminLookup checks IsStaff). Backs /dashboard/admin's first tool.
-	//
-	// POST, not GET, and read-only regardless: the look-up term is a customer
-	// EMAIL ADDRESS, which must not travel in a URL (see
-	// [adminLookupRequest]). It carries the same same-site write gate as the
-	// other session-cookie POSTs here, which costs nothing and keeps a
-	// cross-site page from driving a staff session's PII reads.
+	// Staff customer look-up: session-gated AND staff-gated (HandleAdminLookup checks IsStaff).
+	// POST although read-only, because the term is an email address that must not travel in a
+	// URL (see [adminLookupRequest]); the same-site gate keeps a cross-site page from driving a
+	// staff session's PII reads.
 	mux.Handle("POST /v1/account/admin/lookup",
 		RequireSession()(sameSite(http.HandlerFunc(h.HandleAdminLookup))))
 
-	// Passkey (WebAuthn) routes — only when a credential store is
-	// wired. Registration + management are session-gated (adding a
-	// passkey is a privilege of an existing session); the login pair
-	// is the unauthenticated entry point, like /v1/auth/login. Every
-	// state-changing route keeps the same-site write gate the other
-	// auth POSTs carry — finish-login MINTS a session, so it is a
-	// login-CSRF primitive exactly as verify-code is.
+	// Passkey routes, only when a credential store is wired. Registration and management are
+	// session-gated; the login and signup pairs are unauthenticated entry points. Every
+	// state-changing route keeps the same-site write gate: finish-login mints a session, so it
+	// is a login-CSRF primitive exactly as verify-code is.
 	if h.cfg.Passkeys != nil {
 		requireSession := RequireSession()
 		public.Handle(mux, "POST /v1/auth/passkey/begin-login",
@@ -347,31 +302,18 @@ func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 	}
 }
 
-// maxCodeAttempts caps wrong 6-digit code guesses against a single
-// login token before it stops being a code candidate (the magic link
-// still works — the cap gates code matching only). 5 keeps the
-// brute-force success probability against the ~1e6 code space
-// negligible while tolerating a fat-fingered user.
+// maxCodeAttempts caps wrong 6-digit guesses against one login token; the magic link still
+// works, only code matching stops. 5 keeps brute force over the ~1e6 space negligible.
 const maxCodeAttempts = 5
 
 // Durable per-EMAIL code-failure policy.
 //
-// maxCodeAttempts alone is a per-MINT cap: a new /v1/auth/login hands the
-// guesser a fresh 5. The only bound on re-mints is
-// [auth.RedisLoginThrottle] (5 sends/hour/email), which lives in Redis with
-// an in-process fallback (a FLUSHALL, fail-over or restart clears it) and
-// is a fixed window. Standing budget: ~25 guesses/hour/email, indefinitely
-// ≈ 0.22 probability of hitting a code over a year on one address.
-//
-// These numbers cut that to ~10 guesses/day ≈ 3.7e-3/year, and only because
-// each guess is compared against ONE code (the newest mint's); matching
-// every live mint would multiply it by the send throttle's 5. The usability
-// cost is near zero: the lockout gates the CODE path only, the magic link
-// in the same email keeps working, and a legitimate user would have to
-// mistype ten times in a day.
-//
-// Deliberately NOT tunable per deployment: an operator weakening the bound
-// is the failure mode.
+// maxCodeAttempts alone is per mint: every new /v1/auth/login hands the guesser a fresh 5, and
+// the send throttle that bounds re-mints is a volatile fixed window (~25 guesses/hour/email,
+// ~0.22 chance of hitting a code over a year). This cuts it to ~10 guesses/day (~3.7e-3/year),
+// but only because each guess is compared against ONE code (the newest mint's); matching every
+// live mint would multiply it by the send throttle's 5. The lockout gates the code path only,
+// so the magic link keeps working. Deliberately not tunable per deployment.
 const (
 	// maxDurableCodeFailures is the per-email failure budget inside
 	// durableCodeFailureWindow before the code path locks.
@@ -394,26 +336,13 @@ type loginResponse struct {
 	Status string `json:"status"`
 }
 
-// refuseLoginWithoutMail answers 503 — and reports true — when the
-// deployment's mail transport holds no provider credential
-// ([notify.IsUnconfigured]), so no sign-in email can be delivered.
-// Without this, login would answer 200 "sent" for mail that never left.
+// refuseLoginWithoutMail answers 503 and reports true when the mail transport holds no provider
+// credential ([notify.IsUnconfigured]), instead of a 200 "sent" for mail that never left.
 //
-// It runs BEFORE the throttle and BEFORE any side effect, on purpose:
-//
-//   - no magic-link row and no login-intent cookie are minted for a
-//     link nobody can receive;
-//   - every well-formed request gets the same 503, whatever the
-//     address and whether or not a throttle would have fired — so the
-//     refusal is neither an account-enumeration oracle nor a throttle
-//     oracle (the throttled branch answers a decoy 200, which would
-//     otherwise stand out against the 503).
-//
-// The refusal is counted as a failed magic-link send: that counter is
-// what the notify failure-ratio alert reads, and a request for mail
-// that cannot be delivered is exactly the outage it exists to catch.
-// 503 is already a declared response of POST /auth/login ("the
-// deployment hasn't configured the dashboard auth flow").
+// It runs BEFORE the throttle and any side effect, so no link row or login-intent cookie is
+// minted for mail nobody can receive, and every well-formed request gets the same 503: the
+// refusal is neither an enumeration oracle nor a throttle oracle (a decoy 200 would stand out).
+// It counts as a failed send, which is what the notify failure-ratio alert reads.
 func (h *Handlers) refuseLoginWithoutMail(w http.ResponseWriter) bool {
 	if !notify.IsUnconfigured(h.cfg.Sender) {
 		return false
@@ -426,14 +355,10 @@ func (h *Handlers) refuseLoginWithoutMail(w http.ResponseWriter) bool {
 	return true
 }
 
-// HandleLogin issues a magic-link email. Returns 200 with
-// `{status: "sent"}` regardless of whether the email matches an
-// existing user — leaking that information would let attackers
-// enumerate valid emails. The one exception is address-independent:
-// a deployment whose mail transport has no credential answers 503
-// to every request (see refuseLoginWithoutMail). Real signup happens
-// on consumption: if the user doesn't exist when they click
-// the link, the callback handler creates the account.
+// HandleLogin issues a magic-link email. It returns 200 {status:"sent"} whether or not the email
+// matches a user, so attackers cannot enumerate addresses. The one address-independent exception
+// is 503 when the mail transport is unconfigured (see refuseLoginWithoutMail). Signup happens
+// on consumption: the callback creates the account if none exists.
 func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	// MaxBytesReader, not LimitReader: LimitReader returns (n, nil) at
 	// its cap, so the read would succeed on a silently truncated body and
@@ -510,28 +435,18 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/login")
 		return
 	}
-	// The magic-link token is already durably written above; a caller
-	// disconnecting (or a ctx cancellation racing the write) must not
-	// abort the send with the same request context, or a client-triggered
-	// cancellation looks identical to a genuine provider failure. Same
-	// context.WithoutCancel idiom as newTouchCtx (middleware.go).
+	// The token is already written; a client disconnect must not cancel the send, or it would
+	// look like a provider failure.
 	sendCtx, cancelSend := context.WithTimeout(context.WithoutCancel(r.Context()), sendTimeout)
 	defer cancelSend()
 	if err := h.cfg.Sender.Send(sendCtx, msg); errors.Is(err, notify.ErrSuppressed) {
 		obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateMagicLink, obs.NotifySendResultSuppressed).Inc()
 	} else if err != nil {
-		// Instrument the mail outage: the send
-		// failure is otherwise swallowed here (200 either way, see below),
-		// so without this counter a Resend outage that silently kills login
-		// is invisible until users complain.
+		// The failure is swallowed below (200 either way), so this counter is the only signal of
+		// a mail outage.
 		obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateMagicLink, obs.NotifySendResultFailed).Inc()
-		// Log + return 200 anyway — the user shouldn't see
-		// "we tried to email you and failed" because that's a
-		// signal an attacker can use to confirm an email
-		// exists. Operator gets the alert via the
-		// stellarindex_notify_send_failure_ratio_high Prometheus
-		// rule on NotifySendsTotal (configs/prometheus/rules.r1/notify.yml)
-		// — there is no Sentry integration and no Loki alert rule.
+		// Return 200 anyway: a visible send failure would let an attacker confirm an address
+		// exists. The operator alert is the notify failure-ratio Prometheus rule on this counter.
 		h.cfg.Logger.Error("send magic link email", "err", err, "email", maskEmail(email))
 	} else {
 		obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateMagicLink, obs.NotifySendResultSent).Inc()
@@ -540,13 +455,11 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(loginResponse{Status: "sent"})
 }
 
-// loginThrottled applies the magic-link abuse throttle (per IP and per
-// target email). Over quota → skip the send but write the SAME generic 200 the send
-// path does and report true, so neither an attacker nor the victim's inbox
-// learns a throttle fired. Throttle error → fall open. The global anon
-// rate-limit is NOT what bounds sends then (it is far above any email cap);
-// auth.RedisLoginThrottle only errors after its in-process fallback has
-// admitted the send under the same caps.
+// loginThrottled applies the magic-link abuse throttle (per IP and per target email). Over quota
+// it skips the send, writes the SAME generic 200 as the send path and reports true, so neither
+// attacker nor victim learns a throttle fired. A throttle error falls open;
+// auth.RedisLoginThrottle only errors after its in-process fallback admitted the send under
+// the same caps.
 func (h *Handlers) loginThrottled(w http.ResponseWriter, r *http.Request, email string) bool {
 	if h.cfg.LoginThrottle == nil {
 		return false
@@ -564,48 +477,34 @@ func (h *Handlers) loginThrottled(w http.ResponseWriter, r *http.Request, email 
 		return false
 	}
 	h.cfg.Logger.Warn("magic-link login throttled", "ip", clientIP(r).String())
-	// Stamp the login-intent cookie exactly as a real send does. Without
-	// it the throttled response would be the only 200 that carries no
-	// `Set-Cookie: stellarindex_login_intent` — a byte-visible oracle for
-	// "a throttle fired for this address", which is exactly what
-	// [LoginThrottle]'s contract forbids leaking. The cookie carries no
-	// per-link state, so this write is identical to a real one.
+	// Stamp the login-intent cookie exactly as a real send does; its absence would be a
+	// byte-visible oracle for "a throttle fired". The cookie carries no per-link state.
 	h.setLoginIntentCookie(w, r)
 	_ = json.NewEncoder(w).Encode(loginResponse{Status: "sent"})
 	return true
 }
 
-// admitSignedInBrowser lets a send past a full LoginThrottle when the
-// request carries this address's [LoginDeviceCookieName] proof. The
-// per-address cap is shared by everyone who knows the address, so without
-// this the owner's own requests could be crowded out indefinitely; the
-// proof is something only a browser that has already signed in holds.
-// Bounded to one send per address per link lifetime per instance, so the
-// owner can always hold one live link and the bypass is no inbox flood.
-// The proof is checked first, so a caller without one never adds a key.
+// admitSignedInBrowser lets a send past a full LoginThrottle when the request carries this
+// address's [LoginDeviceCookieName] proof. The per-address cap is shared by everyone who knows
+// the address, so the owner could otherwise be crowded out indefinitely. The bypass is bounded to
+// one send per address per link lifetime per instance, so it is no inbox flood. The proof is
+// checked first so a caller without one never adds a key.
 func (h *Handlers) admitSignedInBrowser(r *http.Request, email string) bool {
 	return h.hasLoginDeviceProof(r, email) &&
 		h.cfg.signedInBrowserSends.Allow(hashEmailForLocker(email), 1)
 }
 
-// sessionSameSite picks the session-cookie SameSite policy. The explorer at
-// stellarindex.io calls the API at api.stellarindex.io — cross-*origin* but
-// **same-site** (same registrable domain). SameSite is a *site*-level
-// control, so Lax is sent on those credentialed requests while blocking
-// genuine cross-*site* (e.g. evil.com) ones.
+// sessionSameSite picks the session-cookie SameSite policy. The explorer and the API share a
+// registrable domain (cross-origin but same-site), so Lax is sent on its credentialed requests
+// while genuine cross-site ones are blocked.
 //
-// Not None: it is only needed for a different registrable domain, and it
-// would let any site auto-submit a credentialed POST to the cookie-authed
-// /v1/dashboard/* mutation handlers (CSRF). If the dashboard is ever served
-// from a truly different site, add a CSRF token — do NOT switch to None.
+// Not None: that would let any site auto-submit a credentialed POST to the cookie-authed
+// /v1/dashboard/* mutations (CSRF). If the dashboard ever moves to a different site, add a CSRF
+// token rather than switching to None.
 //
-// Lax still leaves a residual gap: a sibling origin under the same
-// registrable domain counts as same-site, and Lax permits a top-level
-// cross-site GET. Every state-changing dashboard + auth route is therefore
-// also gated by [middleware.RequireSameSiteWrite] (Origin / Referer
-// allow-list), and the magic-link callback — a GET, beyond any Origin check
-// — by [LoginIntentCookieName]. This cookie's SameSite mode is defence in
-// depth, not the only line.
+// Lax leaves a gap: a sibling origin counts as same-site, and Lax permits a top-level cross-site
+// GET. So every state-changing route is also gated by [middleware.RequireSameSiteWrite], and the
+// magic-link callback (a GET) by [LoginIntentCookieName]. SameSite is defence in depth only.
 func sessionSameSite() http.SameSite {
 	return http.SameSiteLaxMode
 }
@@ -625,16 +524,12 @@ func credentialCookie(name, value string) *http.Cookie {
 	}
 }
 
-// HandleCallback consumes a magic-link token, finds-or-creates
-// the user (single-org v1: each email gets one account on first
-// signup), and issues a session cookie.
+// HandleCallback consumes a magic-link token, finds-or-creates the user (one account per email)
+// and issues a session cookie.
 //
-// The link must be opened in the browser that requested it: the
-// login-intent cookie is checked BEFORE the token is consumed
-// (see [LoginIntentCookieName] for the login-CSRF this
-// closes). Checking first, not after, means a user who merely
-// opened their own link on a second device doesn't burn the token
-// — they can still click it on the device that asked for it.
+// The link must be opened in the browser that requested it. The login-intent cookie (see
+// [LoginIntentCookieName]) is checked BEFORE the token is consumed, so opening the link on a
+// second device does not burn it for the device that asked.
 func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	// The request URL carries the magic-link plaintext; set here too so
 	// the guarantee does not depend on the outer middleware stack.
@@ -703,26 +598,20 @@ type verifyCodeResponse struct {
 	Status string `json:"status"`
 }
 
-// HandleVerifyCode consumes the 6-digit email code (the paste-friendly
-// alternative to the magic link) and mints the same session cookie
-// HandleCallback does. It returns JSON (`{status:"ok"}`), not a 303,
-// because the SPA calls it via a credentialed fetch.
+// HandleVerifyCode consumes the 6-digit email code and mints the same session cookie as
+// HandleCallback. It returns JSON, not a 303, because the SPA calls it via credentialed fetch.
 //
-// The code is matched only against the email's NEWEST in-flight token: one
-// comparison per request, so each guess has 1-in-1e6 odds however many
-// sign-in emails an attacker triggered. Every attempt is charged, per token
-// and per email (a separate budget when the browser holds this address's
-// [LoginDeviceCookieName] proof), BEFORE it is compared, atomically in the
-// store, so concurrent guesses get no more comparisons than sequential ones
-// (see [maxCodeAttempts], [maxDurableCodeFailures]). All failures return
-// one generic error.
+// The code is matched only against the email's NEWEST in-flight token: one comparison per
+// request, so each guess has 1-in-1e6 odds however many sign-in emails an attacker triggered.
+// Every attempt is charged, per token and per email (a separate budget when the browser holds
+// this address's [LoginDeviceCookieName] proof), BEFORE it is compared and atomically in the
+// store, so concurrent guesses get no more comparisons than sequential ones. All failures
+// return one generic error.
 //
-// A CORRECT-BUT-STALE code (token expired, consumed, burned or superseded)
-// is not a candidate, so while ANY code is live submitting it counts as a
-// durable failure like a wrong guess: the server cannot tell the owner
-// pasting yesterday's code from an attacker guessing a dead value without
-// leaking which. Affordable because the lockout gates this door only (the
-// magic LINK keeps working) and a successful sign-in clears the counter.
+// A correct-but-stale code (expired, consumed, burned or superseded) counts as a durable failure
+// while any code is live: the server cannot tell the owner pasting yesterday's code from an
+// attacker guessing a dead value without leaking which. Affordable because the lockout gates
+// this door only and a successful sign-in clears the counter.
 func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	// MaxBytesReader, not LimitReader — see HandleLogin.
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
@@ -742,21 +631,17 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A browser that has signed in to this address before is charged
-	// against its own durable budget. The email's budget is spendable by
-	// anyone who knows the address, so sharing it would let a stranger's
-	// ten guesses lock the owner out; a separate budget keeps the proof
-	// holder bounded too, in case the proof outlives the owner's control.
+	// A browser that has signed in to this address before is charged against its own budget:
+	// the email's budget is spendable by anyone who knows the address, so sharing it would let a
+	// stranger's guesses lock the owner out. The proof holder stays bounded too.
 	lockKey := email
 	if h.hasLoginDeviceProof(r, email) {
 		lockKey = platform.LoginCodeDeviceKey(email)
 	}
 
-	// Durable per-email lockout, checked BEFORE any candidate is
-	// compared so a locked address burns no code space. Same generic 400
-	// as every other failure — a distinguishable "you are locked out"
-	// would be an enumeration oracle, and the anti-enumeration contract
-	// on this endpoint is absolute.
+	// Durable lockout, checked BEFORE any candidate is compared so a locked address burns no
+	// code space. Same generic 400 as every failure: a distinct "locked out" would be an
+	// enumeration oracle.
 	if h.loginCodeLocked(r, lockKey) {
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
@@ -814,25 +699,18 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(verifyCodeResponse{Status: "ok"})
 }
 
-// loginCodeLocked reports whether the durable per-email failure counter
-// currently bars the code path.
+// loginCodeLocked reports whether the durable per-email failure counter currently bars the code
+// path.
 //
-// Fails OPEN on a store error, loudly. Fail-closed was considered and
-// rejected: the realistic way this query fails while the rest of the
-// handler works is migration 0122 not being applied yet on a node, and
-// refusing there would take dashboard code sign-in offline fleet-wide
-// for a defence-in-depth control. It is not a bypass an attacker can
-// reach either — the candidate lookup two lines down uses the same
-// Postgres pool, so a DB an attacker could break takes the whole
-// verify path with it, and the per-token maxCodeAttempts cap still
-// stands regardless.
+// Fails OPEN on a store error, loudly: failing closed would take code sign-in offline for a
+// defence-in-depth control (e.g. a node missing the lockout migration). It is no attacker bypass,
+// since the candidate lookup uses the same Postgres pool and the per-token maxCodeAttempts cap
+// still applies.
 func (h *Handlers) loginCodeLocked(r *http.Request, email string) bool {
 	state, err := h.cfg.Tokens.LoginCodeLockoutStatus(r.Context(), email)
 	if err != nil {
-		// The control is now OFF for this request and the HTTP response
-		// is indistinguishable from the healthy path, so the counter is
-		// the only evidence it happened. A fail-open control without one
-		// fails silently.
+		// The control is OFF for this request and the response looks healthy, so the counter
+		// is the only evidence.
 		obs.LoginCodeLockoutErrorsTotal.WithLabelValues(obs.LoginCodeLockoutOpStatusCheck).Inc()
 		h.cfg.Logger.Error("login code lockout status unavailable; allowing the attempt",
 			"err", err, "email", maskEmail(email))
@@ -871,17 +749,14 @@ func (h *Handlers) loginCodeLive(r *http.Request, email string) bool {
 	return live
 }
 
-// chargeLoginCodeAttempt records this attempt against the email's
-// durable failure budget BEFORE any code is compared, and reports
-// whether the attempt is within budget. It is charged as a failure up
-// front; a successful sign-in clears it ([Handlers.startSessionForEmail]).
-// The store's upsert serialises on the email's row, so concurrent
-// attempts receive distinct post-increment counts and at most
-// [maxDurableCodeFailures] of them per window are admitted — including
-// the one that reaches the cap, which is why the bound is <=.
+// chargeLoginCodeAttempt records this attempt against the email's durable failure budget BEFORE
+// any code is compared, and reports whether it is within budget. It is charged as a failure up
+// front; a successful sign-in clears it ([Handlers.startSessionForEmail]). The store's upsert
+// serialises on the email's row, so concurrent attempts get distinct counts and at most
+// [maxDurableCodeFailures] per window are admitted, including the one that reaches the cap
+// (hence <=).
 //
-// Fails OPEN on a store error for the reason [Handlers.loginCodeLocked]
-// gives; the per-token [maxCodeAttempts] reservation still applies.
+// Fails OPEN on a store error for the reason given on [Handlers.loginCodeLocked].
 func (h *Handlers) chargeLoginCodeAttempt(r *http.Request, email string) bool {
 	state, err := h.cfg.Tokens.RegisterFailedLoginCode(
 		r.Context(), email, maxDurableCodeFailures, durableCodeFailureWindow, durableCodeLockout)
@@ -900,13 +775,9 @@ func (h *Handlers) chargeLoginCodeAttempt(r *http.Request, email string) bool {
 	return state.FailedCount <= maxDurableCodeFailures
 }
 
-// startSessionForEmail finds-or-creates the user for a just-verified
-// email, marks it verified + bumps last_login, mints a session, and
-// writes the session cookie. Shared by HandleCallback (magic link) and
-// HandleVerifyCode (email code): both arrive here once a login token
-// has been validated + atomically consumed. On success it writes only
-// the Set-Cookie header — the caller owns the response body (303
-// redirect vs JSON) so it can shape errors appropriately.
+// startSessionForEmail finds-or-creates the user for a just-verified email, marks it verified,
+// mints a session and writes the cookie. HandleCallback and HandleVerifyCode both arrive here
+// once a login token is consumed. It writes only Set-Cookie; the caller owns the response body.
 func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, email string) error {
 	user, err := h.cfg.Users.GetUserByEmail(r.Context(), email)
 	if err != nil {
@@ -919,12 +790,9 @@ func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 
-	// A successful sign-in through EITHER door (code or magic
-	// link) retires the durable failure counter. Possession of a live
-	// token proves the address's owner is present, and without this a
-	// legitimate user's typos would accumulate across months until they
-	// locked themselves out of the code path for nothing. Best-effort:
-	// a failure here must never turn a valid login into an error.
+	// A successful sign-in through either door retires the durable failure counter: a live token
+	// proves the owner is present, and otherwise typos would accumulate until they locked the
+	// owner out. Best-effort.
 	h.clearLoginCodeLockouts(r, email)
 
 	// Mark email verified — a consumed login token proves control of
@@ -939,11 +807,9 @@ func (h *Handlers) startSessionForEmail(w http.ResponseWriter, r *http.Request, 
 // minting one more revokes the oldest.
 const maxLiveSessionsPerUser = 10
 
-// mintSession bumps last_login, creates the DB session row, and
-// writes the session cookie for an ALREADY-AUTHENTICATED user. It is
-// the single session-issuance path — magic link, email code, and
-// passkey login all end here, so every door issues the identical
-// credential with identical attributes.
+// mintSession bumps last_login, creates the session row and writes the cookie for an
+// ALREADY-AUTHENTICATED user. It is the single issuance path (link, code and passkey), so every
+// door issues an identical credential.
 func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user platform.User) error {
 	// last_login (+ any caller-staged field like EmailVerifiedAt) is
 	// non-fatal on error — the session can still issue; we just won't
@@ -954,22 +820,16 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 		h.cfg.Logger.Warn("update user post-login", "err", err, "user_id", user.ID)
 	}
 
-	// The cookie carries a high-entropy random token; the row stores
-	// only sha256(token). A leak of the sessions table is therefore not
-	// directly replayable — the same hashed-at-rest posture as api_keys
-	// and magic_link_tokens. We hold the plaintext
-	// just long enough to set the cookie, then drop it.
+	// The row stores only sha256(token), so a leaked sessions table is not replayable (same
+	// hashed-at-rest posture as api_keys and magic_link_tokens).
 	token, tokenHash, err := h.cfg.Generator.NewSessionToken()
 	if err != nil {
 		return fmt.Errorf("mint session token: %w", err)
 	}
 	h.revokePresentedSession(r)
 
-	// CF-IPCountry is normally a 2-letter ISO code (or "XX"/"T1"/"EU"),
-	// but it's a client-reachable header like the UA — sanitise it the
-	// same way rather than writing it to Postgres text unbounded and
-	// untreated. Read once; empty is expected (and safe) when Cloudflare
-	// isn't fronting the request.
+	// CF-IPCountry is a client-reachable header like the UA, so sanitise it before it reaches
+	// Postgres. Empty is expected when Cloudflare is not fronting the request.
 	const maxGeoLen = 8
 	geo := safeText(r.Header.Get("CF-IPCountry"), maxGeoLen)
 
@@ -1022,10 +882,8 @@ func (h *Handlers) revokePresentedSession(r *http.Request) {
 	}
 }
 
-// HandleLogout revokes the current session and clears the
-// cookie. With ?all=true it revokes every session of the presented
-// session's user instead. Idempotent — calling without a session
-// cookie is a 200, not a 401.
+// HandleLogout revokes the current session and clears the cookie; ?all=true revokes every
+// session of its user instead. Idempotent: no session cookie is a 200, not a 401.
 func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	all := false
 	if v := r.URL.Query().Get("all"); v != "" {
@@ -1039,9 +897,8 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		all = parsed
 	}
 	if c, err := r.Cookie(SessionCookieName); err == nil && c.Value != "" {
-		// The cookie is the random token, not the PK — hash it, resolve
-		// the row, and revoke by internal ID. Best-effort: a missing /
-		// already-revoked session is not an error at logout.
+		// The cookie is the random token, not the PK: hash it, resolve the row, revoke by ID.
+		// A missing or already-revoked session is not an error at logout.
 		sess, err := h.cfg.Users.GetSessionByTokenHash(r.Context(), HashSessionToken(c.Value))
 		switch {
 		case err == nil && all:
@@ -1069,9 +926,8 @@ func (h *Handlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// clearSessionCookies expires the session cookie and, in the same
-// response, its presence flag: a hint left behind would send the explorer
-// back for one more 401 per page load until it expired on its own.
+// clearSessionCookies expires the session cookie and, in the same response, its presence hint;
+// a leftover hint would cost the explorer a 401 per page load until it expired.
 func (h *Handlers) clearSessionCookies(w http.ResponseWriter) {
 	cleared := credentialCookie(SessionCookieName, "") //nolint:gosec // G124: credentialCookie sets Secure, HttpOnly and SameSite=Lax
 	cleared.MaxAge = -1
@@ -1079,22 +935,12 @@ func (h *Handlers) clearSessionCookies(w http.ResponseWriter) {
 	h.clearSessionHintCookie(w)
 }
 
-// signupNewUser creates the account + first user from a
-// just-verified email. Single-org v1: every new email gets
-// its own account with the user as owner.
+// signupNewUser creates the account and first user (as owner) from a just-verified email.
 //
-// Concurrent /v1/auth/callback callbacks for the same just-verified
-// email can race — both pass the GetUserByEmail check, both create an
-// account, only the first user-insert wins on `users_email_idx`. The
-// full fix is the optional per-email EmailLocker (Redis SETNX): the
-// loser short-circuits before Account.Create, polls briefly for the
-// winner's user, and never inserts a speculative-account row.
-//
-// When no EmailLocker is configured (tests, Redis-less dev) the
-// Suspend-on-conflict path stays as defence-in-depth:
-// catch ErrConflict on CreateUser, mark the speculative-account
-// row Suspended with reason `signup-race:` so the operator
-// reaper has an unambiguous signal, then reload the winner.
+// Concurrent callbacks for one email can race: both pass GetUserByEmail and create an account,
+// and only the first user insert wins on users_email_idx. EmailLocker prevents the speculative
+// account. Without one, ErrConflict on CreateUser marks the speculative account Suspended with
+// a "signup-race:" reason (an unambiguous reaper signal) and reloads the winner.
 func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.User, error) {
 	winner, gotWinner, release, err := h.acquireSignupLock(ctx, email)
 	if err != nil {
@@ -1128,18 +974,8 @@ func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.Us
 			if getErr != nil {
 				return platform.User{}, fmt.Errorf("create user conflict + reload: %w", getErr)
 			}
-			// Mark the speculative-account row as Suspended with a
-			// reason the operator reaper can match. Without this the
-			// orphan accumulates as a never-recovered Active row;
-			// the reaper has to fuzz-match against "accounts with
-			// no users" to find them. With this, the reaper just
-			// scans for `Suspended` + reason starting with
-			// "signup-race:". Best-effort — Suspend errors log
-			// and drop because the load-bearing operation (login
-			// for `winner`) has already succeeded.
-			// No address in the reason: it is copied into audit metadata
-			// (account.override.set before/after) and the row already
-			// carries it in billing_email.
+			// Best-effort: the winner's login has already succeeded. The reason carries no address
+			// because it is copied into audit metadata.
 			if suspErr := h.cfg.Accounts.Suspend(ctx, acct.ID, "signup-race: orphan speculative account"); suspErr != nil {
 				h.cfg.Logger.Warn("signup race: failed to mark orphan account",
 					"err", suspErr, "speculative_account_id", acct.ID)
@@ -1176,23 +1012,13 @@ func (h *Handlers) createSignupAccount(ctx context.Context, email string) (platf
 	return acct, nil
 }
 
-// acquireSignupLock attempts to serialise first-login provisioning
-// for `email` through the configured EmailLocker. Returns:
+// acquireSignupLock serialises first-login provisioning for email through the EmailLocker.
+// Returns:
 //
-//	(winner, true, nil, nil)  — lock lost AND the winner's user row
-//	                            became visible while we polled.
-//	                            Caller returns the winner directly.
-//	(_, false, release, nil)  — either no locker is configured, the
-//	                            lock acquire failed (treat as "fall
-//	                            through to unlocked path"), or we won
-//	                            the lock. `release` is non-nil only
-//	                            when we hold the lock; caller must
-//	                            defer it.
-//	(_, false, nil, err)      — re-check under the lock surfaced a
-//	                            non-NotFound store error.
-//
-// Extracted from [signupNewUser] to keep that function's cognitive
-// complexity under the linter's gocognit cap.
+//	(winner, true, nil, nil)  - lock lost and the winner's user became visible; use it directly.
+//	(_, false, release, nil)  - no locker, acquire failed (fall through unlocked), or we hold
+//	                            the lock; release is non-nil only when held, and must be deferred.
+//	(_, false, nil, err)      - the re-check under the lock hit a non-NotFound store error.
 func (h *Handlers) acquireSignupLock(ctx context.Context, email string) (platform.User, bool, func(), error) {
 	if h.cfg.EmailLocker == nil {
 		return platform.User{}, false, nil, nil
@@ -1222,10 +1048,8 @@ func (h *Handlers) acquireSignupLock(ctx context.Context, email string) (platfor
 				"err", relErr, "email", maskEmail(email))
 		}
 	}
-	// Inside the lock, a concurrent winner may have already
-	// committed before we acquired (the lock TTL elapsed between
-	// their Release and our Acquire). Re-check user-by-email
-	// before the speculative Account.Create.
+	// A winner may have committed before we acquired (their lock TTL elapsed); re-check before
+	// the speculative Account.Create.
 	if existing, getErr := h.cfg.Users.GetUserByEmail(ctx, email); getErr == nil {
 		release()
 		return existing, true, nil, nil
@@ -1236,27 +1060,19 @@ func (h *Handlers) acquireSignupLock(ctx context.Context, email string) (platfor
 	return platform.User{}, false, release, nil
 }
 
-// hashEmailForLocker produces a stable hex digest for the per-
-// email signup lock. The plaintext email is never the cache
-// key so a Redis dump doesn't leak addresses; the digest is
-// stable across processes so two API workers serialise on the
-// same key.
+// hashEmailForLocker returns a stable hex digest for the signup lock key, so a Redis dump leaks
+// no addresses and all API workers serialise on the same key.
 func hashEmailForLocker(email string) string {
 	h := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
 	return hex.EncodeToString(h[:])
 }
 
-// waitForWinnerUser polls Users.GetUserByEmail until the
-// winner's row materialises, the context expires, or the local
-// budget (1500ms across ~10 attempts) is exhausted. Returns the
-// zero-value [platform.User] (with `ID == uuid.Nil`) if we time
-// out without seeing a winner — the caller falls through and
-// tries to provision themselves.
+// waitForWinnerUser polls GetUserByEmail until the winner's row appears, the context expires or
+// the budget runs out, returning a zero User (ID == uuid.Nil) on timeout so the caller
+// provisions itself.
 //
-// Tight budget on purpose: the user is waiting on the callback
-// redirect; a long poll would surface as a hung browser tab.
-// 1.5s is generous enough to bridge a slow first INSERT but
-// short enough to fail open if the lock-holder crashed.
+// The ~1.5s budget is tight on purpose: the user is waiting on the callback redirect, yet it
+// bridges a slow first INSERT and fails open if the lock-holder crashed.
 func (h *Handlers) waitForWinnerUser(ctx context.Context, email string) (platform.User, error) {
 	const (
 		maxAttempts = 10
@@ -1300,15 +1116,9 @@ func looksLikeCode(s string) bool {
 }
 
 func clientIP(r *http.Request) net.IP {
-	// Use the trusted-proxy-resolved IP from `middleware.RemoteIP`
-	// rather than parsing r.RemoteAddr directly. Behind Caddy /
-	// Cloudflare, the socket peer is the local proxy; the real client
-	// IP is in X-Forwarded-For, and the middleware decides whether to
-	// honour it based on the `trusted_proxy_cidrs` config.
-	//
-	// Falls back to the socket peer when middleware.RemoteIP
-	// returns empty (well-formed requests always carry one;
-	// the empty case is left to upstream policy).
+	// Use the trusted-proxy-resolved IP: behind the proxy the socket peer is the proxy itself,
+	// and the middleware honours X-Forwarded-For only per trusted_proxy_cidrs. Falls back to the
+	// socket peer when it returns empty.
 	if resolved := middleware.RemoteIP(r); resolved != "" {
 		if ip := net.ParseIP(resolved); ip != nil {
 			return ip
@@ -1321,14 +1131,9 @@ func clientIP(r *http.Request) net.IP {
 	return net.ParseIP(host)
 }
 
-// safeText sanitises a client-supplied string before it reaches a
-// Postgres text column: strips control characters (a client-supplied
-// CR/LF could inject arbitrary lines into the plaintext login email)
-// and truncates by RUNES rather than bytes, so truncation can never cut
-// a multi-byte codepoint in half and hand Postgres invalid UTF-8, which
-// Postgres refuses. passkeyDisplayName (passkey.go) documents the same
-// rule; this applies it to every client-string-to-Postgres-text site in
-// the package.
+// safeText sanitises a client-supplied string before it reaches a Postgres text column. It strips
+// control characters (CR/LF could inject lines into the plaintext login email) and truncates by
+// runes, so a multi-byte codepoint is never cut into invalid UTF-8.
 func safeText(s string, maxRunes int) string {
 	s = strings.Map(func(rr rune) rune {
 		if rr == '\t' {
@@ -1345,9 +1150,8 @@ func safeText(s string, maxRunes int) string {
 	return s
 }
 
-// uaDangerousChars strips delimiter/sentence punctuation and bidi,
-// zero-width and line-separator code points (which safeText's <0x20 check
-// misses) from the UA we store and display. Outbound email never renders
+// uaDangerousChars strips delimiter punctuation and bidi, zero-width and line-separator code
+// points (which safeText's <0x20 check misses) from the stored UA. Outbound email never renders
 // the raw UA; it uses notify.ClientFromUserAgent's closed vocabulary.
 var uaDangerousChars = regexp.MustCompile(
 	"[()\"'`:!?<>\\[\\]{}\u200b\u200e\u200f\u2028\u2029\u0085\u202a-\u202e\u2066-\u2069]")
@@ -1413,17 +1217,12 @@ func accountNameFromEmail(email string) string {
 	return email
 }
 
-// writeProblem emits a problem+json error body matching the
-// rest of the v1 surface, via the shared httpx helper. Kept as a
-// local one-liner only to pin this surface's type URL —
-// dashboardauth must not depend on internal/api/v1's enveloped
-// writeProblem.
+// writeProblem emits a problem+json body via httpx, pinning this surface's type URL;
+// dashboardauth must not depend on internal/api/v1's enveloped writeProblem.
 func writeProblem(w http.ResponseWriter, status int, detail, instance string) {
 	httpx.WriteProblem(w, "https://api.stellarindex.io/errors/auth", status, detail, instance)
 }
 
-// maskEmail redacts a customer email for logging: keep the first
-// local-part character + the full domain, hide the rest —
-// "alice@example.com" -> "a***@example.com". Enough to correlate a log line to
-// a domain / support ticket without persisting the full PII in application logs.
+// maskEmail redacts an email for logging ("alice@example.com" -> "a***@example.com"): enough to
+// correlate a log line without persisting full PII.
 func maskEmail(email string) string { return pii.MaskEmail(email) }

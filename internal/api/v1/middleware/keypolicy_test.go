@@ -204,15 +204,9 @@ func TestKeyPolicy_Permissions(t *testing.T) {
 	}
 }
 
-// TestKeyPolicy_OperatorSubjectToOwnPermissions pins that operator-tier keys
-// are bound by their OWN permission gate — a default operator key keeps full
-// access, but a deliberately-narrowed one is confined.
-//
-// Defect guarded against: checkKeyPolicy short-circuiting with an
-// unconditional `return "", nil` for every TierOperator subject BEFORE the
-// scope + permission gates ran, so an operator key explicitly narrowed at
-// mint silently bypassed its own restrictions. The prior test here asserted
-// that bypass as intended behaviour; it encoded the defect.
+// TestKeyPolicy_OperatorSubjectToOwnPermissions pins that operator-tier keys are bound by their
+// OWN gates: a default operator key keeps full access, a narrowed one is confined. Guards against
+// checkKeyPolicy short-circuiting for TierOperator before the scope and permission gates run.
 func TestKeyPolicy_OperatorSubjectToOwnPermissions(t *testing.T) {
 	cases := []struct {
 		name       string

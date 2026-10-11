@@ -5,24 +5,13 @@ import (
 	"net/http"
 )
 
-// Envelope404 converts Go's default text/plain "404 page not found"
-// and "Method Not Allowed" responses (emitted by net/http's ServeMux
-// when no pattern matches a path, or when a path's only registered
-// pattern uses a different method) into RFC 9457 problem+json so
-// the wire shape stays consistent with the rest of the v1 error
-// surface.
+// Envelope404 converts the ServeMux's default text/plain 404 and 405 responses into RFC 9457
+// problem+json, matching the rest of the v1 error surface.
 //
-// All v1 handlers write JSON via writeJSON / writeProblem and set
-// Content-Type explicitly. The only way a response leaves with
-// Content-Type "text/plain; charset=utf-8" is the mux's default
-// error path. We detect that combination at WriteHeader time,
-// override the Content-Type to application/problem+json, write
-// our envelope, and suppress the trailing default-handler body.
-//
-// This middleware only buffers the WriteHeader decision (a small,
-// allocation-free wrapper) — Write passes straight through for the
-// non-overridden case, so SSE handlers and large responses are
-// untouched.
+// v1 handlers always set Content-Type explicitly, so a "text/plain; charset=utf-8" response can
+// only come from the mux's default error path. That is detected at WriteHeader time, replaced
+// with the envelope, and the trailing default body is suppressed. Only the WriteHeader decision
+// is intercepted; Write passes straight through, so SSE and large responses are untouched.
 func Envelope404(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := &envelope404Recorder{ResponseWriter: w, r: r}
@@ -47,12 +36,8 @@ func (e *envelope404Recorder) WriteHeader(status int) {
 		// Length depends on the body we're about to write — let Go
 		// recompute it. The default handler may have set a stale value.
 		e.Header().Del("Content-Length")
-		// Errors override the cache-control middleware's per-route
-		// directive: never cache an unknown-path 404 or method-mismatch
-		// 405. A CDN serving /v1/assets (tagged `public, max-age=60,
-		// s-maxage=300` by the middleware) would otherwise cache a
-		// transient 405 from a misconfigured client and replay it to
-		// other anonymous clients on the same key.
+		// Override the per-route cache-control: a CDN caching a 405 from a misconfigured client
+		// under a public route key would replay it to other anonymous clients.
 		e.Header().Set("Cache-Control", "no-store")
 		e.ResponseWriter.WriteHeader(status)
 		e.writeProblem(status)

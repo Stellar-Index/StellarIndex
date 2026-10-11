@@ -78,12 +78,9 @@ func (r *testRig) postLogin(t *testing.T, email string) *httptest.ResponseRecord
 	return w
 }
 
-// attachCookies replays onto req the cookies a real browser would
-// have stored from w. Load-bearing because `POST /v1/auth/login`
-// sets the login-intent witness and `GET /v1/auth/callback` refuses to
-// mint a session without it, so a callback request built without this
-// step is a DIFFERENT browser — which is exactly the login-CSRF the
-// binding rejects.
+// attachCookies replays onto req the cookies a real browser would have stored from w. The callback
+// refuses to mint a session without the login-intent cookie, so a request built without this step
+// is a different browser, which is exactly the login-CSRF the binding rejects.
 func attachCookies(req *http.Request, w *httptest.ResponseRecorder) {
 	for _, c := range w.Result().Cookies() {
 		req.AddCookie(c)
@@ -753,12 +750,9 @@ func TestHandleLogin_EmailDescribesUAFromClosedVocabulary(t *testing.T) {
 	}
 }
 
-// TestTruncateUA_RuneSafe — a multi-byte rune straddling the
-// byte-256 truncation boundary must not be split. A byte-slice
-// truncation (a naive implementation) cuts the leading bytes of "€"
-// (E2 82 AC) off mid-sequence and hands Postgres invalid UTF-8, which
-// `user_agent text NOT NULL` (migration 0027) refuses — after the
-// login token has already been consumed, burning the attempt.
+// TestTruncateUA_RuneSafe: a multi-byte rune straddling the byte-256 boundary must not be split.
+// Invalid UTF-8 is refused by Postgres after the login token has already been consumed, which
+// would burn the attempt.
 func TestTruncateUA_RuneSafe(t *testing.T) {
 	prefix := strings.Repeat("a", 255)
 	ua := prefix + "€" + "xyz" // rune 256 is the 3-byte "€", straddling byte offset 256
@@ -774,12 +768,9 @@ func TestTruncateUA_RuneSafe(t *testing.T) {
 	}
 }
 
-// TestTruncateUA_BreaksOutOfTemplateDelimiter — the
-// plaintext magic-link template renders the UA inside a literal
-// "({{.UserAgent}})" with no escaping. A UA that closes that paren
-// early and adds prose must not survive truncateUA, or the rendered
-// email reads as a trusted, DKIM-signed alert authored by the account
-// owner's own browser.
+// TestTruncateUA_BreaksOutOfTemplateDelimiter: the plaintext magic-link template renders the UA
+// unescaped inside "({{.UserAgent}})". A UA that closes the paren early and adds prose must not
+// survive truncateUA, or the DKIM-signed email would carry attacker-authored text.
 func TestTruncateUA_BreaksOutOfTemplateDelimiter(t *testing.T) {
 	ua := `Mozilla/5.0) URGENT: call +1-555-0100 to secure your account (`
 
@@ -798,20 +789,14 @@ func TestTruncateUA_BreaksOutOfTemplateDelimiter(t *testing.T) {
 
 // TestMaskEmail moved to internal/pii with the implementation.
 
-// TestHandleCallback_MailedLinkDoesNotSignInAForeignBrowser is the
-// headline login-CSRF regression, written against nothing but the public
-// behaviour so it stands on its own: the ONLY thing that changes
-// between failing and passing is whether a magic link mailed to a
-// third party signs that third party into the requester's account.
+// TestHandleCallback_MailedLinkDoesNotSignInAForeignBrowser is the login-CSRF regression, written
+// against public behaviour only: a magic link mailed to a third party must not sign that party
+// into the requester's account.
 //
-// Attack: the attacker requests a link for their OWN address, then
-// mails the link to a victim. The victim's browser has never been
-// through /v1/auth/login, so it holds nothing that ties it to the
-// link. Without the binding, the callback mints the attacker's session there
-// anyway (`sessionSameSite()` is Lax, which permits top-level
-// cross-site GET navigation), and every later action the victim took
-// — minting an API key, attaching a payment method — landed in the
-// attacker's dashboard.
+// Attack: the attacker requests a link for their own address and mails it to a victim, whose
+// browser never went through /v1/auth/login. Without the binding the callback mints the attacker's
+// session there (SameSite=Lax permits top-level cross-site GET), so the victim's later actions
+// land in the attacker's dashboard.
 func TestHandleCallback_MailedLinkDoesNotSignInAForeignBrowser(t *testing.T) {
 	r := newTestRig(t)
 
@@ -880,16 +865,9 @@ func TestHandleCallback_RefusesUnkeyedLoginIntent(t *testing.T) {
 	}
 }
 
-// TestHandleCallback_LoginCSRF_AttackerLinkInVictimBrowserRejected is
-// the login-CSRF regression: the attacker requests a magic link for their
-// OWN account and mails that link to the victim. Without the
-// login-intent binding the victim's browser follows it, takes the
-// attacker's session cookie, and every later action the victim
-// performs lands in the attacker's dashboard.
-//
-// The victim's browser must not be signed in, and — because the check
-// runs before consumption — the attacker's own token must survive so
-// this can never be used to burn someone's link.
+// TestHandleCallback_LoginCSRF_AttackerLinkInVictimBrowserRejected: an attacker's magic link
+// followed in the victim's browser must not sign the victim in. The check runs before consumption,
+// so the attacker's token must survive; this path can never be used to burn someone's link.
 func TestHandleCallback_LoginCSRF_AttackerLinkInVictimBrowserRejected(t *testing.T) {
 	r := newTestRig(t)
 
@@ -990,14 +968,10 @@ func TestHandleCallback_ClearsLoginIntentOnSuccess(t *testing.T) {
 	}
 }
 
-// A deployment with no Resend credential wires a transport that
-// declares it cannot deliver (notify.UnconfiguredSender). HandleLogin must
-// refuse up front: 503, a counted failed send, and NO side effect — no
-// magic-link row, no login-intent cookie — for a link nobody can receive.
-//
-// Reverting only the handler guard leaves the send-error branch to absorb
-// ErrNotConfigured: 200 {"status":"sent"} and a live token row. That is the
-// shape this test goes red on.
+// With no Resend credential the transport declares it cannot deliver (notify.UnconfiguredSender).
+// HandleLogin must refuse up front: 503, a counted failed send, and no magic-link row or
+// login-intent cookie for a link nobody can receive. Without the handler guard the send-error
+// branch would absorb ErrNotConfigured and answer 200 with a live token row.
 func TestHandleLogin_MailUnconfigured_Refuses503WithNoSideEffects(t *testing.T) {
 	r := newTestRig(t)
 	r.cfg.Sender = notify.UnconfiguredSender{Reason: "env X is unset/empty"}
@@ -1034,11 +1008,9 @@ func TestHandleLogin_MailUnconfigured_Refuses503WithNoSideEffects(t *testing.T) 
 	}
 }
 
-// The refusal must be the same for every well-formed request. The throttled
-// branch answers a decoy 200 {"status":"sent"}; if the mail guard ran after
-// it, a 200 among 503s would tell a caller "a throttle fired for this
-// address" — the oracle [LoginThrottle]'s contract forbids — and would claim
-// an email on a deployment that cannot send one.
+// The refusal must be the same for every well-formed request. The throttled branch answers a decoy
+// 200; if the mail guard ran after it, a 200 among 503s would reveal that a throttle fired for the
+// address, the oracle [LoginThrottle]'s contract forbids.
 func TestHandleLogin_MailUnconfigured_RefusesBeforeTheThrottle(t *testing.T) {
 	r := newTestRig(t)
 	r.cfg.Sender = notify.UnconfiguredSender{}
@@ -1079,12 +1051,10 @@ func TestHandleLogin_RecordingSender_StillSends(t *testing.T) {
 	}
 }
 
-// TestHandleLogin_RecordsNotifySendMetric pins the send metric for the
-// magic-link path: internal/notify had zero prometheus visibility, and
-// HandleLogin swallows the send error (returns 200 either way to avoid an
-// enumeration oracle), so a mail outage that silently kills login was invisible.
-// The send call site must now bump stellarindex_notify_sends_total{template=
-// "magic-link"} with result=sent on success and result=failed on error.
+// TestHandleLogin_RecordsNotifySendMetric pins the send metric: HandleLogin swallows the send error
+// (200 either way, to avoid an enumeration oracle), so the counter
+// stellarindex_notify_sends_total{template="magic-link"} with result=sent|failed is the only
+// signal of a mail outage that silently kills login.
 func TestHandleLogin_RecordsNotifySendMetric(t *testing.T) {
 	// Success path: the default rig wires a NoopSender (accepts the message).
 	r := newTestRig(t)
@@ -1201,12 +1171,10 @@ func TestHandleLogin_KeepsPriorIntentSoAnEarlierLinkStillWorks(t *testing.T) {
 	}
 }
 
-// TestHandleLogin_ThrottledResponseStillCarriesAnIntentCookie — the
-// login-intent cookie must not become a side channel for the
-// magic-link throttle. [LoginThrottle]'s contract is that a throttled
-// send is byte-indistinguishable from a real one; if only the
-// un-throttled path emitted a Set-Cookie, the header's presence would
-// answer "does a throttle currently apply to this address?" for free.
+// TestHandleLogin_ThrottledResponseStillCarriesAnIntentCookie: the login-intent cookie must not
+// become a side channel for the throttle. A throttled send must be indistinguishable from a real
+// one, so if only the un-throttled path set a cookie, its presence would leak whether a throttle
+// applies to the address.
 func TestHandleLogin_ThrottledResponseStillCarriesAnIntentCookie(t *testing.T) {
 	sent := newTestRig(t)
 	sentW := sent.postLogin(t, "alice@example.com")
@@ -1243,11 +1211,9 @@ func TestHandleLogin_ThrottledResponseStillCarriesAnIntentCookie(t *testing.T) {
 	}
 }
 
-// TestHandleLogin_ThrottledTapsKeepEveryMailedLinkRedeemable — a
-// user who taps "email me a link" past the send throttle must still be
-// able to open every link that WAS mailed, in the browser that asked for
-// it. Without this, each throttled tap writes a decoy into a 3-slot
-// cookie, so three taps left every mailed link 403ing.
+// TestHandleLogin_ThrottledTapsKeepEveryMailedLinkRedeemable: taps past the send throttle must not
+// stop the browser from opening any link that was actually mailed. A decoy written into the
+// 3-slot cookie per throttled tap would evict real entries and 403 every mailed link.
 func TestHandleLogin_ThrottledTapsKeepEveryMailedLinkRedeemable(t *testing.T) {
 	r := newTestRig(t)
 	throttle := &stubLoginThrottle{allow: true}
@@ -1274,12 +1240,10 @@ func TestHandleLogin_ThrottledTapsKeepEveryMailedLinkRedeemable(t *testing.T) {
 	}
 }
 
-// TestHandleLogin_ThrottleUnobservableAcrossFollowUps — [LoginThrottle]'s
-// contract across a request SEQUENCE, not one response: whether a probe
-// was throttled must change neither the probe's cookie, nor the cookie a
-// follow-up request (real or throttled) gets back, nor which earlier
-// links still redeem. Every observable is compared against a reference
-// fixed before the probe, so the two branches are pinned to each other.
+// TestHandleLogin_ThrottleUnobservableAcrossFollowUps: [LoginThrottle]'s contract holds across a
+// request sequence. Whether a probe was throttled must change neither its own cookie, nor a
+// follow-up's cookie, nor which earlier links still redeem; each is compared to a reference fixed
+// before the probe.
 func TestHandleLogin_ThrottleUnobservableAcrossFollowUps(t *testing.T) {
 	for _, priorSends := range []int{0, 1, 2, 3} {
 		for _, priorThrottled := range []bool{false, true} {
@@ -1325,14 +1289,9 @@ func TestHandleLogin_ThrottleUnobservableAcrossFollowUps(t *testing.T) {
 	}
 }
 
-// TestMiddleware_NilNowDoesNotPanic is a regression for the live
-// production bug where main.go built the auth Config without a Now
-// func and passed it raw to Middleware. NewHandlers defaulted Now on
-// its own copy, but the resolver Middleware kept the nil — so
-// resolveSession's cfg.Now() nil-derefed on every authenticated
-// request. The magic-link cookie resolved fine; /v1/account/me then
-// 500'd, making login look broken. Middleware must default Now (and
-// Logger) so a valid session resolves without panicking.
+// TestMiddleware_NilNowDoesNotPanic: Middleware receives the caller's raw Config, which may never
+// have been validated, so it must default Now and Logger itself. Otherwise resolveSession
+// nil-derefs on every authenticated request.
 func TestMiddleware_NilNowDoesNotPanic(t *testing.T) {
 	accounts := newFakeAccountStore()
 	users := newFakeUserStore()
@@ -1448,14 +1407,9 @@ func TestMiddleware_IdleSessionRejectedAndRevoked(t *testing.T) {
 	}
 }
 
-// TestSignupNewUser_EmailLocker_PreemptsLoser — when the locker is
-// already held for an email (a concurrent winner is provisioning),
-// the loser must wait + return the winner's user WITHOUT creating
-// a speculative Account row.
-//
-// Proves the full-fix path. The
-// fallback Suspend-on-conflict recovery still serves as defence
-// in depth, but the lock path should never trigger it.
+// TestSignupNewUser_EmailLocker_PreemptsLoser: when the locker is already held for an email, the
+// loser must wait and return the winner's user without creating a speculative Account row. The
+// Suspend-on-conflict recovery is defence in depth and the lock path must never trigger it.
 func TestSignupNewUser_EmailLocker_PreemptsLoser(t *testing.T) {
 	r := newTestRig(t)
 	locker := newFakeEmailLocker()
@@ -1521,14 +1475,9 @@ func TestSignupNewUser_EmailLocker_WinnerSucceeds(t *testing.T) {
 	}
 }
 
-// TestTouchTracker_EvictsAgedEntries guards that
-// touchTracker.last must not grow without bound. Without an
-// eviction sweep, every distinct session ID ever seen stays in the
-// map for the process lifetime — one permanent entry per session.
-// Here 50 sessions are each touched once, then time is advanced past
-// the debounce interval and a single FRESH session is touched (which
-// triggers the opportunistic sweep): all 50 aged-out entries must be
-// gone, leaving only the fresh one.
+// TestTouchTracker_EvictsAgedEntries guards that touchTracker.last does not grow without bound.
+// After 50 sessions age past the debounce interval, touching one fresh session triggers the
+// opportunistic sweep and only the fresh entry may remain.
 func TestTouchTracker_EvictsAgedEntries(t *testing.T) {
 	tr := newTouchTracker(time.Minute)
 	base := time.Unix(1_750_000_000, 0)

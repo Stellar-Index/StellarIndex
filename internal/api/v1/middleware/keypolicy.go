@@ -51,16 +51,10 @@ func KeyPolicy() Middleware {
 	}
 }
 
-// checkKeyPolicy runs the per-key gates in order — IP → Referer →
-// scopes → permissions — returning the reason slug + error of the
-// first failure ("" + nil when all pass). Operator-tier subjects run
-// through the SAME gates as every other tier: a default operator key
-// (empty Scopes, AllowAllPermissions=true) passes scopes + permissions
-// freely, but an operator key deliberately narrowed at mint is confined
-// to what it was granted. There is no operator early-return — an
-// operator key that carries an explicit scope subset or permission list
-// must actually be bound by it (an early return would silently bypass
-// both, re-opening the very narrowing the operator configured).
+// checkKeyPolicy runs the per-key gates in order (IP, Referer, scopes, permissions) and returns
+// the reason slug and error of the first failure ("" and nil when all pass). Operator-tier
+// subjects get no early return: a key narrowed at mint must stay bound by its scopes and
+// permissions, or the narrowing would be silently bypassed.
 func checkKeyPolicy(r *http.Request, subject auth.Subject) (string, error) {
 	if err := checkIPAllowlist(r, subject.IPAllowlist); err != nil {
 		return "ip-not-allowed", err
@@ -118,11 +112,9 @@ func checkRefererAllowlist(r *http.Request, allow []string) error {
 	return fmt.Errorf("referer host %q not in this key's allowlist", host)
 }
 
-// checkScopes enforces the coarse route-family capability scopes.
-// Keys with an empty scope list pass unconditionally (back-compat:
-// scopes are opt-in at mint time). Runs before the fine-grained
-// permission entries so the two layers compose: scopes bound the
-// family, permissions bound individual endpoints inside it.
+// checkScopes enforces the coarse route-family scopes; an empty list passes (scopes are opt-in at
+// mint). It runs before permissions so scopes bound the family and permissions bound endpoints
+// inside it.
 func checkScopes(r *http.Request, subject auth.Subject) error {
 	if len(subject.Scopes) == 0 {
 		return nil
@@ -180,11 +172,9 @@ func permissionMatches(r *http.Request, entries []auth.SubjectPermissionEntry) b
 	return false
 }
 
-// prefixMatchesPathSegment reports whether path is prefix or lies under it
-// as a path segment, e.g. prefix "/v1/admin" matches "/v1/admin/keys" but
-// not "/v1/administer" — a bare strings.HasPrefix would let a permission
-// entry scoped to one route leak onto an unrelated sibling route that
-// merely shares a string prefix.
+// prefixMatchesPathSegment reports whether path is prefix or lies under it as a path segment:
+// "/v1/admin" matches "/v1/admin/keys" but not "/v1/administer", so a permission entry cannot
+// leak onto a sibling route that merely shares a string prefix.
 func prefixMatchesPathSegment(path, prefix string) bool {
 	if !strings.HasPrefix(path, prefix) {
 		return false

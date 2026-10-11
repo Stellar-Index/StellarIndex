@@ -1,20 +1,10 @@
 // Package dashboardauth implements the magic-link login flow
 // + session middleware for the customer dashboard.
 //
-// Distinct from internal/auth (bearer-token API auth):
-//
-//   - internal/auth handles `Authorization: Bearer <key>` for
-//     programmatic API requests; the Subject it produces is
-//     scoped to a single API key.
-//   - dashboardauth handles cookie-based dashboard sessions;
-//     the Subject it produces is scoped to a User (and via
-//     User.AccountID to an Account).
-//
-// The two surfaces will eventually meet — admin endpoints want
-// to accept either a staff session OR a tier=operator API key
-// — but for v1 they don't intersect: dashboard endpoints
-// accept sessions only; programmatic endpoints accept keys
-// only.
+// Distinct from internal/auth (bearer-token API auth): that package yields a Subject scoped to a
+// single API key; this one handles cookie sessions, scoped to a User (and via User.AccountID to
+// an Account). The surfaces do not intersect in v1: dashboard endpoints accept sessions only and
+// programmatic endpoints accept keys only.
 package dashboardauth
 
 import (
@@ -32,11 +22,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// SessionCookieName is the HTTP cookie name used for dashboard
-// sessions. Distinct from any future API-side cookies so a
-// browser logged into both can't leak credentials between
-// surfaces. The __Host- prefix makes browsers accept it only as a
-// host-only, Secure, Path=/ cookie (see [credentialCookie]).
+// SessionCookieName is the dashboard session cookie. The __Host- prefix makes browsers accept it
+// only as a host-only, Secure, Path=/ cookie (see [credentialCookie]).
 const SessionCookieName = "__Host-stellarindex_session"
 
 // MagicLinkPlaintextLen — the random-bytes length we use for
@@ -59,14 +46,9 @@ func HashSessionToken(token string) []byte {
 	return sum[:]
 }
 
-// generateMagicLinkToken returns (plaintext, sha256-hash, code).
-// The plaintext is what we put in the email link;
-// the hash is what we store in magic_link_tokens;
-// the code is the paste-friendly 6-digit numeric variant, derived
-// under `secret` (see [Generator.CodeForHash] for why it is keyed).
-//
-// `read` is the entropy source. crypto/rand.Read in production;
-// tests inject a deterministic source.
+// generateMagicLinkToken returns (plaintext, sha256-hash, code): the plaintext goes in the email
+// link, the hash is stored in magic_link_tokens, and the paste-friendly 6-digit code is derived
+// under secret (see [Generator.CodeForHash]). read is the entropy source; tests inject one.
 func generateMagicLinkToken(read func([]byte) (int, error), secret []byte) (plaintext string, hash []byte, code string, err error) {
 	buf := make([]byte, MagicLinkPlaintextLen)
 	n, err := read(buf)
@@ -91,22 +73,14 @@ const loginCodeDomain = "stellarindex/login-code/v1|"
 // codeFromHashKeyed derives the 6-digit email code from a stored token hash
 // UNDER A SERVER-SIDE SECRET.
 //
-// Why keyed: were the code an unkeyed, public function of
-// magic_link_tokens.token_hash, anyone able to read that table (SQL
-// injection elsewhere, a stolen backup, a curious operator) could compute
-// every in-flight sign-in code directly — no brute force, no email access —
-// and mint a session for any address they could trigger a login for via
-// POST /v1/auth/verify-code. The token plaintext is preimage-safe, but the
-// code would be equivalent to the token.
+// Keyed because an unkeyed code would be a public function of magic_link_tokens.token_hash:
+// anyone who could read that table (stolen backup, SQL injection, operator) could compute every
+// in-flight code and mint a session via POST /v1/auth/verify-code without email access.
 //
-// The code is HMAC-SHA256(secret, domain || token_hash) reduced to 6
-// digits. The secret lives in config/env (never Postgres), so a database
-// read alone yields nothing and the online-guessing bounds (per-token
-// attempt cap + durable per-email lockout) are the only attack surface
-// left.
-//
-// The uint32 % 10^6 reduction has negligible modulo bias (0.02% skew,
-// irrelevant at 10 guesses/day).
+// The code is HMAC-SHA256(secret, domain || token_hash) reduced to 6 digits. The secret lives in
+// config/env, never Postgres, so a database read alone yields nothing and the online-guessing
+// bounds (per-token attempt cap, per-email lockout) are the only attack surface. The uint32 %
+// 10^6 reduction has negligible modulo bias (0.02%).
 func codeFromHashKeyed(secret, hash []byte) string {
 	if len(hash) < 4 {
 		// Defensive: a malformed hash must not silently produce a
@@ -151,16 +125,11 @@ func HashMagicLinkPlaintext(plaintext string) []byte {
 // deterministic plaintexts.
 type Generator struct {
 	Read func([]byte) (int, error)
-	// Secret is the root server secret. It is never used as a MAC key
-	// itself: each consumer derives its own key with [purposeKey] — the
-	// 6-digit code ([Generator.CodeForHash]), the passkey-ceremony cookie
-	// (passkeyCeremonyMAC), the magic-link login-intent tag
-	// (loginIntentTag) and the login-device marker (loginDeviceMAC).
-	// Production wires it from the STELLARINDEX_DASHBOARD_CODE_SECRET env
-	// (config api.dashboard.code_secret_env). When empty,
-	// Config.validate() refuses to start if Passkeys is wired (a
-	// per-process key breaks every ceremony that crosses instances or a
-	// restart) and otherwise fills a random per-process secret.
+	// Secret is the root server secret, never used as a MAC key itself: each consumer derives its
+	// own key with [purposeKey] (login code, passkey-ceremony cookie, login-intent tag,
+	// login-device marker). Production reads it from STELLARINDEX_DASHBOARD_CODE_SECRET. When
+	// empty, Config.validate() refuses to start if Passkeys is wired (a per-process key breaks
+	// ceremonies that cross instances or a restart) and otherwise fills a random per-process one.
 	Secret []byte
 }
 
@@ -183,11 +152,8 @@ func (g *Generator) CodeForHash(hash []byte) string {
 	return codeFromHashKeyed(g.Secret, hash)
 }
 
-// NewSessionToken mints (plaintext token, sha256 hash). The
-// plaintext goes in the cookie; the hash is stored on the session
-// row. crypto/rand in production; tests inject a fixed source via
-// Generator.Read. Mirrors [Generator.NewToken] without the 6-digit
-// code (sessions have no paste-friendly variant).
+// NewSessionToken mints (plaintext token, sha256 hash): the plaintext goes in the cookie, the
+// hash on the session row. Like [Generator.NewToken] without the 6-digit code.
 func (g *Generator) NewSessionToken() (token string, hash []byte, err error) {
 	buf := make([]byte, SessionTokenLen)
 	n, err := g.Read(buf)
@@ -226,12 +192,9 @@ func (g *Generator) NewSessionID() (uuid.UUID, error) {
 
 type sessionKey struct{}
 
-// SessionContext carries the authenticated dashboard subject
-// derived from a valid session cookie. Distinct from
-// auth.Subject — that's bearer-token-derived; this is cookie-
-// derived. A request can carry both; handlers prefer the
-// dashboard session for routes like /v1/account/me when both
-// are present.
+// SessionContext carries the dashboard subject derived from a valid session cookie, distinct from
+// the bearer-derived auth.Subject. When a request carries both, handlers prefer the dashboard
+// session for routes like /v1/account/me.
 type SessionContext struct {
 	Session platform.Session
 	User    platform.User

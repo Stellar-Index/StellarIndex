@@ -177,14 +177,12 @@ func TestChargeRateLimit_SingleBucketMiddlewareChargesToo(t *testing.T) {
 	}
 }
 
-// TestChargeRateLimit_FollowsTheLimitersFailurePolicy: the re-pricing
-// shares the base charge's failure policy rather than inventing one.
-// Inside the dwell window a Redis error fails OPEN; past it the throttle
-// layer is declared unavailable and the re-pricing fails CLOSED with the
-// same 503 the middleware writes.
+// TestChargeRateLimit_FollowsTheLimitersFailurePolicy: re-pricing shares the base charge's
+// failure policy. Inside the dwell window a Redis error fails OPEN; past it the throttle layer
+// is unavailable and re-pricing fails CLOSED with the middleware's 503.
 //
-// Both halves run inside ONE request so that it is the handler-side
-// charge, not the middleware's base charge, that meets each state.
+// Both halves run in ONE request so the handler-side charge, not the base charge, meets each
+// state.
 func TestChargeRateLimit_FollowsTheLimitersFailurePolicy(t *testing.T) {
 	rdb := newDownRedis(t)
 

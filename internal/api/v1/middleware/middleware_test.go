@@ -250,11 +250,8 @@ func TestLogger_ServerErrorLogsAtErrorLevel(t *testing.T) {
 	}
 }
 
-// TestLogger_Skips429 — 429 responses must not produce a per-line
-// log entry. A misconfigured client (or an unauthenticated load
-// generator) can produce thousands of 429s per second and flood the
-// systemd journal — r1 evidence saw 343 k suppressed
-// messages in a single 60 s window. Visibility is preserved by the
+// TestLogger_Skips429: 429s must not produce a per-line log entry, since a misconfigured client
+// can emit thousands per second and flood the journal. Visibility is kept by the
 // `stellarindex_http_requests_total{status="429"}` counter.
 func TestLogger_Skips429(t *testing.T) {
 	var buf bytes.Buffer

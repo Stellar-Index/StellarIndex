@@ -11,25 +11,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// RequireEmailVerified returns a [Middleware] that 403s API-key callers
-// whose `EmailVerifiedAt` is still zero: the customer signed up via `POST
-// /v1/signup` but hasn't clicked the verification link. Without it, a
-// valid-looking email string yields a usable plaintext Starter key with no
-// ownership proof; with it, the key stays 403'd until the link is clicked
-// (`/v1/signup/verify` flips the flag).
+// RequireEmailVerified 403s a `/v1/signup`-issued key whose `EmailVerifiedAt` is still zero, so
+// an unverified email string cannot yield a usable key without proof of ownership; the key
+// works once `/v1/signup/verify` flips the flag.
 //
-//   - Anonymous Subjects pass (no key to gate).
-//   - Subjects whose `Identifier` does NOT start with `signup-` pass:
-//     operator-minted (`customer-acme-corp`) and dashboard-minted
-//     (`acct:<slug>`) keys never went through the email-link flow. Only
-//     `/v1/signup`-issued keys are checked.
-//   - `EmailVerifiedAt.IsZero()` AND a `signup-` prefix → 403 +
-//     Problem-JSON pointing at the verify endpoint.
+// Anonymous subjects and keys whose `Identifier` lacks the `signup-` prefix (operator-minted,
+// dashboard-minted `acct:<slug>`) pass, because they never used the email-link flow.
 //
-// The api binary mounts this only when
-// `cfg.API.SignupRequireEmailVerification` is true (the default). Wire
-// AFTER `Auth` and `KeyPolicy`, BEFORE `RateLimit`, so a
-// verification-failed request doesn't also spend a rate-limit token.
+// Mounted only when `cfg.API.SignupRequireEmailVerification` is true. Wire AFTER `Auth` and
+// `KeyPolicy` and BEFORE `RateLimit`, so a rejected request does not also spend a rate-limit token.
 func RequireEmailVerified() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,12 +41,8 @@ func RequireEmailVerified() Middleware {
 	}
 }
 
-// writeEmailUnverified emits a 403 Problem-JSON pointing the
-// customer at the verify endpoint. The body intentionally
-// does NOT echo back the key_id (operators distinguish
-// individual customer flows via /v1/account/me); the keyword
-// `signup-verify-required` lets dashboard clients render a
-// resend-link CTA.
+// writeEmailUnverified emits a 403 problem+json pointing at the verify endpoint. It does not echo
+// the key_id; the `signup-verify-required` keyword lets dashboard clients render a resend CTA.
 func writeEmailUnverified(w http.ResponseWriter, r *http.Request) {
 	payload := map[string]any{
 		"type":     "https://api.stellarindex.io/errors/signup-verify-required",

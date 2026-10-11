@@ -7,16 +7,12 @@ import (
 	"testing"
 )
 
-// The whole value of this field is that it is diagnosable without being
-// identifying. Both halves are load-bearing and both are tested here: a
-// version that leaked values would be a privacy defect (the leak class is
-// exactly that — customer emails reaching edge logs via query strings),
-// and a version that redacted everything would leave us back where we
-// started, unable to tell which /v1/assets request took 9.7 seconds.
+// The field must be diagnosable without being identifying, and both halves are tested: leaking
+// values is a privacy defect (customer emails reaching edge logs via query strings), while
+// redacting everything leaves slow requests indistinguishable.
 
 func TestQueryShapeKeepsPlanSelectingValues(t *testing.T) {
-	// The measured case: same route, same limit, 18x apart in latency —
-	// 82 ms vs 1523 ms on r1 — distinguishable only by order_by.
+	// Same route and limit can differ 18x in latency, distinguishable only by order_by.
 	u, err := url.Parse("/v1/assets?limit=500&order_by=volume_24h_usd_desc")
 	if err != nil {
 		t.Fatal(err)
@@ -31,16 +27,10 @@ func TestQueryShapeKeepsPlanSelectingValues(t *testing.T) {
 }
 
 func TestQueryShapeRedactsEverythingNotAllowListed(t *testing.T) {
-	// Free-text, identifying, and credential-bearing parameters must
-	// never contribute a value. The list is deliberately not exhaustive:
-	// the design is allow-list, so an unknown parameter is redacted by
-	// construction rather than by remembering to deny it.
-	// The fixture values are deliberately NOT secret-shaped. Redaction
-	// keys on the parameter NAME — an unknown name is redacted whatever
-	// it carries — so a realistic-looking credential would add nothing to
-	// this test except a gitleaks finding on our own repo. It did: an
-	// earlier revision used an `sk_live_…` fixture and the secrets gate
-	// correctly rejected it.
+	// Free-text, identifying and credential-bearing parameters must never contribute a value.
+	// The design is an allow-list, so an unknown parameter is redacted by construction.
+	// Fixture values are deliberately NOT secret-shaped: redaction keys on the NAME, and a
+	// realistic credential would only trip the secrets gate.
 	u, err := url.Parse(
 		"/v1/x?q=alice%40example.com&email=bob%40example.com&api_key=fake-not-a-credential" +
 			"&token=fake-not-a-token&cursor=100%3Aabc&account=GABC123&limit=10")

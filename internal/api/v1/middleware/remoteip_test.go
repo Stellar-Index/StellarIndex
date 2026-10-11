@@ -68,12 +68,9 @@ func TestSetTrustedProxyCIDRs(t *testing.T) {
 	})
 }
 
-// TestRightmostUntrustedForwardedFor — the XFF header carries a
-// comma-separated chain like `client, proxy1, proxy2` where each
-// trusted proxy APPENDS the peer it saw. We walk RIGHT-TO-LEFT and
-// return the first entry NOT inside a trusted-proxy CIDR (the
-// closest untrusted hop). Taking the leftmost would let a client
-// forge its own value.
+// TestRightmostUntrustedForwardedFor covers the XFF chain `client, proxy1, proxy2`, where each
+// trusted proxy APPENDS the peer it saw: the first entry from the right outside a trusted CIDR
+// wins, since the leftmost is client-forgeable.
 func TestRightmostUntrustedForwardedFor(t *testing.T) {
 	resetTrustedProxyConfig(t)
 	// Trust the 10/8 proxy tier for these cases.
@@ -170,13 +167,9 @@ func TestRemoteIPFor(t *testing.T) {
 	})
 
 	t.Run("forged leftmost XFF behind appending trusted proxy does NOT win", func(t *testing.T) {
-		// Attack: a hostile client SENDS `X-Forwarded-For: 9.9.9.9`.
-		// The trusted L7 proxy APPENDS the connection peer it saw
-		// (the attacker's real IP 8.8.8.8), then the internal hop
-		// 10.0.0.5 is appended. A leftmost parser would attribute the
-		// request to the forged 9.9.9.9 — spoofing rate-limit identity
-		// and bypassing per-key IP allowlists. The rightmost-untrusted
-		// walk must resolve to 8.8.8.8.
+		// A hostile client sends `X-Forwarded-For: 9.9.9.9`; the proxies append the real peer
+		// 8.8.8.8 and the internal hop 10.0.0.5. A leftmost parser would credit the forged
+		// 9.9.9.9 (spoofing rate-limit identity and IP allowlists); the walk must give 8.8.8.8.
 		_ = SetTrustedProxyCIDRs([]string{"10.0.0.0/8"})
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.RemoteAddr = "10.0.0.5:1234"
