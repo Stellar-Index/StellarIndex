@@ -1,50 +1,21 @@
 ---
-# Installs the exporters that `configs/prometheus/prometheus.r1.yml`
-# scrapes: redis_exporter, postgres_exporter, pgbackrest_exporter and
-# MinIO's metrics token. Without them the scrape jobs exist but every
-# alert family that consumes their metrics (cache.yml, storage.yml,
-# pgbackrest.* in infra.yml) is silently `absent_over_time`; only the
-# `up == 0` meta-alert surfaces the gap.
+# Installs the exporters that `configs/prometheus/prometheus.r1.yml` scrapes.
+# Without them the scrape jobs exist but the alert families consuming their
+# metrics (cache.yml, storage.yml, pgbackrest.* in infra.yml) go silently
+# `absent_over_time`; only the `up == 0` meta-alert surfaces the gap.
 #
-# Four groups wired here:
-#   - Group A: redis_exporter via the Debian package
-#     `prometheus-redis-exporter` (port 9121). Distinct from the
-#     redis-sentinel role's tarball-based exporter — this is
-#     archival-node's single-node `redis-server` shape, NOT the
-#     Sentinel cluster.
-#   - Group B: postgres_exporter via the Debian package
-#     `prometheus-postgres-exporter` (port 9187), peer-auth on
-#     the local socket as the `postgres` superuser. Requires
-#     `GRANT pg_monitor TO postgres_exporter` if the operator
-#     later switches to a non-superuser role — documented in
-#     `docs/operations/r1-deployment-state.md`.
-#   - Group C: pgbackrest_exporter — no Debian package; pinned
-#     upstream release tarball from
-#     https://github.com/woblerr/pgbackrest_exporter/releases
-#     (port 9854). Same fail-fast checksum pattern as the other
-#     pinned binaries — operator must set
-#     `pgbackrest_exporter_release_sha256` in inventory.
-#   - Group D: MinIO's native /minio/v2/metrics/cluster bearer token.
-#     No exporter binary — MinIO exposes its own metrics behind
-#     `admin:Prometheus`. Without this task the token is an operator
-#     hand-step (docs/operations/runbooks/infra.md#minio-metrics-403),
-#     so a rebuilt or rotated host ships a missing/empty
-#     `/etc/prometheus/minio.token` and every MinIO-dependent alert
-#     goes blind.
+# Groups: A redis_exporter (9121), B postgres_exporter (9187), C
+# pgbackrest_exporter (9854), D MinIO metrics bearer token. A and B use the
+# Debian packages, C a pinned upstream tarball, D has no binary.
 #
-# Env-files containing DATA_SOURCE_NAME live at mode 0640 with
-# group `prometheus` so the package-shipped systemd unit (which
-# runs as `prometheus`) can read them but no other local user
-# can. Matches the redis-sentinel role's secret env-file.
+# Env-files holding DATA_SOURCE_NAME are 0640 root:prometheus so the packaged
+# unit (runs as `prometheus`) can read them and no other local user can.
 
 # ── Group A: redis_exporter (Debian package) ──────────────────
 #
-# Ubuntu ships `prometheus-redis-exporter` in the `universe`
-# component on noble (24.04) and jammy (22.04). r1 is noble per
-# `r1-deployment-state.md` § Hardware (Ubuntu 24.04.3 LTS). The
-# `apt` module will surface a clear error if universe is not
-# enabled — recovery is to add the component via
-# `add-apt-repository universe` or via /etc/apt/sources.list.d/.
+# Ubuntu ships `prometheus-redis-exporter` in `universe` (noble and jammy).
+# The apt module errors clearly if universe is disabled; fix with
+# `add-apt-repository universe`.
 
 - name: Install prometheus-redis-exporter Debian package
   ansible.builtin.apt:
@@ -53,13 +24,9 @@
     update_cache: true
     cache_valid_time: 3600
 
-# redis-server now requires auth (08-redis.yml sets
-# requirepass from redis_password and flushes that restart before
-# this task runs). REDIS_PASSWORD is read directly by the exporter
-# binary (same env var oliver006/redis_exporter uses, per
-# redis-sentinel/tasks/07-monitoring.yml's precedent) — without it
-# every scrape gets NOAUTH and cache.yml's alerts go dark. Same
-# 0640 root:prometheus posture as the postgres env-file below.
+# redis-server requires auth (08-redis.yml sets requirepass and flushes that
+# restart first). The exporter reads REDIS_PASSWORD directly; without it every
+# scrape gets NOAUTH and cache.yml's alerts go dark.
 - name: Template /etc/default/prometheus-redis-exporter
   ansible.builtin.copy:
     dest: /etc/default/prometheus-redis-exporter
@@ -89,28 +56,17 @@
     enabled: true
     daemon_reload: true
 
-# ── Group B: postgres_exporter (Debian package) ───────────────
+# ── Group B: postgres_exporter (Debian package) ──────────────
 #
-# The Debian package ships its own `prometheus` system user and
-# runs the exporter as that user. We auth against postgres on
-# the local Unix socket via peer auth, which means the
-# DATA_SOURCE_NAME is read from /etc/default/prometheus-postgres-exporter
-# by the package's systemd unit. We connect as the exporter's OWN
-# OS user (`prometheus`) via peer auth on the local socket to a
-# same-named PG role holding pg_monitor — no password anywhere.
-# `sslmode=disable` is required for Unix-socket connections.
-#
-# A `user=postgres` socket DSN can never work: peer auth requires the
-# OS user to match, and the unit runs as `prometheus`, not `postgres`.
-# Env-file edits also don't apply until restart, so the exporter can
-# keep a stale DSN in-process for weeks; the restart handler below
-# closes that.
+# The exporter runs as the OS user `prometheus` and connects over the local
+# Unix socket via peer auth to a same-named pg_monitor role (no password).
+# `user=postgres` can never work: peer auth needs the OS user to match.
+# `sslmode=disable` is required for Unix sockets. Env-file edits only apply on
+# restart, so the handler below must run or a stale DSN lives on in-process.
 
-# Group B needs a running Postgres to grant into and a role for the
-# exporter to authenticate as; main.yml's own scrape-list Jinja already
-# gates the `postgres_exporter` job on `run_postgres` (defaults/main.yml)
-# — the install/start tasks below must match or a non-Postgres host
-# fails the psql GRANT unconditionally.
+# Needs a running Postgres; gated on `run_postgres` like the
+# `postgres_exporter` scrape job in main.yml, or non-Postgres hosts fail the
+# psql GRANT.
 - name: Group B — postgres_exporter (requires Postgres)
   when: run_postgres | bool
   block:
@@ -131,9 +87,8 @@
         update_cache: true
         cache_valid_time: 3600
 
-    # Env-file is 0640 root:prometheus — DATA_SOURCE_NAME would
-    # leak a password if the operator switches off peer auth, so
-    # we treat the file as secret regardless of current contents.
+    # 0640 root:prometheus: DATA_SOURCE_NAME would leak a password if peer auth
+    # is ever replaced.
     - name: Template /etc/default/prometheus-postgres-exporter
       ansible.builtin.copy:
         dest: /etc/default/prometheus-postgres-exporter
@@ -166,10 +121,9 @@
 
 # ── Bind post-condition (Groups A + B) ────────────────────────
 #
-# ARGS reaches the exporter only through the packaged unit's `$ARGS`;
-# if that ever stops holding, the exporter silently binds every
-# interface and the run stays green. Ask the kernel what is listening.
-# Flush first so a changed env-file's restart has already happened.
+# ARGS reaches the exporter only through the packaged unit's `$ARGS`; if that
+# stops holding the exporter silently binds every interface. Ask the kernel
+# what is listening, after flushing so the env-file restart has happened.
 - name: Apply pending exporter restarts before checking their binds
   ansible.builtin.meta: flush_handlers
 
@@ -199,19 +153,12 @@
 
 # ── Group C: pgbackrest_exporter (upstream tarball) ───────────
 #
-# No Debian package exists. Pinned upstream release from
-# https://github.com/woblerr/pgbackrest_exporter/releases.
-# Same fail-fast checksum pattern as the other pinned binaries —
-# operator must set `pgbackrest_exporter_release_sha256`
-# in inventory before running this group. The default version
-# (`pgbackrest_exporter_version` in defaults/main.yml) is
-# updated per release; the SHA must be re-pasted from the
-# upstream releases page when the version bumps.
+# No Debian package. Operator must set `pgbackrest_exporter_release_sha256` in
+# inventory and re-paste it from the upstream releases page whenever
+# `pgbackrest_exporter_version` (defaults/main.yml) bumps.
 #
-# Gated the same as the `pgbackrest_exporter` scrape job
-# (defaults/main.yml) — nothing to export metrics FOR when backups
-# are disabled, and pinning a release without a repo to watch is
-# pure risk with no payoff.
+# Gated like the `pgbackrest_exporter` scrape job: nothing to export when
+# backups are disabled.
 - name: Group C — pgbackrest_exporter (requires pgbackrest backups)
   when: pgbackrest_backup_enabled | default(true) | bool
   block:
@@ -242,9 +189,8 @@
       check_mode: false
 
     - name: Download pgbackrest_exporter release tarball
-      # Skipped when the installed version already matches, so a re-run
-      # does not re-download. The URL pattern follows >=0.23 naming:
-      # name-version-os-arch with x86_64.
+      # Skipped when the installed version already matches. URL naming is
+      # name-version-os-arch (>=0.23).
       when: pgbackrest_exporter_version not in ((pge_current.stdout | default('')) + (pge_current.stderr | default('')))
       ansible.builtin.get_url:
         url: "https://github.com/woblerr/pgbackrest_exporter/releases/download/v{{ pgbackrest_exporter_version }}/pgbackrest_exporter-{{ pgbackrest_exporter_version }}-linux-x86_64.tar.gz"
@@ -286,14 +232,12 @@
         enabled: true
         daemon_reload: true
       when:
-        # Role-installed unit — CHECK-MODE UNIT GUARD, tasks/main.yml. The
-        # two exporters above are PACKAGED (apt puts their units on the
-        # host), so they are deliberately left unguarded.
+        # Role-installed unit: CHECK-MODE UNIT GUARD, tasks/main.yml. The apt-packaged
+        # exporters above are deliberately unguarded.
         - not (ansible_check_mode and pgbackrest_exporter_unit is changed)
 
-# Converge the other way: an exporter installed before the gate above
-# existed keeps running (and crash-loops with no repo to watch) once
-# backups are disabled. The binary is left in place.
+# Converge disabled hosts: an exporter installed before the gate existed
+# crash-loops once backups are off. The binary is left in place.
 - name: Remove pgbackrest_exporter where backups are disabled
   when: not (pgbackrest_backup_enabled | default(true) | bool)
   block:
@@ -321,21 +265,16 @@
 
 # ── Group D: MinIO Prometheus bearer token ─────────────────────
 #
-# Procedure per docs/operations/runbooks/infra.md#minio-metrics-403: a
-# dedicated `prometheus-read` policy scoped to `admin:Prometheus`
-# only, then a service account under MinIO root carrying that
-# policy — `mc admin user svcacct add` prints the generated secret
-# key ONCE, on creation, which is the bearer token
-# /minio/v2/metrics/cluster expects.
-#
-# Requires the `local` mc alias configured earlier in this role
-# (09-minio.yml) and the `prometheus` system user Group A/B above
-# create.
+# Procedure: docs/operations/runbooks/infra.md#minio-metrics-403. A
+# `prometheus-read` policy scoped to `admin:Prometheus`, plus a service account
+# carrying it; the svcacct creation prints the secret key ONCE, which is
+# the bearer token. Needs the `local` mc alias (09-minio.yml) and the
+# `prometheus` user from Groups A/B.
 - name: Group D — MinIO Prometheus bearer token (requires MinIO)
   when: run_minio | bool
   block:
     - name: Render prometheus-read MinIO policy
-      # Same dir 09-minio.yml already created for the bucket policies.
+      # Dir created by 09-minio.yml for the bucket policies.
       ansible.builtin.copy:
         dest: /etc/minio/policies/prometheus-read.json
         owner: root
@@ -371,13 +310,10 @@
       register: minio_prom_token_file
 
     - name: Generate the Prometheus MinIO bearer token
-      # Generated ONCE — svcacct add mints a NEW secret key every call, so
-      # re-running this on every apply would invalidate the previous token
-      # and break scraping until the next reload. Rotating it (MinIO root
-      # rotation only, docs/operations/credential-rotation.md) is a
-      # deliberate manual step: remove the file, then re-run this tag.
-      # stdout carries the secret key — no_log on this task and the write
-      # below, same posture as the `mc admin user add` tasks above.
+      # Generated ONCE: each svcacct creation mints a new secret, so re-running
+      # would invalidate the token and break scraping. Rotation
+      # (docs/operations/credential-rotation.md) is manual: remove the file, re-run
+      # this tag. stdout carries the secret, so no_log here and on the write below.
       ansible.builtin.command:
         argv:
           - /usr/local/bin/mc
@@ -387,7 +323,7 @@
           - add
           - local
           - "{{ minio_root_user }}"
-          # mc reads --policy as a JSON file path, not a policy name.
+          # mc reads --policy as a JSON file path, not a name.
           - --policy
           - /etc/minio/policies/prometheus-read.json
           - --name
@@ -396,13 +332,10 @@
           - "Bearer-token scrape for /minio/v2/metrics/cluster"
           - --json
       register: minio_prom_svcacct
-      # Same reasoning as the mc-admin-user tasks in 09-minio.yml: a real
-      # MinIO mutation, not previewable, so it does not run under --check.
-      # Guarding the Write task below on the SAME condition (rather than
-      # `minio_prom_svcacct is not skipped`) matters on a fresh host that
-      # has never had a real apply: under --check the "no file yet" branch
-      # is always taken, so without this guard the Write task would
-      # reference `minio_prom_svcacct.stdout` from a task --check never ran.
+      # A real MinIO mutation, not previewable, so skipped under --check (as in
+      # 09-minio.yml). The Write task uses the SAME condition rather than
+      # `minio_prom_svcacct is not skipped`: on a fresh host --check always takes the
+      # "no file yet" branch and would reference stdout of a task that never ran.
       when:
         - not minio_prom_token_file.stat.exists
         - not ansible_check_mode

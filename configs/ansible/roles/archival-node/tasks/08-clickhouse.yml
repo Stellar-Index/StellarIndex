@@ -1,16 +1,15 @@
 ---
-# ClickHouse — the certified lake (ADR-0034). An out-of-band install on r1
-# (the 2026-06 lake pivot); codified here so a fresh host (r2/r3/test net)
-# gets it reproducibly. Imported behind run_clickhouse (DEFAULT FALSE in
-# main.yml) so r1's hand-tended ClickHouse is NEVER touched by this role —
-# test nets / fresh regions set run_clickhouse=true. Native port is
-# clickhouse_tcp_port (default 9300; 9000 is MinIO's). Schema application is
-# a SEPARATE opt-in (clickhouse_apply_schema, default false) so a re-run
-# never re-executes DDL against a live lake.
+# ClickHouse, the certified lake (ADR-0034), codified so a fresh host
+# (r2/r3/test net) gets it reproducibly. Imported behind run_clickhouse
+# (DEFAULT FALSE in main.yml) so r1's hand-tended ClickHouse is NEVER touched;
+# test nets / fresh regions set it true. Native port is clickhouse_tcp_port
+# (default 9300; 9000 is MinIO's). Schema application is a SEPARATE opt-in
+# (clickhouse_apply_schema, default false) so a re-run never re-executes DDL
+# against a live lake.
 
 - name: Install the ClickHouse repo signing key
-  # Shipped as a role file — the online key URL (packages.clickhouse.com/deb/
-  # pubkey.gpg) 404s and the keyserver fetch is flaky; this is r1's proven key.
+  # Shipped as a role file: the online key URL 404s and the keyserver fetch is
+  # flaky; this is r1's proven key.
   ansible.builtin.copy:
     src: clickhouse-keyring.gpg
     dest: /usr/share/keyrings/clickhouse-keyring.gpg
@@ -23,9 +22,8 @@
     filename: clickhouse
 
 - name: Preseed ClickHouse default-user password (empty — non-interactive install)
-  # debconf-set-selections (from the base `debconf` package) rather than the
-  # ansible.builtin.debconf module, which needs debconf-utils
-  # (debconf-get-selections) — not present on a fresh host.
+  # debconf-set-selections (base `debconf` package) rather than the debconf
+  # module, which needs debconf-utils, absent on a fresh host.
   ansible.builtin.shell: echo 'clickhouse-server clickhouse-server/default-password password' | debconf-set-selections
   changed_when: false
 
@@ -50,9 +48,8 @@
   notify: Restart clickhouse-server
 
 - name: Ensure ClickHouse client config.d dir exists (for the client port drop-in)
-  # The clickhouse-client package creates /etc/clickhouse-client/ but NOT the
-  # config.d/ subdir that 15-log-discipline writes the client port drop-in into
-  # (so `clickhouse-client` defaults to the same 9300 native port). r1 had it.
+  # The client package creates /etc/clickhouse-client/ but NOT the config.d/
+  # subdir that 15-log-discipline writes the client port drop-in into.
   ansible.builtin.file:
     path: /etc/clickhouse-client/config.d
     state: directory
@@ -65,8 +62,8 @@
     mode: "0755"
 
 - name: Disable core dumps for clickhouse-server
-  # apport capturing a crashed ClickHouse held the dead process ~4 min (load ~1000) and wrote
-  # a 4.7 GB core to the root disk; err.log already carries the stack trace. Applies on next start.
+  # apport capturing a crashed ClickHouse held the dead process ~4 min and wrote
+  # a 4.7 GB core to the root disk; err.log already has the stack trace.
   ansible.builtin.copy:
     dest: /etc/systemd/system/clickhouse-server.service.d/no-core.conf
     mode: "0644"
@@ -91,58 +88,38 @@
     port: "{{ clickhouse_tcp_port | default(9300) }}"
     timeout: 60
 
-# ── Schema (opt-in; fresh host only — never re-run against a live lake) ──
+# ── Schema (opt-in; fresh host only, never re-run against a live lake) ──
 #
-# THE APPLY SET IS AN ALLOW-LIST, NOT A GLOB.
+# THE APPLY SET IS AN ALLOW-LIST, NOT A GLOB. deploy/clickhouse/ is not a
+# bootstrap manifest: `tier1_schema.sql` is the founding DDL, the rest are
+# OPERATOR artifacts for the existing deployment (r1: feature DDL mirrors,
+# backfill runbooks, migrations), several headed "NOT auto-applied" or
+# "FREEZE-GATED". Applying them wherever clickhouse_apply_schema is true
+# (testnet.yml, futurenet.yml) would run operator migrations unattended. Most
+# CREATEs are no-ops behind `IF NOT EXISTS`, but the cut-over halves
+# (ledger_entries_current_v2, contract_events_daily_v2, with their MVs) would
+# be built as duplicates of v1 tables the host does not have, doubling MV
+# write work and storage for nothing.
 #
-# Copying `deploy/clickhouse/*.sql` with with_fileglob and executing
-# every file found is wrong. That directory is not a bootstrap manifest:
-# `tier1_schema.sql` is the founding DDL, and the other files are OPERATOR
-# artifacts for the EXISTING deployment (r1) — a per-feature DDL mirror plus
-# its windowed-backfill runbook, or a genuine migration. Several say exactly
-# that in their own headers ("NOT auto-applied by any bootstrap", "A FRESH
-# deployment does NOT need this file", one of them "FREEZE-GATED: do NOT
-# run"), and every one of those claims is false wherever
-# clickhouse_apply_schema is true — testnet.yml and futurenet.yml. So each
-# fresh test-net provision would run the operator's migrations unattended.
+# The list is DEFAULT-DENY: a new file in deploy/clickhouse/ does not run here
+# until added. scripts/ci/lint-ch-apply-scope.sh keeps that from rotting: every
+# deploy/clickhouse/*.sql must declare `si-apply-scope: fresh-host|operator`,
+# the fresh-host set must EXACTLY equal this list, and every object an operator
+# artifact creates must also be declared by a fresh-host file.
 #
-# What that does, measured against the checked-in DDL: every CREATE
-# in every non-tier1 file is byte-identical to tier1_schema.sql's own, and
-# tier1 runs first, so most are pure no-ops behind `IF NOT EXISTS`. The two
-# exceptions build the cut-over halves — stellar.ledger_entries_current_v2
-# (+_mv) and stellar.contract_events_daily_v2 (+_mv) — as exact duplicates of
-# their v1 tables, on a host that has no v1 to cut over FROM. Confirmed on the
-# live testnet host: identical column list and order, identical engine, ORDER
-# BY and indexes, MVs reading the same source with the same SELECT into a
-# second target. That host does double materialized-view write work and holds
-# a second copy of the same rows, forever, for nothing.
-#
-# The list below is DEFAULT-DENY: a new file dropped into deploy/clickhouse/
-# does not run here until someone adds it. The other half — so the deny
-# cannot rot into a silent omission — is scripts/ci/lint-ch-apply-scope.sh,
-# which fails CI unless every deploy/clickhouse/*.sql declares
-# `si-apply-scope: fresh-host|operator` in its header, the fresh-host set is
-# EXACTLY this list, and every object an operator artifact creates is also
-# declared by a fresh-host file (so a genuinely-new fresh-host table cannot
-# hide inside a migration).
-#
-# Deliberately NOT changed: clickhouse_apply_schema stays false on r1, whose
-# DDL is applied by hand.
+# clickhouse_apply_schema stays false on r1, whose DDL is applied by hand.
 - name: Declare the fresh-host ClickHouse apply set
   when: clickhouse_apply_schema | default(false) | bool
-  # scripts/ci/lint-ch-apply-scope.sh parses this exact key, so the
-  # allow-list has ONE home. tier1_schema.sql must be first: it CREATEs the
-  # `stellar` database everything else depends on.
+  # lint-ch-apply-scope.sh parses this exact key, so the allow-list has ONE
+  # home. tier1_schema.sql must be first: it CREATEs the `stellar` database.
   ansible.builtin.set_fact:
     clickhouse_fresh_host_schema:
       - tier1_schema.sql
 
 - name: Remove any previously staged schema files
-  # Removed rather than merely re-created: a host provisioned before the
-  # allow-list still carries the 15 operator artifacts the old with_fileglob
-  # copied into /tmp/ch-schema. Leaving them there is an invitation to
-  # `cat /tmp/ch-schema/*.sql | clickhouse-client`, which is the defect
-  # again by hand.
+  # Removed, not merely re-created: hosts provisioned from an older glob-based
+  # version still hold operator artifacts in /tmp/ch-schema, an invitation to
+  # `cat /tmp/ch-schema/*.sql | clickhouse-client`.
   when: clickhouse_apply_schema | default(false) | bool
   ansible.builtin.file:
     path: /tmp/ch-schema
@@ -158,8 +135,8 @@
 - name: Copy the fresh-host ClickHouse schema files
   when: clickhouse_apply_schema | default(false) | bool
   ansible.builtin.copy:
-    # playbook_dir is configs/ansible/playbooks, so three levels up is the
-    # repo root — the same anchor the ch-live-catchup copies below use.
+    # playbook_dir is configs/ansible/playbooks, so three levels up is the repo
+    # root, the anchor the ch-live-catchup copies below also use.
     src: "{{ playbook_dir }}/../../../deploy/clickhouse/{{ item }}"
     dest: /tmp/ch-schema/
     mode: "0644"
@@ -167,31 +144,22 @@
 
 - name: Apply the fresh-host ClickHouse schema
   when: clickhouse_apply_schema | default(false) | bool
-  # An `|| true` would swallow EVERY non-tier1 file's failure, so this task
-  # would report success whether or not a single object was created. That is
-  # the worst shape an apply can have: a missed DDL (e.g.
-  # stellar.account_creators_ops) would have to be applied by hand and
-  # confirmed in system.tables, because nothing here would say it had not
-  # been. deploy.yml's evidence step only ASKS whether the objects exist — it
-  # is not an apply — so this task is the only place a failure can surface.
+  # No `|| true`: it would swallow every non-tier1 failure and report success
+  # even if no object was created, and this is the only place a failure can
+  # surface (deploy.yml's evidence step only asks whether objects exist).
   #
-  # Still applies every file rather than stopping at the first failure (a
-  # later file is usually independent of an earlier one, and aborting early
-  # would leave a half-applied schema with no report of the rest), but the
-  # failures are collected and the task fails at the end naming each one.
+  # Still applies every file rather than stopping at the first failure (later
+  # files are usually independent; aborting leaves a half-applied schema with no
+  # report of the rest); failures are collected and the task fails at the end
+  # naming each one.
   #
-  # The closing line is self-accounting (N of M). "applied every schema file
-  # cleanly" reads identically over an empty loop as over a real apply, and
-  # an allow-list that rendered empty is precisely the regression this task
-  # would otherwise report as success.
+  # The closing line is self-accounting (N of M): "applied cleanly" reads the
+  # same over an empty loop as a real apply, and an allow-list that rendered
+  # empty must not pass.
   #
-  # The per-file blocks are UNROLLED by Jinja rather than walked by a shell
-  # `for f in $rest` loop: `ansible.builtin.shell` runs the body under
-  # /bin/sh (dash on this role's hosts), and a rendered-empty word-split
-  # loop is exactly the kind of dialect-sensitive construct that is a
-  # syntax error in one shell and a no-op in another. Unrolling makes the
-  # one-file list render as no blocks at all, which is unambiguous
-  # everywhere.
+  # Per-file blocks are UNROLLED by Jinja, not a shell `for f in $rest` loop:
+  # shell runs under /bin/sh (dash), and a rendered-empty word-split loop is a
+  # syntax error in one shell and a no-op in another.
   ansible.builtin.shell: |
     set -u
     P={{ clickhouse_tcp_port | default(9300) }}
@@ -222,26 +190,16 @@
 
 # ─── Tier-1 lake self-healer ──────────────────────────
 #
-# ch-live-catchup is the ONLY thing that fills a hole in the ClickHouse
-# Tier-1 lake. The script (scripts/ops/ch-live-catchup.sh) and both units
-# (deploy/systemd/ch-live-catchup.{service,timer}) already existed and are
-# covered by scripts/ops/ch-ops-user-test.sh — but nothing in this role
-# ever installed them, so on a playbook-provisioned host the healer was
-# simply absent.
+# ch-live-catchup (scripts/ops/ch-live-catchup.sh, deploy/systemd/
+# ch-live-catchup.{service,timer}) is the ONLY thing that fills a hole in the
+# Tier-1 lake. Without it, internal/projector's resolveTip clamps to the
+# ContiguousWatermark, so one unhealed gap stalls the CH-fed projector
+# permanently rather than degrading. Live wherever run_clickhouse is true
+# (testnet.yml, futurenet.yml).
 #
-# That is not cosmetic: internal/projector's resolveTip clamps to the
-# ContiguousWatermark, so a single unhealed gap stalls the CH-fed
-# projector permanently rather than degrading. Reachable wherever the
-# lake is live — testnet.yml and futurenet.yml set run_clickhouse: true,
-# and stellarindex.toml.j2 defaults clickhouse_live_sink and
-# clickhouse_projector_source to true.
-#
-# Units are copied VERBATIM from deploy/systemd/ rather than templated:
-# they carry no host-specific values, and copying keeps the checked-in
-# file the thing that actually runs. That mirrors how
-# config-assertions.{service,timer} are installed
-# (15-log-discipline.yml) and is why those two are the directory's other
-# authoritative entries.
+# Units are copied VERBATIM from deploy/systemd/, not templated: they carry no
+# host-specific values and the checked-in file stays what actually runs (as
+# config-assertions.{service,timer} do in 15-log-discipline.yml).
 
 - name: Install the ClickHouse live-catchup script
   ansible.builtin.copy:
@@ -273,7 +231,7 @@
     daemon_reload: "{{ ch_live_catchup_units is changed }}"
   when:
     - ch_live_catchup_enabled | default(true) | bool
-    # check-mode guard: --check reports the units as changed without
-    # writing them, so daemon_reload would act on files that do not
-    # exist yet. Same guard as the ch-schema-snapshot timer above.
+    # check-mode guard: --check reports the units changed without writing them,
+    # so daemon_reload would act on files that do not exist. Same as the
+    # ch-schema-snapshot timer above.
     - not (ansible_check_mode and ch_live_catchup_units is changed)

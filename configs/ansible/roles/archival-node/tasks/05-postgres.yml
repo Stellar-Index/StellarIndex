@@ -1,8 +1,7 @@
 ---
 # Postgres 15 from the PGDG repository. stellar-core uses BucketListDB
-# (Postgres-backed) per ADR discussion in the archival-node spec.
-#
-# Secrets (postgres_pass_core) come from ansible-vault.
+# (Postgres-backed) per the archival-node spec. Secrets (postgres_pass_core)
+# come from ansible-vault.
 
 - name: Add PGDG apt key
   ansible.builtin.get_url:
@@ -33,26 +32,18 @@
 
 # ── WAL headroom guard ──────────────────────────────────────────────
 #
-# Refuse to write a postgresql.conf whose max_wal_size does not fit the
-# filesystem pg_wal is ACTUALLY on. Raising max_wal_size
-# from 2GB to 16GB took r1's database down once: the reasoning in the
-# template asserted "pg_wal sits on a dataset with 2.7TB free", which
-# was true of the DATA directory and false of pg_wal — a symlink to a
-# /pgwal path on the 49GB root filesystem. Root reached 0 bytes, and
-# crash recovery could not write a new segment.
+# Refuse a postgresql.conf whose max_wal_size does not fit the filesystem
+# pg_wal is ACTUALLY on. The template once reasoned from the data directory's
+# free space while pg_wal was a symlink onto a small root filesystem, which
+# filled and took the database down. So resolve the symlink rather than
+# trusting the data directory.
 #
-# The check resolves the symlink rather than trusting the data
-# directory, because that substitution is the whole defect. It is a
-# pre-flight assert, not a post-hoc alert: max_wal_size is SIGHUP, so a
-# bad value reaches a running database without a restart to think twice
-# about, and the failure surfaces hours later as an outage.
+# A pre-flight assert, not an alert: max_wal_size is SIGHUP, so a bad value
+# reaches a running database with no restart to think twice about.
 #
-# The 2x multiplier is not padding. Postgres treats max_wal_size as a
-# soft target for the CHECKPOINT interval, not a hard cap on the
-# directory: a checkpoint that cannot keep up, or an archiver that
-# stalls, both let pg_wal exceed it, and 2x is the commonly cited
-# working bound. Falling below it is the condition under which this
-# host has already failed once.
+# The 2x multiplier is not padding: max_wal_size is a soft target for the
+# checkpoint interval, not a cap, and a lagging checkpoint or stalled archiver
+# lets pg_wal exceed it. 2x is the commonly cited working bound.
 - name: Resolve the filesystem pg_wal is really on
   ansible.builtin.shell: |
     set -eu
@@ -116,18 +107,14 @@
     _wal_path: "{{ pg_wal_fs.stdout.split()[0] }}"
     _wal_avail_mb: "{{ pg_wal_fs.stdout.split()[1] | int }}"
     _wal_device: "{{ pg_wal_fs.stdout.split()[2] }}"
-    # What WAL already occupies is capacity available TO WAL, so it
-    # counts toward the budget: a directory already holding 2GB of
-    # segments is not 2GB short, it is 2GB spent on the thing being
-    # sized. Without this the check would fail every healthy host.
-    #
-    # This is du of pg_wal ITSELF and of nothing else — the probe emits
-    # 0 when pg_wal is absent or dangling. Anything wider (the cluster
-    # directory, a walked-up ancestor, /) is not WAL and must never be
-    # added to free space.
+    # What WAL already occupies counts toward the budget (a directory holding 2GB
+    # of segments is not 2GB short), or the check would fail every healthy host.
+    # This is du of pg_wal ITSELF only: the probe emits 0 when it is absent or
+    # dangling, and a wider scope (cluster dir, ancestor, /) is not WAL and must
+    # never be added to free space.
     _wal_used_mb: "{{ pg_wal_fs.stdout.split()[3] | default(0) | int }}"
-    # Accepts the GB/MB spellings this template uses. A unitless value
-    # is megabytes, matching Postgres' own default unit for this GUC.
+    # Accepts the GB/MB spellings the template uses; a unitless value is
+    # megabytes, Postgres' default unit for this GUC.
     _max_wal_mb: >-
       {{ (postgres_max_wal_size | default('2GB') | regex_replace('(?i)\s*([kmgt]?b)$', '') | int)
          * (1024 if (postgres_max_wal_size | default('2GB')) is search('(?i)gb$') else 1) }}
@@ -204,16 +191,13 @@
     state: present
   become_user: postgres
 
-# pg_stat_statements on the APPLICATION db is enabled AFTER the db is
-# created, below ("Enable pg_stat_statements on stellarindex db"). A
-# duplicate task here (before the CREATE DATABASE) passes idempotently on
-# the already-built r1 but fails a FRESH build ("database does not exist").
+# pg_stat_statements on the APPLICATION db is enabled after the db is created
+# (below); a duplicate task before CREATE DATABASE fails a FRESH build.
 
 # ──── stellarindex application database ─────────────────────────────
-# Used by stellarindex-indexer / aggregator / api. Owns the trades +
-# oracle_updates hypertables + price-aggregate CAGGs. TimescaleDB
-# extension is enabled at db-create time so migrations don't need
-# superuser to CREATE EXTENSION.
+# Used by indexer / aggregator / api. Owns the trades + oracle_updates
+# hypertables and price-aggregate CAGGs. TimescaleDB is enabled at db-create
+# time so migrations don't need superuser for CREATE EXTENSION.
 
 - name: Install TimescaleDB apt repo signing key
   ansible.builtin.get_url:
@@ -228,11 +212,11 @@
     filename: timescaledb
 
 # No unattended-upgrades blacklist needed: 12-hardening.yml allows only the
-# distro -security origin, so neither this repo nor PGDG auto-upgrades. A
-# distro library fix (libc6) still leaves Postgres needing a restart; that
-# waits for maintenance because needrestart is list-only (12-hardening.yml).
-# Downgrade is deliberately not allowed: a host already newer than the pin
-# fails loudly instead of mismatching its installed extension version.
+# distro -security origin, so neither this repo nor PGDG auto-upgrades. A distro
+# library fix (libc6) still needs a Postgres restart, which waits for
+# maintenance because needrestart is list-only (12-hardening.yml). Downgrade is
+# deliberately not allowed: a host newer than the pin fails loudly instead of
+# mismatching its installed extension version.
 - name: Install TimescaleDB for Postgres {{ postgres_version }}
   ansible.builtin.apt:
     name: "timescaledb-2-postgresql-{{ postgres_version }}={{ timescaledb_version }}*"
@@ -241,11 +225,9 @@
   notify: Restart postgres
 
 - name: Add timescaledb to shared_preload_libraries
-  # Value carries a space after the comma to match what Postgres stores
-  # and reports back ("timescaledb, pg_stat_statements"). postgresql_set
-  # string-compares the desired value against the live pg_settings value,
-  # so the spaceless form drifts (reports changed → restart handler) on
-  # every --check run.
+  # The space after the comma matches what Postgres stores and reports back.
+  # postgresql_set string-compares against live pg_settings, so the spaceless form
+  # reports changed (and fires the restart handler) on every --check run.
   community.postgresql.postgresql_set:
     name: shared_preload_libraries
     value: "timescaledb, pg_stat_statements"
@@ -301,12 +283,9 @@
 
 - name: Disable JIT on the stellarindex db (2026-07-10 incident)
   # PG15's LLVM JIT allocates large per-query chunks; under
-  # vm.overcommit_memory=2 two concurrent JIT-compiled chart queries
-  # blew the kernel commit budget ("FATAL: out of memory / while in
-  # LLVM"), poisoning unrelated backends — the aquarius replay's
-  # InsertTrade batches all failed for ~15s (dropped rows, re-replayed)
-  # and the resulting error-log flood seized the indexer via the fd-2
-  # wrap. Timescale workloads see no JIT benefit; keep it off.
+  # vm.overcommit_memory=2 concurrent JIT-compiled queries blew the kernel commit
+  # budget ("FATAL: out of memory / while in LLVM") and poisoned unrelated
+  # backends. Timescale workloads see no JIT benefit; keep it off.
   community.postgresql.postgresql_query:
     login_db: "{{ postgres_db_stellarindex }}"
     query: "ALTER DATABASE {{ postgres_db_stellarindex }} SET jit = off"

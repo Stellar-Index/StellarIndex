@@ -1,78 +1,56 @@
 ---
-# Brings up Prometheus + Alertmanager on the dedicated prometheus_pair
-# hosts. Never an archival node: the role renders the whole-host
-# /etc/nftables.conf, which would drop that host's public ports (the
-# role's preflight asserts this, and runs under any --tags selection).
-# Companion to playbooks/archival-node.yml — the archival-node
-# playbook installs node_exporter and bind-mounts the metric ports;
-# this playbook wires the scrape + alert routing layer on top.
-#
-# Idempotent; safe to re-run. Splits from the archival-node playbook
-# so operators who run their own Prometheus stack (cross-region
-# aggregator, vendor like Grafana Cloud, etc.) can skip this without
-# affecting the host-level role.
-#
-# Usage:
+# Brings up Prometheus + Alertmanager on the dedicated prometheus_pair hosts.
+# Never an archival node: the role renders the whole-host /etc/nftables.conf,
+# which would drop that host's public ports (the role's preflight asserts this
+# under any --tags selection). Companion to playbooks/archival-node.yml, which
+# installs node_exporter and the metric ports; this wires scrape + alert routing
+# on top. Idempotent. Split out so operators running their own Prometheus stack
+# (Grafana Cloud, a cross-region aggregator) can skip it.
 #
 #   ansible-playbook -i <multi-host inventory> playbooks/monitoring.yml
 #
-# NOT runnable against inventory/r1.yml. The
-# prometheus role is the MULTI-HOST shape: roles/prometheus/tasks/
-# 01-preflight.yml requires a `prometheus_pair` group with exactly two
-# hosts, plus a populated `stellarindex_api`/`_aggregator`/`_indexer`
-# scrape-target group. r1.yml defines only `archival_nodes` with a
-# single host, so the play matches no hosts and changes nothing.
+# NOT runnable against inventory/r1.yml: the prometheus role is the MULTI-HOST
+# shape (roles/prometheus/tasks/01-preflight.yml requires a `prometheus_pair`
+# group of exactly two hosts plus a populated stellarindex_api/_aggregator/
+# _indexer scrape-target group). r1.yml has one `archival_nodes` host, so the
+# play matches no hosts and changes nothing.
 #
-# R1's Prometheus + Alertmanager are managed out-of-band today:
-# configs/prometheus/rules.r1/ (the R1 rule overlay, kept in lockstep
-# with deploy/monitoring/rules/ by scripts/ci/lint-rule-equivalence)
-# and configs/alertmanager/alertmanager.r1.yml + apply.sh. Wiring the
-# single-box path into THIS playbook still needs a single-host code
-# path in the prometheus role, and that is still on the L4 cutover
-# backlog with the other multi-host cluster playbooks
-# (configs/ansible/README.md).
+# r1's Prometheus + Alertmanager are managed out-of-band:
+# configs/prometheus/rules.r1/ (kept in lockstep with deploy/monitoring/rules/
+# by scripts/ci/lint-rule-equivalence) and configs/alertmanager/alertmanager.r1.yml
+# + apply.sh. A single-host path in the prometheus role is on the L4 cutover
+# backlog (configs/ansible/README.md).
 #
-# A single-host SCRAPE-ONLY path does exist now, in the other role:
-# roles/archival-node/tasks/23-local-prometheus.yml, gated on
-# `run_local_prometheus` (default false) with tag `local-prometheus`.
-# It installs the distro `prometheus` package and a localhost scrape
-# config derived from the host's run_* switches — no Alertmanager and
-# no rule files, because its purpose is the metrics backend /v1/status
-# reads (ASH-8). The two test nets use it; r1 does not. It is NOT a
-# replacement for this playbook on a multi-host deployment.
+# A single-host SCRAPE-ONLY path exists in the other role:
+# roles/archival-node/tasks/23-local-prometheus.yml (`run_local_prometheus`,
+# default false, tag `local-prometheus`). It installs the distro package and a
+# localhost scrape config, with no Alertmanager or rules, as the metrics backend
+# /v1/status reads. The test nets use it; r1 does not. It does not replace this
+# playbook on a multi-host deployment.
 #
-# Per-deployment configuration (set in inventory `vars:`):
+# Per-deployment configuration (inventory `vars:`):
 #   - alertmanager_healthchecks_deadmansswitch_url
-#   - alertmanager_discord_webhook_url_pages   (page tier → #pages; empty → no fanout)
-#   - alertmanager_discord_webhook_url_alerts  (ticket tier → #alerts; empty → no fanout)
+#   - alertmanager_discord_webhook_url_pages   (page tier -> #pages; empty -> no fanout)
+#   - alertmanager_discord_webhook_url_alerts  (ticket tier -> #alerts; empty -> no fanout)
 #   - alertmanager_discord_webhook_url_informational
-#         (informational tier → its OWN low-traffic channel, not #alerts;
-#          empty → no fanout, which is the #485 black hole)
+#         (informational tier -> its OWN low-traffic channel, not #alerts;
+#          empty -> no fanout, a black hole)
 #   - alertmanager_healthchecks_alert_delivery_url
-#         (out-of-band leg for a refused chat delivery; empty → the only
+#         (out-of-band leg for a refused chat delivery; empty -> the only
 #          signal of a delivery outage travels the failing path)
 #   - alertmanager_pagerduty_key               (optional)
 #
-# Secret handling: pass the webhook URLs via ansible-vault (e.g. an
-# encrypted inventory/r1.secrets.yml file you `--ask-vault-pass`
-# unlock at apply time). Hardcoding webhooks in a non-vault inventory
-# is a CI-exposure risk — the playbook accepts empty strings and
-# degrades to "alerts visible in Alertmanager UI only", which is
-# safer than committing a webhook to git.
+# Pass the webhook URLs via ansible-vault (e.g. an encrypted
+# inventory/r1.secrets.yml unlocked with --ask-vault-pass); never commit a
+# webhook. Empty strings are accepted and degrade to "alerts visible in the
+# Alertmanager UI only".
 #
-# Apply notes (R1 specifically):
-#
-# The standalone `configs/alertmanager/alertmanager.r1.yml` +
-# `apply.sh` pair was the pre-Ansible bootstrap path. Both
-# arrangements produce the same routing — the template here is the
-# preferred long-term arrangement (one place to edit; multi-region
-# consistency); the standalone files stay valid for one-off
-# emergency edits without needing an ansible run.
-#
-# "Both arrangements produce the same routing" is a GATE now, not a
-# claim: scripts/ci/check-alertmanager-parity.sh renders the two with
-# identical inputs and fails on any structural difference: a receiver
-# added to the standalone file only would make THIS playbook silently
+# The standalone configs/alertmanager/alertmanager.r1.yml + apply.sh are the
+# pre-Ansible bootstrap path and stay valid for one-off emergency edits; the
+# template here is the preferred one. They must route identically:
+# scripts/ci/check-alertmanager-parity.sh renders both with the same inputs and
+# fails on any structural difference, since a receiver added to only the
+# standalone file would make this playbook route those alerts to nobody.
 # route those alerts back to a receiver that delivers to nobody.
 
 - name: Monitoring (Prometheus + Alertmanager)

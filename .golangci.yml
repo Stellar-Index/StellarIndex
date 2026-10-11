@@ -1,8 +1,6 @@
-# golangci-lint config for Stellar Index.
-#
-# Lives at repo root. Applied via `make lint` and in CI. Any rule
-# change requires a PR + rationale; we don't weaken lint "just to
-# unblock something." See docs/engineering-standards.md §8.
+# golangci-lint config, applied via `make lint` and CI. Any rule change needs
+# a PR + rationale; we don't weaken lint to unblock something
+# (docs/engineering-standards.md §8).
 
 version: "2"
 
@@ -29,17 +27,13 @@ linters:
     - wastedassign
     - ineffassign
     - gosec
-    # Exhaustiveness — ADR-0010. Catches enum switches that silently
-    # drop a variant when a new one is added (a switch on an AssetType /
-    # Basis / Class / EventKind that forgets a case). default-signifies-
-    # exhaustive keeps false positives near zero.
+    # Exhaustiveness (ADR-0010): catches enum switches that silently drop a
+    # variant when a new one is added.
     - exhaustive
 
     # Style / clarity
-    #
-    # gofmt + goimports moved to the `formatters:` section below —
-    # in golangci-lint v2 they are formatters, not linters.
-    # gosimple was merged into staticcheck in v2.
+    # gofmt + goimports are `formatters:` below in golangci-lint v2; gosimple was
+    # merged into staticcheck.
     - unparam
     - unused
     - misspell
@@ -53,80 +47,48 @@ linters:
 
   settings:
     exhaustive:
-      # A `default:` case counts as handling the remaining variants — so
-      # exhaustive only flags a switch that is BOTH missing enum cases AND
-      # has no default. This is the low-noise setting: it catches the real
-      # "forgot to add the new variant" bug without forcing a case-per-
-      # variant on switches that intentionally default.
+      # A `default:` case counts as handling the remaining variants, so only a
+      # switch missing cases AND a default is flagged (low noise).
       default-signifies-exhaustive: true
-      # The strict form below floods 12
-      # findings repo-wide — of which only 3 are AssetType switches
-      # (canonical/sac.go, supply/key.go, xdrjson/sac.go — all
-      # intentional error-defaults for unsupported classes), plus 2
-      # reflect.Kind walkers and 7 misc. The linter can't scope
-      # strictness to one enum type, so the strict form stays off; the
-      # 3 AssetType defaults are correct rejection paths, not missed
-      # variants.
+      # The strict form below flags 12 sites repo-wide, mostly intentional
+      # error-defaults (canonical/sac.go, supply/key.go, xdrjson/sac.go) and
+      # reflect.Kind walkers, and the linter cannot scope strictness to one enum.
       # default-signifies-exhaustive: false
       #
-      # Rather than fight this
-      # linter's repo-wide scope, internal/canonical/
-      # asset_type_exhaustive_guard_test.go (TestAssetTypeExhaustiveGuard)
-      # adds a second, narrow guard — a go/types AST walk restricted to
-      # switches tagged on canonical.AssetType specifically, at full
-      # strictness, with zero noise on any other enum. It also catches
-      # something this setting structurally cannot: a `default:` clause
-      # present but empty/fallthrough-only, which this linter counts as
-      # "exhaustive" without ever looking inside it. Shares the same
-      # `//exhaustive:ignore` escape hatch as this linter (see
-      # internal/storage/timescale/usd_volume_quote_spec.go for the one
-      # documented site). Runs as a plain `go test ./internal/canonical/...`
-      # — already covered by `make test` / `make verify`, no separate
-      # wiring needed.
-      # Ignore enums we don't own: the go-stellar-sdk `xdr.*` enums have
-      # 20+ variants and our decoders intentionally handle a subset (a
-      # ManageOffer decoder shouldn't enumerate every OperationType), and
-      # `time.Duration` isn't a real enum (its named constants are units).
-      # Enforcement is scoped to OUR domain enums, where a forgotten
-      # variant is a real bug.
+      # Instead, internal/canonical/asset_type_exhaustive_guard_test.go
+      # (TestAssetTypeExhaustiveGuard) walks switches on canonical.AssetType at full
+      # strictness, and also catches an empty/fallthrough-only `default:`, which this
+      # linter counts as exhaustive. Shares this linter's `//exhaustive:ignore`
+      # escape hatch (one site: internal/storage/timescale/usd_volume_quote_spec.go).
+      # Ignore enums we don't own: go-stellar-sdk `xdr.*` enums have 20+ variants
+      # and decoders intentionally handle a subset; `time.Duration` isn't a real
+      # enum. Enforcement is scoped to OUR domain enums.
       ignore-enum-types: 'xdr\.|time\.Duration'
     gocognit:
-      # Soft limit per engineering-standards.md §4.8 — 20 lets
-      # genuinely linear state-machines and dispatcher tables
-      # through while still flagging the "why does this function
-      # exist" kind of mess at 25+.
+      # Soft limit per engineering-standards.md §4.8: lets linear state machines and
+      # dispatcher tables through, flags real mess at 25+.
       min-complexity: 20
     gocyclo:
       min-complexity: 20
     funlen:
-      # Soft limit. See engineering-standards.md §4.8. Enforced via
-      # code review for genuine exceptions. 100/60 covers
-      # dispatch-heavy handlers (handleHistory, handleVWAP,
-      # buildDispatcher) that read better linearly than split
-      # into one-shot helpers.
+      # Soft limit (engineering-standards.md §4.8); exceptions go through review.
+      # 100/60 covers dispatch-heavy handlers (handleHistory, handleVWAP,
+      # buildDispatcher) that read better linearly.
       lines: 100
       statements: 60
     gosec:
       excludes:
-        # G104 — we use errorlint/errcheck for unchecked errors;
-        # gosec's G104 is noisy on intentional ignores.
+        # G104: errorlint/errcheck cover unchecked errors; gosec's is noisy on
+        # intentional ignores.
         - G104
-        # G101 — "hardcoded credentials" false-positives on const
-        # strings that happen to contain the word "key" or "token"
-        # (e.g. an env-var NAME constant). Our real secrets never
-        # appear as Go literals.
+        # G101: false-positives on consts containing "key" or "token" (env-var
+        # names). Real secrets never appear as Go literals.
         - G101
-        # G115 — "integer overflow" on int→uint32 / uint64→int64
-        # conversions. Every flagged site is a Soroban XDR field
-        # where the upstream schema caps the range safely (ledger
-        # uint32, op_index int that can't exceed 255, etc). Adding
-        # bounds checks everywhere would be noise; gosec has no
-        # way to see the upstream invariant.
+        # G115: every flagged int conversion is a Soroban XDR field whose upstream
+        # schema caps the range; gosec cannot see that invariant.
         - G115
-        # G404 — "weak random for security". Every flagged site is
-        # a reconnect-backoff jitter or a non-security sample.
-        # crypto/rand would be incorrect (blocking + rate-limited
-        # on some platforms) in a reconnect loop.
+        # G404: every flagged site is reconnect-backoff jitter or a non-security
+        # sample; crypto/rand would block and be rate-limited in a reconnect loop.
         - G404
     errorlint:
       errorf: true
@@ -136,11 +98,9 @@ linters:
   exclusions:
     generated: strict
     rules:
-      # Test files can have longer setups + HTTP plumbing that test
-      # helpers (mustGet, newTestServer) already cleanup via
-      # t.Cleanup — the bodyclose linter can't see through the
-      # helper, and ctx-less http.Get is fine in a test that's
-      # already scoped by the testing package's own timeouts.
+      # Tests: helpers (mustGet, newTestServer) clean up via t.Cleanup, which
+      # bodyclose cannot see through, and ctx-less http.Get is fine under the testing
+      # package's own timeouts.
       - path: _test\.go
         linters:
           - funlen

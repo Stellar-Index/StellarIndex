@@ -1,8 +1,7 @@
-# Stellar Index — single-node Prometheus on r1.
-# Scrapes the local exporters; sends alerts to local Alertmanager.
-# When R2/R3 land, switch to the configs/ansible/roles/prometheus
-# 2-host HA topology (paired with R2 prometheus, AlertManager
-# cluster on :9094).
+# Stellar Index: single-node Prometheus on r1. Scrapes the local exporters and
+# alerts to the local Alertmanager. When R2/R3 land, switch to the
+# configs/ansible/roles/prometheus 2-host HA topology (Alertmanager cluster on
+# :9094).
 
 global:
   scrape_interval: 15s
@@ -11,24 +10,21 @@ global:
     region: r1
     deployment: production
 
-# Alerts go to local Alertmanager. No clustering today (single node);
-# AlertManager fans out to webhook receivers per its own config.
+# No clustering (single node); Alertmanager fans out to webhook receivers per
+# its own config.
 alerting:
   alertmanagers:
     - static_configs:
         - targets:
             - localhost:9093
 
-# Rule files. Operator deploys configs/prometheus/rules.r1/*.yml to
-# /etc/prometheus/rules.r1/ (one ansible task — rsync or ansible.builtin.copy
-# with the whole directory). Every file in this directory has a runbook
-# at docs/operations/runbooks/ and is referenced from
-# docs/operations/alerts-catalog.md; load the
-# full set on R1 so there are no silent-rule families.
-#
-# R1 uses hyphenated job labels, multi-host underscored; this glob picks up the R1
-# overlay copies in configs/prometheus/rules.r1/ which use the
-# hyphenated names matching the scrape jobs above.
+# Operator deploys configs/prometheus/rules.r1/*.yml to
+# /etc/prometheus/rules.r1/ (rsync or ansible.builtin.copy of the whole
+# directory). Every file has a runbook under docs/operations/runbooks/ and an
+# entry in docs/operations/alerts-catalog.md; load the full set so there are no
+# silent-rule families. r1 uses hyphenated job labels (multi-host uses
+# underscored), and this glob picks up the r1 overlay copies, which match the
+# scrape jobs below.
 rule_files:
   - /etc/prometheus/rules.r1/*.yml
 
@@ -71,10 +67,8 @@ scrape_configs:
           host: r1
     metrics_path: /metrics
 
-  # MinIO exposes metrics on :9000/minio/v2/metrics/cluster
-  # (auth required; future).
-  # Galexie exposes metrics on :6061/metrics (best-effort —
-  # endpoint may hang per node-healthcheck.sh comment).
+  # Galexie metrics on :6061/metrics (best-effort; the endpoint may hang, see
+  # the node-healthcheck.sh comment).
   - job_name: galexie
     static_configs:
       - targets: [localhost:6061]
@@ -83,19 +77,14 @@ scrape_configs:
     scrape_timeout: 5s
 
   # ─── scrape-job coverage ─────────────
-  # Multi-host parity for R1's single-host shape. The corresponding
-  # rule files in configs/prometheus/rules.r1/ reference the metrics
-  # these exporters emit (cache.yml, infra.yml, storage.yml). Each
-  # job has a one-line comment naming the runbook that triages the
-  # corresponding alert family.
+  # Multi-host parity for r1's single-host shape. The rule files in
+  # configs/prometheus/rules.r1/ (cache.yml, infra.yml, storage.yml) reference
+  # the metrics these exporters emit; each job names the runbook family it feeds.
 
-  # redis_exporter — port 9121, installed by configs/ansible/roles/
-  # archival-node/tasks/16-prometheus-exporters.yml on r1 (single-node
-  # archival-node shape uses the `prometheus-redis-exporter` Debian
-  # package; the redis-sentinel role's own 07-monitoring.yml ships a
-  # tarball-based exporter on the Sentinel-cluster boxes). Feeds
-  # cache.yml + the redis-writes-blocked + cache-miss-rate-high alert
-  # families.
+  # redis_exporter, port 9121, installed by
+  # configs/ansible/roles/archival-node/tasks/16-prometheus-exporters.yml (Debian
+  # package; the redis-sentinel role ships its own tarball exporter on the
+  # Sentinel boxes). Feeds cache.yml: redis-writes-blocked, cache-miss-rate-high.
   - job_name: redis_exporter
     static_configs:
       - targets: [localhost:9121]
@@ -103,21 +92,18 @@ scrape_configs:
           host: r1
           service: redis
 
-  # Alertmanager self-scrape — port 9093, the same target prometheus
-  # already alerts TO. Self-scraping lets us alert on alertmanager
-  # being down (alertmanager-bad-config + meta runbook family).
-  # Required by the deadmansswitch heartbeat (configs/alertmanager/
-  # alertmanager.r1.yml).
+  # Alertmanager self-scrape, port 9093: lets us alert on Alertmanager being
+  # down (alertmanager-bad-config + meta runbook family). Required by the
+  # deadmansswitch heartbeat (configs/alertmanager/alertmanager.r1.yml).
   - job_name: alertmanager
     static_configs:
       - targets: [localhost:9093]
         labels:
           host: r1
 
-  # postgres_exporter — port 9187, installed by configs/ansible/roles/
-  # archival-node/tasks/16-prometheus-exporters.yml (Debian package
-  # `prometheus-postgres-exporter`, peer-auth on the local Unix socket
-  # as the `postgres` superuser). Feeds storage.yml's pg_* alerts.
+  # postgres_exporter, port 9187, installed by 16-prometheus-exporters.yml
+  # (Debian package, peer auth on the local socket). Feeds storage.yml's pg_*
+  # alerts.
   - job_name: postgres_exporter
     static_configs:
       - targets: [localhost:9187]
@@ -126,11 +112,9 @@ scrape_configs:
           service: postgres
     honor_labels: true
 
-  # pgbackrest_exporter — port 9854 (upstream default), installed by
-  # configs/ansible/roles/archival-node/tasks/16-prometheus-exporters.yml
-  # (no Debian package; pinned upstream release from
-  # https://github.com/woblerr/pgbackrest_exporter/releases — version
-  # in `pgbackrest_exporter_version` default, SHA in inventory).
+  # pgbackrest_exporter, port 9854 (upstream default), installed by
+  # 16-prometheus-exporters.yml (pinned upstream release; version in
+  # `pgbackrest_exporter_version`, SHA in inventory).
   - job_name: pgbackrest_exporter
     static_configs:
       - targets: [localhost:9854]
@@ -138,14 +122,11 @@ scrape_configs:
           host: r1
           service: pgbackrest
 
-  # ClickHouse — port 9363, served by clickhouse-server ITSELF (no
-  # exporter process exists or is needed). The stock config.xml ships
-  # the whole <prometheus> block commented out, which is why this job
-  # had no counterpart on the box until the archival-node role's
-  # 22-clickhouse-exporter.yml drop-in enabled it; until that tag is
-  # applied the job is down and clickhouse.yml's
-  # stellarindex_clickhouse_server_down pages, which is the intended
-  # signal that the lake's read path has no telemetry.
+  # ClickHouse, port 9363, served by clickhouse-server ITSELF (no exporter
+  # process). Stock config.xml ships the <prometheus> block commented out; the
+  # archival-node role's 22-clickhouse-exporter.yml drop-in enables it. Until
+  # applied the job is down and clickhouse.yml's stellarindex_clickhouse_server_down
+  # pages, the intended signal that the lake's read path has no telemetry.
   # Runbook: docs/operations/runbooks/clickhouse.md
   - job_name: clickhouse
     static_configs:
@@ -154,10 +135,8 @@ scrape_configs:
           host: r1
           service: clickhouse
 
-  # MinIO cluster metrics — Bearer-token auth (per the bucket-level
-  # `mc admin prometheus generate` output), so the operator wires
-  # the bearer token into a bearer_token_file BY HAND.
-  # Path differs from /metrics (the v2 path).
+  # MinIO cluster metrics: bearer-token auth on the v2 path (not /metrics),
+  # read from bearer_token_file.
   - job_name: minio
     metrics_path: /minio/v2/metrics/cluster
     static_configs:
@@ -165,12 +144,8 @@ scrape_configs:
         labels:
           host: r1
           service: minio
-    # /etc/prometheus/minio.token is an OPERATOR-MINTED file: no ansible
-    # task owns it (09-minio.yml never mentions it;
-    # the gap is tracked in docs/operations/credential-rotation.md and the
-    # minio-metrics-403 runbook). Until the file exists this job 401s; the
-    # absence-of-series surfaces via meta.yml
-    # (stellarindex_minio_exporter_down, page) and the operator gets a
-    # clear "wire the token" signal.
+    # /etc/prometheus/minio.token is minted by 16-prometheus-exporters.yml
+    # Group D. Until it exists this job 401s, which surfaces via meta.yml
+    # (stellarindex_minio_exporter_down, page).
     # Procedure: docs/operations/runbooks/infra.md#minio-metrics-403
     bearer_token_file: /etc/prometheus/minio.token
