@@ -35,13 +35,7 @@ func IsPlaceholderEmail(email string) bool {
 	return strings.HasSuffix(strings.ToLower(email), placeholderEmailDomain)
 }
 
-// User is a human with a dashboard login. v1 attaches each user
-// to exactly one account; multi-org migrates via a memberships
-// table (see Account doc).
-//
-// IsStaff is orthogonal to Role — a user can be RoleMember on
-// their account AND have IsStaff = true (gates the
-// admin.stellarindex.io surface).
+// User is a human with a dashboard login, attached to exactly one account in v1; IsStaff is orthogonal to Role and gates the admin surface.
 type User struct {
 	ID                     uuid.UUID
 	AccountID              uuid.UUID
@@ -57,17 +51,7 @@ type User struct {
 	CreatedAt              time.Time
 }
 
-// Session is an authenticated dashboard session backed by an
-// HttpOnly cookie. Distinct from API keys: cookie sessions
-// authenticate the dashboard SPA; bearer tokens authenticate
-// programmatic API calls.
-//
-// The cookie carries a high-entropy random token, NOT the ID.
-// Only TokenHash (sha256 of that token) is persisted, mirroring
-// api_keys/magic_link_tokens: a read of the sessions table is
-// therefore not directly replayable. ID stays
-// the internal primary-key handle used by Touch/Revoke and never
-// leaves the server.
+// Session is an authenticated dashboard session backed by an HttpOnly cookie. The cookie carries a random token, NOT the ID; only TokenHash (sha256) is persisted, so a read of the table is not replayable, and ID never leaves the server.
 type Session struct {
 	ID uuid.UUID
 	// TokenHash is sha256(cookie token). It is the lookup key on the
@@ -103,11 +87,7 @@ type UserStore interface {
 	// Excludes nothing — caller filters by role / staff if needed.
 	ListUsersForAccount(ctx context.Context, accountID uuid.UUID) ([]User, error)
 
-	// UpdateUser writes mutable fields (display_name, role,
-	// email_verified_at, last_login_at, MFA fields). Immutable
-	// fields (id, account_id, email, created_at, is_staff) are
-	// ignored — staff-only operations on those go through dedicated
-	// admin methods.
+	// UpdateUser writes the mutable fields (display_name, role, email_verified_at, last_login_at, MFA); immutable fields (id, account_id, email, created_at, is_staff) are ignored.
 	UpdateUser(ctx context.Context, u User) error
 
 	// CreateSession mints a new dashboard session. The caller sets
@@ -120,11 +100,7 @@ type UserStore interface {
 	// carries the ID. It backs internal-handle reads (tests, ops) only.
 	GetSession(ctx context.Context, id uuid.UUID) (Session, error)
 
-	// GetSessionByTokenHash looks up an active session by sha256 of the
-	// cookie token; ErrNotFound if absent, revoked or expired. This is the
-	// authentication path: resolveSession hashes the incoming cookie and
-	// looks up by hash, so a leak of the sessions table (which stores
-	// only the hash) is not directly replayable.
+	// GetSessionByTokenHash looks up an active session by sha256 of the cookie token (ErrNotFound if absent, revoked or expired); the table stores only hashes, so a leak is not replayable.
 	GetSessionByTokenHash(ctx context.Context, tokenHash []byte) (Session, error)
 
 	// TouchSession updates LastSeenAt + IPLastSeen + UserAgent.

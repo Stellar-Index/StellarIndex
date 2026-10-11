@@ -9,14 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// APIKey is the extended replacement for the Redis-only
-// `auth.APIKeyRecord`. Phase 1 Week 4 ships the cutover where
-// the runtime auth path consults this table (mirrored to Redis
-// for read latency); until then the existing Redis store stays
-// canonical and the dashboard merely writes through.
-//
-// The plaintext is NEVER stored — KeyHash is sha256 of the
-// plaintext, KeyPrefix is the first 12 chars (safe to display).
+// APIKey is a dashboard-managed API key; the plaintext is NEVER stored, KeyHash is its sha256 and KeyPrefix the first 12 chars (safe to display).
 type APIKey struct {
 	ID                     string // "kid_<hex>"
 	AccountID              uuid.UUID
@@ -55,15 +48,7 @@ const (
 	APIKeyTierOperator APIKeyTier = "operator" // staff-issued; unlocks admin endpoints
 )
 
-// Key capability scopes — the coarse route-family grants a key can
-// carry. Families are derived from the /v1 route table: everything
-// that serves market/network data is `read`; the account
-// self-service surface is `account`; the session-dashboard
-// management surface is `dashboard`; the operator surface is
-// `admin`. A key with an EMPTY scope list retains full access (so every
-// key minted before scopes existed keeps working); a key WITH scopes is
-// confined to the listed families. Enforcement lives in the API's
-// KeyPolicy middleware (internal/api/v1/middleware/keypolicy.go).
+// Key capability scopes: coarse route-family grants (read, account, dashboard, admin). An EMPTY scope list retains full access; a key WITH scopes is confined to the listed families (enforced by the KeyPolicy middleware).
 const (
 	KeyScopeRead      = "read"      // public data surfaces (price, history, chart, assets, explorer, …)
 	KeyScopeAccount   = "account"   // /v1/account/* self-service
@@ -90,15 +75,7 @@ func ValidKeyScope(s string) bool {
 	}
 }
 
-// KeyPermissions is the per-key capability set. Stored as JSONB
-// in Postgres. Default is {All: true} (no enforcement); a dashboard
-// customer can restrict a key to specific endpoints via Allow/Deny.
-//
-// internal/api/v1/middleware.KeyPolicy() enforces the per-endpoint
-// allow/deny check on every authenticated request (wired in
-// cmd/stellarindex-api/main.go), reading All/Allow/Deny via
-// auth.NewPostgresAPIKeyValidator (internal/auth/apikey_postgres.go:
-// Permissions.All → Subject.AllowAllPermissions).
+// KeyPermissions is the per-key capability set, stored as JSONB; the default {All: true} enforces nothing, and Allow/Deny restrict a key per endpoint via middleware KeyPolicy.
 type KeyPermissions struct {
 	All   bool                 `json:"all"`
 	Allow []KeyPermissionEntry `json:"allow,omitempty"`
@@ -130,13 +107,7 @@ func (k APIKey) IsActive(now time.Time) bool {
 // validator will consult this store via a Redis-cached read-
 // through wrapper once the Phase 1 Week 4 cutover ships.
 type APIKeyStore interface {
-	// Create inserts. Caller has already hashed the plaintext
-	// and computed the prefix. Returns ErrConflict if the hash
-	// or ID collide (extremely rare; key_id is 8 hex bytes).
-	// `maxActiveKeysPerAccount` enforces the cap atomically
-	// inside the INSERT statement; zero or negative disables
-	// the cap (operator/staff seeding paths). Returns
-	// [ErrAPIKeyQuotaExceeded] when the cap is met.
+	// Create inserts a pre-hashed key; ErrConflict on hash/ID collision, [ErrAPIKeyQuotaExceeded] when maxActiveKeysPerAccount is met (zero or negative disables the cap).
 	Create(ctx context.Context, k APIKey, maxActiveKeysPerAccount int) (APIKey, error)
 
 	// Get by key ID; ErrNotFound if absent.
@@ -156,18 +127,10 @@ type APIKeyStore interface {
 	// the tier-clamp and kill-switch paths; revoked history is never read.
 	ListActiveForAccount(ctx context.Context, accountID uuid.UUID) ([]APIKey, error)
 
-	// ListForAccount returns every active key plus at most
-	// revokedLimit of the most recently created revoked keys, sorted
-	// CreatedAt asc. moreRevoked is true when older revoked keys exist
-	// and were omitted. Revoked rows are kept forever, so no caller may
-	// read the whole history.
+	// ListForAccount returns every active key plus at most revokedLimit recent revoked keys (moreRevoked reports omitted ones); revoked rows are kept forever, so never read the whole history.
 	ListForAccount(ctx context.Context, accountID uuid.UUID, revokedLimit int) (keys []APIKey, moreRevoked bool, err error)
 
-	// Update writes the editable fields: name, description,
-	// rate_limit_per_min, monthly_quota, permissions,
-	// ip_allowlist, referer_allowlist, expires_at,
-	// usage_alert_threshold_pct. Only a key owned by accountID is
-	// written; any other key, like an absent one, is ErrNotFound.
+	// Update writes the editable fields; a key not owned by accountID is ErrNotFound, like an absent one.
 	Update(ctx context.Context, accountID uuid.UUID, k APIKey) error
 
 	// Revoke soft-deletes by setting revoked_at + reason. Only a key

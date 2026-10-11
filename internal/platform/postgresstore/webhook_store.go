@@ -15,12 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// WebhookStore implements [platform.WebhookStore] against the
-// `customer_webhooks` + `webhook_deliveries` tables from migration
-// 0027.
-//
-// It is the data plane for customer-facing incident callbacks: the
-// fan-out enqueues deliveries here and the delivery worker drains them.
+// WebhookStore implements [platform.WebhookStore] against `customer_webhooks` and `webhook_deliveries`: fan-out enqueues deliveries, the delivery worker drains them.
 type WebhookStore struct {
 	s      *Store
 	sealer *platform.WebhookKeySealer
@@ -57,20 +52,8 @@ func webhookURLConflict(err error) error {
 	return err
 }
 
-// CreateWebhook inserts the registry row, enforcing the per-account
-// `maxPerAccount` cap atomically. A handler pre-check (SELECT then INSERT) is
-// raceable: N parallel creates at 9 webhooks could all pass and take the
-// account to 9+N.
-//
-// The create runs in a transaction guarded by a per-account advisory lock
-// ([lockAccount]), so the count + insert observes a stable view: the loser's
-// count-CTE sees the winner's INSERT and short-circuits via WHERE n < $7. The
-// lock auto-releases at COMMIT/ROLLBACK and is keyed by account_id, so
-// different accounts don't serialise.
-//
-// `maxPerAccount` is the handler's tier ceiling; a value <= 0 admits nothing
-// (TierAnon), never a default. A second registration of the same URL on one
-// account returns [platform.ErrConflict].
+// CreateWebhook inserts the registry row, enforcing `maxPerAccount` atomically: a per-account advisory lock ([lockAccount]) serialises creates so the loser's count-CTE sees the winner's INSERT (a handler pre-check is raceable).
+// maxPerAccount <= 0 admits nothing (TierAnon); a duplicate URL on one account returns [platform.ErrConflict].
 func (c *WebhookStore) CreateWebhook(ctx context.Context, w platform.CustomerWebhook, maxPerAccount int) (platform.CustomerWebhook, error) {
 	if w.AccountID == uuid.Nil {
 		return platform.CustomerWebhook{}, errors.New("postgresstore: CreateWebhook: AccountID is empty")
@@ -159,20 +142,8 @@ func (c *WebhookStore) ListWebhooksForAccount(ctx context.Context, accountID uui
 	return out, nil
 }
 
-// ListWebhooksSubscribedTo returns every enabled webhook subscribed to
-// `eventType` whose owning account is ACTIVE. The fan-out service
-// iterates the result and calls EnqueueDelivery for each. The events
-// column is a text[] in Postgres; ANY($1) is the membership predicate.
-//
-// The account kill switch must hold outbound as well as inbound.
-// Suspending or closing an account stops its API keys authenticating
-// (internal/auth/apikey_redis.go); without a status check here this
-// resolver would keep handing the fan-out a suspended customer's
-// endpoints and we would keep POSTing their data to them. The
-// EXISTS is the resolver-side gate: a webhook whose account is anything
-// other than `active` — and a webhook whose account row is missing
-// altogether — is not a subscriber. Fail-closed, matching the inbound
-// side's "active authenticates, everything else does not".
+// ListWebhooksSubscribedTo returns enabled webhooks subscribed to eventType whose owning account is ACTIVE (events is text[], ANY($1) the predicate).
+// Fail-closed outbound kill switch: a webhook whose account is not `active`, or whose account row is missing, is not a subscriber, mirroring the inbound side.
 func (c *WebhookStore) ListWebhooksSubscribedTo(ctx context.Context, eventType platform.WebhookEventType) ([]platform.CustomerWebhook, error) {
 	const q = `
 		SELECT id, account_id, name, url, events, enabled,
@@ -251,11 +222,7 @@ func (c *WebhookStore) openSigningKey(id uuid.UUID, raw, sealed []byte) ([]byte,
 	return c.sealer.Open(id, sealed)
 }
 
-// SealLegacySigningKeys seals every signing key still stored raw, the
-// current and the previous (rotation) key alike, and clears the raw copy,
-// returning how many keys it sealed. Each key is a compare-and-swap on
-// its raw value, so concurrent runs, a racing rotation and a racing
-// delete are safe.
+// SealLegacySigningKeys seals every raw signing key (current and previous) and clears the raw copy, returning the count; each is a compare-and-swap on its raw value, safe against concurrent runs, rotation and delete.
 func (c *WebhookStore) SealLegacySigningKeys(ctx context.Context) (int, error) {
 	if c.sealer == nil {
 		return 0, errors.New("postgresstore: SealLegacySigningKeys: no seal key configured")
@@ -378,23 +345,8 @@ func (c *WebhookStore) DeleteWebhook(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// EnqueueDelivery inserts one pending delivery row, conditional on the
-// owning account being ACTIVE.
-//
-// This is the choke point EVERY producer shares.
-// ListWebhooksSubscribedTo already withholds a suspended account's
-// endpoints from the fan-out, but internal/pricealerts/worker.go
-// resolves its targets with ListWebhooksForAccount — the customer's own
-// dashboard listing, deliberately unfiltered — so without the gate here
-// a suspended account would still accrue queued deliveries. Returns an error
-// wrapping [ErrWebhookAccountInactive] when the account is not active,
-// and [platform.ErrNotFound] when the webhook itself is gone (the
-// pre-gate behaviour a foreign-key violation produced).
-//
-// d.ID is inserted as the primary key, so a producer that derives it from
-// the event (customerwebhook.Fanout.PublishOnce) can re-run a partial
-// fan-out without re-notifying subscribers already queued: the conflict
-// inserts nothing and returns [platform.ErrDeliveryAlreadyEnqueued].
+// EnqueueDelivery inserts one pending delivery only if the owning account is ACTIVE; it is the choke point every producer shares (price alerts resolve targets without the status filter), so a suspended account accrues nothing.
+// Errors: wrapping [ErrWebhookAccountInactive] when inactive, [platform.ErrNotFound] when the webhook is gone, [platform.ErrDeliveryAlreadyEnqueued] when d.ID is already queued (so a partial fan-out can re-run without re-notifying).
 func (c *WebhookStore) EnqueueDelivery(ctx context.Context, d platform.WebhookDelivery) error {
 	if d.WebhookID == uuid.Nil {
 		return errors.New("postgresstore: EnqueueDelivery: WebhookID is empty")
@@ -461,12 +413,7 @@ func (c *WebhookStore) alreadyEnqueued(ctx context.Context, id, webhookID uuid.U
 		id, webhookID, platform.ErrDeliveryAlreadyEnqueued)
 }
 
-// ErrWebhookAccountInactive is the sentinel the enqueue paths wrap when
-// they refuse to queue a delivery because the webhook's owning account
-// is suspended or closed. It is a POLICY refusal, not a lost event: the
-// returned error also answers WebhookSuppressed() true, so a fan-out can
-// count it apart from a genuine enqueue failure — and stay off the
-// lost-event alert — without importing this package.
+// ErrWebhookAccountInactive is wrapped when a delivery is refused because the owning account is suspended or closed; a POLICY refusal, not a lost event, and WebhookSuppressed() reports true so fan-out can count it apart.
 var ErrWebhookAccountInactive = errors.New("postgresstore: webhook account is not active")
 
 // accountInactiveError reports an enqueue refused by the account kill
@@ -507,12 +454,7 @@ func (c *WebhookStore) refuseEnqueue(ctx context.Context, op string, webhookID u
 	return accountInactiveError{op: op, webhookID: webhookID, status: status}
 }
 
-// WebhookAccountStatus returns the lifecycle status of the account that
-// OWNS webhookID, or [platform.ErrNotFound] when the webhook (or the
-// account it hangs off) is absent. It is the delivery worker's leg of
-// the account kill switch: the worker re-reads it immediately before
-// signing and POSTing, so an account suspended AFTER its deliveries were
-// claimed is still caught.
+// WebhookAccountStatus returns the status of the account that OWNS webhookID, or [platform.ErrNotFound]; the delivery worker re-reads it just before signing so a post-claim suspension is still caught.
 func (c *WebhookStore) WebhookAccountStatus(ctx context.Context, webhookID uuid.UUID) (platform.AccountStatus, error) {
 	const q = `
 		SELECT a.status
@@ -536,25 +478,9 @@ func (c *WebhookStore) WebhookAccountStatus(ctx context.Context, webhookID uuid.
 // rows per poll instead of a whole batch.
 const maxClaimPerWebhook = 5
 
-// ListPendingDeliveries atomically claims up to `limit` due deliveries,
-// fair-shared across endpoints. The claim is one UPDATE...RETURNING with
-// `FOR UPDATE SKIP LOCKED`, so concurrent workers never hand the same row to
-// two HTTP-POST paths.
-//
-// The lease pushes `next_attempt_at` 5 minutes out as part of the claim. A
-// crashed worker's lease expires and another re-POSTs; that is idempotent
-// because the receiver dedupes on X-StellarIndex-Delivery-Id (the row id),
-// authenticated by X-StellarIndex-Signature-V2.
-//
-// Fair share: each endpoint's due rows are ranked FIFO and every endpoint's
-// first row is taken before any second, capped at maxClaimPerWebhook per
-// endpoint, so one black-holing endpoint cannot starve other customers.
-//
-// The claim skips deliveries whose owning account is not ACTIVE; rows queued
-// before a suspension are PARKED, not destroyed. The EXISTS deliberately does
-// not join `accounts` into the FROM list: a join would extend the `FOR UPDATE
-// ... SKIP LOCKED` row lock to accounts, so an admin PATCH holding an account
-// row would make the worker silently skip that customer.
+// ListPendingDeliveries atomically claims up to `limit` due deliveries with one UPDATE...RETURNING ... FOR UPDATE SKIP LOCKED, fair-shared across endpoints (capped at maxClaimPerWebhook each) so a black-holing endpoint cannot starve others.
+// The 5-minute lease makes a crashed worker's re-POST idempotent (the receiver dedupes on X-StellarIndex-Delivery-Id).
+// Rows of non-ACTIVE accounts are PARKED, not destroyed; the EXISTS must not join `accounts`, or the row lock would extend to it and an admin PATCH would make the worker skip that customer.
 func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int) ([]platform.WebhookDelivery, error) {
 	if limit <= 0 {
 		limit = 100
@@ -664,14 +590,7 @@ func (c *WebhookStore) MarkAttemptFailed(ctx context.Context, id uuid.UUID, errM
 	return nil
 }
 
-// SweepFinishedDeliveries deletes delivery rows created before
-// olderThan that are finished — delivered, or failed permanently
-// (next_attempt_at cleared) — returning how many were removed. Drives
-// the webhook-delivery reaper (internal/retentionreaper).
-//
-// A row still carrying next_attempt_at is never touched at any age:
-// that includes deliveries parked behind a suspended account, which
-// resume if the account is reinstated.
+// SweepFinishedDeliveries deletes delivery rows created before olderThan that are delivered or permanently failed (next_attempt_at cleared); a row still carrying next_attempt_at (incl. parked behind a suspended account) is never touched.
 func (c *WebhookStore) SweepFinishedDeliveries(ctx context.Context, olderThan time.Time) (int64, error) {
 	const q = `
 		DELETE FROM webhook_deliveries
@@ -755,14 +674,8 @@ func scanDeliveryRow(s rowScanner) (platform.WebhookDelivery, error) {
 
 // ─── Dashboard-flow surfaces (extends EnqueueDelivery/MarkDelivered) ─────
 
-// RotateWebhookSecret makes newSecret the signing key in place and moves
-// the outgoing key into the previous slot, under a row lock. The row is
-// never deleted, so its queued deliveries and delivery log survive.
-//
-// Both keys are stored the way create stores one: with a sealer, sealed
-// and with both raw columns cleared (an outgoing key still held raw is
-// sealed on the way); without one, raw. A store without a sealer refuses
-// a sealed row rather than writing a pair it could not read back.
+// RotateWebhookSecret makes newSecret the signing key in place under a row lock, moving the outgoing key to the previous slot; the row is never deleted, so queued deliveries and the log survive.
+// Keys are stored as create stores them (sealed with a sealer, raw without); a store without a sealer refuses a sealed row rather than write a pair it cannot read back.
 func (c *WebhookStore) RotateWebhookSecret(ctx context.Context, id uuid.UUID, newSecret []byte, previousExpiresAt time.Time) error {
 	if len(newSecret) == 0 {
 		return errors.New("postgresstore: RotateWebhookSecret: newSecret is empty")
@@ -818,15 +731,7 @@ func (c *WebhookStore) RotateWebhookSecret(ctx context.Context, id uuid.UUID, ne
 	return nil
 }
 
-// AppendDelivery records one delivery attempt. Returns the
-// inserted row with `ID` + `CreatedAt` populated. Used by the
-// dashboard-flow path where the caller has the full attempt state
-// already (vs EnqueueDelivery which seeds a fresh queue row).
-//
-// Gated on the owning account being ACTIVE, exactly as
-// [WebhookStore.EnqueueDelivery] is — it is the second way a row reaches
-// webhook_deliveries, and a kill switch honoured by only one of two
-// writers is not a kill switch.
+// AppendDelivery records one delivery attempt and returns the row; gated on the owning account being ACTIVE exactly like [WebhookStore.EnqueueDelivery], since a kill switch honoured by one of two writers is not one.
 func (c *WebhookStore) AppendDelivery(ctx context.Context, d platform.WebhookDelivery) (platform.WebhookDelivery, error) {
 	if d.WebhookID == uuid.Nil {
 		return platform.WebhookDelivery{}, errors.New("postgresstore: AppendDelivery: WebhookID is empty")

@@ -12,13 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TokenStore implements [platform.TokenStore] against Postgres.
-//
-// Magic-link tokens and invites share a 32-byte sha256 token-
-// hash key shape but live in distinct tables — the
-// authorisation envelope (purpose / role / acceptance) differs
-// enough that one-table-many-purposes would force callers to
-// remember which fields apply to which row.
+// TokenStore implements [platform.TokenStore] against Postgres; magic-link tokens and invites live in distinct tables because their authorisation envelopes differ.
 type TokenStore struct {
 	s              *Store
 	now            func() time.Time
@@ -47,21 +41,8 @@ func (r *TokenStore) WithSweepBatchSize(n int) *TokenStore {
 	return r
 }
 
-// defaultSweepBatchRows and sweepMaxBatchesPerCall bound every
-// reaper-driven DELETE in this package (TokenStore's login-code-lockout
-// and magic-link sweeps; AccountStore's suspended-orphan reap).
-//
-// Each of these tables grows at a rate an unauthenticated caller
-// controls (an attacker-chosen email or a signup-race retry). An
-// unbounded `DELETE FROM t WHERE <predicate>` landing during a large
-// backlog would hold row locks and WAL for as long as the delete took,
-// on the same connection pool the request path shares. Each sweep
-// instead issues bounded `DELETE ... WHERE pk IN (SELECT pk ... LIMIT
-// defaultSweepBatchRows)` statements in a loop, capped at
-// sweepMaxBatchesPerCall batches per call rather than holding one
-// unbounded transaction open. The remainder waits for the next call:
-// the login-code reaper, whose insert rate an anonymous caller drives,
-// re-sweeps after a short pause; the others wait for their next tick.
+// defaultSweepBatchRows and sweepMaxBatchesPerCall bound every reaper DELETE: these tables grow at a rate an unauthenticated caller controls, and one unbounded DELETE would hold locks and WAL on the shared pool.
+// Each sweep loops bounded `DELETE ... WHERE pk IN (SELECT ... LIMIT)` batches; the remainder waits for the next call.
 const (
 	defaultSweepBatchRows  = 2000
 	sweepMaxBatchesPerCall = 25
@@ -89,18 +70,8 @@ func (r *TokenStore) CreateMagicLinkToken(ctx context.Context, t platform.MagicL
 	return nil
 }
 
-// ConsumeMagicLinkToken atomically marks the row consumed and
-// returns it. Three terminal states surface as distinct errors:
-//
-//   - row absent → platform.ErrNotFound
-//   - row already consumed → platform.ErrNotFound (treated the
-//     same so a leaked token reused after consumption isn't
-//     distinguishable from a typo'd one)
-//   - row exists but past expires_at → platform.ErrTokenExpired
-//
-// The atomic UPDATE...RETURNING combines the lookup, expiry
-// check, and consumption-marking so two concurrent requests
-// can't both succeed.
+// ConsumeMagicLinkToken atomically marks the row consumed and returns it. Absent and already-consumed both give platform.ErrNotFound (a reused token must look like a typo); past expires_at gives platform.ErrTokenExpired.
+// One UPDATE...RETURNING does lookup, expiry check and consumption, so concurrent requests cannot both succeed.
 func (r *TokenStore) ConsumeMagicLinkToken(ctx context.Context, tokenHash []byte) (platform.MagicLinkToken, error) {
 	now := r.now()
 	const q = `
@@ -138,22 +109,9 @@ func (r *TokenStore) ConsumeMagicLinkToken(ctx context.Context, tokenHash []byte
 	return out, nil
 }
 
-// ReserveLoginCode charges one attempt to the email's newest active
-// login token, if it is still under maxAttempts, and returns the charged
-// row. The verify-code handler recomputes the row's 6-digit code from
-// its hash, so the full row comes back (TokenHash is the load-bearing
-// field).
-//
-// Only the newest token is selected, and the cap is checked on it rather
-// than used to pick among tokens: an older token must never step in as
-// the candidate, or the number of codes a guess can hit would grow
-// with the number of mints (see [platform.TokenStore.ReserveLoginCode]).
-//
-// Charge and cap check are one statement so the cap holds under
-// concurrency: FOR UPDATE makes a racing call wait for the row, and the
-// UPDATE re-checks `attempts < $3` against the committed value (READ
-// COMMITTED re-evaluation), so a call whose re-check fails is not handed
-// the token.
+// ReserveLoginCode charges one attempt to the email's NEWEST active login token if under maxAttempts and returns the row (the handler recomputes the code from TokenHash).
+// Only the newest token is a candidate, so older tokens never widen the set of codes a guess can hit (see [platform.TokenStore.ReserveLoginCode]).
+// Charge and cap check are one statement: FOR UPDATE makes a racing call wait, and the UPDATE re-checks `attempts < $3` against the committed value.
 func (r *TokenStore) ReserveLoginCode(ctx context.Context, email string, maxAttempts int) (platform.MagicLinkToken, error) {
 	now := r.now()
 	const q = `
@@ -220,25 +178,9 @@ func (r *TokenStore) HasLiveLoginCode(ctx context.Context, email string, maxAtte
 	return live, nil
 }
 
-// RegisterFailedLoginCode records one failed 6-digit-code attempt
-// against the EMAIL and returns the resulting lockout state.
-//
-// This counter is independent of any token: `magic_link_tokens.attempts`
-// resets on every new mint, and the only bound on re-mints is a Redis send
-// throttle that a flush, fail-over or restart clears, which would give an
-// attacker an indefinite ~25-guesses/hour budget against a ~1e6 code
-// space. Here the budget is per address and survives all of that.
-//
-// One statement, so concurrent verify attempts for the same address
-// cannot both read `failed_count = n` and both write `n+1`:
-//
-//	insert   — no row yet: first failure of a fresh window.
-//	conflict — a row exists. If its window has fully elapsed AND it is
-//	           not currently locked, the window restarts at 1;
-//	           otherwise the count increments. Crossing maxFailures
-//	           stamps locked_until; an already-locked row keeps its
-//	           existing lock rather than sliding it forward, so a
-//	           grinder cannot extend a victim's lockout indefinitely.
+// RegisterFailedLoginCode records one failed 6-digit-code attempt against the EMAIL and returns the lockout state. The counter is independent of any token because per-mint `attempts` reset on re-mint and the Redis send throttle can be cleared, which would give an attacker an indefinite guess budget.
+// One statement, so concurrent attempts cannot both write `n+1`: a fresh or fully-elapsed unlocked window restarts at 1, otherwise the count increments;
+// crossing maxFailures stamps locked_until, and an already-locked row keeps its lock so a grinder cannot extend a victim's lockout.
 func (r *TokenStore) RegisterFailedLoginCode(
 	ctx context.Context, email string, maxFailures int, window, lockFor time.Duration,
 ) (platform.LoginCodeLockout, error) {
@@ -307,16 +249,7 @@ func (r *TokenStore) RegisterFailedLoginCode(
 	return out, nil
 }
 
-// LoginCodeLockoutStatus reports the stored lockout for an email
-// without recording an attempt.
-//
-// A missing row reports the zero value. An EXISTING row is returned as
-// stored — an elapsed window or an expired lock is NOT normalised away
-// here, because the raw counters are what an operator investigating a
-// grinder wants to see. Callers decide with
-// [platform.LoginCodeLockout.Locked], which is time-aware; the window's
-// elapse is applied by [TokenStore.RegisterFailedLoginCode] at the next
-// failure.
+// LoginCodeLockoutStatus reports the stored lockout without recording an attempt; a missing row is the zero value and an existing row is returned as stored (elapsed windows are not normalised), so callers decide with the time-aware [platform.LoginCodeLockout.Locked].
 func (r *TokenStore) LoginCodeLockoutStatus(ctx context.Context, email string) (platform.LoginCodeLockout, error) {
 	if email == "" {
 		return platform.LoginCodeLockout{}, errors.New("postgresstore: LoginCodeLockoutStatus: email is empty")
@@ -355,26 +288,8 @@ func (r *TokenStore) ClearLoginCodeLockout(ctx context.Context, email string) er
 	return nil
 }
 
-// SweepLoginCodeLockouts deletes SETTLED lockout rows older than
-// `olderThan`, returning how many were removed. Drives
-// [logincodereaper.Reaper]; see that package for why this exists.
-//
-// The short version: `login_code_lockouts.email` is attacker-chosen.
-// POST /v1/auth/verify-code is unauthenticated and accepts any
-// well-formed address, so one wrong guess against a synthetic address
-// inserts a row that ClearLoginCodeLockout will never remove — nobody
-// can sign in as an address that does not exist. Bounded only by the
-// anonymous rate limit, that is remote, cheap, unbounded table growth.
-//
-// "Settled" is the load-bearing word: a row with a LIVE lock is never
-// deleted, at any age. Reaping the rest costs nothing — retention is
-// longer than the counting window, so a sweepable row's window has
-// already elapsed and its next failure would have restarted the count
-// anyway.
-//
-// The bool reports that the call stopped at its per-call cap with every
-// batch full, so settled rows may remain; the reaper re-sweeps on that
-// signal instead of leaving the backlog for its next hourly tick.
+// SweepLoginCodeLockouts deletes SETTLED lockout rows older than olderThan (driving [logincodereaper.Reaper]): `email` is attacker-chosen via unauthenticated verify-code, so rows would otherwise grow without bound.
+// A row with a LIVE lock is never deleted at any age; the bool reports the per-call cap was hit with every batch full, so the reaper re-sweeps.
 func (r *TokenStore) SweepLoginCodeLockouts(ctx context.Context, olderThan time.Time) (int64, bool, error) {
 	const q = `
 		DELETE FROM login_code_lockouts
@@ -416,25 +331,8 @@ func (r *TokenStore) CountLoginCodeLockouts(ctx context.Context) (int64, error) 
 	return n, nil
 }
 
-// SweepExpiredMagicLinkTokens deletes magic-link rows whose
-// `expires_at` is before `olderThan`, returning how many were removed.
-// Drives [magiclinkreaper.Reaper]; see that package for why this
-// exists.
-//
-// The short version: `magic_link_tokens.email` (+ requested_ip) is
-// ATTACKER-CHOSEN and durable plaintext PII. POST /v1/auth/login is
-// unauthenticated and inserts a permanent row for any well-formed
-// address, so a scripted caller can grow this table without bound on a
-// disk-fixed host, and nothing ever removes a row it created (a link
-// nobody clicks is never consumed).
-//
-// Every row past `expires_at` is TERMINAL: ConsumeMagicLinkToken and
-// ReserveLoginCode both require `expires_at > now`, so an
-// expired row can never again be redeemed regardless of its
-// consumed_at. The reaper's retention keeps expired rows a while for
-// forensics and to preserve the expired-vs-absent distinction
-// classifyMagicLinkMiss draws for a slow user, then deletes them. The
-// predicate drives over `magic_link_tokens_expires_idx`.
+// SweepExpiredMagicLinkTokens deletes rows with `expires_at` before olderThan (driving [magiclinkreaper.Reaper]): email and requested_ip are ATTACKER-CHOSEN durable PII inserted by unauthenticated login, so the table would grow without bound.
+// An expired row is terminal (consume and reserve both require expires_at > now); retention keeps it a while so classifyMagicLinkMiss can tell expired from absent.
 func (r *TokenStore) SweepExpiredMagicLinkTokens(ctx context.Context, olderThan time.Time) (int64, error) {
 	const q = `
 		DELETE FROM magic_link_tokens
@@ -475,12 +373,7 @@ func (r *TokenStore) CountMagicLinkTokens(ctx context.Context) (int64, error) {
 	return n, nil
 }
 
-// classifyMagicLinkMiss runs after the consume UPDATE found no
-// rows. Distinguishes:
-//   - row exists, past expiry → ErrTokenExpired
-//   - row exists, already consumed → ErrNotFound (intentional;
-//     re-use after consumption looks identical to "wrong token")
-//   - row absent → ErrNotFound
+// classifyMagicLinkMiss runs after a consume UPDATE found no rows: past expiry gives ErrTokenExpired; consumed or absent gives ErrNotFound (re-use must look like a wrong token).
 func (r *TokenStore) classifyMagicLinkMiss(ctx context.Context, tokenHash []byte) error {
 	now := r.now()
 	const q = `

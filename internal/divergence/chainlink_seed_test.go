@@ -40,18 +40,8 @@ func chainlinkSeedChild(t *testing.T, vec *prometheus.CounterVec, consumer, pair
 	return false
 }
 
-// TestNewChainlinkReferenceSeedsDecimalsCounters: obs.ChainlinkFeedDecimalsMismatchTotal and
-// obs.ChainlinkFeedDecimalsVerifyFailedTotal are counters with no
-// producer until the first refused reading / failed decimals() call, so
-// a feed that has never mis-scaled and one whose counter was never
-// wired both read as an absent series (identical to "no data" in
-// PromQL). NewChainlinkReference must pre-register the zero-valued
-// child for every configured feed so "zero forever" is provably the
-// healthy state, not an unwired metric.
-//
-// Uses a pair name that appears in no other test in this package, so
-// the assertion is independent of registration order / prior test
-// pollution of the shared package-level counters.
+// TestNewChainlinkReferenceSeedsDecimalsCounters: the decimals counters have no producer until the first refusal, so "zero forever" would read as an absent series; NewChainlinkReference must pre-register the zero child per feed.
+// Uses a pair name unique in this package so the assertion is independent of registration order and shared-counter pollution.
 func TestNewChainlinkReferenceSeedsDecimalsCounters(t *testing.T) {
 	const pair = "crypto:GH641SEEDTEST/fiat:USD"
 

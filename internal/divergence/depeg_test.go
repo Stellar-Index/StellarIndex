@@ -13,32 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
 )
 
-// TestStablecoinDepeg_DivergenceWorkerFires wires the stablecoin
-// late-binding policy (ADR-0026) together with the divergence
-// safety net (ADR-0019 §"Divergence"). The two are designed as a
-// pair: the aggregator deliberately conceals stablecoin↔fiat
-// drift so XLM/USDC trades flow into the same XLM/USD bucket as
-// XLM/USDT and direct XLM/fiat:USD; the divergence worker is the
-// safety net that fires `flags.divergence_warning` when our
-// (concealed-depeg) price drifts from external references.
-//
-// Without this test, the late-binding rewrite + the divergence
-// service could silently regress in opposite directions and
-// leave the safety net broken — exactly the gap this test closes.
-//
-// Scenario:
-//
-//   - 1 XLM observed trading for 0.10 USDC on Soroswap.
-//   - aggregate.ProxyTrade rewrites the pair to XLM/fiat:USD,
-//     leaving amounts untouched (the policy is "stablecoin ≈
-//     fiat at aggregator layer", not "renormalise the i128").
-//   - The aggregator publishes the resulting price as our
-//     XLM/USD = 0.10 (the depeg is invisible at this layer).
-//   - But USDC actually depegs to $0.95 — true XLM/USD is ~0.0950.
-//   - References (CoinGecko + Chainlink + Reflector) all see the
-//     true price.
-//   - divergence.RefreshPair(XLM/USD, our=0.10) fires
-//     WarningFired=true because the delta exceeds the threshold.
+// TestStablecoinDepeg_DivergenceWorkerFires: the aggregator conceals stablecoin-to-fiat drift (ADR-0026), so divergence is the safety net. XLM/USDC at 0.10 is rewritten to XLM/USD with amounts untouched;
+// when USDC depegs to $0.95 the references see ~0.095 and RefreshPair(our=0.10) must fire WarningFired.
 func TestStablecoinDepeg_DivergenceWorkerFires(t *testing.T) {
 	xlm, _ := canonical.NewCryptoAsset("XLM")
 	usdc, _ := canonical.NewCryptoAsset("USDC")
@@ -120,11 +96,7 @@ func TestStablecoinDepeg_DivergenceWorkerFires(t *testing.T) {
 	}
 }
 
-// TestStablecoinPegHolds_DivergenceWorkerStaysQuiet — symmetric
-// negative case: when the stablecoin holds its peg, our concealed-
-// fiat price matches the references and the divergence worker
-// must NOT fire. Catches a regression that makes the warning
-// fire on the steady state.
+// TestStablecoinPegHolds_DivergenceWorkerStaysQuiet is the negative case: with the peg held, our concealed-fiat price matches the references and the worker must NOT fire.
 func TestStablecoinPegHolds_DivergenceWorkerStaysQuiet(t *testing.T) {
 	xlm, _ := canonical.NewCryptoAsset("XLM")
 	usdc, _ := canonical.NewCryptoAsset("USDC")

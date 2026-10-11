@@ -11,18 +11,10 @@ var (
 	// magic-link tokens, has already been consumed).
 	ErrNotFound = errors.New("platform: not found")
 
-	// ErrTokenExpired is returned by ConsumeMagicLinkToken /
-	// AcceptInvite when the row exists but its expires_at is
-	// in the past. Distinct from ErrNotFound so the handler
-	// can render "this link expired, request a fresh one"
-	// rather than the generic "invalid link" message.
+	// ErrTokenExpired: the token row exists but is past expires_at; distinct from ErrNotFound so the handler can say "link expired".
 	ErrTokenExpired = errors.New("platform: token expired")
 
-	// ErrConflict signals a uniqueness violation (duplicate
-	// email, duplicate slug, key_hash collision).
-	// Callers handle by surfacing the appropriate user-facing
-	// message — typically "an account with that email already
-	// exists" for users, or retry-with-new-id for keys.
+	// ErrConflict signals a uniqueness violation (duplicate email, slug or key_hash).
 	ErrConflict = errors.New("platform: conflict")
 
 	// ErrLastOwner is returned when an operation would leave an
@@ -30,11 +22,7 @@ var (
 	// both refuse rather than orphan the account.
 	ErrLastOwner = errors.New("platform: cannot remove the last owner")
 
-	// ErrWebhookQuotaExceeded is returned by CreateWebhook when
-	// the per-account cap is already met. The store enforces the
-	// cap atomically (single CTE-gated INSERT) so concurrent
-	// requests at the boundary see this error rather than slip
-	// through a raceable pre-check.
+	// ErrWebhookQuotaExceeded: the per-account cap is met; enforced atomically in one CTE-gated INSERT so concurrent requests cannot slip past.
 	ErrWebhookQuotaExceeded = errors.New("platform: webhook quota exceeded")
 
 	// ErrAPIKeyQuotaExceeded mirrors ErrWebhookQuotaExceeded for
@@ -42,11 +30,6 @@ var (
 	// enforced atomically inside the INSERT to defeat the same race.
 	ErrAPIKeyQuotaExceeded = errors.New("platform: api key quota exceeded")
 
-	// ErrPriceAlertQuotaExceeded mirrors ErrWebhookQuotaExceeded for
-	// the price-alert store. The per-account cap is
-	// enforced atomically inside the CreatePriceAlert INSERT (same
-	// advisory-lock + CTE-gate shape) so concurrent creates at the
-	// boundary see this error rather than slip through a raceable
-	// pre-check.
+	// ErrPriceAlertQuotaExceeded mirrors ErrWebhookQuotaExceeded, enforced atomically inside the CreatePriceAlert INSERT.
 	ErrPriceAlertQuotaExceeded = errors.New("platform: price alert quota exceeded")
 )

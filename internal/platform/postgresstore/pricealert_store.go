@@ -12,13 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// PriceAlertStore implements [platform.PriceAlertStore] against the
-// `price_alerts` table from migration 0080.
-//
-// Shape mirrors [WebhookStore]: an atomic per-account cap on create
-// (advisory lock + CTE-gated INSERT), owner-scoped reads for the
-// dashboard, and an enabled-only sweep read for the aggregator's
-// evaluator.
+// PriceAlertStore implements [platform.PriceAlertStore] against `price_alerts`, mirroring [WebhookStore] (atomic per-account cap, owner-scoped reads, enabled-only sweep).
 type PriceAlertStore struct{ s *Store }
 
 // NewPriceAlertStore returns the Postgres-backed implementation.
@@ -29,12 +23,7 @@ func NewPriceAlertStore(s *Store) *PriceAlertStore {
 // Compile-time interface conformance.
 var _ platform.PriceAlertStore = (*PriceAlertStore)(nil)
 
-// CreatePriceAlert inserts the alert, enforcing the per-account
-// `maxPerAccount` cap atomically. Same race-proof shape as
-// [WebhookStore.CreateWebhook]: a per-account advisory lock
-// serialises concurrent creates, and the count + insert observe a
-// stable view via `WHERE current_count.n < $N`. Returns
-// [platform.ErrPriceAlertQuotaExceeded] when the account is at the cap.
+// CreatePriceAlert inserts the alert, enforcing `maxPerAccount` atomically under a per-account advisory lock like [WebhookStore.CreateWebhook]; [platform.ErrPriceAlertQuotaExceeded] at the cap.
 func (c *PriceAlertStore) CreatePriceAlert(ctx context.Context, a platform.PriceAlert, maxPerAccount int) (platform.PriceAlert, error) {
 	if a.AccountID == uuid.Nil {
 		return platform.PriceAlert{}, errors.New("postgresstore: CreatePriceAlert: AccountID is empty")
@@ -140,12 +129,8 @@ func (c *PriceAlertStore) ListEnabledPriceAlerts(ctx context.Context) ([]platfor
 	return c.queryAlerts(ctx, "ListEnabledPriceAlerts", q)
 }
 
-// UpdatePriceAlert persists the mutable fields. AccountID + ID are
-// immutable post-create. [platform.ErrNotFound] when the row is gone.
-//
-// The SET right-hand sides read the row as it was, so the CASE re-arms
-// against the old rule; threshold is compared as NUMERIC so "0.150" and
-// "0.15" are the same rule.
+// UpdatePriceAlert persists the mutable fields (AccountID and ID are immutable); [platform.ErrNotFound] if gone.
+// The SET right-hand sides read the old row so the CASE re-arms against the old rule; threshold compares as NUMERIC ("0.150" == "0.15").
 func (c *PriceAlertStore) UpdatePriceAlert(ctx context.Context, a platform.PriceAlert) error {
 	if a.ID == uuid.Nil {
 		return errors.New("postgresstore: UpdatePriceAlert: ID is empty")
@@ -196,25 +181,9 @@ func (c *PriceAlertStore) DeletePriceAlert(ctx context.Context, id uuid.UUID) er
 	return nil
 }
 
-// ClaimPriceAlertFire stamps last_fired_at and sets disarmed (+ bumps
-// updated_at) ONLY when this alert is armed and its own cooldown window
-// has elapsed, and reports whether it won the claim. See
-// [platform.PriceAlertStore] for why the gate has to live in the UPDATE
-// rather than in the evaluator.
-//
-// The cooldown half is the exact SQL translation of the evaluator's
-// coolingDown: never fired (NULL) OR last_fired_at + cooldown <= firedAt.
-// cooldown_seconds = 0 (the schema default, "re-fire every tick") reduces
-// it to last_fired_at <= firedAt, which is what that setting asks for.
-//
-// The rule predicate pins the claim to the pair, condition and threshold
-// the evaluator compared, and to the alert still being enabled: an edit
-// committed mid-sweep makes the claim match nothing.
-//
-// A row that does not exist and a row still inside its cooldown both
-// return claimed=false — unlike UpdatePriceAlert this does NOT report
-// [platform.ErrNotFound], because the caller's action is identical
-// either way and an alert deleted mid-sweep is not an error.
+// ClaimPriceAlertFire stamps last_fired_at and disarms the alert ONLY when it is armed and its cooldown has elapsed (never fired OR last_fired_at + cooldown <= firedAt), and reports whether it won; the gate lives in the UPDATE, see [platform.PriceAlertStore].
+// The claim also pins pair, condition, threshold and enabled, so a mid-sweep edit matches nothing.
+// A missing row and a row in cooldown both return claimed=false, not [platform.ErrNotFound].
 func (c *PriceAlertStore) ClaimPriceAlertFire(ctx context.Context, a platform.PriceAlert, firedAt time.Time) (bool, error) {
 	const q = `
 		UPDATE price_alerts

@@ -70,14 +70,7 @@ func TestTierStorageValue(t *testing.T) {
 	}
 }
 
-// TestTierLadders pins the three-level default numbers:
-//
-//	anon    — the unauthenticated per-IP baseline (60/min, no keys)
-//	free    — the registered default, anchored to the old Starter plan
-//	partner — ceilings only; staff-set per-account overrides are the
-//	          real limits (old Enterprise numbers)
-//
-// Legacy strings must resolve through Canonical() to the same rungs.
+// TestTierLadders pins the anon/free/partner default numbers; legacy strings must resolve through Canonical() to the same rungs.
 func TestTierLadders(t *testing.T) {
 	type row struct {
 		tier     Tier

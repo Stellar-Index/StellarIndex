@@ -99,17 +99,8 @@ type CompareOptions struct {
 	// can require 2+ for stronger consensus.
 	MinSuccessForMedian int
 
-	// OverallTimeout caps the WHOLE comparison, independent of the
-	// per-reference contexts. <= 0 defaults to
-	// [overallTimeoutFactor] × PerReferenceTimeout.
-	//
-	// The per-reference timeout is only advisory: it is delivered by
-	// cancelling a context, and a Reference that ignores ctx (a
-	// third-party SDK doing a blocking read, an operator-supplied
-	// implementation, a cgo call) simply never returns. Since the
-	// references run concurrently, this budget is the wall-clock
-	// ceiling on Compare as a whole — see [Compare] for what a
-	// reference that blows it is recorded as.
+	// OverallTimeout caps the WHOLE comparison; <= 0 defaults to [overallTimeoutFactor] x PerReferenceTimeout. The per-reference timeout is only advisory (a reference
+	// that ignores ctx never returns), so this is the wall-clock ceiling; see [Compare] for how a reference that blows it is recorded.
 	OverallTimeout time.Duration
 }
 
@@ -117,39 +108,13 @@ type CompareOptions struct {
 // the caller sets none.
 const DefaultPerReferenceTimeout = 5 * time.Second
 
-// overallTimeoutFactor multiplies PerReferenceTimeout to get the
-// default overall budget. References run CONCURRENTLY, so a healthy
-// run finishes in about one per-reference timeout; 2× leaves generous
-// slack for scheduling and response parsing while still bounding the
-// call.
+// overallTimeoutFactor scales PerReferenceTimeout into the default overall budget; references run concurrently, so 2x leaves slack while still bounding the call.
 const overallTimeoutFactor = 2
 
-// overallDeadlineLabel is the Failures value recorded for a reference
-// that had not reported by the overall deadline. Distinct from a
-// per-reference context timeout (which surfaces as the underlying
-// "context deadline exceeded") precisely so operators can tell "slow
-// upstream" from "this reference ignores cancellation".
+// overallDeadlineLabel is the Failures value for a reference that had not reported by the overall deadline, distinct from a per-reference timeout so "slow upstream" differs from "ignores cancellation".
 const overallDeadlineLabel = OutcomeDeadlineExceeded
 
-// Compare gathers prices from each reference in parallel and
-// computes the divergence between ourPrice and the median of the
-// successful responses.
-//
-// Behaviour:
-//
-//   - Each reference runs in its own goroutine with the per-reference timeout
-//     from opts.
-//   - [ErrAssetUnsupported] and [ErrPriceUnavailable] are recorded in Failures
-//     with a stable label; the threshold logic distinguishes "this source is
-//     down" from "we disagree with this source".
-//   - Other errors (timeout, recovered panic, etc.) are recorded in Failures
-//     with the verbatim message.
-//   - A reference that has not reported by opts.OverallTimeout is recorded as
-//     [overallDeadlineLabel] and Compare returns the PARTIAL result. Waiting on
-//     the WaitGroup alone would let one reference that ignores context
-//     cancellation block the aggregator's divergence refresh indefinitely. The
-//     abandoned goroutine's send cannot block or panic: the results channel is
-//     buffered to len(refs) and never closed.
+// Compare queries every reference in parallel and returns the divergence between ourPrice and the median of the successes.
 func Compare(
 	ctx context.Context,
 	refs []Reference,
@@ -199,18 +164,8 @@ func Compare(
 			// in some deployments).
 			name := safeName(r)
 
-			// Panic-recover the LookupQuote call. Per Compare's
-			// docstring, "panic recovered" failures are recorded in
-			// Failures the same way as a normal error — operators
-			// see "this reference is broken" without losing the
-			// other references' results. A misbehaving reference
-			// MUST NOT take the whole comparison run down.
-			//
-			// The recovered value also goes through worker.Report so
-			// it moves stellarindex_worker_panics_total, the metric
-			// the page rule reads: a panic visible only inside one
-			// comparison's Failures map is invisible to the alert
-			// that exists to say "a detached goroutine died".
+			// Recover a LookupQuote panic into Failures so one broken reference cannot take the comparison down, and also report it via worker.Report so
+			// stellarindex_worker_panics_total (which the page rule reads) moves.
 			defer func() {
 				if rv := recover(); rv != nil {
 					worker.Report(nil, "divergence-reference-lookup", rv)
@@ -257,14 +212,8 @@ type fetchOutcome struct {
 	err   error
 }
 
-// collectOutcomes drains `total` replies into res, or gives up after
-// `overall` and records everyone still in `pending` as an
-// overall-deadline failure. Returns the successful prices, unsorted.
-//
-// The channel is NEVER closed: a goroutine abandoned at the deadline
-// may still send afterwards, and a send on a closed channel panics.
-// It is buffered to the reference count, so that late send neither
-// blocks nor leaks the goroutine.
+// collectOutcomes drains `total` replies into res, or after `overall` records every reference still in `pending` as an overall-deadline failure. Returns the successful prices, unsorted.
+// The channel is NEVER closed and is buffered to the reference count, so a goroutine abandoned at the deadline can send late without blocking, leaking or panicking.
 func collectOutcomes(
 	results <-chan fetchOutcome,
 	pending map[string]struct{},
@@ -306,21 +255,9 @@ func collectOutcomes(
 	return prices
 }
 
-// CountAgreeing returns how many references in `sources` corroborate
-// `ourPrice` within `thresholdPct` percent — the cross-oracle
-// AGREEMENT count per ADR-0019 Phase 3.
-//
-// A reference agrees when `abs(ourPrice - refPrice) / refPrice * 100
-// <= thresholdPct`; a delta exactly AT the threshold agrees, mirroring
-// `flushObservations`' strict `>` firing test.
-//
-// Only references that RESPONDED can agree or disagree; failed ones are
-// not in `sources`. An empty map returns 0, which consumers MUST read as
-// "unchecked", never as "every reference disagrees"; gate on the companion
-// SuccessCount before interpreting the count.
-//
-// Non-finite or non-positive ourPrice returns 0; non-finite or non-positive
-// reference prices are skipped; NaN/negative thresholds count nothing.
+// CountAgreeing returns how many `sources` corroborate `ourPrice` within `thresholdPct` percent (ADR-0019 Phase 3); a delta exactly AT the threshold agrees.
+// An empty map returns 0, which consumers MUST read as "unchecked", never "every reference disagrees": gate on SuccessCount first. Non-finite or non-positive ourPrice returns 0 and
+// non-finite or non-positive reference prices are skipped.
 func CountAgreeing(ourPrice float64, sources map[string]float64, thresholdPct float64) int {
 	if !isFinitePositive(ourPrice) || math.IsNaN(thresholdPct) || thresholdPct < 0 {
 		return 0
@@ -371,13 +308,7 @@ func errorOutcome(err error) string {
 	}
 }
 
-// classifyError maps known sentinels to short stable labels so the
-// operator dashboard can distinguish "asset not on this source"
-// from "transport failure". Panics surface as "panicked: <text>"
-// (the safeName-wrapped goroutine recovers + wraps via
-// `fmt.Errorf("reference panicked: %v", rv)`); we strip the
-// "reference " prefix here so the dashboard label stays compact.
-// Unknown errors pass through verbatim.
+// classifyError maps known sentinels to short stable dashboard labels; a recovered panic surfaces as "panicked: <text>" and unknown errors pass through verbatim.
 func classifyError(err error) string {
 	switch {
 	case errors.Is(err, ErrAssetUnsupported):
@@ -399,14 +330,7 @@ func classifyError(err error) string {
 	}
 }
 
-// safeName returns r.Name() with a panic-recover guard so a
-// misbehaving reference can't take down the wrapping goroutine
-// before we even reach LookupQuote. Returns "_unknown" when
-// Name() panics — the operator-facing failure label still
-// surfaces but tied to a synthetic name. Real production
-// references never panic from Name() (the function returns a
-// constant string), but operator-supplied custom references
-// might.
+// safeName returns r.Name() under a panic guard, or "_unknown" if it panics (operator-supplied references might), so the failure label still surfaces.
 func safeName(r Reference) (out string) {
 	defer func() {
 		if rv := recover(); rv != nil {

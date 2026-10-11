@@ -10,16 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// OracleReader is the narrow served-tier read seam the on-chain
-// oracle references consume. Production wires
-// `internal/storage/timescale.(*Store)` (method
-// LatestOracleObservation); tests substitute a fake.
-//
-// The contract deliberately returns (nil, nil) — not a storage
-// sentinel error — when the source has never observed any
-// (baseKeys × quoteKeys) combination, so this package can map
-// "oracle doesn't cover the pair" to [ErrAssetUnsupported] without
-// importing the storage package's ErrNotFound.
+// OracleReader is the narrow served-tier read seam for the on-chain oracle references (production: timescale LatestOracleObservation).
+// It returns (nil, nil), not a storage sentinel, when the source never observed any (baseKeys x quoteKeys) combination, mapped to [ErrAssetUnsupported] without importing storage's ErrNotFound.
 type OracleReader interface {
 	// LatestOracleObservation returns the single most-recent
 	// oracle_updates row for `source` whose asset matches ANY of
@@ -28,12 +20,7 @@ type OracleReader interface {
 	LatestOracleObservation(ctx context.Context, source string, baseKeys, quoteKeys []string) (*canonical.OracleUpdate, error)
 }
 
-// Oracle source labels as stamped on oracle_updates rows by the
-// ingest decoders (see internal/canonical/oracle.go — Source is
-// part of row identity, stable across versions). Reference.Name()
-// reuses the same label so the /divergences feed, Prometheus
-// failure maps, and the oracle_updates table all speak one
-// vocabulary per source.
+// Oracle source labels as stamped on oracle_updates rows (internal/canonical/oracle.go; Source is part of row identity); Reference.Name() reuses them so every surface speaks one vocabulary.
 const (
 	OracleSourceReflectorDEX = "reflector-dex"
 	OracleSourceReflectorCEX = "reflector-cex"
@@ -42,37 +29,17 @@ const (
 	OracleSourceBand         = "band"
 )
 
-// Staleness ceilings per oracle family (the external references'
-// staleness discipline applied to served rows: a frozen feed must read as "reference
-// unavailable", never as agreement/divergence).
-//
-//   - Reflector publishes every ~5 minutes per contract; 30m means
-//     "missed five rounds + slack".
-//   - Redstone batch-pushes on deviation triggers with a daily-ish
-//     heartbeat floor; 26h tolerates one missed heartbeat + slack.
-//   - Band relays are relayer-driven and sparse (hours apart); 26h
-//     matches the Redstone rationale.
+// Staleness ceilings per oracle family: a frozen feed must read "reference unavailable", never agreement/divergence. Reflector publishes every ~5m (30m = five missed rounds + slack);
+// Redstone and Band are sparse or deviation-triggered with daily-ish heartbeats (26h = one missed heartbeat + slack).
 const (
 	DefaultOracleMaxAgeReflector = 30 * time.Minute
 	DefaultOracleMaxAgeRedstone  = 26 * time.Hour
 	DefaultOracleMaxAgeBand      = 26 * time.Hour
 )
 
-// OracleReference is a [Reference] backed by our OWN ingested on-chain oracle
-// rows (the `oracle_updates` served tier) rather than an outbound HTTP call.
-// One instance per oracle source label ("reflector-dex", "reflector-cex",
-// "reflector-fx", "redstone", "band").
-//
-// Unlike CoinGecko / Chainlink this checks the value an on-chain consumer (e.g.
-// Blend) sees against our VWAP. That is independent only where the oracle's
-// upstream price discovery is not ours: reflector-dex prices the same Stellar
-// DEX book our VWAP aggregates, so it moves with an SDEX manipulation instead
-// of contradicting it. [NewService] drops it (see [CorrelatedWithOurVWAP]).
-//
-// Scale discipline (ADR-0003): oracle_updates stores the RAW integer price + a
-// per-row decimals column (Reflector 14, Redstone 8, Band single-asset 9). The
-// price is scaled via big.Rat, never int64 truncation, and collapses to float64
-// only at the [Reference] interface boundary, as in the Chainlink reference.
+// OracleReference is a [Reference] over our OWN ingested `oracle_updates` rows, one instance per source label; it is independent only where the oracle's price discovery is not ours
+// (reflector-dex prices the same SDEX book our VWAP aggregates, so [NewService] drops it; see [CorrelatedWithOurVWAP]).
+// Scale (ADR-0003): the RAW integer price is scaled via big.Rat, never int64 truncation, and collapses to float64 only at the [Reference] boundary.
 type OracleReference struct {
 	source string
 	reader OracleReader
@@ -139,24 +106,8 @@ func defaultOracleMaxAge(source string) time.Duration {
 // Name implements [Reference].
 func (r *OracleReference) Name() string { return r.source }
 
-// LookupQuote implements [Reference]; AsOf is the observation's ledger close time.
-//
-// Pair mapping: both sides are expanded through the alias registry
-// ([canonical.AssetAliasStrings]) — XLM's three forms (`native`, the
-// `crypto:XLM` ticker the CEX-class oracles publish under, and the SAC
-// C-address reflector-dex publishes under) plus every configured classic↔SAC
-// pair; any other asset must match its canonical string exactly. Coverage per
-// oracle falls out of the stored rows:
-//
-//   - reflector-dex   — Soroban token assets quoted in the USDC SAC (see
-//     reflector.quoteForVariant), so no USDC→USD mapping here
-//   - reflector-cex   — crypto tickers quoted in fiat:USD
-//   - reflector-fx    — fiat codes quoted in fiat:USD
-//   - redstone        — per-feed base quoted in fiat:USD (EUROC→EUR)
-//   - band            — crypto/fiat symbols quoted in fiat:USD
-//
-// No inversion or cross-quote triangulation: a pair the oracle doesn't publish
-// directly returns [ErrAssetUnsupported] (information, not a degradation).
+// LookupQuote implements [Reference]; AsOf is the observation's ledger close time. Both sides expand through the alias registry ([canonical.AssetAliasStrings]) so XLM's three forms
+// (`native`, `crypto:XLM`, the SAC address) match; any other asset must match its canonical string exactly. No inversion or triangulation: an unpublished pair is [ErrAssetUnsupported].
 func (r *OracleReference) LookupQuote(ctx context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	u, err := r.reader.LatestOracleObservation(ctx,
 		r.source, canonical.AssetAliasStrings(pair.Base), canonical.AssetAliasStrings(pair.Quote))
@@ -168,11 +119,7 @@ func (r *OracleReference) LookupQuote(ctx context.Context, pair canonical.Pair, 
 		return Quote{}, fmt.Errorf("%w: oracle %s has no observation for %s",
 			ErrAssetUnsupported, r.source, pair.String())
 	}
-	// Defensive: the keys above are exact canonical strings, so a
-	// `raw:` row (an unmapped oracle symbol recorded verbatim — see
-	// canonical.AssetOracleRaw) can never match a mapped pair. Should
-	// a reader ever hand one back regardless, it is reference-only,
-	// orientation-unknown data and must never become a comparison.
+	// Defensive: a `raw:` row (unmapped oracle symbol, see canonical.AssetOracleRaw) can never match a mapped pair's exact keys; if a reader returns one anyway it is orientation-unknown and must never become a comparison.
 	if !u.Asset.IsMapped() || !u.Quote.IsMapped() {
 		return Quote{}, fmt.Errorf("%w: oracle %s observation for %s is an unmapped raw row (%s/%s)",
 			ErrAssetUnsupported, r.source, pair.String(), u.Asset.String(), u.Quote.String())
@@ -201,13 +148,8 @@ func (r *OracleReference) LookupQuote(ctx context.Context, pair canonical.Pair, 
 	return Quote{Price: price, AsOf: u.Timestamp}, nil
 }
 
-// scaleOracleAmount divides raw by 10^decimals via big.Rat and
-// collapses to float64 only at the return boundary (ADR-0003 — the
-// integer path never truncates; float64 is the [Reference] wire
-// shape and the divergence threshold is percentage-based, same
-// trade-off as scaleChainlinkAnswer). The 38 ceiling comfortably
-// covers every stored scale (Reflector 14, Band 9, Redstone 8) with
-// room for an upstream E18-class rescale.
+// scaleOracleAmount divides raw by 10^decimals via big.Rat and collapses to float64 only at the return (ADR-0003; the divergence threshold is percentage-based).
+// The 38 ceiling covers every stored scale (Reflector 14, Band 9, Redstone 8) with room for an E18-class rescale.
 func scaleOracleAmount(raw *big.Int, decimals int) (float64, error) {
 	if raw == nil {
 		return 0, errors.New("nil price")

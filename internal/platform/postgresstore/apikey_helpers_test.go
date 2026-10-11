@@ -13,12 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestCidrArrayValue — the IP-allowlist enforcement path serialises
-// a []netip.Prefix into the Postgres cidr[] literal `{a,b}`. This
-// value IS the allowlist that gates key use, so a formatting bug
-// (missing braces, wrong separator) silently disables or corrupts
-// the allowlist. Empty must yield `{}` to match the schema default,
-// NOT NULL (the column is NOT NULL).
+// TestCidrArrayValue: the cidr[] literal IS the IP allowlist gating key use, so a formatting bug silently disables or corrupts it; empty must yield `{}`.
 func TestCidrArrayValue(t *testing.T) {
 	cases := []struct {
 		name string
@@ -98,12 +93,7 @@ func TestParseCIDRArray(t *testing.T) {
 	}
 }
 
-// TestFinalizeAPIKeyCreate — the Create insert's error contract.
-// ErrNoRows means the capped-INSERT's `WHERE n < cap` filtered the
-// row (quota met) → ErrAPIKeyQuotaExceeded, NOT a generic 500. A
-// 23505 unique violation → ErrConflict. Mapping the wrong sentinel
-// would surface a quota-exceeded as a conflict (or vice versa) to
-// the dashboard.
+// TestFinalizeAPIKeyCreate: ErrNoRows (capped INSERT filtered) maps to ErrAPIKeyQuotaExceeded and a 23505 unique violation to ErrConflict, never swapped.
 func TestFinalizeAPIKeyCreate(t *testing.T) {
 	seed := platform.APIKey{ID: "kid_deadbeef", Name: "prod"}
 
@@ -162,11 +152,7 @@ func TestParseUUIDNullString(t *testing.T) {
 	}
 }
 
-// TestUUIDOrEmpty / TestNullTime — the zero-boundary helpers that
-// let the INSERT bind SQL NULL for absent optional values via
-// NULLIF. A zero that leaks through as a real value would insert
-// the all-zeros UUID / Go's year-1 timestamp (which timestamptz
-// rejects).
+// TestUUIDOrEmpty covers the zero-boundary helpers that bind SQL NULL for absent values; a leaked zero would insert the all-zeros UUID or a year-1 timestamp.
 func TestUUIDOrEmpty(t *testing.T) {
 	if got := uuidOrEmpty(uuid.Nil); got != "" {
 		t.Errorf("uuidOrEmpty(Nil) = %q, want empty", got)

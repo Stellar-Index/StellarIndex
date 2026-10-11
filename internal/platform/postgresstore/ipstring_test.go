@@ -9,12 +9,7 @@ import (
 	"testing"
 )
 
-// TestIPString_NilFailsClosed. ipString must not silently return the "0.0.0.0" sentinel for a nil IP, commented
-// "but this only happens for tests" — false: clientIP returns nil on
-// every real request whose RemoteAddr fails to parse, and that value
-// reaches CreateSession / CreateMagicLinkToken in production. A nil IP
-// must now surface as an explicit error rather than a plausible-looking
-// fabricated address in a security-forensics column.
+// TestIPString_NilFailsClosed: a nil IP (clientIP returns it on any unparsable RemoteAddr, reaching CreateSession in production) must error, not become a fabricated "0.0.0.0" in a forensics column.
 func TestIPString_NilFailsClosed(t *testing.T) {
 	got, err := ipString(nil)
 	if err == nil {

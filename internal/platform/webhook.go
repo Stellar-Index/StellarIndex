@@ -9,11 +9,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// WebhookEventType is the closed set of customer-deliverable event
-// kinds. Adding a new type requires a corresponding entry in the
-// /v1/account/webhooks/events customer-facing docs. The events
-// column is text[] so future values can be tolerated by readers
-// that haven't been updated.
+// WebhookEventType is the closed set of customer-deliverable event kinds; a new type needs an entry in the customer-facing events docs.
 type WebhookEventType string
 
 const (
@@ -37,15 +33,7 @@ const (
 	// warning starts; a clear sends nothing. Body is DivergenceFiringWebhookPayload.
 	WebhookEventDivergenceFiring WebhookEventType = "divergence.firing"
 
-	// WebhookEventPriceAlert fires when one of the account's
-	// registered price-threshold alerts crosses its condition, once per
-	// crossing. Unlike the operational events above, this is a
-	// PER-ACCOUNT event: the aggregator's price-alert evaluator
-	// enqueues it only to the owning account's subscribed webhooks
-	// (via ListWebhooksForAccount, not the global fan-out), so one
-	// account's alerts never reach another's. Body shape:
-	// PriceAlertWebhookPayload (alert_id, pair, condition, threshold,
-	// observed_price, bucket, at).
+	// WebhookEventPriceAlert fires once per crossing of a registered price alert; PER-ACCOUNT, enqueued only to the owning account's webhooks (ListWebhooksForAccount), never the global fan-out.
 	WebhookEventPriceAlert WebhookEventType = "price.alert"
 )
 
@@ -73,22 +61,9 @@ func IsWebhookEventType(s string) bool {
 	return false
 }
 
-// CustomerWebhook is an outbound HTTPS endpoint a customer
-// registers to receive event notifications. Stripe-shape:
-// signed deliveries (HMAC-SHA-256 of payload), exponential
-// retry over ~8h (15 attempts, 30s doubling to a 1h cap).
-//
-// The signing key is the LITERAL HMAC key, not a hash: the receiver
-// verifies with the same shared secret, so it cannot be one-way hashed.
-// At rest it is sealed with [WebhookKeySealer] into
-// `customer_webhooks.signing_key_sealed` whenever the API has a seal
-// key; the legacy `secret_hash` column holds the raw key only for rows
-// written without one, and the API seals those at startup.
-//
-// Customer surface: each plaintext key is returned exactly once —
-// from `POST /v1/dashboard/webhooks` at creation and from
-// `POST /v1/dashboard/webhooks/{id}/rotate-secret` at rotation — and
-// never served back through any API surface again.
+// CustomerWebhook is an outbound HTTPS endpoint for event notifications, signed with HMAC-SHA-256 and retried with exponential backoff.
+// The signing key is the LITERAL HMAC key (the receiver needs the same secret), sealed at rest with [WebhookKeySealer] into `signing_key_sealed`; the legacy `secret_hash` holds a raw key only for rows written without a seal key.
+// Each plaintext key is returned exactly once (creation, rotate-secret) and never served again.
 type CustomerWebhook struct {
 	ID        uuid.UUID
 	AccountID uuid.UUID
@@ -97,11 +72,7 @@ type CustomerWebhook struct {
 	// SigningKey is the plaintext HMAC key: set on create and by
 	// GetWebhook, nil from the list reads.
 	SigningKey []byte
-	// PreviousSigningKey is the plaintext key SigningKey held before the
-	// last rotation; deliveries are also signed with it until
-	// PreviousSecretExpiresAt so a receiver can switch keys without
-	// rejecting deliveries. Set by GetWebhook only; nil when no rotation
-	// overlap is open.
+	// PreviousSigningKey is the key held before the last rotation, also signed with until PreviousSecretExpiresAt; set by GetWebhook only, nil when no overlap is open.
 	PreviousSigningKey      []byte
 	PreviousSecretExpiresAt time.Time
 	Events                  []string
@@ -150,13 +121,7 @@ var ErrDeliveryAlreadyEnqueued = errors.New("platform: webhook delivery already 
 
 // WebhookStore persists [CustomerWebhook] and [WebhookDelivery].
 type WebhookStore interface {
-	// CreateWebhook registers a new outbound endpoint, enforcing
-	// the per-account `maxPerAccount` cap atomically. Returns
-	// [ErrWebhookQuotaExceeded] when the cap is met — the cap
-	// check + insert happen in a single SQL statement so
-	// concurrent callers can't both pass a pre-check and each append a row
-	// past the cap. A cap <= 0 admits nothing (TierAnon's ladder value).
-	// Returns [ErrConflict] when the account already registered w.URL.
+	// CreateWebhook registers an endpoint, enforcing `maxPerAccount` atomically in one SQL statement ([ErrWebhookQuotaExceeded]); a cap <= 0 admits nothing, and a duplicate w.URL on the account returns [ErrConflict].
 	CreateWebhook(ctx context.Context, w CustomerWebhook, maxPerAccount int) (CustomerWebhook, error)
 
 	// GetWebhook by ID, with SigningKey unsealed. A key that cannot
@@ -181,13 +146,7 @@ type WebhookStore interface {
 	// the account's webhooks.
 	UpdateWebhook(ctx context.Context, w CustomerWebhook) error
 
-	// RotateWebhookSecret makes newSecret the signing key IN PLACE: the
-	// current key moves to PreviousSigningKey, valid until
-	// previousExpiresAt, and the row, its queued deliveries and its
-	// delivery log are kept. A rotation inside an open overlap replaces
-	// the older previous key. Both keys are stored like create stores
-	// one (sealed when a seal key is configured) — see [CustomerWebhook].
-	// Returns [ErrNotFound] when the webhook does not exist.
+	// RotateWebhookSecret makes newSecret the signing key IN PLACE, keeping the old one valid until previousExpiresAt (a rotation inside an open overlap replaces the older previous key); both are stored like create stores them, [ErrNotFound] if absent.
 	RotateWebhookSecret(ctx context.Context, id uuid.UUID, newSecret []byte, previousExpiresAt time.Time) error
 
 	// DeleteWebhook hard-deletes (cascades to deliveries).
@@ -207,23 +166,11 @@ type WebhookStore interface {
 
 	// ─── Worker-side queue surface ─────
 
-	// EnqueueDelivery inserts one pending delivery row keyed off
-	// an existing webhook. The worker then drains the queue via
-	// ListPendingDeliveries. attempt_count starts at 0;
-	// NextAttemptAt zero is normalised to "now" so the first
-	// poll picks it up immediately.
-	//
-	// d.ID is the row's primary key and so its idempotency key: a
-	// second enqueue with an ID already queued for the same webhook
-	// inserts nothing and returns an error wrapping
-	// [ErrDeliveryAlreadyEnqueued]. A zero ID gets a fresh random one.
+	// EnqueueDelivery inserts one pending delivery for an existing webhook (zero NextAttemptAt means now).
+	// d.ID is the idempotency key: a repeat for the same webhook inserts nothing and returns [ErrDeliveryAlreadyEnqueued]; a zero ID gets a random one.
 	EnqueueDelivery(ctx context.Context, d WebhookDelivery) error
 
-	// ListPendingDeliveries claims up to `limit` deliveries whose
-	// next_attempt_at is in the past: FIFO within each webhook, with
-	// every due webhook's oldest row ahead of any webhook's second so
-	// one endpoint's backlog cannot fill the batch. The delivery
-	// worker calls this on each poll tick.
+	// ListPendingDeliveries claims up to `limit` due deliveries, FIFO per webhook with every webhook's oldest row ahead of any second, so one backlog cannot fill the batch.
 	ListPendingDeliveries(ctx context.Context, limit int) ([]WebhookDelivery, error)
 
 	// MarkDelivered records a successful POST: stamps

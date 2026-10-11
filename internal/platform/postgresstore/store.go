@@ -9,11 +9,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// Store is the shared *sql.DB handle every concrete store wraps.
-// Constructed by Open and threaded through {Account,User,Token,
-// APIKey,Audit,Billing,Webhook}Store.
-//
-// Safe for concurrent use; *sql.DB is internally pooled.
+// Store is the shared *sql.DB handle every concrete store wraps; safe for concurrent use (the pool is internal).
 type Store struct {
 	db *sql.DB
 }

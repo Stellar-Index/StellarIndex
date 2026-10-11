@@ -17,11 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestBuildAuditWhere_Empty — an empty query produces no WHERE
-// clause and a nil arg slice. List appends the ORDER BY/LIMIT
-// directly onto this string, so a stray "WHERE" or a non-nil
-// zero-length arg slice would produce malformed SQL / a spurious
-// positional-arg count.
+// TestBuildAuditWhere_Empty: an empty query yields no WHERE and a nil arg slice, since List appends ORDER BY/LIMIT directly.
 func TestBuildAuditWhere_Empty(t *testing.T) {
 	where, args := buildAuditWhere(platform.AuditQuery{})
 	if where != "" {
@@ -32,11 +28,7 @@ func TestBuildAuditWhere_Empty(t *testing.T) {
 	}
 }
 
-// TestBuildAuditWhere_SingleFilters — each scoping field, in
-// isolation, maps to exactly one clause bound to $1. Pins the
-// column names + operators (=, >=, <) the audit_log_*_idx indexes
-// depend on; a swapped >= / < on the time window would silently
-// return the wrong half of a range.
+// TestBuildAuditWhere_SingleFilters: each scoping field maps to exactly one clause bound to $1; a swapped >= / < would return the wrong half of a time range.
 func TestBuildAuditWhere_SingleFilters(t *testing.T) {
 	acct := uuid.New()
 	from := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
@@ -70,11 +62,7 @@ func TestBuildAuditWhere_SingleFilters(t *testing.T) {
 	}
 }
 
-// TestBuildAuditWhere_AllFilters — every field set at once. The
-// positional placeholders MUST count up 1..5 in the exact order
-// the args slice is built, or Postgres binds the wrong value to
-// the wrong column. This is the assertion that catches a reordered
-// clause vs a reordered arg append.
+// TestBuildAuditWhere_AllFilters: placeholders must count 1..5 in the exact order the args are appended, or Postgres binds the wrong value to a column.
 func TestBuildAuditWhere_AllFilters(t *testing.T) {
 	acct := uuid.New()
 	from := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
@@ -100,11 +88,7 @@ func TestBuildAuditWhere_AllFilters(t *testing.T) {
 	}
 }
 
-// TestNullable_Helpers — the four driver-boundary helpers must
-// map Go zero values to SQL NULL (nil) and pass non-zero values
-// through untouched. A regression here writes empty strings /
-// zero UUIDs into columns the schema wants NULL, breaking the
-// FK ON DELETE SET NULL semantics + the host(ip) read-back.
+// TestNullable_Helpers: Go zero values must map to SQL NULL and non-zero values pass through, or empty strings and zero UUIDs break FK SET NULL semantics.
 func TestNullable_Helpers(t *testing.T) {
 	if got := nullableUUID(uuid.Nil); got != nil {
 		t.Errorf("nullableUUID(Nil) = %v, want nil", got)
@@ -142,11 +126,7 @@ func TestNullable_Helpers(t *testing.T) {
 	}
 }
 
-// TestAuditAppend_ValidationRejectsEmpty — Append + AppendBatch
-// reject rows missing the two guarded columns (action, actor_kind)
-// BEFORE touching the database. Proven with a nil-DB store:
-// reaching ExecContext would panic, so a passing test also proves
-// the guard short-circuits ahead of any IO.
+// TestAuditAppend_ValidationRejectsEmpty: Append and AppendBatch reject empty action/actor_kind before any IO (a nil-DB store would panic on ExecContext).
 func TestAuditAppend_ValidationRejectsEmpty(t *testing.T) {
 	a := NewAuditStore(New(nil))
 	ctx := context.Background()
@@ -169,11 +149,7 @@ func TestAuditAppend_ValidationRejectsEmpty(t *testing.T) {
 	}
 }
 
-// TestAuditStoreDocDoesNotClaimUnbuiltDashboardReader: the
-// AuditStore struct doc must not claim List "powers the dashboard's
-// audit-trail surface" — grep across the tree finds zero non-test
-// callers of List, and admin_keys.go's AuditSink (the only thing
-// wired into API handlers) exposes just Append.
+// TestAuditStoreDocDoesNotClaimUnbuiltDashboardReader: the AuditStore doc must not claim List powers a dashboard surface (no non-test caller).
 func TestAuditStoreDocDoesNotClaimUnbuiltDashboardReader(t *testing.T) {
 	src, err := os.ReadFile("audit_store.go")
 	if err != nil {
@@ -193,12 +169,7 @@ func TestAuditStoreDocDoesNotClaimUnbuiltDashboardReader(t *testing.T) {
 	}
 }
 
-// TestMigration0027AuditLogCommentDoesNotClaimImplementedRetention
-// Migration 0027's audit_log header comment must not
-// present 12-month/S3 retention as current behavior — no
-// retention/archival job exists anywhere in the tree (no DELETE or
-// purge statement touches audit_log, and no archiver code exists in
-// migrations/, scripts/, configs/, internal/, cmd/ or deploy/).
+// TestMigration0027AuditLogCommentDoesNotClaimImplementedRetention: the migration header must not present 12-month/S3 retention as current (no retention job exists).
 func TestMigration0027AuditLogCommentDoesNotClaimImplementedRetention(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {

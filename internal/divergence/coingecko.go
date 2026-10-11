@@ -18,23 +18,8 @@ import (
 	externalcoingecko "github.com/Stellar-Index/StellarIndex/internal/sources/external/coingecko"
 )
 
-// CoinGeckoReference looks up prices via CoinGecko's
-// /api/v3/simple/price endpoint, authenticating with the same Pro/Demo
-// keys as the ingest poller (keyless requests are heavily 429-throttled).
-// The reference is best-effort — transient 429s bubble up as
-// ErrPriceUnavailable and the caller treats this run's CoinGecko
-// response as missing.
-//
-// The reference batches per-tick lookups: the first LookupQuote in
-// a tick burst issues a single `/simple/price?ids=A,B,C&vs_currencies=usd,eur`
-// covering EVERY configured (id, quote) pair, then caches the
-// response for [batchTTL]. Subsequent LookupQuote calls within the
-// TTL hit the cache and issue zero HTTP requests. With the default
-// 25s TTL and the orchestrator's 30s tick, each tick produces ONE
-// HTTP call regardless of how many pairs the operator has
-// configured. At 9 default pairs, one call per pair would be
-// ~25,920 calls/day (9 × 2 ticks/min × 1440 min); batched is ~2,880
-// (1 × 2 × 1440), well inside the demo-tier 10K daily limit.
+// CoinGeckoReference looks up prices via /api/v3/simple/price with the ingest poller's Pro/Demo keys (keyless is 429-throttled); best-effort, a 429 is ErrPriceUnavailable.
+// It batches per tick: one request covers EVERY configured (id, quote) pair and is cached for [batchTTL] (default 25s vs the 30s tick), keeping it far inside the demo-tier 10K daily limit.
 type CoinGeckoReference struct {
 	httpClient *http.Client
 	baseURL    string
@@ -59,14 +44,8 @@ type CoinGeckoReference struct {
 	// the per-tick fan-out across pairs reuses one HTTP call.
 	batchTTL time.Duration
 
-	// maxAge is the staleness ceiling: a quote whose upstream
-	// last_updated_at is older than this (relative to the
-	// comparison's observedAt) is rejected as ErrPriceUnavailable
-	// instead of served as a fresh reference. A FROZEN CoinGecko
-	// price served as fresh can both mask a real divergence and
-	// fabricate a false one — the same failure mode the Chainlink
-	// (chainlink.go) and on-chain oracle (oracle.go) references gate
-	// against. See defaultCoinGeckoMaxAge for the default rationale.
+	// maxAge is the staleness ceiling for upstream last_updated_at: an older quote is ErrPriceUnavailable, since a FROZEN price served as fresh can mask or fabricate a divergence.
+	// See defaultCoinGeckoMaxAge.
 	maxAge time.Duration
 
 	// nowFn returns the current time. Hookable for tests so the
@@ -83,13 +62,7 @@ type CoinGeckoReference struct {
 	// Nil/empty until the first successful fetch.
 	batchData map[string]map[string]float64
 
-	// batchUpdatedAt maps cgID → the UPSTREAM publication time
-	// CoinGecko reports for that coin (the `last_updated_at` field
-	// returned when the request sets include_last_updated_at=true).
-	// An id absent from this map is REJECTED by the staleness gate:
-	// every request opts into the field, so its absence
-	// means the response did not honour the contract the gate rests
-	// on, and freshness for that id is unverifiable.
+	// batchUpdatedAt maps cgID to CoinGecko's upstream last_updated_at; an id missing from it is REJECTED by the staleness gate, since every request asks for the field and freshness is unverifiable without it.
 	batchUpdatedAt map[string]time.Time
 }
 
@@ -123,12 +96,7 @@ type CoinGeckoOptions struct {
 	// fiat:USD/EUR/GBP/JPY + crypto:BTC/ETH.
 	QuoteMap map[string]string
 
-	// BatchTTL is the window over which a single batched
-	// /simple/price response is reused across per-pair LookupQuote
-	// calls. Default 25s (less than the orchestrator's 30s tick so
-	// each tick triggers a fresh fetch). Operators can set it
-	// shorter for higher freshness at the cost of more HTTP calls,
-	// or longer for paranoid rate-limit conservation.
+	// BatchTTL is how long one batched /simple/price response is reused across lookups; default 25s (under the 30s tick). Shorter is fresher but costs HTTP calls.
 	BatchTTL time.Duration
 
 	// MaxAge is the staleness ceiling for a quote's upstream
@@ -141,39 +109,14 @@ type CoinGeckoOptions struct {
 	NowFn func() time.Time
 }
 
-// defaultCoinGeckoMaxAge is the staleness ceiling for a CoinGecko
-// /simple/price quote's upstream last_updated_at. CoinGecko
-// refreshes /simple/price on the order of every 1–5 minutes for
-// liquid coins; 30m means "missed roughly five refresh cycles + slack"
-// — the same shape as the Reflector on-chain default
-// (DefaultOracleMaxAgeReflector). It exists to catch a genuinely
-// FROZEN feed (last_updated_at stops advancing for hours), not to
-// second-guess normal update jitter.
-//
-// VALUE DECISION: 30m is a defensible engineering default, not a
-// business rule.
+// defaultCoinGeckoMaxAge (30m, about five refresh cycles plus slack, like the Reflector default) exists to catch a FROZEN feed, not normal jitter. An engineering default, not a business rule.
 const defaultCoinGeckoMaxAge = 30 * time.Minute
 
-// coinGeckoLastUpdatedKey is the sentinel key CoinGecko folds into
-// each id's object when the request sets include_last_updated_at=true
-// (`{"stellar":{"usd":0.12,"last_updated_at":1710000000}}`). It is NOT
-// a vs_currency, so [fetchBatch] lifts it out of the price map into
-// the per-id timestamp map before the quote lookup runs.
+// coinGeckoLastUpdatedKey is the sentinel CoinGecko folds into each id's object under include_last_updated_at=true; it is not a vs_currency, so [fetchBatch] lifts it out of the price map.
 const coinGeckoLastUpdatedKey = "last_updated_at"
 
-// NewCoinGeckoReference constructs a CoinGecko-backed reference.
-//
-// When opts.IDMap is empty, the reference falls back to a built-in
-// default that covers the canonical asset_id forms the aggregator
-// computes by default (XLM in every canonical alias form,
-// BTC, ETH, LINK, plus the major USD stablecoins). Without this
-// fallback every divergence-cross-check call returns
-// `ErrAssetUnsupported` and `divergence_observations` stays empty
-// for any operator who hasn't manually populated `[divergence.coingecko].id_map`
-// — which the type-level docs already promised wouldn't happen.
-// Operator-supplied entries merge OVER the defaults (operator wins):
-// an entry can be overridden or a new one added, but a default entry
-// cannot be removed by omission — the merge only adds/overrides keys.
+// NewCoinGeckoReference constructs a CoinGecko-backed reference. An empty opts.IDMap falls back to a built-in default (else every call is `ErrAssetUnsupported` and observations stay empty).
+// Operator entries merge OVER the defaults: an entry can be overridden or added, never removed by omission.
 func NewCoinGeckoReference(opts CoinGeckoOptions) *CoinGeckoReference {
 	baseURL := opts.BaseURL
 	if baseURL == "" {
@@ -220,19 +163,8 @@ func NewCoinGeckoReference(opts CoinGeckoOptions) *CoinGeckoReference {
 	}
 }
 
-// defaultCoinGeckoIDMap covers the canonical asset_id forms the
-// aggregator computes by default (per cmd/stellarindex-aggregator/
-// main.go::defaultPairs — XLM/BTC/ETH × USD/EUR/GBP, with XLM in
-// every canonical alias form). Major USD stablecoins are
-// included so a deployment with stablecoin-fiat-proxy enabled
-// (ADR-0026) can cross-check the underlying USDC/USDT path too.
-//
-// Slugs verified against https://api.coingecko.com/api/v3/coins/list.
-// Mirrors the per-source coingecko poller's `tickerToID` map
-// (internal/sources/external/coingecko/poller.go) — kept separate
-// here because the divergence path keys on canonical asset_id
-// strings (`crypto:XLM`, `native`) while the poller keys on bare
-// upper-case tickers.
+// defaultCoinGeckoIDMap covers the aggregator's default asset_id forms (XLM in every alias form, BTC, ETH, major USD stablecoins per ADR-0026).
+// It mirrors the poller's `tickerToID` map but keys on canonical asset_id strings (`crypto:XLM`, `native`), not bare tickers; slugs verified against /coins/list.
 func defaultCoinGeckoIDMap() map[string]string {
 	m := map[string]string{
 		"crypto:BTC":  "bitcoin",
@@ -258,24 +190,8 @@ func defaultCoinGeckoIDMap() map[string]string {
 // Name implements [Reference].
 func (c *CoinGeckoReference) Name() string { return "coingecko" }
 
-// LookupQuote implements [Reference]; AsOf is the id's upstream
-// last_updated_at.
-//
-// Staleness gate: CoinGecko's /simple/price returns the latest
-// CACHED price, so a frozen upstream keeps serving a stale number with
-// no error. We request include_last_updated_at=true and reject any
-// quote whose upstream last_updated_at is older than [maxAge] relative
-// to observedAt (the bucket-end comparison time Compare passes
-// through; zero falls back to wall time defensively) — mirroring the
-// Chainlink and on-chain oracle references so a stale reference reads
-// as "unavailable", never as agreement or divergence. A quote whose
-// last_updated_at is missing is rejected the same way (fail closed —
-// see [CoinGeckoReference.staleness]).
-//
-// Internally this delegates to the per-tick batched fetcher: the
-// first call within batchTTL issues ONE HTTP request covering every
-// configured (id, quote) pair; subsequent calls within the TTL read
-// from the in-memory map without touching the network.
+// LookupQuote implements [Reference]; AsOf is the id's upstream last_updated_at. Staleness gate: a quote older than [maxAge] against observedAt (zero falls back to wall time) or missing the timestamp
+// reads "unavailable", never agreement or divergence (see [CoinGeckoReference.staleness]). The first call in batchTTL issues ONE request; the rest read the in-memory map.
 func (c *CoinGeckoReference) LookupQuote(ctx context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	cgID, ok := c.idMap[pair.Base.String()]
 	if !ok {
@@ -308,23 +224,9 @@ func (c *CoinGeckoReference) LookupQuote(ctx context.Context, pair canonical.Pai
 	return Quote{Price: price, AsOf: updatedAt[cgID]}, nil
 }
 
-// staleness applies the staleness gate to one id's upstream
-// last_updated_at. asOf defaults to wall time when observedAt is zero
-// (matching chainlink.go / oracle.go).
-//
-// A MISSING upstream timestamp is rejected, not waved through.
-// Every request this reference issues sets
-// include_last_updated_at=true, and /simple/price returns the field
-// for every id on the free tier — so an absent timestamp is not a
-// benign older-endpoint case, it means the response did not honour the
-// contract the gate rests on (an intermediary stripping fields, a
-// proxy replaying a truncated body, an upstream schema change). Waving
-// it through would disable the entire staleness gate silently and serve
-// a possibly-frozen price as fresh, which is exactly the failure the
-// gate exists to prevent. Failing closed costs one reference for this
-// tick — visible in Result.Failures as price_unavailable, and in the
-// stellarindex_divergence_no_reference alert if it becomes total — while
-// failing open costs a wrong divergence verdict with no signal at all.
+// staleness applies the gate to one id's last_updated_at (asOf defaults to wall time when observedAt is zero). A MISSING timestamp is rejected, not waved through: every request sets
+// include_last_updated_at=true, so absence means the contract the gate rests on was not honoured, and failing open would silently serve a possibly-frozen price as fresh.
+// Failing closed costs one reference for the tick (visible as price_unavailable in Result.Failures).
 func (c *CoinGeckoReference) staleness(cgID string, updatedAt map[string]time.Time, observedAt time.Time) error {
 	ts, ok := updatedAt[cgID]
 	if !ok || ts.IsZero() {
@@ -342,12 +244,7 @@ func (c *CoinGeckoReference) staleness(cgID string, updatedAt map[string]time.Ti
 	return nil
 }
 
-// ensureBatch returns the cached batched response if it's within
-// the TTL; otherwise issues a single HTTP request covering every
-// configured (id, quote) tuple, parses, caches, and returns the
-// fresh map. Concurrent calls coalesce on batchMu — the second
-// caller observes the first caller's freshly-cached response
-// instead of double-fetching.
+// ensureBatch returns the cached batch within the TTL, else fetches once, parses and caches; concurrent calls coalesce on batchMu so a second caller reuses the first's response.
 func (c *CoinGeckoReference) ensureBatch(ctx context.Context) (map[string]map[string]float64, map[string]time.Time, error) {
 	c.batchMu.Lock()
 	defer c.batchMu.Unlock()
@@ -373,12 +270,7 @@ func (c *CoinGeckoReference) ensureBatch(ctx context.Context) (map[string]map[st
 	return data, updatedAt, nil
 }
 
-// fetchBatch issues a single GET against /simple/price covering
-// every (id, quote) pair, parses the response into the nested
-// map[id]map[quote]price shape CoinGecko emits, and lifts each id's
-// upstream `last_updated_at` (requested via include_last_updated_at)
-// out of the price map into a parallel cgID → time map for the
-// staleness gate.
+// fetchBatch issues one GET against /simple/price for every (id, quote) pair and lifts each id's `last_updated_at` out of the price map into a parallel cgID to time map for the staleness gate.
 func (c *CoinGeckoReference) fetchBatch(ctx context.Context, ids, quotes []string) (map[string]map[string]float64, map[string]time.Time, error) {
 	v := url.Values{}
 	v.Set("ids", strings.Join(ids, ","))
@@ -432,11 +324,7 @@ func (c *CoinGeckoReference) fetchBatch(ctx context.Context, ids, quotes []strin
 		return nil, nil, errors.New("coingecko: empty response body")
 	}
 
-	// Lift last_updated_at out of each id's price object so it can't be
-	// mistaken for a vs_currency quote, and convert to a UTC time for
-	// the staleness gate. A missing/zero/negative value leaves the id
-	// out of updatedAt — the gate then REJECTS that id as
-	// freshness-unverifiable (see staleness).
+	// Lift last_updated_at out of the price object so it is not mistaken for a vs_currency; a missing/zero/negative value leaves the id out of updatedAt, so the gate REJECTS it (see staleness).
 	updatedAt := make(map[string]time.Time, len(parsed))
 	for id, entry := range parsed {
 		if raw, ok := entry[coinGeckoLastUpdatedKey]; ok {

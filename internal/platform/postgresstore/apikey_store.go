@@ -20,15 +20,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// APIKeyStore implements [platform.APIKeyStore] against Postgres
-// (`api_keys` table from migration 0027).
-//
-// The runtime auth validator at `internal/auth` keeps reading
-// from Redis until the cutover migration mirrors records here;
-// today this store is exercised exclusively by the dashboard's
-// list/create/revoke surface — the validator picks it up when
-// `cmd/stellarindex-api` swaps the Redis-only store for a
-// Postgres-backed read-through one.
+// APIKeyStore implements [platform.APIKeyStore] against the `api_keys` table.
 type APIKeyStore struct{ s *Store }
 
 // NewAPIKeyStore returns the Postgres-backed implementation.
@@ -141,17 +133,8 @@ func parseCIDRArray(in []string) []netip.Prefix {
 	return out
 }
 
-// Create inserts a new key. Caller has already hashed the
-// plaintext + computed the prefix. Enforces the per-account
-// `maxActiveKeysPerAccount` cap atomically: an unlocked count-CTE
-// lets two callers at cap-1 each see n=cap-1 under MVCC and both
-// insert, so the capped path runs under the account's apikey
-// advisory lock ([lockAccount]).
-// Returns [platform.ErrAPIKeyQuotaExceeded] when the cap is met.
-//
-// `maxActiveKeysPerAccount` is passed by the handler
-// (MaxKeysPerAccount = 25 at time of writing). Zero or negative
-// disables the cap (used by stellarindex-ops staff seeding).
+// Create inserts a pre-hashed key. The capped path (maxActiveKeysPerAccount > 0) runs under the account's apikey advisory lock ([lockAccount]), since an unlocked count-CTE lets two callers at cap-1 both insert under MVCC.
+// Returns [platform.ErrAPIKeyQuotaExceeded] when the cap is met; zero or negative disables it (staff seeding).
 func (r *APIKeyStore) Create(ctx context.Context, k platform.APIKey, maxActiveKeysPerAccount int) (platform.APIKey, error) {
 	args, err := buildAPIKeyCreateArgs(k)
 	if err != nil {
@@ -490,12 +473,7 @@ func encodePermissions(p platform.KeyPermissions) ([]byte, error) {
 	return json.Marshal(p)
 }
 
-// uuidOrEmpty returns the UUID's text form for non-zero values,
-// empty string for the zero UUID. Lets the statement write
-//
-//	NULLIF($1::text, '')::uuid
-//
-// to bind NULL when the caller meant "absent".
+// uuidOrEmpty returns the UUID text, or "" for the zero UUID, so the SQL NULLIF on the empty string binds NULL for "absent".
 func uuidOrEmpty(id uuid.UUID) string {
 	if id == uuid.Nil {
 		return ""
@@ -535,19 +513,7 @@ func (a cidrArray) Value() (driver.Value, error) {
 	return "{" + strings.Join(parts, ",") + "}", nil
 }
 
-// nonNilStringArray defends the api_keys insert path against the driver
-// encoding a nil `[]string` as SQL NULL. Migration 0027 declares
-// `referer_allowlist text[] NOT NULL DEFAULT '{}'`, so a NULL insert
-// violates the column's NOT NULL constraint with `null value in column
-// "referer_allowlist" violates not-null constraint (23502)`.
-//
-// The dashboard `keys/page.tsx` + the auth.CreateAPIKeyRequest path
-// both leave the optional `referer_allowlist` field nil when callers
-// don't set it, and passing that nil slice straight through would
-// surface as a 500 on the default request shape. Route the raw slice
-// through this helper at every Postgres-bound `text[]` call site so a
-// nil slice persists as the schema-default empty array (a non-nil
-// empty `[]string` encodes as `{}`, not NULL).
+// nonNilStringArray keeps a nil `[]string` from encoding as SQL NULL, which violates the NOT NULL on `referer_allowlist` (23502) and would 500 the default create-key request; a non-nil empty slice encodes as `{}`.
 func nonNilStringArray(in []string) []string {
 	if in == nil {
 		return []string{}

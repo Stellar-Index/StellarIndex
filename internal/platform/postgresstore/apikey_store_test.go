@@ -10,14 +10,7 @@ import (
 	"testing"
 )
 
-// TestNonNilStringArray_NilBecomesEmpty — a nil input must
-// surface to the pgx driver as a non-nil zero-length
-// []string, which serialises to the SQL `'{}'` array
-// literal. A
-// bare nil `[]string` emitted SQL NULL, which
-// violated the migration-0027 NOT NULL constraint on
-// `api_keys.referer_allowlist` and surfaced as a 500 on the
-// default dashboard create-key request shape.
+// TestNonNilStringArray_NilBecomesEmpty: a nil input must reach pgx as a non-nil empty slice (`'{}'`), since SQL NULL violates the NOT NULL on api_keys.referer_allowlist.
 func TestNonNilStringArray_NilBecomesEmpty(t *testing.T) {
 	got := nonNilStringArray(nil)
 	if got == nil {
@@ -43,11 +36,7 @@ func TestNonNilStringArray_NonNilPassthrough(t *testing.T) {
 	}
 }
 
-// TestNonNilStringArray_EmptyNonNilPassthrough — an explicit
-// empty (non-nil) input is preserved as zero-length. This is
-// the safest case (it's already a safe
-// shape) but the helper must not accidentally allocate a new
-// array literal from it.
+// TestNonNilStringArray_EmptyNonNilPassthrough: an explicit empty input is preserved as is.
 func TestNonNilStringArray_EmptyNonNilPassthrough(t *testing.T) {
 	got := nonNilStringArray([]string{})
 	if got == nil {
@@ -58,11 +47,7 @@ func TestNonNilStringArray_EmptyNonNilPassthrough(t *testing.T) {
 	}
 }
 
-// apiKeysBoundedMarkers are the shapes that keep a read of api_keys
-// independent of the revoked history, which is kept forever and grows
-// without bound under a create/revoke loop: an explicit LIMIT, an
-// aggregate or EXISTS probe, a unique-key lookup, or the active set (capped
-// per account at insert time).
+// apiKeysBoundedMarkers are the shapes that keep an api_keys read independent of the forever-growing revoked history: an explicit LIMIT, an aggregate or EXISTS probe, a unique-key lookup, or the capped active set.
 var apiKeysBoundedMarkers = []string{
 	"LIMIT", "COUNT(", "EXISTS", "WHERE id = $", "WHERE key_hash = $", "revoked_at IS NULL",
 }

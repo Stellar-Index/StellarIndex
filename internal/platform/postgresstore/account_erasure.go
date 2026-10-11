@@ -155,17 +155,9 @@ func (r *AccountStore) PlanErasure(ctx context.Context, id uuid.UUID) (ErasurePl
 	return p, nil
 }
 
-// EraseAccount closes the account and deletes or scrubs every row that
-// holds it, in ONE transaction: a failure leaves the account exactly as
-// it was (still active, so its owner can retry), and success leaves no
-// half-erased state for the session middleware to lock the owner out of.
-// platform.ErrNotFound means the account is already gone.
-//
-// Order matters: the slug lock is taken first, as Create takes it; the
-// audit scrub runs while the account is closed but its users and keys
-// still exist (the 0188 trigger checks linkage), the explicit deletes run child-first so the RESTRICT foreign keys stay a
-// guard against a missed table, and the slug tombstone and the
-// account.erase row land in the same commit.
+// EraseAccount closes the account and deletes or scrubs every row that holds it in ONE transaction (platform.ErrNotFound means already gone).
+// Order matters: slug lock first, as Create takes it; audit scrub while users and keys still exist (the 0188 trigger checks linkage); child-first deletes so RESTRICT foreign keys guard against a missed table;
+// slug tombstone and account.erase row in the same commit.
 func (r *AccountStore) EraseAccount(ctx context.Context, req ErasureRequest) (ErasureCounts, error) {
 	p := req.Plan
 	var c ErasureCounts
