@@ -24,16 +24,13 @@ const ohlcDefaultOutlierSigma = 4.0
 // OHLCBar is the wire shape for /v1/ohlc entries. All prices are
 // decimal strings (ADR-0003).
 //
-// The volume fields are RAW smallest-unit sums, and the unit is a per-SOURCE scale, not a fixed
-// stroop: on-chain DEX legs are 7-decimal, CEX 8, FX 6 ([amountScaleDecimalsFor]). A consumer
-// dividing by a fixed 1e7 overstates a CEX-fed pair tenfold.
+// The volume fields are RAW smallest-unit sums in a per-SOURCE scale, not a fixed stroop: DEX legs
+// are 7-decimal, CEX 8, FX 6 ([amountScaleDecimalsFor]). Dividing by a fixed 1e7 overstates a
+// CEX-fed pair tenfold. BaseVolumeDecimals / QuoteVolumeDecimals state the scale on the wire (the
+// [aggregate.NormalizeAmountScale] lift target, resolved over the pre-outlier-filter population);
+// a leg in `nonstandard_decimals_assets` is stamped at the asset's own decimals instead.
 //
-// BaseVolumeDecimals / QuoteVolumeDecimals state that scale on the wire: the lift target of
-// [aggregate.NormalizeAmountScale], resolved by [commonAmountScaleDecimals] over the pre-outlier-
-// filter population. It is the per-source axis only; a leg in `nonstandard_decimals_assets` is
-// stamped at the asset's own decimals, which NormalizeAmountScale does not model.
-//
-// Truncated signals the window hit the per-request trade cap: Open/High/Low reflect only the
+// Truncated means the window hit the per-request trade cap: Open/High/Low reflect only the
 // chronologically-last N trades (the reader drops the oldest under the LIMIT). Close is unaffected.
 type OHLCBar struct {
 	From        WireTime `json:"from"`
@@ -99,17 +96,13 @@ func priceRenderScale(r *big.Rat, digits int) int {
 //
 // Two modes share this route:
 //
-//  1. Single-bar (default): no `interval` query param. Returns one
-//     [OHLCBar] for the window [from, to) computed from raw trades
-//     via [aggregate.ComputeOHLC].
-//  2. Multi-bar series (CG/CMC parity): `interval` is one
-//     of 1m / 5m / 15m / 30m / 1h / 4h / 1d / 1w. Returns
-//     [OHLCSeriesResponse.Intervals] — up to `limit` (default 100,
-//     max 1000) closed bars, oldest first, sourced from the
-//     prices_<n> continuous aggregates.
+//  1. Single-bar (no `interval`): one [OHLCBar] for [from, to) from raw trades via
+//     [aggregate.ComputeOHLC].
+//  2. Series (`interval` 1m..1w): up to `limit` (default 100, max 1000) closed bars, oldest
+//     first, from the prices_<n> continuous aggregates.
 //
-// Defaults: single-bar matches /v1/history (from to-1h, to now clamped to the
-// previous closed bucket); series mode snaps to now and from = to - limit*interval.
+// Single-bar defaults match /v1/history (from = to-1h, to = now clamped to the previous closed
+// bucket); series mode snaps to now and from = to - limit*interval.
 func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	reader := s.History
 	if reader == nil {
@@ -236,13 +229,10 @@ func filterOHLCOutliers(w http.ResponseWriter, r *http.Request, window aggregate
 	return window, true
 }
 
-// computeOHLCSingleBar derives the single-bar OHLC, answers the caller directly on the two failure
-// shapes, and applies the dex-nonstandard-decimals forward normalization.
-//
-// Open/High/Low/Close all derive from the same raw quote/base ratio, so one per-pair scalar corrects
-// all four (see [aggregate.AdjustPrice] for why a post-hoc multiply is exact).
-//
-// Returns ok=false when it has already written the response.
+// computeOHLCSingleBar derives the single-bar OHLC and applies the dex-nonstandard-decimals
+// normalization. O/H/L/C share one raw quote/base ratio, so one per-pair scalar corrects all four
+// ([aggregate.AdjustPrice] explains why a post-hoc multiply is exact). Returns ok=false when it
+// has already written the failure response.
 func (s *Server) computeOHLCSingleBar(
 	w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair, from, to time.Time,
@@ -278,13 +268,11 @@ func (s *Server) computeOHLCSingleBar(
 // [aggregate.NormalizeAmountScale] chose, the MAXIMUM per-source scale present, so every lift is an
 // exact integer multiply and nothing is divided (ADR-0003).
 //
-// Call it over the window as fetched, not after the outlier filter: the registry check must see
-// every source the lift was resolved over. Zero for an empty window, which 404s before the wire.
-//
-// [barScaleDecimals] is the series twin over a CAGG row's `sources`; both resolve a venue through
-// [amountScaleDecimalsFor] so point and series cannot disagree about a source's scale. Returns
-// [ohlcBarScaleUnknown] if any source has no [external.Registry] entry, because [external.Lookup]
-// would answer with the CEX 8-decimal default and misstate an unregistered 7-decimal DEX tenfold.
+// Call it over the window as fetched, not after the outlier filter, so the registry check sees
+// every source the lift was resolved over. Zero for an empty window (which 404s).
+// [barScaleDecimals] is the series twin; both resolve through [amountScaleDecimalsFor] so point
+// and series agree. Returns [ohlcBarScaleUnknown] if any source is missing from [external.Registry],
+// since [external.Lookup] would default to CEX 8 and misstate an unregistered 7-decimal DEX tenfold.
 func commonAmountScaleDecimals(window aggregate.ScaledWindow) int {
 	trades := window.Trades()
 	for i := range trades {
@@ -318,12 +306,10 @@ func parseOHLCOutlierSigma(w http.ResponseWriter, r *http.Request) (float64, boo
 // parseFromTo parses the from/to query params with a 1-hour default, writing a problem and
 // returning ok=false on failure.
 //
-// `to` defaults to wall-clock now. Use this where the client wants exactly the stated range
-// (/v1/history); aggregated rate endpoints use [parseFromToClamped] per ADR-0015.
-//
-// `window` (a [time.ParseDuration] string plus a `d` days shortcut) sets `from = to - window`.
-// Combining it with an explicit `from` is a 400, which catches the "asked for 24h, got the 1h
-// default" surprise; combining it with an explicit `to` is fine.
+// `to` defaults to wall-clock now; use this where the client wants exactly the stated range
+// (/v1/history). Aggregated rate endpoints use [parseFromToClamped] per ADR-0015.
+// `window` (a [time.ParseDuration] string plus a `d` shortcut) sets `from = to - window`; with an
+// explicit `from` it is a 400, so "asked for 24h, got the 1h default" cannot happen silently.
 func parseFromTo(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok bool) {
 	to = time.Now().UTC()
 	if raw := r.URL.Query().Get("to"); raw != "" {
@@ -407,9 +393,8 @@ func parseWindowDuration(s string) (time.Duration, error) {
 // closedBucketWindow is the boundary granularity [parseFromToClamped] snaps "now" to. 30 s sits
 // inside the smallest CAGG bucket (`prices_1m`) and matches the 30 s freshness SLA.
 //
-// Per ADR-0015, snapping makes "every region returns the same rate" real: requests landing at
-// different instants in two regions clamp to the same boundary and answer over the identical
-// window, so the JSON is byte-identical once both have ingested those trades.
+// Per ADR-0015, requests at different instants in two regions clamp to the same boundary and
+// answer over the identical window, so the JSON is byte-identical once both ingested those trades.
 const closedBucketWindow = 30 * time.Second
 
 // parseFromToClamped is the rate-endpoint flavour of [parseFromTo]: the right edge is always

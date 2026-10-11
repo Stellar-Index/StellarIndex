@@ -94,10 +94,10 @@ type AssetListingValuation struct {
 	// CirculatingSupply is the raw integer supply, in the asset's smallest unit, that ValueUSD
 	// was computed from; scale it by the row's `decimals`.
 	//
-	// It is published here because it can legitimately differ from the row's own
-	// `circulating_supply`: against a trustline floor this arm takes the LARGER of the row's
-	// reading and the lake's flow total, and the detail row often has no reading at all. A
-	// dollar total with a guessed multiplicand is worse than no figure.
+	// It is published here because it can differ from the row's own `circulating_supply`: against
+	// a trustline floor this arm takes the LARGER of the row's reading and the lake's flow total,
+	// and the detail row often has none. A dollar total with a guessed multiplicand is worse than
+	// no figure.
 	CirculatingSupply string `json:"circulating_supply,omitempty"`
 	// SupplyBasis names where that number came from: [ListingSupplyBasisLakeFlows] (the lake's
 	// mint-burn total over the asset's SAC) or [ListingSupplyBasisServed] (the reading already on
@@ -105,8 +105,8 @@ type AssetListingValuation struct {
 	//
 	// The two differ by far more than rounding on exactly the assets this arm serves: USDT0's
 	// trustline sum is 6,469 tokens against 2,581,052 by mint-burn, because most of its float sits
-	// in contracts and claimable balances that a trustline query cannot see. The wrong basis gives
-	// a plausible-looking valuation 400x too small.
+	// in contracts and claimable balances a trustline query cannot see. The wrong basis gives a
+	// plausible valuation 400x too small.
 	SupplyBasis string `json:"supply_basis,omitempty"`
 }
 
@@ -167,8 +167,8 @@ const (
 	// lake's flow log. The only reading not keyed on where tokens are HELD, so the only one that
 	// sees claimable balances, liquidity-pool reserves and SAC-held balances.
 	ListingSupplyBasisLakeFlows = "lake_flows"
-	// ListingSupplyBasisServed — the `circulating_supply` already on the row, with its own
-	// `supply_basis`. Used when the row holds an ADR-0011 observation (outranks the lake, see
+	// ListingSupplyBasisServed is the `circulating_supply` already on the row, with its own
+	// `supply_basis`. Used when the row holds an observation (outranks the lake, see
 	// [classicSupplyReading]), when its trustline floor is larger, or when the lake could not
 	// answer. Against a floor [higherClassicSupply] applies: every trustline balance was minted,
 	// so a lake total below the trustline sum is incomplete seeding, not a smaller truth.
@@ -180,11 +180,9 @@ const (
 // AssetListingDirectoryReader is the seam for reading the independent listing directory;
 // *timescale.Store satisfies it.
 //
-// It is deliberately a DIFFERENT method from [RWAListingDirectoryReader]'s, which serves contract
-// rows only; a classic catalogue asset can be named under either address form.
-//
-// Optional: without it no listing valuations are published and [ListingValuationUnavailable] says
-// nobody looked, not that nobody lists these addresses.
+// It is a DIFFERENT method from [RWAListingDirectoryReader]'s, which serves contract rows only;
+// a classic catalogue asset can be named under either address form. Optional: without it
+// [ListingValuationUnavailable] says nobody looked, not that nobody lists these addresses.
 type AssetListingDirectoryReader interface {
 	ListingDirectoryByAddress(ctx context.Context) (
 		map[string]timescale.ListingEntry, timescale.ListingDirectoryCensus, error)
@@ -228,12 +226,11 @@ type assetListingCache struct {
 // assetListingSnapshot returns the cached directory read, refreshing it past
 // [assetListingSnapshotTTL].
 //
-// Fails CLOSED like [Server.rwaCuratedSnapshot]: a failed read yields an UNAVAILABLE snapshot and
-// is CACHED as such. Carrying the last good snapshot forward would keep publishing dollar figures
-// from an unreadable directory with nothing on the wire to say so.
-//
-// The read uses a context DETACHED from the request, so a disconnect cannot poison the shared
-// cache, and its own deadline, so a hung read cannot hold the mutex indefinitely.
+// Fails CLOSED like [Server.rwaCuratedSnapshot]: a failed read yields an UNAVAILABLE snapshot,
+// CACHED as such, because carrying the last good one forward would keep publishing dollar figures
+// from an unreadable directory with nothing on the wire to say so. The read uses a context
+// DETACHED from the request (a disconnect cannot poison the shared cache) with its own deadline
+// (a hung read cannot hold the mutex indefinitely).
 func (s *Server) assetListingSnapshot(ctx context.Context) assetListing {
 	return s.assetListingSnapshotWithin(ctx, assetListingReadBudget)
 }
@@ -467,13 +464,11 @@ func listingReferenceOf(entry timescale.ListingEntry, form string, now time.Time
 // it, or records why it cannot.
 //
 // `lake` is Σmint − Σburn − Σclawback over the asset's SAC. [listingSupplyReading] prefers it
-// when the row's reading is a trustline FLOOR (or absent) and the lake is larger; an ADR-0011
-// observation is kept. The gap can be two orders of magnitude (USDT0: 6,469 vs 2,581,052). Taking
-// the larger is safe because the trustline sum is a provable LOWER BOUND, so a smaller lake total
-// means incomplete flow seeding.
-//
-// The reading is published INSIDE the valuation block and the row's `circulating_supply` is left
-// alone, since a dollar figure needs a visible multiplicand.
+// when the row's reading is a trustline FLOOR (or absent) and the lake is larger; an observation
+// is kept. Taking the larger is safe because the trustline sum is a provable LOWER BOUND, so a
+// smaller lake total means incomplete flow seeding. The reading is published INSIDE the
+// valuation block and the row's `circulating_supply` is left alone, since a dollar figure needs
+// a visible multiplicand.
 func (s *Server) publishListingValuation(row *AssetDetail, lake string) {
 	circ, reading := listingSupplyReading(row, lake)
 	if circ == "" {
@@ -505,9 +500,8 @@ func (s *Server) publishListingValuation(row *AssetDetail, lake string) {
 // listingSupplyReading picks the multiplicand from the row's supply reading and the lake's flow
 // total. The lake may replace the row's reading only when that is a provable FLOOR
 // ([supply.Basis.LowerBound]) or absent, since the [higherClassicSupply] guard is sound only
-// against a sum of minted balances. An ADR-0011 observation outranks the lake
-// ([classicSupplyReading]) because the lake over-counts replayed mints with missing burns, and
-// the valuation must not overrule the row's published supply. A reading with no basis is not
+// against a sum of minted balances. An observation outranks the lake ([classicSupplyReading])
+// because the lake over-counts replayed mints with missing burns; a reading with no basis is not
 // known to be a floor, so it is kept too.
 func listingSupplyReading(row *AssetDetail, lake string) (string, supply.Basis) {
 	if row.CirculatingSupply == nil || *row.CirculatingSupply == "" {

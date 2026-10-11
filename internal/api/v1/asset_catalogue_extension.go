@@ -22,11 +22,8 @@ const assetExtensionTimeout = 4 * time.Second
 
 // applyAssetExtensionFields lifts the trailing-window activity + history fields from the
 // assetsReader catalogue onto AssetDetail. Skipped for fiat:* / external:* assets (no catalogue
-// row) and when no AssetsReader is wired.
-//
-// Sub-fetches run in parallel and are best-effort: a failure logs at Debug and leaves its field
-// nil. A missing catalogue row (never traded) is the common case, not an error. Same readers as
-// /v1/coins/{slug}; only the lookup key differs.
+// row) and when no AssetsReader is wired. Sub-fetches run in parallel and are best-effort: a
+// failure logs at Debug and leaves its field nil, and a missing row (never traded) is not an error.
 // assetExtensionResults holds the parallel-fetch results, separated to keep the caller under the
 // gocognit ceiling.
 type assetExtensionResults struct {
@@ -64,10 +61,10 @@ func (s *Server) applyAssetExtensionFields(ctx context.Context, detail *AssetDet
 // fetchAssetExtensionResults runs the 6 reader calls in parallel.
 //
 // Every one is DETACHED from the handler goroutine, so middleware.Recoverer does not cover it and
-// an unrecovered reader panic would terminate the whole API process. Each registers worker.Recover,
+// an unrecovered reader panic would terminate the API process. Each registers worker.Recover,
 // which leaves the field zero and its *Err nil: indistinguishable from a reader that returned
-// nothing, which is already this overlay's best-effort contract. Nothing is cached, so the next
-// request retries every field.
+// nothing, already this overlay's best-effort contract. Nothing is cached, so the next request
+// retries every field.
 func (s *Server) fetchAssetExtensionResults(ctx context.Context, assetID string) assetExtensionResults {
 	var (
 		r  assetExtensionResults
@@ -124,18 +121,17 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 		s.fillTransitivePrice(ctx, detail, asset, assetID)
 		return
 	}
-	// The catalogue row's price_usd is computed outside /v1/price's gated read path, so it would
-	// bypass the thin-market substance gate: the listing withholds a dust-authored price, and
-	// copying it onto /v1/assets/{id} ungated would give a substanceless market a headline. Apply
-	// the SAME per-pair verdict the listing uses (listingPriceAllowed, cached ~60s per pair). The
-	// change pills derive from that price, so a gated-out row loses them too. Withholding also
-	// lets the declared-peg fill downstream (nil PriceUSD only) supply the operator-declared basis.
+	// The catalogue row's price_usd is computed outside /v1/price's gated read path and would bypass
+	// the thin-market substance gate: copying a dust-authored price onto /v1/assets/{id} would give
+	// a substanceless market a headline. Apply the SAME per-pair verdict the listing uses
+	// (listingPriceAllowed, cached ~60s per pair). The change pills derive from that price, so a
+	// gated-out row loses them too, and the declared-peg fill downstream (nil PriceUSD only) can
+	// supply the operator-declared basis.
 	priceAllowed := s.Substance == nil || s.listingPriceAllowed(ctx, asset)
-	// Fill PriceUSD from the catalogue row ONLY when the canonical price path left it nil. The
-	// row's price is COALESCE(direct_usd, asset_vs_xlm x xlm_usd), and for native XLM its anchor
-	// prefers the SDEX book over the CEX one, so it can differ slightly from the canonical VWAP.
-	// Yielding to the canonical value keeps /v1/assets/native in agreement with /v1/price while
-	// still pricing the XLM-triangulated long tail the canonical reader can't reach.
+	// Fill PriceUSD from the catalogue row ONLY when the canonical price path left it nil. The row's
+	// price is COALESCE(direct_usd, asset_vs_xlm x xlm_usd), and for native XLM its anchor prefers the
+	// SDEX book over the CEX one, so it can differ slightly from the canonical VWAP. Yielding keeps
+	// /v1/assets/native in agreement with /v1/price while still pricing the XLM-triangulated long tail.
 	//
 	// The row's price is a RAW prices_1m ratio, so it is decimals-normalised before publishing
 	// (see normalizeCatalogueReadUSD). A price that normalisation must withhold leaves PriceUSD nil
@@ -171,8 +167,8 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	// means "never observed" and serving `first_seen_ledger: 0` would assert an impossible ledger.
 	//
 	// observation_count is the opposite: 0 is a LEGITIMATE reading (a registered asset that hasn't
-	// traded in the window), and dropping it would stop a client telling "no data" from "zero".
-	// Presence is already proven here, so report the count unless the row holds none (native XLM).
+	// traded in the window), and dropping it would blur "no data" with "zero". Presence is already
+	// proven here, so report the count unless the row holds none (native XLM).
 	if row.FirstSeenLedger != 0 {
 		v := row.FirstSeenLedger
 		detail.FirstSeenLedger = &v
@@ -199,8 +195,8 @@ func observationCountWire(row timescale.AssetRow) *int64 {
 // each field is independent, so one failure doesn't fail the others.
 //
 // The three PRICE fields (both histories and the ATH) arrive as RAW ratios and are normalised for
-// a confirmed non-7-decimals asset (see normalizeCatalogueUSD); verbatim, they would sit unscaled
-// beside a price_usd the canonical path already normalised.
+// a confirmed non-7-decimals asset (see normalizeCatalogueUSD), else they would sit unscaled beside
+// an already-normalised price_usd.
 func (s *Server) applyAssetExtensionResults(detail *AssetDetail, asset canonical.Asset, r assetExtensionResults) {
 	if r.topMarketsErr == nil && len(r.topMarkets) > 0 {
 		detail.TopMarkets = topMarketsToWire(r.topMarkets)
@@ -249,11 +245,11 @@ const catalogueUSDMinQuanta = 1000
 // non-7-decimals row (every classic asset and native XLM) pass through byte-identical.
 //
 // WITHHOLDING: for a flagged asset an unparseable or non-positive value cannot be corrected, and
-// publishing it raw is the defect this removes. When `rounded`, the SQL already cut the RAW ratio
-// to catalogueUSDRoundDigits places, and scaling UP by 10^k promotes that rounding error by 10^k
-// (an 18-decimals token worth $1 has a raw ratio that rounds to zero). Below
-// catalogueUSDMinQuanta the result would be precise-looking fiction, so the point is a gap.
-// Scaling DOWN only shrinks the error and needs no floor.
+// publishing it raw is wrong. When `rounded`, the SQL already cut the RAW ratio to
+// catalogueUSDRoundDigits places, and scaling UP by 10^k promotes that rounding error by 10^k (an
+// 18-decimals token worth $1 has a raw ratio that rounds to zero). Below catalogueUSDMinQuanta the
+// result would be precise-looking fiction, so the point is a gap. Scaling DOWN only shrinks the
+// error and needs no floor.
 func (s *Server) normalizeCatalogueUSD(value string, asset canonical.Asset, rounded bool) (string, bool) {
 	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, asset)
 	quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, defaultPriceQuote)

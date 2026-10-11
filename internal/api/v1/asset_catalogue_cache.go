@@ -17,14 +17,10 @@ import (
 // takes ~1.1s. Other AssetsReader methods pass through unchanged (keyed too narrowly to
 // benefit). Concurrent callers during a refetch share one upstream call (single-flight).
 type CachedAssetsReader struct {
-	// logger sinks a panic recovered in a detached refresh goroutine.
-	// It is the PROCESS DEFAULT rather than the API Server's logger:
-	// these reader wrappers are constructed directly in
-	// cmd/stellarindex-api/main.go before the Server exists, and
-	// widening the exported constructor would churn every caller for a
-	// sink that ends up in the same journal either way. The
-	// load-bearing signal is stellarindex_worker_panics_total, which
-	// worker.Report moves regardless of the sink.
+	// logger sinks a panic recovered in a detached refresh goroutine. It is the process
+	// default because the reader wrappers are built before the API Server exists; the
+	// load-bearing signal is stellarindex_worker_panics_total, which worker.Report moves
+	// regardless of the sink.
 	logger *slog.Logger
 
 	upstream AssetsReader
@@ -81,25 +77,18 @@ type assetsCacheEntry struct {
 	rows           []timescale.AssetRow
 	historyByAsset map[string][]timescale.AssetPricePoint
 
-	// err is set by the leader before close(flight) on a failing
-	// upstream call. Waiters hold a pointer to the SAME entry they
-	// joined the flight on so they can read entry.err here even
-	// after the leader removes the entry from the map (we don't
-	// TTL-cache errors). Without this, a waiter that wakes after
-	// the leader's delete derefs `c.entries[key].rows` on nil and
-	// panics — same root cause as the markets_cache fix.
+	// err is set by the leader before close(flight) on a failing upstream call. Waiters hold
+	// the SAME entry they joined, so they can read err even after the leader deletes it from
+	// the map (errors are not cached); re-looking it up by key would nil-deref and panic.
 	err error
 }
 
 // NewCachedAssetsReader wraps `upstream` with a TTL cache. ttl=0
 // disables the cache (every call passes through).
 //
-// The production TTL is **2 minutes**, set at the single call site
-// (cmd/stellarindex-api/main.go, `NewCachedAssetsReader(store,
-// 2*time.Minute)`) — listings are activity-ranked aggregates that don't
-// move materially in that window, and the explorer's react-query layer
-// caches client-side on top. Change the call site and this line
-// together.
+// The production TTL is 2 minutes, set at the single call site in cmd/stellarindex-api/main.go:
+// listings are activity-ranked aggregates that do not move materially in that window. Change
+// the call site and this line together.
 func NewCachedAssetsReader(upstream AssetsReader, ttl time.Duration) *CachedAssetsReader {
 	return &CachedAssetsReader{
 		logger:     slog.Default(),
@@ -110,16 +99,12 @@ func NewCachedAssetsReader(upstream AssetsReader, ttl time.Duration) *CachedAsse
 	}
 }
 
-// LatestSupplyObservations passes through to the upstream's supply
-// reader (used by the /v1/assets market_cap enrichment). Not part of
-// AssetsReader — exposed so the handler's type-assert resolves through
-// this wrapper instead of skipping enrichment. Uncached: the underlying
-// observation lookup is one indexed row per watched asset.
+// LatestSupplyObservations passes through to the upstream's supply reader (the /v1/assets
+// market_cap enrichment). It is not part of AssetsReader; it is exposed so the handler's
+// type-assert resolves through this wrapper instead of skipping enrichment.
 //
-// Deliberately NOT cached here on top of that. The freshness bound the
-// caller passes is the whole point of the read, and a cache in front of it
-// would age the observation by its own TTL behind the bound's back — which
-// is a smaller version of exactly the defect that made this method exist.
+// It is deliberately uncached: the lookup is one indexed row per watched asset, and a cache
+// would age the observation by its own TTL behind the caller's freshness bound.
 func (c *CachedAssetsReader) LatestSupplyObservations(
 	ctx context.Context, maxAge time.Duration,
 ) (map[string]timescale.SupplyObservation, error) {
@@ -136,13 +121,9 @@ func (c *CachedAssetsReader) ListAssetsExt(ctx context.Context, opts timescale.L
 	if c.ttl <= 0 {
 		return c.upstream.ListAssetsExt(ctx, opts)
 	}
-	// Every ListAssetsOptions dimension that changes the result set
-	// MUST appear in the key, or two requests differing only by that
-	// dimension collide and one serves the other's rows. Code is a
-	// row-narrowing filter, so it is keyed alongside
-	// Issuer/Cursor/Q — and so is Type, which reaches the store now
-	// that it narrows the spine (classic vs the traded Soroban-native
-	// contracts) rather than being folded away by the handler.
+	// Every ListAssetsOptions dimension that changes the result set MUST appear in the key,
+	// or two requests differing only by that dimension would serve each other's rows. That
+	// includes Code and Type (classic vs traded Soroban-native), alongside Issuer/Cursor/Q.
 	key := newCacheKey("ListAssetsExt").
 		int(opts.Limit).str(opts.Issuer).str(opts.Code).str(opts.Type).
 		str(opts.Cursor).str(opts.Q).order(int(opts.Order)).build()
@@ -183,16 +164,11 @@ func (c *CachedAssetsReader) GetAssetsATHBatch(ctx context.Context, assetIDs []s
 	return c.upstream.GetAssetsATHBatch(ctx, assetIDs)
 }
 
-// Per-asset single-value reads — all stale-while-revalidate cached
-// via the generic swr[T] helper. These were pass-through on the
-// assumption they were "<50ms low-volume single-row" lookups; that
-// became false post-backfill: /v1/assets/{id}'s asset-catalogue extension
-// fans out ~9 of these per request and GetAssetByAssetID /
-// GetNativeAssetRow run the whole-asset-universe listAssetsBaseSelect
-// query (~13s under load), with GetAssetTradeCount24h /
-// GetAssetMarketsCount adding multi-second trades-OR scans.
-// SWR moves all of that off the request path with zero correctness
-// loss (serve stale instantly, single-flighted background refresh).
+// Per-asset single-value reads are stale-while-revalidate cached via the generic swr[T] helper.
+// They are not cheap single-row lookups: /v1/assets/{id} fans out ~9 of them per request,
+// GetAssetByAssetID and GetNativeAssetRow run the whole-asset-universe listAssetsBaseSelect
+// query, and the trade-count and markets-count reads scan trades. SWR moves that off the
+// request path (stale served instantly, one single-flighted background refresh).
 
 func (c *CachedAssetsReader) GetAssetBySlug(ctx context.Context, slug string) (timescale.AssetRow, error) {
 	if c.ttl <= 0 {
@@ -284,12 +260,9 @@ func (c *CachedAssetsReader) GetAssetTradeCount24h(ctx context.Context, assetID 
 		})
 }
 
-// swrEntry backs the generic single-value SWR path. Separate from
-// assetsCacheEntry's method-field shape — `val` holds an opaque T;
-// its dynamic type is invariant per key because keys are
-// method-namespaced (e.g. "GetAssetByAssetID|<id>"), so the
-// e.val.(T) assertions never mix types. Guarded by
-// CachedAssetsReader.mu (shared with `entries`; distinct map).
+// swrEntry backs the generic single-value SWR path. `val` holds an opaque T whose dynamic type
+// is invariant per key because keys are method-namespaced (e.g. "GetAssetByAssetID|<id>"), so
+// the e.val.(T) assertions never mix types. Guarded by CachedAssetsReader.mu.
 // evictOldestSWREntry drops the oldest-filled entry when the map is at
 // capacity. Caller must hold the mutex.
 //
@@ -323,19 +296,15 @@ type swrEntry struct {
 	err    error
 }
 
-// swr is the generic single-value stale-while-revalidate fetch: the
-// proven, race-clean assetsReader fetchRows logic, made
-// type-parametric so every per-asset single-value asset-catalogue method
-// shares ONE implementation. Free function — Go methods can't have
-// type parameters.
+// swr is the generic single-value stale-while-revalidate fetch: the fetchRows logic made
+// type-parametric so every per-asset method shares ONE implementation. It is a free function
+// because Go methods cannot have type parameters.
 //
 //	(A)  fresh hit → return cached
-//	(A') expired with a prior success → serve stale IMMEDIATELY +
-//	     one single-flighted background refresh (runDetachedFill); never
-//	     blocks a request on the slow upstream
-//	(B)/(C) cold → join the running fill or start one, then
-//	     wait on it OR the caller's ctx; delete-on-error with the
-//	     waiter-err-pointer panic-safety
+//	(A') expired with a prior success → serve stale IMMEDIATELY + one single-flighted
+//	     background refresh (runDetachedFill); never blocks a request on the slow upstream
+//	(B)/(C) cold → join the running fill or start one, then wait on it OR the caller's ctx;
+//	     delete-on-error, with waiters holding the entry pointer so they read its err safely
 func swr[T any](ctx context.Context, c *CachedAssetsReader, op, key string, upstream func(context.Context) (T, error)) (T, error) {
 	var zero T
 	c.mu.Lock()
@@ -444,12 +413,10 @@ func (c *CachedAssetsReader) settleRowsFillLocked(op, key string, entry *assetsC
 	}
 }
 
-// assetsRefreshBudget bounds a stale-while-revalidate background
-// refresh. It runs OFF the request path so a generous budget costs
-// users nothing (they're already served the stale value); it just
-// has to comfortably exceed the listing aggregate's worst case
-// (~seconds, contended) so the refresh actually completes and the
-// cache moves forward instead of perpetually re-spawning.
+// assetsRefreshBudget bounds a stale-while-revalidate background refresh. It runs off the
+// request path, so a generous budget costs users nothing; it must comfortably exceed the
+// listing aggregate's contended worst case so the refresh completes and the cache advances
+// instead of perpetually re-spawning.
 const assetsRefreshBudget = 30 * time.Second
 
 // fetchRows returns just the rows. Kept so callers that do not care
@@ -487,15 +454,10 @@ func (c *CachedAssetsReader) fetchRowsAt(
 		return out, outAt, nil
 	}
 
-	// (A') Stale-while-revalidate. A prior SUCCESSFUL fetch exists
-	// (e.at non-zero — failed cold fetches delete the entry, so a
-	// present entry with non-zero at always has servable rows) but
-	// it's expired. Serve the stale rows IMMEDIATELY and, if no
-	// refresh is already running, kick exactly one in the
-	// background. Concurrent callers during the refresh also get
-	// stale — nobody ever waits on the upstream call. The
-	// expiry refetch (~seconds on the
-	// listing aggregate) must never land on a user request.
+	// (A') Stale-while-revalidate. A prior SUCCESSFUL fetch exists (failed cold fetches delete
+	// the entry, so non-zero e.at always means servable rows) but it has expired. Serve the
+	// stale rows IMMEDIATELY and kick at most one background refresh; concurrent callers also
+	// get stale, so the slow expiry refetch never lands on a user request.
 	if ok && !e.at.IsZero() {
 		stale, staleAt := e.rows, e.at
 		if e.flight == nil {
@@ -578,14 +540,10 @@ func (c *CachedAssetsReader) settleRows(op, key string, entry *assetsCacheEntry)
 	}
 }
 
-// fetchHistoryMap is [CachedAssetsReader.fetchRows] for the batched
-// price-history maps. The branch structure is deliberately identical,
-// (A)/(A')/(B)/(C) in the same order. Without (A') an EXPIRED history
-// batch falls straight through to the blocking cold-leader path and
-// every caller during the refetch waits on the slow upstream: the
-// stampede-on-expiry the listing rows avoid, on the sibling the same
-// handler calls in the same request (/v1/assets?include=sparkline fans
-// out to both).
+// fetchHistoryMap is [CachedAssetsReader.fetchRows] for the batched price-history maps, with
+// the same (A)/(A')/(B)/(C) branch order. Without (A') an expired history batch would block
+// every caller on the slow upstream, a stampede-on-expiry that the listing rows avoid and that
+// /v1/assets?include=sparkline would hit on its sibling call in the same request.
 func (c *CachedAssetsReader) fetchHistoryMap(
 	ctx context.Context,
 	op, key string,

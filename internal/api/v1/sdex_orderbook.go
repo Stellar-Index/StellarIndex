@@ -14,30 +14,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// GET /v1/sdex/orderbook — live classic order-book depth for one
-// (selling, buying) pair, served from an in-process book maintained
-// off the certified lake.
+// GET /v1/sdex/orderbook — live classic order-book depth for one (selling, buying) pair, served
+// from an in-process book maintained off the certified lake.
 //
-// Why in-process: offer entries in the lake carry their assets only
-// inside the entry_xdr blob (no selling/buying columns), so a per-pair
-// read would decode the whole ~1.02B-row offer slice per request. The
-// book is instead loaded once at process start and advanced with
-// partition-pruned incremental change reads — see
-// clickhouse/sdex_offer_book_reader.go for the full trade-off note.
+// Why in-process: lake offer entries carry their assets only inside the entry_xdr blob, so a
+// per-pair read would decode the whole ~1.02B-row offer slice per request. The book is loaded once
+// and advanced with partition-pruned incremental reads (see clickhouse/sdex_offer_book_reader.go).
 
-// SDEXOrderBookAdvanceInterval is the cadence the background goroutine
-// in cmd/stellarindex-api/main.go advances the live book at. 60s keeps
-// the incremental reads to a handful of recent partitions while
-// bounding staleness at about the freshness /v1/price's closed-bucket
-// contract already serves.
+// SDEXOrderBookAdvanceInterval is the cadence the background goroutine advances the live book at.
+// 60s keeps incremental reads to a few recent partitions and bounds staleness at about what
+// /v1/price's closed-bucket contract already serves.
 const SDEXOrderBookAdvanceInterval = 60 * time.Second
 
-// SDEXOrderBookStaleAfter gates `flags.stale`: 2x the advance cadence,
-// the same missed-refresh-cycles convention changeSummaryStaleAfter
-// uses (one missed tick can be a slow ClickHouse read, not yet a
-// wedged Advance; two cannot). Advance returns early on a
-// read error without moving `c.updated`, so an in-memory book that has
-// stopped advancing otherwise keeps serving `stale: false` forever.
+// SDEXOrderBookStaleAfter gates `flags.stale`: 2x the advance cadence (one missed tick can be a
+// slow ClickHouse read; two cannot). Advance returns early on a read error without moving
+// `c.updated`, so a stopped book would otherwise keep serving `stale: false` forever.
 const SDEXOrderBookStaleAfter = 2 * SDEXOrderBookAdvanceInterval
 
 // sdexOrderBookDefaultDepth / MaxDepth bound the served price levels
@@ -47,16 +38,11 @@ const (
 	sdexOrderBookMaxDepth     = 200
 )
 
-// SDEXOrderBookVerifyBatch bounds one [SDEXOrderBookCache.VerifyPending]
-// sweep (called once per advance tick by the maintainer goroutine in
-// cmd/stellarindex-api/main.go). Each pending offer costs one
-// partition-pruned (ledger, key) probe against ledger_entry_changes —
-// ~1.5 ms/key measured on r1 — so a 2,500 batch is ~4 s
-// of the 60 s tick, and a fully zombie-laden book (~10^6 suspects)
-// converges in hours, not days. The quarantined suspects are NOT
-// served meanwhile — each response counts them per side as
-// `*_offers_withheld` — so the book is honest from the first snapshot;
-// verification only widens it back out with proven-live offers.
+// SDEXOrderBookVerifyBatch bounds one [SDEXOrderBookCache.VerifyPending] sweep per advance tick.
+// Each pending offer costs one partition-pruned (ledger, key) probe against ledger_entry_changes
+// (~1.5 ms/key), so 2,500 is ~4 s of the 60 s tick and ~10^6 suspects converge in hours. Suspects
+// are NOT served meanwhile (counted per side as `*_offers_withheld`), so the book is honest from
+// the first snapshot; verification only widens it back out with proven-live offers.
 const SDEXOrderBookVerifyBatch = 2500
 
 // Order-book maintenance budgets and the self-heal cadence, applied by
@@ -68,20 +54,17 @@ const (
 	SDEXOrderBookLoadTimeout = 30 * time.Minute
 	// SDEXOrderBookAdvanceTimeout caps one tick's Advance + VerifyPending.
 	SDEXOrderBookAdvanceTimeout = 2 * time.Minute
-	// SDEXOrderBookReloadInterval is how often the book is rebuilt
-	// wholesale from the lake's current-state projection. Advance is only as good as the change
-	// stream above its cursor: a change landing BELOW the cursor (a hole healed later, a
-	// re-backfilled range) or one Advance could not apply (an undecodable entry) stays wrong
-	// until restart, so daily bounds that to a day under the same work-shape bound.
+	// SDEXOrderBookReloadInterval is how often the book is rebuilt wholesale from the lake's
+	// current-state projection. Advance only sees changes above its cursor: a change landing BELOW
+	// it (a healed hole, a re-backfilled range) or one it could not apply stays wrong until a
+	// reload, so daily bounds that to a day.
 	//
-	// Periodic rather than triggered by the crossed-pairs gauge: a sustained crossed pair is a
-	// lake coverage gap a re-load cannot heal, so re-firing a multi-minute scan would only add load.
+	// Periodic, not triggered by the crossed-pairs gauge: a sustained crossed pair is a lake
+	// coverage gap a re-load cannot heal, so re-firing a multi-minute scan would only add load.
 	SDEXOrderBookReloadInterval = 24 * time.Hour
-	// SDEXOrderBookReloadRetry spaces re-load attempts after a FAILED
-	// re-load. The book keeps serving and advancing meanwhile, so there is
-	// no reason to point a 30-minute scan at a struggling ClickHouse every
-	// tick. (The INITIAL load still retries every tick: until it lands
-	// the endpoint is a 503.)
+	// SDEXOrderBookReloadRetry spaces re-load attempts after a FAILED re-load: the book keeps
+	// serving meanwhile, so a 30-minute scan must not hit a struggling ClickHouse every tick. The
+	// INITIAL load still retries every tick, since until it lands the endpoint is a 503.
 	SDEXOrderBookReloadRetry = time.Hour
 )
 
@@ -96,13 +79,10 @@ type SDEXOfferBookReader interface {
 	OfferRemovedAt(ctx context.Context, refs []clickhouse.OfferRemovalRef) (map[string]struct{}, error)
 }
 
-// SDEXOrderBookCache is the in-process live offer book: a map of every
-// live classic offer, loaded at process start and rebuilt daily ([Load]),
-// and advanced incrementally in between ([Advance]) — all by one
-// background goroutine ([MaintainTick]). Handlers aggregate per-pair
-// depth from the map under an RLock (tens of thousands of offers —
-// microseconds). Before the first Load completes the handler serves an
-// honest 503 "snapshot loading" problem, never fabricated emptiness.
+// SDEXOrderBookCache is the in-process live offer book: a map of every live classic offer, loaded
+// at start, rebuilt daily ([Load]) and advanced incrementally ([Advance]) by one background
+// goroutine ([MaintainTick]). Handlers aggregate per-pair depth under an RLock. Before the first
+// Load the handler serves an honest 503 "snapshot loading", never fabricated emptiness.
 //
 // Trust discipline (what keeps the book from crossing): a loaded offer whose winning version has
 // intra_ledger_seq == 0 is AMBIGUOUS: either a pre-intra-era backfill row whose same-ledger
@@ -134,15 +114,11 @@ func NewSDEXOrderBookCache(reader SDEXOfferBookReader, logger Logger) *SDEXOrder
 	return &SDEXOrderBookCache{reader: reader, logger: logger, now: time.Now}
 }
 
-// MaintainTick is one pass of the background maintainer
-// (cmd/stellarindex-api/main.go calls it once at start and then every
-// [SDEXOrderBookAdvanceInterval]); ctx is the process lifetime, each
-// step takes its own budget from it. Until a load has landed it only
-// retries the load — Advance no-ops without one. After that it applies
-// the change stream, drains a bounded batch of the version-tie
-// quarantine, and rebuilds the book when [ReloadDue] says the periodic
-// self-heal is owed. Every step logs and meters its own failure; a failed
-// step never takes the served book down.
+// MaintainTick is one pass of the background maintainer, run every
+// [SDEXOrderBookAdvanceInterval]; ctx is the process lifetime and each step takes its own budget.
+// Until a load lands it only retries the load. After that it applies the change stream, drains a
+// bounded batch of the version-tie quarantine, and reloads when [ReloadDue]. Each step logs and
+// meters its own failure; a failed step never takes the served book down.
 func (c *SDEXOrderBookCache) MaintainTick(ctx context.Context) {
 	c.mu.RLock()
 	ready := c.loadedOK
@@ -167,11 +143,9 @@ func (c *SDEXOrderBookCache) loadWithin(ctx context.Context) {
 	_ = c.Load(loadCtx)
 }
 
-// ReloadDue reports whether the periodic self-heal re-load is owed at
-// now: the book is loaded, its last successful load is at least
-// [SDEXOrderBookReloadInterval] old, and the last attempt — a failed
-// re-load leaves the old book serving — is at least
-// [SDEXOrderBookReloadRetry] old.
+// ReloadDue reports whether the periodic re-load is owed at now: the book is loaded, its last
+// successful load is at least [SDEXOrderBookReloadInterval] old, and the last attempt (a failed
+// re-load leaves the old book serving) is at least [SDEXOrderBookReloadRetry] old.
 func (c *SDEXOrderBookCache) ReloadDue(now time.Time) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -201,11 +175,9 @@ func observeMaintainOutcome(outcome string, start time.Time) {
 	obs.SDEXOrderBookMaintainDurationSeconds.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
 }
 
-// Load performs a full-book load: the initial one, and the periodic
-// self-heal [MaintainTick] runs every [SDEXOrderBookReloadInterval].
-// Idempotent — a re-Load replaces the book wholesale and rewinds the
-// cursor to the lake's contiguous tip as of the scan's start; Advance
-// re-applies everything above it by version. A failed re-Load leaves the
+// Load performs a full-book load: the initial one and the periodic self-heal. Idempotent: a
+// re-Load replaces the book wholesale and rewinds the cursor to the lake's contiguous tip as of the
+// scan's start; Advance re-applies everything above it by version. A failed re-Load leaves the
 // previous book serving.
 //
 // A re-Load keeps verification verdicts already earned: a version-tie suspect already served at
@@ -250,11 +222,10 @@ func (c *SDEXOrderBookCache) Load(ctx context.Context) (err error) {
 	return nil
 }
 
-// partitionLoadedBook splits a freshly loaded book into the served book
-// and the version-tie quarantine (intra_ledger_seq == 0 — see the type
-// comment). Seed-snapshot rows carry intra 0xFFFFFFFF and stay trusted.
-// trusted is the book being replaced (nil on the first load): a suspect
-// it already serves at the SAME version keeps its verdict.
+// partitionLoadedBook splits a freshly loaded book into the served book and the version-tie
+// quarantine (intra_ledger_seq == 0). Seed-snapshot rows carry intra 0xFFFFFFFF and stay trusted.
+// trusted is the book being replaced (nil on first load): a suspect it already serves at the SAME
+// version keeps its verdict.
 func partitionLoadedBook(book, trusted map[string]clickhouse.LiveOffer) (served, pending map[string]clickhouse.LiveOffer) {
 	served = make(map[string]clickhouse.LiveOffer, len(book))
 	pending = make(map[string]clickhouse.LiveOffer)
@@ -288,11 +259,9 @@ func (c *SDEXOrderBookCache) dropPendingLocked(k string) {
 	c.withheld[m]--
 }
 
-// VerifyPending drains up to limit quarantined offers by probing the
-// lake's change stream for a removal at each offer's own ledger.
-// Proven-dead offers are discarded permanently; the rest graduate into
-// the served book. No-op (and unobserved — steady state has nothing to
-// verify) when the quarantine is empty.
+// VerifyPending drains up to limit quarantined offers by probing the lake's change stream for a
+// removal at each offer's own ledger. Proven-dead offers are discarded permanently; the rest
+// graduate into the served book. No-op (and unobserved) when the quarantine is empty.
 func (c *SDEXOrderBookCache) VerifyPending(ctx context.Context, limit int) (err error) {
 	c.mu.RLock()
 	refs := make([]clickhouse.OfferRemovalRef, 0, min(limit, len(c.pending)))
@@ -335,12 +304,9 @@ func (c *SDEXOrderBookCache) VerifyPending(ctx context.Context, limit int) (err 
 	return nil
 }
 
-// Advance applies offer changes since the cursor. Changes are applied
-// by version (>= wins), so overlapping or duplicated change rows are
-// idempotent. No-op (nil) before Load has succeeded.
-//
-// A tick that makes zero cursor progress (next == cursor) records
-// "advance_held" instead of "advance_ok" — see [observeMaintainOutcome].
+// Advance applies offer changes since the cursor by version (>= wins), so overlapping or
+// duplicated change rows are idempotent. No-op (nil) before Load has succeeded. A tick with zero
+// cursor progress (next == cursor) records "advance_held", not "advance_ok" ([observeMaintainOutcome]).
 func (c *SDEXOrderBookCache) Advance(ctx context.Context) error {
 	c.mu.RLock()
 	ready, cursor := c.loadedOK, c.cursor
@@ -381,16 +347,10 @@ func (c *SDEXOrderBookCache) Advance(ctx context.Context) error {
 	c.updateHealthGaugesLocked()
 	c.mu.Unlock()
 	if next == cursor {
-		// The lake's contiguous tip has not moved past the cursor at all —
-		// an unhealed hole (OfferChangesSince logs "advance held below a
-		// lake hole") or a full ingest halt, as opposed to a legitimate
-		// advance that just applied zero CHANGES because nothing on the
-		// pair moved while the tip itself advanced. advance_ok would mask
-		// this exactly the way pre-Load ticks are deliberately unobserved
-		// above: no error is ever raised, so the served book can go stale
-		// for as long as the hold lasts with maintain_failing silent the
-		// whole time. Mirrors the projector's watermark_held
-		// outcome for the identical guard (sdex_offer_book_reader.go).
+		// The lake's contiguous tip has not moved past the cursor: an unhealed hole or a full ingest
+		// halt, unlike a legitimate advance that applied zero CHANGES while the tip moved. advance_ok
+		// would mask it (no error is raised), leaving the book stale with maintain_failing silent for
+		// as long as the hold lasts. Mirrors the projector's watermark_held outcome.
 		observeMaintainOutcome("advance_held", start)
 		return nil
 	}
@@ -398,17 +358,13 @@ func (c *SDEXOrderBookCache) Advance(ctx context.Context) error {
 	return nil
 }
 
-// updateHealthGaugesLocked recomputes the book's data-quality gauges.
-// Caller holds mu.
+// updateHealthGaugesLocked recomputes the book's data-quality gauges. Caller holds mu.
 //
-// The crossed-pairs count is the invariant tripwire this cache exists
-// to keep at zero: Stellar's DEX executes crossing offers at
-// submission, so a RESTING book can never have best bid > best ask.
-// Any sustained non-zero value means phantom offers are being served —
-// e.g. the residual zombie class whose removal was never ingested at
-// all (so [VerifyPending] cannot disprove them). The
-// stellarindex_sdex_orderbook_crossed_book alert (ticket) fires on it; the
-// log line names the pairs so the operator knows which market to chase.
+// The crossed-pairs count is the tripwire this cache keeps at zero: Stellar's DEX executes crossing
+// offers at submission, so a RESTING book can never have best bid > best ask. A sustained non-zero
+// value means phantom offers are served, e.g. zombies whose removal was never ingested (so
+// [VerifyPending] cannot disprove them). The stellarindex_sdex_orderbook_crossed_book alert fires
+// on it and the log line names the pairs.
 func (c *SDEXOrderBookCache) updateHealthGaugesLocked() {
 	pairs := crossedPairs(c.offers)
 	crossed := len(pairs)
@@ -673,16 +629,12 @@ type bookLevel struct {
 	offers int
 }
 
-// aggregateOrderBookSide folds one side's offers into sorted,
-// cumulative price levels.
+// aggregateOrderBookSide folds one side's offers into sorted, cumulative price levels.
 //
-// Asks sell the market's base asset: the offer's price N/D is already
-// quote-per-base and Amount is base stroops. Bids sell the market's
-// QUOTE asset: the offer's N/D is base-per-quote, so the level price
-// is the exact inverse D/N and Amount is quote stroops; the base
-// equivalent is Amount × N/D. All arithmetic is exact big.Rat — the
-// only rounding is at render time (7 decimal places, the classic
-// stroop precision).
+// Asks sell the base asset: price N/D is already quote-per-base and Amount is base stroops. Bids
+// sell the QUOTE asset: N/D is base-per-quote, so the level price is the exact inverse D/N, Amount
+// is quote stroops and the base equivalent is Amount × N/D. All arithmetic is exact big.Rat; the
+// only rounding is at render time (7 decimal places, stroop precision).
 func aggregateOrderBookSide(offers []clickhouse.LiveOffer, invert bool, depth int) []SDEXOrderBookLevelView {
 	levels := map[[2]int64]*bookLevel{}
 	for _, o := range offers {

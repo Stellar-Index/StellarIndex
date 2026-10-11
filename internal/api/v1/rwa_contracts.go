@@ -17,15 +17,11 @@ import (
 // that have no (code, issuer) pair. The definition is internal/rwa/contract.go; this file is the
 // read path.
 //
-// The classic arm walks issuers, and only the classic-asset registry writes that table, so an
-// entity issuing only contract tokens gets no row, no SEP-1 fetch and never becomes a candidate.
-// That is the silent-discard shape the funnel exists to prevent, so this arm draws its population
-// from the one table tying a real-world entity to a Stellar address without classic issuance.
-//
-// It reports two things nothing else could: contracts an independent party named, evaluated and
-// counted with each refusal attributed; and entities that are recognised, unflagged, real, yet hold
-// no Stellar token in this index. Nothing refuses those, so unnamed they would be indistinguishable
-// from an entity that does not exist; they are named on the response.
+// The classic arm walks issuers, so an entity issuing only contract tokens would never become a
+// candidate: the silent-discard shape the funnel exists to prevent. This arm therefore draws its
+// population from the one table tying a real-world entity to a Stellar address without classic
+// issuance. It also names entities that are recognised and unflagged yet hold no Stellar token in
+// this index; nothing refuses those, so unnamed they look like an entity that does not exist.
 
 // rwaContractScanCap bounds the contracts one rebuild evaluates. The recognised set is small by
 // construction, so this guards against a directory sync that suddenly tags thousands of contracts.
@@ -51,11 +47,8 @@ const rwaContractValuationBudget = 8 * time.Second
 
 // ─── storage seams ──────────────────────────────────────────────────
 
-// RWADirectoryContractReader is the seam the contract arm draws its
-// candidate population through. *timescale.Store satisfies it.
-//
-// Optional: a deployment without it serves the classic arm alone and says so in the funnel. An
-// absent reader is a configuration statement; reporting it as a measured population of zero
+// RWADirectoryContractReader is the seam the contract arm draws its candidate population through.
+// Optional: without it the classic arm serves alone and the funnel says so, since reporting zero
 // contracts would assert something nobody looked at.
 type RWADirectoryContractReader interface {
 	DirectoryRecognisedContracts(ctx context.Context, issuingTags []string) (
@@ -74,8 +67,8 @@ type ContractCatalogueReader interface {
 // TokenSymbolReader resolves a token contract's on-chain SEP-41 symbol.
 // The lake ExplorerReader satisfies it.
 //
-// Read ONLY after an independent party has named the contract. The value is contract-authored and
-// answers which instrument, never whether; the reader's own doc says why that ordering matters.
+// Read ONLY after an independent party has named the contract: the value is contract-authored and
+// answers which instrument, never whether.
 type TokenSymbolReader interface {
 	TokenSymbol(ctx context.Context, contractID string) (string, bool, error)
 }
@@ -128,12 +121,9 @@ type rwaContractCensus struct {
 	available bool
 }
 
-// buildRWAContractMembership applies the contract requirements to every
-// recognised contract the curated directory names.
-//
-// Order of work: the directory census and candidate rows, then ONE metadata read per candidate under
-// a shared budget, then the verdict. Nothing here reads a price: membership is decided before
-// valuation, as on the classic arm.
+// buildRWAContractMembership applies the contract requirements to every recognised contract the
+// curated directory names: ONE metadata read per candidate under a shared budget, then the verdict.
+// Nothing here reads a price; membership is decided before valuation, as on the classic arm.
 func (s *Server) buildRWAContractMembership(ctx context.Context) rwaContractBuild {
 	var out rwaContractBuild
 	out.refusals = map[string]int{}
@@ -161,13 +151,11 @@ func (s *Server) buildRWAContractMembership(ctx context.Context) rwaContractBuil
 	return out
 }
 
-// rwaContractBuild is one contract-side rebuild: the admitted set from
-// BOTH C2 arms, and each arm's own census and refusal tally.
-//
-// The refusal tallies are kept APART: both arms run rwa.QualifyContract and can produce the same
-// reason string, so one tally would attribute an arm-2 refusal to arm 1's narrowing and stop the
-// stage arithmetic closing. They are merged once, at the top, into the single `refused[]`, which
-// speaks for the whole surface and does not care which arm turned a candidate away.
+// rwaContractBuild is one contract-side rebuild: the admitted set from BOTH C2 arms, and each
+// arm's own census and refusal tally. The tallies stay APART because both arms run
+// rwa.QualifyContract and can produce the same reason string; one tally would misattribute an
+// arm-2 refusal to arm 1's narrowing and the stage arithmetic would not close. They merge once,
+// at the top, into the single `refused[]`.
 type rwaContractBuild struct {
 	members         []rwaContractMember
 	unreached       []rwaUnreachedEntity
@@ -177,13 +165,10 @@ type rwaContractBuild struct {
 	listingRefusals map[string]int
 }
 
-// buildRWADirectoryMembership is C2's first arm: the contract addresses
-// the curated account directory names with an issuing tag.
-//
-// Returns the set of addresses it EVALUATED alongside its members, so the second arm can remove
-// them from its own population. Evaluated, not admitted: an address refused here must not be
-// re-evaluated by the other arm, or the funnel would count one candidate twice and the refusal
-// would be contradicted by an admission.
+// buildRWADirectoryMembership is C2's first arm: the contract addresses the curated account
+// directory names with an issuing tag. It returns the addresses it EVALUATED (not just admitted)
+// so the second arm can remove them: otherwise the funnel counts one candidate twice and a
+// refusal here is contradicted by an admission there.
 func (s *Server) buildRWADirectoryMembership(
 	ctx context.Context, listing rwaListing, refusals map[string]int,
 ) (rwaContractCensus, []rwaContractMember, map[string]struct{}) {
@@ -254,13 +239,10 @@ func (s *Server) buildRWADirectoryMembership(
 	return census, members, admitted
 }
 
-// buildRWAListingMembership is C2's second arm: every in-repo curated
-// binding the first arm is not already evaluating, put to the
-// definition with an independent listing as its recognition.
-//
-// Smaller than the first arm because its population is a hand-reviewed table in this repository:
-// no scan cap, duplicate guard or truncation accounting, as it cannot grow without a code change
-// and [rwa.ContractInstrumentBindings] returns it deduplicated and ordered.
+// buildRWAListingMembership is C2's second arm: every in-repo curated binding the first arm is not
+// already evaluating, with an independent listing as its recognition. Its population is a
+// hand-reviewed table that cannot grow without a code change and arrives deduplicated and ordered
+// ([rwa.ContractInstrumentBindings]), so it needs no scan cap or truncation accounting.
 func (s *Server) buildRWAListingMembership(
 	ctx context.Context, listing rwaListing,
 	directoryEvaluated map[string]struct{}, refusals map[string]int,
@@ -352,22 +334,19 @@ func (s *Server) rwaUnreachedEntities(ctx context.Context, tags []string) []rwaU
 // rwaContractListingRows reads the admitted contracts through the /v1/assets
 // post-query pipeline, then fills the two things it cannot fill for a contract.
 //
-// Every step runs in the listing's order, as in [Server.rwaListingRows], so the
-// surface cannot drift from /v1/assets one omission at a time
-// (TestRWAContractPipelineMatchesTheAssetsListing). The substance gate is NOT a
-// no-op: it covers canonical.AssetSoroban, so a thin-market price is withheld here.
+// Every step runs in the listing's order, as in [Server.rwaListingRows], so the surface cannot
+// drift from /v1/assets one omission at a time (TestRWAContractPipelineMatchesTheAssetsListing).
+// The substance gate is NOT a no-op: it covers canonical.AssetSoroban, so a thin-market price is
+// withheld here.
 //
-//  1. SUPPLY AND MARKET CAP. Only the precise supply map reaches a contract row, and
-//     only for tokens the supply observer watches; the rest would be
-//     `supply_unavailable` forever. Their supply lives in the lake
-//     (stellar.supply_flows); fillContractMarketCaps reads it and is the last word,
-//     dropping the generic fill's cap once it holds its own supply reading, and every
-//     cap on a row whose scale was not read.
-//  2. THE SCAM SUPPRESSION. fillIssuerDirectoryTags runs before the contract fills,
-//     so tags are re-read at valuation time (not reused from the membership build).
+//  1. SUPPLY AND MARKET CAP. Only the precise supply map reaches a contract row, and only for
+//     tokens the supply observer watches; the rest live in the lake (stellar.supply_flows).
+//     fillContractMarketCaps is the last word, dropping the generic cap once it holds its own
+//     supply reading, and every cap on a row whose scale was not read.
+//  2. THE SCAM SUPPRESSION. fillIssuerDirectoryTags runs before the contract fills, so tags are
+//     re-read at valuation time, not reused from the membership build.
 //
-// valuationCut reports ctx ended mid-fill: rows lacking a valuation were never read,
-// not refused. The caller must say so.
+// valuationCut reports ctx ended mid-fill: rows lacking a valuation were never read, not refused.
 func (s *Server) rwaContractListingRows(
 	ctx context.Context, members []rwaContractMember,
 ) (byID map[string]AssetDetail, notObserved int, valuationCut bool, err error) {
@@ -423,22 +402,15 @@ func (s *Server) rwaContractListingRows(
 
 // fillContractDecimals overlays each contract's real on-chain decimals.
 //
-// assetDetailFromAssetRow hardcodes 7, right for classic assets and SACs, wrong for
-// SEP-41 tokens declaring otherwise. Here the error IS the published money figure:
-// market cap divides supply by 10^decimals, so a 5-decimal fund read at 7 publishes
-// one hundredth of its capitalisation and an 18-decimal token eleven orders of
-// magnitude too much.
+// assetDetailFromAssetRow hardcodes 7, wrong for SEP-41 tokens declaring otherwise. Here the error
+// IS the money figure: market cap divides supply by 10^decimals, so a 5-decimal fund read at 7
+// publishes one hundredth of its capitalisation and an 18-decimal token eleven orders too much.
 //
-// A token with no readable metadata keeps 7 (as /v1/assets/{id} does), but on THIS
-// surface that default may not be multiplied by anything. The set of addresses whose
-// scale was actually READ is returned, and a row absent from it carries no valuation
-// of either kind.
-//
-// The reading goes missing when the decimals reader is unwired or fails, the contract
-// instance is not in the lake, or METADATA declares no scale (or conflicting ones).
-// The honest answer is "scale unknown", a refusal, not a 7.
-//
-// ctx ending mid-walk is not a refusal: cut reports it and the walk stops.
+// A token with no readable metadata keeps 7 (as /v1/assets/{id} does), but on THIS surface that
+// default may not be multiplied by anything: the set of addresses whose scale was actually READ is
+// returned, and a row absent from it carries no valuation of either kind. Unwired or failing
+// reader, instance not in the lake, or missing/conflicting METADATA scale all mean "scale
+// unknown", a refusal, not a 7. ctx ending mid-walk is not a refusal: cut reports it.
 func (s *Server) fillContractDecimals(
 	ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow,
 ) (resolved map[string]struct{}, cut bool) {
@@ -466,16 +438,11 @@ func (s *Server) fillContractDecimals(
 // fillContractMarketCaps fills circulating supply and market cap for contract rows from the
 // certified lake.
 //
-// Supply is the lake sum of mints less burns and clawbacks in the token's smallest unit, the figure
-// GET /v1/assets/{id}/supply serves. An INCOMPLETE reading (a negative net means the flows are
-// under-seeded, not that supply is negative) is UNAVAILABLE and never clamped to zero, which would
-// read as a fully-burned token.
-//
-// The dust-liquidity guard runs on the same inputs as the listing: a single-venue price under the
-// volume floor suppresses the CAP and leaves the price and supply, as fillRowMarketCap does.
-//
-// cut reports that ctx ended mid-walk: the remaining rows were never read, which is not a supply
-// that was read and refused.
+// Supply is the lake sum of mints less burns and clawbacks in the token's smallest unit, as
+// GET /v1/assets/{id}/supply serves. An INCOMPLETE reading (a negative net means under-seeded
+// flows) is UNAVAILABLE and never clamped to zero, which would read as a fully-burned token. The
+// dust-liquidity guard matches the listing: a single-venue price under the volume floor suppresses
+// the CAP only, as fillRowMarketCap does. cut reports ctx ended mid-walk: unread rows, not refused.
 func (s *Server) fillContractMarketCaps(
 	ctx context.Context, rows []AssetDetail, src map[string]timescale.AssetRow,
 	scaled map[string]struct{},
@@ -547,11 +514,11 @@ func (s *Server) applyContractMarketCap(
 // contractPriceScaleDisagrees reports that a contract row's DEX price and its lake decimals are on
 // different scales, so their product is no cap.
 //
-// row.PriceUSD is normalised through the nonstandard_decimals_assets projection (the confirmed
-// value, else [aggregate.StandardDecimals]); row.Decimals is the lake's decimals() reading. This is
-// the same lockstep and refusal [Server.applyTokenDecimals] runs: a 6-decimal token the guard has
-// not seeded carries a raw price, and dividing its supply by 10^6 would publish ten times its
-// capitalisation. The reference valuation is untouched: an oracle quotes a whole-token price.
+// row.PriceUSD is normalised through the nonstandard_decimals_assets projection (confirmed value,
+// else [aggregate.StandardDecimals]); row.Decimals is the lake's decimals() reading. Same refusal
+// as [Server.applyTokenDecimals]: an unseeded 6-decimal token carries a raw price, and dividing
+// its supply by 10^6 would publish ten times its capitalisation. The oracle reference valuation
+// is untouched, being a whole-token price.
 func (s *Server) contractPriceScaleDisagrees(row *AssetDetail) bool {
 	confirmed, hasConfirmed := s.NonstandardDecimals.Lookup(row.AssetID)
 	if (hasConfirmed && confirmed == row.Decimals) ||
@@ -583,15 +550,11 @@ func refuseUnscaledContractCaps(rows []AssetDetail, scaled map[string]struct{}) 
 }
 
 // contractSupplyReading resolves one contract token's circulating supply and names the basis that
-// produced it. Counterpart to [classicSupplyReading]: the preference order between two readings
-// belongs in ONE place, or two surfaces publish different bases under the same field name.
-//
-// The order is not a quality ranking. The readings measure an accumulation of ISSUANCE against a
-// level of DISTRIBUTION, so they are never summed, and the storage reading is only meaningful where
-// there is no event history to accumulate.
-//
-// ok=false means no defensible figure: no reader wired, a read error, or an INCOMPLETE flow sum (a
-// negative net means the flows are under-seeded; never clamped to zero).
+// produced it. Counterpart to [classicSupplyReading]: the preference order belongs in ONE place,
+// or two surfaces publish different bases under one field name. It is not a quality ranking: the
+// readings measure an accumulation of ISSUANCE against a level of DISTRIBUTION, so they are never
+// summed. ok=false means no defensible figure: no reader, a read error, or an INCOMPLETE flow sum
+// (a negative net is under-seeded, never clamped to zero).
 func (s *Server) contractSupplyReading(
 	ctx context.Context, assetID string,
 ) (string, supply.Basis, bool) {
@@ -614,12 +577,10 @@ func (s *Server) contractSupplyReading(
 // contractStorageCirculating reads a token's supply from the per-holder balance entries in its own
 // contract storage, for a contract that emits no SEP-41 events at all.
 //
-// It is a DIFFERENT BASIS, not a better reading of the same one, so it is consulted only where the
-// event reading has no history and the two are never summed.
-//
-// Best-effort: no reader, a read error, a Stellar Asset Contract (balances live in trustlines) or a
-// holder set past the reader's cap yield ok=false. A zero-entry read is the ABSENCE of a reading,
-// not a supply of zero, and is refused.
+// It is a DIFFERENT BASIS, consulted only where the event reading has no history and never summed
+// with it. Best-effort: no reader, a read error, a SAC (balances live in trustlines) or a holder
+// set past the reader's cap yield ok=false. A zero-entry read is the ABSENCE of a reading, not a
+// supply of zero, and is refused.
 func (s *Server) contractStorageCirculating(ctx context.Context, contractID string) (string, bool) {
 	if s.ContractStorageSupply == nil {
 		return "", false
@@ -747,13 +708,10 @@ func rwaContractArmSplit(
 
 // rwaContractName is the human-readable name for a contract row.
 //
-// The curated directory's label first. A row admitted on the SECOND arm has no directory entry, so
-// it falls back to the in-repo curated binding's instrument, the string
-// [rwa.ContractInstrumentBindings] publishes.
-//
-// It never falls back to the listing platform's display text: that is CORROBORATION, not identity,
-// and using it would put a price aggregator's label where an independent attestation belongs. An
-// unnamed row is the correct outcome if neither source names it.
+// The curated directory's label first; a row admitted on the SECOND arm falls back to the in-repo
+// binding's instrument ([rwa.ContractInstrumentBindings]). It never uses the listing platform's
+// display text: that is CORROBORATION, not identity, and would put a price aggregator's label
+// where an independent attestation belongs. An unnamed row is correct if neither source names it.
 func rwaContractName(m rwaContractMember) string {
 	if n := strings.TrimSpace(m.dirName); n != "" {
 		return n

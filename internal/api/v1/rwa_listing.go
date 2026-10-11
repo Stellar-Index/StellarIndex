@@ -14,24 +14,19 @@ import (
 // lives in internal/rwa/contract.go.
 //
 // The population is the UNION of the directory's addresses and every address the in-repo
-// binding set names. Enumerating is not admitting: a curated binding must still be named by
-// the listing directory to pass C2, and its refusal is reported under
+// binding set names. Enumerating is not admitting: a curated binding must still be named by the
+// listing directory to pass C2, else it is refused under
 // contract_curated_binding_without_independent_listing.
 //
 // The two arms' candidate sets are DISJOINT: an address the curated directory recognises is
-// evaluated by the directory arm and removed here, or the served set would carry it twice
-// (a double-counted market cap).
+// evaluated by the directory arm and removed here, or its market cap would be counted twice.
 
 // ─── storage seam ───────────────────────────────────────────────────
 
-// RWAListingDirectoryReader is the seam the second C2 arm reads its
-// corroborating source through. *timescale.Store satisfies it.
-//
-// Optional, like every other reader on this surface. A deployment
-// without it serves the first arm alone and says so — the arm reports
-// itself UNMEASURED rather than reporting a population of zero, because
-// a zero would assert that no independent listing names any of these
-// addresses, which is a finding nobody made.
+// RWAListingDirectoryReader is the seam the second C2 arm reads its corroborating source
+// through; *timescale.Store satisfies it. It is optional: without it the first arm is served
+// alone and the arm reports itself UNMEASURED, not a population of zero, because a zero would
+// assert that no independent listing names any of these addresses, a finding nobody made.
 type RWAListingDirectoryReader interface {
 	ListingDirectoryContracts(ctx context.Context) (
 		[]timescale.ListingEntry, timescale.ListingDirectoryCensus, error)
@@ -82,10 +77,10 @@ func (l rwaListing) names(contractID string) bool {
 
 // rwaListingSnapshot reads the listing directory once per rebuild.
 //
-// Fails CLOSED: a failed read yields an UNAVAILABLE snapshot, never a carried-forward one.
-// A slightly old price is a labelled approximation, but an old recognition admits an asset on
-// a fact nobody re-established, which is what C2 exists to prevent. The staleness bound is
-// enforced in SQL by the reader, so a snapshot arriving here is already inside it.
+// Fails CLOSED: a failed read yields an UNAVAILABLE snapshot, never a carried-forward one. An
+// old price is a labelled approximation, but an old recognition admits an asset on a fact nobody
+// re-established, which is what C2 exists to prevent. The reader enforces the staleness bound in
+// SQL, so a snapshot arriving here is already inside it.
 func (s *Server) rwaListingSnapshot(ctx context.Context) rwaListing {
 	if s.RWAListings == nil {
 		return rwaListing{}
@@ -98,11 +93,11 @@ func (s *Server) rwaListingSnapshot(ctx context.Context) rwaListing {
 	out := rwaListing{
 		byAddress: make(map[string]timescale.ListingEntry, len(rows)),
 		census:    census,
-		// Zero fresh rows cannot support "nobody independent names this address": the reader
-		// drops rows past the recognition bound, so a fully stale table looks like a listing
-		// that names nothing. Treated as available it would refuse bindings under
-		// contract_curated_binding_without_independent_listing (a finding about the world)
-		// when our copy merely expired; unavailable, they are refused under
+		// Zero fresh rows cannot support "nobody independent names this address": the reader drops
+		// rows past the recognition bound, so a fully stale table looks like a listing naming
+		// nothing. Treated as available, bindings would be refused under
+		// contract_curated_binding_without_independent_listing (a finding about the world) when
+		// our copy merely expired; unavailable, they are refused under
 		// independent_listing_unavailable, an outage an operator can fix. A never-synced table
 		// takes the same branch: zero fresh rows is zero evidence.
 		available:  len(rows) > 0,
@@ -111,11 +106,8 @@ func (s *Server) rwaListingSnapshot(ctx context.Context) rwaListing {
 		observedAt: time.Now().UTC(),
 	}
 	if !out.available {
-		// The same two numbers the funnel now publishes. They were
-		// computed here, printed once, and dropped — which meant the
-		// question "is the sync down, or is this set older than the
-		// sync" could only be answered by somebody with a database
-		// prompt. They are carried onto the census below and served.
+		// Carried onto the census below and served, so "is the sync down, or is this set older
+		// than the sync" is answerable without database access.
 		s.logger.Warn("rwa listing directory: no fresh contract rows",
 			"stale", census.Stale, "entries", census.Entries,
 			"observed_at", out.observedAt.Format(time.RFC3339))
@@ -133,11 +125,9 @@ func (s *Server) rwaListingSnapshot(ctx context.Context) rwaListing {
 // it.
 type rwaListingCandidate struct {
 	contractID string
-	// dirTags are the curated tags on the address, empty when the
-	// directory does not name it. Looked up even though the directory
-	// is not this arm's recognition source, because the scam vocabulary
-	// lives there and NOWHERE else. An arm that skipped the lookup
-	// would be an arm on which a scam flag has no effect.
+	// dirTags are the curated tags on the address, empty when the directory does not name it.
+	// Looked up even though the directory is not this arm's recognition source, because the scam
+	// vocabulary lives there and NOWHERE else; skipping it would make scam flags inert here.
 	dirTags []string
 }
 
@@ -161,20 +151,17 @@ type rwaListingCensus struct {
 	notListed int
 	// evaluated is what reached rwa.QualifyContract.
 	evaluated int
-	// listedWithoutBinding counts the addresses the listing directory
-	// names that no curated binding does — a TERMINAL census, not part
-	// of the narrowing. It is the population an operator would review
-	// to grow the set, and publishing it is what keeps "the listing
-	// admits nothing on its own" an auditable claim rather than a
-	// promise.
+	// listedWithoutBinding counts addresses the listing directory names that no curated binding
+	// does: a TERMINAL census, not part of the narrowing. It is the population an operator
+	// reviews to grow the set, and publishing it keeps "the listing admits nothing on its own"
+	// auditable.
 	listedWithoutBinding int
 	// available is false when the arm was not walked at all.
 	available bool
 
-	// dir is the storage layer's census of the whole listing directory, carried so the arm
-	// publishes evidence and not only a verdict. A zero corroborated count is ambiguous
-	// (never synced, sync stopped, or a healthy directory this set predates); these counts
-	// separate the three:
+	// dir is the storage layer's census of the whole listing directory, so the arm publishes
+	// evidence and not only a verdict. A zero corroborated count is ambiguous; these counts
+	// separate never synced, sync stopped, and a healthy directory this set predates:
 	//
 	//   - Entries 0                 -> never synced
 	//   - Entries > 0, Stale = all  -> the sync stopped
@@ -189,22 +176,19 @@ type rwaListingCensus struct {
 	observedAt time.Time
 }
 
-// rwaListingCandidates builds the second arm's population: every curated
-// binding the first arm is not already evaluating, with the curated tags
-// C3 needs.
+// rwaListingCandidates builds the second arm's population: every curated binding the first arm
+// is not already evaluating, with the curated tags C3 needs.
 //
 // The curated-directory lookup is required: C3 refuses scam-flagged addresses and scam flags
 // exist only there, so a candidate whose tags could not be read has not had C3 evaluated and
-// must not be admitted. A failed lookup closes the arm under its OWN refusal reason, never
-// the listing's, because a refusal reason tells an operator which system to inspect.
+// must not be admitted. A failed lookup closes the arm under its OWN refusal reason, never the
+// listing's, because a refusal reason tells an operator which system to inspect.
 func (s *Server) rwaListingCandidates(
 	ctx context.Context, listing rwaListing, directoryEvaluated map[string]struct{},
 ) ([]rwaListingCandidate, rwaListingCensus) {
-	// Not wired is NOT a finding. The arm reports itself unwalked, makes
-	// no refusals, and the funnel basis says why the set is the size it
-	// is. A wired reader that FAILED is the opposite: it looked, it
-	// could not answer, and every binding it would have corroborated is
-	// refused under a reason an operator can act on.
+	// Not wired is NOT a finding: the arm reports itself unwalked and makes no refusals. A wired
+	// reader that FAILED is the opposite: it could not answer, so every binding it would have
+	// corroborated is refused under a reason an operator can act on.
 	if !listing.wired {
 		return nil, rwaListingCensus{}
 	}
@@ -243,12 +227,10 @@ func (s *Server) rwaListingCandidates(
 	tags, tagsOK := s.rwaDirectoryTagsFor(ctx, pending)
 	out := make([]rwaListingCandidate, 0, len(pending))
 	for _, addr := range pending {
-		// Ordered by which source is missing, most specific first. The
-		// listing read is this arm's RECOGNITION source, so its absence
-		// closes the arm whatever the curated directory said; only when
-		// the listing answered can a tag failure be the thing standing
-		// in the way, and that case must not be reported as a listing
-		// outage.
+		// Ordered by which source is missing, most specific first. The listing read is this arm's
+		// RECOGNITION source, so its absence closes the arm whatever the curated directory said;
+		// only when the listing answered can a tag failure be the blocker, and that must not be
+		// reported as a listing outage.
 		switch {
 		case !listing.available:
 			census.listingUnavailable++
@@ -264,14 +246,11 @@ func (s *Server) rwaListingCandidates(
 	return out, census
 }
 
-// rwaDirectoryTagsFor batch-reads the curated tags for a set of
-// addresses, reporting whether the read answered at all.
-//
-// ok=false is NOT "no tags". An empty tag list means the directory does
-// not flag the address; a failed read means nobody looked, and the two
-// must never be confused on a path where the absence of a scam flag is
-// what admits an asset. An absent reader is the same statement: C3
-// cannot be evaluated, so the arm closes.
+// rwaDirectoryTagsFor batch-reads the curated tags for a set of addresses, reporting whether
+// the read answered at all. ok=false is NOT "no tags": an empty list means the directory does
+// not flag the address, a failed read means nobody looked, and confusing them admits an asset
+// on the mere absence of a scam flag. An absent reader is the same: C3 cannot be evaluated, so
+// the arm closes.
 func (s *Server) rwaDirectoryTagsFor(ctx context.Context, addrs []string) (map[string][]string, bool) {
 	if len(addrs) == 0 {
 		return map[string][]string{}, true

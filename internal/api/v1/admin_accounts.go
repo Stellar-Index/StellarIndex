@@ -22,23 +22,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// PlatformAccountStore is the narrow platform-account boundary the
-// operator tier-override endpoints need. Backed in production by
-// postgresstore.AccountStore — the same store the Postgres API-key
-// validator reads the account row (and its overrides) from at Lookup
-// time. Distinct from [AccountStore] (the auth API-key store the
-// self-service /v1/account/keys path uses): this one carries the
+// PlatformAccountStore is the narrow platform-account boundary the operator tier-override
+// endpoints need, backed by postgresstore.AccountStore (the store the Postgres API-key validator
+// reads at Lookup). Distinct from [AccountStore], the self-service key store: this one carries the
 // account-level tier + rate-limit / monthly-quota overrides.
 type PlatformAccountStore interface {
 	Get(ctx context.Context, id uuid.UUID) (platform.Account, error)
 	GetBySlug(ctx context.Context, slug string) (platform.Account, error)
 	Update(ctx context.Context, a platform.Account) error
-	// UpdateAtomic loads the row, applies mutate, and writes the result
-	// back inside one transaction holding a row lock — see
-	// postgresstore.AccountStore.UpdateAtomic. PATCH
-	// /v1/admin/accounts/{id} uses this instead of Get+Update so two
-	// concurrent operator PATCHes on the same account can't race a
-	// lost update on the kill-switch (status) field.
+	// UpdateAtomic loads the row, applies mutate and writes it back in one transaction holding a row
+	// lock (postgresstore.AccountStore.UpdateAtomic). PATCH uses it instead of Get+Update so two
+	// concurrent operator PATCHes cannot lose an update on the kill-switch (status) field.
 	UpdateAtomic(ctx context.Context, id uuid.UUID, mutate func(*platform.Account) error) (before, after platform.Account, err error)
 }
 
@@ -49,11 +43,9 @@ type AccountSessionRevoker interface {
 	RevokeAllUserSessions(ctx context.Context, userID uuid.UUID) error
 }
 
-// AdminAccountView is the wire shape the operator account endpoints
-// return — the account-level knobs an operator inspects / edits, no
-// customer PII beyond the billing email. Mirrors the dashboardauth
-// staff-lookup AdminAccountView projection so the two admin surfaces
-// render consistently.
+// AdminAccountView is the wire shape of the operator account endpoints: the account-level knobs an
+// operator edits, no customer PII beyond the billing email. It mirrors the dashboardauth
+// staff-lookup projection so the two admin surfaces render consistently.
 type AdminAccountView struct {
 	ID                          string `json:"id"`
 	Name                        string `json:"name"`
@@ -93,22 +85,17 @@ func adminAccountView(a platform.Account) AdminAccountView {
 	return v
 }
 
-// adminAccountOverrideRequest is the PATCH /v1/admin/accounts/{id}
-// body. All three fields are pointers so the handler can distinguish
-// "field absent → leave unchanged" from "field present with value 0 →
-// clear the override / set the value". Every field is optional but at
-// least one must be present.
+// adminAccountOverrideRequest is the PATCH /v1/admin/accounts/{id} body. Fields are pointers so
+// the handler can tell "absent, leave unchanged" from "present with value 0, clear the override".
+// At least one must be present.
 type adminAccountOverrideRequest struct {
 	// Tier, when set, overwrites the account's tier — the operator
 	// comp / partner path (staff-set limits; there is no self-service
 	// billing).
 	Tier *string `json:"tier,omitempty"`
-	// Status, when set, moves the account's lifecycle state:
-	// active | suspended | closed. This is the operator KILL SWITCH:
-	// the HTTP trigger for the suspension machinery enforced on the
-	// read paths (postgresstore.AccountStore.Suspend, the Postgres
-	// API-key validator's `acct.Status != AccountActive` rejection, the
-	// dashboard session middleware's suspended/closed denial).
+	// Status, when set, moves the account's lifecycle state: active | suspended | closed. This is
+	// the operator KILL SWITCH, the HTTP trigger for the suspension enforced on the read paths (the
+	// Postgres API-key validator's non-active rejection, the dashboard session middleware's denial).
 	Status *string `json:"status,omitempty"`
 	// SuspendedReason is the customer-visible-ish note stored alongside
 	// a suspension (distinct from the mandatory X-Reason audit header,
@@ -123,11 +110,8 @@ type adminAccountOverrideRequest struct {
 	MonthlyRequestQuotaOverride *int64 `json:"monthly_request_quota_override,omitempty"`
 }
 
-// requireOperator gates a handler on an operator-tier credential,
-// mirroring handleAdminKeysCreate exactly. Returns the subject +
-// ok=true when the caller may proceed; on ok=false a problem+json has
-// already been written. instance names the endpoint for the problem
-// detail text.
+// requireOperator gates a handler on an operator-tier credential, mirroring handleAdminKeysCreate.
+// On ok=false a problem+json has already been written; instance names the endpoint in its detail.
 func (s *Server) requireOperator(w http.ResponseWriter, r *http.Request, instance string) (auth.Subject, bool) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -147,14 +131,10 @@ func (s *Server) requireOperator(w http.ResponseWriter, r *http.Request, instanc
 	return subject, true
 }
 
-// requireReason enforces the admin-write X-Reason contract
-// shared by every unconditional operator-tier write: POST/DELETE
-// /v1/admin/keys, PATCH /v1/admin/accounts/{id} and the status-notice
-// create/resolve routes. Returns the reason + ok=true when present; on
-// ok=false a problem+json has already been written. Operator-conditional
-// routes (e.g. /v1/account/keys, gated only when the caller happens to be
-// operator-tier) use account.go's operatorReasonOK instead — the message
-// there names that route explicitly.
+// requireReason enforces the X-Reason contract shared by every unconditional operator-tier write
+// (admin keys, PATCH accounts, status-notice create/resolve). On ok=false a problem+json has
+// already been written. Operator-conditional routes (e.g. /v1/account/keys) use account.go's
+// operatorReasonOK instead, whose message names that route.
 func (s *Server) requireReason(w http.ResponseWriter, r *http.Request) (string, bool) {
 	reason := r.Header.Get("X-Reason")
 	if reason == "" {
@@ -167,11 +147,9 @@ func (s *Server) requireReason(w http.ResponseWriter, r *http.Request) (string, 
 	return reason, true
 }
 
-// handleAdminAccountGet serves GET /v1/admin/accounts/{id} — read the
-// account-level tier + overrides so an operator can inspect current
-// state before patching. Operator-tier only. The view carries the billing
-// email, so every successful read lands an "admin.account.read" audit row,
-// as the dashboard staff lookup does for the same PII.
+// handleAdminAccountGet serves GET /v1/admin/accounts/{id}: the tier + overrides an operator
+// inspects before patching. The view carries the billing email, so every successful read lands an
+// "admin.account.read" audit row, as the dashboard staff lookup does for the same PII.
 func (s *Server) handleAdminAccountGet(w http.ResponseWriter, r *http.Request) {
 	subject, ok := s.requireOperator(w, r, "/v1/admin/accounts/{id}")
 	if !ok {
@@ -202,11 +180,9 @@ func (s *Server) handleAdminAccountGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, adminAccountView(acct), Flags{})
 }
 
-// handleAdminAccountOverrides serves PATCH /v1/admin/accounts/{id} —
-// set the account tier and/or the rate-limit / monthly-quota overrides.
-// Operator-tier only; requires an `X-Reason` header
-// (every write endpoint captures a reason into the audit log).
-// Every successful mutation lands an "account.override.set" audit row.
+// handleAdminAccountOverrides serves PATCH /v1/admin/accounts/{id}: set the account tier and/or the
+// rate-limit / monthly-quota overrides. Operator-tier only; requires an `X-Reason` header, and
+// every successful mutation lands an "account.override.set" audit row.
 func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Request) {
 	subject, ok := s.requireOperator(w, r, "/v1/admin/accounts/{id}")
 	if !ok {
@@ -313,11 +289,10 @@ func (s *Server) writeAccountUpdateError(w http.ResponseWriter, r *http.Request,
 	}
 }
 
-// revokeKeysOnClosure revokes every live Postgres key of a closed account and
-// evicts each from the auth cache, so closure is recorded on the credential
-// rows themselves instead of resting on the account-status gate alone. It runs
-// on every PATCH that leaves the account closed, so a re-PATCH retries a key a
-// previous sweep failed on. Redis self-service keys are gated by the Redis
+// revokeKeysOnClosure revokes every live Postgres key of a closed account and evicts each from the
+// auth cache, so closure is recorded on the credential rows rather than resting on the
+// account-status gate alone. It runs on every PATCH that leaves the account closed, so a re-PATCH
+// retries a key a previous sweep failed on. Redis self-service keys are gated by the Redis
 // validator's account-status check, which a terminal closure keeps shut.
 func (s *Server) revokeKeysOnClosure(
 	ctx context.Context, subject auth.Subject, acct platform.Account,
@@ -350,11 +325,9 @@ func (s *Server) revokeKeysOnClosure(
 	return revoked, failed
 }
 
-// revokeSessionsOnClosure revokes every dashboard session of each member of a
-// closed account, so closure is recorded on the session rows rather than
-// resting on the middleware's account-status gate alone. Like
-// revokeKeysOnClosure it runs on every PATCH that leaves the account closed,
-// so a re-PATCH retries a member a previous sweep failed on.
+// revokeSessionsOnClosure revokes every dashboard session of each member of a closed account, so
+// closure is recorded on the session rows rather than resting on the middleware's status gate
+// alone. Like revokeKeysOnClosure it re-runs on every PATCH that leaves the account closed.
 func (s *Server) revokeSessionsOnClosure(ctx context.Context, acct platform.Account) (users, failed int) {
 	if acct.Status != platform.AccountClosed || s.PlatformUsers == nil {
 		return 0, 0
@@ -378,19 +351,16 @@ func (s *Server) revokeSessionsOnClosure(ctx context.Context, acct platform.Acco
 	return users, failed
 }
 
-// clampKeysAfterTierChange lowers every credential the account can still
-// authenticate with to the new tier's budget, whenever the PATCH LOWERED
-// the tier ceiling. Returns (keys lowered, per-key failures) so the caller
-// can record both in the audit row.
+// clampKeysAfterTierChange lowers every credential the account can still authenticate with to the
+// new tier's budget when the PATCH LOWERED the tier ceiling. Returns (keys lowered, per-key
+// failures) for the audit row.
 //
-// Writing `accounts.tier` alone is not enough: the enforced per-minute budget is read straight
-// off the key record, so demoting an abusive account Pro to Free would leave every existing key
-// at 10_000/min indefinitely.
+// Writing `accounts.tier` alone is not enough: the enforced per-minute budget is read off the key
+// record, so demoting Pro to Free would leave every existing key at 10_000/min indefinitely.
 //
-// Only runs when the ceiling DROPS; a raise is not mirrored, since silently lifting existing
-// keys would grant throughput the operator did not ask for. The account-level
-// `rate_limit_per_min_override` is deliberately NOT clamped: it is an explicit field of the same
-// request, so tier=free with a 10_000 override is a deliberate, audited comp decision.
+// A raise is not mirrored, since silently lifting keys would grant throughput the operator did not
+// ask for. The account-level `rate_limit_per_min_override` is NOT clamped: it is an explicit field
+// of the same request, so tier=free with a 10_000 override is a deliberate, audited decision.
 func (s *Server) clampKeysAfterTierChange(
 	ctx context.Context, subject auth.Subject, priorTier platform.Tier, acct platform.Account,
 ) (lowered, failed int) {
@@ -403,10 +373,9 @@ func (s *Server) clampKeysAfterTierChange(
 	return s.clampKeyBudgetsToTier(ctx, cause, s.APIKeyBudgets, acct, ceiling)
 }
 
-// evictKeyCacheOnEnforcementChange evicts the account's cached API-key
-// records when a PATCH changed a field feeding a key's RESOLVED enforcement
-// state, so it applies on the next request rather than after the ~1h TTL.
-// Two transitions:
+// evictKeyCacheOnEnforcementChange evicts the account's cached API-key records when a PATCH changed
+// a field feeding a key's RESOLVED enforcement state, so it applies on the next request rather
+// than after the ~1h TTL. Two transitions:
 //   - The account left active (suspended/closed), the operator kill switch. The cache-HIT path
 //     checks only the KEY's own revoked/expired fields, never account status, while the MISS
 //     path rejects non-active accounts before cacheStore, so one eviction is durable.
@@ -486,11 +455,9 @@ func enforcementChangeCause(
 // the suspension bookkeeping.
 func applyAccountOverrides(acct *platform.Account, req adminAccountOverrideRequest, now time.Time) {
 	if req.Tier != nil {
-		// Canonicalise on apply so the in-memory account (and the
-		// clamp + audit rows downstream) always speaks the
-		// three-level model even when the operator sent a legacy
-		// paid-tier string; the store folds back to a CHECK-legal
-		// string at write time (platform.Tier.StorageValue).
+		// Canonicalise so the clamp and audit rows downstream always speak the three-level model even
+		// for a legacy paid-tier string; the store folds back to a CHECK-legal string at write time
+		// (platform.Tier.StorageValue).
 		acct.Tier = platform.Tier(*req.Tier).Canonical()
 	}
 	if req.Status != nil {
@@ -504,12 +471,10 @@ func applyAccountOverrides(acct *platform.Account, req adminAccountOverrideReque
 	}
 }
 
-// applyAccountStatus moves the account's lifecycle state and keeps the
-// SuspendedAt / SuspendedReason bookkeeping consistent with it —
-// mirroring what postgresstore.AccountStore's Suspend / Unsuspend do, so
-// a status set through this endpoint is indistinguishable from one set
-// through those. A re-suspension keeps the ORIGINAL SuspendedAt: the age
-// of the suspension is the age of the incident, not of the last edit.
+// applyAccountStatus moves the account's lifecycle state and keeps SuspendedAt / SuspendedReason
+// consistent, as postgresstore.AccountStore's Suspend / Unsuspend do, so the two paths are
+// indistinguishable. A re-suspension keeps the ORIGINAL SuspendedAt: the age of the suspension is
+// the age of the incident, not of the last edit.
 func applyAccountStatus(acct *platform.Account, status platform.AccountStatus, reason *string, now time.Time) {
 	acct.Status = status
 	switch status {
@@ -603,12 +568,10 @@ func parseAccountOverrideRequest(w http.ResponseWriter, r *http.Request) (adminA
 	return req, true
 }
 
-// validAccountTier gates the PATCH tier vocabulary: the canonical
-// three-level model (free / partner — anon is not an account tier)
-// plus the legacy paid-tier strings, which applyAccountOverrides
-// canonicalises (starter→free; pro/business/enterprise→partner) so
-// pre-existing operator tooling keeps working. The vocabulary itself
-// lives in [platform.KnownTier].
+// validAccountTier gates the PATCH tier vocabulary: free / partner (anon is not an account tier)
+// plus the legacy paid-tier strings, which applyAccountOverrides canonicalises
+// (starter→free; pro/business/enterprise→partner) so existing operator tooling keeps working.
+// The vocabulary lives in [platform.KnownTier].
 func validAccountTier(t string) bool {
 	return platform.KnownTier(t)
 }
@@ -711,12 +674,9 @@ func (s *Server) recordAdminAccountAudit(
 		"actor_key_id":     actor.KeyID,
 		"actor_identifier": actor.Identifier,
 		"reason":           reason,
-		// The tier-lowering key clamp's OUTCOME, durably. A clamp that
-		// silently failed would leave over-tier throughput live on a
-		// demoted account. The audit_log is
-		// the surface staff already read for privileged mutations, so a
-		// non-zero key_clamp_failures is queryable next to the tier
-		// change that caused it.
+		// Record the key clamp's OUTCOME durably: a silently failed clamp would leave over-tier
+		// throughput live on a demoted account, and a non-zero key_clamp_failures is then queryable
+		// in audit_log next to the tier change that caused it.
 		"keys_clamped":       keys.clamped,
 		"key_clamp_failures": keys.clampFailed,
 		// Keys revoked because the account closed; failures are retried

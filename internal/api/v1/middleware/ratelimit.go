@@ -18,26 +18,20 @@ import (
 
 // throttleTakeTimeout bounds the throttle's own backend round-trip.
 //
-// The take does not inherit the request's cancellation (see [throttleContext]), so it needs its
-// own bound or a wedged Redis would pin the request goroutine. 5 s matches
-// [postResponseWriteTimeout] and is a backstop above go-redis's 3 s default.
+// The take does not inherit the request's cancellation (see [throttleContext]), so without its own
+// bound a wedged Redis would pin the request goroutine. 5 s matches [postResponseWriteTimeout].
 const throttleTakeTimeout = 5 * time.Second
 
-// throttleContext derives the context an abuse-prevention seam's backend
-// call runs under: the request's values, WITHOUT its cancellation, bounded
-// by [throttleTakeTimeout] or the request's remaining deadline, whichever
-// is sooner. Shared by the pre-dispatch seams (rate-limit take,
-// [MonthlyQuota] read, failed-auth throttle).
+// throttleContext derives the context for an abuse-prevention backend call (rate-limit take,
+// [MonthlyQuota] read, failed-auth throttle): the request's values WITHOUT its cancellation,
+// bounded by [throttleTakeTimeout] or the request's remaining deadline, whichever is sooner.
 //
-// A client abort must not reach the limiter as an error. The bucket cannot tell a cancelled call
-// from a Redis outage (every take error arms its dwell clock), so a client that connects and
-// resets a few times a second would make the middleware fail CLOSED with 503 for EVERY caller
-// sharing that bucket while Redis is healthy.
-//
-// Detaching also keeps charge semantics right: an aborted take would error and fall OPEN, so
-// its token would never be spent. The request's DEADLINE is re-applied (a flat 5 s would let
-// the pre-handler stack outrun [RequestTimeout] and WriteTimeout); it is server-set, so a
-// client cannot use it to arm the dwell clock.
+// A client abort must not reach the limiter as an error: the bucket cannot tell a cancelled call
+// from a Redis outage (every take error arms its dwell clock), so a client resetting connections
+// would make the middleware fail CLOSED with 503 for EVERY caller sharing that bucket. Detaching
+// also means an aborted take cannot fall OPEN and leave its token unspent. The request's
+// DEADLINE is re-applied so the pre-handler stack cannot outrun [RequestTimeout]; it is
+// server-set, so a client cannot use it to arm the dwell clock.
 func throttleContext(r *http.Request) (context.Context, context.CancelFunc) {
 	deadline := time.Now().Add(throttleTakeTimeout)
 	if reqDeadline, ok := r.Context().Deadline(); ok && reqDeadline.Before(deadline) {
@@ -104,11 +98,9 @@ func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip 
 	}
 }
 
-// rateLimitCharge is one request's account with the limiter: the bucket and key it is charged
-// against and the tokens paid so far. The middleware opens it with the one-token base charge and
-// plants it on the request context; a handler whose work scales with a client-chosen parameter
-// re-prices through [ChargeRateLimit]. The mutex guards against a handler calling it from a
-// worker goroutine.
+// rateLimitCharge is one request's account with the limiter: the bucket, key and tokens paid so
+// far. The middleware opens it with the one-token base charge; a handler whose work scales with
+// a client-chosen parameter re-prices via [ChargeRateLimit]. The mutex covers worker goroutines.
 type rateLimitCharge struct {
 	bucket   *ratelimit.Bucket
 	key      string
@@ -185,14 +177,13 @@ func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens i
 //
 // The limiter charges one token before dispatch because that is all it can know. Where the
 // client chooses the work (a 1000-id POST /v1/price/batch) one token would multiply the budget
-// a thousandfold, so such a handler calls this AFTER validating the parameter and BEFORE doing
-// the work. The middleware cannot: pricing the POST means buffering up to 1 MiB for a caller not
-// yet admitted.
+// a thousandfold, so such a handler calls this AFTER validating and BEFORE doing the work; the
+// middleware cannot, as pricing the POST means buffering up to 1 MiB for an unadmitted caller.
 //
 // The total is capped at the subject's ceiling, so an over-ceiling request spends the whole
 // window instead of being refused in every window ([ratelimit.Bucket.Charge]). A request that
-// never crossed a rate-limit middleware proceeds, and a cost at or below what was paid charges
-// nothing: this never refunds.
+// never crossed a rate-limit middleware proceeds; a cost at or below what was paid charges
+// nothing (never refunds).
 func ChargeRateLimit(w http.ResponseWriter, r *http.Request, cost int) bool {
 	c, ok := r.Context().Value(rateLimitChargeKey{}).(*rateLimitCharge)
 	if !ok || c == nil {
@@ -226,20 +217,13 @@ func nextWindowResetUnix(window time.Duration) int64 {
 	return ((now / windowSecs) + 1) * windowSecs
 }
 
-// RateLimitBySubject enforces separate anonymous and authenticated
-// buckets. When an auth middleware has attached a Subject, anonymous
-// callers use anonBucket and authenticated callers use authBucket.
-//
-// Keying semantics:
-//   - authenticated: the owner account's bucket ([authenticatedRateLimitKey])
-//   - anonymous with Subject: per-IP bucket (see below)
-//   - no Subject attached: per-IP bucket
+// RateLimitBySubject enforces separate anonymous (anonBucket) and authenticated (authBucket)
+// buckets. Authenticated callers are keyed on the owner account ([authenticatedRateLimitKey]);
+// anonymous callers, with or without a Subject, on the per-IP bucket.
 //
 // An authenticated subject with `Subject.RateLimitPerMin > 0` replaces authBucket's default max
-// as the ceiling for THIS request, while the counter stays the account's. It never applies to
-// anonymous callers.
-//
-// Nil buckets disable rate limiting for that class.
+// as the ceiling for THIS request, while the counter stays the account's. Nil buckets disable
+// rate limiting for that class.
 func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*http.Request) bool, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -269,13 +253,11 @@ func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*htt
 	}
 }
 
-// bucketKeyAndOverrideForRequest picks the right bucket + Redis key
-// for the inbound request, plus any per-subject limit override.
+// bucketKeyAndOverrideForRequest picks the bucket, Redis key and any per-subject limit override.
+// The override is non-zero ONLY for an authenticated subject whose APIKey carries an explicit
+// `RateLimitPerMin`.
 //
-// Override is non-zero ONLY for an authenticated subject whose APIKey record carries an explicit
-// `RateLimitPerMin`; anonymous callers always get 0 so the bucket default applies.
-//
-// Anonymous keying is the resolved client IP ALONE. The anonymous Subject.Identifier hashes in
+// Anonymous keying is the resolved client IP ALONE: the anonymous Subject.Identifier hashes in
 // the client-controlled User-Agent, so keying on it would let a caller mint a bucket per request
 // and bypass the per-IP floor. anonymousRateLimitKey(r) resolves the IP from the request itself,
 // independent of whether Logger has populated the context value yet.
@@ -330,12 +312,10 @@ func authenticatedRateLimitKey(subject auth.Subject) string {
 	return "auth:" + UsageKeyForSubject(subject)
 }
 
-// SkipHealthAndMetrics is a convenience Skip predicate for operators
-// who don't want liveness probes or prometheus scrapes counted.
-//
-// Keep in lockstep with isUnauthenticatedInfraPath (auth.go): a probe the
-// LB may send unauthenticated must not spend the anonymous per-IP bucket
-// either, or a monitor behind a shared NAT flaps the region on 429.
+// SkipHealthAndMetrics is a Skip predicate that exempts liveness probes and prometheus scrapes.
+// Keep in lockstep with isUnauthenticatedInfraPath (auth.go): a probe the LB sends
+// unauthenticated must not spend the anonymous per-IP bucket, or a monitor behind a shared NAT
+// flaps the region on 429.
 func SkipHealthAndMetrics(r *http.Request) bool {
 	switch r.URL.Path {
 	case "/v1/healthz", "/v1/readyz", "/v1/livez/lake", "/v1/version", "/metrics", "/robots.txt", "/":

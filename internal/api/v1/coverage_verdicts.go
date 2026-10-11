@@ -11,16 +11,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// CoverageVerdictView is the wire shape of one source's row on GET /v1/coverage: the public
-// projection of the ADR-0033 completeness verdict, straight from completeness_snapshots, so
-// API consumers can audit the "verified complete" claim.
+// CoverageVerdictView is one source's row on GET /v1/coverage: the public projection of the
+// ADR-0033 completeness verdict from completeness_snapshots.
 //
 // Two axes (ADR-0033/ADR-0034):
 //   - LakeComplete: the certified ClickHouse ARCHIVE is contiguous + hash-chained +
 //     recognition-complete from genesis to tip (substrate and recognition only).
 //   - Complete: the SERVED tier additionally reconciles against that archive within its
 //     retention window. Postgres is the working-set tier, not the archive, so Complete can be
-//     false for a source whose LakeComplete is true.
+//     false while LakeComplete is true.
 type CoverageVerdictView struct {
 	// Source is the logical source name (soroswap, blend, sdex, …) —
 	// the same identifiers /v1/sources uses.
@@ -46,14 +45,12 @@ type CoverageVerdictView struct {
 	GenesisLedger   uint32 `json:"genesis_ledger"`
 	WatermarkLedger uint32 `json:"watermark_ledger"`
 	TipLedger       uint32 `json:"tip_ledger"`
-	// ProjectionVerifiedFrom is the PROJECTION axis's floor: the bottom of the range ProjectionOK
-	// (and therefore Complete) is a claim about. It is GenesisLedger unless the served tier is a
-	// declared working-set window, where it is the lowest served row (pubnet sdex: genesis 2,
-	// served tier from ~61.6M); reading complete/coverage_pct without it overstates the served
-	// claim by that span.
+	// ProjectionVerifiedFrom is the floor of the range ProjectionOK (and so Complete) claims. It is
+	// GenesisLedger unless the served tier is a declared working-set window, where it is the lowest
+	// served row (pubnet sdex: genesis 2, served from ~61.6M); reading complete/coverage_pct without
+	// it overstates the served claim by that span.
 	//
-	// Omitted when the audit recorded no floor (an older verdict, or a run that failed an earlier
-	// claim before evaluating projection). Absent means UNKNOWN, not "from ledger 0".
+	// Omitted when the audit recorded no floor. Absent means UNKNOWN, not "from ledger 0".
 	ProjectionVerifiedFrom uint32 `json:"projection_verified_from,omitempty"`
 	// ProjectionReconciledFrom is the lowest ledger the run that produced
 	// this verdict reconciled itself; anything from ProjectionVerifiedFrom
@@ -64,11 +61,9 @@ type CoverageVerdictView struct {
 	// ComputedAt advances on every run, including one that carried the claim.
 	// null = no evidence on record.
 	ProjectionEvidencedAt *WireTime `json:"projection_evidenced_at"`
-	// CoveragePct is watermark progress vs tip, as a FRACTION in
-	// [0,1] — 1.0 (not 100) means the verdict reaches the tip at
-	// compute time. The name is a legacy misnomer kept for wire
-	// compatibility; the value is what completeness.Watermark
-	// computes, (Ledger-Genesis+1)/(Tip-Genesis+1), clamped.
+	// CoveragePct is watermark progress vs tip as a FRACTION in [0,1] (1.0, not 100, means the
+	// verdict reaches the tip at compute time). The name is kept for wire compatibility; the value
+	// is completeness.Watermark's (Ledger-Genesis+1)/(Tip-Genesis+1), clamped.
 	CoveragePct float64 `json:"coverage_pct"`
 	// FirstProblemLedger is the first ledger with a verified problem
 	// (0 when none) and Detail the human-readable problem description.
@@ -88,11 +83,10 @@ type NotApplicableSourceView struct {
 // RecognitionAxisView is the ADR-0033 RECOGNITION audit axis: distinct on-chain event shapes in the
 // certified lake that sit on contracts NO indexed source owns.
 //
-// It is deliberately NOT a [CoverageVerdictView], although compute-completeness stores it in
-// completeness_snapshots under the reserved source name "recognition". As a `sources[]` row the
-// headline would count it as a failed source and its per-source fields would be fiction
-// (complete/lake_complete false permanently by construction), teaching readers to ignore the
-// board; data-freshness.sh draws the same line with `WHERE source <> 'recognition'`.
+// It is deliberately NOT a [CoverageVerdictView], although it is stored in completeness_snapshots
+// under the reserved source name "recognition". As a `sources[]` row the headline would count it
+// as a failed source and its per-source fields would be fiction (complete/lake_complete false by
+// construction); data-freshness.sh draws the same line with `WHERE source <> 'recognition'`.
 //
 // It is not a gap in any published source: a source dropping its OWN events surfaces as
 // `recognition_ok: false` on THAT source's row in Sources, and fails the headline.
@@ -102,14 +96,11 @@ type RecognitionAxisView struct {
 	// census is empty. False on any public network with protocols we
 	// have not integrated, which is the expected steady state.
 	AllShapesRecognized bool `json:"all_shapes_recognized"`
-	// UnrecognizedShapes / UnrecognizedContracts are the census: how
-	// many distinct (contract, topic) event shapes are unattributed,
-	// across how many distinct contracts.
+	// UnrecognizedShapes / UnrecognizedContracts are the census: how many distinct (contract, topic)
+	// event shapes are unattributed, across how many distinct contracts.
 	//
-	// Omitted — NOT zeroed — when they cannot be read from the audit's
-	// stored detail (a snapshot written in an older format).
-	// "0 unrecognized shapes" is a claim of cleanliness; inventing it
-	// from a parse failure would be exactly the laundering this axis
+	// Omitted, NOT zeroed, when they cannot be read from the audit's stored detail: "0 unrecognized
+	// shapes" is a claim of cleanliness, and inventing it from a parse failure is what this axis
 	// exists to prevent. Detail is still served verbatim.
 	UnrecognizedShapes    *int `json:"unrecognized_shapes,omitempty"`
 	UnrecognizedContracts *int `json:"unrecognized_contracts,omitempty"`
@@ -168,12 +159,10 @@ type CoverageVerdictsView struct {
 	// genesis-complete, independent of the served tier's retention
 	// window. See CoverageVerdictView.LakeComplete.
 	LakeCompleteSources int `json:"lake_complete_sources"`
-	// Network is the Stellar network this deployment serves (pubnet /
-	// testnet / futurenet). Protocol sources are anchored to pubnet
-	// contract identities (ADR-0035), so on a test net they do not
-	// exist — they are listed in NotApplicableSources with a reason and
-	// EXCLUDED from Sources and every total, instead of being counted
-	// incomplete by construction.
+	// Network is the Stellar network this deployment serves (pubnet / testnet / futurenet). Protocol
+	// sources are anchored to pubnet contract identities (ADR-0035), so on a test net they are listed
+	// in NotApplicableSources with a reason and EXCLUDED from Sources and every total, instead of
+	// being counted incomplete by construction.
 	Network string `json:"network"`
 	// NotApplicableSources names the sources that do not exist on this
 	// network. Always empty on pubnet.
@@ -249,32 +238,25 @@ func unverifiedSources(audited []string, snaps []timescale.CompletenessSnapshot,
 	return out
 }
 
-// coverageVerdictStaleLedgers bounds how far the network tip may run
-// past a verdict's tip_ledger before the verdict stops being a
-// claim about the CURRENT chain.
+// coverageVerdictStaleLedgers bounds how far the network tip may run past a verdict's tip_ledger
+// before the verdict stops being a claim about the CURRENT chain.
 //
-// The deployed audit is daily (compute-completeness.timer, 05:30 UTC
-// plus up to 5 min jitter, one multi-hour -pass run). 34560 ledgers is
-// ~2 audit periods at 5 s/ledger: a backstop that tolerates a slow run
-// and ledger-rate drift without flapping. The age gate below is the
-// primary "the audit stopped" signal and fires first.
+// The audit is daily (one multi-hour -pass run). 34560 ledgers is ~2 audit periods at 5 s/ledger:
+// a backstop that tolerates a slow run and ledger-rate drift without flapping. The age gate below
+// is the primary "the audit stopped" signal and fires first.
 const coverageVerdictStaleLedgers uint32 = 34560
 
-// coverageVerdictStaleAge is the wall-clock gate, and deliberately
-// tighter than [coverageVerdictStaleLedgers]: one daily period plus a
-// two-hour grace flags a missed run the morning it fails, without
-// flagging the ordinary gap between yesterday's run and today's. It
-// also decides alone when no CursorsReader or ledgerstream cursor is
-// available.
+// coverageVerdictStaleAge is the wall-clock gate, deliberately tighter than
+// [coverageVerdictStaleLedgers]: one daily period plus a two-hour grace flags a missed run the
+// morning it fails without flagging the ordinary gap between runs. It decides alone when no
+// CursorsReader or ledgerstream cursor is available.
 const coverageVerdictStaleAge = 26 * time.Hour
 
-// coverageVerdictEvidenceStaleAge bounds the age of the evidence behind a
-// clean projection claim. The -pass audit judges expiry at run start against
-// the DB-stamped proof time, so it re-proves a claim up to one audit period
-// after [completeness.MaxProjectionCarryAge]; two more periods absorb two
-// missed re-proof nights before the flag fires. The SDEX census and
-// sep41_transfers are re-proved weekly by compute-completeness-sdex.timer and
-// compute-completeness-sep41.timer, not by the pass.
+// coverageVerdictEvidenceStaleAge bounds the age of the evidence behind a clean projection claim.
+// The -pass audit judges expiry at run start against the DB-stamped proof time, so it re-proves a
+// claim up to one audit period after [completeness.MaxProjectionCarryAge]; two more periods absorb
+// two missed re-proof nights. The SDEX census and sep41_transfers are re-proved weekly by their
+// own timers (compute-completeness-sdex / -sep41), not by the pass.
 const coverageVerdictEvidenceStaleAge = completeness.MaxProjectionCarryAge + 3*coverageVerdictStaleAge
 
 // coverageIngestStallAge is the ledgerstream cursor age past which ingest
@@ -283,10 +265,8 @@ const coverageVerdictEvidenceStaleAge = completeness.MaxProjectionCarryAge + 3*c
 // per ~5 s ledger, so this cannot fire in healthy operation.
 const coverageIngestStallAge = 10 * time.Minute
 
-// handleCoverageVerdicts serves GET /v1/coverage — every source's
-// latest ADR-0033 completeness verdict. Verdicts change only when the
-// audit runs (manually or on its timer), so a 60s public cache is
-// generous to edges without hiding anything meaningful.
+// handleCoverageVerdicts serves GET /v1/coverage, every source's latest ADR-0033 completeness
+// verdict. Verdicts change only when the audit runs, so a 60s public cache hides nothing.
 //
 // `flags.stale` carries the live-tip gate (see [Server.coverageVerdictsStale]): every row field
 // is frozen at compute time, so without it a dead audit would keep serving "complete" forever.
@@ -370,11 +350,9 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, view, Flags{Stale: verdictsStale})
 }
 
-// completenessVerdicts is the one read of the completeness verdict rows
-// for every surface that republishes a claim from them: the rows plus
-// [Server.coverageVerdictsStale] over them, so a second publisher cannot
-// serve the rows without the freshness verdict that qualifies them.
-// Callers must check completenessReader != nil first.
+// completenessVerdicts is the one read of the verdict rows for every surface that republishes a
+// claim: the rows plus [Server.coverageVerdictsStale] over them, so no publisher can serve the
+// rows without the freshness verdict that qualifies them. Callers check completenessReader != nil.
 func (s *Server) completenessVerdicts(ctx context.Context) ([]timescale.CompletenessSnapshot, bool, error) {
 	snaps, err := s.CompletenessReader.ListCompletenessSnapshots(ctx)
 	if err != nil {
@@ -384,12 +362,9 @@ func (s *Server) completenessVerdicts(ctx context.Context) ([]timescale.Complete
 	if network == "" {
 		network = sourcenet.Pubnet
 	}
-	// The staleness gate must judge only what this deployment actually
-	// publishes: a pubnet-only row surviving in the table on a testnet
-	// deployment (see the comment above the view-building loop) has no
-	// audit that will ever refresh it here, so leaving it in would flag
-	// flags.stale=true forever regardless of the published verdicts'
-	// own freshness.
+	// The staleness gate must judge only what this deployment publishes: a pubnet-only row left in
+	// the table on a testnet deployment is never refreshed here, so keeping it would flag
+	// flags.stale=true forever regardless of the published verdicts' own freshness.
 	applicable := make([]timescale.CompletenessSnapshot, 0, len(snaps))
 	for _, sn := range snaps {
 		if ok, _ := sourcenet.Applicable(sn.Source, network); !ok {
@@ -400,12 +375,10 @@ func (s *Server) completenessVerdicts(ctx context.Context) ([]timescale.Complete
 	return snaps, s.coverageVerdictsStale(ctx, applicable), nil
 }
 
-// recognitionAxisView projects the system recognition snapshot onto its
-// own wire shape, publishing only the fields that are real for a
-// census. The per-source booleans the snapshot carries
-// (substrate_ok/projection_ok, hardcoded true by the computor;
-// complete/lake_complete, false by construction) and coverage_pct are
-// deliberately NOT re-exported: they were never claims about this axis.
+// recognitionAxisView projects the recognition snapshot onto its own wire shape, publishing only
+// fields that are real for a census. The per-source booleans (substrate_ok/projection_ok,
+// hardcoded true; complete/lake_complete, false by construction) and coverage_pct are NOT
+// re-exported: they were never claims about this axis.
 func recognitionAxisView(sn timescale.CompletenessSnapshot) *RecognitionAxisView {
 	v := &RecognitionAxisView{
 		AllShapesRecognized: sn.RecognitionOK,
@@ -425,10 +398,10 @@ func recognitionAxisView(sn timescale.CompletenessSnapshot) *RecognitionAxisView
 	return v
 }
 
-// coverageVerdictsStale is the live-tip gate on the completeness verdicts. It answers "is this
-// `complete: true` a statement about the chain as it is NOW?", which the rows cannot: `tip_ledger`,
-// `coverage_pct` and every claim boolean are stamped at the audit's compute time, so a dead audit
-// still reads `coverage_pct: 1` against a tip hours behind.
+// coverageVerdictsStale is the live-tip gate on the completeness verdicts: is this `complete: true`
+// a statement about the chain as it is NOW? The rows cannot say, since `tip_ledger`,
+// `coverage_pct` and every claim boolean are stamped at compute time and a dead audit still reads
+// `coverage_pct: 1`.
 //
 // Four independent signals, OR'd (fail-closed; any one is `flags.stale`, ADR-0018):
 //

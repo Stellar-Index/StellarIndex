@@ -65,10 +65,8 @@ const ExpectedSchemaVersion uint = 214
 // these versions leave a genuinely partial schema when dirty.
 var nonAtomicMigrationVersions = map[uint]bool{30: true}
 
-// SchemaVersionReader reports the applied golang-migrate schema state
-// (schema_migrations.version + dirty). cmd/stellarindex-api adapts
-// *timescale.Store over its *sql.DB — keeping the raw SQL in the binary
-// layer, mirroring the storeChecker/redisChecker adapter pattern.
+// SchemaVersionReader reports the applied golang-migrate schema state (schema_migrations.version
+// + dirty). cmd/stellarindex-api adapts *timescale.Store, keeping the raw SQL in the binary layer.
 type SchemaVersionReader interface {
 	// SchemaMigrationVersion returns the highest applied migration number
 	// and whether the last migration left the bookkeeping row dirty
@@ -1064,11 +1062,9 @@ func New(opts Options) *Server {
 		statusServices:     statusServicesOr(opts.StatusServices),
 		globalPrice:        newDecimalsCorrectedGlobalReader(opts.GlobalPrice, opts.NonstandardDecimals),
 		globalPriceOpts:    globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
-		// 120s TTL on /v1/assets/{id} responses. MUST exceed the selfPrewarmAssetEndpoints
-		// cadence (60s) with margin: a shorter TTL leaves the cache expired between prewarm
-		// passes, so probes in that window pay the full cold rebuild and inflate p95/p99.
-		// The data updates per-minute at fastest, so 120s staleness still fits the
-		// closed-bucket-only contract.
+		// 120s TTL on /v1/assets/{id}. MUST exceed the selfPrewarmAssetEndpoints cadence (60s)
+		// with margin, or the cache expires between prewarm passes and probes pay the full cold
+		// rebuild. Data moves per-minute at fastest, so 120s fits the closed-bucket-only contract.
 		assetDetailCache: newAssetDetailResponseCache(120 * time.Second),
 		assetListCache:   newAssetListResponseCache(assetListCacheTTL, assetListCacheMaxAge),
 		mux:              http.NewServeMux(),
@@ -1208,11 +1204,10 @@ func (s *Server) streamOptions() streaming.StreamOptions {
 	return streaming.StreamOptions{Drain: s.streamDrain, Revalidate: s.streamRevalidate}
 }
 
-// streamRevalidationGates are the middlewareStack entries an open stream
-// re-runs at each heartbeat: the ones that decide whether this caller
-// may be served at all. RateLimit is deliberately absent — re-running it
-// would spend a token per heartbeat, and a per-minute limit is an
-// admission control, not a revocation.
+// streamRevalidationGates are the middlewareStack entries an open stream re-runs at each
+// heartbeat: those that decide whether this caller may be served at all. RateLimit is absent on
+// purpose: re-running it would spend a token per heartbeat, and it is admission control, not
+// revocation.
 var streamRevalidationGates = map[string]bool{
 	"PublicRoutes":         true,
 	"Auth":                 true,
@@ -1299,11 +1294,9 @@ func (s *Server) middlewareStack() []stackEntry {
 		// it; handlers may override. CDN-tier `s-maxage` is gated on s.CDNEnabled so a
 		// deployment without a CDN never emits a directive one could later honour.
 		{"CacheControl", middleware.CacheControlWithCDN(s.CDNEnabled)},
-		// Convert Go's default text/plain 404 / 405 from the mux into
-		// problem+json so unknown paths and method mismatches use the
-		// same wire shape as the rest of our error surface. Sits AFTER
-		// CacheControl so the override gets the same Cache-Control
-		// directive a regular handler-side response would.
+		// Convert the mux's text/plain 404 / 405 into problem+json so they match the rest of the
+		// error surface. Sits AFTER CacheControl so the override gets the same Cache-Control
+		// directive a handler-side response would.
 		{"Envelope404", middleware.Envelope404},
 	}
 	if s.CORS != nil {
@@ -1331,11 +1324,9 @@ func (s *Server) middlewareStack() []stackEntry {
 	if s.requestTimeout > 0 {
 		stack = append(stack, stackEntry{"RequestTimeout", middleware.RequestTimeout(s.requestTimeout)})
 	}
-	// Auth runs INSIDE CORS (so preflight OPTIONS short-circuits
-	// before any credential check) but OUTSIDE RateLimit (so
-	// per-tier limits see the authenticated Subject in context).
-	// publicRoutes.Mark sits directly outside it so routes mounted via
-	// handlePublic are credential-optional under every auth_mode.
+	// Auth runs INSIDE CORS (preflight OPTIONS short-circuits before any credential check) but
+	// OUTSIDE RateLimit (per-tier limits need the authenticated Subject). publicRoutes.Mark sits
+	// directly outside it so handlePublic routes are credential-optional under every auth_mode.
 	if s.Auth != nil {
 		stack = append(stack, stackEntry{"PublicRoutes", s.publicRoutes.Mark()}, stackEntry{"Auth", s.Auth})
 	}
@@ -1434,11 +1425,10 @@ func loopbackOnly(next http.Handler) http.Handler {
 	})
 }
 
-// handlePublic mounts a route that is unauthenticated by design (a
-// credential bootstrap or a public status surface) so it answers without
-// an API key or SEP-10 JWT under every auth_mode. Its OpenAPI operation
-// must declare `security: []`; TestPublicRoutes_MatchOpenAPISecurityNone
-// holds the two in lockstep.
+// handlePublic mounts a route that is unauthenticated by design (a credential bootstrap or public
+// status surface), answering without an API key or SEP-10 JWT under every auth_mode. Its OpenAPI
+// operation must declare `security: []`; TestPublicRoutes_MatchOpenAPISecurityNone holds the two
+// in lockstep.
 func (s *Server) handlePublic(pattern string, h http.HandlerFunc) {
 	s.publicRoutes.Handle(s.mux, pattern, h)
 }
@@ -1707,11 +1697,9 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// (migration 0025 Phase B).
 	s.mux.HandleFunc("GET /v1/aggregators", s.handleAggregators)
 
-	// Methodology — machine-readable summary of the active
-	// aggregation policy (VWAP method, outlier filters,
-	// stablecoin proxy, source classes, ADR refs). Mirrors what
-	// the explorer's /methodology HTML page documents, in a form
-	// transparency consumers can parse.
+	// Methodology: machine-readable summary of the active aggregation policy (VWAP method, outlier
+	// filters, stablecoin proxy, source classes, ADR refs), mirroring the explorer's /methodology
+	// page.
 	s.mux.HandleFunc("GET /v1/methodology", s.handleMethodology)
 
 	// SAC wrapper resolution: operator-config map of SAC C-strkey to "CODE-ISSUER", so the
