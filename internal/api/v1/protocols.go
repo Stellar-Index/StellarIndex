@@ -14,26 +14,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// protocolDetailTTL is the freshness horizon of a cached
-// /v1/protocols/{name} detail. Past it the entry is NOT dropped: it is
-// served STALE (flags.stale + analytics.status="stale") while a detached
-// single-flight rebuild runs — an already-built page must never blank
-// back to a cold 503 (measured under replay load, every on-demand build
-// died at the request ceiling and pages lost their visual suites).
-// 20 minutes pairs with the prewarm sweep in cmd/stellarindex-api (a
-// full registry × windows sweep measured ~3–6 min of build work; the
-// worker re-sweeps 10 min after each sweep ends, so entries are
-// normally refreshed every ~13–16 min and requests almost always see a
-// fresh copy). The analytics are 90d/windowed aggregates — minutes of
-// staleness is immaterial.
+// protocolDetailTTL is the freshness horizon of a cached /v1/protocols/{name} detail. Past it the
+// entry is NOT dropped: it is served STALE (flags.stale + analytics.status="stale") while a
+// detached single-flight rebuild runs, so a built page never blanks back to a cold 503. 20 minutes
+// pairs with the prewarm sweep in cmd/stellarindex-api, so requests almost always see a fresh copy;
+// the analytics are windowed aggregates, so minutes of staleness is immaterial.
 const protocolDetailTTL = 20 * time.Minute
 
-// protocolDetailRefreshTimeout bounds one detached detail rebuild.
-// Measured on r1 UNDER replay load (upper bounds): the
-// bespoke tier is ~1.9s for soroswap 90d (raw-KPI 0.96s + window-KPI
-// 0.48s dominant) and ~0.4s for cctp; the lake-analytics fills are
-// seconds-class. 90s is generous headroom for contention spikes while
-// still bounding a wedged query so it can't pin the single-flight.
+// protocolDetailRefreshTimeout bounds one detached detail rebuild. Builds measure seconds-class
+// under replay load; 90s leaves headroom for contention while still bounding a wedged query so it
+// can't pin the single-flight.
 const protocolDetailRefreshTimeout = 90 * time.Second
 
 type protoDetailEntry struct {
@@ -89,25 +79,17 @@ func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build fun
 	}
 }
 
-// protoDetailRefreshLocked kicks ONE detached rebuild for key (returning
-// the existing flight's done channel when one is already up). Caller
-// holds protoDetailMu. The rebuild runs on its own background context +
-// protocolDetailRefreshTimeout — NEVER a request deadline — and on
-// completion:
+// protoDetailRefreshLocked kicks ONE detached rebuild for key, returning the existing flight's done
+// channel when one is already up. Caller holds protoDetailMu. The rebuild runs on its own
+// background context + protocolDetailRefreshTimeout, NEVER a request deadline. On completion:
 //
-//   - a build that finished HEALTHY (analytics status "ok") replaces the
-//     entry;
-//   - a non-ok build — timed out OR degraded, including a FAST failure
-//     (e.g. ClickHouse down makes every enrich error in milliseconds,
-//     with rctx.Err() still nil) — is cached only when no HEALTHY entry
-//     exists (registry-only beats 503 for a stone-cold key, and a
-//     degraded entry may be refreshed by another degraded build). A
-//     good entry is NEVER displaced by a degraded build: otherwise one
-//     prewarm sweep during a ClickHouse outage would blank every
-//     protocol page's analytics while stamping the entries fresh.
+//   - a HEALTHY build (analytics status "ok") replaces the entry;
+//   - a non-ok build (timed out OR degraded, including a FAST failure such as ClickHouse down
+//     with rctx.Err() still nil) is cached only when no HEALTHY entry exists: registry-only beats
+//     503 for a stone-cold key, but a good entry is NEVER displaced, or one prewarm sweep during
+//     a ClickHouse outage would blank every page's analytics while stamping them fresh.
 //
-// Every rebuild (request-kicked or prewarm) observes the paired
-// stellarindex_protocol_detail_refresh_{total,duration_seconds} metrics.
+// Every rebuild observes stellarindex_protocol_detail_refresh_{total,duration_seconds}.
 func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context) ProtocolDetailView) chan struct{} {
 	if ch, inflight := s.protoDetailFlight[key]; inflight {
 		return ch
@@ -115,18 +97,12 @@ func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context
 	done := make(chan struct{})
 	s.protoDetailFlight[key] = done
 	go func() {
-		// Deregistering the flight and closing done are the terminal
-		// bookkeeping, run from a DEFER so a panic inside build cannot
-		// skip them. Left undone the key is wedged permanently:
-		// protoDetailRefreshLocked keeps returning the dead channel to
-		// every later request and to the prewarm sweep, each of which
-		// then waits on a close that will never come, and no rebuild of
-		// that protocol's page can ever start.
+		// Deregistering the flight and closing done run from a DEFER so a panic inside build cannot
+		// skip them: left undone, the key is wedged permanently, since later requests and the
+		// prewarm sweep would wait on a dead channel that never closes.
 		//
-		// A panicking build counts as "degraded", not "ok": it produced
-		// no page, so the entry-displacement rule below must not run and
-		// an already-HEALTHY cached page must survive. That is why the
-		// guard sits here rather than around build alone.
+		// A panicking build counts as "degraded", not "ok": it produced no page, so an
+		// already-HEALTHY cached page must survive.
 		defer func() {
 			if rec := recover(); rec != nil {
 				worker.Report(s.logger, "api-protocol-detail-refresh", rec)
@@ -154,11 +130,8 @@ func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context
 
 		s.protoDetailMu.Lock()
 		existing, exists := s.protoDetailCache[key]
-		// Only a build that produced a COMPLETE page may displace an
-		// existing HEALTHY entry. Checking rctx.Err() alone is not enough:
-		// a fast-failing build (store down → enrich errors in ms) has
-		// rctx.Err()==nil but an analytics-empty view — caching it over
-		// good data would blank the page and stamp the blank fresh.
+		// Only a COMPLETE page may displace a HEALTHY entry. rctx.Err() alone is not enough: a
+		// fast-failing build (store down) has rctx.Err()==nil but an analytics-empty view.
 		if outcome == "ok" || outcome == "stale" || !exists || !protoDetailEntryHealthy(existing) {
 			s.protoDetailCache[key] = protoDetailEntry{view: view, at: time.Now()}
 		}
@@ -176,10 +149,8 @@ func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context
 	return done
 }
 
-// endProtoDetailFlight deregisters the in-flight rebuild for key and
-// releases its waiters. Deferred by the rebuild goroutine so it runs on
-// EVERY exit including a panic — a flight left in the map is never
-// retried and its channel never closes.
+// endProtoDetailFlight deregisters the in-flight rebuild for key and releases its waiters. It is
+// deferred so it runs on EVERY exit including a panic.
 func (s *Server) endProtoDetailFlight(key string, done chan struct{}) {
 	s.protoDetailMu.Lock()
 	delete(s.protoDetailFlight, key)
@@ -187,11 +158,9 @@ func (s *Server) endProtoDetailFlight(key string, done chan struct{}) {
 	close(done)
 }
 
-// protoDetailEntryHealthy reports whether a cached detail entry carries a
-// COMPLETE page — status "ok", or "stale" (every panel present, the
-// bespoke block served from the last-good cache). Those are the entries a
-// DEGRADED rebuild must never displace; an "unavailable" entry is missing
-// panels and any later build may replace it.
+// protoDetailEntryHealthy reports whether a cached entry carries a COMPLETE page: status "ok", or
+// "stale" (every panel present, bespoke block from the last-good cache). A DEGRADED rebuild must
+// never displace these; an "unavailable" entry is missing panels and any build may replace it.
 func protoDetailEntryHealthy(e protoDetailEntry) bool {
 	if e.view.Analytics == nil {
 		return false
@@ -200,12 +169,9 @@ func protoDetailEntryHealthy(e protoDetailEntry) bool {
 		e.view.Analytics.Status == protocolAnalyticsStale
 }
 
-// protocolDetailPrewarmPause is the gap between consecutive prewarm
-// builds — one protocol-window at a time with a breather, so the sweep
-// never stampedes the served tier / lake (it must be safe to run DURING
-// replays; the whole point is that replay load is when cold builds die).
-// A var only so the sweep regression test can shrink it; production
-// never mutates it.
+// protocolDetailPrewarmPause is the gap between consecutive prewarm builds, so the sweep never
+// stampedes the served tier / lake and stays safe to run DURING replays. A var only so the sweep
+// test can shrink it.
 var protocolDetailPrewarmPause = 2 * time.Second
 
 // protocolBespokeWindows is every window the ?days= whitelist admits
@@ -213,17 +179,11 @@ var protocolDetailPrewarmPause = 2 * time.Second
 // (the no-param 90d page) warms before the drill-down windows.
 var protocolBespokeWindows = []int{protocolActivityWindowDays, 1, 7, 30}
 
-// PrewarmProtocolDetails refreshes EVERY (protocol, window) detail cache
-// entry — all of protocolRegistry × protocolBespokeWindows — one build at
-// a time with protocolDetailPrewarmPause between builds. Driven by
-// cmd/stellarindex-api's dedicated prewarm goroutine (initial sweep at
-// boot, then re-swept on a fixed sleep after each sweep completes), so
-// every protocol page + window is warm BEFORE anyone asks and no user
-// request ever pays for a cold analytics build. Refreshes
-// unconditionally (no freshness check): the sweep cadence is chosen
-// against protocolDetailTTL so entries are always fresh, and the load is
-// deterministic. Shares the request path's single-flight, so an
-// overlapping request-kicked refresh collapses into the same build.
+// PrewarmProtocolDetails refreshes EVERY (protocol, window) detail cache entry, one build at a time
+// with protocolDetailPrewarmPause between builds, so no user request pays for a cold analytics
+// build. It refreshes unconditionally; the sweep cadence is chosen against protocolDetailTTL. It
+// shares the request path's single-flight, so an overlapping request-kicked refresh collapses into
+// the same build.
 func (s *Server) PrewarmProtocolDetails(ctx context.Context) {
 	for _, meta := range protocolRegistry {
 		for _, w := range protocolBespokeWindows {
@@ -248,11 +208,9 @@ func (s *Server) PrewarmProtocolDetails(ctx context.Context) {
 	}
 }
 
-// protocolDetailCacheKey is the single cache-key grammar for the protocol
-// detail TTL cache — every dimension that changes the response (today: the
-// protocol name and the bespoke ?days= window) goes through here, so a
-// handler and any future prewarm path are physically incapable of keying
-// the same request differently (the feedback_prewarm_handler_drift class).
+// protocolDetailCacheKey is the single cache-key grammar for the detail cache: every dimension that
+// changes the response (protocol name, bespoke ?days= window) goes through here, so the handler and
+// the prewarm path cannot key the same request differently.
 func protocolDetailCacheKey(name string, windowDays int) string {
 	return newCacheKey("protocolDetail").str(name).int(windowDays).build()
 }
@@ -279,11 +237,9 @@ type ProtocolActivityReader interface {
 	ProtocolContractActivity(ctx context.Context, contractIDs []string, sinceLedger uint32) ([]clickhouse.ProtocolContractActivity, error)
 }
 
-// protocolFastActivityReader is the OPTIONAL capability the daily
-// pre-aggregation adds. The handler type-asserts for it
-// and probes availability (caching only definitive answers — see
-// fastActivity); deployments without the contract_events_daily table
-// stay on the raw scans transparently.
+// protocolFastActivityReader is the OPTIONAL daily pre-aggregation capability. The handler
+// type-asserts for it and caches only definitive availability answers (see fastActivity);
+// deployments without contract_events_daily stay on the raw scans.
 type protocolFastActivityReader interface {
 	// DailyActivityAvailable reports whether the pre-aggregation is
 	// usable. definitive=false means the probe got no authoritative
@@ -343,34 +299,23 @@ func bespokeFromStore(b *timescale.BespokeBlock) *ProtocolBespoke {
 // and counts serve empty; never an error.
 type ProtocolContractsReader interface {
 	ListProtocolContracts(ctx context.Context, source string) ([]timescale.ProtocolContract, error)
-	// ListSourceContractsFromProjection is the fallback roster for protocols
-	// the protocol_contracts registry doesn't carry yet (only blend is seeded
-	// today): the distinct contract ids from the source's projected table
-	// (defindex_flows / phoenix_liquidity / comet_liquidity / aquarius_liquidity
-	// / cctp_events / rozo_events). Returns nil for sources without one — the
-	// page then keeps its registry/pairs path. Lets defindex/phoenix/comet/
-	// aquarius/cctp/rozo show a full roster + the lake analytics scoped to it,
-	// without waiting on the factory-enumeration team answer.
+	// ListSourceContractsFromProjection is the fallback roster for protocols the
+	// protocol_contracts registry doesn't carry: the distinct contract ids from the source's
+	// projected table. Returns nil for sources without one, and the page keeps its
+	// registry/pairs path.
 	ListSourceContractsFromProjection(ctx context.Context, source string) ([]string, error)
-	// ProtocolContractIndex returns a contract_id → source map over every
-	// registered protocol contract — the explorer's contract-attribution
-	// overlay (the contracts directory + contract detail tag each contract
-	// with its owning protocol). Returns an empty map (never an error) when
-	// nothing is seeded.
+	// ProtocolContractIndex returns a contract_id -> source map over every registered protocol
+	// contract, the explorer's attribution overlay. Empty map (never an error) when unseeded.
 	ProtocolContractIndex(ctx context.Context) (map[string]string, error)
 }
 
-// protocolContractCounter is the OPTIONAL count-without-enumeration
-// capability the contracts reader may add (production wiring is
-// timescale.Store.CountSourceContracts). The handlers type-assert for it; a
-// reader without it leaves every contract_count derived from the roster.
+// protocolContractCounter is the OPTIONAL count-without-enumeration capability the contracts reader
+// may add; a reader without it leaves every contract_count derived from the roster.
 //
-// It exists for a protocol whose contract set dwarfs the enumerating roster
-// paths' LIMIT 5000: sorocredit deploys one Collateral-<uuid> child contract
-// per opened position (116k on r1). Counting a capped roster would publish
-// 5,000 and not enumerating at all publishes 0 — both are wrong numbers where
-// an exact one is a single COUNT away, so the count is read directly and the
-// roster stays empty.
+// It exists for a protocol whose contract set dwarfs the roster paths' LIMIT 5000 (sorocredit
+// deploys one child contract per opened position). Counting a capped roster would publish 5,000
+// and not enumerating would publish 0, both wrong where an exact COUNT is cheap, so the count is
+// read directly and the roster stays empty.
 type protocolContractCounter interface {
 	// CountSourceContracts returns source's exact contract total. ok=false
 	// with a nil error means this source has no count-only path and the
@@ -403,15 +348,10 @@ type ProtocolCompletenessView struct {
 	Complete bool `json:"complete"`
 	// WatermarkLedger is the highest ledger the verdict covers.
 	WatermarkLedger uint32 `json:"watermark_ledger"`
-	// ProjectionVerifiedFrom is the projection axis's floor — the bottom
-	// of the range Complete is a claim about. Carried here because this
-	// summary republishes Complete, and Complete without its floor reads
-	// as a claim back to the protocol's genesis_ledger (the row directly
-	// above it on the same object), which for a source whose served tier
-	// starts mid-history is wrong by the whole span between them. Omitted
-	// when the audit recorded no floor — see
-	// [CoverageVerdictView.ProjectionVerifiedFrom], which documents the
-	// field in full.
+	// ProjectionVerifiedFrom is the projection axis's floor, the bottom of the range Complete
+	// is a claim about. Without it Complete reads as a claim back to genesis_ledger, wrong by
+	// the whole span for a source whose served tier starts mid-history. Omitted when the audit
+	// recorded no floor; see [CoverageVerdictView.ProjectionVerifiedFrom].
 	ProjectionVerifiedFrom uint32 `json:"projection_verified_from,omitempty"`
 }
 
@@ -461,12 +401,9 @@ type ProtocolsView struct {
 	// the protocols carrying a `tvl` block on this same response.
 	// Absent on cold start and when no protocol has a TVL derivation.
 	TVLTotal *DEXTVLTotalView `json:"tvl_total,omitempty"`
-	// CoverageNote is an honest-degrade signal (mirrors AccountMovements'
-	// coverage_note / tx.go): non-empty when a source's contract-roster read
-	// failed and no last-good count was cached, so the source is OMITTED from
-	// `protocols` rather than published with a fabricated contract_count: 0.
-	// Absent = every source's roster resolved (or is a genuine empty) and the
-	// directory is complete.
+	// CoverageNote is non-empty when a source's roster read failed with no last-good count, so
+	// the source is OMITTED from `protocols` rather than published with a fabricated
+	// contract_count: 0. Absent = the directory is complete.
 	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
@@ -521,13 +458,9 @@ type ProtocolEventTypeView struct {
 
 // ─── Bespoke per-category analytics (the Dune-surpassing block) ──────
 //
-// ProtocolBespoke is a generic rendering container — KPIs + named time-series
-// + named top-N tables — filled with content BESPOKE to each protocol's
-// category (lending shows TVL/borrows/utilization; a DEX shows swap volume +
-// top pairs; a vault shows AUM + flows; a bridge shows transfer volume by
-// domain; an oracle shows feeds + update cadence). The UI renders the three
-// shapes generically, so adding/retuning a category's metrics is a server-side
-// data change, not a new UI layout.
+// ProtocolBespoke is a generic rendering container (KPIs + named time-series + named top-N tables)
+// filled with content bespoke to each protocol's category. The UI renders the three shapes
+// generically, so retuning a category's metrics is a server-side data change.
 
 // ProtocolBespoke is the category-specific analytics block on
 // GET /v1/protocols/{name}. Absent when no bespoke reader is wired or the
@@ -616,13 +549,10 @@ const (
 	protocolAnalyticsUnavailable = "unavailable"
 )
 
-// ProtocolAnalyticsStatus makes analytics degradation explicit on the
-// wire. Without it, a failed bespoke build or lake fill would silently
-// omit the block / zero events fields — indistinguishable client-side
-// from a protocol with genuinely no activity. Clients: "ok" → trust the
-// analytics; "stale" → real data, a refresh is in flight (AsOf says how
-// old); "unavailable" → absence means degraded, render a hint, not a
-// zero.
+// ProtocolAnalyticsStatus makes analytics degradation explicit on the wire; a failed bespoke build
+// or lake fill would otherwise be indistinguishable from a protocol with no activity. "ok": trust
+// the analytics; "stale": real data, a refresh is in flight; "unavailable": absence means
+// degraded, so render a hint, not a zero.
 type ProtocolAnalyticsStatus struct {
 	// Status is ok | stale | unavailable.
 	Status string `json:"status"`
@@ -635,13 +565,9 @@ type ProtocolAnalyticsStatus struct {
 // registry, decoded event vocabulary and verification write-up path.
 type ProtocolDetailView struct {
 	ProtocolView
-	// Contracts lists every registered instance; empty for sources
-	// without a contract registry (oracles, sdex, bridges) AND for a
-	// source whose instances are counted rather than enumerated
-	// (sorocredit's per-position child contracts — see
-	// protocolContractCounter). An empty list therefore never contradicts
-	// a non-zero ContractCount: it means "not enumerated here", and the
-	// count is still the true total.
+	// Contracts lists every registered instance; empty for sources without a contract registry
+	// AND for a source whose instances are counted rather than enumerated (see
+	// protocolContractCounter). An empty list never contradicts a non-zero ContractCount.
 	Contracts []ProtocolContractView `json:"contracts"`
 	// EventKinds lists the EventKind() discriminators the source's
 	// decoder emits.
@@ -656,24 +582,18 @@ type ProtocolDetailView struct {
 
 	// ─── Lake analytics (populated when the activity reader is wired) ──
 
-	// EventBreakdown is the event-type distribution (topic[0] symbol →
-	// count) across the protocol's contracts over the trailing
-	// ActivityWindowDays — "which event types fired, and how often." All
-	// analytics share this window so the lake queries stay partition-pruned
-	// and fast. Descending by count. Includes a synthetic "untyped" bucket
-	// for events whose topic[0] isn't a denormalized Symbol in the lake
-	// (predominantly AMM swap/sync events), so sum(EventBreakdown) reconciles
-	// to EventsTotal.
+	// EventBreakdown is the event-type distribution (topic[0] symbol -> count) over the trailing
+	// ActivityWindowDays, descending by count. All analytics share this window so the lake queries
+	// stay partition-pruned. A synthetic "untyped" bucket covers events whose topic[0] isn't a
+	// denormalized Symbol, so sum(EventBreakdown) reconciles to EventsTotal.
 	EventBreakdown []ProtocolEventTypeView `json:"event_breakdown,omitempty"`
 	// ActivitySeries is the daily decoded-event count over the trailing
 	// ActivityWindowDays — the protocol's on-chain activity chart.
 	ActivitySeries []ProtocolActivityPointView `json:"activity_series,omitempty"`
 	// ActivityWindowDays is the lookback all the analytics fields cover.
 	ActivityWindowDays int `json:"activity_window_days,omitempty"`
-	// EventsTotal is the contract-event count across every contract in the
-	// protocol over ActivityWindowDays — the unfiltered total (= sum of
-	// ActivitySeries = sum of EventBreakdown incl. the untyped bucket). NOT
-	// the typed-breakdown sum, which excludes non-Symbol-topic'd events.
+	// EventsTotal is the unfiltered contract-event count over ActivityWindowDays (= sum of
+	// ActivitySeries = sum of EventBreakdown incl. untyped), NOT the typed-breakdown sum.
 	EventsTotal int64 `json:"events_total,omitempty"`
 
 	// Bespoke is the category-specific analytics block (TVL/volume/AUM/…) —
@@ -689,24 +609,16 @@ type ProtocolDetailView struct {
 	Analytics *ProtocolAnalyticsStatus `json:"analytics,omitempty"`
 }
 
-// handleProtocolsList serves GET /v1/protocols — the protocol
-// directory backing the explorer's Protocols pillar. The static
-// registry (protocols_registry.go) always serves; the dynamic joins
-// (24h events, completeness verdicts) degrade to zeros/absent when
-// their reader is nil or errors, so a deployment without the optional
-// readers still gets a useful directory.
+// handleProtocolsList serves GET /v1/protocols, the protocol directory. The static registry always
+// serves; the dynamic joins (24h events, completeness verdicts) degrade to zeros/absent when their
+// reader is nil or errors.
 //
-// contract_count is served from the per-server roster-count cache
-// (protocol_roster_cache.go): the registry-empty sources' roster is a
-// `SELECT DISTINCT … LIMIT 5000` served-tier scan, and this route is
-// unauthenticated + edge-cache-maskable, so scanning per protocol on
-// every origin miss would be a DoS surface. The cache is prewarmed
-// and stale-while-revalidate, so a request serves a last-good count and
-// at most one background refresh runs per source per TTL regardless of
-// request rate. When a source's roster read FAILS and no last-good count
-// exists, the source is OMITTED and named in coverage_note rather than
-// published with a fabricated contract_count: 0 (the honesty contract —
-// a failed read is not a real zero).
+// contract_count comes from the per-server roster-count cache (protocol_roster_cache.go): the
+// registry-empty sources' roster is a `SELECT DISTINCT ... LIMIT 5000` scan on an unauthenticated
+// route, so scanning per origin miss would be a DoS surface. The cache is prewarmed and
+// stale-while-revalidate, so at most one background refresh runs per source per TTL. When a roster
+// read FAILS with no last-good count, the source is OMITTED and named in coverage_note rather than
+// published with a fabricated contract_count: 0 (a failed read is not a real zero).
 func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// The list's dynamic joins degrade to zeros/absent silently (doc
@@ -740,11 +652,9 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, view, Flags{Stale: verdictsStale, Degraded: !eventsOK || !verdictsOK || len(degraded) > 0})
 }
 
-// protocolsCoverageNote is the directory's honest-degrade statement
-// (mirrors movementsCoverageNote / txCoverageNote): non-empty when one or
-// more sources were omitted because their contract-roster read failed and
-// no last-good count was cached, so an incomplete directory is
-// distinguishable on the wire from a complete one. Empty = complete.
+// protocolsCoverageNote is non-empty when sources were omitted because their roster read failed
+// with no last-good count, so an incomplete directory is distinguishable on the wire. Empty =
+// complete.
 func protocolsCoverageNote(omitted []string) string {
 	if len(omitted) == 0 {
 		return ""
@@ -754,13 +664,10 @@ func protocolsCoverageNote(omitted []string) string {
 		"these sources are omitted from this directory (not shown with a zero contract_count) and will reappear once the read recovers"
 }
 
-// protocolBespokeWindowDays parses the optional ?days= query param that
-// windows the bespoke analytics block (the lake-analytics fields keep the
-// fixed protocolActivityWindowDays lookback regardless). The whitelist is
-// deliberate — each admitted window is a distinct cached scan over the
-// projected tables on an unauthenticated endpoint, so arbitrary values
-// would be an amplification surface (the same reasoning as the explorer
-// contracts ladder). ok=false ⇒ a problem+json 400 was written.
+// protocolBespokeWindowDays parses the optional ?days= param that windows the bespoke block (the
+// lake-analytics fields keep the fixed protocolActivityWindowDays). The whitelist is deliberate:
+// each window is a distinct cached scan on an unauthenticated endpoint, so arbitrary values would
+// be an amplification surface. ok=false means a problem+json 400 was written.
 func protocolBespokeWindowDays(w http.ResponseWriter, r *http.Request) (int, bool) {
 	raw := r.URL.Query().Get("days")
 	switch raw {
@@ -801,20 +708,13 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// This ceiling now only bounds how long a STONE-COLD request waits
-	// for the detached build (built entries stale-serve instantly and
-	// the build itself runs on protocolDetailRefreshTimeout, detached).
-	// The prewarm sweep keeps every key built, so hitting this is the
-	// exception (boot instant / brand-new deployment), and even then the
-	// detached build survives the 503 so the retry lands warm. Capped at
-	// the longest budget that still beats the blanket request deadline —
-	// the 25s this asked for could never elapse.
+	// This ceiling only bounds how long a STONE-COLD request waits for the detached build; built
+	// entries stale-serve instantly. The detached build survives a 503 so the retry lands warm.
+	// Capped at the longest budget that still beats the blanket request deadline.
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
-	// The cache key carries the bespoke window alongside the name — a
-	// name-only key would let a ?days=7 hit serve the cached 90d view (or
-	// vice versa). The no-param default builds the same key as an explicit
-	// days=90, so the common path stays a single cached entry.
+	// The key carries the bespoke window, or a ?days=7 hit would serve the cached 90d view. The
+	// no-param default builds the same key as days=90.
 	view, builtAt, stale, ok := s.cachedProtocolDetail(ctx, protocolDetailCacheKey(meta.Name, windowDays), s.protocolDetailBuilder(meta, windowDays))
 	if !ok {
 		writeProblem(w, r,
@@ -826,11 +726,8 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	if stale {
 		view = staleProtocolDetail(view)
 	}
-	// The envelope flag tracks the ANALYTICS status, not just the cache
-	// entry's age: a freshly-built view whose bespoke block came from the
-	// last-good cache past its horizon is still stale data, and the wire
-	// contract is that analytics.status="stale" always travels with
-	// flags.stale (openapi: "flags.stale is set on the envelope too").
+	// The flag tracks the ANALYTICS status, not just entry age: analytics.status="stale" always
+	// travels with flags.stale (openapi contract).
 	staleFlag := stale || view.verdictsStale ||
 		(view.Analytics != nil && view.Analytics.Status == protocolAnalyticsStale)
 
@@ -843,30 +740,20 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(builtAt.UTC()), Flags: Flags{Stale: staleFlag, Degraded: degraded}})
 }
 
-// protocolDetailBuilder returns the one build closure both the request
-// path and the prewarm sweep use for (meta, windowDays) — a single
-// construction site so the two paths are physically incapable of
-// building different views for the same cache key (the
-// feedback_prewarm_handler_drift class).
+// protocolDetailBuilder returns the one build closure both the request path and the prewarm sweep
+// use, so they cannot build different views for the same cache key.
 func (s *Server) protocolDetailBuilder(meta ProtocolMeta, windowDays int) func(context.Context) ProtocolDetailView {
 	return func(c context.Context) ProtocolDetailView {
 		return s.buildProtocolDetail(c, meta, windowDays)
 	}
 }
 
-// buildProtocolDetail assembles the full detail view and stamps its
-// analytics status: "ok" only when EVERY analytics-adjacent component —
-// the lake analytics, the bespoke block, the roster's pool-token pairs, the
-// contract count, and the 24h event count — built healthy under a live context; "stale" when
-// everything is present but the bespoke block came from the last-good
-// cache past its staleness horizon; otherwise "unavailable" — so a
-// degraded build is explicit on the wire instead of masquerading as
-// present zeros / silent absence. contract_count, events_24h and the
-// completeness verdict can each fail independently of the lake/bespoke
-// halves (a roster count read, the stats union, or the completeness
-// snapshot list can error while the rest of the build is healthy), so
-// their health feeds the same status instead of degrading silently, so a
-// verdict-read error stays distinguishable from "no snapshot exists".
+// buildProtocolDetail assembles the full detail view and stamps its analytics status: "ok" only
+// when EVERY component (lake analytics, bespoke block, pool-token pairs, contract count, 24h event
+// count, verdicts) built healthy under a live context; "stale" when everything is present but the
+// bespoke block came from the last-good cache past its horizon; otherwise "unavailable". The
+// count, events and verdict reads can fail independently of the lake/bespoke halves, so their
+// health feeds the same status and a verdict-read error stays distinguishable from "no snapshot".
 func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, windowDays int) ProtocolDetailView {
 	contracts, rosterOK := s.protocolRoster(ctx, meta)
 	classifyContractKinds(contracts, meta.Factories)
@@ -895,10 +782,9 @@ func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, win
 	return v
 }
 
-// staleProtocolDetail is the serve-time overlay for an entry past its
-// TTL: a shallow copy whose analytics status is downgraded ok→stale
-// (an unavailable build stays unavailable — worst state wins). The
-// cached entry itself is never mutated.
+// staleProtocolDetail is the serve-time overlay for an entry past its TTL: a shallow copy with
+// analytics status downgraded ok -> stale (unavailable stays unavailable; worst state wins). The
+// cached entry is never mutated.
 func staleProtocolDetail(v ProtocolDetailView) ProtocolDetailView {
 	if v.Analytics == nil {
 		return v
@@ -911,21 +797,14 @@ func staleProtocolDetail(v ProtocolDetailView) ProtocolDetailView {
 	return v
 }
 
-// enrichBespoke attaches the category-specific bespoke analytics block over
-// the request's ?days= window (default protocolActivityWindowDays), degrading
-// to absent only when NO block has ever been built for this key.
+// enrichBespoke attaches the bespoke analytics block for the request's ?days= window, degrading to
+// absent only when NO block has ever been built for this key. The block comes from the last-good
+// cache (protocol_bespoke_cache.go), so a slow or failing build keeps serving the previous block.
 //
-// The block comes from the last-good cache (protocol_bespoke_cache.go), so a
-// build whose own battery is slow, failing, or starved keeps serving the
-// previous block instead of dropping the page's visual suite. Returns:
-//
-//   - ok: a block (or a legitimate "this category has none") was attached.
-//     false ⇒ no reader wired, or the FIRST-EVER build for this key failed /
-//     was starved / outran ctx; absence then means degradation and the caller
-//     marks the view's analytics status accordingly.
-//   - stale: the attached block is older than bespokeStaleAfter — real data,
-//     but the refresh behind it has not landed for several sweeps, which the
-//     caller surfaces as analytics.status "stale".
+//   - ok: a block (or a legitimate "this category has none") was attached. false means no reader
+//     is wired or the FIRST-EVER build for this key failed; absence then means degradation.
+//   - stale: the attached block is older than bespokeStaleAfter: real data whose refresh has not
+//     landed for several sweeps, surfaced as analytics.status "stale".
 func (s *Server) enrichBespoke(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView, windowDays int) (ok, stale bool) {
 	blk, stale, ok := s.cachedBespoke(ctx, meta.Name, meta.Category, windowDays)
 	if !ok {
@@ -957,20 +836,13 @@ func classifyContractKinds(contracts []ProtocolContractView, factories []string)
 	}
 }
 
-// protocolRoster returns meta's full contract roster: the registry / soroswap-
-// pairs / projection contracts from protocolContracts, plus any ExtraContracts
-// folded in from a sub-module source (the Blend Backstop's contracts belong to
-// the Blend protocol page but live under the separate blend_backstop source).
-// Extras are tagged Kind="module"; because protocolContractIDs scopes the lake
-// analytics to every roster contract id, folding them here also pulls their
-// events into the breakdown / activity / per-contract counts. Deduped against
-// the base roster so a contract already present isn't doubled.
-// ok=false means the read failed and the returned roster is a swallowed-error
-// EMPTY, not a true empty — the caller must fold it into analytics.status
-// rather than let a failed roster read build an "ok" detail page (otherwise
-// a roster read error looks like a genuinely contract-less protocol, the page
-// is stamped "ok" and the SWR cache overwrites a healthy cached entry with
-// contract_count 0).
+// protocolRoster returns meta's full contract roster: registry / soroswap-pairs / projection
+// contracts plus any ExtraContracts folded in from a sub-module source (the Blend Backstop lives
+// under its own source). Extras are tagged Kind="module", deduped against the base roster, and
+// since protocolContractIDs scopes the lake analytics to the roster, their events join the counts.
+// ok=false means the read failed and the roster is a swallowed-error EMPTY, not a true empty: the
+// caller must fold it into analytics.status, or the page is stamped "ok" and the SWR cache
+// overwrites a healthy entry with contract_count 0.
 func (s *Server) protocolRoster(ctx context.Context, meta ProtocolMeta) ([]ProtocolContractView, bool) {
 	rows, err := s.rosterErr(ctx, meta)
 	if err != nil {
@@ -983,11 +855,9 @@ func (s *Server) protocolRoster(ctx context.Context, meta ProtocolMeta) ([]Proto
 	return rows, true
 }
 
-// rosterErr returns meta's full contract roster, SURFACING a read error
-// rather than swallowing it. protocolRoster wraps it for the detail path's
-// degrade-to-empty contract; the roster-count cache uses it directly so a
-// failed read omits the source from the directory instead of publishing a
-// fake contract_count: 0.
+// rosterErr returns meta's full contract roster, SURFACING a read error. protocolRoster wraps it
+// for the detail path; the roster-count cache uses it directly so a failed read omits the source
+// instead of publishing a fake contract_count: 0.
 func (s *Server) rosterErr(ctx context.Context, meta ProtocolMeta) ([]ProtocolContractView, error) {
 	rows, err := s.protocolContractsErr(ctx, meta.Name)
 	if err != nil {
@@ -1013,12 +883,9 @@ func (s *Server) rosterErr(ctx context.Context, meta ProtocolMeta) ([]ProtocolCo
 	return rows, nil
 }
 
-// countedContractTotal resolves meta's contract_count WITHOUT enumerating a
-// roster, for the sources that have such a path (protocolContractCounter).
-// ok=false ⇒ no counter wired, or none for this source: the caller counts the
-// roster as before. An error is surfaced rather than swallowed so the caller
-// keeps the same honesty contract a failed roster read has — an unreadable
-// count is not a zero.
+// countedContractTotal resolves meta's contract_count WITHOUT enumerating a roster
+// (protocolContractCounter). ok=false means no counter is wired for this source and the caller
+// counts the roster. An error is surfaced, since an unreadable count is not a zero.
 func (s *Server) countedContractTotal(ctx context.Context, meta ProtocolMeta) (int, bool, error) {
 	counter, has := s.ProtocolContracts.(protocolContractCounter)
 	if !has {
@@ -1052,15 +919,10 @@ func (s *Server) rosterCountErr(ctx context.Context, meta ProtocolMeta) (int, er
 	return len(rows), nil
 }
 
-// detailContractCount is the contract_count the DETAIL view publishes:
-// len(roster) for a source whose roster is its count, and the counted TRUE
-// total for a source whose contracts are not enumerable (the roster then stays
-// empty while the count is real). A failed count degrades to the roster length
-// and logs — the detail path serves one named protocol, so it cannot omit it
-// the way the directory does. ok=false only on a genuine read failure (no
-// counter wired, or an uncounted source, is a legitimate roster-derived
-// count and reports ok=true) so the caller can fold it into analytics.status
-// instead of letting the degraded fallback read as a real number.
+// detailContractCount is the contract_count the DETAIL view publishes: len(roster), or the counted
+// TRUE total for a source whose contracts are not enumerable. A failed count degrades to the roster
+// length and logs, since the detail path serves one named protocol and cannot omit it. ok=false
+// only on a genuine read failure, so the caller can fold it into analytics.status.
 func (s *Server) detailContractCount(ctx context.Context, meta ProtocolMeta, roster []ProtocolContractView) (int, bool) {
 	n, ok, err := s.countedContractTotal(ctx, meta)
 	if err != nil {
@@ -1073,16 +935,11 @@ func (s *Server) detailContractCount(ctx context.Context, meta ProtocolMeta, ros
 	return n, true
 }
 
-// enrichProtocolAnalytics populates the lake-derived analytics on the detail
-// view: the event-type breakdown, the daily activity series, and per-contract
-// event counts merged onto the roster. Degrades to leaving the fields empty
-// when the activity reader is nil or any query errors (same contract as the
-// other optional joins — the directory + registry still serve). Returns
-// whether the lake half is HEALTHY: true only when every fill completed
-// (an empty roster is healthy — there is genuinely nothing to scope to);
-// false on nil reader / unreadable tip / any failed fill, so the caller
-// can mark the view's analytics status "unavailable" instead of letting
-// the absent fields read as real zeros.
+// enrichProtocolAnalytics populates the lake-derived analytics on the detail view (event-type
+// breakdown, daily series, per-contract counts), leaving fields empty when the reader is nil or a
+// query errors. It returns whether the lake half is HEALTHY: true only when every fill completed
+// (an empty roster is healthy), false on nil reader, unreadable tip or any failed fill, so absent
+// fields are marked "unavailable" rather than read as real zeros.
 func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta, view *ProtocolDetailView) bool {
 	if s.ProtocolActivity == nil {
 		return false
@@ -1091,13 +948,10 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 	if len(ids) == 0 {
 		return true
 	}
-	// All three analytics are bounded to the recent window: bounding by
-	// ledger_seq prunes partitions, keeping each query well under the lake
-	// reader's 30s budget even for the busiest protocols (an all-time scan ran
-	// ~33s for blend / would be far worse for soroswap). An unreadable tip
-	// skips the analytics entirely (degrade honestly, don't serve a
-	// mislabeled window — a zero tip would make the fast path's day cutoff
-	// collapse to yesterday while still claiming ActivityWindowDays).
+	// All three analytics are bounded to the recent window: bounding by ledger_seq prunes
+	// partitions, keeping each query well under the lake reader's 30s budget. An unreadable tip
+	// skips the analytics entirely rather than serve a mislabeled window (a zero tip would
+	// collapse the fast path's day cutoff to yesterday while claiming ActivityWindowDays).
 	tip, err := s.ProtocolActivity.LakeTipLedger(ctx)
 	if err != nil {
 		s.logger.Warn("protocol activity tip read failed", "err", err)
@@ -1105,31 +959,19 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 	}
 	plan := s.protocolActivityPlanFor(ctx, tip)
 	view.ActivityWindowDays = protocolActivityWindowDays
-	// The three lake reads are independent (~5s each on a cold cache) and
-	// write disjoint fields of the view (ActivitySeries+EventsTotal /
-	// EventBreakdown / Contracts[].Events), so run them concurrently rather
-	// than serially — cutting the cold-path from ~15s to ~5s (the
-	// cache + prewarm make repeat hits instant, this
-	// keeps the detached rebuild fast). All three share ONE plan (one tip
-	// read, one fast-vs-raw decision) so the series and breakdown can't
-	// split across the fast/raw sources and de-reconcile. The breakdown's
-	// "untyped" reconciling bucket needs EventsTotal (from the series), so
-	// it's appended single-threaded after the barrier.
+	// The lake reads are independent and write disjoint fields of the view, so they run
+	// concurrently to keep the detached rebuild fast. All share ONE plan (one tip read, one
+	// fast-vs-raw decision) so series and breakdown can't split across sources and de-reconcile.
+	// The "untyped" bucket needs EventsTotal, so it is appended single-threaded after the barrier.
 	var wg sync.WaitGroup
 	var seriesOK, breakdownOK, contractsOK bool
 	wg.Add(2)
-	// Detached from the handler goroutine, so middleware.Recoverer does
-	// not cover these — a panic would kill the process. Recovering
-	// leaves that fill's OK flag false, which is exactly the "this fill
-	// failed" signal `seriesOK && breakdownOK && contractsOK` already
-	// carries: the analytics block is marked incomplete and must not
-	// displace a healthy cached entry.
+	// These goroutines are detached from the handler, so middleware.Recoverer does not cover them
+	// and a panic would kill the process. Recovering leaves that fill's OK flag false, marking the
+	// analytics incomplete so it cannot displace a healthy cached entry.
 	//
-	// Series and breakdown run as ONE fill, not two: if each tried its
-	// own fast query and fell back to raw independently, a fast
-	// breakdown timeout could pair a fast (day-grain) series with a raw
-	// (ledger-window) breakdown — different windows from the same build,
-	// silently breaking sum(EventBreakdown)==EventsTotal.
+	// Series and breakdown run as ONE fill: independent fast/raw fallbacks could pair a day-grain
+	// series with a ledger-window breakdown, silently breaking sum(EventBreakdown)==EventsTotal.
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-protocol-series-breakdown-fill")
@@ -1145,11 +987,9 @@ func (s *Server) enrichProtocolAnalytics(ctx context.Context, meta ProtocolMeta,
 	return seriesOK && breakdownOK && contractsOK
 }
 
-// reconcileProtocolBreakdown appends the synthetic "untyped" bucket so the
-// event breakdown sums to EventsTotal (the unfiltered window total set by
-// fillProtocolSeries). The gap is events whose topic[0] symbol the lake
-// didn't denormalize — predominantly AMM swap/sync — see fillProtocolBreakdown.
-// Run after the parallel reads so EventsTotal is known.
+// reconcileProtocolBreakdown appends the synthetic "untyped" bucket so the breakdown sums to
+// EventsTotal. The gap is events whose topic[0] symbol the lake didn't denormalize (mostly AMM
+// swap/sync). Run after the parallel reads so EventsTotal is known.
 func reconcileProtocolBreakdown(view *ProtocolDetailView) {
 	var typedSum int64
 	for _, b := range view.EventBreakdown {
@@ -1186,17 +1026,14 @@ func protocolContractIDs(contracts []ProtocolContractView, factories []string) [
 }
 
 // fillProtocolSeriesAndBreakdown fills BOTH the daily ActivitySeries (+EventsTotal) and the
-// event-type breakdown from the SAME source — fast or raw — for this build. Each degrades
-// independently on its own error (an ok flag per field); what it does NOT allow is one succeeding
-// on the fast pre-aggregation while the other uses the raw ledger-window scan, because the windows
-// differ (day-grain vs ledger-window) and the wire's sum(EventBreakdown)==EventsTotal invariant
-// assumes one shared window. So EITHER fast query erroring forces BOTH onto raw together.
+// event-type breakdown from the SAME source, fast or raw. Each degrades independently on its own
+// error, but one must never use the fast pre-aggregation while the other uses the raw scan: the
+// windows differ (day-grain vs ledger-window) and sum(EventBreakdown)==EventsTotal assumes one.
+// So EITHER fast query erroring forces BOTH onto raw.
 //
-// The breakdown groups by topic[0]'s denormalized symbol (topic_0_sym), which the lake only
-// populates when topic[0] is a plain Symbol SCVal. Many Soroban DEX events (Soroswap swap/sync is
-// the dominant case) carry a non-Symbol topic[0], so the typed breakdown alone under-counts the
-// event total. To keep it reconciled with EventsTotal, reconcileProtocolBreakdown appends a
-// synthetic "untyped" bucket after both fields here are set.
+// The breakdown groups by topic_0_sym, populated only when topic[0] is a plain Symbol SCVal; many
+// Soroban DEX events (Soroswap swap/sync) are not, so reconcileProtocolBreakdown appends an
+// "untyped" bucket afterwards.
 func (s *Server) fillProtocolSeriesAndBreakdown(ctx context.Context, name string, ids []string, plan protocolActivityPlan, view *ProtocolDetailView) (seriesOK, breakdownOK bool) {
 	if plan.fast != nil {
 		series, sErr := plan.fast.ProtocolDailyActivityFast(ctx, ids, plan.sinceDay)
@@ -1224,11 +1061,8 @@ func (s *Server) fillProtocolSeriesAndBreakdown(ctx context.Context, name string
 	return sErr == nil, bErr == nil
 }
 
-// applyProtocolSeries projects the daily points onto the view and sets
-// EventsTotal — the unfiltered contract-event count over the window (the
-// sum of the daily points), which is the authoritative total the
-// breakdown reconciles against, NOT the typed breakdown sum (which
-// excludes non-Symbol-topic'd events).
+// applyProtocolSeries projects the daily points onto the view and sets EventsTotal, the unfiltered
+// window total (sum of the daily points) the breakdown reconciles against, NOT the typed sum.
 func applyProtocolSeries(view *ProtocolDetailView, series []clickhouse.ProtocolDailyPoint) {
 	view.ActivitySeries = make([]ProtocolActivityPointView, 0, len(series))
 	var total int64
@@ -1254,12 +1088,9 @@ func applyProtocolBreakdown(view *ProtocolDetailView, breakdown []clickhouse.Pro
 // the roster (degrades on error).
 func (s *Server) fillProtocolContractActivity(ctx context.Context, name string, ids []string, plan protocolActivityPlan, view *ProtocolDetailView) bool {
 	if plan.fast != nil {
-		// Fast path: per-contract counts over the daily pre-aggregation
-		// (sub-second) instead of the raw `contract_events FINAL` scan
-		// (57s / 2 GiB-limit kill — the certified-lake "unavailable" root
-		// cause + a primary CH-load source). Falls back to raw when the
-		// daily table isn't available or the fast read errors (mirrors
-		// fillProtocolSeriesAndBreakdown).
+		// Fast path: per-contract counts over the daily pre-aggregation instead of the raw
+		// `contract_events FINAL` scan, which can blow the lake memory limit. Falls back to raw
+		// when the daily table is unavailable or the read errors.
 		act, err := plan.fast.ProtocolContractActivityFast(ctx, ids, plan.sinceDay)
 		if err == nil {
 			applyProtocolContractActivity(view, act)
@@ -1294,10 +1125,8 @@ func applyProtocolContractActivity(view *ProtocolDetailView, act []clickhouse.Pr
 	}
 }
 
-// protocolActivityPlanFor derives the shared analytics plan from ONE lake
-// tip read: the ledger cutoff (tip − window) plus, when the daily
-// pre-aggregation is usable, the fast reader and its day-grain cutoff.
-// The caller has already verified tip was read successfully.
+// protocolActivityPlanFor derives the shared analytics plan from ONE lake tip read: the ledger
+// cutoff plus, when the daily pre-aggregation is usable, the fast reader and its day cutoff.
 func (s *Server) protocolActivityPlanFor(ctx context.Context, tip uint32) protocolActivityPlan {
 	since, sinceDay := s.protocolWindowFloor(ctx, tip)
 	plan := protocolActivityPlan{sinceLedger: since}
@@ -1308,10 +1137,8 @@ func (s *Server) protocolActivityPlanFor(ctx context.Context, tip uint32) protoc
 	return plan
 }
 
-// protocolLedgerAtCloseTimeReader is the optional capability behind an
-// accurate window boundary: a ProtocolActivityReader
-// that can resolve a ledger sequence's close_time. *clickhouse.ExplorerReader
-// (the production wiring) satisfies it; a reader that doesn't degrades to
+// protocolLedgerAtCloseTimeReader is the optional capability behind an accurate window boundary: a
+// ProtocolActivityReader that can resolve a ledger's close_time. A reader without it degrades to
 // the theoretical-cadence approximation below.
 type protocolLedgerAtCloseTimeReader interface {
 	explorer.LedgerPager
@@ -1322,16 +1149,11 @@ type protocolLedgerAtCloseTimeReader interface {
 // drifted out of it would silently serve the approximation instead.
 var _ protocolLedgerAtCloseTimeReader = (*clickhouse.ExplorerReader)(nil)
 
-// protocolWindowFloor derives the raw readers' ledger cutoff AND the fast
-// reader's day-grain cutoff from ONE close_time boundary: tip's close_time
-// minus protocolActivityWindowDays days. A ledger-count multiple of the
-// theoretical 17,280/day cadence (protocolActivityWindowLedgers =
-// 90*17280) does not work: pubnet's observed cadence is
-// ~14,950-15,300/day, so that ledger count spans ~101-104 days while the
-// response publishes activity_window_days: 90. explorer_reader.go's
-// ledgersPerDayPruningEstimate doc covers the same trap for
-// NetworkThroughput. Falls back to the ledger-count approximation only
-// when the reader can't resolve close_time (production always can).
+// protocolWindowFloor derives the raw readers' ledger cutoff AND the fast reader's day-grain cutoff
+// from ONE close_time boundary: tip's close_time minus protocolActivityWindowDays. A ledger-count
+// multiple of the theoretical 17,280/day cadence is wrong: pubnet runs ~15,000/day, so it would
+// span 100+ days while the response publishes activity_window_days: 90. Falls back to the
+// ledger-count approximation only when the reader can't resolve close_time.
 func (s *Server) protocolWindowFloor(ctx context.Context, tip uint32) (sinceLedger uint32, sinceDay time.Time) {
 	fallback := uint32(1) // whole chain inside the window
 	if tip > protocolActivityWindowLedgers {
@@ -1397,14 +1219,9 @@ func (s *Server) protocolTVLs() map[string]ProtocolTVLView {
 	return snap
 }
 
-// protocolTVLsAndTotal reads the per-protocol TVL snapshot together with
-// the reconciled headline total from the SAME refresh cycle:
-// reading them via two separate calls (Snapshot() then Total(), each
-// its own critical section) can straddle a concurrent Refresh() and
-// pair one cycle's per-protocol figures with a different cycle's total.
-// Both degrade to nil when the cache isn't wired or hasn't completed
-// its first background refresh — the same degradation contract as
-// every other dynamic join on this directory.
+// protocolTVLsAndTotal reads the per-protocol TVL snapshot together with the headline total from
+// the SAME refresh cycle: two separate calls can straddle a concurrent Refresh() and pair one
+// cycle's figures with another's total. Both are nil when the cache is unwired or not yet filled.
 func (s *Server) protocolTVLsAndTotal() (map[string]ProtocolTVLView, *DEXTVLTotalView) {
 	if s.DEXTVL == nil {
 		return nil, nil
@@ -1439,17 +1256,10 @@ func (s *Server) protocolEvents24h(ctx context.Context) (map[string]int64, bool)
 	return counts, true
 }
 
-// protocolVerdicts reads the latest completeness verdict per source plus
-// the /v1/coverage freshness gate over them. ok=true covers BOTH a nil
-// reader (not wired — the documented "no completeness snapshot exists"
-// shape [Completeness]'s field doc describes) and a successful read;
-// ok=false is reserved for a read ERROR, so a caller can distinguish
-// "genuinely no snapshot" from "the snapshot read failed" instead of both
-// collapsing to the identical nil map — the same
-// split protocolEvents24h already makes for its own reader. stale is
-// independent of ok: it is false whenever there is nothing to be stale
-// about (nil reader or a failed read), true only when a successful
-// read's own verdicts are stale.
+// protocolVerdicts reads the latest completeness verdict per source plus the /v1/coverage
+// freshness gate. ok=true covers both a nil reader (no snapshot exists) and a successful read;
+// ok=false is a read ERROR, so "no snapshot" and "read failed" are distinguishable. stale is true
+// only when a successful read's own verdicts are stale.
 func (s *Server) protocolVerdicts(ctx context.Context) (verdicts map[string]timescale.CompletenessSnapshot, ok, stale bool) {
 	if s.CompletenessReader == nil {
 		return nil, true, false
@@ -1503,15 +1313,10 @@ func (s *Server) protocolContractsErr(ctx context.Context, name string) ([]Proto
 	return out, nil
 }
 
-// protocolContractsFromProjectionErr is the registry-empty fallback: the
-// distinct contracts from name's projected table (nil/empty when the source
-// has no per-contract table), surfacing a read error rather than swallowing
-// it. aquarius populates here from aquarius_liquidity; the oracles
-// (band/reflector-*/redstone) populate from their pinned contracts in
-// oracle_updates via a source-scoped query. Only
-// sdex is op-keyed (no contract) and truly has no roster here. This is the
-// `SELECT DISTINCT … LIMIT 5000` served-tier scan the roster-count cache
-// exists to keep off the unauthenticated request path.
+// protocolContractsFromProjectionErr is the registry-empty fallback: the distinct contracts from
+// name's projected table (empty when the source has none), surfacing a read error. Only sdex is
+// op-keyed with no contract roster. This is the `SELECT DISTINCT ... LIMIT 5000` served-tier scan
+// the roster-count cache keeps off the unauthenticated request path.
 func (s *Server) protocolContractsFromProjectionErr(ctx context.Context, name string) ([]ProtocolContractView, error) {
 	ids, err := s.ProtocolContracts.ListSourceContractsFromProjection(ctx, name)
 	if err != nil {
@@ -1561,13 +1366,10 @@ func protocolSinceDay(sinceLedger, tip uint32) time.Time {
 	return time.Now().UTC().AddDate(0, 0, -days)
 }
 
-// fastActivity returns the fast reader when the pre-aggregation is
-// available on this deployment. The probe answer is cached only when it
-// is DEFINITIVE (table missing, or rows found) — a transient ClickHouse
-// blip on the FIRST probe must not latch the raw 12B-row scans for the
-// process lifetime (the schemaProbe in internal/storage/clickhouse
-// shows why a sync.Once is the wrong primitive here). A non-definitive answer
-// degrades THIS call to the raw readers and re-probes next time.
+// fastActivity returns the fast reader when the pre-aggregation is available. The probe answer is
+// cached only when DEFINITIVE (table missing, or rows found): a transient ClickHouse blip must not
+// latch the raw multi-billion-row scans for the process lifetime, so sync.Once is the wrong
+// primitive. A non-definitive answer degrades THIS call to raw and re-probes next time.
 func (s *Server) fastActivity(ctx context.Context) protocolFastActivityReader {
 	fast, ok := s.ProtocolActivity.(protocolFastActivityReader)
 	if !ok {
@@ -1603,13 +1405,10 @@ func (s *Server) fastActivity(ctx context.Context) protocolFastActivityReader {
 	return fast
 }
 
-// protocolActivityPlan is the ONE shared fast-vs-raw decision + window
-// derivation for a detail build's three concurrent analytics fills.
-// Before it, each fill probed fastActivity and re-read the lake tip
-// independently — discarding the tip error, so a failed read (tip==0)
-// made protocolSinceDay silently serve a 1-day window labeled 90d, and
-// two fills could take DIFFERENT fast/raw paths, breaking the
-// sum(EventBreakdown)==EventsTotal reconcile.
+// protocolActivityPlan is the ONE shared fast-vs-raw decision and window for a detail build's
+// concurrent analytics fills. Independent probes could take different paths and break the
+// sum(EventBreakdown)==EventsTotal reconcile, and a failed tip read (tip==0) would silently serve
+// a 1-day window labeled 90d.
 type protocolActivityPlan struct {
 	// sinceLedger is the raw readers' cutoff (tip − window), always set.
 	sinceLedger uint32

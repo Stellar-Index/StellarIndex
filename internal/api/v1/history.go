@@ -25,27 +25,18 @@ import (
 // HistoryReader is the storage-side interface for /v1/history
 // lookups.
 type HistoryReader interface {
-	// TradesInRange returns trades for pair whose close-time is in
-	// [from, to). Ordered chronologically (ts ASC). Used by the
-	// aggregation endpoints (/v1/vwap, /v1/twap, /v1/ohlc) which
-	// consume the whole window at once.
+	// TradesInRange returns trades for pair closing in [from, to), ts ASC, for the aggregation
+	// endpoints (/v1/vwap, /v1/twap, /v1/ohlc) that consume the whole window.
 	//
-	// When the window holds more than `limit` trades, implementations
-	// MUST keep the NEWEST `limit` rows (and still return them ts ASC),
-	// not the oldest: a truncated aggregate has to run up to the window
-	// end or a busy 24h VWAP reports a price from hours ago.
-	// The handlers' `truncated` flag is documented against this
-	// guarantee — see VWAPResult.Truncated.
+	// When the window holds more than `limit` trades, implementations MUST keep the NEWEST `limit`
+	// rows (still returned ts ASC): a truncated aggregate has to run to the window end or a busy
+	// 24h VWAP reports a price from hours ago. See VWAPResult.Truncated.
 	TradesInRange(ctx context.Context, pair canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error)
 
-	// TradesInRangeAfter is TradesInRange with a full-PK cursor.
-	// Rows are filtered to (ts, ledger, tx_hash, op_index, source)
-	// > (afterTs, afterLedger, afterTxHash, afterOpIndex, afterSource).
-	// afterTs = zero time disables the cursor.
-	//
-	// Full PK as the cursor (not just ts+ledger) avoids dropping
-	// rows when a page break falls mid-ledger — multiple trades
-	// can share (ts, ledger) on high-volume ledgers.
+	// TradesInRangeAfter is TradesInRange with a full-PK cursor: rows are filtered to (ts, ledger,
+	// tx_hash, op_index, source) > the after* tuple, and a zero afterTs disables it. The full PK
+	// is needed because many trades can share (ts, ledger), so a page break mid-ledger would
+	// otherwise drop rows.
 	TradesInRangeAfter(
 		ctx context.Context,
 		pair canonical.Pair,
@@ -56,78 +47,48 @@ type HistoryReader interface {
 		limit int,
 	) ([]canonical.Trade, error)
 
-	// HistoryPoints returns every CLOSED bucket from the requested
-	// granularity's CAGG (prices_1m / prices_15m / prices_1h / etc.)
-	// for the pair, ordered chronologically. Used by /v1/history/
-	// since-inception to serve the full historical series.
-	//
-	// granularity must be one of the canonical strings: "1m", "15m",
-	// "1h", "4h", "1d", "1w", "1mo". The handler translates the
-	// query-param string into this argument; unknown granularities
-	// return [ErrUnknownGranularity].
-	//
-	// limit clamps the row count; 0 = unbounded. Empty slice + nil
-	// error when the pair has no closed buckets yet.
+	// HistoryPoints returns every CLOSED bucket from the granularity's CAGG (prices_1m, prices_1h,
+	// etc.) for the pair, chronologically, for /v1/history/since-inception. granularity is one of
+	// "1m", "15m", "1h", "4h", "1d", "1w", "1mo"; others return [ErrUnknownGranularity]. limit
+	// clamps the row count (0 = unbounded). Empty slice and nil error when nothing has closed yet.
 	HistoryPoints(ctx context.Context, pair canonical.Pair, granularity string, limit int) ([]HistoryPoint, error)
 
-	// HistoryPointsInRange is [HistoryPoints] with an explicit
-	// [from, to) bucket bound. Same closed-bucket guard, same
-	// granularity validation, same limit semantics. `from` zero
-	// disables the lower bound; `to` zero disables the upper bound.
-	//
-	// Used by /v1/chart to serve a rolling-window series (timeframe
-	// → from = now-tf, to = now). Per ADR-0020.
+	// HistoryPointsInRange is [HistoryPoints] with an explicit [from, to) bucket bound (zero
+	// disables that bound), serving /v1/chart's rolling window per ADR-0020.
 	HistoryPointsInRange(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time, limit int) ([]HistoryPoint, error)
 
-	// TWAPPointsInRange is the time-weighted-average sibling of
-	// [HistoryPointsInRange], reading the twap_<granularity> CAGG
-	// (migration 0081) instead of prices_<granularity>. Same [from, to)
-	// window, closed-bucket guard, and `[]HistoryPoint` shape (the VWAP
-	// field carries the TWAP value). granularity is 1h or 1d — the only
-	// two grains with a TWAP CAGG; other values return
-	// [ErrUnknownGranularity] (handler → 400). Backs
-	// /v1/chart?price_type=twap.
+	// TWAPPointsInRange is the time-weighted sibling of [HistoryPointsInRange], reading the
+	// twap_<granularity> CAGG; the VWAP field carries the TWAP value. Only 1h and 1d have a TWAP
+	// CAGG; other granularities return [ErrUnknownGranularity]. Backs /v1/chart?price_type=twap.
 	TWAPPointsInRange(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time, limit int) ([]HistoryPoint, error)
 
-	// OHLCSeries returns chronologically-ordered OHLC bars from the
-	// CAGG matching the requested interval, in [from, to). Bucket is
-	// the START of each window; window end = bucket + interval.
-	// `interval` is one of [timescale.OHLCRoutes]; unknown intervals
-	// return [ErrUnknownGranularity]. `limit` clamps the row count
-	// (0 = unbounded). Empty slice + nil error when no closed buckets
-	// exist in the window. The storage-side impl re-buckets a
-	// finer-grain CAGG when the interval doesn't have a native one
-	// (the table's folded rows).
-	//
-	// Used by /v1/ohlc's multi-bar mode (CG/CMC parity).
+	// OHLCSeries returns OHLC bars in [from, to), chronologically, for /v1/ohlc's multi-bar mode.
+	// Bucket is the START of each window. interval is one of [timescale.OHLCRoutes]; unknown
+	// values return [ErrUnknownGranularity]. limit clamps rows (0 = unbounded). The storage
+	// side re-buckets a finer CAGG when the interval has no native one.
 	OHLCSeries(ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int) ([]OHLCSeriesBar, error)
 
-	// LatestTradePerSource returns the most-recent trade FROM EACH source that has ever recorded a
-	// trade on the market `pair` names. Empty slice + nil error when none.
+	// LatestTradePerSource returns the most-recent trade from each source that has ever traded
+	// the market `pair` names. Empty slice and nil error when none.
 	//
-	// EITHER STORED DIRECTION, returned in the requested orientation. The SDEX decoder records
-	// XLM/USDC and USDC/XLM as separate rows, so binding (base_asset, quote_asset) literally would
-	// answer `base=AQUA&quote=USDC` with nothing for a market recorded the other way round while
-	// /v1/history serves it. Implementations MUST read both directions and re-express the flipped
-	// rows: the two legs and the two smallest-unit amounts SWAP, so a derived price is the exact
-	// reciprocal and nothing is divided. A source that traded both ways folds to its later trade.
+	// It matches EITHER STORED DIRECTION and returns the requested orientation: the SDEX decoder
+	// records XLM/USDC and USDC/XLM as separate rows, so a literal bind would miss a market
+	// recorded the other way round while /v1/history serves it. Implementations MUST read both
+	// directions and re-express flipped rows by swapping the two legs and the two smallest-unit
+	// amounts, so a derived price is the exact reciprocal. A source that traded both ways folds
+	// to its later trade.
 	//
-	// sourceFilter ("" = none) restricts to one source, applied at the SQL layer. Storage primitive
-	// for ADR-0018 Surface 3 `/v1/observations`; the production impl is a `DISTINCT ON (source) ...
-	// ORDER BY source, ts DESC` scan per direction, unioned, with no time bound.
+	// sourceFilter ("" = none) restricts to one source in SQL. Backs ADR-0018 /v1/observations
+	// with a DISTINCT ON (source) scan per direction and no time bound.
 	//
-	// COST, measured on r1: `trades_pair_source_ts_idx` (migration 0037) exists and Timescale plans a
-	// Merge Append of per-chunk SkipScans: 49 ms across 249 chunks for native/fiat:USD, 289 ms for the
-	// heaviest pair. No index build is pending; do not re-schedule one. Planning (40-210 ms) can
-	// exceed execution on a novel key. The two-arm read is estimated, not measured, well inside the 8s
-	// ceiling. [CachedHistoryReader] SWR-caches this.
+	// Cost: trades_pair_source_ts_idx gives per-chunk SkipScans (49-289 ms on r1); planning can
+	// exceed execution on a novel key. The two-arm read sits well inside the 8s ceiling, and
+	// [CachedHistoryReader] SWR-caches it.
 	LatestTradePerSource(ctx context.Context, pair canonical.Pair, sourceFilter string) ([]canonical.Trade, error)
 }
 
-// HistoryPoint is one (timestamp, price, optional usd-volume) row
-// from a CAGG, returned by [HistoryReader.HistoryPoints]. The wire
-// shape (`{t, p, v_usd?}`) is the OpenAPI HistoryPoint schema; the
-// reader returns rich types and the handler does the marshalling.
+// HistoryPoint is one (timestamp, price, optional usd-volume) CAGG row from
+// [HistoryReader.HistoryPoints]; the handler marshals it to the OpenAPI `{t, p, v_usd?}` shape.
 type HistoryPoint struct {
 	Bucket    time.Time
 	VWAP      string   // NUMERIC text — pass-through, no float round-trip
@@ -140,12 +101,8 @@ type HistoryPoint struct {
 // Handler translates to HTTP 400 problem+json.
 var ErrUnknownGranularity = fmt.Errorf("unknown granularity")
 
-// TradeRow is the wire shape for /v1/history entries.
-//
-// Numeric amounts ship as decimal strings (ADR-0003). Price is a
-// pre-computed decimal for consumer convenience — the storage layer
-// never persists a derived price, so we compute at response time. Price
-// is null (always present) for a stored trade with a zero leg.
+// TradeRow is the wire shape for /v1/history entries. Amounts ship as decimal strings (ADR-0003).
+// Price is computed at response time, never stored, and is null (but present) when a leg is zero.
 type TradeRow struct {
 	Source      string   `json:"source"`
 	Ledger      uint32   `json:"ledger"`
@@ -157,29 +114,18 @@ type TradeRow struct {
 	BaseAmount  string   `json:"base_amount"`
 	QuoteAmount string   `json:"quote_amount"`
 	Price       *string  `json:"price"` // quote/base as decimal; nil when a leg is zero
-	// BaseDecimals / QuoteDecimals are the smallest-unit scale for each side's amount: divide
-	// base_amount by 10^base_decimals (and quote by 10^quote_decimals) to get whole-asset units.
+	// BaseDecimals / QuoteDecimals are the smallest-unit scale of each side's amount: divide by
+	// 10^decimals for whole-asset units. The scale belongs to the ROW'S SOURCE, not the asset, and
+	// one page mixes both: on-chain rows carry the asset's own scale (7 for native/classic, the
+	// contract's decimals() for Soroban tokens), CEX rows carry 8 regardless of the pair.
 	//
-	// The scale is a property of the ROW'S SOURCE, not of the asset, and a single page MIXES BOTH:
-	//
-	//   on-chain rows (sdex, soroswap, aquarius, phoenix, comet) carry
-	//     the asset's own scale — 7 for native/classic, the token
-	//     contract's declared decimals() for Soroban tokens;
-	//   CEX rows (binance, kraken, bitstamp, coinbase) carry 8
-	//     REGARDLESS of the pair — the external normalisation scale, not
-	//     anything about the asset.
-	//
-	// Never substitute a constant. A reader that assumed 7 per-asset mis-scaled real rows in
-	// production once already, and the error is PAYLOAD-UNDETECTABLE: `price` is quote/base and
-	// therefore scale-invariant, so nothing in the response looks wrong.
-	//
-	// Populated on /v1/history; omitted (0) on /v1/observations, whose rows carry no per-side scale.
+	// Never substitute a constant. The error is payload-undetectable because `price` is
+	// quote/base and so scale-invariant. Populated on /v1/history; omitted (0) on
+	// /v1/observations, whose rows carry no per-side scale.
 	BaseDecimals  int `json:"base_decimals,omitempty"`
 	QuoteDecimals int `json:"quote_decimals,omitempty"`
-	// RoutedVia is the router/aggregator whose same-tx invocation
-	// drove this trade (routers.name, e.g. "soroswap-router").
-	// Omitted for direct trades — and for very recent routed trades
-	// the attribution sweeper (1-min cadence) hasn't tagged yet.
+	// RoutedVia is the router whose same-tx invocation drove this trade (routers.name). Omitted
+	// for direct trades and for recent routed trades the 1-minute attribution sweeper has not tagged.
 	RoutedVia string `json:"routed_via,omitempty"`
 }
 
@@ -224,19 +170,11 @@ func tradeRowFrom(t canonical.Trade, decimals int) TradeRow {
 	return row
 }
 
-// normalizeTradeRowPrices rewrites each row's Price from the RAW
-// quote_amount/base_amount ratio (what tradeRowFrom / priceRatioDecimal
-// render) to the dex-nonstandard-decimals-corrected price (M2). rows and
-// trades are parallel slices; base/quote are the request pair's legs, resolved
-// ONCE against the nonstandard_decimals_assets guard table (the SAME source
-// every normalized endpoint uses — /v1/vwap, main /v1/price, …).
-//
-// BYTE-IDENTICAL no-op — rows left exactly as tradeRowFrom rendered them —
-// when neither leg is a confirmed non-7-decimals asset (baseDec == quoteDec,
-// the common case), keeping the wire response unchanged for standard tokens.
-// BaseAmount / QuoteAmount are deliberately left as raw smallest-unit integers
-// (the on-chain truth); only the convenience Price field is corrected, exactly
-// as /v1/history and /v1/observations agree.
+// normalizeTradeRowPrices rewrites each row's Price from the raw quote/base ratio to the
+// nonstandard-decimals-corrected price. rows and trades are parallel slices; the pair's legs are
+// resolved once against the nonstandard_decimals_assets guard table, the same source /v1/vwap and
+// /v1/price use. It is a byte-identical no-op when both legs share a scale. Amounts stay raw
+// smallest-unit integers (the on-chain truth); only Price is corrected.
 func (s *Server) normalizeTradeRowPrices(rows []TradeRow, trades []canonical.Trade, base, quote canonical.Asset) {
 	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, base)
 	quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, quote)
@@ -319,11 +257,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		return
 	}
 
-	// dex-nonstandard-decimals: /v1/history reads exclusively from raw
-	// trades via TradesInRangeAfter below (no CAGG involved — that's a
-	// different reader method, HistoryPoints, used by /v1/chart), so it
-	// needs no decline guard. The per-row Price field is
-	// normalized after decimals are resolved further down.
+	// Reads raw trades only (no CAGG), so no nonstandard-decimals decline guard is needed; Price
+	// is normalized below once decimals resolve.
 
 	source, ok := historySourceParam(w, r, reader)
 	if !ok {
@@ -374,13 +309,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		afterOpIndex = c.opIndex
 	}
 
-	// 8s ceiling on the trades hypertable range query, part of the
-	// cold-path timeout pattern applied across every aggregation
-	// endpoint. Long `from` windows (no
-	// `from` set, or month-spanning) can take
-	// 5–10s on a cold cache scanning per-trade rows. One ceiling spans
-	// every alias scan below — the fan-in must not multiply the
-	// endpoint's worst-case hold.
+	// 8s ceiling on the trades range query: long windows can take 5-10s cold. One ceiling spans
+	// every alias scan below so the fan-in cannot multiply the endpoint's worst-case hold.
 	hCtx, hCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer hCancel()
 	trades, next, err := s.tradesInRangeAfterWithAliases(hCtx, reader, pair, source,
@@ -409,19 +339,11 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		return
 	}
 
-	// Resolve the per-ASSET scale once (base+quote are fixed request
-	// params), then let each row override it with its SOURCE's scale.
-	//
-	// The per-asset value alone is wrong for every off-chain row. The
-	// scale an amount was stamped at is a property of the CONNECTOR, not
-	// of the asset: the CEX parsers stamp 1e8 and the FX pollers 1e6,
-	// while this resolver returns 7 for anything non-Soroban. A page can
-	// mix both — /v1/history?base=crypto:XLM&quote=fiat:USD returns sdex
-	// rows at 1e7 beside coinbase rows at 1e8 — so "constant across the
-	// page" does not hold, and a consumer following this field's own
-	// documented conversion (amount / 10^decimals) would overstate every
-	// CEX trade by exactly 10x. The `price` field is scale-invariant, so
-	// nothing else in the response would contradict it.
+	// Resolve the per-ASSET scale once, then let each row override it with its SOURCE's scale.
+	// The per-asset value is wrong for off-chain rows: CEX parsers stamp 1e8 and FX pollers 1e6
+	// while this resolver returns 7, and one page can mix sdex and coinbase rows. Following the
+	// documented conversion would overstate every CEX trade 10x, and the scale-invariant `price`
+	// would not contradict it.
 	baseDec, baseOK := s.resolveAssetDecimals(hCtx, base)
 	quoteDec, quoteOK := s.resolveAssetDecimals(hCtx, quote)
 	if !baseOK || !quoteOK {
@@ -429,30 +351,17 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		return
 	}
 	rows := historyTradeRows(trades, baseDec, quoteDec)
-	// dex-nonstandard-decimals forward normalization of the Price field
-	// (M2). tradeRowFrom's Price is the raw quote_amount/base_amount ratio;
-	// normalizeTradeRowPrices corrects it against the `nonstandard_decimals_assets`
-	// guard table (s.NonstandardDecimals) — the SAME source /v1/vwap and the
-	// main /v1/price use, NOT the broader live-contract baseDec/quoteDec stamped
-	// above for the BaseDecimals/QuoteDecimals metadata (those two resolvers can
-	// legitimately disagree, and mixing them would make Price disagree with what
-	// /v1/vwap serves for the identical pair). /v1/observations shares this exact
-	// helper so the two raw-trade surfaces stay in lockstep. Byte-identical no-op
-	// at 7dp.
+	// Price is corrected against the nonstandard_decimals_assets guard table (as /v1/vwap and
+	// /v1/price do), not the live-contract baseDec/quoteDec above; the two resolvers can
+	// disagree, and mixing them would make Price differ from /v1/vwap for the same pair.
+	// /v1/observations shares this helper.
 	s.normalizeTradeRowPrices(rows, trades, base, quote)
 
-	// When rows remain beyond this page, emit a next-cursor pointing at
-	// the last row we returned ([historyNextCursor]). Clients just
-	// re-issue the same request with ?cursor=<next> to drain subsequent
-	// pages. When the window is exhausted — no cursor, no next. The read
-	// reports that itself rather than it being inferred from
-	// `len(trades) == limit`: the two-direction merge can cut a page
-	// short with rows still behind it, and a length test would stop the
-	// client there.
+	// Pagination: next comes from the read itself, not from len(trades) == limit, because the
+	// two-direction merge can cut a page short with rows still behind it.
 	env := Envelope{Data: rows, Flags: Flags{}}
-	// Probed over both legs' alias families and both stored directions —
-	// see historyCoverageSet: that is exactly what the page read above
-	// spans, so the floor describes rows this page can return.
+	// The coverage probe spans both legs' alias families and both stored directions, exactly
+	// what the page read spans (see historyCoverageSet), so the floor describes returnable rows.
 	coverageFrom, outsideCoverage := s.coverageAnnotationIfEmpty(
 		r.Context(), historyCoverageSet(pair), to, historyPageIsAmbiguous(len(trades), afterTs))
 	env.CoverageFrom, env.Flags.OutsideCoverage = wireTimePtr(coverageFrom), outsideCoverage
@@ -485,36 +394,19 @@ type historyCursor struct {
 	opIndex uint32
 }
 
-// pastTieGroupCursorSource is the `source` field of a cursor that
-// resumes PAST a whole tie group rather than at one row of it: a marker,
-// not a source name.
-//
-// It exists because the two forms need different binds and the decoder
-// refuses to take the second one from a client. A past-group cursor
-// binds `source` EMPTY, so the database's tuple comparison decides on
-// the stepped op_index and never reaches the source column at all —
-// which is the whole point (see [tieGroupCursor]). But an empty source
-// arriving in a cursor a CLIENT wrote is a different thing entirely: it
-// would pair with an unstepped op_index and weaken the full-PK
-// comparison to a partial one, which is what [decodeHistoryCursor]'s
-// guard has always rejected and still does. The marker keeps that guard
-// intact and lets this endpoint's own cursors say which form they are.
-//
-// `*` cannot collide with a real source: source names are [a-z0-9_-]
-// (see below), and TestHistoryCursor_PastGroupMarkerIsNotASourceName
-// pins that against the live registry.
+// pastTieGroupCursorSource is the `source` field of a cursor that resumes PAST a whole tie group
+// rather than at one row of it: a marker, not a source name. A past-group cursor binds source
+// EMPTY so the tuple comparison is decided by the stepped op_index (see [tieGroupCursor]), but a
+// client-written empty source would weaken the full-PK comparison to a partial one, which
+// [decodeHistoryCursor] rejects. The marker keeps that guard and lets our own cursors say which
+// form they are. `*` cannot collide with a real source name ([a-z0-9_-]);
+// TestHistoryCursor_PastGroupMarkerIsNotASourceName pins that against the registry.
 const pastTieGroupCursorSource = "*"
 
-// encodeHistoryCursor / decodeHistoryCursor are the opaque
-// over-the-wire form of a historyCursor. Base64 keeps the cursor
-// URL-safe without needing client-side URL encoding.
-//
-// Format inside the base64:
-// "<unix_nanos>:<ledger>:<source>:<tx_hash>:<op_index>"
-// Timestamp is nanosecond-precision (future-proof against sub-
-// second ledger close times). Source names are [a-z0-9_-] so no
-// field-separator collision, and `*` is therefore free to mark the
-// past-group form ([pastTieGroupCursorSource]).
+// encodeHistoryCursor / decodeHistoryCursor are the opaque, URL-safe base64 wire form of a
+// historyCursor: "<unix_nanos>:<ledger>:<source>:<tx_hash>:<op_index>". Source names are
+// [a-z0-9_-], so they never collide with the separator, and `*` is free to mark the past-group
+// form ([pastTieGroupCursorSource]).
 func encodeHistoryCursor(c historyCursor) string {
 	raw := fmt.Sprintf("%d:%d:%s:%s:%d",
 		c.ts.UnixNano(), c.ledger, c.source, c.txHash, c.opIndex)
@@ -541,18 +433,13 @@ func decodeHistoryCursor(s string) (historyCursor, error) {
 	source := parts[2]
 	switch source {
 	case pastTieGroupCursorSource:
-		// This endpoint's own past-group cursor. Bind no source at all:
-		// its op_index is already stepped past the group, so the
-		// comparison is decided before the source column is reached.
+		// Our own past-group cursor: its op_index is already stepped past the group, so the
+		// comparison is decided before the source column and no source is bound.
 		source = ""
 	case "":
-		// An empty source would weaken the full-PK cursor comparison
-		// into a partial one, reintroducing the same-ledger page-skip
-		// the full-PK cursor exists to prevent. Reject rather
-		// than silently serve wrong-looking pages. The past-group form
-		// above is the ONLY way to an empty bind, and it pairs the
-		// empty source with a STEPPED op_index, so its comparison is
-		// total on the first four components.
+		// An empty source would weaken the full-PK comparison to a partial one and reintroduce
+		// the same-ledger page-skip. The past-group form is the only legitimate empty bind, as
+		// it pairs with a stepped op_index.
 		return historyCursor{}, fmt.Errorf("cursor source must not be empty")
 	}
 	txHash := parts[3]
@@ -572,10 +459,8 @@ func decodeHistoryCursor(s string) (historyCursor, error) {
 	}, nil
 }
 
-// isLowerHex64 returns true iff s is exactly 64 characters of
-// lowercase hex. Same invariant canonical.validTxHash enforces on
-// the ingest side; mirrored here (without importing canonical) so
-// decodeHistoryCursor doesn't create a cycle.
+// isLowerHex64 reports whether s is exactly 64 lowercase hex characters, mirroring
+// canonical.validTxHash without importing it (which would create a cycle).
 func isLowerHex64(s string) bool {
 	if len(s) != 64 {
 		return false
@@ -589,15 +474,9 @@ func isLowerHex64(s string) bool {
 	return true
 }
 
-// parseBaseQuote extracts + validates base/quote from the request.
-// Returns (base, quote, true) on success; writes a problem response
-// and returns ok=false on failure.
-//
-// `asset=` is accepted as an alias for `base=` so
-// clients copying URLs from /v1/price (which uses asset/quote) don't
-// hit a 400 on their first try. Passing BOTH `base` and `asset` is
-// a 400 — they're conflicting controls for the same value and the
-// silent precedence pick was confusing.
+// parseBaseQuote extracts and validates base/quote, writing a problem response and returning
+// ok=false on failure. `asset=` is an alias for `base=` so URLs copied from /v1/price work;
+// passing both is a 400 rather than a silent precedence pick.
 func parseBaseQuote(w http.ResponseWriter, r *http.Request) (canonical.Asset, canonical.Asset, bool) {
 	rawBase := r.URL.Query().Get("base")
 	rawAsset := r.URL.Query().Get("asset")
@@ -660,38 +539,25 @@ type HistorySeries struct {
 	GapStartsAt   *WireTime          `json:"gap_starts_at,omitempty"` // last bucket before the WIDEST interior gap
 	GapEndsAt     *WireTime          `json:"gap_ends_at,omitempty"`   // first bucket after it
 
-	// RowCapTruncated is true when the read hit historyMaxPoints, so
-	// Points holds the OLDEST slice of the pair's history and stops
-	// short of the present — the opposite direction from ChartSeries'
-	// Truncated (which flags the window starting before retention).
-	// DataEndsAt carries the last served bucket so a client can tell
-	// "the series ends here" (this field) from "the data ends here"
-	// (an interior gap or genuine end of history).
+	// RowCapTruncated is true when the read hit historyMaxPoints, so Points holds the OLDEST
+	// slice of history and stops short of the present (the opposite of ChartSeries' Truncated).
+	// DataEndsAt is the last served bucket, letting a client tell "the series ends here" from
+	// "the data ends here".
 	RowCapTruncated bool      `json:"row_cap_truncated"`
 	DataEndsAt      *WireTime `json:"data_ends_at,omitempty"` // last returned bucket; only set when RowCapTruncated
 }
 
-// markDiscontinuity stamps the interior-gap signal, delegating to
-// [ChartSeries.markDiscontinuity] so the two surfaces cannot disagree
-// about what a hole is.
-//
-// This surface shares the chart's read chain, so it serves the same
-// merged series and can carry the same hole: on the flagship pair it
-// gains 763 buckets from the SAC-quoted pool and still stops ~1,156
-// days short of continuous, which needs CEX ingest rather than a read
-// change. A signal that covered two of the three repaired surfaces
-// would leave the third asserting continuity it does not have.
+// markDiscontinuity stamps the interior-gap signal via [ChartSeries.markDiscontinuity] so the
+// surfaces cannot disagree about what a hole is. This surface shares the chart's read chain and
+// can carry the same hole, so it must flag it rather than assert continuity it does not have.
 func (h *HistorySeries) markDiscontinuity() {
 	c := ChartSeries{Granularity: h.Granularity, Points: h.Points}
 	c.markDiscontinuity()
 	h.Discontinuous, h.GapStartsAt, h.GapEndsAt = c.Discontinuous, c.GapStartsAt, c.GapEndsAt
 }
 
-// HistoryPointWire is the JSON-tagged shape that marshals as the
-// OpenAPI HistoryPoint ({t, p, v_usd?}). Distinct from the
-// reader-side [HistoryPoint] which carries rich types — keeps the
-// internal type usable by tests + adapters without leaking wire-
-// shape assumptions.
+// HistoryPointWire marshals as the OpenAPI HistoryPoint ({t, p, v_usd?}), kept distinct from the
+// reader-side [HistoryPoint] so wire-shape assumptions do not leak into adapters.
 type HistoryPointWire struct {
 	T    WireTime `json:"t"`
 	P    string   `json:"p"`
@@ -725,22 +591,11 @@ func nonVWAPSources(srcs []string) []string {
 const (
 	defaultHistoryGranularity = "1d"
 
-	// historyMaxPoints is the safety cap on a single response: the 1m CAGG reaches ~32M
-	// rows over 5 years, so 50k stops a granularity=1m request shipping a 32M-row
-	// payload. Operators wanting the full 1m series should paginate (planned cursor
-	// surface).
-	//
-	// Truncation takes the EARLIEST buckets, so a grid wider than the cap is answered
-	// with its oldest slice and no remaining window. On /v1/chart that is decidable from
-	// the request (window width over bucket width), so the grain is coarsened to fit and
-	// reported as the response's `granularity` ([chartFitGranularity]).
-	//
-	// /v1/history/since-inception is NOT that shape: it has no window parameter, so its
-	// bucket count is a property of the DATA and it cannot coarsen up front. The handler
-	// checks the read's row count (`len(points) == historyMaxPoints`) and stamps
-	// `row_cap_truncated` + `data_ends_at`, so `?granularity=1m` on the flagship pair
-	// returns exactly 50,000 points ending in February 2018 and says so. Plain
-	// /v1/history pages raw trades via `limit`/`cursor` and takes no `granularity`.
+	// historyMaxPoints caps a single response: the 1m CAGG reaches ~32M rows over 5 years.
+	// Truncation takes the EARLIEST buckets. /v1/chart can decide that from the request and
+	// coarsens its grain to fit ([chartFitGranularity]). Since-inception has no window
+	// parameter, so its bucket count depends on the data; the handler checks
+	// len(points) == historyMaxPoints and stamps row_cap_truncated and data_ends_at instead.
 	historyMaxPoints = 50_000
 
 	// sinceInceptionPricingSpan is the history depth the since-inception
@@ -749,17 +604,10 @@ const (
 	sinceInceptionPricingSpan = 10 * 365 * 24 * time.Hour
 )
 
-// sinceInceptionCost is the rate-limit price, in tokens, of one
-// /v1/history/since-inception request. The client's `granularity`
-// selects how many buckets the unbounded read returns, and the read is
-// LIMITed to historyMaxPoints, so its work tracks the point count:
-// min(historyMaxPoints, span / bucket width). The default grain costs
-// the base token and every other grain its point count's multiple of
-// the default's, rounded DOWN — conservative, as the /v1/assets weights
-// are: 1m / 15m / 1h cost 13 against a measured production ratio of
-// ~15 (50,000 points at 1m vs 3,341 at 1d on the flagship pair).
-// An unknown grain costs the base token; it is a 400
-// before any read.
+// sinceInceptionCost is the rate-limit price, in tokens, of one since-inception request. Work
+// tracks the point count, min(historyMaxPoints, span / bucket width), so each grain costs its
+// point count's multiple of the default grain's, rounded DOWN to stay conservative. An unknown
+// grain costs the base token because it is a 400 before any read.
 func sinceInceptionCost(gran string) int {
 	width := timescale.HistoryGranularity(gran).BucketDuration()
 	if width <= 0 {
@@ -772,15 +620,9 @@ func sinceInceptionCost(gran string) int {
 	return max(1, points(width)/base)
 }
 
-// handleHistorySinceInception serves GET /v1/history/since-inception?
-// asset=<id>&quote=<id>&granularity=<g>. Returns CLOSED buckets
-// from the granularity's CAGG, oldest to newest, capped at
-// historyMaxPoints.
-//
-// 503 when no HistoryReader is wired. 400 on bad asset/quote/
-// granularity. 200 with empty points[] when the pair has no closed
-// buckets yet — distinct from 404 since the asset itself may be
-// known but just hasn't accrued bucketed history.
+// handleHistorySinceInception serves GET /v1/history/since-inception?asset=&quote=&granularity=:
+// CLOSED CAGG buckets, oldest first, capped at historyMaxPoints. A pair with no closed buckets
+// yet is 200 with empty points[], not 404, since the asset may be known without bucketed history.
 func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Request) { //nolint:funlen // option parsing + 8s-timeout guard + grain-default + clamp logic are linear; splitting fragments the request lifecycle
 	if s.History == nil {
 		writeProblem(w, r,
@@ -842,15 +684,10 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Directory-scam gate, the SAME one /v1/chart applies and for the
-	// same reason: this endpoint is named for the raw-trade family but
-	// serves the AGGREGATED CAGG VWAP series, so withholding a flagged
-	// issuer's price point everywhere else while handing over the whole
-	// trajectory here would defeat the gate. /v1/chart?timeframe=all and
-	// this route answer the identical question about the identical
-	// pair, so both must withhold it. The raw
-	// surfaces scam.go promises stay visible — /v1/history's trade rows
-	// and /v1/observations — are untouched.
+	// Same directory-scam gate as /v1/chart: this route serves the AGGREGATED VWAP series, so
+	// handing over a flagged issuer's whole trajectory here would defeat withholding its price
+	// elsewhere. The raw surfaces scam.go keeps visible (/v1/history trade rows,
+	// /v1/observations) are untouched.
 	if s.seriesWithheldForScam(w, r, pair, "history_series") {
 		return
 	}
@@ -860,17 +697,10 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 
 	hCtx, hCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer hCancel()
-	// Deliberately the SAME chain /v1/chart runs
-	// ([Server.chartSeriesPoints]), differing only in the read closure:
-	// this surface has no lower bound, so it reads HistoryPoints rather
-	// than HistoryPointsInRange. The two endpoints answer one question
-	// about one pair, and they held two hand-maintained copies of the
-	// fallback — which drifted (this one never reached the abstract
-	// stablecoin backers) and which carried the same per-response
-	// first-hit gate, so `native/fiat:USD` since-inception served the
-	// identical 1,070-point series with the identical 1,919-day hole
-	// measured on /v1/chart. One definition cannot drift from itself.
-	// A window unbounded below is never narrowed, so the walk passes no bounds here.
+	// Deliberately the same chain as /v1/chart ([Server.chartSeriesPoints]), differing only in the
+	// read closure (no lower bound, so HistoryPoints). The endpoints answer one question about one
+	// pair, and separate copies of the fallback drift. A window unbounded below is never
+	// narrowed, so the walk passes no bounds.
 	read := func(rc context.Context, p canonical.Pair, _, _ time.Time, limit int) ([]HistoryPoint, error) {
 		return s.History.HistoryPoints(rc, p, gran, limit)
 	}
