@@ -2,40 +2,24 @@ package dashboardauth
 
 // Passkey (WebAuthn) sign-in for the customer dashboard.
 //
-// Two ceremonies, four endpoints, plus management:
-//
-//   - begin-register / finish-register: a SIGNED-IN user adds a
-//     passkey. The browser calls navigator.credentials.create() with
-//     the options begin returns; finish verifies the attestation and
-//     stores the public key (webauthn_credentials, migration 0140).
-//   - begin-login / finish-login: an anonymous visitor signs in with
-//     a discoverable credential (usernameless — the authenticator
-//     itself knows which account). finish verifies the assertion and
-//     mints the SAME session cookie the email-code flow issues, via
-//     the shared mintSession path.
+//   - begin/finish-register: a SIGNED-IN user adds a passkey; finish
+//     verifies the attestation and stores the public key
+//     (webauthn_credentials, migration 0140).
+//   - begin/finish-login: an anonymous visitor signs in with a
+//     discoverable credential; finish verifies the assertion and mints
+//     the SAME session cookie as the email-code flow, via mintSession.
 //   - credentials (GET/DELETE): management for the settings page.
 //
-// The ceremony state (challenge) between begin and finish lives in a
-// short-lived HMAC-signed cookie rather than server-side storage:
-// the challenge is not a secret (the browser sees it), but it must
-// be integrity-bound so a caller can't substitute their own — the
-// HMAC (keyed by the same server secret that keys the 6-digit code
-// derivation, domain-separated) provides exactly that.
+// The ceremony state (challenge) lives in a short-lived HMAC-signed cookie,
+// not server storage. The challenge is not secret but must be
+// integrity-bound so a caller can't substitute their own; the HMAC (keyed
+// by the server secret behind the 6-digit code derivation,
+// domain-separated) does that.
 //
-// Integrity alone is not enough; two more properties are required:
-//
-//   - The ceremony must EXPIRE server-side. The cookie's MaxAge is a
-//     client-side hint; an attacker's HTTP client simply ignores it.
-//     See [Handlers.webAuthn] for why the library needs telling.
-//   - The ceremony must be SINGLE-USE. See passkey_ceremony_guard.go.
-//
-// Without both, a captured finish-login request (cookie + body) is a
-// session-mint oracle for that account: unlimited uses, no expiry.
-//
-// RP identity derives from DashboardBaseURL — the origin the browser
-// performs the ceremony on (https://stellarindex.io): RP ID is its
-// hostname, allowed origin is its scheme://host. That mirrors how the
-// magic-link callback URL is already built from the same config.
+// Integrity alone is not enough: the ceremony must EXPIRE server-side (the
+// cookie's MaxAge is a hint an attacker ignores; see [Handlers.webAuthn])
+// and be SINGLE-USE (passkey_ceremony_guard.go), else a captured
+// finish-login request is a session-mint oracle.
 
 import (
 	"bytes"

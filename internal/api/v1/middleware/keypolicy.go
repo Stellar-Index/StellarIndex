@@ -14,47 +14,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// KeyPolicy returns a Middleware that enforces the per-key policy
-// fields the dashboard exposes — IP allowlist, Referer allowlist,
-// and per-endpoint permissions. Runs AFTER [Auth] so the
-// authenticated Subject is on the request context; before
-// [RateLimit] so policy-rejected requests never spend a rate-limit
-// token.
+// KeyPolicy returns a Middleware enforcing the per-key policy fields the
+// dashboard exposes: IP allowlist, Referer allowlist, scopes and
+// per-endpoint permissions. Runs AFTER [Auth] and before [RateLimit] so
+// policy-rejected requests never spend a token. A 403 names the control
+// that rejected (ip / referer / permission).
 //
-// The dashboard lets customers configure these fields; this is
-// where they are enforced at request time. A 403 reply here is
-// the same shape as Auth's
-// problem+json; the body carries which control rejected (ip /
-// referer / permission) so dashboard users can debug their own
-// configuration.
+//   - IPAllowlist empty: skip. Else the resolved client IP ([RemoteIP],
+//     honouring trusted-proxy CIDRs) must fall in a prefix.
+//   - RefererAllowlist empty: skip. Else the Referer host must be
+//     present and exactly match one entry (case-insensitive).
+//   - Scopes empty: skip (full access). Else the path's route family
+//     (auth.RequiredScope) must be in the key's scopes.
+//   - AllowAllPermissions=true: passes unless a deny entry matches.
+//     False: an allow entry must match and no deny entry.
 //
-// Behaviour per check:
-//
-//   - IPAllowlist empty: skip the IP gate (no opt-in).
-//     Non-empty: the request's resolved client IP (via
-//     [RemoteIP] which honours the trusted-proxy CIDRs) must
-//     fall in at least one prefix.
-//   - RefererAllowlist empty: skip. Non-empty: the request's
-//     Referer header must be present and its host must exactly
-//     match one entry (case-insensitive). Empty / missing
-//     Referer is rejected — the customer asked for the gate.
-//   - Scopes empty: skip the scope gate (full access — the
-//     pre-scopes posture every legacy key keeps). Non-empty: the
-//     request path's route family (auth.RequiredScope) must be in
-//     the key's scope list.
-//   - AllowAllPermissions=true: permission gate passes unless
-//     a deny entry matches. False: at least one allow entry
-//     must match, and no deny entry may.
-//
-// Anonymous subjects (Tier=anonymous) bypass every check — they
-// don't carry per-key policy. Every other tier, INCLUDING operator,
-// is subject to its OWN configured gates: a default operator key
-// (empty Scopes, AllowAllPermissions=true) passes the scope +
-// permission gates freely, while an operator key deliberately narrowed
-// at mint (a scope subset or a restricted permission list) is confined
-// to what it was granted. Admin-endpoint ACCESS is gated on
-// Tier==Operator in the handlers, not on scope, so narrowing a staff
-// key's scopes bounds its data reach without locking it out of admin.
+// Anonymous subjects bypass every check. Every other tier, INCLUDING
+// operator, is subject to its OWN gates: a default operator key passes
+// freely, one narrowed at mint is confined. Admin-endpoint ACCESS is gated
+// on Tier==Operator in the handlers, not on scope, so narrowing a staff key
+// bounds its data reach without locking it out of admin.
 func KeyPolicy() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

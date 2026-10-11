@@ -8,23 +8,19 @@ import (
 	"net/http"
 )
 
-// requireJSONContentType is the CSRF gate shared by the two anonymous
-// durable-write endpoints /v1/signup and /v1/register, neither of which
-// can use middleware.RequireSameSiteWrite the way their browser-only
-// siblings (/v1/auth/login, /v1/auth/verify-code) do: both are public
-// API endpoints, so a legitimate curl or server-side caller has no
-// Origin/Referer and would be refused.
+// requireJSONContentType is the CSRF gate shared by the anonymous
+// durable-write endpoints /v1/signup and /v1/register. They cannot use
+// middleware.RequireSameSiteWrite like the browser-only /v1/auth/*
+// siblings: both are public API endpoints, so a legitimate curl or
+// server-side caller has no Origin/Referer and would be refused.
 //
-// `application/json` is NOT a CORS "simple request" type, so any
-// cross-site browser POST carrying it must be preflighted — and this
-// deployment's CORS policy refuses the preflight. The header is
-// therefore REQUIRED, not merely validated-when-present: tolerating an
-// absent header for "bare curl ergonomics" leaves the exact hole the
-// gate exists to close, because a header-less POST (e.g.
-// navigator.sendBeacon with an empty-type Blob, or fetch with
-// mode:"no-cors") is itself a CORS *simple* request that issues no
-// preflight to refuse. A presence-form `if ct != ""` would skip the
-// check entirely for a header-less request, silently minting a
+// `application/json` is NOT a CORS "simple request" type, so a cross-site
+// browser POST carrying it must be preflighted, and our CORS policy refuses
+// the preflight. The header is therefore REQUIRED, not just
+// validated-when-present: a header-less POST (sendBeacon with an empty-type
+// Blob, fetch with mode:"no-cors") is a CORS simple request with no
+// preflight to refuse, so `if ct != ""` would skip the check and mint a
+// credential plus a verification email per visitor.
 // credential + relaying a verification email per visitor and burning a
 // token from the per-IP throttle the two endpoints share.
 //

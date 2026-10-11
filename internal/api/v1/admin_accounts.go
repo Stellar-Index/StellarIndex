@@ -380,28 +380,24 @@ func (s *Server) revokeSessionsOnClosure(ctx context.Context, acct platform.Acco
 
 // clampKeysAfterTierChange lowers every credential the account can still
 // authenticate with to the new tier's budget, whenever the PATCH LOWERED
-// the tier ceiling. Returns (keys lowered, per-key failures) so the
-// caller can record both in the audit row.
+// the tier ceiling. Returns (keys lowered, per-key failures) so the caller
+// can record both in the audit row.
 //
 // Writing `accounts.tier` alone is not enough. The enforced per-minute
 // budget is read straight off the key record (auth/apikey_postgres.go
-// `rateLimit := pgKey.RateLimitPerMin`; auth/apikey_redis.go returns
-// the stored value), so an operator demoting an abusive account
-// Pro→Free would leave every existing key serving 10_000/min
-// indefinitely. The clamp helper + the tier ladder
-// (`platform.Tier.MaxRateLimitPerMin`) close that.
+// `rateLimit := pgKey.RateLimitPerMin`; auth/apikey_redis.go returns the
+// stored value), so demoting an abusive account Pro→Free would leave every
+// existing key serving 10_000/min indefinitely.
 //
-// Only runs when the ceiling DROPS. A raise is intentionally not
-// mirrored: budgets are raised at mint time by the dashboard's
-// `clampRateLimitToTier`, and silently lifting existing keys on a comp
-// would grant throughput the operator did not ask for.
+// Only runs when the ceiling DROPS. A raise is not mirrored: budgets are
+// raised at mint time by the dashboard's `clampRateLimitToTier`, and
+// silently lifting existing keys on a comp would grant throughput the
+// operator did not ask for.
 //
 // The account-level `rate_limit_per_min_override` is deliberately NOT
-// clamped here: on the operator surface the override is an explicit
-// field of the SAME request. An operator who PATCHes tier=free while
-// leaving a 10_000 override in place is making a deliberate, audited
-// comp decision; overwriting it would silently discard the very
-// affordance this endpoint exists to provide.
+// clamped: on the operator surface it is an explicit field of the SAME
+// request, so tier=free with a 10_000 override left in place is a
+// deliberate, audited comp decision.
 func (s *Server) clampKeysAfterTierChange(
 	ctx context.Context, subject auth.Subject, priorTier platform.Tier, acct platform.Account,
 ) (lowered, failed int) {
@@ -414,49 +410,25 @@ func (s *Server) clampKeysAfterTierChange(
 	return s.clampKeyBudgetsToTier(ctx, cause, s.APIKeyBudgets, acct, ceiling)
 }
 
-// evictKeyCacheOnEnforcementChange evicts every cached API-key record for the
-// account from the auth read-through cache whenever this PATCH changed an
-// account field that feeds a key's RESOLVED enforcement state in the Postgres
-// validator, so the change takes effect on the next request rather than after
-// the validator's ~1h read-through TTL. Two such transitions exist:
+// evictKeyCacheOnEnforcementChange evicts the account's cached API-key
+// records when a PATCH changed a field feeding a key's RESOLVED enforcement
+// state, so it applies on the next request rather than after the ~1h TTL.
+// Two transitions:
+//   - The account left active (suspended/closed), the operator kill
+//     switch. The cache-HIT path (auth/apikey_postgres.go cacheLookup)
+//     checks only the KEY's own revoked/expired fields, never account
+//     status; the MISS path rejects non-active accounts before
+//     cacheStore, so one eviction is durable.
+//   - The rate-limit or monthly-quota OVERRIDE changed (ANY delta): the
+//     validator caches the resolved floor and ceiling, so a tightened
+//     override would stay unenforced on warm keys.
 //
-//   - The account left the active state (active→suspended/closed): the operator
-//     kill switch. The validator's cache-HIT path
-//     (auth/apikey_postgres.go cacheLookup) checks only the KEY's own
-//     revoked/expired fields, never the account status, so persisting
-//     `accounts.status='suspended'` changes nothing an already-warm key can
-//     feel. The cache-MISS path DOES reject non-active accounts
-//     (`acct.Status != AccountActive`) and returns before cacheStore, so a
-//     single eviction is durable — the next request misses, re-reads Postgres,
-//     and is refused. The clamp does NOT cover this — clampKeysAfterTierChange
-//     early-returns unless the tier ceiling drops, so a pure status flip evicts
-//     nothing.
-//
-//   - The rate-limit or monthly-quota OVERRIDE changed.
-//     The validator RESOLVES the effective per-minute floor and monthly-quota
-//     ceiling from these account overrides at Lookup time (apikey_postgres.go
-//     :164-191) and caches the resolved Subject verbatim, so a tightened
-//     monthly-quota ceiling (or a lowered rate-limit floor) is silently
-//     unenforced on every warm key until the TTL rolls it off. Eviction is
-//     keyed on ANY override delta — not just a tightening — because the cache
-//     must reflect the persisted account row in either direction, and keying
-//     on "did an enforcement-relevant field change" (rather than one bespoke
-//     per-direction guard) leaves no direction for an override change to
-//     slip through.
-//
-// POSTGRES BACKEND ONLY. Under the default auth_backend=redis there is no
-// read-through cache: the key this would DEL is the canonical credential (the
-// /v1/register mirror), so an "eviction" there is the permanent loss of the
-// customer's key on what may be a quota RAISE. [NewAPIKeyBudgetStores] leaves
-// CacheInvalidator nil in that mode and this function returns (0, 0); the
-// redis validator reads status and overrides through its own account cache,
-// which refreshes within auth.DefaultAccountStatusCacheTTL, so nothing needs
-// evicting.
-//
-// Reuses the tier-clamp eviction seam exactly (ListActiveForAccount +
-// InvalidateCachedKey). Best-effort and idempotent — a failure on one key never
-// stops the others, and a failed eviction just means that key waits out the
-// TTL; the durable state (the persisted account row) is already written.
+// POSTGRES BACKEND ONLY. Under auth_backend=redis there is no read-through
+// cache: the key a DEL would hit is the canonical credential (the
+// /v1/register mirror), so an "eviction" would destroy the customer's key.
+// [NewAPIKeyBudgetStores] leaves CacheInvalidator nil there and this
+// returns (0, 0).
+// Best-effort and idempotent: a failed key just waits out the TTL.
 func (s *Server) evictKeyCacheOnEnforcementChange(
 	ctx context.Context, subject auth.Subject, priorStatus platform.AccountStatus,
 	priorRateOverride int, priorQuotaOverride int64, acct platform.Account,

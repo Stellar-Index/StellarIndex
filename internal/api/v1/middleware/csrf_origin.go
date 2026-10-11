@@ -50,45 +50,25 @@ func OriginPolicyFrom(ctx context.Context) (*OriginPolicy, bool) {
 }
 
 // RequireSameSiteWrite rejects state-changing requests that did not
-// originate from this deployment's own site or from an operator-
-// allow-listed origin, per the OWASP CSRF Prevention Cheat Sheet's
-// "Verifying Origin With Standard Headers" defence.
+// originate from this deployment's own site or an operator-allow-listed
+// origin (OWASP CSRF Prevention Cheat Sheet, "Verifying Origin With
+// Standard Headers").
 //
-// `SameSite=Lax` on the session cookie is not, on its own, a CSRF
-// defence for the dashboard's cookie-authed mutation surface. Lax
-// stops a cross-SITE POST from carrying the
-// cookie, which is real protection — but it is a *site*-level
-// control, so it does nothing about a sibling origin under the same
-// registrable domain (any `*.stellarindex.io` host, e.g. a
-// customer-content or preview subdomain, is same-site), and nothing
-// about the un-authenticated state-changing routes that MINT a
-// session rather than consume one (`/v1/auth/login`,
-// `/v1/auth/verify-code` — login CSRF). This
-// guard closes both: the `Origin` must be the API's own origin or
-// one the operator explicitly allow-listed for CORS.
+// `SameSite=Lax` alone is not a CSRF defence for the dashboard's
+// cookie-authed mutations: it is a *site*-level control, so it does nothing
+// about a sibling origin under the same registrable domain (any
+// `*.stellarindex.io` host), nor about unauthenticated routes that MINT a
+// session (`/v1/auth/login`, `/v1/auth/verify-code`: login CSRF). This
+// guard closes both.
 //
-// Policy, in order:
-//
-//   - Safe methods (GET / HEAD / OPTIONS) pass untouched. They must
-//     not be state-changing in the first place; CORS preflight also
-//     short-circuits above this.
-//   - `Origin` is used when present; otherwise the origin is derived
-//     from `Referer`. `Origin: null` (sandboxed iframe, some
-//     redirect chains) is NOT trusted and falls through to Referer.
-//   - Neither header present → **reject**. This is the fail-closed
-//     arm the cheat sheet recommends, and it is safe on this surface
-//     specifically because every route it guards is a browser-only,
-//     cookie-authenticated dashboard route — programmatic clients
-//     use `Authorization: Bearer` on the API surface, which this
-//     guard is deliberately not mounted on.
-//   - Same origin as the request itself → pass.
-//   - Explicitly allow-listed for credentialed CORS → pass. That is
-//     the `stellarindex.io` explorer calling `api.stellarindex.io`:
-//     the operator already has to allow-list it for the credentialed
-//     fetch to work at all, so there is exactly one list to keep. See
-//     [OriginPolicy.AllowsCredentialed] for why the `*` wildcard is
-//     not accepted here.
-//   - Anything else → 403 problem+json.
+// Policy: safe methods (GET / HEAD / OPTIONS) pass. Otherwise `Origin` is
+// used when present, else the origin derived from `Referer`; `Origin: null`
+// is NOT trusted and falls through to Referer. Neither present: reject
+// (fail-closed), safe because every guarded route is browser-only and
+// cookie-authenticated (programmatic clients use `Authorization: Bearer`,
+// where this is not mounted). Same origin as the request, or allow-listed
+// for credentialed CORS ([OriginPolicy.AllowsCredentialed] says why `*` is
+// not accepted): pass. Anything else: 403 problem+json.
 func RequireSameSiteWrite(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()

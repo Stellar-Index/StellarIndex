@@ -135,62 +135,26 @@ func (g *monthlyQuotaGate) observeReadSuccess() {
 	}
 }
 
-// MonthlyQuota returns a [Middleware] that enforces the
-// `Subject.MonthlyQuota` ceiling against the caller's ACCOUNT-wide
-// month-to-date count. It is the runtime enforcement of the per-key
-// `monthly_quota` value the dashboard accepts and the Postgres
-// store persists; without it paid customers on metered plans could
-// spend indefinitely past the cap.
+// MonthlyQuota returns a [Middleware] enforcing `Subject.MonthlyQuota`
+// against the caller's ACCOUNT-wide month-to-date count.
 //
-// Behaviour:
+//   - `MonthlyQuota <= 0` or a nil reader (Redis-less): pass through.
+//   - Else read the counter under [UsageKeyForSubject], the key
+//     `UsageTracker` writes (the OWNER ACCOUNT, so re-minting a key
+//     never resets it). count >= quota: 429 + Problem-JSON. Only
+//     BILLABLE traffic counts ([billableClass]), so our throttle and
+//     outages never consume the cap.
+//   - Read error inside the dwell window: pass (fail OPEN), counted on
+//     [obs.MonthlyQuotaFailOpenTotal]. The cap is billing fairness, not
+//     security, so a Redis blip must not 429 paying customers.
+//   - Read error past the dwell window: 429 + Retry-After (fail
+//     CLOSED), counted on [obs.MonthlyQuotaFailClosedTotal]; else a
+//     capped key bills unmetered through the outage.
 //
-//   - Subject with `MonthlyQuota <= 0` (zero / negative): no
-//     check; the middleware is a pass-through. Anonymous /
-//     un-keyed callers fall in here.
-//   - Subject with `MonthlyQuota > 0` and a non-nil reader: read
-//     the month-to-date counter for the subject key (via
-//     [UsageKeyForSubject], the same derivation `UsageTracker` writes
-//     under, so the writer and reader stay in lock-step). That key is
-//     the OWNER ACCOUNT, not the credential — the ceiling is
-//     a plan budget, so every key the account holds spends the same
-//     counter and neither minting a second key nor revoking and
-//     re-minting this one resets it. When the count >= quota, reject
-//     with `429 Too Many Requests` + Problem-JSON body listing the cap.
-//     The counter this reads is BILLABLE traffic only — `UsageTracker`
-//     keeps 429s and fast-failing 5xx out of it (see
-//     [billableClass]), so neither our throttle nor our outage can
-//     consume the customer's cap; a read that timed out on its
-//     server-side budget is charged like a served one.
-//   - Reader nil: no backing store, pass through (Redis-less
-//     deployment).
-//   - Read error, dwell-time NOT yet exceeded: count + log + pass
-//     through (fail OPEN). The cap is not a security boundary — it's a
-//     billing-fairness mechanism, so a transient Redis blip must not
-//     429 paying customers. The bypass is counted on
-//     [obs.MonthlyQuotaFailOpenTotal] because while it is
-//     happening a metered key bills past its agreed cap and the
-//     overage cannot be reclaimed after the response is served.
-//   - Read error, dwell-time exceeded: reject with `429 Too Many
-//     Requests` + Retry-After (fail CLOSED). Once the month-to-date
-//     counter has been unreadable continuously for longer than the
-//     dwell window a key at/past its cap would otherwise bill unmetered
-//     for the entire outage, so the middleware stops serving on trust.
-//     Counted on [obs.MonthlyQuotaFailClosedTotal].
-//
-// # Dwell-time fail-open inversion
-//
-// The fail-open→fail-closed state machine mirrors
-// [auth.RedisSignupIPThrottle] and [ratelimit.Bucket]: a
-// read error inside the dwell window (default 30s, see
-// [DefaultMonthlyQuotaDwellTime]) falls open; once errors have
-// persisted past the window the middleware fails closed; and the
-// clock is cleared only after dwellTime of UNBROKEN success (or a
-// success after dwellTime with no failure), so a single stray success
-// under a flapping counter cannot reopen an indefinite unmetered window.
-//
-// Wire AFTER [Auth] (so SubjectFrom returns) and BEFORE
-// [RateLimit] so a request rejected by the monthly cap doesn't
-// also spend a rate-limit token.
+// The dwell machine (default 30s, [DefaultMonthlyQuotaDwellTime]) mirrors
+// [ratelimit.Bucket]: it clears only after dwellTime of UNBROKEN success,
+// so a stray success under a flapping counter cannot reopen an unmetered
+// window.
 func MonthlyQuota(reader MonthToDateReader, logger *slog.Logger, opts ...MonthlyQuotaOption) Middleware {
 	if logger == nil {
 		logger = slog.Default()

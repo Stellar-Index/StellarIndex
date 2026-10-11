@@ -44,50 +44,25 @@ func init() {
 }
 
 // UsageTracker records per-request daily counters keyed on the
-// authenticated subject's OWNER ACCOUNT (auth.Subject Identifier, with
-// KeyID as the fallback for credentials carrying no owner reference —
-// see [UsageKeyForSubject]). Anonymous requests are skipped —
-// /v1/account/usage is per-account, and there's no account to bill
-// for IP-only callers.
+// authenticated subject's OWNER ACCOUNT (see [UsageKeyForSubject]).
+// Anonymous requests are skipped: they have no account to bill.
 //
-// Two counter families per request, each advanced by the request's
-// unit count (1 unless the handler raised it via [ChargeUsage]):
+// Two counter families per request, each advanced by the request's unit
+// count (1 unless the handler raised it via [ChargeUsage]):
+//   - The LEGACY per-day total (usage:<sub>:<day>) feeds [MonthlyQuota]
+//     and the /v1/account/usage fallback. Only BILLABLE traffic
+//     increments it: 429s are excluded so rate-limit rejections don't
+//     eat monthly quota, and 5xx too, since an outage is our fault and
+//     must not burn paid quota.
+//   - The per-endpoint DETAIL hash (usage:ep:<sub>:<day>): one field
+//     per (mux route PATTERN, so bounded cardinality; outcome class ok
+//     / 4xx / 429 / 5xx), folded by the rollup worker into
+//     `usage_daily`.
 //
-//   - The LEGACY per-day total (usage:<sub>:<day>) — feeds
-//     [MonthlyQuota] and the /v1/account/usage fallback path. Only
-//     BILLABLE traffic increments it: 429s are excluded so
-//     rate-limit rejections don't eat monthly quota, and 5xx are
-//     excluded for the same reason with more force — a
-//     platform-caused failure is our fault, not the customer's, so
-//     an outage must not burn through the quota they paid for and
-//     lock them out of their own plan once we recover. Both classes
-//     stay fully visible in the detail family below, so the traffic
-//     is still observable; it is only the BILLABLE total that
-//     excludes them.
-//   - The per-endpoint DETAIL hash (usage:ep:<sub>:<day>) — one
-//     field per (route pattern, outcome class): ok / 4xx / 429 /
-//     5xx. The rollup worker folds these into the `usage_daily`
-//     hypertable that backs the dashboard's per-endpoint analytics.
-//
-// The endpoint label is the mux route PATTERN (bounded cardinality),
-// read via [obs.RouteFromContext] — the innermost obs.CaptureRoute
-// middleware writes it after dispatch — with r.Pattern as fallback
-// for stacks without the obs pair (tests). Unmatched paths bucket
-// under "unmatched".
-//
-// An SSE request ([isStreamingPath]) is recorded when its headers
-// commit (see [streamOpenMeter]), then re-billed every
-// [streamMeterInterval] for as long as it stays open (see
-// [meterOpenStream]) — a stream that never returns must still cost
-// more than one unit the longer it runs. Every other request is
-// recorded once, after its handler returns.
-//
-// Failures are logged at debug and dropped — usage tracking must
-// never block a request.
-//
-// Wire this AFTER the auth middleware (so SubjectFrom returns) and
-// OUTSIDE rate-limit, so 429 rejections are observed and counted as
-// `throttled` in the detail family.
+// An SSE request ([isStreamingPath]) is recorded at header commit
+// ([streamOpenMeter]) and re-billed every [streamMeterInterval]
+// ([meterOpenStream]); others once, after the handler returns. Failures are
+// logged and dropped. Wire AFTER auth and OUTSIDE rate-limit.
 func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -195,29 +170,23 @@ func usageTrackerRecord(counter *usage.Counter, logger *slog.Logger, reqCtx cont
 	}
 	billable := billableClass(class, deadlineFired.Load())
 	n := units.get()
-	// The response is already written, so these counters MUST NOT
-	// inherit the request's cancellation: a client that aborted, or
-	// a handler that consumed the whole RequestTimeout budget, would
-	// otherwise silently lose its usage row — and the legacy total is
-	// the monthly-quota input. They run under context.Background(), on
-	// the shared after-response pool rather than the request goroutine,
-	// so a wedged store bounds only a pool worker, never the
-	// request.
+	// The response is already written, so these counters MUST NOT inherit
+	// the request's cancellation: an aborted client, or a handler that used
+	// the whole RequestTimeout budget, would silently lose its usage row
+	// (the legacy total is the monthly-quota input). They run under
+	// context.Background() on the shared after-response pool, so a wedged
+	// store bounds only a pool worker.
 	//
-	// DELIBERATE: an ABORTED request consumes monthly quota.
-	// statusRecorder defaults to 200, so a served-
-	// then-abandoned request classes as billable and the Increment,
-	// detached from the cancelled context, lands. That
-	// is the intended semantics — the request consumed the read, the
-	// pool connection and the CPU, and NOT counting it is a
-	// quota-evasion vector: a caller could abort before the body
-	// completes and get unmetered traffic indefinitely.
+	// DELIBERATE: an ABORTED request consumes monthly quota. statusRecorder
+	// defaults to 200, so a served-then-abandoned request classes as
+	// billable and the detached Increment lands. The request consumed the
+	// read, the pool connection and the CPU, and NOT counting it is a
+	// quota-evasion vector (abort before the body completes, get unmetered
+	// traffic).
 	//
-	// The 5 s bound is only as hard as the store's context honouring.
-	// go-redis and database/sql both respect ctx cancellation on the
-	// wire, so it holds for every store wired here today; a driver
-	// that ignored ctx would block a pool worker for its own timeout
-	// instead.
+	// The 5 s bound is only as hard as the store's ctx honouring; go-redis
+	// and database/sql both respect it, but a driver that ignored ctx would
+	// block a pool worker for its own timeout.
 	fn := func() { //nolint:contextcheck // intentional detach: post-response work outlives the request ctx
 		ctx, cancel := context.WithTimeout(context.Background(), postResponseWriteTimeout)
 		defer cancel()
@@ -336,59 +305,24 @@ func ChargeUsage(r *http.Request, units int) {
 }
 
 // meterOpenStream re-bills a live SSE connection every
-// [streamMeterInterval] for as long as it stays open, so a stream is
-// not metered exactly once at open: that would buy unbounded duration
-// for one quota unit, invisible to the DETAIL family for its whole
-// lifetime.
+// [streamMeterInterval] while it stays open: metering once at open would
+// buy unbounded duration for one quota unit.
 //
-// The ticker starts at DISPATCH — this goroutine is spawned just
-// before next.ServeHTTP, not at [streamOpenMeter]'s header commit —
-// so the billed total for a connection open from commit to close for
-// duration d is 1 (the open bill) + floor(d/streamMeterInterval) only
-// when dispatch and commit coincide, which they do for a handler that
-// writes its preamble immediately. A handler that does setup work
-// before its first write shifts every tick earlier relative to d by
-// that gap, since the ticker's own clock never restarts at commit;
-// gated ticks before commit are simply skipped (see once.fired()
-// below), not deferred to after it.
+// The ticker starts at DISPATCH; ticks before [streamOpenMeter]'s header
+// commit are skipped, not deferred. Ticks are gated on once.fired(): [streamOpenMeter] fires it at the first
+// write/flush, and an SSE response can't change status after that, so a
+// tick seeing fired()==true reads rec.status/units as they stood at commit
+// without racing the handler goroutine that owns rec. family and id are
+// resolved once before dispatch: afterwards the mux mutates inner.Pattern
+// from the handler's goroutine.
 //
-// Ticks are gated on once.fired(): [streamOpenMeter] fires it the
-// moment the handler commits headers/first write/flush, and an SSE
-// response can't change status after that (HTTP forbids it), so a
-// tick observing fired()==true is bound (via the atomic.Bool it
-// reads) to see rec.status/units as they stood at that commit —
-// billing a connection already confirmed successful without racing
-// the handler goroutine that still owns rec. A handler that errors
-// out before opening the stream never gets ticked at all.
-//
-// family and id are resolved once, before dispatch, and passed in
-// rather than recomputed per tick: after dispatch starts, the mux
-// mutates inner.Pattern from the handler's goroutine, so reading it
-// from here too would race it.
-//
-// Deliberately reuses [outcomeClass]/[billableClass]/[units] rather
-// than assuming success, so the rule that a platform-side 5xx must
-// never eat monthly quota holds for every tick, not just the first.
-//
-// Writes run inline on this goroutine, not via [AfterResponse]'s
-// shared pool: this goroutine is already dedicated to one connection
-// (unlike a burst of post-response bookkeeping across many short
-// requests), so there is no fan-out to bound, and routing through the
-// pool's WaitGroup here would make a test polling mid-stream race the
-// pool's own drain-for-test Wait() (sync.WaitGroup forbids a
-// concurrent Add once a Wait could observe zero).
-//
-// A billable tick is a fresh purchase of stream time, so it is refused
-// at the same used >= quota ceiling [MonthlyQuota] applies at open:
-// instead of billing, it calls endStream and stops.
-//
-// Stops when done is closed (the request handler returned), and closes
-// exited on its way out so the caller's deferred <-exited can block
-// until this goroutine has genuinely stopped touching rec/once/units —
-// not merely been told to (see UsageTracker's recover defer comment).
-//
-// A panic here would otherwise kill the whole API process; close(exited)
-// still runs on unwind, so the caller's <-exited never wedges.
+// It reuses [outcomeClass]/[billableClass]/[units], so a platform 5xx never
+// eats quota on any tick, and a billable tick is refused at the same used
+// >= quota ceiling [MonthlyQuota] applies at open (endStream, then stop).
+// Writes run inline, not via [AfterResponse]'s pool: this goroutine is
+// already dedicated to one connection. Closing exited on the way out (even
+// on panic) lets the caller's deferred <-exited wait until rec/once/units
+// are untouched.
 func meterOpenStream(counter *usage.Counter, logger *slog.Logger, id, family string, quota int64, endStream context.CancelFunc, rec *statusRecorder, once *usageRecordOnce, units *usageUnits, deadlineFired *atomic.Bool, done <-chan struct{}, exited chan<- struct{}) {
 	defer worker.Recover(logger, "api-usage-stream-meter")
 	defer close(exited)
@@ -485,56 +419,26 @@ func SetStreamTickHookForTest(fn func()) (restore func()) {
 	return func() { streamTickHook.Store(nil) }
 }
 
-// UsageKeyForSubject picks the stable identifier we count under.
-// Order of preference:
+// UsageKeyForSubject picks the stable identifier we count under, in order:
 //  1. Identifier — the OWNER-ACCOUNT reference ([auth.AccountIdentifier],
-//     `acct:<slug>`, for API keys; the client account id for SEP-10).
-//     Every credential the same account holds shares ONE counter.
-//  2. KeyID — per-credential fallback, reached only by a credential
-//     whose store stamped no owner reference (legacy hand-seeded Redis
-//     records). Metered narrowly beats not metered at all.
+//     `acct:<slug>` for API keys; the client account id for SEP-10).
+//  2. KeyID — for credentials with no owner reference (legacy Redis records).
 //  3. "" — anonymous; skip.
 //
-// # Why the ACCOUNT, not the credential
+// Why the ACCOUNT, not the credential: the counter feeds [MonthlyQuota] and
+// keys the per-minute bucket ([authenticatedRateLimitKey]); each ceiling is
+// a PLAN budget a customer may only ever LOWER. Keying on KeyID would allow
+// two ways to raise it: MINT (N live keys mean N independent counters) and
+// ROTATE (revoke-and-mint yields a fresh KeyID and a zero month-to-date).
 //
-// The counter this derives feeds [MonthlyQuota] and keys the per-minute
-// rate-limit bucket ([authenticatedRateLimitKey]), and the ceiling each
-// is compared against is a PLAN budget, not a per-credential allowance:
-// platform.Tier.MaxMonthlyQuota is the ladder a dashboard-minted
-// key's quota is clamped to, and the account-level
-// `MonthlyRequestQuotaOverride` is the hard ceiling above it — the
-// documented contract is that a customer may only ever LOWER their cap,
-// never raise it. Keying on KeyID would hand them two ways to raise it
-// anyway, because the counter's identity would be the credential's:
+// Counting per account conserves the allowance across credentials and
+// rotation. The per-credential `Subject.MonthlyQuota` still sets the
+// ceiling, so lowering ONE key's quota cuts it off at that many
+// ACCOUNT-wide requests: stricter, deliberately (it fails closed).
 //
-//   - MINT: N live keys under one account would mean N independent
-//     month-to-date counters, so the plan's allowance multiplies by the
-//     number of keys held (bounded by account.go's
-//     defaultAccountKeyQuota, but bounded is not capped).
-//   - ROTATE: revoke-and-mint produces a fresh KeyID, hence a
-//     month-to-date of zero, so the cap would reset on demand mid-month —
-//     and the self-service key cap counts only un-revoked keys, so the
-//     rotation is free.
-//
-// Counting per account closes both: the allowance is conserved across
-// every credential the account holds and survives rotation, which is
-// what a plan budget means.
-//
-// The per-credential `Subject.MonthlyQuota` still decides the ceiling
-// for the request in front of us, so a customer who deliberately lowers
-// ONE key's quota gets that key cut off at that many ACCOUNT-wide
-// requests. That is stricter than a per-credential reading and deliberately
-// so: it fails closed, and in the ordinary case every key on an account
-// carries the same clamped plan value, where the two readings coincide.
-//
-// Exported so every reader of these counters — [MonthlyQuota]
-// and /v1/account/usage's handler — calls this single implementation
-// instead of reimplementing the derivation. A duplicated copy that
-// drifts from this one silently breaks the reader: it would key off
-// something the writer never wrote under, and /v1/account/usage would
-// return [] despite incoming requests being recorded. That coupling is
-// why the derivation can only move with its writer: a reader pointed at
-// an account key the writer never writes meters NOTHING.
+// Exported so every reader ([MonthlyQuota], /v1/account/usage) shares one
+// implementation: a drifted copy would key off something the writer never
+// wrote and meter NOTHING.
 func UsageKeyForSubject(s auth.Subject) string {
 	if s.Tier == auth.TierAnonymous || s.Tier == "" {
 		return ""

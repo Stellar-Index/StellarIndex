@@ -97,16 +97,11 @@ type AuthOptions struct {
 // Behaviour by mode:
 //
 //   - none: attach anonymous Subject keyed by remote-IP+UA hash; pass.
-//   - apikey: extract key from Authorization Bearer or X-API-Key
-//     header, call APIKey.Lookup. On success attach the returned
-//     Subject; on error map to HTTP status (401/503).
-//   - sep10: extract JWT from Authorization Bearer header, call
-//     SEP10.VerifyJWT. Same error mapping.
+//   - apikey: key from Authorization Bearer or X-API-Key, APIKey.Lookup;
+//     errors map to 401/503.
+//   - sep10: JWT from Authorization Bearer, SEP10.VerifyJWT; same mapping.
 //
-// Errors are returned as bare-bones text/plain 401 / 503 — the
-// problem+json wrapper happens upstream in the handler layer for
-// route-specific errors. Auth is too generic to ship a problem URL
-// per case.
+// Errors are bare text/plain 401 / 503; route-specific problem+json is the handler layer's job.
 func Auth(opts AuthOptions) Middleware {
 	mode := opts.Mode
 	if mode == "" {
@@ -148,40 +143,25 @@ func rejectAuth(w http.ResponseWriter, r *http.Request, mode AuthMode, opts Auth
 	writeAuthError(w, err)
 }
 
-// isUnauthenticatedInfraPath reports whether a path is operational
-// plumbing that must answer WITHOUT credentials, whatever `auth_mode` is.
+// isUnauthenticatedInfraPath reports whether a path is operational plumbing
+// that must answer WITHOUT credentials, whatever `auth_mode` is.
 //
-// Auth() wraps the entire mux, and every one of these routes is registered
-// on that same mux — so without this list, flipping auth_mode from `none` to
-// `apikey` would make liveness probes, readiness probes, the Prometheus
-// scrape, robots.txt and the public error-documentation pages all return 401.
+// Auth() wraps the entire mux, so without this list, flipping auth_mode
+// from `none` to `apikey` (the production cutover in
+// docs/operations/launch-day-checklist.md) would 401 liveness/readiness
+// probes, the Prometheus scrape, robots.txt and the error-documentation
+// pages: health checks fail and monitoring goes blind at go-live.
 //
-// That is not a hypothetical configuration. docs/operations/
-// launch-day-checklist.md documents the production cutover as exactly that
-// flip (`--extra-vars 'auth_mode=apikey'`), so the failure would fire at the
-// moment of going live: load-balancer health checks start failing, the
-// orchestrator concludes the API is unhealthy, and monitoring goes blind at
-// precisely the point an operator most needs it.
-//
-// /metrics is included deliberately. It is already protected by
-// loopbackOnly(), which is the correct control for a scrape endpoint — but
-// under auth that guard would be MOOT, because Auth would 401 the request
-// before it ever reached the handler, blocking even a local Prometheus on
-// 127.0.0.1. Exempting it here keeps loopbackOnly as the actual gate rather
-// than stacking a second one that breaks the legitimate caller.
+// /metrics is included deliberately. loopbackOnly() is its real gate, but
+// under auth it would be MOOT because Auth would 401 first, blocking even a
+// local Prometheus.
 //
 // Nothing here reads user data or accepts input: healthz/readyz report
-// process liveness, /metrics is loopback-only, and robots.txt and /errors/*
-// are static public documentation the RFC 9457 `type` URIs point at — a 401
-// on those makes every error response's own documentation link unreachable.
-//
-// /v1/livez/lake is the lake-critical LB probe (ADR-0050): the OpenAPI
-// contract declares it `security: []` alongside healthz/readyz, and it reads
-// no caller input, so it belongs here too.
-//
-// Deliberately an exact-match list, not a prefix match: a prefix rule ("/v1/health…")
-// is how an exemption silently widens to cover a route added next to it later.
-// The one prefix here, /errors/, is scoped to a static docs handler.
+// liveness; robots.txt and /errors/* are static documentation the RFC 9457
+// `type` URIs point at; /v1/livez/lake is the lake-critical LB probe
+// (ADR-0050). Exact-match, not prefix: a prefix rule is how an exemption
+// silently widens to a route added later. The one prefix, /errors/, is
+// scoped to a static docs handler.
 func isUnauthenticatedInfraPath(path string) bool {
 	switch path {
 	case "/v1/healthz", "/v1/readyz", "/v1/livez/lake", "/v1/version", "/metrics", "/robots.txt", "/":

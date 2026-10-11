@@ -145,19 +145,14 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 // fiat:USD market.
 // usdPriceMapTTL caches the priced-asset set used to rank account wealth.
 //
-// usdPriceMap walks every verified asset and resolves each price with a
-// SEQUENTIAL LookupUSDPrice call. On production that loop measured ~8s on
-// the request path — it, not the wealth scan, was what kept /v1/accounts at
-// 8.1s even once the ranking itself was cached: two slow things were
-// stacked, not one.
+// usdPriceMap resolves each price with a SEQUENTIAL LookupUSDPrice call,
+// ~8s on the request path.
 //
-// TTL is set ABOVE the prewarm cadence (5 min) on purpose: PrewarmAccounts-
-// Wealth calls usdPriceMap every 5 minutes, so a 10-minute TTL means the
-// entry is always refreshed before it expires and real requests never pay
-// the walk. A 60s TTL expired 4 minutes out of every 5, so in production
-// most requests still ate the ~8s cold walk even though the wealth ranking
-// itself was warmly cached. 10 minutes stale is fine: this feeds a ranking
-// cached for 15 minutes, so the price set cannot change what the page shows.
+// TTL is set ABOVE the prewarm cadence (5 min) on purpose:
+// PrewarmAccountsWealth calls usdPriceMap every 5 minutes, so a 10-minute
+// TTL means the entry is always refreshed before it expires and real
+// requests never pay the walk. 10 minutes stale is fine: this feeds a
+// ranking cached for 15 minutes.
 const usdPriceMapTTL = 10 * time.Minute
 
 // usdPriceMapEmptyTTL is shorter so a pricing outage clears quickly, yet

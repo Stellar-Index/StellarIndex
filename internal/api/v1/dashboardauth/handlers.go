@@ -31,38 +31,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// EmailLocker serialises first-login provisioning per email so
-// concurrent /v1/auth/callback callers can't both create
-// speculative Account rows before the email-unique-index Users
-// insert decides a winner.
+// EmailLocker serialises first-login provisioning per email so concurrent
+// /v1/auth/callback callers can't both create speculative Account rows
+// before the email-unique-index Users insert picks a winner.
 //
-// Without this seam, two valid magic links for the same
-// just-verified email racing through the callback both pass
-// `GetUserByEmail → ErrNotFound`, both `Accounts.Create` succeed
-// (slug uniqueness gets resolved with the 4-hex retry), then only
-// the first `Users.CreateUser` wins. The losing caller's Account
-// row is then orphaned. A best-effort Suspend-mark on the orphan
-// exists as defence-in-depth, but acquiring a per-email lock
-// BEFORE the Account.Create removes the orphan creation entirely.
+// Without it, two valid magic links for the same just-verified email both
+// pass `GetUserByEmail → ErrNotFound` and both `Accounts.Create`; only the
+// first `Users.CreateUser` wins and the loser's Account is orphaned. A
+// Suspend-mark on the orphan is defence-in-depth; locking BEFORE
+// Account.Create removes it.
 //
-// Implementations:
-//   - production: Redis SETNX with a 30s TTL (the
-//     `dashboardauth.RedisEmailLocker` adapter).
-//   - tests / Redis-less dev: nil — the Suspend-on-conflict
-//     fallback handles the rare race without serialisation.
+// Production: Redis SETNX, 30s TTL (`dashboardauth.RedisEmailLocker`).
+// Tests / Redis-less dev: nil, and the Suspend-on-conflict fallback handles
+// the rare race.
 //
-// `Acquire` returns (true, token, …) when the caller now holds
-// the lock and must call `Release` with the SAME token. (false,
-// "", …) means another caller holds it — the caller should poll
-// `Users.GetUserByEmail` briefly to find the winner's user.
-// Errors propagate; treat them as "lock not acquired, fall
-// through to the unlocked path".
-//
-// The `token` is a per-acquire fencing token: `Release` must delete
-// the lock ONLY if it still carries this caller's token, so a holder
-// that overran its TTL (a slow Account.Create + Users.CreateUser)
-// cannot delete a successor's freshly-acquired lock. `Release` with an
-// empty token is a no-op (nothing was held).
+// `Acquire` returns (true, token, …) when the caller holds the lock and
+// must `Release` with the SAME token; (false, "", …) means another caller
+// holds it, so poll `Users.GetUserByEmail` briefly. Errors mean "not
+// acquired": fall through unlocked. `Release` deletes the lock ONLY if it
+// still carries the token, so a holder that overran its TTL cannot delete a
+// successor's lock.
 type EmailLocker interface {
 	Acquire(ctx context.Context, emailHash string, ttl time.Duration) (bool, string, error)
 	Release(ctx context.Context, emailHash, token string) error
@@ -299,20 +287,10 @@ func NewHandlers(cfg *Config) (*Handlers, error) {
 //	GET    /v1/auth/passkey/credentials       — list passkeys (session-gated)
 //	DELETE /v1/auth/passkey/credentials/{id}  — remove one (session-gated)
 //
-// Caller wires the result into the regular middleware stack
-// (RequestID + Logger + Recoverer + RateLimit + ...). The login
-// entry points (login, callback, verify-code, logout, passkey
-// begin/finish-login) are mounted through public, so the API-key /
-// SEP-10 Auth middleware admits them without a credential under
-// every auth_mode. The session-gated routes are NOT public.
-//
-// The three POSTs are wrapped in [middleware.RequireSameSiteWrite].
-// They are state-changing and browser-driven: login MINTS a token (and
-// the intent cookie that binds it), and verify-code MINTS a session —
-// so a cross-site page that can drive either is a login-CSRF primitive
-// even though neither consumes a session cookie. The GET callback is a
-// top-level navigation from an email client and carries no usable
-// Origin; it is bound instead by [LoginIntentCookieName].
+// Login entry points mount through public (Auth admits them credential-less
+// in every auth_mode); session-gated routes do not. The three POSTs sit
+// behind [middleware.RequireSameSiteWrite] (login-CSRF primitives); the GET
+// callback has no usable Origin and is bound by [LoginIntentCookieName].
 func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
 	public.Handle(mux, "POST /v1/auth/login", sameSite(http.HandlerFunc(h.HandleLogin)))
@@ -378,26 +356,22 @@ const maxCodeAttempts = 5
 
 // Durable per-EMAIL code-failure policy.
 //
-// maxCodeAttempts alone is a per-MINT cap: a new /v1/auth/login hands
-// the guesser a fresh 5. Without this policy the only thing bounding
-// re-mints is [auth.RedisLoginThrottle] (5 sends/hour/target-email),
-// which lives in Redis with an in-process fallback — a FLUSHALL, a
-// fail-over or a restart clears it, and it is a fixed window that
-// resets hourly regardless. Standing budget: ~25 guesses/hour/email,
-// indefinitely ≈ 0.22 probability of hitting a code over a year of
-// patient grinding on one targeted address.
+// maxCodeAttempts alone is a per-MINT cap: a new /v1/auth/login hands the
+// guesser a fresh 5. The only bound on re-mints is
+// [auth.RedisLoginThrottle] (5 sends/hour/email), which lives in Redis with
+// an in-process fallback (a FLUSHALL, fail-over or restart clears it) and
+// is a fixed window. Standing budget: ~25 guesses/hour/email, indefinitely
+// ≈ 0.22 probability of hitting a code over a year on one address.
 //
-// These numbers cut that to ~10 guesses/day ≈ 3.7e-3/year — two orders
-// of magnitude down, and only because each guess is compared against ONE
-// code (the newest mint's); matching against every live mint would
-// multiply it by the send throttle's 5 — at a usability cost that is close to zero,
-// because the lockout gates the CODE path only: the magic link in the
-// same email keeps working, exactly as maxCodeAttempts already does.
-// A legitimate user would have to mistype ten times in a day to meet
-// it, and their recovery is "click the link you were sent".
+// These numbers cut that to ~10 guesses/day ≈ 3.7e-3/year, and only because
+// each guess is compared against ONE code (the newest mint's); matching
+// every live mint would multiply it by the send throttle's 5. The usability
+// cost is near zero: the lockout gates the CODE path only, the magic link
+// in the same email keeps working, and a legitimate user would have to
+// mistype ten times in a day.
 //
-// Deliberately NOT tunable per deployment: an operator lowering the
-// bound is the failure mode this finding is about.
+// Deliberately NOT tunable per deployment: an operator weakening the bound
+// is the failure mode.
 const (
 	// maxDurableCodeFailures is the per-email failure budget inside
 	// durableCodeFailureWindow before the code path locks.
@@ -616,25 +590,22 @@ func (h *Handlers) admitSignedInBrowser(r *http.Request, email string) bool {
 
 // sessionSameSite picks the session-cookie SameSite policy. The explorer at
 // stellarindex.io calls the API at api.stellarindex.io — cross-*origin* but
-// **same-site** (both are the `stellarindex.io` registrable domain). SameSite
-// is a *site*-level control, so Lax is sent on those credentialed same-site
-// requests while blocking genuine cross-*site* (e.g. evil.com) requests.
+// **same-site** (same registrable domain). SameSite is a *site*-level
+// control, so Lax is sent on those credentialed requests while blocking
+// genuine cross-*site* (e.g. evil.com) ones.
 //
-// Not None: None is only needed for a different registrable domain, and it
+// Not None: it is only needed for a different registrable domain, and it
 // would let any site auto-submit a credentialed POST to the cookie-authed
-// /v1/dashboard/* mutation handlers (CSRF — e.g. creating a webhook that
-// exfiltrates the victim's payloads). Lax closes that with no impact on the
-// legitimate same-site flow. If the dashboard is ever served from a truly
-// different site, add a CSRF token — do NOT switch to None.
+// /v1/dashboard/* mutation handlers (CSRF). If the dashboard is ever served
+// from a truly different site, add a CSRF token — do NOT switch to None.
 //
-// Lax still leaves a residual gap: SameSite is a *site*-level control, so a
-// sibling origin under the same registrable domain still counts as
-// same-site and Lax still permits a top-level cross-site GET. Every
-// state-changing dashboard + auth route is therefore additionally gated by
-// [middleware.RequireSameSiteWrite] (Origin / Referer allow-list), and the
-// magic-link callback — a GET, and therefore beyond any Origin check — is
-// gated by [LoginIntentCookieName]. This cookie's SameSite mode is defence
-// in depth, not the only line.
+// Lax still leaves a residual gap: a sibling origin under the same
+// registrable domain counts as same-site, and Lax permits a top-level
+// cross-site GET. Every state-changing dashboard + auth route is therefore
+// also gated by [middleware.RequireSameSiteWrite] (Origin / Referer
+// allow-list), and the magic-link callback — a GET, beyond any Origin check
+// — by [LoginIntentCookieName]. This cookie's SameSite mode is defence in
+// depth, not the only line.
 func sessionSameSite() http.SameSite {
 	return http.SameSiteLaxMode
 }
@@ -732,36 +703,26 @@ type verifyCodeResponse struct {
 	Status string `json:"status"`
 }
 
-// HandleVerifyCode consumes the 6-digit email code — the paste-friendly
-// alternative to clicking the magic link — and mints the same session
-// cookie HandleCallback does. Unlike the callback it returns JSON
-// (`{status:"ok"}`) rather than a 303, because the SPA calls it via a
-// credentialed fetch: the Set-Cookie rides the response and the SPA
-// navigates itself. Same find-or-create-on-first-login semantics.
+// HandleVerifyCode consumes the 6-digit email code (the paste-friendly
+// alternative to the magic link) and mints the same session cookie
+// HandleCallback does. It returns JSON (`{status:"ok"}`), not a 303,
+// because the SPA calls it via a credentialed fetch.
 //
-// The code is matched only against the email's NEWEST in-flight login
-// token — one comparison per request, so each guess has 1-in-1e6 odds no
-// matter how many sign-in emails an attacker has triggered — and every
-// attempt is charged — per token, and per email (a separate budget when the
-// browser holds this address's [LoginDeviceCookieName] proof) — BEFORE it is compared,
-// atomically in the store, so a burst of concurrent guesses
-// gets no more comparisons than sequential ones (see [maxCodeAttempts],
-// [maxDurableCodeFailures]). All failure modes return one generic error
-// so a caller can't tell "no token" from "wrong code" from "too many
-// attempts".
+// The code is matched only against the email's NEWEST in-flight token: one
+// comparison per request, so each guess has 1-in-1e6 odds however many
+// sign-in emails an attacker triggered. Every attempt is charged, per token
+// and per email (a separate budget when the browser holds this address's
+// [LoginDeviceCookieName] proof), BEFORE it is compared, atomically in the
+// store, so concurrent guesses get no more comparisons than sequential ones
+// (see [maxCodeAttempts], [maxDurableCodeFailures]). All failures return
+// one generic error.
 //
-// Non-matching includes CORRECT-BUT-STALE. A code whose token has
-// expired, been consumed, burned [maxCodeAttempts], or been superseded
-// by a newer sign-in email is not a candidate, so while ANY code is live
-// submitting it registers a durable per-email failure exactly as
-// a wrong guess does; with no live code nothing is compared and nothing
-// is charged. That is deliberate — the
-// server cannot distinguish "the owner pasted yesterday's code" from
-// "an attacker guessed a value that happens to match a dead token"
-// without leaking which — and it is affordable because the lockout
-// gates this door only: the magic LINK in the same email keeps working,
-// and any successful sign-in clears the counter. A user who exhausts
-// the budget on stale codes clicks the link instead.
+// A CORRECT-BUT-STALE code (token expired, consumed, burned or superseded)
+// is not a candidate, so while ANY code is live submitting it counts as a
+// durable failure like a wrong guess: the server cannot tell the owner
+// pasting yesterday's code from an attacker guessing a dead value without
+// leaking which. Affordable because the lockout gates this door only (the
+// magic LINK keeps working) and a successful sign-in clears the counter.
 func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	// MaxBytesReader, not LimitReader — see HandleLogin.
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))

@@ -81,45 +81,26 @@ type RegisterResult struct {
 // /v1/signup — name + email + JSON wrapper fits in a fraction of it.
 const registerBodyMaxBytes = 4 * 1024
 
-// handleRegister serves POST /v1/register.
-//
-// Public, anonymous-tier, and deliberately friction-free: the
-// canonical AGENT onboarding path. One curl —
+// handleRegister serves POST /v1/register: public, anonymous-tier, the
+// canonical AGENT onboarding path (one curl, no body needed) —
 //
 //	curl -X POST https://api.stellarindex.io/v1/register \
 //	    -H 'Content-Type: application/json'
 //
-// — creates a free-tier platform account and mints its first API
-// key. Name and email are both optional (email is contact-only; no
-// verification email is sent and nothing is keyed on it). This is
-// the platform-account sibling of the older email-keyed /v1/signup
-// flow: signup mints a bare Redis credential against an email hash,
-// register creates a real accounts row (the thing PATCH
-// /v1/admin/accounts/{id} can later promote to partner limits) plus
-// a Postgres-backed key attached to it.
+// — creates a free-tier platform account and mints its first API key. Name
+// and email are optional (contact-only). Unlike the older email-keyed
+// /v1/signup, which mints a bare Redis credential, this creates a real
+// accounts row (promotable via PATCH /v1/admin/accounts/{id}) plus a
+// Postgres-backed key.
 //
 // Abuse posture:
-//   - Per-IP volume: the SAME per-IP signup throttle /v1/signup uses
-//     ([SignupIPThrottle], default 5/hour/IP) gates every
-//     mint, sharing one budget across both endpoints so an abuser
-//     can't double-dip. The global anonymous rate limit applies
-//     upstream of that.
+//   - Per-IP volume: the SAME [SignupIPThrottle] /v1/signup uses
+//     (default 5/hour/IP), one budget across both.
 //   - CSRF/browser relay: Content-Type: application/json is REQUIRED
-//     (requireJSONContentType, not merely validated-when-present — a
-//     header-less POST is itself a CORS *simple* request that no
-//     preflight would catch). A body-less POST is fine (an empty
-//     body still satisfies parsing), but the header itself is not
-//     optional — same reasoning as /v1/signup.
-//   - No enumeration surface: there is no per-email uniqueness, so
-//     there is nothing to probe — every accepted call mints a fresh
-//     account.
-//   - Retention: an account whose key is never used is erased once
-//     that key's validator record expires
-//     ([accounterasure.AbandonedRegistrationRetention]), so a stranger's
-//     address typed in as the email does not persist.
-//
-// Stores nil → 503 (deployment without Postgres), same posture as
-// the admin account endpoints.
+//     (requireJSONContentType): a header-less POST is a CORS simple request
+//     no preflight would catch. A body-less POST is fine.
+//   - Retention: an account whose key is never used is erased once its
+//     validator record expires ([accounterasure.AbandonedRegistrationRetention]).
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	req, ok := s.parseAndValidateRegister(w, r)
 	if !ok {

@@ -38,32 +38,24 @@ type TouchDebouncer interface {
 	ShouldTouch(ctx context.Context, keyID string) (bool, error)
 }
 
-// TouchUsage returns a [Middleware] that updates the api_keys
-// row's `last_used_at` / `last_used_ip` / `last_used_user_agent`
-// columns for authenticated requests.
+// TouchUsage returns a [Middleware] that updates the api_keys row's
+// `last_used_at` / `last_used_ip` / `last_used_user_agent` for
+// authenticated requests.
 //
-// Behaviour:
-//
-//   - Wraps `next.ServeHTTP` so the touch fires post-handler
-//     (touch is bookkeeping, not load-bearing). [AfterResponse]
-//     flushes the response to the client immediately and hands the
-//     actual touch to the shared bounded worker pool — not a
-//     per-request goroutine, so fan-out stays capped under load.
+//   - The touch fires post-handler (bookkeeping, not load-bearing):
+//     [AfterResponse] flushes the response, then hands the touch to the
+//     shared bounded worker pool, so fan-out stays capped under load.
 //   - Skips anonymous Subjects, Subjects without a KeyID, and
-//     deployments where toucher OR debouncer is nil — Redis-less
-//     deployments fall in here and get no last_used updates.
-//   - The SETNX debounce keeps the per-request cost to one
-//     Redis round-trip in the common case (debounce window held
-//     by a recent request); only the first call per (key, TTL)
-//     window pays the additional Postgres UPDATE.
-//   - Best-effort: every error path logs at debug and drops.
-//     The dashboard's "last seen" column is operator UX, not
-//     auth — a debounce-store blip must never surface to the
-//     customer.
+//     deployments where toucher OR debouncer is nil (Redis-less: no
+//     last_used updates).
+//   - The SETNX debounce keeps the common case to one Redis round-trip;
+//     only the first call per (key, TTL) window pays the Postgres
+//     UPDATE.
+//   - Best-effort: every error logs at debug and drops. "Last seen" is
+//     operator UX, not auth.
 //
-// Wire AFTER [Auth] (so SubjectFrom returns) — placement in the
-// chain after that is flexible because the middleware fires
-// post-handler.
+// Wire AFTER [Auth] (so SubjectFrom returns); later placement is flexible
+// because it fires post-handler.
 func TouchUsage(toucher KeyToucher, debouncer TouchDebouncer, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
