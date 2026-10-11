@@ -3,45 +3,41 @@
 # ops-verdict.sh — sourced helpers that refuse to call an operation
 # successful when it did nothing.
 #
-# THE BUG CLASS. Four variants of one shape were found on r1,
-# all of them "an operation that succeeded at doing nothing":
+# THE BUG CLASS: four variants of "an operation that succeeded at doing
+# nothing" were found on r1.
 #
 #   1. Waiting on a `Type=oneshot` unit with
 #        while systemctl is-active --quiet "$u"; do sleep 30; done
 #      exits on iteration ZERO. `is-active` returns 0 only for
-#      ActiveState=active|reloading, and a `RemainAfterExit=no` oneshot
-#      is never `active` at any point in its life — it goes
-#      inactive → activating → inactive. Measured on r1 the same day:
-#      creators-rollup.service ran 11:32:26 → 11:48:29 CEST and its
-#      ActiveEnterTimestamp is EMPTY (ActiveEnterTimestampMonotonic=0),
-#      while every RemainAfterExit=yes oneshot on the host carries one.
-#      The loop therefore falls through immediately and the caller reads
-#      `systemctl show -p Result`, which still holds the PREVIOUS run's
-#      value. A rollup cycle 23 windows into a 65-window walk reported
-#      RESULT=success by quoting a result from hours earlier.
-#   2. `Result` is not evidence that a unit ran. It is `success` by
-#      default: apport-autoreport.service on r1 has never run since boot
-#      (InactiveExitTimestampMonotonic=0) and reports
-#      Result=success, ExecMainStatus=0.
-#   3. A backgrounded verify.sh reported exit 0 twice while its
-#      `ALL CHECKS PASSED` sentinel was absent — it had died on a
-#      missing toolchain, and the sentinel is the only honest verdict.
-#   4. An `alter_job` disarm matched zero rows and exited 0; an ansible
-#      apply path skipped its own verdict step and counted as success.
+#      ActiveState=active|reloading, and a `RemainAfterExit=no` oneshot is never
+#      `active` (inactive -> activating -> inactive). Measured on r1:
+#      creators-rollup.service ran 11:32:26 -> 11:48:29 CEST with an EMPTY
+#      ActiveEnterTimestamp (Monotonic=0), while every RemainAfterExit=yes
+#      oneshot carries one. The loop falls through, the caller reads
+#      `systemctl show -p Result`, and gets the PREVIOUS run's value: a rollup
+#      23 windows into a 65-window walk reported RESULT=success from hours earlier.
+#   2. `Result` is not evidence a unit ran; it defaults to `success`.
+#      apport-autoreport.service has never run since boot
+#      (InactiveExitTimestampMonotonic=0) yet reports Result=success,
+#      ExecMainStatus=0.
+#   3. A backgrounded verify.sh reported exit 0 twice with its
+#      `ALL CHECKS PASSED` sentinel absent: it had died on a missing toolchain,
+#      and the sentinel is the only honest verdict.
+#   4. An `alter_job` disarm matched zero rows and exited 0; an ansible apply
+#      path skipped its own verdict step and counted as success.
 #
-# WHAT THESE HELPERS DO ABOUT IT. Each one requires POSITIVE evidence
-# that work happened, and each reports a distinct exit code per outcome
-# rather than folding "nothing happened" into an existing one:
+# WHAT THESE HELPERS DO: each requires POSITIVE evidence that work happened and
+# reports a distinct exit code per outcome rather than folding "nothing
+# happened" into an existing one.
 #
-#   wait_for_oneshot   the unit left activating AND its completion
-#                      timestamp advanced past a baseline taken before
-#                      the wait — otherwise it refuses to report at all.
-#   gate_passed        the gate's own sentinel is present in its log,
-#                      the expected number of times. Never an exit code.
-#   require_output     the command produced at least N rows; silence is
-#                      the failure.
-#   require_affected   the psql command tag says at least N rows were
-#                      touched, for statements that cannot RETURN.
+#   wait_for_oneshot   the unit left activating AND its completion timestamp
+#                      advanced past a baseline taken before the wait;
+#                      otherwise it refuses to report at all.
+#   gate_passed        the gate's own sentinel is in its log, the expected
+#                      number of times. Never an exit code.
+#   require_output     the command produced at least N rows; silence is failure.
+#   require_affected   the psql command tag says at least N rows were touched,
+#                      for statements that cannot RETURN.
 #
 # USAGE
 #
@@ -54,54 +50,47 @@
 #   gate_passed /tmp/verify.out "$GATE_SENTINEL_VERIFY"
 #   require_output "disarm" 1 -- psql -tAq -f disarm.sql
 #
-# This file is SOURCED, so it deliberately sets no shell options: a
-# `set -euo pipefail` here would silently change the caller's shell.
-# Every function is written to be correct with or without them, and
-# returns rather than exits so a caller can decide what a failure means.
+# SOURCED, so it sets no shell options (`set -euo pipefail` would silently
+# change the caller's shell). Every function is correct with or without them
+# and returns rather than exits, so the caller decides what a failure means.
 #
-# The systemctl to call is $OPS_VERDICT_SYSTEMCTL, so the same helper
-# serves a local unit and a remote one:
-#
+# $OPS_VERDICT_SYSTEMCTL names the systemctl to call, so one helper serves a
+# local and a remote unit:
 #   OPS_VERDICT_SYSTEMCTL="ssh root@r1 systemctl" wait_for_oneshot …
 #
 # Self-test: bash scripts/ops/ops-verdict-test.sh
 
 # ─── configuration ──────────────────────────────────────────────────
 #
-# `:=` rather than `=` so re-sourcing the library keeps an operator's
-# override, and so `readonly` is never imposed on the caller's shell.
+# `:=` rather than `=` so re-sourcing keeps an operator's override and never
+# imposes `readonly` on the caller's shell.
 
 : "${OPS_VERDICT_SYSTEMCTL:=systemctl}"
-# Default wait, in seconds. Generous on purpose: a wait helper whose
-# own default is the thing that fails teaches operators to delete it.
-# Measured on r1 — creators-rollup 963 s, sponsors-rollup
-# 704 s.
+# Default wait in seconds. Generous on purpose: a wait helper whose own default
+# fails teaches operators to delete it. Measured on r1: creators-rollup 963 s,
+# sponsors-rollup 704 s.
 : "${OPS_VERDICT_TIMEOUT:=3600}"
 : "${OPS_VERDICT_POLL:=5}"
 
-# The gate sentinels this repo actually emits. Exported as names so a
-# caller cannot misspell one into a grep that can never match — which
-# is the same silent-pass shape the helper exists to refuse.
+# The gate sentinels this repo emits, as names so a caller cannot misspell one
+# into a grep that never matches (the same silent-pass shape this refuses).
 : "${GATE_SENTINEL_VERIFY:=ALL CHECKS PASSED}"          # scripts/dev/verify.sh
 : "${GATE_SENTINEL_PREPUSH:=ALL REQUIRED CHECKS PASSED}" # scripts/dev/prepush.sh
 : "${GATE_SENTINEL_CONTAINER:=ALL LINUX CHECKS PASSED}"  # docker/verify/entrypoint.sh
 
 # ─── systemd plumbing ───────────────────────────────────────────────
 
-# _ops_systemctl runs the configured systemctl. The command string is
-# split into words so the remote form ("ssh root@r1 systemctl") works;
-# unit names never contain spaces, so nothing is lost.
+# _ops_systemctl runs the configured systemctl, split into words so the remote
+# form ("ssh root@r1 systemctl") works; unit names never contain spaces.
 _ops_systemctl() {
   local -a cmd
   read -r -a cmd <<<"${OPS_VERDICT_SYSTEMCTL}"
   "${cmd[@]}" "$@"
 }
 
-# _ops_show prints the KEY=VALUE block for one unit.
-#
-# Deliberately NOT `--value`: with several -p flags systemd prints the
-# values in ITS order, not the order asked for, so a positional read is
-# wrong on a host with a different systemd. Parsing KEY= is order-free.
+# _ops_show prints the KEY=VALUE block for one unit. Deliberately NOT `--value`:
+# with several -p flags systemd prints values in ITS order, not the order asked
+# for, so a positional read breaks on another systemd. Parsing KEY= is order-free.
 _ops_show() { # _ops_show <unit> <property>...
   local unit=$1
   shift
@@ -111,8 +100,8 @@ _ops_show() { # _ops_show <unit> <property>...
   _ops_systemctl show "$unit" "${args[@]}" 2>/dev/null
 }
 
-# _ops_field extracts one KEY's value from a KEY=VALUE block. Returns 1
-# when the key is absent, so a caller can tell "empty" from "missing".
+# _ops_field extracts one KEY's value from a KEY=VALUE block; returns 1 when the
+# key is absent, so a caller can tell "empty" from "missing".
 _ops_field() { # _ops_field <block> <key>
   local blob=$1 key=$2 line
   while IFS= read -r line; do
@@ -126,24 +115,20 @@ _ops_field() { # _ops_field <block> <key>
   return 1
 }
 
-# oneshot_baseline prints the unit's completion token: the monotonic
-# microsecond stamps of the moment it last entered `active` and the
-# moment it last entered `inactive`/`failed`, joined as
-# "<active>:<inactive>". `0` in either slot means that transition has
-# not happened once since boot.
+# oneshot_baseline prints the unit's completion token: the monotonic microsecond
+# stamps of when it last entered `active` and last entered `inactive`/`failed`,
+# joined as "<active>:<inactive>". `0` means that transition has not happened
+# since boot.
 #
-# This is the value wait_for_oneshot compares against, and it must be
-# read BEFORE the run is triggered. Nothing else on the unit
-# distinguishes this run from the last one: ActiveState, Result and
-# ExecMainStatus all survive a run and are all `success`-shaped on a
-# unit that has never executed.
+# wait_for_oneshot compares against it, so it must be read BEFORE the run is
+# triggered: nothing else distinguishes this run from the last (ActiveState,
+# Result and ExecMainStatus survive a run and look `success`-shaped on a unit
+# that never executed).
 #
-# Both stamps are needed, not just the one matching RemainAfterExit:
-# ActiveEnterTimestampMonotonic only advances on entry to `active`, so
-# a RemainAfterExit=yes unit that FAILS (activating → failed, never
-# active) never moves it — but InactiveEnterTimestampMonotonic advances
-# on entry to `inactive` OR `failed` regardless of RemainAfterExit, so
-# it is the one wait_for_oneshot must compare a failure against.
+# Both stamps are needed: ActiveEnter only advances on entry to `active`, so a
+# RemainAfterExit=yes unit that FAILS (activating -> failed) never moves it,
+# while InactiveEnter advances on `inactive` OR `failed` regardless of
+# RemainAfterExit, so a failure is compared against that one.
 oneshot_baseline() { # oneshot_baseline <unit>
   local unit=${1:-}
   if [ -z "$unit" ]; then
@@ -162,27 +147,23 @@ oneshot_baseline() { # oneshot_baseline <unit>
   printf '%s:%s\n' "${active:-0}" "${inactive:-0}"
 }
 
-# wait_for_oneshot waits for a oneshot unit to finish and reports its
-# result — but only when it can prove the result belongs to THIS
-# invocation.
+# wait_for_oneshot waits for a oneshot unit to finish and reports its result,
+# but only when it can prove the result belongs to THIS invocation.
 #
 #   wait_for_oneshot <unit> [timeout_s] [baseline]
 #
-# `baseline` is an oneshot_baseline value taken before the run was
-# triggered. Omitted, one is taken on entry, which is correct when the
-# unit is already running or about to be started, and fails CLOSED
-# (exit 3, refused) when the run had already finished — the safe
-# direction, because the alternative is quoting a stale result.
+# `baseline` is an oneshot_baseline value taken before the run was triggered.
+# Omitted, one is taken on entry: correct when the unit is running or about to
+# start, and it fails CLOSED (exit 3) when the run had already finished, the
+# safe direction versus quoting a stale result.
 #
-# It waits on ActiveState, never on `systemctl is-active`: is-active
-# exits 0 only for ActiveState=active (or reloading), and a
-# RemainAfterExit=no oneshot is never in that state — 93 of 93 such
-# units on r1 have ActiveEnterTimestampMonotonic=0 — so every loop
-# conditioned on it exits immediately. See the header for the
-# measurement.
+# It waits on ActiveState, never `systemctl is-active`, which exits 0 only for
+# active/reloading; a RemainAfterExit=no oneshot never is (93 of 93 such units
+# on r1 have ActiveEnterTimestampMonotonic=0), so any loop on it exits
+# immediately. See the header.
 #
-# Exit codes are distinct per outcome — a new state never reuses an
-# existing code, so a caller's `if` cannot inherit the wrong meaning:
+# Exit codes are distinct per outcome; a new state never reuses a code, so a
+# caller's `if` cannot inherit the wrong meaning:
 #
 #   0  a NEW run completed and Result=success
 #   1  a NEW run completed and FAILED (Result / ExecMainStatus reported)
@@ -194,14 +175,10 @@ oneshot_baseline() { # oneshot_baseline <unit>
 #   5  a NEW run completed with ExecMainStatus=75: run-heavy-job.sh found
 #      the job's lock held and skipped — the payload never ran
 #
-# Which stamp proves a terminal state is NEW depends on the state
-# reached, not on RemainAfterExit: ActiveEnterTimestampMonotonic only
-# advances on entry to `active`, so a RemainAfterExit=yes unit that
-# FAILS (activating → failed, never active) never moves it.
-# InactiveEnterTimestampMonotonic advances on entry to `inactive` OR
-# `failed` regardless of RemainAfterExit, so `failed` is always checked
-# against it — otherwise a failed RemainAfterExit=yes run burns the
-# whole timeout and is reported "refused" instead of "failed".
+# The stamp that proves a terminal state is NEW follows the state reached, not
+# RemainAfterExit: `failed` is always checked against InactiveEnter, otherwise a
+# failed RemainAfterExit=yes run burns the whole timeout and reads "refused"
+# instead of "failed".
 wait_for_oneshot() { # wait_for_oneshot <unit> [timeout_s] [baseline]
   local unit=${1:-}
   local timeout=${2:-$OPS_VERDICT_TIMEOUT}
@@ -259,9 +236,8 @@ wait_for_oneshot() { # wait_for_oneshot <unit> [timeout_s] [baseline]
       ;;
   esac
 
-  # The poll interval also drives the elapsed-time counter, so it is
-  # floored at one second: a zero or non-numeric interval would leave
-  # `waited` at 0 forever and turn the timeout into a spin.
+  # The poll interval also drives the elapsed counter, so floor it at 1s: zero or
+  # non-numeric would leave `waited` at 0 and turn the timeout into a spin.
   local poll=${OPS_VERDICT_POLL}
   case $poll in
     '' | *[!0-9]*) poll=5 ;;
@@ -273,14 +249,13 @@ wait_for_oneshot() { # wait_for_oneshot <unit> [timeout_s] [baseline]
     blob=$(_ops_show "$unit" ActiveState SubState Result ExecMainStatus \
       ConditionResult InactiveEnterTimestampMonotonic ActiveEnterTimestampMonotonic)
     state=$(_ops_field "$blob" ActiveState || echo "")
-    # `case` rather than `[ … ] && …`: a trailing false test would end
-    # the loop body non-zero and kill a caller running under `set -e`.
+    # `case` rather than `[ … ] && …`: a trailing false test would end the loop
+    # body non-zero and kill a caller under `set -e`.
     done_state=''
     case " ${terminal[*]} " in
       *" $state "*) done_state=$state ;;
     esac
-    # The stamp that proves freshness follows the STATE reached, not
-    # RemainAfterExit: `failed` is always InactiveEnter (see header).
+    # The proving stamp follows the STATE reached: `failed` is always InactiveEnter.
     if [ "$done_state" = active ]; then
       token_name=ActiveEnterTimestampMonotonic
       stamp=$(_ops_field "$blob" ActiveEnterTimestampMonotonic || echo 0)
@@ -296,8 +271,7 @@ wait_for_oneshot() { # wait_for_oneshot <unit> [timeout_s] [baseline]
     fi
     if [ "$waited" -ge "$timeout" ]; then
       if [ -n "$done_state" ]; then
-        # Idle, but the stamp never advanced. Reporting Result here is
-        # exactly the defect: it would quote the previous run.
+        # Idle but the stamp never advanced: Result here would quote the previous run.
         echo "wait_for_oneshot: unit=$unit verdict=stale-result state=$state" \
           "$token_name=$stamp baseline=$stamp_baseline condition=$(_ops_field "$blob" ConditionResult || echo '?')" >&2
         echo "wait_for_oneshot: $unit never completed a NEW run in ${timeout}s — refusing to report a result from a previous one" >&2
@@ -330,19 +304,16 @@ wait_for_oneshot() { # wait_for_oneshot <unit> [timeout_s] [baseline]
 
 # ─── gate verdicts ──────────────────────────────────────────────────
 
-# gate_passed asserts a gate's own sentinel is in its log, the expected
-# number of times. It never looks at an exit code, because an exit code
-# is what lied: a backgrounded verify.sh reported 0 twice with the
-# sentinel absent.
+# gate_passed asserts a gate's own sentinel is in its log, the expected number
+# of times, never looking at an exit code (the thing that lied: a backgrounded
+# verify.sh reported 0 twice with the sentinel absent).
 #
 #   gate_passed <logfile> <sentinel> [expected_count]
 #
-# expected_count defaults to 1 and MORE than that fails, because two
-# scripts in this tree emit `ALL CHECKS PASSED` — scripts/dev/verify.sh
-# (bare) and scripts/ci/site-crawl-check.sh (prefixed) — plus
-# scripts/ops/dns-perimeter-check.sh. In a combined log a substring
-# match cannot tell them apart, so an unexpected count is surfaced
-# rather than accepted.
+# expected_count defaults to 1 and MORE fails: `ALL CHECKS PASSED` is emitted by
+# scripts/dev/verify.sh (bare), scripts/ci/site-crawl-check.sh (prefixed) and
+# scripts/ops/dns-perimeter-check.sh, and in a combined log a substring match
+# cannot tell them apart, so an unexpected count is surfaced.
 #
 #   0  present exactly expected_count times
 #   1  ABSENT — the gate never reached its verdict
@@ -364,9 +335,8 @@ gate_passed() { # gate_passed <logfile> <sentinel> [expected_count]
     return 2
   fi
 
-  # grep -c on a FILE: no pipe, so no early-exit consumer and no
-  # SIGPIPE (scripts/ci/lint-shell-sigpipe.sh). -c exits 1 on zero
-  # matches, which is a count, not an error.
+  # grep -c on a FILE: no pipe, so no SIGPIPE (scripts/ci/lint-shell-sigpipe.sh).
+  # -c exits 1 on zero matches, which is a count, not an error.
   n=$(grep -cF -- "$sentinel" "$log") || n=0
 
   if [ "$n" -eq 0 ]; then
@@ -384,8 +354,8 @@ gate_passed() { # gate_passed <logfile> <sentinel> [expected_count]
 # ─── "it matched nothing" verdicts ──────────────────────────────────
 
 # _ops_split_cmd consumes the "<args> -- <cmd...>" convention shared by
-# require_output and require_affected, leaving the command in
-# _OPS_CMD. Returns 1 when no `--` separator is present.
+# require_output and require_affected, leaving the command in _OPS_CMD.
+# Returns 1 when no `--` separator is present.
 _ops_split_cmd() {
   _OPS_CMD=()
   local seen=0 a
@@ -399,18 +369,17 @@ _ops_split_cmd() {
   [ "$seen" -eq 1 ] && [ "${#_OPS_CMD[@]}" -gt 0 ]
 }
 
-# require_output runs a command and fails when it produced fewer than
-# min_rows non-blank lines. Silence is the failure mode being hunted: a
-# disarm that matched no job, a sweep that found no chunk, a reconcile
-# that compared nothing all exit 0 with empty output.
+# require_output runs a command and fails when it produced fewer than min_rows
+# non-blank lines. Silence is the hunted failure: a disarm that matched no job,
+# a sweep that found no chunk, a reconcile that compared nothing all exit 0 with
+# empty output.
 #
 #   require_output <label> <min_rows> -- <cmd...>
 #
-# It is a strict superset of the exit-code check — a command that FAILS
-# also fails here — so replacing a bare invocation with this one can
-# never weaken a caller. The command's own output is echoed through, and
-# a self-accounting line is printed so a run that did nothing says so in
-# its own log.
+# A strict superset of the exit-code check (a command that FAILS fails here
+# too), so swapping it in for a bare invocation never weakens a caller. Output
+# is echoed through, plus a self-accounting line so a run that did nothing says
+# so in its own log.
 #
 #   0  at least min_rows rows
 #   1  fewer than min_rows rows (including zero)
@@ -446,17 +415,15 @@ require_output() { # require_output <label> <min_rows> -- <cmd...>
   return 0
 }
 
-# require_affected is require_output for a statement that cannot
-# RETURN its rows: it reads the psql COMMAND TAG (`UPDATE 3`,
-# `DELETE 0`, `SELECT 0`, `INSERT 0 7`) and fails when the count is
-# below min_rows.
+# require_affected is require_output for a statement that cannot RETURN its
+# rows: it reads the psql COMMAND TAG (`UPDATE 3`, `DELETE 0`, `SELECT 0`,
+# `INSERT 0 7`) and fails when the count is below min_rows.
 #
 #   require_affected <label> <min_rows> -- <psql cmd...>
 #
-# Prefer `RETURNING` + require_output where the statement allows it —
-# a returned row names WHAT changed. This exists for the ones that do
-# not, such as the `alter_job` disarm that matched zero rows and exited
-# 0. Run psql WITHOUT -q so the tag is printed.
+# Prefer `RETURNING` + require_output where possible: a returned row names WHAT
+# changed. This is for statements that cannot, like the `alter_job` disarm that
+# matched zero rows and exited 0. Run psql WITHOUT -q so the tag is printed.
 #
 #   0  the last command tag reports at least min_rows
 #   1  the tag reports fewer than min_rows
@@ -484,8 +451,7 @@ require_affected() { # require_affected <label> <min_rows> -- <cmd...>
     echo "require_affected: $label — command exited $rc" >&2
     return 2
   fi
-  # Last tag wins: a script of several statements is judged on the one
-  # that ran last, which is the one the caller was waiting for.
+  # Last tag wins: a multi-statement script is judged on the statement that ran last.
   while IFS= read -r line; do
     case $line in
       'INSERT '[0-9]*' '[0-9]*)

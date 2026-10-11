@@ -1,34 +1,29 @@
 #!/usr/bin/env bash
-# ch-schema-snapshot.sh — ADR-0043 §2.1, the ClickHouse lake's actual
-# backup.
+# ch-schema-snapshot.sh — ADR-0043 §2.1, the ClickHouse lake's actual backup.
 #
-# ADR-0043 REJECTS a full CH backup as the primary strategy: the lake's
-# ground truth (raw LCM) already exists in two independent archives, so
-# paying object storage for a third copy of derived data is poor spend.
-# What it commits to instead is this — "Schema + state backup (tiny,
-# daily): SHOW CREATE DDL for every table + the ch-live-catchup/backfill
-# cursor state, pushed to repo2 alongside pgBackRest. Losing DDL/config
-# is what turns a re-derive from 'run the script' into archaeology."
+# ADR-0043 REJECTS a full CH backup as the primary strategy: the lake's ground
+# truth (raw LCM) already lives in two independent archives, so a third copy of
+# derived data is poor spend. It commits instead to "Schema + state backup
+# (tiny, daily): SHOW CREATE DDL for every table + the ch-live-catchup/backfill
+# cursor state, pushed to repo2 alongside pgBackRest. Losing DDL/config is what
+# turns a re-derive from 'run the script' into archaeology."
 #
-# That sentence is the whole justification. The re-derive machinery is
-# committed code and the raw ledgers are in two archives — but the lake's
-# 40-odd table definitions, their ORDER BY / PARTITION BY keys, codecs,
-# TTLs, materialized views and the exact set of 1M-ledger partitions that
-# existed are NOT reconstructible from anything in the repo. tier1_schema.sql
-# is the FOUNDING DDL, not the live one: indexes, MVs, compression policies
-# and serving-profile changes have landed on top of it since. Restoring
-# from a stale hand-written schema silently changes the sort order of a
-# 60M-ledger rebuild.
+# The re-derive machinery is committed code, but the lake's 40-odd table
+# definitions, ORDER BY / PARTITION BY keys, codecs, TTLs, materialized views
+# and the exact set of 1M-ledger partitions are NOT reconstructible from the
+# repo. tier1_schema.sql is the FOUNDING DDL, not the live one; indexes, MVs,
+# compression policies and serving-profile changes landed on top. Restoring from
+# a stale hand-written schema silently changes the sort order of a 60M-ledger
+# rebuild.
 #
-# Emits (node_exporter textfile collector, so the freshness of the backup
-# is itself alerted — a silent backup is the failure class this whole ADR
-# exists for):
+# Emits via the node_exporter textfile collector (a silent backup is the failure
+# class this ADR exists for, so freshness is itself alerted):
 #   stellarindex_ch_schema_snapshot_last_success_unix
 #   stellarindex_ch_schema_snapshot_tables
 #   stellarindex_ch_schema_snapshot_bytes
 #   stellarindex_ch_schema_snapshot_offsite_configured (1 iff SNAPSHOT_MC_TARGET
-#     is set — emitted EVERY run so the offsite alert can tell "never
-#     pushed" from "acked local-only")
+#     is set; emitted EVERY run so the alert can tell "never pushed" from
+#     "acked local-only")
 #   stellarindex_ch_schema_snapshot_offsite_last_success_unix (push only)
 # Alerts: stellarindex_ch_schema_snapshot_stale /
 #         stellarindex_ch_schema_snapshot_offsite_stale /
@@ -41,8 +36,8 @@
 #   OUT_DIR=./deploy/clickhouse/schema-snapshot \
 #     TEXTFILE_DIR=/dev/null ch-schema-snapshot.sh   # regenerate the in-repo copy
 #
-# Exit code: 0 clean; 1 the snapshot itself failed (nothing usable
-# written); 2 the snapshot was written but the offsite push failed.
+# Exit code: 0 clean; 1 the snapshot itself failed (nothing usable written);
+# 2 the snapshot was written but the offsite push failed.
 set -uo pipefail
 
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
@@ -59,9 +54,9 @@ TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 RETAIN_DAYS="${RETAIN_DAYS:-90}"
 BACKFILL_STATE="${BACKFILL_STATE:-/var/lib/ch-backfill/done-windows.txt}"
 PG_DSN="${STELLARINDEX_POSTGRES_DSN:-}"
-# Offsite target, gated on presence — exactly the pgbackrest_repo2 idiom
-# (18-pgbackrest-backup.yml): unset means local-only and the role has to
-# have carried an explicit ack for that. An `mc` alias/prefix, e.g.
+# Offsite target, gated on presence like the pgbackrest_repo2 idiom
+# (18-pgbackrest-backup.yml): unset means local-only, and the role must have
+# carried an explicit ack for that. An `mc` alias/prefix, e.g.
 # "offsite/stellarindex-backups/ch-schema".
 SNAPSHOT_MC_TARGET="${SNAPSHOT_MC_TARGET:-}"
 
@@ -74,16 +69,15 @@ snapshot_ok=1
 note() { echo "ch-schema-snapshot: $*" >&2; }
 ch() { curl -sSf --max-time 120 --netrc-file "$CH_NETRC" "$CH_HTTP" --data-binary "$1"; }
 # A partial capture must not stamp a fresh last_success: half a schema
-# presented as a backup is the exact "we thought we had one" failure
-# ADR-0043 was written after. Degrade -> the staleness alert fires.
+# presented as a backup is the "we thought we had one" failure ADR-0043 followed.
+# Degrade so the staleness alert fires.
 degrade() { note "$1"; snapshot_ok=0; rc=1; }
 
 mkdir -p "$work" || { note "cannot create $work"; exit 1; }
 
 # ─── 1. the tables ──────────────────────────────────────────────────
-# system.tables covers tables, materialized views and dictionaries in
-# one list, which is what a restore needs — an MV that is missing after
-# a rebuild is a silently empty serving surface, not an error.
+# system.tables covers tables, MVs and dictionaries in one list, as a restore
+# needs: a missing MV after a rebuild is a silently empty serving surface.
 tables="$(ch "SELECT name FROM system.tables
              WHERE database = '$CH_DATABASE' AND NOT is_temporary
              ORDER BY name FORMAT TabSeparated")" || {
@@ -92,9 +86,8 @@ tables="$(ch "SELECT name FROM system.tables
 }
 table_count="$(grep -c . <<<"$tables")"
 if [[ "$table_count" -eq 0 ]]; then
-  # Fail closed. An empty snapshot that overwrites a good one is worse
-  # than no snapshot: it turns "we have a backup" into a lie, quietly,
-  # on the exact day the database was unreachable.
+  # Fail closed: an empty snapshot overwriting a good one turns "we have a
+  # backup" into a lie, on the day the database was unreachable.
   note "database '$CH_DATABASE' reported ZERO tables — refusing to write an empty snapshot"
   exit 1
 fi
@@ -117,33 +110,30 @@ while IFS= read -r t; do
   printf ';\n\n' >> "$schema"
 done <<<"$tables"
 if [[ "$snapshot_ok" -ne 1 ]]; then
-  # A DDL file missing tables is the archaeology case this exists to
-  # prevent, dressed as a success. Leave the directory for diagnosis but
-  # do NOT stamp a fresh last_success — the staleness alert must fire.
+  # A DDL file missing tables is the archaeology case, dressed as success. Keep
+  # the directory for diagnosis but do NOT stamp last_success, so staleness fires.
   note "one or more SHOW CREATE statements failed — snapshot is INCOMPLETE"
   exit 1
 fi
 
 # ─── 2. the schema-relevant state ───────────────────────────────────
-# Engine/keys inventory: human-readable cross-check that the restored
-# DDL is the one that was live, plus the row/byte counts a rebuild is
-# sized against.
+# Engine/keys inventory: a human cross-check that the restored DDL is the live
+# one, plus the row/byte counts a rebuild is sized against.
 ch "SELECT name, engine, partition_key, sorting_key, total_rows, total_bytes
     FROM system.tables WHERE database = '$CH_DATABASE' AND NOT is_temporary
     ORDER BY name FORMAT TabSeparatedWithNames" > "$work/tables.tsv" \
   || degrade "tables inventory query failed"
 
-# Which 1M-ledger partitions existed, and how big. This is the
-# difference between "rebuild everything" and "rebuild these 12
-# partitions" when a restore is partial.
+# Which 1M-ledger partitions existed and how big: the difference between
+# "rebuild everything" and "rebuild these 12" on a partial restore.
 ch "SELECT table, partition, sum(rows) AS rows, sum(bytes_on_disk) AS bytes
     FROM system.parts WHERE database = '$CH_DATABASE' AND active
     GROUP BY table, partition ORDER BY table, partition
     FORMAT TabSeparatedWithNames" > "$work/partitions.tsv" \
   || degrade "partition inventory query failed"
 
-# Non-default server settings: a rebuild under different settings can
-# behave differently enough to matter (merge behaviour, memory caps).
+# Non-default server settings: a rebuild under different ones (merge behaviour,
+# memory caps) can behave differently enough to matter.
 ch "SELECT name, value FROM system.settings WHERE changed ORDER BY name
     FORMAT TabSeparatedWithNames" > "$work/settings-changed.tsv" \
   || degrade "changed-settings query failed"
@@ -152,9 +142,9 @@ ch "SELECT version(), uptime() FORMAT TabSeparatedWithNames" > "$work/server.tsv
   || degrade "server version query failed"
 
 # ─── 3. the cursor state (ADR-0043 §2.1's second half) ──────────────
-# ch-full-backfill.sh banks a window as done ONLY on ch-backfill exit 0
-# and never revisits it, so this file IS the record of what has been
-# backfilled. Losing it means re-walking 60M ledgers to find out.
+# ch-full-backfill.sh banks a window as done ONLY on ch-backfill exit 0 and
+# never revisits it, so this file IS the record of what was backfilled; losing
+# it means re-walking 60M ledgers.
 if [[ -r "$BACKFILL_STATE" ]]; then
   cp "$BACKFILL_STATE" "$work/ch-backfill-done-windows.txt"
 else
@@ -162,10 +152,9 @@ else
   echo "# $BACKFILL_STATE was not readable at $stamp" > "$work/ch-backfill-done-windows.txt"
 fi
 
-# ch-live-catchup reads its tip from Postgres ingestion_cursors. That
-# table is inside the pgBackRest stanza already, but a CH-side rebuild
-# should not need a full Postgres restore to learn where the live sink
-# had got to.
+# ch-live-catchup reads its tip from Postgres ingestion_cursors. pgBackRest
+# covers that table, but a CH-side rebuild should not need a full Postgres
+# restore to learn where the live sink got to.
 if [[ -n "$PG_DSN" ]] && command -v psql >/dev/null 2>&1; then
   psql "$PG_DSN" -tAF$'\t' -c \
     "SELECT source, sub_source, last_ledger, last_updated FROM ingestion_cursors ORDER BY source, sub_source" \
@@ -189,62 +178,47 @@ bytes="$(du -sb "$work" 2>/dev/null | cut -f1)"
 bytes="${bytes:-0}"
 note "wrote $work ($table_count tables, ${bytes}B)"
 
-# Retention: the snapshot is megabytes, so keep a long tail — the value
-# of this backup is partly the DIFF history (when did that ORDER BY
-# change?), which a 7-day window would throw away.
+# Retention: the snapshot is megabytes, so keep a long tail; part of its value
+# is the DIFF history (when did that ORDER BY change?).
 find "$OUT_DIR" -mindepth 1 -maxdepth 1 -type d -mtime "+$RETAIN_DAYS" -exec rm -rf {} + 2>/dev/null || true
 
 # ─── 5. offsite push (gated on presence) ────────────────────────────
-# ADR-0043 §2.1 says "pushed to repo2 alongside pgBackRest": a copy that
-# lives only on the pool it protects is not a backup. Unset target =
-# local-only. On pubnet the ansible role refuses the backup surface
-# without one and reports it on every full run; a non-pubnet host
-# acknowledges the gap explicitly (ch_schema_snapshot_offsite_ack)
-# rather than drifting into it. Either way the offsite alert tickets
-# the host, by name, until a push lands.
+# ADR-0043 §2.1 says "pushed to repo2 alongside pgBackRest": a copy only on the
+# pool it protects is not a backup. Unset target = local-only. On pubnet the
+# ansible role refuses the backup surface without one; a non-pubnet host
+# acknowledges the gap (ch_schema_snapshot_offsite_ack). Either way the offsite
+# alert tickets the host by name until a push lands.
 offsite_ok=0
-# Whether the configured target survived the "is it provably remote"
-# check below. A refusal here must NOT blank SNAPSHOT_MC_TARGET: the
-# metrics block (§6) reads that variable to report offsite_configured,
-# and a host with a typo'd/loopback alias is "configured but failing"
-# (1), not "never configured" (0) — the two read as opposite fixes to
-# an on-call engineer, and blanking the target on a refusal would
-# collapse them into the wrong one.
+# Whether the target survived the "provably remote" check below. A refusal must
+# NOT blank SNAPSHOT_MC_TARGET: the metrics block (§6) reads it for
+# offsite_configured, and a typo'd/loopback alias is "configured but failing"
+# (1), not "never configured" (0). The two imply opposite fixes on call.
 offsite_target_provable=1
 if [[ -n "$SNAPSHOT_MC_TARGET" ]]; then
-  # `mc` honours AWS_* from the process environment ahead of the alias's
-  # own stored credentials, and this unit's EnvironmentFile
-  # (/etc/default/stellarindex-ops) sets AWS_ENDPOINT_URL to the LOCAL
-  # MinIO with AWS_REGION=r1. Inherited, they retarget an S3 alias at the
-  # very host the snapshot is supposed to survive, and the request fails
-  # the bucket's real region with "must be addressed using the specified
-  # endpoint". Strip them for the mc calls only.
+  # `mc` honours AWS_* from the environment ahead of the alias's stored
+  # credentials, and this unit's EnvironmentFile (/etc/default/stellarindex-ops)
+  # sets AWS_ENDPOINT_URL to the LOCAL MinIO with AWS_REGION=r1. Inherited, they
+  # retarget an S3 alias at the host the snapshot must survive, failing with
+  # "must be addressed using the specified endpoint". Strip them for mc only.
   mc_clean=(env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY
             -u AWS_ENDPOINT_URL -u AWS_REGION -u AWS_SESSION_TOKEN
             -u AWS_DEFAULT_REGION)
 
-  # NEVER gate this on mc's exit code. `mc mirror` exits 0 on a transfer
-  # that moved nothing — the failure above printed an error, reported
-  # "Total 0 B", and still returned 0, so the old check reported a
-  # healthy off-site push on every single run while the bucket stayed
-  # empty. Prove the objects landed instead: count what is at the
-  # destination and require it to match what we meant to send.
-  # The destination must be proven REMOTE before anything else. mc treats
-  # an unknown alias as a plain LOCAL PATH: `mc mirror ... typo/bucket/x`
-  # happily writes ./typo/bucket/x on this host, and the object count
-  # below then reads it straight back and calls it verified. A typo in
-  # the alias would therefore turn the off-site copy into a second local
-  # one that reports healthy — the exact failure this whole step exists
-  # to prevent. Require the alias to be configured, and require it not to
-  # point at loopback, since "off-site" is the property being claimed.
+  # NEVER gate on mc's exit code: `mc mirror` exits 0 on a transfer that moved
+  # nothing (the failure above printed an error, "Total 0 B", and returned 0, so
+  # a healthy push was reported while the bucket stayed empty). Prove the objects
+  # landed: count the destination and require it to match what was sent.
+  # The destination must first be proven REMOTE. mc treats an unknown alias as a
+  # plain LOCAL PATH (`mc mirror ... typo/bucket/x` writes ./typo/bucket/x), and
+  # the count below would read it back and call it verified: a typo would turn the
+  # off-site copy into a second local one that reports healthy. Require a
+  # configured alias that does not point at loopback.
   offsite_alias="${SNAPSHOT_MC_TARGET%%/*}"
   alias_url=""
   if command -v mc >/dev/null 2>&1 && "${mc_clean[@]}" mc alias list "$offsite_alias" >/dev/null 2>&1; then
-    # Land the output before slicing it: `mc alias list` on one alias is a
-    # handful of lines, but piping it straight into an early-exit `awk`
-    # under this script's pipefail is the exact class scripts/ci/
-    # lint-shell-sigpipe.sh exists to catch, and the gate does not
-    # get to assume this call site is small enough to be exempt.
+    # Land the output before slicing: piping the alias lookup into an early-exit
+    # `awk` under pipefail is the class scripts/ci/lint-shell-sigpipe.sh catches,
+    # and this call site gets no small-output exemption.
     alias_out=$("${mc_clean[@]}" mc alias list "$offsite_alias" 2>/dev/null)
     alias_url=$(awk '/URL/ { print $3; exit }' <<<"$alias_out")
   fi
@@ -293,10 +267,8 @@ if [[ "$TEXTFILE_DIR" != "/dev/null" ]]; then
     echo "# HELP stellarindex_ch_schema_snapshot_bytes Size on disk of the most recent snapshot directory."
     echo "# TYPE stellarindex_ch_schema_snapshot_bytes gauge"
     echo "stellarindex_ch_schema_snapshot_bytes $bytes"
-    # Always emitted. The offsite alert no longer gates on this (a
-    # never-configured target is as loud as a failing push, per host);
-    # its description reads it to split "never configured" (0) from
-    # "configured but failing" (1) for triage.
+    # Always emitted. The offsite alert no longer gates on it; its description
+    # reads it to split "never configured" (0) from "configured but failing" (1).
     echo "# HELP stellarindex_ch_schema_snapshot_offsite_configured 1 if an offsite target (SNAPSHOT_MC_TARGET) is configured for this host, else 0."
     echo "# TYPE stellarindex_ch_schema_snapshot_offsite_configured gauge"
     if [[ -n "$SNAPSHOT_MC_TARGET" ]]; then

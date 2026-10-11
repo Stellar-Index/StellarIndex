@@ -1,43 +1,31 @@
 #!/usr/bin/env bash
 # Fuzz smoke for Stellar Index.
 #
-# Runs every `func Fuzz*` target in the tree for a short generative
-# budget. This is a SMOKE, not a fuzzing campaign: 30s per target finds
-# the shallow crashers a seed corpus does not reach, and keeps the whole
-# job inside a few CI minutes. Deep runs are an operator activity
-# (`go test -fuzz=FuzzX -fuzztime=1h ./pkg/`).
+# Runs every `func Fuzz*` target in the tree for a short generative budget.
+# A SMOKE, not a campaign: 30s per target finds shallow crashers the seed
+# corpus misses and keeps the job inside a few CI minutes. Deep runs are an
+# operator activity (`go test -fuzz=FuzzX -fuzztime=1h ./pkg/`).
 #
-# Why the target list is DISCOVERED rather than listed
-# ----------------------------------------------------
-# A hardcoded list is a registry that drifts: someone adds
-# `FuzzNewThing`, nobody adds it here, and it is never fuzzed while the
-# job stays green. Discovery makes a new target automatically covered.
+# Targets are DISCOVERED, not listed: a hardcoded list drifts (someone adds
+# `FuzzNewThing`, nobody adds it here, it is never fuzzed and the job stays
+# green). The cost is that a broken pattern would smoke NOTHING and exit 0, so
+# the script REFUSES to pass on an empty discovery and prints a self-accounting
+# line (found / run / passed) a reader can check against the tree.
 #
-# The cost of discovery is that a broken pattern silently smokes NOTHING
-# and still exits 0 — a gate that did not run, reporting clean by
-# printing nothing. So this script REFUSES to pass on an empty
-# discovery, and prints a self-accounting line (targets found / run /
-# passed) that a reader can check against the tree.
+# A crasher makes `go test` exit non-zero AND writes the reproducing input to
+# `<pkg>/testdata/fuzz/<FuzzName>/<hash>`. Commit that file as a seed-corpus
+# entry and the crasher becomes a permanent regression test under plain
+# `go test`.
 #
-# Failures
-# --------
-# A crasher makes `go test` exit non-zero AND writes the reproducing
-# input to `<pkg>/testdata/fuzz/<FuzzName>/<hash>`. That file is the
-# deliverable: commit it as a seed-corpus entry and the crasher becomes
-# a permanent regression test that runs under plain `go test`.
-#
-# Scope and budget
-# ----------------
-# Discovery covers the whole tree (fail-closed on zero), but a PR smokes
-# only the targets of the packages it changed: FUZZ_BASE (CI passes the
-# PR's base sha) selects them. Unset, every target runs. The per-target
-# time is min(30s, FUZZ_BUDGET / selected), never under 8s — go's -fuzztime
-# deadline covers worker start-up (~2s on a loaded runner), and a 3s floor
-# produced a phantom "context deadline exceeded" crasher — so a wave
-# that adds 160 targets still fits the job instead of being cancelled at
-# the timeout with nothing reported (the tree went 5 -> 166 targets in
-# one PR; 166 x 30s is 83 min). The accounting line prints the budget
-# actually used.
+# Scope and budget: discovery covers the whole tree (fail-closed on zero), but
+# a PR smokes only targets in packages it changed; FUZZ_BASE (CI passes the
+# PR's base sha) selects them, unset runs all. Per-target time is
+# min(30s, FUZZ_BUDGET / selected), never under 8s: -fuzztime covers worker
+# start-up (~2s on a loaded runner) and a 3s floor produced a phantom "context
+# deadline exceeded" crasher. The cap keeps a wave that adds 160 targets inside
+# the job timeout (the tree went 5 -> 166 in one PR; 166 x 30s is 83 min)
+# instead of being cancelled with nothing reported. The accounting line prints
+# the budget actually used.
 #
 # Usage:
 #   bash scripts/ci/fuzz-smoke.sh                        # every target, budget-derived time
@@ -54,30 +42,22 @@ command -v go >/dev/null 2>&1 || {
 
 cd "$(dirname "$0")/../.."
 
-# Discover (package-dir, target) pairs. Fuzz targets live in _test.go
-# files and are declared `func FuzzName(f *testing.F)`.
-#
-# Deliberately POSIX-portable (no mapfile / no process substitution):
-# this has to be runnable on a maintainer's macOS bash 3.2 as well as on
-# the ubuntu runner, or the only place it is ever exercised is CI.
+# Discover (package-dir, target) pairs: targets are `func FuzzName(f *testing.F)`
+# in _test.go files.
 HITS_FILE="$(mktemp)"
 trap 'rm -f "$HITS_FILE"' EXIT
 
-# Discovery is driven by `git ls-files`, not a filesystem walk, and that
-# is the whole trick: it lists only TRACKED files, so every ignored
-# directory is invisible by construction. Agent tooling keeps live
-# worktrees in an ignored dot-directory, each a full copy of this repo —
-# a filesystem walk found 4 real targets plus 52 duplicates from throwaway
-# checkouts, burned 30s on each, and failed naming paths that are not part
-# of the build. That would only ever break on a maintainer's machine,
-# which is exactly the kind of gate nobody trusts afterwards. It also
-# retires a brittle --exclude-dir glob whose behaviour differed between
-# GNU and BSD grep (the BSD form silently matched nothing, so the gate
-# failed closed on a clean tree).
+# Driven by `git ls-files`, not a filesystem walk: only TRACKED files are listed,
+# so ignored directories are invisible by construction. Agent tooling keeps full
+# repo copies in an ignored dot-directory; a walk found 4 real targets plus 52
+# duplicates, burned 30s on each and failed naming paths outside the build,
+# breaking only on a maintainer's machine. It also retires an --exclude-dir glob
+# that differed between GNU and BSD grep (BSD matched nothing, so the gate failed
+# closed on a clean tree).
 #
-# Deliberately POSIX-portable below (no mapfile, no process substitution):
-# this has to run on a maintainer's macOS bash 3.2 as well as on the
-# ubuntu runner, or the only place it is ever exercised is CI.
+# POSIX-portable on purpose (no mapfile, no process substitution): it must run
+# on macOS bash 3.2 as well as the ubuntu runner, or CI is the only place it is
+# ever exercised.
 git ls-files -z '*_test.go' |
 	xargs -0 grep -l -E '^func Fuzz[A-Za-z0-9_]*\(f \*testing\.F\)' |
 	sed 's#^\./##' |
@@ -145,10 +125,9 @@ while IFS="$(printf '\t')" read -r pkg target; do
 	[ -n "$pkg" ] || continue
 	RUN=$((RUN + 1))
 	echo "--- fuzz ${target} (${pkg}) for ${FUZZTIME}"
-	# -run with a name no test matches keeps this to the generative pass;
-	# the seed corpus already runs in the unit-test job. The -fuzz regex
-	# is anchored so a target whose name prefixes another's cannot pull
-	# in its sibling (go test refuses more than one match).
+	# -run with a name no test matches keeps this to the generative pass (the seed
+	# corpus runs in the unit-test job). The -fuzz regex is anchored so a target
+	# whose name prefixes another's cannot match its sibling (go test refuses >1).
 	corpus="${pkg}/testdata/fuzz/${target}"
 	before=$(corpus_size "$corpus")
 	if fuzz_once "$pkg" "$target"; then
@@ -165,8 +144,8 @@ while IFS="$(printf '\t')" read -r pkg target; do
 		echo "::error::crasher becomes a permanent regression test, then fix the defect."
 		FAILED_TARGETS="${FAILED_TARGETS} ${pkg}:${target}"
 	fi
-	# The loop body runs in a subshell under `while read < file`, so the
-	# counters are echoed out and re-read below rather than mutated here.
+	# The loop body runs in a subshell (`while read < file`), so counters are
+	# echoed out and re-read below rather than mutated here.
 	printf '%s\t%s\t%s\n' "$RUN" "$PASSED" "$FAILED_TARGETS" >"${HITS_FILE}.tally"
 done <"$SELECTED"
 
@@ -175,9 +154,8 @@ if [ -f "${HITS_FILE}.tally" ]; then
 	rm -f "${HITS_FILE}.tally"
 fi
 
-# Self-accounting: a reader can check FOUND against
-# `grep -rn 'func Fuzz' --include='*_test.go' .`. A run that smoked
-# fewer targets than it discovered did not do its job.
+# Self-accounting: check FOUND against `grep -rn 'func Fuzz' --include='*_test.go' .`.
+# A run that smoked fewer targets than it discovered did not do its job.
 echo "fuzz-smoke: ${PASSED} passed of ${RUN} run (${SEL} selected of ${FOUND} discovered), ${FUZZTIME} each"
 
 if [ "$RUN" -ne "$SEL" ]; then

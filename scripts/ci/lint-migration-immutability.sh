@@ -1,72 +1,43 @@
 #!/usr/bin/env bash
 # lint-migration-immutability.sh — freeze already-shipped migrations.
 #
-# Why this gate exists:
+# Why: cmd/stellarindex-migrate wraps golang-migrate, which keys a migration
+# ONLY on the version integer in the NNNN_ prefix. It records applied versions
+# in schema_migrations, never re-runs a number it has seen, and never
+# content-hashes the file. An in-place edit of a numbered migration is thus
+# silently undetectable: an environment that ran the OLD text stays diverged
+# from a fresh DB built from the NEW text. This has happened once
+# (0138_defindex_flows_harvest_direction.up.sql was edited from a nonexistent
+# table to `defindex_flows`), safe only because the original would have ERRORed
+# and so was never recorded as applied.
 #
-#   cmd/stellarindex-migrate/main.go is a thin wrapper over
-#   golang-migrate/migrate: it opens `file://migrations` and calls
-#   Up/Steps/Force. golang-migrate keys each migration ONLY on the
-#   version integer parsed from the NNNN_ prefix — it records the applied
-#   version in schema_migrations and never re-runs a number it has
-#   already seen, and it never content-hashes the file. So an in-place
-#   edit of an already-numbered migration file (after it was committed,
-#   and possibly applied somewhere) is silently undetectable: an
-#   environment that ran the OLD text stays permanently diverged from a
-#   fresh DB built from the NEW text, and nothing complains.
+# What it enforces: every migrations/*.sql is pinned to its SHA-256 in
+# scripts/ci/migration-immutability.sha256. Each file's hash is recomputed:
+#   * MUTATED    baselined file whose content no longer matches -> FAIL. Changing
+#                a shipped migration must move a visible, reviewable checksum line.
+#   * MISSING    baselined file deleted or renamed -> FAIL (same hazard in reverse).
+#   * UNBASELINED  migration with no baseline entry -> FAIL. New migrations are
+#                append-only, but their checksum is added in the SAME PR (`--write`)
+#                so the next edit of that file is caught.
+# Squashing or removing a not-yet-shipped migration stays possible; it becomes
+# an explicit `--write` in the diff rather than a silent drop.
 #
-#   This already happened. 0138_defindex_flows_harvest_direction.up.sql
-#   was committed (8eb223fc) referencing a nonexistent table
-#   `defindex_strategy_flows`, then edited IN PLACE (7b7089d3) to
-#   `defindex_flows`. It was safe only by luck — the original would have
-#   ERRORed, so no DB recorded it as applied. The hazard is the
-#   normalized practice of editing a shipped migration at all.
+# WHAT MAY BE EDITED (migrations/README.md "Amending a shipped migration" has
+# the long form): a shipped migration's UP body is immutable; its DOWN body and
+# header COMMENTS may be corrected via the baseline refresh (`--write`), said so
+# in the commit message; anything stored in the database (COMMENT ON, defaults)
+# needs a new migration. The one UP exception is the README's "Neutralising an
+# unapplied migration".
 #
-# What this enforces:
+# The gate deliberately cannot tell those apart: it hashes bytes and cannot know
+# whether a changed line was above BEGIN;. It is the FORCING FUNCTION, not the
+# judgement: even a correctable edit must move a visible checksum line, which
+# puts the decision in front of a reviewer. Reviewers enforce the rule; this
+# script guarantees they get the chance to.
 #
-#   Every migrations/*.sql file is pinned to its SHA-256 in
-#   scripts/ci/migration-immutability.sha256 (the checksum baseline).
-#   The gate recomputes each file's hash and:
-#
-#     * MUTATED — a baselined file whose content no longer matches its
-#       recorded hash → FAIL. This is the core defense: changing a
-#       shipped migration now requires consciously updating a visible,
-#       reviewable checksum line instead of slipping by unnoticed.
-#     * MISSING — a baselined file deleted or renamed → FAIL. Dropping a
-#       shipped migration is the same divergence hazard in reverse.
-#     * UNBASELINED — a migration file with no baseline entry → FAIL.
-#       New migrations are APPEND-ONLY: allowed freely, but their
-#       checksum must be added in the SAME PR (run `--write`), so the
-#       baseline stays complete and the next edit of that file is caught.
-#
-#   The immutability contract is therefore: shipped migrations are frozen
-#   (their baseline line never changes silently); new migrations only
-#   ever get appended. Legitimately squashing/removing a not-yet-shipped
-#   migration is still possible — it just becomes an explicit `--write`
-#   in the diff rather than a silent drop.
-#
-# WHAT MAY BE EDITED (the one rule; migrations/README.md "Amending a
-# shipped migration" holds the long form and the rationale):
-#
-#   A shipped migration's UP body is immutable; its DOWN body and its
-#   header COMMENTS may be corrected through the baseline-refresh path
-#   (lint-migration-immutability --write) and said so in the commit
-#   message; anything stored in the database (COMMENT ON, defaults)
-#   needs a new migration. The one exception to UP immutability is the
-#   README's "Neutralising an unapplied migration" (0174, v0.92.1).
-#
-#   This gate deliberately cannot tell those apart — it hashes bytes,
-#   and a hash cannot know whether the changed line was above BEGIN;.
-#   It is the FORCING FUNCTION, not the judgement: a correctable edit
-#   still has to move a visible checksum line, which is what puts the
-#   decision in front of a reviewer. Reviewers enforce the rule; this
-#   script guarantees they get the chance to.
-#
-# Maintenance:
-#
-#   Adding (or, per the rule above, editing/removing) a migration →
-#   refresh the baseline in the same change and commit it:
-#
-#       ./scripts/ci/lint-migration-immutability.sh --write
+# Maintenance: adding (or, per the rule above, editing/removing) a migration
+# means refreshing the baseline in the same change and committing it:
+#   ./scripts/ci/lint-migration-immutability.sh --write
 #
 # Usage:
 #   bash scripts/ci/lint-migration-immutability.sh            # check (CI + verify.sh)
@@ -94,8 +65,8 @@ if [ ! -d "$MIGRATIONS_DIR" ]; then
   exit 1
 fi
 
-# Portable SHA-256: coreutils `sha256sum` (Linux/CI) or `shasum -a 256`
-# (macOS default). Both print "<hash>  <path>"; we keep the hash only.
+# Portable SHA-256: coreutils `sha256sum` (Linux/CI) or `shasum -a 256` (macOS);
+# only the hash is kept.
 sha256_of() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum -- "$1" | awk '{print $1}'
@@ -104,10 +75,9 @@ sha256_of() {
   fi
 }
 
-# Current-tree fingerprint: "<sha256>  <basename>" per *.sql, sorted by
-# name (zero-padded NNNN prefixes → append order == sort order). Keyed on
-# the BASENAME, not the path, so the baseline is independent of where the
-# migrations dir lives (the self-test points MIGRATIONS_DIR at a tmpdir).
+# Current-tree fingerprint: "<sha256>  <basename>" per *.sql, sorted by name
+# (zero-padded prefixes: append order == sort order). Keyed on the BASENAME so the
+# baseline is independent of the migrations dir (the self-test uses a tmpdir).
 CUR="$(mktemp)"
 trap 'rm -f "$CUR"' EXIT
 for f in "$MIGRATIONS_DIR"/*.sql; do
@@ -132,8 +102,8 @@ fi
 #   NEW  <name>                 — file present, no baseline entry
 #   MUT  <name> <want> <got>    — baseline entry differs from file
 #   GONE <name>                 — baseline entry with no file
-# Default FS (whitespace runs) makes $1 the hash and $2 the basename for
-# both the one- and two-space forms; comment/blank lines are skipped.
+# Default FS makes $1 the hash and $2 the basename for both the one- and
+# two-space forms; comment/blank lines are skipped.
 report="$(
   awk '
     FNR == NR {

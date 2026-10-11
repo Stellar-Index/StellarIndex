@@ -1,54 +1,47 @@
 #!/usr/bin/env bash
-# restore-drill.sh — a backup that has never been
-# restored is a hope, not a backup. NON-DESTRUCTIVE scratch restore
-# of the pgBackRest stanza + a ClickHouse re-derive sample, with the
-# results appended to the drill evidence log (ADR-0043).
+# restore-drill.sh — a backup that has never been restored is a hope, not a
+# backup. NON-DESTRUCTIVE scratch restore of the pgBackRest stanza + a ClickHouse
+# re-derive sample, results appended to the drill evidence log (ADR-0043).
 #
 # Safe by construction:
 #   - restores into a throwaway data dir under $DRILL_ROOT
 #   - starts a DISPOSABLE postgres on $DRILL_PG_PORT (never 5432)
 #   - read-only against the live DB (comparison queries only)
-#   - refuses to run unless the drill volume has room for the restore
-#     it is about to perform (sized from the backup itself, see the
-#     capacity precondition below) — never less than $MIN_FREE_GB
+#   - refuses to run unless the drill volume has room for the restore, sized from
+#     the backup itself (capacity precondition below), never less than $MIN_FREE_GB
 #   - cleans up on exit (trap), even on failure
-#   - one drill at a time: a non-blocking lock ($DRILL_LOCK) serialises
-#     the repo1 and repo2 timers and any hand-run beside them — they
-#     share the scratch port and the pool the capacity check sizes — and
-#     a separate pre-flight refuses when a postgres left behind by a
-#     KILLED drill still answers on $DRILL_PG_PORT, which no lock covers
-#   - every run that gets past the preconditions leaves evidence: an
-#     entry in the drill log AND a rewritten per-repo textfile metric
-#     (`repo` label), whether it passed, failed a check, or aborted
-#     mid-restore
+#   - one drill at a time: a non-blocking lock ($DRILL_LOCK) serialises the repo1
+#     and repo2 timers and any hand-run (they share the scratch port and the pool
+#     the capacity check sizes); a separate pre-flight refuses when a postgres
+#     left by a KILLED drill still answers on $DRILL_PG_PORT, which no lock covers
+#   - every run that gets past the preconditions leaves evidence: a drill-log
+#     entry AND a rewritten per-repo textfile metric (`repo` label), whether it
+#     passed, failed a check, or aborted mid-restore
 #
 # Usage (r1, as root):
 #   bash scripts/ops/restore-drill.sh                 # pg drill, repo1 (restore-drill.timer)
 #   DRILL_REPO=2 bash scripts/ops/restore-drill.sh    # prove the OFFSITE copy (restore-drill-offsite.timer)
 #   DRILL_CH_WINDOW=100000 bash scripts/ops/restore-drill.sh  # + CH re-derive sample
 #
-# Exit code: 1 if any verification check failed (the count is in the
-# evidence log and the failures metric), else 0; 2 for a precondition
-# refusal (wrong user, missing tool, too little free space, or a
-# drill-script/binary flag drift — see the CH preflight below). A
-# precondition refusal is deliberately NOT counted as a verification
-# failure: "the drill could not honestly run" and "the drill ran and
-# found a problem" are different facts and must not share a signal.
+# Exit code: 1 if any verification check failed (count is in the evidence log and
+# the failures metric), else 0; 2 for a precondition refusal (wrong user, missing
+# tool, too little free space, or drill-script/binary flag drift, see the CH
+# preflight). A refusal is deliberately NOT a verification failure: "the drill
+# could not honestly run" and "the drill ran and found a problem" must not share
+# a signal.
 set -euo pipefail
 
 STANZA="${DRILL_STANZA:-stellarindex}"
 DRILL_REPO="${DRILL_REPO:-1}"
-# Not /var/tmp: PrivateTmp=true in restore-drill.service gives the unit a
-# private /tmp AND /var/tmp, so a drill root under there cannot be seen
-# from inside the service (226/NAMESPACE at unit start).
+# Not /var/tmp: PrivateTmp=true in restore-drill.service gives the unit a private
+# /tmp AND /var/tmp, so a root there is invisible to the service (226/NAMESPACE).
 DRILL_ROOT="${DRILL_ROOT:-/srv/restore-drill}"
 DRILL_PG_PORT="${DRILL_PG_PORT:-5499}"
-# ABSOLUTE floor only. The real capacity requirement is derived per run
-# from the size of the backup being restored (below); this constant is
-# the minimum that requirement is clamped up to, not the safety property.
+# ABSOLUTE floor only. The real requirement is derived per run from the backup
+# size (below); this is the minimum it is clamped up to.
 MIN_FREE_GB="${MIN_FREE_GB:-200}"
-# Margin over the backup's database size (percent) + fixed headroom for
-# the WAL that archive-get pulls into pg_wal during recovery.
+# Margin over the backup's database size (percent) + fixed headroom for the WAL
+# archive-get pulls into pg_wal during recovery.
 DRILL_SIZE_MARGIN_PCT="${DRILL_SIZE_MARGIN_PCT:-125}"
 DRILL_WAL_HEADROOM_GB="${DRILL_WAL_HEADROOM_GB:-50}"
 # Pool free space run-heavy-job.sh's watchdog stops the job below
@@ -61,38 +54,33 @@ DRILL_LOG_NOTE="${DRILL_LOG_NOTE:-}"
 OPS_BIN="${OPS_BIN:-/usr/local/bin/stellarindex-ops}"
 OPS_CONFIG="${OPS_CONFIG:-/etc/stellarindex.toml}"
 CH_HTTP="${CH_HTTP:-http://127.0.0.1:8123/}"
-# CH as ops_monitor once the role renders this file; /dev/null (no
-# credential, CH `default`) until then, so no deploy order strands this script.
+# CH as ops_monitor once the role renders this file; /dev/null (CH `default`, no
+# credential) until then, so no deploy order strands this script.
 CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-monitor.netrc}"
 if [[ ! -r "$CH_NETRC" ]]; then
   echo "restore-drill.sh: credential file $CH_NETRC unreadable; using ClickHouse default user" >&2
   CH_NETRC=/dev/null
 fi
-# Bucket the CH re-derive reads. The window is ~1M ledgers below the
-# tip, i.e. history — which on r1 lives in galexie-archive, NOT the
-# trimmed galexie-live default (the 5179250a wrong-bucket class). Passed
-# explicitly so the drill never depends on a seam this host has not set.
+# Bucket the CH re-derive reads. The window is ~1M ledgers below the tip, i.e.
+# history, which on r1 lives in galexie-archive, NOT the trimmed galexie-live
+# default. Passed explicitly so the drill never depends on a seam the host lacks.
 DRILL_CH_BUCKET="${DRILL_CH_BUCKET:-galexie-archive}"
-# WAL replay from the last backup to now legitimately takes tens of
-# minutes (third drill failure mode: a daily-diff schedule means up
-# to ~24h of a busy ingest DB's WAL replays through archive-get).
+# WAL replay from the last backup to now legitimately takes tens of minutes: a
+# daily-diff schedule means up to ~24h of busy-ingest WAL through archive-get.
 PG_START_TIMEOUT="${PG_START_TIMEOUT:-7200}"
 # Ceiling on draining the archive stream after consistency.
 WAL_DRAIN_TIMEOUT="${WAL_DRAIN_TIMEOUT:-3600}"
-# Evidence log + metric destinations. Both are EXPLICIT host paths
-# (env-overridable), NOT computed from $0 — the installed copy runs as
-# /usr/local/bin/restore-drill.sh, where the old $0-relative LOG_DIR
-# resolved to a non-existent /usr/docs/operations/drills and silently
-# dropped the whole evidence phase. /var is left writable by
-# the systemd unit's ProtectSystem=full. Operators running from a
-# checkout who want the evidence committed can point LOG_DIR at the
-# repo: RESTORE_DRILL_LOG_DIR=$(pwd)/docs/operations/drills.
+# Evidence log + metric destinations: EXPLICIT host paths (env-overridable), NOT
+# computed from $0. The installed copy runs as /usr/local/bin/restore-drill.sh,
+# where a $0-relative LOG_DIR resolved to a non-existent path and silently
+# dropped the whole evidence phase. /var is writable under the unit's
+# ProtectSystem=full. To commit evidence from a checkout:
+# RESTORE_DRILL_LOG_DIR=$(pwd)/docs/operations/drills.
 LOG_DIR="${RESTORE_DRILL_LOG_DIR:-/var/lib/stellarindex/restore-drills}"
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
-# Held for the life of the run (see the one-drill-at-a-time precondition).
-# Under /run, which PrivateTmp does not shadow and ProtectSystem=full
-# leaves writable; NOT under DRILL_ROOT, so a refusal leaves the drill
-# volume exactly as it found it.
+# Held for the life of the run (one-drill-at-a-time precondition). Under /run,
+# which PrivateTmp does not shadow and ProtectSystem=full leaves writable; NOT
+# under DRILL_ROOT, so a refusal leaves the drill volume as it found it.
 DRILL_LOCK="${DRILL_LOCK:-/run/lock/restore-drill.lock}"
 
 fail_count=0
@@ -109,25 +97,20 @@ check() { # check <name> <ok:0|1> <detail>
 
 # ─── preconditions ──────────────────────────────────────────────────
 [[ "$(id -u)" == "0" ]] || { note "run as root (drops to postgres for pg ops)"; exit 2; }
-# The repo number is now a metric label and part of a file name, so it
-# must be one — a pgBackRest repo is always a small positive integer.
+# The repo number is a metric label and part of a file name, so it must be a
+# small positive integer.
 [[ "$DRILL_REPO" =~ ^[1-9][0-9]*$ ]] || { note "DRILL_REPO must be a pgBackRest repo number, got '$DRILL_REPO'"; exit 2; }
 command -v pgbackrest >/dev/null || { note "pgbackrest not installed"; exit 2; }
 [[ -x "$PG_BIN/postgres" ]] || { note "postgres $PG_VERSION binaries not at $PG_BIN"; exit 2; }
 
-# CH-stage preconditions, checked HERE rather than four hours into the
-# run. An invocation ch-backfill cannot parse (a flag it does not have,
-# such as `-database drill_scratch`) is rejected at PARSE time by
-# flag.ContinueOnError; recorded as an ordinary
-# `check "ch_rederive" 0 "ch-backfill sample failed"` with its output
-# swallowed, a drill-script BUG would be indistinguishable from a genuine
-# re-derive failure, and the optional stage would silently never run.
-#
-# A drill whose own invocation is broken must fail LOUDLY, immediately,
-# and DIFFERENTLY from a drill that ran and found a problem: this is a
-# precondition (exit 2, same class as "pgbackrest not installed"), not a
-# verification failure that gets counted, logged as evidence and averaged
-# into an RTO number.
+# CH-stage preconditions, checked HERE rather than four hours into the run. An
+# invocation ch-backfill cannot parse (a flag it lacks, such as `-database
+# drill_scratch`) is rejected at PARSE time by flag.ContinueOnError; recorded as
+# an ordinary `check "ch_rederive" 0` with output swallowed, a drill-script BUG
+# would look like a genuine re-derive failure and the stage would silently never
+# run. A broken invocation must fail LOUDLY, immediately and DIFFERENTLY from a
+# drill that found a problem: a precondition (exit 2), not a counted failure
+# averaged into an RTO number.
 if [[ -n "${DRILL_CH_WINDOW:-}" ]]; then
   [[ -x "$OPS_BIN" ]] || { note "DRILL_CH_WINDOW set but $OPS_BIN is not executable"; exit 2; }
   [[ -r "$OPS_CONFIG" ]] || { note "DRILL_CH_WINDOW set but $OPS_CONFIG is not readable"; exit 2; }
@@ -149,55 +132,43 @@ if [[ -n "${DRILL_CH_WINDOW:-}" ]]; then
   fi
 fi
 
-# Capacity precondition — DERIVED from the backup, not a constant. The
-# drill writes a full copy of the database onto the SAME single pool the
-# live Postgres and ClickHouse run on, and the restore-drill dataset
-# carries no quota. A fixed 200 G floor sat below the ~600 G database it
-# restores, so a pool that had drifted to (say) 500 G free would pass the
-# check, fill the pool mid-restore, and stall live WAL + CH merges. Size
-# the requirement from the latest backup in the stanza/repo being
-# restored: database size × margin + WAL headroom, clamped to
-# MIN_FREE_GB. A backup that cannot be sized is a precondition refusal
-# (exit 2), not a guess — a floor that cannot be derived is not a floor.
+# Capacity precondition, DERIVED from the backup, not a constant. The drill
+# writes a full database copy onto the SAME pool the live Postgres and ClickHouse
+# use, with no quota on the restore-drill dataset. A fixed 200 G floor sat below
+# the ~600 G database, so a pool at 500 G free passed, filled mid-restore and
+# stalled live WAL + CH merges. Size from the latest backup in the stanza/repo:
+# database size x margin + WAL headroom, clamped to MIN_FREE_GB. A backup that
+# cannot be sized is a refusal (exit 2), not a guess.
 command -v jq >/dev/null || { note "jq not installed (needed to size the restore from 'pgbackrest info')"; exit 2; }
 
-# One drill at a time. Two timers drive this script — repo1 on the first
-# Saturday, repo2 on the 15th (restore-drill-offsite.timer) — and an
-# operator forcing a run by hand can land beside either. Two drills
-# would start their scratch instances on the same DRILL_PG_PORT, and each
-# would size its capacity check against free space the other is about to
-# consume, which is the pool-fill the floor below exists to prevent. So
-# the lock is taken BEFORE the capacity check, non-blocking, and a held
-# lock is a refusal (exit 2, nothing written), not a counted failure:
-# "another drill is running" is not a fact about the backup. flock ties
-# the lock to the open descriptor, so it is released however this process
-# ends.
+# One drill at a time. Two timers drive this script (repo1 first Saturday, repo2
+# the 15th via restore-drill-offsite.timer) and a hand run can land beside either.
+# Two drills would share DRILL_PG_PORT and each size its capacity check against
+# space the other is about to consume. So the lock is taken BEFORE the capacity
+# check, non-blocking, and a held lock is a refusal (exit 2, nothing written), not
+# a counted failure. flock ties the lock to the open descriptor, so it is
+# released however this process ends.
 command -v flock >/dev/null || { note "flock not installed (needed to run one drill at a time)"; exit 2; }
-# Opening the lock file is itself a precondition: under `set -e` a failed
-# `exec 9>` exits 1, and 1 is this script's code for ONE FAILED CHECK —
-# an unwritable /run/lock (read-only mount, a stray directory at that
-# path, a namespace that does not expose it) would have been recorded and
-# read as "the drill ran and the backup failed a check". Nothing has been
-# written at this point, so it is exit 2 like every other refusal.
+# Opening the lock file is itself a precondition: under `set -e` a failed `exec
+# 9>` exits 1, this script's code for ONE FAILED CHECK, so an unwritable /run/lock
+# (read-only mount, stray directory, hidden namespace) would read as "the backup
+# failed a check". Nothing is written yet, so exit 2 like every refusal.
 exec 9>"$DRILL_LOCK" || { note "could not open the lock file $DRILL_LOCK — refusing (one drill at a time)"; exit 2; }
 flock -n 9 || { note "another restore drill holds $DRILL_LOCK — refusing (one drill at a time)"; exit 2; }
 
-# The scratch port, which the lock does NOT cover. The lock
-# guards against a CONCURRENT drill; it says nothing about the wreckage of
-# a killed one. A run SIGKILLed after pg_start (TimeoutStartSec, an OOM
-# kill, a hand `kill -9`) leaves a DAEMONISED postgres listening on
-# DRILL_PG_PORT — the EXIT trap never ran — while its lock died with the
-# shell, so the next drill takes the lock cleanly, restores several
-# hundred GB, and only then fails at pg_start on "address already in
-# use": hours of pool I/O spent to record a verification failure that is
-# not a fact about the backup. Probe the port first and refuse (exit 2,
-# nothing written), naming the datadir to stop. Skipped rather than
-# refused where pg_isready is absent — no worse than not probing.
+# The scratch port, which the lock does NOT cover: the lock guards a CONCURRENT
+# drill, not the wreckage of a killed one. A run SIGKILLed after pg_start
+# (TimeoutStartSec, OOM, `kill -9`) leaves a DAEMONISED postgres on
+# DRILL_PG_PORT (the EXIT trap never ran) while its lock died with the shell, so
+# the next drill restores several hundred GB and only then fails at pg_start on
+# "address already in use": hours of pool I/O to record a failure that says
+# nothing about the backup. Probe first and refuse (exit 2, nothing written),
+# naming the datadir to stop. Skipped where pg_isready is absent.
 if [[ -x "$PG_BIN/pg_isready" ]]; then
   isready_rc=0
   "$PG_BIN/pg_isready" -h 127.0.0.1 -p "$DRILL_PG_PORT" -t 5 >/dev/null 2>&1 || isready_rc=$?
-  # 0 = accepting connections, 1 = rejecting (a server IS there, still
-  # starting up), 2 = no response (the port is free), 3 = bad invocation.
+  # 0 = accepting, 1 = rejecting (a server IS there, still starting), 2 = no
+  # response (port free), 3 = bad invocation.
   if [[ "$isready_rc" == "0" || "$isready_rc" == "1" ]]; then
     note "a postgres already answers on $DRILL_PG_PORT — an earlier drill was killed before its cleanup ran; refusing (one scratch instance at a time)"
     for pidfile in "$DRILL_ROOT"/pgdata-*/postmaster.pid; do
@@ -227,21 +198,20 @@ fi
 note "capacity: ${free_gb}G free under $DRILL_ROOT ≥ ${need_gb}G needed for a ${backup_gb}G backup (+ ${DRILL_POOL_FLOOR_GB}G pool floor)"
 
 DATA_DIR="$DRILL_ROOT/pgdata-$(date +%Y%m%d-%H%M%S)"
-# 1 while `pgbackrest restore` is writing DATA_DIR. A restore that dies
-# part-way (ENOSPC, repo corruption, killed) leaves a multi-hundred-GB
-# partial copy with NO diagnostic value — the pgbackrest output in the
-# unit log is the diagnosis — and on the shared pool it is the very thing
-# that must not linger. Post-restore failures (recovery, verification)
-# are different: there the datadir IS the evidence, and is kept.
+# 1 while `pgbackrest restore` is writing DATA_DIR. A restore that dies part-way
+# (ENOSPC, repo corruption, kill) leaves a multi-hundred-GB partial copy with NO
+# diagnostic value (the pgbackrest output is the diagnosis) that must not linger
+# on the shared pool. Post-restore failures differ: the datadir IS the evidence,
+# and is kept.
 restore_in_progress=0
 evidence_recorded=0
 drill_stage="startup"
 # shellcheck disable=SC2317,SC2329  # invoked indirectly via the EXIT trap below
 cleanup() {
   local rc=$?
-  # Any exit that did not go through record_evidence (an unguarded psql,
-  # tee or command substitution dying under `set -e`) is still a drill
-  # that ran: count it and record it rather than leave the old metric ageing.
+  # Any exit that bypassed record_evidence (an unguarded psql/tee/substitution
+  # dying under `set -e`) is still a drill that ran: count and record it rather
+  # than leave the old metric ageing.
   if [[ "$evidence_recorded" -eq 0 ]]; then
     [[ "$rc" -ne 0 ]] || rc=1
     fail_count=$((fail_count + 1))
@@ -267,21 +237,17 @@ cleanup() {
 trap cleanup EXIT
 
 # ─── evidence + metric (phases 5/6, callable from every exit path) ──
-# The evidence IS the deliverable (ADR-0043 §3: "a backup that
-# has never been restored is a hope"). A drill that ran but recorded
-# nothing is a FAILED drill, so an unwritable evidence log fails LOUDLY
-# and is counted — it is never silently skipped.
+# The evidence IS the deliverable (ADR-0043 §3). A drill that ran but recorded
+# nothing is a FAILED drill, so an unwritable evidence log fails LOUDLY and is
+# counted, never silently skipped.
 #
-# These are FUNCTIONS, not a tail-of-script phase, because the two most
-# likely failure modes — `pgbackrest restore` failing and the scratch
-# instance never reaching consistency — `exit` before a tail phase would
-# run. The drill log would get no entry and the previous run's textfile
-# (failures=0, a fresh last_success) would keep being scraped as if the
-# backup had just been proven restorable; nothing would fire until the
-# 40-day staleness window. Every run that gets past the preconditions
-# records what it found, on every path. Precondition refusals
-# (exit 2, above) deliberately still write nothing: "could not honestly
-# run" and "ran and found a problem" must not share a signal.
+# FUNCTIONS, not a tail phase, because the likeliest failures (`pgbackrest
+# restore` failing, the scratch instance never reaching consistency) `exit`
+# before a tail phase would run. The drill log would get no entry and the previous
+# textfile (failures=0, fresh last_success) would keep being scraped as if the
+# backup had just been proven restorable, until the 40-day staleness window.
+# Every run past the preconditions records what it found, on every path.
+# Precondition refusals (exit 2) deliberately write nothing.
 drill_aborted_at=""
 record_evidence() {
   evidence_recorded=1
@@ -305,30 +271,25 @@ record_evidence() {
   fi
 }
 
-# Mirrors ch-schema-snapshot.sh §6: stamp last_success ONLY on a fully
-# clean run (fail_count==0, evidence written) so
-# stellarindex_restore_drill_stale fires when the monthly drill stops
-# producing evidence, and stellarindex_restore_drill_failed fires the
-# moment a run records failures > 0. Written atomically (.tmp then mv)
-# under /var, which ProtectSystem=full leaves writable.
+# Mirrors ch-schema-snapshot.sh §6: stamp last_success ONLY on a fully clean run
+# (fail_count==0, evidence written), so stellarindex_restore_drill_stale fires
+# when the monthly drill stops producing evidence and
+# stellarindex_restore_drill_failed fires when a run records failures > 0.
+# Written atomically (.tmp then mv) under /var (ProtectSystem=full leaves it
+# writable).
 #
-# One textfile PER REPO, and a `repo` label on every series. Two timers
-# drive this script and each run
-# rewrites its file whole, so one shared file would let a clean repo2 run
-# erase a failed repo1 verdict (and the other way round), and a series
-# with no label could not say which copy it proves. repo1 keeps the
-# historical file name so an un-labelled series left in it is REPLACED
-# by the next repo1 run rather than left behind as a
-# second, forever-ageing series. node_exporter merges a metric family that
-# appears in several files provided its HELP text agrees, which the shared
-# literals below guarantee — the verify-archive tiers already rely on the
-# same behaviour with their `tier` label. stellarindex_restore_drill_stale
-# selects repo=~"1|" (repo1 or no label — an allow-list, so a repo3 sample
-# cannot stand in for a never-drilled repo1);
-# stellarindex_restore_drill_offsite_stale selects repo="2". An
-# un-labelled series in restore_drill.prom is whichever repo ran LAST
-# before the label existed, and the on-box rule reads it as repo1's until
-# a labelled repo1 run rewrites the file.
+# One textfile PER REPO with a `repo` label on every series: each run rewrites its
+# file whole, so a shared file would let a clean repo2 run erase a failed repo1
+# verdict, and an unlabelled series could not say which copy it proves. repo1
+# keeps the historical file name so an unlabelled series there is REPLACED by the
+# next repo1 run, not left as a forever-ageing second series. node_exporter merges
+# a family across files when HELP text agrees, which the shared literals
+# guarantee (verify-archive tiers rely on the same with `tier`).
+# stellarindex_restore_drill_stale selects repo=~"1|" (an allow-list, so a repo3
+# sample cannot stand in for a never-drilled repo1);
+# stellarindex_restore_drill_offsite_stale selects repo="2". An unlabelled series
+# in restore_drill.prom is whichever repo ran LAST before the label existed, read
+# on-box as repo1's until a labelled repo1 run rewrites the file.
 emit_metric() {
   [[ "$TEXTFILE_DIR" != "/dev/null" ]] || return 0
   if ! mkdir -p "$TEXTFILE_DIR" 2>/dev/null; then
@@ -341,30 +302,18 @@ emit_metric() {
   local metric_checked="$metric_tmp.checked"
   local lbl="{repo=\"${DRILL_REPO}\"}"
 
-  # Throughput is the ONLY value in this file that is not a shell
-  # integer, and it is computed by a program that may not be installed:
-  # `bc` is its own Debian package, is not pulled in by postgresql,
-  # pgbackrest or anything else this drill needs, and is absent from a
-  # minimal image. When it is missing the command substitution yields
-  # the EMPTY STRING and the line becomes a metric NAME WITH NO VALUE —
-  # which does not cost one series, it costs the file: node_exporter
-  # rejects an unparseable textfile whole, so restore_drill.prom would
-  # take stellarindex_restore_drill_failures and _last_success_unix with
-  # it and the drill's entire signal would go dark on the run that
-  # measured a re-derive (the same shape was observed on r1, silent for
-  # ~20 minutes).
-  #
-  # So: compute it, prove it is a number, and OMIT the series when it is
-  # not. An absent throughput gauge already means "not measured" here —
-  # that is exactly what the enclosing `if` does when the CH stage did
-  # not run — so omitting costs nothing that publishing a broken file
-  # would not cost a hundredfold.
+  # Throughput is the ONLY non-integer value in this file and comes from `bc`,
+  # a separate Debian package absent from a minimal image. Missing, the command
+  # substitution yields the EMPTY STRING and the line becomes a metric NAME WITH
+  # NO VALUE, which costs the file, not one series: node_exporter rejects an
+  # unparseable textfile whole, taking _failures and _last_success_unix with it
+  # (observed on r1, silent ~20 minutes). So compute it, prove it is a number,
+  # and OMIT the series when not; an absent gauge already means "not measured".
   local lps=""
   if [[ -n "${ch_secs:-}" && -n "${DRILL_CH_WINDOW:-}" && "${ch_rc:-1}" -eq 0 ]]; then
     lps="$(echo "scale=2; $DRILL_CH_WINDOW / ($ch_secs + 0.0001)" | bc)" || lps=""
-    # bc renders a sub-1 result as `.50`, which is a valid Prometheus
-    # float, so a leading dot is allowed; two dots, a digit-free string
-    # and bc's backslash line-continuation are not.
+    # bc renders a sub-1 result as `.50`, a valid Prometheus float; two dots, a
+    # digit-free string and bc's backslash line-continuation are not.
     case "$lps" in
       '' | '.' | *[!0-9.]* | *.*.*)
         note "WARN: ledgers-per-second came back '$lps' (bc missing or in error) — omitting stellarindex_restore_drill_ch_rederive_ledgers_per_second rather than writing a metric name with no value, which would make node_exporter drop $metric_out whole"
@@ -382,10 +331,9 @@ emit_metric() {
     echo "# HELP stellarindex_restore_drill_failures Number of failed verification checks in the most recent restore-drill run."
     echo "# TYPE stellarindex_restore_drill_failures gauge"
     echo "stellarindex_restore_drill_failures${lbl} $fail_count"
-    # ClickHouse re-derive throughput (ADR-0043 §2.2): the lake RTO
-    # is only honest as a MEASURED number. Emitted only when the CH stage
-    # ran and succeeded; absent otherwise, so a missing series means "not
-    # measured", never a stale figure.
+    # ClickHouse re-derive throughput (ADR-0043 §2.2): the lake RTO is only honest
+    # MEASURED. Emitted only when the CH stage ran and succeeded; absent means
+    # "not measured", never a stale figure.
     if [[ -n "${ch_secs:-}" && -n "${DRILL_CH_WINDOW:-}" && "${ch_rc:-1}" -eq 0 ]]; then
       echo "# HELP stellarindex_restore_drill_ch_rederive_seconds Wall seconds the drill took to fetch+decode its ClickHouse re-derive window (dry-run, single-threaded)."
       echo "# TYPE stellarindex_restore_drill_ch_rederive_seconds gauge"
@@ -399,39 +347,32 @@ emit_metric() {
         echo "stellarindex_restore_drill_ch_rederive_ledgers_per_second${lbl} $lps"
       fi
     fi
-    # Publication safety, not a drill signal. Emitted on EVERY run so the
-    # healthy value (0) is a series that exists rather than an absence.
+    # Publication safety, not a drill signal. Emitted EVERY run so the healthy
+    # value (0) exists as a series rather than an absence.
     echo "# HELP stellarindex_restore_drill_unparseable_lines Exposition lines this run rendered that are not valid Prometheus samples and were therefore WITHHELD from the published textfile. 0 every healthy run; above 0 means a value this drill composed is not a number and that one series is absent this tick."
     echo "# TYPE stellarindex_restore_drill_unparseable_lines gauge"
   } > "$metric_tmp"
 
   # ── Validate the rendered bytes before publishing ─────────────────
   #
-  # The guard above stops the ONE value that is known to be able to go
-  # non-numeric; this stops the class. Everything in this file shares
-  # one .prom, so a single bad line costs every series in it, and the
-  # series in it are the only evidence that the backups are restorable.
+  # The guard above stops the ONE value known able to go non-numeric; this stops
+  # the class. Everything shares one .prom, so one bad line costs every series,
+  # and they are the only evidence the backups are restorable.
   #
-  # WITHHOLD rather than refuse: an unpublished file is not an absent
-  # one. node_exporter re-serves the previous restore_drill.prom on
-  # every scrape with a fresh timestamp, so failures and last_success
-  # would FREEZE — last month's clean drill reading as this month's,
-  # which is exactly the false-clean the abort paths above were added to
-  # remove. A withheld line leaves its series absent, and both staleness
-  # alerts already read absence.
+  # WITHHOLD rather than refuse: an unpublished file is not an absent one.
+  # node_exporter re-serves the previous restore_drill.prom with a fresh
+  # timestamp, so failures and last_success would FREEZE (last month's clean
+  # drill reading as this month's, the false-clean the abort paths remove). A
+  # withheld line leaves its series absent, which both staleness alerts read.
   #
-  # This never changes the drill's exit code: `exit "$(failure_exit_code)"` is
-  # the verdict on FAILED CHECKS OF THE BACKUP, and a metric-writer fault
-  # is not a fact about the backup (the same reasoning that made the
-  # lock a refusal rather than a counted failure). The tally gauge and
-  # the journal carry it instead.
+  # This never changes the exit code: `failure_exit_code` is the verdict on FAILED
+  # CHECKS OF THE BACKUP, and a metric-writer fault is not a fact about the backup
+  # (same reasoning as the lock refusal). The tally gauge and journal carry it.
   #
-  # Braces are written [{] / [}]: in an ERE a bare brace opens an
-  # interval expression and the escape is undefined by POSIX, so the
-  # bracket form is the one that means the same thing under mawk (the
-  # Debian default), gawk and BWK awk alike. No apostrophe appears in
-  # the awk program — it is a single-quoted shell word and one would
-  # end it.
+  # Braces are written [{] / [}]: in an ERE a bare brace opens an interval
+  # expression and the escape is undefined by POSIX; the bracket form means the
+  # same under mawk (Debian default), gawk and BWK awk. No apostrophe in the awk
+  # program: it is a single-quoted shell word.
   local dropped=""
   if ! dropped="$(awk -v keep="$metric_checked" '
     /^[ \t]*$/ || /^#/ { print > keep; next }
@@ -451,9 +392,9 @@ emit_metric() {
     note "WARN: the exposition validator did not run — refusing to publish unvalidated bytes to $metric_out, since node_exporter drops an unparseable file whole and says so only in node_textfile_scrape_error. The previous file stays and ages; its staleness alert is what notices."
     return 0
   fi
-  # The tally becomes a metric value of its own, so it gets the same
-  # treatment. A validator that answered with something other than a
-  # count has validated nothing — refuse rather than coerce it to 0.
+  # The tally becomes a metric value, so same treatment: a validator that
+  # answered with something other than a count validated nothing; refuse rather
+  # than coerce to 0.
   case "$dropped" in
     '' | *[!0-9]*)
       rm -f "$metric_tmp" "$metric_checked"
@@ -461,19 +402,17 @@ emit_metric() {
       return 0
       ;;
   esac
-  # Guarded, and it returns rather than letting `set -e` fire: an
-  # unchecked `mv` that failed would leave $metric_tmp holding the
-  # UNVALIDATED render for the publish below, and an uncaught failure
-  # here would exit the drill with this function's status — which the
-  # caller reads as a count of failed checks OF THE BACKUP.
+  # Guarded and returns rather than letting `set -e` fire: a failed `mv` would
+  # leave $metric_tmp holding the UNVALIDATED render for the publish below, and
+  # the caller reads this function's status as a count of failed backup checks.
   if ! mv "$metric_checked" "$metric_tmp"; then
     rm -f "$metric_tmp" "$metric_checked"
     note "WARN: could not swap in the validated render — refusing to publish $metric_out"
     return 0
   fi
-  # printf on its own line, not folded into an `if !`: the exposition
-  # gate reads lines that BEGIN with echo/printf, and a sample hidden
-  # behind a condition keyword is a sample it stops checking.
+  # printf on its own line, not folded into an `if !`: the exposition gate reads
+  # lines that BEGIN with echo/printf, and a sample behind a condition keyword is
+  # one it stops checking.
   local tally_ok=1
   printf 'stellarindex_restore_drill_unparseable_lines%s %s\n' "$lbl" "$dropped" >> "$metric_tmp" || tally_ok=0
   if [[ "$tally_ok" != 1 ]]; then
@@ -484,10 +423,9 @@ emit_metric() {
   if [[ "$dropped" -gt 0 ]]; then
     note "WARN: published $metric_out with $dropped unparseable line(s) withheld — stellarindex_restore_drill_unparseable_lines carries the count"
   fi
-  # mktemp-free tmp path, so set the mode explicitly: node_exporter runs
-  # unprivileged and SILENTLY skips a textfile it cannot read. Chained so
-  # a failure is a note rather than a `set -e` exit carrying this
-  # function's status out as the drill's failure count.
+  # Mode set explicitly (mktemp-free tmp path): node_exporter runs unprivileged
+  # and SILENTLY skips a textfile it cannot read. Chained so failure is a note,
+  # not a `set -e` exit carrying this function's status out as the failure count.
   if ! { chmod 644 "$metric_tmp" && mv "$metric_tmp" "$metric_out"; }; then
     rm -f "$metric_tmp"
     note "WARN: could not publish $metric_out — restore-drill metric for repo${DRILL_REPO} not emitted (its staleness alert will fire on the frozen series)"
@@ -528,14 +466,11 @@ fi
 
 # ─── phase 2: start scratch instance + recover ──────────────────────
 drill_stage="pg_start"
-# Recovery target: end of archived WAL. Disposable instance — no
-# archive_command, loopback only, alternate port.
-# Debian layout: the live cluster's postgresql.conf + pg_hba.conf live
-# under /etc/postgresql, NOT in PGDATA — so the restored datadir has
-# neither. Synthesize minimal
-# ones: config just includes the auto file; hba is loopback-trust for
-# the postgres OS user only (the instance binds 127.0.0.1 on a
-# non-standard port and dies at drill end).
+# Recovery target: end of archived WAL. Disposable instance: no archive_command,
+# loopback only, alternate port. Debian keeps the live postgresql.conf and
+# pg_hba.conf under /etc/postgresql, NOT in PGDATA, so the restored datadir has
+# neither; synthesize minimal ones (config includes the auto file; hba is
+# loopback-trust for the postgres OS user only).
 if [[ ! -f "$DATA_DIR/postgresql.conf" ]]; then
   sudo -u postgres tee "$DATA_DIR/postgresql.conf" >/dev/null <<CONF
 # synthesized by restore-drill.sh — Debian keeps the real config in /etc
@@ -552,11 +487,10 @@ if [[ ! -f "$DATA_DIR/pg_ident.conf" ]]; then
   sudo -u postgres touch "$DATA_DIR/pg_ident.conf"
 fi
 
-# Scratch-instance overrides: the restored/live postgresql.conf carries
-# PRODUCTION sizing (tens-of-GB shared_buffers, wide lock tables) —
-# a second instance at those settings fails or starves the live DB.
-# Downsize everything except what recovery correctness needs
-# (timescaledb preload + a lock table big enough for the chunk count).
+# Scratch-instance overrides: the restored postgresql.conf carries PRODUCTION
+# sizing (tens-of-GB shared_buffers, wide lock tables); a second instance at
+# those settings fails or starves the live DB. Downsize everything except what
+# recovery needs (timescaledb preload + a lock table big enough for the chunks).
 sudo -u postgres tee -a "$DATA_DIR/postgresql.auto.conf" >/dev/null <<CONF
 port = $DRILL_PG_PORT
 listen_addresses = '127.0.0.1'
@@ -571,11 +505,10 @@ timescaledb.max_background_workers = 2
 hot_standby = on
 CONF
 
-# With hot_standby=on, WAL
-# replay ENFORCES that connection/worker GUCs are >= the primary's
-# values ("recovery aborted because of insufficient parameter
-# settings") — these must MIRROR the live primary, not be downsized.
-# Read them live so a future primary retune can't re-break the drill.
+# With hot_standby=on, WAL replay ENFORCES that connection/worker GUCs are >= the
+# primary's ("recovery aborted because of insufficient parameter settings"), so
+# these must MIRROR the live primary, not be downsized. Read them live so a
+# primary retune cannot re-break the drill.
 sudo -u postgres psql -d stellarindex -tA -F' = ' -c \
   "SELECT name, setting FROM pg_settings WHERE name IN
    ('max_connections','max_worker_processes','max_wal_senders',
@@ -602,36 +535,28 @@ check "core_tables" "$([[ "$tables" == "4" ]] && echo 1 || echo 0)" "found $tabl
 
 # 3b. Restored tip is close to the live tip (WAL archiving healthy).
 #
-# DRAIN THE ARCHIVE STREAM FIRST. `hot_standby = on`
-# plus `pg_ctl -w` means the scratch instance accepts connections the
-# moment CONSISTENCY is reached, while replay of the remaining archived
-# WAL continues in the background. Measuring the tip right there answers
-# "how old was the backup we restored from", NOT "how far forward can we
-# recover" — and the latter is the only claim worth making here.
+# DRAIN THE ARCHIVE STREAM FIRST. `hot_standby = on` plus `pg_ctl -w` accepts
+# connections at CONSISTENCY while replay of the remaining archived WAL continues.
+# Measuring then answers "how old was the backup", NOT "how far forward can we
+# recover", the only claim worth making. Measured on r1 without the drain: lag
+# 13,392 ledgers (~18.6h) against a diff backup 21h old, i.e. the backup's AGE;
+# on a daily-diff schedule the < 5000 threshold was passable only by luck (a
+# 240-ledger pass was that accident).
 #
-# Measured on r1 without the drain: lag 13,392 ledgers (~18.6h) against a
-# diff backup taken 21h earlier, i.e. the number was the backup's AGE. On
-# a daily-diff schedule that makes the < 5000 threshold unpassable except
-# by drilling shortly after a diff — a 240-ledger pass was exactly that
-# accident. A threshold that can only be met by luck is not evidence.
-#
-# The finish line is an LSN captured from the LIVE primary now; replay is
-# drained until it reaches that point. A standby can only replay WAL that
-# has been ARCHIVED, so on a quiet primary the segment holding the target
-# may not be archived until it fills — hence bounded, and a timeout is
-# reported as its own outcome rather than silently measuring early.
+# The finish line is an LSN captured from the LIVE primary now; replay drains to
+# it. A standby replays only ARCHIVED WAL, so on a quiet primary the target
+# segment may not archive until it fills: hence bounded, and a timeout is its own
+# outcome rather than a silent early measurement.
 wal_target=$(qlive "SELECT pg_current_wal_lsn()")
 drain_deadline=$(( $(date +%s) + WAL_DRAIN_TIMEOUT ))
 drained=0
 drain_why=""
 while (( $(date +%s) < drain_deadline )); do
-  # Two terminal states, both meaning "everything available was applied":
-  #  - still in recovery AND replay passed the target LSN; or
-  #  - no longer in recovery at all. pgBackRest type=default writes
-  #    recovery.signal, so once the archive stream is exhausted Postgres
-  #    ENDS recovery and promotes — at which point pg_last_wal_replay_lsn()
-  #    returns NULL. Polling only the LSN would then spin to the timeout on
-  #    the very run that succeeded.
+  # Two terminal states, both meaning "everything available was applied": still
+  # in recovery AND replay passed the target LSN; or no longer in recovery.
+  # pgBackRest type=default writes recovery.signal, so once the archive stream is
+  # exhausted Postgres promotes and pg_last_wal_replay_lsn() returns NULL; polling
+  # only the LSN would spin to the timeout on the run that succeeded.
   if [[ "$(q "SELECT pg_is_in_recovery()" 2>/dev/null)" == "f" ]]; then
     drained=1; drain_why="recovery ended (archive stream exhausted, promoted)"
     break
@@ -648,10 +573,9 @@ check "wal_drain" "$drained" "${drain_why:-did NOT reach $wal_target within ${WA
 restored_tip=$(q "SELECT coalesce(max(ledger_seq),0) FROM ledger_ingest_log")
 live_tip=$(qlive "SELECT coalesce(max(ledger_seq),0) FROM ledger_ingest_log")
 lag=$(( live_tip - restored_tip ))
-# With the archive stream drained, the residual lag is only what the live
-# primary wrote DURING the drain — minutes, not hours. One ledger ≈ 5-6s,
-# so 5000 ledgers (~7h) stays a generous ceiling; it now fails on a real
-# WAL-restore gap instead of on the backup's age.
+# With the stream drained, residual lag is only what the primary wrote DURING the
+# drain (minutes). One ledger is ~5-6s, so 5000 (~7h) is a generous ceiling that
+# now fails on a real WAL-restore gap, not the backup's age.
 check "tip_lag" "$(( lag >= 0 && lag < 5000 ? 1 : 0 ))" "restored tip $restored_tip vs live $live_tip (lag $lag ledgers)"
 
 # 3c. Hash-chain sanity on the restored copy (100k-ledger sample):
@@ -679,24 +603,19 @@ check "trades_window_match" "$([[ "$restored_rows" == "$live_rows" ]] && echo 1 
 drill_stage="ch_rederive"
 # Proves the ADR-0043 §2.2 "lake is re-derivable" claim + measures RTO.
 #
-# WHY DRY-RUN rather than the ADR's "scratch database": clickhouse.Open
-# pins the `stellar` database (internal/storage/clickhouse/sink.go), so
-# ch-backfill has no scratch-database mode to offer — there is no
-# `-database` flag. The only writing
-# alternative is re-deriving into the LIVE lake, and that is the wrong
-# default here: r1's pool is capacity-constrained and the lake already
-# carries ~3 TiB of duplicate rows, so a recurring drill that
-# re-inserts 100k ledgers of ReplacingMergeTree duplicates would be
-# paying for its own evidence in the scarcest resource on the box.
+# WHY DRY-RUN rather than the ADR's "scratch database": clickhouse.Open pins the
+# `stellar` database (internal/storage/clickhouse/sink.go), so ch-backfill has no
+# `-database` flag. The only writing alternative is re-deriving into the LIVE
+# lake, wrong here: r1's pool is capacity-constrained and the lake already holds
+# ~3 TiB of duplicate rows, so re-inserting 100k ledgers of ReplacingMergeTree
+# duplicates would spend the scarcest resource on the box.
 #
 # `-dry-run` fetches every galexie object and runs the full
-# clickhouse.ExtractLedger decode — the entire recovery path and
-# essentially all of its wall-clock — and writes nothing. Honest limit,
-# recorded in the drill log: this measures FETCH+DECODE throughput, not
-# the ClickHouse INSERT (which the live sink exercises continuously and
-# which is not the multi-week bottleneck). The count reconcile below is
-# what checks the lake actually holds the window we just proved
-# derivable.
+# clickhouse.ExtractLedger decode (the whole recovery path and nearly all its
+# wall-clock), writing nothing. Honest limit, recorded in the log: this measures
+# FETCH+DECODE throughput, not the ClickHouse INSERT (which the live sink
+# exercises continuously and is not the multi-week bottleneck). The count
+# reconcile checks the lake actually holds the window just proved derivable.
 if [[ -n "${DRILL_CH_WINDOW:-}" ]]; then
   note "CH re-derive drill: window=$DRILL_CH_WINDOW ledgers, dry-run (see ADR-0043 §2.2)"
   ch_started=$(date +%s)
@@ -709,15 +628,15 @@ if [[ -n "${DRILL_CH_WINDOW:-}" ]]; then
     per_ledger=$(echo "scale=4; $ch_secs / $DRILL_CH_WINDOW" | bc)
     full_days=$(echo "scale=1; $per_ledger * $live_tip / 86400" | bc)
     check "ch_rederive" 1 "window in ${ch_secs}s (${per_ledger}s/ledger → full rebuild ≈ ${full_days} days single-threaded, fetch+decode only — parallelism divides this)"
-    # Reconcile against the live lake (ADR-0043 §2.2): the window we
-    # just proved re-derivable must already be complete in ClickHouse.
+    # Reconcile against the live lake (ADR-0043 §2.2): the window just proved
+    # re-derivable must already be complete in ClickHouse.
     ch_rows=$(curl -sf --netrc-file "$CH_NETRC" "$CH_HTTP" --data-binary \
       "SELECT count() FROM stellar.ledgers WHERE ledger_seq BETWEEN $lo AND $hi" | tr -dc '0-9')
     check "ch_lake_window_complete" "$([[ "$ch_rows" == "$DRILL_CH_WINDOW" ]] && echo 1 || echo 0)" \
       "stellar.ledgers[$lo,$hi]: lake=${ch_rows:-?} expected=$DRILL_CH_WINDOW"
   else
-    # Full output, never `| tail -5`: the reason this stage sat broken
-    # for weeks is that its diagnosis was truncated away.
+    # Full output, never `| tail -5`: this stage sat broken for weeks because its
+    # diagnosis was truncated away.
     check "ch_rederive" 0 "ch-backfill -dry-run exited $ch_rc — full output below"
     printf '%s\n' "$ch_out" >&2
   fi
