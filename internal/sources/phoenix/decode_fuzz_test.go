@@ -20,10 +20,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Property fuzz targets for the phoenix money path. Every amount here lands
-// in a NUMERIC column, so the reference for each is (hi << 64) + lo computed
-// with big.Int independently of the decoder (ADR-0003). Seeds run as plain
-// tests under `go test`; the generative run is
+// Property fuzz targets for the phoenix money path. Every amount lands in a NUMERIC column, so
+// the reference is (hi << 64) + lo computed with big.Int independently of the decoder
+// (ADR-0003). Seeds run as plain tests; the generative run is
 // `go test -run=^$ -fuzz=^FuzzXxx$ -fuzztime=60s ./internal/sources/phoenix/`.
 
 // i128Ref is the exact value an Int128Parts carries, two's complement.
@@ -135,13 +134,11 @@ var mapSwapKeys = [...]string{
 
 const mapSwapRequired = 5 // mapSwapKeys[:5] are the fields decodeSwapMap reads
 
-// FuzzDecodeSwapMap builds the Map body from fuzzed amounts, token seeds,
-// dropped fields, entry order and key encoding, and checks decodeSwapMap
-// against an independent model: accept iff every read field is present
-// under a Symbol key, both amounts are strictly positive and the legs are
-// distinct; on accept the amounts are exact, base is sell_token, quote is
-// buy_token, and actual_received_amount (== offer on the wire) never leaks
-// into the quote.
+// FuzzDecodeSwapMap builds the Map body from fuzzed amounts, token seeds, dropped fields,
+// entry order and key encoding, and checks decodeSwapMap against an independent model: accept
+// iff every read field is present under a Symbol key, both amounts are strictly positive and
+// the legs are distinct. On accept the amounts are exact, base is sell_token, quote is
+// buy_token, and actual_received_amount (== offer on the wire) never leaks into the quote.
 func FuzzDecodeSwapMap(f *testing.F) {
 	// Real CBENABXP fixture amounts, then the boundaries the positivity gate
 	// and the i128 carry sit on.
@@ -248,12 +245,11 @@ func permute(n int, seed uint64) []int {
 	return out
 }
 
-// FuzzDecoderStringSwap drives the 8 ScvString field-events of one swap
-// through Decoder.Decode in every arrival order. Nothing may emit before the
-// 8th field; the 8th emits exactly one trade whose amounts are the exact
-// offer / return i128s (never actual-received), fanned out on the FIRST
-// arriving field's event index — or, for a non-positive amount, a
-// ErrMalformedPayload and no trade.
+// FuzzDecoderStringSwap drives the 8 ScvString field-events of one swap through Decoder.Decode
+// in every arrival order. Nothing may emit before the 8th field; the 8th emits exactly one
+// trade whose amounts are the exact offer / return i128s (never actual-received), fanned out
+// on the FIRST arriving field's event index, or ErrMalformedPayload and no trade for a
+// non-positive amount.
 func FuzzDecoderStringSwap(f *testing.F) {
 	f.Add(int64(0), uint64(55194571), int64(0), uint64(273730773), uint64(0), uint16(0))
 	f.Add(int64(0), uint64(0), int64(0), uint64(1), uint64(40319), uint16(7))
@@ -458,11 +454,10 @@ func symbolField(m xdr.ScMap, key string) (xdr.ScVal, bool) {
 	return xdr.ScVal{}, false
 }
 
-// FuzzDecodeBodies feeds arbitrary bytes to every body decoder. None may
-// panic, and any body a decoder ACCEPTS must be one it had the right to:
-// an i128 read equals the wire parts exactly, an announced pool is a real
-// C-strkey, and a Map swap has positive amounts that are the Symbol-keyed
-// offer_amount / return_amount of the body and two distinct legs.
+// FuzzDecodeBodies feeds arbitrary bytes to every body decoder. None may panic, and any body a
+// decoder ACCEPTS must be one it had the right to: an i128 read equals the wire parts exactly,
+// an announced pool is a real C-strkey, and a Map swap has positive amounts that are the
+// Symbol-keyed offer_amount / return_amount of the body and two distinct legs.
 func FuzzDecodeBodies(f *testing.F) {
 	for _, s := range fuzzBodySeeds(f) {
 		f.Add(s)

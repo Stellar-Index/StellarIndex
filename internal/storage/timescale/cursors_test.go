@@ -9,12 +9,10 @@ import (
 	"time"
 )
 
-// ReapCursors is the only irreversible statement in the cursor-cleanup
-// path, and its safety lives entirely in three predicates. The Go-side
-// planner in `stellarindex-ops reap-cursors` applies the same rules, but
-// the planner's output does NOT constrain this DELETE: the statement is
-// predicated on the cutoff, not on the previewed keys, so a dropped
-// clause here deletes rows no preview ever showed. Pin all three.
+// ReapCursors is the only irreversible statement in cursor cleanup, and its safety lives in
+// three predicates. The planner in `stellarindex-ops reap-cursors` applies the same rules but
+// does NOT constrain this DELETE (it is predicated on the cutoff, not the previewed keys), so
+// a dropped clause deletes rows no preview showed. Pin all three.
 func TestReapCursors_DeletePredicates(t *testing.T) {
 	cutoff := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
 

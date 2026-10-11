@@ -73,12 +73,10 @@ func TestRWAApplyReference_OracleOutageLeavesUnboundArmsAlone(t *testing.T) {
 	}
 }
 
-// A prospectus constant NAV is a rule, but the READING of it is bounded
-// like every other reference: through the binding's review deadline the
-// row is served at par unlabelled; from the first instant after it the
-// same figure is served `stale: true` and Source says the binding is
-// due for re-verification. The figure itself is never withheld on this
-// bound — the label is the finding.
+// A prospectus constant NAV is a rule, but its READING is bounded like every other reference:
+// through the binding's review deadline the row is served at par unlabelled; after it the same
+// figure is served `stale: true` and Source says the binding is due for re-verification. The
+// figure is never withheld on this bound.
 func TestRWAApplyReference_ProspectusConstantNAV_StaleAfterReviewBy(t *testing.T) {
 	const issuer = "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"
 	binding, ok := rwa.ConstantNAV("gBENJI", issuer)
@@ -129,11 +127,10 @@ func TestRWAApplyReference_ProspectusConstantNAV_StaleAfterReviewBy(t *testing.T
 	}
 }
 
-// A listing row that is not a usable valuation — zero, negative,
-// unparseable or past the reference bound — must not suppress the
-// prospectus NAV: precedence asks whether the listing IS a valuation, not
-// whether the directory published a string. A pair the prospectus does
-// not bind still reports the listing arm's specific refusal.
+// A listing row that is not a usable valuation (zero, negative, unparseable or past the
+// reference bound) must not suppress the prospectus NAV: precedence asks whether the listing IS
+// a valuation, not whether a string was published. An unbound pair still reports the listing
+// arm's specific refusal.
 func TestRWAApplyReference_UnusableListingPriceFallsToConstantNAV(t *testing.T) {
 	const issuer = "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"
 	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
@@ -179,12 +176,10 @@ func TestRWAApplyReference_UnusableListingPriceFallsToConstantNAV(t *testing.T) 
 	}
 }
 
-// The ISIN an issuer declares and the ISIN a constant-NAV binding was
-// verified against name one security or the row is refused: the bound
-// pair re-declaring another class, and another pair declaring a bound
-// class, are both withheld whatever else would have priced them. A
-// declaration that matches — in any case — or that is not an ISIN at
-// all leaves the row exactly as it was.
+// The ISIN an issuer declares and the ISIN a constant-NAV binding was verified against must
+// name one security or the row is refused: the bound pair declaring another class, and another
+// pair declaring a bound class, are both withheld. A matching declaration (in any case) or a
+// non-ISIN one leaves the row unchanged.
 func TestRWAApplyReference_DeclaredISINMustMatchConstantNAVBinding(t *testing.T) {
 	const franklinIB = "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"
 	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)

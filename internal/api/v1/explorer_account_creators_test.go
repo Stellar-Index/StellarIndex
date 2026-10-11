@@ -142,13 +142,10 @@ func TestExplorer_AccountCreators_WireShape(t *testing.T) {
 	}
 }
 
-// TestExplorer_AccountCreators_ServedSpanMatchesProjection is the
-// regression guard for the defect class this surface is most likely to
-// fall into: reporting a coverage span wider than the rows behind it.
-//
-// The snapshot's span starts at ledger 33,000,001 — NOT genesis — and
-// the response must say so. A handler that hardcoded genesis, or that
-// derived the span from anything other than the projection, fails here.
+// TestExplorer_AccountCreators_ServedSpanMatchesProjection guards against reporting a coverage
+// span wider than the rows behind it. The snapshot's span starts at ledger 33,000,001, NOT
+// genesis, and the response must say so; a handler that hardcoded genesis or derived the span
+// from anything but the projection fails here.
 func TestExplorer_AccountCreators_ServedSpanMatchesProjection(t *testing.T) {
 	snap := creatorsSnapshot(t)
 	reader := &stubExplorerReader{accountCreators: snap}

@@ -12,10 +12,9 @@ import (
 
 // TestInstrumentFeed_BindsThePairNotTheCode is the identity rule.
 //
-// Asset codes are not unique on Stellar. A binding that answered on the
-// code would hand every account issuing a token called USTRY the real
-// instrument's net asset value — a false financial claim about a real
-// security, made about a token the oracle has never heard of.
+// Asset codes are not unique on Stellar. A binding that answered on the code would give any
+// issuer of a token called USTRY the real instrument's net asset value, a false financial
+// claim about a token the oracle has never heard of.
 func TestInstrumentFeed_BindsThePairNotTheCode(t *testing.T) {
 	const impostor = "GAXSPCTVGFIVYGHT7JLJZV57HCN5KUYDJ6DMPLNWUKL7A5A3HKCNW7JW"
 
@@ -105,11 +104,9 @@ func TestBindingsAreWellFormed(t *testing.T) {
 	}
 }
 
-// TestInstrumentBindings_Served — the curated set is published so a
-// consumer can audit every pair this surface will compare, rather than
-// inferring the rule from whichever rows carry a figure today. Feeds are
-// served in canonical `rwa:` form so the id goes straight to the oracle
-// endpoints.
+// TestInstrumentBindings_Served: the curated set is published so a consumer can audit every
+// pair this surface will compare. Feeds are served in canonical `rwa:` form so the id goes
+// straight to the oracle endpoints.
 func TestInstrumentBindings_Served(t *testing.T) {
 	got := InstrumentBindings()
 	if len(got) != len(instrumentBindings) {

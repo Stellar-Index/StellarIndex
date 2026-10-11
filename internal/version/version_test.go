@@ -8,11 +8,8 @@ import (
 )
 
 func TestString_DefaultValues(t *testing.T) {
-	// At test time, ldflags haven't been applied. Version should be
-	// the package default ("dev") and BuildDate the package default
-	// ("unknown"); GoVersion is whatever the test binary is running
-	// against. The point of String() is one-line summary — verify it
-	// includes all three.
+	// ldflags are not applied under test, so Version and BuildDate are the package defaults
+	// ("dev", "unknown"); GoVersion is the test binary's. String() must include all three.
 	got := String()
 	if !strings.Contains(got, Version) {
 		t.Errorf("String()=%q missing Version=%q", got, Version)
@@ -46,12 +43,9 @@ func TestReadVCSSetting_UnknownKey(t *testing.T) {
 }
 
 func TestReadVCSSetting_MatchedKey(t *testing.T) {
-	// The "key not found" path is covered by TestReadVCSSetting_UnknownKey;
-	// this pins the matched-key path so a refactor that breaks the
-	// loop-match (e.g. accidentally returning "unknown" for every
-	// lookup) gets caught. Use a setting Go's build system always
-	// records into a test binary — GOARCH — and assert that the
-	// helper returns the same value the runtime confirms.
+	// The not-found path is TestReadVCSSetting_UnknownKey; this pins the matched-key path so a
+	// loop-match regression (returning "unknown" for every lookup) is caught. GOARCH is always
+	// recorded in a test binary, so the helper must return the value the runtime confirms.
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
 		t.Skip("build info unavailable — cannot exercise matched-key path")

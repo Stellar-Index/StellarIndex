@@ -18,13 +18,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// TestAssetSupplyResponseFieldsMatchSpec pins the handler struct to the spec's
-// AssetSupply schema in BOTH directions. The spec shipped three property names
-// the server never emitted (`total_supply_lower_bound`,
-// `contract_self_checks_agreed`, `declared_decimals`) while the handler served
-// `circulating_supply_lower_bound`, `supply_consistent` and `decimals`; every
-// generated consumer typed the phantom names and read undefined for the real
-// ones. The Asset-schema sibling of this test only looks one way.
+// TestAssetSupplyResponseFieldsMatchSpec pins the handler struct to the spec's AssetSupply schema
+// in BOTH directions, so a property the server never emits (or emits undeclared) cannot make
+// generated consumers read undefined. The Asset-schema sibling of this test only looks one way.
 func TestAssetSupplyResponseFieldsMatchSpec(t *testing.T) {
 	props := specSchemaProps(t, "AssetSupply")
 	if len(props) == 0 {
@@ -138,13 +134,10 @@ func TestSupplyStorageFallbackOmitsConsistencyWithoutSelfChecks(t *testing.T) {
 
 func ptrBool(b bool) *bool { return &b }
 
-// TestSupplyStorageFallbackAsOfLedgerIsLakeWatermark pins ADR-0041 Decision 4
-// on the storage-derived arm: `as_of_ledger` is the lake watermark — the same
-// ledger `flags.stale` is judged from — not the storage reader's own
-// max(last_modified_ledger), which is when a balance last moved and trails
-// the tip by however long the holders have been idle. The two were stamped
-// from different sources, so a response could carry a fresh-looking stale
-// flag beside a months-old as_of_ledger, or the reverse.
+// TestSupplyStorageFallbackAsOfLedgerIsLakeWatermark pins ADR-0041 Decision 4 on the
+// storage-derived arm: `as_of_ledger` is the lake watermark that `flags.stale` is judged from, not
+// the reader's max(last_modified_ledger), which trails the tip while holders are idle. Mixed
+// sources would pair a fresh-looking stale flag with an old as_of_ledger, or the reverse.
 func TestSupplyStorageFallbackAsOfLedgerIsLakeWatermark(t *testing.T) {
 	const (
 		lastMoved = 64165090 // dealStorageSupply().AsOfLedger

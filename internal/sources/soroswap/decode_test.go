@@ -9,17 +9,13 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// Decoder tests using SDK-encoded fixtures. Complements
-// real_fixture_test.go (live mainnet captures): this file covers
-// shapes that are hard to provoke on mainnet — large negative
-// i128s, missing map fields, wrong top-level SCVal kind,
-// contract-version drift scenarios.
+// Decoder tests using SDK-encoded fixtures. Complements real_fixture_test.go (live mainnet
+// captures) with shapes hard to provoke on mainnet: large negative i128s, missing map fields,
+// wrong top-level SCVal kind, contract-version drift.
 //
-// Capturing new_pair events from the factory requires waiting for
-// someone to deploy a pair on mainnet (infrequent). Until a real
-// fixture lands in test/fixtures/soroswap/<wasm_hash>/new_pair_*.json,
-// the new_pair decoder is covered exclusively by the SDK-encoded
-// fixture below. TODO: refresh from real capture when available.
+// new_pair events are infrequent on mainnet, so until a real fixture lands in
+// test/fixtures/soroswap/<wasm_hash>/new_pair_*.json the new_pair decoder is covered only by
+// the SDK-encoded fixture below. TODO: refresh from real capture when available.
 
 // ─── SDK-encode helpers for building well-formed fixtures ────────
 
@@ -230,11 +226,9 @@ func TestSdkDecodeSkim_phase1Shape(t *testing.T) {
 }
 
 func TestSdkDecodeSkim_amountAliasShape(t *testing.T) {
-	// Schema-evolution-safety: decoder falls back to `amount_0` /
-	// `amount_1` when the canonical Soroswap names are absent (the
-	// common alias seen in Uniswap-v2 derivatives). If a future
-	// Soroswap WASM upgrade renames the fields, the decoder still
-	// produces a row instead of silently dropping the event.
+	// Schema evolution: the decoder falls back to `amount_0` / `amount_1` (the Uniswap-v2
+	// alias) when the canonical Soroswap names are absent, so a WASM upgrade renaming the
+	// fields still yields a row instead of silently dropping the event.
 	body := b64(t, scMap(
 		xdr.ScMapEntry{Key: symbol("amount_0"), Val: i128(big.NewInt(11))},
 		xdr.ScMapEntry{Key: symbol("amount_1"), Val: i128(big.NewInt(22))},

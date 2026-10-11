@@ -12,16 +12,10 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// The document under test is WisdomTree's real stellar.toml, captured
-// from stellar.wisdomtree.com on 2026-09-16. Line 20 ends its ACCOUNTS
-// array with an unterminated basic string, so the whole file is invalid
-// TOML — and every one of its eighteen [[CURRENCIES]] tables is
-// well-formed. Thirteen declare an RWA anchor class and carry
-// 7,023,543 tokens across roughly 30,000 trustlines each.
-//
-// Before section recovery this index read NOTHING from it. A missing
-// quotation mark in a table we do not even consult was silencing an
-// issuer's whole declaration.
+// The document under test is a real stellar.toml whose ACCOUNTS array ends in an unterminated
+// basic string, so the whole file is invalid TOML while every [[CURRENCIES]] table is
+// well-formed. Section recovery must still read those tables: a missing quotation mark in a
+// table we do not consult must not silence an issuer's whole declaration.
 func realWisdomTreeTOML(t *testing.T) []byte {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("testdata", "wisdomtree-unterminated-accounts.toml"))

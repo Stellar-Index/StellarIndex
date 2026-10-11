@@ -12,12 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Replay captured Phoenix swaps (8 events each, grouped by tx_hash
-// + op_index) into the RawSwap collator + real decoder. Validates
-// end-to-end against mainnet wire format.
-//
-// Fixtures at test/fixtures/phoenix/<wasm_hash>/swap_*.json — one
-// file per complete swap, embedding all 8 per-field events.
+// Replay captured Phoenix swaps (8 events each, grouped by tx_hash + op_index) into the RawSwap
+// collator and real decoder, validating the mainnet wire format. Fixtures live at
+// test/fixtures/phoenix/<wasm_hash>/swap_*.json, one file per complete swap.
 
 type phoenixSwapFixture struct {
 	WasmHash       string `json:"wasm_hash"`
@@ -82,12 +79,9 @@ func runPhoenixFixture(t *testing.T, path string) {
 		t.Fatalf("parse closed_at: %v", err)
 	}
 
-	// Feed the 8 events through the classify + assign path — same
-	// work processPage does at runtime. This validates that
-	//   1. classify() matches on real topic[0] bytes,
-	//   2. each of the 8 field-name topic[1] values routes to the
-	//      right RawSwap slot,
-	//   3. decodeSwap assembles the final canonical.Trade.
+	// Same classify + assign path as processPage: classify() must match real topic[0] bytes, each
+	// of the 8 topic[1] field names must route to the right RawSwap slot, and decodeSwap must
+	// assemble the final canonical.Trade.
 	var raw_ RawSwap
 	raw_.Ledger = fx.Ledger
 	raw_.TxHash = fx.TxHash

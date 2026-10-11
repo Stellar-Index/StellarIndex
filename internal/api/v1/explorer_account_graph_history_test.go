@@ -54,8 +54,7 @@ func histMonth(year int, month time.Month) time.Time {
 	return time.Date(year, month, 1, 0, 0, 0, 0, time.UTC)
 }
 
-// graphHistorySnapshot is the base fixture, and every figure in it is
-// arithmetically consistent with the reader's contract:
+// graphHistorySnapshot is the base fixture; every figure is consistent with the reader's contract:
 //
 //	created:   3 edges (3 new accounts) across 3 months, 7 creations of
 //	           which 5 are placed and 2 are not.

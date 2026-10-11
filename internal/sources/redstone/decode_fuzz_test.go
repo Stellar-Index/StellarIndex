@@ -123,12 +123,10 @@ func FuzzReciprocalAtScale(f *testing.F) {
 	})
 }
 
-// FuzzDecodeWritePricesSingle drives decodeWritePrices end-to-end with
-// one priced feed and checks the emitted row: a registry feed's raw
-// value passes through exactly unless the feed is Invert, in which
-// case it is the exact reciprocal; a row is never emitted with a
-// non-positive price; and the package timestamp is used only inside
-// the plausible window.
+// FuzzDecodeWritePricesSingle drives decodeWritePrices end-to-end with one priced feed: a raw
+// value passes through exactly unless the feed is Invert (then the exact reciprocal), no row
+// carries a non-positive price, and the package timestamp is used only inside the plausible
+// window.
 func FuzzDecodeWritePricesSingle(f *testing.F) {
 	f.Add(uint64(0), uint64(0), uint64(0), uint64(oneBTCAt8), uint64(1_745_000_000_000), uint8(0))
 	f.Add(uint64(0), uint64(0), uint64(0), uint64(1_739_110_000), uint64(1_745_000_000_000), uint8(1))

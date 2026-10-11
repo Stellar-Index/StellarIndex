@@ -23,15 +23,10 @@ func classicSupplyConn(t *testing.T, rows [][]any) (*ExplorerReader, *stubConn) 
 	return &ExplorerReader{conn: conn}, conn
 }
 
-// TestClassicCirculatingSupply_PreservesAboveInt64Totals is the ADR-0003
-// assertion for this reader. The per-asset total is a SUM over every trustline
-// balance for a classic asset; the query sums as Int128 and stringifies
-// (`toString(sum(toInt128(balance)))`) precisely because the running total can
-// exceed int64, and the Go side must carry the result as a STRING end to end.
-//
-// The value used is 2^70 stroops — comfortably past int64's 9.22e18 ceiling —
-// so any int64 hop anywhere on this path truncates it visibly rather than
-// silently rounding a plausible number.
+// TestClassicCirculatingSupply_PreservesAboveInt64Totals is the ADR-0003 assertion for this
+// reader: the per-asset trustline total is summed as Int128 and stringified because it can
+// exceed int64, so the Go side must carry it as a STRING end to end. The fixture is 2^70
+// stroops, so any int64 hop truncates it visibly.
 func TestClassicCirculatingSupply_PreservesAboveInt64Totals(t *testing.T) {
 	huge := new(big.Int).Lsh(big.NewInt(1), 70).String() // 1180591620717411303424
 	if len(huge) <= len("9223372036854775807") {
@@ -55,12 +50,10 @@ func TestClassicCirculatingSupply_PreservesAboveInt64Totals(t *testing.T) {
 	}
 }
 
-// TestClassicCirculatingSupply_OmitsUnusableRows — the reader drops rows whose
-// asset or total is empty, and drops an exact "0". The zero case is the
-// interesting one: a classic asset whose trustlines net to zero has NO
-// circulating supply to report, and publishing "0" as a fact would feed a
-// market-cap of exactly zero into /v1/assets rather than leaving the field
-// absent (the caller's documented degrade path).
+// TestClassicCirculatingSupply_OmitsUnusableRows: the reader drops rows whose asset or total is
+// empty, and an exact "0". A classic asset whose trustlines net to zero has NO circulating
+// supply to report; publishing "0" would feed a zero market cap into /v1/assets instead of
+// leaving the field absent (the caller's documented degrade path).
 func TestClassicCirculatingSupply_OmitsUnusableRows(t *testing.T) {
 	r, _ := classicSupplyConn(t, [][]any{
 		{"GOOD-" + testIssuer, "500"},
@@ -95,18 +88,15 @@ func TestClassicCirculatingSupply_OmitsUnusableRows(t *testing.T) {
 	}
 }
 
-// TestClassicCirculatingSupply_QueryShape pins the population the total is
-// summed over. Each predicate is a correctness predicate, not a filter of
-// convenience:
+// TestClassicCirculatingSupply_QueryShape pins the population the total is summed over. Each
+// predicate is a correctness predicate, not a convenience filter:
 //
-//   - entry_type = 'trustline': circulating supply for a classic asset IS the
-//     amount held by non-issuer accounts, which is exactly the trustline set.
-//     Admitting account entries would fold XLM balances into every asset.
-//   - change_type != 'removed': a deleted trustline holds nothing; counting it
-//     resurrects the balance it had when it was closed.
+//   - entry_type = 'trustline': circulating supply is the amount held by non-issuer accounts,
+//     which is the trustline set; account entries would fold XLM balances into every asset.
+//   - change_type != 'removed': a deleted trustline holds nothing; counting it resurrects the
+//     balance it had when closed.
 //   - balance > 0: a zero/negative row contributes nothing and only costs scan.
-//   - GROUP BY asset: the per-asset key. Losing it collapses every asset into
-//     one total.
+//   - GROUP BY asset: the per-asset key; losing it collapses every asset into one total.
 //   - toInt128 + toString: the ADR-0003 no-truncation contract, in the SQL.
 func TestClassicCirculatingSupply_QueryShape(t *testing.T) {
 	r, conn := classicSupplyConn(t, nil)

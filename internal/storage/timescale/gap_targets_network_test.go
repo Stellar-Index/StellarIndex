@@ -9,17 +9,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 )
 
-// TestGapDetectorTargetsResolveToKnownSources is the drift guard that
-// makes the network filter safe to trust.
-//
-// [sourcenet.Applicable] answers false for ANY name it does not
-// classify, so a target whose SourceNetKey sourcenet has never heard of
-// would be silently dropped from every non-pubnet deployment's scan —
-// trading the "invalid range" noise this fix removes for a MISSING
-// coverage signal, which is strictly worse. Every target must therefore
-// resolve to a name sourcenet has an opinion about: either its own
-// (cctp, sdex, soroswap…) or an explicit CanonicalSource
-// ("aquarius-liquidity" → "aquarius").
+// TestGapDetectorTargetsResolveToKnownSources is the drift guard that makes the network filter
+// safe to trust. [sourcenet.Applicable] answers false for ANY name it does not classify, so a
+// target with an unknown SourceNetKey would be silently dropped from every non-pubnet scan,
+// losing its coverage signal. Every target must resolve to a name sourcenet knows: its own
+// (cctp, sdex, soroswap…) or an explicit CanonicalSource ("aquarius-liquidity" → "aquarius").
 func TestGapDetectorTargetsResolveToKnownSources(t *testing.T) {
 	t.Parallel()
 
@@ -34,16 +28,10 @@ func TestGapDetectorTargetsResolveToKnownSources(t *testing.T) {
 	}
 }
 
-// TestApplicableGapDetectorTargets_ScopesToTheNetwork pins the filter
-// itself (RV1 #5).
-//
-// Before this, RunGapDetector scanned every registered target on every
-// network. Each target's Genesis is a PUBNET contract-deploy ledger, so
-// on a test net whose tip is ~4.4M the window came out as
-// [50_746_266, 4_467_040] and FindPerSourceLedgerGaps returned
-// `invalid range` — forever, once per cadence, for every pubnet-only
-// target, while the sourcenet package doc already claimed the detector
-// as a consumer.
+// TestApplicableGapDetectorTargets_ScopesToTheNetwork pins the filter itself. Each target's
+// Genesis is a PUBNET contract-deploy ledger, so scanning a pubnet-only target on a test net
+// whose tip is lower yields an inverted window and FindPerSourceLedgerGaps fails with
+// `invalid range` on every cadence.
 func TestApplicableGapDetectorTargets_ScopesToTheNetwork(t *testing.T) {
 	t.Parallel()
 
@@ -69,11 +57,9 @@ func TestApplicableGapDetectorTargets_ScopesToTheNetwork(t *testing.T) {
 			kept[target.Source] = true
 		}
 
-		// Ledger-anchored substrate: these exist on every network and
-		// MUST keep their coverage signal. sep41-* and soroban-events
-		// are the ones a naive name match would have dropped — their
-		// target keys are hyphenated per-table names that sourcenet
-		// spells with underscores.
+		// Ledger-anchored substrate exists on every network and MUST keep its coverage
+		// signal. sep41-* and soroban-events are the ones a naive name match would drop:
+		// their target keys are hyphenated while sourcenet spells them with underscores.
 		for _, src := range []string{"sdex", "sep41-transfers", "sep41-supply", "soroban-events"} {
 			if !kept[src] {
 				t.Errorf("%s: target %q was dropped, but its substrate is the ledger itself — "+

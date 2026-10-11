@@ -174,13 +174,11 @@ func grepLines(t *testing.T, body, prefix string) []string {
 	return out
 }
 
-// TestWriteSnapshotFailureTextfile_CarriesLastSuccessTimestamp is the
-// regression guard for the 36 h ticket / 72 h page escalation. The
-// textfile collector serves exactly what the `.prom` file holds on
-// each scrape, so a failure-path rewrite that omits
-// last_success_timestamp RETIRES the series and both alerts — which
-// evaluate `time() - <metric>` — go permanently no-data. Days 2..n of
-// an outage must still carry the day-0 success timestamp verbatim.
+// TestWriteSnapshotFailureTextfile_CarriesLastSuccessTimestamp guards the 36 h ticket / 72 h
+// page escalation. The textfile collector serves exactly what the `.prom` file holds, so a
+// failure-path rewrite that omits last_success_timestamp retires the series and both alerts
+// (`time() - <metric>`) go permanently no-data. Later days of an outage must still carry the
+// day-0 success timestamp verbatim.
 func TestWriteSnapshotFailureTextfile_CarriesLastSuccessTimestamp(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "supply_snapshot.prom")

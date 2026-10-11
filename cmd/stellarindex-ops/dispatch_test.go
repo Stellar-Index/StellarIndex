@@ -5,22 +5,17 @@ import (
 	"testing"
 )
 
-// TestSubcommandDispatch_LeafHandlersSeeTheirFlags is the coverage that was
-// missing and let every leaf subcommand ship UNINVOKABLE.
+// TestSubcommandDispatch_LeafHandlersSeeTheirFlags guards against leaf subcommands being
+// UNINVOKABLE.
 //
-// The dispatch table hands a handler the FULL argv (args[0] == the verb).
-// Go's flag package stops parsing at the first non-flag argument, so a leaf
-// handler doing fs.Parse(args) on that argv parses NOTHING and every flag
-// keeps its zero value: `stellarindex-ops usage-rollup-backfill -config
-// /etc/stellarindex.toml -from DATE` answered "-config is required"
-// and there was no way to run it at all. The existing unit tests all call
-// the handlers DIRECTLY with flags-only argv, so they exercised the
-// convention the handlers wanted and never the one the dispatcher used —
-// which is precisely why nothing caught it.
+// The dispatch table hands a handler the FULL argv (args[0] == the verb). Go's flag package
+// stops parsing at the first non-flag argument, so a leaf doing fs.Parse(args) on that argv
+// parses NOTHING and every flag keeps its zero value, answering "-config is required". Unit
+// tests that call handlers DIRECTLY with flags-only argv never exercise the dispatcher's
+// convention.
 //
-// This test goes through `subcommands`, the way main() does. The assertion
-// is deliberately "the error is NOT the no-flags-parsed symptom": each
-// handler's next gate differs, but every one of them reports
+// This test goes through `subcommands`, as main() does. It asserts the error is NOT the
+// no-flags-parsed symptom: each handler's next gate differs, but every one reports
 // "-config is required" if and only if the flags were dropped.
 func TestSubcommandDispatch_LeafHandlersSeeTheirFlags(t *testing.T) {
 	cases := []struct {

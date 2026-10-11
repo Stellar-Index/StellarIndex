@@ -61,16 +61,12 @@ func decodeOneCCTP(t *testing.T, ev events.Event) Event {
 	return out[0].(Event)
 }
 
-// FuzzMoneyColumnsAreExact drives every CCTP event that carries money —
-// deposit_for_burn (amount, max_fee), mint_and_withdraw (amount,
-// fee_collected), mint_and_forward (amount) and
-// set_burn_limit_per_message (burn_limit_per_message) — through the
-// production Matches + Decode over the whole i128 × i128 domain and
-// asserts each promoted column is the exact value of its OWN named field:
-// no int64 truncation, no amount/fee cross-wiring, whatever order the
-// Map carries the fields in. It also pins EventIndex, the cctp_events PK
-// discriminator, to the source event's index, and the identity gate: the
-// same bytes from a non-CCTP contract are never claimed.
+// FuzzMoneyColumnsAreExact drives every CCTP money-carrying event (deposit_for_burn,
+// mint_and_withdraw, mint_and_forward, set_burn_limit_per_message) through Matches + Decode
+// over the whole i128 x i128 domain. Each promoted column must equal its OWN named field: no
+// int64 truncation, no amount/fee cross-wiring, whatever order the Map carries fields in. It
+// also pins EventIndex (the cctp_events PK discriminator) and the identity gate: the same
+// bytes from a non-CCTP contract are never claimed.
 //
 // Generative run:
 // go test -run=^$ -fuzz=^FuzzMoneyColumnsAreExact$ -fuzztime=60s -parallel=2 ./internal/sources/cctp/
@@ -176,10 +172,9 @@ func FuzzMoneyColumnsAreExact(f *testing.F) {
 	})
 }
 
-// FuzzDecodeArbitraryBody feeds arbitrary body bytes under every CCTP
-// topic symbol from a CCTP contract. The decoder must never panic (the
-// dispatcher would recover and lose the event silently), and whatever it
-// accepts must be exactly one Event of the classified type.
+// FuzzDecodeArbitraryBody feeds arbitrary body bytes under every CCTP topic symbol from a CCTP
+// contract. The decoder must never panic (the dispatcher would recover and silently lose the
+// event), and whatever it accepts must be exactly one Event of the classified type.
 //
 // Generative run:
 // go test -run=^$ -fuzz=^FuzzDecodeArbitraryBody$ -fuzztime=60s -parallel=2 ./internal/sources/cctp/

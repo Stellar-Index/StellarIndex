@@ -145,11 +145,8 @@ func TestRecoverer_NilLoggerFallsBackToDefault(t *testing.T) {
 	}
 }
 
-// TestRecoverer_RequestIDIncludedWhenSet — when a request id is
-// present in the context (set by the request-id middleware
-// upstream), the problem+json body includes it. This is the
-// operator-facing thread that ties a 500 in the response to a
-// log line.
+// TestRecoverer_RequestIDIncludedWhenSet — a request id in the context (set by the upstream
+// request-id middleware) must appear in the problem+json body: it ties a 500 to its log line.
 func TestRecoverer_RequestIDIncludedWhenSet(t *testing.T) {
 	mw := Recoverer(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -175,12 +172,9 @@ func TestRecoverer_RequestIDIncludedWhenSet(t *testing.T) {
 	}
 }
 
-// withRequestIDForTest is a tiny shim around the package-internal
-// withString helper so the recoverer test can simulate the upstream
-// request-id middleware injecting an ID into the context. Kept
-// here (rather than in the production code) because exporting a
-// real WithRequestID function would let downstream code bypass the
-// request-id middleware entirely — undesirable.
+// withRequestIDForTest wraps the package-internal withString helper to simulate the upstream
+// request-id middleware. It stays test-only: an exported WithRequestID would let downstream
+// code bypass that middleware.
 func withRequestIDForTest(ctx context.Context, id string) context.Context {
 	return withString(ctx, ctxKeyRequestID, id)
 }

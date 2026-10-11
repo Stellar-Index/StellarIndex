@@ -21,18 +21,13 @@ import (
 
 // ─── The movements provenance vocabulary has two declaration sites ──
 //
-// explorer.AccountMovements passes `provenance` straight through from the
-// row, so every value a writer stamps is a value a consumer receives.
-// Three writers, two declarations: the [classicmovements.Provenance]
-// const block (classic_derived on the ADR-0047 archive; cap67_event on
-// the Postgres recent tail) and [clickhouse.ProvenanceCAP67Derived]
-// (the ch-cap67-movements derive that continues the archive past P23).
-// The spec's `AccountMovement.provenance` enum is a YAML copy of that
-// set, and the explorer types, Postman collection and docs mirror are
-// generated from it — so a value missing from the spec is a value every
-// published contract rejects while the API serves it. cap67_derived was
-// served from the ClickHouse arm and absent from all of them until this
-// pin.
+// explorer.AccountMovements passes `provenance` straight through from the row, so every value a
+// writer stamps is a value a consumer receives. Three writers, two declarations: the
+// [classicmovements.Provenance] const block (classic_derived on the archive; cap67_event on the
+// Postgres recent tail) and [clickhouse.ProvenanceCAP67Derived] (the derive that continues the
+// archive past P23). The spec's `AccountMovement.provenance` enum is a YAML copy of that set, and
+// the explorer types, Postman collection and docs are generated from it, so a value missing from
+// the spec is one every published contract rejects while the API serves it.
 
 // TestAccountMovementProvenance_SpecEnumIsTheGoVocabulary — the spec
 // enum is exactly the set of provenance values a writer can stamp.

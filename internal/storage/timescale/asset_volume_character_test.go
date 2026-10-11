@@ -12,11 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestDeriveVolumeCharacter_Census pins the §2 classifier against the
-// design's taxonomy table (the census is the oracle). The required cases
-// from the build directive — scam AUD → concentrated, AUDD/AUDR →
-// operational, a normal multi-account asset → market — plus the other two
-// taxonomy species and the floor guard.
+// TestDeriveVolumeCharacter_Census pins the classifier against the design's taxonomy table:
+// scam AUD → concentrated, AUDD/AUDR → operational, a normal multi-account asset → market,
+// plus the other two taxonomy species and the floor guard.
 func TestDeriveVolumeCharacter_Census(t *testing.T) {
 	cases := []struct {
 		name string
@@ -181,13 +179,10 @@ func TestVolumeCharacterWindow(t *testing.T) {
 	}
 }
 
-// TestVolumeCharacterSQL_PoolMakerIsNotAnAccount: a classic liquidity-pool
-// fill stores the hex pool id in trades.maker (sdex decode). Both the
-// per-asset query and the rollup must project maker through an account
-// discriminator that keeps a G-strkey and drops the pool id, and key a pool
-// fill on its lone taker rather than on the raw (pool, taker) pair, or the
-// pool counts as a distinct market maker and a round-trip through pools
-// splits into per-pool halves.
+// TestVolumeCharacterSQL_PoolMakerIsNotAnAccount: a classic liquidity-pool fill stores the hex
+// pool id in trades.maker. Both the per-asset query and the rollup must project maker through an
+// account discriminator that keeps a G-strkey and drops the pool id, and key a pool fill on its
+// lone taker, or the pool counts as a distinct market maker and round-trips split per pool.
 func TestVolumeCharacterSQL_PoolMakerIsNotAnAccount(t *testing.T) {
 	var raw [32]byte
 	for i := range raw {

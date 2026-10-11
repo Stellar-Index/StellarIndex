@@ -39,13 +39,11 @@ func FuzzSkewDecades(f *testing.F) {
 	})
 }
 
-// FuzzReconcileRow drives one persisted row through Reconcile against
-// every (persisted, lake, found, read-error, write-error) combination and
-// checks the repair contract: an unreadable/underivable lake never touches
-// the row; agreement is silent; a mismatch is repaired TOWARD the lake —
-// deleted when the lake says 7 (the table forbids 7), upserted to the
-// lake's exact value otherwise — and a failed repair leaves the row as it
-// was so the next tick retries.
+// FuzzReconcileRow drives one persisted row through Reconcile against every (persisted, lake,
+// found, read-error, write-error) combination. Contract: an unreadable/underivable lake never
+// touches the row; agreement is silent; a mismatch is repaired TOWARD the lake (deleted when
+// the lake says 7, which the table forbids, else upserted to the lake's value); a failed
+// repair leaves the row as it was so the next tick retries.
 func FuzzReconcileRow(f *testing.F) {
 	f.Add(int32(6), uint32(9), true, false, false)
 	f.Add(int32(6), uint32(7), true, false, false)

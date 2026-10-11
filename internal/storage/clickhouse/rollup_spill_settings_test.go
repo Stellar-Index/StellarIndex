@@ -6,26 +6,13 @@ import (
 	"time"
 )
 
-// TestRollupStatementsKeepTheSpillValve refuses a statement that sets
-// both max_bytes_before_external_group_by and
-// optimize_aggregation_in_order = 1.
+// TestRollupStatementsKeepTheSpillValve refuses a statement that sets both
+// max_bytes_before_external_group_by and optimize_aggregation_in_order = 1.
 //
-// The two cancel: in-order aggregation cannot spill to disk, so setting
-// it disables the external-group-by limit sitting beside it and turns an
-// aggregation that would have gone to disk into a hard
-// max_memory_usage failure. Nothing reports the conflict — ClickHouse
-// accepts both settings and simply never spills.
-//
-// This is not theoretical. The creators rollup's edge step carried both
-// from the day it shipped and died at step 10/12 with "Query memory
-// limit exceeded: would use 8.00 GiB" on the first cycle after deploy,
-// leaving stellar.account_creator_edges empty and
-// /v1/accounts/{g}/graph serving its warming 503. Measured on r1: with
-// the setting removed, the same 24.8 M-row aggregation completes inside
-// a 512 MiB budget.
-//
-// The rule is general, so the test is too: any future step that pairs
-// them fails here rather than on r1 at 3 a.m.
+// The two cancel: in-order aggregation cannot spill to disk, so it disables the external
+// group-by limit beside it and turns an aggregation that would have spilled into a hard
+// max_memory_usage failure. ClickHouse accepts both settings and reports nothing. The rule is
+// general, so any rollup step that pairs them fails here rather than at runtime.
 func TestRollupStatementsKeepTheSpillValve(t *testing.T) {
 	lists := map[string][]string{}
 	for _, s := range creatorsRollupStatements(P23BoundaryLedger) {

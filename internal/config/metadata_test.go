@@ -2,14 +2,9 @@ package config
 
 import "testing"
 
-// TestMetadataConfig_HomeDomainFor covers the curated-lookup helper
-// the API binary uses to populate AssetDetail.HomeDomain. Three
-// edge cases worth pinning:
-//
-//  1. nil/empty map → ("", false) for any issuer.
-//  2. unknown issuer → ("", false).
-//  3. empty-string entry → ("", false) — falsy entries are
-//     treated as un-curated rather than asserting an empty domain.
+// TestMetadataConfig_HomeDomainFor covers the curated lookup behind AssetDetail.HomeDomain: a
+// nil/empty map and an unknown issuer both give ("", false), and an empty-string entry is treated
+// as un-curated rather than asserting an empty domain.
 func TestMetadataConfig_HomeDomainFor(t *testing.T) {
 	t.Run("nil map yields not-found", func(t *testing.T) {
 		var m MetadataConfig

@@ -64,16 +64,14 @@ func validSymbol(sym string) bool {
 	return true
 }
 
-// FuzzDecodeRelayArgs builds a well-formed relay / force_relay call
-// with a fuzzed symbol, rate, resolve_time and indices, and checks the
-// emitted row against an independently computed expectation:
+// FuzzDecodeRelayArgs builds a well-formed relay / force_relay call with a fuzzed symbol, rate,
+// resolve_time and indices, and checks the emitted row against an independent expectation:
 //   - the price is the exact u64 rate (no int64 wrap above 2^63);
 //   - USD and zero rates are never emitted;
-//   - inside Band's own acceptance window (floor ≤ resolve_time <
-//     close + 3600, strict, as relay() applies it) the timestamp is the
-//     declared resolve_time; outside it, relay() is dropped entirely
-//     (ErrEmptyRates — the contract would silently no-op it) and
-//     force_relay clamps to the ledger close (unconditional admin path);
+//   - inside Band's acceptance window (floor ≤ resolve_time < close + 3600, strict, as relay()
+//     applies it) the timestamp is the declared resolve_time; outside it, relay() is dropped
+//     (ErrEmptyRates, since the contract would silently no-op it) and force_relay clamps to the
+//     ledger close (unconditional admin path);
 //   - a rate in any numeric shape other than u64 is refused.
 func FuzzDecodeRelayArgs(f *testing.F) {
 	f.Add("BTC", uint64(50_000_000_000_000), uint64(fuzzClose), false, uint8(0), uint8(0), true)

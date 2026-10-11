@@ -5,13 +5,11 @@ import (
 	"testing"
 )
 
-// TestEncodeDecodeArgs_RoundTrip is the op-args plumbing the
-// soroban_events landing zone (ADR-0029) + projector-replay depend
-// on: InvokeContract args are stored as a marshalled ScVal::Vec and
-// later reconstructed to the per-arg base64 blobs events.Event.OpArgs
-// expects. A regression here silently corrupts the args Band /
-// Redstone decode their feed IDs + relay values from. XDR marshalling
-// is canonical, so an exact byte-for-byte round-trip must hold.
+// TestEncodeDecodeArgs_RoundTrip covers the op-args plumbing the soroban_events landing zone
+// and projector-replay depend on: InvokeContract args are stored as a marshalled ScVal::Vec
+// and rebuilt into the per-arg base64 blobs events.Event.OpArgs expects. A regression would
+// silently corrupt the args Band / Redstone decode feed IDs and values from. XDR marshalling
+// is canonical, so the round-trip must be byte-for-byte exact.
 func TestEncodeDecodeArgs_RoundTrip(t *testing.T) {
 	args := []string{
 		MustEncodeSymbol("relay"),
@@ -76,11 +74,9 @@ func TestEncodeArgs_InvalidBase64(t *testing.T) {
 	}
 }
 
-// TestDecodeScVec_WrongShape — the column commits to ScVal::Vec.
-// A blob that unmarshals to some OTHER ScVal type (here a bare
-// Symbol) must error rather than being interpreted as a zero-arg
-// list, so a schema/producer drift is caught instead of silently
-// dropping every arg.
+// TestDecodeScVec_WrongShape — the column commits to ScVal::Vec. A blob of any OTHER ScVal
+// type (here a bare Symbol) must error, not read as a zero-arg list, so producer drift is
+// caught instead of silently dropping every arg.
 func TestDecodeScVec_WrongShape(t *testing.T) {
 	// MustEncodeSymbol yields a base64 ScVal::Symbol; its raw bytes
 	// are a valid ScVal but NOT a Vec.

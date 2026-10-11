@@ -48,13 +48,10 @@ func (f *fakeLookup) HomeDomainsAtOrBefore(ctx context.Context, issuers []string
 	return out, nil
 }
 
-// TestLCMHomeDomainResolver_AsOfFitsInPostgresInt32 pins the
-// "no upper bound" sentinel below MaxInt32 — the previous
-// `^uint32(0)` overflowed the postgres int4 column on every call,
-// resurfacing as a flood of `pq: value "4294967295" is out of range
-// for type integer (22003)` errors that defeated the LCM path
-// entirely on r1 and silently routed every issuer through the
-// static-map fallback.
+// TestLCMHomeDomainResolver_AsOfFitsInPostgresInt32 pins the "no upper bound" sentinel below
+// MaxInt32: a `^uint32(0)` overflows the postgres int4 column on every call (error 22003),
+// which would defeat the LCM path and silently route every issuer through the static-map
+// fallback.
 func TestLCMHomeDomainResolver_AsOfFitsInPostgresInt32(t *testing.T) {
 	const maxInt32 = uint32(1<<31 - 1) // 2,147,483,647
 	lookup := &fakeLookup{rows: map[string]string{}}

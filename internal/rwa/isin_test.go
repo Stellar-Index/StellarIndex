@@ -5,16 +5,12 @@ package rwa
 
 import "testing"
 
-// The two ISINs Franklin Templeton declares for its Stellar share
-// classes, plus published ISINs whose check digits are documented, plus
-// the shapes an `anchor_asset` field actually contains when an issuer
-// fills it in with prose.
+// The two ISINs Franklin Templeton declares for its Stellar share classes, published ISINs
+// with documented check digits, and the shapes an `anchor_asset` field contains when an issuer
+// fills it with prose.
 //
-// Every positive fixture here had its check digit reproduced by a
-// separate ISO 6166 implementation before it was written down — one of
-// them was wrong on the first pass and the test caught it, which is the
-// only reason to say so. A fixture whose expected value is taken from
-// the implementation under test asserts nothing.
+// Every positive fixture had its check digit reproduced by a separate ISO 6166 implementation:
+// a fixture whose expected value comes from the implementation under test asserts nothing.
 func TestIsISIN(t *testing.T) {
 	for _, tc := range []struct {
 		in   string

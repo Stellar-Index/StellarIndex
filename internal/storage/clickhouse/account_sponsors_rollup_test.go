@@ -8,21 +8,13 @@ import (
 	"testing"
 )
 
-// TestSponsorsRollupReadsNoOperationBody is the cost guard AND the
-// correctness note behind this rollup's whole shape.
+// TestSponsorsRollupReadsNoOperationBody is the cost guard behind this rollup's shape.
 //
-// The sponsored account could be read out of a Begin operation's
-// body_xdr. It is not, because body_xdr is stellar.operations' wide
-// column and ClickHouse reads it a granule at a time: measured on r1
-// over ledgers 64,000,000-64,277,243, including it cost 61.06 GiB
-// against 12.05 GiB without. The sponsored identity is instead taken
-// from the End operation's source_account, which the XDR guarantees is
-// the sponsored account and which was verified two ways on r1 (SDK
-// decode of sampled bodies, and an identical board over the whole
-// window computed both ways).
-//
-// A future edit that reaches for body_xdr would silently multiply the
-// cycle's cost, so it fails here instead.
+// The sponsored account is not read from a Begin operation's body_xdr: it is stellar.operations'
+// wide column and ClickHouse reads it a granule at a time, roughly 5x the bytes scanned. The
+// sponsored identity comes from the End operation's source_account, which the XDR guarantees is
+// the sponsored account. An edit that reaches for body_xdr would silently multiply the cycle's
+// cost, so it fails here.
 func TestSponsorsRollupReadsNoOperationBody(t *testing.T) {
 	for i, step := range sponsorsRollupStatements {
 		if strings.Contains(step.sql, "body_xdr") {
@@ -35,11 +27,9 @@ func TestSponsorsRollupReadsNoOperationBody(t *testing.T) {
 	}
 }
 
-// TestSponsorsRollupScansOperationsOnce: stellar.operations is the
-// expensive table. Exactly one statement may touch it — the one that
-// lands the narrow working projection. Everything else derives from
-// that projection, which is what makes the board and its coverage span
-// describe the same rows by construction.
+// TestSponsorsRollupScansOperationsOnce: stellar.operations is the expensive table, so exactly one
+// statement may touch it (the narrow working projection). Everything else derives from that
+// projection, so the board and its coverage span describe the same rows by construction.
 func TestSponsorsRollupScansOperationsOnce(t *testing.T) {
 	var touching []int
 	for i, step := range sponsorsRollupStatements {
@@ -80,48 +70,27 @@ func TestSponsorsRollupScansOperationsOnce(t *testing.T) {
 	}
 }
 
-// TestSponsorsRollupCountsOnlyAppliedOperations is the guard for a
-// served league table that counted sponsorship arrangements which never
-// took effect.
+// TestSponsorsRollupCountsOnlyAppliedOperations guards against a served league table that counts
+// sponsorship arrangements which never took effect.
 //
-// stellar.operations carries no success flag and never will — the lake
-// stores what the ledger CONTAINED, so extractOps keeps the operations of
-// failed transactions by design. Measured on r1, 2,426,813 of
-// the archive's 22,413,991 sponsorship operations (10.8%) sit in failed
-// transactions. Ungated the board served 11,162,397 sponsorships_started
-// and 87,193 revocations_issued against true figures of 9,972,887 and
-// 39,492; 323 of its 2,740 ranked accounts had every operation they were
-// credited with inside a failed transaction, one was credited with 27,528
-// revocations against a real 63, and 2,408 of the 2,417 rows that survive
-// the correction were ranked in the wrong place.
+// stellar.operations carries no success flag: the lake stores what the ledger CONTAINED, so the
+// operations of failed transactions are kept by design (about 10% of sponsorship operations).
+// Ungated, the board overstated started sponsorships and revocations and mis-ranked accounts.
 //
-// The sibling cycle gates by pairing the operation with an APPLIED EFFECT
-// (a CAP-67 transfer movement, which a failed transaction cannot
-// produce). That route does not exist here: under CAP-33 the
-// is-sponsoring-future-reserves-for relationship lives only for the
-// duration of the transaction and is written to no ledger entry, so 0 of
-// 4,745 Begin and End operations over ledgers 63,000,000-63,010,000 have
-// any stellar.ledger_entry_changes row at their own operation identity,
-// the 4,294 that applied included. The transaction's own success flag is
-// the only evidence of application there is.
+// The sibling cycle gates on an APPLIED EFFECT (a CAP-67 transfer movement, which a failed
+// transaction cannot produce). That route does not exist here: under CAP-33 the
+// is-sponsoring-future-reserves-for relationship lives only for the transaction and is written to
+// no ledger entry, so the transaction's own success flag is the only evidence of application.
 //
-// Three properties make that gate sound, and each is pinned here because
-// dropping any one of them puts wrong numbers on a served board rather
-// than an error in a log:
+// Three properties make that gate sound; dropping any one puts wrong numbers on a served board
+// rather than an error in a log:
 //
-//   - the join key is the FULL transaction identity, which is also
-//     stellar.transactions' whole ORDER BY key. A looser key would gate an
-//     operation on some other transaction's outcome.
-//   - the flag is resolved with argMax over the version column, not read
-//     off whichever duplicate row the scan reached first. Duplicates are
-//     not hypothetical: over ledgers 63,000,000-63,099,999 every one of
-//     that range's 33,380,486 distinct (ledger_seq, tx_index) keys carries
-//     more than one row.
-//   - the build side is PINNED. The window's transactions outnumber its
-//     sponsorship operations by roughly 460 to 1 (519,663,457 against
-//     1,129,122 in partition 63), so a planner estimate that swapped them
-//     would build a hash table over half a billion rows in a step that
-//     measures 1.28 GiB pinned.
+//   - the join key is the FULL transaction identity, which is also stellar.transactions' whole
+//     ORDER BY key. A looser key would gate an operation on another transaction's outcome.
+//   - the flag is resolved with argMax over the version column, not read off whichever duplicate
+//     row the scan reached first (ReplacingMergeTree duplicates are common).
+//   - the build side is PINNED. Transactions outnumber sponsorship operations by roughly 460 to 1,
+//     so a planner estimate that swapped sides would build a hash table over half a billion rows.
 func TestSponsorsRollupCountsOnlyAppliedOperations(t *testing.T) {
 	stmt := sponsorsOperationsStatement(t)
 

@@ -10,13 +10,10 @@ import (
 // the credential got out.
 const tailStem = "PLACEHOLDER-TAIL-NOT-REAL"
 
-// hostileCarriers are credentials the first pattern stopped short on. It
-// ended the password at the FIRST `@` — so everything after an embedded,
-// unescaped one printed — and it refused to cross a space or a quote, so
-// a password holding either did not match at all and printed whole.
-// These are the text a Go caller actually sees: net/url's *url.Error
-// renders the URL with %q, which is why the quoted forms are the ones
-// that matter and why an embedded `"` arrives backslash-escaped.
+// hostileCarriers are credentials a naive pattern stops short on: one that ends the password at
+// the FIRST `@` leaks everything after an embedded one, and one that will not cross a space or a
+// quote prints such a password whole. They match the text a Go caller sees: net/url's *url.Error
+// renders the URL with %q, so the quoted forms matter and an embedded `"` is backslash-escaped.
 var hostileCarriers = map[string]string{
 	"embedded @":               "postgres://u:" + sentinel + "@" + tailStem + "@db.example.invalid/db",
 	"embedded @, quoted":       `parse "postgres://u:` + sentinel + `%ZZ@` + tailStem + `@db.example.invalid/db": invalid URL escape "%ZZ"`,

@@ -3,39 +3,24 @@
 
 package canonical
 
-// This file extends the i128 truncation guard (ADR-0003) to struct
-// SHAPE: a float32/float64 struct field named like a money quantity
-// (Amount/Rate*/Price*/Reserve*/Supply*) is either an unconverted
-// decode/write boundary or an outright precision-loss bug — the
-// canonical shape is canonical.Amount (*big.Int) in Go and NUMERIC
-// text on the wire, never a float. It is a sibling test in the same
-// package, reusing loadRepoPackages / basicKind from
-// i128_truncation_guard_test.go rather than a second go/types walk.
+// This file extends the i128 truncation guard (ADR-0003) to struct shape: a float32/float64
+// field named like a money quantity is an unconverted decode/write boundary or a precision-loss
+// bug. The canonical shape is canonical.Amount (*big.Int) in Go and NUMERIC text on the wire.
+// It reuses loadRepoPackages / basicKind from i128_truncation_guard_test.go.
 //
-// What counts as a violation: any struct field (an embedded/anonymous
-// field is skipped — it carries no name to judge) whose identifier
-// contains "amount", "rate", "price", "reserve", "supply", "cap",
-// "balance", "fee" or "tvl" (case-insensitive) and whose type, after
-// stripping one pointer level OR one map-value/slice-element level, is
-// float32 or float64 — so map[string]float64 and []float64 money
-// fields are caught the same as a bare float64 one.
+// A violation is any named struct field (embedded fields carry no name to judge) whose
+// identifier contains "amount", "rate", "price", "reserve", "supply", "cap", "balance", "fee"
+// or "tvl" (case-insensitive) and whose type, after stripping one pointer or one
+// map-value/slice-element level, is float32 or float64.
 //
-// Deliberately NOT matched: bare Pct/APR/Ratio/Confidence/Score/Weight
-// names (UtilizationPct, DivergencePct, BorrowAPR, Confidence, …) —
-// dimensionless ratios are correctly float64 throughout this repo and
-// a stem that caught them would flag the majority of the tree's
-// legitimate float fields for no reason. "SupplyAPR" and "*Rate" names
-// that are themselves percentages still match the money stems here
-// (their name contains "Supply"/"Rate") and rely on the marker below,
-// same as the SQL lint's documented stance on `rate` (lint-migrations.sh)
-// — the fix for the false-positive is the escape hatch, not a smarter
-// stem.
+// Bare Pct/APR/Ratio/Confidence/Score/Weight names are deliberately not matched: dimensionless
+// ratios are correctly float64, and a stem catching them would flag most legitimate floats.
+// Percentage names that still contain a money stem (SupplyAPR, *Rate) rely on the marker
+// below, as the SQL lint does for `rate` (lint-migrations.sh).
 //
-// Escape hatch: a `//floatmoney:ok <reason>` comment on the field's
-// line (or the line above) exempts it, same contract as i128:ok —
-// reasons are mandatory, and a marker that exempts nothing (the field
-// it names was fixed or removed) fails the test so the allowlist can
-// only shrink.
+// Escape hatch: a `//floatmoney:ok <reason>` comment on the field's line (or the line above)
+// exempts it, as i128:ok does. Reasons are mandatory, and a marker that exempts nothing fails
+// the test so the allowlist can only shrink.
 
 import (
 	"fmt"
@@ -91,11 +76,9 @@ func unwrapOneLevel(t types.Type) (elem types.Type, ok bool) {
 
 // checkFloatMoneyField returns a violation message when v is a
 // float32/float64 struct field named like a money quantity, else "".
-// The field's declared type is unwrapped through any chain of
-// pointers, maps (by value type) and slices/arrays (by element type)
-// before the float check, so map[string]float64, []float64 and
-// map[string]map[string]float64 (a raw decode boundary before
-// reshaping) are all caught the same as a bare float64 field.
+// The declared type is unwrapped through pointers, maps (by value type) and slices/arrays (by
+// element type) before the float check, so map[string]float64 and []float64 are caught like a
+// bare float64.
 func checkFloatMoneyField(v *types.Var) string {
 	if !v.IsField() || !floatMoneyNameRe.MatchString(v.Name()) {
 		return ""
@@ -180,11 +163,9 @@ func TestFloatMoneyFieldGuard(t *testing.T) {
 	}
 }
 
-// TestFloatMoneyFieldGuard_PositiveControl proves the detector still
-// FIRES on the exact field shape it exists to catch (same "a guard that
-// never fails is decorative" concern the i128 guard's positive control
-// documents) — a synthetic, self-contained source so it cannot go stale
-// against the real tree.
+// TestFloatMoneyFieldGuard_PositiveControl proves the detector still FIRES on the field shape it
+// exists to catch (a guard that never fails is decorative), using a synthetic self-contained
+// source so it cannot go stale against the real tree.
 func TestFloatMoneyFieldGuard_PositiveControl(t *testing.T) {
 	const src = `package sink
 

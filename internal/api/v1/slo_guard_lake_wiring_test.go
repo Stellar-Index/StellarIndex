@@ -8,11 +8,10 @@ import (
 	"testing"
 )
 
-// sloLakeBackedFields are the Server fields TestSLORoutesNeverTouchTheLake
-// forbids in an SLO'd handler: every field backed by ClickHouse (the
-// `er`/`sr` fan-out in cmd/stellarindex-api/main.go) plus the explorer
-// sub-handler, which is built from the whole Options and so cannot be
-// derived. Add any future cross-region-proxy or S3-fallback client field by
+// sloLakeBackedFields are the Server fields TestSLORoutesNeverTouchTheLake forbids in an
+// SLO'd handler: every ClickHouse-backed field (the `er`/`sr` fan-out in
+// cmd/stellarindex-api/main.go) plus the explorer sub-handler, which is built from the whole
+// Options and cannot be derived. Add any cross-region-proxy or S3-fallback client field by
 // hand; lake-wired fields are enforced by TestSLOLakeFieldsCoverLakeWiring.
 var sloLakeBackedFields = map[string]bool{
 	"Explorer":              true,
@@ -31,11 +30,9 @@ var sloLakeBackedFields = map[string]bool{
 	"SDEXOrderBook":    true,
 }
 
-// TestSLOLakeFieldsCoverLakeWiring derives, from the production wiring, every
-// Server field a ClickHouse reader reaches and requires sloLakeBackedFields
-// to name it. The hand-kept list alone is opt-in: a lake reader threaded into
-// a new Server field stays invisible to the SLO guard until someone
-// remembers to add it.
+// TestSLOLakeFieldsCoverLakeWiring derives from the production wiring every Server field a
+// ClickHouse reader reaches and requires sloLakeBackedFields to name it. The hand-kept list
+// alone is opt-in: a lake reader in a new field would stay invisible to the SLO guard.
 func TestSLOLakeFieldsCoverLakeWiring(t *testing.T) {
 	mainGo := filepath.Join("..", "..", "..", "cmd", "stellarindex-api", "main.go")
 	lakeOptions := lakeWiredOptionKeys(t, mainGo)

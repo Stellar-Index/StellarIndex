@@ -9,11 +9,8 @@ import (
 // TestAquariusRewardsKind_ParityWithMigrationCheck pins the Go-side
 // IsValid() set to migration 0099's event_kind CHECK constraint.
 //
-// Regression: v0.12.0 shipped with `config_rewards` present in the
-// migration CHECK (and emitted by the decoder) but MISSING from
-// IsValid(), so every config_rewards insert was rejected client-side
-// ("invalid Kind") — silently dropped events plus an error flood
-// during the aquarius replay. The two sets must never drift again.
+// The two sets must not drift: a kind in the CHECK and emitted by the decoder but missing
+// from IsValid() is rejected client-side ("invalid Kind"), silently dropping its events.
 func TestAquariusRewardsKind_ParityWithMigrationCheck(t *testing.T) {
 	raw, err := os.ReadFile("../../../migrations/0099_create_aquarius_rewards_events.up.sql")
 	if err != nil {

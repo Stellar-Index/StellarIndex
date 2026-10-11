@@ -8,13 +8,10 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// TestListingsWithholdScamFlaggedLastPrice pins the listing surfaces to
-// the same withholding decision /v1/price, /v1/vwap and /v1/twap reach:
-// a market with a directory-flagged issuer on EITHER leg still lists
-// (activity is not a price) but ships no last_price. Before the gate,
-// /v1/markets, /v1/pools and /v1/pairs each served the flagged market's
-// last_price verbatim — the number the detail endpoints had just
-// withheld, one listing page away.
+// TestListingsWithholdScamFlaggedLastPrice pins the listing surfaces (/v1/markets, /v1/pools,
+// /v1/pairs) to the withholding decision /v1/price, /v1/vwap and /v1/twap reach: a market with
+// a directory-flagged issuer on EITHER leg still lists (activity is not a price) but ships no
+// last_price.
 func TestListingsWithholdScamFlaggedLastPrice(t *testing.T) {
 	const usdc = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	flaggedPrice, quoteLegPrice, cleanPrice := "1.5", "0.25", "2.5"

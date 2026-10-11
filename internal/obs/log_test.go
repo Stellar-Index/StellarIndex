@@ -14,13 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// captureStderr swaps os.Stderr for a pipe, runs fn, and returns everything
-// fn wrote to stderr. NewLogger binds its handler to os.Stderr at construction
-// time, so fn must BOTH build the logger AND emit through it inside the swap.
-//
-// It mutates the process-global os.Stderr, so callers MUST NOT call
-// t.Parallel(): non-parallel tests in a package run sequentially (never
-// concurrently), which keeps the swap isolated.
+// captureStderr swaps os.Stderr for a pipe, runs fn, and returns what fn wrote. NewLogger binds
+// its handler to os.Stderr at construction, so fn must BOTH build the logger AND emit inside the
+// swap. It mutates a process global, so callers MUST NOT call t.Parallel().
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 	orig := os.Stderr
@@ -88,11 +84,9 @@ func TestNewLogger_BinaryAttrNonEmpty(t *testing.T) {
 	}
 }
 
-// TestNewLogger_LogLevelCaseInsensitive — operators sometimes write
-// "DEBUG" / "warning" / "Error"; all should land on the matching slog.Level,
-// and anything unrecognised (incl. "") falls back to info. Asserted by
-// probing the configured handler's threshold rather than by re-reading the
-// switch: the handler must be Enabled AT the wanted level and NOT below it.
+// TestNewLogger_LogLevelCaseInsensitive: operators write "DEBUG" / "warning" / "Error", which
+// must land on the matching slog.Level, and anything unrecognised (incl. "") falls back to info.
+// It probes the handler's threshold: Enabled AT the wanted level and NOT below it.
 func TestNewLogger_LogLevelCaseInsensitive(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

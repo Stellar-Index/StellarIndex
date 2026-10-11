@@ -10,14 +10,10 @@ import (
 	"time"
 )
 
-// The per-contract audit-trail read behind GET
-// /v1/contracts/{id}/transfers. Its cost class is the contract: an
-// unbounded read of a busy contract's rows has to sort every row that
-// contract owns in the newest chunk before the LIMIT can take any, which
-// is what made the OpenAPI example contract (the USDC SAC, the busiest
-// token on the network) spend the handler's whole 8s budget and 503
-// while quiet contracts answered in 0.19s. These pin the lookback ladder
-// that mitigated it — and that full history is still reachable through it.
+// The per-contract audit-trail read behind GET /v1/contracts/{id}/transfers. An unbounded read
+// of a busy contract must sort every row the contract owns in the newest chunk before LIMIT
+// can take any, which blows the handler's 8s budget. These tests pin the lookback ladder that
+// bounds it, and that full history is still reachable through it.
 
 const (
 	sep41LadderContract = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
@@ -65,13 +61,9 @@ func windowFloor(t *testing.T, stmt recordedStmt) (time.Time, bool) {
 	return ts, true
 }
 
-// TestListSEP41Transfers_BusyContractReadsOneBoundedWindow is the
-// regression: the read a caller makes with no from/to filter must reach
-// Postgres with a trailing-window floor, so the LIMIT can stop at an
-// index scan instead of sorting every row the contract owns in the
-// newest chunk. Without the floor this read is the 8s
-// sep41-transfers-timeout 503 on the contract the OpenAPI spec names as
-// its own example.
+// TestListSEP41Transfers_BusyContractReadsOneBoundedWindow: a read with no from/to filter must
+// reach Postgres with a trailing-window floor, so LIMIT can stop at an index scan instead of
+// sorting every row the contract owns in the newest chunk (the 8s sep41-transfers-timeout 503).
 func TestListSEP41Transfers_BusyContractReadsOneBoundedWindow(t *testing.T) {
 	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 	store, conn := newScriptedStore(t, scriptedResult{
@@ -139,11 +131,9 @@ func TestListSEP41Transfers_StopsAtTheFirstFullPage(t *testing.T) {
 	}
 }
 
-// TestListSEP41Transfers_FallsThroughToFullHistory — the ladder is a
-// cost bound, never a claim about history. A contract too quiet to fill
-// its page in the widest rung still gets the unbounded read, which is
-// what keeps a long-dormant token's audit trail readable (quiet is not
-// stale).
+// TestListSEP41Transfers_FallsThroughToFullHistory: the ladder is a cost bound, never a claim
+// about history. A contract too quiet to fill its page in the widest rung still gets the
+// unbounded read, which keeps a long-dormant token's audit trail readable.
 func TestListSEP41Transfers_FallsThroughToFullHistory(t *testing.T) {
 	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 	script := make([]scriptedResult, 0, len(sep41TransferLookbackLadder)+1)
@@ -230,17 +220,12 @@ func TestSEP41TransfersQuery_PlaceholderBinding(t *testing.T) {
 	}
 }
 
-// TestSEP41TransferLookbackLadder_WidestRungIsTheMeasuredCeiling guards
-// the ladder against being widened back into the cost class it exists
-// to avoid. 7d is the widest window measured on r1 to still plan onto
-// an index scan; 90d plans back to the per-chunk `Seq Scan + Sort`, so
-// a wider rung is not a deeper cheap read — it is the timeout again,
-// just later in the ladder. The ceiling is NOT "one chunk": migration
-// 0047 declares 1-day chunks and 7-day compression, so on a tree-built
-// deployment the 7d rung already spans up to eight chunks and reaches
-// the compression boundary; r1's 30-day chunk width, which puts every
-// rung inside one chunk, is drift from that migration, not a property
-// the ladder may rely on.
+// TestSEP41TransferLookbackLadder_WidestRungIsTheMeasuredCeiling guards the ladder against being
+// widened back into the cost class it exists to avoid. 7d is the widest window measured to still
+// plan onto an index scan; 90d plans back to the per-chunk `Seq Scan + Sort`, so a wider rung is
+// the timeout again. The ceiling is NOT "one chunk": migration 0047 declares 1-day chunks and
+// 7-day compression, so the 7d rung can span up to eight chunks and reach the compression
+// boundary; a wider deployed chunk width is drift from the migration, not something to rely on.
 func TestSEP41TransferLookbackLadder_WidestRungIsTheMeasuredCeiling(t *testing.T) {
 	t.Parallel()
 	if len(sep41TransferLookbackLadder) == 0 {
@@ -258,14 +243,11 @@ func TestSEP41TransferLookbackLadder_WidestRungIsTheMeasuredCeiling(t *testing.T
 	}
 }
 
-// TestListSEP41Transfers_BudgetAbandonsAStalledRung is the ladder's cost
-// bound. A rung the database has not answered when the ladder's budget
-// runs out is abandoned, no wider rung is tried, and the fallback goes
-// out on the caller's OWN deadline — so the ladder can never spend the
-// handler's 8s on the way to the query that has the rows. Measured on
-// r1, a 7d rung that cannot fill its page for a contract the chunk
-// statistics still call busy was still running at a 9s statement
-// timeout: without this bound that one rung 503s a request the
+// TestListSEP41Transfers_BudgetAbandonsAStalledRung is the ladder's cost bound. A rung the
+// database has not answered when the ladder's budget runs out is abandoned, no wider rung is
+// tried, and the fallback goes out on the caller's OWN deadline, so the ladder can never spend
+// the handler's 8s before the query that has the rows. Without this bound a 7d rung that cannot
+// fill its page for a contract the chunk statistics still call busy can 503 a request the
 // unbounded read would have answered.
 func TestListSEP41Transfers_BudgetAbandonsAStalledRung(t *testing.T) {
 	const budget = 50 * time.Millisecond
@@ -319,13 +301,10 @@ func TestListSEP41Transfers_BudgetAbandonsAStalledRung(t *testing.T) {
 	}
 }
 
-// TestListSEP41Transfers_CallerDeadlineIsTheCallersNotTheLadders — the
-// budget is derived from the caller's context, never detached from it.
-// A caller with less time than the ladder's budget gets its own
-// deadline back, promptly and as context.DeadlineExceeded (which the
-// handler maps to its timeout 503); no fallback is attempted on a
-// context that is already dead, because there is nothing left to run
-// it on.
+// TestListSEP41Transfers_CallerDeadlineIsTheCallersNotTheLadders: the budget is derived from the
+// caller's context, never detached from it. A caller with less time than the ladder's budget
+// gets its own deadline back promptly as context.DeadlineExceeded (which the handler maps to its
+// timeout 503); no fallback is attempted on an already-dead context.
 func TestListSEP41Transfers_CallerDeadlineIsTheCallersNotTheLadders(t *testing.T) {
 	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 	store, conn := newScriptedStore(t, scriptedResult{stall: true})

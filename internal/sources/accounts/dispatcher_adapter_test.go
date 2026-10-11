@@ -11,13 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// G-strkeys used across the test file. Both are the canonical
-// "test public key" values from the SDK's test fixtures, so they
-// strkey-encode cleanly.
-// Both G-strkeys are derived from synthetic 32-byte public keys
-// at test time — picked over real-world Stellar accounts so the
-// tests don't accidentally encode a meaningful issuer / SDF
-// reserve / wallet address into the test fixtures.
+// G-strkeys used across the test file, derived from synthetic 32-byte public keys at test time
+// so no real issuer, SDF reserve or wallet address leaks into the fixtures.
 const (
 	gWatched   = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
 	gUnwatched = "GAAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQDZ7H"
@@ -105,11 +100,9 @@ func TestObserver_SkipsUnwatchedAccountEntry(t *testing.T) {
 	}
 }
 
-// TestObserver_SkipsNonAccountEntry — the type discriminator
-// pre-filter blocks ContractCode / Trustline / etc. before the
-// watched-set check runs. Defence-in-depth: a future bug that
-// added a watched contract C-strkey to the set wouldn't suddenly
-// fire on contract-code changes.
+// TestObserver_SkipsNonAccountEntry: the type pre-filter blocks ContractCode / Trustline / etc.
+// before the watched-set check, so a contract C-strkey wrongly added to the set cannot fire on
+// contract-code changes.
 func TestObserver_SkipsNonAccountEntry(t *testing.T) {
 	o, err := NewObserver([]string{gWatched})
 	if err != nil {

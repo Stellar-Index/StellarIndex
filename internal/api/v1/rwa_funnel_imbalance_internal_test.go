@@ -10,12 +10,9 @@ import (
 // `balanced: false` is a statement that something did not add up, with
 // no way to find out what.
 //
-// Every reason was already being computed. Each census publishes a
-// Check() returning the invariant it broke; each adjacent stage pair
-// reports the arithmetic that failed. All of it was reduced to a
-// boolean at the funnel boundary and the sentences went to a log — the
-// same shape as a listing census computed for a WARN line and dropped,
-// one surface over.
+// Each census publishes a Check() returning the invariant it broke, and each adjacent stage
+// pair reports the arithmetic that failed. Those reasons must reach the response rather than
+// being reduced to a boolean at the funnel boundary.
 
 // An unbalanced funnel must name what did not close, and the name must
 // be specific enough to act on: which check, and the numbers that

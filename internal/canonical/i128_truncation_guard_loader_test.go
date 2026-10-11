@@ -10,12 +10,11 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// TestLoadRepoPackages_ScopesLoadErrors pins the loader shared by the
-// i128-truncation and AssetType-exhaustiveness guards: a package that
-// fails to type-check is fatal only when it is one the guards protect
-// (internal/, cmd/, pkg/); a failing scripts/ or test/ tool is skipped,
-// not a reason to take both guards down. Packages that load are kept
-// whatever their path, and only in-scope ones count toward the floor.
+// TestLoadRepoPackages_ScopesLoadErrors pins the loader shared by the i128-truncation and
+// AssetType-exhaustiveness guards: a package that fails to type-check is fatal only in
+// internal/, cmd/ or pkg/; a failing scripts/ or test/ tool is skipped rather than taking both
+// guards down. Packages that load are kept whatever their path, and only in-scope ones count
+// toward the floor.
 func TestLoadRepoPackages_ScopesLoadErrors(t *testing.T) {
 	const module = "example.test/m"
 	broken := []packages.Error{{Msg: "undefined: x", Kind: packages.TypeError}}

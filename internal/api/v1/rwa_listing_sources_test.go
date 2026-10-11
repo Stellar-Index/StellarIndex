@@ -9,22 +9,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// GET /v1/rwa/assets — C2's second arm rests on TWO sources, and a
-// refusal reason has to name the one that actually failed.
+// GET /v1/rwa/assets: C2's second arm rests on TWO sources, and a refusal reason has to name the
+// one that actually failed.
 //
-// The listing directory supplies the arm's recognition. The curated
-// account directory supplies the scam vocabulary C3 reads, and C3
-// refuses a flagged address whatever named it — so either read failing
-// closes the arm. Both closed it under `independent_listing_unavailable`,
-// which names the listing sync.
-//
-// The two failures are not correlated. The curated directory can be
-// unreadable while the listing directory sits there perfectly fresh,
-// and in that state the funnel raised an operator-addressed alarm
-// against a sync that was running perfectly well — the strongest form
-// of a misdirected instruction this surface can emit, because it is
-// indistinguishable from the real thing and sends somebody to the wrong
-// system to look for a fault that is not there.
+// The listing directory supplies the arm's recognition. The curated account directory supplies the
+// scam vocabulary C3 reads, and C3 refuses a flagged address whatever named it, so either read
+// failing closes the arm. The two failures are not correlated: the curated directory can be
+// unreadable while the listing directory is fresh, and blaming the listing sync then sends an
+// operator to the wrong system for a fault that is not there.
 
 // rwaTwoSourceServer wires the listing arm with the curated directory
 // reader under the test's control, so each source can be failed on its
@@ -52,16 +44,10 @@ func rwaTwoSourceServer(
 	})
 }
 
-// The defect, stated as a test: a CURATED read that fails, beside a
-// listing directory that answered, must not be reported as a listing
-// outage.
-//
-// The evidence block is asserted alongside the reason because together
-// they are the contradiction. A response saying "the independent
-// listing is unavailable" while publishing a healthy, freshly-read
-// listing directory in the same object is not merely unhelpful — it
-// disagrees with itself, and a reader who trusts the reason over the
-// evidence goes to the wrong system.
+// A failed CURATED read, beside a listing directory that answered, must not be reported as a
+// listing outage. The evidence block is asserted alongside the reason because together they are
+// the contradiction: "listing unavailable" next to a healthy listing directory disagrees with
+// itself, and a reader who trusts the reason goes to the wrong system.
 func TestRWAListingSources_CuratedTagFailureIsNotAListingOutage(t *testing.T) {
 	view := getRWA(t, rwaTwoSourceServer(t,
 		// The listing directory ANSWERS, freshly, naming the address.

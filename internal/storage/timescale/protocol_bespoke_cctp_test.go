@@ -7,20 +7,16 @@ import (
 	"testing"
 )
 
-// cctpBothMintTypesRe finds a scan of cctp_events keyed on BOTH mint
-// event types together (either literal order), the shape file-doc rule 2
-// says is safe ONLY for a non-value aggregate (e.g. distinct recipients),
-// never for a sum(amount) — a forward-restatement row would double one
-// transfer's value into the total.
+// cctpBothMintTypesRe finds a cctp_events scan keyed on BOTH mint event types (either literal
+// order), which file-doc rule 2 allows ONLY for a non-value aggregate such as distinct
+// recipients, never for sum(amount): the forward-restatement row would double the value.
 var cctpBothMintTypesRe = regexp.MustCompile(
 	`event_type\s+IN\s*\(\s*'mint_and_(?:withdraw','mint_and_forward|forward','mint_and_withdraw)'\s*\)`)
 
-// TestCCTPInboundSumsExcludeForwardRestatement pins file-doc rule 2: a
-// mint_and_forward event restates its sibling mint_and_withdraw at the
-// LOCAL 7-decimal SAC scale (exactly 10x), so any query that sums amount
-// across both event types in the same aggregate would count one transfer
-// 11x over. cctp_events carries no scale/discriminator column to catch
-// this at the schema level, so the invariant is enforced here.
+// TestCCTPInboundSumsExcludeForwardRestatement pins file-doc rule 2: a mint_and_forward event
+// restates its sibling mint_and_withdraw at the LOCAL 7-decimal SAC scale (exactly 10x), so
+// summing amount across both event types counts one transfer 11x over. cctp_events has no
+// scale/discriminator column to catch this in the schema, so the invariant is enforced here.
 func TestCCTPInboundSumsExcludeForwardRestatement(t *testing.T) {
 	src, err := os.ReadFile("protocol_bespoke_cctp.go")
 	if err != nil {

@@ -9,12 +9,10 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// TestSoroswapQueryShapesHaveGuardRailSettings pins the SQL to the
-// repo's bounded-lake-read conventions: current-state table with
-// FINAL dedup, keyed probe, empty-entry filter, and the guard-rail
-// SETTINGS the sibling readers pin (cometPoolStateQuery /
-// phoenixPoolStateQuery) — an unbounded FINAL scan on this host must
-// fail loudly, not fan out on the shared host.
+// TestSoroswapQueryShapesHaveGuardRailSettings pins the SQL to the bounded-lake-read conventions:
+// current-state table with FINAL dedup, keyed probe, empty-entry filter, and the guard-rail
+// SETTINGS the sibling readers pin (cometPoolStateQuery / phoenixPoolStateQuery), so an
+// unbounded FINAL scan fails loudly instead of fanning out on the shared host.
 func TestSoroswapQueryShapesHaveGuardRailSettings(t *testing.T) {
 	for name, q := range map[string]string{
 		"soroswapPairStateQuery": soroswapPairStateQuery,

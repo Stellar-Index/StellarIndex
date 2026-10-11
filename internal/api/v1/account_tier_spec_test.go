@@ -10,13 +10,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// TestOpenAPIAccountTierEnumMatchesAuthTier pins Account.tier's documented
-// enum to the values the Account schema can actually carry: every auth.Tier
-// constant except TierAnonymous. /v1/account/me and /v1/account/keys serve
-// string(Tier) verbatim, and both 401 an anonymous caller before building
-// an Account (asserted below), so `anonymous` in the enum is a documented
-// value no response can hold. The constants are read from source so a new
-// tier fails here until the spec names it.
+// TestOpenAPIAccountTierEnumMatchesAuthTier pins Account.tier's documented enum to every
+// auth.Tier constant except TierAnonymous: /v1/account/me and /v1/account/keys serve
+// string(Tier) verbatim and both 401 an anonymous caller first (asserted below). The constants
+// are read from source so a new tier fails here until the spec names it.
 func TestOpenAPIAccountTierEnumMatchesAuthTier(t *testing.T) {
 	var want []string
 	for _, tier := range goStringConsts(t, filepath.Join("internal", "auth"), "Tier") {

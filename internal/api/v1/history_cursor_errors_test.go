@@ -6,12 +6,9 @@ import (
 	"testing"
 )
 
-// decodeHistoryCursor has eight failure modes; the round-trip
-// test in history_cursor_internal_test.go pins the success path.
-// This file pins each error branch so a refactor can't silently
-// loosen any of them — a hand-crafted cursor with the wrong shape
-// MUST be rejected, otherwise pagination accepts attacker-supplied
-// values and serves wrong-looking pages.
+// decodeHistoryCursor has eight failure modes; history_cursor_internal_test.go pins the success
+// path and this file pins each error branch. A hand-crafted cursor with the wrong shape must be
+// rejected, otherwise pagination accepts attacker-supplied values and serves wrong-looking pages.
 
 func encodeRaw(s string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(s))

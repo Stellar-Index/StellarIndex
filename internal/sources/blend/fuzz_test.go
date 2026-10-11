@@ -259,12 +259,11 @@ func equalReserveConfig(a, b ReserveConfig) bool {
 	return a == b
 }
 
-// FuzzReserveConfigRoundTrip closes the writer→reader loop the APY
-// path depends on: a queue_set_reserve ReserveConfig decoded by the
-// EVENT decoder, persisted as blend_admin.attributes->'metadata' JSON
-// and re-read by ParseReserveConfigMetadata must equal the STORAGE
-// decoder's view of the same ScVal — every field, the i128 supply cap
-// without truncation, regardless of map key order.
+// FuzzReserveConfigRoundTrip closes the writer-to-reader loop the APY path depends on: a
+// queue_set_reserve ReserveConfig decoded by the EVENT decoder, persisted as
+// blend_admin.attributes->'metadata' JSON and re-read by ParseReserveConfigMetadata must equal the
+// STORAGE decoder's view of the same ScVal: every field, the i128 supply cap untruncated, in any
+// map key order.
 func FuzzReserveConfigRoundTrip(f *testing.F) {
 	f.Add(uint32(3), uint32(7), uint32(8_500_000), uint32(9_000_000), uint32(8_000_000), uint32(9_500_000),
 		uint32(100_000), uint32(500_000), uint32(1_000_000), uint32(2_000_000), uint32(50_000),

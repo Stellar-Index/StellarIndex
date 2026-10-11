@@ -8,12 +8,10 @@ import (
 	"testing"
 )
 
-// TestSorobanVolume24hUSDQueryShape guards the XLM-anchored per-asset
-// USD-volume query. The load-bearing properties — a bounded 24h window, a
-// per-trade valuation, the XLM leg at its own minute's anchor (never a
-// current-window scalar) and the excluded-trade count — must not silently
-// regress; behaviour lives in the integration suite (TestSorobanVolume24hUSD_*,
-// TestXLMLegVolume_TradeTimeNeverSpot).
+// TestSorobanVolume24hUSDQueryShape guards the XLM-anchored per-asset USD-volume query: a bounded
+// 24h window, per-trade valuation, the XLM leg at its own minute's anchor (never a current-window
+// scalar) and the excluded-trade count. Behaviour lives in the integration suite
+// (TestSorobanVolume24hUSD_*, TestXLMLegVolume_TradeTimeNeverSpot).
 func TestSorobanVolume24hUSDQueryShape(t *testing.T) {
 	q := strings.Join(strings.Fields(sorobanVolume24hUSDQuery), " ")
 	for _, pin := range []struct{ sub, why string }{

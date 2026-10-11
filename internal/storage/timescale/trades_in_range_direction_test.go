@@ -14,40 +14,25 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// [Store.TradesInRange] is the read behind an AGGREGATE — /v1/vwap,
-// /v1/twap, single-bar /v1/ohlc, /v1/price/tip and the aggregator
-// orchestrator — which is why it was held back when the two
-// mechanical raw-trade reads were folded. A mean and an extreme are
-// not relabellings: fold a row into them the wrong way and the answer
-// is a plausible number rather than an empty one.
+// [Store.TradesInRange] is the read behind the aggregates (/v1/vwap, /v1/twap, single-bar
+// /v1/ohlc, /v1/price/tip, the aggregator orchestrator). A mean or extreme folded the wrong
+// way yields a plausible number rather than an empty one.
 //
-// The rule turns out to be the SAME per-row leg swap, and these tests
-// are the reason to believe it. Every aggregate downstream is defined
-// on the two integer leg amounts and never on a stored price:
+// The rule is a per-row leg swap. Every aggregate is defined on the two integer leg amounts,
+// never on a stored price (restated here because this package must not import
+// internal/aggregate):
 //
 //   - aggregate.VWAP        Σ(QuoteAmount) / Σ(BaseAmount)
 //   - aggregate.ComputeOHLC per row, price = QuoteAmount/BaseAmount as
 //     an exact big.Rat; High = max, Low = min, Open/Close by slice order
 //   - aggregate.TWAP        Σ(price·Δt) / Σ(Δt), Δt from Timestamp
 //
-// (restated here rather than imported: this package must not depend on
-// internal/aggregate — see asset_price_snapshot_test.go for the same
-// restatement of a constant.)
-//
-// So swapping a flipped row's two legs does two things at once. It
-// inverts the price exactly, with no division. And it re-weights the
-// mean, because the weight is the row's own base leg and a flipped
-// row's base leg in the REQUESTED orientation is its stored QUOTE
-// amount. There is no separate re-weighting step to get wrong — but
-// there is a fold that skips it, and the fixture below is chosen so
-// that fold reports a wrong high instead of an empty bar.
+// Swapping a flipped row's legs inverts the price exactly and also re-weights the mean: the
+// weight is the row's base leg, which in the REQUESTED orientation is its stored QUOTE amount.
+// A fold that skips the re-weighting reports a wrong high, which the fixture below exposes.
 
-// The market: AQUA priced in USDC. Four prints, deliberately at four
-// different prices, two recorded each way round.
-//
-// Every base leg is 100 AQUA and every quote leg differs, so the
-// requested-orientation weights are uniform and the arithmetic below
-// stays checkable by eye.
+// The market: AQUA priced in USDC. Four prints at four prices, two recorded each way round.
+// Every base leg is 100 AQUA so the requested-orientation weights are uniform.
 //
 //	stored AQUA/USDC  100 AQUA / 20 USDC   → 0.20
 //	stored AQUA/USDC  100 AQUA / 18 USDC   → 0.18
@@ -132,17 +117,10 @@ func aggRat(t *testing.T, s string) *big.Rat {
 	return r
 }
 
-// TestTradesInRange_AggregateOverBothStoredDirections is the row-1.16
-// aggregate half, stated as the three aggregate shapes it has to be
-// right for at once.
-//
-// Unfolded, the read returns two of the four prints and the window
-// answers 0.19 / high 0.20 / low 0.18 on 200 AQUA of volume — a bar
-// that looks perfectly well-formed and is missing half its market.
-// Folded but merely RELABELLED — flipped rows appended with their
-// stored legs left alone — the same window answers a high of 10, the
-// stored AQUA-per-USDC price read as if it were USDC-per-AQUA. Both
-// failures are silent; the second is 40x wrong.
+// TestTradesInRange_AggregateOverBothStoredDirections checks the VWAP, OHLC and TWAP shapes
+// together. An unfolded read drops half the prints and returns a well-formed but incomplete
+// bar. A merely RELABELLED fold (flipped rows appended with stored legs untouched) reads the
+// stored price in the wrong orientation. Both failures are silent.
 func TestTradesInRange_AggregateOverBothStoredDirections(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 
@@ -176,11 +154,9 @@ func TestTradesInRange_AggregateOverBothStoredDirections(t *testing.T) {
 		}
 	}
 
-	// (2) The volume-weighted mean. Σquote/Σbase over the folded set is
-	// 73/400 = 0.1825 exactly. The weight is what a fold gets wrong: a
-	// flipped row's weight in the requested base is its STORED QUOTE
-	// leg, so the base volume is 400 AQUA and not the 235 that summing
-	// the stored base legs would give.
+	// (2) The volume-weighted mean, Σquote/Σbase = 73/400 = 0.1825 exactly. A flipped row's
+	// weight in the requested base is its STORED QUOTE leg, so base volume is 400 AQUA, not
+	// the 235 that summing stored base legs gives.
 	sumQuote, sumBase := aggSumLegs(got)
 	if want := aggRat(t, "4000000000"); new(big.Rat).SetInt(sumBase).Cmp(want) != 0 {
 		t.Errorf("Σbase = %s, want %s (4 x 100 AQUA).\n"+
@@ -240,17 +216,11 @@ func TestTradesInRange_AggregateOverBothStoredDirections(t *testing.T) {
 	}
 }
 
-// TestTradesInRange_FoldedMeanIsReciprocalConsistent is the property
-// that distinguishes a re-weighted fold from a re-priced one, without
-// reference to any fixture number.
-//
-// Σq/Σb in one orientation and Σb/Σq in the other are exact
-// reciprocals BY CONSTRUCTION once the legs are swapped, because both
-// are ratios of the same two totals. A fold that inverted each row's
-// price while leaving its weight alone cannot satisfy this for any
-// window holding more than one price: it computes Σ(b²/q)/Σb, which is
-// a weighted mean of reciprocals, not the reciprocal of a weighted
-// mean.
+// TestTradesInRange_FoldedMeanIsReciprocalConsistent separates a re-weighted fold from a
+// re-priced one without fixture numbers. Once legs are swapped, Σq/Σb in one orientation and
+// Σb/Σq in the other are exact reciprocals. A fold that inverts each row's price but keeps
+// its weight computes Σ(b²/q)/Σb, a weighted mean of reciprocals, so it fails on any window
+// with more than one price.
 func TestTradesInRange_FoldedMeanIsReciprocalConsistent(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 	flipped := pair.Flip()
@@ -285,11 +255,9 @@ func TestTradesInRange_FoldedMeanIsReciprocalConsistent(t *testing.T) {
 			product.RatString(), fwdVWAP.FloatString(10), revVWAP.FloatString(10))
 	}
 
-	// The extremes swap roles under the same inversion: the high one way
-	// round is the reciprocal of the low the other. This is what
-	// Store.OHLCSeries' `norm` CTE has to write out longhand on the
-	// bucket side (hi = 1/low_price), and what a per-ROW fold gets for
-	// free because a row carries one price rather than an interval.
+	// The extremes swap roles under inversion: the high one way round is the reciprocal of the
+	// low the other. Store.OHLCSeries' `norm` CTE writes this out (hi = 1/low_price) on the
+	// bucket side; a per-ROW fold gets it free because a row carries one price.
 	fwdHigh, fwdLow := aggExtremes(t, fwd)
 	revHigh, revLow := aggExtremes(t, rev)
 	if got := new(big.Rat).Mul(fwdHigh, revLow); got.Cmp(big.NewRat(1, 1)) != 0 {
@@ -328,11 +296,9 @@ func TestTradesInRange_LeavesTheRequestedOrientationUntouched(t *testing.T) {
 	}
 }
 
-// TestTradesInRange_BindsTheWindowAndLimitOnEveryArm: the two arms are
-// only equivalent to the read they replace if BOTH carry the whole
-// predicate. An arm missing the window bound would aggregate a
-// flipped row from outside [from, to); an arm missing the limit would
-// uncap half the scan the ceiling exists to bound.
+// TestTradesInRange_BindsTheWindowAndLimitOnEveryArm: both arms must carry the whole
+// predicate. A missing window bound would aggregate flipped rows from outside [from, to); a
+// missing limit would uncap half the scan the ceiling bounds.
 func TestTradesInRange_BindsTheWindowAndLimitOnEveryArm(t *testing.T) {
 	pair := dirAQUAUSDCPair(t)
 
@@ -379,11 +345,9 @@ func countSQLMatches(sql, pat string) int {
 	return len(regexp.MustCompile(pat).FindAllString(sql, -1))
 }
 
-// TestFXQuoteAtOrBefore_ServesAQuoteRecordedTheOtherWayRound: the
-// legacy `trades` arm of the FX snap is on the triangulation money
-// path, so it cannot be exempted from the class guard — it serves a
-// price. A EUR/USD rate recorded USD/EUR is the exact reciprocal once
-// the two legs are swapped.
+// TestFXQuoteAtOrBefore_ServesAQuoteRecordedTheOtherWayRound: the legacy `trades` arm of the
+// FX snap serves a price on the triangulation money path, so the class guard applies. A
+// EUR/USD rate recorded USD/EUR is the exact reciprocal once the legs are swapped.
 func TestFXQuoteAtOrBefore_ServesAQuoteRecordedTheOtherWayRound(t *testing.T) {
 	eur, err := canonical.NewFiatAsset("EUR")
 	if err != nil {

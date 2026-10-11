@@ -27,14 +27,12 @@ func TestMonthlyUSDVWAPAsset_FoldsEverySpellingOntoTheCanonicalForm(t *testing.T
 	}
 }
 
-// The cohort price join matches a month price to the flows on the asset
-// spelling alone, and the two sides spell a SAC-wrapped classic asset
-// independently: the movements archive writes a verified SAC transfer
-// under its classic CODE-ISSUER (chops.cap67AssetName, pinned by
-// TestCap67AssetName with this same USDC SAC), and this fold keys the SAC
-// spelling through the installed registry. Pin that both land on the
-// same id, so a registered SAC's month is never priced under a C… id no
-// flow row carries.
+// The cohort price join matches a month price to flows on the asset spelling alone, and the
+// two sides spell a SAC-wrapped classic asset independently: the movements archive writes a
+// verified SAC transfer under its classic CODE-ISSUER (chops.cap67AssetName, pinned by
+// TestCap67AssetName with this same USDC SAC), while this fold keys the SAC spelling through
+// the installed registry. Both must land on the same id, or a registered SAC's month is
+// priced under a C… id no flow row carries.
 func TestMonthlyUSDVWAPAsset_RegisteredSACFoldsOntoTheMovementsSpelling(t *testing.T) {
 	const (
 		usdcSAC      = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
@@ -53,12 +51,10 @@ func TestMonthlyUSDVWAPAsset_RegisteredSACFoldsOntoTheMovementsSpelling(t *testi
 	}
 }
 
-// A canonical asset's spellings are stored at different scales: on-chain
-// 'native' in stroops (10^7), the CEX feeds' crypto:XLM at 10^8. The fold
-// weights each row by its WHOLE-unit volume, so the same 1B XLM traded on
-// each side weighs the same. Weighting by raw stored volume would give
-// the CEX month ten times the weight: (0.3×1e16 + 0.31×1e17) / 1.1e17 =
-// 0.30909…, where the union market's price is 0.305.
+// A canonical asset's spellings are stored at different scales: on-chain 'native' in stroops
+// (10^7), CEX crypto:XLM at 10^8. The fold weights each row by WHOLE-unit volume, so the same
+// 1B XLM on each side weighs the same. Raw stored volume would give the CEX month ten times
+// the weight: (0.3×1e16 + 0.31×1e17) / 1.1e17 = 0.30909…, where the union price is 0.305.
 func TestFoldMonthlyUSDVWAPs_WeightsSpellingsByWholeUnits(t *testing.T) {
 	may := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	rat := func(s string) *big.Rat {

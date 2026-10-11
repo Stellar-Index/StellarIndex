@@ -20,17 +20,12 @@ import (
 
 // ─── The supply_basis vocabulary has one declaration ─────────────────
 //
-// [supply.Basis]'s typed constants in package internal/supply are it. The
-// handlers stamp the wire field straight from a snapshot's Basis
-// (populateSupplyFields, rwaSupplyProvenance), so every constant there
-// is a value a consumer can receive. The spec's two `supply_basis`
-// enums are copies that cannot be derived — they are YAML — so they
-// are pinned here, the way ohlc_intervals_test.go pins the interval
-// ladder to its route table. The docs mirror, the Postman collection
-// and the explorer's types.ts are all generated from the spec, so a
-// value missing from the spec is missing from every published contract
-// at once: `sep41_total_only` was served from v0.21.0 and absent from
-// all of them until this pin.
+// [supply.Basis]'s typed constants in internal/supply are it. Handlers stamp the wire field
+// straight from a snapshot's Basis (populateSupplyFields, rwaSupplyProvenance), so every
+// constant is a value a consumer can receive. The spec's two `supply_basis` enums are YAML
+// copies that cannot be derived, so they are pinned here (as ohlc_intervals_test.go pins the
+// interval ladder). The docs mirror, Postman collection and types.ts are generated from the
+// spec, so a value missing there is missing from every published contract at once.
 
 // TestSupplyBasis_AssetSpecEnumIsTheGoVocabulary — `Asset.supply_basis`
 // carries every Basis constant, in declaration order. A value in one
@@ -46,12 +41,10 @@ func TestSupplyBasis_AssetSpecEnumIsTheGoVocabulary(t *testing.T) {
 	}
 }
 
-// TestSupplyBasis_RWAAssetSpecEnumIsTheGoVocabulary —
-// `RWAAsset.supply_basis` carries every basis a supply can travel
-// WITH. rwaSupplyProvenance names a basis only beside a non-nil
-// circulating_supply, and [supply.BasisNoMetadata] is by its own
-// docstring the basis of a nil figure, so it is the one constant that
-// cannot reach this row.
+// TestSupplyBasis_RWAAssetSpecEnumIsTheGoVocabulary — `RWAAsset.supply_basis` carries every
+// basis a supply can travel WITH. rwaSupplyProvenance names a basis only beside a non-nil
+// circulating_supply, and [supply.BasisNoMetadata] is the basis of a nil figure, so it is
+// the one constant that cannot reach this row.
 func TestSupplyBasis_RWAAssetSpecEnumIsTheGoVocabulary(t *testing.T) {
 	got := specSupplyBasisEnum(t, "RWAAsset")
 	var want []string
@@ -109,10 +102,9 @@ func specPropertyEnum(t *testing.T, schema, prop string) []string {
 }
 
 // goSupplyBases reads every typed [supply.Basis] constant out of the
-// internal/supply package. The source is the declaration; a
-// hand-maintained slice beside it would be a third copy for this test
-// to drift from. Every file is walked, not just supply.go: overlay.go
-// already stamps a Basis, and a constant declared there is as servable.
+// internal/supply package. The source is the declaration; a hand-kept slice would be a third
+// copy to drift. Every file is walked, not just supply.go, since a constant declared in
+// overlay.go is as servable.
 func goSupplyBases(t *testing.T) []string {
 	t.Helper()
 	dir := filepath.Join(repoRoot(t), "internal", "supply")
@@ -160,10 +152,8 @@ func goFileStringConsts(t *testing.T, file, typeName string) []string {
 }
 
 // TestSupplyBasis_ListingValuationSpecEnumIsTheGoVocabulary —
-// `AssetListingValuation.supply_basis` is a separate vocabulary from
-// [supply.Basis]: which of two supply readings the listing valuation
-// used. Its values are this package's ListingSupplyBasis* constants,
-// which the handler stamps verbatim.
+// `AssetListingValuation.supply_basis` is a separate vocabulary from [supply.Basis]: its
+// values are this package's ListingSupplyBasis* constants, stamped verbatim by the handler.
 func TestSupplyBasis_ListingValuationSpecEnumIsTheGoVocabulary(t *testing.T) {
 	got := specSupplyBasisEnum(t, "AssetListingValuation")
 	want := packageStringConsts(t, ".", func(name string, _ *ast.ValueSpec) bool {

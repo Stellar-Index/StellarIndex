@@ -15,8 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Replay real Soroswap swap + sync fixtures captured from mainnet
-// into decodeSwap. Validates that:
+// Replay real mainnet Soroswap swap + sync fixtures into decodeSwap. Validates that:
 //
 //   - topic classification works on real topic bytes,
 //   - sdkDecodeSwapAmounts extracts all four i128 fields from the
@@ -24,10 +23,8 @@ import (
 //   - swap/sync correlation by (ledger, tx_hash, op_index) matches
 //     the real on-chain ordering.
 //
-// Fixtures live at test/fixtures/soroswap/<wasm_hash>/{swap,sync}_*.json.
-// swap + sync of the same trade share the leading txHash-prefix in
-// their filename — that's how we pair them up here. (stellar-rpc
-// returns events in-order within a ledger, so the pairing is safe.)
+// Fixtures live at test/fixtures/soroswap/<wasm_hash>/{swap,sync}_*.json. A swap and sync of
+// the same trade share the leading txHash prefix in their filename, which pairs them here.
 
 type soroswapFixture struct {
 	ContractID     string   `json:"contract_id"`
