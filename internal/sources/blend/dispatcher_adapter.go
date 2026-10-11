@@ -8,40 +8,30 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing view of Blend (ADR-0035
-// factory-anchored gating). Blend has a clean factory model: every
-// business event (money-market / credit-risk / auction / admin) is
-// emitted by a POOL contract, and the only event the Pool Factory V2
-// emits is `deploy` — which announces each new pool. We anchor on the
-// factory (MainnetPoolFactory) and fan out to the pools it deploys.
+// Decoder is the dispatcher-facing view of Blend (ADR-0035 factory-anchored gating). Every business
+// event is emitted by a POOL contract and a factory emits only `deploy`, which announces each new
+// pool, so we anchor on the factory and fan out to the pools it deploys.
 //
-// The registry of factory-deployed pools is the load-bearing state. It's
-// seeded live (every `deploy` we decode calls reg.Seed), DB-warmed at
-// boot (the `protocol_contracts` table → contractid.WithSeed), and
-// genesis-seeded by walking the factory's `deploy` events from the lake
-// (`stellarindex-ops seed-protocol-contracts -source blend`, and the
-// ADR-0033 reconcile pre-seed). See docs/protocols/blend.md
-// (Pool Factory V2 = CDSYOAVXFY7SM5S64IZPPPYB4GVGGLMQVFREPSQQEZVIWXX5R23G4QSU).
+// The registry of factory-deployed pools is the load-bearing state: seeded live (each decoded
+// `deploy` calls reg.Seed), DB-warmed at boot (`protocol_contracts` via contractid.WithSeed), and
+// genesis-seeded by walking factory `deploy` events from the lake (`stellarindex-ops
+// seed-protocol-contracts -source blend`, and the ADR-0033 reconcile pre-seed). See
+// docs/protocols/blend.md.
 type Decoder struct {
 	reg *contractid.Registry
 }
 
-// NewDecoder constructs a Blend Decoder. The options seed and persist the
-// factory-deployed-pool registry (contractid.WithSeed / WithHook); with no
-// options the registry is empty and only live `deploy` events populate it
-// (correct for a from-genesis stream, insufficient for an incremental
-// restart — hence the DB warm in production wiring).
+// NewDecoder constructs a Blend Decoder. Options seed and persist the pool registry
+// (contractid.WithSeed / WithHook); with none, only live `deploy` events populate it, which is
+// right for a from-genesis stream but not an incremental restart (hence the DB warm in production).
 //
-// The event surface spans both pool-factory contract versions:
-// MainnetPoolFactories trusts V1 (CCZD6ESM…) and V2, and decodeByKind
-// dispatches the three V1-only event kinds (update_emissions /
-// new_liquidation_auction / delete_liquidation_auction) alongside the
-// V2 vocabulary. A hypothetical V3 would still need a per-WASM-hash
-// dispatch (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
+// The surface spans both factory versions: MainnetPoolFactories trusts V1 and V2, and decodeByKind
+// handles the three V1-only kinds (update_emissions / new_liquidation_auction /
+// delete_liquidation_auction) beside the V2 vocabulary. A V3 would need per-WASM-hash dispatch
+// (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 func NewDecoder(opts ...contractid.Option) *Decoder {
-	// The factory trust-root set is intrinsic to the protocol (verified,
-	// hard-coded), so it's always installed first; caller opts (WithSeed /
-	// WithHook) layer the discovered children + persistence on top.
+	// The factory trust roots are intrinsic and hard-coded, so they are installed first; caller
+	// opts layer discovered children and persistence on top.
 	base := []contractid.Option{contractid.WithFactories(MainnetPoolFactories)}
 	return &Decoder{reg: contractid.New(append(base, opts...)...)}
 }
@@ -55,20 +45,16 @@ func (*Decoder) Name() string { return SourceName }
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
 // Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY, not topic symbol
-// (ADR-0035): a non-Blend contract that emits a `supply`/`claim`/`set_admin`/… topic (SACs and
-// other DeFi do) must NOT be attributed to Blend.
+// (ADR-0035): other contracts (SACs, other DeFi) emit `supply`/`claim`/`set_admin` topics too.
 //
-//   - `deploy` matches ONLY from a canonical Pool Factory (MainnetPoolFactories; Blend has MORE
-//     THAN ONE). This is the trust root: otherwise a foreign contract could inject a pool into the
-//     registry and launder its own events as Blend's.
-//   - every other event matches ONLY from a REGISTERED pool (a factory descendant). The registry
-//     is seeded from factory deploy events (live + DB warm + genesis walk).
+//   - `deploy` matches ONLY from a canonical Pool Factory (MainnetPoolFactories has more than
+//     one). This is the trust root; otherwise a foreign contract could inject a pool into the
+//     registry and launder its events as Blend's.
+//   - every other event matches ONLY from a REGISTERED pool (a factory descendant).
 //
-// COVERAGE NOTE (ADR-0035): an un-seeded real pool has its events dropped, so registry
-// completeness is a hard requirement. It rests on the factory `deploy` events living in the lake
-// (substrate-continuous per ADR-0033 Claim 1) and on MainnetPoolFactories being the complete
-// factory set; an undocumented factory is the residual risk, mitigated by re-running the
-// deploy-graph enumeration.
+// An un-seeded real pool has its events dropped, so registry completeness is a hard requirement.
+// It rests on factory `deploy` events being in the lake (ADR-0033 Claim 1) and on
+// MainnetPoolFactories being the complete set; an undocumented factory is the residual risk.
 func (d *Decoder) Matches(ev events.Event) bool {
 	kind := classifyAny(&ev)
 	if kind == "" {
@@ -80,17 +66,13 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return d.reg.Has(ev.ContractID)
 }
 
-// Decode implements [dispatcher.Decoder]. Returns one consumer.Event per
-// successful decode; the kind is preserved in EventKind so the sink can
-// demultiplex. Auctions return New/Fill/DeleteAuctionEvent; the 18
-// money-market / emission / admin events return PositionEvent / EmissionEvent /
-// AdminEvent.
+// Decode implements [dispatcher.Decoder]. Returns one consumer.Event per decode, with the kind
+// preserved in EventKind so the sink can demultiplex: auctions yield New/Fill/DeleteAuctionEvent,
+// the 18 money-market / emission / admin events yield PositionEvent / EmissionEvent / AdminEvent.
 //
-// EventIndex is stamped onto the position/emission/admin outputs here: without
-// it, same-(asset, user, kind) events in one operation collide on the
-// blend_positions / blend_emissions / blend_admin primary key and all but one
-// are silently dropped. The auction decoders set it themselves
-// (blend_auctions PK, migration 0058).
+// EventIndex is stamped on position/emission/admin outputs here: without it, same-(asset, user,
+// kind) events in one operation collide on the blend_positions / blend_emissions / blend_admin
+// primary key and all but one are silently dropped. The auction decoders set it themselves.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	outs, err := d.decodeByKind(ev)
 	if err != nil {
@@ -108,14 +90,10 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		case AdminEvent:
 			e.EventIndex = ei
 			outs[i] = e
-			// Fan-out (ADR-0035): a factory `deploy` announces a new
-			// pool. Register it so its subsequent business events pass
-			// the Matches gate. Seed fires the persistence hook, so the
-			// mapping survives a restart even after the projector cursor
-			// advances past this deploy ledger. Matches() already
-			// guaranteed this deploy came from one of MainnetPoolFactories
-			// (e.ContractID), so the Target is a genuine Blend pool and
-			// e.ContractID is the deploying factory (provenance).
+			// Fan-out (ADR-0035): register the deployed pool so its later events pass the Matches
+			// gate. Seed fires the persistence hook, so the mapping survives a restart even after
+			// the projector cursor passes this ledger. Matches() already guaranteed the deploy came
+			// from a MainnetPoolFactories member, so Target is a genuine pool.
 			if e.Kind == EventDeploy && e.Target != "" {
 				d.reg.Seed(e.Target, e.ContractID, ev.Ledger)
 			}

@@ -16,36 +16,27 @@ import (
 
 // ─── Entry-changes half: LiquidityPoolDeposit/Withdraw + ────────────
 // ─── the CAP-0038 trustline-revocation auto-liquidation edge case ───
-// ADR-0047 D3: LiquidityPoolDeposit/WithdrawResult are bare result codes, so the
-// amounts exchanged exist only as the pool's ReserveA/ReserveB before vs. after
-// the op in ledger_entry_changes. The CAP-0038 case (a trustline revocation
-// auto-redeeming LP shares into two ClaimableBalanceEntry rows) is the same.
+// LiquidityPoolDeposit/WithdrawResult are bare result codes, so the amounts exchanged exist only
+// as the pool's ReserveA/ReserveB before vs. after the op in ledger_entry_changes. The CAP-0038
+// case (a revocation auto-redeeming LP shares into two ClaimableBalanceEntry rows) is the same.
 //
-// This is a SEPARATE surface from decode.go (dispatcher.OpContext has no room
-// for a correlated change group): classic-movements-backfill correlates
-// clickhouse.StreamEntryChanges by (ledger, tx_hash, op_index) and calls below.
+// This is a SEPARATE surface from decode.go because dispatcher.OpContext has no room for a
+// correlated change group: the backfill correlates clickhouse.StreamEntryChanges by
+// (ledger, tx_hash, op_index) and calls in here.
 //
-// # Ledger_entry_changes fidelity: BOTH available and unavailable eras
-// Per-op fidelity starts at ~ledger 61,996,000, past the P23 boundary the
-// backfill clamps to. Absent fidelity yields ErrEntryChangesUnavailable (or
-// "no CAP-0038 liquidation"), counted by the caller, NEVER a guessed amount.
-// Deposit/Withdraw always mutate the pool, so empty means unavailable. For
-// AllowTrust/SetTrustLineFlags the caller MUST run
-// clickhouse.CountOpScopedEntryChanges for the window before trusting an empty
+// # Ledger_entry_changes fidelity
+// Per-op fidelity starts at ~ledger 61,996,000. Absent fidelity yields ErrEntryChangesUnavailable
+// (or "no CAP-0038 liquidation"), counted by the caller, NEVER a guessed amount. Deposit/Withdraw
+// always mutate the pool, so empty means unavailable. For AllowTrust/SetTrustLineFlags the caller
+// MUST run clickhouse.CountOpScopedEntryChanges for the window before trusting an empty
 // "no liquidation" from DecodeCAP0038Revocation.
 
-// EntryChangeOpTypes returns the entry-changes-correlated decode
-// surface's op-type scope, in stellar.operations.op_type string form
-// — the set clickhouse.StreamClassicOps should ALSO be called with
-// (alongside SupportedOpTypes(), typically unioned into one CH read)
-// so the caller has both the op bodies/results AND can correlate
-// against clickhouse.StreamEntryChanges output for the same ops.
-// AllowTrust/SetTrustLineFlags are here despite moving no value in
-// the overwhelming majority of cases — they're in scope because they
-// CAN trigger the CAP-0038 side effect, detected only by consulting
-// entry changes; see recognition_test.go's
-// TestRecognition_EntryChangeOpTypesIsExhaustiveAndDisjoint for the
-// guard pinning this list disjoint from SupportedOpTypes().
+// EntryChangeOpTypes returns the entry-changes-correlated op-type scope in
+// stellar.operations.op_type form, to be read alongside SupportedOpTypes(). AllowTrust and
+// SetTrustLineFlags are included although they rarely move value, because they can trigger the
+// CAP-0038 side effect, visible only in entry changes.
+// TestRecognition_EntryChangeOpTypesIsExhaustiveAndDisjoint pins this list disjoint from
+// SupportedOpTypes().
 func EntryChangeOpTypes() []string {
 	return []string{
 		xdr.OperationTypeLiquidityPoolDeposit.String(),
@@ -55,47 +46,30 @@ func EntryChangeOpTypes() []string {
 	}
 }
 
-// ErrEntryChangesUnavailable is returned by DecodeLiquidityPoolOp
-// when a successful LiquidityPoolDeposit/Withdraw has no correlated
-// ledger_entry_changes to derive amounts from — either because
-// ledger_entry_changes' per-op fidelity backfill (ADR-0047 Phase 0)
-// hasn't reached this ledger range yet, or (far less likely, given a
-// real deposit/withdraw always mutates the pool) a genuine data gap.
-// The caller MUST count + log this and move on — never guess an
-// amount by any other means.
+// ErrEntryChangesUnavailable is returned by DecodeLiquidityPoolOp when a successful
+// deposit/withdraw has no correlated ledger_entry_changes to derive amounts from: the per-op
+// fidelity backfill has not reached this range, or (unlikely) a genuine data gap. The caller MUST
+// count and log it, never guess an amount.
 var ErrEntryChangesUnavailable = errors.New("classicmovements: ledger_entry_changes unavailable for this op")
 
-// EntryChangeXDR is one op-scoped ledger_entry_changes row, already
-// correlated by the caller to a single op via
-// (ledger, tx_hash, op_index) — decoupled from clickhouse.EntryChange
-// so this package stays storage-agnostic (mirrors
-// internal/sources/sdex never importing a storage package; the same
-// design choice PendingClaimableBalanceRef made for Phase 3). Entry
-// is nil for a 'removed' change (key only, no payload).
+// EntryChangeXDR is one op-scoped ledger_entry_changes row, already correlated by the caller to a
+// single op via (ledger, tx_hash, op_index). It is decoupled from clickhouse.EntryChange to keep
+// this package storage-agnostic. Entry is nil for a 'removed' change (key only).
 type EntryChangeXDR struct {
 	ChangeType string // "state" | "created" | "updated" | "removed"
 	Entry      *xdr.LedgerEntry
 }
 
-// DecodeLiquidityPoolOp reconstructs the
-// 'liquidity_pool_deposit'/'liquidity_pool_withdraw' movement rows
-// (leg 0 = pool AssetA, leg 1 = pool AssetB) for a successful
-// LiquidityPoolDeposit/Withdraw op, given its correlated
-// ledger_entry_changes group. Two rows for the ordinary case; a
-// withdraw whose payout rounds to zero on one leg emits only the
-// paying leg (see decodeLiquidityPoolWithdraw). Returns
-// ErrEntryChangesUnavailable (never a guessed amount) when changes has
-// no usable liquidity_pool before/after pair for this op.
+// DecodeLiquidityPoolOp reconstructs the 'liquidity_pool_deposit'/'liquidity_pool_withdraw'
+// rows (leg 0 = pool AssetA, leg 1 = pool AssetB) for a successful op from its correlated
+// ledger_entry_changes group. A withdraw that rounds to zero on one leg emits only the paying
+// leg. Returns ErrEntryChangesUnavailable, never a guessed amount, when changes has no usable
+// liquidity_pool before/after pair.
 //
-// from/to framing: a deposit moves value FROM the depositor
-// (fromAddr) INTO the pool (no G-address — ToAddress left empty, the
-// same "no single resolvable address" convention
-// claimable_balance_create's escrow leg uses); a withdraw is the
-// reverse (FromAddress empty, ToAddress = fromAddr). Attributes
-// always carries pool_id (hex of the PoolId, same convention
-// internal/sources/sdex's LiquidityPool ClaimAtom Maker field uses)
-// for cross-referencing against SDEX's trade-side rows for the same
-// pool.
+// A deposit moves value from fromAddr into the pool (ToAddress empty: the pool has no
+// G-address, like the claimable-balance escrow leg); a withdraw is the reverse. Attributes
+// carries pool_id (hex, as sdex's LiquidityPool Maker field) to cross-reference the pool's trade
+// rows.
 func DecodeLiquidityPoolOp(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, fromAddr string, op xdr.Operation, result xdr.OperationResult, changes []EntryChangeXDR) ([]Movement, error) {
 	switch op.Body.Type {
 	case xdr.OperationTypeLiquidityPoolDeposit:
@@ -131,8 +105,7 @@ func decodeLiquidityPoolDeposit(ledger uint32, closedAt time.Time, txHash string
 	}
 	before, after := v.before, v.after
 	if !v.haveBefore {
-		// A brand-new pool (this deposit created it) — implicit
-		// zero-reserve "before" is valid, not a fidelity gap.
+		// A brand-new pool: an implicit zero-reserve "before" is valid, not a fidelity gap.
 		before = xdr.LiquidityPoolEntryConstantProduct{}
 	}
 	if negativeReserve(before, after) {
@@ -174,9 +147,7 @@ func decodeLiquidityPoolWithdraw(ledger uint32, closedAt time.Time, txHash strin
 	}
 
 	v := liquidityPoolBeforeAfter(changes)
-	// A withdraw ALWAYS acts on a pre-existing pool — unlike deposit,
-	// a missing "before" here is itself a fidelity gap, not a valid
-	// "new pool" case.
+	// A withdraw always acts on an existing pool, so a missing "before" is a fidelity gap.
 	if !v.haveBefore {
 		return nil, fmt.Errorf("%w: ledger %d tx %s op %d", ErrEntryChangesUnavailable, ledger, txHash, opIndex)
 	}
@@ -185,14 +156,10 @@ func decodeLiquidityPoolWithdraw(ledger uint32, closedAt time.Time, txHash strin
 		if !v.removed {
 			return nil, fmt.Errorf("%w: ledger %d tx %s op %d", ErrEntryChangesUnavailable, ledger, txHash, opIndex)
 		}
-		// Full drain: the last pool shares were withdrawn, so core
-		// ERASED the LiquidityPoolEntry — the group is 'state' +
-		// 'removed' with no 'updated' row, and 'removed' carries a key
-		// only (Entry nil). The after-reserves are zero BY
-		// CONSTRUCTION, so this is a complete observation, not a
-		// fidelity gap: treating it as ErrEntryChangesUnavailable both
-		// dropped a real two-leg withdrawal and fired a false
-		// "entry-changes unavailable" fidelity alarm at the caller.
+		// Full drain: core erased the LiquidityPoolEntry, leaving 'state' + 'removed' with no
+		// 'updated' row. After-reserves are zero by construction, so this is a complete
+		// observation; calling it unavailable would drop a real withdrawal and raise a false
+		// fidelity alarm.
 		after = xdr.LiquidityPoolEntryConstantProduct{}
 	}
 	if negativeReserve(before, after) {
@@ -206,14 +173,10 @@ func decodeLiquidityPoolWithdraw(ledger uint32, closedAt time.Time, txHash strin
 			ErrMalformedMovement, deltaA, deltaB, ledger, txHash, opIndex)
 	}
 
-	// A single zero leg is a VALID one-sided withdrawal, not a
-	// malformed op: core computes each leg as
-	// floor(shares * reserve / totalShares) with ROUND_DOWN and only
-	// rejects it against the caller's minAmountA/minAmountB, so a small
-	// withdrawal from a lopsided pool legitimately pays out on one
-	// asset and rounds the other to zero. Emit the paying leg(s) and
-	// drop only the zero one — LegIndex still identifies the pool asset
-	// (0=AssetA, 1=AssetB), so the surviving leg keeps its true index.
+	// A single zero leg is a valid one-sided withdrawal: core rounds each leg down as
+	// floor(shares * reserve / totalShares), so a small withdrawal from a lopsided pool pays one
+	// asset and rounds the other to zero. Drop only the zero leg; LegIndex still identifies the
+	// pool asset (0=AssetA, 1=AssetB), so the surviving leg keeps its true index.
 	poolIDHex := fmt.Sprintf("%x", body.LiquidityPoolId)
 	movements := make([]Movement, 0, 2)
 	if deltaA > 0 {
@@ -238,13 +201,9 @@ func negativeReserve(sides ...xdr.LiquidityPoolEntryConstantProduct) bool {
 	return false
 }
 
-// liquidityPoolLeg builds one leg of a two-leg LiquidityPoolDeposit/
-// Withdraw movement (leg 0 = pool AssetA, leg 1 = pool AssetB). The
-// CAP-0038 revocation path (DecodeCAP0038Revocation) does NOT use
-// this helper — its rows come from created ClaimableBalanceEntry
-// data, not a pool reserve delta, so it builds its own Movement
-// literal with a different Attributes shape (revocation provenance
-// instead of pool_id).
+// liquidityPoolLeg builds one leg of a LiquidityPoolDeposit/Withdraw movement (leg 0 = AssetA,
+// leg 1 = AssetB). DecodeCAP0038Revocation does not use it: its rows come from created
+// ClaimableBalanceEntry data and carry revocation attributes instead of pool_id.
 func liquidityPoolLeg(kind Kind, ledger uint32, closedAt time.Time, txHash string, opIndex, legIndex uint32, asset xdr.Asset, amount xdr.Int64, fromAddr, toAddr, poolIDHex string) Movement {
 	return Movement{
 		Kind:            kind,
@@ -274,23 +233,15 @@ type lpEntryChangeView struct {
 	removed    bool
 }
 
-// liquidityPoolBeforeAfter walks an op's correlated liquidity_pool
-// entry-changes group (already in change_index order — the same
-// order stellar-core's own Changes list uses, see
-// clickhouse.StreamEntryChanges' doc) and extracts the before/after
-// LiquidityPoolEntryConstantProduct. "before" comes from a 'state'
-// row if present (haveBefore=false, not an error, for a brand-new
-// pool with no prior state — 'created' rows have no preceding
-// state); "after" comes from the LAST 'created'/'updated' row.
+// liquidityPoolBeforeAfter walks an op's liquidity_pool entry-changes group (in change_index
+// order, as stellar-core emits it) and extracts the before/after constant-product state. "before"
+// comes from a 'state' row (absent for a brand-new pool); "after" from the LAST 'created' or
+// 'updated' row.
 //
-// removed reports a 'removed' row in the group: core erases the
-// LiquidityPoolEntry when the last shares are withdrawn, emitting
-// 'state' + 'removed' and NO 'updated' row. That row carries a
-// LedgerKey only (Entry nil), so it can't be read as an "after" — but
-// it is not a missing observation either: the caller reads it as a
-// zero-reserve after (see decodeLiquidityPoolWithdraw). The group is
-// already scoped to one op and filtered to entry_type='liquidity_pool'
-// by the caller, so any 'removed' row here is this pool's.
+// removed reports a 'removed' row: core erases the entry when the last shares are withdrawn,
+// emitting 'state' + 'removed' and no 'updated'. That row has a key only (Entry nil), so it is not
+// an "after", but the caller reads it as a zero-reserve after. The group is already scoped to one
+// op and entry_type='liquidity_pool', so any 'removed' row is this pool's.
 func liquidityPoolBeforeAfter(changes []EntryChangeXDR) lpEntryChangeView {
 	var v lpEntryChangeView
 	for _, c := range changes {
@@ -314,11 +265,9 @@ func liquidityPoolBeforeAfter(changes []EntryChangeXDR) lpEntryChangeView {
 	return v
 }
 
-// liquidityPoolConstantProduct extracts the ConstantProduct body
-// from a decoded LedgerEntry, false for anything else (nil entry,
-// wrong entry type, or a future non-ConstantProduct pool type — none
-// exist in current XDR, but this fails closed rather than panicking
-// if one is ever added).
+// liquidityPoolConstantProduct extracts the ConstantProduct body from a LedgerEntry, false for
+// anything else. It fails closed rather than panicking if a non-ConstantProduct pool type is ever
+// added.
 func liquidityPoolConstantProduct(e *xdr.LedgerEntry) (xdr.LiquidityPoolEntryConstantProduct, bool) {
 	if e == nil {
 		return xdr.LiquidityPoolEntryConstantProduct{}, false
@@ -333,25 +282,20 @@ func liquidityPoolConstantProduct(e *xdr.LedgerEntry) (xdr.LiquidityPoolEntryCon
 	return *lp.Body.ConstantProduct, true
 }
 
-// DecodeCAP0038Revocation checks whether a successful AllowTrust /
-// SetTrustLineFlags op triggered CAP-0038's automatic liquidity-pool-share
-// liquidation, detected PURELY from correlated entry changes (created
-// claimable_balance rows at this op's index; the op body can't tell whether the
-// account held a matching LP-share trustline). Returns ZERO movements in the
-// common no-liquidation case: not an error and NOT ErrEntryChangesUnavailable,
-// unlike LiquidityPoolDeposit/Withdraw. Callers must run the window-level
-// fidelity probe (clickhouse.CountOpScopedEntryChanges) before reading "zero
-// movements" as "no liquidation" (see this file's package-level comment).
+// DecodeCAP0038Revocation checks whether a successful AllowTrust / SetTrustLineFlags op triggered
+// CAP-0038's automatic LP-share liquidation, detected only from created claimable_balance rows at
+// this op's index (the op body cannot say whether the account held an LP-share trustline). The
+// common no-liquidation case returns zero movements, not an error and not
+// ErrEntryChangesUnavailable. Callers must run the window-level fidelity probe
+// (clickhouse.CountOpScopedEntryChanges) before reading zero as "no liquidation".
 //
-// Emits TWO rows per created ClaimableBalanceEntry (one per pool asset): a
-// movement_kind='liquidity_pool_withdraw' row at leg_index 0..n-1, and a
-// 'claimable_balance_create' row for the same balance at leg_index n..2n-1 so a
-// later claim/clawback resolves. Both carry revocation=true, trigger_op_type
-// and balance_id to distinguish them from voluntary withdrawals and creates.
+// Emits TWO rows per created ClaimableBalanceEntry: a 'liquidity_pool_withdraw' row at leg_index
+// 0..n-1 and a 'claimable_balance_create' row for the same balance at n..2n-1 so a later
+// claim/clawback resolves. Both carry revocation=true, trigger_op_type and balance_id to tell them
+// from voluntary withdrawals and creates.
 //
-// FromAddress is the Trustor (the liquidated account), NOT ctx.TxSource
-// (typically the issuer). ToAddress is left empty: funds land in a claimable
-// balance, same convention as claimable_balance_create's escrow leg.
+// FromAddress is the Trustor (the liquidated account), NOT the tx source (typically the issuer).
+// ToAddress is empty because funds land in a claimable balance.
 func DecodeCAP0038Revocation(ledger uint32, closedAt time.Time, txHash string, opIndex uint32, op xdr.Operation, result xdr.OperationResult, changes []EntryChangeXDR) ([]Movement, error) {
 	if !opSucceeded(result) {
 		return nil, nil
@@ -369,25 +313,20 @@ func DecodeCAP0038Revocation(ledger uint32, closedAt time.Time, txHash string, o
 		return nil, nil // the common case: no CAP-0038 liquidation triggered here
 	}
 
-	// TWO movements per liquidated asset, because two things happened on-chain:
-	// the trustor exited the pool, AND a claimable balance was created to hold the
-	// proceeds.
+	// TWO movements per liquidated asset: the trustor exited the pool AND a claimable balance
+	// was created to hold the proceeds.
 	//
-	// A pool-exit leg alone leaves the created balance UNRESOLVABLE: it is tagged
-	// KindLiquidityPoolWithdraw, so the resolver's
-	// `Kind == KindClaimableBalanceCreate` index gate skips it, the id would live
-	// under `claimable_balance_id` while every other site keys on `balance_id`, and
-	// cbLookupCreatesQuery filters `movement_kind = 'claimable_balance_create'`. A
-	// later claim or clawback would be dropped silently and permanently.
+	// A pool-exit leg alone leaves the created balance unresolvable: the resolver's
+	// `Kind == KindClaimableBalanceCreate` index gate skips it and cbLookupCreatesQuery filters
+	// `movement_kind = 'claimable_balance_create'`, so a later claim or clawback would be dropped
+	// silently and permanently.
 	//
-	// Broadening the ClickHouse predicate is the wrong fix: that `movement_kind`
-	// filter is a LowCardinality PREWHERE scoping the semijoin to cb-create rows
-	// (~2.5 min over 695M rows); including every LP withdraw would regress the hot
-	// path.
+	// Broadening the ClickHouse predicate is the wrong fix: the `movement_kind` filter is a
+	// LowCardinality PREWHERE that keeps the semijoin to cb-create rows (~2.5 min over 695M rows);
+	// adding every LP withdraw would regress that hot path.
 	//
-	// LegIndex: pool-exit legs take [0, len(created)) and the create legs follow
-	// above that range. Both are numbered in balance-id order
-	// (createdClaimableBalances), never change order.
+	// LegIndex: pool-exit legs take [0, len(created)) and the create legs follow. Both are numbered
+	// in balance-id order (createdClaimableBalances), never change order.
 	movements := make([]Movement, 0, 2*len(created))
 	for i, cb := range created {
 		movements = append(movements, Movement{
@@ -440,12 +379,9 @@ func DecodeCAP0038Revocation(ledger uint32, closedAt time.Time, txHash string, o
 	return movements, nil
 }
 
-// trustFlagOpSuccess reports whether op (AllowTrust or
-// SetTrustLineFlags) succeeded and, if so, returns its Trustor's
-// address and a stable "trigger_op_type" label. ok=false + err=nil
-// means the op failed (routine, not an error); a non-nil err means
-// op.Body's own type-specific field was missing despite a success
-// result (a genuine malformed-data signal).
+// trustFlagOpSuccess reports whether an AllowTrust or SetTrustLineFlags op succeeded and returns
+// its Trustor address and a stable "trigger_op_type" label. ok=false with nil err is a routine
+// failed op; a non-nil err means the body was missing despite a success result (malformed data).
 func trustFlagOpSuccess(op xdr.Operation, result xdr.OperationResult) (trustor, triggerType string, ok bool, err error) {
 	tr, hasTr := result.GetTr()
 	if !hasTr {
@@ -485,15 +421,11 @@ type createdClaimableBalanceRef struct {
 	BalanceIDHex string
 }
 
-// createdClaimableBalances extracts every 'created' ClaimableBalanceEntry
-// from changes — the CAP-0038 liquidation signal — sorted by balance id.
-// The order is leg_index, part of account_movements' key, and change order
-// within an op differs between exports of the same ledger. Any non-'created'
-// claimable_balance change (a genuine ClaimClaimableBalance/
-// ClawbackClaimableBalance at the SAME op_index would be a protocol
-// impossibility — AllowTrust/SetTrustLineFlags never claim/clawback)
-// is ignored rather than erroring, since only 'created' rows are ever
-// expected here.
+// createdClaimableBalances extracts every 'created' ClaimableBalanceEntry (the CAP-0038
+// liquidation signal), sorted by balance id. The order becomes leg_index, part of
+// account_movements' key, and change order within an op differs between exports of the same
+// ledger. Non-'created' changes are ignored: AllowTrust/SetTrustLineFlags never claim or claw
+// back, so only 'created' rows are expected.
 func createdClaimableBalances(changes []EntryChangeXDR) []createdClaimableBalanceRef {
 	var out []createdClaimableBalanceRef
 	for _, c := range changes {

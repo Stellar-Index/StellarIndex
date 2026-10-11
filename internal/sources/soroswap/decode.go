@@ -28,23 +28,14 @@ type RawPair struct {
 // to emit as a trade.
 func (r RawPair) Complete() bool { return r.Swap != nil && r.Sync != nil }
 
-// groupKey is the (ledger, tx_hash, op_index, pair_contract) tuple we
-// use to correlate swap + sync. It's ordered so Go-map-ready.
+// groupKey is the (ledger, tx_hash, op_index, pair_contract) tuple that correlates swap + sync.
 //
-// The pair contract is part of the key. A router multi-hop swaps
-// through SEVERAL pools inside ONE operation, so (ledger, tx, op)
-// alone would put every pool's swap+sync in the same buffer slot.
-// That works only while each pool emits swap-then-sync contiguously,
-// and nothing in the protocol guarantees that interleaving: pool A's
-// swap followed by pool B's swap would OVERWRITE the slot's Swap while
-// leaving Pair pinned to A, so A's sync would then complete a trade
-// carrying B's amounts under A's pair identity — and therefore under
-// A's token0/token1 mapping. Wrong assets, wrong price, silently.
-// Keying on the emitter makes the correlation correct across pools
-// regardless of emission order; both correlated kinds are gated to the
-// same pair contract by Matches, so this can never split a real pair.
-// Two swaps through the SAME pair in one op share a key; buffer.absorb
-// rotates on an occupied slot so neither is overwritten.
+// The pair contract must be in the key: a router multi-hop swaps through SEVERAL pools in ONE
+// operation, and nothing guarantees each pool emits swap-then-sync contiguously. With (ledger,
+// tx, op) alone, pool B's swap would overwrite pool A's slot and A's sync would complete a trade
+// with B's amounts under A's token0/token1, silently wrong. Matches gates both kinds to the same
+// pair contract, so this never splits a real pair. Two swaps through the SAME pair in one op share
+// a key; buffer.absorb rotates on an occupied slot so neither is overwritten.
 type groupKey struct {
 	Ledger  uint32
 	TxHash  string
@@ -56,14 +47,9 @@ func keyOf(e *events.Event) groupKey {
 	return groupKey{Ledger: e.Ledger, TxHash: e.TxHash, OpIndex: uint32(e.OperationIndex), Pair: e.ContractID}
 }
 
-// classify decides what kind of Soroswap event this is. Soroswap
-// topics are 2-tuples:
-//
-//	topic[0] = String("SoroswapPair" | "SoroswapFactory")
-//	topic[1] = Symbol("swap" | "sync" | "new_pair" | …)
-//
-// Both positions are compared as byte-equal base64 against the
-// constants computed at package init.
+// classify decides what kind of Soroswap event this is. Topics are 2-tuples: topic[0] is
+// String("SoroswapPair" | "SoroswapFactory") and topic[1] is the event Symbol, both compared as
+// byte-equal base64 against constants computed at package init.
 func classify(e *events.Event) string {
 	if len(e.Topic) < 2 {
 		return ""
@@ -88,12 +74,9 @@ func classify(e *events.Event) string {
 	if e.Topic[0] == TopicPrefixFactory && e.Topic[1] == TopicSymbolNewPair {
 		return EventNewPair
 	}
-	// LP-share (pair-token) SEP-41 events: a Soroswap pair is also the
-	// SEP-41 token of its own LP shares and emits Symbol-topic[0]
-	// transfer/mint/burn/approve alongside the String-prefixed protocol
-	// namespace above. Enumerated so classify() covers the pair WASM's
-	// full event surface (EVERY-event principle) — Matches() maps this
-	// kind to false on purpose; see its EventPairToken arm.
+	// A pair is also the SEP-41 token of its own LP shares and emits Symbol-topic[0]
+	// transfer/mint/burn/approve. They are classified to cover the full event surface; Matches()
+	// returns false for this kind on purpose (see its EventPairToken arm).
 	switch e.Topic[0] {
 	case TopicSymbolLPTransfer, TopicSymbolLPMint, TopicSymbolLPBurn, TopicSymbolLPApprove:
 		return EventPairToken
@@ -109,15 +92,9 @@ func classify(e *events.Event) string {
 //	             amount_0_out: i128, amount_1_out: i128 }
 //	SyncEvent  { new_reserve_0: i128, new_reserve_1: i128 }
 //
-// Both are #[contracttype] structs → on the wire they're ScvMap with
-// field-name Symbol keys. We pull the four swap amount fields by
-// name (per ingest-pipeline.md#contract-schema-evolution's decode-by-name rule) and
-// derive trade direction from which side has a positive `in` +
-// matching positive `out`.
-//
-// Token0 / token1 asset identities come from the factory's new_pair
-// event for this pair; the consumer holds that mapping in an
-// in-memory cache.
+// Both are ScvMap with Symbol keys, so the amount fields are pulled by name (decode-by-name rule,
+// ingest-pipeline.md#contract-schema-evolution) and direction comes from which side has a positive
+// `in` with a matching positive `out`. Token identities come from the registry of new_pair events.
 func decodeSwap(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, error) {
 	if !r.Complete() {
 		return canonical.Trade{}, ErrSwapWithoutSync
@@ -125,10 +102,9 @@ func decodeSwap(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, error) 
 	return decodeSwapLeg(r, tok0, tok1)
 }
 
-// decodeSwapLeg decodes the trade from r.Swap alone: the sync body only
-// carries post-state reserves and is never read. The buffer hands the
-// adapter a swap-only group when a second swap through the same pair in
-// one op rotates it out (buffer.absorb); every other group is Complete.
+// decodeSwapLeg decodes the trade from r.Swap alone; the sync body only carries post-state
+// reserves. The buffer yields a swap-only group when a second swap through the same pair in one
+// op rotates it out (buffer.absorb).
 func decodeSwapLeg(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, error) {
 	if r.Swap == nil {
 		return canonical.Trade{}, fmt.Errorf("%w: swap nil", ErrMalformedPayload)
@@ -138,37 +114,22 @@ func decodeSwapLeg(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, erro
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("%w: %w", ErrMalformedPayload, err)
 	}
-	// Taker: SwapEvent.to — the swap recipient, on-chain in EVERY
-	// soroswap swap since genesis. Without it soroswap measured 0%
-	// trades.taker coverage while every sibling venue had 100%.
-	// Best-effort per the Trade.Taker contract: a decode failure leaves
-	// it empty rather than failing the trade.
+	// Taker is SwapEvent.to, present in every swap. Best-effort per the Trade.Taker contract: a
+	// decode failure leaves it empty rather than failing the trade.
 	taker := decodeSwapTaker(r.Swap.Value)
 
-	// Trade direction: whichever side had non-zero `in` is the base
-	// asset the trader sold; the other side is what they bought. A
-	// PRICE-FORMING swap has a cross-token pair non-zero — 0→1 or
-	// 1→0. The chain does NOT guarantee that shape: pair.swap() is
-	// directly invokable (Uniswap-v2-style) and accepts any argument
-	// combination that keeps K non-decreasing, so a swap whose value
-	// movement is confined to one token side settles successfully
-	// (real case: ledger 57,403,300). Those decode cleanly but are
-	// not trades — surfaced as ErrNonDirectionalSwap, which Decode
-	// treats as a recognized no-op rather than a decode error.
+	// The side with non-zero `in` is the base the trader sold. A price-forming swap has EXACTLY one
+	// non-zero `in` and one non-zero `out` on OPPOSITE token sides (0->1 or 1->0); the chain does
+	// not guarantee that, since pair.swap() is directly invokable and settles any argument mix that
+	// keeps K non-decreasing. Any other shape has no single direction, so the event is refused
+	// (honest-blind beats half-decoded):
+	//   - single-sided / no cross-token move: ErrNonDirectionalSwap, a recognized no-op that Decode
+	//     does not treat as an error (real case: ledger 57,403,300).
+	//   - three OR four amounts non-zero: a matching arm would drop the extra leg and report a
+	//     GROSS `in` as the net trade, fabricating a price into VWAP/OHLC. This covers the
+	//     three-leg shape too. Returns ErrAmbiguousSwapDirection.
 	var base, quote canonical.Asset
 	var baseAmt, quoteAmt canonical.Amount
-	// A price-forming swap has EXACTLY one non-zero `in` and one non-zero
-	// `out`, on OPPOSITE token sides (0→1 or 1→0). Match that shape
-	// exactly. Any other combination has no single derivable direction,
-	// so refuse the whole event as a recognized no-op (honest-blind beats
-	// half-decoded):
-	//   - single-sided / no cross-token move → ErrNonDirectionalSwap
-	//     (real case: ledger 57,403,300).
-	//   - three OR four amounts non-zero → the first matching arm below
-	//     would silently drop the extra leg and report a GROSS `in` as if
-	//     it were the net trade, fabricating a price into VWAP/OHLC. That
-	//     includes the three-leg shape (e.g. 0_in,1_in,1_out non-zero),
-	//     not just all four. Both → ErrAmbiguousSwapDirection.
 	in0, in1 := amounts.Amount0In.Sign() > 0, amounts.Amount1In.Sign() > 0
 	out0, out1 := amounts.Amount0Out.Sign() > 0, amounts.Amount1Out.Sign() > 0
 	switch {
@@ -258,15 +219,11 @@ var (
 	decodeLiquidity   = sdkDecodeLiquidity
 )
 
-// LiquidityFields is the decoded body shared by the Soroswap pair
-// `deposit` and `withdraw` events. Both are the same #[contracttype]
-// struct on the wire:
+// LiquidityFields is the decoded body shared by the pair `deposit` and `withdraw` events, one
+// #[contracttype] struct on the wire:
 //
 //	{ amount_0: i128, amount_1: i128, liquidity: i128,
 //	  new_reserve_0: i128, new_reserve_1: i128, to: Address }
-//
-// verified byte-exact against mainnet lake bodies (deposit ledger
-// 63,181,271; withdraw ledger 62,940,668).
 type LiquidityFields struct {
 	Amount0     canonical.Amount // token0 added (deposit) / removed (withdraw)
 	Amount1     canonical.Amount // token1 added (deposit) / removed (withdraw)
@@ -276,10 +233,8 @@ type LiquidityFields struct {
 	To          string           // LP provider strkey
 }
 
-// sdkDecodeLiquidity decodes a Soroswap pair deposit/withdraw body.
-// Same Map-by-field-name path as sdkDecodeSwapAmounts — a positional
-// decode would break silently if a future WASM upgrade reorders or
-// adds a field (ingest-pipeline.md#contract-schema-evolution decode-by-name rule).
+// sdkDecodeLiquidity decodes a pair deposit/withdraw body by field name; a positional decode would
+// break silently if a WASM upgrade reorders or adds a field (decode-by-name rule).
 func sdkDecodeLiquidity(valueB64 string) (LiquidityFields, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
@@ -310,9 +265,7 @@ func sdkDecodeLiquidity(valueB64 string) (LiquidityFields, error) {
 		}
 		*field.dst = amt
 	}
-	// `to` is the LP provider — present on both deposit and withdraw
-	// bodies. A missing/wrong-shape value is an error worth surfacing
-	// (unlike skim's optional `to`).
+	// `to` (the LP provider) is always present here, so a missing value is an error, unlike skim.
 	toSv, err := scval.MustMapField(entries, "to")
 	if err != nil {
 		return LiquidityFields{}, fmt.Errorf("LiquidityEvent.to: %w", err)
@@ -325,9 +278,8 @@ func sdkDecodeLiquidity(valueB64 string) (LiquidityFields, error) {
 	return out, nil
 }
 
-// sdkDecodeSwapAmounts decodes the SwapEvent body. Pulls all four
-// amount fields by name from the top-level Map — positional decode
-// would break silently if Soroswap adds a field in a future upgrade.
+// sdkDecodeSwapAmounts decodes the SwapEvent body, pulling the four amounts by name because a
+// positional decode would break silently if Soroswap adds a field.
 func sdkDecodeSwapAmounts(valueB64 string) (swapAmounts, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
@@ -360,9 +312,8 @@ func sdkDecodeSwapAmounts(valueB64 string) (swapAmounts, error) {
 	return out, nil
 }
 
-// NewPairFields is the decoded NewPairEvent — emitted by the factory
-// each time a pair contract is deployed. We use it to populate the
-// pair→(token0, token1) registry that decodeSwap depends on.
+// NewPairFields is the decoded factory NewPairEvent, which populates the pair->(token0, token1)
+// registry that decodeSwap depends on.
 //
 // Contract reference (factory/src/event.rs:19-43):
 //
@@ -423,43 +374,28 @@ func sdkDecodeNewPair(valueB64 string) (NewPairFields, error) {
 	return NewPairFields{Token0: a0, Token1: a1, Pair: pairAddr}, nil
 }
 
-// SkimFields is the decoded SkimEvent — emitted by a pair contract
-// when a caller invokes `skim()` to claim the excess balance the
-// pool's reserves don't account for (Uniswap-v2-style mechanism;
-// the difference between the contract's actual token balance and the
-// stored reserves goes to the caller's chosen address).
+// SkimFields is the decoded SkimEvent, emitted when a caller invokes `skim()` to claim the excess
+// of the pair's token balance over its stored reserves (Uniswap-v2-style).
 //
 // Contract reference (pair/src/event.rs):
 //
 //	struct SkimEvent { skimmed_0: i128, skimmed_1: i128 }
 //
-// To stay decode-by-name (per ingest-pipeline.md#contract-schema-evolution), the
-// decoder tolerates both the documented field names AND the common
-// Uniswap-v2-style `amount_0` / `amount_1` aliases — if a future
-// WASM upgrade renames the fields the decoder still produces a row
-// rather than silently dropping. A `to` Address field is decoded
-// when present (some Uniswap-v2 ports surface the recipient in the
-// body) and left empty when absent — current Soroswap WASM omits
-// it.
+// Decoding is by name and tolerates the Uniswap-v2-style `amount_0` / `amount_1` aliases, so a
+// WASM rename still yields a row rather than a silent drop. `to` is decoded when present and left
+// empty when absent, as current Soroswap WASM omits it.
 type SkimFields struct {
 	// Amount0 is the token0 excess transferred out of the pool.
 	Amount0 canonical.Amount
 	// Amount1 is the token1 excess transferred out of the pool.
 	Amount1 canonical.Amount
-	// To is the C-strkey (contract) / G-strkey (account) of the
-	// skim recipient, when the contract surfaces it in the body.
-	// Empty string when the field is absent — discovery-doc Soroswap
-	// `SkimEvent` carries no `to`; nullable in storage so we don't
-	// fabricate a value.
+	// To is the skim recipient C- or G-strkey when the body carries it, else empty. It is
+	// nullable in storage so no value is fabricated.
 	To string
 }
 
-// sdkDecodeSkim decodes a SkimEvent body. Same Map-by-field-name
-// path as sdkDecodeSwapAmounts; tolerant of both the
-// `skimmed_0`/`skimmed_1` field names from the Phase-1 audit and the
-// `amount_0`/`amount_1` alias the upstream Uniswap-v2 derivative
-// uses in some forks. The `to` Address is optional — absent on
-// today's Soroswap WASM, populated if a future upgrade adds it.
+// sdkDecodeSkim decodes a SkimEvent body by field name, accepting `skimmed_0`/`skimmed_1` and the
+// `amount_0`/`amount_1` alias. The `to` Address is optional.
 func sdkDecodeSkim(valueB64 string) (SkimFields, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
@@ -479,9 +415,7 @@ func sdkDecodeSkim(valueB64 string) (SkimFields, error) {
 		return SkimFields{}, fmt.Errorf("SkimEvent.skimmed_1: %w", err)
 	}
 
-	// Optional `to` — silently absent on current Soroswap WASM, so a
-	// missing field is fine; only a present-but-wrong-shape value is
-	// an error worth surfacing.
+	// Optional `to`: absence is fine; only a present-but-wrong-shape value is an error.
 	var to string
 	if sv, ok := scval.MapField(entries, "to"); ok {
 		toStr, err := scval.AsAddressStrkey(sv)

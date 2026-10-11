@@ -8,24 +8,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// This file decodes Blend pool CURRENT STATE from Soroban contract
-// storage (ADR-0039) — distinct from the event path (decode.go /
-// decode_money_market.go). The structs + field names mirror the Blend
-// pool contract's `storage.rs` (ReserveData / ReserveConfig /
-// PoolConfig); the rate/APY math lives in interest.go.
+// This file decodes Blend pool CURRENT STATE from Soroban contract storage (ADR-0039), separate
+// from the event path. Structs and field names mirror the pool contract's `storage.rs`
+// (ReserveData / ReserveConfig / PoolConfig); rate/APY math lives in interest.go.
 //
-// Soroban `#[contracttype]` structs serialize as an ScVal::Map with
-// the field names as Symbol keys, so every field is decoded BY NAME
-// (scval.MapField) — resilient to field reordering across contract
-// upgrades, the same discipline the event decoders use.
+// #[contracttype] structs serialize as an ScVal::Map with Symbol keys, so every field is decoded
+// BY NAME (scval.MapField), which survives field reordering across contract upgrades.
 //
-// Scales (from the V2 contract): d_rate / b_rate are 12-decimal
-// conversion rates; ir_mod / c_factor / l_factor / util / r_* /
-// reactivity / bstop_rate are 7-decimal; b_supply / d_supply /
-// backstop_credit / supply_cap are in the underlying token's decimals.
-// A V1 pool stores d_rate / b_rate / ir_mod with 9 decimals under the
-// same field names, so the scale is keyed on PoolVersion, never on
-// the wire shape.
+// Scales (V2): d_rate / b_rate are 12-decimal; ir_mod / c_factor / l_factor / util / r_* /
+// reactivity / bstop_rate are 7-decimal; b_supply / d_supply / backstop_credit / supply_cap use the
+// underlying token's decimals. A V1 pool stores d_rate / b_rate / ir_mod with 9 decimals under the
+// same field names, so the scale is keyed on PoolVersion, never on the wire shape.
 
 // PoolVersion is a Blend pool contract's generation, resolved from the
 // factory that deployed it. It fixes the scale of ReserveData's rates.
@@ -105,11 +98,9 @@ type PoolConfig struct {
 }
 
 // reserveConfigMetadata is the JSON shape of a queue_set_reserve
-// event's ReserveConfig, as persisted to blend_admin.attributes
-// ('metadata' key) by the event decoder. The rate-model params (util /
-// r_* / reactivity / decimals) come from here — the live ResConfig
-// storage entry is often uncaptured (set at reserve init, never
-// re-written), but the queue_set_reserve EVENT carries the same config.
+// event's ReserveConfig, persisted to blend_admin.attributes ('metadata'). The rate-model params
+// come from here because the live ResConfig storage entry is often uncaptured (written once at
+// reserve init), while the queue_set_reserve EVENT carries the same config.
 type reserveConfigMetadata struct {
 	Index      uint32  `json:"index"`
 	Decimals   uint32  `json:"decimals"`
@@ -126,11 +117,9 @@ type reserveConfigMetadata struct {
 	Enabled    *bool   `json:"enabled"`
 }
 
-// ParseReserveConfigMetadata builds a ReserveConfig from a
-// queue_set_reserve event's metadata JSON (blend_admin.attributes ->
-// 'metadata'). This is the event-derived source of the rate-model
-// params for APY, used when the on-chain ResConfig storage entry isn't
-// in the captured window.
+// ParseReserveConfigMetadata builds a ReserveConfig from a queue_set_reserve event's metadata JSON
+// (blend_admin.attributes -> 'metadata'), the event-derived source of rate-model params when the
+// on-chain ResConfig entry isn't in the captured window.
 func ParseReserveConfigMetadata(b []byte) (ReserveConfig, error) {
 	var m reserveConfigMetadata
 	if err := json.Unmarshal(b, &m); err != nil {

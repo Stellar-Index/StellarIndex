@@ -7,36 +7,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// AuctionData wire-format keys. Verified against
-// pool/src/auctions/auction.rs::AuctionData. soroban-sdk
-// #[contracttype] structs serialise as ScvMap with sorted-by-symbol
-// keys; we look up by name regardless of order to stay resilient
-// to declaration reorderings (per
-// docs/architecture/ingest-pipeline.md#contract-schema-evolution).
+// AuctionData wire-format keys, from pool/src/auctions/auction.rs::AuctionData. Looked up by name
+// regardless of map order so declaration reorderings are harmless
+// (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 const (
 	auctionDataKeyBid   = "bid"
 	auctionDataKeyLot   = "lot"
 	auctionDataKeyBlock = "block"
 )
 
-// decodeAuctionData parses the AuctionData ScvMap embedded in
-// new_auction / fill_auction event bodies into the AuctionData
-// struct.
-//
-// AuctionData on the wire (from blend-contracts-v2
-// pool/src/auctions/auction.rs):
+// decodeAuctionData parses the AuctionData ScvMap in new_auction / fill_auction bodies. On the
+// wire (blend-contracts-v2 pool/src/auctions/auction.rs):
 //
 //	ScvMap with three named fields:
 //	  "bid"   → ScvMap{ Address → i128 }   — assets the filler spends
 //	  "block" → u32                         — auction-start block
 //	  "lot"   → ScvMap{ Address → i128 }   — assets the filler receives
 //
-// Decoder is by name (resilient to field reordering). The asset key
-// must be a Soroban contract address: decodeAssetAmountMap routes it
-// through canonical.NewSorobanAsset, which rejects any non-C-strkey
-// (account/G-addresses included) — matching Blend's asset registries,
-// which are all Soroban contracts (SAC-wrapped classic + per-token
-// Soroban tokens) today.
+// Asset keys must be Soroban contract addresses: decodeAssetAmountMap routes them through
+// canonical.NewSorobanAsset, which rejects any non-C-strkey (G-addresses included), matching
+// Blend's asset registries (SAC-wrapped classic and Soroban tokens, all contracts).
 func decodeAuctionData(sv scval.ScVal) (AuctionData, error) {
 	entries, err := scval.AsMap(sv)
 	if err != nil {

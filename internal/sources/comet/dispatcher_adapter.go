@@ -19,72 +19,52 @@ import (
 // mimicking) the Balancer-v1 WASM emits the same topic shape, and without the gate a look-alike
 // could inject fabricated trades under `source = "comet"`.
 //
-// No creation event announces new pools, so the gate is the curated set (ADR-0040 §1 mechanism
-// 2/3): the in-code MainnetGatedSet (today one pool, Blend's backstop) is the trust root; the
-// protocol_contracts DB warm layers on top as the operator seam for admitting a pool without a
-// redeploy. No WASM-hash sweep discovers pools; wasm-drift alerts on drift but never admits one.
+// No creation event announces new pools, so the gate is the curated set (ADR-0040 section 1,
+// mechanism 2/3): the in-code MainnetGatedSet is the trust root and the protocol_contracts warm
+// is the operator seam for admitting a pool without a redeploy. No WASM-hash sweep admits pools.
 //
-// Claims the five Soroban-emitted POOL events from a REGISTERED pool: swap (→ TradeEvent),
-// join_pool / exit_pool / deposit / withdraw (→ LiquidityEvent). Admin functions publish no events
-// in the Soroban port; BPT transfers use the SEP-41 surface (sep41_supply), not the POOL
-// namespace.
+// Claims the five POOL events from a registered pool: swap (TradeEvent) and join_pool /
+// exit_pool / deposit / withdraw (LiquidityEvent). BPT transfers use the SEP-41 surface
+// (sep41_supply), not the POOL namespace.
 type Decoder struct {
 	reg *contractid.Registry
 
-	// now sources wall-clock for the self-pair detection metric's recency
-	// gate ONLY (never for decoded timestamps — those come from the ledger,
-	// see EventClosedAt). Injectable so tests are deterministic; defaults to
-	// time.Now in NewDecoder.
+	// now sources wall-clock for the self-pair metric's recency gate only; decoded timestamps
+	// come from the ledger (EventClosedAt). Injectable for deterministic tests.
 	now func() time.Time
 
-	// countMetrics gates the exploit-detection counters
-	// (obs.AMMSelfPairSwapTotal / obs.AMMNonPositiveSwapTotal). The
-	// dispatcher ALWAYS builds a comet.Decoder when comet is enabled,
-	// and the projector builds an INDEPENDENT second instance alongside
-	// it whenever Projector.Enabled (ADR-0032 Phase-3 parallel
-	// double-write — both decode the same live events, deduped at the
-	// DB layer by ON CONFLICT DO NOTHING). Without this gate both
-	// instances would increment the same detection event, doubling the
-	// exploit signal. Default true; the projector registry disables it
-	// via [Decoder.WithoutMetrics] so the dispatcher's instance — which
-	// exists whether or not the projector runs — stays the single
-	// canonical counter.
+	// countMetrics gates the exploit-detection counters (obs.AMMSelfPairSwapTotal /
+	// obs.AMMNonPositiveSwapTotal). The dispatcher and the projector (ADR-0032 Phase-3 parallel
+	// double-write) each build a Decoder over the same live events, deduped at the DB by ON
+	// CONFLICT DO NOTHING; without this gate both would count one detection twice. The projector
+	// registry disables it via [Decoder.WithoutMetrics] so the dispatcher's instance stays the
+	// single canonical counter.
 	countMetrics bool
 }
 
-// selfPairLiveWindow bounds how recent a self-pair swap's ledger close time
-// must be for it to bump the exploit-detection metric. The SAME Decode runs
-// during backfill re-ingest AND the completeness re-derive (which re-runs the
-// decoder over historical soroban_events to count expected rows) — both
-// re-process the historical exploit window, and counting there would re-fire
-// the burst alert in present wall-clock time for a non-event. Gating on
-// close-time recency keeps the metric a "happening now" signal. The window is
-// generous (live decode lags by seconds; a real >1h tip lag is its own page).
+// selfPairLiveWindow bounds how recent a self-pair swap's ledger close time must be to bump the
+// exploit-detection metric. Backfill re-ingest and the completeness re-derive re-run Decode over
+// the historical exploit window, and counting there would re-fire the burst alert for a
+// non-event. The window is generous: live decode lags by seconds, and a >1h tip lag pages on
+// its own.
 const selfPairLiveWindow = time.Hour
 
-// NewDecoder constructs a Comet Decoder. The in-code curated set
-// (MainnetGatedSet) is always installed first; caller opts (WithSeed
-// from the protocol_contracts warm) layer discovered pools on top.
-// There are no factories — comet pools have no on-chain creation
-// event to self-register from, so live fan-out never fires.
+// NewDecoder constructs a Comet Decoder. The in-code MainnetGatedSet is installed first; caller
+// opts (the protocol_contracts warm) layer on top. There are no factories: pools have no
+// creation event to self-register from.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{contractid.WithSeed(MainnetGatedSet())}
 	return &Decoder{reg: contractid.New(append(base, opts...)...), now: time.Now, countMetrics: true}
 }
 
-// WithoutMetrics disables this Decoder's exploit-detection counter
-// increments. See the countMetrics field doc for why: it is the
-// projector registry's opt-out when the dispatcher already runs its
-// own comet.Decoder over the same event stream.
+// WithoutMetrics disables this Decoder's exploit-detection counters; see countMetrics.
 func (d *Decoder) WithoutMetrics() *Decoder {
 	d.countMetrics = false
 	return d
 }
 
-// bumpDroppedSwapMetric increments counter for a determinate,
-// zero-row swap drop (self-pair or non-positive-amount) — gated on
-// countMetrics and close-time recency, same rationale as the
-// countMetrics field doc and selfPairLiveWindow.
+// bumpDroppedSwapMetric counts a determinate zero-row swap drop (self-pair or non-positive
+// amount), gated on countMetrics and close-time recency (see selfPairLiveWindow).
 func (d *Decoder) bumpDroppedSwapMetric(counter *prometheus.CounterVec, closedAt time.Time) {
 	if d.countMetrics && d.now().Sub(closedAt) < selfPairLiveWindow {
 		counter.WithLabelValues(SourceName).Inc()
@@ -94,14 +74,10 @@ func (d *Decoder) bumpDroppedSwapMetric(counter *prometheus.CounterVec, closedAt
 // Name implements [dispatcher.Decoder].
 func (d *Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.Decoder]. Gates on CONTRACT
-// IDENTITY, not topic bytes (ADR-0035/0040): the bare ("POOL",
-// <event>) tuple is the Balancer-v1 event family shared by EVERY
-// deployment of that code — forgeable by construction. An event
-// matches ONLY when emitted by a pool in the curated registry
-// (MainnetGatedSet + protocol_contracts warm). A comet-shaped event
-// from an unregistered contract is left for the recognition audit to
-// surface (ADR-0033 Claim 2a) — visible, never silently attributed.
+// Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY, not topic bytes
+// (ADR-0035/0040): the bare ("POOL", <event>) tuple is shared by every deployment of the
+// Balancer-v1 code, so it is forgeable. A comet-shaped event from an unregistered contract is
+// left for the recognition audit (ADR-0033 Claim 2a): visible, never silently attributed.
 func (d *Decoder) Matches(ev events.Event) bool {
 	if classify(&ev) == "" {
 		return false
@@ -109,15 +85,12 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return d.reg.Has(ev.ContractID)
 }
 
-// Decode implements [dispatcher.Decoder]. Returns exactly one
-// consumer.Event on success — TradeEvent for swap, LiquidityEvent
-// for the other four kinds. A decode error is non-fatal per the
-// dispatcher contract — counted by the source's orphan/malformed
-// metrics and skipped.
+// Decode implements [dispatcher.Decoder]. It returns one consumer.Event on success: TradeEvent
+// for swap, LiquidityEvent for the other four kinds. A decode error is non-fatal: counted and
+// skipped.
 //
-// Decode itself stays shape-only (no registry lookup): the identity
-// gate lives in Matches, which the dispatcher consults first. Direct
-// Decode callers (tests, fixture tooling) bypass the gate by design.
+// Decode is shape-only (no registry lookup); the identity gate lives in Matches, which the
+// dispatcher consults first. Direct callers (tests, fixture tooling) bypass it by design.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	kind := classify(&ev)
 	if kind == "" {
@@ -126,55 +99,33 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 
 	closedAt, err := ev.EventClosedAt()
 	if err != nil {
-		// Comet events use ledger close time for the event timestamp
-		// (unlike oracles, there's no contract-declared timestamp in
-		// the body). Fail closed like the blend/phoenix/defindex
-		// siblings rather than substituting time.Now() — during a
-		// backfill replay that would stamp every event with the
-		// wall-clock of the replay run, not the historical ledger.
+		// Fail closed rather than substituting time.Now(): during a backfill replay that would
+		// stamp every event with the replay run's wall-clock, not the historical ledger time.
 		return nil, err
 	}
 
 	if kind == EventSwap {
 		trade, err := decodeSwap(&ev, closedAt)
 		if err != nil {
-			// Determinate "not a serveable trade": the body decoded
-			// cleanly but maps to ZERO rows — a self-pair swap (token_in
-			// == token_out, the Blend/Comet exploit's primitive →
-			// canonical.NewPair's ErrPairMismatch) or non-positive amounts.
-			// Return zero output with NO error so the completeness
-			// re-derive counts these as expected=0, NOT as undecodable
-			// blind spots, which would fail the source's verdict closed
-			// forever: the 36 exploit self-swaps alone would hold `comet`
-			// at `complete=false` through every re-derive. Safe
-			// precisely because the body FULLY decoded — we read both token
-			// addresses and saw they're equal — so there is no hidden-drop
-			// risk. The error path stays reserved for INDETERMINATE parse
-			// failures, which must remain blind. (Precedent for
-			// recognised-but-unserved → (nil, nil):
-			// internal/sources/classicmovements/decode.go.)
+			// Determinate "not a serveable trade": the body decoded cleanly but maps to ZERO rows
+			// (a self-pair swap, token_in == token_out, which is canonical.NewPair's
+			// ErrPairMismatch, or non-positive amounts). Return no output and NO error so the
+			// completeness re-derive counts expected=0 instead of an undecodable blind spot,
+			// which would hold `comet` at complete=false forever. Safe because the body fully
+			// decoded, so nothing is hidden; the error path stays for indeterminate parse
+			// failures, which must remain blind.
 			if errors.Is(err, canonical.ErrPairMismatch) {
-				// Self-pair swap (token_in == token_out) — the exploit
-				// primitive. Count it as an exploit-shaped detection signal
-				// before dropping: these rows never reach the served `trades`
-				// table, so this counter (+ the raw soroban_events landing) is
-				// the ONLY place the freeze/divergence-blind self-swap burst is
-				// observable. Detection only — drops to zero rows exactly as
-				// before, changing no serving or freeze decision. Gated on
-				// close-time recency so a backfill / completeness re-derive of
-				// the historical exploit window does NOT re-fire the alert (see
-				// selfPairLiveWindow).
+				// Self-pair swap is the exploit primitive. These rows never reach the served
+				// `trades` table, so this counter is the only place the self-swap burst is
+				// observable. Detection only: it changes no serving or freeze decision. The
+				// recency gate keeps backfill/re-derive from re-firing the alert.
 				d.bumpDroppedSwapMetric(obs.AMMSelfPairSwapTotal, closedAt)
 				return nil, nil
 			}
 			if errors.Is(err, ErrNonPositiveAmounts) {
-				// Sibling detection signal to the self-pair branch above —
-				// same "decoded cleanly, zero honest rows" drop shape, same
-				// recency gate: reconciliation_catalogue.go and
-				// verify_decoders.go construct their own un-disabled
-				// comet.NewDecoder() to replay historical ledgers, and an
-				// ungated counter would be inflated by every completeness
-				// sweep rather than reflecting live activity.
+				// Same drop shape and recency gate as the self-pair branch: tools that replay
+				// historical ledgers build their own un-disabled Decoder, and an ungated counter
+				// would be inflated by every completeness sweep.
 				d.bumpDroppedSwapMetric(obs.AMMNonPositiveSwapTotal, closedAt)
 				return nil, nil
 			}

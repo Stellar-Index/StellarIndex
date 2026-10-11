@@ -23,13 +23,10 @@ func (TradeEvent) Source() string { return SourceName }
 // Compile-time check that TradeEvent satisfies consumer.Event.
 var _ consumer.Event = TradeEvent{}
 
-// PositionEvent is the [consumer.Event] shape the Decoder emits for a pool
-// `mint`, `burn` or `collect` — the concentrated-liquidity position
-// lifecycle. Backs a sushiswap_v3_position_events row (migration 0203).
-//
-// Token0 / Token1 come from the pool registry, not the event body.
-// Liquidity is the mint / burn liquidity delta and is unset for a collect;
-// Sender is set on a mint only and Recipient on a collect only.
+// PositionEvent is the [consumer.Event] the Decoder emits for a pool `mint`, `burn` or `collect`
+// (the concentrated-liquidity position lifecycle). Token0 / Token1 come from the pool registry,
+// not the event body. Liquidity is the mint / burn delta and unset for a collect; Sender is set
+// on a mint only and Recipient on a collect only.
 type PositionEvent struct {
 	ContractID string // pool contract C-strkey (emitter)
 	Ledger     uint32

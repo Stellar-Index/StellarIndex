@@ -26,16 +26,9 @@ func (TradeEvent) Source() string { return SourceName }
 // Compile-time check that TradeEvent satisfies consumer.Event.
 var _ consumer.Event = TradeEvent{}
 
-// SkimEvent is the [consumer.Event] shape emitted by the Soroswap
-// Decoder on a pair-contract `skim` event. Mirrors the
-// soroswap_skim_events row (migration 0042): the universal
-// identity fields, the always-present Amount0 / Amount1 i128
-// excesses, and the optional `to` recipient (empty when absent on
-// today's WASM; populated if a future upgrade adds it).
-//
-// The indexer's event sink type-switches on this at its output
-// channel (internal/pipeline/sink.go) and writes via
-// Store.InsertSoroswapSkimEvent.
+// SkimEvent is the [consumer.Event] emitted on a pair `skim` event; it mirrors the
+// soroswap_skim_events row, with the optional `to` empty when the WASM omits it. The event sink
+// (internal/pipeline/sink.go) writes it via Store.InsertSoroswapSkimEvent.
 type SkimEvent struct {
 	ContractID string // pair contract C-strkey
 	Ledger     uint32
@@ -57,22 +50,11 @@ func (SkimEvent) Source() string { return SourceName }
 // Compile-time check that SkimEvent satisfies consumer.Event.
 var _ consumer.Event = SkimEvent{}
 
-// LiquidityEvent is the [consumer.Event] shape emitted by the
-// Soroswap Decoder on a pair-contract `deposit` or `withdraw` event —
-// the LP add / remove that mutates pool reserves alongside the
-// swap→trade path. Backs the soroswap_liquidity row (migration 0127).
-//
-// deposit and withdraw share one wire struct: both carry the two
-// token amounts moved (Amount0/Amount1), the LP shares minted/burned
-// (Liquidity), the post-state reserves (NewReserve0/NewReserve1) and
-// the provider address (To). Token0/Token1 come NOT from the event
-// body but from the factory new_pair registry, resolved best-effort
-// at decode time — empty when the pair mapping isn't seeded yet
-// (the row is still emitted rather than dropped; every-event mission).
-//
-// Self-contained: does NOT feed the swap+sync correlation buffer. The
-// indexer's event sink type-switches on this (internal/pipeline/
-// sink.go) and writes via Store.InsertSoroswapLiquidity.
+// LiquidityEvent is the [consumer.Event] emitted on a pair `deposit` or `withdraw` (LP add or
+// remove); it backs the soroswap_liquidity row. Both share one wire struct. Token0/Token1 come
+// from the factory new_pair registry, not the body, and are empty when the pair is unseeded: the
+// row is still emitted rather than dropped. It does NOT feed the swap+sync buffer; the sink writes
+// it via Store.InsertSoroswapLiquidity.
 type LiquidityEvent struct {
 	ContractID  string // pair contract C-strkey (emitter)
 	Ledger      uint32
@@ -101,23 +83,13 @@ func (LiquidityEvent) Source() string { return SourceName }
 var _ consumer.Event = LiquidityEvent{}
 
 // ─── Correlation buffer ─────────────────────────────────────────
-// Groups swap + sync by (ledger, tx_hash, op_index). Emits complete
-// pairs back to the caller; holds incompletes until either their
-// partner event arrives, or their ClosedAt is older than maxAge
-// (at which point they're returned as orphans and dropped).
-//
-// Bounded memory: without age-based eviction, the buffer would
-// grow unbounded whenever a swap arrives without its matching sync
-// (page-boundary races, malformed pair contracts, etc.).
+// Groups swap + sync by groupKey and emits complete pairs; incompletes wait for their partner
+// until ClosedAt is older than maxAge, then are returned as orphans and dropped. Age-based
+// eviction bounds memory when a swap never gets its sync.
 
-// defaultOrphanMaxAge is how long the buffer holds an incomplete
-// entry waiting for its partner before evicting as an orphan.
-//
-// Soroswap swap+sync are emitted in the same transaction — they
-// SHOULD always arrive adjacently in the dispatcher's in-order
-// stream. Five minutes is a generous ceiling that absorbs any
-// out-of-order quirk without holding references to events that will
-// never resolve.
+// defaultOrphanMaxAge is how long an incomplete entry waits for its partner. Swap+sync share a
+// transaction and should arrive adjacently, so five minutes is a generous ceiling that absorbs
+// out-of-order quirks without holding events that will never resolve.
 const defaultOrphanMaxAge = 5 * time.Minute
 
 type buffer struct {
@@ -134,28 +106,21 @@ func newBuffer() *buffer {
 	}
 }
 
-// absorb records an event; returns any pairs that just completed,
-// including a swap-only group rotated out by a same-pair re-entry.
-// Also sweeps the buffer for entries older than maxAge; evicted
-// orphans are RETURNED so the caller can emit metrics — they're
-// NOT returned as completed pairs (they have no Sync to finalise).
+// absorb records an event and returns the pairs that just completed, including a swap-only group
+// rotated out by a same-pair re-entry. Stale orphans are returned separately as evicted so the
+// caller can count them; they are never returned as completed.
 func (b *buffer) absorb(e *events.Event, kind string, closedAt time.Time) (completed []RawPair, evicted []RawPair) {
-	// Evict stale orphans first — keeps the map bounded in size
-	// regardless of how long the process runs. The reference time
-	// is the incoming event's ClosedAt, not wall-clock — so
-	// backfill of historical events correctly compares against the
-	// timeline being replayed.
+	// Evict stale orphans first to keep the map bounded. The reference time is the incoming
+	// event's ClosedAt, not wall-clock, so backfill compares against the replayed timeline.
 	evicted = b.sweepStale(closedAt)
 
 	k := keyOf(e)
 	p, ok := b.m[k]
 	if ok && p.rotates(kind, e) {
-		// A second swap (or sync) into an occupied slot with a DIFFERENT
-		// EventIndex belongs to a second swap through the SAME pair in the
-		// same op, emitted non-contiguously. Overwriting in place lost the
-		// first trade uncounted. Rotate the group out: a swap-only group is
-		// final (the trade is read from the swap body alone), a sync-only
-		// one is an orphan. Same EventIndex is a redelivery: overwrite.
+		// A swap or sync landing in an occupied slot with a DIFFERENT EventIndex is a second swap
+		// through the SAME pair in the same op; overwriting would lose the first trade uncounted.
+		// Rotate the group out: swap-only is final (the trade reads from the swap body alone),
+		// sync-only is an orphan. The same EventIndex is a redelivery: overwrite.
 		if p.Swap != nil {
 			completed = append(completed, *p)
 		} else {
@@ -197,13 +162,9 @@ func (p *RawPair) rotates(kind string, e *events.Event) bool {
 	return prior != nil && prior.EventIndex != e.EventIndex
 }
 
-// sweepStale removes every entry whose ClosedAt is older than
-// maxAge relative to `ref`, returning them as orphans.
-//
-// `ref` is normally the most-recent event's ClosedAt. Never use
-// nowFn() during backfill: historical events have ClosedAt far
-// behind wall-clock, and every entry would evict on the next
-// absorb before its partner arrived.
+// sweepStale removes and returns every entry whose ClosedAt is older than maxAge relative to `ref`,
+// normally the latest event's ClosedAt. Never use nowFn() during backfill: historical ClosedAt is
+// far behind wall-clock, so every entry would evict before its partner arrived.
 func (b *buffer) sweepStale(ref time.Time) []RawPair {
 	if b.maxAge <= 0 {
 		return nil

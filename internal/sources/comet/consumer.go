@@ -21,28 +21,20 @@ func (TradeEvent) EventKind() string { return "comet.trade" }
 // Source implements [consumer.Event].
 func (TradeEvent) Source() string { return SourceName }
 
-// LiquidityEvent is the [consumer.Event] Comet's Decoder emits on a
-// successful (POOL, join_pool | exit_pool | deposit | withdraw)
-// decode. One row per emitted event — a multi-token join_pool / exit_pool
-// produces one LiquidityEvent per participating token (Comet emits one
-// event per token in the loop, as documented in pool.rs).
+// LiquidityEvent is the [consumer.Event] emitted for a (POOL, join_pool | exit_pool | deposit |
+// withdraw) decode. A multi-token join_pool / exit_pool yields one LiquidityEvent per token.
 //
-// The indexer's event sink type-switches on this and calls
-// store.InsertCometLiquidity to land it in the `comet_liquidity`
-// hypertable (migration 0042). PoolAmountIn is populated only for
-// withdraw events (the count of BPT-share tokens burned for the
-// underlying withdrawn); the writer translates a zero / unset
-// Amount to SQL NULL on the other three kinds.
+// The indexer's sink type-switches on this and calls store.InsertCometLiquidity
+// (`comet_liquidity` hypertable). PoolAmountIn is populated only for withdraw (BPT-share count
+// burned); the writer translates a zero or unset Amount to SQL NULL on the other kinds.
 type LiquidityEvent struct {
 	ContractID string
 	Ledger     uint32
 	TxHash     string
 	OpIndex    uint32
-	// EventIndex is the contract event's index within its operation —
-	// the per-event discriminator in the comet_liquidity PK (migration
-	// 0059). The swap path fans op_index via canonical.FanoutOpIndex;
-	// the liquidity path keys on event_index directly so two
-	// same-(kind,token) events in one op don't collide.
+	// EventIndex is the contract event's index within its operation, the per-event discriminator
+	// in the comet_liquidity PK. The swap path fans op_index via canonical.FanoutOpIndex; the
+	// liquidity path keys on event_index so two same-(kind,token) events in one op don't collide.
 	EventIndex   uint32
 	ObservedAt   time.Time
 	Kind         LiquidityKind

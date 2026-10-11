@@ -14,15 +14,10 @@ import (
 //	topic[0] = String("BlendStrategy")     — pre-encoded, byte-equal
 //	topic[1] = Symbol("deposit"|"withdraw"|"harvest"|…)
 //
-// Both positions are compared as byte-equal base64 against the
-// constants computed at package init — no SCVal parsing on the
-// reject path. Returns "" for non-strategy events.
-//
-// Per the EVERY-event policy (project_every_event_principle), this
-// switch enumerates every topic[1] symbol the BlendStrategy contract
-// emits — not just the ones we decode into a StrategyFlow today. The
-// audit doc (docs/operations/wasm-audits/defindex.md) is the upstream
-// reference for the topic set.
+// Both positions are compared as byte-equal base64 against init-time constants, so the reject
+// path does no SCVal parsing. Returns "" for non-strategy events. Per the EVERY-event policy
+// the switch enumerates every topic[1] symbol the contract emits, not just decoded ones
+// (docs/operations/wasm-audits/defindex.md).
 func classify(e *events.Event) string {
 	if len(e.Topic) < 2 {
 		return ""
@@ -47,12 +42,9 @@ func classify(e *events.Event) string {
 //	topic[0] = String("DeFindexVault")     — pre-encoded, byte-equal
 //	topic[1] = Symbol("deposit"|"withdraw"|<governance/admin>)
 //
-// Per the EVERY-event policy: classifies all 12 vault-layer topic[1]
-// symbols enumerated by the upstream contract (the WASM audit's §
-// "Topic structure" + the n_wasm census). deposit + withdraw drive a
-// VaultFlow, dfees drives per-entry DFees and the seven admin topics a
-// VaultAdmin; rebalance and n_wasm have no decoder but recognising them
-// satisfies the closed-set completeness requirement.
+// Per the EVERY-event policy it classifies all 12 vault-layer topic[1] symbols. deposit and
+// withdraw drive a VaultFlow, dfees per-entry DFees and the seven admin topics a VaultAdmin;
+// rebalance and n_wasm have no decoder but are recognised for closed-set completeness.
 func classifyVault(e *events.Event) string {
 	if len(e.Topic) < 2 {
 		return ""
@@ -95,15 +87,10 @@ func classifyVault(e *events.Event) string {
 //	topic[0] = String("DeFindexFactory")    — pre-encoded, byte-equal
 //	topic[1] = Symbol("create"|"n_fee")
 //
-// We recognise factory events so the dispatcher's drop-counter
-// doesn't file them as "unmatched topic" — EVERY-event policy
-// (project_every_event_principle). Neither `create` nor `n_fee` has
-// its BODY decoded: a `create` body is UNTRUSTED for registry fan-out
-// because the factory is permissionless (anyone can create a vault — see
-// Decoder.Decode), and `n_fee` is protocol-fee-recipient governance,
-// not a creation announcement. Neither ever produces a consumer.Event:
-// Decoder.Decode returns no Event on a factory match (drops cleanly
-// without counting against ErrUnknownEvent).
+// Factory events are recognised so the drop-counter does not file them as "unmatched topic"
+// (EVERY-event policy). Neither body is decoded: a `create` body is untrusted for registry
+// fan-out because the factory is permissionless (see Decoder.Decode), and `n_fee` is
+// fee-recipient governance. Decoder.Decode drops them without counting ErrUnknownEvent.
 func classifyFactory(e *events.Event) string {
 	if len(e.Topic) < 2 {
 		return ""
@@ -120,20 +107,17 @@ func classifyFactory(e *events.Event) string {
 	return ""
 }
 
-// decodeFlow converts one classified strategy event into a
-// StrategyFlow.
+// decodeFlow converts one classified strategy event into a StrategyFlow.
 //
-// Body shape (verified on-chain via scan-soroban-events — identical
-// for deposit and withdraw; harvest carries the same two fields plus
-// an unread price_per_share):
+// Body shape (harvest adds an unread price_per_share):
 //
 //	{ from: Address, amount: i128 }              (deposit/withdraw)
 //	{ from: Address, amount: i128,
 //	  price_per_share: i128 }                    (harvest)
 //
-// Fields are pulled by name from the top-level Map per
-// docs/architecture/ingest-pipeline.md#contract-schema-evolution's decode-by-name
-// rule — positional decoding would silently break across upgrades.
+// Fields are pulled by name from the top-level Map (decode-by-name rule,
+// docs/architecture/ingest-pipeline.md#contract-schema-evolution); positional decoding would
+// silently break across contract upgrades.
 func decodeFlow(e *events.Event, kind string) (StrategyFlow, error) {
 	closedAt, err := e.EventClosedAt()
 	if err != nil {
@@ -204,10 +188,9 @@ func decodeFlow(e *events.Event, kind string) (StrategyFlow, error) {
 //	            df_tokens_burned:  i128,
 //	            total_managed_funds_before, total_supply_before }
 //
-// The `total_*_before` NAV-snapshot fields are ignored: not needed for flow
-// attribution. Fields are pulled by name
-// (ingest-pipeline.md#contract-schema-evolution), so the decoder survives the
-// vault's mid-life WASM upgrade as long as the field names hold.
+// The `total_*_before` NAV-snapshot fields are ignored (not needed for flow attribution).
+// Fields are pulled by name, so the decoder survives the vault's mid-life WASM upgrade while
+// the names hold.
 func decodeVaultFlow(e *events.Event, kind string) (VaultFlow, error) {
 	closedAt, err := e.EventClosedAt()
 	if err != nil {
@@ -298,13 +281,11 @@ func decodeVaultFlow(e *events.Event, kind string) (VaultFlow, error) {
 //
 //	Map{ distributed_fees: Vec[ (token Address<contract>, amount i128) ] }
 //
-// The tuple is Vec-encoded. Positions 0 (token) and 1 (amount) are read and
-// trailing elements tolerated, so an additive per-entry field from a future
-// vault upgrade does not error the event. FEWER than 2 elements is
-// ErrMalformedPayload. An EMPTY distributed_fees Vec is a real shape (a
-// distribution with nothing to distribute): ZERO entries, NO error, keeping
-// live-decode and the completeness re-derive count-consistent. Any other body
-// is ErrMalformedPayload: fail loud, never silent-drop.
+// The tuple is Vec-encoded. Positions 0 (token) and 1 (amount) are read and trailing elements
+// tolerated, so an additive field from a future upgrade does not error the event; fewer than 2
+// elements is ErrMalformedPayload. An empty distributed_fees Vec is a real shape: zero
+// entries, no error, keeping live decode and the completeness re-derive count-consistent. Any
+// other body is ErrMalformedPayload (fail loud, never silent-drop).
 func decodeDFees(e *events.Event) ([]DFee, error) {
 	closedAt, err := e.EventClosedAt()
 	if err != nil {
@@ -438,20 +419,13 @@ func decodeVaultAdmin(e *events.Event, kind string) (VaultAdmin, error) {
 	return out, nil
 }
 
-// DecodeRebalanceMethod extracts the `rebalance_method` discriminator
-// Symbol from a ("DeFindexVault","rebalance") event body. It reads
-// ONLY that one documented field and returns the raw Symbol verbatim
-// as a [RebalanceMethod]; the per-method payload is deliberately NOT
-// decoded — see the [RebalanceMethod] godoc for the do-not-invent
-// scope caveats. Returns ErrMalformedPayload if the body is not a Map
-// or the discriminator field is absent / not a Symbol.
+// DecodeRebalanceMethod extracts the `rebalance_method` discriminator Symbol from a
+// ("DeFindexVault","rebalance") event body, returned verbatim as a [RebalanceMethod]. The
+// per-method payload is deliberately not decoded (see [RebalanceMethod]). Returns
+// ErrMalformedPayload if the body is not a Map or the field is absent or not a Symbol.
 //
-// This is the multiplexer scaffolding for the four-way rebalance
-// event: production Decode() does not yet emit a
-// consumer.Event for rebalance (the payload is unmodelled pending a
-// real on-chain sample), so this decoder is exercised by the golden
-// tests + available to operator tooling that inspects raw rebalance
-// bodies from the lake once samples exist.
+// Production Decode() emits no consumer.Event for rebalance until a real sample exists; this
+// is scaffolding for the golden tests and operator tooling.
 func DecodeRebalanceMethod(e *events.Event) (RebalanceMethod, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {

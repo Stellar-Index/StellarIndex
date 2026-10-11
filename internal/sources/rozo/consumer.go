@@ -6,34 +6,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// Event is the [consumer.Event] the Rozo Decoder emits — one per
-// decoded v1 contract event. It carries the rozo_events row shape
-// (migration 0039): the universal identity fields, the always-present
-// Amount + Destination, and the per-event-type fields (From / Memo
-// for payment, Token for flush) as *string so nil writes SQL NULL.
-//
-// The indexer's event sink type-switches on this at its output
-// channel (internal/pipeline/sink.go) and writes via
-// Store.InsertRozoEvent.
+// Event is the [consumer.Event] the Rozo Decoder emits, one per decoded v1 contract event, in the
+// rozo_events row shape. Per-event-type fields (From / Memo for payment, Token for flush) are
+// *string so nil writes SQL NULL. The sink type-switches on it (internal/pipeline/sink.go) and
+// writes via Store.InsertRozoEvent.
 type Event struct {
 	ContractID string
 	Ledger     uint32
 	TxHash     string
 	OpIndex    int
-	// EventIndex is the position of this event within its operation's
-	// contract-event list (internal/events.Event.EventIndex). It is the
-	// rozo_events PK discriminator (migration 0112) that keeps two same-type
-	// events emitted by ONE operation from collapsing to a single row
-	// Stamped by the Decoder from the source events.Event.
+	// EventIndex is the event's position within its operation's contract-event list, the
+	// rozo_events PK discriminator that keeps two same-type events from ONE operation from
+	// collapsing to a single row.
 	EventIndex  uint32
 	ObservedAt  time.Time
 	EventType   string // one of the Event* constants
 	Amount      string // decimal i128
 	Destination string
 	From        *string // payment-only
-	// Memo is payment-only ('' is a valid tag). It is already in its
-	// scval.ToText form (DecodePayment) — text-column-safe, lossless —
-	// so a sink binds it as-is and must not encode it a second time.
+	// Memo is payment-only ('' is a valid tag), already in lossless text-column-safe
+	// scval.ToText form, so a sink binds it as-is and must not encode it again.
 	Memo  *string
 	Token *string // flush-only
 }

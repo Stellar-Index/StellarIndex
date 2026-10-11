@@ -2,18 +2,15 @@
 // a Uniswap-V3-shaped concentrated-liquidity AMM on Soroban whose pools are
 // created by a single factory ([MainnetFactory]).
 //
-// Every pool topic is a ONE-element Symbol vector and the pool address is not in
-// it, so topic bytes identify nothing: gating must be on contract identity
-// (ADR-0035). `swap`, `mint` and `burn` are among the most common symbols on
-// pubnet (a 10k-ledger census puts `mint` at 33% and `burn` at 12% of all
-// contract events).
+// Every pool topic is a one-element Symbol vector and the pool address is not in it, so topic
+// bytes identify nothing: gating must be on contract identity (ADR-0035). `swap`, `mint` and
+// `burn` are among the most common symbols on pubnet.
 //
-// `swap` is the only trade-forming event: a 7-entry Map {amount0 i128, amount1
-// i128, liquidity u128, recipient, sender, sqrt_price_x96 u256, tick i32}. The
-// body is identical across both deployed WASM versions; decoding is by field
-// name (docs/architecture/ingest-pipeline.md#contract-schema-evolution) so an
-// appended field stays readable. The factory emitted `pool_created` twice for
-// two pools inside their creation transaction, so seeding must be idempotent.
+// `swap` is the only trade-forming event: a 7-entry Map {amount0 i128, amount1 i128, liquidity
+// u128, recipient, sender, sqrt_price_x96 u256, tick i32}. It is identical across both deployed
+// WASM versions; decoding is by field name so an appended field stays readable. The factory has
+// emitted `pool_created` twice for a pool inside its creation transaction, so seeding must be
+// idempotent.
 //
 // A V3 pool prices from `sqrt_price_x96` and a tick range, not reserves, so
 // reserve-based TVL or pricing would be WRONG and neither is derived. Trade rows
@@ -76,67 +73,46 @@ var (
 	// package decodes (wrong SCVal shape, missing field, wrong field type).
 	ErrMalformedPayload = errors.New("sushiswap_v3: malformed event payload")
 
-	// ErrNonDirectionalSwap — a swap body decoded cleanly but carries no
-	// cross-token exchange: the two signed pool deltas are not one strictly
-	// positive and one strictly negative. A price-forming V3 swap moves
-	// value BOTH ways (the pool gains one token and pays out the other), so
-	// any other sign combination has no derivable direction and no
-	// derivable price.
-	//
-	// This is not hypothetical. Ledger 62,712,211 on pool CCR2CH4G… carries
-	// amount0=1, amount1=0 — a one-unit dust swap that rounded its output to
-	// nothing. It is the ONLY such event in the protocol's whole history
-	// (1 of 97,349 swaps; every other swap has exactly opposite signs), and
-	// it must be refused rather than reported as a trade at an infinite or
-	// zero price. Treated by the Decoder as a recognized no-op — projected
-	// as expected-zero rather than as a decode error — the same contract
-	// soroswap's non-directional swaps carry.
+	// ErrNonDirectionalSwap - a swap body decoded cleanly but carries no cross-token exchange: the
+	// two signed pool deltas are not one strictly positive and one strictly negative. A
+	// price-forming V3 swap moves value both ways, so any other sign combination has no
+	// derivable direction or price. A one-unit dust swap that rounded its output to nothing
+	// (amount0=1, amount1=0) does occur and must be refused, not reported as a trade at an
+	// infinite or zero price. The Decoder treats it as a recognized no-op, projected as
+	// expected-zero rather than a decode error, like soroswap's non-directional swaps.
 	ErrNonDirectionalSwap = errors.New("sushiswap_v3: non-directional swap (no cross-token exchange)")
 
-	// ErrUnknownPool — a gated pool emitted a swap but its (token0, token1)
-	// mapping is not in the registry, so the trade cannot be given asset
-	// identities. Fails CLOSED (no row) rather than inventing a bare-code
-	// or NULL-asset trade; counted so the gap is visible.
+	// ErrUnknownPool - a gated pool emitted a swap but its (token0, token1) mapping is not in the
+	// registry, so the trade has no asset identities. Fails closed (no row) rather than
+	// inventing a bare-code or NULL-asset trade; counted so the gap is visible.
 	ErrUnknownPool = errors.New("sushiswap_v3: swap from a pool with no token mapping")
 )
 
-// MainnetFactory is the SushiSwap V3 pool factory on pubnet — the ADR-0035
-// trust root. Verified from the lake rather than from a third-party
-// listing: it is the emitter of the `pool_created` event that appears in
-// the SAME transaction as, and immediately before, the `init` event of
-// every pool the public pool listings name (first proven on tx
-// 01d797bc…4765, ledger 61,487,379, which creates CCR2CH4G…). It is the
-// only contract on pubnet emitting `pool_created` alongside these pools.
+// MainnetFactory is the SushiSwap V3 pool factory on pubnet, the ADR-0035 trust root. It is
+// verified from the lake, not a third-party listing: it emits the `pool_created` event in the
+// same transaction as, and immediately before, the `init` event of every pool.
 //
-// A protocol may have more than one factory (Blend and Soroswap both do),
-// so the gate takes a SET; exactly one has ever emitted `pool_created` for
-// these pools, and a second would be admitted by extending
-// [MainnetFactories].
+// A protocol may have several factories, so the gate takes a SET; a second would be admitted by
+// extending [MainnetFactories].
 const MainnetFactory = "CD3KRKGDRVWPXVB3VXLUMQKMX6XZ6Q2H334IVZD4XXNAMKSRVQL5GLYF"
 
 // MainnetFactories is the complete verified factory trust-root set.
 var MainnetFactories = []string{MainnetFactory}
 
-// FactoryGenesisLedger is the ledger of the factory's first `pool_created`
-// event — the first ledger at which this source can have data, and the
-// lower bound for any re-derive or gap scan.
+// FactoryGenesisLedger is the ledger of the factory's first `pool_created` event: the first
+// ledger this source can have data, and the lower bound for any re-derive or gap scan.
 const FactoryGenesisLedger uint32 = 61_487_379
 
 // PoolMeta is the immutable creation record of one pool, as carried by the
 // factory's `pool_created` event.
 //
-// Token0 / Token1 are the C-strkeys of the pool's two token contracts
-// (Stellar Asset Contracts for classic assets, plain Soroban tokens
-// otherwise). They are held as strkeys rather than canonical.Asset so this
-// table stays a plain data literal; [PoolTokensFor] converts.
+// Token0 / Token1 are the C-strkeys of the pool's token contracts (SACs for classic assets),
+// held as strkeys so this table stays a plain data literal; [PoolTokensFor] converts.
 //
-// FeePips is the swap fee in hundredths of a basis point (500 = 0.05%,
-// 3000 = 0.30%, 10000 = 1.00%) and TickSpacing the pool's tick granularity.
-// The deployed set uses exactly the three canonical V3 tiers, each paired
-// with its canonical spacing (500/10, 3000/60, 10000/200). Neither field
-// participates in trade derivation; both are recorded because a V3 pool is
-// identified by (token0, token1, fee), not by the token pair alone — two
-// pools over the same pair at different fee tiers are different markets.
+// FeePips is the swap fee in hundredths of a basis point (500 = 0.05%) and TickSpacing the tick
+// granularity; the deployed tiers are 500/10, 3000/60 and 10000/200. Neither participates in
+// trade derivation, but both are recorded because a V3 pool is identified by (token0, token1,
+// fee): two pools over one pair at different fee tiers are different markets.
 type PoolMeta struct {
 	Token0      string
 	Token1      string
@@ -145,20 +121,15 @@ type PoolMeta struct {
 	CreatedAt   uint32
 }
 
-// MainnetPools is the curated pool table: every pool the factory has created,
-// keyed by pool C-strkey, decoded from the factory's `pool_created` events (not
-// from any third-party listing).
+// MainnetPools is the curated pool table: every pool the factory has created, keyed by pool
+// C-strkey, decoded from `pool_created` events. It carries tokens, not just ids, because it is
+// both the ADR-0035 gate seed (via [MainnetGatedSet]) and the money mapping: token0 / token1
+// appear only in the creation event.
 //
-// It carries tokens, not just ids, because it does two jobs: the ADR-0035 gate
-// seed (via [MainnetGatedSet]), and the money mapping, since token0 / token1
-// appear ONLY in the creation event.
-//
-// A pool created after the table was frozen is picked up live from
-// `pool_created` and persisted to protocol_contracts. A process that starts
-// after such a creation ledger admits the pool via the protocol_contracts warm
-// but has no token mapping until that event is replayed, so its swaps fail
-// closed into a counted gap (ErrUnknownPool) rather than a mis-assetted trade.
-// See the README.
+// A pool created after the table was frozen is picked up live from `pool_created` and persisted
+// to protocol_contracts. A process starting after that ledger admits the pool via the warm but
+// has no token mapping until the event is replayed, so its swaps fail closed into a counted gap
+// (ErrUnknownPool) rather than a mis-assetted trade.
 var MainnetPools = map[string]PoolMeta{
 	"CA5MIPAAG3UULVAHK7U3U6VBBM52YIHMCZOOSHNTPUSLYR7NKNHVD6WK": {
 		Token0:      "CCKCKCPHYVXQD4NECBFJTFSCU2AMSJGCNG4O6K4JVRE2BLPR7WNDBQIQ",
@@ -579,15 +550,12 @@ func MainnetGatedSet() []string {
 	return out
 }
 
-// classify decides what kind of SushiSwap V3 event this is, by
-// byte-equality on the pre-encoded topic[0] Symbol. Returns "" for
-// anything unrecognized.
+// classify decides what kind of SushiSwap V3 event this is, by byte-equality on the pre-encoded
+// topic[0] Symbol. Returns "" for anything unrecognized.
 //
-// Topic shape carries NO identity: every event in this protocol has a
-// one-element Symbol topic vector, and `swap` / `mint` / `burn` are among
-// the most-emitted symbols on pubnet. classify therefore answers only
-// "which of our event names is this", never "is this ours" — that is
-// [Decoder.Matches]'s job and it answers it from contract identity.
+// Topic shape carries no identity (one-element Symbol vector; `swap` / `mint` / `burn` are
+// among the most-emitted pubnet symbols), so classify answers only "which of our event names",
+// never "is this ours"; that is [Decoder.Matches]'s job, from contract identity.
 func classify(e *events.Event) string {
 	if len(e.Topic) != 1 {
 		return ""

@@ -6,56 +6,35 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder implements dispatcher.Decoder (the event-based variant —
-// not ContractCallDecoder). DeFindex contracts publish Soroban
-// contract events on every capital flow at both layers:
+// Decoder implements dispatcher.Decoder (the event-based variant). DeFindex contracts publish
+// events on every capital flow at both layers: vault wrappers
+// `("DeFindexVault","deposit"|"withdraw")` carry end-user attribution, and Blend strategies
+// `("BlendStrategy","deposit"|"withdraw"|...)` carry vault-to-strategy movement.
 //
-//   - Vault wrappers: `("DeFindexVault","deposit"|"withdraw")` —
-//     end-user (G-strkey) attribution.
-//   - Blend strategies: `("BlendStrategy","deposit"|"withdraw"|…)` —
-//     vault↔strategy capital movement (`from` = vault C-strkey).
-//
-// We match both, gated on CONTRACT IDENTITY (ADR-0035/0040):
-// the namespaced topic strings are still just strings any pubnet
-// contract can emit, and the lake contains emitters that carry the
-// topic shape but none of the four independent DeFindex-provenance
-// proofs (see MainnetVaults). Dispatch is therefore topic shape AND
-// registry membership — the curated evidence-verified set plus any
-// operator-seeded protocol_contracts rows.
+// Both match gated on CONTRACT IDENTITY (ADR-0035/0040): the topic strings are just strings
+// any pubnet contract can emit, and the lake holds emitters with the topic shape but none of
+// the DeFindex provenance proofs (see MainnetVaults). Dispatch is topic shape AND registry
+// membership.
 type Decoder struct {
-	// reg gates Matches() on contract identity. The factory trust
-	// roots (MainnetFactories) gate factory events; children (vaults
-	// AND strategies) come from the curated, evidence-verified in-code
-	// seed + the protocol_contracts operator warm.
+	// reg gates Matches() on contract identity. Factory trust roots (MainnetFactories) gate
+	// factory events; vaults and strategies come from the curated in-code seed plus the
+	// protocol_contracts operator warm.
 	//
-	// There is NO live fan-out from factory `create` bodies. The
-	// DeFindex factory is PERMISSIONLESS — anyone can create a vault —
-	// so the BlendStrategy addresses a create body NAMES are
-	// attacker-controlled: a canonical-factory emitter proves only that
-	// the real factory announced SOME (possibly attacker-owned) vault,
-	// never that a named address is a genuine DeFindex strategy. A
-	// fan-out that Seeded them would let an attacker register arbitrary
-	// contracts as "strategies" merely by naming them in a create they
-	// triggered, contaminating flow/TVL stats. Both layers behave the
-	// same: neither the VAULT's own address (never carried by any
-	// observed create body) nor a strategy address self-registers — each fail-closes
-	// into an ADR-0033 recognition gap until an operator verifies
-	// provenance and seeds it (docs/protocols/defindex.md).
+	// There is deliberately NO live fan-out from factory `create` bodies. The factory is
+	// permissionless, so the strategy addresses a create body names are attacker-controlled: a
+	// canonical-factory emitter proves only that the factory announced SOME vault. Seeding the
+	// named addresses would let anyone register arbitrary contracts as strategies and
+	// contaminate flow/TVL stats. Neither a vault nor a strategy self-registers; each
+	// fail-closes into an ADR-0033 recognition gap until an operator verifies provenance and
+	// seeds it (docs/protocols/defindex.md).
 	reg *contractid.Registry
 }
 
-// NewDecoder constructs a defindex Decoder. Contract-identity gating
-// (ADR-0035/0040): the curated mainnet set (vault wrappers +
-// strategies, docs/protocols/defindex.md) is ALWAYS seeded — it is
-// the trust root for BOTH layers, because neither a vault's nor a
-// strategy's identity can be safely reconstructed from the
-// PERMISSIONLESS factory's creation events (the create omits the
-// vault address entirely and only NAMES attacker-controlled strategy
-// addresses). Caller opts layer the protocol_contracts DB warm +
-// live-upsert hook on top; that operator seam (verify provenance,
-// then seed protocol_contracts / extend the in-code set) is how a
-// future BlendStrategy deployment is admitted — there is no automatic
-// create-body fan-out to keep the strategy half current on its own.
+// NewDecoder constructs a defindex Decoder. The curated mainnet set (vaults and strategies) is
+// always seeded as the trust root for both layers, because identity cannot be reconstructed
+// from the permissionless factory's create events (they omit the vault address and only name
+// attacker-controlled strategies). Caller opts layer the protocol_contracts warm and
+// live-upsert hook on top; that operator seam is how a future deployment is admitted.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{
 		contractid.WithFactories(MainnetFactories),
@@ -67,24 +46,14 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 // Name implements [dispatcher.Decoder].
 func (d *Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.Decoder]. Gates on CONTRACT
-// IDENTITY, not topic bytes (ADR-0035/0040):
+// Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY, not topic bytes
+// (ADR-0035/0040): vault and strategy flow events match only from a registered child, factory
+// events (`create` / `n_fee`) only from a canonical MainnetFactories entry. Decode returns
+// ([], nil) for factory events: recognised for EVERY-event completeness, not decoded.
 //
-//   - vault / strategy flow events match ONLY when emitted by a
-//     REGISTERED child (curated seed + protocol_contracts warm);
-//   - factory events (`create` / `n_fee`) match ONLY when emitted
-//     by one of the canonical MainnetFactories. Decode returns
-//     ([], nil) for them — recognised for EVERY-event-policy
-//     completeness, not decoded into a flow.
-//
-// COVERAGE NOTE (ADR-0035): an un-seeded real VAULT *or* STRATEGY
-// fail-closes into an ADR-0033 recognition gap — visible, never silently
-// mis-attributed. Closing such a gap is an operator step (verify
-// provenance, then seed protocol_contracts / extend the in-code set) for
-// BOTH layers. The factory `create` body is NOT trusted to self-register
-// children: it omits the vault address entirely and only NAMES
-// attacker-controlled strategy addresses (the factory is
-// permissionless), so a canonical-factory emitter cannot vouch for them.
+// An un-seeded real vault or strategy fail-closes into a visible ADR-0033 recognition gap,
+// never silent mis-attribution; closing it is an operator step. The factory `create` body
+// cannot vouch for children (permissionless factory, attacker-controlled names).
 func (d *Decoder) Matches(ev events.Event) bool {
 	if classify(&ev) != "" || classifyVault(&ev) != "" {
 		return d.reg.Has(ev.ContractID)
@@ -92,18 +61,12 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return classifyFactory(&ev) != "" && d.reg.IsFactory(ev.ContractID)
 }
 
-// Decode implements [dispatcher.Decoder]. Emits one Event per
-// matched flow — Event (strategy layer), VaultEvent (vault wrapper
-// layer), DFeesEvent (one per dfees distributed_fees entry) or
-// AdminEvent (vault admin topics) — for the events we model. Every
-// OTHER recognised topic (vault rebalance / n_wasm; factory `create` /
-// `n_fee`) drops cleanly with (nil, nil): "match, nothing to emit".
-// Returning an ERROR is a "skip + count-as-decode-error" signal,
-// reserved for genuinely malformed bodies of modelled topics — NOT for
-// topics we recognise but intentionally don't model yet, and NOT for
-// factory bodies (their contents are untrusted and never decoded).
-// Filing those as decode errors would inflate the source's decode-error
-// counter for normal upstream traffic.
+// Decode implements [dispatcher.Decoder]. It emits Event (strategy), VaultEvent (vault),
+// DFeesEvent (one per distributed_fees entry) or AdminEvent for modelled topics. Every other
+// recognised topic (vault rebalance / n_wasm; factory `create` / `n_fee`) drops with (nil, nil).
+// An error means "skip and count as decode error", reserved for malformed bodies of modelled
+// topics; using it for recognised-but-unmodelled topics or untrusted factory bodies would
+// inflate the decode-error counter with normal upstream traffic.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if kind := classify(&ev); kind != "" {
 		return d.decodeStrategy(&ev, kind)
@@ -115,30 +78,20 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		// create / n_fee are recognised so the drop counter doesn't file them as
 		// "unmatched topic"; neither is a consumer.Event and neither body is decoded.
 		//
-		// SECURITY: the factory is permissionless and a `create` body's
-		// assets[].strategies[].address fields are attacker-controlled. Matches()
-		// proving ev.ContractID is the real factory does not make the NAMED addresses
-		// genuine strategies. Seeding them would let anyone register arbitrary
-		// contracts as strategies by naming them, and their ("BlendStrategy",…) events
-		// would then contaminate flow/TVL attribution.
-		//
-		// No execution-corroboration signal (the dispatcher's ExecutionCorroborated)
-		// exists on this decode path, so fail closed: a strategy is recognised only via
-		// the curated MainnetStrategies root or an operator-seeded protocol_contracts
-		// row, the same posture as vaults. Unverified strategies surface as an ADR-0033
-		// recognition gap.
+		// SECURITY: the factory is permissionless, so a `create` body's strategy addresses are
+		// attacker-controlled; a real-factory emitter does not make them genuine strategies.
+		// This decode path has no execution-corroboration signal, so fail closed: strategies
+		// are recognised only via MainnetStrategies or an operator-seeded protocol_contracts
+		// row, like vaults. Unverified ones surface as an ADR-0033 recognition gap.
 		return nil, nil
 	}
 	// Defensive — Matches should have filtered.
 	return nil, ErrUnknownEvent
 }
 
-// decodeStrategy handles a classified BlendStrategy event.
-// deposit/withdraw/harvest each model a StrategyFlow. The lake holds
-// harvests (1,018 counted; body `{amount: i128, from: Address,
-// price_per_share: i128}` — the exact {from, amount} shape decodeFlow
-// reads by name, the extra field unread), and dropping them would
-// under-count vault NAV by the full harvested yield.
+// decodeStrategy handles a classified BlendStrategy event; deposit, withdraw and harvest each
+// model a StrategyFlow. Harvest bodies carry the {from, amount} shape decodeFlow reads by name
+// (plus an unread price_per_share), and dropping them would under-count vault NAV.
 func (d *Decoder) decodeStrategy(ev *events.Event, kind string) ([]consumer.Event, error) {
 	if kind != EventDeposit && kind != EventWithdraw && kind != EventHarvest {
 		return nil, nil // any future unmodelled strategy topic
@@ -151,12 +104,10 @@ func (d *Decoder) decodeStrategy(ev *events.Event, kind string) ([]consumer.Even
 	return []consumer.Event{Event{Flow: flow}}, nil
 }
 
-// decodeVault handles a classified DeFindexVault event.
-// deposit/withdraw model a VaultFlow; dfees models per-asset [DFee]
-// entries (one DFeesEvent per distributed_fees Vec entry so reconcile
-// expected-counts equal served rows); the seven admin topics model one
-// [VaultAdmin] each. `rebalance` and n_wasm remain recognised but NOT
-// modelled and drop cleanly.
+// decodeVault handles a classified DeFindexVault event. deposit/withdraw model a VaultFlow;
+// dfees emits one DFeesEvent per distributed_fees entry so reconcile expected-counts equal
+// served rows; the seven admin topics model one [VaultAdmin] each. `rebalance` and n_wasm are
+// recognised but not modelled, and drop cleanly.
 func (d *Decoder) decodeVault(ev *events.Event, kind string) ([]consumer.Event, error) {
 	if _, ok := vaultAdminFields[kind]; ok {
 		admin, err := decodeVaultAdmin(ev, kind)

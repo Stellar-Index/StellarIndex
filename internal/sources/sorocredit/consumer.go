@@ -7,12 +7,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// decodeOne classifies and decodes a single event into the canonical
-// [Event] row. It is the join point between decode.go's per-kind helpers
-// and the universal identity fields carried on events.Event. Returns
-// (_, ErrNotSoroCreditEvent) for an untracked topic so the dispatcher
-// skips cheaply; a genuinely malformed tracked event returns an
-// ErrMalformedPayload the dispatcher counts + skips.
+// decodeOne classifies and decodes one event into the canonical [Event] row, joining decode.go's
+// per-kind helpers with the identity fields on events.Event. An untracked topic returns
+// ErrNotSoroCreditEvent so the dispatcher skips cheaply; a malformed tracked event returns an
+// ErrMalformedPayload the dispatcher counts and skips.
 func decodeOne(ev *events.Event) (Event, error) {
 	kind := classify(ev)
 	if kind == "" {

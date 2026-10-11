@@ -2,18 +2,13 @@ package blend
 
 import "math/big"
 
-// Blend interest-rate model + reserve arithmetic, ported faithfully
-// from the pool contract's `interest.rs` (calc_accrual) and
-// `reserve.rs` (utilization / total_supply / total_liabilities). All
-// fixed-point ops mirror soroban-fixed-point-math's mul/div ceil/floor
-// rounding so the Go output matches the on-chain values bit-for-bit
-// (verified against the contract's own unit-test vectors in
-// interest_test.go).
+// Blend interest-rate model + reserve arithmetic, ported from the pool contract's `interest.rs`
+// (calc_accrual) and `reserve.rs` (utilization / total_supply / total_liabilities). Fixed-point
+// ops mirror soroban-fixed-point-math's ceil/floor rounding so results match on-chain values
+// bit-for-bit (pinned by the contract's unit-test vectors in interest_test.go).
 //
-// Scales: SCALAR_7 (1e7) for rates/factors/utilization; SCALAR_12
-// (1e12) for V2 b_rate/d_rate conversion rates, SCALAR_9 (1e9) for a
-// V1 pool's (blend-contracts v1 reserve.rs total_supply /
-// total_liabilities).
+// Scales: SCALAR_7 (1e7) for rates/factors/utilization; SCALAR_12 (1e12) for V2 b_rate/d_rate;
+// SCALAR_9 (1e9) for V1 pools' total_supply / total_liabilities.
 
 var (
 	scalar7  = big.NewInt(10_000_000)        // 1e7
@@ -88,11 +83,9 @@ func (rd ReserveData) Utilization() *big.Int {
 	return fixedDivCeil(liabilities, supply, scalar7)
 }
 
-// BorrowRate returns the current annual borrow interest rate (cur_ir)
-// in 7 decimals, ported from interest.rs::calc_accrual's rate branch.
-// util is 7-decimal utilization (from ReserveData.Utilization); irMod
-// is the reserve's current interest-rate modifier (ReserveData.IRMod,
-// 7 decimals).
+// BorrowRate returns the current annual borrow rate (cur_ir) in 7 decimals, ported from
+// interest.rs::calc_accrual. util is ReserveData.Utilization and irMod is ReserveData.IRMod,
+// both 7-decimal.
 func (rc ReserveConfig) BorrowRate(util, irMod *big.Int) *big.Int {
 	rBase := big.NewInt(int64(rc.RBase))
 	rOne := big.NewInt(int64(rc.ROne))
@@ -102,15 +95,10 @@ func (rc ReserveConfig) BorrowRate(util, irMod *big.Int) *big.Int {
 
 	switch {
 	case util.Cmp(target) <= 0:
-		// target (the reserve's configured target utilization) is
-		// guaranteed positive on-chain — the contract rejects util==0 at
-		// reserve setup — but a corrupt or zero-valued config-metadata row
-		// (bad backfill, a future WASM that permits it) would divide by
-		// zero inside fixedDivCeil and panic the request goroutine. This
-		// branch is only entered when util <= target, and util is
-		// non-negative, so the sole divide-by-zero case is util==0 &&
-		// target==0: no utilization, for which the utilization scalar is 0
-		// (base rate only). Guard it rather than trust the upstream.
+		// The contract guarantees target > 0, but a corrupt or zero config-metadata row would
+		// divide by zero in fixedDivCeil and panic the request goroutine. Here util <= target, so
+		// the only such case is target==0 (util==0): the utilization scalar is then 0 (base rate
+		// only). Guard rather than trust the stored config.
 		utilScalar := big.NewInt(0)
 		if target.Sign() != 0 {
 			utilScalar = fixedDivCeil(util, target, scalar7)
@@ -134,9 +122,8 @@ func (rc ReserveConfig) BorrowRate(util, irMod *big.Int) *big.Int {
 	}
 }
 
-// SupplyRate returns the supplier interest rate in 7 decimals: the
-// borrow rate scaled by utilization (only borrowed capital earns
-// interest) minus the backstop's take. bstopRate is 7-decimal.
+// SupplyRate returns the supplier rate in 7 decimals: the borrow rate scaled by utilization (only
+// borrowed capital earns interest) minus the backstop's take. bstopRate is 7-decimal.
 //
 //	supply_rate = borrow_rate × util × (1 − bstop_rate)
 func SupplyRate(borrowRate, util *big.Int, bstopRate uint32) *big.Int {
@@ -157,11 +144,9 @@ func rate7ToFloat(rate *big.Int) float64 {
 	return v
 }
 
-// ReserveMetrics bundles the derived current-state metrics for one
-// reserve, ready for the API. HasAPR is false when the reserve's
-// ReserveConfig (the rate-model params) isn't available — supplied /
-// borrowed / utilization come from ReserveData alone and are always
-// present; the APR fields need the config and are meaningless without it.
+// ReserveMetrics bundles the derived current-state metrics for one reserve. HasAPR is false when
+// the ReserveConfig (rate-model params) is unavailable: supplied / borrowed / utilization come
+// from ReserveData alone, but the APR fields are meaningless without the config.
 type ReserveMetrics struct {
 	SuppliedUnderlying *big.Int // smallest unit of the underlying token
 	BorrowedUnderlying *big.Int
@@ -171,9 +156,8 @@ type ReserveMetrics struct {
 	SupplyAPR          float64 //floatmoney:ok a yield rate/fraction (like BorrowAPR above), not a principal amount
 }
 
-// BaseMetrics derives the config-FREE current-state metrics (supplied /
-// borrowed / utilization) from ReserveData alone — used when the
-// reserve's ReserveConfig isn't captured, so APY can't be computed.
+// BaseMetrics derives the config-free metrics (supplied / borrowed / utilization) from ReserveData
+// alone, for reserves whose ReserveConfig isn't captured so APY can't be computed.
 func BaseMetrics(rd ReserveData) ReserveMetrics {
 	return ReserveMetrics{
 		SuppliedUnderlying: rd.SuppliedUnderlying(),
@@ -182,11 +166,9 @@ func BaseMetrics(rd ReserveData) ReserveMetrics {
 	}
 }
 
-// Metrics derives the full per-reserve current-state metrics (incl.
-// APY) from the decoded reserve state + config + the pool's backstop
-// take rate. BorrowRate is the V2 rate model (7-decimal ir_mod); a V1
-// reserve's 9-decimal ir_mod has no verified port, so its APR is
-// withheld rather than served ~100x high.
+// Metrics derives the full per-reserve metrics (incl. APY) from reserve state, config and the
+// pool's backstop take rate. BorrowRate is the V2 model (7-decimal ir_mod); a V1 reserve's
+// 9-decimal ir_mod has no verified port, so its APR is withheld rather than served ~100x high.
 func Metrics(rd ReserveData, rc ReserveConfig, bstopRate uint32) ReserveMetrics {
 	if rd.Version == PoolV1 {
 		return BaseMetrics(rd)

@@ -12,91 +12,52 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// RawEventSink is the contract a sink must satisfy to receive
-// captured rows from the dispatcher's raw-event hook.
+// RawEventSink receives every Soroban contract event from the dispatcher's raw-event hook,
+// whether or not a per-source decoder claimed it; the sink converts to a [Row] via [Capture].
 //
-// The dispatcher's raw-event hook (added in ADR-0029) calls
-// PushEvent for every Soroban contract event it sees, regardless
-// of whether a per-source decoder claimed it. The sink converts to
-// a [Row] via [Capture] and writes batched.
-//
-// PushEvent MAY block to apply back-pressure to the producer. The
-// [AsyncSink] implementation blocks when its channel is full so
-// produced rows are never silently lost — back-pressure propagates
-// up to the ledger walker, which is correct: cursor advance must
-// not outrun durable writes (otherwise -resume can't recover the
-// gap). The previous non-blocking buffer-full-drop semantics were
-// proved unsafe by a fill walk, which dropped ~0.43%
-// of rows across 8 chunks without a recovery path.
+// PushEvent MAY block to apply back-pressure: cursor advance must not outrun durable writes,
+// otherwise -resume cannot recover the gap, so a full buffer must never drop rows.
 type RawEventSink interface {
 	PushEvent(ev events.Event)
 }
 
-// BatchWriter is the storage seam the [AsyncSink] uses to drain its
-// buffer. The Timescale implementation
-// (`internal/storage/timescale.Store.InsertSorobanEventsBatch`)
-// writes the batch via a single multi-row INSERT with ON CONFLICT
-// DO NOTHING; idempotent across replays.
+// BatchWriter is the storage seam the [AsyncSink] drains into. The Timescale implementation
+// uses one multi-row INSERT with ON CONFLICT DO NOTHING, so replays are idempotent.
 type BatchWriter interface {
 	InsertSorobanEventsBatch(ctx context.Context, rows []Row) error
 }
 
 // AsyncSinkOptions configures a [NewAsyncSink].
 type AsyncSinkOptions struct {
-	// IsPermanentFault positively classifies an error as a PERMANENT data
-	// fault (a row that will never land no matter how many times it is
-	// retried). Only such an error is isolated and dropped; everything else
-	// blocks-and-retries, per the asymmetric ADR-0041 policy.
+	// IsPermanentFault positively classifies an error as a PERMANENT data fault (a row that will
+	// never land however often retried). Only such an error is isolated and dropped; everything
+	// else blocks and retries (ADR-0041).
 	//
-	// Injected rather than imported: a source package must not reach up into
-	// internal/storage (import-boundary rule L/sources-app-purity, D8 rule 3).
-	// The app layer supplies timescale.IsPermanentDataError here.
-	//
-	// Defaults to "nothing is permanent" — i.e. retry forever rather than
-	// drop. That is the safe side: an unclassified error must never silently
-	// discard a row from ADR-0029's catch-all landing zone.
+	// Injected because a source package must not import internal/storage (rule L/sources-app-purity);
+	// the app layer supplies timescale.IsPermanentDataError. Defaults to "nothing is permanent":
+	// an unclassified error must never silently discard a row from the catch-all landing zone.
 	IsPermanentFault func(error) bool
 
-	// BufferSize is the channel depth. Defaults to 4096. Sized so a
-	// few seconds of peak Soroban event volume (typically 100-500
-	// events/s) fits even during a Postgres write hiccup. When the
-	// buffer is full PushEvent blocks (back-pressure into the
-	// producer); the buffer's only job is to smooth bursty producer
-	// rates against the worker's batched flushes — sustained
-	// over-production correctly slows the dispatcher down.
+	// BufferSize is the channel depth (default 4096), enough for a few seconds of peak Soroban
+	// volume (100-500 events/s) during a Postgres write hiccup. When full, PushEvent blocks, so
+	// sustained over-production slows the dispatcher instead of dropping rows.
 	BufferSize int
 
-	// BatchSize is the number of rows the worker accumulates before
-	// firing an InsertSorobanEventsBatch. Defaults to 1000 per the
-	// task spec — large enough to amortise the COPY-equivalent
-	// statement-prepare cost across many rows, small enough that one
-	// failed batch only loses ~10s of events at peak.
+	// BatchSize is the rows accumulated before one InsertSorobanEventsBatch (default 1000):
+	// large enough to amortise statement cost, small enough that one failed batch is cheap.
 	BatchSize int
 
-	// FlushInterval bounds how long a partial batch can wait before
-	// being flushed. Defaults to 1 second. Without this, a low-volume
-	// indexer (or the tail of a backfill) could leave the last
-	// few-hundred rows stranded in the channel forever.
+	// FlushInterval bounds how long a partial batch waits (default 1s), so a low-volume
+	// indexer or a backfill tail cannot strand rows in the channel.
 	FlushInterval time.Duration
 
-	// WriteTimeout caps how long one InsertSorobanEventsBatch call
-	// may block. Defaults to 10 seconds — generous because the
-	// batched write is many-row.
+	// WriteTimeout caps one InsertSorobanEventsBatch call (default 10s; it is a many-row write).
 	WriteTimeout time.Duration
 
-	// DrainGrace bounds the shutdown drain: how long flushBatch may
-	// keep retrying rows that were still buffered when Stop() fired.
-	// Defaults to 2x WriteTimeout.
-	//
-	// This exists because "stop was requested" and "stop has waited
-	// long enough" are different events, and conflating them silently
-	// lost data. The steady-state flush is interrupted by s.stopping
-	// so a stuck write can't hold shutdown hostage — its rows are then
-	// handed to the drain, which retries them under this grace (see
-	// [AsyncSink.flushBatch]). The shutdown DRAIN runs entirely after
-	// s.stopping is closed, so reusing that signal made every drained
-	// batch abandon-on-arrival. Stop() still terminates promptly: the
-	// drain is bounded by this grace, not by unbounded retries.
+	// DrainGrace bounds how long flushBatch may keep retrying rows still buffered when Stop()
+	// fired (default 2x WriteTimeout). It is separate from s.stopping because the shutdown drain
+	// runs entirely after s.stopping closes, so reusing that signal abandoned every drained batch
+	// on arrival. Stop() still terminates promptly: the drain is bounded by this grace.
 	DrainGrace time.Duration
 
 	// Logger is used for warn/error lines from the worker. nil falls
@@ -104,22 +65,14 @@ type AsyncSinkOptions struct {
 	Logger *slog.Logger
 }
 
-// AsyncSink is the back-pressuring adapter between the dispatcher's
-// raw-event hook and a batched storage writer. Construct with
-// [NewAsyncSink] + Start; Stop signals shutdown, drains the buffer,
-// and shuts down the worker.
+// AsyncSink is the back-pressuring adapter between the dispatcher's raw-event hook and a batched
+// storage writer. Construct with [NewAsyncSink] + Start; Stop drains the buffer and stops the worker.
 //
-// PushEvent blocks when the channel is full (back-pressure into the
-// producer) so produced rows are never silently lost — a precondition
-// for the cursor-advance contract in the backfill driver. DroppedCount
-// only goes non-zero when Stop has been signalled and a producer
-// raced past the stopping check; in steady state it stays at zero.
+// PushEvent blocks when the channel is full so rows are never silently lost, a precondition for
+// the backfill driver's cursor-advance contract. DroppedCount goes non-zero only when a producer
+// races past the stopping check after Stop.
 //
-// Concurrency: PushEvent is safe for concurrent callers (parallel
-// backfill chunks each run their own dispatcher into a per-chunk
-// sink; the live indexer has a single dispatcher into one sink).
-// The worker goroutine is single, so writes don't compete with each
-// other.
+// PushEvent is safe for concurrent callers; the single worker goroutine serialises writes.
 type AsyncSink struct {
 	w                BatchWriter
 	isPermanentFault func(error) bool
@@ -131,24 +84,18 @@ type AsyncSink struct {
 	batchSz    int
 	drainGrace time.Duration
 
-	// abortFlush is the signal that interrupts an in-flight or
-	// retrying flush. Steady state it is s.stopping; drainOnStop swaps
-	// it for a bounded grace timer so the final batches can actually
-	// land. What happens to the interrupted rows depends on draining:
-	// before the drain they are RETURNED to the worker for the drain
-	// to retry; during the drain (grace expired) they are abandoned.
-	// Both fields are written and read ONLY by the single worker
-	// goroutine (run -> drainOnStop -> flushBatch), never concurrently.
+	// abortFlush interrupts an in-flight or retrying flush. It is s.stopping in steady state;
+	// drainOnStop swaps in a bounded grace timer so the final batches can land. Interrupted rows
+	// are returned to the worker for the drain to retry, or abandoned once the grace expires.
+	// abortFlush and draining are touched only by the single worker goroutine.
 	abortFlush <-chan struct{}
 	draining   bool
 	startOnce  sync.Once
 	stopOnce   sync.Once
 	stopping   chan struct{}
-	// quiesced closes once Stop has seen every in-flight PushEvent
-	// return; only then may drainOnStop take its final poll of ch,
-	// because a producer past the stopping check can still win the
-	// send. pushMu is that barrier: producers hold it shared for the
-	// duration of PushEvent, Stop takes it exclusively once.
+	// quiesced closes once Stop has seen every in-flight PushEvent return; only then may
+	// drainOnStop take its final poll of ch, since a producer past the stopping check can still
+	// win the send. pushMu is that barrier: producers hold it shared, Stop takes it exclusively.
 	quiesced chan struct{}
 	pushMu   sync.RWMutex
 	done     chan struct{}
@@ -213,23 +160,10 @@ func (s *AsyncSink) Start() {
 	s.startOnce.Do(func() { go s.run() })
 }
 
-// PushEvent captures `ev` into a Row and enqueues it for the
-// batched writer. Behaviour:
-//   - Capture returns ErrSkip → silently skipped (SkippedCount
-//     incremented). Defence in depth for non-contract events that
-//     should never reach this hook.
-//   - Capture returns any other error → logged + counted as skipped.
-//   - Channel full → BLOCKS until a slot frees (back-pressure into
-//     the producer) OR until Stop signals shutdown, in which case the
-//     row is counted as dropped (DroppedCount incremented).
-//   - Otherwise → enqueued.
-//
-// Steady-state DroppedCount stays at zero; non-zero values appear
-// only on the shutdown race window after Stop is called.
-//
-// Implements [RawEventSink] (structurally — circular import means
-// dispatcher declares its own interface and this method satisfies
-// it).
+// PushEvent captures ev into a Row and enqueues it. A Capture error is counted as skipped
+// (ErrSkip silently, anything else logged). A full channel BLOCKS until a slot frees or Stop
+// fires, in which case the row is counted as dropped; DroppedCount is non-zero only in that
+// shutdown race. Satisfies [RawEventSink] structurally to avoid a circular import.
 func (s *AsyncSink) PushEvent(ev events.Event) {
 	row, err := Capture(ev)
 	if err != nil {
@@ -248,8 +182,8 @@ func (s *AsyncSink) PushEvent(ev events.Event) {
 	}
 	s.pushMu.RLock()
 	defer s.pushMu.RUnlock()
-	// Checked before the blocking select: once Stop has fired, a row
-	// must never enter ch — the drain's final poll may already be past.
+	// Checked before the blocking select: once Stop has fired a row must never enter ch,
+	// because the drain's final poll may already be past.
 	select {
 	case <-s.stopping:
 		s.countDropped(row.Ledger)
@@ -273,12 +207,10 @@ const syncPoll = 20 * time.Millisecond
 // exited with rows it accepted still unsettled.
 var ErrSinkStopped = errors.New("sorobanevents: sink stopped before its rows settled")
 
-// Sync blocks until every row whose PushEvent returned before the call has
-// settled — committed to soroban_events, or counted lost — or ctx ends.
-// PushEvent returns before the ledgerstream cursor is written, so after Sync
-// every row of every ledger at or below a cursor read before the call is
-// readable, unless LostCount says otherwise. The worker drains ch in order
-// and settles each batch in order, so reaching the count settles the prefix.
+// Sync blocks until every row whose PushEvent returned before the call has settled (committed to
+// soroban_events, or counted lost) or ctx ends. PushEvent returns before the ledgerstream cursor
+// is written, so after Sync every ledger at or below a previously read cursor is readable unless
+// LostCount says otherwise. The worker settles batches in channel order, so the count settles a prefix.
 func (s *AsyncSink) Sync(ctx context.Context) error {
 	s.mu.Lock()
 	target := s.accepted
@@ -328,22 +260,15 @@ func (s *AsyncSink) LowestUnlandedLedger() (uint32, bool) {
 	return s.minUnlanded, s.minUnlanded != 0
 }
 
-// Stop signals shutdown to producers (closing the stopping channel
-// so any blocked PushEvent returns the row as dropped instead of
-// waiting forever) and waits for the worker to drain its remaining
-// buffer, flush the final batch, and exit. The input channel is
-// intentionally NOT closed — that would race with concurrent
-// producers and panic on send-to-closed; instead the worker uses
-// the stopping signal to switch into drain-then-exit mode.
-// Pending rows — including a steady-state batch whose write was in
-// flight when Stop fired — are flushed within DrainGrace; any that
-// still error are logged as lost. Idempotent.
+// Stop closes the stopping channel so blocked producers return their row as dropped, then waits
+// for the worker to drain and flush the final batch. The input channel is deliberately NOT
+// closed: that would race with concurrent producers and panic on send-to-closed. Pending rows,
+// including an in-flight steady-state batch, are flushed within DrainGrace; failures are logged
+// as lost. Idempotent.
 //
-// Lifecycle contract: producers that race past the stopping check
-// are unblocked via the select and counted as dropped — the drop
-// count then reflects shutdown-race row loss only, never
-// steady-state pressure loss. Rows already accepted into the sink
-// are never counted lost merely because Stop raced their flush.
+// Producers racing past the stopping check are counted as dropped, so the drop count reflects
+// shutdown-race loss only. Rows already accepted are never counted lost merely because Stop
+// raced their flush.
 func (s *AsyncSink) Stop() {
 	s.stopOnce.Do(func() {
 		close(s.stopping)
@@ -386,26 +311,18 @@ func (s *AsyncSink) WrittenCount() uint64 {
 	return s.written
 }
 
-// LostCount returns the total number of rows permanently lost — a
-// batch that either hit a positively-classified permanent data fault
-// or never landed before shutdown gave up on it (soroban_events is the raw catch-all landing zone, so a
-// sustained infra fault would otherwise silently eat whole windows of
-// raw events with no operator-visible signal and no re-derive hint).
-// Operators alert
-// on this rising the same way they do on the trades path's
-// SourceInsertErrorsTotal{kind="dropped"}.
+// LostCount returns the rows permanently lost: batches that hit a positively-classified permanent
+// data fault or never landed before shutdown gave up. Without this signal a sustained infra fault
+// would silently eat whole windows of the raw landing zone, so operators alert on it rising.
 func (s *AsyncSink) LostCount() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.lost
 }
 
-// asyncSinkRetryInitialBackoff / asyncSinkRetryMaxBackoff bound the
-// capped exponential backoff [flushBatch] applies to a batch insert
-// failure that is not positively classified as permanent — mirroring
-// the block-and-retry policy [internal/pipeline] applies to the
-// trades path (ADR-0041's asymmetric default: a drop
-// requires positive proof of permanence, retry is the default).
+// asyncSinkRetryInitialBackoff / asyncSinkRetryMaxBackoff bound the capped exponential backoff
+// [flushBatch] applies to an insert failure not positively classified as permanent, mirroring the
+// trades path (ADR-0041: a drop requires positive proof of permanence; retry is the default).
 const (
 	asyncSinkRetryInitialBackoff = 100 * time.Millisecond
 	asyncSinkRetryMaxBackoff     = 5 * time.Second
@@ -413,26 +330,17 @@ const (
 
 // run drains the channel and flushes batches.
 //
-// Deliberately uses a fresh context per batch rather than a
-// parent-derived one — the whole reason this sink exists is to
-// keep writing past the dispatcher's lifetime (shutdown drain),
-// matching the pattern in [internal/canonical/discovery.AsyncSink].
+// It uses a fresh context per batch, not a parent-derived one, because the sink must keep
+// writing past the dispatcher's lifetime (shutdown drain).
 //
 //nolint:contextcheck // intentional fresh context; see godoc above.
 func (s *AsyncSink) run() {
 	defer close(s.done)
-	// Deliberately NOT worker.Recover: that helper's log-and-continue
-	// trade-off is right for a detached background worker whose halt
-	// only stops ITS OWN work, but run() is the sole drain for
-	// ADR-0029's raw landing zone and the dispatcher calls PushEvent
-	// SYNCHRONOUSLY on its hot path. A swallowed panic here leaves the
-	// channel undrained forever, so every source's PushEvent blocks on
-	// the full buffer with no restart and no operator signal beyond the
-	// panic page. Report (keeps the existing
-	// stellarindex_worker_panics_total page) then re-panic: registered
-	// after close(s.done) so that defer still runs on the way out, and
-	// the re-panic crashes the process so its supervisor restarts it
-	// from the durable ledger cursor instead of hanging invisibly.
+	// Deliberately NOT worker.Recover: run() is the sole drain of the raw landing zone and the
+	// dispatcher calls PushEvent synchronously, so a swallowed panic would leave the channel
+	// undrained and block every source's PushEvent with no restart. Report (keeps the
+	// stellarindex_worker_panics_total page) then re-panic so the supervisor restarts from the
+	// durable ledger cursor. Registered after close(s.done) so that defer still runs on the way out.
 	defer func() {
 		if r := recover(); r != nil {
 			worker.Report(s.logger, "soroban-events-sink-drain", r)
@@ -482,19 +390,13 @@ func (s *AsyncSink) run() {
 	}
 }
 
-// drainOnStop is the shutdown-drain branch of run. Reads any
-// remaining rows the producers managed to enqueue between the
-// stopping-close and their PushEvent-select-wakeup, accumulates
-// them into batch, and triggers a final flush. s.ch is
-// deliberately NOT closed — that would panic any in-flight
-// producer; the stopping signal already unblocked them via
-// PushEvent's select. The final, non-blocking poll of ch happens
-// only after Stop reports quiesced: a producer that won the send
-// against a closed stopping would otherwise leave its row in a
-// channel nobody reads again, counted neither written nor dropped.
+// drainOnStop is the shutdown-drain branch of run: it collects rows producers enqueued after the
+// stopping-close and does a final flush. s.ch is NOT closed, which would panic in-flight
+// producers. The final non-blocking poll waits for Stop to report quiesced: a producer that won
+// the send would otherwise leave its row in a channel nobody reads, counted neither written nor dropped.
 func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
-	// s.stopping is already closed here, so leaving abortFlush pointing
-	// at it would abandon every batch this drain flushes. Bounded, so Stop() still returns promptly.
+	// s.stopping is already closed, so leaving abortFlush on it would abandon every drained
+	// batch. The grace timer bounds the drain so Stop() still returns promptly.
 	grace := make(chan struct{})
 	timer := time.AfterFunc(s.drainGrace, func() { close(grace) })
 	defer timer.Stop()
@@ -525,23 +427,18 @@ func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 	}
 }
 
-// flushBatch writes one batch under the asymmetric ADR-0041 failure policy the trades
-// path uses: a write failure blocks and retries with capped backoff by DEFAULT; only
-// a POSITIVELY-classified permanent data fault (the injected IsPermanentFault
-// predicate, pq class 22/23) is isolated and dropped. Dropping on any error would
-// silently lose a window of raw soroban_events rows (ADR-0029's last-resort source of
-// truth) during a transient Postgres outage.
+// flushBatch writes one batch under the ADR-0041 asymmetric failure policy: a write failure
+// blocks and retries with capped backoff by default; only a POSITIVELY-classified permanent data
+// fault (IsPermanentFault, pq class 22/23) is isolated and dropped, since dropping on any error
+// would silently lose raw soroban_events rows during a transient Postgres outage.
 //
-// The retry loop is bounded by s.abortFlush. In steady state that is s.stopping:
-// Stop() cancels an in-flight attempt and the unlanded rows are RETURNED for the
-// worker to carry into drainOnStop (retried under DrainGrace), not abandoned here;
-// otherwise a Stop() racing a healthy write would count a whole batch as lost on
-// every deploy (TestAsyncSink_StopDrainsPendingRows_NoChannelClose). During the drain
-// abortFlush is the grace timer, and a batch still unlanded then is abandoned loudly
-// via [AsyncSink.abandonBatch].
+// The retry loop is bounded by s.abortFlush. In steady state that is s.stopping: Stop() cancels
+// the attempt and the unlanded rows are RETURNED for drainOnStop to retry under DrainGrace,
+// otherwise a Stop() racing a healthy write would count a whole batch as lost on every deploy
+// (TestAsyncSink_StopDrainsPendingRows_NoChannelClose). During the drain abortFlush is the grace
+// timer, and a batch still unlanded is abandoned loudly via [AsyncSink.abandonBatch].
 //
-// Returns the rows neither written nor abandoned (nil in the drain, and in steady
-// state unless Stop interrupted).
+// Returns the rows neither written nor abandoned (nil in the drain).
 func (s *AsyncSink) flushBatch(rows []Row) []Row {
 	abort := s.abortFlush
 	backoff := asyncSinkRetryInitialBackoff
@@ -549,12 +446,8 @@ func (s *AsyncSink) flushBatch(rows []Row) []Row {
 		ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 		attemptDone := make(chan struct{})
 		go func() {
-			// This watchdog owns nothing and has no failure of its own,
-			// but an unrecovered panic here would still take the whole
-			// process down, so it carries the guard like every other
-			// detached goroutine. cancel() below is idempotent and the
-			// deferred cancel in the caller runs regardless, so recovering
-			// cannot strand the write.
+			// An unrecovered panic in this detached watchdog would take the whole process down.
+			// cancel() is idempotent, so recovering cannot strand the write.
 			defer worker.Recover(s.logger, "soroban-events-flush-abort-watch")
 			select {
 			case <-abort:
@@ -594,13 +487,10 @@ func (s *AsyncSink) flushBatch(rows []Row) []Row {
 	}
 }
 
-// isolatePermanentFault narrows a batch-wide permanent fault to the
-// row(s) that carry it. Postgres rejects the whole multi-row INSERT
-// for one bad row, so abandoning rows[] as-is would lose up to
-// BatchSize-1 good rows for one poison row; bisecting re-flushes each
-// half (log2(BatchSize) extra round trips per poison row) and only a
-// batch of one that still faults is abandoned. Returns the rows a
-// Stop-raced steady-state flush handed back, exactly as [flushBatch].
+// isolatePermanentFault narrows a batch-wide permanent fault to the rows carrying it. Postgres
+// rejects the whole multi-row INSERT for one bad row, so abandoning the batch would lose up to
+// BatchSize-1 good rows; bisecting costs log2(BatchSize) extra round trips per poison row and
+// only a batch of one that still faults is abandoned. Returns rows handed back as in [flushBatch].
 func (s *AsyncSink) isolatePermanentFault(rows []Row, err error) []Row {
 	if len(rows) <= 1 {
 		s.abandonBatch(rows, err, "permanent data fault")

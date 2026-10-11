@@ -11,8 +11,7 @@ import (
 
 // ─── Topic-arity expectations ──────────────────────────────────
 //
-// Per pool/src/events.rs at blend-contracts-v2 commit
-// c19abee5b9be4f49e0cda9057e87d343e5dcc095:
+// Per pool/src/events.rs in blend-contracts-v2 (c19abee5b9be4f49e0cda9057e87d343e5dcc095):
 //
 //	supply / withdraw / supply_collateral / withdraw_collateral /
 //	borrow / repay:                3 topics  [Symbol, asset, from]
@@ -36,21 +35,15 @@ import (
 // withdraw_collateral / borrow / repay / flash_loan. EventKind discriminates.
 // TokenAmount + BOrDAmount are i128 *big.Int (ADR-0003).
 //
-// Field-for-field identical to [domain.BlendPositionEvent], the persisted shape
-// (storage cannot import this package). It is a distinct named type, not an
-// alias, because it carries the EventKind()/Source() methods that satisfy
-// consumer.Event, and methods cannot be added to an alias of a foreign type.
-// internal/pipeline/sink.go converts explicitly via domain.BlendPositionEvent(e).
+// Mirrors [domain.BlendPositionEvent], the persisted shape (storage cannot import this package).
+// It is a named type, not an alias, so it can carry the EventKind()/Source() methods that satisfy
+// consumer.Event; internal/pipeline/sink.go converts via domain.BlendPositionEvent(e).
 type PositionEvent domain.BlendPositionEvent
 
 // EmissionEvent is the decoded shape of the emission / credit-risk events
 // (gulp / claim / reserve_emission_update / gulp_emissions / bad_debt /
-// defaulted_debt). Heterogeneous bodies, so individual fields are nullable
-// (zero value = absent for strings, nil for *big.Int).
-//
-// EventKind discriminates which: EventGulp, EventClaim, EventReserveEmissions,
-// EventGulpEmissions, EventBadDebt, EventDefaultedDebt.
-// Promoted typed fields. Populated per event kind:
+// defaulted_debt). Bodies are heterogeneous, so fields are nullable (zero value = absent for
+// strings, nil for *big.Int); EventKind says which are populated:
 //
 //	gulp:                    Asset, Amount(=token_delta)
 //	claim:                   User(=from), Amount(=amount_claimed),
@@ -60,30 +53,23 @@ type PositionEvent domain.BlendPositionEvent
 //	bad_debt:                User, Asset, Amount(=d_tokens)
 //	defaulted_debt:          Asset, Amount(=d_tokens_burnt)
 //
-// Field-for-field identical to [domain.BlendEmissionEvent]; see the
-// [PositionEvent] doc for why this is a locally-declared type, not an alias.
+// Mirrors [domain.BlendEmissionEvent]; see [PositionEvent] for why it is a named type.
 type EmissionEvent domain.BlendEmissionEvent
 
 // AdminEvent is the decoded shape of every pool-config / admin / pool-factory
 // lifecycle event: set_admin, update_pool, queue_set_reserve,
 // cancel_set_reserve, set_reserve, set_status, deploy.
 //
-// ContractID is the EMITTING contract: the pool for the six pool events, the
-// pool-factory for `deploy`. ByAdmin is true when set_status carried an admin
-// topic (set_status_admin in events.rs). ReserveConfig is nil unless the kind
-// carries one.
-//
-// Field-for-field identical to [domain.BlendAdminEvent]; see [PositionEvent]
-// for why this is a local type rather than an alias.
+// ContractID is the EMITTING contract: the pool for the six pool events, the pool-factory for
+// `deploy`. ByAdmin is true when set_status carried an admin topic. ReserveConfig is nil unless
+// the kind carries one. Mirrors [domain.BlendAdminEvent]; see [PositionEvent] for why it is a
+// named type.
 type AdminEvent domain.BlendAdminEvent
 
 // ─── classify (extended) ───────────────────────────────────────
 //
-// The original classify() in decode.go covers only the three
-// auction topics. classifyAny is the extended switch — every
-// topic the package declares is mapped to its Event* name. The
-// dispatcher adapter (Matches/Decode) uses classifyAny; classify()
-// is now only exercised by the auction-scoped decode_test.go cases.
+// classify() in decode.go covers only the three auction topics; classifyAny maps every topic the
+// package declares to its Event* name and is what the dispatcher adapter (Matches/Decode) uses.
 func classifyAny(e *events.Event) string { //nolint:gocyclo,cyclop // one case per Blend topic; flattening makes the dispatch table easier to audit against pool/src/events.rs + pool-factory/src/events.rs.
 	if len(e.Topic) == 0 {
 		return ""
@@ -160,13 +146,9 @@ func classifyAny(e *events.Event) string { //nolint:gocyclo,cyclop // one case p
 
 // ─── Position-event decoder ────────────────────────────────────
 
-// decodePositionEvent parses a money-market position-changing
-// event. Topic + body shapes per the events.rs comment block at
-// the top of this file. The seven kinds share enough structure
-// that one function handles them all — flash_loan is the only one
-// with an extra topic for the borrowing contract.
-//
-// Returns ErrMalformedPayload (wrapped) on schema drift.
+// decodePositionEvent parses a money-market position-changing event using the topic table at the
+// top of this file. One function serves all seven kinds; flash_loan alone carries an extra topic
+// for the borrowing contract. Returns ErrMalformedPayload (wrapped) on schema drift.
 func decodePositionEvent(e *events.Event, kind string, closedAt time.Time) (PositionEvent, error) {
 	wantTopics := 3
 	if kind == EventFlashLoan {
@@ -539,11 +521,9 @@ func decodeUpdatePool(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 //	topics: [Symbol("queue_set_reserve"), Address(admin)]
 //	body:   (asset: Address, metadata: ReserveConfig)
 //
-// ReserveConfig is the soroban-sdk #[contracttype] struct from
-// pool/src/storage.rs:45 — serialised as ScvMap with sorted-by-
-// name keys. We decode the full struct into the AdminEvent's
-// ReserveConfig map for round-trip parity (storage marshals to
-// jsonb attributes).
+// ReserveConfig is the #[contracttype] struct from pool/src/storage.rs, serialised as an ScvMap
+// with name-sorted keys. The full struct is decoded into AdminEvent.ReserveConfig so storage can
+// marshal it to jsonb attributes losslessly.
 func decodeQueueSetReserve(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	if len(e.Topic) != 2 {
 		return AdminEvent{}, fmt.Errorf("%w: queue_set_reserve expected 2 topics, got %d",
@@ -722,30 +702,23 @@ func decodeDeploy(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 
 // ─── V1 pool-factory decoders ────────────────────────────────
 //
-// The V1 pool-factory (CCZD6ESM…) emits three topics not present in
-// blend-contracts-v2's pool/src/events.rs, verified against real
-// ClickHouse-lake bytes (see README.md "Known gap"):
+// The V1 pool-factory (CCZD6ESM…) emits three topics absent from blend-contracts-v2's
+// pool/src/events.rs, verified against real lake bytes (see README.md "Known gap"):
 //
 //	update_emissions:           1 topic  [Symbol]           body i128 (bare)
 //	new_liquidation_auction:    2 topics [Symbol, Address]   body Map{bid,lot,block}
 //	delete_liquidation_auction: 2 topics [Symbol, Address]   body ScvVoid
 //
-// update_emissions lands in blend_emissions (a pool-wide total, distinct from
-// V2's per-reserve reserve_emission_update). The two liquidation-auction events
-// land in blend_admin, NOT blend_auctions: the V1 body carries the same
-// {bid, lot, block} Map decodeAuctionData parses for V2, but there is no
-// auction_type topic to classify it against blend_auctions' taxonomy
-// (auction_type is NOT NULL there), so inventing one would attach unverified
-// provenance to a verified-data table. bid/lot/block ride in blend_admin's
-// jsonb attributes column instead.
+// update_emissions lands in blend_emissions (a pool-wide total, unlike V2's per-reserve
+// reserve_emission_update). The two liquidation-auction events land in blend_admin, NOT
+// blend_auctions: V1 has no auction_type topic and that column is NOT NULL, so inventing one would
+// put unverified provenance in a verified-data table. bid/lot/block ride in blend_admin's jsonb
+// attributes instead.
 
 // decodeUpdateEmissions parses a V1 `update_emissions` event.
 //
 //	topics: [Symbol("update_emissions")]
-//	body:   i128 (bare — a pool-wide emissions total)
-//
-// Real-lake sample: ledger 51,524,668, pool CDVQVKOY…, amount
-// 447798000000.
+//	body:   i128 (bare, a pool-wide emissions total)
 func decodeUpdateEmissions(e *events.Event, closedAt time.Time) (EmissionEvent, error) {
 	if len(e.Topic) != 1 {
 		return EmissionEvent{}, fmt.Errorf("%w: update_emissions expected 1 topic, got %d",
@@ -774,13 +747,8 @@ func decodeUpdateEmissions(e *events.Event, closedAt time.Time) (EmissionEvent, 
 // event.
 //
 //	topics: [Symbol("new_liquidation_auction"), Address(user)]
-//	body:   AuctionData Map{bid, lot, block} — same shape decodeAuctionData
-//	        parses for V2's new_auction/fill_auction, but with no
-//	        auction_type topic and no percent field.
-//
-// Real-lake sample: ledger 51,611,821, pool CDVQVKOY…, user
-// GDTZSZTG…, bid=[CCW67TSZ…:1080028495], lot=[CAS3J7GY…:11654137475],
-// block=51611822.
+//	body:   AuctionData Map{bid, lot, block}, the shape decodeAuctionData parses for V2, but with
+//	        no auction_type topic and no percent field.
 func decodeNewLiquidationAuctionV1(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	if len(e.Topic) != 2 {
 		return AdminEvent{}, fmt.Errorf("%w: new_liquidation_auction expected 2 topics, got %d",
@@ -813,9 +781,8 @@ func decodeNewLiquidationAuctionV1(e *events.Event, closedAt time.Time) (AdminEv
 }
 
 // decodeDeleteLiquidationAuctionV1 parses a V1
-// `delete_liquidation_auction` event. Body is ScvVoid (verified
-// real-lake, ledger 54,890,906) — like V2's delete_auction, only the
-// topic-derived fields matter, so the body is not parsed.
+// `delete_liquidation_auction` event. The body is ScvVoid; like V2's delete_auction only the
+// topic-derived fields matter, so it is not parsed.
 //
 //	topics: [Symbol("delete_liquidation_auction"), Address(user)]
 //	body:   ScvVoid
@@ -839,11 +806,9 @@ func decodeDeleteLiquidationAuctionV1(e *events.Event, closedAt time.Time) (Admi
 	}, nil
 }
 
-// toDomainAssetAmounts converts the blend package's []AssetAmount
-// (used by the shared V1/V2 decodeAuctionData helper) into the
-// domain package's []BlendAssetAmount — the primitive-only mirror
-// BlendAdminEvent carries (domain cannot import this package; see
-// domain.BlendAssetAmount doc).
+// toDomainAssetAmounts converts []AssetAmount (from the shared V1/V2 decodeAuctionData) into the
+// primitive-only []BlendAssetAmount that BlendAdminEvent carries, since domain cannot import this
+// package.
 func toDomainAssetAmounts(in []AssetAmount) []domain.BlendAssetAmount {
 	if len(in) == 0 {
 		return nil
@@ -857,17 +822,10 @@ func toDomainAssetAmounts(in []AssetAmount) []domain.BlendAssetAmount {
 
 // ─── ReserveConfig decoder helper ──────────────────────────────
 
-// reserveConfigKeys mirrors pool/src/storage.rs::ReserveConfig.
-// Decoded by name (resilient to field reordering) per
-// docs/architecture/ingest-pipeline.md#contract-schema-evolution.
-//
-// Field decoding rules:
-//   - i128 → decimal string (preserved full precision per ADR-0003)
-//   - u32  → uint64 (jsonb-safe)
-//   - bool → bool
-//
-// V2Only marks the fields the V2 pool added; a V1 pool's ReserveConfig
-// has only the other eleven.
+// reserveConfigKeys mirrors pool/src/storage.rs::ReserveConfig, decoded by name so field
+// reordering is harmless. i128 becomes a decimal string (full precision, ADR-0003), u32 becomes
+// uint64 (jsonb-safe). V2Only marks fields the V2 pool added; a V1 ReserveConfig has the other
+// eleven.
 var reserveConfigKeys = []struct {
 	Name   string
 	Type   string // "u32" | "i128" | "bool"
@@ -888,11 +846,9 @@ var reserveConfigKeys = []struct {
 	{reserveConfigEnabled, "bool", true},
 }
 
-// decodeReserveConfig decodes an ScvMap-shaped ReserveConfig into a
-// key-value map. A missing field both pool generations carry is an
-// error, so an upgrade that drops one fails loud rather than writing
-// partial data. A missing V2-only field is left out of the map and
-// named in missing, so a V1 pool's event still lands.
+// decodeReserveConfig decodes an ScvMap ReserveConfig into a key-value map. A missing field that
+// both pool generations carry is an error, so an upgrade dropping one fails loud instead of
+// writing partial data. A missing V2-only field is omitted and named in missing so V1 events land.
 func decodeReserveConfig(sv scval.ScVal) (out map[string]any, missing []string, err error) {
 	entries, err := scval.AsMap(sv)
 	if err != nil {
