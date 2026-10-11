@@ -8,30 +8,23 @@ import (
 	"time"
 )
 
-// ConfigReserveBalanceReader is a [ReserveBalanceReader] backed by a
-// static operator-supplied balance map. The supply-snapshot writer uses
-// it as the bootstrap fallback in the chained-reader pattern (see
-// docs/architecture/supply-pipeline.md "The chained-fallback reader
-// pattern"): the live [LCMReserveBalanceReader] takes precedence when
-// every watched account has an observation, and this reader fills the
-// gap when the AccountEntry observer hasn't backfilled yet (or on
-// storage error).
-//
-// Operator usage: populate
-// `[supply] reserve_balances_stroops = { "G..." = "12345..." }`.
+// ConfigReserveBalanceReader is a [ReserveBalanceReader] backed by a static
+// operator-supplied balance map (`[supply] reserve_balances_stroops`), used as the
+// bootstrap fallback in the chained-reader pattern (docs/architecture/supply-pipeline.md
+// "The chained-fallback reader pattern"): the live [LCMReserveBalanceReader] takes
+// precedence when every watched account has an observation; this reader fills the
+// gap when the AccountEntry observer hasn't backfilled yet (or on storage error).
 //
 // Limitations (as a fallback):
 //
-//   - Static map, no refresh. The map carries its own as-of date and
-//     the reader refuses to answer once that date is more than maxAge
-//     old (or was never set), so a forgotten snapshot fails closed
-//     instead of being re-stamped at every new ledger as the current
-//     reserve.
-//   - No per-account ledger versioning: it ignores the `ledger`
-//     argument; the live reader is the ledger-aware path.
+//   - Static map, no refresh. The map carries its own as-of date and the reader
+//     refuses to answer once that date is more than maxAge old (or was never set),
+//     so a forgotten snapshot fails closed instead of being re-stamped at every
+//     new ledger as the current reserve.
+//   - No per-account ledger versioning: it ignores the `ledger` argument.
 //
-// Answers are tagged [ReserveSourceStatic]; [XLMComputer] publishes
-// them as [BasisXLMSDFReserveExclusionStatic] with no freshness anchor.
+// Answers are tagged [ReserveSourceStatic]; [XLMComputer] publishes them as
+// [BasisXLMSDFReserveExclusionStatic] with no freshness anchor.
 type ConfigReserveBalanceReader struct {
 	balances map[string]*big.Int
 	asOf     time.Time

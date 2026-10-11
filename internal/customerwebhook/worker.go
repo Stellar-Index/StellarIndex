@@ -14,11 +14,8 @@
 // `FOR UPDATE SKIP LOCKED` and in the same statement pushes `next_attempt_at`
 // 5 minutes out as a lease (internal/platform/postgresstore/webhook_store.go).
 // A worker that dies mid-delivery releases the row at lease expiry.
-//
-// That is part of the DeliveryStore CONTRACT: any substitute MUST claim and
-// lease atomically, or two workers can POST the same row twice.
-// MarkDelivered / MarkAttemptFailed idempotency is only a second line of
-// defence.
+// Any substitute DeliveryStore MUST claim and lease atomically, or two workers
+// can POST the same row twice.
 package customerwebhook
 
 import (
@@ -694,26 +691,23 @@ func isRetryable4xx(status int) bool {
 	}
 }
 
-// mark runs a store write that records an attempt's OUTCOME, on a
-// context whose lifetime belongs to the write rather than to the attempt
-// it is recording. Every outcome write goes through here.
+// mark runs a store write that records an attempt's OUTCOME, on a context whose
+// lifetime belongs to the write rather than to the attempt it is recording.
+// Every outcome write goes through here.
 //
-// The attempt context is the wrong lifetime for it twice over. Its
-// deadline starts before GetWebhook and the POST, so it expires no later
-// than the HTTP client's own timeout: a POST that times out — the
-// commonest failure there is — would reach the mark with a context that
-// is already dead, MarkAttemptFailed would fail on it, attempt_count
-// would never advance, and the row would keep its claim lease and be
-// re-POSTed every lease interval, timing out again each time. Nothing
-// would end that loop, not even MaxAttempts, because no attempt would
-// ever be counted. And its cancellation is the worker's shutdown signal: a
-// customer who was just sent an event must not be sent it again because
-// the process was stopping when the 200 came back.
+// The attempt context is the wrong lifetime twice over. Its deadline starts before
+// GetWebhook and the POST, so it expires no later than the HTTP client's own
+// timeout: a POST that times out (the commonest failure) would reach the mark with
+// a dead context, MarkAttemptFailed would fail, attempt_count would never advance,
+// and the row would keep its claim lease and be re-POSTed every lease interval
+// forever, because no attempt is ever counted, not even toward MaxAttempts. And its
+// cancellation is the worker's shutdown signal: a customer who was just sent an
+// event must not be sent it again because the process was stopping when the 200
+// came back.
 //
-// WithoutCancel drops both the parent's deadline and its cancellation
-// while keeping its values; markWriteTimeout then bounds the write so a
-// hung store cannot stall the batch past the claim lease (the guard
-// beside the defaults holds the sum under it).
+// WithoutCancel drops both the parent's deadline and its cancellation while keeping
+// its values; markWriteTimeout then bounds the write so a hung store cannot stall
+// the batch past the claim lease (the guard beside the defaults holds the sum under it).
 func (w *Worker) mark(ctx context.Context, write func(context.Context) error) error {
 	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), markWriteTimeout)
 	defer cancel()

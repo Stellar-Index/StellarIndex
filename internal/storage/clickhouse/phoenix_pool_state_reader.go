@@ -26,16 +26,11 @@ import (
 // `token_a` / `token_b` Address fields carry the token identities (read). All
 // are PERSISTENT contract_data entries, not the instance entry.
 //
-// Pools upgrade in place (phoenix.MainnetPools vs phoenix.MainnetMapPools are
-// two WASM generations), so re-check after any upgrade (HTTP port 8123):
-//
-//	SELECT key_xdr, ledger_seq, base64Decode(entry_xdr) IS NOT NULL
-//	FROM stellar.ledger_entries_current FINAL
-//	WHERE entry_type = 'contract_data'
-//	  AND key_xdr IN (<output of phoenixPoolKeys for one curated pool>)
-//
-// Expect three rows, then cross-check reserves against the latest phoenix_trades
-// post-state. A mismatch surfaces as undecodable pools: fail-to-absent.
+// Pools upgrade in place (two WASM generations: phoenix.MainnetPools vs MainnetMapPools),
+// so after any upgrade check ledger_entries_current FINAL still returns three
+// contract_data rows for phoenixPoolKeys of one curated pool and that reserves match
+// the latest phoenix_trades post-state. A mismatch surfaces as undecodable pools:
+// fail-to-absent.
 const (
 	phoenixKeyReserveA = 1 // DataKey::ReserveA
 	phoenixKeyReserveB = 2 // DataKey::ReserveB
