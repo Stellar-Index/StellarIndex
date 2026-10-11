@@ -20,7 +20,8 @@ import (
 // verify-served-values reconciles served values against independent ground truth (XLM supply vs
 // the SDF lumen API, USDC supply vs Stellar Expert, the configured SDF reserve list vs SDF's
 // published one) and emits node_exporter textfile gauges. Every truth is point-in-time state,
-// never a windowed counter. Empty -textfile prints to stdout; empty -config skips the list check.
+// never a windowed counter. -textfile (served_values.prom) empty prints to stdout; empty -config
+// skips the list check.
 func verifyServedValues(args []string) error {
 	fs := flag.NewFlagSet("verify-served-values", flag.ContinueOnError)
 	apiBase := fs.String("api", "http://127.0.0.1:3000", "Base URL of our API (loopback on r1)")
