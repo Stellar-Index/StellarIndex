@@ -9,35 +9,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// preseedFactoryChildren seeds a factory-anchored reconcile source's
-// contractid.Registry (ADR-0035) by walking the factory's creation events from
-// source genesis up to `to` through the decoder (dec.Decode registers the
-// announced child as a side effect). No-op for non-gated sources
-// (factory == ""). Idempotent.
-//
-// Needed because the re-derive gates Matches() on the registry. A re-derive
-// from genesis self-seeds in-stream, but one over a custom sub-range
-// (verify-reconciliation -from N, past some pool deploys) would silently drop
-// every pre-N child's events and report a false "missing rows" delta.
-//
-// It reads the certified ClickHouse lake (callers pass a
-// clickhouse.ReconcileEventStreamer), never the Postgres landing zone; factory
-// creation events are rare and contract-prefiltered, so it is cheap.
-//
-// The decoder runs under completeness.Guard: a creation event whose decoder
-// panics leaves that child unseeded, so it is returned as a blind spot rather
-// than crashing the caller, which decides what a blind preseed means for it.
+// preseedFactoryChildren seeds a factory-anchored source's contractid.Registry (ADR-0035) by
+// decoding the factory's creation events from genesis up to `to`; it is a no-op for non-gated
+// sources and idempotent. A sub-range re-derive would otherwise drop every earlier child's
+// events and report a false "missing rows" delta. It reads the ClickHouse lake, not Postgres.
+// A creation event whose decoder panics (completeness.Guard) is returned as a blind spot.
 func preseedFactoryChildren(ctx context.Context, es completeness.EventStreamer, src reconSource, to uint32) (completeness.BlindSpots, error) {
 	if len(src.factories) == 0 || src.dec == nil {
 		return completeness.BlindSpots{}, nil
 	}
-	// A factory whose own genesis is at/after `to` deployed no children
-	// BEFORE `to`, so the [genesis, to) preseed window holds nothing to
-	// seed — and when genesis > to the window is inverted. This is exactly
-	// the case a sub-range re-derive whose -from sits below a
-	// later-deploying factory's genesis hits (e.g. a whole-lake ch-reproject
-	// -from below defindex's genesis). Skip the empty walk; the re-derive
-	// over [to, hi] self-seeds from the factory's in-range creation events.
+	// A factory with genesis at or after `to` deployed no children before it, and the window is
+	// inverted when genesis > to. Skip the empty walk; the re-derive self-seeds in range.
 	if src.genesis >= to {
 		return completeness.BlindSpots{}, nil
 	}
@@ -69,15 +51,9 @@ func preseedFactoryChildren(ctx context.Context, es completeness.EventStreamer, 
 	return blind.Result(), nil
 }
 
-// preseedResultMessage reports the outcome of a factory preseed walk,
-// including the zero case. A silent zero is indistinguishable from "this
-// source's window genuinely predates every deploy": the walk
-// covers a non-empty, non-inverted window (preseedFactoryChildren already
-// returned early otherwise), so finding no creation events there is
-// suspicious enough to surface — an empty in-memory registry makes the
-// gated decoder's Matches() reject every real child's events for the rest
-// of the re-derive, which reports them as missing rather than as the
-// decoder-blind gap they actually are.
+// preseedResultMessage reports a preseed walk's outcome, including zero. Zero over a non-empty
+// window is suspicious: an empty registry makes the gated Matches() reject every real child's
+// events, which the re-derive then reports as missing rows rather than a decoder-blind gap.
 func preseedResultMessage(name string, seeded int) string {
 	if seeded > 0 {
 		return fmt.Sprintf("verify-reconciliation: pre-seeded %d %s factory children (gate registry)\n", seeded, name)

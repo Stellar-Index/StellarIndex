@@ -16,35 +16,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ─── The published availability figure and the alert budget agree ───
-//
-// The API's availability commitment is stated in three kinds of place:
-// the public page at /sla, the burn-rate alerts that page an operator
-// when the error budget is being spent, and the operator documents
-// that explain those alerts. For four months they disagreed by an
-// order of magnitude — the page promised ≥ 99.9 % while ADR-0008 and
-// the alerts operationalised 99.99 %, under a recording-rule label
-// named for the tighter figure. Nothing could fail on the
-// disagreement because each site is prose or config that no build
-// step reads.
-//
-// The public page is the authority: it is the number a customer holds
-// the service to, and the one the sla-probe binary, the load-test
-// thresholds and the launch announcement already state. Everything
-// else is derived from it here, so a change to the page is the only
-// edit that legitimately moves the figure, and that edit fails the
-// build until every dependent site follows:
-//
-//   - both Prometheus rule trees budget against exactly (100 − figure) %
-//     of requests and carry a label that names the figure;
-//   - the sla-probe binary's default availability target is the figure;
-//   - the operator documents that restate the figure or its burn
-//     arithmetic state the same number.
-//
-// Assertions run over whitespace-collapsed content so a re-wrapped
-// paragraph cannot hollow the check out, and the prose sites assert
-// BOTH that the stale figure is gone and that the corrected one is
-// present — a deletion is not a fix.
+// The published availability figure on the /sla page is the authority. The burn-rate alert
+// budgets, the sla-probe default target and the operator documents must all state the same
+// number, so changing the page fails the build until every dependent site follows. Assertions
+// run over whitespace-collapsed content, and prose sites check both that the stale figure is
+// gone and the corrected one is present.
 
 const (
 	slaPage       = "web/explorer/src/app/sla/page.tsx"
@@ -58,12 +34,8 @@ const (
 func publishedAvailability(t *testing.T) string {
 	t.Helper()
 	page := readRepoFile(t, slaPage)
-	// Whitespace-tolerant on BOTH sides of the label and around the figure.
-	// The first version required `Availability</td>` to be adjacent, so when
-	// the tree was reformatted and prettier broke that cell across three
-	// lines, this gate stopped matching — a formatter silently disabled a
-	// consistency check while the published figure was untouched. The value
-	// is what this test is about; its layout is not.
+	// Whitespace-tolerant around the label and the figure so a formatter re-wrapping the cell
+	// cannot silently disable the check; the value matters, not its layout.
 	re := regexp.MustCompile(`Availability\s*</td>\s*<td[^>]*>\s*&ge;\s*([0-9]+\.[0-9]+)\s*%`)
 	m := re.FindStringSubmatch(page)
 	if m == nil {
@@ -276,13 +248,8 @@ func TestOperatorDocsStateThePublishedAvailabilityFigure(t *testing.T) {
 	}
 }
 
-// ─── Every published target is an alert threshold, in both trees ───
-//
-// The probe measures every target the /sla page publishes and its
-// verdict fails on each, so a published bound that no rule compares
-// against is a breach nobody is told about: availability and p99 were
-// exported and selected by nothing, and the /v1/price freshness alert
-// sat above the published structural bound.
+// Every target the /sla page publishes must be compared by an alert rule in both trees, or a
+// breach of that bound goes unreported.
 
 const (
 	slaProbeTextfile   = "cmd/stellarindex-sla-probe/textfile.go"

@@ -10,26 +10,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// chParticipantBackfill fills stellar.operation_participants (the NON-source
-// side of ADR-0038 Phase B account history) for historical ledgers by
-// re-deriving participants from stellar.operations.body_xdr IN THE CLICKHOUSE
-// LAKE — a CH-internal job, not a multi-day Galexie re-walk.
-// operation_participants captures live-forward only;
-// stellar.operations holds the full genesis→tip history with the op body, so
-// every historical participant set is derivable without touching MinIO.
-//
-// The op's own source_account is already a full-history operations column (the
-// account-history reader UNIONs it), so this backfill writes only the NON-source
-// participants — byte-identical to the live extractor, with which it shares the
-// derivation (clickhouse.operationParticipantRows). Writing source rows too
-// would double-count each op for its own source account.
-//
-// Windowed + resumable like ch-txindex-backfill: each window prints its resume
-// point (-from) and re-running a window is idempotent (ReplacingMergeTree keyed
-// on (account, ledger_seq, tx_index, op_index)). On r1 run it under
-// /usr/local/sbin/run-heavy-job.sh, serialized with other heavy CH jobs and the
-// root-<2G watchdog (heavy CH load can wedge the log channel on the small
-// root partition).
+// chParticipantBackfill fills the non-source side of stellar.operation_participants (ADR-0038
+// Phase B) for historical ledgers by re-deriving from stellar.operations.body_xdr inside the lake.
+// It writes only non-source participants, sharing the live derivation
+// (clickhouse.operationParticipantRows); source rows too would double-count each op.
+// Windowed and resumable; re-running a window is idempotent (ReplacingMergeTree). On r1 run it
+// under /usr/local/sbin/run-heavy-job.sh, as heavy CH load can wedge the log channel.
 func chParticipantBackfill(args []string) error {
 	fs := flag.NewFlagSet("ch-participant-backfill", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
@@ -101,14 +87,10 @@ var backfillOperationParticipants = clickhouse.BackfillOperationParticipants
 // bound resolution is testable without a live lake.
 var minParticipantLedger = clickhouse.MinParticipantLedger
 
-// resolveParticipantTo resolves the inclusive upper ledger, always within the
-// lake's contiguous tip from `from` (resolveBackfillTop): operation_participants
-// has no MV, so a ledger this pass reads across as a hole is never derived.
-// toFlag==0 auto-targets the gap below live capture: the live-capture floor
-// minus one (min ledger in operation_participants), or the contiguous tip when
-// the table is empty. That floor is read from the table this backfill writes,
-// so it is the live floor only on a first run — a resumed run must carry the
-// -to its first run resolved, which every resume line prints.
+// resolveParticipantTo resolves the inclusive upper ledger, always within the lake's contiguous
+// tip from `from` (resolveBackfillTop), since a hole read across is never derived. toFlag==0
+// targets the live-capture floor minus one, or the tip when the table is empty. That floor is
+// live only on a first run, so a resumed run must carry the -to its first run printed.
 func resolveParticipantTo(ctx context.Context, chAddr string, from, toFlag uint32) (uint32, error) {
 	if toFlag != 0 {
 		return resolveBackfillTop(ctx, chAddr, from, toFlag)

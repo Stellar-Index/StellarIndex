@@ -16,13 +16,9 @@ import (
 
 // ─── `-tier xlm-base -chunks` — the anchor re-derive's half of the walk ──
 //
-// The chunk driver (usd_volume_restamp_chunks.go) owns the chunks, the
-// compression policy, the run lock and the free-space guard. This file is
-// the other half: what the XLM-base re-derive does INSIDE one chunk,
-// and it is the same plan/apply pair the day walk uses
-// (usd_volume_restamp_xlmbase.go) — same functions, same generation
-// guard, same report — restricted to the chunk's slice of the window and
-// routed through the guarded in-chunk apply.
+// The chunk driver (usd_volume_restamp_chunks.go) owns chunks, compression policy, the run lock
+// and the free-space guard. This file runs the day walk's plan/apply pair
+// (usd_volume_restamp_xlmbase.go), generation guard included, on one chunk through the guarded apply.
 
 // xlmBaseChunkStore is the xlm-base tier's seam: the driver's chunk and
 // policy primitives, the day walk's plan/apply pair, and the in-chunk
@@ -34,11 +30,8 @@ type xlmBaseChunkStore interface {
 	ApplyXLMBaseUSDVolumeRestampInChunk(ctx context.Context, c timescale.TradeChunk, plan *timescale.XLMBaseRestampPlan, generation int64, batch int) (int64, error)
 }
 
-// runXLMBaseChunkRestamp is the `-tier xlm-base -chunks` entry point,
-// called by usdVolumeRestamp once the shared window/flag/live-tail
-// validation has passed. The per-chunk half is the shared estimated-tier
-// one (usd_volume_restamp_chunks_estimated.go); what this tier supplies
-// is its planner and its own guarded in-chunk apply.
+// runXLMBaseChunkRestamp is the `-tier xlm-base -chunks` entry point, called after shared
+// validation. The per-chunk half is the estimated tier's; this tier supplies its planner and apply.
 func runXLMBaseChunkRestamp(ctx context.Context, store xlmBaseChunkStore, cfgPath string, from, to time.Time, opts xlmBaseRestampOptions, copts chunkRestampOptions) error {
 	run := newXLMBaseRestampRun(store, opts)
 	run.batch = copts.Batch
@@ -49,11 +42,9 @@ func runXLMBaseChunkRestamp(ctx context.Context, store xlmBaseChunkStore, cfgPat
 		&estimatedChunkTier{run: run, opts: opts, inChunk: inChunk})
 }
 
-// chunkRestampResumeHint is the chunk walk's RESUME line: the same
-// command, carrying the run's generation and every flag that shaped its
-// population. Finished chunks are probed read-only and skipped; the
-// failed chunk was re-compressed unless the error above says LEFT
-// DECOMPRESSED.
+// chunkRestampResumeHint builds the RESUME command carrying the run's generation and every
+// population-shaping flag. Finished chunks are skipped; the failed chunk was re-compressed
+// unless the error says LEFT DECOMPRESSED.
 func chunkRestampResumeHint(cfgPath string, from, to time.Time, run *xlmBaseRestampRun, opts xlmBaseRestampOptions, copts chunkRestampOptions) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\nRESUME: stellarindex-ops usd-volume-restamp -config %s -tier %s -chunks -from %s -to %s -generation %d",
@@ -76,11 +67,9 @@ func chunkRestampResumeHint(cfgPath string, from, to time.Time, run *xlmBaseRest
 	return b.String()
 }
 
-// xlmBaseResumeFlags renders the flags BOTH walks' RESUME lines carry:
-// everything that shapes the population (-fill-null, -sources,
-// -max-generation, -min-rel-delta) and the slice. A resume that dropped
-// -sources would restamp every DEX source where one was asked for; one
-// that dropped -max-generation would admit rows the first run excluded.
+// xlmBaseResumeFlags renders the population-shaping flags and slice both walks' RESUME lines
+// carry. Dropping -sources would restamp every DEX source; dropping -max-generation would admit
+// rows the first run excluded.
 func xlmBaseResumeFlags(opts xlmBaseRestampOptions) string {
 	var b strings.Builder
 	if opts.FillNull {

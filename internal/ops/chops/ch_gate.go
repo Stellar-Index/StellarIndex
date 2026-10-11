@@ -17,21 +17,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// chGate runs the backfill acceptance gates over a backfilled ledger range:
-//
-//   - Gate 2 (completeness): for every ledger it recomputes the
-//     decoder-independent census (dispatcher.CensusLedger, plus tx/op
-//     counts read off the LCM itself) AND the structural extract
-//     (clickhouse.ExtractLedger) straight from galexie, asserts the
-//     extractor matches the census, then reads the range back
-//     out of ClickHouse and asserts the STORED per-ledger counts and the
-//     ACTUAL child-table row counts both equal the census. Any divergence
-//     is a dropped/miscounted row — the gate fails (non-zero exit).
-//   - Gate 1 (footprint): reports compressed bytes/ledger from system.parts
-//     and projects full-history size; reports the census-walk throughput.
-//
-// It writes nothing — it only reads galexie + ClickHouse — so it is safe to
-// re-run, and it is the same comparison Phase 5 completeness will reuse.
+// chGate runs the backfill acceptance gates over a ledger range: it recomputes the census from
+// galexie and fails if stored per-ledger counts or child-table rows diverge, then reports
+// footprint. It is read-only, so it is safe to re-run.
 func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear walk + compare + report; splitting reduces clarity.
 	fs := flag.NewFlagSet("ch-gate", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -153,13 +141,8 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 		fmt.Printf("%-16s %14d %14d %14s  %s\n", c.name, c.census, c.stored, rowStr, verdict)
 	}
 
-	// Coverage, in two halves. The gate's claim is "every REQUESTED
-	// ledger was examined AND is present in CH exactly once", and the
-	// halves fail for different reasons, so they report separately.
-	// Measuring CH rows against `walked` alone would let a short walk certify
-	// itself: a wrong bucket or a hole tolerated by
-	// TolerateTrailingMissing shrinks both sides together, so the gate
-	// would compare a subset to itself and print OK.
+	// Coverage is checked against the requested range, not against `walked`: a wrong bucket or a
+	// tolerated trailing hole shrinks both sides together, so a short walk would certify itself.
 	requested := uint64(*to) - uint64(*from) + 1
 	if uint64(walked) != requested {
 		fmt.Printf("walk coverage:   MISMATCH (requested %d, walked %d)\n", requested, walked)
@@ -200,12 +183,8 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	}
 	fmt.Printf("census-walk throughput: %.1f ledgers/s\n", walkRate)
 
-	// A walk that delivered fewer ledgers than it asked for is a BROKEN
-	// GATE, not a clean range — every check above compares census vs
-	// stored vs rows over the ledgers the walk produced, so on the part
-	// it never reached there is nothing to disagree with. This is
-	// checked before gateFail because every mismatch above is downstream
-	// of it, and it names the bucket, which is the usual cause.
+	// A short walk is a broken gate, not a clean range: nothing disagrees over ledgers never
+	// reached. Checked before gateFail because it names the bucket, the usual cause.
 	if cerr := walkCoverage("ch-gate", uint32(*from), uint32(*to), walked, streamBucket); cerr != nil {
 		return cerr
 	}
@@ -216,21 +195,9 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	return nil
 }
 
-// walkCoverage is the rule every galexie-walking subcommand here applies
-// before reporting: assert DELIVERED == REQUESTED, or say so and fail.
-// Returns nil when the walk covered the whole range.
-//
-// A short walk otherwise looks clean, and short walks are routine: -bucket
-// defaults to the TRIMMED live bucket, and opsutil.NewBoundedLedgerStreamConfig
-// sets TolerateTrailingMissing, turning any hole within 65,536 ledgers of -to
-// into a clean finish. Either way Stream returns nil, the tallies are just
-// smaller, and a tally compared only against itself agrees over the slice
-// read and says nothing about the rest. The zero-ledger case gets its own
-// message because operators misread it as "clean".
-//
-// Siblings with the same rule: [backfillCoverage], ingest.censusCoverage and
-// ingest.backfillChunkCoverage. This one is worded for READ-ONLY walks and
-// used by ch-gate.
+// walkCoverage fails unless the walk delivered every requested ledger. Short walks are routine
+// (-bucket defaults to the trimmed live bucket; TolerateTrailingMissing hides holes near -to)
+// and Stream still returns nil. Read-only sibling of [backfillCoverage], used by ch-gate.
 func walkCoverage(cmd string, from, to uint32, walked int, bucket string) error {
 	requested := uint64(to) - uint64(from) + 1
 	if uint64(walked) == requested {

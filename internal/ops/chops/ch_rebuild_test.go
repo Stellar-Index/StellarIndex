@@ -54,11 +54,9 @@ func okWriter() eventWriter {
 
 var errInsert = errors.New("insert failed")
 
-// TestDrainAndWriteCountsOnlyWritten pins RA-1: an event whose insert fails
-// must NOT be counted in written[] and MUST appear in failed[], so the
-// completion report + exit code cannot claim a partially-failed recovery as
-// complete. Red against an implementation with unconditional written++
-// and `_ = HandleEvent`).
+// TestDrainAndWriteCountsOnlyWritten pins that an event whose insert fails is not counted in
+// written[] and appears in failed[], so the report and exit code cannot claim a partially-failed
+// recovery as complete.
 func TestDrainAndWriteCountsOnlyWritten(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx := context.Background()
@@ -433,15 +431,9 @@ func TestContractAllowed(t *testing.T) {
 	}
 }
 
-// TestDropReconSources pins the de-dup guard that accompanies the
-// sep41 catalogue promotion: buildReconciliationCatalogue
-// hands ch-rebuild a `cat` that may already carry sep41_transfers/
-// sep41_supply (when a watched set is configured), but ch-rebuild's
-// -sep41 pass folds in its OWN freshly-built sep41Cat afterward — so the
-// stale, promoted copies must be dropped first, or the final report loop
-// (keyed by written[src.name]) double-prints and double-totals them.
-// Order of the surviving entries must be preserved (report output order
-// is otherwise stable and operator-relied-on).
+// TestDropReconSources pins the de-dup guard for the sep41 promotion: the -sep41 pass folds in
+// its own catalogue, so promoted copies must be dropped first or the report double-totals them.
+// Surviving entries keep their order because operators rely on the report order.
 func TestDropReconSources(t *testing.T) {
 	cat := []reconSource{
 		{name: "soroswap"},
@@ -467,14 +459,10 @@ func TestDropReconSources(t *testing.T) {
 	}
 }
 
-// TestSEP41RollupResetPlan pins WHEN a -sep41 -write run resets the
-// sep41_supply_rollup fold checkpoint, and for WHICH contracts. This is the
-// footgun guard: a re-derive that rewrites
-// sep41_supply_events below the worker's checkpoint must reset the fold, or the
-// worker double-counts a full re-derive (KALE 2×) / undercounts a scoped
-// recovery. The reset must fire ONLY when the SUPPLY source is actually being
-// written, and scope to exactly the CH read set (nil = FULL/all rows, the
-// -contracts override = scoped).
+// TestSEP41RollupResetPlan pins when a -sep41 -write run resets the sep41_supply_rollup fold
+// checkpoint and for which contracts. A re-derive below the checkpoint must reset the fold or the
+// worker double-counts. It fires only when the supply source is written, scoped to the CH read
+// set (nil is all rows, the -contracts override is scoped).
 func TestSEP41RollupResetPlan(t *testing.T) {
 	affected := []string{"CBH4M45TOCKF", "CDLZFC3SYJYD"}
 	cases := []struct {
@@ -505,14 +493,10 @@ func TestSEP41RollupResetPlan(t *testing.T) {
 	}
 }
 
-// ─── checkCHRebuildLiveOverlap: the ADR-0048 D3 contract on ch-rebuild ────
-//
-// The hazard the guard removes: `ch-rebuild -sources <projected> -to <tip>
-// -write` is a SECOND writer of a domain ADR-0031/0032 gives the projector
-// alone, and it stamps a positive derive_generation so its rows win the
-// upsert over the live projector's. projected-rebuild has refused that
-// since ADR-0048 D3; ch-rebuild must too, because a guard on one of two bulk writers
-// is not a guard. Scripted cursor, mirroring TestCheckLiveCursorGuard.
+// checkCHRebuildLiveOverlap: ch-rebuild -sources <projected> -to <tip> -write would be a second
+// writer of a projector-owned domain, with a positive derive_generation so its rows win the
+// upsert. A guard on only one of two bulk writers is not a guard. Scripted cursor, mirroring
+// TestCheckLiveCursorGuard.
 func TestCheckCHRebuildLiveOverlap(t *testing.T) {
 	// The live projector is at 63,000,000 for aquarius, is still behind at
 	// 61,000,000 for blend, and has never run for rozo.
@@ -597,23 +581,18 @@ func TestCheckCHRebuildLiveOverlap_CursorReadErrorRefuses(t *testing.T) {
 	}
 }
 
-// projectedSourcesInRun must RESOLVE the projected set from
-// projector.BuildRegistry — the same registry.go the indexer's projector
-// builds from — so the guard covers a source the moment the projector
-// does, and leaves the non-projected domains (sdex census, band /
-// soroswap-router ContractCall) alone: nothing else writes those, so
-// refusing there would be pure breakage.
+// projectedSourcesInRun must resolve the projected set from projector.BuildRegistry, so the guard
+// covers a source the moment the projector does, and leaves the non-projected domains (sdex
+// census, band and soroswap-router ContractCall) alone, since nothing else writes those.
 func TestProjectedSourcesInRun_SplitsProjectedFromNot(t *testing.T) {
 	cat := []reconSource{
 		{name: "aquarius", dec: aquarius.NewDecoder()},
 		{name: "soroswap", dec: soroswap.NewDecoder()},
 		{name: "sdex", census: true},                              // dec == nil: op-derived census, not projected
 		{name: "band", callDec: band.NewDecoder("CBANDCONTRACT")}, // ContractCall source, not projected
-		// A decoder-bearing entry whose NAME the projector does not own.
-		// soroswap-router is ContractCall-derived and explicitly excluded
-		// from pipeline.IsProjectedEvent (AGENTS.md invariant 7), so its
-		// presence in the event catalogue must not arm the guard: only
-		// the registry lookup can tell these apart, a name list cannot.
+		// A decoder-bearing entry whose name the projector does not own: soroswap-router is
+		// ContractCall-derived and excluded from pipeline.IsProjectedEvent, so it must not arm the
+		// guard. Only the registry lookup can tell these apart.
 		{name: soroswap_router.SourceName, dec: soroswap.NewDecoder()},
 		{name: "phoenix", dec: phoenix.NewDecoder()},
 	}
@@ -800,13 +779,9 @@ func TestCheckCHRebuildSources_partialTypoRefused(t *testing.T) {
 	}
 }
 
-// TestCheckCHRebuildSources_knownNamesAccepted is the other half of the
-// contract, and the one that keeps the gate from over-refusing: a known
-// name is accepted even when THIS invocation would not engage its pass.
-// scripts/ops/ch-rebuild-projected.sh asks -preflight for its whole source
-// set and deletes only the subset the verdict names back, so narrowing
-// must stay a legal answer — refusing here would abort that script on
-// every window.
+// TestCheckCHRebuildSources_knownNamesAccepted keeps the gate from over-refusing: a known name is
+// accepted even when this invocation would not engage its pass, because ch-rebuild-projected.sh
+// asks -preflight for its whole source set and deletes only the subset the verdict names back.
 func TestCheckCHRebuildSources_knownNamesAccepted(t *testing.T) {
 	cat := sourcesTestCatalogue()
 	for _, named := range [][]string{
@@ -850,12 +825,9 @@ func TestCHRebuildSourceUniverse_carriesTheSEP41Pair(t *testing.T) {
 	}
 }
 
-// TestCHRebuild_ValidatesSourcesAgainstTheCatalogue pins the CALL SITE the
-// gate above is worthless without: chRebuild needs Postgres and ClickHouse
-// past the catalogue build, so no test can reach the refusal through the
-// entry point. Deleting the call would leave every unit test green while
-// `-sources sdx` went back to re-deriving nothing and exiting 0. Mirrors
-// TestCHRebuild_BothBackfillSafeLegsAreCalledInOrder's approach.
+// TestCHRebuild_ValidatesSourcesAgainstTheCatalogue pins the call site of the gate above.
+// chRebuild needs Postgres and ClickHouse past the catalogue build, so no test reaches the
+// refusal through the entry point; without this, deleting the call leaves every unit test green.
 func TestCHRebuild_ValidatesSourcesAgainstTheCatalogue(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("ch_rebuild.go")

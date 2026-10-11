@@ -13,18 +13,10 @@ import (
 
 // ─── the ESTIMATED tiers' half of the chunk walk ────────────────────────
 //
-// The chunk driver (usd_volume_restamp_chunks.go) owns the chunks, the
-// compression policy, the run lock and the free-space guard. This file is
-// the other half for every tier whose write set is a ROW LIST — the
-// XLM-base re-derive, its XLM-quote mirror, and the CEX fiat-quote
-// re-derive. All three plan a window through the live valuation function,
-// apply the plan in `-chunk-batch` transactions and report the same
-// dispositions, so they share ONE [chunkRestampTier] implementation: what
-// differs is the run's planner, and a guard cannot drift between them
-// because there is only one copy of it.
-//
-// The exact tier has its own (usd_volume_restamp_chunks_exact.go): its
-// write set is a set-based UPDATE per `-slice` window, not a row list.
+// The chunk driver (usd_volume_restamp_chunks.go) owns chunks, compression policy, the run lock
+// and the free-space guard. This file serves the row-list tiers (XLM-base, its XLM-quote mirror,
+// CEX fiat-quote) through ONE [chunkRestampTier] so their guards cannot drift; the exact tier's
+// set-based UPDATE lives in usd_volume_restamp_chunks_exact.go.
 
 // estimatedChunkApply is the guarded in-chunk write: the store's apply
 // with the is-the-chunk-still-decompressed check ahead of every batch.
