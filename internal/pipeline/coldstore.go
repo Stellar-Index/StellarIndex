@@ -13,40 +13,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// ADR-0027 cold-tier datastore construction.
-//
-// This exists instead of datastore.NewDataStore because, through the SDK
-// constructor, the cold tier can never authenticate: the SDK builds EVERY S3
-// datastore via the AWS default credential chain and falls back to anonymous
-// ONLY when the ambient chain is completely empty. We have two S3 backends
-// with DIFFERENT credentials: HOT is local MinIO, whose root credentials r1
-// exports in the standard AWS form (AWS_ACCESS_KEY_ID etc.); COLD is the
-// public aws-public-blockchain bucket, which wants none. So on r1 the chain
-// SUCCEEDS, the anonymous fallback never fires, and an SDK-built cold client
-// presents MinIO's key to real AWS (InvalidAccessKeyId). ledgerstream's
-// cold-init failure is non-fatal by design (WARN, degrade to hot-only), so
-// the broken tier looks like a quiet log line.
-//
-// datastore.FromS3Client is exported, so NewColdDataStore builds the cold
-// *s3.Client itself. It deliberately does NOT call config.LoadDefaultConfig:
-// that also resolves AWS_ENDPOINT_URL into cfg.BaseEndpoint, so a cold tier
-// without an explicit endpoint would inherit r1's MinIO endpoint. A cold
-// client must inherit NOTHING from the ambient environment; every knob comes
-// from the storage.s3_cold_* config block.
+// ADR-0027 cold-tier datastore construction. The SDK builds every S3 datastore via the AWS default credential chain, falling back to anonymous only if the chain is EMPTY.
+// On r1 the chain holds MinIO's keys, so an SDK-built cold client would sign real-AWS requests with them (InvalidAccessKeyId), and ledgerstream's non-fatal cold-init failure hides it as a log line.
+// So NewColdDataStore uses datastore.FromS3Client and never config.LoadDefaultConfig (it also resolves AWS_ENDPOINT_URL): the cold client inherits NOTHING from the environment.
 
-// NewColdDataStore builds the ADR-0027 cold-tier DataStore
-// (read-only historical LCM upstream) from the storage.s3_cold_*
-// config block, with credentials resolved explicitly rather than
-// from the AWS SDK's ambient default chain. See the package-level
-// note above for why the SDK's datastore.NewDataStore cannot be
-// used here.
-//
-// Behaviourally identical to the SDK's NewS3DataStore apart from
-// credential/endpoint resolution: same path-style addressing, same
-// region plumbing, and the same datastore.FromS3Client tail — so
-// the SDK's bucket-probe diagnostics (301 PermanentRedirect =>
-// "wrong region", NoSuchBucket, AccessDenied) are preserved
-// verbatim.
+// NewColdDataStore builds the ADR-0027 cold-tier DataStore from storage.s3_cold_* with explicit credentials, not the SDK's ambient chain (see the note above).
+// Otherwise identical to NewS3DataStore (path-style, region, FromS3Client tail), so the SDK's bucket-probe diagnostics are preserved.
 func NewColdDataStore(ctx context.Context, storage config.StorageConfig) (datastore.DataStore, error) {
 	client, err := NewColdS3Client(storage)
 	if err != nil {
@@ -61,13 +33,7 @@ func NewColdS3Client(storage config.StorageConfig) (*s3.Client, error) {
 	if storage.S3ColdBucketArchive == "" {
 		return nil, fmt.Errorf("cold datastore: storage.s3_cold_bucket_archive is empty (cold tiering disabled)")
 	}
-	// config.StorageConfig.validate rejects a bucket set without its
-	// region/endpoint at load time; the check is repeated here for the
-	// same reason coldCredentials repeats the key-pair check below —
-	// this func is reachable from callers that build a StorageConfig by
-	// hand (tests, future operators). Without it a bare bucket reaches
-	// newColdS3Client with a zero-value Region, which SigV4 cannot sign
-	// against.
+	// Repeat the region check: config validation rejects this at load, but hand-built StorageConfigs reach here, and a zero Region cannot be SigV4-signed.
 	if storage.S3ColdRegion == "" {
 		return nil, fmt.Errorf("cold datastore: storage.s3_cold_region is empty (required when s3_cold_bucket_archive is set)")
 	}
@@ -77,13 +43,8 @@ func NewColdS3Client(storage config.StorageConfig) (*s3.Client, error) {
 	return newColdS3Client(storage)
 }
 
-// newColdS3Client builds the cold tier's *s3.Client from a
-// zero-valued aws.Config so nothing leaks in from the process
-// environment (see the note above). The two checksum knobs are set
-// to the values config.LoadDefaultConfig would have resolved when
-// no AWS_*_CHECKSUM_* env/profile setting is present, keeping
-// on-the-wire behaviour identical to the SDK's own client; the
-// option func mirrors NewS3DataStore's exactly.
+// newColdS3Client builds the *s3.Client from a zero-valued aws.Config so nothing leaks in from the environment.
+// The checksum knobs match what config.LoadDefaultConfig would resolve, keeping wire behaviour identical to the SDK's client.
 func newColdS3Client(storage config.StorageConfig) (*s3.Client, error) {
 	creds, err := coldCredentials(storage)
 	if err != nil {
@@ -104,25 +65,9 @@ func newColdS3Client(storage config.StorageConfig) (*s3.Client, error) {
 	}), nil
 }
 
-// coldCredentials resolves the cold tier's credential provider from
-// the storage.s3_cold_{access,secret}_key_env fields. Like their hot
-// counterparts (s3_access_key_env / s3_secret_key_env) these hold the
-// NAME of an env var, never the credential itself.
-//
-//   - both names empty → aws.AnonymousCredentials{}. This is the
-//     production shape: aws-public-blockchain is public-read.
-//   - both names set → static credentials read from those env vars
-//     at call time (so the binary picks up whatever the systemd
-//     EnvironmentFile exports, matching buildS3Client's contract).
-//     A named-but-unset/empty env var is a HARD ERROR, never a
-//     silent downgrade to anonymous: "private bucket quietly read
-//     anonymously" is precisely the failure shape this whole file
-//     exists to eliminate, and it would surface as a confusing
-//     AccessDenied hundreds of ledgers later instead of at startup.
-//   - exactly one name set → error. config.StorageConfig.validate
-//     rejects this at load time; the check is repeated here because
-//     NewColdDataStore is reachable from callers that build a
-//     StorageConfig by hand (tests, future operators).
+// coldCredentials resolves the cold tier's credentials from storage.s3_cold_{access,secret}_key_env, which hold env var NAMES, never the secret.
+// Both empty: anonymous (public-read bucket). Both set: static creds read at call time; a named-but-unset var is a HARD ERROR, never a silent downgrade to anonymous.
+// Exactly one set: error (validation rejects it at load; hand-built configs reach here too).
 func coldCredentials(storage config.StorageConfig) (aws.CredentialsProvider, error) {
 	accessEnv, secretEnv := storage.S3ColdAccessKeyEnv, storage.S3ColdSecretKeyEnv
 	switch {

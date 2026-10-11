@@ -14,34 +14,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisSignupEmailLocker is the Redis-SETNX adapter for the
-// dashboardauth EmailLocker seam. It serialises first-login provisioning per email so two
-// /v1/auth/callback callers can't both create speculative
-// Account rows before the email-unique-index Users insert
-// resolves a winner.
-//
-// Key layout: `signup:lock:<sha256-hex>` (the dashboardauth
-// handler does the hashing so the plaintext email never reaches
-// Redis). The value is a per-acquire random FENCING token, not a
-// fixed sentinel: Acquire stores it via SETNX and Release deletes
-// the key only if it still carries that token (a Lua
-// compare-and-delete). If a holder overruns the 30s TTL (a slow
-// Account.Create + Users.CreateUser), the key can expire and a
-// concurrent caller can SETNX-acquire it afresh; a blind DEL would
-// then delete the SUCCESSOR's lock, reopening the orphan-Account
-// race the lock exists to close. The
-// token-scoped delete makes the overrunning holder's Release a
-// no-op instead. The TTL remains the safety net for a process
-// crash between Acquire and Release.
+// RedisSignupEmailLocker is the Redis-SETNX dashboardauth EmailLocker: it serialises first-login provisioning per email (key `signup:lock:<sha256-hex>`, hashed by the handler so no plaintext email reaches Redis).
+// The value is a per-acquire fencing token and Release is a Lua compare-and-delete, so a holder that overruns the 30s TTL cannot delete its successor's lock and reopen the orphan-Account race; the TTL covers a crash.
 type RedisSignupEmailLocker struct {
 	rdb redis.Cmdable
 }
 
-// releaseLockScript is a Redis compare-and-delete: it DELs the
-// key only when its current value still equals the caller's
-// fencing token. Running it as a single Lua eval makes the
-// get-then-del atomic, so no successor's lock can be deleted
-// between the check and the delete.
+// releaseLockScript DELs the key only when it still equals the caller's fencing token, atomically in one Lua eval.
 var releaseLockScript = redis.NewScript(`
 if redis.call("get", KEYS[1]) == ARGV[1] then
 	return redis.call("del", KEYS[1])
@@ -59,11 +38,7 @@ func newLockToken() (string, error) {
 	return hex.EncodeToString(buf[:]), nil
 }
 
-// NewRedisSignupEmailLocker constructs a locker. rdb MUST be
-// non-nil — the api binary only wires this when Redis is
-// reachable. Redis-less deployments leave the dashboardauth
-// EmailLocker field nil and fall back to the Suspend-on-conflict
-// recovery path.
+// NewRedisSignupEmailLocker constructs a locker; rdb must be non-nil. Redis-less deployments leave the EmailLocker field nil and use the Suspend-on-conflict path.
 func NewRedisSignupEmailLocker(rdb redis.Cmdable) *RedisSignupEmailLocker {
 	if rdb == nil {
 		panic("auth: NewRedisSignupEmailLocker: rdb must not be nil")
@@ -79,13 +54,8 @@ func signupLockKey(emailHash string) string {
 	return "signup:lock:" + emailHash
 }
 
-// Acquire implements the dashboardauth.EmailLocker contract.
-// SETNX with a per-acquire fencing token and the given TTL.
-// Returns (true, token, nil) on win, (false, "", nil) on
-// contention, and (false, "", err) on a Redis-side (or entropy)
-// failure. The caller treats the err case as "fall through to
-// the non-locked path" rather than refusing to log in,
-// and passes the returned token back to Release.
+// Acquire implements dashboardauth.EmailLocker: SETNX with a fencing token and ttl, returning (true, token, nil) on win, (false, "", nil) on contention, (false, "", err) on Redis or entropy failure.
+// The caller treats err as "fall through unlocked" and passes the token back to Release.
 func (l *RedisSignupEmailLocker) Acquire(ctx context.Context, emailHash string, ttl time.Duration) (bool, string, error) {
 	token, err := newLockToken()
 	if err != nil {
@@ -101,13 +71,8 @@ func (l *RedisSignupEmailLocker) Acquire(ctx context.Context, emailHash string, 
 	return true, token, nil
 }
 
-// Release implements the dashboardauth.EmailLocker contract.
-// Compare-and-delete: the key is removed only if it still carries
-// this caller's `token`, so a holder that overran its TTL cannot
-// delete a successor's freshly-acquired lock (F-C). An empty
-// token means the caller never held the lock, so Release is a
-// no-op. A key that already TTL-expired (or was never set) leaves
-// the CAD a harmless zero-match no-op.
+// Release implements dashboardauth.EmailLocker as compare-and-delete: the key goes only if it still carries this caller's token, so an overrunning holder cannot delete a successor's lock.
+// An empty token (never held), an expired key or an absent key is a harmless no-op.
 func (l *RedisSignupEmailLocker) Release(ctx context.Context, emailHash, token string) error {
 	if token == "" {
 		return nil

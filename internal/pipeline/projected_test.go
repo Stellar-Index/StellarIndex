@@ -24,20 +24,8 @@ import (
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 )
 
-// TestIsProjectedEvent_TableDriven pins the [IsProjectedEvent]
-// dispatch table to the ADR-0032 projector contract. Every event
-// emitted by a source `projector/registry.go::buildSource` returns
-// must be projected=true; every event from out-of-scope sources
-// (sdex, external CEX/FX, band, supply observers) must be
-// projected=false.
-//
-// Drift between this table and `IsProjectedEvent`'s switch is a
-// silent double-write bug class (or a silent dropped-event bug
-// class, depending on direction). The lint guard at
-// scripts/ci/lint-imports.sh already catches "new source added but
-// not classify()'d"; this test adds the analogous gate for
-// "new consumer.Event added but not classified for the
-// projected/non-projected split."
+// TestIsProjectedEvent_TableDriven pins IsProjectedEvent to the ADR-0032 contract: every event from a source projector buildSource returns is projected=true,
+// every event from out-of-scope sources (sdex, external CEX/FX, band, supply observers) is false. Drift means a silent double-write or dropped event.
 func TestIsProjectedEvent_TableDriven(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -74,19 +62,8 @@ func TestIsProjectedEvent_TableDriven(t *testing.T) {
 		{"external.TradeEvent", external.TradeEvent{Trade: canonical.Trade{Source: "binance"}}, false},
 		{"external.UpdateEvent", external.UpdateEvent{Update: canonical.OracleUpdate{Source: "ecb"}}, false},
 		{"band.UpdateEvent", band.UpdateEvent{Update: canonical.OracleUpdate{Source: "band"}}, false},
-		// soroswap_router.Event is log-only (HandleEvent's case writes
-		// ONLY to soroswap_router_swaps via InsertSoroswapRouterSwap,
-		// never persistTrade) and MUST stay projected=false. RouterSwap
-		// rows mix a REALIZED amount with a user-supplied slippage LIMIT
-		// in AmountIn/AmountOut (see soroswap_router.RouterSwap's doc
-		// comment) — a price derived from them would be the limit price,
-		// not the realized price. Pinned here so a future refactor that
-		// accidentally routes router events through the projector /
-		// trades path fails this test instead of silently corrupting
-		// VWAP. Complements the aggregator-side guard in
-		// internal/aggregate/orchestrator/orchestrator_test.go
-		// (TestFilterForVWAP_ExcludesSoroswapRouter /
-		// TestTick_SoroswapRouterTradeNeverContributesToVWAP).
+		// soroswap_router.Event is log-only (written only to soroswap_router_swaps) and MUST stay projected=false:
+		// RouterSwap amounts mix realized amounts with a user slippage LIMIT, so a price from them would be the limit price and corrupt VWAP.
 		{"soroswap_router.Event", soroswap_router.Event{Swap: soroswap_router.RouterSwap{Source: soroswap_router.SourceName}}, false},
 	}
 	for _, tc := range cases {

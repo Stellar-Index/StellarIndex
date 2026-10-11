@@ -52,13 +52,7 @@ func (f *fakeTradeStore) unhealthyErr() error {
 
 var errInfra = errors.New("dial tcp 127.0.0.1:5432: connect: connection refused")
 
-// errData is a PERMANENT data fault as the driver actually reports one:
-// SQLSTATE 23502 (not_null_violation, integrity-constraint class 23).
-// A bare errors.New whose *text* imitated pq would be
-// indistinguishable from an unclassifiable driver error,
-// which the classifier deliberately routes to block-and-retry
-// rather than to the drop path. So the fault is typed, letting the
-// classifier positively recognise it.
+// errData is a permanent data fault as the driver reports it (SQLSTATE 23502); a text-only imitation would be unclassifiable and block-and-retry.
 var errData = &pgconn.PgError{
 	Code:    "23502",
 	Message: `null value in column "quote_asset" violates not-null constraint`,
@@ -134,11 +128,7 @@ func counter(t *testing.T, vec *prometheus.CounterVec, labels ...string) float64
 	return testutil.ToFloat64(vec.WithLabelValues(labels...))
 }
 
-// TestFlushTradeBatch_InfraRetryThenSuccess is the load-bearing
-// property: an on-chain batch that hits an
-// infrastructure fault must BLOCK (retry with backpressure — the drain
-// goroutine is stalled, so the ledger cursor can't advance) and then
-// land every trade exactly once when Postgres recovers — never drop.
+// TestFlushTradeBatch_InfraRetryThenSuccess: an on-chain batch hitting an infra fault must block, then land every trade exactly once on recovery, never drop.
 func TestFlushTradeBatch_InfraRetryThenSuccess(t *testing.T) {
 	retryBefore := counter(t, obs.TradeInsertRetriesTotal, "retry")
 	recoveredBefore := counter(t, obs.TradeInsertRetriesTotal, "recovered")
@@ -237,16 +227,8 @@ func TestFlushTradeBatch_ExternalInfraRoutesToBufferNoBlock(t *testing.T) {
 	}
 }
 
-// ─── infra-vs-data classification ────────
-//
-// The hazard: retrying ONLY what timescale.IsInfraError
-// positively recognises and dropping everything else would treat a Postgres
-// infrastructure fault it does not enumerate (53100 disk_full, 53200
-// out_of_memory, class-58 I/O, XX000) as a permanent data
-// fault — the trade dropped while the enqueue-advanced cursor sails
-// past its ledger. These tests pin the asymmetric policy: a
-// DROP needs positive proof of permanence; everything else blocks and
-// retries.
+// infra-vs-data classification. Retrying only what timescale.IsInfraError recognises would drop unenumerated infra faults
+// (53100, 53200, class 58, XX000) as data faults while the cursor passes; these tests pin the asymmetric policy (a drop needs positive proof of permanence).
 
 // TestClassifyFault_Policy pins the classification table itself.
 func TestClassifyFault_Policy(t *testing.T) {
@@ -279,12 +261,7 @@ func TestClassifyFault_Policy(t *testing.T) {
 	}
 }
 
-// TestClassifyFault_StoragePredicatesAgree — the pipeline's policy must
-// never contradict the storage layer's own predicates: anything
-// timescale positively calls infra classifies as faultInfra, anything it
-// positively calls a permanent data fault classifies as faultData. (The
-// converse does NOT hold, by design: faultInfra is the default, so it
-// also absorbs everything neither predicate recognises.)
+// TestClassifyFault_StoragePredicatesAgree: whatever timescale calls infra is faultInfra and whatever it calls permanent is faultData; the converse need not hold (faultInfra is the default).
 func TestClassifyFault_StoragePredicatesAgree(t *testing.T) {
 	errs := []error{
 		errInfra,
@@ -346,11 +323,7 @@ func TestRetryInfra_PermanentDataFaultReturnsImmediately(t *testing.T) {
 	}
 }
 
-// TestFlushTradeBatch_UnclassifiedInfraNeverDropsOnChain — end-to-end at
-// the batch path: an on-chain batch hitting a disk-full fault must block
-// (cursor gating) and land every trade on recovery, with ZERO drops
-// counted. Returning instantly would count three
-// dropped trades while the cursor kept moving.
+// TestFlushTradeBatch_UnclassifiedInfraNeverDropsOnChain: an on-chain batch hitting disk-full must block and land every trade on recovery with zero drops.
 func TestFlushTradeBatch_UnclassifiedInfraNeverDropsOnChain(t *testing.T) {
 	dropsBefore := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade")
 	store := &fakeTradeStore{failErr: errUnclassified} // healthy=false → disk full
@@ -386,11 +359,7 @@ func TestFlushTradeBatch_UnclassifiedInfraNeverDropsOnChain(t *testing.T) {
 	}
 }
 
-// TestFlushTradeBatch_ExternalUnclassifiedRoutesToBufferNoBlock — the
-// mirror-image invariant: making unclassified faults
-// blocking must NOT put external CEX/FX trades on the blocking path.
-// They have no cursor and are vendor-refillable (ADR-0041 acceptance
-// caveat), so they go to the bounded buffer and the drain keeps moving.
+// TestFlushTradeBatch_ExternalUnclassifiedRoutesToBufferNoBlock: unclassified faults block on-chain trades but must never put external trades on the blocking path.
 func TestFlushTradeBatch_ExternalUnclassifiedRoutesToBufferNoBlock(t *testing.T) {
 	store := &fakeTradeStore{failErr: errUnclassified}
 	buf := newExternalRetryBuffer(store, discardLogger(), 1000)
@@ -446,11 +415,7 @@ func (s *scriptedStore) WouldPopulateUSDVolume(_ context.Context, _ canonical.Tr
 	return false
 }
 
-// TestFlushTradeBatch_CtxCancelledMidWrite_ReturnsWholeBatch pins the
-// contract the carry depends on: a batch write that fails with the
-// ctx's own cancellation is handed back to the caller in full — not
-// isolated per-row against the dead ctx (which can only fail every
-// row instantly and count each one lost).
+// TestFlushTradeBatch_CtxCancelledMidWrite_ReturnsWholeBatch: a write failing with the ctx's own cancellation is handed back whole, not isolated per-row against the dead ctx.
 func TestFlushTradeBatch_CtxCancelledMidWrite_ReturnsWholeBatch(t *testing.T) {
 	droppedBefore := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade")
 

@@ -9,25 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// RequiredScope maps a request path to the capability scope a
-// scoped key must carry to call it. Families are derived from the
-// /v1 route table (see internal/api/v1/server.go mountRoutes):
-//
-//   - /v1/admin/*, /v1/account/admin/*, /v1/dashboard/admin/*
-//     → platform.KeyScopeAdmin
-//   - /v1/account/*   → platform.KeyScopeAccount
-//   - /v1/dashboard/* → platform.KeyScopeDashboard
-//   - everything else → platform.KeyScopeRead (public data surfaces)
-//
-// The mapping is prefix-based rather than a per-route table so a
-// new data endpoint is read-scoped by default and a new management
-// endpoint under an existing family inherits the right scope with
-// zero wiring. A staff surface nested inside a self-service family
-// (POST /v1/account/admin/lookup returns customer PII) must not
-// inherit that family's least-privileged scope, so the admin arms
-// match first. Enforcement lives in the KeyPolicy middleware and
-// only applies to subjects whose Scopes list is non-empty
-// (empty = full access, the pre-scopes posture).
+// RequiredScope maps a request path to the scope a scoped key must carry: admin families (/v1/admin/*, /v1/account/admin/*, /v1/dashboard/admin/*) need KeyScopeAdmin, /v1/account/* Account, /v1/dashboard/* Dashboard, everything else Read.
+// Prefix-based so new endpoints are read-scoped by default; admin arms match first so staff surfaces nested in a self-service family (account/admin/lookup returns PII) do not inherit its weaker scope.
+// Enforced by the KeyPolicy middleware only for subjects with a non-empty Scopes list.
 func RequiredScope(path string) string {
 	switch {
 	case strings.HasPrefix(path, "/v1/admin/"),
@@ -43,12 +27,8 @@ func RequiredScope(path string) string {
 	}
 }
 
-// HasScope reports whether the subject may exercise the given
-// capability scope. An EMPTY scope list grants everything — the
-// documented meaning of "no scopes" at mint time, which keeps keys
-// minted without scopes working.
-// The "*" wildcard is honoured defensively for hand-seeded records
-// even though the mint surfaces reject it.
+// HasScope reports whether the subject may exercise scope; an EMPTY scope list grants everything (keys minted without scopes keep working).
+// The "*" wildcard is honoured for hand-seeded records although mint surfaces reject it.
 func (s Subject) HasScope(scope string) bool {
 	if len(s.Scopes) == 0 {
 		return true

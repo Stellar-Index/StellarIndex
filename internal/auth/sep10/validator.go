@@ -13,26 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// ReplayGuard makes every issued challenge transaction redeemable
-// exactly once, so the same signed XDR can't be re-used to mint
-// multiple JWTs inside its time-bound window.
-//
-// SEP-10 §3.4 acknowledges the replay risk and leaves implementations
-// to choose their own defence. Without one, a captured signed
-// challenge XDR is reusable for the full ChallengeTTL (default
-// 15 m) — long enough for an attacker who steals a single signed
-// XDR (e.g. via an XSS exfil on the client wallet) to mint a steady
-// stream of JWTs even after the user closes the tab.
-//
-// Reserve records a challenge's hash at issuance; Claim spends it at
-// verification and returns [auth.ErrUnauthorized] when no reservation
-// is present. Claim must require presence, not absence: a store that
-// can evict keys early (Redis allkeys-lru) then refuses a redemption
-// instead of re-admitting a replay.
-//
-// Wired in production via internal/auth/sep10/redisreplay.go
-// (Redis-backed). Nil ReplayGuard preserves prior behaviour for
-// callers that haven't opted in.
+// ReplayGuard makes every issued challenge transaction redeemable exactly once, so a captured signed XDR cannot mint multiple JWTs inside its time-bound window (SEP-10 §3.4 leaves the defence to implementations).
+// Reserve records a challenge's hash at issuance; Claim spends it and returns [auth.ErrUnauthorized] when no reservation is present. Claim must require presence, not absence, so a store that evicts early (Redis allkeys-lru) refuses a redemption instead of re-admitting a replay.
+// Production: internal/auth/sep10/redisreplay.go. A nil ReplayGuard disables the defence.
 type ReplayGuard interface {
 	Reserve(ctx context.Context, txHash string, ttl time.Duration) error
 	Claim(ctx context.Context, txHash string) error
@@ -43,21 +26,8 @@ type ReplayGuard interface {
 // reservation never expires under a still-valid challenge.
 const reservationSlack = time.Minute
 
-// challengeTxHash returns the dedupe key the [ReplayGuard] stores: the
-// PARSED transaction's canonical hash (SHA-256 over the network-id-
-// prefixed signature payload, the same value Stellar itself identifies a
-// transaction by), hex-encoded and therefore bounded at 64 bytes.
-//
-// It is not the SHA-256 of the raw
-// caller-supplied base64 string, which is not a canonical identity for a
-// transaction — distinct strings decode to the same envelope, so one
-// redemption could be replayed simply by re-spelling it. Reordering the
-// envelope's decorated signatures, or inserting a "\n" into the base64
-// (Go's decoder skips "\r"/"\n"), both pass ReadChallengeTx +
-// VerifyChallengeTxSigners unchanged yet yield a fresh dedupe key, so a
-// captured signed XDR (XSS exfil from a client wallet is the threat
-// model) could mint JWTs for the rest of the challenge window.
-// Hashing the parsed transaction removes the whole class.
+// challengeTxHash returns the ReplayGuard dedupe key: the PARSED transaction's canonical hash, hex-encoded (64 bytes), never a digest of the caller's base64 string.
+// One transaction has many spellings (reordered signatures, a "\n" in the base64) that pass verification unchanged, so keying on the string would let a captured XDR be replayed re-encoded. Hashing the parsed transaction removes the class.
 func challengeTxHash(tx *txnbuild.Transaction, networkPassphrase string) (string, error) {
 	h, err := tx.HashHex(networkPassphrase)
 	if err != nil {
@@ -150,11 +120,7 @@ type Options struct {
 	AccountLoader AccountLoader
 }
 
-// Validator implements [auth.SEP10Validator] using the
-// go-stellar-sdk txnbuild helpers for challenge construction +
-// verification, plus a hand-rolled HMAC-SHA256 JWT for issuance.
-//
-// Safe for concurrent use; fields are read-only after construction.
+// Validator implements [auth.SEP10Validator] with txnbuild challenge construction/verification and a hand-rolled HMAC-SHA256 JWT. Safe for concurrent use; fields are read-only after construction.
 type Validator struct {
 	serverKP     *keypair.Full
 	network      string
@@ -229,14 +195,7 @@ func NewValidator(opts Options) (*Validator, error) {
 	}, nil
 }
 
-// Challenge implements [auth.SEP10Validator]. Generates a SEP-10
-// challenge transaction for clientAccount (a G-strkey) using the
-// txnbuild SDK helper.
-//
-// Returns [auth.ErrUnauthorized] when clientAccount isn't a
-// parseable G-strkey — better to fail loudly at challenge issuance
-// than to issue a valid-looking transaction the client can never
-// satisfy.
+// Challenge implements [auth.SEP10Validator], issuing a SEP-10 challenge for clientAccount (a G-strkey). An unparseable strkey returns [auth.ErrUnauthorized], failing at issuance rather than issuing a transaction the client can never satisfy.
 func (v *Validator) Challenge(ctx context.Context, clientAccount string) (auth.Challenge, error) {
 	if _, err := keypair.ParseAddress(clientAccount); err != nil {
 		return auth.Challenge{}, errors.Join(auth.ErrUnauthorized,
@@ -280,20 +239,9 @@ func (v *Validator) Challenge(ctx context.Context, clientAccount string) (auth.C
 	}, nil
 }
 
-// Verify implements [auth.SEP10Validator]. Validates a signed
-// challenge transaction: structure (per SEP-10 §3.3), server +
-// client signatures, time bounds, web auth domain, and home domain.
-// On success issues a JWT bearing the authenticated client account.
-//
-// Errors:
-//   - [auth.ErrTokenMalformed] — transaction XDR doesn't parse or
-//     the server's signature is missing.
-//   - [auth.ErrUnauthorized] — client signature missing/wrong, a
-//     signature from a key that cannot sign for the account, or signer
-//     weight below the account's medium threshold.
-//   - any other error — the account's signers could not be loaded.
-//   - [auth.ErrTokenExpired] — challenge's time-bound window has
-//     elapsed.
+// Verify implements [auth.SEP10Validator]: validates structure, server and client signatures, time bounds, web auth domain and home domain, then issues a JWT for the client account.
+// Errors: [auth.ErrTokenMalformed] (unparseable XDR or missing server signature); [auth.ErrUnauthorized] (client signature missing/wrong, non-signing key, or weight below the medium threshold);
+// [auth.ErrTokenExpired] (time bounds elapsed); any other error means the account's signers could not be loaded.
 func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, error) {
 	// ReadChallengeTx parses the transaction and validates structure
 	// (server source account, single sequence number, manage_data
@@ -314,17 +262,8 @@ func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, e
 		return auth.Token{}, err
 	}
 
-	// Replay defence: spend the reservation [Validator.Challenge] made
-	// for this challenge TRANSACTION — keyed on the parsed tx's
-	// canonical hash, not on the caller's spelling of the XDR (see
-	// [challengeTxHash]). A second submission, however re-encoded,
-	// or one whose reservation was evicted, returns ErrUnauthorized
-	// before we issue a JWT. Claiming AFTER verifyClientSignatures
-	// means bogus / unsigned XDR can never burn a real reservation.
-	//
-	// Falls open (continues to issue JWT) when no ReplayGuard is
-	// configured, preserving prior behaviour for callers that
-	// haven't opted in.
+	// Spend the reservation Challenge made, keyed on the parsed tx's canonical hash (see [challengeTxHash]): a second or re-encoded submission, or an evicted reservation, returns ErrUnauthorized.
+	// Claimed AFTER verifyClientSignatures so bogus XDR cannot burn a real reservation. No ReplayGuard configured: continue.
 	if v.replayGuard != nil {
 		txHash, hashErr := challengeTxHash(challengeTx, v.network)
 		if hashErr != nil {
@@ -356,11 +295,7 @@ func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, e
 	}, nil
 }
 
-// verifyClientSignatures checks the challenge's client signatures as SEP-10
-// requires: an account that exists on chain must be signed by its own
-// signers with combined weight meeting its medium threshold; one that does
-// not exist yet can only be proven by its master key. A failed account
-// lookup fails closed.
+// verifyClientSignatures checks the client signatures: an on-chain account must be signed by its own signers meeting its medium threshold; one not yet on chain only by its master key. A failed account lookup fails closed.
 func (v *Validator) verifyClientSignatures(ctx context.Context, signedXDR, clientAccountID string) error {
 	acct, err := v.accounts.LoadAccountSigners(ctx, clientAccountID)
 	if err != nil {
@@ -404,12 +339,7 @@ func signerSummary(accountID string, acct AccountSigners) txnbuild.SignerSummary
 	return summary
 }
 
-// VerifyJWT implements [auth.SEP10Validator]. Validates a JWT
-// previously issued by [Verify] and returns the [auth.Subject] it
-// represents. Returns [auth.ErrTokenExpired] when the exp claim has
-// passed; [auth.ErrUnauthorized] for any other validation failure
-// (bad signature, malformed body, wrong issuer or network, or an nbf that is
-// still in the future).
+// VerifyJWT implements [auth.SEP10Validator]: returns the [auth.Subject] for a JWT from [Verify]; [auth.ErrTokenExpired] once exp has passed, [auth.ErrUnauthorized] for any other failure (signature, body, issuer, network, future nbf).
 func (v *Validator) VerifyJWT(_ context.Context, jwt string) (auth.Subject, error) {
 	claims, err := v.parseJWT(jwt)
 	if err != nil {
@@ -419,13 +349,7 @@ func (v *Validator) VerifyJWT(_ context.Context, jwt string) (auth.Subject, erro
 	if claims.Exp < now {
 		return auth.Subject{}, auth.ErrTokenExpired
 	}
-	// nbf ("not before") enforcement — a token whose validity window
-	// hasn't opened yet is rejected. [issueJWT] sets nbf == iat, so a
-	// legitimately-issued token is immediately valid; this rejects a
-	// forged/clock-skewed token that claims to become valid later.
-	// Mirrors the exp check's strict, no-leeway posture. Tokens minted
-	// without an nbf claim carry Nbf == 0 (omitempty) and are
-	// unaffected, so this stays backward-compatible.
+	// nbf enforcement: a token whose window has not opened is rejected, with no leeway like exp. issueJWT sets nbf == iat; tokens without nbf (Nbf == 0, omitempty) are unaffected.
 	if claims.Nbf > now {
 		return auth.Subject{}, fmt.Errorf("%w: JWT nbf is in the future (not valid yet)",
 			auth.ErrUnauthorized)
@@ -437,11 +361,7 @@ func (v *Validator) VerifyJWT(_ context.Context, jwt string) (auth.Subject, erro
 	}, nil
 }
 
-// classifyVerifyError maps the SDK's error returns to our typed
-// auth-error vocabulary. The SDK returns wrapped errors with
-// readable messages; we pattern-match on substring rather than a
-// brittle errors.Is chain because the SDK doesn't expose its
-// internal sentinels.
+// classifyVerifyError maps the SDK's errors to our auth errors by substring match, since the SDK exposes no sentinels to errors.Is.
 func classifyVerifyError(err error) error {
 	msg := err.Error()
 	switch {
@@ -452,11 +372,7 @@ func classifyVerifyError(err error) error {
 	}
 }
 
-// classifyReadChallengeError maps ReadChallengeTx errors. Distinct
-// from classifyVerifyError because ReadChallengeTx surfaces both
-// genuine parse failures (→ ErrTokenMalformed) and time-bound
-// expiry (→ ErrTokenExpired) — and we need to keep them distinct
-// for callers to render the right HTTP status.
+// classifyReadChallengeError maps ReadChallengeTx errors, keeping parse failures (ErrTokenMalformed) distinct from time-bound expiry (ErrTokenExpired) so callers render the right HTTP status.
 func classifyReadChallengeError(err error) error {
 	msg := err.Error()
 	wrapped := fmt.Errorf("read challenge: %w", err)

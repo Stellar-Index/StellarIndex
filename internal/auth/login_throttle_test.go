@@ -13,11 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// redisOutage is a go-redis hook that fails every command with a
-// transport error, on demand. Cheaper and far more deterministic than
-// killing the miniredis server (go-redis spends ~0.8s per call
-// rediscovering that a dead address is dead), and it reproduces the
-// exact thing the throttle sees during an outage: Incr returns an error.
+// redisOutage is a go-redis hook that fails every command with a transport error on demand: faster and more deterministic than killing miniredis, and exactly what the throttle sees in an outage.
 type redisOutage struct{ down atomic.Bool }
 
 func (h *redisOutage) DialHook(next redis.DialHook) redis.DialHook { return next }
@@ -49,14 +45,8 @@ func newLoginThrottle(t *testing.T, opts auth.LoginThrottleOptions) (*auth.Redis
 	return auth.NewRedisLoginThrottle(rdb, opts), outage
 }
 
-// TestLoginThrottle_PerEmailCapIsCaseAndWhitespaceInsensitive is the LOW
-// finding: hashEmail normalises (lower-case + trim) internally, so the
-// per-target-email cap can't be walked by re-spelling the address. Hashing raw
-// bytes would put "Victim@X.com " and "victim@x.com"
-// landed on DIFFERENT buckets and each got a fresh budget — the caller
-// happened to lower-case, but the throttle's own invariant was not
-// self-enforcing. Against a MaxPerEmail=2 cap, four sends split across two
-// spellings of one inbox must be denied once the shared bucket is full.
+// TestLoginThrottle_PerEmailCapIsCaseAndWhitespaceInsensitive: hashEmail normalises internally, so re-spelling ("Victim@X.com " vs "victim@x.com") cannot walk the per-email cap;
+// with MaxPerEmail=2, four sends across two spellings of one inbox must be denied once the shared bucket is full.
 func TestLoginThrottle_PerEmailCapIsCaseAndWhitespaceInsensitive(t *testing.T) {
 	tt, _ := newLoginThrottle(t, auth.LoginThrottleOptions{
 		MaxPerIP:    100, // isolate the per-email dimension
@@ -114,23 +104,8 @@ func TestLoginThrottle_AllowsUpToCapThenDenies(t *testing.T) {
 	}
 }
 
-// TestLoginThrottle_EmailBombIsCappedDuringRedisOutage is the attack
-// regression for a Redis outage.
-//
-// Attack: knock Redis over (or simply wait for a fail-over — an attacker
-// does not need to cause the outage, only to notice it) and then POST
-// /v1/auth/login for one victim's address in a loop. If each call
-// returned (false, <redis error>), the handler's fail-open branch would
-// fire on the non-nil error and a magic-link email would go out EVERY
-// time: the per-target-email cap this type exists to enforce would be
-// absent for the whole outage. The blast radius is the victim's inbox
-// plus the deployment's sender reputation and email quota, both of which
-// outlive the outage.
-//
-// The in-process fallback keeps counting, so the send stops at the same
-// cap. The assertion is on the exact contract the handler
-// reads: (false, nil) — a definitive DENY. (false, err) would NOT do,
-// because the handler inspects the error first and would send anyway.
+// TestLoginThrottle_EmailBombIsCappedDuringRedisOutage: an attacker who notices a Redis outage POSTs /v1/auth/login for one victim in a loop; if each call returned (false, <redis error>) the handler's fail-open branch would send a magic link EVERY time.
+// The in-process fallback keeps counting so sends stop at the cap, and the contract asserted is (false, nil), a definitive DENY, since the handler inspects the error first.
 func TestLoginThrottle_EmailBombIsCappedDuringRedisOutage(t *testing.T) {
 	tt, redisDown := newLoginThrottle(t, auth.LoginThrottleOptions{
 		MaxPerIP:    100, // isolate the per-EMAIL dimension
@@ -213,15 +188,8 @@ func TestLoginThrottle_RedisBlipStillSendsWithinCap(t *testing.T) {
 	}
 }
 
-// TestLoginThrottle_IPv6RotationWithinSlash64CannotEvadeCap is the
-// IPv6-keying check (the same class the API middleware guards against).
-//
-// Attack: an attacker with ANY delegated IPv6 /64 — the standard
-// residential/VPS allocation — sources each request from a different
-// /128 inside it. Keying on the full address would put every request in
-// a pristine bucket and the per-IP magic-link cap would cost nothing to
-// bypass: 2^64 free buckets. The key is the /64, so the whole allocation
-// shares one budget.
+// TestLoginThrottle_IPv6RotationWithinSlash64CannotEvadeCap: an attacker with a delegated /64 sourcing each request from a different /128 would get a pristine bucket each if keyed on the full address;
+// the key is the /64, so the allocation shares one budget.
 func TestLoginThrottle_IPv6RotationWithinSlash64CannotEvadeCap(t *testing.T) {
 	tt, _ := newLoginThrottle(t, auth.LoginThrottleOptions{
 		MaxPerIP:    2,

@@ -13,16 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 )
 
-// TestHandleEvent_EntryCountFollowsTheLandedInsert pins the ordering the
-// four inline handleEvent cases share with every persist helper: the
-// `entries` bump runs only AFTER the row landed. Bumping ahead of the
-// insert would count one entry per infra-retry attempt of the same
-// event, and one for a row the store then rejects.
-//
-// The seam is the nil store the validation-reject tests already use: each
-// store.Insert* rejects an empty TxHash in Go before touching the pool, so
-// the corrected order surfaces that verdict, whereas a bump ahead of it
-// dereferences the nil store — recovered by handleEvent as ErrSinkPanic.
+// TestHandleEvent_EntryCountFollowsTheLandedInsert: the `entries` bump must run only AFTER the row landed, or infra retries and rejected rows over-count.
+// The nil store makes the order observable: a correct order surfaces the empty-TxHash rejection, a bump ahead of it dereferences nil (ErrSinkPanic).
 func TestHandleEvent_EntryCountFollowsTheLandedInsert(t *testing.T) {
 	cases := []struct {
 		name string
@@ -49,11 +41,8 @@ func TestHandleEvent_EntryCountFollowsTheLandedInsert(t *testing.T) {
 	}
 }
 
-// TestHandleEvent_PermanentlyInvalidTradeReturnsDrop drives the PRODUCTION
-// entry point the projector's sink is bound to (cmd/stellarindex-indexer:
-// sinkFn → pipeline.HandleEvent). A zero-value trade fails
-// canonical.Trade.Validate inside Store.InsertTrade before any SQL runs, so
-// a nil store is never dereferenced.
+// TestHandleEvent_PermanentlyInvalidTradeReturnsDrop drives the production entry point the projector's sink binds (pipeline.HandleEvent);
+// a zero-value trade fails Validate before any SQL, so the nil store is never dereferenced.
 func TestHandleEvent_PermanentlyInvalidTradeReturnsDrop(t *testing.T) {
 	ev := soroswap.TradeEvent{Trade: canonical.Trade{Source: "soroswap", Ledger: 703}}
 	err := HandleEvent(context.Background(), discardLogger(), nil, ev)

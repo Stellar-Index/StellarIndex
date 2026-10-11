@@ -11,11 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Intra-ledger apply order — the live half of migration 0196's
-// trades.tx_index. Same shape as RunSignerTagger: trades rows are written by
-// the projector and the dispatcher, neither of which sees the tx's position
-// in its ledger, so a first-wins trailing-window sweep back-tags it from the
-// lake. Unlike signer it covers every on-chain source (ledger > 0).
+// Intra-ledger apply order sweep (trades.tx_index): the projector and dispatcher never see a tx's position in its ledger, so a first-wins trailing-window sweep back-tags it from the lake, like RunSignerTagger but for every on-chain source.
 
 const (
 	txIndexSweepInterval = time.Minute

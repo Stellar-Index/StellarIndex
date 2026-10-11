@@ -14,25 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// PostgresAPIKeyValidator reads keys from the Postgres
-// `api_keys` table (the dashboard's source of truth) with an
-// optional Redis read-through cache.
-//
-// Redis-only keys (minted by the retired `/v1/signup`) also work — their
-// canonical `apikey:<hash>` records are consulted before Postgres, so the
-// validator transparently serves both populations.
-//
-// On a Postgres-served lookup the result is written back into
-// the read-through cache (`apikey-cache:<hash>`, cacheTTL) so
-// subsequent requests for the same key short-circuit at Redis. The
-// cache has its own namespace so the redis-backend validator never
-// reads a cache row as a credential. The dashboard's Revoke handler
-// evicts both keys via [PostgresAPIKeyValidator.InvalidateCachedKey].
-//
-// On Redis I/O failures we degrade-not-fail: a transient cache
-// outage still authenticates calls via Postgres directly. The
-// inverse is not true — Postgres being down means nobody
-// authenticates (the keys table is the source of truth).
+// PostgresAPIKeyValidator reads keys from the Postgres `api_keys` table (source of truth) with an optional Redis read-through cache (`apikey-cache:<hash>`, cacheTTL, its own namespace so the redis validator never reads it as a credential).
+// Canonical `apikey:<hash>` records (retired /v1/signup) are consulted first. Revoke evicts via InvalidateCachedKey. Redis failures degrade to Postgres; Postgres down means nobody authenticates.
 type PostgresAPIKeyValidator struct {
 	keys     platform.APIKeyStore
 	accounts platform.AccountStore
@@ -117,14 +100,8 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 		}
 		return Subject{}, fmt.Errorf("auth: postgres lookup: %w", err)
 	}
-	// [platform.APIKey.IsActive] is the single source of truth for "may
-	// this key authenticate". Re-implementing its revoked/expired
-	// predicate inline here would create a second copy that a future change to the platform rule
-	// (grace periods, a `disabled_at` column, an inclusive-vs-exclusive
-	// expiry boundary) would silently leave behind, on the one path where
-	// being wrong means authenticating a dead credential. The field checks
-	// below only CLASSIFY an already-made rejection into the right
-	// sentinel; they never decide it.
+	// platform.APIKey.IsActive is the single source of truth for "may this key authenticate"; re-implementing the revoked/expired predicate here would leave a stale copy on the path where being wrong authenticates a dead credential.
+	// The field checks below only classify an already-made rejection into a sentinel.
 	if !pgKey.IsActive(v.now()) {
 		if !pgKey.RevokedAt.IsZero() {
 			return Subject{}, ErrUnauthorized
@@ -142,42 +119,12 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 		return Subject{}, ErrUnauthorized
 	}
 
-	// Monthly-quota cascade. The account-level override
-	// (accounts.monthly_request_quota_override) is the operator's
-	// hard CEILING — the customer can only ever LOWER their cap
-	// beneath it, never raise it. This is the deliberate
-	// symmetric-opposite of the rate-limit override below (which is a
-	// FLOOR that only raises).
-	//
-	//   - per-key 0 (default/inherit): fall back to the account
-	//     override. If that's also 0 the middleware's
-	//     `MonthlyQuota <= 0` short-circuit leaves the request unmetered.
-	//   - per-key > 0 AND override > 0: use min(per-key, override) so
-	//     an override always clamps a per-key value budgeted above it,
-	//     including keys persisted without the dashboard's mint-time clamp.
-	//   - per-key > 0 AND override 0: honour the per-key value (the
-	//     dashboard already clamped it to the tier ceiling at mint).
-	//
-	// The cascade lives on platform.Account so the account views that
-	// report "your limit" resolve it exactly as enforced here.
+	// Monthly-quota cascade: the account override (accounts.monthly_request_quota_override) is a hard CEILING the customer can only lower beneath, the opposite of the rate-limit FLOOR below.
+	// Per-key 0 falls back to the override (both 0 = unmetered); per-key > 0 with override > 0 uses min(); per-key > 0 with override 0 is honoured. The cascade lives on platform.Account so account views report what is enforced.
 	monthlyQuota := acct.ResolveKeyMonthlyQuota(pgKey.MonthlyQuota)
 
-	// Account-level rate-limit override (accounts.
-	// rate_limit_per_min_override, "when set, replaces the tier
-	// default"). Symmetric with the monthly-quota cascade above, but
-	// the per-key `rate_limit_per_min` column is NOT NULL CHECK (> 0)
-	// — it's never the zero sentinel that the quota cascade keys on —
-	// so the override can't be a "fall back when per-key is unset"
-	// rule here. Instead it acts as an account-wide FLOOR: the staff
-	// override raises every key that would otherwise be below it (an
-	// operator comps an enterprise account to 100k/min without
-	// touching each key), while a key explicitly budgeted ABOVE the
-	// override keeps its higher value. Monotonic by construction — an
-	// override only ever raises the effective budget, so it can never
-	// silently shrink a customer's paid-for limit. Effective
-	// immediately for cache-miss lookups; cache hits inherit the
-	// resolved value on the next Postgres read after the cache TTL
-	// (same staleness window the monthly-quota override has).
+	// Account rate-limit override (rate_limit_per_min_override): the per-key column is NOT NULL CHECK (> 0), so there is no unset sentinel and the override acts as an account-wide FLOOR that raises lower keys,
+	// while a key budgeted above it keeps its value; it only ever raises the budget, never shrinking a paid limit. Cache hits pick it up after the cache TTL, like the quota override.
 	rateLimit := acct.ResolveKeyRateLimitPerMin(pgKey.RateLimitPerMin)
 	sub := Subject{
 		Identifier:          AccountIdentifier(acct.Slug),
@@ -208,14 +155,8 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 	return sub, nil
 }
 
-// cacheLookup returns (Subject, hit, sentinelErr). hit=false
-// means "miss or transient cache failure — fall through to
-// Postgres". When hit=true the second return is the sentinel the
-// caller should propagate (or nil for a successful auth).
-//
-// The canonical `apikey:` record (retired /v1/signup keys, /v1/register
-// mirrors) is read before the `apikey-cache:` row: it is the one that
-// can carry revoked_at, so a derived cache row never shadows it.
+// cacheLookup returns (Subject, hit, sentinelErr): hit=false means miss or transient failure (fall through to Postgres); on hit the error is the sentinel to propagate or nil.
+// The canonical `apikey:` record is read before the `apikey-cache:` row because it can carry revoked_at, so a derived cache row never shadows it.
 func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash string) (Subject, bool, error) {
 	rec, ok := v.readRecord(ctx, cachekeys.APIKey(hexHash).String())
 	if !ok {
@@ -299,11 +240,7 @@ redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
 return 1
 `)
 
-// cacheStore writes the Postgres-derived Subject into Redis with the
-// configured TTL, as the exact record [subjectFromRecord] reads back.
-// The write is skipped while an eviction tombstone lives, so a revoke or
-// suspension that commits mid-lookup is not overwritten by this lookup's
-// older Postgres read (see [evictCachedKey]).
+// cacheStore writes the Postgres-derived Subject to Redis with the configured TTL, skipped while an eviction tombstone lives so a revoke or suspension committed mid-lookup is not overwritten by an older read (see evictCachedKey).
 func (v *PostgresAPIKeyValidator) cacheStore(ctx context.Context, hexHash string, sub Subject) {
 	body, err := json.Marshal(recordFromSubject(sub))
 	if err != nil {
@@ -375,15 +312,8 @@ func hexNibble(c byte) (byte, error) {
 	return 0, fmt.Errorf("auth: invalid hex byte %q", c)
 }
 
-// InvalidateCachedKey removes a key's Redis records — the read-through
-// cache row and any canonical `apikey:` record (see [evictCachedKey]).
-// Called by the dashboard's Revoke handler so a revoked key stops
-// authenticating without waiting for the cache TTL to roll it off.
-//
-// hexHash is the SHA-256 of the plaintext, hex-encoded. Callers
-// who only have a key_id need to look up the hash from
-// platform.APIKeyStore.Get first — we don't add a Get-by-id
-// here because the dashboard handler already has the row.
+// InvalidateCachedKey removes a key's cache row and any canonical `apikey:` record (see evictCachedKey), so a revoked key stops authenticating without waiting for the TTL;
+// hexHash is the SHA-256 of the plaintext, hex-encoded.
 func (v *PostgresAPIKeyValidator) InvalidateCachedKey(ctx context.Context, hexHash string) error {
 	if v.cache == nil {
 		return nil

@@ -14,12 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestEmitDispatcherMetricDeltas_UnknownContractDropsWiring pins
-// a decoder-reported UnknownContractDrops delta (a fully
-// decoded event dropped for want of a pair/pool token mapping — see
-// soroswap.Decoder.UnknownContractDrops / sushiswap_v3.Decoder.
-// UnknownContractDrops) must reach obs.SourceDecodeErrorsTotal. Without
-// this wiring the drop would reach no metric at all.
+// TestEmitDispatcherMetricDeltas_UnknownContractDropsWiring: a decoder-reported UnknownContractDrops delta must reach obs.SourceDecodeErrorsTotal, or the drop reaches no metric.
 func TestEmitDispatcherMetricDeltas_UnknownContractDropsWiring(t *testing.T) {
 	const source = "soroswap"
 	before := testutil.ToFloat64(obs.SourceDecodeErrorsTotal.WithLabelValues(source))

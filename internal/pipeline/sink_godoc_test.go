@@ -6,12 +6,7 @@ import (
 	"testing"
 )
 
-// TestPersistEventsGodocMatchesConcurrencyModel guards sink.go's
-// PersistEvents godoc against claiming, in the same comment block, both that
-// "One goroutine drains; per-event work is sequential" and that
-// PersistEvents "launches [PersistWorkers] concurrent drain goroutines"
-// (PersistWorkers == 8). The single-goroutine language is stale --
-// confirm it stays gone.
+// TestPersistEventsGodocMatchesConcurrencyModel keeps the stale "One goroutine drains" language out of PersistEvents' godoc, which launches PersistWorkers (8) concurrent drains.
 func TestPersistEventsGodocMatchesConcurrencyModel(t *testing.T) {
 	src, err := os.ReadFile("sink.go")
 	if err != nil {

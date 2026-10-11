@@ -14,11 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// TestCreateCapped_ConcurrentBurstMintsOnlyToCeiling pins
-// An identifier one key below its ceiling fires a
-// concurrent burst of self-service mints. A count taken apart from the
-// write lets every request read 24 < 25 and mint; the capped create must
-// issue exactly one key and refuse the rest.
+// TestCreateCapped_ConcurrentBurstMintsOnlyToCeiling: an identifier one key below its ceiling firing a concurrent burst must get exactly one key;
+// a count taken apart from the write would let every request read 24 < 25 and mint.
 func TestCreateCapped_ConcurrentBurstMintsOnlyToCeiling(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), PoolSize: 64})

@@ -30,11 +30,7 @@ const (
 
 var testJWTSecret = []byte("test-jwt-secret-must-be-32-bytes-or-more!!")
 
-// newTestValidator constructs a Validator with a freshly-generated
-// server keypair, testnet passphrase, and a deterministic clock.
-// Returns the validator + the server keypair (so tests can introspect
-// the server account address) + a clock-mover. Every client account
-// is absent from its signer lookup, i.e. not yet on chain.
+// newTestValidator builds a Validator with a fresh server keypair, testnet passphrase and deterministic clock; returns the validator, server keypair and a clock-mover. Every client account is absent from signer lookup (not on chain).
 func newTestValidator(t *testing.T) (*sep10.Validator, *keypair.Full, *fakeClock) {
 	t.Helper()
 	return newTestValidatorWithAccounts(t, fakeAccounts{})
@@ -258,11 +254,7 @@ func TestVerify_RejectsWrongSigner(t *testing.T) {
 	}
 }
 
-// TestVerify_RejectsExpiredChallenge — a challenge whose time-bound
-// window has already passed (constructed with a ~200ms TTL + sleep)
-// fails with ErrTokenExpired. Real-time-based because the SDK's
-// VerifyChallengeTxSigners reads time.Now() directly rather than an
-// injected clock.
+// TestVerify_RejectsExpiredChallenge: a challenge past its time bounds (~200ms TTL + sleep) fails with ErrTokenExpired. Real-time, because the SDK reads time.Now() directly.
 func TestVerify_RejectsExpiredChallenge(t *testing.T) {
 	server, _ := keypair.Random()
 	v, err := sep10.NewValidator(sep10.Options{
@@ -358,13 +350,7 @@ func TestVerifyJWT_ExpiredToken(t *testing.T) {
 	}
 }
 
-// TestVerifyJWT_RejectsFutureNbf pins that VerifyJWT checks the
-// `nbf` (not-before) claim issueJWT stamps, not only `exp`, so a token whose
-// validity window hasn't opened yet is rejected. Here we mint a
-// token at t0 and verify it from a clock BEFORE t0 — its nbf (== iat == t0)
-// is in the future, so it must be rejected. Mirrors the exp check's strict
-// (no-leeway) posture; the error is a wrap of ErrUnauthorized per VerifyJWT's
-// documented "any other validation failure" vocabulary.
+// TestVerifyJWT_RejectsFutureNbf: VerifyJWT checks nbf, not only exp. A token minted at t0 and verified from a clock before t0 has a future nbf and must be rejected, wrapping ErrUnauthorized.
 func TestVerifyJWT_RejectsFutureNbf(t *testing.T) {
 	v, _, clk := newTestValidator(t)
 	client, _ := keypair.Random()
@@ -657,13 +643,7 @@ func TestVerify_ReplayGuard_RejectsSecondRedemption(t *testing.T) {
 	}
 }
 
-// TestVerify_ReplayGuard_EvictedMarkerFailsClosed pins eviction
-// handling. R1's Redis runs `maxmemory-policy allkeys-lru`, which can
-// evict ANY key before its TTL. With a bare SETNX spent-marker, an
-// evicted marker re-opens the slot: a captured signed XDR replayed after
-// the eviction finds it free and mints a second JWT. The guard must
-// instead require a marker reserved at challenge issuance, so an
-// eviction refuses the redemption rather than re-admitting a replay.
+// TestVerify_ReplayGuard_EvictedMarkerFailsClosed: under allkeys-lru an evicted bare SETNX marker re-opens the slot for a replayed XDR; the guard must require a marker reserved at issuance so eviction refuses the redemption.
 func TestVerify_ReplayGuard_EvictedMarkerFailsClosed(t *testing.T) {
 	ctx := context.Background()
 
@@ -703,11 +683,7 @@ func TestVerify_ReplayGuard_EvictedMarkerFailsClosed(t *testing.T) {
 	})
 }
 
-// reorderSignatures re-serialises signedXDR with its two decorated
-// signatures swapped. Same transaction, same signatures, same canonical
-// hash — a different byte string. No forgery is involved: the envelope's
-// signature list simply has no canonical order, and the SEP-10 verifier
-// accepts either arrangement (confirmed against the SDK in-tree).
+// reorderSignatures re-serialises signedXDR with its two decorated signatures swapped: same transaction and hash, different bytes, and the verifier accepts either order.
 func reorderSignatures(t *testing.T, signedXDR string) string {
 	t.Helper()
 	gtx, err := txnbuild.TransactionFromXDR(signedXDR)
@@ -731,25 +707,8 @@ func reorderSignatures(t *testing.T, signedXDR string) string {
 	return out
 }
 
-// TestVerify_ReplayGuard_RejectsReEncodedChallenge is the
-// re-encoding attack.
-//
-// Attack: an attacker who captures ONE signed challenge XDR (e.g. an XSS
-// exfil from a client wallet) redeems it,
-// then re-submits the SAME transaction under a different SPELLING. Two
-// independent re-spellings are verified here, both confirmed against
-// this SDK to sail through ReadChallengeTx + VerifyChallengeTxSigners
-// unchanged:
-//
-//   - swapping the order of the envelope's two decorated signatures
-//     (XDR imposes no canonical order and the verifier is order-blind);
-//   - inserting a newline into the base64 (Go's decoder, which the SDK's
-//     XDR unmarshal uses, skips "\r"/"\n").
-//
-// A dedupe key of SHA-256 of the submitted STRING would let every
-// re-spelling claim a fresh unused slot, minting a JWT per submission for
-// the whole challenge window. The key is the parsed transaction's
-// canonical hash, which no re-encoding changes.
+// TestVerify_ReplayGuard_RejectsReEncodedChallenge: an attacker redeems a captured signed XDR, then resubmits the same transaction re-spelled (swapped signature order, or a newline in the base64, which Go's decoder skips).
+// Both pass the SDK verifiers unchanged, so a dedupe key of SHA-256 of the submitted string would mint a JWT per spelling; the key is the parsed transaction's canonical hash.
 func TestVerify_ReplayGuard_RejectsReEncodedChallenge(t *testing.T) {
 	v, _ := newReplayValidator(t)
 	client, _ := keypair.Random()

@@ -12,21 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// ProcessLedger runs the dispatcher over one LedgerCloseMeta and
-// forwards every emitted event to the supplied sink channel.
-//
-// Error paths:
-//
-//   - Dispatcher returns an error (malformed LCM, reader build
-//     failure, decoder panic surfaced through the recover boundary):
-//     logged at WARN, then returned to the caller unchanged so the
-//     caller can refuse cursor advancement for that ledger.
-//   - ctx is canceled while pushing events: ctx.Err() is returned.
-//     The caller (typically a streamer goroutine) treats this as
-//     shutdown.
-//
-// Caller responsibility: cursor persistence + cursor metric. Those
-// must happen only after ProcessLedger returns nil for the ledger.
+// ProcessLedger runs the dispatcher over one LedgerCloseMeta and forwards each emitted event to sink.
+// A dispatcher error is logged and returned unchanged so the caller refuses cursor advancement; ctx cancellation returns ctx.Err() (shutdown).
+// The caller persists the cursor only after a nil return.
 func ProcessLedger(
 	ctx context.Context,
 	disp *dispatcher.Dispatcher,
@@ -86,11 +74,8 @@ func emitDispatcherMetricDeltas(before, after dispatcher.Stats) {
 		}
 		obs.SourceOrphanEventsTotal.WithLabelValues(source).Add(float64(delta))
 	}
-	// A completed, priced event dropped for want of a pair/pool token
-	// mapping: the body decoded cleanly, so it never touches
-	// the DecodeErrors path above, but it is the same class of lost
-	// data — count it against the same budget rather than leaving it
-	// with no signal at all.
+	// A priced event dropped for want of a pair/pool token mapping decoded cleanly, so it bypasses the DecodeErrors path above;
+	// count it against the same budget so the loss is not silent.
 	for source, n := range after.UnknownContractDrops {
 		delta := n - before.UnknownContractDrops[source]
 		if delta <= 0 {

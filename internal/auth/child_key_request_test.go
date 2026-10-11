@@ -14,11 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// TestChildKeyRequest_InheritsEveryField is the completeness guard for the
-// delegation chokepoint: with every parent dimension set, no field of the
-// resulting mint request may be left zero. A field added to
-// CreateAPIKeyRequest without an inheritance line fails here, because a
-// zero there reads as "unlimited" or "never expires".
+// TestChildKeyRequest_InheritsEveryField: with every parent dimension set, no field of the mint request may be zero; a field added without an inheritance line would read as unlimited or never-expiring.
 func TestChildKeyRequest_InheritsEveryField(t *testing.T) {
 	parent := Subject{
 		Identifier:      "acct-parent",

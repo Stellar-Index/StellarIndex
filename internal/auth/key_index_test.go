@@ -18,18 +18,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// These tests cover what the cost test cannot: the states in which the
-// API-key lookup index is NOT simply present and right.
-// Each one is a way a lookup index turns a cost defect into a security
-// one — a live credential that list / revoke / the tier clamp cannot
-// see — so each asserts that the credential is still found and still
-// dies on revoke.
+// These tests cover the states where the API-key lookup index is NOT simply present and right; each is a way an index turns a cost defect into a security one (a live credential that list, revoke and the tier clamp cannot see),
+// so each asserts the credential is still found and still dies on revoke.
 
-// indexDenier is a go-redis hook that rejects every command naming a
-// key of the `apikey-index:*` family, the way a lockdown Redis ACL that
-// has not been given `~apikey-index:*` does. The reply text is the one
-// a real server sends (see test/integration/redis_test.go,
-// which proves the same behaviour against redis-server itself).
+// indexDenier is a go-redis hook rejecting every command naming an `apikey-index:*` key, like a lockdown ACL lacking `~apikey-index:*`; the reply text is a real server's (see test/integration/redis_test.go).
 type indexDenier struct {
 	deny   atomic.Bool
 	denied atomic.Int64
@@ -169,11 +161,7 @@ func sameKeyIDs(got []string, want ...string) bool {
 	return true
 }
 
-// TestKeyIndex_ACLDenied_IssuanceAndRevocationStillWork is the rollout
-// state: the binary is deployed, the Redis ACL template that admits
-// `apikey-index:*` has not been applied. Issuance must not go down,
-// and — the half that matters — a key minted in this state must be
-// listable and REVOCABLE, both before and after the ACL is applied.
+// TestKeyIndex_ACLDenied_IssuanceAndRevocationStillWork covers the rollout state (binary deployed, ACL not yet applied): issuance must not go down, and a key minted then must be listable and REVOCABLE before and after the ACL is applied.
 func TestKeyIndex_ACLDenied_IssuanceAndRevocationStillWork(t *testing.T) {
 	f := newKeyIndexFixture(t)
 	ctx := context.Background()
@@ -222,11 +210,7 @@ func TestKeyIndex_ACLDenied_IssuanceAndRevocationStillWork(t *testing.T) {
 	}
 }
 
-// TestKeyIndex_EvictionFallsBackInsteadOfHidingKeys pins the reason the
-// index is ONE hash. Production Redis runs allkeys-lru: if the index
-// is evicted its `ready` marker must go with it, so the next lookup
-// rebuilds instead of trusting an empty index and reporting that a
-// live credential does not exist.
+// TestKeyIndex_EvictionFallsBackInsteadOfHidingKeys pins why the index is ONE hash: under allkeys-lru an evicted index must take its `ready` marker with it, so the next lookup rebuilds instead of trusting an empty index and reporting a live credential absent.
 func TestKeyIndex_EvictionFallsBackInsteadOfHidingKeys(t *testing.T) {
 	f := newKeyIndexFixture(t)
 	ctx := context.Background()

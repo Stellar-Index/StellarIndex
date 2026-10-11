@@ -92,12 +92,7 @@ func TestMarkEmailVerified_RejectsEmptyKeyID(t *testing.T) {
 	}
 }
 
-// TestMarkEmailVerified_PreservesMirroredKeyTTL pins the TTL:
-// the /v1/signup/verify handler calls this on a register-mirrored key,
-// which is written with the sliding idle TTL (MirroredKeyIdleTTL). A
-// write-back of `SET ... 0` would clear that TTL — the customer's
-// FIRST click on the verification link would turn their open-registration
-// key permanent, defeating the idle-expiry bound.
+// TestMarkEmailVerified_PreservesMirroredKeyTTL: the write-back must keep the sliding idle TTL; `SET ... 0` would make the key permanent on the first verification click, defeating idle-expiry.
 func TestMarkEmailVerified_PreservesMirroredKeyTTL(t *testing.T) {
 	store, mr, _ := newTestStore(t)
 	ctx := context.Background()

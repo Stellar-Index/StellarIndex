@@ -11,30 +11,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// upsertHookTimeout caps how long the live new_pair upsert is allowed
-// to block the dispatcher's ledger goroutine. A locally-attached
-// postgres handles a single bound INSERT in sub-millisecond — the 2s
-// ceiling exists for the pathological case (postgres in failover,
-// network blip). A timeout is preferable to dropping the upsert
-// silently because the in-memory registry already absorbed the new
-// pair; any upsert miss only matters for FUTURE backfill chunks /
-// indexer restarts and we'd want the operator to see the warning.
+// upsertHookTimeout caps how long the live new_pair upsert may block the dispatcher's ledger goroutine (sub-millisecond normally; 2s covers failover).
+// A timeout beats a silent drop because the in-memory registry already has the pair and only future backfills or restarts miss it.
 const upsertHookTimeout = 2 * time.Second
 
-// SoroswapPersistenceOptions returns the soroswap.DecoderOption slice
-// the indexer + every parallel backfill chunk should pass to
-// [BuildDispatcher] when soroswap is in the enabled-sources list.
-//
-//  1. WithSeededPairTokensDecoder — preloaded from the soroswap_pairs table
-//     (empty is fine; run `stellarindex-ops seed-soroswap-pairs` once to bootstrap).
-//  2. WithPairUpsertHook — bound to store.UpsertSoroswapPair so every live
-//     factory new_pair event persists to the table the next load reads.
-//
-// Both, because the live in-memory pair registry is invisible to parallel
-// backfill workers and restarts (migrations/0016_create_soroswap_pairs.up.sql).
-//
-// hookCtx is the parent context of every UpsertSoroswapPair call; pass the
-// binary's root context.
+// SoroswapPersistenceOptions returns the soroswap.DecoderOption slice for [BuildDispatcher] when soroswap is enabled: seeded pair tokens from soroswap_pairs plus an upsert hook for live new_pair events,
+// both because the in-memory registry is invisible to parallel backfill workers and restarts. hookCtx parents every upsert; pass the root context.
 func SoroswapPersistenceOptions(
 	ctx context.Context,
 	store *timescale.Store,

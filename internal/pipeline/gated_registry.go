@@ -22,35 +22,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// GatedMeta is the per-source description a factory-anchored decoder
-// (ADR-0035) needs to seed its contractid.Registry: the trust-root factory
-// SET (a protocol can have several factories — e.g. Blend was redeployed),
-// the topic[0] name of the factories' creation event (which announces a new
-// child), the genesis ledger (lower bound for the deploy walk across all
-// factories), and a constructor that builds the source's decoder with
-// contractid (child-gate) options applied.
+// GatedMeta describes a factory-anchored decoder (ADR-0035): its trust-root factory SET, the creation event's topic[0] name,
+// the genesis ledger bounding the deploy walk, and a constructor applying contractid child-gate options.
 type GatedMeta struct {
 	Factories []string // canonical factory C-strkeys (gate trust roots); empty for curated-only sources
-	// CreationSym is the creation event's topic[0] NAME (e.g. "deploy").
-	// Empty for curated-only sources. It is matched against the lake in
-	// both on-wire encodings — the topic_0_sym column (Symbol topics) and
-	// the ScvString encoding in topics_xdr[1] (String topics, e.g.
-	// phoenix's "create", for which topic_0_sym is always empty). See
-	// internal/storage/clickhouse/event_reader.go topic0Predicate.
+	// CreationSym is the creation event's topic[0] name, empty for curated-only sources. Matched against both on-wire encodings
+	// (topic_0_sym and the ScvString in topics_xdr[1]; phoenix's String topics leave topic_0_sym empty): see event_reader.go topic0Predicate.
 	CreationSym string
 	Genesis     uint32 // earliest factory deploy ledger; lower bound for the walk
-	// CuratedSet is the in-code curated child set for sources with NO
-	// factory namespace (ADR-0040 §1 mechanism 3 — comet,
-	// blend_emitter, upshift), and for a factory-declared source whose
-	// creation events are untrusted and never admit a child (defindex).
-	// It is the source's whole trust root: nothing discovers these
-	// contracts at runtime. GatedRegistryOptions seeds it into every
-	// warmed registry and (on the indexer path) reconciles it into
-	// protocol_contracts with provenance factory_id = CuratedFactoryID;
-	// seed-protocol-contracts upserts the same set through the same
-	// writer. A curated-only entry (Factories empty) with an empty
-	// CuratedSet declares a gate with no trust root and is rejected —
-	// see TestGatedSources_curatedOnlyDeclaresTrustRoot.
+	// CuratedSet is the in-code trust root for sources with no factory namespace (ADR-0040 mechanism 3) or untrusted creation events (defindex);
+	// nothing discovers these at runtime. It is seeded into every warmed registry and reconciled into protocol_contracts as CuratedFactoryID.
+	// A curated-only entry with an empty set is rejected (TestGatedSources_curatedOnlyDeclaresTrustRoot).
 	CuratedSet []string
 	// NewDecoder builds the source's decoder with the given contractid
 	// options (WithSeed / WithHook). Returned as a dispatcher.Decoder so
@@ -58,59 +40,27 @@ type GatedMeta struct {
 	NewDecoder func(opts ...contractid.Option) dispatcher.Decoder
 }
 
-// gatedSources is the registry of contract-gated sources. Adding one is
-// four edits: an entry here, the decoder's Matches() gate, the NewDecoder
-// call in BuildDispatcher + BuildRegistry (forwarding gated[source]), and
-// the reconcile-catalogue factory/creationSym fields.
-//
-// Soroswap is NOT here — it keeps its richer soroswap_pairs registry (it
-// carries token identities, not just a contract set); see
-// SoroswapPersistenceOptions.
+// gatedSources is the registry of contract-gated sources. Adding one: an entry here, the decoder's Matches() gate,
+// the NewDecoder call in BuildDispatcher + BuildRegistry (forwarding gated[source]), and the reconcile-catalogue fields. Soroswap keeps its own soroswap_pairs registry.
 var gatedSources = map[string]GatedMeta{
 	comet.SourceName: {
-		// Curated-set gate (ADR-0040 §1 mechanism 3): comet has NO
-		// factory namespace — every
-		// Balancer-v1 deployment shares the ("POOL",…) topic family —
-		// so there is no creation event to anchor on. The decoder's
-		// in-code seed (MainnetGatedSet: exactly one pool, Blend's
-		// backstop) is the trust root; this entry adds the
-		// protocol_contracts warm (the operator seam for admitting a
-		// future pool without a redeploy). The WASM-hash sweep is the
-		// registered upkeep loop for discovering byte-identical pools.
+		// Curated-set gate (ADR-0040 mechanism 3): comet has no factory namespace (every Balancer-v1 deployment shares the ("POOL",...) topics),
+		// so the decoder's in-code MainnetGatedSet is the trust root; this entry adds the protocol_contracts warm.
 		Genesis:    51_499_546,
 		CuratedSet: comet.MainnetGatedSet(),
 		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder { return comet.NewDecoder(opts...) },
 	},
 	blend_emitter.SourceName: {
-		// Curated-set gate (ADR-0040 §1 mechanism 3), same shape as
-		// comet: the Emitter has NO factory namespace — a single
-		// canonical mainnet instance spanning Blend V1→V2, no
-		// creation event to anchor on. The decoder's in-code seed
-		// (MainnetGatedSet: exactly the one known mainnet Emitter)
-		// is the trust root; this entry adds the protocol_contracts
-		// warm (the operator seam for admitting a future instance
-		// without a redeploy). Genesis is the earliest observed
-		// Emitter event on the lake (the ledger-51,499,914 `drop`
-		// airdrop).
+		// Curated-set gate (ADR-0040 mechanism 3) like comet: one canonical mainnet Emitter, no creation event; MainnetGatedSet is the trust root.
+		// Genesis is the earliest Emitter event on the lake.
 		Genesis:    51_499_914,
 		CuratedSet: blend_emitter.MainnetGatedSet(),
 		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder { return blend_emitter.NewDecoder(opts...) },
 	},
 	phoenix.SourceName: {
-		// Factory-anchored gate (ADR-0040 §1 mechanism 1): the decoder admits each pool
-		// announced by the factory's ("create","liquidity_pool") events (lake from
-		// ledger 51,572,026; captures in test/fixtures/phoenix/factory-create). The
-		// in-code MainnetGatedSet is the cold-start warm root; this entry adds the
-		// protocol_contracts warm + live-upsert hook so admitted pools are durable.
-		//
-		// CreationSym is the ScvString "create", not a Symbol: the lake's topic_0_sym
-		// column is empty for these rows, which is why the prefilter also matches
-		// topics_xdr (internal/storage/clickhouse/event_reader.go topic0Predicate).
-		//
-		// CuratedSet carries only the stake contracts: the factory announces pools,
-		// never the stake contract a pool deploys (see NewDecoder's doc), so without a
-		// trust root here nothing writes them to protocol_contracts. Pools already have
-		// the factory as their root.
+		// Factory-anchored gate (ADR-0040 mechanism 1): pools announced by the factory's ("create","liquidity_pool") events.
+		// CreationSym is the ScvString "create" (topic_0_sym is empty for these rows, hence the topics_xdr prefilter).
+		// CuratedSet carries only the stake contracts, which the factory never announces; pools already have the factory as root.
 		Factories:   []string{phoenix.MainnetFactory},
 		CreationSym: phoenix.EventActionCreate,
 		Genesis:     51_572_016,
@@ -124,28 +74,16 @@ var gatedSources = map[string]GatedMeta{
 		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return blend.NewDecoder(opts...) },
 	},
 	aquarius.SourceName: {
-		// Router-anchored gate (ADR-0040): the router IS the
-		// protocol's registry — its add_pool events announce exactly
-		// the pool set the protocol's public API serves (verified
-		// byte-identical, docs/protocols/aquarius.md).
-		// The decoder's in-code seed (MainnetGatedSet) covers history
-		// (the PG soroban_events landing zone is capture-scoped and
-		// holds only recent add_pool rows); live add_pool events
-		// self-register new pools blend-style, and this entry adds
-		// the protocol_contracts warm + live-upsert hook.
+		// Router-anchored gate (ADR-0040): the router is the registry, its add_pool events announcing the pool set the public API serves.
+		// MainnetGatedSet covers history; live add_pool events self-register new pools.
 		Factories:   []string{aquarius.MainnetRouter},
 		CreationSym: aquarius.EventAddPool,
 		Genesis:     52_728_375,
 		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return aquarius.NewDecoder(opts...) },
 	},
 	sushiswap_v3.SourceName: {
-		// Factory-anchored gate (ADR-0035 mechanism 1): one pool factory
-		// whose `pool_created` event announces every pool AND carries the
-		// pool's token identities. The decoder's in-code curated table
-		// (MainnetPools — all 58 pools the factory has created, decoded from
-		// the lake) is the cold-start trust root; this entry adds the
-		// protocol_contracts warm plus the live-upsert hook so a pool created
-		// after the table was frozen survives a restart.
+		// Factory-anchored gate (ADR-0035 mechanism 1): pool_created announces each pool and its token identities.
+		// MainnetPools is the cold-start trust root; this entry adds the warm and live-upsert hook so later pools survive a restart.
 		Factories:   sushiswap_v3.MainnetFactories,
 		CreationSym: sushiswap_v3.EventPoolCreated,
 		Genesis:     sushiswap_v3.FactoryGenesisLedger,
@@ -166,18 +104,8 @@ var gatedSources = map[string]GatedMeta{
 		},
 	},
 	upshift.SourceName: {
-		// Curated-set gate (ADR-0040 §1 mechanism 3), the comet shape:
-		// the Upshift vaults have NO factory namespace — neither vault
-		// has a creation event anywhere in the lake, each one's first
-		// event being its own `admin_set` — so there is nothing to
-		// anchor a fan-out on. The decoder's in-code seed
-		// (MainnetGatedSet: earnUSDC + earnXLM, both verified against
-		// the lake) is the trust root; this entry adds the
-		// protocol_contracts warm, the operator seam for admitting a
-		// third vault without a redeploy. The upkeep loop is the
-		// bespoke-symbol sweep documented in the package doc: the two
-		// vaults are the only contracts emitting
-		// `deployed_assets_changed` and its four siblings.
+		// Curated-set gate (ADR-0040 mechanism 3), the comet shape: the vaults have no creation event in the lake, so MainnetGatedSet is the trust root.
+		// Upkeep is the bespoke-symbol sweep (deployed_assets_changed and siblings) documented in the package doc.
 		Genesis:    upshift.GenesisLedger,
 		CuratedSet: upshift.MainnetGatedSet(),
 		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder {
@@ -185,21 +113,9 @@ var gatedSources = map[string]GatedMeta{
 		},
 	},
 	defindex.SourceName: {
-		// Curated-set gate (ADR-0035/0040). Neither vaults NOR strategies
-		// self-register from factory `create` events: the create body's strategy
-		// addresses are attacker-controlled (anyone can call the public factory),
-		// so auto-seeding would be a permissionless registry-poisoning vector. The
-		// decoder's in-code evidence-verified seed (MainnetStrategies +
-		// MainnetVaults) is the sole trust root; the protocol_contracts warm is the
-		// operator seam for admitting a newly-verified vault OR strategy without a
-		// redeploy. A new strategy appearing after the curated freeze fail-closes
-		// into an ADR-0033 recognition gap until an operator seeds it.
-		//
-		// Because the decoder never calls reg.Seed, CuratedSet is the ONLY writer of
-		// defindex's protocol_contracts rows: the warm reconcile and
-		// seed-protocol-contracts both upsert it. Factories stay declared: they gate
-		// the factory's own create/n_fee events (topic[0] is the String prefix;
-		// "create" sits in topic[1]).
+		// Curated-set gate (ADR-0035/0040). Neither vaults nor strategies self-register from factory create events:
+		// the body's strategy addresses are attacker-controlled, so auto-seeding is a registry-poisoning vector. Hence CuratedSet is the ONLY writer of defindex's protocol_contracts rows;
+		// a new strategy fail-closes into an ADR-0033 recognition gap until seeded. Factories stay declared to gate the factory's own create/n_fee events.
 		Factories:   defindex.MainnetFactories,
 		CreationSym: defindex.PrefixFactory,
 		Genesis:     defindex.GenesisLedger,
@@ -230,12 +146,7 @@ func GatedSourceNames() []string {
 // source, or nil if the source is not factory-anchored.
 func GatedFactories(source string) []string { return gatedSources[source].Factories }
 
-// CuratedFactoryID is the provenance stamped on a protocol_contracts row
-// that comes from a source's IN-CODE curated set (ADR-0040 §1 mechanism 3)
-// rather than from a factory creation event. Both writers of those rows —
-// the warm-time reconcile in GatedRegistryOptions and the
-// `seed-protocol-contracts` CLI — go through [SeedCuratedContracts], so
-// the two paths cannot drift into different provenance.
+// CuratedFactoryID is the provenance on protocol_contracts rows from a source's in-code curated set, written only via SeedCuratedContracts.
 const CuratedFactoryID = "curated"
 
 // curatedReconcileTimeout caps the warm-time curated reconcile. It writes
@@ -244,12 +155,7 @@ const CuratedFactoryID = "curated"
 // to hold up indexer boot.
 const curatedReconcileTimeout = 10 * time.Second
 
-// protocolContractStore is the `protocol_contracts` seam the gated-registry
-// warm needs: the read that warms a decoder's gate, and the write that
-// records a child. *timescale.Store implements it; the unit tests
-// substitute an in-memory double so the warm's own invariants — chiefly
-// "a curated source's trust root is installed whatever the table holds" —
-// are provable without a database.
+// protocolContractStore is the protocol_contracts seam the gated-registry warm needs (read to warm, write to record a child), faked in unit tests.
 type protocolContractStore interface {
 	LoadProtocolContracts(ctx context.Context, source string) ([]string, error)
 	ProtocolContractUpserter
@@ -261,21 +167,8 @@ type ProtocolContractUpserter interface {
 	UpsertProtocolContract(ctx context.Context, source, contractID, factoryID string, firstLedger uint32) error
 }
 
-// SeedCuratedContracts upserts a curated-set source's in-code trust root
-// (GatedMeta.CuratedSet) into protocol_contracts with provenance
-// factory_id = [CuratedFactoryID] and first_ledger = meta.Genesis, and
-// returns how many rows it wrote.
-//
-// It is the ONE writer of curated rows. `seed-protocol-contracts -source
-// <name>` calls it with have=nil (its documented contract is an idempotent
-// full re-seed); the warm-time reconcile calls it with the ids the table
-// already holds, so a restart does not re-stamp observed_at on rows that
-// are already correct.
-//
-// A curated-only source with an EMPTY CuratedSet is an error, not a
-// zero-row success: that entry declares a gate with no trust root, and
-// reporting "upserted 0 child contract(s)" for it is precisely the silence
-// this seam exists to end.
+// SeedCuratedContracts upserts a curated source's CuratedSet into protocol_contracts (factory_id = CuratedFactoryID, first_ledger = meta.Genesis) and returns rows written.
+// It is the ONE writer of curated rows; an empty CuratedSet on a curated-only source is an error, not a zero-row success.
 func SeedCuratedContracts(
 	ctx context.Context,
 	store ProtocolContractUpserter,
@@ -314,25 +207,8 @@ func seedCuratedContracts(
 	return seeded, nil
 }
 
-// GatedRegistryOptions warms the contractid.Registry for every contract-gated
-// source and returns a map keyed by source name, forwarded to each gated
-// decoder's NewDecoder. The cursor advances past creation events, so live-only
-// seeding would miss pools deployed before boot (ADR-0035).
-//
-// The warm has two inputs:
-//
-//   - the protocol_contracts table: a factory-anchored source's children,
-//     discovered from creation events; and
-//   - meta.CuratedSet, the in-code trust root of a curated-set source (ADR-0040:
-//     comet, blend_emitter, upshift), which has no creation events.
-//
-// Seeding it here keeps the table populated; otherwise GET /v1/protocols/{name}
-// serves an empty roster that reads like a protocol with no pools yet.
-//
-// withHook installs the live-upsert persistence callback (indexer path) and arms
-// the curated reconcile. Read-only consumers (audits) pass withHook=false: they
-// still gate on the curated set but write nothing, since an audit that registered
-// contracts would manufacture its own evidence. hookCtx scopes the live upserts.
+// GatedRegistryOptions warms the contractid.Registry for every gated source (keyed by name) from protocol_contracts and meta.CuratedSet (ADR-0035, ADR-0040).
+// withHook installs the live-upsert callback and arms curated reconcile; read-only audits pass false so they write nothing.
 func GatedRegistryOptions(
 	ctx context.Context,
 	store *timescale.Store,
@@ -388,11 +264,8 @@ func gatedRegistryOptions(
 			}))
 		}
 
-		// Reconcile the curated set into the table on the indexer path so
-		// the roster reads (GET /v1/protocols/{name}, the explorer's
-		// contract attribution) agree with the gate. Best-effort: the
-		// gate above is already complete, so a failed upsert degrades the
-		// roster, never ingestion — same idiom as the live-upsert hook.
+		// Reconcile the curated set into the table (indexer path) so roster reads agree with the gate.
+		// Best-effort: the gate is already complete, so a failed upsert degrades the roster, never ingestion.
 		reconciled := 0
 		if withHook && len(meta.CuratedSet) > 0 {
 			warmCtx, cancel := context.WithTimeout(ctx, curatedReconcileTimeout)
@@ -410,13 +283,8 @@ func gatedRegistryOptions(
 			"children", len(ids), "curated", len(meta.CuratedSet),
 			"gated", len(seed), "reconciled", reconciled)
 
-		// Only a factory-anchored source without a curated set reaches
-		// this, before its genesis walk has run. Its gate is then just
-		// whatever the decoder seeds from code (nothing, for blend), so a
-		// child missing from that is dropped while every upstream signal
-		// looks healthy. The remedy works because such a decoder admits
-		// children from creation events — see
-		// TestGatedSources_everySourceHasAProtocolContractsWriter.
+		// Only a factory-anchored source without a curated set reaches this before its genesis walk: its gate is whatever the decoder seeds from code,
+		// so a missing child is dropped silently. The remedy works because such decoders admit children from creation events.
 		if len(seed) == 0 {
 			logger.Warn("gated registry warmed with NO protocol_contracts children — "+
 				"events from any child the decoder's in-code seed lacks are dropped until it is seeded",

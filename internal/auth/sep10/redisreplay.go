@@ -11,26 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// RedisReplayGuard is the production [ReplayGuard]. [Validator.Challenge]
-// reserves each issued challenge transaction's hash and
-// [Validator.Verify] spends it with an atomic DEL, so a challenge mints
-// at most one JWT; a resubmitted signed XDR finds no reservation and
-// returns [auth.ErrUnauthorized].
-//
-// Eviction hardening: R1 runs `maxmemory-policy allkeys-lru`, which can
-// evict ANY key before its TTL. A SETNX spent-marker fails OPEN under
-// that — an evicted marker lets a captured XDR re-claim the slot and
-// mint a second JWT. Requiring the reservation to be PRESENT makes an
-// eviction refuse the redemption instead (as in
-// [auth.RedisPasskeyCeremonyGuard.Reserve] / ClaimReserved).
-//
-// Cache key `sep10:seen:live:<hex transaction hash>`, the prefix the Redis
-// ACL allow-list grants.
-//
-// The suffix is the challenge TRANSACTION's canonical hash (see
-// [challengeTxHash]), never a digest of the caller-supplied XDR string:
-// one transaction has many valid spellings, and keying on the spelling
-// would let one redemption be replayed by re-encoding it.
+// RedisReplayGuard is the production [ReplayGuard]: Challenge reserves each challenge transaction's hash and Verify spends it with an atomic DEL, so a challenge mints at most one JWT.
+// Under allkeys-lru a SETNX spent-marker would fail OPEN (an evicted marker lets a captured XDR re-claim the slot); requiring the reservation to be PRESENT makes eviction refuse the redemption instead.
+// Key `sep10:seen:live:<hex transaction hash>` (the Redis ACL allow-list prefix); the hash is the parsed transaction's (see [challengeTxHash]), never a digest of the XDR string.
 type RedisReplayGuard struct {
 	rdb redis.UniversalClient
 }
@@ -54,11 +37,7 @@ func (g *RedisReplayGuard) Reserve(ctx context.Context, txHash string, ttl time.
 	return nil
 }
 
-// Claim spends the reservation for txHash. It returns
-// [auth.ErrUnauthorized] when the reservation is absent for any reason
-// — already redeemed, never issued, expired or evicted — and propagates
-// other Redis errors so callers can tell "refused" from "couldn't
-// check". DEL is atomic, so concurrent submissions yield one claimant.
+// Claim spends the reservation for txHash: [auth.ErrUnauthorized] when absent for any reason (redeemed, never issued, expired, evicted); other Redis errors propagate so callers can tell refused from unchecked. DEL is atomic, so concurrent submissions yield one claimant.
 func (g *RedisReplayGuard) Claim(ctx context.Context, txHash string) error {
 	key := redisReplayKey(txHash)
 	removed, err := g.rdb.Del(ctx, key).Result()

@@ -9,12 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestExternalRetryBuffer_FinalDrainCountsUndrainedRows pins the third
-// shutdown-loss site: external trades still in the retry ring after the
-// final bounded pass have nowhere left to go, and must be counted on
-// SinkUndrainedRowsTotal by row exactly like an abandoned on-chain batch
-// (reportAbandonedTrades) — a Warn line alone would leave the alert
-// blind to a vendor-refillable loss.
+// TestExternalRetryBuffer_FinalDrainCountsUndrainedRows: external trades left in the retry ring after the final bounded pass must be counted on SinkUndrainedRowsTotal by row, like reportAbandonedTrades;
+// a Warn line alone would leave the alert blind to a vendor-refillable loss.
 func TestExternalRetryBuffer_FinalDrainCountsUndrainedRows(t *testing.T) {
 	before := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "trade")
 	store := &fakeTradeStore{} // stays unhealthy: every insert is an infra fault
@@ -87,14 +83,8 @@ func TestExternalRetryBuffer_OverflowDropsOldest(t *testing.T) {
 	}
 }
 
-// TestExternalRetryBuffer_InfraDuringIsolationRequeues — when
-// the batch fails with a data fault the buffer isolates per-row, and if
-// Postgres goes away DURING that pass the un-landed rows must be
-// re-queued for the next tick, not counted as permanent drops. Before
-// the fix every failing row in the isolation pass was dropped and
-// counted "dropped" — recoverable infra failures mislabelled as
-// permanent loss, and for external trades (no cursor, no lake) that loss
-// was final.
+// TestExternalRetryBuffer_InfraDuringIsolationRequeues: if Postgres goes away during the per-row isolation pass, un-landed rows are re-queued, not counted as permanent drops;
+// external trades have no cursor and no lake, so a mislabelled drop is final loss.
 func TestExternalRetryBuffer_InfraDuringIsolationRequeues(t *testing.T) {
 	droppedBefore := counter(t, obs.SourceInsertErrorsTotal, "kraken", "dropped")
 	store := &scriptedStore{

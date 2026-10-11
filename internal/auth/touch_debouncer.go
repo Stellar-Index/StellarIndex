@@ -11,16 +11,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisTouchDebouncer is the Redis-SETNX adapter for the
-// `middleware.TouchDebouncer` seam. Gates calls into `APIKeyStore.TouchUsage` so the
-// hot api_keys row gets at most one UPDATE per (keyID, TTL)
-// window even under sustained customer traffic.
-//
-// Key layout: `touch:apikey:<keyID>` with the configured TTL.
-// Value is a fixed sentinel — only the existence of the key
-// matters; ownership is implicit. The TTL is the safety net for
-// a process that crashes between the SETNX and the actual
-// TouchUsage call (the next caller after expiry retries).
+// RedisTouchDebouncer is the Redis-SETNX adapter for middleware.TouchDebouncer: it gates APIKeyStore.TouchUsage to at most one UPDATE per (keyID, TTL) window on the hot api_keys row.
+// Key `touch:apikey:<keyID>` with a sentinel value (only existence matters); the TTL covers a crash between the SETNX and TouchUsage.
 type RedisTouchDebouncer struct {
 	rdb redis.Cmdable
 	ttl time.Duration
@@ -45,21 +37,12 @@ func NewRedisTouchDebouncer(rdb redis.Cmdable, ttl time.Duration) *RedisTouchDeb
 	return &RedisTouchDebouncer{rdb: rdb, ttl: ttl}
 }
 
-// touchKey returns the Redis key for a debounce window. Kept
-// separate from the `signup:lock:` family and the `signup:`
-// reservation family so the three namespaces don't collide; the
-// `touch:apikey:*` family is pre-listed in the Redis ACL
-// allow-list.
+// touchKey returns the Redis key for a debounce window, separate from the `signup:lock:` and `signup:` families; `touch:apikey:*` is pre-listed in the Redis ACL allow-list.
 func touchKey(keyID string) string {
 	return "touch:apikey:" + keyID
 }
 
-// ShouldTouch implements `middleware.TouchDebouncer`. SETNX
-// with the configured TTL. Returns (true, nil) on win,
-// (false, nil) on contention (already touched within the
-// window), and (false, err) on a Redis-side failure. The
-// middleware treats every non-success branch as "skip this
-// tick" — last_used updates are bookkeeping, not load-bearing.
+// ShouldTouch implements middleware.TouchDebouncer via SETNX: (true, nil) on win, (false, nil) if already touched in the window, (false, err) on Redis failure; the middleware skips on every non-success branch (last_used is bookkeeping).
 func (d *RedisTouchDebouncer) ShouldTouch(ctx context.Context, keyID string) (bool, error) {
 	if keyID == "" {
 		return false, nil

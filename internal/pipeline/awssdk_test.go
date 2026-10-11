@@ -43,13 +43,8 @@ func TestFilteringForwarder(t *testing.T) {
 			wantOut: "single line no newline\n",
 		},
 		{
-			// Regression: indexer seizure. A single line
-			// larger than the bufio.Scanner 1 MiB cap made Scan()
-			// return false, the drain goroutine exited, the stderr
-			// pipe lost its only reader, and every logger in the
-			// process blocked once the 64 KiB pipe filled. The drain
-			// must survive arbitrarily long lines (forwarding them
-			// verbatim) and keep filtering afterwards.
+			// Regression: a line over the bufio.Scanner 1 MiB cap made Scan() return false, the drain exited and the pipe filled, blocking every logger.
+			// The drain must forward arbitrarily long lines verbatim and keep filtering.
 			name: "giant line does not kill the drain",
 			input: strings.Repeat("x", 3*1024*1024) + "\n" +
 				"SDK WARN Response has no supported checksum. dropped\n" +
@@ -88,11 +83,7 @@ func TestFilteringForwarder(t *testing.T) {
 	}
 }
 
-// TestInstallStderrFilterTo exercises the full install path:
-// dup-replace fd 2, then verify a write to fd 2 is routed through
-// the supplied consumer. Uses the returned flush to tear the
-// filter down deterministically instead of the old dup2-restore
-// trick.
+// TestInstallStderrFilterTo exercises the full install path: dup-replace fd 2, verify a write is routed through the consumer, then tear down via flush.
 func TestInstallStderrFilterTo(t *testing.T) {
 	// Save the real fd 2 so we can restore it after the test —
 	// otherwise subsequent tests' t.Log/t.Error output goes to
@@ -141,19 +132,8 @@ func TestInstallStderrFilterTo(t *testing.T) {
 	}
 }
 
-// TestSilenceSDKChecksumWarnings_FlushDrainsPipe is the regression
-// test for the rc.77 short-lived-process bug: without flush the
-// consumer goroutine is killed mid-buffer when the runtime tears
-// down, so multi-line output (and even single-line output once the
-// pipe-buffer ceiling is hit) gets lost on os.Exit. After flush
-// returns, every byte written to fd 2 since install MUST have
-// reached the real-stderr-side.
-//
-// The test uses installStderrFilterTo with a custom consume
-// callback that writes to a captured bytes.Buffer (via a sync
-// guard since the goroutine writes concurrently with the test
-// goroutine until flush returns). Asserts that all 5 lines arrived
-// with their original ordering preserved.
+// TestSilenceSDKChecksumWarnings_FlushDrainsPipe: without flush the consumer goroutine dies mid-buffer on os.Exit, losing output;
+// after flush returns, every byte written to fd 2 since install MUST have reached the real-stderr side, in order. Uses a custom consume callback into a synchronised bytes.Buffer.
 func TestSilenceSDKChecksumWarnings_FlushDrainsPipe(t *testing.T) {
 	originalStderrCopy, err := syscall.Dup(int(os.Stderr.Fd()))
 	if err != nil {
@@ -169,11 +149,7 @@ func TestSilenceSDKChecksumWarnings_FlushDrainsPipe(t *testing.T) {
 		captured bytes.Buffer
 	)
 	consume := func(r io.Reader, _ *os.File) {
-		// Forward via filteringForwarder semantics so the test
-		// exercises the same code path the production wrap uses,
-		// but redirect to the in-memory buffer instead of real
-		// stderr. We don't need filtering in this test — just
-		// forward every byte verbatim so we can compare exactly.
+		// Forward verbatim into the in-memory buffer (no filtering needed) so the test exercises the production forwarder path.
 		buf := make([]byte, 4096)
 		for {
 			n, err := r.Read(buf)
@@ -205,12 +181,7 @@ func TestSilenceSDKChecksumWarnings_FlushDrainsPipe(t *testing.T) {
 		}
 	}
 
-	// The critical assertion: after flush returns, every byte
-	// must have arrived. Without the wait this race-checked: the goroutine
-	// was killed by the runtime mid-Read and the captured buffer
-	// held only the first ~64 bytes (or nothing at all). The
-	// wg.Wait inside flush guarantees the goroutine ran the
-	// full forwarder loop.
+	// Critical assertion: after flush returns every byte must have arrived; without the wg.Wait inside flush the goroutine is killed mid-Read.
 	flush()
 
 	mu.Lock()
@@ -222,19 +193,8 @@ func TestSilenceSDKChecksumWarnings_FlushDrainsPipe(t *testing.T) {
 	}
 }
 
-// TestCrashTracebackReachesRealStderr is the regression test for
-// crash tracebacks: a fatal, unrecovered panic freezes the world and
-// writes its traceback straight to the OS fd 2 (now the filter's
-// pipe) via a raw syscall, so the forwarder goroutine never gets to
-// run and the traceback is lost. debug.SetCrashOutput routes the
-// runtime's crash writer at realStderr directly, independent of the
-// pipe/goroutine, so the traceback must survive even though the
-// forwarder never drains it.
-//
-// Re-execs this test binary as a child process (the standard
-// TestHelperProcess pattern) because an unrecovered panic in any
-// goroutine terminates the whole process — it can't be induced
-// in-process without killing the test runner itself.
+// TestCrashTracebackReachesRealStderr: a fatal panic writes its traceback to fd 2 by raw syscall, bypassing the forwarder; debug.SetCrashOutput must route it to realStderr.
+// Re-execs this test binary as a child (the TestHelperProcess pattern) because an unrecovered panic cannot be induced in-process.
 func TestCrashTracebackReachesRealStderr(t *testing.T) {
 	const marker = "boom-crash-traceback-regression"
 

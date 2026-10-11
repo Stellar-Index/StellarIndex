@@ -27,11 +27,7 @@ func soleWriterEvents() []consumer.Event {
 	}
 }
 
-// TestIsSoleWriterProjected_Membership pins the sole-writer membership:
-// exactly the sep41 pair and rozo, and nothing else. A projected but
-// NOT-yet-promoted source (soroswap, comet, cctp) must be false — it still
-// double-writes in Phase-3 parallel; a non-projected source must be false
-// too.
+// TestIsSoleWriterProjected_Membership pins membership: exactly the sep41 pair and rozo; projected-but-unpromoted (soroswap, comet, cctp) and non-projected sources are false.
 func TestIsSoleWriterProjected_Membership(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -100,20 +96,8 @@ func TestSinkModeForProjector_TruthTable(t *testing.T) {
 	}
 }
 
-// TestSinkModeForProjector_SoleWriterInvariant is the foot-gun closure:
-// for EVERY combination of the two projector config booleans,
-// a sole-writer event is written EXACTLY ONCE — never zero (silent loss)
-// and never twice (double-write).
-//
-//   - the dispatcher's events-goroutine writes it iff skipInSink is false;
-//   - the projector writes it iff the projector is enabled: both writers
-//     build from the same enabled_sources (rozo) or watched set (sep41),
-//     and an empty set makes BOTH paths emit nothing, so the invariant is
-//     vacuously satisfied there and not exercised here.
-//
-// `persist_per_source` left at its zero-value (false) while the
-// projector is enabled must not select sole-writer mode for a projector
-// that cannot serve sep41 → zero writers → total loss.
+// TestSinkModeForProjector_SoleWriterInvariant: for EVERY combination of the two projector booleans a sole-writer event is written EXACTLY ONCE, never zero (loss) or twice.
+// The events-goroutine writes iff skipInSink is false; the projector writes iff enabled. persist_per_source=false with the projector on must not select sole-writer mode.
 func TestSinkModeForProjector_SoleWriterInvariant(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		for _, pps := range []bool{false, true} {
@@ -138,11 +122,7 @@ func TestSinkModeForProjector_SoleWriterInvariant(t *testing.T) {
 	}
 }
 
-// TestSkipInSink_SoleWriterAlwaysProjectorOwnedWhenEnabled — the direct
-// statement of the fix: whenever the projector is enabled, the
-// dispatcher's events-goroutine SKIPS a sole-writer event,
-// regardless of persist_per_source. When the projector is disabled it
-// does NOT skip them (it is the only writer, so a skip would lose them).
+// TestSkipInSink_SoleWriterAlwaysProjectorOwnedWhenEnabled: with the projector enabled the dispatcher SKIPS sole-writer events regardless of persist_per_source; disabled, it must not skip.
 func TestSkipInSink_SoleWriterAlwaysProjectorOwnedWhenEnabled(t *testing.T) {
 	for _, ev := range soleWriterEvents() {
 		// Projector disabled → must NOT skip (only writer).
@@ -162,12 +142,7 @@ func TestSkipInSink_SoleWriterAlwaysProjectorOwnedWhenEnabled(t *testing.T) {
 	}
 }
 
-// TestSkipInSink_UnpromotedProjectedStillDoubleWritesInPhase3 — the
-// scoping guarantee: a projected-but-un-promoted source (soroswap) is
-// still written by the dispatcher in Phase-3 parallel mode (double-write
-// with the projector, ON CONFLICT dedup), and only stops in Phase-4.
-// This proves the sep41 promotion did NOT change any other source's
-// behavior.
+// TestSkipInSink_UnpromotedProjectedStillDoubleWritesInPhase3: a projected-but-unpromoted source (soroswap) still double-writes in Phase-3 (ON CONFLICT dedup) and stops only in Phase-4.
 func TestSkipInSink_UnpromotedProjectedStillDoubleWritesInPhase3(t *testing.T) {
 	ev := soroswap.TradeEvent{Trade: canonical.Trade{Source: "soroswap"}}
 

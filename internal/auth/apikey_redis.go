@@ -17,26 +17,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// RedisAPIKeyValidator implements [APIKeyValidator] backed by Redis.
-//
-// Storage shape (one record per key):
-//
-//	KEY   apikey:<sha256-hex>
-//	VALUE JSON [APIKeyRecord]
-//
-// Plaintext keys are never stored; the lookup hashes the caller-supplied
-// bytes with SHA-256. A Redis dump leaks owner identifiers and tier
-// mapping but never the key material itself.
-//
-// Lookup errors:
-//
-//   - record absent or revoked_at set → [ErrUnauthorized]
-//   - expires_at past     → [ErrTokenExpired]
-//   - record undecodable  → wrapped non-sentinel (operator log signal)
-//   - Redis I/O failure   → wrapped non-sentinel (middleware → 503)
-//
-// Concurrency: safe across goroutines — every Lookup is one GET; the
-// account-status cache has its own mutex (see [accountStatusGate]).
+// RedisAPIKeyValidator implements APIKeyValidator over `apikey:<sha256-hex>` records (JSON APIKeyRecord); plaintext keys are never stored, so a Redis dump leaks owners and tiers but not key material.
+// Lookup errors: absent or revoked_at set is ErrUnauthorized; expires_at past is ErrTokenExpired; an undecodable record or Redis I/O failure is a wrapped non-sentinel (log signal / 503).
+// Safe across goroutines: each Lookup is one GET and the account-status cache has its own mutex (accountStatusGate).
 type RedisAPIKeyValidator struct {
 	rdb redis.Cmdable
 	now func() time.Time
@@ -64,21 +47,13 @@ type accountStatusGate struct {
 	ttl      time.Duration
 	maxStale time.Duration
 
-	// cache memoises the last-read account status per slug so the
-	// kill-switch GetBySlug is read at most once per account per
-	// ttl window (bounding hot-path Postgres load) and a transient
-	// Postgres blip rides out on last-known status (auth-ks-1). Only
-	// populated when accounts != nil. Guarded by mu.
+	// cache memoises the last-read account status per slug so the kill-switch GetBySlug runs at most once per account per ttl window and a Postgres blip rides out on last-known status. Only populated when accounts != nil; guarded by mu.
 	mu    sync.RWMutex
 	cache map[string]cachedAccountStatus
 }
 
-// init sets the freshness window. Ride-out staleness is a fixed multiple
-// of it: past the fresh TTL each request still re-reads Postgres, and a
-// cached status is only used to cover a GetBySlug *error* up to this
-// bound. A Postgres outage also blocks the suspension write itself, so
-// riding out on last-known status cannot mask a suspension an operator
-// could actually have applied during the outage.
+// init sets the freshness window. Past it each request re-reads Postgres, and a cached status covers a GetBySlug *error* only up to a fixed multiple of it;
+// a Postgres outage also blocks the suspension write itself, so riding out cannot mask a suspension an operator could have applied.
 func (g *accountStatusGate) init(ttl time.Duration) {
 	g.ttl = ttl
 	g.maxStale = 10 * ttl
@@ -92,29 +67,11 @@ type cachedAccountStatus struct {
 	at   time.Time
 }
 
-// DefaultAccountStatusCacheTTL is the freshness window of the Redis
-// validators' account-status cache: within it, [accountStatusGate] serves
-// the last-read status without touching Postgres, so the kill-switch
-// read costs at most one query per account per window rather than one
-// per request. Matches the 30s dwell-time the rest of the auth layer
-// uses for Redis-degradation windows.
+// DefaultAccountStatusCacheTTL is the freshness window of the Redis validators' account-status cache: at most one kill-switch query per account per window instead of per request.
 const DefaultAccountStatusCacheTTL = 30 * time.Second
 
-// MirroredKeyIdleTTL bounds a register-mirrored credential's lifetime in
-// the validator pool as a SLIDING idle window rather than a
-// hard expiry. The record is written with this TTL
-// ([RedisAPIKeyStore.CreateWithSecret], and [RedisAPIKeyStore.Create] for
-// a SelfService request) and every successful validated
-// [Lookup] slides it forward, so an actively-used key never expires while
-// a key untouched for the whole window TTLs out on its own — capping the
-// keyspace growth that open, anonymous /v1/register would otherwise make
-// unbounded, WITHOUT turning a key that is actually in use into a
-// permanent silent 401.
-//
-// 90 days: comfortably longer than any plausible active-use gap, so only
-// a genuinely abandoned credential is ever dropped. The TTL also puts the
-// record in the instance's volatile-lru eviction pool, so memory pressure
-// can drop an idle one early; TTL-less records are never evicted.
+// MirroredKeyIdleTTL is the SLIDING idle window for register-mirrored credentials (CreateWithSecret, and Create for SelfService): every successful Lookup slides it, so a used key never expires while an abandoned one ages out,
+// capping the keyspace growth open /v1/register would otherwise make unbounded. 90 days exceeds any plausible active gap; the TTL also makes the record eligible for volatile-lru eviction, whereas TTL-less records never are.
 const MirroredKeyIdleTTL = 90 * 24 * time.Hour
 
 // AccountStatusReader is the narrow slice of
@@ -125,13 +82,7 @@ type AccountStatusReader interface {
 	GetBySlug(ctx context.Context, slug string) (platform.Account, error)
 }
 
-// APIKeyRecord is the JSON shape stored at `apikey:<hash>`. The
-// admin/seeding path is responsible for marshalling this; the
-// validator only unmarshals.
-//
-// All time fields are RFC 3339; absent fields decode to the zero
-// time and are interpreted as "no constraint" (no expiry / not
-// revoked).
+// APIKeyRecord is the JSON shape at `apikey:<hash>`, marshalled by the admin/seeding path and only unmarshalled by the validator. Time fields are RFC 3339; absent means no constraint (no expiry, not revoked).
 type APIKeyRecord struct {
 	// KeyID — public-safe identifier for this key. Distinct from
 	// the secret hash (the Redis key) so it can appear in logs and
@@ -149,16 +100,7 @@ type APIKeyRecord struct {
 	// surfaced via /v1/account/me. Optional.
 	Label string `json:"label,omitempty"`
 
-	// KeyPrefix — first N characters of the plaintext key (e.g.
-	// `sip_4f9c1d8b`).
-	// Stored at creation time; safe to log
-	// because it's not enough to authenticate (the secret tail is
-	// what makes the key). Customers see this in dashboard
-	// listings to identify which row corresponds to which key in
-	// their secret manager.
-	//
-	// Empty on records minted without a prefix — the dashboard
-	// renders "—" in that case. New keys always have it.
+	// KeyPrefix is the first characters of the plaintext (e.g. `sip_4f9c1d8b`), stored at creation, safe to log (not enough to authenticate) and shown in dashboard listings; empty on records minted without one.
 	KeyPrefix string `json:"key_prefix,omitempty"`
 
 	// Tier — the [Tier] this key authenticates as. Production
@@ -166,16 +108,8 @@ type APIKeyRecord struct {
 	// [TierOperator] to unlock admin endpoints.
 	Tier Tier `json:"tier"`
 
-	// Scopes — optional capability list. Empty slice and absent are
-	// equivalent ("no special scopes"), which means "no scope
-	// restriction" rather than "no access".
-	//
-	// **These ARE enforced at runtime.** `middleware.KeyPolicy`
-	// (internal/api/v1/middleware/keypolicy.go, `checkScopes`) rejects a
-	// request whose route requires a scope the key doesn't carry, with a
-	// `scope-denied` problem response. Minting a key with a narrow scope
-	// set therefore narrows what it can call — verify the scope names
-	// against keypolicy.go's route table before issuing.
+	// Scopes is an optional capability list; empty or absent means no restriction, not no access.
+	// These ARE enforced at runtime: middleware.KeyPolicy (checkScopes) rejects a route needing a scope the key lacks with `scope-denied`; verify names against keypolicy.go's route table before issuing.
 	Scopes []string `json:"scopes,omitempty"`
 
 	// RateLimitPerMin — overrides the per-tier default (zero means
@@ -197,18 +131,8 @@ type APIKeyRecord struct {
 	// [ErrUnauthorized].
 	RevokedAt time.Time `json:"revoked_at,omitempty"`
 
-	// IPAllowlist / RefererAllowlist / Permissions are the
-	// per-key policy fields the dashboard exposes for
-	// Postgres-backed keys (the PostgresAPIKeyValidator cache).
-	// The cache mirrors what the Postgres rebuild produces so the
-	// cache-hit Subject is policy-identical to the cache-miss
-	// Subject; without these a cache hit would carry empty policy
-	// fields, silently bypassing KeyPolicy enforcement until the
-	// cache entry TTL elapsed.
-	//
-	// IPAllowlist is rendered as `[]string` of CIDR text on the
-	// wire (e.g. ["10.0.0.0/8"]) — netip.Prefix isn't directly
-	// JSON-friendly. Empty / nil = "no IP gate".
+	// IPAllowlist / RefererAllowlist / Permissions are the per-key policy fields mirrored from Postgres keys, so a cache-hit Subject is policy-identical to a miss; omitting them would silently bypass KeyPolicy until the TTL elapsed.
+	// IPAllowlist is CIDR text on the wire (netip.Prefix is not JSON-friendly); empty or nil means no IP gate.
 	IPAllowlist []string `json:"ip_allowlist,omitempty"`
 
 	// RefererAllowlist is rendered as `[]string` of exact-host
@@ -247,25 +171,8 @@ func WithClock(now func() time.Time) RedisOption {
 	return func(v *RedisAPIKeyValidator) { v.now = now }
 }
 
-// WithAccountStatus wires the account-level kill switch.
-//
-// The Postgres validator (`acct.Status != AccountActive` →
-// [ErrUnauthorized]) and the dashboard session middleware enforce
-// suspension on their own, but this validator is the DEFAULT backend
-// (`auth_backend=redis`). Without a reader, suspending an account does
-// not stop its keys from authenticating here, whether through the admin
-// API, the dashboard, or a manual `UPDATE accounts SET status='suspended'`.
-//
-// With a reader wired, a record whose Identifier is
-// [AccountIdentifier](slug) — the shape the Postgres validator stamps
-// and POST /v1/account/keys copies onto every self-service record — has
-// its account resolved and is rejected unless the account is active.
-// `signup-<emailhash>` records (minted by the retired /v1/signup) carry
-// no account reference and are unaffected; their kill switch is the
-// per-key revoke (DELETE /v1/admin/keys/{keyID}).
-//
-// Nil (the default) skips the account check: no account lookup, no
-// per-request Postgres read.
+// WithAccountStatus wires the account-level kill switch. The Postgres validator and dashboard session middleware enforce suspension themselves, but this is the DEFAULT backend (auth_backend=redis): without a reader, suspending an account does not stop its keys here.
+// With one, records whose Identifier is AccountIdentifier(slug) are rejected unless the account is active; `signup-<emailhash>` records have no account and are killed by per-key revoke. Nil skips the check and the per-request Postgres read.
 func WithAccountStatus(accounts AccountStatusReader) RedisOption {
 	return func(v *RedisAPIKeyValidator) { v.status.accounts = accounts }
 }
@@ -320,11 +227,7 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 
 	var rec APIKeyRecord
 	if err := json.Unmarshal(raw, &rec); err != nil {
-		// Malformed record is operator-side corruption, not caller
-		// fault. Wrap a non-sentinel so the middleware's default
-		// branch returns 401 (the safer of the two — we won't
-		// surface details about why); a parallel log line on the
-		// admin side will catch the corruption.
+		// Malformed record is operator-side corruption, not caller fault: wrap a non-sentinel so the middleware's default branch returns 401 without detail; the admin-side log line catches it.
 		return Subject{}, fmt.Errorf("auth: apikey record decode: %w", err)
 	}
 
@@ -353,25 +256,14 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 		sub.MonthlyQuota = acct.ResolveKeyMonthlyQuota(sub.MonthlyQuota)
 	}
 
-	// Refresh-on-use: a fully-validated key that
-	// carries a TTL (the register mirror) has its idle window slid
-	// forward, so an actively-used credential never hard-expires while a
-	// genuinely idle one still TTLs out of the validator pool. Placed
-	// after every rejection gate (revoked / expired / account inactive)
-	// so a suspended account's key is NOT kept alive. Best-effort and
-	// EXPIRE ... XX, so it never touches persistent (TTL-less) operator /
-	// self-service records and a failed refresh only means the key rides
-	// its remaining TTL — never a rejected auth.
+	// Refresh-on-use: a fully-validated TTL-bearing key (the register mirror) has its idle window slid forward. Placed after every rejection gate so a suspended account's key is NOT kept alive.
+	// Best-effort EXPIRE ... XX: never touches persistent records, and a failed refresh never rejects auth.
 	v.refreshIdleTTL(ctx, hash)
 	return sub, nil
 }
 
-// subjectFromRecord is the single APIKeyRecord→Subject mapping. Both
-// validators' record reads go through it and [recordFromSubject] is its
-// exact inverse, so a field cannot be carried by one path and dropped by
-// another. Rejection gates (revoked / expired / account) stay with the
-// caller; this only maps. An unparseable allowlist entry is an error so
-// the caller fails closed.
+// subjectFromRecord is the single APIKeyRecord-to-Subject mapping (recordFromSubject is its inverse) used by both validators, so no path can drop a field. Rejection gates stay with the caller;
+// an unparseable allowlist entry is an error so the caller fails closed.
 func subjectFromRecord(rec APIKeyRecord) (Subject, error) {
 	ipAllowlist, err := decodeIPAllowlist(rec.IPAllowlist)
 	if err != nil {
@@ -426,13 +318,7 @@ func recordFromSubject(sub Subject) APIKeyRecord {
 	}
 }
 
-// refreshIdleTTL slides a TTL-bearing record's idle window forward to
-// mirroredKeyIdleTTL. Uses EXPIRE ... XX so it is a no-op on records
-// written without a TTL (operator-seeded keys), keeping their persistent
-// semantics intact; only register-mirror and self-service records,
-// written with an idle TTL, are re-warmed. Best-effort: any error is
-// swallowed — the worst case is the key expiring on its existing TTL, an
-// idle key by definition.
+// refreshIdleTTL slides a TTL-bearing record's idle window to MirroredKeyIdleTTL with EXPIRE ... XX, a no-op on persistent (operator-seeded) records. Best-effort: errors are swallowed, since the worst case is an idle key expiring on its existing TTL.
 func (v *RedisAPIKeyValidator) refreshIdleTTL(ctx context.Context, hash string) {
 	if v.mirroredKeyIdleTTL <= 0 {
 		return
@@ -440,26 +326,9 @@ func (v *RedisAPIKeyValidator) refreshIdleTTL(ctx context.Context, hash string) 
 	_ = v.rdb.ExpireXX(ctx, cachekeys.APIKey(hash).String(), v.mirroredKeyIdleTTL).Err()
 }
 
-// check enforces the account-level kill switch for a record that names
-// a platform account, and returns the account read so the caller can
-// resolve its overrides. isAccount is false (and err nil) when the
-// check does not apply (no reader wired, or a non-account identifier).
-//
-// A short-TTL in-process cache fronts the kill-switch GetBySlug so the
-// status is read at most once per account per ttl window, bounding
-// hot-path Postgres load; suspension and override changes therefore
-// propagate within ttl.
-//
-// Degradation posture:
-//
-//   - ErrNotFound: the record references an account that does not
-//     exist — the closed-account case, rejected as [ErrUnauthorized].
-//   - Transport error WITH a cached status within maxStale: ride out on
-//     last-known status. A Postgres blip does not 401 every active
-//     customer; a still-suspended account is still rejected.
-//   - Transport error with NO usable cached status: [ErrAccountStatusUnavailable]
-//     — a retryable 503, NOT the 401 default. Still fails closed, without
-//     mis-signalling "your credential is invalid" during a server outage.
+// check enforces the account kill switch for a record naming a platform account and returns the account read; isAccount is false (err nil) when it does not apply. A short-TTL cache fronts GetBySlug, so suspension and override changes propagate within ttl.
+// ErrNotFound (closed account) is ErrUnauthorized. A transport error WITH a cached status within maxStale rides out on it (a blip does not 401 customers, a suspended account is still rejected);
+// with NO usable cache it is ErrAccountStatusUnavailable (retryable 503, not a misleading 401), still failing closed.
 func (g *accountStatusGate) check(
 	ctx context.Context, identifier string, now time.Time,
 ) (acct platform.Account, isAccount bool, err error) {
@@ -539,11 +408,7 @@ func (g *accountStatusGate) evictStaleStatusLocked(now time.Time) {
 	}
 }
 
-// HashAPIKey returns the hex-encoded SHA-256 of key. Exposed for
-// admin tooling that seeds records into Redis — the admin path
-// computes the hash, builds the record, calls
-// [cachekeys.APIKey](hash), and SET'S the JSON bytes. Lookup re-
-// derives the same hash on read.
+// HashAPIKey returns the hex SHA-256 of key, for admin tooling that seeds records under cachekeys.APIKey(hash); Lookup derives the same hash.
 func HashAPIKey(key string) string { return hashAPIKey(key) }
 
 func hashAPIKey(key string) string {

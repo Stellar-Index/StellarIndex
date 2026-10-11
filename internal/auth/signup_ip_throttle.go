@@ -11,48 +11,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// DefaultSignupThrottleDwellTime is the dwell-time window: how long the throttle is allowed to be failing-open on
-// Redis errors before [RedisSignupIPThrottle.CheckIP] flips to
-// fail-CLOSED with [ErrThrottleUnavailable].
-//
-// 30s is the documented tradeoff: long enough that a single Redis
-// blip (MISCONF, brief network partition, fail-over) doesn't take
-// signup offline, short enough that an attacker who sustains an
-// outage to disable abuse-prevention can't pivot to
-// bulk-mint accounts indefinitely. Tune via
-// [SignupIPThrottleOptions.DwellTime] if the operator has a
-// different Redis-availability SLO.
+// DefaultSignupThrottleDwellTime is how long the throttle may fail open on Redis errors before CheckIP fails CLOSED with ErrThrottleUnavailable.
+// 30s tolerates a Redis blip without taking signup offline, yet stops an attacker sustaining an outage from bulk-minting accounts; tune via SignupIPThrottleOptions.DwellTime.
 const DefaultSignupThrottleDwellTime = 30 * time.Second
 
-// signupThrottleIncrTimeout bounds the throttle's own Redis round-trip.
-//
-// The increment deliberately does NOT inherit the CALLER's
-// cancellation (see [RedisSignupIPThrottle.CheckIP]), so it needs a
-// bound of its own or a wedged Redis would pin the signup handler's
-// goroutine forever. Mirrors the API middleware's throttle bound; 5 s
-// is generous relative to go-redis's 3 s default — a backstop, not the
-// usual limiter.
+// signupThrottleIncrTimeout bounds the throttle's own Redis round-trip: the increment deliberately ignores the CALLER's cancellation (see CheckIP),
+// so a wedged Redis would otherwise pin the handler goroutine forever. 5s is a backstop above go-redis's 3s default.
 const signupThrottleIncrTimeout = 5 * time.Second
 
-// RedisSignupIPThrottle implements [v1.SignupIPThrottle] (the per-IP
-// signup rate-limit boundary) with a sliding-window Redis counter.
-//
-// The global anonymous rate limit (6000/min per IP on r1) would let a
-// single IP bulk-mint 360,000 email→key_id pairs/hour. The default
-// 5/hour cap here closes that vector while letting an operator onboarding
-// a small team through one shared egress complete normally. It is set
-// only through [SignupIPThrottleOptions]; there is no config key.
-//
-// # Dwell-time fail-open inversion
-//
-// On a Redis transport failure CheckIP starts a dwell-time clock.
-// Errors inside the window (default 30s, see
-// [DefaultSignupThrottleDwellTime]) propagate as wrapped Redis errors and
-// the handler falls open. Once Redis has failed continuously for longer
-// than the dwell-time, CheckIP returns [ErrThrottleUnavailable] and the
-// handler returns 503 + Retry-After. The clock resets after a dwell-time
-// of unbroken successes, or on a success that follows a dwell-time with
-// no failure; a single success amid ongoing errors does not reset it.
+// RedisSignupIPThrottle implements v1.SignupIPThrottle with a sliding-window Redis counter, default 5/hour per IP (set only via SignupIPThrottleOptions), since the global 6000/min anonymous limit would allow 360,000 email-to-key pairs/hour from one IP.
+// Dwell-time inversion: Redis transport errors fall open (wrapped error) until Redis has failed continuously for the dwell time (default 30s), after which CheckIP returns ErrThrottleUnavailable (503 + Retry-After).
+// The clock resets after a dwell time of unbroken successes, or a success following a dwell time with no failure; one success amid ongoing errors does not reset it.
 type RedisSignupIPThrottle struct {
 	counter   *ratelimit.FixedWindowCounter
 	max       int
@@ -88,14 +57,8 @@ type SignupIPThrottleOptions struct {
 	// KeyPrefix is the Redis key namespace for this throttle.
 	// Default "signup-ip:". Override only in tests.
 	KeyPrefix string
-	// DwellTime is the fail-open window. Errors observed within
-	// DwellTime of the first error since the last success fall open;
-	// errors observed past DwellTime return [ErrThrottleUnavailable]
-	// so the handler emits 503 + Retry-After. Default
-	// [DefaultSignupThrottleDwellTime] (30s). Set to a negative value
-	// to disable the dwell-time inversion (fail-open-always) —
-	// operators should NOT reach for this without understanding the
-	// sustained-outage bulk-mint vector.
+	// DwellTime is the fail-open window: errors within it of the first error since the last success fall open, later ones return ErrThrottleUnavailable (503 + Retry-After). Default 30s;
+	// negative disables the inversion (fail-open-always), which exposes the sustained-outage bulk-mint vector.
 	DwellTime time.Duration
 	// NowFn overrides the clock source. Tests inject a synthetic
 	// clock to drive dwell-time transitions deterministically; nil
@@ -139,42 +102,16 @@ func NewRedisSignupIPThrottle(rdb redis.UniversalClient, opts SignupIPThrottleOp
 	}
 }
 
-// CheckIP increments the per-IP counter for the current window.
-// Returns nil while under the cap, [ErrSignupRateLimited] once the
-// cap is reached, [ErrThrottleUnavailable] when Redis has been
-// failing for longer than the configured dwell-time (the handler
-// returns 503 + Retry-After), and a wrapped Redis error on
-// transient transport failure (the handler treats those as
-// fail-open — better than taking signup offline because Redis
-// blipped briefly).
+// CheckIP increments the per-IP counter: nil under the cap, ErrSignupRateLimited at the cap, ErrThrottleUnavailable after the dwell time of Redis failure (503 + Retry-After),
+// and a wrapped Redis error on a transient failure (the handler falls open rather than taking signup offline).
 func (t *RedisSignupIPThrottle) CheckIP(ctx context.Context, ip string) error {
 	if ip == "" {
-		// No usable IP — let the request through; the global
-		// rate-limit middleware also failed to find one and capped
-		// via its own fallback. This throttle hardens against
-		// IP-rotators, not against IP-less direct calls (which production
-		// shouldn't see — Caddy + Cloudflare always populate one).
+		// No usable IP: let the request through, since the global rate limit also found none; this throttle hardens against IP-rotators, not IP-less direct calls.
 		return nil
 	}
-	// The shared counter uses the same window-bucket trick as
-	// ratelimit.Bucket and owns the first-touch drain TTL. Sliding-window
-	// approximate: at most 2× the cap during a window-crossing burst,
-	// acceptable for an abuse-prevention threshold (not a billing meter).
-	//
-	// The address is masked to its throttle-key identity first — see
-	// [ratelimit.ThrottleIPKey]. Keying on the exact IPv6 /128 would make
-	// this cap free to bypass: one delegated /64 is 2^64 addresses, each on
-	// its own empty bucket.
-	//
-	// The increment runs on the caller's VALUES without its cancellation,
-	// bounded by [signupThrottleIncrTimeout], for two load-bearing reasons.
-	// First, this counter cannot tell a caller-cancelled call from a Redis
-	// outage: every error arms the dwell clock and resets the recovery
-	// streak, so a client that posts a signup and RSTs a few times a second
-	// keeps it armed, and past the window CheckIP returns
-	// ErrThrottleUnavailable, taking signup offline for EVERYONE. Second, an
-	// attempt that errors out was never counted, so aborting mid-flight
-	// would buy unlimited uncounted signup attempts (the bulk-mint vector).
+	// The counter shares ratelimit.Bucket's window trick and first-touch drain TTL (sliding-window approximate, at most 2x the cap at a window crossing: fine for abuse prevention, not billing).
+	// The address is masked via ratelimit.ThrottleIPKey first; keying on an IPv6 /128 would be free to bypass, as one /64 holds 2^64 addresses.
+	// The increment runs on the caller's VALUES without its cancellation (bounded by signupThrottleIncrTimeout): the counter cannot tell a client RST from a Redis outage, so RSTs would arm the dwell clock and take signup offline for everyone, and an aborted attempt would go uncounted (bulk-mint).
 	incrCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), signupThrottleIncrTimeout)
 	defer cancel()
 	count, err := t.counter.Incr(incrCtx, t.keyPrefix+ratelimit.ThrottleIPKey(ip))
@@ -191,14 +128,7 @@ func (t *RedisSignupIPThrottle) CheckIP(ctx context.Context, ip string) error {
 	return nil
 }
 
-// observeRedisFailure stamps the first-error timestamp on the
-// dwell-time clock if it isn't already armed, and reports whether
-// the dwell-time has elapsed. Callers should map true to
-// [ErrThrottleUnavailable] and false to a wrapped transport error
-// (the handler falls open on the latter).
-//
-// Disabled (negative DwellTime) always returns false: fail-open-always
-// for operators who explicitly opt out.
+// observeRedisFailure arms the dwell clock on the first error if not armed and reports whether the dwell time has elapsed (true maps to ErrThrottleUnavailable, false to a wrapped transport error). A negative DwellTime always returns false.
 func (t *RedisSignupIPThrottle) observeRedisFailure() bool {
 	if t.dwellTime < 0 {
 		return false
@@ -215,13 +145,8 @@ func (t *RedisSignupIPThrottle) observeRedisFailure() bool {
 	return now.Sub(t.redisErrorSince) > t.dwellTime
 }
 
-// observeRedisSuccess clears the fail-closed clock only after dwellTime of
-// UNBROKEN successes — NOT on a single success, which under a flapping
-// Redis (occasional OK amid sustained errors) would keep the signup throttle
-// fail-open indefinitely. The "first OK after outage" recovery marker operators
-// want comes from the success-path metric, not from weakening the throttle.
-// A success after dwellTime with no observed failure also clears it. Mirrors
-// ratelimit.Bucket.observeRedisSuccess.
+// observeRedisSuccess clears the fail-closed clock only after dwellTime of UNBROKEN successes (or a success after dwellTime with no failure), not on one success: a flapping Redis would otherwise keep the throttle fail-open indefinitely.
+// The recovery signal operators want comes from the success metric. Mirrors ratelimit.Bucket.observeRedisSuccess.
 func (t *RedisSignupIPThrottle) observeRedisSuccess() {
 	now := t.nowFn()
 	t.mu.Lock()

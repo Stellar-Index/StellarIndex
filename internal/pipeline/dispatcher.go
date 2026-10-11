@@ -1,20 +1,4 @@
-// Package pipeline holds the shared ingest-pipeline glue used by both
-// the long-running indexer (`cmd/stellarindex-indexer`) and the
-// bounded-replay backfill subcommand (`cmd/stellarindex-ops backfill`).
-//
-// What's here vs what isn't:
-//
-//   - BuildDispatcher: registers the right per-source decoders given
-//     the operator's enabled-sources list + the oracle contract IDs.
-//   - ProcessLedger: runs the dispatcher over one LCM and forwards
-//     emitted events to a sink channel. Does NOT touch cursors or
-//     emit cursor metrics (a long-running-indexer concern).
-//   - PersistEvents: drains a sink channel and writes each event to
-//     its hypertable. Type-switch covers every event kind any
-//     registered source can emit.
-//   - LedgerstreamConfig: builds a ledgerstream.Config from a global
-//     config + bucket name, so both binaries share the datastore wiring.
-//
+// Package pipeline holds the ingest glue shared by the indexer and `stellarindex-ops backfill`: BuildDispatcher, ProcessLedger, PersistEvents, LedgerstreamConfig.
 // Cursors, signals, flags and metrics-server lifecycle stay in the binaries.
 package pipeline
 
@@ -33,33 +17,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/trustlines"
 )
 
-// BuildDispatcher constructs a dispatcher with decoders registered
-// for every name in `names`. Returns an error on unknown names or
-// when an oracle source is requested without its required contract
-// ID populated in `oracle`.
-//
-// Each name is wired per its [SourceSpec]; watched (sep41) specs are
-// never enabled by name, see [RegisterSupplyEventDecoders].
-//
-// soroswapOpts is forwarded to soroswap.NewDecoder when soroswap is
-// in `names`. The indexer + backfill chunks pass:
-//
-//   - WithSeededPairTokensDecoder seeded from
-//     timescale.LoadSoroswapPairRegistry, so a parallel chunk that
-//     doesn't cover the original new_pair event emits no
-//     "skipped_unknown_pair" noise.
-//   - WithPairUpsertHook bound to timescale.UpsertSoroswapPair, so
-//     newly-discovered pairs are persisted as live new_pair events.
+// BuildDispatcher registers a decoder per name in names per its SourceSpec, erroring on unknown names or a missing oracle contract ID; sep41 is never enabled by name.
 func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[string][]contractid.Option, soroswapOpts ...soroswap.DecoderOption) (*dispatcher.Dispatcher, error) {
-	// Oracle-staleness policy is installed BEFORE any
-	// decoder is built, so the first update a source persists already
-	// publishes the right budget. Overrides go in unconditionally —
-	// they are keyed by (source, asset) and a row naming a source this
-	// replica does not run simply never matches a series, which is
-	// cheaper than reasoning about which replica owns which asset.
-	// Per-source DEFAULTS are declared by each spec's OnDispatch, so a
-	// source that is not enabled here publishes neither a resolution
-	// nor a budget.
+	// Install the oracle-staleness policy BEFORE any decoder is built so the first persisted update publishes the right budget.
+	// Overrides are keyed by (source, asset), so one naming a source this replica does not run is inert; per-source defaults come from each spec's OnDispatch.
 	obs.SetOracleStalenessOverrides(oracleStalenessOverrides(oracle))
 
 	a := BuildArgs{Oracle: oracle, Gated: gated, SoroswapOpts: soroswapOpts}
@@ -76,16 +37,8 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 	return disp, nil
 }
 
-// oracleStalenessOverrides translates the operator's
-// `[[oracle.staleness_overrides]]` rows into the obs package's shape.
-//
-// The translation exists so internal/obs stays free of an
-// internal/config import: obs is the leaf every binary links, and the
-// budget policy it owns is described by (source, asset, seconds) —
-// the `reason` field is for humans reading the config, not for the
-// gauge. config.Validate has already rejected unknown sources,
-// non-canonical asset spellings, non-positive budgets and duplicate
-// pairs by the time this runs.
+// oracleStalenessOverrides translates `[[oracle.staleness_overrides]]` rows into obs's shape, keeping internal/obs free of an internal/config import.
+// config.Validate has already rejected unknown sources, non-canonical assets, non-positive budgets and duplicates.
 func oracleStalenessOverrides(oracle config.OracleConfig) []obs.OracleStalenessOverride {
 	if len(oracle.StalenessOverrides) == 0 {
 		return nil
@@ -101,11 +54,7 @@ func oracleStalenessOverrides(oracle config.OracleConfig) []obs.OracleStalenessO
 	return out
 }
 
-// AccountObserverWatchSet is the account set the accounts observer
-// watches: the SDF reserve accounts plus the metadata-watched issuers,
-// deduplicated in first-seen order. Empty means the observer is not
-// registered. The indexer gates the observer's watermark on the same
-// set.
+// AccountObserverWatchSet is the accounts observer's watch set (SDF reserve accounts plus metadata-watched issuers, deduplicated); empty means unregistered.
 func AccountObserverWatchSet(sup config.SupplyConfig, meta config.MetadataConfig) []string {
 	seen := make(map[string]struct{}, len(sup.SDFReserveAccounts)+len(meta.WatchedIssuerAccounts))
 	var out []string
@@ -121,25 +70,9 @@ func AccountObserverWatchSet(sup config.SupplyConfig, meta config.MetadataConfig
 	return out
 }
 
-// RegisterSupplyEntryDecoders attaches the LCM-based supply observers
-// to disp based on the supply config. Each observer is opt-in: an
-// empty watched-set leaves it unregistered (no decoder, no per-ledger
-// work). Returns the registered observer names for boot logs.
-//
-// Wired observers and their watch sets:
-//
-//   - accounts.Observer: [AccountObserverWatchSet], i.e.
-//     [supply.SDFReserveAccounts] plus [metadata.WatchedIssuerAccounts].
-//     Readers query by account id, so issuers do not leak into the
-//     reserve sum.
-//   - trustlines.Observer, claimable_balances.Observer and
-//     liquidity_pools.Observer: [supply.WatchedClassicAssets].
-//   - sac_balances.Observer: [supply.SACWrappers] (SAC C-strkey ->
-//     asset_key map); covers SAC-wrapped classics and pure SEP-41.
-//
-// Persistence is the type-switch in internal/pipeline/sink.go. The
-// event-stream sep41_supply observer registers in
-// [RegisterSupplyEventDecoders]; call both.
+// RegisterSupplyEntryDecoders attaches the opt-in LCM supply observers (an empty watched set leaves one unregistered) and returns their names.
+// Accounts use AccountObserverWatchSet (readers query by account id, so issuers do not leak into the reserve sum); persistence is the sink.go type-switch;
+// call RegisterSupplyEventDecoders too for the sep41_supply event observer.
 func RegisterSupplyEntryDecoders(disp *dispatcher.Dispatcher, sup config.SupplyConfig, meta config.MetadataConfig) ([]string, error) {
 	var registered []string
 	if watched := AccountObserverWatchSet(sup, meta); len(watched) > 0 {

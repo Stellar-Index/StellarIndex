@@ -64,17 +64,8 @@ func (v *Validator) issueJWT(subject string, issuedAt, expiresAt time.Time) (str
 	return signingInput + "." + sig, nil
 }
 
-// parseJWT validates an HS256 JWT signed by [issueJWT] and returns
-// its claims. Returns:
-//
-//   - [auth.ErrTokenMalformed] — wrong shape (not three dot-separated
-//     parts), header doesn't match, or body isn't decodeable JSON.
-//   - [auth.ErrUnauthorized] — signature mismatch (constant-time
-//     check; substituting the secret or tampering with the body
-//     fails here).
-//
-// `exp` enforcement happens at the call site so callers can choose
-// to surface [auth.ErrTokenExpired] specifically.
+// parseJWT validates an HS256 JWT from [issueJWT] and returns its claims: [auth.ErrTokenMalformed] for wrong shape, header or undecodable body; [auth.ErrUnauthorized] for a signature mismatch (constant-time compare).
+// exp is enforced at the call site so callers can surface [auth.ErrTokenExpired].
 func (v *Validator) parseJWT(token string) (claims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {

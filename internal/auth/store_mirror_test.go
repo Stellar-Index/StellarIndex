@@ -14,15 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestCreateWithSecret_RoundTripsThroughTheValidator is the end-to-end
-// check that the mirrored record carries every gate.
-//
-// Component tests prove the handler's Postgres row is right and the
-// mirror received the right STRUCT, but cannot see that the record the
-// DEPLOYED validator reads lacks a monthly quota — /v1/register would
-// advertise a 1,000,000/month cap on completely unmetered keys. This
-// drives the real store into the real validator and asserts on the
-// Subject the middleware actually consumes.
+// TestCreateWithSecret_RoundTripsThroughTheValidator drives the real store into the real validator and asserts on the Subject the middleware consumes:
+// component tests cannot see a mirrored record lacking its monthly quota, which would advertise a cap on unmetered keys.
 func TestCreateWithSecret_RoundTripsThroughTheValidator(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -92,12 +85,7 @@ func gatedManagementRow(expiresAt time.Time) platform.APIKey {
 	}
 }
 
-// TestCreateWithSecret_MirrorsEveryGateOfTheManagementRow pins that
-// the mirror is the seam for writing a Postgres-minted key into the Redis
-// validator store, so it must carry every gate on the management row. A
-// MirroredKey without fields for scopes, expiry, IP/referer allowlists or
-// permission entries, or with PermissionsAll hardcoded true, would hand a
-// gated key back as an unrestricted one.
+// TestCreateWithSecret_MirrorsEveryGateOfTheManagementRow: the mirror must carry every gate (scopes, expiry, IP/referer allowlists, permission entries, PermissionsAll not hardcoded true), or a gated key becomes unrestricted.
 func TestCreateWithSecret_MirrorsEveryGateOfTheManagementRow(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

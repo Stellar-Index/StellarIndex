@@ -13,11 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ProjectorStallBound is the longest the projector can hold a projected
-// event behind a lake hole before writing it: one ch-live-catchup period
-// (deploy/systemd/ch-live-catchup.timer, 10 minutes) plus a 5-minute margin
-// for the catch-up's own drain and clock skew — the bound migration 0165
-// sized prices_1m's lookback to.
+// ProjectorStallBound is the longest the projector can hold a projected event behind a lake hole: one ch-live-catchup period (10 minutes) plus a 5-minute margin, the bound prices_1m's lookback is sized to.
 const ProjectorStallBound = 15 * time.Minute
 
 // ErrSoleWriterCAGGWindow is returned by [VerifySoleWriterCAGGCoverage]
@@ -32,19 +28,9 @@ type CAGGWindowReader interface {
 	CAGGRefreshWindows(ctx context.Context) ([]timescale.CAGGRefreshWindow, error)
 }
 
-// VerifySoleWriterCAGGCoverage refuses a sink mode in which the projector
-// is the only writer of a table some continuous aggregate reads with a
-// refresh lookback shorter than [ProjectorStallBound]: the projector can
-// deliver rows that late, and the policy never materializes them. Low
-// projector lag does not prove a mode safe — a single lake hole does the
-// damage.
-//
-// In Phase 4 ([SinkModeSkipProjected]) every aggregate is checked, not a
-// list of projector-written tables, so a new one cannot slip past a stale
-// list. In Phase 3 ([SinkModeSkipSoleWriter]) the dispatcher still writes
-// the other projected sources live, so only aggregates over a
-// [ProjectorSpec.SoleWriter] source's tables are checked. A missing
-// refresh policy, or a database reporting no aggregates at all, also fails.
+// VerifySoleWriterCAGGCoverage refuses a sink mode where the projector alone writes a table that a continuous aggregate reads with a lookback shorter than ProjectorStallBound;
+// low projector lag does not prove safety, one lake hole suffices. Phase 4 checks every aggregate (so a new one cannot slip past a stale list); Phase 3 checks only aggregates over SoleWriter sources' tables.
+// A missing refresh policy, or no aggregates at all, also fails.
 func VerifySoleWriterCAGGCoverage(ctx context.Context, r CAGGWindowReader, mode SinkMode) error {
 	tables, all, err := soleWrittenTables(mode)
 	if err != nil {

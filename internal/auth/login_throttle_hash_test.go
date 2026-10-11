@@ -29,11 +29,8 @@ func TestHashEmail_NormalisesBeforeHashing(t *testing.T) {
 	}
 }
 
-// Every RFC-5322 spelling of ONE inbox must share ONE throttle bucket.
-// Case+trim alone gave `<v@x.com>` and `"n" <v@x.com>` their own 5/hour
-// budgets while all of them deliver to the same mailbox, so the per-email
-// cap — whose entire purpose is bounding inbox-bombing — was bypassable by
-// re-spelling the target.
+// Every RFC-5322 spelling of ONE inbox must share ONE throttle bucket; case+trim alone gave `<v@x.com>` and `"n" <v@x.com>` their own 5/hour budgets,
+// making the per-email inbox-bombing cap bypassable by re-spelling the target.
 func TestHashEmail_RFC5322SpellingsShareOneBucket(t *testing.T) {
 	t.Parallel()
 

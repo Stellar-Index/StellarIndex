@@ -47,11 +47,7 @@ func mirroredTTL(t *testing.T, rdb redis.Cmdable, plaintext string) time.Duratio
 	return ttl
 }
 
-// TestRedisValidator_RefreshesIdleTTLOnUse proves the read-path re-warm:
-// a successful Lookup slides the idle window forward. Without it a
-// register-mirrored key HARD-EXPIRES at mint+TTL even while actively
-// used — the "valid key -> permanent silent 401" failure. A bare-GET
-// Lookup fails it: the TTL keeps decaying because nothing re-warms it.
+// TestRedisValidator_RefreshesIdleTTLOnUse: a successful Lookup must slide the idle window, or a mirrored key hard-expires at mint+TTL while in use (permanent silent 401).
 func TestRedisValidator_RefreshesIdleTTLOnUse(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -103,11 +99,7 @@ func TestRedisValidator_ActivelyUsedKeyDoesNotExpire(t *testing.T) {
 	}
 }
 
-// TestRedisValidator_PersistentKeyKeepsNoTTL guards the blast radius:
-// refresh-on-use is EXPIRE ... XX, so it must NOT graft a TTL onto a
-// record written WITHOUT one (operator-seeded keys, which are deliberately
-// permanent). Its job is to keep a future "just GETEX everything" simplification from
-// silently making every persistent key evictable.
+// TestRedisValidator_PersistentKeyKeepsNoTTL: refresh-on-use is EXPIRE ... XX and must not graft a TTL onto a deliberately permanent (operator-seeded) record.
 func TestRedisValidator_PersistentKeyKeepsNoTTL(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

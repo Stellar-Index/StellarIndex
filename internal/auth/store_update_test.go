@@ -111,12 +111,7 @@ func TestUpdateRateLimit_RejectsEmptyKeyID(t *testing.T) {
 	}
 }
 
-// TestUpdateRateLimit_PreservesMirroredKeyTTL pins the TTL: a
-// register-mirrored record is written with the sliding idle TTL
-// (MirroredKeyIdleTTL) so an abandoned open-registration key ages out of
-// Redis. A read-modify-write of `SET ... 0` clears any existing TTL — the
-// FIRST rate-limit change on such a key would silently turn it
-// permanent, defeating the idle-expiry bound entirely.
+// TestUpdateRateLimit_PreservesMirroredKeyTTL: a read-modify-write must keep the sliding idle TTL; `SET ... 0` would make a mirrored key permanent on its first rate-limit change.
 func TestUpdateRateLimit_PreservesMirroredKeyTTL(t *testing.T) {
 	store, mr, _ := newTestStore(t)
 	ctx := context.Background()

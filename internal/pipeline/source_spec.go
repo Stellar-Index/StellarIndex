@@ -44,11 +44,7 @@ type BuildArgs struct {
 	SoroswapOpts []soroswap.DecoderOption
 }
 
-// SourceSpec is the one entry that wires an on-chain source into both
-// writers (AGENTS.md invariant 7). BuildDispatcher, SorobanSourceNames,
-// IsProjectedEvent, IsSoleWriterProjected, RegisterSupplyEventDecoders and
-// projector.BuildRegistry all read it, so a source cannot be projected in
-// one list and missing from another.
+// SourceSpec is the one entry wiring an on-chain source into both writers (AGENTS.md invariant 7); every dispatcher, projector and classification helper reads it, so a source cannot be projected in one list and missing from another.
 type SourceSpec struct {
 	Name string
 	// Events holds a zero value of every consumer.Event type the source
@@ -85,19 +81,13 @@ type ProjectorSpec struct {
 	LiveContractIDs     func(dispatcher.Decoder) func() []string
 	NeedsStateWriteKeys bool
 	Genesis             uint32
-	// SoleWriter: the projector owns the write even in Phase-3 parallel
-	// mode, so the dispatcher's events goroutine skips it. Set only once
-	// the source's full-history re-derive has landed and it is in the
-	// ADR-0033 reconcile catalogue (internal/ops/chops/reconciliation_catalogue.go).
+	// SoleWriter: the projector owns the write even in Phase-3 parallel mode, so the dispatcher skips it. Set only after the source's full-history re-derive landed and it is in the ADR-0033 reconcile catalogue;
 	// VerifySoleWriterCAGGCoverage then gates the aggregates over its tables.
 	SoleWriter bool
 }
 
-// firehoseExcludeSyms is the CAP-67 classic-token topic[0] set minus
-// set_admin (blend dispatches on it). Every source using it was audited to
-// consume none of these six, so excluding them from a catch-up window's
-// lake scan is lossless. An exclude-list because several decoders match
-// prefixed topic[0] symbols (phoenix "XYK Pool: …") an include-list would miss.
+// firehoseExcludeSyms is the CAP-67 classic-token topic[0] set minus set_admin (blend dispatches on it); every source using it consumes none of the six, so excluding them from a lake scan is lossless.
+// An exclude-list because several decoders match prefixed symbols (phoenix "XYK Pool: ...") an include-list would miss.
 var firehoseExcludeSyms = []string{
 	"transfer", "mint", "burn", "clawback", "approve", "set_authorized",
 }

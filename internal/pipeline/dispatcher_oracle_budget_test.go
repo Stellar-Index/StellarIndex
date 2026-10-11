@@ -26,14 +26,7 @@ type oracleSourceFixture struct {
 	enabledSourceNames []string
 }
 
-// oracleSourceFixtures maps every source name config.OracleSourceNames
-// accepts in a staleness override to the config that enables it.
-//
-// Keyed off that map on purpose: an oracle source added there but not
-// wired into BuildDispatcher's case table fails
-// TestBuildDispatcher_DeclaresBudgetForEveryOracleSource with
-// "unhandled source" rather than shipping an asset population whose
-// alert can never fire.
+// oracleSourceFixtures maps each source name config.OracleSourceNames accepts to the config enabling it, so a source missing from BuildDispatcher fails with "unhandled source".
 func oracleSourceFixtures() map[string]oracleSourceFixture {
 	return map[string]oracleSourceFixture{
 		reflector.SourceDEX: {
@@ -64,17 +57,8 @@ func oracleSourceFixtures() map[string]oracleSourceFixture {
 	}
 }
 
-// TestBuildDispatcher_DeclaresBudgetForEveryOracleSource is the
-// no-silent-loss guard on the wiring side.
-//
-// obs.RecordOracleUpdate always emits a budget series, but a source
-// that never declared its resolution gets +Inf — a series that exists
-// and can never ticket. That is the correct fallback (it reproduces
-// the behaviour of a rule with no right-hand side) and
-// exactly the wrong thing to ship for an enabled source. So
-// every oracle source the dispatcher can enable must come out of
-// BuildDispatcher with a FINITE budget, equal to the same
-// 10 × resolution the alert computes.
+// TestBuildDispatcher_DeclaresBudgetForEveryOracleSource: a source that never declared its resolution gets a +Inf budget that can never ticket,
+// so every enabled oracle source must come out of BuildDispatcher with a finite budget equal to the alert's 10 x resolution.
 func TestBuildDispatcher_DeclaresBudgetForEveryOracleSource(t *testing.T) {
 	fixtures := oracleSourceFixtures()
 	for source := range config.OracleSourceNames {
@@ -135,11 +119,7 @@ func (p budgetStubPoller) PollOnce(context.Context, []canonical.Pair) (
 	return nil, nil, nil
 }
 
-// TestExternalRun_DeclaresBudgetForEveryPolledOracleSource is the
-// poller-side twin of the dispatcher guard. Chainlink, CoinGecko, ECB
-// and the rest write oracle_updates through the same sink as the
-// on-chain oracles, so each must leave external.Run with a finite
-// budget of 10 × its registry cadence (floored at the poll interval).
+// TestExternalRun_DeclaresBudgetForEveryPolledOracleSource is the poller-side twin: each must leave external.Run with a finite budget of 10 x its registry cadence (floored at the poll interval).
 func TestExternalRun_DeclaresBudgetForEveryPolledOracleSource(t *testing.T) {
 	const pollInterval = time.Minute
 	polled := 0
@@ -179,12 +159,7 @@ func TestExternalRun_DeclaresBudgetForEveryPolledOracleSource(t *testing.T) {
 	}
 }
 
-// TestOracleSourceNames_MatchRegistry is the lockstep between the two
-// spellings of "which sources write oracle_updates". config cannot
-// import external, so it mirrors the set by hand; a source missing from
-// the mirror is one no staleness override can reach, and a registry
-// row with no cadence is one whose budget falls back to its poll
-// interval instead of its real publication rhythm.
+// TestOracleSourceNames_MatchRegistry keeps config's hand-mirrored oracle source set in lockstep with the external registry (config cannot import external).
 func TestOracleSourceNames_MatchRegistry(t *testing.T) {
 	fromRegistry := map[string]struct{}{}
 	for name, m := range external.Registry {
@@ -206,11 +181,7 @@ func TestOracleSourceNames_MatchRegistry(t *testing.T) {
 	}
 }
 
-// TestBuildDispatcher_InstallsConfiguredOverrides proves the operator's
-// `[[oracle.staleness_overrides]]` rows actually reach the gauge, and
-// that they are installed even for a source this replica does not run
-// (the rows are keyed by (source, asset); one that matches nothing is
-// inert, which is cheaper than reasoning about replica topology).
+// TestBuildDispatcher_InstallsConfiguredOverrides: configured staleness overrides reach the gauge, even for a source this replica does not run (inert if unmatched).
 func TestBuildDispatcher_InstallsConfiguredOverrides(t *testing.T) {
 	oracle := config.OracleConfig{
 		Reflector: config.ReflectorOracleConfig{CEXContract: realisticCStrkey},
@@ -259,13 +230,8 @@ func TestBuildDispatcher_NoOverridesLeavesEveryAssetOnTheDefault(t *testing.T) {
 	}
 }
 
-// TestBuildDispatcher_FoldsWhitespaceAndCaseInSourceNames pins that the
-// dispatcher's own switch must normalise ingestion.enabled_sources entries
-// the SAME way internal/config/validate.go's KnownSources check already
-// does (lowercase + trim). Lowercasing alone would let a name with
-// leading/trailing whitespace pass config.Validate (which trims) but then
-// hard-error here as "unknown source" — a boot-time crash on input the
-// config layer had already accepted as valid.
+// TestBuildDispatcher_FoldsWhitespaceAndCaseInSourceNames: the dispatcher must normalise enabled_sources like config validation (lowercase + trim),
+// or a name config accepted would hard-error here as an unknown source at boot.
 func TestBuildDispatcher_FoldsWhitespaceAndCaseInSourceNames(t *testing.T) {
 	disp, err := BuildDispatcher([]string{"  Comet  "}, config.OracleConfig{}, nil)
 	if err != nil {

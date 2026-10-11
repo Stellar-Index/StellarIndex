@@ -31,11 +31,8 @@ func policy(view string, startOffset time.Duration) timescale.CAGGRefreshWindow 
 	return timescale.CAGGRefreshWindow{View: view, HasPolicy: true, StartOffset: startOffset}
 }
 
-// TestVerifySoleWriterCAGGCoverage_RefusesShortLookback pins the pre-flip
-// gate on the shipped policy shape: prices_1m was widened to 15 minutes
-// (0165) but oracle_prices_1m is still at 0034's 5, so a projector stall
-// on reflector/redstone would leave its buckets permanently short. The
-// flip must be refused, naming exactly that view.
+// TestVerifySoleWriterCAGGCoverage_RefusesShortLookback pins the pre-flip gate on the shipped policies: oracle_prices_1m still has a 5-minute lookback,
+// so a projector stall would leave its buckets short and the flip must be refused, naming that view.
 func TestVerifySoleWriterCAGGCoverage_RefusesShortLookback(t *testing.T) {
 	r := &fakeCAGGWindows{windows: []timescale.CAGGRefreshWindow{
 		policy("oracle_prices_1m", 5*time.Minute),
