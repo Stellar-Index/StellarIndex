@@ -18,11 +18,8 @@ import (
 // StoreChecker adapts *timescale.Store to the v1.ReadyChecker
 // interface so /readyz can include it in the dependency poll.
 //
-// Postgres is critical — every request that returns trade /
-// aggregate / supply data reads from Timescale. There's no
-// fallback path; a Postgres outage really does mean the API
-// can't serve. Critical()==true so /readyz returns 503 when
-// Postgres is unreachable.
+// Postgres is critical: every trade, aggregate and supply read hits Timescale with no fallback, so
+// Critical()==true and /readyz returns 503 when it is unreachable.
 type StoreChecker struct{ S *timescale.Store }
 
 func (c StoreChecker) Name() string   { return "postgres" }
@@ -31,11 +28,9 @@ func (c StoreChecker) Ping(ctx context.Context) error {
 	return c.S.DB().PingContext(ctx)
 }
 
-// SchemaChecker adapts the golang-migrate schema_migrations
-// bookkeeping row to v1.SchemaVersionReader for the head
-// assertion. It reads over the store's *sql.DB —
-// the stellarindex-migrate binary owns writes; the API only reads —
-// keeping the raw SQL in this binary layer, mirroring StoreChecker.
+// SchemaChecker adapts the golang-migrate schema_migrations row to v1.SchemaVersionReader for the
+// head assertion. It reads over the store's *sql.DB (stellarindex-migrate owns writes) and keeps
+// the raw SQL in this binary layer, like StoreChecker.
 type SchemaChecker struct{ DB *sql.DB }
 
 func (c SchemaChecker) SchemaMigrationVersion(ctx context.Context) (uint, bool, error) {
@@ -53,18 +48,12 @@ func (c SchemaChecker) SchemaMigrationVersion(ctx context.Context) (uint, bool, 
 	return version, dirty, nil
 }
 
-// RedisChecker adapts redis.UniversalClient to the v1.ReadyChecker
-// interface. Redis is non-critical at API layer — cache misses
-// fall back to Timescale per ADR-0007, so a Redis outage degrades
-// latency (every read becomes a Timescale query instead of a
-// Redis read) but does NOT break correctness. UniversalClient
-// (vs typed Client) lets the same adapter work against both the
-// dev single-node and production Sentinel-backed FailoverClient.
+// RedisChecker adapts redis.UniversalClient to v1.ReadyChecker. Redis is non-critical: cache misses
+// fall back to Timescale per ADR-0007, so an outage costs latency, not correctness.
+// UniversalClient lets one adapter serve both dev single-node and the Sentinel FailoverClient.
 //
-// Critical()==false so a Redis
-// outage produces a 200 with status="degraded" from /v1/readyz
-// instead of a 503; HAProxy keeps the backend in service while
-// operators see the degradation in the response body.
+// Critical()==false makes an outage a 200 with status="degraded" from /v1/readyz instead of a 503,
+// so HAProxy keeps the backend in service while operators see the degradation in the body.
 type RedisChecker struct{ RDB redis.UniversalClient }
 
 func (c RedisChecker) Name() string   { return "redis" }
@@ -103,21 +92,14 @@ func (k nonstandardDecimalsChecker) Ping(context.Context) error {
 	return nil
 }
 
-// ClickhouseChecker adapts *clickhouse.ExplorerReader to the
-// v1.ReadyChecker interface. Non-critical
-// for the same reason as redisChecker: the explorer/supply readers
-// this wraps degrade to 503 on their own OWNING endpoints
-// (/v1/ledgers, /v1/tx, /v1/assets/{id}/supply, …) when ClickHouse
-// is unreachable — the rest of the API (Postgres-backed reads) keeps
-// serving correctly — so a CH outage should read status="degraded",
-// not take the whole backend out of load-balancer rotation. Reuses
-// LakeTipLedger (already exported for the protocol-analytics window
-// cutoff) as the Ping probe: a cheap query against the small
-// `stellar.ledgers` table, no new ClickHouse-side surface needed.
+// ClickhouseChecker adapts *clickhouse.ExplorerReader to v1.ReadyChecker. It is non-critical: the
+// explorer/supply readers 503 on their own endpoints (/v1/ledgers, /v1/tx, /v1/assets/{id}/supply,
+// ...) when ClickHouse is down while Postgres-backed reads keep serving, so an outage should read
+// status="degraded", not drop the backend from load-balancer rotation. LakeTipLedger is the Ping
+// probe: a cheap query against the small `stellar.ledgers` table.
 //
-// `r` is nil when every boot dial in the retry window failed. The checker
-// still exists in that state and still reports down — see
-// ClickhouseReadyChecks.
+// `r` is nil when every boot dial in the retry window failed; the checker then still reports down
+// (see ClickhouseReadyChecks).
 type ClickhouseChecker struct {
 	R          *clickhouse.ExplorerReader
 	DialErr    error
@@ -137,14 +119,12 @@ func (c ClickhouseChecker) Ping(ctx context.Context) error {
 // ClickhouseReadyChecks returns the readiness checkers for ClickHouse: none when
 // no address is configured, exactly one otherwise, wired or not.
 //
-// A checker registered only in the boot-dial success branch would leave a
-// ClickHouse that was down at startup with no stellarindex_dependency_up series;
-// the alert (== 0, deliberately not absent()) would have nothing to match while
-// endpoints 503. So one still unreachable when dialLakeReadersAtBoot's window ends
-// registers a checker that reports down for the process's lifetime: the lake seams
-// are never re-dialled, so a Ping that went green would hide endpoints still
-// 503ing. Only a ClickHouse that answers before the last attempt
-// (clickhouseBootDialMinAttempt) avoids this.
+// A checker registered only on boot-dial success would leave a ClickHouse that was down at startup
+// with no stellarindex_dependency_up series, so the alert (== 0, deliberately not absent()) could
+// not match while endpoints 503. One still unreachable when dialLakeReadersAtBoot's window ends
+// therefore reports down for the process's lifetime: the lake seams are never re-dialled, so a
+// Ping that went green would hide endpoints still 503ing. Only a ClickHouse that answers before
+// the last attempt (clickhouseBootDialMinAttempt) avoids this.
 //
 // No address means no lake and no dependency, so nothing is published.
 func ClickhouseReadyChecks(addr string, er *clickhouse.ExplorerReader, dialErr error, dialBudget time.Duration) []v1.ReadyChecker {

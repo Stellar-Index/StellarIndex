@@ -12,19 +12,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/nettools"
 )
 
-// ssrfGuardedDialContext is the [net/http.Transport]'s DialContext
-// override that the customer-webhook delivery worker uses. It
-// resolves the destination host at dial time and rejects any
-// address in a non-public range — closing the DNS-rebinding gap
-// that registration-time validation cannot cover, since the DNS
-// answer can change between when the URL was saved and when the
-// callback fires.
+// ssrfGuardedDialContext is the delivery worker's [net/http.Transport] DialContext. It resolves
+// the host at dial time and rejects any non-public address, closing the DNS-rebinding gap that
+// registration-time validation cannot cover because the DNS answer can change after the URL was
+// saved.
 //
-// The check mirrors the registration-time logic in
-// `internal/api/v1/dashboardwebhooks/handlers.go::isInternalIP`.
-// Both must agree on the block list, or a host that passes
-// registration could be rejected at delivery (a worse-than-the-
-// alternative UX).
+// It mirrors `internal/api/v1/dashboardwebhooks/handlers.go::isInternalIP`; the two block lists
+// must agree, or a host that passes registration would be rejected at delivery.
 func ssrfGuardedDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {

@@ -18,11 +18,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/nettools"
 )
 
-// SEP1 is the parsed subset of a stellar.toml document we care
-// about. The full raw content is preserved in [SEP1.Raw] for
-// callers that need the uncommon fields (FEDERATION_SERVER,
-// SIGNING_KEY, HORIZON_URL, etc.) — we don't pre-struct those
-// until we have a use for them.
+// SEP1 is the parsed subset of a stellar.toml we use. The full content stays in [SEP1.Raw] for the
+// uncommon fields, which are not structured until something needs them.
 type SEP1 struct {
 	// OrgName is the issuer's human-readable organisation name —
 	// typically `DOCUMENTATION.ORG_NAME` in the TOML.
@@ -49,17 +46,9 @@ type SEP1 struct {
 	// [Resolver.Resolve] — not part of the TOML itself.
 	FetchedAt time.Time
 
-	// RecoveredSections is non-empty when the document did not parse
-	// whole and was read section by section instead. Each entry names
-	// a top-level table this index could NOT read, and the parser
-	// error that refused it.
-	//
-	// It is the visible form of a partial read. A caller that treats an
-	// absent field as "the issuer declared nothing" would be wrong
-	// about a document whose section carrying that field is listed
-	// here, so the list has to travel with the result rather than being
-	// logged and dropped. Empty on every document that parsed whole,
-	// which is almost all of them.
+	// RecoveredSections names each top-level table that could NOT be read when the document was
+	// parsed section by section (empty if it parsed whole). An absent field is not "the issuer
+	// declared nothing" when the section carrying it is listed here.
 	RecoveredSections []SkippedSection
 }
 
@@ -105,11 +94,8 @@ type Currency struct {
 type Resolver struct {
 	client *http.Client
 
-	// allowPrivateIPs mirrors [Options.AllowPrivateIPs]. It is the
-	// single "test mode" switch: production leaves it false. As well
-	// as relaxing the SSRF IP guard, it relaxes the home_domain port
-	// restriction so httptest servers (which bind ephemeral ports)
-	// resolve. Production requires the SEP-1 well-known port (443).
+	// allowPrivateIPs mirrors [Options.AllowPrivateIPs], the single test-mode switch. It also
+	// relaxes the home_domain port restriction (production requires 443) for httptest servers.
 	allowPrivateIPs bool
 }
 
@@ -125,19 +111,9 @@ type Options struct {
 	AllowPrivateIPs bool
 }
 
-// WithClient replaces the Resolver's HTTP client. Test-only —
-// production callers use NewResolver's built-in client with its
-// SSRF-guarded transport + timeouts.
-//
-// Preserves our CheckRedirect policy on the incoming client so
-// redirect safety (cross-host + downgrade rejection) survives the
-// swap. Without this, tests that replace the client would also
-// drop security policy — making redirect-related regressions
-// invisible to the test suite.
-//
-// Use case: httptest.Server listens on 127.0.0.1 with a
-// self-signed cert; tests need a client that trusts it and allows
-// the loopback address.
+// WithClient replaces the Resolver's HTTP client. Test-only: production uses NewResolver's
+// SSRF-guarded client. It keeps our CheckRedirect policy (cross-host and downgrade rejection) on
+// the incoming client, so a swapped client cannot hide redirect regressions from tests.
 func WithClient(r *Resolver, c *http.Client) *Resolver {
 	if r.client != nil && r.client.CheckRedirect != nil {
 		c.CheckRedirect = r.client.CheckRedirect
@@ -155,19 +131,9 @@ func NewResolver(opts Options) *Resolver {
 
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	transport := &http.Transport{
-		// Proxy is DISABLED (nil) — these are direct-egress fetches of
-		// an issuer-controlled URL, and the SSRF guard lives in
-		// DialContext below.
-		//
-		// SECURITY: if we honoured HTTP(S)_PROXY here, the
-		// transport would dial the PROXY's address (which passes the
-		// guard) and hand it the issuer-controlled target host in the
-		// CONNECT line / request URL. The guard would then NEVER see —
-		// let alone validate — the real target, because the proxy
-		// resolves and connects to it for us. An attacker who can set
-		// a home-domain could exfiltrate to internal hosts straight
-		// through a configured proxy. Pinning Proxy: nil forces every
-		// fetch through our own SSRF-checked dialer.
+		// SECURITY: Proxy stays nil. Honouring HTTP(S)_PROXY would dial the proxy (which passes
+		// the guard) and hand it the issuer-controlled host, so the SSRF guard in DialContext
+		// would never see the real target and a home-domain could reach internal hosts.
 		Proxy: nil,
 		DialContext: (&ssrfDialer{
 			inner:           dialer,
@@ -175,11 +141,7 @@ func NewResolver(opts Options) *Resolver {
 		}).DialContext,
 		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Second,
-		// Bounds the RESPONSE HEADERS only (net/http's own doc for this
-		// field) — it does not cap the body. stellar.toml files should
-		// be a few KB at most; body size is enforced separately by the
-		// caller reading with io.LimitReader, not by this transport
-		// setting.
+		// Bounds the response HEADERS only; the body cap is enforced by the caller's io.LimitReader.
 		MaxResponseHeaderBytes: 1 << 20,
 	}
 
@@ -193,16 +155,9 @@ func NewResolver(opts Options) *Resolver {
 	}
 }
 
-// checkRedirect is the SEP-1 redirect policy:
-//
-//  1. Cap at 5 hops so a malicious domain can't burn our request
-//     budget with a redirect loop.
-//  2. Reject scheme downgrade (https → http). An attacker controlling
-//     the domain MUST NOT force plaintext transit.
-//  3. Reject cross-origin redirects: host AND effective port must match
-//     the original request. SEP-1 is origin-scoped trust, and a
-//     same-host hop to another port would bypass the 443-only rule
-//     that [isValidDomainOrHostPort] applies to the on-chain domain.
+// checkRedirect is the SEP-1 redirect policy: at most 5 hops, no https-to-http downgrade, and no
+// cross-origin hop. Host AND port must match because trust is origin-scoped, and another port
+// would bypass the 443-only rule [isValidDomainOrHostPort] applies.
 func checkRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 5 {
 		return errors.New("sep1: stopped after 5 redirects")
@@ -217,9 +172,8 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 	return nil
 }
 
-// redirectOrigin returns the case-folded host:port a URL dials, with
-// the scheme's default port filled in so "EXAMPLE.com:443" and
-// "example.com" compare equal.
+// redirectOrigin returns the case-folded host:port a URL dials, filling the default port so
+// "EXAMPLE.com:443" and "example.com" compare equal.
 func redirectOrigin(u *url.URL) string {
 	port := u.Port()
 	if port == "" && u.Scheme == "https" {
@@ -236,45 +190,30 @@ var ErrSSRFBlocked = errors.New("sep1: target IP is in a private or reserved ran
 // [maxBodyBytes].
 var ErrTOMLTooLarge = errors.New("sep1: TOML body exceeds 100 KiB limit")
 
-// maxBodyBytes caps the stellar.toml body size at SEP-1's own limit;
-// the reference client (go-stellar-sdk clients/stellartoml
-// StellarTomlMaxSize) enforces the same 100 * 1024.
+// maxBodyBytes caps the stellar.toml body at SEP-1's own limit, which the reference client
+// (go-stellar-sdk StellarTomlMaxSize) also enforces.
 const maxBodyBytes = 100 << 10
 
 // ErrTOMLTooDeep is returned when a stellar.toml nests structural brackets, or tables through
 // dotted keys and headers, deeper than [maxTOMLNestingDepth].
 //
-// # Why a byte cap is not enough
-//
-// [maxBodyBytes] bounds the INPUT, not the WORK the decoder does, and the decoder's cost is
-// superlinear in nesting depth. Measured against the pinned decoder: 250 nested inline tables
-// (1,005 bytes) allocate 8 MiB, 1,000 (4 KB) allocate 117 MiB, 4,000 (16 KB) allocate 1.81 GiB in
-// 0.72s, and a 100 KiB body admits ~26,000 levels. The refresh unit runs under MemoryMax=2G, so a
-// 16 KB document any 1-XLM account can publish from its home_domain is enough to have the whole
-// worker SIGKILLed by the cgroup. Depth is the one dimension that does this: nested ARRAYS and
-// 10,000 sibling [[CURRENCIES]] tables are linear (0.6 MiB in 55ms).
-//
-// So the depth is bounded BEFORE the body reaches the decoder, and a document over the bound is
-// refused like any other unparseable document — the issuer is marked failed and the run moves on.
+// [maxBodyBytes] bounds the INPUT, not the decoder's work, which is superlinear in nesting depth:
+// 4,000 nested inline tables (16 KB) allocate 1.81 GiB against the refresh unit's MemoryMax=2G.
+// Depth is therefore bounded BEFORE the decoder, and an over-deep document fails like any
+// unparseable one (issuer marked failed, run continues).
 var ErrTOMLTooDeep = errors.New("sep1: TOML nests tables deeper than the parse budget allows")
 
 // Nesting bounds enforced by [checkTOMLNesting].
 //
-// maxTOMLNestingDepth is the real limit, measured by a scan that knows where strings and comments
-// are. 32 is far past SEP-1's deepest construct (an inline table inside an array of tables, two
-// levels) and bounds decoder allocation on a full-size body to a few hundred KB.
+// maxTOMLNestingDepth is the real limit, from a scan that knows where strings and comments are;
+// 32 is far past SEP-1's deepest construct (two levels). It also holds a dotted key path
+// (`a.b.c = 1`, `[a.b.c]`) to the same depth, since each segment makes a table at quadratic cost.
 //
 // maxRawTOMLNestingDepth is a context-free backstop for a string-aware scan that loses track of a
-// string. It is not a guarantee: a closing bracket in data lowers the count. The guarantee is the
-// string-aware scans ending every string and comment where the decoder's lexer does
-// (TestSkipTOMLStringMatchesDecoder). At the raw bound the decoder allocates ~8 MiB. Because it
-// cannot tell data from structure, 256 unclosed brackets or dots inside one string refuse the
-// document; accepted, since resetting at string edges would blind it to the one case it exists for.
-//
-// Both bounds also cover dotted table nesting (`a.b.c = 1`, `[a.b.c]`), which creates a table per
-// segment at cost quadratic in key-path length. The full path a key reaches is held to
-// maxTOMLNestingDepth: 32-segment paths across a full body cost ~110 MiB transient, one
-// 16,000-segment key cost 4.75 GiB.
+// string. It is not a guarantee (a closing bracket in data lowers the count); the guarantee is
+// the string-aware scans ending strings where the decoder's lexer does
+// (TestSkipTOMLStringMatchesDecoder). It also refuses 256 unclosed brackets or dots inside one
+// string, accepted because resetting at string edges would blind it to its purpose.
 const (
 	maxTOMLNestingDepth    = 32
 	maxRawTOMLNestingDepth = 256
@@ -305,20 +244,13 @@ func stripTOMLBOM(body []byte) []byte {
 	return body
 }
 
-// rawKeyPathDepth over-estimates the longest key path in body, in
-// segments, without knowing where strings or comments are: every dot
-// counts. At each dot and each `=` the estimate is the current table
-// header, plus one entry per unclosed bracket holding the dots that
-// preceded it on its line, plus every dot so far on the current line.
-// Inline tables may span lines, so it is this accumulation, not the dots
-// on any one line, that bounds a path the string-aware
-// [tomlKeyPathDepth] cannot see.
+// rawKeyPathDepth over-estimates the longest key path in body, in segments, without knowing where
+// strings or comments are: every dot counts. It sums the current table header, the dots before
+// each unclosed bracket on the line, and every dot so far on the line, bounding a path the
+// string-aware [tomlKeyPathDepth] cannot see.
 //
-// The header is taken from a line whose first non-blank byte is `[`: it
-// replaces the previous header when no bracket is open, and can only
-// raise it when one is (the open bracket may be data the decoder never
-// saw). Like [rawBracketDepth], a closing bracket that is data cancels
-// an opening one, so this is a backstop, not the bound itself.
+// A line starting with `[` replaces the header when no bracket is open and can only raise it
+// when one is (that bracket may be data). Like [rawBracketDepth] it is a backstop, not the bound.
 func rawKeyPathDepth(body []byte) int {
 	var owners []int
 	inside, header, line, run, deepest := 0, 0, 0, 0, 0
@@ -367,17 +299,12 @@ func rawKeyPathDepth(body []byte) int {
 	return deepest
 }
 
-// tomlKeyPathDepth returns the longest key path, in segments, that the
-// decoder would build for any key or table header in body: the current
-// table header's segments, plus the segments of the key owning each
-// enclosing inline table or array, plus the key's own. Strings and
-// comments are skipped as in [tomlNestingDepth], so dots in data (and in
-// quoted key segments) do not count.
+// tomlKeyPathDepth returns the longest key path, in segments, the decoder would build: the
+// header's segments, those of each enclosing inline table's owning key, plus the key's own.
+// Strings and comments are skipped as in [tomlNestingDepth].
 //
-// A dot counts toward a key only while every byte since the last
-// separator could belong to a key: a bare-key character, a space or
-// tab, a dot, or a quoted segment. Any other byte ends the run, which
-// is what keeps floats and dates in values out of the count.
+// A dot counts only while every byte since the last separator could belong to a key; any other
+// byte ends the run, which keeps floats and dates in values out of the count.
 func tomlKeyPathDepth(body []byte) int {
 	s := keyPathScan{lineStart: true}
 	for i := 0; i < len(body); {
@@ -473,12 +400,9 @@ func isTOMLBareKeyByte(c byte) bool {
 	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-'
 }
 
-// rawBracketDepth returns the greatest excess of opening over closing
-// brackets at any point in body, counting every byte — inside strings
-// and comments included. Deliberately context-free, so an opening
-// bracket in data raises it; a closing bracket in data lowers it just
-// the same, which is why it backs up [tomlNestingDepth] rather than
-// replacing it.
+// rawBracketDepth returns the greatest excess of opening over closing brackets in body, counting
+// every byte including strings and comments. It is context-free, so a closing bracket in data
+// lowers it as an opening one raises it; that is why it backs up [tomlNestingDepth].
 func rawBracketDepth(body []byte) int {
 	depth, deepest := 0, 0
 	for _, c := range body {
@@ -497,13 +421,9 @@ func rawBracketDepth(body []byte) int {
 	return deepest
 }
 
-// tomlNestingDepth returns the deepest structural bracket nesting in
-// body, skipping comments and every TOML string form so that brackets
-// which are DATA are not counted as structure.
-//
-// It stops counting down at zero rather than going negative: a stray
-// closing bracket in a malformed document must not let a later opening
-// run start from below zero and hide its depth.
+// tomlNestingDepth returns the deepest structural bracket nesting in body, skipping comments and
+// every TOML string form so brackets in DATA are not counted. It stops counting down at zero: a
+// stray closing bracket must not let a later opening run start below zero and hide its depth.
 func tomlNestingDepth(body []byte) int {
 	depth, deepest := 0, 0
 	for i := 0; i < len(body); {
@@ -539,17 +459,10 @@ func skipTOMLComment(body []byte, i int) int {
 	return len(body)
 }
 
-// skipTOMLString returns the index just past the string literal opening
-// at body[i], which must be a quote byte. Handles all four TOML string
-// forms: the double-quoted basic and single-quoted literal forms, and
-// the triple-quoted multi-line counterpart of each. Backslash escapes
-// are honoured in the basic forms only, which is where TOML defines
-// them.
-//
-// An unterminated string ends the scan at the newline (single-line
-// forms) or at EOF (multi-line forms) — the decoder rejects such a
-// document anyway; this only has to leave the scan in the same state
-// the decoder's lexer is in.
+// skipTOMLString returns the index just past the string literal opening at body[i], a quote byte.
+// It handles all four TOML string forms; backslash escapes apply to basic strings only. An
+// unterminated string ends the scan at the newline (single-line) or EOF (multi-line), matching
+// the lexer's state, since the decoder rejects the document anyway.
 func skipTOMLString(body []byte, i int) int {
 	quote := body[i]
 	width := 1
@@ -590,13 +503,10 @@ func closesTOMLString(body []byte, j int, quote byte, width int) bool {
 	return j+2 < len(body) && body[j+1] == quote && body[j+2] == quote
 }
 
-// endOfTOMLStringClose returns the index just past the closing delimiter
-// found at body[j]. A multi-line string may end with up to two quote
-// bytes of content before its closing three (`"""x"""""` is `x""`), which
-// the decoder's lexer includes in the string. Right after an escaped
-// backslash the lexer takes three: its six-quote check exempts a run
-// preceded by `\` without asking whether that `\` was itself escaped
-// (toml v1.6.0 lex.go lexMultilineString).
+// endOfTOMLStringClose returns the index just past the closing delimiter found at body[j]. A
+// multi-line string may end with up to two content quotes before its closing three
+// (`"""x"""""` is `x""`). After an escaped backslash the lexer takes three, as its six-quote
+// check exempts a run preceded by `\` without asking if that `\` was escaped (toml v1.6.0).
 func endOfTOMLStringClose(body []byte, j int, quote byte, width int, afterBackslash bool) int {
 	maxExtra := 2
 	if afterBackslash {
@@ -609,36 +519,26 @@ func endOfTOMLStringClose(body []byte, j int, quote byte, width int, afterBacksl
 	return end
 }
 
-// Per-field length caps. The 100 KiB body cap bounds the whole TOML,
-// but a single field (e.g. DOCUMENTATION.ORG_NAME) can still be ~100 KiB
-// of one string — and we store + serve these values verbatim (every
-// /v1/issuers response, the explorer's issuer <h1>). Cap each copied
-// string at parse time so a hostile issuer can't bloat our storage or
-// our clients' DOM. Short fields (names, codes, handles, tickers) get
-// maxShortFieldRunes; free-text fields (descriptions, conditions) get
-// maxLongFieldRunes. Caps are in RUNES and truncation lands on a UTF-8
-// rune boundary (never mid-codepoint) — see [truncateRunes].
+// Per-field length caps. One field can still be ~100 KiB under the body cap and values are served
+// verbatim (/v1/issuers, the explorer), so each copied string is capped at parse time. Short
+// fields get maxShortFieldRunes, free text maxLongFieldRunes, cut in RUNES on a rune boundary
+// ([truncateRunes]).
 const (
 	maxShortFieldRunes = 256
 	maxLongFieldRunes  = 4096
 )
 
-// maxDocumentationFields and maxCurrencies bound FIELD/ENTRY COUNT,
-// not byte size: the 100 KiB body cap and the per-field rune caps above
-// bound the bytes of any one value, but nothing stopped a document
-// with an unbounded number of short DOCUMENTATION keys or CURRENCIES
-// entries from growing the parsed struct — and every field/entry is
-// stored and served verbatim. SEP-1 declares under a dozen
-// DOCUMENTATION fields; real anchors list at most a few hundred
-// currencies.
+// maxDocumentationFields and maxCurrencies bound FIELD/ENTRY COUNT, not bytes: the byte caps above
+// do not stop many short DOCUMENTATION keys or CURRENCIES entries from growing the struct, and
+// every one is served verbatim. SEP-1 declares under a dozen documentation fields; real anchors
+// list at most a few hundred currencies.
 const (
 	maxDocumentationFields = 64
 	maxCurrencies          = 1000
 )
 
-// truncateRunes returns s limited to at most maxRunes runes, cutting
-// on a UTF-8 rune boundary so the result is never invalid mid-encoding
-// UTF-8. Returns s unchanged when it already fits (the common case).
+// truncateRunes returns s limited to maxRunes runes, cutting on a UTF-8 rune boundary so the
+// result is never invalid UTF-8.
 func truncateRunes(s string, maxRunes int) string {
 	if maxRunes <= 0 {
 		return ""
@@ -668,20 +568,14 @@ func sep1DocFieldCap(key string) int {
 	return maxShortFieldRunes
 }
 
-// Resolve fetches the stellar.toml for domain and returns the
-// parsed SEP1 record.
-//
-// domain is the bare home-domain (e.g. "circle.com"), NOT a URL.
-// The resolver constructs `https://<domain>/.well-known/stellar.toml`.
-// Domain is lowercased before use.
+// Resolve fetches and parses the stellar.toml for domain, a bare lowercased home-domain (e.g.
+// "circle.com"), NOT a URL; the resolver builds `https://<domain>/.well-known/stellar.toml`.
 func (r *Resolver) Resolve(ctx context.Context, domain string) (*SEP1, error) {
 	domain = strings.ToLower(strings.TrimSpace(domain))
 	if domain == "" {
 		return nil, errors.New("sep1: empty domain")
 	}
-	// Friendlier error first: a full URL is a very common user
-	// mistake ("pass just the hostname"). Other bad characters get
-	// the generic hostname-validation error.
+	// A full URL is a common mistake, so it gets a friendlier error than generic validation.
 	if strings.Contains(domain, "://") || strings.Contains(domain, "/") ||
 		strings.HasPrefix(domain, "http:") || strings.HasPrefix(domain, "https:") {
 		return nil, fmt.Errorf("sep1: %q looks like a URL; pass just the hostname", domain)
@@ -727,12 +621,9 @@ func (r *Resolver) Resolve(ctx context.Context, domain string) (*SEP1, error) {
 	return parseSEP1(body)
 }
 
-// parseSEP1 decodes TOML bytes into a SEP1 struct. Separated from
-// the HTTP path so tests can exercise the parser directly.
+// parseSEP1 decodes TOML bytes into a SEP1, separate from the HTTP path so tests can drive it.
 func parseSEP1(body []byte) (*SEP1, error) {
-	// Refuse a pathologically nested document BEFORE handing it to the
-	// decoder: the byte cap bounds the input, not the work the decoder
-	// does on it. See [ErrTOMLTooDeep].
+	// Refuse over-nested input BEFORE the decoder: the byte cap bounds input, not decode work.
 	if err := checkTOMLNesting(body); err != nil {
 		return nil, err
 	}
@@ -763,11 +654,9 @@ func parseSEP1(body []byte) (*SEP1, error) {
 	return sep, nil
 }
 
-// applySEP1Documentation copies the [DOCUMENTATION] table onto sep,
-// capping each field on a rune boundary, each key's own length, and
-// the total number of fields copied (see [maxDocumentationFields]).
-// Keys are sorted first so the fields kept under the cap are
-// deterministic rather than depending on Go's randomised map order.
+// applySEP1Documentation copies the [DOCUMENTATION] table onto sep, capping each field's runes,
+// each key's length and the field count ([maxDocumentationFields]). Keys are sorted first so the
+// fields kept under the cap do not depend on Go's randomised map order.
 func applySEP1Documentation(sep *SEP1, raw map[string]any) {
 	doc, ok := raw["DOCUMENTATION"].(map[string]any)
 	if !ok {
@@ -791,13 +680,9 @@ func applySEP1Documentation(sep *SEP1, raw map[string]any) {
 	}
 }
 
-// appendSEP1Currencies reads the [[CURRENCIES]] array onto sep,
-// capped at [maxCurrencies] entries.
-//
-// Two shapes, because the decoder produces both: an array-of-tables
-// normally arrives as []map[string]any, and sometimes as []any of
-// map[string]any. Reading only one silently drops every currency in a
-// document that happened to decode as the other.
+// appendSEP1Currencies reads the [[CURRENCIES]] array onto sep, capped at [maxCurrencies].
+// The decoder yields either []map[string]any or []any of maps; reading only one would silently
+// drop every currency in a document that decoded as the other.
 func appendSEP1Currencies(sep *SEP1, raw map[string]any) {
 	if currencies, ok := raw["CURRENCIES"].([]map[string]any); ok {
 		for _, c := range currencies {
@@ -821,9 +706,8 @@ func appendSEP1Currencies(sep *SEP1, raw map[string]any) {
 
 func parseCurrency(m map[string]any) Currency {
 	c := Currency{}
-	// getString reads a string field and caps it to maxRunes on a
-	// rune boundary (see [truncateRunes]) so a hostile issuer can't
-	// smuggle a ~100 KiB currency field past the whole-body cap.
+	// getString caps each field at maxRunes so a hostile issuer cannot smuggle a ~100 KiB field
+	// past the whole-body cap.
 	getString := func(k string, maxRunes int) string {
 		if v, ok := m[k].(string); ok {
 			return truncateRunes(v, maxRunes)
@@ -894,11 +778,9 @@ func normaliseNumeric(v any) string {
 
 // ─── SSRF guard ───────────────────────────────────────────────────
 
-// ssrfDialer wraps net.Dialer + blocks dials to private / loopback
-// / link-local / multicast addresses and, outside test mode, any port
-// other than [standardTLSPort]. The block happens AFTER DNS
-// resolution + BEFORE TCP connect, so it catches rebind attacks
-// where a hostname resolves differently each call.
+// ssrfDialer blocks dials to private, loopback, link-local and multicast addresses and, outside
+// test mode, any port but [standardTLSPort]. The check runs AFTER DNS resolution and BEFORE the
+// TCP connect, so it catches rebinding hostnames that resolve differently per call.
 type ssrfDialer struct {
 	inner           *net.Dialer
 	allowPrivateIPs bool // tests only
@@ -947,28 +829,16 @@ func (d *ssrfDialer) DialContext(ctx context.Context, network, address string) (
 
 // isBlocked reports whether ip is in a range we refuse to dial.
 //
-// standardTLSPort is the only port a production SEP-1 fetch will dial.
-// SEP-1's stellar.toml is served over HTTPS on 443, and a Stellar
-// home_domain is a bare domain (no port) in practice. An issuer whose
-// on-chain home_domain carries any other port (":6379", ":8080") is
-// rejected up front, and ssrfDialer refuses any other port on every hop,
-// so neither a `<public-host>:<arbitrary-port>` home_domain nor a
-// redirect to one lets the sep1-refresh cron open a blind TLS+GET to
-// any port on a public host. Tests pass allowAnyPort=true so httptest
-// servers (ephemeral ports) still resolve.
+// standardTLSPort is the only port a production SEP-1 fetch will dial. A home_domain with another
+// port is rejected up front and ssrfDialer refuses it on every hop, so neither such a domain nor
+// a redirect to one lets the sep1-refresh cron open a blind TLS+GET to any port on a public
+// host. Tests pass allowAnyPort=true so httptest servers (ephemeral ports) still resolve.
 const standardTLSPort = "443"
 
-// isValidDomainOrHostPort reports whether s is a syntactically valid
-// DNS name (optionally with a :port suffix). Guards the URL builder
-// from query strings, fragments, whitespace, and other shenanigans
-// that would otherwise survive into the request URL.
-//
-// In production (allowAnyPort=false) a :port suffix is only accepted
-// when it is exactly 443; any other port is rejected. allowAnyPort is
-// the test escape hatch for httptest servers on ephemeral ports.
-//
-// Tolerates IPv4 literals (for httptest) but not IPv6 bracket form
-// — we never ingest IPv6 literals as home-domains in practice.
+// isValidDomainOrHostPort reports whether s is a valid DNS name with an optional :port, keeping
+// query strings, fragments and whitespace out of the request URL. In production a port is
+// accepted only if it is exactly 443; allowAnyPort is the httptest escape hatch. IPv4 literals
+// pass (httptest); IPv6 bracket form does not.
 func isValidDomainOrHostPort(s string, allowAnyPort bool) bool { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduce linearity
 	// Split off optional :port.
 	host, port, hasPort := strings.Cut(s, ":")
@@ -993,11 +863,8 @@ func isValidDomainOrHostPort(s string, allowAnyPort bool) bool { //nolint:gocogn
 	if host == "" || len(host) > 253 {
 		return false
 	}
-	// Reserved TLDs (RFC 2606/6761: example/test/invalid/localhost) are
-	// guaranteed to never resolve to a real destination, so an on-chain
-	// home_domain claiming one is malformed input, not a legitimate
-	// issuer — reject it at the syntax gate rather than relying solely
-	// on the dial-layer guard to fail the lookup.
+	// Reserved TLDs (RFC 2606/6761) never resolve to a real destination, so a home_domain
+	// claiming one is malformed; reject it here rather than rely on the dial-layer guard.
 	if nettools.IsReservedTLD(host) {
 		return false
 	}
@@ -1043,22 +910,16 @@ func (d *ssrfDialer) isBlocked(ip net.IP) bool {
 // recoverSEP1Sections reads a document that does not parse whole, one top-level
 // table at a time, and returns what it could read plus the tables it could not.
 //
-// A stellar.toml is published by the issuer, and a syntax error in one table is
-// no evidence about the others. Discarding the whole document turns an issuer's
-// typo into our silence about assets that exist (WisdomTree's file has an
-// unterminated string in ACCOUNTS while thirteen of its [[CURRENCIES]] declare
-// an RWA anchor class).
+// A syntax error in one table is no evidence about the others, and discarding the whole document
+// would turn an issuer's typo into our silence about assets that exist.
 //
-// This is not a lenient parser: nothing is repaired or guessed. Each kept
-// section goes through the same toml.Unmarshal with the same strictness and a
-// failing section is dropped and named, so the result is only ever a subset of
-// what valid TOML would produce. An attacker gains nothing: they control their
-// own file anyway.
+// This is not a lenient parser: nothing is repaired or guessed. Each kept section goes through
+// the same strict toml.Unmarshal and a failing one is dropped and named, so the result is only
+// ever a subset of what valid TOML would produce.
 //
-// Splitting on table-start lines is sound only if such a line cannot be data. A
-// bare [[NAME]] at column zero can be text inside a triple-quoted literal, so a
-// document containing either multi-line delimiter is refused outright; the gate
-// is on the document, not the section.
+// Splitting on table-start lines is sound only if such a line cannot be data. A bare [[NAME]] at
+// column zero can be text inside a triple-quoted literal, so a document containing either
+// multi-line delimiter is refused outright.
 func recoverSEP1Sections(body []byte) (map[string]any, []SkippedSection, error) {
 	text := string(body)
 	if strings.Contains(text, `"""`) || strings.Contains(text, `'''`) {
@@ -1116,11 +977,9 @@ func recoverSEP1Sections(body []byte) (map[string]any, []SkippedSection, error) 
 	return out, skipped, nil
 }
 
-// parseTOMLSection decodes one section split out by
-// [recoverSEP1Sections]. The nesting check is repeated per section: a
-// malformation earlier in the document can leave the whole-body scan
-// reading this section as nested inside it, while the decoder sees it
-// standalone.
+// parseTOMLSection decodes one section split out by [recoverSEP1Sections]. The nesting check is
+// repeated per section because an earlier malformation can make the whole-body scan read this
+// section as nested while the decoder sees it standalone.
 func parseTOMLSection(chunk string) (map[string]any, error) {
 	if err := checkTOMLNesting([]byte(chunk)); err != nil {
 		return nil, err
@@ -1132,13 +991,10 @@ func parseTOMLSection(chunk string) (map[string]any, error) {
 	return part, nil
 }
 
-// isTOMLTableHeader reports whether a line begins a top-level table or
-// array-of-tables. Deliberately strict: column zero, no leading
-// whitespace, a bare or quoted key name, and nothing after the closing
-// bracket but whitespace or a comment. A line this refuses is treated
-// as part of the section above it, which is the conservative direction
-// — it can only cause a section to be dropped, never a declaration to
-// be invented.
+// isTOMLTableHeader reports whether a line begins a top-level table or array-of-tables.
+// Deliberately strict (column zero, bare or quoted name, only whitespace or a comment after the
+// bracket): a refused line joins the section above, which can only drop a section, never invent
+// a declaration.
 func isTOMLTableHeader(line string) bool {
 	if len(line) == 0 || line[0] != '[' {
 		return false
@@ -1187,12 +1043,9 @@ func tomlTrailerOK(s string) bool {
 // mergeTOMLSection folds one independently-parsed section into the
 // accumulating document.
 //
-// Arrays of tables APPEND, because that is what they mean and because
-// each [[CURRENCIES]] block arrives as its own section. Everything else
-// keeps the FIRST occurrence: a key defined twice is a duplicate-key
-// error in strict TOML, and letting a later section overwrite an
-// earlier one would make recovery produce a document strict TOML would
-// never have produced. First-wins is the reading that stays a subset.
+// Arrays of tables APPEND, as each [[CURRENCIES]] block arrives as its own section. Everything
+// else keeps the FIRST occurrence: a duplicate key is an error in strict TOML, so letting a later
+// section overwrite would produce a document strict TOML never would. First-wins stays a subset.
 func mergeTOMLSection(dst, src map[string]any) {
 	for k, v := range src {
 		prev, exists := dst[k]

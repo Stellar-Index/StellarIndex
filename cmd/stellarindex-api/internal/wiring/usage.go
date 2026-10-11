@@ -8,11 +8,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
 
-// UsageReaderOrNil returns a v1.UsageReader bound to `c` when
-// `c` is non-nil, and a typed-nil v1.UsageReader otherwise. The
-// `/v1/account/usage` handler treats `UsageReader == nil` as
-// "no usage backend wired" and returns an empty list — the
-// correct degradation when Redis is absent.
+// UsageReaderOrNil returns a v1.UsageReader bound to `c`, or a nil v1.UsageReader when `c` is nil.
+// /v1/account/usage treats nil as "no usage backend wired" and returns an empty list, the correct
+// degradation when Redis is absent.
 func UsageReaderOrNil(c *usage.Counter) v1.UsageReader {
 	if c == nil {
 		return nil
@@ -62,11 +60,9 @@ func (a usageRollupReaderAdapter) ReadRollup(ctx context.Context, subject string
 	return out, nil
 }
 
-// UsageEndpointDay derives the wire semantics from the granular
-// columns: requests = every non-429 outcome (ok + 4xx + 5xx),
-// billable = ok + 4xx — the classes middleware.billableClass lets into
-// the MonthlyQuota counter, so it equals the legacy per-day total —
-// errors = 4xx (excl. 429) + 5xx, throttled = 429s.
+// UsageEndpointDay derives the wire semantics from the granular columns: requests = every non-429
+// outcome (ok + 4xx + 5xx); billable = ok + 4xx, the classes middleware.billableClass lets into
+// the MonthlyQuota counter; errors = 4xx (excl. 429) + 5xx; throttled = 429s.
 func UsageEndpointDay(r timescale.UsageDailyRow) v1.UsageEndpointDay {
 	return v1.UsageEndpointDay{
 		Date:      r.Day,

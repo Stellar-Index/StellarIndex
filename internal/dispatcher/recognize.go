@@ -2,36 +2,20 @@ package dispatcher
 
 import "github.com/Stellar-Index/StellarIndex/internal/events"
 
-// Recognize reports whether any registered event decoder claims this
-// event, returning the matching decoder's name. It runs the SAME
-// Matches() predicates the live dispatch walk uses, but with NO decode
-// and NO side effects (it does not touch eventsSeen / unmatchedHits).
+// Recognize reports whether any registered event decoder claims this event, returning its name.
+// It runs the same Matches() predicates as the live dispatch walk, with no decode and no side
+// effects (eventsSeen / unmatchedHits untouched). It is the oracle for ADR-0033 Claim 2a: a
+// (contract_id, topic) shape in soroban_events that returns false is an on-chain event the system
+// would silently drop. ContractCallDecoders are excluded; they emit no Soroban events.
 //
-// This is the oracle for ADR-0033 Claim 2a (recognition): any
-// (contract_id, topic) shape in soroban_events it returns false for is an
-// on-chain event the system would silently drop.
-//
-// ContractCallDecoders are excluded: they bind to InvokeContract op args
-// and emit no Soroban events.
-//
-// Matches() proves only the topic *shape* is owned, not that this sample
-// would decode. Calling Decode here would corrupt the correlation state
-// (Soroswap swap+sync, Phoenix 8-field) of the live decoder instances, so
-// a matched decoder may instead implement [Validator] to opt into a
-// side-effect-free check of this exact sample; stateful decoders don't.
+// Matches() proves only the topic shape is owned. Calling Decode here would corrupt the
+// correlation state (Soroswap swap+sync, Phoenix 8-field) of the live decoder instances, so a
+// matched decoder may implement [Validator] for a side-effect-free check; stateful decoders don't.
 func (d *Dispatcher) Recognize(ev events.Event) (name string, ok bool) {
-	// Decoder-panic guard (ops path). Matches is arbitrary source
-	// code running on adversary-influenced ledger data — it type-asserts
-	// topic vectors and reads body fields — so it panics as readily as
-	// Decode. Recognize is called from the completeness recogniser and two
-	// ops subcommands, none of which recovers, so without this guard one
-	// malformed row would take the whole verification run down.
-	//
-	// A panic here resolves to NOT RECOGNISED, which is the fail-closed
-	// direction: the shape is then counted as an unrecognised event on an
-	// unowned contract and the recognition axis goes RED. Reporting the
-	// decoder as the owner would have been the dangerous answer — it would
-	// certify a shape nobody can actually decode.
+	// Matches runs on adversary-influenced ledger data and can panic like Decode, and Recognize's
+	// callers do not recover, so one malformed row would take down the whole verification run.
+	// A panic resolves to NOT RECOGNISED (fail closed): the shape counts as an unrecognised event
+	// and the recognition axis goes RED, rather than certifying a shape nobody can decode.
 	var current string
 	defer func() {
 		if r := recover(); r != nil {
@@ -47,11 +31,8 @@ func (d *Dispatcher) Recognize(ev events.Event) (name string, ok bool) {
 		}
 		if v, ok := dec.(Validator); ok {
 			if err := v.Validate(ev); err != nil {
-				// dispatchOne commits to the first Matches()==true decoder
-				// and never falls through to a later one on decode failure
-				// (dispatcher.go dispatchOne). Recognize must report the
-				// same outcome for the same sample: a recognition gap, not
-				// a later decoder's name.
+				// dispatchOne commits to the first matching decoder and never falls through on
+				// decode failure, so Recognize reports a gap, not a later decoder's name.
 				return "", false
 			}
 		}
@@ -60,13 +41,10 @@ func (d *Dispatcher) Recognize(ev events.Event) (name string, ok bool) {
 	return "", false
 }
 
-// Validator is an OPTIONAL interface a [Decoder] implements to let
-// Recognize verify that a specific matched sample would actually
-// decode, not merely that its topic shape matches. Validate MUST be
-// side-effect-free and independent of any correlation state Decode
-// carries across events — a decoder with such state (Soroswap
-// swap+sync, Phoenix 8-field) must not implement this, since Recognize
-// runs against the SAME decoder instances the live pipeline uses.
+// Validator is an optional [Decoder] interface letting Recognize verify that a matched sample
+// would actually decode. Validate must be side-effect-free and independent of cross-event
+// correlation state; decoders with such state (Soroswap, Phoenix) must not implement it, since
+// Recognize runs against the live decoder instances.
 type Validator interface {
 	Validate(ev events.Event) error
 }

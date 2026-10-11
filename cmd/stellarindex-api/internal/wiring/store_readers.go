@@ -11,10 +11,9 @@ import (
 )
 
 // StoreVolumeReader adapts *timescale.Store to v1.VolumeReader.
-// Returns the trailing-24h USD volume across every pair the asset
-// participates in. No error translation needed — the timescale
-// helper returns "0" when the asset is tracked but had no trades,
-// and a real error for genuine SQL failures.
+// Returns the trailing-24h USD volume across every pair the asset participates in. No error
+// translation is needed: the timescale helper returns "0" for a tracked asset with no trades and
+// an error only for genuine SQL failures.
 type StoreVolumeReader struct{ S *timescale.Store }
 
 func (r StoreVolumeReader) Volume24hUSDForAsset(ctx context.Context, assetKey string) (string, bool, error) {
@@ -32,11 +31,9 @@ func (r StoreVolumeReader) SorobanVolume24hUSDForAsset(ctx context.Context, asse
 // StoreSupplyLooker adapts *timescale.Store to v1.SupplyLooker for
 // the F2-fields path on /v1/assets/{id}.
 //
-// Error translation: timescale.ErrNotFound (no recorded snapshot)
-// becomes v1.ErrSupplyNotFound, which the handler treats as
-// "feature unavailable for this asset" and leaves the F2 fields
-// null on the response. Other errors propagate unchanged so the
-// handler can log them at WARN.
+// timescale.ErrNotFound (no recorded snapshot) becomes v1.ErrSupplyNotFound, which the handler
+// treats as "unavailable for this asset" and leaves the F2 fields null. Other errors propagate
+// unchanged so the handler can log them at WARN.
 type StoreSupplyLooker struct{ S *timescale.Store }
 
 func (r StoreSupplyLooker) LatestSupply(ctx context.Context, assetKey string) (supply.Supply, error) {
@@ -50,11 +47,8 @@ func (r StoreSupplyLooker) LatestSupply(ctx context.Context, assetKey string) (s
 	return snap, nil
 }
 
-// SupplyCoverageStats delegates to the underlying Store so the
-// wrapper satisfies v1.SupplyCoverageReader as well as
-// v1.SupplyLooker. Same pattern as FXHistoryReader's coverage
-// delegate — without it, /v1/diagnostics/ingestion's supply
-// section renders as empty.
+// SupplyCoverageStats delegates to the Store so the wrapper also satisfies v1.SupplyCoverageReader;
+// without it /v1/diagnostics/ingestion's supply section renders empty.
 func (r StoreSupplyLooker) SupplyCoverageStats(ctx context.Context) (timescale.SupplyCoverage, error) {
 	return r.S.SupplyCoverageStats(ctx)
 }
@@ -88,11 +82,8 @@ func (r *FXHistoryReader) ListFXHistory(ctx context.Context, ticker string, from
 	return out, nil
 }
 
-// FXCoverageStats delegates to the underlying Store so the wrapper
-// satisfies v1.FXCoverageReader as well as v1.FXHistoryReader. The
-// /v1/diagnostics/ingestion endpoint type-asserts to FXCoverageReader
-// at request time; if this delegate is missing, the FX section of
-// the response renders as empty.
+// FXCoverageStats delegates to the Store so the wrapper also satisfies v1.FXCoverageReader.
+// /v1/diagnostics/ingestion type-asserts to it at request time; without it the FX section is empty.
 func (r *FXHistoryReader) FXCoverageStats(ctx context.Context) (timescale.FXCoverage, error) {
 	return r.Store.FXCoverageStats(ctx)
 }
@@ -105,13 +96,9 @@ func (r *FXHistoryReader) CAGGCoverageStats(ctx context.Context) (timescale.CAGG
 	return r.Store.CAGGCoverageStats(ctx)
 }
 
-// SourceEntryCounts delegates so the wrapper satisfies
-// v1.SourceEntryCountReader too. Same pattern as the two above:
-// without this delegate the type assertion in
-// fillIngestionEntryCounts fails closed and the `entries` column on
-// /v1/diagnostics/ingestion is silently 0 for EVERY source, even
-// though source_entry_counts (migration 0035, maintained live by the
-// indexer + seed-entry-counts) is fully populated.
+// SourceEntryCounts delegates so the wrapper also satisfies v1.SourceEntryCountReader. Without it
+// the type assertion in fillIngestionEntryCounts fails closed and the `entries` column on
+// /v1/diagnostics/ingestion is silently 0 for every source although source_entry_counts is populated.
 func (r *FXHistoryReader) SourceEntryCounts(ctx context.Context) (map[string]int64, error) {
 	return r.Store.SourceEntryCounts(ctx)
 }

@@ -7,14 +7,12 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// This file populates events.Event.StateWriteKeys on the production LCM path: the
-// base64 XDR LedgerKeys of the contract-data entries whose VALUE the event's
-// operation CHANGED, filtered per event to the event's own contract (sibling of
-// the OpArgs enrichment, extractInvokeContractCalls).
+// This file populates events.Event.StateWriteKeys on the production LCM path: the base64 XDR
+// LedgerKeys of contract-data entries whose VALUE the event's operation CHANGED, filtered to the
+// event's own contract.
 //
-// VALUE-CHANGED, not merely written: the RedStone adapter's write_prices REWRITES
-// every REQUESTED feed's entry, byte-identical for feeds its freshness verifier
-// rejected, while an ACCEPTED feed's stored PriceData always changes.
+// Value-changed, not merely written: RedStone's write_prices rewrites every requested feed's entry,
+// byte-identical for feeds its freshness verifier rejected, while an accepted feed always changes.
 //
 // The rule, identical here and in the ClickHouse re-derive twin
 // (internal/storage/clickhouse/state_write_keys.go):
@@ -125,11 +123,9 @@ type keyChangeState struct {
 	bad     bool // any parse failure → exclude the key (fail toward fallback)
 }
 
-// record folds one change into the state: a nil val marks the key bad
-// (unmarshalable genuine contract data), the FIRST state change becomes
-// the pre-image, the LAST write becomes the post-image. Returns true
-// exactly when this was the key's first post-image (the caller's
-// ordering signal).
+// record folds one change into the state: a nil val marks the key bad, the first state change
+// becomes the pre-image, the last write the post-image. It returns true exactly on the key's first
+// post-image (the caller's ordering signal).
 func (ks *keyChangeState) record(w contractDataWrite, val []byte, isPre bool) (firstPost bool) {
 	if val == nil {
 		ks.bad = true
@@ -157,12 +153,10 @@ func (ks *keyChangeState) valueChanged() bool {
 	return true
 }
 
-// contractDataWriteOf projects one contract-data LedgerEntry to its
-// (owner, key) identity plus its marshalled Val bytes. ok=false for
-// non-contract-data entries and account-owned contract data. A nil val
-// with ok=true signals a marshal failure on a genuine contract-data
-// entry — the caller excludes that key rather than guessing (mirroring
-// the lake extractor's skip-and-tolerate).
+// contractDataWriteOf projects one contract-data LedgerEntry to its (owner, key) identity plus its
+// marshalled Val bytes. ok=false for non-contract-data and account-owned entries. A nil val with
+// ok=true is a marshal failure; the caller excludes that key rather than guessing, as the lake
+// extractor does.
 func contractDataWriteOf(entry xdr.LedgerEntry) (w contractDataWrite, val []byte, ok bool) {
 	if entry.Data.Type != xdr.LedgerEntryTypeContractData {
 		return contractDataWrite{}, nil, false

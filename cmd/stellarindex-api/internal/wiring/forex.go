@@ -11,11 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ForexAdapter bridges the forex.Cache (raw snapshot type) to
-// v1.CurrenciesReader (wire-shape projection). The v1 package
-// can't import internal/sources/external/forex without inverting
-// the dependency direction; the adapter lives here so main.go owns
-// the conversion.
+// ForexAdapter bridges forex.Cache to v1.CurrenciesReader. It lives here because v1 cannot import
+// internal/sources/external/forex without inverting the dependency direction.
 type ForexAdapter struct{ cache *forex.Cache }
 
 func NewForexAdapter(c *forex.Cache) *ForexAdapter { return &ForexAdapter{cache: c} }

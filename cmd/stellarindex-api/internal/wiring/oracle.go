@@ -30,16 +30,12 @@ func (r StoreOracleReader) LatestOracleStreams(ctx context.Context) ([]canonical
 	return r.S.LatestOracleStreams(ctx)
 }
 
-// CachedOracleReader wraps an inner OracleReader with a Redis
-// read-through cache. The inner DISTINCT ON (source) sort is
-// expensive (~580 ms p95 on R1's oracle_updates volume); the
-// reading only refreshes every 1–5 minutes, so a 30 s Redis
-// entry absorbs the polling fan-out without delaying customer-
-// facing freshness in any meaningful way.
+// CachedOracleReader wraps an inner OracleReader with a Redis read-through cache. The inner
+// DISTINCT ON (source) sort is expensive (~580 ms p95) while oracle readings only refresh every
+// 1-5 minutes, so a 30 s entry absorbs polling fan-out without hurting freshness.
 //
-// Cache miss: hit the inner reader, then SET. Cache hit: deserialise
-// and skip the DB. Errors on either side fall through to the inner
-// reader — never fail open.
+// A miss queries the inner reader then SETs; a hit deserialises and skips the DB. Errors on
+// either side fall through to the inner reader, never fail open.
 type CachedOracleReader struct {
 	Inner v1.OracleReader
 	RDB   redis.UniversalClient
