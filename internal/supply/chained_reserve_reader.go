@@ -18,21 +18,15 @@ const (
 	ReserveSourceStatic ReserveSource = "static"
 )
 
-// ReserveBalanceSourcedReader is the optional extension to
-// [ReserveBalanceReader] that also reports which source answered. The
-// [XLMComputer] uses it to label a static-map answer with
-// [BasisXLMSDFReserveExclusionStatic]; a reader that does not
-// implement it is treated as live.
+// ReserveBalanceSourcedReader extends [ReserveBalanceReader] to report which source answered, so
+// [XLMComputer] can label a static-map answer [BasisXLMSDFReserveExclusionStatic]; others are treated as live.
 type ReserveBalanceSourcedReader interface {
 	ReserveBalanceTotalSourced(ctx context.Context, accounts []string, ledger uint32) (*big.Int, ReserveSource, error)
 }
 
-// ChainedReserveBalanceReader tries the live reader first and falls
-// back to the static reader for the WHOLE call when the live reader
-// returns [ErrNoObservation] (ADR-0021: live and static are never
-// mixed within one sum). Any other live error, and any static error,
-// is returned. The aggregator refresher and the `supply snapshot` CLI
-// share this one implementation so both label the static arm.
+// ChainedReserveBalanceReader tries live first and falls back to static for the WHOLE call on
+// [ErrNoObservation] (ADR-0021: never mixed within one sum). Other errors are returned. Shared by
+// the refresher and the `supply snapshot` CLI so both label the static arm.
 type ChainedReserveBalanceReader struct {
 	live   ReserveBalanceReader
 	static ReserveBalanceReader
@@ -58,12 +52,9 @@ func (c *ChainedReserveBalanceReader) ReserveBalanceTotalSourced(ctx context.Con
 	if !errors.Is(err, ErrNoObservation) {
 		return nil, "", err
 	}
-	// The static reader's own errors (missing account, expired snapshot)
-	// are operator-config conditions, so they bubble as themselves; the
-	// live cause is kept as text only (err.Error(), not err — err always
-	// satisfies errors.Is(_, ErrNoObservation) here, and wrapping it would
-	// make the combined error do too) so the refresher classes the tick
-	// by the static failure, not as a benign no_observation.
+	// Static errors are operator-config conditions and bubble as themselves. The live cause is kept
+	// as text only: wrapping err would make the combined error satisfy errors.Is(ErrNoObservation),
+	// and the refresher would class the tick as a benign no_observation.
 	out, serr := c.static.ReserveBalanceTotal(ctx, accounts, ledger)
 	if serr != nil {
 		return nil, "", fmt.Errorf("supply: live reserve read fell through (%s); static fallback: %w", err.Error(), serr)

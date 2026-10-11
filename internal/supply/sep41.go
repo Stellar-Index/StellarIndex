@@ -10,17 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// SEP41SupplyComponents is the per-token breakdown the
-// [SEP41SupplyReader] returns at one ledger boundary. Per ADR-0011
-// Algorithm 3, total_supply = MintTotal − BurnTotal − ClawbackTotal
-// over the contract's lifetime; circulating = total − admin
-// balance − locked-set balances.
-//
-// All fields are non-nil *big.Int. Zero is a valid value (a token
-// with no clawbacks reports ClawbackTotal=0). The three event-sum
-// fields are running totals over the contract's entire lifetime up
-// to the supplied ledger; the indexer maintains these in
-// asset_supply_history.
+// SEP41SupplyComponents is the per-token breakdown at one ledger (ADR-0011 Algorithm 3): total =
+// Mint - Burn - Clawback over the contract's lifetime; circulating = total - admin balance -
+// locked-set balances. All fields are non-nil *big.Int; zero is valid.
 type SEP41SupplyComponents struct {
 	// MintTotal is Σ mint.amount over the contract's lifetime.
 	MintTotal *big.Int
@@ -58,38 +50,22 @@ type SEP41SupplyComponents struct {
 	// gate. Zero = "reader didn't populate" — the gate skips.
 	MinComponentLedger uint32
 
-	// GenesisBaselineSeeded reports whether a pre-Soroban genesis
-	// baseline has been seeded for this contract (migration 0088).
-	// When false, MintTotal/BurnTotal/
-	// ClawbackTotal cover only the Soroban era; a SAC-wrapper issued
-	// before Soroban therefore legitimately reads Σburn > Σmint until
-	// the operator seeds its opening balance. [SEP41Computer.Compute]
-	// uses this to route a negative total to the benign
-	// `missing_baseline` outcome (needs seeding) rather than the
-	// paging `compute_error` reserved for a genuine post-seed
-	// inconsistency.
+	// GenesisBaselineSeeded reports whether a pre-Soroban genesis baseline is seeded (migration
+	// 0088). When false the totals cover only the Soroban era, so a pre-Soroban SAC wrapper reads
+	// sum(burn) > sum(mint); [SEP41Computer.Compute] routes that to the benign `missing_baseline`
+	// outcome instead of the paging `compute_error`.
 	GenesisBaselineSeeded bool
 }
 
-// SEP41SupplyReader is the read-side interface the [SEP41Computer]
-// needs. Production implementation: a Postgres-backed reader against
-// the SEP-41 event-sum running totals + the contract_data store the
-// indexer maintains for admin / locked-balance lookups.
-//
-// Returns non-nil components on success; storage errors propagate
-// as-is. The reader receives the contract id (asset.ContractID) and
-// the operator-configured locked-set so it can produce the
-// LockedAccount/LockedContract sums in a single query.
+// SEP41SupplyReader is the [SEP41Computer]'s read side (production: Postgres event-sum totals plus
+// the contract_data store). It receives the contract id and the locked-set so it can produce the
+// locked sums in a single query; it returns non-nil components, and storage errors propagate as-is.
 type SEP41SupplyReader interface {
 	SEP41SupplyAt(ctx context.Context, asset canonical.Asset, locked LockedSet, ledger uint32) (SEP41SupplyComponents, error)
 }
 
-// SEP41Computer derives Algorithm 3 supply for SEP-41 Soroban tokens.
-// Wraps a [Policy] (for per-asset locked-set + max_supply overrides)
-// and a [SEP41SupplyReader] for component lookups.
-//
-// Safe for concurrent Compute() calls — fields are read-only after
-// construction.
+// SEP41Computer derives Algorithm 3 supply for SEP-41 Soroban tokens from a [Policy] (locked-set,
+// max_supply overrides) and a [SEP41SupplyReader]. Safe for concurrent Compute calls.
 type SEP41Computer struct {
 	policy Policy
 	reader SEP41SupplyReader
@@ -109,51 +85,27 @@ func NewSEP41Computer(policy Policy, reader SEP41SupplyReader) (*SEP41Computer, 
 // safety net.
 var ErrNotSoroban = errors.New("supply: asset is not a SEP-41 Soroban token")
 
-// ErrNegativeTotalSupply is returned when MintTotal − BurnTotal −
-// ClawbackTotal goes negative AND the contract's pre-Soroban genesis
-// baseline HAS been seeded (so the totals already reflect lifetime
-// supply). Per SEP-41 semantics this is physically impossible (you
-// can't burn more than was ever minted); a negative reading here means
-// the indexer's running totals mis-summed somewhere upstream. Surface
-// the error rather than emit a negative-supply reading downstream —
-// the refresher maps it to the paging `compute_error` outcome.
+// ErrNegativeTotalSupply is returned when Mint - Burn - Clawback is negative AND the genesis
+// baseline HAS been seeded. That is physically impossible, so the running totals mis-summed
+// upstream; surface it (the refresher maps it to the paging `compute_error`) rather than emit a
+// negative supply.
 var ErrNegativeTotalSupply = errors.New("supply: SEP-41 mint − burn − clawback went negative")
 
-// ErrNegativeTotalMissingBaseline is returned when the total goes
-// negative but the contract's pre-Soroban genesis baseline has NOT
-// been seeded (migration 0088). A classic asset's
-// SAC-wrapper minted largely before Soroban legitimately reads
-// Σburn > Σmint over the Soroban-era-only window until the operator
-// seeds its opening balance (`stellarindex-ops supply seed-sep41-genesis`).
-// This is a range-scoped-baseline-missing condition, NOT indexer
-// corruption — the refresher maps it to the benign `missing_baseline`
-// outcome so it doesn't page.
+// ErrNegativeTotalMissingBaseline is returned when the total is negative and the genesis baseline
+// is NOT seeded (migration 0088): a pre-Soroban SAC wrapper legitimately reads sum(burn) >
+// sum(mint) until `stellarindex-ops supply seed-sep41-genesis` runs. Not corruption; the
+// refresher maps it to the benign `missing_baseline` outcome.
 var ErrNegativeTotalMissingBaseline = errors.New("supply: SEP-41 total negative and pre-Soroban genesis baseline not seeded — run `stellarindex-ops supply seed-sep41-genesis`")
 
-// ErrGenesisBaselineNotSeeded is returned for a classic asset's SAC wrapper
-// whose pre-Soroban genesis baseline has not been seeded, whatever the sign
-// of its total: the Soroban-era-only sum omits every pre-Soroban mint and
-// burn, so publishing it would misstate lifetime supply. Benign like
-// [ErrNegativeTotalMissingBaseline] — the refresher maps it to
-// `missing_baseline` so it prompts a seed instead of paging.
+// ErrGenesisBaselineNotSeeded is returned for a classic asset's SAC wrapper with no seeded
+// pre-Soroban baseline, whatever the sign: the Soroban-era-only sum omits pre-Soroban mints and
+// burns and would misstate lifetime supply. Benign like [ErrNegativeTotalMissingBaseline]
+// (`missing_baseline`).
 var ErrGenesisBaselineNotSeeded = errors.New("supply: SEP-41 SAC wrapper's pre-Soroban genesis baseline not seeded — run `stellarindex-ops supply seed-sep41-genesis`")
 
-// Compute returns the [Supply] for a SEP-41 Soroban token at the
-// supplied ledger. Per Algorithm 3:
-//
-//   - total_supply = MintTotal − BurnTotal − ClawbackTotal.
-//   - max_supply = Policy.MaxSupplyOverrides[key] if set, else nil
-//     (the SEP-1 declaration overlay — [Overlay] — applies at the
-//     API serving layer, not here).
-//   - circulating_supply = total − AdminBalance − locked-set
-//     balances. Admin balance is always excluded; per-asset
-//     locked-set extends that.
-//
-// Basis is BasisOverride when MaxSupplyOverrides supplied a value
-// OR the per-asset locked-set is non-empty; otherwise
-// BasisAdminExclusion when a non-zero AdminBalance was subtracted,
-// and BasisSEP41TotalOnly when nothing was excluded at all (the
-// wire must not claim an exclusion that didn't happen).
+// Compute returns the [Supply] for a SEP-41 token (Algorithm 3): total = Mint - Burn - Clawback;
+// circulating = total - AdminBalance - locked-set balances; max is the Policy override or nil. Basis is
+// BasisOverride, else BasisAdminExclusion only if a non-zero AdminBalance was subtracted, else BasisSEP41TotalOnly.
 func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledger uint32, observedAt time.Time) (Supply, error) {
 	if asset.Type != canonical.AssetSoroban {
 		return Supply{}, fmt.Errorf("%w: got type %q", ErrNotSoroban, asset.Type)
@@ -180,13 +132,9 @@ func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledg
 	total.Sub(total, comps.ClawbackTotal)
 
 	if total.Sign() < 0 {
-		// Distinguish a legitimately-missing pre-Soroban baseline (the
-		// SAC-wrapper's opening balance hasn't been seeded yet — a
-		// negative Soroban-era-only total is EXPECTED, not corruption)
-		// from a genuine post-seed inconsistency (baseline present and
-		// the total is STILL negative — physically impossible). The
-		// former routes to the benign `missing_baseline` outcome; the
-		// latter pages via `compute_error`. See migration 0088.
+		// A negative Soroban-era-only total with no seeded baseline is EXPECTED (benign
+		// `missing_baseline`); a negative total with the baseline seeded is a genuine inconsistency
+		// (`compute_error`, pages). See migration 0088.
 		sentinel := ErrNegativeTotalSupply
 		if !comps.GenesisBaselineSeeded {
 			sentinel = ErrNegativeTotalMissingBaseline
@@ -230,18 +178,10 @@ func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledg
 		basis = BasisOverride
 	}
 
-	// As in xlm.go: only claim an admin exclusion when one actually
-	// happened. Reaching here with BasisAdminExclusion means no
-	// max_supply override and an empty locked-set, so the ONLY thing
-	// that could have been subtracted is AdminBalance — and
-	// [StorageSEP41SupplyReader] hardcodes it to zero because v1
-	// doesn't track `set_admin`. Labelling that circulating==total
-	// figure "admin_exclusion" told every consumer the issuer's own
-	// holdings had been netted out when nothing was, overstating
-	// circulating supply (and market cap) by whatever the admin
-	// holds. Emit an honest basis so the gap is self-evident on the
-	// API, exactly as xlm_total_only does for an unconfigured
-	// SDF-reserve list.
+	// As in xlm.go: claim an admin exclusion only when one happened. Here the only possible
+	// subtraction is AdminBalance, which [StorageSEP41SupplyReader] hardcodes to zero (set_admin is
+	// untracked), so "admin_exclusion" would tell consumers the admin's holdings were netted out
+	// and overstate circulating supply and market cap.
 	if basis == BasisAdminExclusion && comps.AdminBalance.Sign() == 0 {
 		basis = BasisSEP41TotalOnly
 	}
@@ -258,11 +198,8 @@ func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledg
 	}, nil
 }
 
-// validateSEP41Components rejects nil pointers (would nil-pointer
-// the arithmetic chain) and negative individual sums (event-sum
-// running totals are non-negative by definition; a negative reading
-// indicates indexer corruption upstream — refuse to publish rather
-// than emit a physically-impossible reading).
+// validateSEP41Components rejects nil pointers and negative sums (running totals are non-negative
+// by definition; negative means upstream indexer corruption), refusing to publish them.
 func validateSEP41Components(c SEP41SupplyComponents) error {
 	type field struct {
 		name string
