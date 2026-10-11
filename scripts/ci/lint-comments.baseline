@@ -1,7 +1,6 @@
 # History citations in product Go comments, one per comment line: <path>\t<first match>;
 # comment blocks over the length cap, one per block: <path>\tlong-block.
 # Shrink-only: delete a line when its citation goes; scripts/ci/lint-comments fails on new or stale entries.
-cmd/stellarindex-api/internal/wiring/prices.go	long-block
 cmd/stellarindex-migrate/main.go	long-block
 cmd/stellarindex-migrate/main.go	long-block
 internal/aggregate/decimals.go	long-block
@@ -28,7 +27,6 @@ internal/api/v1/dashboardauth/login_intent.go	long-block
 internal/api/v1/dashboardauth/passkey.go	long-block
 internal/api/v1/dashboardauth/session_hint.go	long-block
 internal/api/v1/dashboardkeys/handlers.go	long-block
-internal/api/v1/dex_tvl_cache.go	long-block
 internal/api/v1/explorer/account_graph.go	long-block
 internal/api/v1/explorer/account_state.go	long-block
 internal/api/v1/middleware/auth.go	long-block
@@ -47,9 +45,7 @@ internal/api/v1/middleware/usage.go	long-block
 internal/api/v1/middleware/usage.go	long-block
 internal/api/v1/middleware/usage.go	long-block
 internal/api/v1/middleware/usage.go	long-block
-internal/api/v1/nonstandard_decimals_cache.go	long-block
 internal/api/v1/register.go	long-block
-internal/api/v1/transitive_price.go	long-block
 internal/auth/apikey_cache_invalidator.go	long-block
 internal/auth/apikey_postgres.go	long-block
 internal/auth/apikey_postgres.go	long-block

@@ -24,10 +24,8 @@ type TransitivePricer interface {
 // hop: the first ranked candidate whose asset and hop are not
 // scam-withheld and whose two legs both clear the substance floors. A
 // candidate that fails a gate falls through to the next, so a deep near
-// leg into a thin hop cannot hide a sound route behind it.
-// Returns ("", false) whenever no candidate may be served — including
-// every error path, because a price we cannot fully verify is worse than
-// no price.
+// leg into a thin hop cannot hide a sound route behind it. Returns
+// ("", false) whenever no candidate may be served, error paths included.
 //
 // # WHY BOTH LEGS
 //
