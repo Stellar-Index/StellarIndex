@@ -14,33 +14,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Launch-plan row 1.15 (the fiat series reaches a SAC-quoted pool) and
-// row 1.14 (the same reach on the point path), landed together so both
-// surfaces answer a fiat-quoted question from one population.
+// The fiat series and the point path both reach a SAC-quoted pool, so both surfaces answer a
+// fiat-quoted question from one population.
 //
-// A declared USD peg is an ASSET, not a spelling: every Soroban pool
-// quotes the peg's SAC wrapper, so a market whose only USD depth is
-// such a pool is stored as `<X>/<USDC SAC>` and the peg expansion —
-// which emits classic spellings only — never names it. Measured on r1
-// over 365 days of `prices_1d`: 43 assets have USD depth
-// under the USDC SAC and under NO spelling either surface reads,
-// carrying 260,833 prints and $14.63M; the largest single one carries
-// $6.38M across a full year. Each served `intervals: []` and a `404`.
+// A declared USD peg is an ASSET, not a spelling: every Soroban pool quotes the peg's SAC
+// wrapper, so a market whose only USD depth is such a pool is stored as `<X>/<USDC SAC>` and
+// the peg expansion, which emits classic spellings only, never names it. Such assets would
+// serve `intervals: []` and a `404`.
 //
-// The widening is gated per BUCKET, not per response, and these tests
-// pin both halves of that: a bucket an established spelling answered
-// never admits a held-back one (so a thin pool cannot set a bar's high,
-// low, count or volume beside book data), and a bucket no established
-// spelling answered is filled from the held-back set rather than
-// reported as quiet.
+// The widening is gated per BUCKET, not per response, and these tests pin both halves: a
+// bucket an established spelling answered never admits a held-back one (so a thin pool cannot
+// set a bar's high, low, count or volume beside book data), and a bucket no established
+// spelling answered is filled from the held-back set rather than reported as quiet.
 
 const (
-	// The r1-measured thin-pool shape, from `prices_1d` on 2026-06-02
-	// for GQX-GD7TC72O…: the SDEX book carried 660 prints with a high
-	// of 9.5396055089328007, and the `<GQX SAC>/<USDC SAC>` pool
-	// carried ONE print worth $0.60 — 0.43% of the day's dollar volume
-	// — at 13.0995677490335234. Merged into the book's bucket, that one
-	// print moves the served high by +37.32%.
+	// A measured thin-pool shape for GQX-GD7TC72O…: the SDEX book carried 660 prints with a
+	// high of 9.5396055089328007, and the `<GQX SAC>/<USDC SAC>` pool carried ONE $0.60 print
+	// (0.43% of the day's dollar volume) at 13.0995677490335234. Merged into the book's
+	// bucket, that one print moves the served high by +37.32%.
 	sacReachBookHigh = "9.5396055089328007"
 	sacReachBookLow  = "8.9038086820528625"
 	sacReachPoolMark = "13.0995677490335234"
@@ -67,12 +58,9 @@ func sacReachSeries(t *testing.T, ts *testServer, base, from, to string) fiatSer
 
 // ── (a) reach: a SAC-quoted pool is the only venue ─────────────────────
 
-// TestFiatSeries_SACQuotedPoolIsTheOnlyVenueIsServed is row 1.15's own
-// case. AQUA's only USD market is `AQUA/<USDC SAC>`; the declared peg is
-// classic USDC, so every spelling the expansion names comes back empty.
-//
-// Red before the widening: `intervals: []` — the shape 43 assets on r1
-// serve today.
+// TestFiatSeries_SACQuotedPoolIsTheOnlyVenueIsServed: AQUA's only USD market is
+// `AQUA/<USDC SAC>`; the declared peg is classic USDC, so every spelling the expansion names
+// comes back empty. Without the widening this serves `intervals: []`.
 func TestFiatSeries_SACQuotedPoolIsTheOnlyVenueIsServed(t *testing.T) {
 	usdc := installUSDCSACRegistry(t)
 	pool := mkSeriesBar(sacReachDay(0), "0.0041", "0.0042", "0.0040", "0.0041", "1000000", "4100", 3)
@@ -144,15 +132,11 @@ func TestFiatPoint_SACQuotedPoolIsTheOnlyVenueIsServed(t *testing.T) {
 
 // ── (c) the guarantee: a thin pool never sets a bar beside book data ───
 
-// TestFiatSeries_ThinSACPoolNeverSetsABarBesideBookData is the guard the
-// widening exists to need. The book and the pool hold the SAME bucket;
-// the served bar must be the book's own, print for print.
-//
-// Red against a widening that merges the two sets unconditionally: the
-// per-bucket max/min and the per-bucket sums take the pool's single
-// $0.60 print, and the bar's high moves from 9.5396055089328007 to
-// 13.0995677490335234 — the +37.32% the r1 measurement recorded — with
-// the count reading 661 rather than 660.
+// TestFiatSeries_ThinSACPoolNeverSetsABarBesideBookData guards the widening. The book and
+// the pool hold the SAME bucket; the served bar must be the book's own, print for print.
+// An unconditional merge would take the pool's single $0.60 print into the per-bucket
+// max/min and sums: high 9.5396055089328007 becomes 13.0995677490335234 (+37.32%) and the
+// count reads 661 rather than 660.
 func TestFiatSeries_ThinSACPoolNeverSetsABarBesideBookData(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	day := sacReachDay(0)
@@ -193,16 +177,11 @@ func TestFiatSeries_ThinSACPoolNeverSetsABarBesideBookData(t *testing.T) {
 // decision recorded in docs/architecture/aggregation-plan.md §"The fiat quote leg, per bucket".
 // The book holds day 1; the pool holds days 1, 2 and 3.
 //
-// Served: three bars. Day 1 is the book's alone — the pool is dropped
-// from it entirely, which is what makes the guarantee above absolute
-// rather than arithmetic — and days 2 and 3 are the pool's, because the
-// alternative for them is reporting a market that traded as quiet.
-//
-// Red against a first-hit evaluated once per RESPONSE: the established
-// set answered somewhere in the window, so the held-back set is never
-// read and one bar is served. Measured on r1, that alternative drops
-// 3,356 daily buckets carrying 671,712 prints and $175.96M across the
-// 24 assets that have both a book and a pool.
+// Served: three bars. Day 1 is the book's alone (the pool is dropped from it entirely, which
+// makes the guarantee absolute rather than arithmetic); days 2 and 3 are the pool's, because
+// the alternative is reporting a traded market as quiet. A first-hit evaluated once per
+// RESPONSE fails: the established set answered somewhere, so the held-back set is never read
+// and one bar is served.
 func TestFiatSeries_PoolFillsOnlyTheBucketsTheBookCannotAnswer(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	book := mkSeriesBar(sacReachDay(0), "0.0041", "0.0042", "0.0040", "0.0041", "100000", "410", 1)
@@ -228,32 +207,24 @@ func TestFiatSeries_PoolFillsOnlyTheBucketsTheBookCannotAnswer(t *testing.T) {
 	assertBookBar(t, env.Data.Intervals[2], poolDay3)
 }
 
-// mkSourcedBar is [mkSeriesBar] with the CAGG's `sources` column filled
-// in. It matters because the combine resolves a bar's smallest-unit
-// scale from that column and from nothing else: a fixture that leaves it
-// empty makes every bar unknown-scale, every lift factor 10^0, and every
-// assertion about scaling vacuous.
+// mkSourcedBar is [mkSeriesBar] with the CAGG's `sources` column filled in. The combine
+// resolves a bar's smallest-unit scale from that column alone: a fixture leaving it empty
+// makes every bar unknown-scale, every lift factor 10^0, and every scaling assertion vacuous.
 func mkSourcedBar(t time.Time, o, h, l, c, vb, vq string, n int64, sources ...string) v1.OHLCSeriesBar {
 	bar := mkSeriesBar(t, o, h, l, c, vb, vq, n)
 	bar.Sources = sources
 	return bar
 }
 
-// TestFiatSeries_ABucketRendersTheSameInEveryWindow is the property that
-// decides §7.5 rather than a preference. Resolving admission once per
-// RESPONSE makes the constituent set a function of the WINDOW, so the
-// same day renders one way in a window the book also covers and another
-// way in a window it does not — the same day charting differently at 3d
-// and at 1d, from one unchanged database.
+// TestFiatSeries_ABucketRendersTheSameInEveryWindow pins window invariance. Resolving
+// admission once per RESPONSE makes the constituent set a function of the WINDOW, so the same
+// day would chart differently at 3d and at 1d from one unchanged database.
 //
-// Every bucket is checked against itself fetched alone, and the bars
-// carry REAL venue sources at two different scales, which is what makes
-// the check bite. An earlier version of this test used [mkSeriesBar],
-// whose bars name no venue: every bar was then unknown-scale, every lift
-// factor was 10^0, and the test passed with the scale machinery deleted
-// outright while the property it names was broken. The lift target is
-// per bucket for exactly this reason — a response-wide maximum is a
-// second, quieter way for a window to change a bar.
+// Every bucket is checked against itself fetched alone, and the bars carry REAL venue sources
+// at two different scales, which is what makes the check bite: with [mkSeriesBar] (no venue)
+// every lift factor is 10^0 and the test passes with the scale machinery deleted. The lift
+// target is per bucket because a response-wide maximum is a second, quieter way for a window
+// to change a bar.
 func TestFiatSeries_ABucketRendersTheSameInEveryWindow(t *testing.T) {
 	cases := []struct {
 		name             string
@@ -311,16 +282,10 @@ func TestFiatSeries_ABucketRendersTheSameInEveryWindow(t *testing.T) {
 	}
 }
 
-// TestFiatSeries_EstablishedMixedScaleBucketIsWindowInvariant pins the
-// same property with NO held-back set in play at all — two established
-// constituents, at two venue scales, on two days.
-//
-// This shape predates the widening and was broken before it: on the
-// pre-widening tree the 7dp day served v_base 1000000 asked for alone
-// and 10000000 asked for beside the 8dp day, because the lift target was
-// the maximum across the RESPONSE. Scoping it to the bucket fixes that
-// too, so this is a regression pin on a defect the widening inherited
-// rather than caused.
+// TestFiatSeries_EstablishedMixedScaleBucketIsWindowInvariant pins the same property with NO
+// held-back set in play: two established constituents, at two venue scales, on two days.
+// A lift target taken as the maximum across the RESPONSE would serve the 7dp day as v_base
+// 1000000 alone but 10000000 beside the 8dp day; the target is scoped to the bucket.
 func TestFiatSeries_EstablishedMixedScaleBucketIsWindowInvariant(t *testing.T) {
 	usdc := mustParseAsset(t, usdcClassicID)
 	onChain := mkSourcedBar(sacReachDay(0), "9.10", "9.20", "9.00", "9.15", "1000000", "9100000", 660, "sdex")
@@ -350,11 +315,9 @@ func TestFiatSeries_EstablishedMixedScaleBucketIsWindowInvariant(t *testing.T) {
 
 // ── point == series, over constituents that genuinely differ ───────────
 
-// The three constituents below are stamped at DIFFERENT sources, so the
-// series' per-bar scale lift and the point path's NormalizeAmountScale
-// both actually run. The pre-existing parity fixture stamps every trade
-// `sdex`, which holds the invariant vacuously: one scale means every
-// lift factor is 10^0 and a broken lift is invisible.
+// The three constituents below are stamped at DIFFERENT sources, so the series' per-bar scale
+// lift and the point path's NormalizeAmountScale both actually run. A fixture stamping every
+// trade `sdex` holds the invariant vacuously: one scale means every lift factor is 10^0.
 //
 //	native/<USDC classic>   sdex     (7dp)   7000 base /  1260 quote → 0.18
 //	crypto:XLM/fiat:USD     binance  (8dp)  20000 base /  3800 quote → 0.19
@@ -397,10 +360,9 @@ func newMixedScaleParityServer(t *testing.T) *v1.Server {
 	return v1.New(v1.Options{History: reader, USDPeggedClassics: []canonical.Asset{usdc}})
 }
 
-// TestFiatPointMatchesSeries_AcrossVenueScales holds the point-vs-series parity
-// invariant where it can actually fail: three constituents at two
-// smallest-unit scales. Point and series must agree on the price and on
-// both volumes, which is only true if each lifts the 7dp leg by the same
+// TestFiatPointMatchesSeries_AcrossVenueScales holds the point-vs-series parity invariant
+// where it can fail: three constituents at two smallest-unit scales. Point and series must
+// agree on price and both volumes, which holds only if each lifts the 7dp leg by the same
 // exact factor of ten.
 func TestFiatPointMatchesSeries_AcrossVenueScales(t *testing.T) {
 	ts := httpTestServer(t, newMixedScaleParityServer(t))
@@ -439,12 +401,10 @@ func TestFiatPointMatchesSeries_AcrossVenueScales(t *testing.T) {
 	}
 }
 
-// TestFiatPointMatchesSeries_OnAPoolOnlyVenue holds the same invariant
-// on the arm rows 1.14 and 1.15 add. A point window IS one bucket, so
-// "read the held-back set when the established set answered nothing"
-// and "fill the buckets the established set did not answer" are one rule
-// stated at each path's own grain — and the two surfaces stay on one
-// population , rather than one serving a series and the other a 404.
+// TestFiatPointMatchesSeries_OnAPoolOnlyVenue holds the same invariant on the held-back arm.
+// A point window IS one bucket, so "read the held-back set when the established set answered
+// nothing" and "fill the buckets the established set did not answer" are one rule at each
+// path's own grain, and the surfaces stay on one population rather than series vs 404.
 func TestFiatPointMatchesSeries_OnAPoolOnlyVenue(t *testing.T) {
 	usdc := installUSDCSACRegistry(t)
 	aqua := mustParseAsset(t, aquaClassicID)
@@ -565,18 +525,12 @@ func pointTotals(t *testing.T, ts *testServer, base, win string) (n int64, vBase
 	return int64(env.Data.TradeCount), mustRat(t, env.Data.BaseVolume), mustRat(t, env.Data.QuoteVolume)
 }
 
-// TestFiatPointMatchesSeries_OverAMultiBucketWindow is the point-vs-series
-// invariant on a window of more than one bucket — where a first attempt
-// at rows 1.14/1.15 broke it.
-//
-// That attempt gated the point path on the whole window ("read the
-// held-back set only when the established set returned nothing"), on the
-// reasoning that a point window is its own bucket. It is, but only when
-// the window IS one bucket, and every parity fixture in the tree was
-// exactly one bucket, so nothing saw it. With the book in hour 1 and the
-// pool in hour 2, the series served both and `/v1/vwap` served the book
-// alone: n=1 v_base=1000 against n=2 v_base=1500, two surfaces answering
-// one window from two populations.
+// TestFiatPointMatchesSeries_OverAMultiBucketWindow is the point-vs-series invariant on a
+// window of more than one bucket. Gating the point path on the whole window ("read the
+// held-back set only when the established set returned nothing") is right only when the
+// window IS one bucket. With the book in hour 1 and the pool in hour 2 the series must serve
+// both and `/v1/vwap` must match (n=2 v_base=1500), not serve the book alone (n=1
+// v_base=1000): two surfaces answering one window from two populations.
 func TestFiatPointMatchesSeries_OverAMultiBucketWindow(t *testing.T) {
 	ts, win, _, _ := twoBucketFixture(t)
 	sn, sBase, sQuote := seriesTotals(t, ts, aquaClassicID, "1h", win)
@@ -591,17 +545,14 @@ func TestFiatPointMatchesSeries_OverAMultiBucketWindow(t *testing.T) {
 	}
 }
 
-// TestFiatPointEqualsTheFinestSeriesExactly states the claim precisely
-// rather than approximately. The point path resolves its held-back gate
-// at the FINEST interval the series can be asked for, so the equality is
-// exact against `interval=1m`.
+// TestFiatPointEqualsTheFinestSeriesExactly states the claim precisely. The point path
+// resolves its held-back gate at the FINEST interval the series can be asked for, so the
+// equality is exact against `interval=1m`.
 //
-// It is not exact against every interval, and it cannot be: per-bucket
-// admission is a function of what a bucket IS, so a coarser bucket is
-// likelier to hold an established print and therefore suppresses more.
-// That is the caller's question changing, not the population splitting —
-// both surfaces run one rule over one constituent split. Pinning the
-// finest grain is what keeps that statement checkable.
+// It cannot be exact against every interval: per-bucket admission depends on what a bucket
+// IS, and a coarser bucket is likelier to hold an established print and suppress more. That
+// is the caller's question changing, not the population splitting. Pinning the finest grain
+// keeps the statement checkable.
 func TestFiatPointEqualsTheFinestSeriesExactly(t *testing.T) {
 	ts, win, _, _ := twoBucketFixture(t)
 	sn, sBase, sQuote := seriesTotals(t, ts, aquaClassicID, "1m", win)
@@ -612,14 +563,10 @@ func TestFiatPointEqualsTheFinestSeriesExactly(t *testing.T) {
 	}
 }
 
-// TestFiatPoint_PoolInAnAnsweredBucketIsSuppressed is the point-path
-// twin of the thin-pool guarantee: widening the point path's reach must
-// not let a pool print join a bucket the book already answered. Both
-// prints sit in the SAME minute, so the gate drops the pool and the
-// served aggregate is the book's alone.
-//
-// The pool print is priced at 0.80 against the book's 0.20, so a failure
-// is loud: it takes the served high to 0.80 and the volume to 1500.
+// TestFiatPoint_PoolInAnAnsweredBucketIsSuppressed is the point-path twin of the thin-pool
+// guarantee: widening the point path's reach must not let a pool print join a bucket the book
+// already answered. Both prints sit in the SAME minute, so the gate drops the pool. The pool
+// is priced at 0.80 against the book's 0.20, so a failure is loud (high 0.80, volume 1500).
 func TestFiatPoint_PoolInAnAnsweredBucketIsSuppressed(t *testing.T) {
 	_ = installUSDCSACRegistry(t)
 	aqua := mustParseAsset(t, aquaClassicID)

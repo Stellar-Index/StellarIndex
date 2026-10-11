@@ -14,17 +14,12 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Replay-window flag. A `stellarindex-ops projector-replay`
-// rewind is an INTENDED lag: a reflector-fx replay once rewound the
-// cursor 2,574,496 ledgers on purpose and
-// stellarindex_projector_lag_high ticketed for the whole ~4h catch-up,
-// carrying no information the operator did not already have — and masking a
-// genuine lag on the same source for the duration.
+// Replay-window flag. A `stellarindex-ops projector-replay` rewind is an INTENDED lag, so
+// stellarindex_projector_lag_high must not ticket it (and must not mask genuine lag).
 //
-// The discriminator is obs.ProjectorReplayWindowActive: 1 while the cursor is
-// still inside the window the replay tool RECORDED (migration 0125), 0
-// otherwise. The assertion surface here is the gauge's VALUE under each of
-// the four states the alert rules join against — not a mock's call log.
+// The discriminator is obs.ProjectorReplayWindowActive: 1 while the cursor is still inside the
+// window the replay tool RECORDED, 0 otherwise. The tests assert the gauge's VALUE under each
+// of the four states the alert rules join against, not a mock's call log.
 // ---------------------------------------------------------------------------
 
 func replayWindowGauge(t *testing.T, source string) float64 {
@@ -33,10 +28,9 @@ func replayWindowGauge(t *testing.T, source string) float64 {
 }
 
 // newReplayHarness wires a projector over the fake store with `source`
-// registered (refreshReplayWindows publishes one series per REGISTERED
-// source) and its projector cursor parked at `cursor`. The tip sits far
-// above the cursor so every cycle sees real lag — the exact condition the
-// lag alert fires on.
+// registered (refreshReplayWindows publishes one series per REGISTERED source) and its
+// projector cursor parked at `cursor`. The tip sits far above the cursor so every cycle sees
+// real lag, the condition the lag alert fires on.
 func newReplayHarness(t *testing.T, source string, cursor uint32, windows map[string]timescale.ProjectionDirtyWindow) (*Projector, *fakeStore, Source) {
 	t.Helper()
 	store := &fakeStore{
@@ -62,11 +56,9 @@ func runCycleThenRefresh(p *Projector, src Source) {
 	p.refreshReplayWindows(context.Background())
 }
 
-// TestReplayWindow_CursorInsideOperatorRewindFlagsActive is the
-// reproduction: after `projector-replay -source reflector-fx -from 61602787`
-// rewound the cursor below the recorded window's to_ledger, the projector
-// must publish replay_window_active=1 so the lag rule's `unless` arm
-// suppresses the expected ticket (and the stalled-replay rule arms).
+// TestReplayWindow_CursorInsideOperatorRewindFlagsActive: with the cursor rewound below the
+// recorded window's to_ledger, the projector must publish replay_window_active=1 so the lag
+// rule's `unless` arm suppresses the expected ticket (and the stalled-replay rule arms).
 func TestReplayWindow_CursorInsideOperatorRewindFlagsActive(t *testing.T) {
 	const source = "replay-window-inside"
 	// Shape of the live incident: rewound to 61,602,787, pre-rewind cursor
@@ -98,14 +90,11 @@ func TestReplayWindow_NoRecordedWindowLeavesLagAlertable(t *testing.T) {
 }
 
 // TestReplayWindow_CursorPastWindowEndClearsFlag pins the BOUND that keeps
-// the suppression honest. The dirty-window row survives until
-// compute-completeness re-verifies the range (up to a day later), so keying
-// the flag on the row's existence alone would blind the lag alert long after
-// the replay finished. The flag is bounded by the CURSOR: once it regains
-// the window's to_ledger (its pre-rewind position) the remaining catch-up is
-// ordinary lag and is alertable again. See
-// TestReplayWindow_CursorAtPreRewindPositionClearsFlag for the boundary
-// itself.
+// the suppression honest. The dirty-window row survives until compute-completeness re-verifies
+// the range (up to a day), so keying the flag on the row alone would blind the lag alert long
+// after the replay finished. Once the cursor regains the window's to_ledger the remaining
+// catch-up is ordinary lag and alertable again. The boundary itself is pinned by
+// TestReplayWindow_CursorAtPreRewindPositionClearsFlag.
 func TestReplayWindow_CursorPastWindowEndClearsFlag(t *testing.T) {
 	const source = "replay-window-past-end"
 	win := map[string]timescale.ProjectionDirtyWindow{
@@ -123,23 +112,17 @@ func TestReplayWindow_CursorPastWindowEndClearsFlag(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// THE OTHER WRITER. `stellarindex-ops projected-rebuild -write` calls the
-// same RecordProjectionDirtyWindow, and its range is NOT bounded below the
-// live cursor the way an early reading of ADR-0048 D3 suggests:
-// checkLiveCursorGuard admits liveLastLedger >= to (EQUALITY — and `-to`
-// DEFAULTS to the live cursor), and `-allow-live-overlap` bypasses the
-// guard entirely (e.g.
-// `projected-rebuild -source sep41_supply -from 63419138 -to 63671020
-// -write -allow-live-overlap`). So a rebuild window routinely covers the
-// live cursor's own position, and under the override sits wholly above it.
+// THE OTHER WRITER. `stellarindex-ops projected-rebuild -write` calls the same
+// RecordProjectionDirtyWindow, and its range is NOT bounded below the live cursor:
+// checkLiveCursorGuard admits liveLastLedger >= to (EQUALITY, and `-to` DEFAULTS to the live
+// cursor), and `-allow-live-overlap` bypasses the guard. So a rebuild window routinely covers
+// the live cursor's own position, or under the override sits wholly above it.
 //
-// None of those shapes is an operator REWIND, so none may excuse lag: if
-// they did, a source whose projector is HELD at that position (sink-retry
-// hold, poison hold, wedge) would have its lag ticket suppressed
-// indefinitely with no rewind on record — the exact failure
-// stellarindex_projector_lag_high exists to catch. The bound is
-// PROVENANCE (timescale.ProjectionDirtyWindow.IsProjectorReplay), not the
-// cursor arithmetic alone.
+// None of those shapes is an operator REWIND, so none may excuse lag: a source whose projector
+// is HELD at that position (sink-retry hold, poison hold, wedge) would have its lag ticket
+// suppressed indefinitely, the exact failure stellarindex_projector_lag_high exists to catch.
+// The bound is PROVENANCE (timescale.ProjectionDirtyWindow.IsProjectorReplay), not cursor
+// arithmetic alone.
 // ---------------------------------------------------------------------------
 
 // TestReplayWindow_RebuildWindowBelowCursorDoesNotSuppress is the benign
@@ -158,11 +141,9 @@ func TestReplayWindow_RebuildWindowBelowCursorDoesNotSuppress(t *testing.T) {
 }
 
 // TestReplayWindow_RebuildWindowAtLiveCursorDoesNotSuppress is the DEFAULT
-// projected-rebuild shape: `-to` omitted, so the recorded to_ledger IS the
-// live cursor. If that raised the flag, a projector HELD at that ledger
-// (the state the lag ticket exists to catch) would be silenced for as long
-// as the dirty row lives — up to a day, until compute-completeness clears
-// it — with no operator rewind on record.
+// projected-rebuild shape: `-to` omitted, so the recorded to_ledger IS the live cursor. Raising
+// the flag would silence a projector HELD at that ledger for as long as the dirty row lives
+// (up to a day), with no operator rewind on record.
 func TestReplayWindow_RebuildWindowAtLiveCursorDoesNotSuppress(t *testing.T) {
 	const source = "replay-window-rebuild-at-cursor"
 	const liveCursor = 63_419_138
@@ -178,12 +159,10 @@ func TestReplayWindow_RebuildWindowAtLiveCursorDoesNotSuppress(t *testing.T) {
 }
 
 // TestReplayWindow_RebuildWindowAboveLiveCursorDoesNotSuppress is the
-// `-allow-live-overlap` shape, taken from a real r1 run: the recorded window sits ABOVE the live cursor. Under
-// a cursor-only bound the flag would read 1 for the whole climb from the
-// cursor to -to (hours), suppressing lag_high for a source with no rewind
-// on record — and a genuinely slow-but-still-advancing lag would then raise
-// nothing at all, because the stalled-replay rule only covers a cursor that
-// has stopped.
+// `-allow-live-overlap` shape: the recorded window sits ABOVE the live cursor. A cursor-only
+// bound would read 1 for the whole climb to -to, suppressing lag_high with no rewind on record,
+// and genuinely slow-but-advancing lag would raise nothing because the stalled-replay rule only
+// covers a cursor that has stopped.
 func TestReplayWindow_RebuildWindowAboveLiveCursorDoesNotSuppress(t *testing.T) {
 	const source = "replay-window-rebuild-above-cursor"
 	p, _, src := newReplayHarness(t, source, 63_419_138, map[string]timescale.ProjectionDirtyWindow{
@@ -198,10 +177,9 @@ func TestReplayWindow_RebuildWindowAboveLiveCursorDoesNotSuppress(t *testing.T) 
 }
 
 // TestReplayWindow_CursorAtPreRewindPositionClearsFlag pins the UPPER bound
-// as EXCLUSIVE. A projector wedged exactly AT the window's to_ledger has
-// finished its replay: the rewind no longer explains anything, and the
-// dirty row outlives the replay by up to a day, so an inclusive bound would
-// suppress that wedge's lag ticket indefinitely.
+// as EXCLUSIVE. A projector wedged exactly AT the window's to_ledger has finished its replay,
+// and the dirty row outlives the replay by up to a day, so an inclusive bound would suppress
+// that wedge's lag ticket indefinitely.
 func TestReplayWindow_CursorAtPreRewindPositionClearsFlag(t *testing.T) {
 	const source = "replay-window-at-end"
 	p, _, src := newReplayHarness(t, source, 64_177_283, map[string]timescale.ProjectionDirtyWindow{
@@ -216,11 +194,9 @@ func TestReplayWindow_CursorAtPreRewindPositionClearsFlag(t *testing.T) {
 }
 
 // TestReplayWindow_CursorAtRewindTargetFlagsActive guards the LOWER bound's
-// off-by-one from the other side: projector-replay parks the cursor at
-// from_ledger-1 (rewindTo = target-1), so that exact position is the FIRST
-// legitimate one inside the rewind and must still suppress. A lower bound
-// written as `cursor >= From` would disarm the fix at the instant it is
-// most needed.
+// off-by-one from the other side: projector-replay parks the cursor at from_ledger-1
+// (rewindTo = target-1), the FIRST legitimate position inside the rewind, which must still
+// suppress. A lower bound of `cursor >= From` would disarm the flag when it is most needed.
 func TestReplayWindow_CursorAtRewindTargetFlagsActive(t *testing.T) {
 	const source = "replay-window-at-target"
 	p, _, src := newReplayHarness(t, source, 61_602_786, map[string]timescale.ProjectionDirtyWindow{
@@ -251,11 +227,9 @@ func TestReplayWindow_CursorFarBelowRewindTargetDoesNotSuppress(t *testing.T) {
 }
 
 // TestReplayWindow_RunStartsTheWatcher pins the WIRING: the flag is only
-// worth anything if the live projector actually publishes it, so Run must
-// start the watcher (and its first pass must land without waiting a whole
-// ReplayWindowRefreshInterval). Without the goroutine in Run the gauge
-// never leaves the value below and this test times out on a wrong 0 —
-// exactly the shape of "the rule suppresses nothing in production".
+// worth anything if the live projector actually publishes it, so Run must start the watcher
+// and its first pass must land without waiting a whole ReplayWindowRefreshInterval. Without
+// the goroutine in Run the gauge stays 0 and this test times out.
 func TestReplayWindow_RunStartsTheWatcher(t *testing.T) {
 	const source = "replay-window-run-wiring"
 	p, _, src := newReplayHarness(t, source, 61_602_786, map[string]timescale.ProjectionDirtyWindow{
@@ -322,17 +296,13 @@ func TestReplayWindow_ReadErrorFailsOpen(t *testing.T) {
 	}
 }
 
-// TestReplayWindow_ReadCarriesItsOwnDeadline: every other
-// p.store call in this package runs under cycleCtx; this one
-// passed Run's ctx straight through, so a blocked read parked the watcher
-// goroutine with the gauge holding whatever it last published. A stale 1
-// keeps suppressing the lag ticket for a source nobody is replaying —
-// and the suppression's whole justification is that it stays narrow.
+// TestReplayWindow_ReadCarriesItsOwnDeadline: every other p.store call in this package runs
+// under cycleCtx, so the watcher's read must too. Otherwise a blocked read parks the watcher
+// with the gauge holding its last value, and a stale 1 keeps suppressing the lag ticket for a
+// source nobody is replaying.
 //
-// Not unbounded without the fix either (OpenBackground SETs statement_timeout on
-// every connection, 30m by default), but 30 minutes of a wrong
-// suppressing gauge is not a bound worth relying on when a local one
-// costs two lines.
+// The connection statement_timeout (30m by default) is not a bound worth relying on when a
+// local deadline costs two lines.
 func TestReplayWindow_ReadCarriesItsOwnDeadline(t *testing.T) {
 	const source = "replay-window-deadline"
 	p, store, _ := newReplayHarness(t, source, 61_602_786, nil)
@@ -352,12 +322,10 @@ func TestReplayWindow_ReadCarriesItsOwnDeadline(t *testing.T) {
 			"has none — a query stuck behind a lock wait parks the watcher and " +
 			"leaves the replay-window gauge latched at its last value (RD-08)")
 	}
-	// Bounded by PerSourceTimeout, and not by something far tighter: a
-	// budget that trips on ordinary DB slowness would zero the gauge
-	// mid-replay and re-arm lag_high for the whole catch-up, reinstating
-	// the ticket storm the flag removed. `before` is read a hair before the
-	// deadline is computed, so the upper check carries scheduling slack;
-	// the lower check is the one with teeth.
+	// Bounded by PerSourceTimeout, not something far tighter: a budget that trips on ordinary DB
+	// slowness would zero the gauge mid-replay and re-arm lag_high for the whole catch-up.
+	// `before` is read just before the deadline is computed, so the upper check carries
+	// scheduling slack; the lower check is the one with teeth.
 	budget := dl.Sub(before)
 	if budget <= PerSourceTimeout/2 {
 		t.Errorf("read deadline is only %v from call time — that is far "+

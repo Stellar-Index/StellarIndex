@@ -22,13 +22,10 @@ import (
 // fixture across tests.
 const usdcIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
-// Golden-string tests: every wire string asserted below is
-// byte-identical to what the pre-typed-key `string`-returning
-// builders produced (captured before the ADR-0007 typed-key
-// migration — ROADMAP #48). The migration is a compile-time-only
-// hardening: it must NOT invalidate a single live Redis key on
-// deploy. Every assertion calls [*.String] to cross into the raw
-// wire string, mirroring what a real call site does at the
+// Golden-string tests: every wire string asserted below is byte-identical to what the
+// untyped `string` builders produced. The typed-key migration (ADR-0007) is compile-time
+// hardening only and must NOT invalidate a live Redis key on deploy. Each assertion calls
+// [*.String] to cross into the raw wire string, as a real call site does at the
 // redis.Cmdable boundary.
 
 func TestPriceKey(t *testing.T) {
@@ -110,15 +107,11 @@ func TestRateLimitKey(t *testing.T) {
 }
 
 func TestRateLimitKey_MatchesRatelimitPackagePrefix(t *testing.T) {
-	// Consistency check: internal/ratelimit builds "rl:<escape(key)>:<bucket>"
-	// directly, atomically, inside Bucket.Charge (internal/ratelimit/bucket.go);
-	// this package mirrors that shape for read-only callers. A hardcoded
-	// "rl:" prefix assertion here would pass even if the two sides drifted
-	// (e.g. the bucket formula's window division changed), so this drives
-	// a real *ratelimit.Bucket against miniredis and diffs the ACTUAL key
-	// it wrote against cachekeys.RateLimitKey's output, mirroring the
-	// key-visibility technique internal/ratelimit/bucket_test.go already
-	// uses for its own WithKeyPrefix coverage.
+	// internal/ratelimit builds "rl:<escape(key)>:<bucket>" atomically inside Bucket.Charge;
+	// this package mirrors that shape for read-only callers. A hardcoded "rl:" prefix
+	// assertion would pass even if the two sides drifted (e.g. the bucket window division
+	// changed), so this drives a real *ratelimit.Bucket against miniredis and diffs the
+	// ACTUAL key it wrote against cachekeys.RateLimitKey's output.
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
@@ -142,11 +135,9 @@ func TestRateLimitKey_MatchesRatelimitPackagePrefix(t *testing.T) {
 }
 
 func TestRateLimitKey_EscapesSubjectForParityWithBucket(t *testing.T) {
-	// Subjects containing `:` (e.g. IPv6 addresses) are url.QueryEscape'd
-	// by internal/ratelimit/bucket.go's Take() to prevent
-	// cross-subject collisions on the Redis slot. This mirror
-	// function MUST escape identically or the two sides produce
-	// different keys for the same subject.
+	// Subjects containing `:` (e.g. IPv6 addresses) are url.QueryEscape'd by
+	// internal/ratelimit/bucket.go's Take() to prevent cross-subject collisions. This mirror
+	// MUST escape identically or the two sides produce different keys for one subject.
 	now := time.Unix(1_750_000_000, 0).UTC()
 	k := cachekeys.RateLimitKey("2001:db8::1", now, time.Minute)
 	if !strings.HasPrefix(k.String(), "rl:2001%3Adb8%3A%3A1:") {
@@ -210,14 +201,11 @@ func TestVWAPProvenance(t *testing.T) {
 	if got.String() != want {
 		t.Errorf("VWAPProvenance = %q, want %q", got.String(), want)
 	}
-	// Sibling-key check: the provenance key MUST be the VWAP key
-	// with `:provenance` suffixed. The aggregator writes both
-	// atomically; a mismatched suffix would orphan the marker.
+	// Sibling-key check: the provenance key MUST be the VWAP key with `:provenance` suffixed.
+	// The aggregator writes both atomically; a mismatched suffix would orphan the marker.
 	//
-	// [VWAPKey] and [VWAPProvenanceKey] are DISTINCT types — this
-	// comparison necessarily goes through .String() on both sides;
-	// `got != vwap` would not even compile (see
-	// TestTypedKeysAreDistinctFamilies below), which is the point.
+	// [VWAPKey] and [VWAPProvenanceKey] are DISTINCT types, so the comparison goes through
+	// .String() on both sides (see TestTypedKeysAreDistinctFamilies below).
 	vwap := cachekeys.VWAP(xlm, usdc, 5*time.Minute)
 	if got.String() != vwap.String()+":provenance" {
 		t.Errorf("VWAPProvenance %q is not VWAP %q + :provenance", got.String(), vwap.String())
@@ -396,17 +384,10 @@ func TestAllKeysHaveDistinctPrefixes(t *testing.T) {
 }
 
 // TestMarketsListFamily golden-pins the four `markets:list:*` shapes.
-// These are canonical builders so call sites in
-// cmd/stellarindex-api/main.go need not hand-append
-// `":order=" + marketsOrderKey(order)` (and further ad-hoc suffixes
-// for source/asset/pools) onto [cachekeys.MarketsList]'s bare
-// `string` result. Against a `string`-returning MarketsList that
-// compiles cleanly, because a canonical builder's output and a
-// hand-rolled suffix are the SAME Go type — exactly the
-// ad-hoc-key-construction bug class this package exists to close.
-// Against the typed [cachekeys.MarketsListKey] that concatenation is
-// a compile error (mismatched types MarketsListKey and string), which
-// is why these dedicated builders exist. The golden strings below
+// These canonical builders spare call sites in cmd/stellarindex-api/main.go from hand-appending
+// `":order=" + marketsOrderKey(order)` (and other ad-hoc suffixes) onto a bare string, the
+// ad-hoc-key-construction bug class this package exists to close. Against the typed
+// [cachekeys.MarketsListKey] that concatenation is a compile error. The golden strings
 // assert the wire bytes equal what the concatenation would produce.
 func TestMarketsListFamily(t *testing.T) {
 	base := cachekeys.MarketsList("cur1", 25)
@@ -488,14 +469,10 @@ func TestOracleLatest(t *testing.T) {
 // compile-time misuse demonstration below.
 func wantsPriceKey(cachekeys.PriceKey) {}
 
-// TestTypedKeysAreDistinctFamilies is the compile-time misuse
-// example the typed-key design exists to produce. The POSITIVE case
-// (a PriceKey satisfies a PriceKey-typed parameter) actually
-// compiles and runs, below. The NEGATIVE cases are commented out —
-// per definition, a _test.go file must compile, so a real type
-// error can't live as executable code; the comments show exactly
-// what fails and why, mirroring the "commented code" option in this
-// package's typed-key design brief.
+// TestTypedKeysAreDistinctFamilies is the compile-time misuse example the typed-key design
+// exists to produce. The POSITIVE case (a PriceKey satisfies a PriceKey-typed parameter)
+// compiles and runs below. The NEGATIVE cases are commented out because a _test.go file
+// must compile; the comments show exactly what fails and why.
 func TestTypedKeysAreDistinctFamilies(t *testing.T) {
 	xlm := canonical.NativeAsset()
 	usdc, _ := canonical.NewClassicAsset("USDC", usdcIssuer)
@@ -503,29 +480,24 @@ func TestTypedKeysAreDistinctFamilies(t *testing.T) {
 	// Compiles: PriceKey is a PriceKey.
 	wantsPriceKey(cachekeys.Price(xlm))
 
-	// Does NOT compile — a VWAPKey is not a PriceKey, even though
-	// both are `string` underneath:
+	// Does NOT compile: a VWAPKey is not a PriceKey, though both are `string` underneath.
 	//
 	//   wantsPriceKey(cachekeys.VWAP(xlm, usdc, time.Minute))
 	//   // error: cannot use cachekeys.VWAP(xlm, usdc, time.Minute)
 	//   // (value of type cachekeys.VWAPKey) as cachekeys.PriceKey
 	//   // value in argument to wantsPriceKey
 
-	// Does NOT compile — a hand-rolled ad-hoc string (the exact
-	// bug class this package exists to close) is not a PriceKey
-	// either, even though it has the identical wire bytes:
+	// Does NOT compile: a hand-rolled ad-hoc string (the bug class this package closes) is not
+	// a PriceKey, though it has identical wire bytes.
 	//
 	//   wantsPriceKey("price:" + xlm.String())
 	//   // error: cannot use "price:" + xlm.String() (value of
 	//   // type string) as cachekeys.PriceKey value in argument
 	//   // to wantsPriceKey
 
-	// Does NOT compile — go-redis's Cmdable methods take a plain
-	// `string`, so handing them a typed key directly (skipping the
-	// explicit .String() conversion) fails the same way; this is
-	// deliberate — every redis.Cmdable call site's `.String()` is a
-	// visible, grep-able "this key just left the typed world"
-	// marker:
+	// Does NOT compile: go-redis's Cmdable methods take a plain `string`, so a typed key
+	// passed without .String() fails the same way. That is deliberate: each call site's
+	// `.String()` is a grep-able "this key just left the typed world" marker.
 	//
 	//   var rdb redis.Cmdable
 	//   rdb.Get(ctx, cachekeys.Price(xlm))
@@ -536,13 +508,11 @@ func TestTypedKeysAreDistinctFamilies(t *testing.T) {
 	_ = usdc // keep the import path exercised even if unused above
 }
 
-// TestAPIKeyRecords_NotOnAnEvictingInstance: `apikey:`
-// records are the credential of record for signup, admin and mint-key
-// issued keys (the plaintext is unrecoverable by contract). They are
-// durable only if the instance can never evict them: noeviction, or a
-// volatile-* policy while the records carry no TTL. An allkeys-* policy
-// evicts regardless of TTL, so memory pressure silently deletes live
-// credentials. Both codified Redis deployments are checked.
+// TestAPIKeyRecords_NotOnAnEvictingInstance: `apikey:` records are the credential of record
+// for signup, admin and mint-key issued keys (the plaintext is unrecoverable by contract).
+// They are durable only if the instance can never evict them: noeviction, or a volatile-*
+// policy while the records carry no TTL. An allkeys-* policy evicts regardless of TTL, so
+// memory pressure silently deletes live credentials. Both codified Redis deployments are checked.
 func TestAPIKeyRecords_NotOnAnEvictingInstance(t *testing.T) {
 	policies := map[string]string{
 		"redis-sentinel defaults": sentinelDefaultsPolicy(t),
@@ -615,12 +585,9 @@ func composeDevPolicy(t *testing.T) string {
 	return ""
 }
 
-// The VWAPMaxAge doc comment tells an operator what notices a dead
-// publisher and when. It once said a ticket "pages" minutes before expiry
-// when the real page lands 5–10 minutes after the 404s start.
-// These tests derive the timings from both Prometheus rule trees and
-// require the comment to state them, so tuning either side fails here
-// until the prose follows.
+// The VWAPMaxAge doc comment tells an operator what notices a dead publisher and when.
+// These tests derive the timings from both Prometheus rule trees and require the comment to
+// state them, so tuning either side fails here until the prose follows.
 
 var vwapAlertRuleTrees = []string{
 	"../../deploy/monitoring/rules",

@@ -71,13 +71,10 @@ func TestOHLCSeries_ReturnsIntervalsArray(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_StatesVolumeScaleOnWire pins the scale statement
-// for the non-combined path: a series bar must state the smallest-unit
-// scale its v_base/v_quote are expressed in (v_base_decimals /
-// v_quote_decimals), resolved from the CAGG's own `sources` column —
-// mirroring [OHLCBar.QuoteVolumeDecimals] for the single-bar
-// path. A bar whose sources are unknown states null, never a guessed
-// scale and never the internal -1 sentinel.
+// TestOHLCSeries_StatesVolumeScaleOnWire pins that a non-combined series bar states the
+// smallest-unit scale of v_base/v_quote (v_base_decimals / v_quote_decimals), resolved from
+// the CAGG's own `sources` column. Unknown sources state null, never a guessed scale or the
+// internal -1 sentinel.
 func TestOHLCSeries_StatesVolumeScaleOnWire(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	cex := mkSeriesBar(t0, "0.16", "0.17", "0.15", "0.165", "1000", "165", 4)
@@ -161,11 +158,9 @@ func TestOHLCSeries_EmptyReturns200WithEmptyIntervals(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_BucketTimestampsAlignedUTC — the handler's
-// implicit-`to` snap rounds DOWN to the requested interval's UTC
-// boundary so two requests landing in the same closed window
-// across regions resolve to identical [from, to). Storage call's
-// `to` arg is the snapped value.
+// TestOHLCSeries_BucketTimestampsAlignedUTC pins that the implicit-`to` snap rounds DOWN to
+// the interval's UTC boundary, so requests in the same closed window resolve to an identical
+// [from, to). The storage call's `to` is the snapped value.
 func TestOHLCSeries_BucketTimestampsAlignedUTC(t *testing.T) {
 	reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{}}
 	srv := v1.New(v1.Options{History: reader})
@@ -208,22 +203,15 @@ func TestOHLCSeries_DailyBoundaryAlignment(t *testing.T) {
 	}
 }
 
-// pgTimeBucketOrigin mirrors timescale's time_bucket() default
-// origin (2000-01-03 00:00 UTC, a Monday) — see
-// internal/storage/timescale/aggregates.go's OHLCSeriesReBucketed
-// doc comment. Server-side folded intervals (3d/2w/2h) grid
-// off this origin; the tests below pin that the API's default `to`
-// does too.
+// pgTimeBucketOrigin mirrors timescale's time_bucket() default origin (a Monday, see
+// OHLCSeriesReBucketed in internal/storage/timescale/aggregates.go). Server-side folded
+// intervals (3d/2w/2h) grid off it; the tests below pin that the API's default `to` does too.
 var pgTimeBucketOrigin = time.Date(2000, 1, 3, 0, 0, 0, 0, time.UTC)
 
-// TestOHLCSeries_ThreeDayBoundaryMatchesTimeBucketOrigin — the
-// default `to` for interval=3d must land on the same grid
-// [timescale.Store.OHLCSeriesReBucketed]'s `time_bucket(INTERVAL '3
-// days', …)` folds prices_1d onto, i.e. a multiple of 72h measured
-// from pgTimeBucketOrigin. [time.Time.Truncate] floors from Go's
-// zero time instead, whose offset from pgTimeBucketOrigin is not a
-// multiple of 72h, so the un-fixed handler's default `to` is
-// provably off that grid for every possible "now".
+// TestOHLCSeries_ThreeDayBoundaryMatchesTimeBucketOrigin pins that the default `to` for
+// interval=3d lands on the grid [timescale.Store.OHLCSeriesReBucketed] folds prices_1d onto,
+// a multiple of 72h from pgTimeBucketOrigin. [time.Time.Truncate] floors from Go's zero time,
+// whose offset from that origin is not a multiple of 72h, so it is off-grid for every "now".
 func TestOHLCSeries_ThreeDayBoundaryMatchesTimeBucketOrigin(t *testing.T) {
 	reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{}}
 	srv := v1.New(v1.Options{History: reader})
@@ -302,12 +290,9 @@ func TestOHLCSeries_StorageError500(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_PreservesSingleBarBackcompat — the single-bar mode
-// is reached only when `interval` is absent. With interval set the
-// stub's TradesInRange is NEVER called (the series reader fires
-// instead). Mirrors the back-compat contract: clients that
-// haven't migrated still get the single-bar shape, clients passing
-// interval get the new series.
+// TestOHLCSeries_PreservesSingleBarBackcompat pins that single-bar mode is reached only when
+// `interval` is absent; with interval set TradesInRange is NEVER called and the series reader
+// serves instead.
 func TestOHLCSeries_PreservesSingleBarBackcompat(t *testing.T) {
 	// Two readers, two responses:
 	//   1. no interval → single-bar mode → TradesInRange called
@@ -363,11 +348,9 @@ func TestOHLCSeries_AllSupportedIntervals(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_FiatCombinesUSDPeggedConstituents — a fiat:USD series
-// must COMBINE the USD-pegged constituent pairs per bucket (not first-hit
-// a single one), so the deep history under the stablecoin pairs surfaces.
-// Verifies the combine math: exact volume sum + max-high/min-low, and
-// base-volume-weighted open/close.
+// TestOHLCSeries_FiatCombinesUSDPeggedConstituents pins that a fiat:USD series COMBINES the
+// USD-pegged constituent pairs per bucket (not first-hit), so deep stablecoin-pair history
+// surfaces: exact volume sum, max-high/min-low, base-volume-weighted open/close.
 func TestOHLCSeries_FiatCombinesUSDPeggedConstituents(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	reader := &stubHistoryReader{
@@ -482,11 +465,9 @@ func approxEq(a, b float64) bool {
 // wire envelope so subtle JSON-tag changes get flagged.
 func TestOHLCSeries_WireShapeFields(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	// fiat:USD now COMBINES the USD-pegged constituents (the deep series
-	// lives under the stablecoin pairs). Make the stub pair-aware so only
-	// the direct native/fiat:USD pair carries the fixture — exercising the
-	// combine's single-source passthrough (exact O/H/L/C/v/n) so the wire
-	// shape assertion still holds.
+	// fiat:USD combines the USD-pegged constituents. The stub is pair-aware so only the direct
+	// native/fiat:USD pair carries the fixture, exercising the combine's single-source
+	// passthrough (exact O/H/L/C/v/n).
 	reader := &stubHistoryReader{
 		ohlcSeriesFn: func(_ context.Context, pair canonical.Pair, _ string, _, _ time.Time, _ int) ([]v1.OHLCSeriesBar, error) {
 			if pair.Base.String() == "native" && pair.Quote.String() == "fiat:USD" {
@@ -500,11 +481,9 @@ func TestOHLCSeries_WireShapeFields(t *testing.T) {
 
 	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=fiat:USD&interval=1h")
 	body, _ := readAll(resp)
-	// Series-mode wire field names — CG/CMC parity (`t,o,h,l,c,v_base,v_quote,n`).
-	// fiat:USD goes through the combine, which normalises prices to fixed
-	// decimals (ohlcPriceDigits) like the single-bar /v1/ohlc; v_base and
-	// v_quote are integer smallest-unit text on every path.
-	// Single-constituent bucket → values pass through exactly.
+	// Series-mode wire field names, CG/CMC parity. The fiat:USD combine normalises prices to
+	// fixed decimals (ohlcPriceDigits) like single-bar /v1/ohlc; v_base and v_quote are
+	// integer smallest-unit text on every path. A single-constituent bucket passes through exactly.
 	for _, want := range []string{`"t":"`, `"o":"1.0000000000"`, `"h":"2.0000000000"`, `"l":"0.5000000000"`, `"c":"1.5000000000"`, `"v_base":"100"`, `"v_quote":"150"`, `"n":3`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q: %s", want, body)
@@ -524,13 +503,10 @@ func TestOHLCSeries_WireShapeFields(t *testing.T) {
 	}
 }
 
-// newestNSeriesFn is a [stubHistoryReader.ohlcSeriesFn] with the STORE's
-// read semantics rather than a fixture's: bars outside [from, to) are
-// not returned, and a positive `limit` keeps the NEWEST `limit` of what
-// remains, ascending — what [timescale.Store.OHLCSeries] does with its
-// `ORDER BY bucket DESC LIMIT n` + reverse. A stub that
-// ignores `limit` cannot see any of the defects below, because every one
-// of them is about which rows a capped read leaves behind.
+// newestNSeriesFn is a [stubHistoryReader.ohlcSeriesFn] with the STORE's read semantics: bars
+// outside [from, to) are dropped and a positive `limit` keeps the NEWEST `limit` ascending
+// ([timescale.Store.OHLCSeries]: `ORDER BY bucket DESC LIMIT n` + reverse). A stub ignoring
+// `limit` cannot see defects about which rows a capped read leaves behind.
 func newestNSeriesFn(byPair map[string][]v1.OHLCSeriesBar) func(
 	context.Context, canonical.Pair, string, time.Time, time.Time, int,
 ) ([]v1.OHLCSeriesBar, error) {
@@ -565,18 +541,10 @@ func seriesWindowURL(base, quote string, t0 time.Time, hours, limit int) string 
 		"&limit=" + strconv.Itoa(limit)
 }
 
-// TestOHLCSeries_TruncatedSetOnlyWhenBucketsWereDropped pins the second
-// half of the newest-buckets cap. OHLCSeriesBar.Truncated was declared on the wire
-// (OpenAPI: "Reserved for future row-cap signalling; absent today") and
-// assigned nowhere, so a capped response gave a caller no way to tell
-// its window was cut.
-//
-// It must be set when — and ONLY when — the window held buckets the
-// response does not carry. The first attempt at this set it on
-// `len(bars) == limit`, which is also the shape of every default
-// request on a liquid pair: no from/to sizes the window to exactly
-// `limit` intervals, a dense market fills every one, and nothing was
-// dropped. That version flagged every such chart as cut.
+// TestOHLCSeries_TruncatedSetOnlyWhenBucketsWereDropped pins the second half of the
+// newest-buckets cap: OHLCSeriesBar.Truncated is set when, and ONLY when, the window held
+// buckets the response does not carry. `len(bars) == limit` is the wrong signal: a default
+// request on a dense pair fills exactly `limit` intervals with nothing dropped.
 func TestOHLCSeries_TruncatedSetOnlyWhenBucketsWereDropped(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	dense := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
@@ -623,12 +591,9 @@ func TestOHLCSeries_TruncatedSetOnlyWhenBucketsWereDropped(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_DefaultWindowFullOfBarsIsNotTruncated is the twin the
-// first attempt's test got backwards: it asserted truncated=true for a
-// request with no from/to whose reader returned exactly `limit` bars.
-// That is the ordinary default request on a dense pair — the handler
-// sized the window to `limit` intervals itself, so `limit` bars is the
-// WHOLE window and nothing was dropped.
+// TestOHLCSeries_DefaultWindowFullOfBarsIsNotTruncated pins that a request with no from/to
+// whose reader returns exactly `limit` bars is not truncated: the handler sized the window to
+// `limit` intervals itself, so `limit` bars is the WHOLE window.
 func TestOHLCSeries_DefaultWindowFullOfBarsIsNotTruncated(t *testing.T) {
 	// Every hour for the last two days, so whatever two-hour window
 	// "now" snaps to is fully populated.
@@ -662,25 +627,17 @@ func TestOHLCSeries_DefaultWindowFullOfBarsIsNotTruncated(t *testing.T) {
 }
 
 // TestOHLCSeries_FiatCombineLimitServesNewestCompleteBuckets covers the newest-buckets cap
-// through the consumer that a store-level cap alone would make WORSE.
+// through the fiat combine, which a store-level cap alone would make worse.
 //
-// A fiat quote is answered by combining several constituent series, and
-// each constituent read carries the request's `limit`. With the store
-// keeping the NEWEST rows of a capped read, a dense constituent is cut
-// to its last few hours while a sparse one still reaches far back — so
-// the merged set's OLD end is made of buckets the dense constituent
-// really traded in but was not asked for. Trimming that merged set to
-// its earliest `limit` (what the combine did, to match the store's old
-// ASC order) served exactly those: 04:00 and 08:00 as n=1 bars where the
-// market printed 101, beside a 09:00 that is not among the newest three
-// either. Wrong values, not merely stale ones.
+// Each constituent read carries the request's `limit` and the store keeps the NEWEST rows, so
+// a dense constituent is cut to its last few hours while a sparse one reaches far back. The
+// merged set's OLD end then holds buckets the dense constituent traded in but was not asked
+// for, and trimming to the earliest `limit` would serve them as wrong (partial) values.
 //
-// The newest `limit` buckets of the merged set are inside every
-// constituent's own newest `limit`, so they are complete — and for the
-// same reason the held-back pass cannot mistake one of them for a
-// bucket the book left unanswered. The pool below trades in hours the
-// book answered (07 and 09–11) at a mark far outside the book's range;
-// it must appear in no served bar.
+// The newest `limit` merged buckets lie inside every constituent's own newest `limit`, so
+// they are complete, and the held-back pass cannot mistake one for a bucket the book left
+// unanswered. The pool below trades in hours the book answered at a mark far outside the
+// book's range; it must appear in no served bar.
 func TestOHLCSeries_FiatCombineLimitServesNewestCompleteBuckets(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -755,12 +712,9 @@ func TestOHLCSeries_FiatCombineLimitServesNewestCompleteBuckets(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_StatesPerBarVolumeScale pins, on the direct
-// (non-fiat) series path: v_base/v_quote are smallest-unit sums at the
-// scale of the venues in the bucket, so each bar must state that scale.
-// Without it a chart reading v_quote had nothing to divide by and plotted
-// raw integers. A bar whose reader named no venue carries no scale at all
-// rather than a guessed one.
+// TestOHLCSeries_StatesPerBarVolumeScale pins that on the direct (non-fiat) series path each
+// bar states the scale of its smallest-unit v_base/v_quote sums, so a chart can divide.
+// A bar whose reader named no venue carries no scale rather than a guessed one.
 func TestOHLCSeries_StatesPerBarVolumeScale(t *testing.T) {
 	t0 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	onchain := mkSeriesBar(t0, "0.16", "0.17", "0.15", "0.165", "10000000000", "1650000000", 4)
@@ -859,11 +813,9 @@ func TestOHLCSeries_ServesPerBarSources(t *testing.T) {
 	}
 }
 
-// The annotation is one-way: it fires only for a window entirely below a
-// KNOWN floor. A straddling or in-coverage window is a genuine market
-// answer, and a failed or empty probe leaves the response unannotated
-// rather than guessing from a database hiccup or a pair too new to have a
-// closed daily bucket.
+// The annotation is one-way: it fires only for a window entirely below a KNOWN floor. A
+// straddling or in-coverage window is a genuine market answer, and a failed or empty probe
+// leaves the response unannotated rather than guessing.
 func TestOHLCSeries_CoverageFloorAnnotation(t *testing.T) {
 	const below1, below2 = "2016-01-01T00:00:00Z", "2016-03-01T00:00:00Z"
 	for _, tc := range []struct {
@@ -989,14 +941,11 @@ func TestOHLCSeries_FiatQuoteFloorIsTheConstituentSet(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_NativeUSDIsNotQuietSinceAFloorItIsNotServedFrom is the
-// shape that motivated the constituent-set fold: `native/fiat:USD`
-// holds no daily bucket under any of XLM's spellings, and its combined
-// series is served from the USDC constituent, whose buckets begin 2021.
-// A 2019 window on it is BELOW the served floor. It must not come back
-// as a quiet window with a floor the served set does not hold — the
-// only floor that can appear is the constituent's, and the window must
-// be flagged against it.
+// TestOHLCSeries_NativeUSDIsNotQuietSinceAFloorItIsNotServedFrom pins the constituent-set
+// fold: `native/fiat:USD` holds no daily bucket under any XLM spelling and is served from the
+// USDC constituent, whose buckets begin later. A window before that is BELOW the served floor
+// and must be flagged against the constituent's floor, never reported quiet against a floor
+// the served set does not hold.
 func TestOHLCSeries_NativeUSDIsNotQuietSinceAFloorItIsNotServedFrom(t *testing.T) {
 	t.Parallel()
 	usdc := mustParseAsset(t, usdcClassicID)
@@ -1019,20 +968,14 @@ func TestOHLCSeries_NativeUSDIsNotQuietSinceAFloorItIsNotServedFrom(t *testing.T
 	}
 }
 
-// TestOHLCSeries_FiatQuoteBookOutranksSACQuotedPool — AQUA under r1's
-// registry (the USDC and AQUA wrappers both declared): the book
-// `AQUA/USDC-GA5Z…` holds one bar on day 1 (n=1, 100 base); the pool
-// `<AQUA SAC>/<USDC SAC>` holds bars on day 1 (n=50, high 0.50, low
-// 0.01) and on day 2.
+// TestOHLCSeries_FiatQuoteBookOutranksSACQuotedPool uses AQUA with both the USDC and AQUA
+// wrappers declared: the book `AQUA/USDC-GA5Z…` holds one bar on day 1 (n=1, 100 base); the
+// pool `<AQUA SAC>/<USDC SAC>` holds bars on day 1 (n=50, high 0.50, low 0.01) and day 2.
 //
-// Served: TWO bars. Day 1 is the book's
-// alone — the pool is dropped from that bucket entirely, so its two
-// prints at 0.50 and 0.01 cannot become the bar's high and low, which is
-// what "outranks" means here — and day 2 is the pool's, because the
-// book cannot answer it and the alternative is reporting a day the
-// market traded as quiet.
-//
-// The per-bucket guarantee is the day-1 assertions.
+// Served: TWO bars. Day 1 is the book's alone, so the pool's 0.50 and 0.01 prints cannot
+// become its high and low ("outranks"). Day 2 is the pool's, because the book cannot answer
+// it and the alternative is reporting a traded day as quiet. The per-bucket guarantee is
+// the day-1 assertions.
 func TestOHLCSeries_FiatQuoteBookOutranksSACQuotedPool(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	day1 := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1077,22 +1020,18 @@ func TestOHLCSeries_FiatQuoteBookOutranksSACQuotedPool(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_XLMBookOutranksSACQuotedPool — XLM under r1's
-// registry: `native/USDC-GA5Z…` holds a bar of 100 trades over
-// 6,000,000 units; `<XLM SAC>/<USDC SAC>` holds a two-trade bar with
-// high 0.50 and low 0.01 in the same bucket.
+// TestOHLCSeries_XLMBookOutranksSACQuotedPool: `native/USDC-GA5Z…` holds a bar of 100 trades
+// over 6,000,000 units; `<XLM SAC>/<USDC SAC>` holds a two-trade bar (high 0.50, low 0.01) in
+// the same bucket.
 //
-// The served bucket carries n=100 and the book's own high 0.20 and low
-// 0.18 under every XLM spelling of the request — the fiat combine folds
-// the base spellings, so which one was named does not change the answer.
-// The measured shape this pins out is n=102 with high 0.50 and low 0.01:
-// two prints setting a bar's extremes beside six million units of book
-// volume.
+// The served bucket carries n=100 and the book's own high 0.20 and low 0.18 under every XLM
+// spelling of the request, since the fiat combine folds base spellings. It pins out n=102
+// with high 0.50 and low 0.01: two prints setting the extremes beside six million units of
+// book volume.
 //
-// The SAC-quoted spelling IS read — that is
-// how a bucket the book cannot answer gets served at all — so what holds
-// the answer still is the per-bucket gate, not an absent read. The read
-// order is asserted instead: every established spelling first.
+// The SAC-quoted spelling IS read (that is how a bucket the book cannot answer gets served),
+// so the per-bucket gate holds the answer, not an absent read. The read order is asserted:
+// every established spelling first.
 func TestOHLCSeries_XLMBookOutranksSACQuotedPool(t *testing.T) {
 	usdc := installPegAliasRegistry(t)
 	day := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1122,19 +1061,14 @@ func TestOHLCSeries_XLMBookOutranksSACQuotedPool(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_SACQuotedOnlyDepthIsServed — SAC-quoted-only depth is served,
-// pinned from the other side.
+// TestOHLCSeries_SACQuotedOnlyDepthIsServed pins that SAC-quoted-only depth is served.
 //
-// One market, AQUA quoted in the USDC SAC, with a daily bar inside the
-// window; the declared peg is classic USDC. No established spelling
-// holds a bucket, so every bucket is unanswered and the held-back
-// spelling fills them: the series serves the pool's bar.
+// One market, AQUA quoted in the USDC SAC, with a daily bar inside the window; the declared
+// peg is classic USDC. No established spelling holds a bucket, so the held-back spelling
+// fills them and the series serves the pool's bar.
 //
-// A populated answer carries no coverage annotation at all — the floor
-// exists to explain an empty one — so the probe must not run here. The
-// annotation that would otherwise sit SILENT on an empty answer is the
-// thing this replaces: the surface need not describe a market it
-// cannot serve, because it serves it.
+// A populated answer carries no coverage annotation (the floor only explains an empty one),
+// so the probe must not run here.
 func TestOHLCSeries_SACQuotedOnlyDepthIsServed(t *testing.T) {
 	usdc := installUSDCSACRegistry(t)
 	poolFloor := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -1164,11 +1098,9 @@ func TestOHLCSeries_SACQuotedOnlyDepthIsServed(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_SACQuotedDepthOutsideTheWindowStillCarriesItsFloor —
-// the annotation half of the same change. The pool's only bucket sits
-// BEFORE the requested window, so the series is genuinely empty, and the
-// floor must now name the pool's first bucket: the combine reads that
-// market, so a floor measured over it is a claim this surface can keep.
+// TestOHLCSeries_SACQuotedDepthOutsideTheWindowStillCarriesItsFloor pins the annotation half:
+// the pool's only bucket sits BEFORE the requested window, so the series is empty and the
+// floor must name the pool's first bucket, since the combine reads that market.
 func TestOHLCSeries_SACQuotedDepthOutsideTheWindowStillCarriesItsFloor(t *testing.T) {
 	usdc := installUSDCSACRegistry(t)
 	aqua := mustParseAsset(t, aquaClassicID)
@@ -1196,26 +1128,19 @@ func TestOHLCSeries_SACQuotedDepthOutsideTheWindowStillCarriesItsFloor(t *testin
 	}
 }
 
-// TestOHLCSeries_FiatProbeSpansWhatTheCombineReads pins the equality
-// the annotation rests on, so the two sides cannot come apart by
-// editing one: on an empty answer the set of literal pairs the combine
-// REQUESTED must equal the set of markets the floor probes SPAN.
+// TestOHLCSeries_FiatProbeSpansWhatTheCombineReads pins the equality the annotation rests on:
+// on an empty answer the literal pairs the combine REQUESTED must equal the markets the floor
+// probes SPAN. A probe wider than the read reports a served-and-empty window as quiet; a
+// narrower one leaves a servable market unmeasured.
 //
-// A quote-literal probe spans its base leg's alias family crossed with
-// the one quote spelling it was given, in both stored directions — so
-// its span is computed here the way the SQL computes it, and the memo's
-// collapse of repeated quote spellings is why the probe list is the
-// shorter of the two. Pinned for a SAC-declared base and for XLM's
-// three-form base, under the registry shape r1 runs.
+// A quote-literal probe spans its base leg's alias family crossed with the one quote spelling
+// given, in both stored directions, so the span is computed here as the SQL does; the memo's
+// collapse of repeated quote spellings is why the probe list is the shorter. Pinned for a
+// SAC-declared base and XLM's three-form base.
 //
-// The SAC-quoted market is on BOTH sides of
-// the equality: the combine reads a declared peg's SAC wrapper, so the
-// floor measures it. The equality is what keeps the two honest — a probe
-// wider than the read reports a served-and-empty window as quiet, and a
-// probe narrower than the read leaves a market it can serve unmeasured.
-// An empty answer is the only one a floor annotates, and an empty answer
-// is one where the held-back set was read too, so the set the probe must
-// span is the whole constituent list.
+// The SAC-quoted market is on BOTH sides, since the combine reads a declared peg's SAC
+// wrapper. Only an empty answer is annotated, and there the held-back set was read too, so
+// the probe must span the whole constituent list.
 func TestOHLCSeries_FiatProbeSpansWhatTheCombineReads(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -1281,20 +1206,13 @@ func TestOHLCSeries_FiatProbeSpansWhatTheCombineReads(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_NonstandardDecimals_NormalizesBarsNotVolumes pins the
-// series-mode contract:
+// TestOHLCSeries_NonstandardDecimals_NormalizesBarsNotVolumes pins the series-mode contract:
 //
-//   - o/h/l/c: the raw prices_<n> CAGG ratio × K (K = 10^(9−7) = 100
-//     for a 9dp base vs a 7dp classic quote) — the same factor the
-//     single-bar path applies, since every bar shares the pair.
-//   - v_base/v_quote: UNCHANGED. The CAGG's volume columns are raw
-//     smallest-unit sums in each asset's OWN declared decimals
-//     (migration 0002: volume = Σ(base_amount)), and the wire contract
-//     (OHLCBar/VWAPResult doc: "in the asset's smallest unit") promises
-//     exactly that — same precedent as /v1/history, which serves raw
-//     base_amount/quote_amount plus base_decimals/quote_decimals
-//     metadata and never rescales amounts. Scaling volumes by 10^(7−dec)
-//     would silently break the smallest-unit contract.
+//   - o/h/l/c: the raw prices_<n> CAGG ratio × K (K = 10^(9−7) = 100 for a 9dp base vs a 7dp
+//     classic quote), the same factor the single-bar path applies.
+//   - v_base/v_quote: UNCHANGED. The CAGG volume columns are raw smallest-unit sums in each
+//     asset's OWN decimals, and the wire contract promises "in the asset's smallest unit",
+//     as /v1/history does. Scaling volumes by 10^(7−dec) would silently break it.
 func TestOHLCSeries_NonstandardDecimals_NormalizesBarsNotVolumes(t *testing.T) {
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 9)
 	t0 := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)

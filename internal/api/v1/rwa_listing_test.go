@@ -15,36 +15,27 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// GET /v1/rwa/assets — C2's SECOND arm: an independent listing
-// directory corroborating an in-repo curated binding.
+// GET /v1/rwa/assets, second arm: an independent listing directory corroborating an in-repo
+// curated binding.
 //
-// The arm exists because the curated account directory names NONE of
-// the contract addresses this repository holds verified bindings for.
-// Measured on a live deployment: the directory names 387 contract addresses, the
-// listing directory names 17 on Stellar, and four are in both — so a
-// bound address was not refused by any requirement, it was never
-// enumerated at all.
+// The arm exists because the curated account directory names NONE of the contract addresses
+// this repository holds verified bindings for, so a bound address was never enumerated at all.
 //
-// Every test below is about the same thing from a different side: two
-// sources are required, neither is sufficient, and the surface says
-// which pair let a row in.
+// Every test below is about the same thing from a different side: two sources are required,
+// neither is sufficient, and the surface says which pair let a row in.
 
-// The real addresses the two sources actually agree on, and the real
-// ones they do not. Unlike the invented C-strkeys elsewhere in this
-// package these are not interchangeable fixtures — the whole claim of
-// arm 2 is that two parties who do not read each other produced the
-// same 56 characters, and a made-up address cannot express it.
+// The real addresses the two sources agree on, and the real ones they do not. Unlike the
+// invented C-strkeys elsewhere in this package these are not interchangeable fixtures: arm 2
+// claims that two parties who do not read each other produced the same 56 characters, which
+// a made-up address cannot express.
 const (
 	// Bound in-repo AND named by the listing directory.
 	rwaListedBoundEUTBL = "CBGV2QFQBBGEQRUKUMCPO3SZOHDDYO6SCP5CH6TW7EALKVHCXTMWDDOF"
 	// Bound in-repo, NOT named by the listing directory. The control.
 	rwaBoundNotListedUSTBL = "CARUUX2FZNPH6DGJOEUFSIUQWYHNL5AVDV7PMVSHWL7OBYIBFC76F4TO"
-	// Named by the listing directory, bound by NOBODY. The native
-	// asset's own Stellar Asset Contract — a real entry in the same
-	// map. The negative control, and a permanent one: XLM can never
-	// acquire a curated RWA binding, so no later admission can retire
-	// this test the way binding the tokenized-gold contract that used
-	// to stand here did.
+	// Named by the listing directory, bound by NOBODY: the native asset's own Stellar Asset
+	// Contract, a real entry in the same map. A permanent negative control, since XLM can
+	// never acquire a curated RWA binding, so no later admission can retire this test.
 	rwaListedNotBoundXLM = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 )
 
@@ -56,11 +47,9 @@ type stubRWAListings struct {
 	// stale is the count the storage layer refused to serve as past the
 	// recognition bound — the visible form of the fail-closed shrink.
 	stale int
-	// census, when set, is served verbatim instead of being derived
-	// from rows. The derivation below counts every served row as a
-	// CONTRACT row, which is true of every fixture that serves rows and
-	// cannot express the one state that serves none while being
-	// perfectly healthy: a directory holding only classic rows.
+	// census, when set, is served verbatim instead of derived from rows. The derivation counts
+	// every served row as a CONTRACT row, so it cannot express the healthy state that serves
+	// none: a directory holding only classic rows.
 	census *timescale.ListingDirectoryCensus
 	err    error
 }
@@ -168,11 +157,10 @@ func dropCount(v v1.RWAAssetsView, stage, reason string) int {
 	return 0
 }
 
-// TestRWAListing_CorroboratedBindingIsAdmittedAndValued is the unlock,
-// end to end. The curated directory names nothing; the listing names
-// the address; an in-repo binding names the same address. The row is
-// served, says which pair admitted it, and carries a reference
-// valuation computed at the LISTING price.
+// TestRWAListing_CorroboratedBindingIsAdmittedAndValued is the end-to-end admission. The
+// curated directory names nothing; the listing and an in-repo binding name the same address.
+// The row is served, says which pair admitted it, and carries a reference valuation computed
+// at the LISTING price.
 func TestRWAListing_CorroboratedBindingIsAdmittedAndValued(t *testing.T) {
 	view := getRWA(t, rwaListingServer(t,
 		&stubRWAListings{rows: []timescale.ListingEntry{
@@ -232,15 +220,12 @@ func TestRWAListing_CorroboratedBindingIsAdmittedAndValued(t *testing.T) {
 	}
 }
 
-// TestRWAListing_DecimalsAreReadNotAssumed is the 10^n guard, stated as
-// a test because a wrong exponent on this surface is not a display
-// defect — it is the published money figure, wrong by two orders of
-// magnitude.
+// TestRWAListing_DecimalsAreReadNotAssumed is the 10^n guard: a wrong exponent here is not a
+// display defect but the published money figure, off by orders of magnitude.
 //
-// The same supply and the same price are valued at the contract's real
-// scale of 5 and at the catalogue default of 7, and the two must differ
-// by exactly 100x. If the valuation ever stops reading the contract's
-// own decimals, both cases return the same number and this fails.
+// The same supply and price are valued at the contract's real scale of 5 and at the
+// catalogue default of 7; the two must differ by exactly 100x. If the valuation stops reading
+// the contract's own decimals, both return the same number and this fails.
 func TestRWAListing_DecimalsAreReadNotAssumed(t *testing.T) {
 	value := func(dec uint32) string {
 		t.Helper()
@@ -270,13 +255,10 @@ func TestRWAListing_DecimalsAreReadNotAssumed(t *testing.T) {
 	}
 }
 
-// TestRWAListing_ListingAloneAdmitsNothing is the negative control the
-// whole arm rests on, run against a REAL address the listing directory
-// names and this repository holds no binding for.
-//
-// It must be absent from the set, and it must be VISIBLE — counted in
-// the terminal census that makes "a listing admits nothing alone" an
-// auditable claim rather than an assertion.
+// TestRWAListing_ListingAloneAdmitsNothing is the negative control the arm rests on, run
+// against a REAL address the listing names and this repository holds no binding for. It must
+// be absent from the set and VISIBLE, counted in the terminal census, so "a listing admits
+// nothing alone" is auditable rather than asserted.
 func TestRWAListing_ListingAloneAdmitsNothing(t *testing.T) {
 	view := getRWA(t, rwaListingServer(t,
 		&stubRWAListings{rows: []timescale.ListingEntry{
@@ -330,11 +312,9 @@ func TestRWAListing_BoundButUnlistedStaysRefused(t *testing.T) {
 	}
 }
 
-// TestRWAListing_ScamFlagBeatsCorroboration is the precedence test at
-// the response level. The listing carries no flags and never will, so
-// if the scam check did not cover this arm an address the curated
-// directory named ONLY to flag as malicious would be served with a
-// nine-figure valuation.
+// TestRWAListing_ScamFlagBeatsCorroboration is the precedence test at the response level. The
+// listing carries no flags, so if the scam check did not cover this arm an address the
+// curated directory named ONLY to flag as malicious would be served with a large valuation.
 func TestRWAListing_ScamFlagBeatsCorroboration(t *testing.T) {
 	for _, tag := range timescale.DirectoryScamFlagTags {
 		view := getRWA(t, rwaListingServer(t,
@@ -362,12 +342,9 @@ func TestRWAListing_ScamFlagBeatsCorroboration(t *testing.T) {
 	}
 }
 
-// TestRWAListing_UnavailableShrinksTheSetAndSaysSo is the fail-closed
-// guarantee, and the reason it is a test rather than a comment: a set
-// that silently shrinks is worse than one that says why.
-//
-// The listing reader is wired and FAILS. Nothing is admitted, every
-// binding is refused under the outage reason rather than under a
+// TestRWAListing_UnavailableShrinksTheSetAndSaysSo is the fail-closed guarantee: a set that
+// silently shrinks is worse than one that says why. The listing reader is wired and FAILS;
+// nothing is admitted, every binding is refused under the outage reason rather than a
 // finding about the data, and the funnel basis states it in prose.
 func TestRWAListing_UnavailableShrinksTheSetAndSaysSo(t *testing.T) {
 	view := getRWA(t, rwaListingServer(t,
@@ -395,17 +372,12 @@ func TestRWAListing_UnavailableShrinksTheSetAndSaysSo(t *testing.T) {
 	}
 }
 
-// TestRWAListing_EntirelyStaleSnapshotIsAnOutageNotAFinding is the
-// fail-closed guarantee in its subtlest form.
-//
-// `synced_at` is stamped once per sync transaction, so every row ages
-// out together: a table that has gone past the recognition bound
-// arrives from the reader as ZERO rows beside a non-zero stale count —
-// shaped exactly like a listing that genuinely names nothing.
-//
-// Those are not the same statement. Treated as a populated snapshot,
-// every binding would be refused under a finding about the world when
-// the truth is that our copy expired.
+// TestRWAListing_EntirelyStaleSnapshotIsAnOutageNotAFinding is the fail-closed guarantee in
+// its subtlest form. `synced_at` is stamped once per sync transaction, so every row ages out
+// together: a table past the recognition bound arrives as ZERO rows beside a non-zero stale
+// count, shaped like a listing that genuinely names nothing. Those differ: treated as a
+// populated snapshot, every binding would be refused under a finding about the world when
+// really our copy expired.
 func TestRWAListing_EntirelyStaleSnapshotIsAnOutageNotAFinding(t *testing.T) {
 	view := getRWA(t, rwaListingServer(t,
 		// The shape a fully-aged-out table produces: nothing fresh to
@@ -457,13 +429,10 @@ func TestRWAListing_UnwiredIsNotMeasured(t *testing.T) {
 	}
 }
 
-// TestRWAListing_BasisDoesNotInheritTheOracleWording is the prose guard.
-//
-// The published basis string must not say the figure rests on an
-// oracle's valuation of the instrument plus the issuer's declaration
-// that one token is one unit. A listing price is neither of those
-// things, and a total that quietly inherited that sentence would be
-// making a claim about provenance that is simply false.
+// TestRWAListing_BasisDoesNotInheritTheOracleWording is the prose guard: the published basis
+// string must not say the figure rests on an oracle's valuation plus the issuer's declaration
+// that one token is one unit. A listing price is neither, and inheriting that sentence would
+// make a false provenance claim.
 func TestRWAListing_BasisDoesNotInheritTheOracleWording(t *testing.T) {
 	view := getRWA(t, rwaListingServer(t,
 		&stubRWAListings{rows: []timescale.ListingEntry{
@@ -597,12 +566,9 @@ func TestRWAListing_FunnelClosesWithBothArms(t *testing.T) {
 	}
 }
 
-// TestRWAListing_DirectoryArmWinsWhenBothNameIt pins the dedup. Four
-// addresses really are in both sources, and evaluating one twice would
-// serve it twice — which is how a double-counted valuation ships.
-//
-// The directory arm keeps it, because its recognition is the stronger
-// of the two and admits on its own.
+// TestRWAListing_DirectoryArmWinsWhenBothNameIt pins the dedup: an address in both sources
+// must not be evaluated twice, or a double-counted valuation ships. The directory arm keeps
+// it, because its recognition is stronger and admits on its own.
 func TestRWAListing_DirectoryArmWinsWhenBothNameIt(t *testing.T) {
 	view := getRWA(t, v1.New(v1.Options{
 		Sep1Cache: &stubSep1BoundReader{},
@@ -649,25 +615,18 @@ func TestRWAListing_DirectoryArmWinsWhenBothNameIt(t *testing.T) {
 	checkFunnelArithmetic(t, view)
 }
 
-// TestRWAListing_UnreadDecimalsPublishNoFigure is the 10^n guard in the
-// form that would actually have shipped.
+// TestRWAListing_UnreadDecimalsPublishNoFigure is the 10^n guard in its reachable form.
 //
-// The API binary dials ClickHouse TWICE — once for the supply reader and
-// once for the explorer reader that resolves decimals — and each failure
-// is a warning that leaves the other wired. "Supply up, decimals down"
-// is therefore a reachable process state, not a hypothetical, and in it
-// every contract row keeps the catalogue's hardcoded 7.
+// The API binary dials ClickHouse TWICE (supply reader, and the explorer reader that resolves
+// decimals), and each failure is a warning that leaves the other wired. "Supply up, decimals
+// down" is therefore a reachable state, and in it every contract row keeps the catalogue's
+// hardcoded 7. For a 5-decimal fund that publishes ONE HUNDREDTH of its capitalisation under
+// `status: published`, with `decimals: 7` served as though it were a reading.
 //
-// For a 5-decimal fund that publishes ONE HUNDREDTH of its
-// capitalisation: $3,455,999.79 against a real $345,599,978.73, under
-// `status: published`, with `decimals: 7` served as though it were a
-// reading and the funnel counting the row as successfully valued.
-//
-// The same silent default is reachable with every reader up: an instance
-// missing from the lake, a METADATA map declaring no scale, or a
-// contract declaring both spellings with different values. Refusing is
-// the only honest answer — the supply is still served, because that is a
-// chain fact and needs no scale to be true.
+// The same silent default is reachable with every reader up: an instance missing from the
+// lake, a METADATA map declaring no scale, or a contract declaring both spellings with
+// different values. Refusing is the only honest answer; the supply is still served, because
+// it is a chain fact and needs no scale to be true.
 func TestRWAListing_UnreadDecimalsPublishNoFigure(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -755,11 +714,10 @@ func TestRWAListing_ReadDecimalsStillPublish(t *testing.T) {
 	}
 }
 
-// TestRWAListing_UnreadDecimalsServeNullScale: a contract row whose scale
-// was never read must not serve the catalogue's default 7 as `decimals`.
-// Beside a raw circulating_supply that number invites exactly the
-// supply/10^decimals division both valuation bases refuse — for this
-// 5-decimal fund, a whole-token float one hundredth of the real one.
+// TestRWAListing_UnreadDecimalsServeNullScale: a contract row whose scale was never read must
+// not serve the catalogue's default 7 as `decimals`. Beside a raw circulating_supply it
+// invites the supply/10^decimals division both valuation bases refuse (a whole-token float
+// off by 100x for a 5-decimal fund).
 func TestRWAListing_UnreadDecimalsServeNullScale(t *testing.T) {
 	raw, ok := rwaWireDecimals(t, map[string]uint32{})
 	if !ok {

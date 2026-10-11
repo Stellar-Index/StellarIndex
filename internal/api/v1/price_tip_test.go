@@ -114,12 +114,10 @@ func TestPriceTip_WindowVWAP(t *testing.T) {
 	}
 }
 
-// TestPriceTip_FallbackWhenWindowEmpty — when the rolling window has
-// no trades, the handler falls back to PriceReader.LatestPrice and
-// returns whatever shape it gives (price_type="last_trade" in the
-// MVP). flags.stale stays FALSE — the fallback is in-contract on
-// /v1/price/tip per ADR-0018, even though the same fallback
-// triggers stale=true on /v1/price.
+// TestPriceTip_FallbackWhenWindowEmpty — with no trades in the rolling window, the handler
+// falls back to PriceReader.LatestPrice and returns its shape (price_type="last_trade").
+// flags.stale stays FALSE: the fallback is in-contract on /v1/price/tip per ADR-0018, though
+// the same fallback sets stale=true on /v1/price.
 func TestPriceTip_FallbackWhenWindowEmpty(t *testing.T) {
 	hist := &stubHistoryReader{trades: nil}
 	prices := &stubPriceReader{
@@ -159,10 +157,8 @@ func TestPriceTip_FallbackWhenWindowEmpty(t *testing.T) {
 	}
 }
 
-// TestPriceTip_FallbackWhenNoHistoryWired — same fallback path
-// triggers when the deployment hasn't wired a HistoryReader at all
-// (e.g. early bring-up, or PriceReader-only deployments). PriceReader
-// alone is sufficient to serve the tip surface; window VWAP is just
+// TestPriceTip_FallbackWhenNoHistoryWired — the same fallback applies when no HistoryReader
+// is wired at all. PriceReader alone is sufficient to serve the tip surface; window VWAP is
 // an enrichment when history is available.
 func TestPriceTip_FallbackWhenNoHistoryWired(t *testing.T) {
 	prices := &stubPriceReader{
@@ -183,11 +179,9 @@ func TestPriceTip_FallbackWhenNoHistoryWired(t *testing.T) {
 	}
 }
 
-// TestPriceTip_AliasResolvesXLM pins, on the tip surface:
-// asset=native must resolve a LatestPrice observation published under
-// the crypto:XLM alias key (the rolling-window VWAP path being empty),
-// exactly like handlePrice's primary read. Querying the literal form only
-// would 404 while /v1/price serves fresh.
+// TestPriceTip_AliasResolvesXLM pins that asset=native resolves a LatestPrice observation
+// published under the crypto:XLM alias key (window VWAP empty), like handlePrice's primary
+// read. Querying the literal form only would 404 while /v1/price serves fresh.
 func TestPriceTip_AliasResolvesXLM(t *testing.T) {
 	prices := &stubPriceReader{
 		// Only the crypto:XLM form is populated; native is absent.
@@ -211,13 +205,10 @@ func TestPriceTip_AliasResolvesXLM(t *testing.T) {
 	}
 }
 
-// TestPriceTip_RedisFallbackForRewrittenPair — when both the
-// rolling-window VWAP path AND PriceReader.LatestPrice come up empty
-// (typical for an aggregator-rewritten pair like XLM/fiat:USD whose
-// literal form isn't in prices_1m), the handler falls through to the
-// Redis VWAP cache. Same shape as /v1/price's tryRedisVWAPFallback —
-// the two surfaces serve the same underlying data so a customer
-// switching between them sees consistent prices.
+// TestPriceTip_RedisFallbackForRewrittenPair — when both the rolling-window VWAP AND
+// PriceReader.LatestPrice are empty (typical for an aggregator-rewritten pair like
+// XLM/fiat:USD whose literal form isn't in prices_1m), the handler falls through to the Redis
+// VWAP cache, as /v1/price's tryRedisVWAPFallback does, so both surfaces show consistent prices.
 func TestPriceTip_RedisFallbackForRewrittenPair(t *testing.T) {
 	hist := &stubHistoryReader{trades: nil}
 	prices := &stubPriceReader{err: v1.ErrPriceNotFound} // CAGG miss
@@ -248,13 +239,10 @@ func TestPriceTip_RedisFallbackForRewrittenPair(t *testing.T) {
 	}
 }
 
-// TestPriceTip_StablecoinFiatProxyFallback — when window VWAP +
-// LatestPrice + Redis VWAP cache all miss but the operator has
-// declared classic USD pegs, the handler rewrites X/fiat:USD to
-// X/<peg> at request time. Same shape as /v1/price's
-// tryStablecoinFiatProxy fallback. Without this
-// /v1/price/tip?asset=native&quote=fiat:USD 404s out of the box on
-// every fresh deployment.
+// TestPriceTip_StablecoinFiatProxyFallback — when window VWAP, LatestPrice and the Redis VWAP
+// cache all miss but the operator has declared classic USD pegs, the handler rewrites
+// X/fiat:USD to X/<peg> at request time, as /v1/price's tryStablecoinFiatProxy does. Without
+// it /v1/price/tip?asset=native&quote=fiat:USD 404s on every fresh deployment.
 func TestPriceTip_StablecoinFiatProxyFallback(t *testing.T) {
 	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -301,14 +289,11 @@ func TestPriceTip_StablecoinFiatProxyFallback(t *testing.T) {
 	}
 }
 
-// TestPriceTip_ReportsWithheldFromProxyLeg: the stablecoin-
-// fiat-proxy peg walk inside computeTip's fallback chain HAS a price
-// for the asset (the peg leg) and policy withholds it — the tip
-// surface must report errors/price-withheld, the same verdict
-// /v1/price already gives via [TestPriceReportsWithheldFromProxyLeg],
-// not errors/price-not-found (which tells the customer to look
-// nowhere when /v1/observations, /v1/ohlc and /v1/history all have
-// the data).
+// TestPriceTip_ReportsWithheldFromProxyLeg: the stablecoin-fiat-proxy peg walk inside
+// computeTip's fallback chain HAS a price (the peg leg) and policy withholds it. The tip
+// surface must report errors/price-withheld, as /v1/price does
+// ([TestPriceReportsWithheldFromProxyLeg]), not errors/price-not-found, which tells the
+// customer to look nowhere when /v1/observations, /v1/ohlc and /v1/history have the data.
 func TestPriceTip_ReportsWithheldFromProxyLeg(t *testing.T) {
 	peg, err := canonical.ParseAsset(msp06Peg)
 	if err != nil {
@@ -480,14 +465,11 @@ func TestPriceTip_DefaultWindowIs5s(t *testing.T) {
 	}
 }
 
-// TestPriceTip_NonstandardDecimals_Normalizes proves /v1/price/tip — the
-// ADR-0018 "SLA surface" — correctly scales a confirmed non-7-decimals
-// leg's window VWAP. This endpoint once lacked a decline guard
-// at all (declineIfNonstandardDecimals's four-endpoint list omitted the
-// tip surface), so it was serving the RAW skewed ratio live and unguarded;
-// this is the regression test for that gap. Same golden shape as
-// internal/aggregate's TestAdjustPrice_Golden18DecimalToken: 18dp base
-// token, 7dp USDC quote, true price 0.4968.
+// TestPriceTip_NonstandardDecimals_Normalizes proves /v1/price/tip, the ADR-0018 "SLA
+// surface", scales a confirmed non-7-decimals leg's window VWAP; declineIfNonstandardDecimals
+// must cover the tip surface or it serves the RAW skewed ratio unguarded. Same golden shape
+// as internal/aggregate's TestAdjustPrice_Golden18DecimalToken: 18dp base token, 7dp USDC
+// quote, true price 0.4968.
 func TestPriceTip_NonstandardDecimals_Normalizes(t *testing.T) {
 	const flaggedAsset = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 	cache := nonstandardDecimalsCacheWith(t, flaggedAsset, 18)
@@ -575,12 +557,11 @@ func TestPriceTip_NonstandardDecimals_FallbackNormalizes(t *testing.T) {
 	}
 }
 
-// TestPriceTip_ThinPoolThirdAlias_ClassicQuoteFallsToTheClosedBook: the
-// SDEX book is silent in the window, the Soroban SAC/SAC pool printed
-// one trade 2s ago at five times the book. The classic-quoted tip must
-// NOT serve that print; with the established forms silent it serves the
-// closed-bucket read — the deep book — and never consults a SAC pair,
-// because the closed bucket answered before the SAC set's turn came.
+// TestPriceTip_ThinPoolThirdAlias_ClassicQuoteFallsToTheClosedBook: the SDEX book is silent
+// in the window, the Soroban SAC/SAC pool printed one trade 2s ago at five times the book.
+// The classic-quoted tip must NOT serve that print; it serves the closed-bucket read (the
+// deep book) and never consults a SAC pair, since the closed bucket answers before the SAC
+// set's turn.
 //
 // RED before tipMergePairs: price 0.0050000000 from soroswap.
 func TestPriceTip_ThinPoolThirdAlias_ClassicQuoteFallsToTheClosedBook(t *testing.T) {
@@ -620,10 +601,9 @@ func TestPriceTip_ThinPoolThirdAlias_ClassicQuoteFallsToTheClosedBook(t *testing
 	}
 }
 
-// TestPriceTip_ThinPoolThirdAlias_XLMMergesEstablishedFormsOnly: for XLM
-// the established forms (`native`, `crypto:XLM`) still merge — that is
-// the merge's reason to exist — and the XLM SAC pool is left out of a
-// classic-quoted window even when it printed inside it.
+// TestPriceTip_ThinPoolThirdAlias_XLMMergesEstablishedFormsOnly: for XLM the established
+// forms (`native`, `crypto:XLM`) still merge, which is the merge's purpose, while the XLM SAC
+// pool is left out of a classic-quoted window even when it printed inside it.
 //
 // RED before tipMergePairs: the SAC print is blended in, price
 // 0.7100000000 with sources [sdex soroswap].
@@ -661,11 +641,9 @@ func TestPriceTip_ThinPoolThirdAlias_XLMMergesEstablishedFormsOnly(t *testing.T)
 	}
 }
 
-// TestPriceTip_ThinPoolThirdAlias_SACKeyedRequestMergesTheNamedPool: a
-// caller who names the SAC forms is asking about that pool and gets its
-// window VWAP — unchanged behaviour, and the proof that the pool is
-// reachable at all (the two tests above are not passing against a pair
-// the stub could never have returned).
+// TestPriceTip_ThinPoolThirdAlias_SACKeyedRequestMergesTheNamedPool: a caller naming the SAC
+// forms asks about that pool and gets its window VWAP. This also proves the pool is reachable
+// at all, so the two tests above are not passing against a pair the stub could never return.
 func TestPriceTip_ThinPoolThirdAlias_SACKeyedRequestMergesTheNamedPool(t *testing.T) {
 	installPegAliasRegistry(t)
 	now := time.Now().UTC()
@@ -689,12 +667,10 @@ func TestPriceTip_ThinPoolThirdAlias_SACKeyedRequestMergesTheNamedPool(t *testin
 }
 
 // TestPriceTip_ThinPoolThirdAlias_SorobanOnlyWrappedClassicServesThePoolLast:
-// a wrapped classic with NO classic venue — no SDEX trade in the window
-// and no closed bucket for the classic pair — whose Soroban SAC/SAC pool
-// printed 2s ago. The classic-keyed tip serves that print, from the pool
-// (the alternative is 404), and reaches it only AFTER the established
-// combinations' window at both bounds and the closed-bucket read have
-// missed.
+// a wrapped classic with NO classic venue (no SDEX trade in the window, no closed bucket for
+// the classic pair) whose Soroban SAC/SAC pool printed 2s ago. The classic-keyed tip serves
+// that pool print (the alternative is 404), reached only AFTER the established combinations'
+// window at both bounds and the closed-bucket read have missed.
 //
 // RED with the SAC set dropped instead of read last: 404.
 func TestPriceTip_ThinPoolThirdAlias_SorobanOnlyWrappedClassicServesThePoolLast(t *testing.T) {
@@ -733,10 +709,9 @@ func TestPriceTip_ThinPoolThirdAlias_SorobanOnlyWrappedClassicServesThePoolLast(
 }
 
 // TestPriceTip_ThinPoolThirdAlias_DeeperPoolNeverBlendsIntoTheClassicBook:
-// the wrapped classic's DEEPER venue is the Soroban pool — ten prints in
-// the window against one SDEX trade. The classic-keyed tip is the SDEX
-// book alone. The exclusion is by form, not by depth: depth on a pool is
-// exactly what an attacker can manufacture, and the classic-quoted
+// the wrapped classic's DEEPER venue is the Soroban pool (ten prints in the window against
+// one SDEX trade). The classic-keyed tip is the SDEX book alone. The exclusion is by form,
+// not depth: depth on a pool is what an attacker can manufacture, and the classic-quoted
 // answer is the classic book's, as on /v1/price.
 //
 // RED before tipMergePairs: a blended VWAP with sources [sdex soroswap].
@@ -771,11 +746,10 @@ func TestPriceTip_ThinPoolThirdAlias_DeeperPoolNeverBlendsIntoTheClassicBook(t *
 }
 
 // TestPriceTip_FallbackBranchesOmitWindowSeconds pins the tip surface's
-// window_seconds contract: it names the rolling window the tip was
-// computed over, clamped to [1,60]. A fallback is not that window — the
-// Redis VWAP cache is a 300s read and the closed bucket a 60s one — so
-// every fallback branch omits the field rather than report its source's
-// own resolution as if it were the caller's window.
+// window_seconds contract: it names the rolling window the tip was computed over, clamped to
+// [1,60]. A fallback is not that window (the Redis VWAP cache is a 300s read, the closed
+// bucket a 60s one), so every fallback branch omits the field rather than report its
+// source's resolution as the caller's window.
 func TestPriceTip_FallbackBranchesOmitWindowSeconds(t *testing.T) {
 	cases := []struct {
 		name string
@@ -873,15 +847,12 @@ func TestPriceTip_GateAllows_Serves(t *testing.T) {
 	}
 }
 
-// TestPriceTip_Withheld_ScamIssuerReasonInDetail — a scam-issuer
-// withhold and a substance-gate withhold both 404 with the same problem
-// TYPE, but the DETAIL text must name the gate that actually fired: otherwise
-// writePriceWithheldProblem would hard-code the substance gate's wording for
-// every withheld cause, so a directory-flagged issuer's response would claim
-// "trailing market activity is below the serve floor" — a reason that
-// never fired. Driven through the real *pricingguard.ScamGate, following
-// the /v1/vwap and /v1/price/tip quote-leg suites, so the pair-aware
-// primitive is what's proved, not a hand-written fake.
+// TestPriceTip_Withheld_ScamIssuerReasonInDetail — a scam-issuer withhold and a
+// substance-gate withhold both 404 with the same problem TYPE, but the DETAIL must name the
+// gate that fired; otherwise writePriceWithheldProblem would claim "trailing market activity
+// is below the serve floor" for a directory-flagged issuer, a reason that never fired.
+// Driven through the real *pricingguard.ScamGate so the pair-aware primitive is what's
+// proved, not a hand-written fake.
 func TestPriceTip_Withheld_ScamIssuerReasonInDetail(t *testing.T) {
 	flagged, err := canonical.NewClassicAsset("RIO", scamQuoteLegIssuer)
 	if err != nil {

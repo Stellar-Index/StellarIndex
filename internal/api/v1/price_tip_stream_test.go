@@ -50,11 +50,9 @@ func readTipStreamEvent(t *testing.T, br *bufio.Reader, timeout time.Duration) s
 	return data
 }
 
-// testStreamSecond stands in for one second of a stream's
-// window_seconds / interval_seconds cadence, so a window_seconds=1 tick
-// lands in 100ms instead of a wall-clock second. Every tick-timing bound
-// in these tests is either against this or against a budget that is NOT
-// scaled (the 8s tick budget), so the edges they probe are unchanged.
+// testStreamSecond stands in for one second of a stream's window_seconds / interval_seconds
+// cadence, so a window_seconds=1 tick lands in 100ms. Tick-timing bounds are either against
+// this or against an unscaled budget (the 8s tick budget), so the edges probed are unchanged.
 const testStreamSecond = 100 * time.Millisecond
 
 // startTipStreamServer wires a v1.Server with the given Prices +
@@ -100,11 +98,9 @@ func TestPriceTipStream_RejectsGranularity(t *testing.T) {
 	}
 }
 
-// TestPriceTipStream_PreFlight404 — when the very first compute
-// returns ErrPriceNotFound (pair has no observations), the stream
-// returns 404 before switching to SSE. Critical: SSE has no way to
-// signal "not found" mid-stream, so the only correct behaviour is
-// to detect emptiness pre-flight.
+// TestPriceTipStream_PreFlight404 — when the first compute returns ErrPriceNotFound, the stream
+// returns 404 before switching to SSE. SSE cannot signal "not found" mid-stream, so emptiness
+// must be detected pre-flight.
 func TestPriceTipStream_PreFlight404(t *testing.T) {
 	url := startTipStreamServer(t, &stubPriceReader{err: v1.ErrPriceNotFound}, nil)
 	resp, err := http.Get(url + "/v1/price/tip/stream?asset=native&quote=fiat:USD")
@@ -237,11 +233,9 @@ func TestPriceTipStream_TickEmitsRepeatedly(t *testing.T) {
 	}
 }
 
-// deadlineCapturingTipHistoryReader records whether each TradesInRange
-// call after the first (the stream's synchronous prelude read, which
-// RequestTimeout deliberately leaves undeadlined on `/stream` paths
-// because the connection itself is long-lived by design) ran under a
-// bounded context.
+// deadlineCapturingTipHistoryReader records whether each TradesInRange call after the first ran
+// under a bounded context. The first is the stream's synchronous prelude read, which
+// RequestTimeout leaves undeadlined on `/stream` paths because the connection is long-lived.
 type deadlineCapturingTipHistoryReader struct {
 	stubHistoryReader
 	mu              sync.Mutex
@@ -266,16 +260,12 @@ func (r *deadlineCapturingTipHistoryReader) TradesInRange(ctx context.Context, _
 	return []canonical.Trade{r.trade}, nil
 }
 
-// TestPriceTipStream_TickIsBoundedByATimeout is the tick-timeout regression:
-// the per-tick computeTip call in the tip-stream producer must run
-// under its OWN bounded deadline, not the raw per-connection context
-// (which RequestTimeout deliberately leaves undeadlined on `/stream`
-// paths). Without a per-tick bound, a slow TradesInRange call could
-// hold the producer goroutine — and its DB connection — open
-// indefinitely, once per open connection, for as long as the client
-// stays connected. Uses crypto:BTC/fiat:USD (no alias pair, unlike
-// native) so exactly one TradesInRange call backs each computeTip
-// invocation, making prelude (call 1) vs. tick (call 2+) unambiguous.
+// TestPriceTipStream_TickIsBoundedByATimeout pins that the per-tick computeTip call in the
+// producer runs under its OWN bounded deadline, not the per-connection context (which
+// RequestTimeout leaves undeadlined on `/stream`). Otherwise a slow TradesInRange call holds the
+// producer goroutine and its DB connection open for as long as the client stays connected.
+// Uses crypto:BTC/fiat:USD (no alias pair) so exactly one TradesInRange call backs each
+// computeTip, making prelude (call 1) vs. tick (call 2+) unambiguous.
 func TestPriceTipStream_TickIsBoundedByATimeout(t *testing.T) {
 	base, err := canonical.ParseAsset("crypto:BTC")
 	if err != nil {
@@ -330,13 +320,10 @@ func TestPriceTipStream_TickIsBoundedByATimeout(t *testing.T) {
 	}
 }
 
-// TestPriceTipStream_ClientDisconnectStopsProducer — when the
-// client cancels its request, the producer goroutine exits via
-// ctx.Done. Probed indirectly: re-issue a second connection with
-// the same params and confirm it serves cleanly (a leaked producer
-// from the first connection wouldn't break this, but a panic or
-// stuck channel send would). Mostly a sanity test that the cleanup
-// path doesn't deadlock.
+// TestPriceTipStream_ClientDisconnectStopsProducer — when the client cancels, the producer
+// goroutine exits via ctx.Done. Probed indirectly by serving a second connection with the same
+// params: a leak would not break it, but a panic or stuck channel send would. Mostly a check
+// that the cleanup path does not deadlock.
 func TestPriceTipStream_ClientDisconnectStopsProducer(t *testing.T) {
 	prices := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
@@ -430,11 +417,9 @@ func tipStreamDivergenceCases() []tipStreamDivergenceCase {
 }
 
 // assertTipStreamDivergenceFlags opens the stream and holds the first
-// TWO frames to the expected divergence flags: the handler builds the
-// pre-flight frame itself and the producer — per-connection or
-// Hub-shared — builds every later one, so a regression in either path
-// shows on exactly one of them. It then checks the lookup record: every
-// lookup asked for the requested spelling and no other.
+// TWO frames to the expected divergence flags: the handler builds the pre-flight frame and the
+// producer (per-connection or Hub-shared) builds every later one, so a regression in either
+// path shows on one of them. It then checks every lookup asked for the requested spelling only.
 func assertTipStreamDivergenceFlags(t *testing.T, url string, div *stubAliasDivergenceLooker, tc tipStreamDivergenceCase) {
 	t.Helper()
 	resp, err := http.Get(url + "/v1/price/tip/stream?asset=native&quote=fiat:USD&window_seconds=1")
@@ -474,14 +459,10 @@ func assertTipStreamDivergenceFlags(t *testing.T, url string, div *stubAliasDive
 }
 
 // TestPriceTipStream_DivergenceCheckedFollowsAssetAliases — the stream is
-// documented as the request endpoint's "same compute logic", and the
-// envelope flags are part of that: every tip_update carries the verdict a
-// GET on the same pair would at that instant, asked for the requested
-// spelling only. Before this the per-connection
-// producer built its flags without the lookup, so a stream and a GET on
-// the same pair disagreed on `divergence_checked` at the same moment.
-// Hub-less server, so both frames come off the per-connection producer
-// path.
+// documented as the request endpoint's "same compute logic", and the envelope flags are part of
+// that: every tip_update carries the verdict a GET on the same pair would, asked for the
+// requested spelling only, so stream and GET agree on `divergence_checked`. Hub-less server, so
+// both frames come off the per-connection producer path.
 func TestPriceTipStream_DivergenceCheckedFollowsAssetAliases(t *testing.T) {
 	for _, tc := range tipStreamDivergenceCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -501,11 +482,9 @@ func TestPriceTipStream_DivergenceCheckedFollowsAssetAliases(t *testing.T) {
 }
 
 // TestPriceTipStream_HubSharedProducerFollowsAssetAliases — the Hub-wired
-// (production) shape: the connection's first frame is the handler's
-// pre-flight, every later one is the shared producer's publish. Both
-// must carry the same verdict the GET would, or a page that opens the
-// stream sees a different `divergence_checked` from the request it made
-// a moment earlier.
+// (production) shape: the first frame is the handler's pre-flight, every later one the shared
+// producer's publish. Both must carry the verdict the GET would, or a page that opens the stream
+// sees a different `divergence_checked` from the request it made a moment earlier.
 func TestPriceTipStream_HubSharedProducerFollowsAssetAliases(t *testing.T) {
 	for _, tc := range tipStreamDivergenceCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -536,11 +515,9 @@ func TestPriceTipStream_CacheUnavailable503(t *testing.T) {
 }
 
 // TestPriceTipStream_HubSharesOneProducerAcrossConnections is the
-// regression pin ("tip stream = 6 DB queries/s PER
-// CONNECTION"). With a Hub wired, N viewers of the same pair must
-// share ONE compute loop: every connection still receives events
-// (fan-out works), but total compute calls stay near
-// (N pre-flights + ticks), far below the legacy N×ticks shape.
+// regression pin against per-connection DB queries. With a Hub wired, N viewers of the same
+// pair must share ONE compute loop: every connection still receives events (fan-out works),
+// but total compute calls stay near (N pre-flights + ticks), far below N×ticks.
 func TestPriceTipStream_HubSharesOneProducerAcrossConnections(t *testing.T) {
 	prices := &countingPriceReader{
 		stubPriceReader: stubPriceReader{
@@ -589,12 +566,9 @@ func TestPriceTipStream_HubSharesOneProducerAcrossConnections(t *testing.T) {
 		}
 	}
 
-	// Compute budget: viewers pre-flights + one shared tick loop.
-	// Each viewer holds the stream ~1-2.5s at window_seconds=1, so the
-	// shared producer runs ~1 + ceil(elapsed) computes. The legacy
-	// per-connection shape would burn viewers×(1+ticks) ≈ 15-20.
-	// Note LatestPrice may be called more than once per computeTip for
-	// alias fan-in — using a no-alias pair (crypto:BTC) keeps it 1:1.
+	// Compute budget: viewers pre-flights + one shared tick loop, ~1 + ceil(elapsed) computes;
+	// the per-connection shape would burn viewers×(1+ticks). LatestPrice may be called more
+	// than once per computeTip for alias fan-in, so a no-alias pair (crypto:BTC) keeps it 1:1.
 	calls := int(prices.calls.Load())
 	maxWant := viewers + 6
 	if calls > maxWant {
@@ -604,14 +578,10 @@ func TestPriceTipStream_HubSharesOneProducerAcrossConnections(t *testing.T) {
 }
 
 // TestPriceTipStream_StalledDivergenceLookupDoesNotDelayHeaders — the
-// divergence verdict is an overlay; the cadence is the product. A
-// verdict store that has stopped answering must cost the FLAG, not the
-// stream: the response headers and the first event still go out inside
-// the lookup's own sub-budget, carrying the verdict unchecked.
-//
-// Before this, the lookup inherited the pre-flight budget, so a stalled
-// store held the headers for the full 8s (measured 8.0036s) — an
-// optional flag setting time-to-first-byte for the whole connection.
+// divergence verdict is an overlay; the cadence is the product. A verdict store that has stopped
+// answering must cost the FLAG, not the stream: headers and the first event still go out inside
+// the lookup's own sub-budget, carrying the verdict unchecked. The lookup must not inherit the
+// pre-flight budget, or an optional flag would set time-to-first-byte for the connection.
 func TestPriceTipStream_StalledDivergenceLookupDoesNotDelayHeaders(t *testing.T) {
 	div := newGatedDivergenceLooker(false, true) // never released
 	url := tipStreamServerWithLooker(t, div, stallBudget)
@@ -663,15 +633,12 @@ func TestPriceTipStream_StalledDivergenceLookupDoesNotDelayHeaders(t *testing.T)
 
 // TestPriceTipStream_DivergenceBudgetDiscriminatesAtItsEdge brackets
 // [tipStreamDivergenceBudget] from both sides on a single-spelling base
-// (one store read, so the delay IS the walk). Inside the budget the
-// verdict survives to the wire; outside it the event still goes out, on
-// time, with the verdict unchecked.
+// (one store read, so the delay IS the walk). Inside the budget the verdict survives to the
+// wire; outside it the event still goes out on time with the verdict unchecked.
 //
-// Both halves matter. Without the inside case, "always report
-// unchecked" passes. Without the outside case, "never bound anything"
-// passes. The budget is shortened to 300ms; the delays keep the same
-// absolute margins as against the production 1s (100ms inside, 200ms
-// outside), so scheduling slack is exactly as tight as before.
+// Both halves matter: without the inside case "always report unchecked" passes, without the
+// outside case "never bound anything" passes. The budget is shortened to 300ms but the delays
+// keep the production margins (100ms inside, 200ms outside), so scheduling slack is as tight.
 func TestPriceTipStream_DivergenceBudgetDiscriminatesAtItsEdge(t *testing.T) {
 	const budget = 300 * time.Millisecond
 	for _, tc := range []struct {
@@ -727,10 +694,9 @@ func TestPriceTipStream_DivergenceBudgetDiscriminatesAtItsEdge(t *testing.T) {
 }
 
 // TestPriceTipStream_AsOfIsStampedAfterTheDivergenceLookup — `as_of`
-// describes the event that is being emitted, so it is taken after the
-// last step that can hold the emission back. Stamped before the
-// divergence lookup it described a moment that had already passed by the
-// time the frame reached the wire, by however long the lookup took.
+// describes the event being emitted, so it is taken after the last step that can hold the
+// emission back. Stamped before the divergence lookup it would describe a moment already past
+// by however long the lookup took.
 func TestPriceTipStream_AsOfIsStampedAfterTheDivergenceLookup(t *testing.T) {
 	div := newGatedDivergenceLooker(false, true)
 	url := tipStreamServerWithLooker(t, div, 0)
@@ -778,11 +744,9 @@ func TestPriceTipStream_AsOfIsStampedAfterTheDivergenceLookup(t *testing.T) {
 }
 
 // TestPriceTipStream_StalledDivergenceLookupDoesNotDelayLaterEmissions —
-// the other half of the same defect. Headers are the first-byte cost;
-// the recurring cost is that every tick's emission waited on the same
-// stalled lookup, so a one-second window emitted roughly every nine
-// seconds. A tick's auxiliary read must not stretch the period it
-// belongs to beyond recognition.
+// the recurring half of the stall. Headers are the first-byte cost; if every tick's emission
+// waits on the same stalled lookup, a one-second window emits far slower than its period. A
+// tick's auxiliary read must not stretch the period it belongs to.
 func TestPriceTipStream_StalledDivergenceLookupDoesNotDelayLaterEmissions(t *testing.T) {
 	div := newGatedDivergenceLooker(false, true) // never released
 	url := tipStreamServerWithLooker(t, div, stallBudget)
@@ -820,11 +784,9 @@ func TestPriceTipStream_StalledDivergenceLookupDoesNotDelayLaterEmissions(t *tes
 }
 
 // TestPriceTipStream_HubSharedProducerStallDoesNotDelayEmissions — the
-// same guarantee on the shared producer. runSharedTipProducer builds its
-// events through the same helper, but it is a separate loop with its own
-// budget, and it is the one that serves every viewer in production: a
-// regression reintroduced there would be invisible to every hub-less
-// test in this package.
+// same guarantee on the shared producer. runSharedTipProducer uses the same helper but is a
+// separate loop with its own budget that serves every viewer in production, so a regression
+// there would be invisible to the hub-less tests.
 func TestPriceTipStream_HubSharedProducerStallDoesNotDelayEmissions(t *testing.T) {
 	div := newGatedDivergenceLooker(false, true) // never released
 	url := hubTipStreamServer(t, div, nil)
@@ -871,10 +833,9 @@ func TestPriceTipStream_HubSharedProducerStallDoesNotDelayEmissions(t *testing.T
 }
 
 // TestPriceTipStream_StallDoesNotClobberSingleSource — the stall path
-// resets the two divergence fields explicitly. That reset must touch
-// ONLY those two: single_source is derived from the sources slice and
-// has nothing to do with the verdict store, so a stalled lookup must not
-// silently unset a flag the emission is still entitled to.
+// resets the two divergence fields explicitly. That reset must touch ONLY those two:
+// single_source is derived from the sources slice, not the verdict store, so a stalled lookup
+// must not unset a flag the emission is still entitled to.
 func TestPriceTipStream_StallDoesNotClobberSingleSource(t *testing.T) {
 	div := newGatedDivergenceLooker(false, true) // never released
 	url := hubTipStreamServer(t, div, []string{"sdex"})
@@ -917,11 +878,9 @@ func TestPriceTipStream_StallDoesNotClobberSingleSource(t *testing.T) {
 }
 
 // TestPriceTipStream_SustainedStallDoesNotFloodTheLog — end-to-end over
-// the wire, both halves of the flood at once: the stream's own warning
-// is rate-limited to one line per interval, and the shared lookup no
-// longer prints a line per tick for deadline expiries it should swallow.
-// A sustained stall must leave the log readable, since that is the
-// moment an operator is reading it.
+// the wire, both halves of the flood at once: the stream's own warning is rate-limited to one
+// line per interval, and the shared lookup swallows deadline expiries instead of logging each
+// tick. A sustained stall must leave the log readable, since that is when an operator reads it.
 func TestPriceTipStream_SustainedStallDoesNotFloodTheLog(t *testing.T) {
 	logs := &capturingHandler{}
 	div := newGatedDivergenceLooker(false, true) // never released
@@ -938,12 +897,9 @@ func TestPriceTipStream_SustainedStallDoesNotFloodTheLog(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	// The per-frame wait is generous on purpose: an unbudgeted lookup
-	// stretches the window to 8s+, and this test must reach its log
-	// assertions on that shape rather than bailing on a missing frame —
-	// what is being pinned is the LOG, not the cadence (which its own
-	// tests cover). On a patched build the frames arrive in ~200ms each
-	// and the generosity costs nothing.
+	// The per-frame wait is generous on purpose: an unbudgeted lookup stretches the window to
+	// 8s+, and this test must still reach its log assertions rather than bail on a missing
+	// frame. It pins the LOG, not the cadence (covered elsewhere).
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+
