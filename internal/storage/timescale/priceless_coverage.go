@@ -103,24 +103,20 @@ const pricelessTradeLegs = `(
 // so the candidate set stays bounded; the market-character discount, popularity
 // floor and withheld verdict are applied by the pure classifier, never here.
 //
-// The counterparty key is UNORDERED (LEAST/GREATEST) so a round-trip A->B / B->A
-// folds into the one concentrated pair it economically is.
+// The counterparty key is UNORDERED (LEAST/GREATEST) so A->B / B->A folds into one pair.
 //
 // ONE POPULATION. Only the SDEX decoder records both sides of a fill; on every
-// Soroban AMM the resting side is the POOL, so those rows carry a taker and a NULL
-// maker. Requiring both columns in the numerator while the vol7d denominator took
-// every row measured two DIFFERENT populations: an AMM-only asset's share was 0 by
-// construction, so the wash exclusion never fired and a farm painting volume on an
-// AMM went straight into the alert. The key therefore DEGENERATES to the one known
-// account when a side is unknown (the AMM ping-pong signature).
+// Soroban AMM the resting side is the POOL (taker set, maker NULL). Requiring
+// both columns in the numerator while the vol7d denominator took every row
+// measured two DIFFERENT populations: an AMM-only asset's share was 0, so the
+// wash exclusion never fired. The key DEGENERATES to the one known account when
+// a side is unknown (the AMM ping-pong signature).
 //
 // Rows with NO account on either side (external CEX feeds) cannot enter the
-// numerator, so unattributed volume dilutes the share DOWNWARD: the tripwire errs
-// toward paging a human, never toward suppressing a gap it cannot measure.
-// attributed_vol_share reports what the share was measured over.
+// numerator, so unattributed volume dilutes the share DOWNWARD (the tripwire errs
+// toward paging); attributed_vol_share reports what the share was measured over.
 //
-// COST: the wider population added ~14s on r1 (the planner declines to parallelise
-// the aggregate); a full sweep stays ~70s, inside DefaultSweepTimeout (5 min).
+// COST: the wider population adds ~14s on r1; a full sweep stays ~70s, inside DefaultSweepTimeout (5 min).
 const popularPricelessCandidatesSQL = `
 WITH vol7d AS (
   SELECT asset_id,

@@ -50,10 +50,8 @@ type FXQuote struct {
 //
 // The per-source `entries` tally (source_entry_counts, migration 0035) is
 // bumped INLINE, as the trades / oracle_updates inserts do: `xmax = 0` marks
-// a genuinely new row, and the HAVING clause makes the counter upsert produce
-// nothing on a duplicate, an update or a generation-guard skip, so a re-run
-// never inflates the tally and [Store.SeedSourceEntryCounts]'s fx_quotes fold
-// reconciles to the same number.
+// a genuinely new row, and the HAVING clause skips duplicates, updates and
+// generation-guard skips, so a re-run never inflates the tally.
 //
 // Empty slice is a no-op.
 func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error {

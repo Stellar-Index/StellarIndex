@@ -14,22 +14,15 @@ import (
 // `discovered_assets` table. Idempotent on contract_id via
 // ON CONFLICT — the first observation per contract preserves
 // first_seen_*, subsequent observations update last_seen_* and
-// increment event_count by hit.Count (1 when unset) — AsyncSink
-// flushes accumulated in-process-dedup deltas with Count set to the
-// true number of observations they represent, so this is not always
-// a plain +1 (CA2-A10-correct-4).
+// increment event_count by hit.Count (1 when unset): AsyncSink flushes
+// in-process-dedup deltas with Count set to the true number of
+// observations, so this is not always a plain +1.
 //
-// discovery_kind (migration 0103) distinguishes which sniffer
-// produced the hit ([discovery.KindSEP41] / [discovery.KindOracleEvent]
-// / [discovery.KindOracleCall]) — a Hit with an empty Kind (any
-// hand-built Hit predating that field, e.g. from an older in-flight
-// binary or a test that only sets EventType) is treated as
-// KindSEP41, matching the sniffer's own default. first_seen_event
-// stores hit.Symbol when set (all three sniffers populate it) and
-// falls back to hit.EventType for the same legacy-Hit case — the
-// column's CHECK constraint was widened in the same migration to
-// admit the oracle-suggestive symbol set alongside the original four
-// SEP-41 values.
+// discovery_kind (migration 0103) distinguishes which sniffer produced the hit
+// ([discovery.KindSEP41] / [discovery.KindOracleEvent] / [discovery.KindOracleCall]);
+// an empty Kind is treated as KindSEP41, matching the sniffer's own default.
+// first_seen_event stores hit.Symbol when set and falls back to hit.EventType
+// when Symbol is empty.
 //
 // Implements [discovery.Recorder].
 func (s *Store) RecordDiscovered(ctx context.Context, hit discovery.Hit) error {

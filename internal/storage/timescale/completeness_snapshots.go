@@ -184,11 +184,7 @@ type VerdictPublication struct {
 // Two independent statements would not do: the first cannot report that it
 // did nothing. A run with a `-to` below the stored tip and no problem is
 // rejected by the never-regress guard with a nil error; the caller would
-// then delete the window on the strength of a verdict that was never
-// stored. The rewound range would drop out of every later reconcile floor
-// while the STORED verdict still carried its pre-rewind clean claim over
-// it — precisely the carried-claim invalidation the window exists to
-// prevent.
+// then delete the window on the strength of a verdict that was never stored.
 //
 // The window is the obligation and the stored verdict is its discharge, so
 // the delete is gated on rows-affected and shares the verdict's

@@ -436,19 +436,12 @@ func dedupDirectoryEntriesByAddress(entries []DirectoryEntry) []DirectoryEntry {
 //
 // The conflict arm is OWNERSHIP-SCOPED: `WHERE account_directory.source
 // = EXCLUDED.source`, so a sync updates only the rows it owns and
-// `source` itself is never rewritten. That is migration 0136's stated
-// contract ("scoped by `source` so a future second directory source can
-// coexist without the syncs deleting each other's rows"). An
-// unconditional `source = EXCLUDED.source` arm would break it in two
-// ways: a second upstream would STEAL every shared address from the
-// first (whose prune, `WHERE source = $1`, then stops seeing them,
-// while the thief's prune eventually deletes them), and an operator's
-// hand-held correction would be adopted into the upstream snapshot and
-// overwritten within 24 hours, leaving no durable override for a
-// false-positive scam flag at all. Rows the chunk conflicts with but
-// does not own are left untouched (no error) and reported as
-// [DirectorySyncResult.Shadowed]: the first source to
-// hold an address keeps it, and the other's prune never sees it.
+// `source` itself is never rewritten (migration 0136's contract). An
+// unconditional arm would let a second upstream STEAL every shared address
+// from the first (whose prune then stops seeing them) and would overwrite an
+// operator's hand-held correction within 24 hours. Rows the chunk conflicts
+// with but does not own are left untouched (no error) and reported as
+// [DirectorySyncResult.Shadowed].
 func buildDirectoryUpsert(chunk []DirectoryEntry, source string) (string, []any) {
 	var (
 		sb   strings.Builder

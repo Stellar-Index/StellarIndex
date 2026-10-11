@@ -7,16 +7,13 @@ import (
 	"time"
 )
 
-// SoroswapRouterSwap is one soroswap_router_swaps row — a single
-// observed router invocation (one call to
-// `swap_exact_tokens_for_tokens` / `swap_tokens_for_exact_tokens`).
-// Mirrors migration 0049's columns; sister to canonical.Trade rows in the
-// `trades` hypertable, which hold the per-pair leg-level records.
+// SoroswapRouterSwap is one soroswap_router_swaps row — a single observed
+// router invocation (one call to `swap_exact_tokens_for_tokens` /
+// `swap_tokens_for_exact_tokens`), mirroring migration 0049's columns.
 //
 // Identity: (ledger, tx_hash, op_index, call_sig). op_index disambiguates
-// multiple router invocations in one tx; call_sig (migration 0056) further
-// distinguishes multiple distinct router swaps within one op (aggregator /
-// batch calls).
+// multiple router invocations in one tx; call_sig further distinguishes multiple
+// distinct router swaps within one op (aggregator / batch calls).
 //
 // AmountIn / AmountOut are decimal-string numerics (i128 → *big.Int →
 // string per ADR-0003). Path is the hop sequence of raw token C-strkeys

@@ -19,24 +19,19 @@ import (
 //
 // WHAT A ROW MEANS, precisely. "Curator X states that this address is a
 // real-world asset issued by company Y, of subclass Z, and values one
-// token at P dollars." That is an editorial table the curator publishes and
-// maintains, and it is the entire content of the claim. No signature, no
-// proof of control, no attestation, no market.
+// token at P dollars." That is the entire content of the claim: no signature,
+// no proof of control, no attestation, no market.
 //
-// The first curator is the Stellar team's public Dune uploads, whose figures
-// the "RWAs on Stellar" dashboard publishes. Rows admitted here are served
-// under their own basis and their own total, beside the verified set and
-// never inside it.
+// Rows admitted here are served under their own basis and their own total,
+// beside the verified set and never inside it.
 //
 // TWO CLOCKS, TWO BOUNDS, the same shape as asset_listing_directory:
 //
-//   - RECOGNITION ages on `synced_at`, OUR clock, bounded by
-//     [curatedRWARecognitionMaxAge].
-//   - The PRICE ages on `priced_at`, the CURATOR's own day stamp,
-//     bounded by [curatedRWAPriceMaxAge].
+//   - RECOGNITION ages on `synced_at`, OUR clock ([curatedRWARecognitionMaxAge]).
+//   - The PRICE ages on `priced_at`, the CURATOR's day stamp ([curatedRWAPriceMaxAge]).
 //
-// Both are spliced into the reader's SQL, never applied by a caller, so
-// there is no code path that reads a stale row as fresh.
+// Both are spliced into the reader's SQL, never applied by a caller, so no code
+// path reads a stale row as fresh.
 
 // CuratedRWAEntry is one row as the curator published it.
 type CuratedRWAEntry struct {

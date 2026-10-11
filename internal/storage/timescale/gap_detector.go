@@ -352,19 +352,15 @@ type gapDetectorCursorReader func(ctx context.Context, source, sub string) (Curs
 //     future-dated row from clock skew cannot suppress a scan past one
 //     cadence.)
 //   - The same stamp re-emits stellarindex_ingest_gap_detector_last_
-//     success_unix, so the `_silent` alert's staleness clock keeps
-//     running across the restart. Without this a skipped target has NO
-//     series until its next scan succeeds — a persistently failing scan
-//     after a restart would never fire the alert.
+//     success_unix, so the `_silent` alert's staleness clock keeps running
+//     across the restart.
 //   - The target's source_coverage_snapshots row (written in the same
 //     scan) re-emits the last-known gap max/count + distinct gauges, so
 //     `stellarindex_ingest_gap_detected` is not blind for up to a full
-//     cadence after every deploy. Same last-known-good contract as the
-//     error path (gauges are never cleared on failure).
+//     cadence after every deploy.
 //
-// A target with no cursor (never scanned, or ErrNotFound) gets no entry
-// → first cycle scans it, as before. A cursor read error is logged and
-// treated the same way (scan now), never as "skip".
+// A target with no cursor (never scanned, or ErrNotFound) or a cursor read
+// error (logged) gets no entry, so the first cycle scans it; never "skip".
 func seedGapDetectorState(ctx context.Context, targets []GapDetectorTarget, getCursor gapDetectorCursorReader, snapshots []SourceCoverage, logger *slog.Logger, now time.Time) map[string]time.Time {
 	byKey := make(map[string]SourceCoverage, len(snapshots))
 	for _, cov := range snapshots {

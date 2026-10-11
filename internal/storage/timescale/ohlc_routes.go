@@ -42,14 +42,12 @@ func (r OHLCRoute) Folded() bool { return r.Native == "" }
 // switch learns but the allow-list does not answers 500 for every
 // request at that width.
 //
-// The fold pairings are query-time derivations over views that
-// already exist — nothing here needs a backfill. 3d folds the DAILY
-// view rather than the hourly one: 3 source rows instead of 72, and
-// prices_1d is already the closed-bucket authority for day
-// boundaries. 4h folds prices_1h although prices_4h exists — that keeps
-// its served rows unchanged, and moving it onto the native
-// view changes which rows the extremes' notional floor (migration
-// 0147) admits, so it is a served-value decision to take on its own.
+// The fold pairings are query-time derivations over existing views, so nothing
+// here needs a backfill. 3d folds the DAILY view rather than the hourly one
+// (3 source rows instead of 72; prices_1d is already the closed-bucket authority
+// for day boundaries). 4h folds prices_1h although prices_4h exists: moving it
+// onto the native view changes which rows the extremes' notional floor
+// (migration 0147) admits, a served-value decision to take on its own.
 var OHLCRoutes = []OHLCRoute{
 	{Interval: "1m", Native: Granularity1m},
 	{Interval: "5m", Source: Granularity1m, Fold: "5 minutes"},

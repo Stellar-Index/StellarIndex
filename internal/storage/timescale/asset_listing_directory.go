@@ -149,9 +149,7 @@ func (c ListingDirectoryCensus) Check() string {
 // while still making an upstream CORRECTION visible within two days.
 //
 // It is deliberately much wider than [listingPriceMaxAge], because it
-// bounds a different kind of fact. Widening it further trades away the
-// only thing this bound buys — that a delisting or a correction
-// propagates — for nothing, since the sync's own failure is already
+// bounds a different kind of fact; the sync's own failure is already
 // visible as [ListingDirectoryCensus.Stale].
 const listingRecognitionMaxAge = "48 hours"
 
@@ -446,11 +444,9 @@ const listingDirectoryCensusSQL = `
 //     publication time is inside [listingPriceMaxAge]. Past it the entry
 //     comes back with an empty price and a zero time, still recognised.
 //
-// There is no scan cap. The recognised set is bounded by how many
-// Stellar assets a third party has chosen to list (~50 today), the prune
-// keeps the table at that size, and [ListingDirectoryCensus.Contracts]
-// is the number a caller compares len(entries) against — a cap with no
-// truncation signal would be worse than none.
+// There is no scan cap: the recognised set is the ~50 Stellar assets a third
+// party has listed, and [ListingDirectoryCensus.Contracts] is the number a
+// caller compares len(entries) against.
 func (s *Store) ListingDirectoryContracts(
 	ctx context.Context,
 ) ([]ListingEntry, ListingDirectoryCensus, error) {

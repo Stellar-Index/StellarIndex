@@ -8,16 +8,13 @@ import (
 // ContractCatalogueRows reads catalogue rows for an EXPLICIT set of contract
 // addresses, keyed by contract id.
 //
-// Why the listing spine could not be reused: the listing's `catalogue_assets` CTE
-// and `GetAssetBySlug` gate the discovered-contract arm on `EXISTS (SELECT 1 FROM
-// asset_volume_24h ...)`, right for a listing that wants assets with a market
-// (it admitted 60 of ~117k discovered contracts on r1). A tokenized treasury or
-// money-market fund is held, not traded, and can carry a nine-figure supply while
-// absent from every 24h volume rollup. Under that gate a membership decision
-// admitting it would be followed by a join that silently dropped it, reporting a
-// coverage failure that was really a query-shape choice. Here the set is bounded
-// by MEMBERSHIP (the contracts an independent party named), so there is no
-// pagination or ranking.
+// Why the listing spine could not be reused: its `catalogue_assets` CTE and
+// `GetAssetBySlug` gate the discovered-contract arm on `EXISTS (SELECT 1 FROM
+// asset_volume_24h ...)`. A tokenized treasury or money-market fund is held, not
+// traded, and can carry a nine-figure supply while absent from every 24h volume
+// rollup, so that gate would silently drop a contract the membership decision
+// admitted. Here the set is bounded by MEMBERSHIP (the contracts an independent
+// party named), so there is no pagination or ranking.
 //
 // Shared with the listing, deliberately: the price side is the SAME rollup under
 // the SAME floor (asset_price_snapshot with `computed_at > now() -
