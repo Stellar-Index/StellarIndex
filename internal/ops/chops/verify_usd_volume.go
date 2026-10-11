@@ -35,9 +35,6 @@ import (
 //
 // Otherwise report-only and read-only against Postgres.
 //
-// Usage: verify-usd-volume [-config PATH] [-day YYYY-MM-DD] [-days N]
-// [-min-rows N] [-max-list N].
-//
 // Exit: non-zero iff an EXACT-tier identity is violated. A clean run says
 // nothing about tier-3/4 accuracy, and the report says so.
 func verifyUSDVolume(args []string) error {
