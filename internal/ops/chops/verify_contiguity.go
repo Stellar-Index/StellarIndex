@@ -23,26 +23,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// verifyContiguity is the stellarindex-ops `verify-contiguity` subcommand —
-// a standing ADR-0034 data-verification tool for the ClickHouse raw lake.
-// Two checks:
-//
-//  1. Ledger substrate contiguity: every ledger_seq in [-from,-to] must be
-//     present in stellar.ledgers (ADR-0034's "100% coverage" claim is
-//     provable only if the substrate is gap-free). Un-merged duplicate rows
-//     are reported alongside, informational.
-//  2. stellar.ledger_entry_changes coverage vs. tx-bearing ledgers: every
-//     ledger with tx_count>0 should have at least one entry_changes row
-//     at/above -ec-floor. The default (0) derives the floor from the lake
-//     (see resolveECFloor), so every hole above that edge is a failure.
-//
-// Exit code = (ledger gaps) + (entry-change deficiencies at/above
-// -ec-floor), capped at 255 ("exit code = number of failed checks", as in
-// reconcile-balances). Backfill-pending entries below -ec-floor are reported
-// but never counted; the exempted range is always printed.
-//
-// Flags: [-config] [-ch-addr] [-from] [-to] [-ec-floor] [-check
-// ledgers|entrychanges|all]. Read-only; ClickHouse only.
+// verifyContiguity is the verify-contiguity subcommand, a read-only ClickHouse check of the raw
+// lake (ADR-0034). Check 1: every ledger_seq in [-from,-to] is present in stellar.ledgers.
+// Check 2: every tx-bearing ledger has an entry_changes row at/above -ec-floor (0 derives it
+// from the lake, see resolveECFloor). The exit code is the failure count capped at 255;
+// backfill-pending entries below the floor are reported, never counted.
 func verifyContiguity(args []string) error {
 	fs := flag.NewFlagSet("verify-contiguity", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr (this tool reads ClickHouse only, never Postgres); a missing/unreadable file is tolerated when -ch-addr is passed explicitly")
@@ -136,11 +121,8 @@ func ecFloorFlagLabel(v uint32) string {
 	return fmt.Sprintf("%d", v)
 }
 
-// resolveECFloor turns the -ec-floor flag into Check 2's effective floor and
-// prints the range it exempts from the hard gate. A non-zero flag is the
-// operator's explicit choice; zero derives the floor from the lake itself
-// (clickhouse.QueryECLowerEdge) rather than a constant that goes stale as
-// ch-backfill extends coverage downward.
+// resolveECFloor turns -ec-floor into Check 2's effective floor and prints the exempted range.
+// Zero derives it from the lake (clickhouse.QueryECLowerEdge) so it tracks ch-backfill.
 func resolveECFloor(ctx context.Context, addr string, flagFloor, from, to uint32) (uint32, error) {
 	if flagFloor != 0 {
 		fmt.Println(ecFloorExemptionLine(flagFloor, from, "operator-supplied -ec-floor"))
@@ -178,13 +160,8 @@ func ecFloorExemptionLine(floor, from uint32, source string) string {
 	return fmt.Sprintf("ec-floor=%d (%s): EXEMPTING [%d,%d] from the hard gate (reported as backfill-pending, not counted)", floor, source, from, floor-1)
 }
 
-// resolveCHAddr implements "-ch-addr overrides; unset falls back to
-// -config's clickhouse_addr; -config itself is best-effort" — mirrors
-// internal/ops/ingest/state_snapshot.go's resolveArchiveTarget, which
-// tolerates a missing/invalid -config the same way for a tool that doesn't
-// strictly need the full config (this one touches ClickHouse only, never
-// Postgres, so a config that fails Validate() on an unrelated section
-// shouldn't block a ClickHouse-only read).
+// resolveCHAddr prefers -ch-addr, then -config's clickhouse_addr. A missing or invalid -config
+// is tolerated because this tool reads only ClickHouse.
 func resolveCHAddr(chAddrFlag, cfgPath string) string {
 	if chAddrFlag != "" {
 		return chAddrFlag
@@ -207,18 +184,12 @@ func toLedgerSeq(flagName string, v uint64) (uint32, error) {
 }
 
 // independentTipShortfallTolerance is the safety margin between the
-// independent tip and the ClickHouse lake's own max ledger before a
-// verifier fails closed. Mirrors run-compute-completeness.sh's
-// 100-ledger margin for the same reason: the served/lake tier legitimately
-// trails the live cursor by seconds under normal load, so a shortfall
-// below this is expected lag, not truncation.
+// independent tip and the lake's own max ledger before a verifier fails closed. It matches
+// run-compute-completeness.sh: a smaller shortfall is normal lag, not truncation.
 const independentTipShortfallTolerance = 100
 
-// independentTip is one reading of the tip from a source OTHER than the
-// ClickHouse table under audit. A verifier that took its bound from
-// stellar.ledgers' own max(ledger_seq) can never observe a
-// restore that died short or a stalled ingest, because the missing
-// ledgers are also missing from the range it checks.
+// independentTip is a tip reading from a source other than the table under audit. A bound taken
+// from stellar.ledgers' own max(ledger_seq) cannot reveal a short restore or stalled ingest.
 type independentTip struct {
 	source string
 	seq    uint32
@@ -363,11 +334,8 @@ func contiguityChecksRunLabel(ledgers, entryChanges bool) string {
 	return strings.Join(ran, ",")
 }
 
-// contiguityBucketStride is the windowed-scan bucket width both checks use
-// once the headline query finds a deficit — 1M ledgers, matching the lake's
-// own partitioning (PARTITION BY intDiv(ledger_seq, 1000000), see
-// recognition.go's recognitionScanWindow) so each window query touches
-// exactly one lake partition.
+// contiguityBucketStride is the windowed-scan width, 1M ledgers, matching the lake's
+// PARTITION BY intDiv(ledger_seq, 1000000) so each window touches one partition.
 const contiguityBucketStride = 1_000_000
 
 // contiguityGapRangeCap bounds how many individual gap ranges Check 1's
@@ -376,12 +344,8 @@ const contiguityBucketStride = 1_000_000
 // never turn this report into an unbounded print loop.
 const contiguityGapRangeCap = 200
 
-// runLedgerContiguityCheck is Check 1: the substrate contiguity check. It
-// starts with the cheap whole-range headline (QueryLedgerRangeCoverage); if
-// that finds no deficit, it stops there. Only when a deficit exists does it
-// pay for the windowed bucket scan + the bounded per-bucket gap-range
-// localization pass, so a healthy lake's steady-state cron run costs one
-// query.
+// runLedgerContiguityCheck is Check 1. It runs one cheap whole-range query and pays for the
+// windowed scan and gap localization only when a deficit exists.
 func runLedgerContiguityCheck(ctx context.Context, addr string, from, to uint32) (uint64, error) {
 	fmt.Printf("\n=== verify-contiguity: check 1 — ledger substrate contiguity [%d,%d] ===\n", from, to)
 
@@ -461,13 +425,9 @@ func (g gapRange) Count() uint64 {
 	return uint64(g.To-g.From) + 1
 }
 
-// groupMissingIntoRanges collapses a SORTED, ASCENDING slice of individual
-// missing ledger_seq values (as returned by
-// clickhouse.QueryMissingLedgerSeqs) into contiguous [From,To] ranges,
-// capped at capRanges entries. truncated=true when more ranges existed
-// beyond the cap, so the caller can print a "list truncated" note instead
-// of silently under-reporting. Pure — no ClickHouse dependency — so it's
-// unit-testable without a live lake.
+// groupMissingIntoRanges collapses sorted ascending missing ledger_seq values into [From,To]
+// ranges, capped at capRanges. truncated reports more ranges than the cap, so the caller never
+// silently under-reports.
 func groupMissingIntoRanges(missing []uint32, capRanges int) (ranges []gapRange, truncated bool) {
 	i := 0
 	for i < len(missing) {
@@ -486,13 +446,8 @@ func groupMissingIntoRanges(missing []uint32, capRanges int) (ranges []gapRange,
 	return ranges, false
 }
 
-// runEntryChangesCheck is Check 2: stellar.ledger_entry_changes coverage vs.
-// tx-bearing ledgers, split at the effective -ec-floor (resolveECFloor;
-// flagFloor 0 = auto) into a below-floor (backfill-pending, informational)
-// and at/above-floor (hard-gated) sub-range via ecFloorSegments BEFORE
-// windowing — so every window handed to QueryECWindowCoverage sits entirely
-// on one side of the floor and its Missing() count is never ambiguous about
-// which zone it belongs to.
+// runEntryChangesCheck is Check 2. It splits the range at the effective floor before windowing,
+// so every window sits wholly on one side and its Missing() count is unambiguous.
 func runEntryChangesCheck(ctx context.Context, addr string, from, to, flagFloor uint32) (deficiency, pending uint64, err error) {
 	fmt.Printf("\n=== verify-contiguity: check 2 — ledger_entry_changes coverage [%d,%d] (ec-floor=%s) ===\n",
 		from, to, ecFloorFlagLabel(flagFloor))
@@ -534,12 +489,8 @@ func runEntryChangesCheck(ctx context.Context, addr string, from, to, flagFloor 
 	return deficiency, pending, nil
 }
 
-// ecFloorSegments splits [from,to] into the below-ecFloor (backfill-pending)
-// and at/above-ecFloor (live-covered, hard-gated) sub-ranges Check 2 scans
-// separately. hasPending/hasGated report whether that segment actually
-// overlaps [from,to] — e.g. -ec-floor <= -from means the whole requested
-// range is gated and there is no pending segment at all. Pure — no
-// ClickHouse dependency — so it's unit-testable without a live lake.
+// ecFloorSegments splits [from,to] into the below-floor (pending) and at/above-floor (gated)
+// sub-ranges; hasPending/hasGated report whether each segment overlaps [from,to].
 func ecFloorSegments(from, to, ecFloor uint32) (pendingFrom, pendingTo uint32, hasPending bool, gatedFrom, gatedTo uint32, hasGated bool) {
 	if ecFloor > from {
 		pendingFrom = from
@@ -560,20 +511,11 @@ func ecFloorSegments(from, to, ecFloor uint32) (pendingFrom, pendingTo uint32, h
 	return pendingFrom, pendingTo, hasPending, gatedFrom, gatedTo, hasGated
 }
 
-// formatCoverageLine renders one window's report line — shared by both
-// checks, since both are (from, to, expected-count, present-count) shaped:
-// Check 1 passes (Expected, Present); Check 2 passes (TxLedgers,
-// ECCoveredTxLedgers). tag carries the check-specific verdict ("GAP", "OK",
-// "DEFICIENCY (at/above -ec-floor)", "BACKFILL-PENDING (...)"). Pure — no
-// ClickHouse dependency — so it's unit-testable without a live lake.
+// formatCoverageLine renders one window's report line for both checks; tag carries the
+// check-specific verdict.
 //
-// missing is a SATURATING expected-present. Since Check 2's present
-// side is a SUBSET of its expected side (tx-bearing ledgers WITH
-// entry-change coverage, not a standalone entry_changes cardinality), so
-// present > expected is unreachable there and the saturation is pure
-// defence-in-depth — matching clickhouse.ECWindowCoverage.Missing(), and
-// keeping the displayed count from wrapping uint64 if a caller ever hands
-// over unrelated cardinalities again.
+// missing saturates at zero like clickhouse.ECWindowCoverage.Missing(), so a present count above
+// expected can never wrap the uint64.
 func formatCoverageLine(from, to uint32, expected, present uint64, tag string) string {
 	var missing uint64
 	if present < expected {

@@ -24,22 +24,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// reconcileBalances is the `reconcile-balances` subcommand, an
-// ADR-0033-style acceptance test that stellar.ledger_entry_changes reflects
-// true on-chain state: it compares our latest recorded native (XLM) balance
-// for an account against an independent source.
-//
-// That source is public Horizon. ADR-0001 bans Horizon from the production
-// ingest pipeline; this is a read-only, operator-invoked verifier that needs
-// truth independent of our pipeline, and no production path depends on it.
-//
-// Usage: reconcile-balances (-account G... | -sample N) [-ch-addr H:P]
-// [-horizon URL] [-tolerance-stroops N] [-recent-ledgers N]
-// [-min-recent-ledger N] [-sample-seed N] [-sleep-ms N] [-timeout DUR].
-// Exactly one of -account/-sample is required. The exit code is the number of
-// MISMATCHes (capped at 255), so cron/Healthchecks.io can consume it like
-// scripts/dev/r1-smoke.sh; [reconcileExitError] lists the other failing
-// tallies.
+// reconcileBalances is the reconcile-balances subcommand: it compares our latest native balance
+// per account against public Horizon, which is allowed here only as an operator-invoked,
+// read-only truth source (ADR-0001 bans it from ingest). Exactly one of -account/-sample is
+// required; the exit code is the MISMATCH count capped at 255, see [reconcileExitError].
 func reconcileBalances(args []string) error { //nolint:funlen // linear: flag parse+validate, resolve account set, per-account loop, report.
 	fs := flag.NewFlagSet("reconcile-balances", flag.ContinueOnError)
 	account := fs.String("account", "", "reconcile exactly this account (G...); mutually exclusive with -sample")
@@ -157,11 +145,8 @@ func reconcileSampleSeed(f reconcileSampleFrame) uint64 {
 	return binary.LittleEndian.Uint64(b[:])
 }
 
-// reconcileResolveAccounts turns the parsed -account/-sample flags
-// into the concrete account list to check, doing the -sample
-// ClickHouse lookup when needed. Split out of reconcileBalances to
-// keep that function's flag-handling linear and this file's per-piece
-// testability high.
+// reconcileResolveAccounts turns the -account/-sample flags into the concrete account list,
+// doing the -sample ClickHouse lookup when needed.
 func reconcileResolveAccounts(ctx context.Context, chAddr, account string, sample int, frame reconcileSampleFrame) ([]string, error) {
 	if account != "" {
 		return []string{account}, nil
@@ -194,40 +179,23 @@ func reconcileResolveAccounts(ctx context.Context, chAddr, account string, sampl
 type reconcileOutcome string
 
 const (
-	// outcomeMatch: our latest-recorded balance equals the current
-	// chain balance within tolerance — holds when the account has had
-	// no change since our last snapshot, since live ingest captures
-	// every account-balance change. This is the invariant this whole
-	// tool exists to check.
+	// outcomeMatch: our latest balance equals the chain balance within tolerance. This is the
+	// invariant the tool exists to check.
 	outcomeMatch reconcileOutcome = "MATCH"
 	// outcomeMismatch: balances disagree by more than -tolerance-stroops.
 	outcomeMismatch reconcileOutcome = "MISMATCH"
-	// outcomeNoData: zero rows in our lake for this account — outside
-	// our coverage. Reported, not counted as a mismatch UNLESS this is
-	// the sole result of a single -account run, in which case it fails
-	// the run (the operator asserted this specific account
-	// should be covered).
+	// outcomeNoData: zero rows in our lake for this account. Not a mismatch, unless it is the
+	// sole result of a single -account run, which fails the run.
 	outcomeNoData reconcileOutcome = "NO_DATA"
-	// outcomeMergedOrAbsent: Horizon 404'd. If we hold a balance>0 for
-	// this account (OurStroops > 0 — the account existed in our data but
-	// is gone from the chain now), that's a real data-staleness signal
-	// and reconcileExitError fails the run on it; a merged
-	// account with a zero recorded balance is the expected/healthy shape
-	// and stays report-only.
+	// outcomeMergedOrAbsent: Horizon 404'd. A positive OurStroops is a staleness signal that
+	// fails the run in reconcileExitError; a zero recorded balance is healthy and report-only.
 	outcomeMergedOrAbsent reconcileOutcome = "MERGED_OR_ABSENT"
-	// outcomeError: an OUR-SIDE failure — the ClickHouse read for this
-	// account failed. This is the only outcome counted toward the
-	// -max-error-rate guard, because it means WE could not produce our
-	// value; a run dominated by these verified nothing reliable.
+	// outcomeError: our ClickHouse read failed. Only this outcome counts toward the
+	// -max-error-rate guard.
 	outcomeError reconcileOutcome = "ERROR"
-	// outcomeTruthUnavailable: the INDEPENDENT truth source (Horizon) was
-	// unreachable or returned an unparseable body — availability, not a
-	// verdict on our data, exactly like F5's SKIPPED for verify-served-values.
-	// Reported separately and DELIBERATELY EXCLUDED from the error rate:
-	// a Horizon rate-limit episode must not fail an otherwise-healthy -sample
-	// gate. (A run where truth was dark for every requested account still
-	// fails, via the verified==0 guard in reconcileExitError — zero
-	// MATCH/MISMATCH means nothing was actually compared, in either mode.)
+	// outcomeTruthUnavailable: Horizon was unreachable or unparseable. Excluded from the error
+	// rate so a rate-limit episode cannot fail a healthy -sample gate; a run with no
+	// comparisons at all still fails via the verified==0 guard in reconcileExitError.
 	outcomeTruthUnavailable reconcileOutcome = "TRUTH_UNAVAILABLE"
 )
 
@@ -244,12 +212,8 @@ type reconcileResult struct {
 	Err        error
 }
 
-// reconcileOneAccount runs the full three-step reconciliation
-// (AGENTS.md task doc "What it does" #1-3) for a single account:
-// read our balance from ClickHouse, fetch Horizon's current native
-// balance, classify. Never returns an error itself — every failure
-// mode is folded into the returned reconcileResult's Outcome/Err so
-// the caller's loop stays uniform across N accounts.
+// reconcileOneAccount reads our balance, fetches Horizon's, and classifies. It never returns an
+// error; every failure is folded into the result's Outcome/Err.
 func reconcileOneAccount(ctx context.Context, client *http.Client, chAddr, horizonBase, account string, toleranceStroops int64) reconcileResult {
 	res := reconcileResult{Account: account}
 
@@ -308,13 +272,8 @@ func classifyBalances(ourStroops, refStroops, toleranceStroops int64) (reconcile
 	return outcomeMismatch, delta
 }
 
-// bigStroopsToInt64 downcasts a stroop amount parsed via math/big
-// into int64, the type stellar.ledger_entry_changes.balance and this
-// tool's comparison arithmetic use. XLM's total supply is bounded
-// well under int64 range (unlike arbitrary Soroban i128 amounts,
-// which is exactly why that column is Int64 not NUMERIC — see
-// deploy/clickhouse/tier1_schema.sql), so this should never fail in
-// practice; it's a defensive guard, not an expected path.
+// bigStroopsToInt64 downcasts a stroop amount to int64, the column type. Native XLM supply is far
+// below int64 range (unlike Soroban i128 amounts), so the failure path is a defensive guard.
 func bigStroopsToInt64(v *big.Int) (int64, error) {
 	if !v.IsInt64() {
 		return 0, fmt.Errorf("reconcile-balances: stroop amount %s does not fit int64 (unexpected for XLM)", v.String())
@@ -355,13 +314,9 @@ const horizonMaxRetriesOn429 = 3
 // DoS guard, not an expected limit.
 const horizonMaxResponseBytes = 1 << 20 // 1 MiB
 
-// fetchHorizonNativeBalance GETs Horizon's /accounts/{account} and
-// returns the native-XLM balance in exact stroops (never float64 —
-// see xlmDecimalToStroops). status is the final HTTP status observed
-// (0 on a pure transport failure); callers treat 404 as
-// MERGED_OR_ABSENT rather than an error (see reconcileOneAccount).
-// Retries once per 429 up to horizonMaxRetriesOn429, honoring
-// Retry-After when present — "rate-limit Horizon politely."
+// fetchHorizonNativeBalance returns Horizon's native balance in exact stroops, never float64.
+// status is the final HTTP status (0 on transport failure); 404 means MERGED_OR_ABSENT. It
+// retries 429s up to horizonMaxRetriesOn429, honoring Retry-After.
 func fetchHorizonNativeBalance(ctx context.Context, client *http.Client, base, account string) (*big.Int, int, error) {
 	url := strings.TrimRight(base, "/") + "/accounts/" + account
 	for attempt := 0; ; attempt++ {
@@ -417,11 +372,8 @@ func fetchHorizonNativeBalanceOnce(ctx context.Context, client *http.Client, url
 	}
 }
 
-// horizonRetryAfter parses an RFC 7231 Retry-After (seconds form —
-// Horizon does not use the HTTP-date form) into a bounded backoff
-// duration. Falls back to a fixed 3s when the header is absent or
-// unparseable; caps at 30s so a misbehaving/huge value can't stall a
-// -sample run for an unreasonable time.
+// horizonRetryAfter parses a seconds-form Retry-After into a backoff. It falls back to 3s when
+// absent or unparseable and caps at 30s so a huge value cannot stall a -sample run.
 func horizonRetryAfter(v string) time.Duration {
 	if v != "" {
 		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
@@ -453,12 +405,8 @@ func parseHorizonNativeBalance(body []byte) (*big.Int, error) {
 // xlmStroopDecimals is XLM's fixed 7 decimal places: 1 XLM = 10^7 stroops.
 const xlmStroopDecimals = 7
 
-// xlmDecimalToStroops converts Horizon's decimal-string XLM balance
-// (e.g. "1234.5670000") into an EXACT stroop count. Reuses
-// internal/sources/external/scale's exact decimal-string parser — the
-// same helper every off-chain source in this repo already uses to
-// avoid the float64-precision trap ADR-0003 warns about for money.
-// Never routes through float64.
+// xlmDecimalToStroops converts Horizon's decimal-string balance (e.g. "1234.5670000") to exact
+// stroops via the shared scale parser, never through float64 (ADR-0003).
 func xlmDecimalToStroops(s string) (*big.Int, error) {
 	v, err := scale.DecimalStringToScaledInt(s, xlmStroopDecimals)
 	if err != nil {
@@ -485,14 +433,10 @@ func clampExitCode(n int) int {
 // rate above -max-error-rate, on verifying zero accounts or fewer than
 // requested (either mode), and on staleMergedHeld.
 //
-// `errored` counts OUR-side (ClickHouse) failures only; Horizon outages are
-// outcomeTruthUnavailable and excluded, so a Horizon rate-limit cannot fail a
-// healthy -sample gate. `requested` is how many accounts the run set out to
-// check; `n` how many produced a result (it trails `requested` when
-// cancelled); `verified` how many were MATCH or MISMATCH, the only outcomes
-// where a comparison happened. staleMergedHeld counts MERGED_OR_ABSENT
-// accounts we still hold a positive balance for: Horizon says the account is
-// gone but our lake says it has funds.
+// errored counts our-side (ClickHouse) failures only; Horizon outages are excluded. requested is
+// the intended account count, n the results produced (fewer when cancelled), and verified the
+// MATCH or MISMATCH count. staleMergedHeld counts accounts Horizon reports gone that we still
+// hold funded.
 func reconcileExitError(mismatches, errored, n, requested, verified int, maxErrorRate float64, staleMergedHeld int) (reason string, err error) {
 	// Too many OUR-side errors ⟹ verified nothing reliable; fail even at
 	// zero mismatches.
@@ -535,15 +479,8 @@ func reconcileExitError(mismatches, errored, n, requested, verified int, maxErro
 	return "", &opsutil.ExitCodeError{Code: clampExitCode(mismatches)}
 }
 
-// countVerified returns how many results were MATCH or MISMATCH — the only
-// outcomes meaning an actual comparison happened; NO_DATA,
-// MERGED_OR_ABSENT, ERROR and TRUTH_UNAVAILABLE all mean nothing was
-// compared for that account. Pure — no I/O — unit-testable. Replaces
-// sampleConfirmedNothing: the old helper asked only "did
-// anything MATCH", was consulted only in -sample mode, and treated a
-// TRUTH_UNAVAILABLE-only run as distinct from "confirmed nothing" — so a
-// single -account run dark on Horizon slipped past reconcileExitError as
-// a clean pass.
+// countVerified returns how many results were MATCH or MISMATCH, the only outcomes where a
+// comparison happened.
 func countVerified(results []reconcileResult) int {
 	n := 0
 	for _, r := range results {
@@ -555,11 +492,8 @@ func countVerified(results []reconcileResult) int {
 }
 
 // printReconcileReport writes the full per-account + summary report to w and
-// returns the MISMATCH count (the caller's exit code), the ERROR count (used
-// by the caller's fail-open guard — a mostly-errored run isn't a pass),
-// and staleMergedHeld — the count of MERGED_OR_ABSENT accounts where we still
-// hold a positive recorded balance (Horizon says gone, we say funded
-// — a data-staleness signal, not report-only).
+// returns the MISMATCH count (the exit code), the ERROR count (for the fail-closed error-rate
+// guard) and staleMergedHeld, the MERGED_OR_ABSENT accounts we still hold funded.
 func printReconcileReport(w io.Writer, results []reconcileResult) (mismatched, errored, staleMergedHeld int) {
 	var matched, noData, mergedAbsent, truthUnavail int
 	var mismatchRows, errorRows, staleMergedRows []reconcileResult

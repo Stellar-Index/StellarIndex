@@ -17,23 +17,12 @@ import (
 	"time"
 )
 
-// verify-served-values reconciles values we SERVE against independent ground
-// truth, because sound code does not prove a served value right. It emits
-// node_exporter textfile gauges so drift alerts within a day:
-//   - XLM circulating + total supply vs the SDF lumen API
-//     (dashboard.stellar.org/api/v3/lumens).
-//   - USDC-on-Stellar total supply vs Stellar Expert's asset API.
-//   - The configured SDF reserve-account LIST vs SDF's published list
-//     (sdf_reserve_list.go); the 2% value tolerance cannot see one added or
-//     retired account.
-//
-// Price cross-checks belong to the divergence worker, served-vs-lake counts to
-// compute-completeness. Every ground truth here is point-in-time state, never
-// a windowed counter, so both sides measure the same thing.
-//
-// Flags: -api, -config, -textfile (served_values.prom). Empty -textfile prints
-// to stdout; empty -config skips the reserve-list check. Exits 1 when any
-// check failed or every VALUE check was skipped (servedValuesExitError).
+// verify-served-values reconciles served values against independent ground truth and emits
+// node_exporter textfile gauges: XLM circulating and total supply vs the SDF lumen API, USDC
+// total supply vs Stellar Expert, and the configured SDF reserve-account list vs SDF's
+// published list (sdf_reserve_list.go). Every truth is point-in-time state, never a windowed
+// counter. -textfile (served_values.prom) empty prints to stdout; empty -config skips the list
+// check.
 func verifyServedValues(args []string) error {
 	fs := flag.NewFlagSet("verify-served-values", flag.ContinueOnError)
 	apiBase := fs.String("api", "http://127.0.0.1:3000", "Base URL of our API (loopback on r1)")
@@ -99,18 +88,11 @@ func servedValuesVerdict(w io.Writer, results []servedValueResult, list *reserve
 	return servedValuesExitError(len(results), failed, skipped)
 }
 
-// servedValuesExitError decides the run's exit status from its tally. total
-// and skipped count the VALUE checks only; failed counts any check, the
-// reserve-list check included. Any FAILED check fails the run. A run whose
-// value checks ALL skipped also fails CLOSED: every truth source for a served
-// number was dark, so the run verified no served value and a one-shot gate
-// must not read that as a clean pass (F5 — the
-// served_value_persistently_skipped alert catches a SUSTAINED dark source, but
-// a single run must fail closed too). The list check is excluded from that
-// denominator because it verifies a config list, not a served number: a
-// verified list must not turn a run with every value source dark into exit 0.
-// A PARTIAL skip stays clean, and a lone third-party outage (the list's
-// source included) must not fail the daily cron. Pure — unit-testable.
+// servedValuesExitError decides the exit status. total and skipped count VALUE checks only;
+// failed counts any check, the list check included. A failed check fails the run, and so does
+// a run where every value check skipped (fail closed: no served value was verified). The list
+// check stays out of that denominator so a verified list cannot mask dark value sources. A
+// partial skip stays clean.
 func servedValuesExitError(total, failed, skipped int) error {
 	if failed > 0 {
 		return fmt.Errorf("%d served-value check(s) failed", failed)
@@ -121,12 +103,9 @@ func servedValuesExitError(total, failed, skipped int) error {
 	return nil
 }
 
-// servedValueResult is one reconciled check. ok and skipped are
-// mutually exclusive and jointly encode three states: verified-pass
-// (ok), verified-drift (neither), and not-verified (skipped — the
-// truth source was dark). skipped is NOT a pass: it must never assert
-// served_value_ok=1, or a persistently-dark ground truth would mask a
-// real drift behind a green gauge (the F5 fail-open).
+// servedValueResult is one reconciled check. ok and skipped are mutually exclusive: ok is a
+// pass, neither is drift, skipped is an unverified dark truth source. skipped must never assert
+// served_value_ok=1, or a dark truth source would hide drift behind a green gauge.
 type servedValueResult struct {
 	name      string
 	served    string // decimal string as served
@@ -280,15 +259,9 @@ func settleRecheck(chk servedValueCheck, first supplyObservation, firstResult se
 	return r
 }
 
-// classifyObservation classifies one read: within tolerance (ok),
-// drifted (fail), served-side fetch error
-// (fail — our own surface must answer), truth-side outage (SKIPPED,
-// NaN rel_err — a dark ground-truth source is availability, not
-// evidence our value is wrong, so it doesn't fail the run; but it is
-// NOT a pass either — skipped never sets ok, so it can't emit
-// served_value_ok=1 and hide a real drift behind a green gauge. A
-// persistently-dark source shows up as a lingering served_value_skipped=1
-// gauge and stale rel_err, which the alerting warns on separately).
+// classifyObservation classifies one read: within tolerance is ok, drift is a fail, and a
+// served-side fetch error is a fail. A truth-side outage is SKIPPED with NaN rel_err: it is
+// availability, not evidence against our value, and never a pass.
 func classifyObservation(chk servedValueCheck, o supplyObservation) servedValueResult {
 	r := servedValueResult{name: chk.name, tolerance: chk.tolerance, note: chk.note}
 	switch {
@@ -354,12 +327,8 @@ func renderServedValueProm(results []servedValueResult, list *reserveListResult,
 		b.line(fmt.Sprintf(`stellarindex_served_value_ok{check=%q} %d`, r.name, ok))
 	}
 	if list != nil {
-		// The list check shares served_value_skipped so the
-		// persistently_skipped alert covers a dark published list,
-		// but carries its verdict in its own family: a list drift is
-		// a CONFIG-vs-publication finding with an account-level
-		// remedy, not a served number outside a tolerance, so it
-		// gets its own alert rather than riding served_value_ok.
+		// The list check shares served_value_skipped so the persistently-skipped alert covers it,
+		// but its verdict has its own family: list drift is a config finding, not a tolerance miss.
 		skipped := 0
 		if list.skipped {
 			skipped = 1
@@ -413,13 +382,10 @@ func writeAtomic(path, body string) error {
 
 // ─── served-side readers ────────────────────────────────────────────
 
-// servedSupplyField reads a supply field from our own
-// GET /v1/assets/{id} F2 block. The F2 supply fields are served as
-// decimal strings in BASE UNITS (stroops for classic; verified
-// empirically — served XLM total was exactly 1e7 × the
-// natural-unit truth), so the value is scaled by 10^-decimals before
-// comparison against natural-unit ground truth. supply_as_of_ledger is
-// read alongside so a drift recheck can tell a new snapshot from a stale one.
+// servedSupplyField reads a supply field from our GET /v1/assets/{id}. Supply is a decimal
+// string in base units (stroops for classic), so it is scaled by 10^-decimals before comparing
+// with natural-unit truth. supply_as_of_ledger is read alongside so a recheck can tell a new
+// snapshot from a stale one.
 func servedSupplyField(assetID, field string, decimals int) func(context.Context, *http.Client, string) (servedReading, error) {
 	return func(ctx context.Context, c *http.Client, apiBase string) (servedReading, error) {
 		var env struct {

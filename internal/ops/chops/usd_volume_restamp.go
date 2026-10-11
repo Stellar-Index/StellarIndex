@@ -20,25 +20,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// usdVolumeRestamp is the `usd-volume-restamp` subcommand, the corrective
-// WRITE half of verify-usd-volume (docs/operations/usd-volume-rederive-*.md
-// §5). -tier picks what it repairs:
+// usdVolumeRestamp is the corrective write half of verify-usd-volume
+// (docs/operations/usd-volume-rederive-*.md §5). -tier picks the repair: exact (SQL identity),
+// xlm-base and xlm-quote (re-derived in Go from prices_1m), or cex-fx (from fx_quotes).
 //
-//	exact (default): tiers 1/2/2b, a pure rescaling of an amount on the row,
-//	  repairable as a SQL identity.
-//	xlm-base: the tier-4 XLM anchor, re-derived in Go through the store's
-//	  resolver because it depends on prices_1m at the row's ts
-//	  (usd_volume_restamp_xlmbase.go).
-//	xlm-quote: its mirror, XLM in the quote leg.
-//	cex-fx: CEX trades quoted in non-USD fiat, valued from fx_quotes.
-//
-// Every tier: DRY RUN by default; bounded, walked one -slice at a time;
-// refused over the live ledgerstream cursor (one writer) unless
-// -allow-live-overlap; idempotent and resumable; reversible through
-// usd_volume_restamp_log, written in the UPDATE's own transaction. An
-// unpriceable row is reported and left as is, never blanked or given a
-// second-choice estimate. Token/token pairs are excluded: their only rate is
-// the tier-3b bridge a counterparty authors.
+// Every tier is a dry run by default, refuses to run over the live ledgerstream cursor (one
+// writer) unless -allow-live-overlap, and is reversible through usd_volume_restamp_log. An
+// unpriceable row is reported and left as is, never blanked or estimated. Token/token pairs are
+// excluded because their only rate is a counterparty-authored bridge.
 func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, validate the tier's flag set, open+wire the store, run the live-overlap guard, dispatch — splitting scatters each guard away from the flag it guards.
 	fs := flag.NewFlagSet("usd-volume-restamp", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml (Postgres DSN + the operator's USD peg list)")
@@ -250,11 +239,8 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	return nil
 }
 
-// exactRestampSummary is the exact tier's closing block, shared by the day
-// walk and the chunk walk so the two cannot report the same run
-// differently: what was written, the CAGG refreshes the write does not do
-// (the acceptance check below CANNOT see them — it reads `trades`
-// directly), and the acceptance command for the window that ran.
+// exactRestampSummary is the exact tier's closing block, shared by the day and chunk walks. The
+// acceptance check reads trades directly, so it cannot see the CAGG refreshes this write skips.
 func exactRestampSummary(cfgPath string, from, to time.Time, rows, groupDays int64, write bool) string {
 	var b strings.Builder
 	verb := "would restamp"
@@ -294,41 +280,20 @@ func restampTierIsEstimated(tier string) bool {
 // UPDATE transaction may decompress out of a compressed chunk.
 const defaultRestampBatch = 2000
 
-// restampEstimatedOnlyFlags are the flags that only mean something for
-// an ESTIMATED tier (xlm-base, xlm-quote, cex-fx). Passing one with
-// `-tier exact` is an ERROR rather than a silent no-op: an operator who
-// typed `-report` and got a write run, or who typed `-min-rel-delta 0.3`
-// and got every row rewritten, has been actively misled by the tool on a
-// money column.
-//
-// `-chunks` and its own flags are NOT on this list: both tiers write into
-// the same compressed chunks and pay the same price for it (the exact
-// tier's own population measured ~1,574 rows/min in place), so both drive
-// the same chunk walk. What stays here is what the exact tier has no
-// meaning FOR: the report/sample of an estimated re-derive, its relative-
-// move threshold, its separate `-max-generation` (the exact walk's guard
-// is the run's own generation), and the two row-batch knobs — the exact
-// tier's per-transaction bound is its `-slice` window, so `-batch` and
-// `-chunk-batch` would be silently ignored.
+// restampEstimatedOnlyFlags only mean something for an estimated tier. Passing one with
+// -tier exact is an error, not a silent no-op, because the operator would be misled on a money
+// column. The chunk flags are not listed since both tiers share the chunk walk.
 var restampEstimatedOnlyFlags = []string{"report", "sample", "batch", "min-rel-delta", "max-generation", "chunk-batch"}
 
-// restampCEXFXOnlyFlags are the flags that only mean something for
-// `-tier cex-fx`. Same posture, in the other direction: `-fx-max-staleness`
-// typed with `-tier xlm-base` would be an operator narrowing a tolerance
-// that tier does not have, and reading the run's report as if it had.
+// restampCEXFXOnlyFlags only mean something for -tier cex-fx; other tiers have no such tolerance.
 var restampCEXFXOnlyFlags = []string{"fx-max-staleness"}
 
-// restampChunkOnlyFlags are the flags that only mean something with
-// `-chunks`. Same posture as [restampEstimatedOnlyFlags]: passing one
-// without the mode is an error, not a silent no-op — `-min-free-bytes`
-// typed without `-chunks` would otherwise run the slow in-place walk the
-// operator was trying to avoid.
+// restampChunkOnlyFlags only mean something with -chunks; without it they would silently run
+// the slow in-place walk, so they are an error.
 var restampChunkOnlyFlags = []string{"chunk-batch", "min-free-bytes", "generation", "allow-live-adjacent", "resume-paused-policy"}
 
-// validateRestampChunkFlags rejects a chunk-only flag passed without
-// -chunks, and -batch passed WITH -chunks (the chunk walk's batch is
-// -chunk-batch; accepting -batch and ignoring it would run 2,000-row
-// transactions where 20,000 were asked for, silently).
+// validateRestampChunkFlags rejects a chunk-only flag without -chunks, and -batch with -chunks,
+// which would be silently ignored in favour of -chunk-batch.
 func validateRestampChunkFlags(chunks bool, set map[string]bool) error {
 	if !chunks {
 		var stray []string
@@ -394,11 +359,8 @@ func quoteAll(in []string) []string {
 	return out
 }
 
-// validateRestampFXStaleness bounds the cex-fx as-of tolerance. Wider
-// than the live insert path's own fx_quotes lookback is refused rather
-// than honoured: the resolver declines a quote that stale, so the run
-// would report a tolerance it never actually applied — and any row it
-// did write past that bound would carry a value InsertTrade would not.
+// validateRestampFXStaleness bounds the cex-fx as-of tolerance to the live insert path's own
+// fx_quotes lookback; the resolver declines staler quotes, so a wider value would never apply.
 func validateRestampFXStaleness(d time.Duration) error {
 	switch {
 	case d <= 0:
@@ -417,11 +379,9 @@ type prices1mRetentionReader interface {
 	Prices1mRetentionArmed(ctx context.Context) (bool, error)
 }
 
-// checkRestampPrices1mRetention refuses a run while migration 0156's
-// prices_1m retention policy is armed. An estimated tier values rows from
-// prices_1m, so over a dropped range every row reads "anchor declined";
-// every -write obliges the CAGG follow-up, and the policy's next drop
-// undoes it. A dry exact-tier run touches neither and is allowed.
+// checkRestampPrices1mRetention refuses a run while migration 0156's prices_1m retention policy
+// is armed: estimated tiers read prices_1m, and the policy's next drop undoes the CAGG follow-up.
+// A dry exact-tier run touches neither and is allowed.
 func checkRestampPrices1mRetention(ctx context.Context, s prices1mRetentionReader, tier string, write bool) error {
 	if !write && !restampTierIsEstimated(tier) {
 		return nil
@@ -460,11 +420,9 @@ func restampLiveOverlapGuard(ctx context.Context, store *timescale.Store, from, 
 	return nil
 }
 
-// resolveRestampWindow parses the inclusive -from/-to day pair. Refuses an
-// empty pair (no "whole history" default on a money-column writer), a
-// reversed pair, and a window reaching TODAY: today's chunk is still being
-// written and the live writers are at generation 0, so restamping it would
-// race the ingest path over rows it has not finished valuing.
+// resolveRestampWindow parses the inclusive -from/-to day pair. It refuses an empty or reversed
+// pair (no whole-history default on a money writer) and any window reaching today, whose chunk
+// the live ingest is still valuing.
 func resolveRestampWindow(fromFlag, toFlag string, now time.Time) (from, to time.Time, err error) {
 	if fromFlag == "" || toFlag == "" {
 		return from, to, fmt.Errorf("usd-volume-restamp: -from and -to are required (YYYY-MM-DD, inclusive UTC days)")
@@ -500,19 +458,10 @@ func restampSourceAllowList(csv string) map[string]bool {
 	return out
 }
 
-// validateRestampSourceAllowList refuses a -sources name that is not in
-// the tier's own registry. The estimated tiers resolve their
-// allow-list through [timescale.restampScanSources], which silently
-// DROPS an unregistered name rather than erroring — so
-// `-tier cex-fx -sources sdex` (a DEX source on the CEX tier) or a plain
-// typo scans nothing, plans zero changes, and exits 0 with per-day
-// output shaped identically to a genuinely clean window. Mirrors the
-// `ch-rebuild -sources` guard (checkCHRebuildSources).
-//
-// The exact tier is not gated here: its allow-list filters groups the
-// scan actually found in the data (restampRun.exactTierGroups), so a
-// typo there yields a visibly empty "0 exact-tier target(s)" day rather
-// than a silently narrowed registry scan.
+// validateRestampSourceAllowList refuses a -sources name outside the tier's registry. The
+// estimated tiers silently drop unregistered names, so a typo would scan nothing and exit 0
+// looking like a clean window (mirrors checkCHRebuildSources). The exact tier is not gated: it
+// filters groups found in the data, so a typo shows as an empty day.
 func validateRestampSourceAllowList(tier string, allow map[string]bool) error {
 	if len(allow) == 0 || !restampTierIsEstimated(tier) {
 		return nil

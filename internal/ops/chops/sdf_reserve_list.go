@@ -15,26 +15,14 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// SDF reserve-list drift: the LIST-level companion to the
-// xlm_circulating_supply VALUE cross-check.
+// SDF reserve-list drift diffs the configured supply.sdf_reserve_accounts set against the one
+// SDF publishes, because the value check's 2% bound hides one small account being added or
+// retired. The list is read from stellar/dashboard common/lumens.js: the accounts table plus
+// networkUpgradeReserveAccount, but not voidAccount, which is the burn address.
 //
-// The value check's 2% bound (~700M XLM) hides SDF adding or retiring a
-// small reserve account, so a stale `supply.sdf_reserve_accounts` could
-// misstate circulating supply indefinitely behind a green check. This diffs
-// the configured account SET against the one SDF publishes.
-//
-// The dashboard API returns only program-level sums, never an account id,
-// so the list is read from the dashboard's source, stellar/dashboard
-// `common/lumens.js`: the `accounts` table plus
-// `networkUpgradeReserveAccount`, exactly what `noncirculatingSupply()`
-// subtracts. `voidAccount` is the burn address, subtracted from total
-// supply, so it is excluded.
-//
-// The parser fails CLOSED into "skipped" (served_value_skipped=1, no verdict):
-// a missing or malformed accounts block, any row outside the `key: "G…"`
-// grammar, a missing upgrade-reserve constant, or retiring more than
-// maxPlausibleReserveRetirements accounts at once.
-// stellarindex_served_value_persistently_skipped fires after two dark runs.
+// The parser fails closed into skipped (no verdict) on a missing or malformed block, any row
+// outside the key: "G..." grammar, a missing upgrade-reserve constant, or more than
+// maxPlausibleReserveRetirements retirements at once.
 
 // sdfReserveListURL is the reserve list SDF publishes: the source of
 // dashboard.stellar.org's circulatingSupply computation.
@@ -45,11 +33,9 @@ const sdfReserveListURL = "https://raw.githubusercontent.com/stellar/dashboard/m
 // existing alerting; the drift verdict has its own gauge family).
 const sdfReserveListCheck = "sdf_reserve_list"
 
-// reserveListDrift is the pure set difference: missing = published by
-// SDF but absent from our config (we over-state circulating supply by
-// that account's balance); extra = configured by us but no longer
-// published (we under-state it). Both slices are sorted and
-// duplicate-free so the verdict is deterministic.
+// reserveListDrift is the set difference. missing is published but not configured (we overstate
+// circulating supply); extra is configured but no longer published (we understate it). Both
+// are sorted and duplicate-free.
 type reserveListDrift struct {
 	missing []string
 	extra   []string
@@ -57,14 +43,10 @@ type reserveListDrift struct {
 
 func (d reserveListDrift) empty() bool { return len(d.missing) == 0 && len(d.extra) == 0 }
 
-// reserveListResult is the list check's verdict. skipped and err are
-// mutually exclusive with a verdict: skipped means the PUBLISHED list was
-// unreachable, unparseable or implausibly far off (availability, not a
-// verdict — the same F5 semantics as servedValueResult.skipped; drift is
-// then populated only when refused for implausibility, for the log line,
-// and never rendered as a gauge); err means OUR side could
-// not be read (the config file), which is a failure, not a skip — our
-// own surface must answer, as for a served-side fetch error.
+// reserveListResult is the list check's verdict. skipped means the published list was
+// unreachable, unparseable or implausibly far off (availability, not a verdict; drift is then
+// set only for the log line, never a gauge). err means our own config could not be read, which
+// is a failure, not a skip.
 type reserveListResult struct {
 	configured []string
 	published  []string
@@ -111,13 +93,9 @@ func diffReserveList(configured, published []string) reserveListDrift {
 	return d
 }
 
-// maxPlausibleReserveRetirements bounds how many configured accounts one
-// run may report as no longer published. SDF retires reserve rows one at
-// a time (escrowJan2021); a larger `extra` set is far likelier a reshaped
-// source the grammar still accepted (rows moved to another table) than a
-// real retirement, and the `extra` remedy is deleting accounts from the
-// circulating-supply exclusion, so beyond this the diff is refused. A
-// conservative bound, not an SDF-published figure.
+// maxPlausibleReserveRetirements bounds how many accounts one run may report as no longer
+// published. SDF retires rows one at a time, so a larger set more likely means a reshaped source
+// than real retirements, and the diff is refused. It is a conservative bound, not an SDF figure.
 const maxPlausibleReserveRetirements = 3
 
 var (
@@ -137,17 +115,10 @@ var (
 	reserveEntry = regexp.MustCompile(`^\s*(?:[A-Za-z_$][A-Za-z0-9_$]*|"[^"\n]*"|'[^'\n]*')\s*:\s*(?:"(G[A-Z2-7]{55})"|'(G[A-Z2-7]{55})')\s*(?:,|$)`)
 )
 
-// parsePublishedReserveList extracts the reserve set from the
-// common/lumens.js source: every row of the `accounts` table, plus the
-// `networkUpgradeReserveAccount` constant. Commented-out rows (SDF
-// retires escrows by commenting them out — `escrowJan2021` is one) are
-// excluded, which is the behaviour that makes a retirement visible as
-// `extra` on our side.
-//
-// Any shape the parser does not recognise — including ONE unrecognised
-// row — is an error, never an empty or partial list: the caller turns it
-// into a SKIP so a format change upstream reads as "unverifiable" rather
-// than as phantom `extra` accounts.
+// parsePublishedReserveList extracts the accounts table rows plus networkUpgradeReserveAccount
+// from common/lumens.js. Commented-out rows are excluded, which is how a retirement shows as
+// extra. Any unrecognised shape, even one row, is an error and never a partial list, so the
+// caller skips rather than reporting phantom extra accounts.
 func parsePublishedReserveList(src string) ([]string, error) {
 	body, err := accountsTableBody(src)
 	if err != nil {
@@ -293,16 +264,10 @@ func fetchPublishedReserveList(ctx context.Context, c *http.Client, url string) 
 	return parsePublishedReserveList(string(src))
 }
 
-// loadConfiguredReserveAccounts reads `[supply] sdf_reserve_accounts`
-// from the node's stellarindex.toml — the ONLY writer of the configured
-// set (SupplyConfig.SDFReserveAccounts carries no `env:` override).
-//
-// Deliberately a partial decode rather than config.Load: Load
-// validates the WHOLE file, and an unrelated validation failure (or
-// an unknown key from a newer binary's config) must not turn the list
-// check into a daily failure. This reads one key and ignores the rest.
-// The result is deduplicated and sorted; a duplicate entry in the file
-// is one account, not two.
+// loadConfiguredReserveAccounts reads [supply] sdf_reserve_accounts from the toml, the only
+// source of the configured set. It is a partial decode rather than config.Load so an unrelated
+// validation failure cannot turn the check into a daily failure. The result is deduplicated
+// and sorted.
 func loadConfiguredReserveAccounts(path string) ([]string, error) {
 	var cfg struct {
 		Supply struct {
@@ -325,12 +290,8 @@ func loadConfiguredReserveAccounts(path string) ([]string, error) {
 	return out, nil
 }
 
-// reconcileReserveList runs the list check end to end: our configured
-// set from cfgPath, the published set from sourceURL, and the diff. The
-// three outcomes mirror reconcileOneCheck: config unreadable → err
-// (our side; fails the run), published list unreachable/unparseable →
-// skipped (their side; never a verdict), otherwise a verified diff
-// whose emptiness is the verdict.
+// reconcileReserveList runs the list check end to end. An unreadable config is err (fails the
+// run), an unreachable or unparseable published list is skipped, otherwise the diff is the verdict.
 func reconcileReserveList(ctx context.Context, c *http.Client, cfgPath, sourceURL string) reserveListResult {
 	r := reserveListResult{note: "vs stellar/dashboard common/lumens.js — the accounts dashboard.stellar.org subtracts for circulatingSupply"}
 	configured, cErr := loadConfiguredReserveAccounts(cfgPath)

@@ -26,56 +26,28 @@ type classicMovementOpKey struct {
 	OpIndex int32
 }
 
-// classicMovementsP23StartLedger re-exports classicmovements.P23StartLedger
-// under this file's existing local name (ADR-0048 D5 promoted the
-// value to an exported constant so internal/api/v1/explorer's account-
-// movements merge can pin against it without duplicating the literal —
-// see that constant's doc comment for the full rationale). Kept as an
-// alias, not a straight replace-in-place, to avoid touching every call
-// site in this file for a pure rename.
+// classicMovementsP23StartLedger aliases classicmovements.P23StartLedger (ADR-0048 D5).
 const classicMovementsP23StartLedger uint32 = classicmovements.P23StartLedger
 
-// classicMovementsDefaultWindow is the per-window ledger span this
-// command streams from ClickHouse + writes to ClickHouse before
-// moving on. Bounds memory (each window's decoded batch, not the
-// whole invocation, is held in-process) the same way ch-rebuild's
-// maxBufferedRange guard does, and gives a resume point every window
-// rather than only at the end of a multi-day run.
+// classicMovementsDefaultWindow is the ledger span streamed and written per window. It bounds
+// memory and gives a resume point every window.
 const classicMovementsDefaultWindow = 500_000
 
-// classicMovementsWindowDeadline bounds a single window's decode +
-// write + verify attempt: a half-dead ClickHouse
-// native connection can leave this loop blocked in a network read for
-// hours with zero CPU — the driver-level ReadTimeout alone does not
-// unwedge it. A window that cannot finish inside this deadline is
-// aborted and retried exactly once on fresh connections
-// (StreamClassicOps / StreamEntryChanges dial per call, so a retry
-// gets new sockets); a second expiry within the same deadline is
-// treated as a real error, not retried again. Generous bound: the
-// densest observed window (~9M ops at 25k ledgers) completed in well
-// under 10 minutes when healthy.
+// classicMovementsWindowDeadline bounds one window's decode, write and verify. A half-dead
+// ClickHouse connection can block a network read for hours, and the driver ReadTimeout alone
+// does not unwedge it. A window that times out is retried once on fresh connections.
 const classicMovementsWindowDeadline = 20 * time.Minute
 
-// classicMovementsBackfill is the ADR-0047 write path for all four phases,
-// straight into ClickHouse's stellar.account_movements (ADR-0048 D2). It is
-// its own writer rather than ch-rebuild's pipeline.HandleEvent path because
-// MovementEvent is historical-only and has no persist arm by design.
+// classicMovementsBackfill writes ADR-0047 movements into stellar.account_movements (ADR-0048 D2).
+// It is its own writer because MovementEvent is historical-only and has no persist arm.
 //
-// Phase 3 claim/clawback correlation resolves in-memory, then by one batched
-// lookup of creates already written, else as an unresolved count, never a
-// guessed amount. Decoder memory grows with the range: chunk -from/-to.
+// Claim/clawback correlation resolves in memory, then by one batched lookup, else counts as
+// unresolved; an amount is never guessed. AllowTrust/SetTrustLineFlags are skipped in a
+// zero-fidelity window, where their empty result would under-report CAP-0038 liquidations.
 //
-// Phase 4 probes fidelity per window. AllowTrust/SetTrustLineFlags are SKIPPED
-// in a zero-fidelity window: their empty case looks like "no liquidation" and
-// would under-report CAP-0038 liquidations.
-//
-// Resume restarts FROM the highest ledger already written (a one-ledger overlap
-// ReplacingMergeTree absorbs), valid only because InsertAccountMovements sends
-// in ledger order, and trusted only when data starts exactly at -from.
-//
-// -verify recounts each window per movement_kind, logging mismatches. -to is
-// HARD-CLAMPED below classicMovementsP23StartLedger: the one enforcement point
-// for ADR-0047 D2's historical-only invariant.
+// Resume restarts from the highest ledger written (ReplacingMergeTree absorbs the overlap), and
+// is trusted only when data starts exactly at -from. -to is hard-clamped below
+// classicMovementsP23StartLedger, the one enforcement point of ADR-0047 D2.
 func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse+clamp, resume, windowed stream+decode+write+verify loop, report.
 	fs, gate := opsutil.NewMutatingFlagSet("classic-movements-backfill")
 	from := fs.Uint("from", 0, "first ledger sequence (inclusive, required)")
@@ -117,12 +89,8 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 		if merr != nil {
 			fmt.Fprintf(os.Stderr, "classic-movements-backfill: resume lookup failed (%v) — starting from -from\n", merr)
 		} else if maxFound && maxLedger >= startLedger {
-			// Confirm the range's data actually starts AT -from before
-			// trusting the jump — see the -resume doc comment:
-			// max(ledger) alone can't distinguish "this range was fully
-			// processed up to maxLedger" from "a narrower prior run left
-			// data at the top of this WIDER range, and [-from, that data)
-			// was never touched."
+			// max(ledger) alone cannot tell a fully processed range from a narrower prior run
+			// that left data only at the top, so confirm the data starts at -from first.
 			minLedger, minFound, minErr := clickhouse.MinAccountMovementLedger(ctx, *chAddr, startLedger, clampedTo)
 			if minErr != nil {
 				fmt.Fprintf(os.Stderr, "classic-movements-backfill: resume contiguity check failed (%v) — starting from -from, not trusting the resume jump\n", minErr)
@@ -170,12 +138,8 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 		if werr != nil && errors.Is(werr, context.DeadlineExceeded) && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] hit its %s deadline (2026-07-12 half-dead-connection stall class) — retrying once on fresh connections\n",
 				wlo, whi, classicMovementsWindowDeadline)
-			// Discard stale pending claim/clawback refs the failed
-			// attempt accumulated via dec.Decode before it stalled — the
-			// retry re-decodes this same window from scratch and
-			// re-records whatever is still genuinely unresolved. Without
-			// this, the retry's own TakePendingClaimableBalances would
-			// double up on refs the failed attempt already queued.
+			// Drop pending claim refs from the failed attempt; the retry re-decodes the window
+			// and would otherwise double them.
 			dec.TakePendingClaimableBalances()
 			windowCtx2, cancel2 := context.WithTimeout(ctx, classicMovementsWindowDeadline)
 			res, werr = classicMovementsAttemptWindow(windowCtx2, *chAddr, dec, opTypes, entryChangeOpTypes, wlo, whi, write, *verify)
@@ -277,16 +241,9 @@ func classicMovementsResumeStart(startLedger, maxLedger, minLedger uint32, minFo
 	return maxLedger, true
 }
 
-// windowResult holds everything one call to classicMovementsAttemptWindow
-// produces for a single [wlo,whi] window: the pre-fan-out batch ready
-// for clickhouse.InsertAccountMovements, the per-movement_kind counts
-// for this window alone, and every per-window counter the summary
-// report accumulates into its run-level totals. Deliberately holds
-// NOTHING run-level (no reference to the outer counts map or the
-// totalXxx accumulators) — the caller only merges a windowResult into
-// run state after classicMovementsAttemptWindow returns successfully,
-// which is what makes retrying a timed-out window safe: a failed
-// attempt's windowResult is simply discarded, never partially merged.
+// windowResult holds one window's batch and counters. It holds no run-level state, and the
+// caller merges it only after a successful attempt, so a failed attempt is discarded whole
+// and retrying is safe.
 type windowResult struct {
 	batch        []clickhouse.AccountMovement
 	windowCounts map[classicmovements.Kind]int64
@@ -300,16 +257,9 @@ type windowResult struct {
 	verifyMismatches                                                      int64
 }
 
-// classicMovementsAttemptWindow runs one attempt at decoding, writing and
-// verifying [wlo,whi], so the caller can bound each attempt with a per-window
-// deadline and one retry (see classicMovementsWindowDeadline).
-//
-// dec is shared across windows and retries: its claimable-balance-create index
-// legitimately spans windows and re-decoding is idempotent, but dec.pending is
-// not, so the caller discards it before retrying. Otherwise only window-local
-// state is touched, so a failed attempt is dropped without unwinding anything.
-// winCtx reaches every ClickHouse call so the deadline bounds the whole
-// attempt.
+// classicMovementsAttemptWindow makes one decode, write and verify attempt on [wlo,whi].
+// dec is shared across windows and retries; its create index may span windows, but dec.pending
+// must be discarded by the caller before a retry.
 func classicMovementsAttemptWindow(
 	winCtx context.Context,
 	chAddr string,
@@ -323,19 +273,9 @@ func classicMovementsAttemptWindow(
 	if err := classicMovementsDecodeOpsSurface(winCtx, chAddr, dec, opTypes, wlo, whi, &res); err != nil {
 		return res, err
 	}
-	// Entry-changes BEFORE pending-claim resolution: a claim/
-	// clawback against a CAP-0038-revocation-created balance is decoded
-	// in the ops surface above, but the CREATE for that same balance is
-	// only produced here, by classicMovementsHandleCAP0038Op via
-	// classicmovements.DecodeCAP0038Revocation — a path that does NOT
-	// go through dec.Decode, so dec's own in-run BalanceId index never
-	// learns about it. Running this phase first means that create is
-	// already sitting in res.batch by the time
-	// classicMovementsResolvePendingClaimableBalances runs its
-	// batch-local fallback check (see that function's doc comment) —
-	// without this ordering, a same-window claim against such a
-	// balance would resolve to "unresolved" even though the create is
-	// right there in this window's own batch.
+	// Entry changes must run before pending-claim resolution. A CAP-0038 revocation create
+	// bypasses dec.Decode, so only res.batch holds it, and a same-window claim would otherwise
+	// resolve as unresolved.
 	if err := classicMovementsDecodeEntryChangesSurface(winCtx, chAddr, entryChangeOpTypes, wlo, whi, &res); err != nil {
 		return res, err
 	}
@@ -346,21 +286,11 @@ func classicMovementsAttemptWindow(
 	return res, nil
 }
 
-// classicMovementsDecodeOpsSurface streams + decodes the op-only
-// surface (classicmovements.SupportedOpTypes / Decoder.Decode) for
-// one window — Phases 1-3 plus Phase 4's AccountMerge — accumulating
-// into res. dec.Decode also updates dec's shared claimable-balance-
-// create index as a side effect (see classicmovements.Decoder's doc
-// comment); that index feeds
-// classicMovementsResolvePendingClaimableBalances, called after
-// classicMovementsDecodeEntryChangesSurface (see that call site).
+// classicMovementsDecodeOpsSurface streams and decodes the op-only surface for one window into
+// res. dec.Decode also feeds dec's shared claimable-balance create index.
 func classicMovementsDecodeOpsSurface(winCtx context.Context, chAddr string, dec *classicmovements.Decoder, opTypes []string, wlo, whi uint32, res *windowResult) error {
-	// classicOpsQuery joins stellar.operations to stellar.operation_results
-	// without FINAL (see that query's doc comment): an unmerged
-	// ReplacingMergeTree part fans one op out to k*m identical rows.
-	// seen (threaded into classicMovementsDecodeOp) collapses the stream to
-	// one op per (ledger, tx_hash, op_index) before it is decoded or
-	// counted at all.
+	// The query joins ReplacingMergeTree tables without FINAL, so one op can arrive as k*m
+	// identical rows; seen collapses the stream to one op per (ledger, tx_hash, op_index).
 	seen := make(map[classicMovementOpKey]struct{})
 	werr := clickhouse.StreamClassicOps(winCtx, chAddr, wlo, whi, opTypes, func(op clickhouse.ClassicOp) error {
 		classicMovementsDecodeOp(dec, seen, op, res)
@@ -372,11 +302,8 @@ func classicMovementsDecodeOpsSurface(winCtx context.Context, chAddr string, dec
 	return nil
 }
 
-// classicMovementsDecodeOp handles one ClassicOp row from
-// classicMovementsDecodeOpsSurface's StreamClassicOps callback: dedupe
-// against seen, decode, and accumulate into res. Split out of
-// the callback so the dedup is independently testable without a live
-// ClickHouse connection (StreamClassicOps dials its own).
+// classicMovementsDecodeOp dedupes one ClassicOp against seen, decodes it and accumulates into
+// res. It is split out so the dedup is testable without a live ClickHouse.
 func classicMovementsDecodeOp(dec *classicmovements.Decoder, seen map[classicMovementOpKey]struct{}, op clickhouse.ClassicOp, res *windowResult) {
 	res.windowRead++
 	key := classicMovementOpKey{Ledger: op.Ledger, TxHash: op.TxHash, OpIndex: int32(op.OpIndex)} //nolint:gosec // OpIndex is a non-negative XDR index.
@@ -394,10 +321,7 @@ func classicMovementsDecodeOp(dec *classicmovements.Decoder, seen map[classicMov
 		OpResult: op.OpResult,
 	})
 	if derr != nil {
-		// Non-fatal per the OpDecoder contract (count + skip). In
-		// practice this should only ever be ErrMalformedMovement —
-		// StreamClassicOps already scoped the CH read to opTypes, so
-		// ErrUnsupportedOpType should never fire here.
+		// Non-fatal per the OpDecoder contract: count and skip.
 		fmt.Fprintf(os.Stderr, "classic-movements-backfill: decode error (ledger %d tx %s op %d): %v\n",
 			op.Ledger, op.TxHash, op.OpIndex, derr)
 		return
@@ -488,11 +412,9 @@ func classicMovementsResolvePendingClaimableBalances(winCtx context.Context, chA
 		wlo, whi, res.windowResolvedIndex, res.windowResolvedCH, res.windowUnresolved)
 }
 
-// classicMovementsBatchClaimableBalanceIndex keys this window's
-// claimable_balance_create movements by balance_id: the same-window fallback
-// between dec's index and ClickHouse. A CAP-0038 revocation's create never passes
-// through dec.Decode (see classicMovementsHandleCAP0038Op), so dec never indexes
-// it. A malformed balance_id is skipped; that ref falls through to ClickHouse.
+// classicMovementsBatchClaimableBalanceIndex keys this window's create movements by balance_id.
+// A CAP-0038 revocation create never passes through dec.Decode, so dec never indexes it. A
+// malformed balance_id is skipped and that ref falls through to ClickHouse.
 func classicMovementsBatchClaimableBalanceIndex(batch []clickhouse.AccountMovement) map[string]clickhouse.AccountMovement {
 	idx := make(map[string]clickhouse.AccountMovement)
 	for _, m := range batch {
@@ -508,15 +430,9 @@ func classicMovementsBatchClaimableBalanceIndex(batch []clickhouse.AccountMoveme
 	return idx
 }
 
-// classicMovementsDecodeEntryChangesSurface is the ADR-0047 Phase 4
-// entry-changes-correlated surface: LiquidityPoolDeposit/Withdraw +
-// the CAP-0038 AllowTrust/SetTrustLineFlags edge case. A window-level
-// fidelity probe decides how "no correlated entry changes" is
-// interpreted per op type — see classicMovementsBackfill's doc
-// comment. Per-op handling is delegated to
-// classicMovementsHandleLiquidityPoolOp /
-// classicMovementsHandleCAP0038Op to keep this function's own
-// complexity down.
+// classicMovementsDecodeEntryChangesSurface decodes the ADR-0047 entry-changes-correlated ops:
+// liquidity pool deposit/withdraw and the CAP-0038 revocation case. A window-level fidelity
+// probe decides how an absence of correlated entry changes is read.
 func classicMovementsDecodeEntryChangesSurface(winCtx context.Context, chAddr string, entryChangeOpTypes []string, wlo, whi uint32, res *windowResult) error {
 	fidelityCount, ferr := clickhouse.CountOpScopedEntryChanges(winCtx, chAddr, wlo, whi)
 	if ferr != nil {
@@ -535,10 +451,7 @@ func classicMovementsDecodeEntryChangesSurface(winCtx context.Context, chAddr st
 		return fmt.Errorf("stream liquidity_pool entry changes [%d,%d]: %w", wlo, whi, lerr)
 	}
 
-	// Only bother building the claimable_balance-created index when
-	// the window has fidelity at all — CAP-0038 ops are skipped
-	// entirely below when it doesn't, so this would otherwise be
-	// wasted work on a window without it.
+	// Skipped without fidelity, since CAP-0038 ops are skipped entirely then.
 	cbChanges := map[classicMovementOpKey][]classicmovements.EntryChangeXDR{}
 	if fidelityPresent {
 		if cerr := clickhouse.StreamEntryChanges(winCtx, chAddr, wlo, whi, "claimable_balance", func(ec clickhouse.EntryChange) error {
@@ -557,8 +470,7 @@ func classicMovementsDecodeEntryChangesSurface(winCtx context.Context, chAddr st
 	werr2 := clickhouse.StreamClassicOps(winCtx, chAddr, wlo, whi, entryChangeOpTypes, func(op clickhouse.ClassicOp) error {
 		res.windowEntryChangeRead++
 		k := classicMovementOpKey{Ledger: op.Ledger, TxHash: op.TxHash, OpIndex: int32(op.OpIndex)} //nolint:gosec // OpIndex is a non-negative XDR index.
-		// Same StreamClassicOps duplication as classicMovementsDecodeOpsSurface
-		// above — collapse to one op before it drives a handler.
+		// Same duplicate rows as in the ops surface; collapse before handling.
 		if _, dup := seenEC[k]; dup {
 			return nil
 		}
@@ -581,14 +493,8 @@ func classicMovementsDecodeEntryChangesSurface(winCtx context.Context, chAddr st
 	return nil
 }
 
-// classicMovementsHandleLiquidityPoolOp decodes one
-// LiquidityPoolDeposit/Withdraw op against its correlated entry
-// changes (lpChanges — this op's slice from
-// classicMovementsDecodeEntryChangesSurface's lpChanges map, already
-// keyed by the caller) and accumulates the result into res. Split out
-// of the StreamClassicOps callback purely to keep
-// classicMovementsDecodeEntryChangesSurface's cognitive complexity
-// within the gocognit gate.
+// classicMovementsHandleLiquidityPoolOp decodes one LP deposit/withdraw op against its
+// correlated entry changes and accumulates the result into res.
 func classicMovementsHandleLiquidityPoolOp(op clickhouse.ClassicOp, entryChanges []classicmovements.EntryChangeXDR, fidelityPresent bool, res *windowResult) {
 	movements, derr := classicmovements.DecodeLiquidityPoolOp(op.Ledger, op.ClosedAt, op.TxHash, op.OpIndex, op.Source, op.Op, op.OpResult, entryChanges)
 	if derr != nil {
@@ -611,13 +517,8 @@ func classicMovementsHandleLiquidityPoolOp(op clickhouse.ClassicOp, entryChanges
 	}
 }
 
-// classicMovementsHandleCAP0038Op decodes one AllowTrust/
-// SetTrustLineFlags op for a possible CAP-0038 auto-liquidation
-// against its correlated claimable_balance-created entry changes
-// (cbChanges — this op's slice, already keyed by the caller) and
-// accumulates the result into res. Split out of the StreamClassicOps
-// callback for the same gocognit reason as
-// classicMovementsHandleLiquidityPoolOp.
+// classicMovementsHandleCAP0038Op decodes one AllowTrust/SetTrustLineFlags op for a possible
+// CAP-0038 auto-liquidation against its created claimable-balance entry changes.
 func classicMovementsHandleCAP0038Op(op clickhouse.ClassicOp, entryChanges []classicmovements.EntryChangeXDR, fidelityPresent bool, res *windowResult) {
 	if !fidelityPresent {
 		res.windowCAP0038Skipped++
@@ -642,10 +543,8 @@ func classicMovementsHandleCAP0038Op(op clickhouse.ClassicOp, entryChanges []cla
 	}
 }
 
-// classicMovementsWriteAndVerify persists res.batch (if -write) and
-// recounts the window from ClickHouse for reconciliation (if
-// -verify), both under winCtx so either can trigger the per-window
-// retry same as any decode-phase call.
+// classicMovementsWriteAndVerify persists res.batch (if -write) and recounts the window (if
+// -verify), both under winCtx so either can trigger the per-window retry.
 func classicMovementsWriteAndVerify(winCtx context.Context, chAddr string, wlo, whi uint32, write, verify bool, res *windowResult) error {
 	if write && len(res.batch) > 0 {
 		written, ierr := clickhouse.InsertAccountMovements(winCtx, chAddr, res.batch)
@@ -663,12 +562,8 @@ func classicMovementsWriteAndVerify(winCtx context.Context, chAddr string, wlo, 
 	return nil
 }
 
-// verifyWindowCounts recounts a window from ClickHouse (via query,
-// injected so this stays testable without a live connection) and
-// compares per-movement_kind counts against decoded — this run's own
-// windowCounts. Logs every mismatch to stderr; returns the number of
-// kinds that disagreed (0 = clean). Never fatal — see the doc comment
-// on classicMovementsBackfill's -verify flag.
+// verifyWindowCounts compares per-kind counts from query against decoded, logs each mismatch
+// and returns how many kinds disagreed. Never fatal.
 func verifyWindowCounts(wlo, whi uint32, decoded map[classicmovements.Kind]int64, query func() (clickhouse.AccountMovementVerifyCounts, error)) int64 {
 	observed, err := query()
 	if err != nil {
@@ -699,12 +594,7 @@ func verifyWindowCounts(wlo, whi uint32, decoded map[classicmovements.Kind]int64
 	return mismatches
 }
 
-// accountMovementOf converts a decode-time classicmovements.Movement
-// into its clickhouse.AccountMovement storage shape — the pre-fan-out
-// input to clickhouse.InsertAccountMovements. Kept local to this
-// command (not internal/pipeline), like the retired
-// classicMovementRowOf it replaces: classic-movements-backfill is the
-// ONLY caller.
+// accountMovementOf converts a decoded Movement into its clickhouse.AccountMovement shape.
 func accountMovementOf(m classicmovements.Movement) clickhouse.AccountMovement {
 	return clickhouse.AccountMovement{
 		MovementKind:    string(m.Kind),

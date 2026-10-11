@@ -13,24 +13,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// verifyHashChain is the stellarindex-ops `verify-hashchain` subcommand, the
-// second half of ADR-0034's provable-100% claim beside verify-contiguity: for
-// every ledger n in [-from,-to], prev_hash must equal ledger n-1's ledger_hash.
+// verifyHashChain is the verify-hashchain subcommand: for every ledger n in [-from,-to],
+// prev_hash must equal ledger n-1's ledger_hash (ADR-0034). Windows split the chain at bucket
+// seams, so it checks in-window links (lagInFrame over ledger_seq) and a lookup at each seam.
+// A gap reads as a break in both; run verify-contiguity first to tell it from a bad hash.
 //
-// Windowing (contiguityBucketStride, the lake's 1M-ledger partitions) splits the
-// chain at bucket seams, so there are two checks:
-//
-//  1. In-window links: lagInFrame(ledger_hash) ordered by ledger_seq gives each
-//     ledger's nearest PRESENT predecessor's hash. A window's first ledger is
-//     left to (2).
-//  2. Boundary links: a 2-row lookup at every seam; an absent predecessor is a
-//     break too, tagged apart from a mismatch (boundaryTag).
-//
-// A gap is reported as a break by both checks. Run verify-contiguity first to
-// tell "missing ledger" from "present but wrong hash"; this tool does not correlate them.
-//
-// Exit code = in-window + boundary broken links, capped at 255, so
-// cron/Healthchecks.io can consume it directly. Read-only; ClickHouse only.
+// Exit code is the broken-link count capped at 255. Read-only; ClickHouse only.
 func verifyHashChain(args []string) error {
 	fs := flag.NewFlagSet("verify-hashchain", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr (this tool reads ClickHouse only, never Postgres); a missing/unreadable file is tolerated when -ch-addr is passed explicitly")
@@ -81,21 +69,13 @@ func verifyHashChain(args []string) error {
 	return &opsutil.ExitCodeError{Code: int(code)} //nolint:gosec // capped above; always in [1,255].
 }
 
-// hashChainLinkCap bounds how many individual broken in-window links
-// runHashChainCheck's localization pass will print across the whole run —
-// mirrors contiguityGapRangeCap (verify_contiguity.go): a chain with
-// millions of broken links must never turn this report into an unbounded
-// print loop.
+// hashChainLinkCap bounds the broken in-window links printed per run, so a badly broken chain
+// cannot become an unbounded print loop.
 const hashChainLinkCap = 200
 
-// runHashChainCheck runs both hash-chain checks over [from,to] using
-// contiguityBucketStride windows (reused from verify_contiguity.go — same
-// 1M stride, same lake-partition-alignment rationale). The windowed
-// headline (QueryHashChainWindowLinks' in-window counts, plus one
-// QueryHashChainBoundary point lookup per seam) is cheap and always runs;
-// the per-ledger localization listing (QueryBrokenHashLinks) only runs for
-// windows the headline already flagged Broken>0 — the same
-// pay-only-when-a-problem-exists discipline as verify-contiguity's Check 1.
+// runHashChainCheck runs both checks over [from,to] in contiguityBucketStride windows. The
+// windowed counts and per-seam lookups are cheap and always run; per-ledger localization only
+// runs for windows already flagged broken.
 func runHashChainCheck(ctx context.Context, addr string, from, to uint32) (inWindowBroken, boundaryBroken uint64, err error) {
 	fmt.Printf("\n=== verify-hashchain: hash-chain check [%d,%d] (1M-ledger windows) ===\n", from, to)
 
@@ -104,10 +84,8 @@ func runHashChainCheck(ctx context.Context, addr string, from, to uint32) (inWin
 		return 0, 0, fmt.Errorf("verify-hashchain: windowed in-window-link scan: %w", err)
 	}
 
-	// Fail-closed guard: a range with NO present ledgers has 0 links and 0
-	// breaks, which would otherwise report PASSED — the chain "passes" precisely
-	// where the substrate is absent. Refuse to pass when nothing was present to
-	// chain. (verify-contiguity localizes WHERE the substrate is missing.)
+	// Fail closed: a range with no present ledgers has 0 breaks and would otherwise PASS
+	// exactly where the substrate is absent.
 	if hashChainWindowsPresent(windows) == 0 {
 		return 0, 0, fmt.Errorf("verify-hashchain: no ledgers present in [%d,%d] — nothing to hash-chain; refusing to PASS (fail-closed)", from, to)
 	}
@@ -134,11 +112,8 @@ func runHashChainCheck(ctx context.Context, addr string, from, to uint32) (inWin
 	return inWindowBroken, boundaryBroken, nil
 }
 
-// reportInWindowBrokenLinks tallies + localizes the in-window broken links
-// across the windowed headline. It prints each flagged window's count and, for
-// the first hashChainLinkCap links overall, the per-ledger detail — the same
-// pay-only-when-a-problem-exists discipline as verify-contiguity's Check 1.
-// Split out of runHashChainCheck to keep that function's control flow flat.
+// reportInWindowBrokenLinks tallies the in-window broken links, printing each flagged window's
+// count and per-ledger detail for the first hashChainLinkCap links overall.
 func reportInWindowBrokenLinks(ctx context.Context, addr string, windows []clickhouse.HashChainWindowResult) (uint64, error) {
 	var inWindowBroken uint64
 	var shown int
@@ -181,11 +156,8 @@ func reportInWindowBrokenLinks(ctx context.Context, addr string, windows []click
 	return inWindowBroken, nil
 }
 
-// hashChainWindowsPresent sums the present-ledger count across the windowed
-// scan. ZERO means the range holds no ledgers at all — there is nothing to
-// hash-chain, so a "0 broken links" result is vacuous and must NOT read as a
-// clean PASS (the F3 fail-closed guard). A healthy range always has Present>0,
-// so this never false-positives. Pure — unit-testable without a live lake.
+// hashChainWindowsPresent sums the present-ledger count across the windows. Zero means nothing
+// to chain, so "0 broken links" is vacuous and must not read as a PASS.
 func hashChainWindowsPresent(windows []clickhouse.HashChainWindowResult) uint64 {
 	var total uint64
 	for _, w := range windows {
@@ -194,13 +166,8 @@ func hashChainWindowsPresent(windows []clickhouse.HashChainWindowResult) uint64 
 	return total
 }
 
-// boundarySeqsToCheck returns the window-seam ledger_seq values
-// runHashChainCheck must run QueryHashChainBoundary against: every window's
-// From EXCEPT the first, whose From==from has no predecessor IN SCOPE —
-// the caller only asked to verify starting at -from, so there is nothing
-// to check before it (mirrors verify-contiguity's -ec-floor scoping: the
-// requested range's own edge is never treated as a deficiency). Pure — no
-// ClickHouse dependency — so it's unit-testable without a live lake.
+// boundarySeqsToCheck returns every window's From except the first, whose predecessor is out
+// of scope: the requested range's own edge is never a deficiency.
 func boundarySeqsToCheck(windows []clickhouse.HashChainWindowResult, from uint32) []uint32 {
 	var out []uint32
 	for _, w := range windows {
@@ -212,12 +179,8 @@ func boundarySeqsToCheck(windows []clickhouse.HashChainWindowResult, from uint32
 	return out
 }
 
-// boundaryTag renders a HashChainBoundaryResult's verdict for the report —
-// distinguishing "predecessor absent" / "seq absent" (a substrate gap;
-// verify-contiguity is the tool that reports gaps precisely) from "both
-// present but hashes differ" (a true chain break), rather than collapsing
-// both into one generic "broken" tag. Pure — no ClickHouse dependency — so
-// it's unit-testable without a live lake.
+// boundaryTag renders a boundary verdict, separating an absent ledger (a substrate gap for
+// verify-contiguity) from present ledgers whose hashes differ (a true chain break).
 func boundaryTag(b clickhouse.HashChainBoundaryResult) string {
 	switch {
 	case b.Linked:
@@ -233,15 +196,9 @@ func boundaryTag(b clickhouse.HashChainBoundaryResult) string {
 	}
 }
 
-// saturatingSub returns a-b, floored at 0 instead of wrapping. Used to
-// compare the windowed headline's Broken count against the follow-up
-// per-ledger localization query's row count: the two queries run moments
-// apart, so a concurrent ingest/backfill landing between them could, in
-// principle, make the detail query return fewer rows than the headline
-// counted. A raw uint64 subtraction would wrap that transient skew to
-// ~1.8e19 instead of reporting "0 more" — the exact bug class the
-// verify-contiguity review caught in this package (never truncate/wrap a
-// displayed count silently; see ECWindowCoverage.Missing()'s doc comment).
+// saturatingSub returns a-b floored at 0. The headline and detail queries run moments apart, so
+// concurrent ingest could make the detail return fewer rows, and a raw uint64 subtraction
+// would wrap to ~1.8e19 instead of reporting zero more.
 func saturatingSub(a, b uint64) uint64 {
 	if b >= a {
 		return 0
