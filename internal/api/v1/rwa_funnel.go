@@ -11,11 +11,11 @@ import (
 // The RWA funnel: the complete accounting from every issuer that could carry a SEP-1 attestation
 // down to the assets served.
 //
-// The served set is small by construction; without the funnel nothing distinguishes "the network
-// holds few real-world assets" from "the pipeline discarded thousands of candidates silently". The
-// refusal tally reports only requirements that were EVALUATED, while most of the population is
-// discarded by stages before any candidate reaches the definition. The funnel reports the stages,
-// the tally the requirements, and together every unit that entered is accounted for.
+// Without the funnel nothing distinguishes "the network holds few real-world assets" from "the
+// pipeline discarded thousands of candidates silently". The refusal tally reports only
+// requirements that were EVALUATED, while most of the population is discarded by stages before any
+// candidate reaches the definition. The funnel reports the stages, the tally the requirements, and
+// together every unit that entered is accounted for.
 //
 // NOT a second membership rule: it admits nothing; widening coverage never loosens it.
 
@@ -27,9 +27,8 @@ const (
 	rwaUnitAssets       = "assets"
 )
 
-// rwaFunnelBasis states what the funnel measured. Served beside the
-// counts because two of its stages are populations no other field on
-// this surface mentions at all.
+// rwaFunnelBasis states what the funnel measured, served beside the counts because two stages are
+// populations no other field on this surface mentions.
 const rwaFunnelBasis = "Every issuer account that could carry a SEP-1 attestation, narrowed to the assets served. " +
 	"Units change down the funnel: issuer accounts, then the SEP-1 [[CURRENCIES]] declarations they publish, then the " +
 	"(code, issuer) assets those bind to. Each stage's drops account exactly for the difference to the next stage of " +
@@ -38,8 +37,8 @@ const rwaFunnelBasis = "Every issuer account that could carry a SEP-1 attestatio
 
 // rwaFunnelClassicUnmeasured corrects the basis sentence when no issuer-bound attestation reader is
 // wired: otherwise zero stages would assert that no issuer attests to a real-world asset, from a
-// scan that never ran. A WIRED scan that failed never reaches here: the cache refuses that rebuild,
-// keeps serving the last good set and reports `membership.rebuild_failed_at`.
+// scan that never ran. A WIRED scan that failed never reaches here: the cache refuses that rebuild
+// and keeps serving the last good set.
 const rwaFunnelClassicUnmeasured = "The `classic` arm was NOT MEASURED: no issuer-bound SEP-1 attestation reader " +
 	"is wired, so that population was never walked. Its stages below read zero because nobody looked, not because " +
 	"no issuer on this network attests to a real-world asset."
@@ -102,9 +101,8 @@ const rwaFunnelListingBasis = "The `listing` arm walks C2's SECOND route to reco
 	"Stellar contract address. Compare `observed_at` against the sync's own clock in every closed-arm case: a sync " +
 	"that completed after it means this set predates the rows and the next rebuild carries them."
 
-// rwaFunnelListingUnmeasured is served when no listing reader is wired. This arm's refusals are
-// about whether a second party agrees, so reporting "nobody agrees" when nobody was asked would be
-// the strongest possible misstatement.
+// rwaFunnelListingUnmeasured is served when no listing reader is wired: this arm's refusals mean a
+// second party disagrees, so "nobody agrees" when nobody was asked would be a misstatement.
 const rwaFunnelListingUnmeasured = "The `listing` arm was NOT MEASURED: no independent listing reader is wired, so that " +
 	"population was never walked and no corroboration was looked for. A reader that IS wired and cannot answer — a " +
 	"failed read, or a snapshot past the recognition bound — is a different state and takes the measured branch, " +
@@ -216,9 +214,8 @@ func rwaValuationStages(assets []RWAAsset) []RWAFunnelStage {
 	return stages
 }
 
-// rwaReferenceRefusalOrder is the order the rules refuse a reference in
-// [rwaApplyReference], which is the order the drops are reported in. A
-// map iteration would reorder the wire between two identical responses.
+// rwaReferenceRefusalOrder is the order [rwaApplyReference] refuses a reference in, and so the
+// order drops are reported; map iteration would reorder the wire between identical responses.
 var rwaReferenceRefusalOrder = []string{
 	RWAPremiumIssuerFlagged,
 	RWAPremiumReferenceUnavailable,
@@ -235,11 +232,11 @@ var rwaReferenceRefusalOrder = []string{
 }
 
 // rwaReferenceDropActors names who can move each reference-valuation drop, on the membership arms'
-// three-actor vocabulary. `operator` where somebody here can act (no oracle publishes the
-// instrument, a failed or stale read, no supply reading, an empty curated feed set); `definition`
-// where the rule is working (flagged issuer, unbound pair such as a token wearing an instrument's
-// ticker, a feed pricing an ounce rather than a token, reserve-asset denominated or non-positive
-// value). No drop is the ISSUER's: an issuer cannot make an oracle price its instrument.
+// actor vocabulary. `operator` where somebody here can act (no oracle publishes the instrument, a
+// failed or stale read, no supply reading, an empty curated feed set); `definition` where the rule
+// is working (flagged issuer, unbound pair such as a token wearing an instrument's ticker, a feed
+// pricing an ounce rather than a token, reserve-denominated or non-positive value). No drop is the
+// ISSUER's: an issuer cannot make an oracle price its instrument.
 var rwaReferenceDropActors = map[string]string{
 	RWAPremiumIssuerFlagged:        rwaActorDefinition,
 	RWAPremiumNotBound:             rwaActorDefinition,
@@ -297,8 +294,7 @@ func rwaReferenceDrops(byReason map[string]int) []RWAFunnelDrop {
 // arm was walked at all.
 func rwaFunnelBasisFor(classicMeasured, contractsMeasured, listingMeasured bool) string {
 	parts := []string{rwaFunnelBasis}
-	// Appended as a correction to the sentence above rather than
-	// replacing it, because that sentence also defines the units and
+	// Appended to the sentence above, not replacing it: that sentence also defines the units and
 	// the `actor` column every other arm's stages use.
 	if !classicMeasured {
 		parts = append(parts, rwaFunnelClassicUnmeasured)
@@ -329,8 +325,8 @@ func rwaClassicStages(m rwaMembership, join rwaCatalogueJoin, served int) []RWAF
 	// The split cannot say WHY a reached domain served nothing: no per-attempt outcome is stored, so
 	// 404, dead name, TLS failure and a document without SEP-1 are one count.
 	//
-	// Both counts are clamped (the gap at zero; fetched-but-empty to the gap). Neither clamp hides an
-	// inconsistency: the census Check() bounds the same counts independently, and Balanced requires both.
+	// Both counts are clamped (the gap at zero; fetched-but-empty to the gap); neither clamp hides an
+	// inconsistency, since the census Check() bounds the same counts independently.
 	gap := max(c.IssuersWithHomeDomain-c.IssuersWithPayload, 0)
 	servedNothing := min(c.IssuersFetchedWithoutPayload, gap)
 	neverFetched := gap - servedNothing
@@ -367,9 +363,8 @@ func rwaClassicStages(m rwaMembership, join rwaCatalogueJoin, served int) []RWAF
 			),
 		},
 		{
-			// Requirement 4's pre-filter runs on the bound entries before any directory read, so its
-			// drop is a funnel stage. It is ALSO in `refused[]` under requirement 4, the one place that
-			// tally reports out of R1-R4 order.
+			// Requirement 4's pre-filter runs before any directory read, so its drop is a funnel
+			// stage; it is ALSO in `refused[]` under requirement 4, out of R1-R4 order.
 			Stage: rwaStageBoundEntries, Unit: rwaUnitDeclarations, Count: c.EntriesBound,
 			Dropped: rwaDrops(RWAFunnelDrop{
 				Reason: rwaDropNoInstrumentBasis, Count: c.EntriesFiltered, Actor: rwaActorDefinition,
@@ -403,10 +398,11 @@ func rwaContractStages(m rwaMembership, served int) []RWAFunnelStage {
 
 	stages := []RWAFunnelStage{
 		{
-			// The curated set split by strkey form. An account address names an ENTITY (many tokens or
-			// none); a contract address names ONE token. The arm identifies tokens, so account rows leave
-			// under `definition` (scope of the rule, not a closable gap); recognised, unflagged, tokenless
-			// entities are counted at directory_recognised_issuing_accounts and NAMED in unreached_entities.
+			// Split by strkey form: an account address names an ENTITY (many tokens or none), a
+			// contract address ONE token. The arm identifies tokens, so account rows leave under
+			// `definition` (scope of the rule, not a closable gap); recognised, unflagged, tokenless
+			// entities are counted at directory_recognised_issuing_accounts and NAMED in
+			// unreached_entities.
 			Stage: rwaStageDirectoryEntries, Unit: rwaUnitDirectoryAddresses, Count: c.Entries,
 			Dropped: rwaDrops(RWAFunnelDrop{
 				Reason: rwaDropDirectoryNamesAnAccount, Count: c.Accounts, Actor: rwaActorDefinition,
@@ -443,10 +439,10 @@ func rwaContractStages(m rwaMembership, served int) []RWAFunnelStage {
 		},
 		{Stage: rwaStageContractsServed, Unit: rwaUnitAssets, Count: served},
 		{
-			// A TERMINAL stage, not part of the narrowing. It counts the account rows the first stage
-			// dropped, filtered to recognised, unflagged entities this index holds no classic asset for.
-			// It takes no part in the stage arithmetic: folding a coverage census into a narrowing would
-			// close the funnel by adding a number that measures something else.
+			// A TERMINAL stage, not part of the narrowing: the account rows the first stage dropped,
+			// filtered to recognised, unflagged entities this index holds no classic asset for.
+			// Folding a coverage census into the arithmetic would close the funnel with a number that
+			// measures something else.
 			Stage: rwaStageRecognisedIssuingAcct, Unit: rwaUnitDirectoryAddresses,
 			Count: c.AccountsIssuingWithoutAsset,
 		},
@@ -460,18 +456,17 @@ func rwaContractStages(m rwaMembership, served int) []RWAFunnelStage {
 // rwaListingStages is C2's SECOND arm: every in-repo curated contract binding, narrowed to the
 // tokens an independent listing directory corroborated into the set.
 //
-// It is a separate arm because it narrows a DIFFERENT population from a different root (a
-// hand-reviewed in-repo table, looking for somebody else agreeing, versus the contract arm's
-// curated account directory); folding them would sum two unrelated populations in one stage. It is
-// short on purpose: every drop between a verified in-repo identity and an admitted asset is
-// somebody else declining to agree, or nobody having been asked.
+// A separate arm because it narrows a DIFFERENT population from a different root (a hand-reviewed
+// in-repo table versus the contract arm's curated account directory); folding them would sum two
+// unrelated populations in one stage. It is short on purpose: every drop between a verified
+// in-repo identity and an admitted asset is somebody else declining to agree, or nobody asked.
 func rwaListingStages(m rwaMembership, served int) []RWAFunnelStage {
 	lc := m.listingCensus
 	stages := []RWAFunnelStage{
 		{
-			// The root: every address this repository has bound to a named real-world instrument at the
-			// evidence bar internal/rwa/contract.go documents. A constant of the build, so the drops
-			// below read as statements about the world rather than about our scan.
+			// The root: every address bound to a named real-world instrument at the evidence bar
+			// internal/rwa/contract.go documents. A constant of the build, so the drops below describe
+			// the world rather than our scan.
 			Stage: rwaStageCuratedBindings, Unit: rwaUnitContracts, Count: lc.bindings,
 			Dropped: rwaDrops(
 				// Not a refusal: the contract arm already evaluates this address, and evaluating it
@@ -481,9 +476,9 @@ func rwaListingStages(m rwaMembership, served int) []RWAFunnelStage {
 					Count:  lc.alsoInDirectoryArm, Actor: rwaActorDefinition,
 				},
 				// The fail-closed shrink. An outage is the operator's to fix and is reported apart from
-				// the finding below, since a read that did not answer may not report an absence. It names
-				// the LISTING directory only, so a curated-directory failure does not alarm against a
-				// healthy listing sync.
+				// the finding below, since a read that did not answer may not report an absence. It
+				// names the LISTING directory only, so a curated-directory failure does not alarm
+				// against a healthy listing sync.
 				RWAFunnelDrop{
 					Reason: rwa.RejectContractListingUnavailable,
 					Count:  lc.listingUnavailable, Actor: rwaActorOperator,
@@ -515,10 +510,10 @@ func rwaListingStages(m rwaMembership, served int) []RWAFunnelStage {
 		},
 		{Stage: rwaStageListingServed, Unit: rwaUnitAssets, Count: served},
 		{
-			// A TERMINAL census, sibling of directory_recognised_issuing_accounts. It counts addresses
-			// the listing names that no curated binding does: the population an operator reviews to grow
-			// the set, and the auditable form of "a listing admits nothing on its own". It takes no part
-			// in the arithmetic.
+			// A TERMINAL census, sibling of directory_recognised_issuing_accounts: addresses the
+			// listing names that no curated binding does, i.e. the population an operator reviews to
+			// grow the set and the auditable form of "a listing admits nothing on its own". Outside
+			// the arithmetic.
 			Stage: rwaStageListedWithoutBinding, Unit: rwaUnitContracts,
 			Count: lc.listedWithoutBinding,
 		},
@@ -561,8 +556,8 @@ func rwaListingAdmitted(m rwaMembership) int {
 // the case the precedence exists for.
 //
 // The C4 drop is UNREACHABLE here by construction (a candidate reaches the verdict only if a
-// curated binding names it, which C4's first branch answers on). It is listed so a candidate
-// admitted on other evidence cannot drop out of the accounting silently.
+// curated binding names it). It is listed so a candidate admitted on other evidence cannot drop
+// out of the accounting silently.
 func rwaListingCandidateDrops(m rwaMembership) []RWAFunnelDrop {
 	out := make([]RWAFunnelDrop, 0, 2)
 	for _, d := range []struct {

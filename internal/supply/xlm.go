@@ -10,10 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// xlmAssetKey is the single canonical key for native XLM in
-// asset_supply_history + on the API surface. Every XLM-related
-// computation produces this constant, never "native" / "XLM:" /
-// other variants.
+// xlmAssetKey is the single canonical key for native XLM in asset_supply_history and the API,
+// never "native" or "XLM:" variants.
 const xlmAssetKey = "XLM"
 
 // XLMTotalSupplyStroops is the frozen-2019 pubnet native XLM total in stroops: 50_001_806_812 XLM
@@ -23,9 +21,8 @@ func XLMTotalSupplyStroops() *big.Int {
 	return new(big.Int).Set(xlmTotalSupplyStroops)
 }
 
-// xlmTotalSupplyStroops is the underlying immutable value. Returned
-// only via the [XLMTotalSupplyStroops] copy-constructor so callers
-// can't mutate the package-level constant.
+// xlmTotalSupplyStroops is exposed only through the [XLMTotalSupplyStroops] copy so callers
+// cannot mutate it.
 var xlmTotalSupplyStroops = new(big.Int).Mul(
 	big.NewInt(50_001_806_812),
 	big.NewInt(10_000_000), // 10^7 stroops per XLM
@@ -87,9 +84,7 @@ type ReserveBalanceFreshnessReader interface {
 type XLMComputer struct {
 	reserveAccounts []string
 	reader          ReserveBalanceReader
-	// total is the network's native XLM total supply in stroops
-	// (see [XLMTotalSupplyStroopsForNetwork]); never mutated after
-	// construction, copied on every Compute.
+	// total is the network's native XLM total in stroops; copied on every Compute, never mutated.
 	total *big.Int
 }
 
@@ -121,10 +116,8 @@ func NewXLMComputerForNetwork(passphrase string, reserveAccounts []string, reade
 	}, nil
 }
 
-// ErrNilReader is returned by [NewXLMComputer] when the caller
-// supplied reserve accounts but no reader. Operator misconfig that
-// would silently produce an over-stated circulating supply (no
-// exclusion applied) — fail loudly at construction instead.
+// ErrNilReader is returned when reserve accounts are configured without a reader; that would
+// silently overstate circulating supply (no exclusion applied), so construction fails loudly.
 var ErrNilReader = errors.New("supply: reserve-balance reader is nil but reserve accounts are configured")
 
 // Compute returns the native XLM [Supply] at ledger (Algorithm 1): total = the network's native
@@ -143,10 +136,7 @@ func (c *XLMComputer) Compute(ctx context.Context, ledger uint32, observedAt tim
 			return Supply{}, fmt.Errorf("supply: read SDF reserve balances at ledger %d: %w", ledger, err)
 		}
 		if reserved == nil {
-			// Defence-in-depth: a misbehaving reader returning
-			// (nil, nil) would otherwise nil-pointer in the Sub call
-			// below. Treat as zero with a wrapped error so the
-			// operator gets a clear signal.
+			// A reader returning (nil, nil) would nil-pointer in Sub below; surface it as an error.
 			return Supply{}, fmt.Errorf("supply: reserve-balance reader returned nil at ledger %d", ledger)
 		}
 	}

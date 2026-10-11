@@ -17,17 +17,17 @@ import (
 // checksumWarnSubstring marks every aws-sdk-go-v2 "Response has no supported checksum" line to drop; substring match is safe enough.
 const checksumWarnSubstring = "Response has no supported checksum"
 
-// silenceOnce guards against accidental double-install (e.g. a test
-// calling the function alongside the real main). The second call is
-// a no-op and returns the already-installed flush func.
+// silenceOnce makes a second install (e.g. a test beside the real main) a no-op that returns the
+// already-installed flush func.
 var (
 	silenceOnce  sync.Once
 	silenceFlush func()
 )
 
-// SilenceSDKChecksumWarnings filters stderr (fd 2) through a pipe dropping the SDK's no-checksum WARNs, which MinIO triggers on every GetObject.
-// Must run before config.LoadDefaultConfig, which binds os.Stderr into the SDK logger. Fail-soft and sync.Once-guarded.
-// The caller MUST run the returned flush (never nil) before exiting; os.Exit skips defers.
+// SilenceSDKChecksumWarnings filters stderr (fd 2) through a pipe dropping the SDK's no-checksum
+// WARNs, which MinIO triggers on every GetObject. Must run before config.LoadDefaultConfig, which
+// binds os.Stderr into the SDK logger. The caller MUST run the returned flush (never nil) before
+// exiting; os.Exit skips defers.
 func SilenceSDKChecksumWarnings() (flush func()) {
 	silenceOnce.Do(func() {
 		f, err := installStderrFilter()
@@ -39,19 +39,14 @@ func SilenceSDKChecksumWarnings() (flush func()) {
 		silenceFlush = f
 	})
 	if silenceFlush == nil {
-		// Second-or-later call before the first finished installing
-		// (unreachable in practice; sync.Once orders them) or the
-		// first call panicked before assigning. Either way, a no-op
-		// is the safe answer.
+		// The first call panicked before assigning; a no-op is the safe answer.
 		return func() {}
 	}
 	return silenceFlush
 }
 
-// installStderrFilter is the testable core. It dup-and-replaces fd
-// 2, then launches the filter goroutine. Returns an error if any
-// syscall fails; callers should fail-soft. The returned flush
-// func tears the filter down and waits for the goroutine to drain.
+// installStderrFilter dup-and-replaces fd 2 and starts the filter goroutine. On a syscall error
+// callers fail soft; the returned flush tears the filter down and waits for the drain.
 func installStderrFilter() (func(), error) {
 	return installStderrFilterTo(filteringForwarder)
 }
@@ -71,10 +66,8 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 		return nil, fmt.Errorf("pipe: %w", err)
 	}
 
-	// Replace fd 2 with the pipe's writer end. Every existing
-	// reference to fd 2 (including the aws-sdk-go-v2 default
-	// logger bound to os.Stderr) is redirected through us from
-	// here on.
+	// Replace fd 2 with the pipe's writer end so every existing reference to it, including the
+	// SDK logger bound to os.Stderr, goes through the filter.
 	if err := dupOnto(int(pw.Fd()), int(os.Stderr.Fd())); err != nil {
 		_ = pr.Close()
 		_ = pw.Close()
@@ -94,10 +87,8 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		// Registered last so it unwinds FIRST: an unrecovered panic in ANY
-		// goroutine kills the whole process, and consume's caller-supplied
-		// body (the SDK's own log lines, in production) is not something
-		// we control the shape of.
+		// Registered last so it unwinds first: an unrecovered panic in any goroutine kills the
+		// process, and consume's input (the SDK's log lines) is not ours to control.
 		defer worker.Recover(nil, "pipeline-stderr-filter")
 		consume(pr, realStderr)
 	}()
@@ -109,19 +100,12 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 			// dup2 closes the pipe writer's fd-2 reference; the reader sees EOF only once pw is closed too, next.
 			_ = dupOnto(savedFD, int(os.Stderr.Fd()))
 			_ = pw.Close()
-			// fd 2 is the real stderr again as of the dup2 above, so
-			// the runtime's own "standard error" crash output already
-			// covers it; drop the extra duplicate to avoid a
-			// double-printed traceback after flush.
+			// fd 2 is the real stderr again, so drop the extra crash-output duplicate to avoid a
+			// double-printed traceback.
 			_ = debug.SetCrashOutput(nil, debug.CrashOptions{})
-			// Wait for the consumer goroutine to drain whatever
-			// was buffered in the pipe before we returned to the
-			// caller. After this point, every byte the goroutine
-			// was going to forward has reached realStderr.
+			// Drain the buffered pipe so every byte to forward has reached realStderr on return.
 			wg.Wait()
-			// Close our handle on the dup'd real-stderr now that
-			// no one needs it (fd 2 itself remains open as a
-			// fresh dup2 target).
+			// fd 2 itself stays open; only our dup'd handle is no longer needed.
 			_ = realStderr.Close()
 		})
 	}
@@ -135,27 +119,22 @@ func filteringForwarder(r io.Reader, realStderr *os.File) {
 	br := bufio.NewReaderSize(r, 64*1024)
 	for {
 		line, err := br.ReadSlice('\n')
-		// Oversized line: ReadSlice fills the buffer without finding
-		// '\n'. Forward the chunks verbatim (no filtering — the SDK
-		// lines this filter targets are short) until the line ends.
-		// Never bail: a giant line must not orphan the pipe.
+		// Oversized line: forward the chunks verbatim (the SDK lines targeted are short) until it
+		// ends. Never bail: a giant line must not orphan the pipe.
 		for errors.Is(err, bufio.ErrBufferFull) {
 			_, _ = realStderr.Write(line)
 			line, err = br.ReadSlice('\n')
 		}
 		if len(line) > 0 && !strings.Contains(string(line), checksumWarnSubstring) {
-			// ReadSlice keeps the trailing '\n' (absent only on a
-			// final unterminated line at EOF — terminate it so the
-			// journal line stays well-formed, matching the previous
-			// Scanner behavior).
+			// ReadSlice keeps the '\n'; only a final unterminated line at EOF lacks one, so
+			// terminate it to keep the journal line well-formed.
 			_, _ = realStderr.Write(line)
 			if line[len(line)-1] != '\n' {
 				_, _ = realStderr.Write([]byte{'\n'})
 			}
 		}
 		if err != nil {
-			// EOF (flush closed the writer) or a genuine pipe read
-			// error — either way the writer side is done with us.
+			// EOF (flush closed the writer) or a pipe read error: the writer side is done.
 			return
 		}
 	}

@@ -48,16 +48,12 @@ const rwaHistoryTTL = 10 * time.Minute
 // request deadline never fires and the handler's unavailable-response branch would never run.
 const rwaHistoryBudget = maxHandlerBudget
 
-// rwaHistoryMaxPoints caps the served point count per series. The daily
-// grain over the longest window this API offers is a few thousand
-// points; the cap exists so a future grain change cannot turn this into
-// an unbounded response.
+// rwaHistoryMaxPoints caps the points per series (daily grain is a few thousand) so a future
+// grain change cannot make the response unbounded.
 const rwaHistoryMaxPoints = 4096
 
-// rwaHistoryQuote is the denominator. Fixed, not a parameter: the
-// reference feeds this surface admits are the USD-denominated ones
-// (R-A in rwa_reference.go), so a quote parameter could only ever be
-// answered with "fiat:USD" or an error.
+// rwaHistoryQuote is the fixed denominator: the admitted reference feeds are USD-denominated
+// (R-A in rwa_reference.go), so a quote parameter could only answer "fiat:USD" or an error.
 var rwaHistoryQuote = canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}
 
 // ─── wire ───────────────────────────────────────────────────────────
@@ -75,10 +71,8 @@ type RWAHistoryView struct {
 	Timeframe string `json:"timeframe"`
 	// Quote is the denominator every figure is in.
 	Quote string `json:"quote"`
-	// Assets and Issuers size the WHOLE RWA set, including the members
-	// this series cannot value. `points[].assets_unvalued` is counted
-	// against Assets, so a reader can see the coverage of every point
-	// without holding the other endpoint's response.
+	// Assets and Issuers size the WHOLE RWA set, including members this series cannot value;
+	// `points[].assets_unvalued` is counted against Assets so each point states its coverage.
 	Assets  int `json:"assets"`
 	Issuers int `json:"issuers"`
 	// Members is how many of those assets contribute to the series at
@@ -89,10 +83,8 @@ type RWAHistoryView struct {
 	// series is valued against THIS membership, including points that
 	// predate an asset's admission. See the file comment.
 	MembershipAsOf WireTime `json:"membership_as_of"`
-	// Excluded names the set members left out of the series and why,
-	// tallied by reason. Served for the reason the assets funnel is: a
-	// total that silently dropped rows is a smaller claim wearing the
-	// same label.
+	// Excluded tallies, by reason, the set members left out of the series: a total that silently
+	// dropped rows is a smaller claim wearing the same label.
 	Excluded []RWAHistoryExcluded `json:"excluded,omitempty"`
 	// Sources names the distinct oracles behind the values, sorted. A
 	// dollar figure that cannot be traced to a publisher is worse than
@@ -115,19 +107,15 @@ type RWAHistoryView struct {
 type RWAHistoryPoint struct {
 	// T is the UTC day the bucket opens.
 	T WireTime `json:"t"`
-	// ValueUSD is the exact sum of the contributing members' values on
-	// this day, as a 2-dp decimal string (ADR-0003 — rational
-	// arithmetic throughout, never a float). Add up the group series
-	// for the same day and you land on this number.
+	// ValueUSD is the exact sum of the contributing members' values on this day, a 2-dp decimal
+	// string (ADR-0003: rational arithmetic, never a float). Group series for the day add up to it.
 	ValueUSD string `json:"value_usd"`
 	// AssetsValued and AssetsUnvalued split the WHOLE set by whether it
 	// contributed to this day's figure. Their sum is `assets`.
 	AssetsValued   int `json:"assets_valued"`
 	AssetsUnvalued int `json:"assets_unvalued"`
-	// LowerBound is true whenever any set member is unvalued on this
-	// day — i.e. whenever the figure is less than the reference-priced
-	// value of the set on that day. It is the same claim
-	// `reference_valuation.lower_bound` makes on /v1/rwa/assets.
+	// LowerBound is true whenever any set member is unvalued on this day, i.e. the figure is below
+	// the set's reference-priced value; same claim as `reference_valuation.lower_bound`.
 	LowerBound bool `json:"lower_bound"`
 }
 
@@ -143,10 +131,8 @@ type RWAHistoryGroup struct {
 	// Code and Issuer carry the classic identity of an asset group.
 	Code   string `json:"code,omitempty"`
 	Issuer string `json:"issuer,omitempty"`
-	// Feed is the ADR-0028 instrument feed an asset group was valued
-	// against, in its canonical `rwa:` form; Source is the oracle whose
-	// series was read. Both absent on an issuer group, which may span
-	// several of each.
+	// Feed is the ADR-0028 instrument feed (canonical `rwa:` form) an asset group was valued
+	// against; Source is the oracle read. Both are absent on an issuer group, which may span several.
 	Feed   string `json:"feed,omitempty"`
 	Source string `json:"source,omitempty"`
 	// Members is how many set members this group's series draws on.
@@ -165,10 +151,8 @@ type RWAHistoryExcluded struct {
 	Detail string `json:"detail"`
 }
 
-// RWAHistoryExcluded reasons. Each names a DIFFERENT absence, because a
-// member nobody has bound to a feed and a member whose flow log is
-// incompletely seeded are opposite findings that one count would render
-// identically.
+// RWAHistoryExcluded reasons. Each names a DIFFERENT absence: a member bound to no feed and one
+// with an incompletely seeded flow log are opposite findings one count would blur.
 const (
 	// RWAHistoryExcludedNotBound — no curated (code, issuer) → feed
 	// binding, so nothing may value the member's instrument. The same
@@ -319,10 +303,9 @@ func (s *Server) handleRWAHistory(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, Envelope{Data: view, AsOf: WireTime(hist.builtAt), Flags: Flags{Stale: hist.stale, Degraded: hist.stale}})
 }
 
-// writeRWASeriesUnavailable answers an RWA series that has no assembly
-// to serve. A problem rather than an envelope: a 200 would have to fill
-// assets, members and membership_as_of with zeros no read produced, and
-// would keep the route's public CDN band. writeProblem sets no-store.
+// writeRWASeriesUnavailable answers an RWA series with no assembly to serve. A problem, not an
+// envelope: a 200 would need zeros no read produced and would keep the route's public CDN band
+// (writeProblem sets no-store).
 func writeRWASeriesUnavailable(w http.ResponseWriter, r *http.Request, detail string) {
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/rwa-series-unavailable",
@@ -693,17 +676,14 @@ type rwaHistoryCandidate struct {
 	decimals    int
 }
 
-// rwaHistoryCandidates applies the gates that do not need a read: the
-// scam-flag suppression, the curated (code, issuer) → feed binding, and
-// the existence of a deterministic SAC address to key the flow log by.
-// Every refusal is tallied rather than dropped.
+// rwaHistoryCandidates applies the gates that need no read: scam-flag suppression, the curated
+// (code, issuer) → feed binding, and a deterministic SAC address to key the flow log. Every
+// refusal is tallied, not dropped.
 func rwaHistoryCandidates(m rwaMembership, excluded map[string]int) []rwaHistoryCandidate {
 	out := make([]rwaHistoryCandidate, 0, len(m.members))
 	for _, mem := range m.members {
-		// First, and covering everything below it: the same suppression
-		// /v1/assets applies. Handing a flagged issuer a real
-		// instrument's NAV history would publish a larger claim through
-		// the gap than the price we already withhold.
+		// First: the same suppression /v1/assets applies. A flagged issuer given a real
+		// instrument's NAV history would publish a larger claim than the price we withhold.
 		if pricingguard.IsDirectoryScamFlagged(mem.dirTags) {
 			excluded[RWAHistoryExcludedIssuerFlagged]++
 			continue
@@ -864,17 +844,13 @@ func rwaClosedDayCeiling(now time.Time) time.Time {
 	return now.UTC().Truncate(24 * time.Hour).Add(-24 * time.Hour)
 }
 
-// rwaReduceFeedSeries keeps only oracle-class publishers and reduces
+// rwaReduceFeedSeries keeps only oracle-class publishers (R-C in rwa_reference.go: an aggregator
+// writing the same table for divergence comparison is not an independent valuation) and reduces
 // each feed to ONE source's series.
 //
-// The source is chosen ONCE per series. Several oracles may price one instrument, and a day
-// bucket cannot order two sources' closings (`last(price, ts)` keeps the value, not its
-// timestamp). Picking per day would let the line switch publisher between adjacent points and
-// render the switch as a price move. The pick is the source with the most day buckets, ties
-// broken on source name so it never depends on scan order, and it is named on the wire.
-//
-// The oracle-class gate is R-C from rwa_reference.go: an aggregator writing into the same table
-// for divergence comparison is not an independent valuation of the instrument.
+// The source is chosen ONCE per series: a day bucket cannot order two sources' closings
+// (`last(price, ts)` keeps the value, not its timestamp), so per-day picking would render a
+// publisher switch as a price move. The pick is named on the wire.
 func rwaReduceFeedSeries(rows []timescale.OracleDayPoint) map[string]*rwaFeedSeries {
 	feeds := rwaFeedDaysBySource(rows)
 	out := make(map[string]*rwaFeedSeries, len(feeds))
@@ -913,10 +889,9 @@ func rwaFeedDaysBySource(rows []timescale.OracleDayPoint) map[string]rwaFeedDayI
 
 // rwaAdmissibleFeedRow reports whether one day bucket may enter a reference series.
 //
-// The oracle-class gate is R-C from rwa_reference.go: an aggregator writing into the same table
-// for divergence comparison is not an independent valuation. A non-positive value is bad data,
-// not a valuation of zero (the refusal rwaReferenceValuationOf makes); dropping the bucket
-// leaves a gap for this feed rather than a number anything may be multiplied by.
+// The oracle-class gate is R-C from rwa_reference.go. A non-positive value is bad data, not a
+// valuation of zero (as rwaReferenceValuationOf refuses); the bucket becomes a gap, not a number
+// anything may be multiplied by.
 func rwaAdmissibleFeedRow(row timescale.OracleDayPoint) bool {
 	switch {
 	case row.Asset.Type != canonical.AssetRWA:
@@ -929,10 +904,8 @@ func rwaAdmissibleFeedRow(row timescale.OracleDayPoint) bool {
 	return true
 }
 
-// rwaPickFeedSource chooses the one publisher a feed's series is drawn
-// from: the one covering the most day buckets, ties broken on the source
-// name so the pick never depends on map iteration order. Empty when the
-// feed has no admissible publisher.
+// rwaPickFeedSource chooses the publisher with the most day buckets, ties broken on source name
+// so the pick never depends on map order. Empty when no publisher is admissible.
 func rwaPickFeedSource(sources rwaFeedDayIndex) string {
 	best, bestDays := "", -1
 	for name, days := range sources {

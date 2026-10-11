@@ -21,14 +21,10 @@ const SourceName = "blend_backstop"
 //     backfill range may replay either.
 const MainnetBackstopV2 = "CAQQR5SWBXKIGZKPBZDH3KM5GQ5GUTPKB7JAFCINLZBC5WXPJKRG3IM7"
 
-// MainnetBackstopV1 re-exports blend.MainnetBackstopV1 so the
-// backstop decoder's contract gate and the blend package agree on the
-// V1 address without re-declaring the constant value here.
+// MainnetBackstopV1 re-exports blend.MainnetBackstopV1 so the two packages cannot disagree.
 const MainnetBackstopV1 = blend.MainnetBackstopV1
 
-// BackstopGenesisLedger is a lower bound on any Blend Backstop event: the
-// Blend rollout's first contract instantiation, which the V1 backstop
-// (earliest pinned lake event: 51_499_926) postdates. Sizes the gap
+// BackstopGenesisLedger is a lower bound on any Blend Backstop event, used to size the gap
 // detector's, the reconcile's and a fresh projector cursor's range.
 const BackstopGenesisLedger = blend.FactoryGenesisLedger
 
@@ -53,16 +49,12 @@ const (
 	// EventRwZone is the V1 reward-zone-update topic, renamed `rw_zone_add` in V2. It stays a
 	// distinct kind so the stored event_kind reflects exactly what was on the wire.
 	EventRwZone = "rw_zone"
-	// EventRwZoneRemove: zero lake occurrences at the last census (this
-	// event had never fired on mainnet). Added per the EVERY-event
-	// principle; decode.go documents a doc-comment/code discrepancy in the
-	// upstream source for this one.
+	// EventRwZoneRemove has no lake occurrences; it is kept so every event is classified.
+	// decode.go documents an upstream doc-comment/code discrepancy for it.
 	EventRwZoneRemove = "rw_zone_remove"
 )
 
-// Topic[0] pre-encoded base64 — package-init constants so Classify()
-// does single string-equal comparisons rather than a full SCVal
-// decode per event (mirrors cctp / blend).
+// Topic[0] pre-encoded base64, so Classify() does string compares instead of an SCVal decode.
 var (
 	TopicSymbolDeposit           = scval.MustEncodeSymbol(EventDeposit)
 	TopicSymbolClaim             = scval.MustEncodeSymbol(EventClaim)
@@ -101,10 +93,7 @@ type Event struct {
 	Attributes  map[string]any // event-type-specific remainder
 }
 
-// EventKind implements [consumer.Event]. A single kind for the whole
-// backstop surface — the per-event discriminator lives in EventType /
-// the event_kind column, mirroring how cctp.Event uses one EventKind
-// across its four event types.
+// EventKind implements [consumer.Event]: one kind for the whole surface; EventType discriminates.
 func (Event) EventKind() string { return "blend_backstop.event" }
 
 // Source implements [consumer.Event] — matches [SourceName].

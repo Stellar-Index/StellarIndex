@@ -17,18 +17,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/httpx"
 )
 
-// This file cross-checks the served `circulating_supply` against external references, mirroring the price path in worker.go.
-// When every reference is dark or stale it degrades to a non-paging `no_reference` outcome, not a false divergence alert.
-// See docs/methodology/xlm-circulating-supply.md.
+// This file cross-checks the served `circulating_supply` against external references, mirroring
+// the price path in worker.go. When every reference is dark or stale it degrades to a non-paging
+// `no_reference` outcome, not a false divergence alert. See docs/methodology/xlm-circulating-supply.md.
 
 // Supply-check sentinel errors. ErrAssetUnsupported (reference.go) is
 // reused for "this reference doesn't publish the asset"; the two below
 // are supply-specific.
 var (
-	// ErrSupplyUnavailable — the reference supports the asset but has
-	// no usable circulating figure right now (vendor outage, 429,
-	// malformed body). Treated as a transient miss, mirroring
-	// ErrPriceUnavailable on the price path.
+	// ErrSupplyUnavailable means the reference supports the asset but has no usable circulating
+	// figure right now (outage, 429, malformed body): a transient miss, like ErrPriceUnavailable.
 	ErrSupplyUnavailable = errors.New("divergence: circulating supply unavailable")
 
 	// ErrNoServedSupply: our served tier has no circulating snapshot yet (bootstrap), so nothing to compare; recorded as `refresh_error`, not a divergence.
@@ -38,10 +36,8 @@ var (
 // SupplyReference is a pluggable external circulating-supply source, the analogue of [Reference]. Implementations MUST be safe for concurrent
 // LookupCirculatingSupply calls and SHOULD return [ErrAssetUnsupported] for an unpublished asset (a gap, not a transport failure).
 type SupplyReference interface {
-	// Name returns a stable, lowercase, hyphenated label suitable for
-	// the Prometheus `reference` label and JSON keys (e.g.
-	// "stellar-dashboard", "coingecko"). Stable across versions —
-	// renaming is a wire break against the supply-divergence alert.
+	// Name returns a stable, lowercase, hyphenated label for the Prometheus `reference` label and
+	// JSON keys (e.g. "coingecko"). Renaming is a wire break against the supply-divergence alert.
 	Name() string
 
 	// LookupCirculatingSupply returns the supply in WHOLE-TOKEN units (NOT minor units / stroops); [ErrAssetUnsupported] if unpublished, [ErrSupplyUnavailable] on a transient outage.
@@ -264,10 +260,8 @@ func (s *SupplyService) tickOne(ctx context.Context, c SupplyCheck) {
 
 	served, err := s.reader.LatestCirculatingSupply(ctx, c.AssetKey)
 	if err != nil {
-		// Bootstrap (no snapshot yet) and real read errors both mean
-		// "nothing to compare" — refresh_error. Log at the level that
-		// matches: bootstrap is debug (expected on a cold deploy), a
-		// real error is warn.
+		// Bootstrap (no snapshot yet) and real read errors both mean "nothing to compare"
+		// (refresh_error); bootstrap logs at debug (expected on a cold deploy), a real error at warn.
 		if errors.Is(err, ErrNoServedSupply) {
 			s.logger.Debug("supply divergence: no served snapshot yet",
 				"asset", c.Label, "asset_key", c.AssetKey)
@@ -296,10 +290,9 @@ func (s *SupplyService) tickOne(ctx context.Context, c SupplyCheck) {
 			continue
 		}
 		if rerr != nil {
-			// Transient miss (429, timeout, malformed body). Debug-level:
-			// the aggregate no_reference/ok outcome carries the operator
-			// signal; a per-reference warn would be noisy on the known
-			// CoinGecko-429 path.
+			// Transient miss (429, timeout, malformed body). Debug-level: the aggregate
+			// no_reference/ok outcome carries the operator signal, and a per-reference warn would be
+			// noisy on the CoinGecko-429 path.
 			s.logger.Debug("supply divergence: reference lookup failed",
 				"asset", c.Label, "reference", ref.Name(), "err", rerr)
 			continue

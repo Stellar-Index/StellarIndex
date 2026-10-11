@@ -29,27 +29,20 @@ type localStore struct {
 	entries map[string]localEntry
 	lastGC  time.Time
 
-	// lastSweptWindow is the window value gcLocked last ran a full scan
-	// for. A second scan at the same value can only re-walk live
-	// entries, so it is skipped.
+	// lastSweptWindow is the window gcLocked last scanned; a second scan at the same value can
+	// only re-walk live entries, so it is skipped.
 	lastSweptWindow int64
 
-	// maxKeys is the hard cap on tracked entries; newLocalStore sets it
-	// to [localStoreMaxKeys]. A field rather than a bare const so the
-	// package's own tests can drive the overflow path at a small size
-	// instead of allocating 100k entries.
+	// maxKeys caps tracked entries. A field, not a const, so tests can drive the overflow path
+	// at a small size instead of allocating 100k entries.
 	maxKeys int
 
-	// per48 counts, per window, how many keys each IPv6 /48 (keyed by
-	// [slash48Key]) has inserted; maxPer48 caps it. A field for the same
-	// test-sizing reason as maxKeys.
+	// per48 counts, per window, the keys each IPv6 /48 (see [slash48Key]) has inserted;
+	// maxPer48 caps it. A field for the same test-sizing reason as maxKeys.
 	per48    map[string]localEntry
 	maxPer48 int
 
-	// sweeps counts completed full scans. Observability for the
-	// invariant test that pins "at most one sweep per window" — the
-	// property this guards. Cheap: incremented at most
-	// once per window.
+	// sweeps counts full scans so a test can pin "at most one sweep per window".
 	sweeps int
 }
 
@@ -59,16 +52,13 @@ type localEntry struct {
 	count  int
 }
 
-// localStoreMaxKeys is the hard cap on distinct tracked keys. Past it,
-// new keys share [localOverflowKey]'s bucket instead of growing the map.
+// localStoreMaxKeys caps distinct tracked keys; past it new keys share [localOverflowKey].
 const localStoreMaxKeys = 100_000
 
-// localStoreMaxKeysPer48 caps the keys one IPv6 /48 may insert per window
-// before its further /64s share a single per-/48 bucket.
+// localStoreMaxKeysPer48 caps the keys one IPv6 /48 may insert per window.
 const localStoreMaxKeysPer48 = 1024
 
-// localPer48BucketTag marks a per-/48 shared bucket key; the NUL byte
-// keeps it disjoint from every real /64 key, as with [localOverflowKey].
+// localPer48BucketTag marks a per-/48 shared bucket; NUL keeps it disjoint from real keys.
 const localPer48BucketTag = "\x00per48\x00"
 
 // localOverflowKey is the shared bucket every key beyond the cap folds into. Its NUL bytes make
@@ -109,9 +99,8 @@ func (s *localStore) take(key string, window int64, limit int, now time.Time, wi
 	return e.count, e.count <= limit
 }
 
-// admitLocked picks the bucket an untracked key is counted against: its
-// own, its /48's shared bucket once that /48 has used its per-window
-// allowance, or [localOverflowKey] once the map is full. Caller holds s.mu.
+// admitLocked picks the bucket for an untracked key: its own, its /48's shared bucket once that
+// /48 is out of allowance, or [localOverflowKey] once the map is full. Caller holds s.mu.
 func (s *localStore) admitLocked(key string, window int64) string {
 	p48, isV6 := slash48Key(key)
 	if isV6 {
@@ -132,10 +121,8 @@ func (s *localStore) admitLocked(key string, window int64) string {
 	return key
 }
 
-// slash48Key returns key with a trailing IPv6 address masked to its /48,
-// keeping any caller prefix ("anon:", "ip:") so namespaces stay disjoint.
-// The first parseable suffix is the longest, i.e. the whole address; a
-// hex-looking prefix can only widen the grouping, never narrow it.
+// slash48Key masks a trailing IPv6 address in key to its /48, keeping any caller prefix ("anon:",
+// "ip:") so namespaces stay disjoint. A hex-looking prefix can only widen the grouping.
 func slash48Key(key string) (string, bool) {
 	for i := 0; i < len(key); i++ {
 		if i > 0 && key[i-1] != ':' {

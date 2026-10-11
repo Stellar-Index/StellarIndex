@@ -7,10 +7,8 @@
 //
 // Two key families per (subject, day):
 //
-//	usage:<sub>:<YYYY-MM-DD>     → INCRBY request-unit total (BILLABLE
-//	                               only: the MonthlyQuota input; excludes
-//	                               429 and 5xx other than a timed-out
-//	                               read, see ClassThrottled)
+//	usage:<sub>:<YYYY-MM-DD>     → INCRBY billable request-unit total (the
+//	                               MonthlyQuota input, see ClassThrottled)
 //	usage:ep:<sub>:<YYYY-MM-DD>  → HASH of per-endpoint counters, fields
 //	                               "<route-pattern>|<class>" (ok, 4xx, 429, 5xx)
 //
@@ -29,36 +27,30 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RetentionDays is the TTL, in days, of every Redis usage key, and so
-// how far back Read, the rollup and its manual backfill can see. 35
-// covers the 30d billing window with a 5-day buffer for late writes /
-// clock skew between regions.
+// RetentionDays is the TTL of every Redis usage key, and so how far back Read and the rollup can
+// see. 35 covers the 30d billing window plus a 5-day buffer for late writes and region clock skew.
 const RetentionDays = 35
 
-// Outcome classes for the per-endpoint detail counters. Bounded by
-// construction — the middleware maps every response status onto
-// exactly one of these four, so the Redis-hash field cardinality is
-// (#route patterns × 4) per subject per day.
+// Outcome classes for the per-endpoint detail counters. The middleware maps every status onto
+// exactly one of four, so hash field cardinality is (#route patterns × 4) per subject per day.
 const (
 	// ClassOK — any status < 400 (2xx success, 3xx redirect/304).
 	ClassOK = "ok"
 	// ClassClientError — 4xx except 429.
 	ClassClientError = "4xx"
 	// ClassThrottled is a 429 rejection (rate-limit or monthly quota). With ClassServerError it
-	// is kept out of the per-day total so `requests` stays BILLABLE traffic, i.e. outcomes the
-	// CALLER caused (MonthlyQuota reads it): an outage or rate-limit storm must not eat a paid
-	// allowance. The one billable 5xx is a read that timed out on its own server-side budget
-	// (middleware.billableClass). Both still count in full in the per-endpoint detail hash.
-	// Both 429 producers reject before route resolution, so throttled counts land under the
-	// "unmatched" endpoint (documented on /v1/account/usage in the spec).
+	// is kept out of the per-day total so `requests` stays billable traffic the caller caused:
+	// an outage or rate-limit storm must not eat a paid allowance. The one billable 5xx is a
+	// read that timed out on its own server-side budget (middleware.billableClass). Both still
+	// count in full in the detail hash, and 429s land under "unmatched" because they reject
+	// before route resolution.
 	ClassThrottled = "429"
 	// ClassServerError — 5xx.
 	ClassServerError = "5xx"
 )
 
-// Counter atomically increments per-(subject, day) Redis counters
-// and reads them back in date-bucketed order. Safe for concurrent
-// use across goroutines; one process-level instance.
+// Counter atomically increments per-(subject, day) Redis counters and reads them back in
+// date-bucketed order. Safe for concurrent use; one process-level instance.
 type Counter struct {
 	rdb       redis.Cmdable
 	keyPrefix string
@@ -69,25 +61,21 @@ type Counter struct {
 // Option configures a Counter at construction.
 type Option func(*Counter)
 
-// WithClock overrides the time source. Tests pass a fake clock to
-// drive the day boundary deterministically.
+// WithClock overrides the time source so tests can drive the day boundary.
 func WithClock(now func() time.Time) Option {
 	return func(c *Counter) { c.nowFn = now }
 }
 
-// WithKeyPrefix overrides the "usage:" key prefix. Tests use this
-// to isolate against shared miniredis state.
+// WithKeyPrefix overrides the "usage:" key prefix to isolate tests on shared miniredis.
 func WithKeyPrefix(prefix string) Option {
 	return func(c *Counter) { c.keyPrefix = prefix }
 }
 
-// New constructs a usage Counter. Pass the same redis.Cmdable
-// the rate-limit Bucket uses — usage shares the bucket's Redis
-// host since the keys never collide (different prefix).
+// New constructs a usage Counter on the same redis.Cmdable as the rate-limit Bucket; the key
+// prefixes never collide.
 func New(rdb redis.Cmdable, opts ...Option) *Counter {
-	// Defence-in-depth: main only constructs a counter when Redis is
-	// wired, but if a future call site passes nil, return nil so [middleware.UsageTracker]'s
-	// `counter == nil` short-circuit fires before any Redis op.
+	// A nil rdb returns nil so [middleware.UsageTracker]'s `counter == nil` short-circuit fires
+	// before any Redis op.
 	if rdb == nil {
 		return nil
 	}
@@ -109,10 +97,8 @@ func (c *Counter) Increment(ctx context.Context, subject string) error {
 	return c.IncrementBy(ctx, subject, 1)
 }
 
-// IncrementBy adds n request units to the counter for (subject, today).
-// A request's unit count is its product cost — one per priced asset on
-// /v1/price/batch — so the monthly quota meters lookups, not HTTP calls.
-// n <= 0 records nothing.
+// IncrementBy adds n request units for (subject, today). Units are product cost (one per priced
+// asset on /v1/price/batch), so the monthly quota meters lookups, not HTTP calls. n <= 0 is a no-op.
 func (c *Counter) IncrementBy(ctx context.Context, subject string, n int64) error {
 	if c == nil || subject == "" || n <= 0 {
 		return nil
@@ -128,14 +114,11 @@ func (c *Counter) IncrementBy(ctx context.Context, subject string, n int64) erro
 	return nil
 }
 
-// detailKeyInfix separates the legacy per-day totals ("usage:<sub>:
-// <day>") from the per-endpoint detail hashes ("usage:ep:<sub>:
-// <day>"). Subjects are QueryEscape'd before keying (':' → "%3A"),
-// so no subject can collide with the literal "ep" segment.
+// detailKeyInfix separates per-day totals from per-endpoint detail hashes. Subjects are
+// QueryEscape'd (':' → "%3A"), so none can collide with the literal "ep" segment.
 const detailKeyInfix = "ep:"
 
-// detailKey builds the Redis key for the per-(subject, day) detail
-// hash. One HASH per (subject, day); fields are "<endpoint>|<class>".
+// detailKey is the per-(subject, day) detail HASH key; fields are "<endpoint>|<class>".
 func (c *Counter) detailKey(subject, day string) string {
 	return c.keyPrefix + detailKeyInfix + url.QueryEscape(subject) + ":" + day
 }
@@ -147,9 +130,8 @@ func (c *Counter) IncrementDetail(ctx context.Context, subject, endpoint, class 
 	return c.IncrementDetailBy(ctx, subject, endpoint, class, 1)
 }
 
-// IncrementDetailBy adds n request units to the per-endpoint outcome
-// counter, weighted exactly as [Counter.IncrementBy] weights the
-// billable total so the rollup's billable sum equals the quota counter.
+// IncrementDetailBy adds n units weighted as [Counter.IncrementBy] weights the billable total, so
+// the rollup's billable sum equals the quota counter.
 func (c *Counter) IncrementDetailBy(ctx context.Context, subject, endpoint, class string, n int64) error {
 	if c == nil || subject == "" || endpoint == "" || class == "" || n <= 0 {
 		return nil
@@ -165,9 +147,8 @@ func (c *Counter) IncrementDetailBy(ctx context.Context, subject, endpoint, clas
 	return nil
 }
 
-// DetailRow is one (subject, day, endpoint, class) counter read back
-// from a detail hash. The rollup worker groups these into
-// [RollupRow]s before handing them to the Timescale sink.
+// DetailRow is one (subject, day, endpoint, class) counter read back from a detail hash; the
+// rollup groups these into [RollupRow]s for the Timescale sink.
 type DetailRow struct {
 	Date     string // YYYY-MM-DD UTC
 	Subject  string // decoded subject ("id:<ident>" / "key:<id>")
@@ -181,11 +162,10 @@ type DetailRow struct {
 // bounded by (#active subjects x len(dates)). Production sweeps should use
 // [Counter.ScanDetailFunc] to avoid buffering a whole day's rows.
 //
-// Keys are de-duplicated per date. SCAN only guarantees AT LEAST once, and this Redis is shared
-// with the rate limiter's high-churn keys, so rehash repeats are routine. A duplicate would
-// become a second DetailRow that the rollup SUMS, and usage_daily's GREATEST() merge would make
-// the inflated count PERMANENT for a closed day. A repeat is a re-read of the same
-// (subject, day) hash, so keeping the first read is exact.
+// Keys are de-duplicated per date: SCAN is at-least-once and rehash repeats are routine on this
+// shared Redis. A duplicate DetailRow would be summed by the rollup, and usage_daily's GREATEST()
+// merge would make the inflated count permanent for a closed day. A repeat re-reads the same
+// hash, so keeping the first read is exact.
 func (c *Counter) ScanDetail(ctx context.Context, dates []string) ([]DetailRow, error) {
 	if c == nil {
 		return nil, nil
@@ -217,10 +197,7 @@ func (c *Counter) ScanDetailFunc(ctx context.Context, dates []string, fn func(De
 	return nil
 }
 
-// scanDetailDateFunc walks one date's detail hashes. Split out of
-// ScanDetailFunc so the cursor walk, the de-duplication and the
-// per-date loop each stay individually readable (and under the
-// gocognit ceiling).
+// scanDetailDateFunc walks one date's detail hashes, de-duplicating SCAN repeats.
 func (c *Counter) scanDetailDateFunc(ctx context.Context, date string, fn func(DetailRow) error) error {
 	match := c.keyPrefix + detailKeyInfix + "*:" + date
 	seen := make(map[string]struct{})
@@ -252,10 +229,9 @@ func (c *Counter) scanDetailDateFunc(ctx context.Context, date string, fn func(D
 	}
 }
 
-// readDetailHash HGETALLs one detail hash and decodes its fields
-// into DetailRows. Malformed fields / values are skipped — the hash
-// is single-writer ([Counter.IncrementDetail]) so damage here means
-// operator surgery, not a code path worth failing the sweep over.
+// readDetailHash decodes one detail hash into DetailRows. Malformed fields are skipped: the hash
+// is single-writer ([Counter.IncrementDetail]), so damage means operator surgery, not a reason
+// to fail the sweep.
 func (c *Counter) readDetailHash(ctx context.Context, key, date string) ([]DetailRow, error) {
 	subject, ok := c.subjectFromDetailKey(key, date)
 	if !ok {
@@ -286,8 +262,7 @@ func (c *Counter) readDetailHash(ctx context.Context, key, date string) ([]Detai
 	return rows, nil
 }
 
-// subjectFromDetailKey recovers the url-decoded subject from a
-// detail hash key of the form "<prefix>ep:<escaped-subject>:<date>".
+// subjectFromDetailKey recovers the subject from "<prefix>ep:<escaped-subject>:<date>".
 func (c *Counter) subjectFromDetailKey(key, date string) (string, bool) {
 	prefix := c.keyPrefix + detailKeyInfix
 	suffix := ":" + date
@@ -363,10 +338,8 @@ func parseCount(v any) int64 {
 	return n
 }
 
-// Read returns up to `days` daily counts for the subject, oldest
-// first. Days with no requests are omitted (the caller fills
-// gaps with zero buckets if the wire contract requires it). days
-// is clamped to RetentionDays — beyond that the data has expired.
+// Read returns up to `days` daily counts, oldest first, omitting days with no requests. days is
+// clamped to RetentionDays, past which the keys have expired.
 func (c *Counter) Read(ctx context.Context, subject string, days int) ([]Day, error) {
 	if c == nil || subject == "" || days <= 0 {
 		return nil, nil
@@ -405,10 +378,9 @@ func (c *Counter) Read(ctx context.Context, subject string, days int) ([]Day, er
 	return out, nil
 }
 
-// DeleteSubject deletes subject's per-day total and per-endpoint detail
-// keys for every day still inside the retention window, and returns how
-// many existed. Account erasure calls it; the keys are derived, not
-// scanned, so the cost is fixed per subject.
+// DeleteSubject deletes subject's total and detail keys for every day inside the retention window
+// and returns how many existed. Account erasure calls it; keys are derived, not scanned, so the
+// cost is fixed per subject.
 func (c *Counter) DeleteSubject(ctx context.Context, subject string) (int64, error) {
 	if c == nil || subject == "" {
 		return 0, nil

@@ -15,23 +15,14 @@ const sep10UnavailableType = "https://api.stellarindex.io/errors/sep10-unavailab
 
 // sep10UnavailableDetail is the body those answers carry.
 //
-// A caller who reaches this has read docs that said the flow exists (/sdk,
-// the getting-started guide, the spec), and every one now says it is off
-// here. This is the one surface that answers a caller who did not read
-// them, so it must stand on its own: WHY the route refuses (no working
-// validator — a deployment posture, not an outage or a bad request) and
-// WHAT TO DO INSTEAD (an API key, the credential this deployment actually
-// verifies). It names no single cause because resolveSEP10Validator
-// installs the Noop for ANY construction failure; it lists every
-// prerequisite and points at the startup log, which carries the real error
-// (not echoed here: the route is public). The four call sites share one
-// string so they cannot drift apart.
+// It must stand alone for a caller who read no docs: WHY the route refuses (no working validator,
+// a deployment posture) and WHAT TO DO INSTEAD (an API key). It names no single cause because
+// resolveSEP10Validator installs the Noop for ANY construction failure, and the real error stays
+// in the startup log because the route is public. The call sites share one string to avoid drift.
 //
-// The last sentence is for the operator reading their logs: enabling SEP-10
-// does not ADD a credential type, it SWAPS the deployment's one, because
-// middleware.authenticate is a mutually exclusive switch over auth_mode. A
-// deployment verifies sip_* keys or SEP-10 JWTs, never both; reading this
-// as "turn it on as well" would break every existing key holder.
+// Enabling SEP-10 SWAPS the deployment's credential type rather than adding one, because
+// middleware.authenticate is a mutually exclusive switch over auth_mode; "turn it on as well"
+// would break every existing key holder.
 const sep10UnavailableDetail = "no SEP-10 validator is wired on this deployment, " +
 	"so it cannot issue or verify SEP-10 challenges; this is a deployment posture, not an outage. " +
 	"Authenticate with an API key instead (Authorization: Bearer sip_…) — see https://stellarindex.io/sdk. " +
@@ -52,13 +43,9 @@ func writeSEP10Unavailable(w http.ResponseWriter, r *http.Request) {
 
 // handleSEP10Challenge serves GET /v1/auth/sep10/challenge?account=G…
 //
-// Returns the SEP-10 challenge transaction the client must sign with
-// its account secret key. Per SEP-10 §3.2, the response shape is the
-// stellar.toml-spec'd { transaction, network_passphrase } pair plus
-// our own valid_until + issued_at convenience fields.
-//
-// This endpoint is deliberately unauthenticated — the whole point of
-// SEP-10 is to bootstrap auth from a public Stellar G-strkey.
+// Returns the challenge transaction the client signs with its account key: the SEP-10 §3.2
+// { transaction, network_passphrase } pair plus issued_at/valid_until. It is deliberately
+// unauthenticated, since SEP-10 bootstraps auth from a public G-strkey.
 func (s *Server) handleSEP10Challenge(w http.ResponseWriter, r *http.Request) {
 	if s.SEP10 == nil {
 		writeSEP10Unavailable(w, r)
@@ -142,10 +129,8 @@ type sep10TokenResponse struct {
 
 // handleSEP10Token serves POST /v1/auth/sep10/token.
 //
-// Accepts a signed challenge transaction in the body, validates it
-// via the Validator, and returns a JWT. Per SEP-10 §3.3 the body is
-// JSON `{"transaction": "<base64-XDR>"}`. The current handler only
-// implements the JSON form reflected in OpenAPI.
+// Accepts a signed challenge in the JSON body `{"transaction": "<base64-XDR>"}` (SEP-10 §3.3,
+// the only form implemented), validates it and returns a JWT.
 //
 // Errors:
 //   - 400 — body missing or transaction field absent
@@ -207,9 +192,7 @@ func (s *Server) handleSEP10Token(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeSEP10VerifyError translates the typed errors from
-// SEP10Validator.Verify into RFC 9457 problem+json responses. Kept
-// separate from the handler to keep cyclomatic complexity reasonable
-// and let the error-mapping table evolve in one place.
+// SEP10Validator.Verify into RFC 9457 problem+json responses, in one place.
 func (s *Server) writeSEP10VerifyError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, auth.ErrTokenExpired):
@@ -228,14 +211,9 @@ func (s *Server) writeSEP10VerifyError(w http.ResponseWriter, r *http.Request, e
 			"Challenge verification failed", http.StatusUnauthorized,
 			"the supplied signed transaction did not pass SEP-10 verification (signature missing or wrong account)")
 	case errors.Is(err, auth.ErrNotImplemented):
-		// Mirrors the challenge handler's ErrNotImplemented branch
-		// — when the server-side validator is the no-op stub
-		// (sep10 wired but signing seed not configured), Verify
-		// returns ErrNotImplemented. Without this branch it would fall through to
-		// the default branch and surface as 500 + "Internal
-		// error" — misleading because it's a deployment config
-		// state, not a server crash. Surfacing it as a non-retryable 404 with a
-		// detail makes the operator-side fix obvious.
+		// The no-op validator stub (signing seed not configured) returns ErrNotImplemented.
+		// That is a deployment state, not a crash, so it is a non-retryable 404 with a detail
+		// instead of falling through to a misleading 500.
 		writeSEP10Unavailable(w, r)
 	default:
 		if clientAborted(r, err) {

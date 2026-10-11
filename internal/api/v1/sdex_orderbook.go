@@ -183,7 +183,7 @@ func observeMaintainOutcome(outcome string, start time.Time) {
 // A re-Load keeps verification verdicts already earned: a version-tie suspect already served at
 // the identical version was proven live by [VerifyPending] or applied from the ordered change
 // stream, and re-reading the row does not weaken either proof. Re-quarantining it would pull
-// every long-resting pre-intra-era offer out of the served book while the probe backlog drains.
+// long-resting offers out of the served book while the probe backlog drains.
 func (c *SDEXOrderBookCache) Load(ctx context.Context) (err error) {
 	start := time.Now()
 	defer func() { observeMaintain("load", start, err) }()

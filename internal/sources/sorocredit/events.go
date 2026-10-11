@@ -1,17 +1,14 @@
-// Package sorocredit decodes events from an unbranded consumer-USDC credit /
-// CDP protocol on Stellar (Soroban). The protocol ships no on-chain brand, so
-// everything is keyed off its single main contract.
+// Package sorocredit decodes events from an unbranded consumer-USDC credit / CDP protocol on
+// Stellar (Soroban). It ships no on-chain brand, so everything is keyed off its single main
+// contract, which runs its OWN USDC credit book and deploys a per-user `Collateral-<uuid>` child
+// per position.
 //
-// It runs its OWN USDC credit book (not a wrapper). Opening a position deploys
-// a per-user `Collateral-<uuid>` child contract.
-//
-// CRITICAL: `Liquidation` is a SCHEDULED SETTLEMENT, not distress. One keeper
-// account executes ALL of them, ~1:1 with StatementPublished. They surface as
-// `settlement` (EventType [TypeSettlement], table `credit_settlements`), NEVER as
-// "liquidations"; no downstream surface may report a liquidation risk signal
+// CRITICAL: `Liquidation` is a SCHEDULED SETTLEMENT, not distress. One keeper account executes
+// ALL of them, ~1:1 with StatementPublished. They surface as `settlement` ([TypeSettlement], table
+// `credit_settlements`), NEVER as "liquidations"; no surface may report a liquidation risk signal
 // from this source.
 //
-// Gating (ADR-0035): the single trust root is the main contract. NewCollateralContract is honored
+// Gating (ADR-0035): the main contract is the single trust root. NewCollateralContract is honored
 // only from it and announces the child C-address (topic[1]), seeded into a [contractid.Registry]
 // child set; every other event needs the trust root OR a registered child. Two OTHER mainnet
 // contracts emit the same symbols, so the identity gate, not the topic, rejects them.
@@ -145,13 +142,12 @@ var (
 )
 
 // Event is the single [consumer.Event] this source emits, one per decoded contract event. The
-// [EventType] routes it to one of four served-tier tables (credit_positions / credit_statements /
-// credit_settlements / credit_events); the sink type-switches on this Go type once and branches on
-// EventType.
+// [EventType] routes it to credit_positions / credit_statements / credit_settlements /
+// credit_events; the sink type-switches on this Go type once, then on EventType.
 //
-// Promoted string fields are strkeys / decimal-i128 strings; empty means the event type carries no
+// Promoted string fields are strkeys or decimal-i128 strings; empty means the event type has no
 // such field and the writer stores SQL NULL. Amount is a decimal i128 string (ADR-0003, NEVER
-// int64). Attributes holds the event-specific remainder as a jsonb blob.
+// int64). Attributes holds the event-specific remainder as jsonb.
 type Event struct {
 	// Universal identity (from events.Event).
 	ContractID string

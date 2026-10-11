@@ -20,52 +20,42 @@ import (
 // public status page. It is distinct from /v1/healthz (shallow liveness) and /v1/readyz (deep
 // dependency ping); /v1/diagnostics/cursors carries the operator detail.
 type StatusResponse struct {
-	// Overall is "ok" when every signal is healthy, "degraded" when
-	// at least one signal is unhealthy but the API is still serving,
-	// "down" when no live signal is available.
+	// Overall is "ok" when every signal is healthy, "degraded" when a signal is unhealthy but the
+	// API is serving, "down" when no live signal is available.
 	Overall string `json:"overall"`
 
-	// Region identifies which region this response came from.
-	// Currently single-region (r1); multi-region rollup is a future
-	// surface.
+	// Region identifies which region this response came from (single-region today).
 	Region StatusRegion `json:"region"`
 
-	// Services reports per-binary heartbeats. Always populated:
-	// the API process itself is queryable, and the indexer +
-	// aggregator heartbeats come from Prometheus when wired.
+	// Services reports per-binary heartbeats; the API entry is always present.
 	Services []StatusService `json:"services"`
 
-	// Latency reports the API histogram-derived percentiles over
-	// the last 5 minutes. Zero values indicate Prometheus isn't
-	// wired or there are no samples in the window.
+	// Latency is the API histogram percentiles over the last 5 minutes; zero values mean
+	// Prometheus is unwired or the window has no samples.
 	Latency StatusLatency `json:"latency"`
 
 	// Freshness summarises the ingest layer.
 	Freshness StatusFreshness `json:"freshness"`
 
-	// Incidents counts active alerts in Alertmanager by severity.
-	// The counts are only meaningful when IncidentsStatus is "ok" or
-	// "degraded"; on "unknown" they are the zero value of a FAILED
-	// query and MUST NOT be read as an all-clear.
+	// Incidents counts active Alertmanager alerts by severity. On IncidentsStatus "unknown" the
+	// counts are the zero value of a FAILED query and MUST NOT be read as an all-clear.
 	Incidents StatusIncidents `json:"incidents"`
 
-	// IncidentsStatus is the tri-state trust signal for the Incidents block. A failed Alertmanager
-	// query zeroes the counts, which is byte-identical to "no alerts firing", so a banner reading
-	// active_count would publish "0 active alerts" while alerting is blind.
+	// IncidentsStatus is the trust signal for the Incidents block. A failed Alertmanager query
+	// zeroes the counts, byte-identical to "no alerts firing", so without it a banner would publish
+	// "0 active alerts" while alerting is blind.
 	//   - "ok":       query succeeded, no alerts firing.
 	//   - "degraded": query succeeded, one or more alerts firing.
-	//   - "unknown":  the query FAILED or no metrics backend is wired; the counts are NOT
-	//                 trustworthy and the UI must render "unknown", not "0 active".
+	//   - "unknown":  the query FAILED or no metrics backend is wired; the UI must render
+	//                 "unknown", not "0 active".
 	// Always present (no omitempty) so an omitted field is never mistaken for a zero count.
 	IncidentsStatus string `json:"incidents_status"`
 
-	// FreshnessStatus is the trust signal for the Freshness block, for
-	// the same reason as IncidentsStatus: a failed count query must not
-	// read as a measured zero.
+	// FreshnessStatus is the trust signal for the Freshness block, for the same reason: a failed
+	// count query must not read as a measured zero.
 	//   - "ok":       counts measured, every enabled source active.
 	//   - "degraded": counts measured, active_sources < total_sources.
-	//   - "unknown":  a freshness query FAILED, or no metrics backend is
-	//                 wired — the counts are omitted.
+	//   - "unknown":  a freshness query FAILED or no backend is wired; the counts are omitted.
 	// Always present.
 	FreshnessStatus string `json:"freshness_status"`
 }
@@ -77,8 +67,7 @@ const (
 	freshnessStatusUnknown  = "unknown"
 )
 
-// freshnessStatusFor classifies the freshness block the way
-// incidentsStatusFor classifies the incidents block.
+// freshnessStatusFor classifies the freshness block as incidentsStatusFor does the incidents block.
 func freshnessStatusFor(f StatusFreshness, err error) string {
 	switch {
 	case err != nil, f.ActiveSources == nil, f.TotalSources == nil:
@@ -97,9 +86,8 @@ const (
 	incidentsStatusUnknown  = "unknown"
 )
 
-// incidentsStatusFor classifies the incidents block's trust state from the Alertmanager query
-// outcome. A query error must NOT be published as an all-clear: err != nil is "unknown", not
-// "ok". A missing metrics backend is set to "unknown" by the caller. See
+// incidentsStatusFor classifies the incidents trust state from the query outcome. A query error
+// must NOT be published as an all-clear, so err != nil is "unknown". See
 // [StatusResponse.IncidentsStatus].
 func incidentsStatusFor(inc StatusIncidents, err error) string {
 	switch {
@@ -135,18 +123,15 @@ type StatusLatency struct {
 	P99TargetMs float64 `json:"p99_target_ms"`
 }
 
-// Latency SLO targets for the customer-facing status roll-up. These are
-// the numbers the status page has always drawn its threshold bars at;
-// they are now declared once, here, and consumed by both sides.
+// Latency SLO targets for the status roll-up, declared once and consumed by both the API and the
+// status page.
 const (
 	statusLatencyP95TargetMs = 200
 	statusLatencyP99TargetMs = 500
 )
 
-// breached reports whether either latency percentile is over target.
-// WindowSecs == 0 means the backend returned nothing measurable, which is
-// not a breach — absence of data is handled by the unknown/backendErr
-// paths instead.
+// breached reports whether either percentile is over target. WindowSecs == 0 means nothing was
+// measurable, which is not a breach; absence of data is handled by the backendErr path.
 func (l StatusLatency) breached() bool {
 	if l.WindowSecs == 0 {
 		return false
@@ -154,8 +139,7 @@ func (l StatusLatency) breached() bool {
 	return l.P95Ms > statusLatencyP95TargetMs || l.P99Ms > statusLatencyP99TargetMs
 }
 
-// StatusFreshness counts are pointers so a failed probe serialises as
-// absent rather than as a measured "0 / 0 active sources".
+// StatusFreshness counts are pointers so a failed probe serialises as absent, not "0 / 0".
 type StatusFreshness struct {
 	LastAggregatorTick WireTime `json:"last_aggregator_tick,omitempty"`
 	ActiveSources      *int     `json:"active_sources,omitempty"`
@@ -183,23 +167,20 @@ type ActiveIncident struct {
 	RunbookURL string `json:"runbook_url,omitempty"`
 }
 
-// StatusBackend pulls signals from a metrics + alerting stack.
-// Production wiring is [PrometheusStatusBackend]; nil means we
-// degrade to in-process data only (uptime, region label).
+// StatusBackend pulls signals from a metrics and alerting stack ([PrometheusStatusBackend]); nil
+// degrades to in-process data only.
 type StatusBackend interface {
 	// Heartbeats returns the latest successful scrape time per friendly service name
 	// ("indexer", "aggregator", "api"). A zero time means the scrape has never succeeded.
 	Heartbeats(ctx context.Context) (map[string]time.Time, error)
 
-	// Latency returns the 5-minute p50/p95/p99 of the API
-	// histogram. Zero values mean no samples in the window.
+	// Latency returns the 5-minute p50/p95/p99 of the API histogram; zero means no samples.
 	Latency(ctx context.Context) (StatusLatency, error)
 
-	// Freshness returns aggregator + source-count signals.
+	// Freshness returns aggregator and source-count signals.
 	Freshness(ctx context.Context) (StatusFreshness, error)
 
-	// Incidents returns the count of currently-firing alerts
-	// grouped by severity label.
+	// Incidents returns currently-firing alert counts by severity.
 	Incidents(ctx context.Context) (StatusIncidents, error)
 
 	// SourceEntries24h returns per-source events ingested in the trailing 24h, from the same
@@ -208,30 +189,21 @@ type StatusBackend interface {
 	// Sources with no events in the window are absent.
 	SourceEntries24h(ctx context.Context) (map[string]int64, error)
 
-	// SourceEnabled reports which registry sources are actually switched
-	// on, from stellarindex_source_enabled. Sources absent from the map
-	// have never been enabled on this deployment.
-	//
-	// The status page lists every external.Registry entry, so a source that was built but
-	// never switched on would otherwise render with a count of 0, indistinguishable from a
-	// dead connector.
+	// SourceEnabled reports which registry sources are switched on (stellarindex_source_enabled);
+	// absent sources were never enabled here. Without it a built-but-off source would render a
+	// count of 0, indistinguishable from a dead connector.
 	SourceEnabled(ctx context.Context) (map[string]bool, error)
 }
 
-// PrometheusStatusBackend hits a local Prometheus' HTTP query
-// API. The URL points at the v1 root (e.g. http://localhost:9090);
-// the client appends /api/v1/query for instant queries.
+// PrometheusStatusBackend queries a Prometheus HTTP API; URL is the root (http://localhost:9090).
 type PrometheusStatusBackend struct {
 	URL    string
 	Client *http.Client
 }
 
 func (p *PrometheusStatusBackend) Heartbeats(ctx context.Context) (map[string]time.Time, error) {
-	// up{job=...} returns 1 if scrape succeeded, 0 otherwise, and
-	// Prometheus writes a sample (with the scrape's timestamp) on
-	// failed scrapes too. Filtering on ==1 before taking the
-	// timestamp means a crashed target's heartbeat goes stale
-	// instead of refreshing every failed scrape.
+	// Prometheus writes an up sample on failed scrapes too; filtering on ==1 before taking the
+	// timestamp lets a crashed target's heartbeat go stale instead of refreshing.
 	const q = `max_over_time(timestamp(up{job=~"stellarindex-indexer|stellarindex-aggregator|stellarindex-api"} == 1)[5m:15s])`
 	res, err := p.queryVector(ctx, q)
 	if err != nil {
@@ -280,18 +252,13 @@ func (p *PrometheusStatusBackend) Latency(ctx context.Context) (StatusLatency, e
 	return out, nil
 }
 
-// activeSourcesQuery and totalSourcesQuery are the numerator and denominator of
-// the status page's "Active sources" headline. They are package-level so the
-// invariant between them (numerator a strict subset of denominator) can be
-// asserted without a Prometheus.
+// activeSourcesQuery and totalSourcesQuery are the numerator and denominator of the "Active
+// sources" headline, package-level so the subset invariant can be asserted without a Prometheus.
 //
-// The numerator MUST join on stellarindex_source_enabled. Otherwise the counts come from
-// different populations and the ratio can exceed 1: the always-on supply observers emit events
-// but carry no `enabled` flag.
-//
-// The population is every scraped stellarindex_source_enabled series, whichever binary emits it.
-// A feed with no gauge is counted on NEITHER side. Both queries count series, assuming one scrape
-// target per source: a second scraped API replica would count `massive` twice.
+// The numerator MUST join on stellarindex_source_enabled, or the counts come from different
+// populations and the ratio can exceed 1 (always-on supply observers emit events but carry no
+// `enabled` flag). A feed with no gauge is counted on NEITHER side. Both count series, assuming
+// one scrape target per source: a second scraped API replica would count `massive` twice.
 // deploy/monitoring/rule-tests/status-source-counts_test.yml evaluates both under promtool, and
 // TestStatusSourceCountQueries_MatchPromtoolFixture holds that fixture to these exact strings.
 const activeSourcesQuery = `count(
@@ -301,10 +268,9 @@ const activeSourcesQuery = `count(
 
 const totalSourcesQuery = `count(stellarindex_source_enabled == 1)`
 
-// Freshness returns the first query error rather than a zero count, so a
-// blind probe trips the handler's backend canary instead of reading as
-// ingest death. The active window is 7 days because rozo, phoenix, ecb and
-// band emit only a handful of events per day; a shorter one reads them dark.
+// Freshness returns the first query error rather than a zero count, so a blind probe trips the
+// backend canary instead of reading as ingest death. The active window is 7 days because rozo,
+// phoenix, ecb and band emit only a few events per day; a shorter one reads them dark.
 func (p *PrometheusStatusBackend) Freshness(ctx context.Context) (StatusFreshness, error) {
 	var out StatusFreshness
 
@@ -318,8 +284,7 @@ func (p *PrometheusStatusBackend) Freshness(ctx context.Context) (StatusFreshnes
 	}
 	out.ActiveSources, out.TotalSources = &active, &total
 
-	// Last aggregator tick — the timestamp of the most recent
-	// vwap-write counter increment.
+	// Last aggregator tick is the most recent vwap-write counter increment.
 	res, err := p.queryVector(ctx, `max(timestamp(stellarindex_aggregator_vwap_writes_total))`)
 	if err != nil {
 		return StatusFreshness{}, err
@@ -333,8 +298,7 @@ func (p *PrometheusStatusBackend) Freshness(ctx context.Context) (StatusFreshnes
 	return out, nil
 }
 
-// queryCount evaluates a PromQL count(). count() over an empty set yields an
-// empty vector, which is a measured zero, not a failure.
+// queryCount evaluates a PromQL count(); an empty vector is a measured zero, not a failure.
 func (p *PrometheusStatusBackend) queryCount(ctx context.Context, expr string) (int, error) {
 	res, err := p.queryVector(ctx, expr)
 	if err != nil {
@@ -352,9 +316,8 @@ func (p *PrometheusStatusBackend) queryCount(ctx context.Context, expr string) (
 func (p *PrometheusStatusBackend) Incidents(ctx context.Context) (StatusIncidents, error) {
 	var out StatusIncidents
 
-	// One query over ALERTS yields names and per-severity counts, saving three round-trips.
-	// It excludes the deadmansswitch (fires constantly by design) and recording-rule
-	// artefacts that appear in ALERTS with alertname="" when severity is unset.
+	// One ALERTS query yields names and per-severity counts. It excludes the deadmansswitch (fires
+	// by design) and recording-rule artefacts with alertname="".
 	res, err := p.queryVector(ctx,
 		`ALERTS{alertstate="firing",alertname!="stellarindex_deadmansswitch",alertname!=""}`)
 	if err != nil {
@@ -371,9 +334,8 @@ func (p *PrometheusStatusBackend) Incidents(ctx context.Context) (StatusIncident
 		}
 		seen[name] = true
 
-		// Only the three documented severities are counted or published verbatim; any other
-		// value is an unvalidated label (an alert can set severity freely) and is normalized
-		// to "unknown" rather than passed into the public JSON.
+		// Only the three documented severities are published verbatim; an alert can set severity
+		// freely, so anything else is normalized to "unknown" before reaching the public JSON.
 		switch severity {
 		case "page":
 			out.PageCount++
@@ -395,8 +357,7 @@ func (p *PrometheusStatusBackend) Incidents(ctx context.Context) (StatusIncident
 		}
 	}
 
-	// Sort by severity (page > ticket > informational) so the most
-	// urgent surfaces first when truncation matters.
+	// Most urgent first, so truncation drops the least important.
 	sort.SliceStable(out.Active, func(i, j int) bool {
 		return severityRank(out.Active[i].Severity) < severityRank(out.Active[j].Severity)
 	})
@@ -418,8 +379,7 @@ func severityRank(s string) int {
 	}
 }
 
-// promSample is one (metric, value) pair from the Prometheus
-// instant query response.
+// promSample is one (metric, value) pair from a Prometheus instant query.
 type promSample struct {
 	Labels map[string]any
 	Value  []any // [unix_ts, "value"]
@@ -525,10 +485,8 @@ func (p *PrometheusStatusBackend) queryVector(ctx context.Context, expr string) 
 	return out, nil
 }
 
-// handleStatus serves GET /v1/status. Anonymous-friendly. Always
-// returns 200; the body's `overall` field reports degraded state
-// rather than an HTTP error so monitoring dashboards can poll a
-// single endpoint without alerting on 503s.
+// handleStatus serves GET /v1/status anonymously. It always returns 200; `overall` carries the
+// degraded state so dashboards can poll one endpoint without alerting on 503s.
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	out := StatusResponse{
 		Overall: "ok",
@@ -542,10 +500,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.StatusBackend == nil {
-		// No metrics backend wired — return the in-process surface.
-		// Every background heartbeat is unknown, and so is the
-		// incidents signal: with no Alertmanager query, zero counts
-		// are absence-of-signal, not an all-clear.
+		// No backend: every heartbeat and the incidents signal are unknown, since zero counts
+		// without an Alertmanager query are absence of signal, not an all-clear.
 		out.IncidentsStatus = incidentsStatusUnknown
 		out.FreshnessStatus = freshnessStatusUnknown
 		out.Services = append(out.Services, unknownServices(s.statusServices)...)
@@ -557,9 +513,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
 
-	// Run the four backend queries concurrently — total wall time
-	// is dominated by the slowest query, which keeps the endpoint
-	// responsive even when Prometheus is sluggish.
+	// The four queries run concurrently so wall time is the slowest one, not the sum.
 	var (
 		wg             sync.WaitGroup
 		hb             map[string]time.Time
@@ -570,10 +524,9 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		freErr, incErr error
 	)
 	wg.Add(4)
-	// Each panel read runs DETACHED from the handler goroutine, so middleware.Recoverer does
-	// not cover it and an unrecovered panic would take the API down. Recovering leaves the
-	// panel's value zero and err nil, which consumers already treat as "backend returned
-	// nothing": that panel degrades and the rest renders. Nothing is latched.
+	// Each read runs DETACHED from the handler goroutine, so middleware.Recoverer does not cover
+	// it and a panic would take the API down. Recovering leaves the value zero and err nil, which
+	// consumers treat as "backend returned nothing": that panel degrades and the rest renders.
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-status-heartbeats")
@@ -596,15 +549,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}()
 	wg.Wait()
 
-	// Background-service heartbeats — the services this deployment declares it runs.
-	// A nil map means "we could not look", and the wire cannot say so: heartbeatServices renders
-	// every declared service "unknown" either way, and rollupOverall turns that into "degraded".
-	// Backend-unreachable and backend-answered-with-nothing are INDISTINGUISHABLE to a reader, so
-	// an unreachable Prometheus reports `overall: degraded` while every unit is active.
-	//
-	// The conservatism is deliberate: refusing to claim "ok" beats a false all-clear. An additive
-	// `services_status` like `incidents_status` would carry the REASON, but that is a wire change
-	// on a public surface.
+	// A nil heartbeat map means "we could not look", and the wire cannot say so: every declared
+	// service renders "unknown" and rollupOverall turns that into "degraded". Backend-unreachable
+	// and answered-with-nothing are INDISTINGUISHABLE, so an unreachable Prometheus reports
+	// degraded while every unit is active. Refusing to claim "ok" beats a false all-clear; a
+	// `services_status` field could carry the reason but is a public wire change.
 	if hbErr != nil {
 		hb = nil
 	}
@@ -612,8 +561,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	if latErr == nil {
 		out.Latency = latency
-		// Echo the SLO targets the roll-up judges against so the status
-		// page renders the same thresholds rather than its own literals.
+		// Echo the targets the roll-up judges against so the page cannot drift from them.
 		out.Latency.P95TargetMs = statusLatencyP95TargetMs
 		out.Latency.P99TargetMs = statusLatencyP99TargetMs
 	}
@@ -621,23 +569,16 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		out.Freshness = freshness
 	}
 	out.FreshnessStatus = freshnessStatusFor(out.Freshness, freErr)
-	// Incidents block: publish the tri-state explicitly. On a failed
-	// Alertmanager query we leave the counts at their zero value but
-	// mark the block "unknown" so a downstream `?? 0` chain cannot
-	// render "0 active alerts" while alerting is blind.
+	// On a failed query the counts stay zero but the block is marked "unknown", so a downstream
+	// `?? 0` chain cannot render "0 active alerts" while alerting is blind.
 	if incErr == nil {
 		out.Incidents = incidents
 	}
 	out.IncidentsStatus = incidentsStatusFor(incidents, incErr)
 
-	// Compute overall from the worst-case per-service state and the
-	// backend-canary signals. The rollup explicitly handles the unknown
-	// floor — if every service is unknown, overall is "unknown" (not
-	// "ok").
 	backendErr := hbErr != nil || latErr != nil || freErr != nil || incErr != nil
 	pageFiring := incErr == nil && incidents.PageCount > 0
-	// A breached latency SLO is degradation by definition — see
-	// rollupOverall's godoc.
+	// A breached latency SLO is degradation by definition (see rollupOverall).
 	latencyBreached := latErr == nil && out.Latency.breached()
 	out.Overall = rollupOverall(out.Services, backendErr, pageFiring, latencyBreached)
 
@@ -646,10 +587,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{Stale: out.Overall != "ok"})
 }
 
-// unknownServices projects the deployment's declared background-service
-// list onto all-unknown entries, for the no-metrics-backend surface: we
-// have no signal about any of them, which rollupOverall turns into a
-// non-"ok" overall rather than a silent all-clear.
+// unknownServices marks every declared service "unknown" for the no-backend surface, which
+// rollupOverall turns into a non-"ok" overall rather than a silent all-clear.
 func unknownServices(names []string) []StatusService {
 	out := make([]StatusService, 0, len(names))
 	for _, name := range names {
@@ -682,8 +621,7 @@ func heartbeatServices(names []string, hb map[string]time.Time) []StatusService 
 	return out
 }
 
-// statusHeartbeatStaleAfter is how old a background service's heartbeat
-// may be before /v1/status calls it down.
+// statusHeartbeatStaleAfter is the heartbeat age beyond which a service is "down".
 const statusHeartbeatStaleAfter = 60 * time.Second
 
 // rollupOverall computes the customer-facing `overall` field from the per-service rollup plus the
@@ -700,11 +638,9 @@ const statusHeartbeatStaleAfter = 60 * time.Second
 //   - "ok": every service is ok and no canary signal trips.
 //
 // TICKET incidents are deliberately NOT an input: `page` means customers are affected, `ticket`
-// means look during working hours. Changing that changes what "ok" PROMISES on a public surface.
-//
-// An active-source SHORTFALL is likewise not an input: the count is over a 7-day window, so it
-// describes ingest coverage, not whether customers are served now. It surfaces only as
-// freshness_status "degraded"; a failed query degrades via backendErr.
+// means look during working hours, and changing that changes what "ok" PROMISES publicly. An
+// active-source SHORTFALL is not an input either: its 7-day window describes ingest coverage,
+// not whether customers are served now, so it surfaces only as freshness_status "degraded".
 func rollupOverall(services []StatusService, backendErr, pageFiring, latencyBreached bool) string {
 	var anyDown, anyDegraded, anyOK, anyUnknown bool
 	for _, svc := range services {
@@ -714,10 +650,8 @@ func rollupOverall(services []StatusService, backendErr, pageFiring, latencyBrea
 		case "degraded":
 			anyDegraded = true
 		case "ok":
-			// A service self-reporting "ok" with a zero LastSeen
-			// hasn't actually been observed — treat it as unknown for
-			// rollup purposes. (The in-process "api" entry always
-			// stamps LastSeen at request time so it's a real "ok".)
+			// "ok" with a zero LastSeen was never observed, so it counts as unknown; the in-process
+			// "api" entry stamps LastSeen per request and is a real "ok".
 			if svc.LastSeen.IsZero() && svc.Name != "api" {
 				anyUnknown = true
 			} else {
@@ -736,8 +670,7 @@ func rollupOverall(services []StatusService, backendErr, pageFiring, latencyBrea
 	case anyUnknown && !anyOK:
 		return "unknown"
 	case anyUnknown && anyOK:
-		// Mixed known/unknown is partial visibility — surface as
-		// degraded so callers can't mistake it for a full-green roll.
+		// Partial visibility surfaces as degraded, never full green.
 		return "degraded"
 	default:
 		return "ok"

@@ -37,13 +37,12 @@ const (
 	// divergence signal, but including it would double-count the markets it derives from.
 	ClassAggregator Class = "aggregator"
 
-	// ClassOracle is an on-chain signed price publisher (Reflector, Redstone, Band). Reported
-	// alongside but excluded from VWAP to avoid methodology inheritance; an operator may opt
-	// one in per source via config.
+	// ClassOracle is an on-chain signed price publisher (Reflector, Redstone, Band). Excluded from
+	// VWAP to avoid inheriting its methodology unless an operator opts one in via config.
 	ClassOracle Class = "oracle"
 
 	// ClassAuthoritySanity is a central-bank daily reference rate (ECB, Fed H.10, BOE): too slow
-	// to aggregate, but the daily-close check that flags our live rate drifting by N bps.
+	// to aggregate, used only to flag our live rate drifting from the daily close.
 	ClassAuthoritySanity Class = "authority_sanity"
 
 	// ClassLending is on-chain lending (Blend). Auction stress-prices and bad-debt flags are
@@ -55,8 +54,7 @@ const (
 	ClassRouter Class = "router"
 
 	// ClassBridge is cross-chain transfer protocols (CCTP, Rozo): a burn plus a remote mint is
-	// one USDC transfer, not a two-leg trade, so no price and no VWAP. Used for cross-chain
-	// flow attribution and USDC supply accounting.
+	// one transfer, not a two-leg trade, so no price and no VWAP.
 	ClassBridge Class = "bridge"
 )
 

@@ -362,12 +362,10 @@ func run(cfgPath string, dryRun bool) error {
 	var divRefresher orchestrator.DivergenceRefresher
 	divRefs := buildDivergenceReferences(cfg.Divergence, cfg.External.CoinGecko, store, logger)
 	if len(divRefs) > 0 {
-		// Every (pair, reference) tick is mirrored into the divergence_observations hypertable for
-		// the /divergences page and post-mortems.
-		// The divergence half of the customer-webhook fan-out builds its own Fanout; the freeze
-		// sink's fanout is local to the freeze block. `OnWarningFired` fires only on
-		// below-threshold to above-threshold transitions, so subscribers get no per-tick re-spam
-		// while a divergence stays elevated.
+		// Every (pair, reference) tick is mirrored into divergence_observations for the
+		// /divergences page and post-mortems. This webhook half builds its own Fanout (the freeze
+		// sink's is local to the freeze block); OnWarningFired fires only on the below-to-above
+		// threshold transition, so an elevated divergence does not re-spam subscribers per tick.
 		divFanout := customerwebhook.NewFanout(
 			postgresstore.NewWebhookStore(postgresstore.New(store.DB())),
 			logger.With("component", "webhook-fanout"))
@@ -404,10 +402,9 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Closed-bucket stream publisher ────────────────────────
-	// Fans each successful (pair, window) VWAP cache write out to API `/v1/price/stream`
-	// subscribers via Redis pub/sub. Always wired: the operator picks only WHICH channel
-	// (RedisClosedBucketChannel; empty falls back to DefaultChannel), and PUBLISH on a channel with
-	// no subscribers is a Redis no-op. The subscriber is redispub.NewSubscriber in the API binary.
+	// Fans each successful (pair, window) VWAP cache write out to `/v1/price/stream` subscribers
+	// via Redis pub/sub. Always wired (only the channel is configurable; empty means
+	// DefaultChannel) because PUBLISH with no subscribers is a Redis no-op.
 	streamPub, err := redispub.NewPublisher(rdb, cfg.Storage.RedisClosedBucketChannel)
 	if err != nil {
 		return fmt.Errorf("redispub.NewPublisher: %w", err)
@@ -416,16 +413,14 @@ func run(cfgPath string, dryRun bool) error {
 		"channel", streamPub.Channel(), "producer_id", streamPub.ProducerID())
 
 	// ─── Decimals-normalization lookup (dex-nonstandard-decimals) ──
-	// Mirrors `nonstandard_decimals_assets` in-process so the orchestrator can scale a window's raw
-	// VWAP by 10^(base_decimals-quote_decimals) before publishing (aggregate.AdjustPrice). One
-	// blocking refresh here so the first Tick, which runs synchronously before the cache's own
-	// background loop, does not work from an empty snapshot.
+	// Mirrors `nonstandard_decimals_assets` so the orchestrator can scale a window's raw VWAP by
+	// 10^(base_decimals-quote_decimals) (aggregate.AdjustPrice). One blocking refresh so the first
+	// Tick, which runs before the cache's background loop, does not see an empty snapshot.
 	//
-	// FATAL on failure. The cache is fail-open for a REFRESH (the last-good snapshot stays), but at
-	// BOOT there is none: an empty map answers "nothing is flagged" for EVERY confirmed offender, so
-	// their windows would publish unnormalized (wrong by 10^(7-decimals)) into prices_1m and every
-	// continuous aggregate that outlives the outage. A wrong price is a false statement about the
-	// market, not a degraded service; refusing to start is recoverable and loud.
+	// FATAL on failure: a refresh failure keeps the last-good snapshot, but at BOOT there is none,
+	// and an empty map says "nothing is flagged" for every offender, publishing windows unnormalized
+	// (wrong by 10^(7-decimals)) into prices_1m and the aggregates that outlive the outage. A wrong
+	// price is a false statement; refusing to start is recoverable and loud.
 	decimalsLookup := newDecimalsCache(store, logger.With("component", "decimals-cache"))
 	if err := decimalsLookup.Refresh(rootCtx); err != nil {
 		return fmt.Errorf("decimals-cache initial refresh (refusing to publish unnormalized VWAP): %w", err)
@@ -790,20 +785,18 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 
 	// ─── Decimals-assumption guard ─
-	// The served price is Sum(quote)/Sum(base) on raw smallest-unit integers, so per-asset decimals
-	// cancel only when base and quote share a scale. A non-7-decimal SEP-41 token with DEX
-	// liquidity skews every price on its pairs by 10^(7-decimals). This sweep resolves each
-	// recently traded Soroban token's decimals() from the lake and raises
-	// stellarindex_dex_trade_nonstandard_decimals_total when one is != 7. It only detects; Writer
-	// persists into nonstandard_decimals_assets, which decimalsLookup uses to normalize.
+	// The served price is Sum(quote)/Sum(base) on raw smallest-unit integers, so decimals cancel
+	// only when base and quote share a scale; a non-7-decimal SEP-41 token with DEX liquidity skews
+	// its pairs by 10^(7-decimals). The sweep resolves each recently traded Soroban token's
+	// decimals() from the lake and raises stellarindex_dex_trade_nonstandard_decimals_total when
+	// one is != 7. It only detects; Writer persists into nonstandard_decimals_assets.
 	//
-	// The lake dial retries with backoff inside the guard's own goroutine, never one inline dial:
-	// after a reboot clickhouse-server spends minutes loading metadata and this unit's After= does
-	// not name it, so one failed dial would leave the aggregator unguarded until a restart.
+	// The lake dial retries with backoff in the guard's goroutine, never one inline dial: after a
+	// reboot clickhouse-server spends minutes loading metadata and this unit's After= does not name
+	// it, so one failed dial would leave the aggregator unguarded until restart.
 	//
-	// MarkEnabled seeds the sweep heartbeat before the dial and Backfill, so
-	// stellarindex_decimals_guard_sweep_stale measures a cold boot from now and a lake-less
-	// aggregator reads "disabled", not "stale".
+	// MarkEnabled seeds the sweep heartbeat before the dial, so decimals_guard_sweep_stale measures
+	// a cold boot from now and a lake-less aggregator reads "disabled", not "stale".
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		decimalsguard.MarkEnabled(time.Now())
 		refresherWG.Add(1)
@@ -892,13 +885,11 @@ func run(cfgPath string, dryRun bool) error {
 			cfg.Trades.USDPeggedClassics(logger)),
 	}
 	pricelessTripwire := pricelesscoverage.New(store, pricelessOpts)
-	// A Soroban-venue trade is keyed by the token contract; a SAC's price
-	// is served under its classic asset. Resolve the one to the other from
-	// the lake so a wrapped classic asset is not ticketed as priceless.
-	//
-	// A one-shot inline dial failure would leave SAC candidates read as given for the process
-	// lifetime (the cold-boot race dialDecimalsResolver also handles). Retry in the background and
-	// arm alias resolution when the lake answers; the sweep itself starts immediately.
+	// A Soroban trade is keyed by the token contract but a SAC's price is served under its classic
+	// asset; resolve one to the other from the lake so a wrapped classic asset is not ticketed as
+	// priceless. One failed inline dial would leave SAC candidates unresolved for the process
+	// lifetime (the cold-boot race dialDecimalsResolver also handles), so retry in the background
+	// and arm alias resolution when the lake answers; the sweep itself starts immediately.
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		refresherWG.Add(1)
 		go func() {
@@ -1006,11 +997,9 @@ func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, closeTimes
 // [supply.Policy] for the classic and SEP-41 computers, and validates it so a malformed override
 // fails startup rather than mid-snapshot.
 //
-// It deliberately leaves Policy.SDFReserveAccounts unset: only Algorithm 1 (native XLM) reads it,
-// and buildXLMRefresher wires that separately.
-//
-// Both maps are re-keyed onto supply.AssetKey form: the computers match keys exactly, so the dash
-// spelling watched_classic_assets uses would otherwise load cleanly and never apply.
+// Policy.SDFReserveAccounts is left unset: only native XLM reads it, and buildXLMRefresher wires
+// it. Both maps are re-keyed onto supply.AssetKey form because the computers match keys exactly;
+// the dash spelling watched_classic_assets uses would load cleanly and never apply.
 func buildSupplyPolicy(cfg config.SupplyConfig) (supply.Policy, error) {
 	maxSupply, err := supply.CanonicalizePolicyKeys(cfg.MaxSupplyOverrides)
 	if err != nil {
@@ -1318,14 +1307,12 @@ const supplyChainCursorSource = "ledgerstream"
 // behind the chain would hide it, so resolution fails closed. 512 ledgers is about 45 min at
 // mainnet cadence: far above any race, far below a day.
 //
-// It IS the lookup's own scan window, not a second copy: [clickhouse.ExplorerReader] reads
-// [clickhouse.LatestLedgerLookbackLedgers] below the cursor and no further, since a row this
-// bound refuses is not worth a ClickHouse read. Widening one widens the other.
+// It IS the lookup's scan window ([clickhouse.LatestLedgerLookbackLedgers] below the cursor), not
+// a second copy: a row this bound refuses is not worth a ClickHouse read.
 const maxSupplyLakeClampLedgers = clickhouse.LatestLedgerLookbackLedgers
 
 // supplyAggregatorLedgers adapts the ingestion cursors + the lake to supply.LedgerLookup (same
-// shape as the auto branch of
-// internal/ops/supply/supply.go::resolveSnapshotLedger).
+// shape as the auto branch of internal/ops/supply/supply.go::resolveSnapshotLedger).
 //
 // ObservedAt is the resolved ledger's real close_time from ClickHouse stellar.ledgers, never
 // time.Now(): a wall-clock stamp corrupts point-in-time supply queries.

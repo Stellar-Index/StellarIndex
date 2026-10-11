@@ -23,11 +23,9 @@ type Trade struct {
 	Source string `json:"source"`
 
 	// Ledger is the pubnet ledger sequence in which this trade closed.
-	// Zero is invalid.
 	Ledger uint32 `json:"ledger"`
 
-	// TxHash is the 32-byte transaction hash, hex-encoded
-	// (64 lowercase hex chars). Zero or malformed is invalid.
+	// TxHash is the transaction hash as 64 lowercase hex chars.
 	TxHash string `json:"tx_hash"`
 
 	// OpIndex is the 0-based operation index, fanned via FanoutOpIndex to also encode the in-op
@@ -37,15 +35,14 @@ type Trade struct {
 	// Timestamp is the ledger close time (UTC); second precision unless upstream supplies ms.
 	Timestamp time.Time `json:"ts"`
 
-	// Pair is the (base, quote) the trade executed against.
-	// Direction matches the on-chain event — we do not normalise here.
+	// Pair is the (base, quote) executed against; direction matches the on-chain event and is not
+	// normalised here.
 	Pair Pair `json:"pair"`
 
 	// BaseAmount is the base quantity that changed hands, in the asset's smallest unit.
 	BaseAmount Amount `json:"base_amount"`
 
-	// QuoteAmount is the quantity of the quote asset paid for the
-	// base, in the quote asset's smallest unit.
+	// QuoteAmount is the quote paid for the base, in the quote asset's smallest unit.
 	QuoteAmount Amount `json:"quote_amount"`
 
 	// Maker is the account that placed the resting offer (SDEX). Soroban DEX decoders leave it
@@ -65,16 +62,12 @@ type Trade struct {
 
 // FanoutOpIndex packs an operation index (high 16 bits) and an in-operation event index (low 16)
 // into the uint32 OpIndex slot, so several trades from ONE operation (a multi-hop swap) get
-// distinct identities instead of colliding on the (source, ledger, tx_hash, op_index, ts) key
-// and being silently dropped by the writer's ON CONFLICT. Both inputs are smallint on the wire,
-// so neither overflows its half, and a projection re-derive reproduces the result exactly.
+// distinct identities instead of colliding on the primary key and being silently dropped by the
+// writer's ON CONFLICT. Sources emitting one trade per Soroban contract event within an op
+// (aquarius, comet) MUST use it; SDEX spaces op_index itself (*1024 stride).
 //
-// Sources emitting one trade per op, or spacing op_index themselves (SDEX's *1024 stride), need
-// not use it. Sources emitting one trade per Soroban contract event within an op (aquarius,
-// comet) MUST, since the op index alone is not unique.
-//
-// It panics if either input is negative or exceeds 0xFFFF: masking an out-of-range value would
-// manufacture the trade-ID collisions this exists to prevent, and is a decoder bug to surface.
+// It panics if either input is negative or exceeds 0xFFFF: masking would manufacture the
+// trade-ID collisions this exists to prevent, and is a decoder bug to surface.
 func FanoutOpIndex(opIndex, eventIndex int) uint32 {
 	if opIndex < 0 || opIndex > 0xFFFF {
 		panic(fmt.Sprintf("canonical: FanoutOpIndex opIndex %d out of range [0, 65535]", opIndex))
@@ -94,13 +87,9 @@ func (t Trade) ID() string {
 
 // Validate returns nil iff every invariant holds; ErrInvalidTrade is always an upstream bug.
 //
-// Ledger is NOT required to be non-zero: off-chain venues have no ledger concept, stamp 0 and
-// rely on Source + TxHash + OpIndex + Timestamp for uniqueness. A zero-ledger check would reject
-// valid off-chain inserts, and TxHash validation already catches stub decoders.
-//
-// Amounts must be non-negative and not both zero. Exactly one zero leg is valid: SDEX settles
-// fills whose base or quote rounded to zero stroops, real on-chain effects the served tier
-// stores (unpriceable, so every price path filters them out).
+// Ledger is NOT required to be non-zero: off-chain venues stamp 0 and rely on the rest of the
+// identity for uniqueness. Exactly one zero leg is valid: SDEX settles fills that rounded to zero
+// stroops, real on-chain effects that are stored but unpriceable, so every price path filters them.
 func (t Trade) Validate() error {
 	if t.Source == "" {
 		return fmt.Errorf("%w: empty source", ErrInvalidTrade)

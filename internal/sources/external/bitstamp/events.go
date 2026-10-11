@@ -23,9 +23,8 @@ const SourceName = "bitstamp"
 // WSEndpoint is Bitstamp's public v2 WebSocket URL.
 const WSEndpoint = "wss://ws.bitstamp.net"
 
-// Event types on the Bitstamp wire. We only act on `trade`; the
-// others either confirm state (subscription_succeeded), indicate
-// errors (bts:error), or request we rebalance (bts:request_reconnect).
+// Event types on the Bitstamp wire. Only `trade` is acted on; the rest confirm state, report
+// errors or request a reconnect.
 const (
 	EventTrade                   = "trade"
 	EventSubscriptionSucceeded   = "bts:subscription_succeeded"
@@ -44,24 +43,20 @@ var _ = external.ClassExchange
 // Errors surfaced by the parser. Transient WS errors live in
 // streamer.go.
 var (
-	// ErrMalformedFrame — JSON shape didn't match the channel
-	// envelope or the trade event payload. Single-frame skip.
+	// ErrMalformedFrame: the JSON did not match the envelope or trade payload; skip that frame.
 	ErrMalformedFrame = errors.New("bitstamp: malformed frame")
 
-	// ErrUnknownChannel — trade event arrived on a channel not in
-	// the configured pair map. Defensive; Start rejects
-	// misconfiguration upfront.
+	// ErrUnknownChannel: a trade arrived on a channel outside the configured pair map. Defensive;
+	// Start rejects misconfiguration upfront.
 	ErrUnknownChannel = errors.New("bitstamp: channel not in configured PairMap")
 
-	// ErrRequestedReconnect — venue asked us to reconnect. The
-	// streamer closes the connection and re-enters the backoff
-	// loop; not an error the caller sees but an internal signal.
+	// ErrRequestedReconnect: the venue asked for a reconnect. Internal signal; the streamer
+	// closes and re-enters the backoff loop.
 	ErrRequestedReconnect = errors.New("bitstamp: server requested reconnect")
 
 	// ErrSubscriptionRejected: the venue answered a subscribe with `bts:error` (e.g. a delisted
-	// pair). Not fatal, other channels stay live. The streamer flips
-	// obs.CEXStreamSubscriptionRejected so a dead pair does not hide behind a sibling's fresh
-	// CEXStreamLastTradeUnix.
+	// pair). Not fatal; the streamer flips obs.CEXStreamSubscriptionRejected so a dead pair does
+	// not hide behind a sibling's fresh CEXStreamLastTradeUnix.
 	ErrSubscriptionRejected = errors.New("bitstamp: subscription rejected")
 
 	// ErrDustTrade: base × price floor-divides to a 0 quote amount (e.g. 1e-8 XLM at $0.16

@@ -23,10 +23,8 @@ type Event struct {
 	// set, since Matches has already run.
 	ContractID string
 
-	// Soroban event identity. EventIndex is load-bearing: a single
-	// operation emits the SAC transfer AND the vault event, and a
-	// redemption emits several vault events, so without it the rows
-	// collide on the primary key.
+	// Soroban event identity. EventIndex is load-bearing: one operation can emit several events,
+	// so without it the rows collide on the primary key.
 	Ledger     uint32
 	ObservedAt time.Time
 	TxHash     string
@@ -37,19 +35,15 @@ type Event struct {
 	// [EventTransfer], [EventDeployedAssetsChanged] values.
 	Kind string
 
-	// Caller is topic[1]: the account that invoked the vault on
-	// deposit/withdraw, the `from` on a share transfer, or the operator
-	// on deployed_assets_changed.
+	// Caller is topic[1]: the invoking account, the `from` on a share transfer, or the operator.
 	Caller string
 
-	// Receiver is topic[2]: who receives the underlying on a withdraw
-	// (or the shares on a deposit), and the `to` on a share transfer.
-	// Empty on deployed_assets_changed, which has only two topics.
+	// Receiver is topic[2]: the recipient of the underlying (withdraw), the shares (deposit) or the
+	// `to` of a transfer. Empty on deployed_assets_changed, which has only two topics.
 	Receiver string
 
-	// Owner is topic[3]: whose shares are minted or burned. Empty on
-	// transfer and deployed_assets_changed. See the package doc for
-	// what is proven about this ordering and what is inferred.
+	// Owner is topic[3]: whose shares are minted or burned. Empty on transfer and
+	// deployed_assets_changed. The package doc says which of this ordering is proven.
 	Owner string
 
 	// Assets is the underlying moved in or out. Zero on transfer and

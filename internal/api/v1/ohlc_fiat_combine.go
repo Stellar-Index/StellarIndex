@@ -38,9 +38,8 @@ func (s *Server) ohlcSeriesFiatCombined(
 	if err != nil {
 		return nil, false, err
 	}
-	// Which buckets the established spellings answered, snapshotted
-	// BEFORE the held-back pass so two held-back constituents sharing an
-	// unanswered bucket still merge with each other.
+	// Snapshot the answered buckets BEFORE the held-back pass so two held-back constituents
+	// sharing an unanswered bucket still merge with each other.
 	answered := make(map[time.Time]struct{}, len(c.acc))
 	for t := range c.acc {
 		answered[t] = struct{}{}
@@ -72,9 +71,8 @@ func (s *Server) ohlcSeriesFiatCombined(
 // Each constituent read is capped to its own newest `limit` buckets, so the merge is a union of
 // per-constituent tails: the old end holds buckets a dense constituent traded in but was never
 // asked for, and keeping the earliest `limit` would serve incomplete bars. The newest `limit` are
-// safe by counting: a constituent has at most `limit` buckets at or after any such t, all inside its
-// own newest `limit`. The same count covers the held-back gate. Only bites on an explicit window
-// wider than `limit` intervals.
+// safe by counting: a constituent has at most `limit` buckets at or after any such t, all inside
+// its own newest `limit`; the same count covers the held-back gate.
 func newestCombinedBars(out []OHLCSeriesBar, limit int) []OHLCSeriesBar {
 	if limit > 0 && len(out) > limit {
 		return out[len(out)-limit:]
@@ -100,12 +98,10 @@ func (s *Server) usdPeggedConstituents(pair canonical.Pair) []canonical.Pair {
 // declared classic peg's SAC wrapper. A peg is an asset, not a spelling: Soroban AMMs trade the
 // wrapper, so a token whose only USD depth is a Soroban pool is stored quoted in the USDC SAC.
 //
-// The passes are [Server.usdPegProxyQuotes]'s classic-then-SAC across ALL peg families, because a
-// pool is far thinner than the book and a few prints must not re-price an answer the book can give
-// (docs/architecture/aggregation-plan.md, "The fiat quote leg, per bucket").
-//
-// Deduplicated by market across both sets, since both readers span both stored directions; a
-// held-back pair whose flip is established is dropped, not promoted.
+// The passes are classic-then-SAC across ALL peg families, because a pool is far thinner than the
+// book and a few prints must not re-price an answer the book can give. Deduplicated by market
+// across both sets, since both readers span both stored directions; a held-back pair whose flip is
+// established is dropped, not promoted.
 func (s *Server) usdPeggedConstituentSets(pair canonical.Pair) (established, heldBack []canonical.Pair) {
 	seen := make(map[string]struct{})
 	add := func(dst *[]canonical.Pair, sp canonical.Pair) {
@@ -144,9 +140,8 @@ func (s *Server) usdPeggedConstituentSets(pair canonical.Pair) (established, hel
 	return established, dropMarketsIn(distinctMarkets(heldBack), established)
 }
 
-// dropMarketsIn removes from `pairs` every market already in `kept`, in either direction. It keeps
-// the held-back set disjoint from the established one: a market reachable under both belongs to
-// the set read first.
+// dropMarketsIn removes from `pairs` every market already in `kept`, in either direction, so a
+// market reachable under both sets belongs to the one read first.
 func dropMarketsIn(pairs, kept []canonical.Pair) []canonical.Pair {
 	if len(pairs) == 0 || len(kept) == 0 {
 		return pairs
@@ -171,11 +166,9 @@ func dropMarketsIn(pairs, kept []canonical.Pair) []canonical.Pair {
 // trades of EVERY constituent of a fiat-quoted target into one chronologically-ordered population
 // at one amount scale. Returns (window, proxied, err); `proxied` drives flags.triangulated.
 //
-// Backing a point quote with one constituent while the series combines all would make
-// `/v1/vwap?quote=fiat:USD` and `/v1/ohlc?interval=1h&quote=fiat:USD` answer from different
-// populations; the series methodology is the authority. The held-back gate resolves at
-// [fiatPointGateInterval], the finest interval the series accepts, so equality is exact against
-// `interval=1m`; a coarser series suppresses more.
+// A point quote backed by one constituent while the series combines all would make /v1/vwap and
+// /v1/ohlc with quote=fiat:USD answer from different populations; the series methodology is the
+// authority. The held-back gate resolves at [fiatPointGateInterval], the finest series interval.
 //
 // Constituent read errors propagate: a quietly narrower money answer is worse than a 500. Each is
 // fetched with the caller's `maxTrades` cap and the merged set is trimmed to the newest
@@ -189,8 +182,7 @@ func (s *Server) fiatCombinedTrades(
 		return aggregate.ScaledWindow{}, false, err
 	}
 	// Held-back spellings answer only the sub-windows the established ones left empty. Gating on the
-	// whole window would make the point window its own bucket: with the book trading in the first
-	// hour and the pool in the second, the series carries both while /v1/vwap carried only the book.
+	// whole window would make the point window its own bucket and diverge from the series.
 	if len(heldBack) > 0 {
 		answered := tradeGateBuckets(merged)
 		for _, sp := range heldBack {
@@ -262,10 +254,9 @@ func tradeGateBuckets(trades []canonical.Trade) map[time.Time]struct{} {
 	return out
 }
 
-// dropTradesInAnsweredBuckets removes every trade whose gate bucket an
-// established spelling already answered. Returns the input untouched
-// when nothing was answered, which is the pool-only asset — the case
-// where the alternative is no price at all.
+// dropTradesInAnsweredBuckets removes every trade whose gate bucket an established spelling
+// already answered. With nothing answered (a pool-only asset) the input is returned untouched,
+// since the alternative is no price at all.
 func dropTradesInAnsweredBuckets(trades []canonical.Trade, answered map[time.Time]struct{}) []canonical.Trade {
 	if len(answered) == 0 || len(trades) == 0 {
 		return trades
@@ -280,10 +271,8 @@ func dropTradesInAnsweredBuckets(trades []canonical.Trade, answered map[time.Tim
 	return out
 }
 
-// fiatPointGateBucket floors a trade's timestamp onto the gate grid.
-// UTC first: [time.Time.Truncate] works on the absolute instant, but the
-// bucket is compared as a value, and two identical instants carrying
-// different locations are not equal.
+// fiatPointGateBucket floors a trade's timestamp onto the gate grid. UTC first: buckets are
+// compared as values, and identical instants carrying different locations are not equal.
 func fiatPointGateBucket(ts time.Time) time.Time {
 	return ts.UTC().Truncate(fiatPointGateInterval.duration())
 }
@@ -305,19 +294,19 @@ func sortTradesChronological(trades []canonical.Trade) {
 	})
 }
 
-// ohlcBarScaleUnknown is the scale of a bar whose reader reported no sources. It is a distinct value,
-// not a plausible default: calling it 8 (the registry fallback) would reintroduce the 10x mis-weight
-// this file corrects. It lifts by a factor of 1, so it leaves a bar where it was.
+// ohlcBarScaleUnknown is the scale of a bar whose reader reported no sources. It is a distinct
+// value, not a plausible default: 8 (the registry fallback) would reintroduce the 10x mis-weight
+// this file corrects. It lifts by a factor of 1.
 const ohlcBarScaleUnknown = -1
 
 // barScaleDecimals resolves a combined bar's smallest-unit scale from its contributing venues, via
 // the same resolver the point path hands to [aggregate.NormalizeAmountScale].
 //
-// The maximum is taken. Stored bars are homogeneous in scale, so the lift is exact; a bar that mixed
-// scales is already an unrepairable sum, and max gives it the smallest lift so it cannot inflate its
-// weight against peers. The scale is unknown when any source lacks an [external.Registry] entry,
-// because [external.Lookup] would answer the CEX-flavoured 8-decimal default and misstate an
-// unregistered on-chain DEX tenfold. Mirrors [commonAmountScaleDecimals], the point-path twin.
+// The maximum is taken: stored bars are homogeneous in scale, so the lift is exact, and a bar that
+// mixed scales is already an unrepairable sum that max keeps from inflating its weight. The scale
+// is unknown when any source lacks an [external.Registry] entry, because [external.Lookup] would
+// answer the 8-decimal CEX default and misstate an unregistered on-chain DEX tenfold. Mirrors
+// [commonAmountScaleDecimals], the point-path twin.
 func barScaleDecimals(sources []string) int {
 	scale := ohlcBarScaleUnknown
 	for _, src := range sources {
@@ -345,9 +334,8 @@ func ohlcScaleFactor(scale, common int) *big.Rat {
 // carrying its own scale.
 //
 // The lift target is per bucket, not per response: a bucket's numbers must depend only on its own
-// bars, or the same day renders differently by window width. The cost is that two buckets of one
-// response can be in different scales, but a response-wide scale would show a caller stitching two
-// windows (a paged chart, an incremental refresh) the same bucket in two units.
+// bars, or the same day renders differently by window width and a caller stitching two windows
+// would see the same bucket in two units.
 type fiatCombine struct {
 	acc map[time.Time]*ohlcBucketAcc
 }
@@ -386,8 +374,6 @@ func (s *Server) combineConstituentBars(
 	for _, sp := range pairs {
 		bars, err := s.History.OHLCSeries(ctx, sp, string(interval), from, to, limit)
 		if err != nil {
-			// A constituent that simply has no rows returns an empty
-			// slice + nil, not an error.
 			return false, err
 		}
 		for i := range bars {
@@ -406,9 +392,8 @@ func (s *Server) combineConstituentBars(
 // ohlcBucketAcc accumulates constituent bars sharing a bucket timestamp, in big.Rat/big.Int to keep
 // the NUMERIC precision of the wire contract (no float round-trip).
 //
-// Volume sums are kept per scale, because the lift target is the bucket's maximum scale, unknown
-// until every constituent is read. Prices are scale-invariant ratios, so extremes and the trade
-// count need no such split.
+// Volume sums are kept per scale because the lift target (the bucket's maximum scale) is unknown
+// until every constituent is read; prices are scale-invariant ratios and need no split.
 type ohlcBucketAcc struct {
 	byScale map[int]*ohlcScaleAcc // keyed by the contributing bars' scale
 	highs   []*big.Rat            // per-constituent highs (bucket high = max)
@@ -421,8 +406,7 @@ type ohlcBucketAcc struct {
 	commonScale int
 }
 
-// ohlcScaleAcc is one bucket's running totals for the bars at a single
-// smallest-unit scale.
+// ohlcScaleAcc is one bucket's running totals for bars at a single smallest-unit scale.
 type ohlcScaleAcc struct {
 	openNum  *big.Rat // Σ(open  · base_vol)
 	closeNum *big.Rat // Σ(close · base_vol)
@@ -468,9 +452,7 @@ func (a *ohlcBucketAcc) add(b *OHLCSeriesBar, scale int) {
 	for _, src := range b.Sources {
 		a.sources[src] = struct{}{}
 	}
-	// Collect the per-constituent extremes; the bucket extreme is simply the
-	// max/min across them (each constituent's own extreme already excludes
-	// dust — see selectExtreme).
+	// The bucket extreme is the max/min across per-constituent extremes (see selectExtreme).
 	a.highs = append(a.highs, high)
 	a.lows = append(a.lows, low)
 }
@@ -499,8 +481,7 @@ func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 	}
 	high := selectExtreme(a.highs, true)
 	low := selectExtreme(a.lows, false)
-	// A bucket holding an unknown-scale bar sums integers at no single
-	// scale (that bar was left unlifted), so it states none.
+	// A bucket holding an unknown-scale bar sums integers at no single scale, so it states none.
 	stated := a.commonScale
 	if _, unknown := a.byScale[ohlcBarScaleUnknown]; unknown {
 		stated = ohlcBarScaleUnknown
@@ -513,9 +494,8 @@ func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 		C:      ratToDecimal(closeP, ohlcPriceDigits),
 		VBase:  seriesVolumeText(baseVol),
 		VQuote: seriesVolumeText(quoteVol),
-		// The bucket's own lift target IS the scale VBase/VQuote ended
-		// up at — every scale present was multiplied up to it above, so
-		// stating anything else would mismatch the served integers.
+		// Every scale present was lifted to the bucket's common scale, so stating anything else
+		// would mismatch the served integers.
 		VBaseDecimals:  wireScaleDecimals(stated),
 		VQuoteDecimals: wireScaleDecimals(stated),
 		N:              a.n,
@@ -541,11 +521,10 @@ func sortedSources(set map[string]struct{}) []string {
 // max / min with no price-distance filtering.
 //
 // A price band around the VWAP is the wrong filter
-// (docs/operations/finding-dust-trades-set-chart-extremes.md):
-// the wicks it targets are dust, already excluded per trade by the $0.01 notional floor on the CAGG
-// extremes (migration 0115). A band is also too weak (a dust wick can sit inside 2x) and too strong
-// (it clips a genuine large move). Filter on trade size, never price divergence: a $100,000
-// fat-finger is a real market event and must show. Zero Rat when no candidates (defensive).
+// (docs/operations/finding-dust-trades-set-chart-extremes.md): dust wicks are already excluded per
+// trade by the $0.01 notional floor on the CAGG extremes, and a band is both too weak (a dust wick
+// can sit inside 2x) and too strong (it clips a genuine large move). Filter on trade size, never
+// price divergence: a $100,000 fat-finger is a real market event and must show.
 func selectExtreme(cands []*big.Rat, isHigh bool) *big.Rat {
 	if len(cands) == 0 {
 		return new(big.Rat)
@@ -563,9 +542,7 @@ func selectExtreme(cands []*big.Rat, isHigh bool) *big.Rat {
 	return best
 }
 
-// ratFromDecimal parses a NUMERIC decimal string (e.g. "0.19056",
-// "3997807371333934") into a big.Rat. Returns nil on parse failure or
-// empty input.
+// ratFromDecimal parses a NUMERIC decimal string into a big.Rat; nil on empty or bad input.
 func ratFromDecimal(s string) *big.Rat {
 	if s == "" {
 		return nil
@@ -577,10 +554,9 @@ func ratFromDecimal(s string) *big.Rat {
 	return r
 }
 
-// seriesVolumeText is the one wire rendering of a series bar's v_base /
-// v_quote: integer smallest-unit text. The true value is a sum of integer
-// amounts; the CAGG's vwap*volume leg carries sub-unit NUMERIC noise on
-// either side of it, so round to nearest (half up; volumes are >= 0).
+// seriesVolumeText is the one wire rendering of a series bar's v_base / v_quote: integer
+// smallest-unit text. The true value is a sum of integers but the CAGG's vwap*volume leg carries
+// sub-unit NUMERIC noise, so round to nearest (half up; volumes are >= 0).
 func seriesVolumeText(r *big.Rat) string {
 	if r == nil {
 		return "0"

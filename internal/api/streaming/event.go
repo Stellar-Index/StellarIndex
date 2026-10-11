@@ -17,26 +17,19 @@ type Event struct {
 	// Clients use it as `Last-Event-ID` on reconnect to resume.
 	ID string
 
-	// Type is the SSE `event:` field, e.g. "price_update",
-	// "tip_update". Empty Type means "default" event in the SSE spec
-	// — clients dispatch to the unnamed handler.
+	// Type is the SSE `event:` field, e.g. "price_update". Empty means the default event, which
+	// clients dispatch to the unnamed handler.
 	Type string
 
-	// Data is the SSE `data:` payload, written verbatim. Multiline
-	// payloads MUST NOT contain bare \n — Stream emits one `data:`
-	// line per logical record, so callers should pre-encode to a
-	// single line of JSON before publishing.
+	// Data is the SSE `data:` payload, written verbatim. It MUST NOT contain a bare \n: Stream
+	// emits one `data:` line per record, so pre-encode to single-line JSON.
 	Data []byte
 
-	// Timestamp is the producer-side wallclock at publish. Used by
-	// Hub for buffer-eviction policies; clients don't see it
-	// directly.
+	// Timestamp is the producer-side wallclock at publish, used by Hub for buffer eviction.
 	Timestamp time.Time
 
-	// Retry, when non-zero, is an SSE `retry:` reconnection-delay
-	// hint attached to this event. Most events leave it zero;
-	// writeStream sends the connection-wide default once in the
-	// prelude rather than per-event (see DefaultRetry).
+	// Retry, when non-zero, is an SSE `retry:` hint for this event. writeStream sends the
+	// connection-wide default once in the prelude instead (see DefaultRetry).
 	Retry time.Duration
 }
 
@@ -52,9 +45,8 @@ const EventTypeStreamGap = "stream_gap"
 // only client contract is "lexicographic sort = chronological"; treat IDs as opaque. Non-Hub
 // callers (per-connection tickers) can construct one directly.
 type Generator struct {
-	// state packs (lastMillis << 16) | counter into a single
-	// uint64 for atomic-CAS update. counter resets implicitly each
-	// time lastMillis advances.
+	// state packs (lastMillis << 16) | counter into one uint64 for atomic CAS; the counter resets
+	// whenever lastMillis advances.
 	state atomic.Uint64
 }
 
@@ -73,8 +65,7 @@ func (g *Generator) Ahead(id string) bool {
 	return v > ceiling
 }
 
-// Next returns the next sortable event ID. Goroutine-safe; never
-// returns the same ID twice (within the lifetime of the generator).
+// Next returns the next sortable event ID. Goroutine-safe; never repeats an ID within one generator.
 func (g *Generator) Next() string {
 	now := uint64(time.Now().UnixMilli()) //nolint:gosec // wall-clock millis bounded; sentinel-safe past year 2106 because we only use lower 48 bits
 	for {
@@ -87,10 +78,8 @@ func (g *Generator) Next() string {
 		case now > oldMillis:
 			next = (now << 16) // counter resets to 0 when the millisecond advances
 		case oldCounter < 0xFFFF:
-			// Same or earlier millisecond, counter has headroom — bump it.
-			// If the system clock jumped backwards we still produce a
-			// strictly increasing ID (we keep the older millis but
-			// increment the counter).
+			// Same or earlier millisecond: bump the counter, which also keeps IDs strictly
+			// increasing if the clock steps backwards.
 			next = (oldMillis << 16) | (oldCounter + 1)
 		default:
 			// Counter saturated within one ms: advance the millis instead of wrapping, since
@@ -99,8 +88,7 @@ func (g *Generator) Next() string {
 			next = (oldMillis + 1) << 16
 		}
 		if g.state.CompareAndSwap(old, next) {
-			// 16-char lowercase hex of next; sortable lexicographically
-			// because the high bits are time and we zero-pad with %016x.
+			// Zero-padded %016x with time in the high bits sorts lexicographically.
 			return fmt.Sprintf("%016x", next)
 		}
 	}
