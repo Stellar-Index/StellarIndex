@@ -260,11 +260,9 @@ func TestWorker_SignatureV2BindsDeliveryIDAndEvent(t *testing.T) {
 	}
 }
 
-// TestWorker_NetworkErrorDoesNotLeakRawErrorText pins RSEC-Y1: a
-// transport-level failure (here, a closed listener — connection refused)
-// must record a fixed, address-free last_error. The raw dial error names
-// the destination host:port, and last_error is served verbatim by the
-// dashboard API's deliveryDTO.
+// TestWorker_NetworkErrorDoesNotLeakRawErrorText pins that a transport-level failure (here a
+// closed listener) records a fixed, address-free last_error. The raw dial error names the
+// destination host:port, and last_error is served verbatim by the dashboard API's deliveryDTO.
 func TestWorker_NetworkErrorDoesNotLeakRawErrorText(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	url := ts.URL
@@ -434,16 +432,11 @@ func TestWorker_MissingWebhookTerminates(t *testing.T) {
 	}
 }
 
-// TestWorker_EmptySecret_TerminalNoDelivery is the defence-in-depth guard
-// for an empty HMAC signing key. signHMACSHA256 with a zero-length secret
-// produces a FORGEABLE HMAC (anyone can compute HMAC("", body) for any
-// payload), so the worker must refuse to sign/POST and instead mark the
-// row terminally failed (a missing secret is a misconfiguration that
-// retrying can never repair) — never emit a spoofable signature.
-//
-// Not reachable via the API today (generateSecret always writes 32
-// crypto/rand bytes), but a belt-and-suspenders gap. Signing with the empty key
-// and POSTing would reach the test server and mark the row delivered.
+// TestWorker_EmptySecret_TerminalNoDelivery is the defence-in-depth guard for an empty HMAC
+// signing key. signHMACSHA256 with a zero-length secret yields a FORGEABLE HMAC (anyone can
+// compute HMAC("", body)), so the worker must refuse to sign/POST and mark the row terminally
+// failed (retrying cannot repair a missing secret), never emit a spoofable signature.
+// Not reachable via the API today (generateSecret always writes 32 crypto/rand bytes).
 func TestWorker_EmptySecret_TerminalNoDelivery(t *testing.T) {
 	var posted int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -490,17 +483,11 @@ func TestWorker_EmptySecret_TerminalNoDelivery(t *testing.T) {
 // errorsIs keeps the errors import live for future expansion.
 var _ = errors.Is
 
-// TestWorker_DeliveryDurationMetricRecorded covers the latency-histogram wiring: a successful delivery
-// produces a sample on
-// `stellarindex_customer_webhook_delivery_duration_seconds`
-// labelled `outcome="delivered"`. Without this test, a future
-// refactor could silently delete the timing call without any
-// signal — the existing TestWorker_DeliversOn2xx asserts the
-// counter side but not the histogram.
-//
-// Uses CollectAndCount on the metric's WithLabelValues child so
-// the assertion stays independent of bucket-by-bucket values
-// (which depend on test-machine performance).
+// TestWorker_DeliveryDurationMetricRecorded covers the latency-histogram wiring: a successful
+// delivery produces a sample on `stellarindex_customer_webhook_delivery_duration_seconds`
+// labelled `outcome="delivered"`. TestWorker_DeliversOn2xx asserts only the counter side.
+// The assertion counts samples on the label child so it stays independent of bucket values,
+// which depend on test-machine performance.
 func TestWorker_DeliveryDurationMetricRecorded(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -520,12 +507,10 @@ func TestWorker_DeliveryDurationMetricRecorded(t *testing.T) {
 		NextAttemptAt: time.Now().Add(-time.Second),
 	})
 
-	// Use obstest.HistogramSampleCount because
-	// HistogramVec.WithLabelValues(...) returns a
-	// prometheus.Observer (not Collector) — testutil.CollectAndCount
-	// can't act on the per-label child directly. The helper sums
-	// sample counts across every series matching the (label key,
-	// value) pair, equivalent to the wire-format `_count` suffix.
+	// obstest.HistogramSampleCount is needed because HistogramVec.WithLabelValues returns a
+	// prometheus.Observer, not a Collector, so testutil.CollectAndCount cannot act on the
+	// child. It sums sample counts across series matching the (label key, value) pair, like
+	// the wire-format `_count` suffix.
 	before := obstest.HistogramSampleCount(t, obs.CustomerWebhookDeliveryDurationSeconds, "outcome", "delivered")
 	runOneTick(t, store, customerwebhook.Options{PollInterval: 30 * time.Millisecond})
 	after := obstest.HistogramSampleCount(t, obs.CustomerWebhookDeliveryDurationSeconds, "outcome", "delivered")
@@ -535,21 +520,15 @@ func TestWorker_DeliveryDurationMetricRecorded(t *testing.T) {
 	}
 }
 
-// TestWorker_TransientGetWebhookError_LeavesDeliveryForRetry is a
-// regression guard.
+// TestWorker_TransientGetWebhookError_LeavesDeliveryForRetry guards against GetWebhook
+// failing with a TRANSPORT error (connection reset, fail-over, statement timeout) while the
+// webhook row is intact. Treating every GetWebhook error as "row deleted" would call
+// MarkAttemptFailed with a zero next_attempt_at, removing the row from the pending predicate
+// FOREVER, so one postgres blip would permanently drop a customer's notification with no
+// retry or alert.
 //
-// The failure it encodes: GetWebhook fails with a TRANSPORT error — a
-// connection reset, a fail-over, a statement timeout — while the webhook
-// row is perfectly intact. Treating every GetWebhook
-// error as "row deleted" would call MarkAttemptFailed with a
-// zero next_attempt_at, which removes the row from the pending predicate
-// FOREVER. One postgres blip therefore silently and permanently dropped
-// a customer's SEV-1 / freeze / divergence notification, with no retry
-// and no alert path other than reading the delivery log by hand.
-//
-// Only platform.ErrNotFound is terminal; a transient error
-// leaves the row untouched so the store's 5-minute claim lease expires
-// and the next poll re-delivers it.
+// Only platform.ErrNotFound is terminal; a transient error leaves the row untouched so the
+// store's claim lease expires and the next poll re-delivers it.
 func TestWorker_TransientGetWebhookError_LeavesDeliveryForRetry(t *testing.T) {
 	store := newFakeStore()
 	webhookID := uuid.New()
@@ -656,15 +635,12 @@ func TestWorker_UnsealableKey(t *testing.T) {
 	}
 }
 
-// TestWorker_TerminalMarkWriteError_SurfacesOnMarkErrorCounter pins
-// that when a TERMINAL MarkAttemptFailed store write fails, the
-// worker must not silently discard the error. The row keeps the claim
-// lease ListPendingDeliveries set, so a dropped terminal mark re-POSTs
-// the same request every lease interval with no attempt-budget advance;
-// the only way to catch that loop is the mark_error counter. This drives
-// the disabled-webhook terminal path with a failing store and asserts the
-// failure lands on mark_error and NOT on the terminal "disabled" outcome
-// (which never persisted).
+// TestWorker_TerminalMarkWriteError_SurfacesOnMarkErrorCounter pins that a failed TERMINAL
+// MarkAttemptFailed store write is not silently discarded. The row keeps the claim lease, so
+// a dropped terminal mark re-POSTs the same request every lease interval with no
+// attempt-budget advance; the mark_error counter is the only way to catch that loop. This
+// drives the disabled-webhook terminal path with a failing store and asserts the failure
+// lands on mark_error and NOT on the terminal "disabled" outcome (which never persisted).
 func TestWorker_TerminalMarkWriteError_SurfacesOnMarkErrorCounter(t *testing.T) {
 	store := newFakeStore()
 	store.markErr = errors.New("UPDATE failed: cannot write to read-only replica")
@@ -700,14 +676,11 @@ func TestWorker_TerminalMarkWriteError_SurfacesOnMarkErrorCounter(t *testing.T) 
 	}
 }
 
-// TestWorker_Run_SequentialSecondCallReturnsErrAlreadyRunning: Run's doc
-// comment promises a second call — concurrent OR after the first has
-// already returned — gets ErrAlreadyRunning rather than starting a
-// second poll loop. this pins the sequential case specifically,
-// since a naive "reset the running flag on return" guard passes the
-// concurrent race test but re-arms Run for a second call once the first
-// has exited, silently breaking the one-shot-for-the-worker's-lifetime
-// contract the doc promises.
+// TestWorker_Run_SequentialSecondCallReturnsErrAlreadyRunning: Run promises a second call,
+// concurrent OR after the first has returned, gets ErrAlreadyRunning rather than a second
+// poll loop. This pins the sequential case, since a naive "reset the running flag on return"
+// guard passes the concurrent race test but re-arms Run once the first call exits, breaking
+// the one-shot-per-worker contract.
 func TestWorker_Run_SequentialSecondCallReturnsErrAlreadyRunning(t *testing.T) {
 	store := newFakeStore()
 	w := customerwebhook.NewUnguardedForTest(store, customerwebhook.Options{
@@ -766,23 +739,17 @@ func TestStop_BeforeRunReturns(t *testing.T) {
 	}
 }
 
-// The account kill switch was INBOUND-ONLY. Suspending
-// or closing an account stopped its API keys authenticating, but nothing
-// in the webhook fan-out, claim or delivery path read account status —
-// so a suspended or closed customer kept RECEIVING our data at the
-// endpoints they had registered, and rows kept being queued against
-// them.
+// The account kill switch must cover OUTBOUND delivery, not only API-key authentication: a
+// suspended or closed customer must stop RECEIVING our data at registered endpoints, and no
+// rows may be queued against them.
 //
-// These tests pin the delivery end of the gate. The store end (the
-// resolver, the two enqueue writers and the claim query, all SQL) is
-// pinned against real Postgres in
+// These tests pin the delivery end of the gate. The store end (the resolver, the two enqueue
+// writers and the claim query, all SQL) is pinned against real Postgres in
 // test/integration/pg_auth_webhooks_test.go.
 
-// WebhookAccountStatus completes the DeliveryStore contract for the
-// package's in-memory fake. That fake models the customer_webhooks table
-// only and has no notion of an owning account, so every account it knows
-// is active — which is what the pre-existing tests around it assume.
-// Non-active statuses are driven through [killSwitchStore] below.
+// WebhookAccountStatus completes the DeliveryStore contract for the in-memory fake. The fake
+// models only the customer_webhooks table, so every account it knows is active. Non-active
+// statuses are driven through [killSwitchStore] below.
 func (s *fakeStore) WebhookAccountStatus(context.Context, uuid.UUID) (platform.AccountStatus, error) {
 	return platform.AccountActive, nil
 }
@@ -807,11 +774,9 @@ func (s *killSwitchStore) WebhookAccountStatus(context.Context, uuid.UUID) (plat
 	return s.status, nil
 }
 
-// killSwitchFixture stands up an endpoint that counts the POSTs it
-// receives, an enabled webhook pointing at it, and one due delivery,
-// then drains a single tick with the account in `status`. It returns the
-// store and the number of requests the customer's endpoint actually
-// received.
+// killSwitchFixture stands up a POST-counting endpoint, an enabled webhook pointing at it and
+// one due delivery, then drains a single tick with the account in `status`. It returns the
+// store and the number of requests the endpoint actually received.
 func killSwitchFixture(
 	t *testing.T, status platform.AccountStatus, statusErr error,
 ) (*killSwitchStore, uuid.UUID, *int64) {
@@ -978,17 +943,14 @@ func TestNew_RefusesAStoreThatCannotAnswerTheKillSwitch(t *testing.T) {
 	_ = customerwebhook.New(storeWithoutAccountGate{}, customerwebhook.Options{})
 }
 
-// TestFanout_SuppressedEnqueueIsNotALostEvent — the enqueue gate's
-// refusal is a POLICY decision, not a lost customer event. Before the
-// fix every enqueue error alike was counted as a permanently lost event,
-// returned as a Publish error, and fed the alertable loss counter — so
-// the kill switch doing its job would have paged an operator.
+// TestFanout_SuppressedEnqueueIsNotALostEvent pins that the enqueue gate's refusal is a
+// POLICY decision, not a lost customer event: it must not count as a lost event, be returned
+// as a Publish error, or feed the alertable loss counter, or the kill switch doing its job
+// would page an operator.
 //
-// The positive half (the refusal lands in PublishResult.Suppressed) is
-// asserted end-to-end against real Postgres in
-// test/integration/pg_auth_webhooks_test.go; keeping
-// it out of this file lets the file compile — and so fail on its
-// assertions rather than on a build error — against code lacking the fix.
+// The positive half (the refusal lands in PublishResult.Suppressed) is asserted against real
+// Postgres in test/integration/pg_auth_webhooks_test.go, which keeps this file compiling
+// against code lacking the fix so it fails on assertions rather than a build error.
 func TestFanout_SuppressedEnqueueIsNotALostEvent(t *testing.T) {
 	live, gone := subscriber(), subscriber()
 	store := newFanoutStore(live, gone)
@@ -1163,12 +1125,10 @@ func TestWorker_ExpiredPreviousKeyStopsSigning(t *testing.T) {
 	}
 }
 
-// TestWorker_StalledEndpointDoesNotBlockOthers: the batch was
-// delivered strictly serially, so one endpoint that holds its connection
-// open delayed every other customer's delivery by the full attempt
-// timeout per row. Here endpoint A stalls on both its rows, which are
-// claimed AHEAD of endpoint B's; B must still be delivered while A is
-// stalled, and A must never have two POSTs in flight at once.
+// TestWorker_StalledEndpointDoesNotBlockOthers: a serial batch would let one endpoint holding
+// its connection open delay every other customer by the full attempt timeout per row.
+// Endpoint A stalls on both its rows, claimed AHEAD of endpoint B's; B must still be delivered
+// while A is stalled, and A must never have two POSTs in flight at once.
 func TestWorker_StalledEndpointDoesNotBlockOthers(t *testing.T) {
 	release := make(chan struct{})
 	var releaseOnce sync.Once

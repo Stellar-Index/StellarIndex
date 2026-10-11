@@ -12,25 +12,17 @@ import (
 // The public edge is the OTHER place this project logs a request, and
 // nothing in the Go build parses its config — so these tests do.
 //
-// The API's own logger refuses to log query parameters at all
-// (internal/api/v1/middleware/logger.go) and its slow-request logger
-// records only an allow-listed SHAPE
-// (internal/api/v1/middleware/slow_query_shape.go). Caddy sits in front
-// of both and writes request.uri — query string included — every
-// request header, and every response header straight into journald, on
-// to promtail and Loki. A redaction filter naming one query
-// parameter (`token`) would log /v1/account/admin/lookup?email=<customer
-// email> verbatim; X-API-Key, the customer credential
-// documented in docs/getting-started.md, must be filtered too; and
-// the trailing-slash 308's Location header carries the same query back
-// out on the response side.
+// The API's own loggers refuse to log query parameters (middleware/logger.go) or record only an
+// allow-listed SHAPE (middleware/slow_query_shape.go). Caddy sits in front of both and writes
+// request.uri (query string included) and every request and response header into journald, on
+// to promtail and Loki. A filter naming only one query parameter (`token`) would log
+// /v1/account/admin/lookup?email=<customer email> verbatim; X-API-Key must be filtered too; and
+// the trailing-slash 308's Location header carries the query back out on the response side.
 //
-// Four properties are pinned here: no query value leaves the edge on
-// the request side, none leaves on the response side, the
-// credential-bearing headers are deleted under the exact name net/http
-// gives them (a mismatched case is a SILENT no-op), and the hand-kept
-// copy of the Caddyfile has not drifted from the ansible template that
-// is what actually reaches the host.
+// Four properties are pinned: no query value leaves the edge on the request side, none on the
+// response side, credential-bearing headers are deleted under the exact name net/http gives
+// them (a mismatched case is a SILENT no-op), and the hand-kept Caddyfile copy has not drifted
+// from the ansible template that actually reaches the host.
 var caddyfiles = []string{
 	filepath.Join("..", "..", "configs", "caddy", "Caddyfile.api"),
 	filepath.Join("..", "..", "configs", "ansible", "roles", "archival-node", "templates", "Caddyfile.j2"),
@@ -114,17 +106,12 @@ func TestCaddyAccessLogRedactsEveryQueryValue(t *testing.T) {
 }
 
 // TestCaddyAccessLogDropsHeadersCaddyDoesNotRedact pins the headers
-// Caddy does NOT redact on its own. Its `log_credentials` default
-// blanks Authorization / Cookie / Set-Cookie / Proxy-Authorization,
-// which covers Bearer keys and the dashboard session cookie — but
-// X-API-Key is our own header name and Caddy has never heard of it, and
-// Location carries the query string back out on the response side of
-// every TrailingSlashRedirect 308.
+// Caddy does NOT redact on its own. Its `log_credentials` default blanks Authorization / Cookie /
+// Set-Cookie / Proxy-Authorization, but X-API-Key is our own header name Caddy does not know,
+// and Location carries the query string out on every TrailingSlashRedirect 308.
 //
-// Request-header names must be in Go's canonical MIME form, because
-// that is how net/http parses the header and therefore the key Caddy
-// logs it under: `request>headers>X-API-Key delete` would match nothing
-// and fail open, silently.
+// Request-header names must be in Go's canonical MIME form, the key Caddy logs them under:
+// `request>headers>X-API-Key delete` would match nothing and fail open, silently.
 func TestCaddyAccessLogDropsHeadersCaddyDoesNotRedact(t *testing.T) {
 	for _, path := range caddyfiles {
 		t.Run(filepath.Base(path), func(t *testing.T) {
@@ -151,12 +138,10 @@ func TestCaddyAccessLogDropsHeadersCaddyDoesNotRedact(t *testing.T) {
 	}
 }
 
-// TestCaddyfilesShareAccessLogBlock guards the drift that would make a
-// repo-side fix cosmetic: Caddyfile.api is the reference copy,
-// Caddyfile.j2 is what ansible renders onto the host. The two files
-// differ elsewhere by design (site address, an ansible banner), but a
-// redaction rule that lives in only one of them means the edge keeps
-// logging what the repo says it does not.
+// TestCaddyfilesShareAccessLogBlock guards the drift that would make a repo-side fix cosmetic:
+// Caddyfile.api is the reference copy, Caddyfile.j2 is what ansible renders onto the host. They
+// differ elsewhere by design, but a redaction rule in only one means the edge keeps logging what
+// the repo says it does not.
 func TestCaddyfilesShareAccessLogBlock(t *testing.T) {
 	first := caddyLogBlock(t, caddyfiles[0])
 	for _, path := range caddyfiles[1:] {
@@ -175,19 +160,12 @@ func caddyLogBlock(t *testing.T, path string) string {
 	t.Helper()
 	src := readCaddyfile(t, path)
 
-	// Take the LAST `\tlog {`, not the first — the SITE block's logger.
-	//
-	// This helper fed every assertion in this file, and when b44cda44
-	// added an identical filter to the GLOBAL options block, "first" started
-	// resolving to that one instead. The site logger then had no coverage at
-	// all: stripping its four header/Location deletes left every test in
-	// this file green, while that logger writes 15,450 of r1's 15,473 access
-	// lines — so an X-Api-Key would have reached Loki with CI passing.
-	//
-	// A guard that silently stops guarding is worse than no guard, because
-	// the green run is taken as evidence. The global block is asserted
-	// separately by TestCaddyAccessLogFilterIsGlobalNotJustTheSite, which
-	// reads the file's head, so the two never collapse onto the same text.
+	// Take the LAST `\tlog {`, not the first: the SITE block's logger. The GLOBAL options block
+	// carries an identical filter, and "first" would resolve to it, leaving the site logger
+	// (which writes nearly all access lines) uncovered while every test stays green. A guard
+	// that silently stops guarding is worse than none. The global block is asserted separately
+	// by TestCaddyAccessLogFilterIsGlobalNotJustTheSite, which reads the file's head, so the two
+	// never collapse onto the same text.
 	start := strings.LastIndex(src, "\tlog {\n")
 	if start < 0 {
 		t.Fatalf("%s: no access-log block", path)
@@ -204,18 +182,14 @@ func caddyLogBlock(t *testing.T, path string) string {
 }
 
 // TestCaddyAccessLogFilterIsGlobalNotJustTheSite pins that attaching
-// the filter to the SITE's access logger leaves two other loggers in the
-// same process emitting a raw `request` object: reverse_proxy runtime
-// warnings (which embed request.uri and headers when a client
-// disconnects mid-response) and the catch-all
-// default access logger serving bare-IP / legacy-host traffic (which
-// echoed Location). Filtering the DEFAULT logger covers both.
+// the filter to the SITE's access logger leaves two other loggers in the same process emitting a
+// raw `request` object: reverse_proxy runtime warnings (which embed request.uri and headers when
+// a client disconnects mid-response) and the catch-all default access logger serving bare-IP /
+// legacy-host traffic (which echoed Location). Filtering the DEFAULT logger covers both.
 //
-// The site block keeps its own copy on purpose — `log` inside a site
-// block REPLACES the default for that site rather than layering onto it —
-// so the redaction line must appear at least twice per file. One
-// occurrence means someone moved it rather than adding it, and half the
-// loggers went unfiltered again.
+// The site block keeps its own copy on purpose: `log` inside a site block REPLACES the default
+// for that site rather than layering onto it. So the redaction line must appear at least twice
+// per file; one occurrence means it was moved rather than added.
 func TestCaddyAccessLogFilterIsGlobalNotJustTheSite(t *testing.T) {
 	for _, path := range caddyfiles {
 		src, err := os.ReadFile(path)
@@ -251,27 +225,20 @@ func TestCaddyAccessLogFilterIsGlobalNotJustTheSite(t *testing.T) {
 
 // ─── Response compression ─────────────────────────────────
 //
-// The edge is also where response compression lives, and the same
-// two-file drift hazard applies. Without `encode`, every JSON route answers `Accept-Encoding: gzip, br,
-// zstd` with NO `content-encoding` — 15–34 KB of raw JSON per
-// page load, of which ~77% is compressible (170,924 B of
-// representative payloads → 40,554 B gzip / 39,399 B zstd).
+// The edge is also where response compression lives, and the same two-file drift hazard
+// applies. Without `encode`, every JSON route answers `Accept-Encoding: gzip, br, zstd` with NO
+// `content-encoding`, and JSON is highly compressible.
 //
-// `encode` is not safe bare here. Caddy's DEFAULT response matcher
-// allow-lists `text/*`, which INCLUDES `text/event-stream`, and the
-// handler wraps the response writer and buffers up to
-// `minimum_length` before it can decide whether to encode. Buffering
-// an event stream is precisely the failure the `flush_interval -1`
-// block in the same file exists for — buffering serves ZERO bytes
-// to every SSE consumer. So the stream paths are excluded
-// from `encode` at the REQUEST level (the handler never wraps them)
-// AND the response matcher is narrowed to the JSON/atom bodies the
-// API actually serves.
+// `encode` is not safe bare here. Caddy's DEFAULT response matcher allow-lists `text/*`, which
+// INCLUDES `text/event-stream`, and the handler buffers up to `minimum_length` before deciding
+// whether to encode. Buffering an event stream is the failure the `flush_interval -1` block
+// exists for: it serves ZERO bytes to every SSE consumer. So the stream paths are excluded from
+// `encode` at the REQUEST level (the handler never wraps them) AND the response matcher is
+// narrowed to the JSON/atom bodies the API serves.
 //
-// The tests below pin both halves of that exclusion in both files. A
-// future edit that drops either one compresses an event stream and
-// takes streaming down silently — the failure mode is a 200 with the
-// right Content-Type and no data, which no smoke check catches.
+// The tests pin both halves of that exclusion in both files. Dropping either compresses an
+// event stream and silently takes streaming down: a 200 with the right Content-Type and no
+// data, which no smoke check catches.
 
 // caddyEncodeExclusion pulls the compression exclusion's path regexp
 // out of a Caddyfile. Caddy's `path_regexp` matcher runs on Go's
@@ -294,14 +261,11 @@ var caddySSERoutes = []string{
 	"/v1/observations/stream",
 }
 
-// caddyCredentialRoutes carry a dashboard session cookie, a
-// magic-link / email-verification token, a SEP-10 challenge or a live
-// API key. Compressing a body that mixes a secret with
-// attacker-influenced input leaks the secret through the compressed
-// length (BREACH), and these bodies are small and low-volume, so
-// there is nothing to win by compressing them. Every one is already
-// `private, no-store` in
-// internal/api/v1/middleware/cachecontrol.go.
+// caddyCredentialRoutes carry a dashboard session cookie, a magic-link / email-verification
+// token, a SEP-10 challenge or a live API key. Compressing a body that mixes a secret with
+// attacker-influenced input leaks the secret through the compressed length (BREACH), and these
+// bodies are small, so nothing is gained by compressing them. Every one is already
+// `private, no-store` in internal/api/v1/middleware/cachecontrol.go.
 var caddyCredentialRoutes = []string{
 	"/v1/auth/login",
 	"/v1/auth/callback",
@@ -320,17 +284,14 @@ var caddyCredentialRoutes = []string{
 	"/v1/signup/verify",
 }
 
-// caddyCompressibleRoutes are the large public JSON bodies the fix
-// exists for. Two traps are pinned here deliberately:
+// caddyCompressibleRoutes are the large public JSON bodies compression exists for. Two traps
+// are pinned deliberately:
 //
-//   - `/v1/accounts/{G…}` is the PUBLIC explorer surface and must stay
-//     compressed; only the singular `/v1/account/…` dashboard prefix is
-//     a credential surface. An exclusion written `account` rather than
-//     `account/` would silently stop compressing the busiest family of
-//     pages on the site.
-//   - `/v1/oracle/streams` is an ordinary JSON listing, not SSE. The
-//     exclusion is anchored `/stream$` precisely so the plural does not
-//     get caught by it.
+//   - `/v1/accounts/{G…}` is the PUBLIC explorer surface and must stay compressed; only the
+//     singular `/v1/account/…` dashboard prefix is a credential surface. An exclusion written
+//     `account` rather than `account/` would silently stop compressing the busiest pages.
+//   - `/v1/oracle/streams` is an ordinary JSON listing, not SSE. The exclusion is anchored
+//     `/stream$` so the plural is not caught by it.
 var caddyCompressibleRoutes = []string{
 	"/v1/assets",
 	"/v1/assets/native",
@@ -348,10 +309,9 @@ var caddyCompressibleRoutes = []string{
 }
 
 // caddyEncodeStanza returns the compression stanza verbatim — the
-// `@compressible` matcher line plus the `encode … { … }` block. Same
-// shape as caddyLogBlock: the stanza opens at one tab of indentation
-// and every nested block is deeper, so the first line that is exactly
-// a tab and a closing brace ends it.
+// `@compressible` matcher line plus the `encode … { … }` block. As with caddyLogBlock, the
+// stanza opens at one tab of indentation and nested blocks are deeper, so the first line that is
+// exactly a tab and a closing brace ends it.
 func caddyEncodeStanza(t *testing.T, path string) string {
 	t.Helper()
 	src := readCaddyfile(t, path)
@@ -384,12 +344,10 @@ func caddyEncodeExcludes(t *testing.T, path string) func(string) bool {
 }
 
 // TestCaddyEncodesPublicJSON pins the directive itself: both files
-// must offer zstd and gzip, and the response matcher must allow-list
-// only the JSON/atom bodies. Caddy's response matcher can NAME
-// Content-Type values to encode but cannot exclude one, so
-// "never text/event-stream" is only expressible as "only these" —
-// which means any `text/` entry appearing in the match block is the
-// bug, not a widening.
+// must offer zstd and gzip, and the response matcher must allow-list only the JSON/atom bodies.
+// Caddy's response matcher can NAME Content-Type values to encode but cannot exclude one, so
+// "never text/event-stream" is only expressible as "only these": any `text/` entry in the match
+// block is the bug, not a widening.
 func TestCaddyEncodesPublicJSON(t *testing.T) {
 	for _, path := range caddyfiles {
 		t.Run(filepath.Base(path), func(t *testing.T) {
@@ -419,12 +377,10 @@ func TestCaddyEncodesPublicJSON(t *testing.T) {
 	}
 }
 
-// TestCaddyEncodeExcludesEventStreams is the one that matters. Caddy's
-// `encode` buffers, and an SSE response that is buffered is a 200 with
-// the right Content-Type and no bytes — an outage that is invisible to a status-code smoke check. Every SSE
-// route must be excluded at the REQUEST level so `encode` never wraps
-// it, and the exclusion must agree with the `@sse` matcher that the
-// `flush_interval -1` block already hangs off.
+// TestCaddyEncodeExcludesEventStreams is the one that matters. Caddy's `encode` buffers, and a
+// buffered SSE response is a 200 with the right Content-Type and no bytes, invisible to a
+// status-code smoke check. Every SSE route must be excluded at the REQUEST level so `encode`
+// never wraps it, agreeing with the `@sse` matcher the `flush_interval -1` block hangs off.
 func TestCaddyEncodeExcludesEventStreams(t *testing.T) {
 	for _, path := range caddyfiles {
 		t.Run(filepath.Base(path), func(t *testing.T) {
@@ -476,9 +432,8 @@ func TestCaddyEncodeExcludesCredentialSurfaces(t *testing.T) {
 }
 
 // TestCaddyfilesShareCompressionStanza is the drift guard, the same
-// one TestCaddyfilesShareAccessLogBlock applies to the log block:
-// Caddyfile.api is the reference copy, Caddyfile.j2 is what ansible
-// renders onto the host. An exclusion that lives in only one of them
+// one TestCaddyfilesShareAccessLogBlock applies to the log block: Caddyfile.api is the
+// reference copy, Caddyfile.j2 is what ansible renders onto the host. An exclusion in only one
 // means the edge does something the repo says it does not.
 func TestCaddyfilesShareCompressionStanza(t *testing.T) {
 	first := caddyEncodeStanza(t, caddyfiles[0])

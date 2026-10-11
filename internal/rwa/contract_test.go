@@ -11,17 +11,9 @@ import (
 
 // The contract arm of the definition.
 //
-// These tests are driven by the population that makes the arm
-// load-bearing rather than decorative. Measured on the production lake
-// 2026-09-10, NINETEEN distinct issuers publish a token called BENJI and
-// every one of them is an impersonator — franklintempleton.co.com,
-// franklintempleton.hqlumens.com, benji.qlumen.co, stellar.dtcc.network,
-// treasury.dtcc.company — most already carrying a scam-class directory
-// tag. Not one is franklintempleton.com.
-//
-// Every one of those could deploy a Soroban token contract declaring
-// symbol BENJI tomorrow, at no cost and with nobody's permission. The
-// tests below pin that such a contract is refused, and pin the specific
+// The arm exists because impersonators are the norm: many issuers publish a classic token called
+// BENJI and none is the real one. Any of them could deploy a Soroban token contract declaring the
+// same symbol at no cost, so the tests pin that such a contract is refused and pin the specific
 // thing an attacker would have to control instead.
 
 // Real C-strkeys, CRC-valid. They are test fixtures and stand for
@@ -36,18 +28,13 @@ const (
 // TestQualifyContract_RefusesAContractNobodyNamed is the whole arm in
 // one case. A contract calling itself BENJI, with a symbol an
 // independent oracle really does price, and no third party naming the
-// address: refused.
-//
-// This is the impersonator shape. If it ever passes, every one of the
-// nineteen BENJI issuers can put a nine-figure valuation on this page by
-// deploying one contract.
+// address: refused. This is the impersonator shape; if it ever passes, any
+// impersonator can put a large valuation on the page by deploying one contract.
 func TestQualifyContract_RefusesAContractNobodyNamed(t *testing.T) {
-	// Every OTHER input is the strongest an attacker could arrange: an
-	// issuing-class tag, no scam tag, and a symbol an oracle really
-	// prices. Only the naming of this exact address is missing. So if C2
-	// is ever removed or weakened, this candidate is ADMITTED rather than
-	// merely refused for a different reason — which is what the assertion
-	// below catches.
+	// Every OTHER input is the strongest an attacker could arrange; only the
+	// naming of this exact address is missing. So if C2 is removed or weakened
+	// the candidate is ADMITTED rather than refused for a different reason,
+	// which is what the assertion below catches.
 	v := rwa.QualifyContract(rwa.ContractCandidate{
 		ContractID:     contractA,
 		DirectoryNamed: false,
@@ -85,12 +72,10 @@ func TestQualifyContract_SymbolAloneNeverAdmits(t *testing.T) {
 // TestQualifyContract_RefusesInfrastructureTags is the reason the
 // contract recognition vocabulary is narrower than the account one.
 //
-// The curated directory tags AMM pools and protocol routers `defi` and
-// `exchange`. On an ACCOUNT those describe an entity that might issue a
-// real-world instrument; on a CONTRACT address they describe a piece of
-// infrastructure that issues nothing. Admitting them would put liquidity
-// pool shares on a page that says the assets on it represent real-world
-// value.
+// The curated directory tags AMM pools and protocol routers `defi` and `exchange`. On an ACCOUNT
+// those describe an entity that might issue a real-world instrument; on a CONTRACT they describe
+// infrastructure that issues nothing. Admitting them would list liquidity pool shares as
+// real-world assets.
 func TestQualifyContract_RefusesInfrastructureTags(t *testing.T) {
 	for _, tag := range []string{"defi", "exchange", "sdf", "wallet", "application"} {
 		t.Run(tag, func(t *testing.T) {
@@ -212,16 +197,12 @@ func TestQualifyContract_RefusesAMalformedAddress(t *testing.T) {
 }
 
 // TestContractInstrumentBindings_AreWellFormed pins the curated set's
-// posture. Populating it needs contract addresses from a primary source,
-// and an address written from memory is a fabricated identity for a
-// financial instrument.
+// posture. Addresses must come from a primary source; one written from memory is a fabricated
+// identity for a financial instrument.
 //
-// The test is not "the list is empty" (which would have had to be
-// deleted the day someone added a verified entry, as the Spiko funds
-// now are). It is that whatever the list holds is well-formed: a real
-// strkey, a named instrument, and a class from the closed vocabulary. A
-// malformed entry would silently admit or silently refuse, and both are
-// worse than a compile error.
+// It checks that whatever the list holds is well-formed (a real strkey, a named instrument, a
+// class from the closed vocabulary) rather than that the list is empty. A malformed entry would
+// silently admit or silently refuse, both worse than a compile error.
 func TestContractInstrumentBindings_AreWellFormed(t *testing.T) {
 	classes := rwa.ContractAnchorClasses()
 	seen := map[string]struct{}{}
@@ -265,11 +246,9 @@ func TestCouldQualifyContract_IsAPreFilterNotADecision(t *testing.T) {
 
 // The Spiko curated bindings.
 //
-// These are real mainnet addresses rather than fixtures, which the note
-// at the top of this file warns against — that warning is about standing
-// a real address in for an imaginary one, and these stand for
-// themselves. Each is asserted against the exact property its curated
-// entry claims.
+// These are real mainnet addresses, not fixtures standing in for imaginary ones, so the warning
+// at the top of this file does not apply. Each is asserted against the exact property its
+// curated entry claims.
 const (
 	// Bound: "Spiko EU T-Bills Money Market Fund", the largest of the
 	// five by supply.
@@ -283,15 +262,10 @@ const (
 // TestSpikoBinding_StillNeedsIndependentRecognition is the reason adding
 // these bindings does not change what the surface publishes today.
 //
-// The curated entry answers C4 and nothing else. With no directory entry
-// for the address — which is the live state, every Spiko contract
-// returning 404 from the curated directory — the candidate
-// must still be refused, and refused on C2.
-//
-// If this ever starts passing as an admission, a curated in-repo entry
-// has silently become sufficient on its own, and the arm's whole
-// argument (an independent party named THIS address) has been replaced
-// by our own say-so without anyone deciding to.
+// The curated entry answers C4 and nothing else. With no directory entry for the address, the
+// candidate must still be refused, and refused on C2. If it ever admits, a curated in-repo entry
+// has silently become sufficient on its own, replacing the arm's argument (an independent party
+// named THIS address) with our own say-so.
 func TestSpikoBinding_StillNeedsIndependentRecognition(t *testing.T) {
 	// Both ways the independent half can be missing. Neither admits,
 	// and each says which half was missing rather than reporting one
@@ -335,12 +309,8 @@ func TestSpikoBinding_StillNeedsIndependentRecognition(t *testing.T) {
 
 // ─── C2 arm 2: an independent listing corroborating a curated binding ──
 //
-// The addresses below are REAL and are the measured state of the two
-// sources. They are fixtures in the sense that the test
-// pins a rule, but unlike contractA/contractB they are not invented:
-// the whole point of arm 2 is that two parties who do not read each
-// other arrived at the same 56 characters, and a made-up address could
-// not express that.
+// The addresses below are REAL, unlike contractA/contractB: arm 2 rests on two parties who do
+// not read each other arriving at the same 56 characters, which a made-up address cannot express.
 const (
 	// Named by the listing directory AND by an in-repo curated binding.
 	// The curated binding was derived from the issuer's own deployment
@@ -353,16 +323,11 @@ const (
 	// repository has an opinion about: same issuer, same deployment,
 	// same evidence bar, no independent naming, no admission.
 	boundNotListedUSTBL = "CARUUX2FZNPH6DGJOEUFSIUQWYHNL5AVDV7PMVSHWL7OBYIBFC76F4TO"
-	// LISTED, and no in-repo curated binding names it. Real entries
-	// from the same listing map: the native asset's own Stellar Asset
-	// Contract, and USDC's. The listing is a price-aggregation
-	// convenience and carries anything with a market, which is exactly
-	// why it may not admit on its own.
+	// LISTED, and no in-repo curated binding names it: the native asset's own SAC and USDC's.
+	// The listing carries anything with a market, which is why it may not admit on its own.
 	//
-	// Both are permanent controls by construction. Neither the native
-	// asset nor a fiat-backed stablecoin can ever acquire a curated
-	// RWA binding, so unlike a tokenized-gold contract, no later admission can
-	// quietly retire this test.
+	// Both are permanent controls: neither the native asset nor a fiat-backed stablecoin can
+	// acquire a curated RWA binding, so no later admission can quietly retire this test.
 	listedNotBoundXLM  = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 	listedNotBoundUSDC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 )
@@ -370,10 +335,9 @@ const (
 // TestListingCorroboratingCuratedBinding_Admits is the unlock, and the
 // only combination in this file that admits without a directory entry.
 //
-// Two independent parties naming the same exact address is what C2 asks
-// for. The row says which pair let it in, because the evidence is not
-// the same strength as a curated directory attestation and a consumer
-// must be able to tell them apart.
+// Two independent parties naming the same exact address is what C2 asks for. The row says which
+// pair let it in, because this evidence is weaker than a curated directory attestation and a
+// consumer must be able to tell them apart.
 func TestListingCorroboratingCuratedBinding_Admits(t *testing.T) {
 	for _, id := range []string{listedAndBoundEUTBL, listedAndBoundUKTBL} {
 		v := rwa.QualifyContract(rwa.ContractCandidate{
@@ -401,11 +365,9 @@ func TestListingCorroboratingCuratedBinding_Admits(t *testing.T) {
 // by-class breakdown depends on and nothing else asserts: the curated
 // contract set is not a set of bonds with a vocabulary bolted on.
 //
-// Every binding in this file was a Treasury-bill fund or a money-market
-// share class until XAUm, so `commodity` and `fund` existed in
-// [contractAnchorClasses] while only `bond` and `fund` were ever
-// produced. A refactor that narrowed the admitted classes to the ones
-// in use would have passed every other test here.
+// Most bindings are bond or fund classes, so `commodity` can exist in [contractAnchorClasses]
+// while never being produced. A refactor that narrowed the admitted classes to the ones in use
+// would pass every other test here.
 func TestCuratedSetCarriesMoreThanOneClass(t *testing.T) {
 	seen := map[string]string{}
 	for _, b := range rwa.ContractInstrumentBindings() {
@@ -435,12 +397,9 @@ func TestCuratedSetCarriesMoreThanOneClass(t *testing.T) {
 }
 
 // TestListingAlone_AdmitsNothing is the negative control the arm lives
-// or dies by, run against REAL addresses the listing directory really
-// does name and this repository holds no binding for.
-//
-// If this ever passes as an admission, C2 has been replaced by "some
-// price aggregator has heard of it" and the surface would publish the
-// native asset's own SAC as a tokenized real-world asset.
+// or dies by, run against REAL addresses the listing names and this repository has no binding
+// for. If it ever admits, C2 has become "some price aggregator has heard of it" and the native
+// asset's own SAC would be published as a tokenized real-world asset.
 func TestListingAlone_AdmitsNothing(t *testing.T) {
 	for _, id := range []string{listedNotBoundXLM, listedNotBoundUSDC} {
 		v := rwa.QualifyContract(rwa.ContractCandidate{
@@ -459,11 +418,9 @@ func TestListingAlone_AdmitsNothing(t *testing.T) {
 }
 
 // TestBoundButNotListed_StaysRefused pins the other control. USTBL is
-// bound on identical evidence to EUTBL and UKTBL, deployed by the same
-// account under the same wasm hash, and holds a 32.9M-token supply the
-// lake can see. The listing directory carries no Stellar address for
-// it, so it is not admitted and the rule is demonstrably not a rubber
-// stamp for the curated set.
+// bound on identical evidence to EUTBL and UKTBL. The listing directory carries no Stellar
+// address for it, so it is not admitted, showing the rule is not a rubber stamp for the
+// curated set.
 func TestBoundButNotListed_StaysRefused(t *testing.T) {
 	v := rwa.QualifyContract(rwa.ContractCandidate{
 		ContractID:       boundNotListedUSTBL,
@@ -482,14 +439,10 @@ func TestBoundButNotListed_StaysRefused(t *testing.T) {
 // TestScamPrecedence_SurvivesTheListingArm is the single most important
 // test in this file.
 //
-// The listing directory carries no flags and never will. If the scam
-// check had stayed inside the directory arm, an address the curated
-// directory named ONLY to flag as malicious could have walked in
-// through arm 2 — the precedence would have protected exactly the
-// population that did not need it.
-//
-// Every scam-class tag in the one shared vocabulary is exercised, so a
-// tag added to that list cannot quietly fail to bind here.
+// The listing directory carries no flags. If the scam check lived only inside the directory arm,
+// an address the curated directory named ONLY to flag as malicious could walk in through arm 2.
+// Every scam-class tag in the shared vocabulary is exercised, so a newly added tag cannot
+// quietly fail to bind here.
 func TestScamPrecedence_SurvivesTheListingArm(t *testing.T) {
 	for _, tag := range timescale.DirectoryScamFlagTags {
 		v := rwa.QualifyContract(rwa.ContractCandidate{
@@ -549,11 +502,9 @@ func TestDirectoryArm_UnchangedByTheSecondArm(t *testing.T) {
 }
 
 // TestListingArm_IsOnTheAddressNotTheSymbol is the non-negotiable rule
-// in arm 2's coordinate. An impersonator whose contract the listing
-// directory happens to carry — a token with a real market is exactly
-// what that map collects — gets nothing, because the curated binding is
-// keyed on the 56-character address and the impersonator does not have
-// it.
+// in arm 2's coordinate. An impersonator whose contract the listing directory happens to carry
+// gets nothing, because the curated binding is keyed on the 56-character address and the
+// impersonator does not have it.
 func TestListingArm_IsOnTheAddressNotTheSymbol(t *testing.T) {
 	v := rwa.QualifyContract(rwa.ContractCandidate{
 		ContractID:       contractB, // not a bound address
@@ -596,10 +547,8 @@ func TestEveryAdmittedContract_NamesItsRecogniser(t *testing.T) {
 // whose symbol is EUTBL gets nothing from the curated set, however
 // recognised its own address might be.
 //
-// The network already carries at least five accounts issuing classic
-// assets coded EUTBL and USTBL from lookalike domains. Any of them can
-// deploy a Soroban token with the same symbol for the price of a
-// transaction.
+// Lookalike accounts already issue classic assets coded EUTBL and USTBL, and any of them can
+// deploy a Soroban token with the same symbol for the price of a transaction.
 func TestSpikoBinding_IsOnTheAddressNotTheSymbol(t *testing.T) {
 	v := rwa.QualifyContract(rwa.ContractCandidate{
 		ContractID:     contractB, // not Spiko's address
@@ -621,11 +570,9 @@ func TestSpikoBinding_IsOnTheAddressNotTheSymbol(t *testing.T) {
 }
 
 // TestSpikoBinding_ExcludesTheCashAndCarryFund pins the classification
-// judgement rather than leaving it to a comment. SPKCC is Spiko's, is
-// deployed, and carries exactly the same identity evidence as the five
-// bound funds — it is out because a digital-asset basis-trade fund is
-// not a bond, a stock, a commodity or real estate, and [anchorClasses]
-// excludes crypto on purpose.
+// judgement rather than leaving it to a comment. SPKCC carries the same identity evidence as
+// the bound funds but is out: a digital-asset basis-trade fund is not a bond, stock, commodity
+// or real estate, and [anchorClasses] excludes crypto on purpose.
 func TestSpikoBinding_ExcludesTheCashAndCarryFund(t *testing.T) {
 	if rwa.CouldQualifyContract(spikoSPKCCContract, "") {
 		t.Error("the cash-and-carry fund is bound — it has no class in the closed vocabulary")
@@ -645,18 +592,14 @@ func TestSpikoBinding_ExcludesTheCashAndCarryFund(t *testing.T) {
 }
 
 // TestSpikoBindings_ClassifyByInstrumentNotByIssuer pins that each bound fund
-// names a falsifiable instrument rather than a category — `US Treasury money
+// names a falsifiable instrument rather than a category (`US Treasury money
 // market fund` is a category, a named fund with a share class is an
-// instrument — and that the class follows the INSTRUMENT.
+// instrument) and that the class follows the INSTRUMENT.
 //
-// One issuer now has two kinds of fund bound. The T-Bill funds are `bond`,
-// invested in short-dated sovereign debt. The overnight swap fund's share
-// classes are `fund`: 152 of its 160 holdings are listed equities at 119% of
-// net assets, and total return swaps hand every penny of that return away for
-// the overnight index rate, so `bond` would be false on the assets and false
-// on the exposure while `stock` would be true of the assets and the exact
-// opposite of the instrument. Classifying by issuer rather than by instrument
-// is how the wrong one of those gets published.
+// One issuer has two kinds of fund bound. The T-Bill funds are `bond`. The overnight swap
+// fund's share classes are `fund`: it holds listed equities but total return swaps hand the
+// return away, so `bond` is false on assets and exposure, and `stock` is true of the assets but
+// the opposite of the instrument. Classifying by issuer is how the wrong one gets published.
 func TestSpikoBindings_ClassifyByInstrumentNotByIssuer(t *testing.T) {
 	var spiko, tbill, swap int
 	for _, b := range rwa.ContractInstrumentBindings() {
@@ -699,24 +642,18 @@ func TestSpikoBindings_ClassifyByInstrumentNotByIssuer(t *testing.T) {
 // for the funnel's arm-2 claim that a curated class is in the closed
 // vocabulary.
 //
-// QualifyContract returns a curated binding's Class VERBATIM — it never
-// checks it against a vocabulary. So an entry added with a class outside
-// one would be ADMITTED and its class published, while the definition
-// block continues to tell consumers the vocabulary is closed. The wire
-// contract would then describe a row it does not cover, which is worse
-// than a refusal.
+// QualifyContract returns a curated binding's Class VERBATIM without checking a vocabulary. An
+// entry with a class outside it would be ADMITTED and published while the definition block
+// still says the vocabulary is closed, so the wire contract would describe a row it does not
+// cover, which is worse than a refusal.
 //
-// The vocabulary here is [ContractAnchorClasses], not [AnchorClasses], and
-// the two are different on purpose. The classic arm READS an issuer's
-// free-text anchor_asset_type, so it can only accept terms SEP-1 defines.
-// A binding's class is this repository's own statement from a primary
-// source, so it may use a term SEP-1 lacks — and `definition`
-// serves BOTH lists, which is what keeps this check honest: the wire
-// declares exactly the set a row may draw from.
+// The vocabulary is [ContractAnchorClasses], not [AnchorClasses], on purpose. The classic arm
+// READS an issuer's free-text anchor_asset_type, so it only accepts terms SEP-1 defines; a
+// binding's class is this repository's own statement and may use a term SEP-1 lacks. `definition`
+// serves BOTH lists, so the wire declares exactly the set a row may draw from.
 //
-// A test rather than a runtime check because the set is a hand-reviewed
-// table in this repository: the failure belongs at the moment the entry
-// is written, not at the moment a response is served.
+// A test rather than a runtime check because the table is hand-reviewed: the failure belongs
+// at the moment the entry is written, not when a response is served.
 func TestCuratedBindings_DeclareAClassFromTheClosedVocabulary(t *testing.T) {
 	classes := rwa.ContractAnchorClasses()
 	bindings := rwa.ContractInstrumentBindings()

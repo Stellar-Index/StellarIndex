@@ -21,18 +21,13 @@ import (
 )
 
 // obs.HTTPRequestsTotal is a PROCESS-GLOBAL counter that no test resets,
-// so an absolute expectation on a scrape row ("… } 1") asserts that this
-// binary ran this test exactly once — not anything the middleware does.
-// `go test -count=2`, the standard way to hunt a flake, then fails all
-// four of the tests below with the middleware behaving perfectly, and so
-// would any future test that happened to route the same
-// method/route/status. What the middleware owes is the DELTA its own
-// requests cause, so that is what these helpers pin.
+// so an absolute expectation on a scrape row ("… } 1") asserts only that the binary ran the
+// test once; `go test -count=2` would fail it with the middleware behaving perfectly. What the
+// middleware owes is the DELTA its own requests cause, so that is what these helpers pin.
 //
-// The assertions stay on the scrape TEXT rather than moving to the
-// Collector: the exact row format is what the alert rules and the SLO
-// recording rule read, and it is the only check here that the metric is
-// registered at all.
+// The assertions stay on the scrape TEXT rather than the Collector: the exact row format is
+// what the alert rules and the SLO recording rule read, and it is the only check here that
+// the metric is registered at all.
 
 // httpRequestsBaseline reads a label set's counter before a test issues
 // its requests.
@@ -65,11 +60,9 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 	obs.RateLimitFailOpenTotal.Inc()
 	obs.CursorLastLedger.WithLabelValues("_warmup").Set(0)
 	obs.PriceStalenessSeconds.WithLabelValues("_warmup", "_warmup").Set(0)
-	// Through RecordOracleUpdate, not the vec directly: it is the only
-	// supported writer for last_update_unix (it emits the paired
-	// staleness budget on the same label set), and warming it here also
-	// keeps TestRecordOracleUpdate_EveryAgeHasABudget honest — a warmup
-	// that set the age alone would leave a permanent budget-less series.
+	// Through RecordOracleUpdate, not the vec directly: it is the only supported writer for
+	// last_update_unix (it emits the paired staleness budget on the same label set). A warmup
+	// setting the age alone would leave a permanent budget-less series.
 	obs.DeclareOracleResolution("_warmup", 0)
 	obs.RecordOracleUpdate("_warmup", "_warmup", 0)
 	obs.AggregatorTicksTotal.WithLabelValues("_warmup").Inc()
@@ -99,14 +92,10 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 		"stellarindex_source_last_event_unix",
 		"stellarindex_source_enabled",
 		"stellarindex_source_decode_errors_total",
-		// This entry is the ONLY check that the counter is
-		// actually REGISTERED. The redstone decoder test asserts its
-		// value with testutil.ToFloat64, which reads the Collector
-		// directly and never consults obs.Registry — so dropping the
-		// MustRegister line (e.g. to quiet funlen) would keep every
-		// other test green while the metric vanished from /metrics and
-		// stellarindex_ingestion_oracle_unrepresentable_symbols became
-		// an alert that can never fire.
+		// This entry is the ONLY check that the counter is REGISTERED. The redstone decoder
+		// test reads the Collector via testutil.ToFloat64 and never consults obs.Registry, so
+		// dropping the MustRegister line would leave every other test green while the metric
+		// vanished from /metrics and its alert could never fire.
 		"stellarindex_source_unrepresentable_symbols_total",
 		"stellarindex_source_orphan_events_total",
 		"stellarindex_source_insert_errors_total",
@@ -194,12 +183,9 @@ func TestHTTPMetrics_CountsRequests(t *testing.T) {
 }
 
 func TestHTTPMetrics_LowercaseMethodIsCanonicalised(t *testing.T) {
-	// An attacker sending "get" instead of "GET" would otherwise
-	// double the method-label cardinality. Middleware uppercases
-	// known methods before stamping the label.
-	//
-	// Handler catches everything with no pattern so the method label
-	// is the only axis varying across requests.
+	// "get" instead of "GET" would otherwise double the method-label cardinality, so the
+	// middleware uppercases known methods before stamping the label. The handler has no
+	// pattern, so the method label is the only axis varying across requests.
 	h := obs.HTTPMetrics(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -291,12 +277,10 @@ func TestHTTPMetrics_UnmatchedRouteLabelled(t *testing.T) {
 	}
 }
 
-// TestHTTPMetrics_RouteSurvivesWithContextChain pins the regression
-// behind /v1/status's broken SLO burn-rate alerts: an inner
-// middleware that calls r.WithContext(...) creates a new
-// http.Request struct, and ServeMux sets Pattern on that struct —
-// not the one HTTPMetrics holds. Without obs.CaptureRoute wired
-// innermost, every request labels as "unmatched" in production.
+// TestHTTPMetrics_RouteSurvivesWithContextChain pins the route label under an inner
+// middleware calling r.WithContext(...): it creates a new http.Request, and ServeMux sets
+// Pattern on that one, not the one HTTPMetrics holds. Without obs.CaptureRoute wired
+// innermost, every request labels as "unmatched" and the SLO burn-rate alerts break.
 func TestHTTPMetrics_RouteSurvivesWithContextChain(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/probe", func(w http.ResponseWriter, _ *http.Request) {
@@ -337,11 +321,10 @@ func TestHTTPMetrics_RouteSurvivesWithContextChain(t *testing.T) {
 	}
 }
 
-// A panicking handler unwinds past CaptureRoute to a recoverer wired
-// OUTSIDE it (production: Recoverer sits between Logger and CaptureRoute),
-// so a route capture written after next.ServeHTTP never runs and the 500
-// was labelled route="unmatched" — every handler panic merged into the
-// 404 bucket. The capture must survive the unwind.
+// A panicking handler unwinds past CaptureRoute to a recoverer wired OUTSIDE it (production:
+// Recoverer sits between Logger and CaptureRoute), so a capture written after next.ServeHTTP
+// never runs and the 500 would merge into the route="unmatched" 404 bucket. The capture must
+// survive the unwind.
 func TestHTTPMetrics_RouteSurvivesHandlerPanic(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/probe", func(http.ResponseWriter, *http.Request) {
@@ -377,12 +360,10 @@ func TestHTTPMetrics_RouteSurvivesHandlerPanic(t *testing.T) {
 	}
 }
 
-// TestHTTPMetrics_SyntheticUASkipsHistogram pins the SLO-noise
-// fix: requests with `User-Agent: stellarindex-smoke/N` (the smoke
-// timer) MUST NOT contribute to the http_requests_total counter
-// or http_request_duration_seconds histogram. Otherwise every
-// smoke fire pollutes the SLO recording rule with cold-cache
-// samples customers never see.
+// TestHTTPMetrics_SyntheticUASkipsHistogram pins that requests with
+// `User-Agent: stellarindex-smoke/N` (the smoke timer) MUST NOT contribute to
+// http_requests_total or the http_request_duration_seconds histogram. Otherwise every smoke
+// fire pollutes the SLO recording rule with cold-cache samples customers never see.
 func TestHTTPMetrics_SyntheticUASkipsHistogram(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/synthetic-probe", func(w http.ResponseWriter, _ *http.Request) {
@@ -429,16 +410,12 @@ func TestHTTPMetrics_SyntheticUASkipsHistogram(t *testing.T) {
 	}
 }
 
-// TestHTTPMetrics_SpoofedSyntheticUAIsNotSkipped proves: the User-Agent header alone is client-controlled,
-// so an external caller spoofing `User-Agent: stellarindex-smoke/1`
-// must NOT be able to erase its own traffic from the customer-facing
-// SLO metrics. In the deployed topology every request that reaches
-// the API from outside crosses haproxy, which appends
-// X-Forwarded-For (option forwardfor); only the three legitimate
-// synthetic sources bypass it by hitting the loopback listener
-// directly. A request carrying X-Forwarded-For therefore proves it
-// came from outside no matter what User-Agent it claims, and must be
-// counted like any other customer request.
+// TestHTTPMetrics_SpoofedSyntheticUAIsNotSkipped proves the client-controlled User-Agent
+// alone cannot let an external caller spoofing `User-Agent: stellarindex-smoke/1` erase its
+// traffic from the customer-facing SLO metrics. Every outside request crosses haproxy, which
+// appends X-Forwarded-For; only the three legitimate synthetic sources bypass it by hitting
+// the loopback listener directly. A request carrying X-Forwarded-For therefore came from
+// outside whatever its User-Agent claims, and must be counted like any customer request.
 func TestHTTPMetrics_SpoofedSyntheticUAIsNotSkipped(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/spoof-probe", func(w http.ResponseWriter, _ *http.Request) {
@@ -448,12 +425,8 @@ func TestHTTPMetrics_SpoofedSyntheticUAIsNotSkipped(t *testing.T) {
 
 	before := httpRequestsBaseline("GET", "/v1/spoof-probe", "200")
 
-	// Attacker-controlled request: claims the synthetic UA, and its
-	// RemoteAddr is the loopback peer haproxy would present on its
-	// behalf — but it also carries the X-Forwarded-For hop haproxy
-	// adds for every proxied request, which a request that truly
-	// bypassed haproxy (the real smoke/probe/prewarm traffic) never
-	// has.
+	// Claims the synthetic UA from the loopback peer haproxy would present, but carries the
+	// X-Forwarded-For hop that real smoke/probe/prewarm traffic bypassing haproxy never has.
 	rr := httptest.NewRecorder()
 	spoofed := httptest.NewRequest(http.MethodGet, "/v1/spoof-probe", nil)
 	spoofed.Header.Set("User-Agent", "stellarindex-smoke/1")
@@ -476,13 +449,10 @@ func TestHTTPMetrics_SpoofedSyntheticUAIsNotSkipped(t *testing.T) {
 	}
 }
 
-// TestHTTPMetrics_StreamRouteSkipsDurationHistogram pins the
-// latency-SLO fix: an SSE / streaming route (pattern ending in
-// /stream) MUST still be counted in http_requests_total but kept
-// OUT of the http_request_duration_seconds histogram. The handler
-// returns only when the client disconnects, so its "duration" is
-// the connection lifetime — feeding that to the latency histogram
-// pins p99 at the +Inf bucket and burns the latency SLO.
+// TestHTTPMetrics_StreamRouteSkipsDurationHistogram pins that an SSE / streaming route
+// (pattern ending in /stream) is still counted in http_requests_total but kept OUT of the
+// http_request_duration_seconds histogram. Its "duration" is the connection lifetime, which
+// would pin p99 at the +Inf bucket and burn the latency SLO.
 func TestHTTPMetrics_StreamRouteSkipsDurationHistogram(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/streamtest/stream", func(w http.ResponseWriter, _ *http.Request) {
@@ -517,11 +487,9 @@ func TestHTTPMetrics_StreamRouteSkipsDurationHistogram(t *testing.T) {
 }
 
 // TestZeroSeed_BoundedCountersPreRegistered verifies that the bounded counters whose alert
-// rules reference rate()/increase() have all their label combos
-// pre-registered at zero, so PromQL queries return 0 rather than
-// "no data" before the first event fires. Without it, operators see the alert reference but no series
-// in /metrics output and cannot tell whether the metric was
-// "intentionally zero" or "alert references a dead metric."
+// rules reference rate()/increase() have all their label combos pre-registered at zero, so
+// PromQL returns 0 rather than "no data" before the first event. Otherwise operators cannot
+// tell "intentionally zero" from "alert references a dead metric."
 func TestZeroSeed_BoundedCountersPreRegistered(t *testing.T) {
 	ts := httptest.NewServer(obs.Handler())
 	defer ts.Close()
@@ -545,13 +513,10 @@ func TestZeroSeed_BoundedCountersPreRegistered(t *testing.T) {
 		`stellarindex_aggregator_triangulations_total{outcome="missing_leg"} 0`,
 		`stellarindex_aggregator_triangulations_total{outcome="parse_error"} 0`,
 		`stellarindex_aggregator_triangulations_total{outcome="redis_error"} 0`,
-		// frozen_leg shipped after the original four and was
-		// not seeded with them. It is the outcome that matters most to
-		// an operator — "a chain refused to publish because one of its
-		// legs was frozen" — and until it first fired, the series was
-		// absent, so a `rate(...{outcome="frozen_leg"}[15m])` panel read
-		// as "no data" (indistinguishable from a dead metric) rather
-		// than as a healthy zero.
+		// frozen_leg ("a chain refused to publish because one of its legs was frozen") is the
+		// outcome that matters most to an operator; unseeded, a
+		// `rate(...{outcome="frozen_leg"}[15m])` panel reads "no data", indistinguishable from
+		// a dead metric, rather than a healthy zero.
 		`stellarindex_aggregator_triangulations_total{outcome="frozen_leg"} 0`,
 		// The self-pair exploit detector is by-design flat-at-zero; without
 		// this seed an operator can't distinguish "armed" from "dead metric."
@@ -559,21 +524,16 @@ func TestZeroSeed_BoundedCountersPreRegistered(t *testing.T) {
 		`stellarindex_usage_rollup_sweeps_total{outcome="ok"}`,
 		`stellarindex_usage_rollup_sweeps_total{outcome="scan_error"} 0`,
 		`stellarindex_usage_rollup_sweeps_total{outcome="sink_error"} 0`,
-		// ADR-0019 freeze lifecycle. The escalation counter drives a
-		// severity:page rule, so "no data" vs "zero" is the difference
-		// between an operator believing the P1 is armed and it being
-		// dead. Unlabelled counters/gauges seed on registration; the
-		// released_total label set is seeded explicitly.
+		// ADR-0019 freeze lifecycle. The escalation counter drives a severity:page rule, so
+		// "no data" vs "zero" separates an armed P1 from a dead one. Unlabelled counters and
+		// gauges seed on registration; the released_total label set is seeded explicitly.
 		`stellarindex_anomaly_freeze_escalated_total 0`,
 		`stellarindex_anomaly_freeze_extensions_total 0`,
 		`stellarindex_anomaly_freeze_active 0`,
 		`stellarindex_anomaly_freeze_released_total{mode="auto"} 0`,
 		`stellarindex_anomaly_freeze_released_total{mode="operator"} 0`,
-		// Both are fail-open /
-		// best-effort paths whose whole point is that they are silent when
-		// healthy, so "absent" and "zero" have to be distinguishable or the
-		// alert is indistinguishable from a dead metric — which is exactly
-		// how both of these would go unobserved.
+		// Both are fail-open / best-effort paths that are silent when healthy, so "absent" and
+		// "zero" must be distinguishable or the alert reads as a dead metric.
 		`stellarindex_monthly_quota_fail_open_total 0`,
 		// W1-flow-register-4: the dwell-guarded fail-CLOSED twin. Its whole
 		// point is to be silent until a SUSTAINED counter outage forces a
@@ -584,12 +544,9 @@ func TestZeroSeed_BoundedCountersPreRegistered(t *testing.T) {
 		`stellarindex_admin_audit_write_failures_total{surface="key_mint"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="key_revoke"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="status_notice"} 0`,
-		// the staff PII look-up joined the set. It is a read, not
-		// a mutation, which is exactly why its audit row is the ONLY
-		// evidence it happened — an absent series here would make "no
-		// staff look-up has ever lost its row" indistinguishable from
-		// "the look-up never got wired to the audit sink at all", which
-		// is the failure mode.
+		// the staff PII look-up is a read, not a mutation, so its audit row is the ONLY
+		// evidence it happened. An absent series would make "no look-up has lost its row"
+		// indistinguishable from "the look-up was never wired to the audit sink".
 		`stellarindex_admin_audit_write_failures_total{surface="staff_customer_lookup"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="admin_account_read"} 0`,
 		`stellarindex_admin_audit_write_failures_total{surface="passkey_register"} 0`,
@@ -609,13 +566,10 @@ func TestZeroSeed_BoundedCountersPreRegistered(t *testing.T) {
 		`stellarindex_anomaly_freeze_ladder_write_failures_total{op="mark_hold"} 0`,
 		`stellarindex_anomaly_freeze_ladder_write_failures_total{op="clear"} 0`,
 		`stellarindex_anomaly_freeze_ladder_rehydrated_total 0`,
-		// all three login-code-lockout failure paths are silent
-		// at the HTTP layer by design (the control is defence-in-depth
-		// over the per-token cap, so it fails soft). `status_check` in
-		// particular means the lockout is not being enforced AT ALL while
-		// the response looks healthy — an absent series there is the
-		// difference between an operator seeing a disabled control and
-		// assuming the metric is dead.
+		// all three login-code-lockout failure paths are silent at the HTTP layer by design
+		// (defence-in-depth over the per-token cap, so it fails soft). `status_check` means the
+		// lockout is not enforced AT ALL while responses look healthy; an absent series would
+		// read as a dead metric rather than a disabled control.
 		`stellarindex_login_code_lockout_errors_total{op="status_check"} 0`,
 		`stellarindex_login_code_lockout_errors_total{op="register"} 0`,
 		`stellarindex_login_code_lockout_errors_total{op="sweep"} 0`,
@@ -625,11 +579,9 @@ func TestZeroSeed_BoundedCountersPreRegistered(t *testing.T) {
 		// a future refactor cannot drop it from the registry list.
 		`stellarindex_login_code_lockout_rows 0`,
 		`stellarindex_login_code_lockout_rows_deleted_total 0`,
-		// Notify (Resend) sends (task #33 / W8 recon 9c). A mail outage is
-		// otherwise silent (the login handler swallows the send error), so
-		// the failure-ratio alert must read a real 0 before the first email
-		// — an absent series would make "no mail has ever failed" and "the
-		// mailer is dead" indistinguishable.
+		// Notify (Resend) sends. A mail outage is otherwise silent (the login handler swallows
+		// the send error), so the failure-ratio alert must read a real 0 before the first email;
+		// absent would make "no mail has failed" and "the mailer is dead" indistinguishable.
 		`stellarindex_notify_sends_total{result="sent",template="magic-link"} 0`,
 		`stellarindex_notify_sends_total{result="failed",template="magic-link"} 0`,
 		`stellarindex_notify_sends_total{result="sent",template="signup-verify"} 0`,
@@ -648,13 +600,11 @@ func TestZeroSeed_BoundedCountersPreRegistered(t *testing.T) {
 	}
 }
 
-// TestCEXStreamDisconnectReasons_MatchesEmittedSet guards: obs.CEXStreamDisconnectReasons (and therefore
-// CEXStreamDisconnectTotal's Help text / the README enum, both
-// generated from it) must list exactly the reason strings the
-// classifiers actually produce — no more, no less. A documented set of
-// reset|broken_pipe|timeout|dial|server_requested|other would silently omit "stall" (wsclient's half-open-socket
-// detector) and "subscription_rejected" (coinbase), even though both
-// were live in production.
+// TestCEXStreamDisconnectReasons_MatchesEmittedSet guards that obs.CEXStreamDisconnectReasons
+// (and so CEXStreamDisconnectTotal's Help text and the README enum, both generated from it)
+// lists exactly the reason strings the classifiers produce. A set of
+// reset|broken_pipe|timeout|dial|server_requested|other would silently omit "stall"
+// (wsclient's half-open-socket detector) and "subscription_rejected" (coinbase).
 func TestCEXStreamDisconnectReasons_MatchesEmittedSet(t *testing.T) {
 	emitted := map[string]bool{
 		// wsclient.ClassifyDisconnect covers every venue at the wire

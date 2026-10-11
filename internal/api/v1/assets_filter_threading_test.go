@@ -17,23 +17,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Regression suite for the /v1/assets row filters that were parsed,
-// validated, and then dropped on the way to the store — two separate
-// drops, one per serving path:
+// Regression suite for /v1/assets row filters that must not be parsed, validated, and then
+// dropped on the way to the store, one case per serving path:
 //
-//   - `q` never reached ListAssetsOptions on the default (no
-//     asset_class) path, so `?q=ZZZZNOSUCH` served the identical first
-//     page every unfiltered request gets. The unified path had passed Q
-//     already; only this path's options bag was missing it.
-//   - `type` / `code` / `issuer` never reached the unified path — the
-//     handler dispatched on asset_class WITHOUT the parsed filters — so
-//     `?asset_class=all&code=AQUA` served the unfiltered baseline.
+//   - `q` must reach ListAssetsOptions on the default (no asset_class) path, or
+//     `?q=ZZZZNOSUCH` serves the identical first page every unfiltered request gets.
+//   - `type` / `code` / `issuer` must reach the unified path, or `?asset_class=all&code=AQUA`
+//     serves the unfiltered baseline.
 //
-// Same class as a dropped include=sparkline7d (in this same
-// handler): the parameter is accepted, the answer is plausible, and
-// nothing in the 200 reveals that the filter was never applied. These
-// tests pin the request→store mapping directly, because that is the
-// join the defect lived in — each layer worked on its own.
+// A dropped filter is silent: the parameter is accepted, the answer is plausible, and nothing
+// in the 200 reveals the filter was never applied. These tests pin the request→store mapping
+// directly, since each layer works on its own and the defect lives in the join.
 
 const (
 	aquaCode   = "AQUA"
@@ -227,17 +221,13 @@ func TestAssetsUnifiedCataloguePhaseHonoursFilters(t *testing.T) {
 	})
 }
 
-// TestAssetsUnifiedFilterMatchingNothingServesEmptyArray — a `type` the
-// listing spine cannot carry ends the classic phase before the reader,
-// and that empty phase is what becomes the envelope's `data`. It must
-// reach the wire as `[]`: AssetListEnvelope.data is `type: array` under
-// `required`, so a nil slice would publish `"data": null` on a 200 —
-// the same shape of harm as the dropped filter this suite pins, a
-// response the caller cannot tell is wrong.
+// TestAssetsUnifiedFilterMatchingNothingServesEmptyArray: a `type` the listing spine cannot
+// carry ends the classic phase before the reader, and that empty phase becomes the envelope's
+// `data`. It must reach the wire as `[]`: AssetListEnvelope.data is a required array, so a
+// nil slice would publish `"data": null` on a 200.
 //
-// Asserted on the RAW BODY, never through a []AssetDetail decode: JSON
-// null unmarshals into a nil slice without error, so a decode reads
-// `null` and `[]` identically.
+// Asserted on the RAW BODY, never through a []AssetDetail decode: JSON null unmarshals into a
+// nil slice without error, so a decode reads `null` and `[]` identically.
 func TestAssetsUnifiedFilterMatchingNothingServesEmptyArray(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {
@@ -267,14 +257,11 @@ func TestAssetsUnifiedFilterMatchingNothingServesEmptyArray(t *testing.T) {
 	}
 }
 
-// armFilteringAssets is an in-memory listing spine that narrows exactly
-// as buildAssetsQuery does: `classic` keeps the rows with a G-issuer,
-// `soroban` the rows without one (the two arms are told apart by that
-// column and nothing else), and `issuer` is exact equality — which is
-// the predicate lookupCatalogueTwin leans on, so a catalogue row's
-// stats fill resolves here the way it does against the store. It exists
-// so a test can observe what a type-filtered page REPORTS, not just
-// what the store was asked for.
+// armFilteringAssets is an in-memory listing spine that narrows exactly as buildAssetsQuery
+// does: `classic` keeps rows with a G-issuer, `soroban` rows without one (the arms differ by
+// that column alone), and `issuer` is exact equality, the predicate lookupCatalogueTwin leans
+// on. It lets a test observe what a type-filtered page REPORTS, not just what the store was
+// asked for.
 type armFilteringAssets struct {
 	AssetsReader
 	rows []timescale.AssetRow
@@ -298,11 +285,10 @@ func (a *armFilteringAssets) ListAssetsExt(
 	return out, nil
 }
 
-// The per-row enrichments the catalogue phase fans out (price, native
-// row, batched history / ATH) are best-effort and irrelevant here, but
-// they are METHODS: left to the embedded nil interface they panic into
-// the fan-out's recover and bury the assertion in a stack trace. An
-// error is the honest "this store has no such row".
+// The per-row enrichments the catalogue phase fans out (price, native row, batched history /
+// ATH) are best-effort and irrelevant here, but they are METHODS: left to the embedded nil
+// interface they panic into the fan-out's recover and bury the assertion in a stack trace.
+// An error is the honest "this store has no such row".
 func (a *armFilteringAssets) GetAssetByAssetID(
 	_ context.Context, assetID string,
 ) (timescale.AssetRow, error) {
@@ -333,11 +319,10 @@ func (a *armFilteringAssets) GetAssetsATHBatch(
 	return nil, nil
 }
 
-// A SAC-wrapped asset the verified catalogue does NOT carry — the
-// ordinary case on this listing, since the catalogue curates a couple
-// of dozen entries against a ~199K-row spine. Its classic twin
-// therefore reaches the wire from the classic phase, where the alias
-// fold runs, rather than from the catalogue phase, where it does not.
+// A SAC-wrapped asset the verified catalogue does NOT carry, the ordinary case since the
+// catalogue curates a couple of dozen entries against a far larger spine. Its classic twin
+// reaches the wire from the classic phase, where the alias fold runs, not the catalogue phase,
+// where it does not.
 const (
 	spineIssuer  = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
 	spineClassic = "TESTX-" + spineIssuer
@@ -357,12 +342,11 @@ func installSpineFoldRegistry(t *testing.T) {
 	t.Cleanup(func() { canonical.InstallAliasRegistry(nil) })
 }
 
-// shippedServer builds the server the way cmd/stellarindex-api/main.go
-// does — WITH the embedded verified-currency catalogue. Every fold /
-// filter contract below is asserted in that configuration and no other:
-// the catalogue phase OPENS the unified listing and suppresses the
-// classic twins of the rows it serves, so a server built without it
-// exercises a code path the binary never runs.
+// shippedServer builds the server as cmd/stellarindex-api/main.go does, WITH the embedded
+// verified-currency catalogue. Every fold / filter contract below is asserted in that
+// configuration only: the catalogue phase OPENS the unified listing and suppresses the
+// classic twins of the rows it serves, so a server built without it runs a path the binary
+// never does.
 func shippedServer(t *testing.T, spine AssetsReader) *Server {
 	t.Helper()
 	cat, err := currency.LoadEmbedded()
@@ -402,29 +386,22 @@ func volumeOf(row AssetDetail) string {
 	return *row.VolumeUSD24h
 }
 
-// TestAssetsUnifiedTypeClassicReportsClassicArmVolume pins the decided
-// contract for a SPINE-served SAC-wrapped asset's money under
-// `type=classic`, in the shipped configuration (catalogue wired).
+// TestAssetsUnifiedTypeClassicReportsClassicArmVolume pins the contract for a SPINE-served
+// SAC-wrapped asset's money under `type=classic`, with the catalogue wired.
 //
-// The unified listing folds a SAC wrapper's trailing-24h volume onto its
-// canonical classic row, so the unfiltered page reports the SUM. Every
-// row filter narrows the spine BEFORE that fold, and the SAC twin lives
-// in the contract arm, so `type=classic` reports the classic arm alone —
-// a materially lower number for the same asset, deliberately, and
-// documented on the four row filters in the OpenAPI spec.
+// The unified listing folds a SAC wrapper's trailing-24h volume onto its canonical classic
+// row, so the unfiltered page reports the SUM. Every row filter narrows the spine BEFORE that
+// fold, and the SAC twin lives in the contract arm, so `type=classic` reports the classic arm
+// alone: a deliberately lower number, documented on the four row filters in the OpenAPI spec.
 //
-// Pushdown, not fold-then-filter: the spine is ~199K rows walked on a
-// keyset cursor, so filtering after the fold means fetching the
-// UNFILTERED page and dropping rows in Go — a request-path scan of the
-// shape kept out of handlers. `code` / `issuer` / `q` are indexed
-// classic_assets columns and have no other option regardless.
+// Pushdown, not fold-then-filter: the spine is walked on a keyset cursor, so filtering after
+// the fold means fetching the UNFILTERED page and dropping rows in Go, a request-path scan
+// kept out of handlers. `code` / `issuer` / `q` are indexed classic_assets columns anyway.
 func TestAssetsUnifiedTypeClassicReportsClassicArmVolume(t *testing.T) {
 	installSpineFoldRegistry(t)
-	// Volume-desc order, which is the order the classic phase reads in:
-	// the canonical row must precede its alias for the fold to merge.
-	// limit=200, comfortably past the curated catalogue: the catalogue
-	// phase OPENS the page, so a limit near its size would leave no room
-	// for the classic phase this test is about.
+	// Volume-desc order, which is how the classic phase reads: the canonical row must precede
+	// its alias for the fold to merge. limit=200 is well past the curated catalogue, which
+	// OPENS the page, so a smaller limit would leave no room for the classic phase.
 	s := shippedServer(t, &armFilteringAssets{rows: []timescale.AssetRow{
 		{AssetID: spineClassic, Code: "TESTX", IssuerGStrkey: spineIssuer, Volume24hUSD: strp("35600000")},
 		{AssetID: spineSAC, Volume24hUSD: strp("9000000")},
@@ -455,19 +432,14 @@ func TestAssetsUnifiedTypeClassicReportsClassicArmVolume(t *testing.T) {
 	}
 }
 
-// TestAssetsUnifiedTypeSorobanServesTheContractArm — `asset_class=all&
-// type=soroban` must serve the SAC rows the spine holds, with their own
-// volume, and must serve the SAME rows as the identical filter without
-// `asset_class=all`.
+// TestAssetsUnifiedTypeSorobanServesTheContractArm: `asset_class=all&type=soroban` must serve
+// the SAC rows the spine holds, with their own volume, and the SAME rows as the identical
+// filter without `asset_class=all`.
 //
-// The alias fold suppresses an alias row whose canonical primary is
-// absent from the page ("otherwise suppress the stray twin"), which
-// assumes the canonical row could have been on it. `type=soroban`
-// excludes every canonical classic row by the caller's own predicate, so
-// with the fold running unconditionally EVERY row of the page qualified
-// as a stray and the phase answered `{"data":[]}` over the exact rows
-// the store returned — the drop this whole suite exists to prevent,
-// reintroduced one layer further in.
+// The alias fold suppresses an alias row whose canonical primary is absent from the page,
+// assuming the canonical row could have been on it. `type=soroban` excludes every canonical
+// classic row by the caller's own predicate, so an unconditional fold would treat EVERY row
+// as a stray and answer `{"data":[]}` over the exact rows the store returned.
 func TestAssetsUnifiedTypeSorobanServesTheContractArm(t *testing.T) {
 	installSpineFoldRegistry(t)
 	s := shippedServer(t, &armFilteringAssets{rows: []timescale.AssetRow{
@@ -501,34 +473,25 @@ func TestAssetsUnifiedTypeSorobanServesTheContractArm(t *testing.T) {
 	}
 }
 
-// TestAssetsCatalogueRowVolumeFoldsTheContractArm pins the OTHER half of
-// the published volume contract — the half that only exists when the
-// catalogue is wired, which is every configuration the binary ships.
+// TestAssetsCatalogueRowVolumeFoldsTheContractArm pins the OTHER half of the published volume
+// contract, which only exists when the catalogue is wired (every shipped configuration).
 //
-// A verified-catalogue slug's unified row is served by the CATALOGUE
-// phase, whose analytics come from lookupCatalogueTwin: an exact-ISSUER
-// lookup, and a SAC wrapper has no issuer, so that lookup returns the
-// classic arm alone. The classic phase meanwhile computes the classic +
-// SAC sum for the very same asset and suppressCatalogueTwins discards
-// that row in this one's favour, so the endpoint held the cross-arm
-// figure and published the smaller one — USDC's flagship row showed
-// 35.6M against the 44.6M in its own discarded twin. The catalogue phase
-// therefore folds the contract arm on itself, and does it on the
-// UNFILTERED request only: a row filter narrows the spine before the
-// spine's fold, so a filtered catalogue row reports the arm the filter
-// admitted, exactly as a spine-served one does.
+// A verified-catalogue slug's unified row is served by the CATALOGUE phase, whose analytics
+// come from lookupCatalogueTwin: an exact-ISSUER lookup, and a SAC wrapper has no issuer, so
+// it returns the classic arm alone. The classic phase computes the classic + SAC sum for the
+// same asset, then suppressCatalogueTwins discards that row, which would publish the smaller
+// figure. The catalogue phase therefore folds the contract arm itself, on the UNFILTERED
+// request only: a row filter narrows the spine before its fold, so a filtered catalogue row
+// reports the arm the filter admitted, as a spine-served one does.
 //
-// XLM is the carve-out and is asserted here so it stays one: `native`
-// has no classic row for a wrapper to have been folded onto, and XLM's
-// third form is off-Stellar CEX turnover, so the `xlm` row reports the
-// native reader's arm even with a funded XLM SAC row in the store.
+// XLM is the carve-out and is asserted so it stays one: `native` has no classic row for a
+// wrapper to fold onto, and XLM's third form is off-Stellar CEX turnover, so the `xlm` row
+// reports the native reader's arm even with a funded XLM SAC row in the store.
 func TestAssetsCatalogueRowVolumeFoldsTheContractArm(t *testing.T) {
 	installFoldRegistry(t)
-	// foldUSDCIssuer IS the catalogue's USDC issuance, so this asset is
-	// served by the catalogue phase — the case the spine-served test
-	// above cannot reach. The XLM rows are the same shape against a
-	// different identity: `native` plus the SAC wrapper the baseline
-	// registry unifies with it unconditionally.
+	// foldUSDCIssuer IS the catalogue's USDC issuance, so this asset is served by the
+	// catalogue phase, which the spine-served test above cannot reach. The XLM rows are the
+	// same shape: `native` plus the SAC wrapper the baseline registry unifies with it.
 	s := shippedServer(t, &armFilteringAssets{rows: []timescale.AssetRow{
 		{AssetID: foldUSDCClassic, Code: "USDC", IssuerGStrkey: foldUSDCIssuer, Volume24hUSD: strp("35600000")},
 		{AssetID: foldUSDCSAC, Volume24hUSD: strp("9000000")},
@@ -556,13 +519,10 @@ func TestAssetsCatalogueRowVolumeFoldsTheContractArm(t *testing.T) {
 	}
 }
 
-// TestAssetsUnknownTypeIsRefusedNotServedUnfiltered — `?type=bogus` must
-// 400 and never reach the store. The listing answers every request with
-// a plausible 200 over ~199k rows, so a `type` that fell through would
-// be served as a narrowed page the caller has no way to question. The
-// store refuses the same value on its own account (see
-// TestBuildAssetsQuery_UnknownTypeIsRefused); this pins the edge that
-// keeps it from ever getting there.
+// TestAssetsUnknownTypeIsRefusedNotServedUnfiltered: `?type=bogus` must 400 and never reach
+// the store. The listing answers any request with a plausible 200, so a `type` that fell
+// through would be served as a page the caller cannot question. The store also refuses the
+// value (TestBuildAssetsQuery_UnknownTypeIsRefused); this pins the edge in front of it.
 func TestAssetsUnknownTypeIsRefusedNotServedUnfiltered(t *testing.T) {
 	for _, target := range []string{
 		"/v1/assets?type=bogus&limit=3",
@@ -583,11 +543,9 @@ func TestAssetsUnknownTypeIsRefusedNotServedUnfiltered(t *testing.T) {
 	}
 }
 
-// leanListingAssets is the minimal AssetReader — the fallback the
-// listing drops to when no AssetsReader is configured. Its ListAssets
-// takes a cursor and a limit and NOTHING else, which is the whole
-// reason that path cannot honour a row filter: there is no argument to
-// pass one in.
+// leanListingAssets is the minimal AssetReader, the fallback when no AssetsReader is
+// configured. Its ListAssets takes a cursor and a limit and NOTHING else, so that path cannot
+// honour a row filter: there is no argument to pass one in.
 type leanListingAssets struct{}
 
 func (leanListingAssets) GetAsset(context.Context, canonical.Asset) (AssetDetail, error) {
@@ -609,19 +567,14 @@ func decodeAssetFlags(t *testing.T, rec *httptest.ResponseRecorder) Flags {
 	return env.Flags
 }
 
-// TestAssetsListNamesTheFiltersItIgnored — the two paths that serve
-// their page WITHOUT applying the row filters must name them in
-// `flags.filters_ignored`, and the paths that apply them must name
-// nothing.
+// TestAssetsListNamesTheFiltersItIgnored: the two paths that serve their page WITHOUT
+// applying the row filters must name them in `flags.filters_ignored`, and the paths that
+// apply them must name nothing.
 //
-// The drop itself is by design on both: the class-scoped catalogue
-// listings serve their whole class, and the lean reader has no filter
-// arguments to take. What was missing is the signal. The spec said so
-// in prose, but `asset_class=stablecoin&q=ZZZZ` returned the whole
-// class as a 200 byte-for-byte the shape of a matched search — so a
-// client re-filtering the page, and the person reading its results,
-// could not tell an ignored filter from a hit. Prose is for the
-// integrator; the flag is for the client.
+// The drop is by design on both (class-scoped catalogue listings serve their whole class; the
+// lean reader has no filter arguments), but without the signal `asset_class=stablecoin&q=ZZZZ`
+// returns the whole class as a 200 shaped like a matched search, and a client cannot tell an
+// ignored filter from a hit. Prose is for the integrator; the flag is for the client.
 func TestAssetsListNamesTheFiltersItIgnored(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {

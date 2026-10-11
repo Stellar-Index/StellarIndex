@@ -658,11 +658,10 @@ func TestDecode_MXNe_PublishedIntegerRecoverable(t *testing.T) {
 	}
 }
 
-// oracle_updates carries ts in its primary key, so a decoder change that
-// shifts the ts of an already-stored event makes a re-derive INSERT a second
-// row instead of conflicting. These goldens pin the exact ts per input; a
-// failure here means a ts-derivation change needs its own cleanup run (see
-// "Re-deriving a timestamp" in docs/architecture/ingest-pipeline.md).
+// oracle_updates carries ts in its primary key, so a decoder change that shifts the ts of a
+// stored event makes a re-derive INSERT a second row. These goldens pin the exact ts per
+// input; a failure means a ts-derivation change needs its own cleanup run (see "Re-deriving
+// a timestamp" in docs/architecture/ingest-pipeline.md).
 func TestDecodeWritePrices_TimestampGolden(t *testing.T) {
 	closedAt := time.Date(2026, 4, 23, 12, 0, 0, 0, time.UTC)
 	ceil := closedAt.Add(24 * time.Hour) // literal: a change to the shared window must trip this
@@ -711,21 +710,19 @@ func TestDecodeWritePrices_TimestampGolden(t *testing.T) {
 	}
 }
 
-// The F1 compound (payload.go's F1 CAVEAT) driven through
-// decodeWritePrices on the payload-median FALLBACK path. feed_ids are
-// [BTC, ETH, USDC, XLM]; the adapter accepted BTC and XLM and dropped
-// ETH and USDC, so updated_feeds carries two prices:
+// The F1 compound (payload.go's F1 CAVEAT) driven through decodeWritePrices on the
+// payload-median FALLBACK path. feed_ids are [BTC, ETH, USDC, XLM]; the adapter accepted BTC
+// and XLM and dropped ETH and USDC, so updated_feeds carries two prices:
 //
-//  1. signer-filter divergence — XLM's trusted signer stored 2_000_000,
-//     but the payload also carries two non-trusted XLM packages at
-//     9_000_000 that the adapter filtered out and this parser does not,
-//     so our XLM median is 9_000_000;
-//  2. cross-feed collision — the DROPPED feed ETH's payload median is
-//     2_000_000, byte-equal to XLM's stored price;
-//  3. order-preserving position — ETH sits between BTC and XLM.
+//  1. signer-filter divergence: XLM's trusted signer stored 2_000_000, but the payload also
+//     carries two non-trusted XLM packages at 9_000_000 that the adapter filtered out and
+//     this parser does not, so our XLM median is 9_000_000;
+//  2. cross-feed collision: the DROPPED feed ETH's payload median is 2_000_000, byte-equal
+//     to XLM's stored price;
+//  3. order-preserving position: ETH sits between BTC and XLM.
 //
-// The unique order-preserving alignment is therefore [BTC, ETH]: XLM's
-// price under ETH's feed_id.
+// The unique order-preserving alignment is therefore [BTC, ETH]: XLM's price under ETH's
+// feed_id.
 const f1PackageTs = uint64(1_745_000_000_000)
 
 func f1FallbackEvent(t *testing.T, stateWriteFeeds ...string) *events.Event {
@@ -757,14 +754,11 @@ func f1FallbackEvent(t *testing.T, stateWriteFeeds ...string) *events.Event {
 	return ev
 }
 
-// The two ways the dispatcher's enrichment degrades to the fallback
-// while still plumbing keys (internal/dispatcher/state_write_keys.go):
-// a restored-then-rewritten-unchanged entry of a DROPPED feed counts as
-// changed (written set too large), and a per-key parse/marshal failure
-// excludes an ACCEPTED feed (written set too small). Either way the
-// subset's arity disagrees and the payload alignment runs — and it must
-// not publish a price under a feed the state writes show was not
-// accepted.
+// The two ways the dispatcher's enrichment degrades to the fallback while still plumbing keys
+// (internal/dispatcher/state_write_keys.go): a rewritten-unchanged entry of a DROPPED feed
+// counts as changed (written set too large), and a per-key parse/marshal failure excludes an
+// ACCEPTED feed (too small). Either way the subset arity disagrees and the payload alignment
+// runs; it must not publish a price under a feed the state writes show was not accepted.
 func TestDecode_F1Fallback_StateWritesRefuseDroppedFeed(t *testing.T) {
 	cases := map[string][]string{
 		"restored dropped feed inflates written set": {"BTC", "USDC", "XLM"},
@@ -808,11 +802,10 @@ func TestDecode_F1Fallback_CorroboratedAlignmentStillAttributes(t *testing.T) {
 	}
 }
 
-// With NO state-write keys (events outside every registered decoder's
-// contract set, stellar-rpc fixtures, pre-plumb stored events) nothing
-// can contradict the alignment, and the F1 compound still misattributes.
-// This pins the residual payload.go's F1 CAVEAT documents: a change that
-// closes it must fail here and update that caveat with it.
+// With NO state-write keys (events outside every registered decoder's contract set, rpc
+// fixtures, pre-plumb stored events) nothing can contradict the alignment, and the F1
+// compound still misattributes. This pins the residual payload.go's F1 CAVEAT documents: a
+// change that closes it must fail here and update that caveat with it.
 func TestDecode_F1Fallback_NoStateWriteKeys_ResidualMisattribution(t *testing.T) {
 	out, err := decodeWritePrices(f1FallbackEvent(t), time.Unix(1_745_000_000, 0))
 	if err != nil {
@@ -823,25 +816,16 @@ func TestDecode_F1Fallback_NoStateWriteKeys_ResidualMisattribution(t *testing.T)
 	}
 }
 
-// navFundamentalInFiat is the explicit, evidenced attestation list for
-// the ONE case where a bare RedStone `_FUNDAMENTAL` feed may carry a
-// fiat quote: the token's reserve asset genuinely IS that fiat, so the
-// NAV really is a dollar (or euro) figure rather than a ratio.
+// navFundamentalInFiat is the evidenced attestation list for the ONE case where a bare
+// RedStone `_FUNDAMENTAL` feed may carry a fiat quote: the token's reserve asset genuinely IS
+// that fiat, so the NAV is a dollar (or euro) figure rather than a ratio.
 //
-// It exists because the `_FUNDAMENTAL` suffix alone does not say what
-// the NAV is denominated in — that is a per-token fact about the
-// reserve, and getting it wrong is not a rounding error but an
-// order-of-magnitude lie on the wire (D8: `SolvBTC_FUNDAMENTAL`
-// published 1.00295305 and was served as `quote=fiat:USD`, i.e. "a
-// BTC-backed token is worth $1.00" while its own
-// `SolvBTC_FUNDAMENTAL/USD` sibling said $78,313.03 — live r1
-// `/v1/oracle/streams?include_unmapped=true`).
-//
-// Adding a feed here is therefore an assertion about the world and
-// needs the evidence recorded alongside it: the feed's published value
-// next to the reserve asset's own price. Anything not attested must
-// name its reserve asset in [feedEntry.Quote] instead. Keep the
-// wording aligned with the same feed's line in feeds.go.
+// The suffix alone does not say what the NAV is denominated in, and a wrong quote is an
+// order-of-magnitude lie on the wire (`SolvBTC_FUNDAMENTAL` publishes ~1.003, a BTC ratio,
+// while its `/USD` sibling publishes the dollar price). Adding a feed here is an assertion
+// about the world and needs the evidence recorded: the feed's published value next to the
+// reserve asset's own price. Anything not attested must name its reserve asset in
+// [feedEntry.Quote]. Keep the wording aligned with the same feed's line in feeds.go.
 var navFundamentalInFiat = map[string]string{
 	"BENJI_ETHEREUM_FUNDAMENTAL": "Franklin Templeton FOBXX money-market fund token; " +
 		"reserve is USD cash + T-bills and the share NAV is a dollar figure " +
@@ -865,24 +849,21 @@ var navFundamentalInFiat = map[string]string{
 		"is not a scaling fault here. No `/USD` sibling feed.",
 }
 
-// TestFeedRegistry_NAVFeedsQuoteTheirReserveAsset is the class guard
-// for D8. A bare `_FUNDAMENTAL` feed publishes net asset value in the
-// token's RESERVE asset; registering one against `fiat:USD` when the
-// reserve is a crypto asset mislabels a ratio (~1.00) as a dollar
-// price and serves it on `/v1/oracle/streams` with `mapped=true`.
+// TestFeedRegistry_NAVFeedsQuoteTheirReserveAsset is the class guard for mislabelled NAV
+// feeds. A bare `_FUNDAMENTAL` feed publishes net asset value in the token's RESERVE asset;
+// registering one against `fiat:USD` when the reserve is crypto serves a ratio (~1.00) as a
+// dollar price with `mapped=true`.
 //
-// The rule, table-driven over the WHOLE live registry so a feed added
-// tomorrow is covered without touching this test:
+// Table-driven over the WHOLE live registry so a new feed is covered without touching this
+// test:
 //
 //	feed_id contains `_FUNDAMENTAL`
-//	  AND carries no explicit `/<QUOTE>` suffix (which would declare
-//	      its own denomination on the wire)
+//	  AND carries no explicit `/<QUOTE>` suffix (which would declare its own denomination)
 //	  AND is registered with a fiat quote
 //	⇒ it MUST appear in navFundamentalInFiat with its evidence.
 //
-// A new NAV feed whose reserve is not fiat therefore fails CI until
-// its quote names the reserve asset; a new NAV feed whose reserve
-// really is fiat fails CI until someone records why.
+// A new NAV feed whose reserve is not fiat fails CI until its quote names the reserve asset;
+// one whose reserve really is fiat fails CI until someone records why.
 func TestFeedRegistry_NAVFeedsQuoteTheirReserveAsset(t *testing.T) {
 	for feedID, entry := range feedRegistry {
 		if !strings.Contains(feedID, "_FUNDAMENTAL") {
@@ -924,13 +905,10 @@ func TestFeedRegistry_NAVFeedsQuoteTheirReserveAsset(t *testing.T) {
 	}
 }
 
-// TestFeedRegistry_SuffixedFeedNeverSharesQuoteWithItsBareSibling is
-// the name-shape-independent half of the same guard. When RedStone
-// publishes BOTH `X` and `X/<FIAT>`, the suffixed id declares the
-// denomination explicitly; the bare id therefore publishes a
-// DIFFERENT quantity and cannot legitimately carry the same quote.
-// D8 is exactly this shape: `SolvBTC_FUNDAMENTAL` and
-// `SolvBTC_FUNDAMENTAL/USD` were both registered `fiat:USD`.
+// TestFeedRegistry_SuffixedFeedNeverSharesQuoteWithItsBareSibling is the name-shape-independent
+// half of the same guard. When RedStone publishes BOTH `X` and `X/<FIAT>`, the suffixed id
+// declares its denomination explicitly, so the bare id publishes a DIFFERENT quantity and
+// cannot carry the same quote (e.g. `SolvBTC_FUNDAMENTAL` vs `SolvBTC_FUNDAMENTAL/USD`).
 func TestFeedRegistry_SuffixedFeedNeverSharesQuoteWithItsBareSibling(t *testing.T) {
 	for feedID, entry := range feedRegistry {
 		i := strings.LastIndexByte(feedID, '/')
@@ -950,28 +928,21 @@ func TestFeedRegistry_SuffixedFeedNeverSharesQuoteWithItsBareSibling(t *testing.
 	}
 }
 
-// TestDecode_SolvBTCFamily_NAVRatiosQuotedInReserveAsset pins the
-// corrected values end-to-end through the decoder, using the four
-// SolvBTC-family feeds exactly as observed live on r1 via
-// `/v1/oracle/streams?include_unmapped=true`:
+// TestDecode_SolvBTCFamily_NAVRatiosQuotedInReserveAsset pins the corrected values
+// end-to-end through the decoder, using four SolvBTC-family feeds as observed live:
 //
 //	crypto:SolvBTC.BBN_FUNDAMENTAL       1.00000000
 //	crypto:SolvBTC.BBN_FUNDAMENTAL_USD  78313.02974310
 //	crypto:SolvBTC_FUNDAMENTAL           1.00295305
 //	crypto:SolvBTC_FUNDAMENTAL_USD      78313.02974310
 //
-// The two `_USD` legs are byte-identical (also true of an earlier
-// capture, 6543063913439 both), which is what fixes each ratio's
-// denominator:
+// The two `_USD` legs are byte-identical, which fixes each ratio's denominator:
 //
-//   - SolvBTC NAV in USD / BTC in USD = 1.00295 ⇒ the bare
-//     `SolvBTC_FUNDAMENTAL` ratio is denominated in BTC.
-//   - SolvBTC.BBN NAV in USD equals SolvBTC NAV in USD while the bare
-//     ratio is exactly 1.00000000 (three independent captures:
-//     lake ledger 60104689 and two live reads) ⇒ SolvBTC.BBN is
-//     1:1 with SolvBTC and its ratio is denominated in SolvBTC, not
-//     BTC. Quoting it crypto:BTC would contradict our own
-//     `SolvBTC.BBN_FUNDAMENTAL_USD` row.
+//   - SolvBTC NAV in USD / BTC in USD = 1.00295 ⇒ the bare `SolvBTC_FUNDAMENTAL` ratio is
+//     denominated in BTC.
+//   - SolvBTC.BBN NAV in USD equals SolvBTC NAV in USD while the bare ratio is exactly
+//     1.00000000 ⇒ SolvBTC.BBN is 1:1 with SolvBTC and its ratio is denominated in SolvBTC,
+//     not BTC. Quoting it crypto:BTC would contradict our own `SolvBTC.BBN_FUNDAMENTAL_USD`.
 func TestDecode_SolvBTCFamily_NAVRatiosQuotedInReserveAsset(t *testing.T) {
 	feedIDs := []string{
 		"SolvBTC.BBN_FUNDAMENTAL",
@@ -1026,18 +997,14 @@ func TestDecode_SolvBTCFamily_NAVRatiosQuotedInReserveAsset(t *testing.T) {
 	}
 }
 
-// TestFeedRegistry_EarnUSDCIsItsOwnInstrument pins the identity of the
-// Gami earnUSDC vault feed. A yield-bearing claim on USDC is NOT USDC:
-// its value accrues away from the peg (observed 0.7176 -> 0.7200 over
-// six days, monotonically), so resolving the two to one asset would
-// publish a drifting number under the peg's identity. That is the
-// asset-identity failure that put attacker-authored pricing on a served
-// surface once already, which is why this is pinned rather than assumed.
+// TestFeedRegistry_EarnUSDCIsItsOwnInstrument pins the identity of the Gami earnUSDC vault
+// feed. A yield-bearing claim on USDC is NOT USDC: its value accrues away from the peg, so
+// resolving the two to one asset would publish a drifting number under the peg's identity,
+// the asset-identity failure class that must not reach a served surface.
 //
-// The base is the vault's Soroban contract because the vault is
-// TOKENIZED — it mints its own shares, so the vault and the share token
-// are one contract, and pricing it by contract id lands the oracle value
-// on the same asset id as the deposits/withdrawals we already index.
+// The base is the vault's Soroban contract because the vault is TOKENIZED: the vault and the
+// share token are one contract, so pricing by contract id lands the oracle value on the same
+// asset id as the deposits/withdrawals we already index.
 func TestFeedRegistry_EarnUSDCIsItsOwnInstrument(t *testing.T) {
 	entry, ok := feedRegistry["earnUSDC_FUNDAMENTAL"]
 	if !ok {
@@ -1062,11 +1029,10 @@ func TestFeedRegistry_EarnUSDCIsItsOwnInstrument(t *testing.T) {
 
 // ─── attribution-chain hardening ────────────────────────────
 //
-// These tests pin the decode-side layers that bind a set of attached op
-// args to the event they claim to describe: duplicate-feed refusal, the
-// body↔args updater cross-check, and the equal-arity state-write
-// corroboration. The dispatcher/lake OpArgs provenance gate (args only
-// from a direct call into the emitting contract) is pinned in
+// These tests pin the decode-side layers that bind attached op args to the event they
+// describe: duplicate-feed refusal, the body↔args updater cross-check, and the equal-arity
+// state-write corroboration. The dispatcher/lake OpArgs provenance gate (args only from a
+// direct call into the emitting contract) is pinned in
 // internal/dispatcher/entry_change_ledger_walk_test.go and
 // internal/storage/clickhouse/extract_events_gate_test.go.
 
@@ -1134,10 +1100,8 @@ func hardeningEvent(t *testing.T, feedIDs []string) *events.Event {
 }
 
 func TestDecode_DuplicateFeedIDs_Refused(t *testing.T) {
-	// A genuine write_prices cannot carry duplicate feed_ids — the
-	// redstone-core SDK's Config::try_new refuses them before the
-	// adapter can emit (ConfigReoccurringFeedId). Duplicates were also
-	// an attribution lever: a repeated feed inflated the state-write
+	// A genuine write_prices cannot carry duplicate feed_ids (the redstone-core SDK refuses
+	// them with ConfigReoccurringFeedId), and a repeated feed would inflate the state-write
 	// subset arity into forcing the payload fallback.
 	ev := hardeningEvent(t, []string{"BTC", "BTC"})
 	_, err := decodeWritePrices(ev, time.Unix(1_745_000_000, 0))
@@ -1220,13 +1184,10 @@ func encodePayloadArgBytes(t *testing.T, raw []byte) string {
 }
 
 func TestDecode_EqualArity_StateWriteMismatch_FallsBackToPayload(t *testing.T) {
-	// hardeningEvent's BTC/ETH prices are 1_000_000 and 2_000_000 at
-	// package_timestamp 1_745_000_000_000 (see hardeningEvent). Build a
-	// real payload whose feed medians match those prices exactly: the
-	// state-write claim disagrees (only BTC's key is reported changed),
-	// but the payload independently and uniquely corroborates BOTH
-	// feeds, so the fallback must attribute rather than refuse (the
-	// degradation internal/dispatcher/state_write_keys.go documents).
+	// Build a real payload whose feed medians match hardeningEvent's BTC/ETH prices exactly.
+	// The state-write claim disagrees (only BTC's key is reported changed), but the payload
+	// independently and uniquely corroborates BOTH feeds, so the fallback must attribute
+	// rather than refuse (internal/dispatcher/state_write_keys.go).
 	ev := hardeningEvent(t, []string{"BTC", "ETH"})
 	payload := buildTestPayload(t, 1_745_000_000_000, map[string][]int64{
 		"BTC": {1_000_000},
@@ -1258,11 +1219,10 @@ func TestSubsetFromStateWrites_DuplicateCandidatesCountWrittenFeedOnce(t *testin
 	}
 }
 
-// The wrapper-invoked shape after the dispatcher/lake provenance gate:
-// a non-empty batch whose event arrived WITHOUT args (the op's
-// top-level call targeted a wrapper, not the adapter) must refuse via
-// ErrMissingOpArgs — honest-blind, counted as a decode error by the
-// dispatcher — regardless of any state-write keys present.
+// The wrapper-invoked shape after the provenance gate: a non-empty batch whose event arrived
+// WITHOUT args (the op's top-level call targeted a wrapper, not the adapter) must refuse via
+// ErrMissingOpArgs, honest-blind and counted as a decode error, regardless of any state-write
+// keys present.
 func TestDecode_WrapperInvoked_NoArgs_RefusesHonestly(t *testing.T) {
 	ev := hardeningEvent(t, []string{"BTC", "ETH"})
 	ev.OpArgs = nil
@@ -1285,23 +1245,18 @@ func TestDecoder_DeclaresStateWriteContracts(t *testing.T) {
 
 // ── Subset attribution from state-write keys (exact path) ──────────────
 //
-// Real lake fixture: the REDSTONE event at ledger 62,056,824 (tx
-// 40758bde24a9…), captured from stellar.contract_events +
-// stellar.ledger_entry_changes on r1. This is the FIRST of
-// the 15 ledgers the payload-median rule provably cannot attribute: the
-// op args request feed_ids [PYUSD, iBENJI_ETHEREUM_FUNDAMENTAL,
-// BENJI_ETHEREUM_FUNDAMENTAL, USTRY], the adapter's freshness verifier
-// kept exactly ONE feed, and the surviving price 100000000 (1.00000000
-// at 8 decimals) equals BOTH BENJI twins' payload medians at the entry's
-// package_timestamp — two order-preserving alignments, ErrAmbiguousSubset.
+// Real lake fixture: the REDSTONE event at ledger 62,056,824 (tx 40758bde24a9…), captured
+// from stellar.contract_events + stellar.ledger_entry_changes. The payload-median rule
+// provably cannot attribute it: the op args request feed_ids [PYUSD,
+// iBENJI_ETHEREUM_FUNDAMENTAL, BENJI_ETHEREUM_FUNDAMENTAL, USTRY], the freshness verifier
+// kept exactly ONE feed, and the surviving price 100000000 equals BOTH BENJI twins' payload
+// medians, giving two order-preserving alignments (ErrAmbiguousSubset).
 //
-// The transaction's ledger-entry changes settle it: write_prices STORED
-// exactly one PriceData under the adapter's contract-data key
-// ScString("iBENJI_ETHEREUM_FUNDAMENTAL") (change_type=updated,
-// change_index 5 — the change_index-4 `state` row is the pre-image and
-// is excluded on both plumbing paths). With that key plumbed through
-// events.Event.StateWriteKeys the accepted subset is exact and the
-// event attributes with zero heuristics.
+// The ledger-entry changes settle it: write_prices STORED exactly one PriceData under the
+// contract-data key ScString("iBENJI_ETHEREUM_FUNDAMENTAL") (change_type=updated, change_index
+// 5; the change_index-4 `state` row is the pre-image and is excluded on both plumbing paths).
+// With that key plumbed through events.Event.StateWriteKeys the accepted subset is exact and
+// the event attributes with zero heuristics.
 
 const stateWriteFixtureTx = "40758bde24a9afcfe5d4ed2e22fe166c3508566e38bb62619aaa2e86227c8842"
 
@@ -1398,15 +1353,11 @@ func TestSubsetFromStateWrites_ForeignAndMalformedKeysIgnored(t *testing.T) {
 
 // ── Subset-filtered batch attribution (payload medians) ────────────────
 //
-// Real lake fixture: the REDSTONE event at ledger 59,258,375 (tx
-// 1e9ddc61675fe641…), captured from stellar.contract_events.
-// Its op args request feed_ids ["BTC","ETH"] but the
-// adapter's freshness verifier dropped ETH, so updated_feeds carries ONE
-// entry — the class that left 1,626 events honest-blind on the full
-// completeness verify. The payload holds 3 signer packages per feed at
-// timestamp 1,759,758,520,000; BTC's median is 12,449,969,251,710, which
-// equals the surviving price byte-exactly, so attribution must yield
-// exactly one BTC/USD update.
+// Real lake fixture: the REDSTONE event at ledger 59,258,375 (tx 1e9ddc61675fe641…), captured
+// from stellar.contract_events. Its op args request feed_ids ["BTC","ETH"] but the freshness
+// verifier dropped ETH, so updated_feeds carries ONE entry. The payload holds 3 signer
+// packages per feed; BTC's median equals the surviving price byte-exactly (12,449,969,251,710),
+// so attribution must yield exactly one BTC/USD update.
 
 const subsetFixtureTx = "1e9ddc61675fe6419761781b68bc9ff8ef7cdb8be66df34d97b1c4bbe90897a4"
 
@@ -1570,12 +1521,11 @@ func amountFromInt64(t *testing.T, v int64) canonical.Amount {
 
 // ── Order-preserving alignment (the residual class) ────────
 
-// Real lake fixture: ledger 60104689's subset batch (7 feed_ids →
-// 5 updated_feeds) where one price matches TWO candidates' medians
-// (iBENJI_ETHEREUM_FUNDAMENTAL and SolvBTC.BBN_FUNDAMENTAL) — refused by
-// the unordered rule, uniquely resolved by the order-preserving
-// subsequence alignment (the adapter builds updated_feeds in one pass
-// over feed_ids, so order is guaranteed).
+// Real lake fixture: ledger 60104689's subset batch (7 feed_ids → 5 updated_feeds) where one
+// price matches TWO candidates' medians (iBENJI_ETHEREUM_FUNDAMENTAL and
+// SolvBTC.BBN_FUNDAMENTAL). The unordered rule refuses it; the order-preserving subsequence
+// alignment resolves it uniquely, since the adapter builds updated_feeds in one pass over
+// feed_ids.
 func TestDecode_OrderPreservingAlignment_DisambiguatesSharedMedians(t *testing.T) {
 	e := &events.Event{
 		ContractID: "CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG",
@@ -1592,11 +1542,9 @@ func TestDecode_OrderPreservingAlignment_DisambiguatesSharedMedians(t *testing.T
 	if len(out) != 5 {
 		t.Fatalf("got %d updates, want 5 (7 requested, 2 freshness-dropped)", len(out))
 	}
-	// Pin the exact attribution, not just the count: the unique
-	// order-preserving alignment drops ETH and BTC (the first two
-	// candidates) and maps the five surviving prices onto the
-	// remaining feed_ids IN ORDER. A regression that found a different
-	// (wrong) unique alignment would still pass a len-only assertion.
+	// Pin the exact attribution, not just the count: the unique order-preserving alignment
+	// drops ETH and BTC and maps the five surviving prices onto the remaining feed_ids IN
+	// ORDER. A different (wrong) unique alignment would still pass a len-only assertion.
 	wantPairs := []struct{ asset, quote string }{
 		{"crypto:PYUSD", "fiat:USD"},
 		{"crypto:USDC", "fiat:USD"},
@@ -1639,14 +1587,12 @@ func TestAttributeSubset_OrderDisambiguates(t *testing.T) {
 
 // ─── an unrepresentable ScString feed_id must not black out the batch ──
 //
-// RedStone feed_ids arrive as `ScString` — arbitrary bytes, unbounded
-// length — not the `ScSymbol` the Reflector/Band raw path was written
-// against. So `canonical.NewOracleRawAsset` CAN refuse one, and because
-// write_prices batches every updated feed into ONE event, an
-// event-level refusal takes every feed dark until a code change.
-// Refusal must therefore be per-SLOT: the unrepresentable slot is
-// dropped (counted + WARN-logged), every sibling feed still lands, and
-// op_index positions are unchanged.
+// RedStone feed_ids arrive as `ScString` (arbitrary bytes, unbounded length), not the
+// `ScSymbol` the Reflector/Band raw path was written against, so `canonical.NewOracleRawAsset`
+// CAN refuse one. write_prices batches every updated feed into ONE event, so an event-level
+// refusal would take every feed dark. Refusal is therefore per-SLOT: the unrepresentable slot
+// is dropped (counted + WARN-logged), every sibling feed still lands, and op_index positions
+// are unchanged.
 
 // oneUnrepresentableFeedID returns the args + body for a three-feed
 // batch whose middle feed_id is `bad`.
@@ -1906,12 +1852,10 @@ func TestDecoder_Decode_happyPath(t *testing.T) {
 }
 
 func TestDecoder_Decode_malformedLedgerClosedAtFailsClosed(t *testing.T) {
-	// LedgerClosedAt empty/invalid → EventClosedAt errors → adapter
-	// FAILS CLOSED (returns the error) rather than substituting
-	// time.Now(). closedAt is pickTimestamp's fallback when a
-	// PriceData's PackageTimestamp is 0 / out of its sanity window, so
-	// a wall-clock value here would mis-timestamp the row during a
-	// backfill replay. Matches the comet/blend/phoenix siblings.
+	// An empty/invalid LedgerClosedAt makes EventClosedAt error and the adapter FAILS CLOSED
+	// rather than substituting time.Now(): closedAt is pickTimestamp's fallback when a
+	// PackageTimestamp is 0 or out of its sanity window, so a wall-clock value would
+	// mis-timestamp the row during a backfill replay.
 	body := encodeWritePricesBody(t, relayerG,
 		[]*big.Int{big.NewInt(oneBTCAt8)}, 1, 2)
 	args := []string{

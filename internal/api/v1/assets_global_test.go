@@ -100,11 +100,9 @@ func TestAssetGet_SlugDispatch_GlobalView(t *testing.T) {
 }
 
 // TestAssetGet_SlugDispatch_GlobalView_SubstanceWithheld pins that
-// the global CEX/aggregator tier (populateGlobalCryptoPrice) must be
-// held to the same substance gate as the classic /v1/assets listing and
-// /v1/price, not just the on-chain fallback tier below it. Before the
-// fix this tier had no gate at all, so a thin/dust market the rest of
-// the API withholds still headlined on /v1/assets/{slug}.
+// the global CEX/aggregator tier (populateGlobalCryptoPrice) is held to the same substance gate
+// as the /v1/assets listing and /v1/price, not just the on-chain fallback tier below it. Without
+// it, a thin/dust market the rest of the API withholds would headline on /v1/assets/{slug}.
 func TestAssetGet_SlugDispatch_GlobalView_SubstanceWithheld(t *testing.T) {
 	cat := newTestCatalogue(t)
 	reader := &stubGlobalPriceReader{}
@@ -142,11 +140,9 @@ func TestAssetGet_SlugDispatch_GlobalView_SubstanceWithheld(t *testing.T) {
 }
 
 func TestAssetGet_SlugDispatch_StellarOnlyTokenNoPrice(t *testing.T) {
-	// AQUA is in the catalogue but `crypto:AQUA` won't be on the
-	// canonical crypto allow-list (it's a Stellar-only token).
-	// Global view still resolves: identity populates; price block
-	// stays nil. Consumers drill into the canonical asset_id surface
-	// for the per-asset price.
+	// AQUA is in the catalogue but `crypto:AQUA` is not on the canonical crypto allow-list (a
+	// Stellar-only token). The global view still resolves: identity populates, price stays nil,
+	// and consumers use the canonical asset_id surface for the price.
 	cat := newTestCatalogue(t)
 	reader := &stubGlobalPriceReader{}
 	// No vwap.ok, no agg.rows, no tri.ok — every tier misses.
@@ -288,12 +284,10 @@ func TestAssetGet_Fiat_USDIdentity(t *testing.T) {
 	}
 }
 
-// TestAssetGet_Fiat_CNY_MarketCap — non-USD fiat: handler reads
-// the FX rate from PriceReader (s.Prices) for the fiat:CNY/fiat:USD
-// pair, then multiplies M2 by the result. PriceReader is used
-// rather than ComputeGlobalPrice because the FX-rate Redis
-// triangulated fallback (which prices_1m doesn't carry for
-// fiat:fiat) is in scope of the production PriceReader.
+// TestAssetGet_Fiat_CNY_MarketCap — non-USD fiat: the handler reads the fiat:CNY/fiat:USD rate
+// from PriceReader (s.Prices) and multiplies M2 by it. PriceReader is used rather than
+// ComputeGlobalPrice because the triangulated Redis FX fallback, which prices_1m does not carry
+// for fiat:fiat, is in scope of the production PriceReader.
 func TestAssetGet_Fiat_CNY_MarketCap(t *testing.T) {
 	cat := newTestCatalogue(t)
 	priceStub := &stubPriceReader{
@@ -669,16 +663,12 @@ func TestAssetGet_AssetExtension_FiatAsset_Skipped(t *testing.T) {
 
 // TestAssetGet_ZeroObservationCountIsServedNotDropped.
 //
-// `observation_count` is a COUNT column declared `NOT NULL DEFAULT 0`
-// (migrations/0023), so a registered asset that hasn't traded in the
-// window legitimately reads 0. An overlay that gated the field on
-// `!= 0`, which dropped it from the response — leaving a client unable
-// to distinguish "this asset has zero observations" from "we have no
-// catalogue row for this asset at all", the two states the field's own
-// `omitempty` is supposed to separate.
+// `observation_count` is a COUNT column declared `NOT NULL DEFAULT 0`, so a registered asset
+// that has not traded in the window legitimately reads 0. Gating the field on `!= 0` would drop
+// it, leaving a client unable to tell "zero observations" from "no catalogue row", the two
+// states the field's `omitempty` is meant to separate.
 //
-// The ledger fields are deliberately NOT included in that change:
-// ledger 0 does not exist on Stellar, so 0 there really does mean
+// The ledger fields are the opposite: ledger 0 does not exist on Stellar, so 0 there means
 // unset and must stay omitted. This test pins both halves.
 func TestAssetGet_ZeroObservationCountIsServedNotDropped(t *testing.T) {
 	usdc, err := canonical.NewClassicAsset("USDC", testUSDCIssuer)
@@ -737,10 +727,9 @@ func TestAssetGet_ZeroObservationCountIsServedNotDropped(t *testing.T) {
 }
 
 // TestAssetGet_NativeObservationCountIsAbsent pins that Native
-// XLM has no registry row, so its row holds no trade count;
-// observation_count must be absent rather than whatever figure the
-// synthetic row carries (it once served a 24 h prices_1m bucket count
-// under a field documented as an all-time trade count).
+// XLM has no registry row, so its row holds no trade count; observation_count must be absent
+// rather than whatever the synthetic row carries (a 24 h prices_1m bucket count is not the
+// documented all-time trade count).
 func TestAssetGet_NativeObservationCountIsAbsent(t *testing.T) {
 	assetsReader := &stubAssetsReaderExt{
 		row: timescale.AssetRow{
@@ -845,13 +834,11 @@ func TestAssetGet_IssuerDirectoryTags_Surfaced(t *testing.T) {
 	}
 }
 
-// TestAssetGet_ScamDirectoryTag_WithholdsPrice — the scam-pricing gate
-// (deliberately overturning the old display-only
-// invariant): a scam-class-tagged issuer (malicious/unsafe/fraud/scam/
-// hack/phishing) has its published price_usd + market_cap WITHHELD, so a
-// scam token can't show a value that lends it legitimacy — even when its
-// market is liquid. The suppression is directory-driven: with no directory
-// wired, the same asset prices normally. Raw trades stay on /v1/ohlc etc.
+// TestAssetGet_ScamDirectoryTag_WithholdsPrice — the scam-pricing gate: a scam-class-tagged
+// issuer (malicious/unsafe/fraud/scam/hack/phishing) has its published price_usd + market_cap
+// WITHHELD, so a scam token cannot show a value that lends it legitimacy even when its market is
+// liquid. Suppression is directory-driven: with no directory wired, the same asset prices
+// normally. Raw trades stay on /v1/ohlc etc.
 func TestAssetGet_ScamDirectoryTag_WithholdsPrice(t *testing.T) {
 	get := func(t *testing.T, directory v1.Options) v1.AssetDetail {
 		t.Helper()
@@ -1046,15 +1033,12 @@ func TestAssetGet_VolumeCharacter_DoesNotAffectPrice(t *testing.T) {
 	}
 }
 
-// TestAssetGet_DeclaredPeg_DustCataloguePriceReplacedByPeg — the
-// detail-path half of the AUDD fix, end-to-end through
-// handleAssetGet: the asset-catalogue overlay carries the dust-authored
-// $0.78 price the substance gate withholds on the listing, and without the gate
-// applyAssetRowToDetail would copy it onto the detail UNGATED — so the
-// listing served the $0.655 peg while the detail presented $0.78 as a
-// market price, and the nil-only peg fill never ran. With the overlay
-// gated by the same per-pair verdict, the detail now serves the
-// declared-peg price with its provenance, matching the listing.
+// TestAssetGet_DeclaredPeg_DustCataloguePriceReplacedByPeg — the detail-path half of the peg
+// fallback, end-to-end through handleAssetGet: the catalogue overlay carries a dust-authored
+// price the substance gate withholds on the listing. Ungated, applyAssetRowToDetail would copy
+// it onto the detail as a market price and the nil-only peg fill would never run. With the
+// overlay gated by the same per-pair verdict, the detail serves the declared-peg price with its
+// provenance, matching the listing.
 func TestAssetGet_DeclaredPeg_DustCataloguePriceReplacedByPeg(t *testing.T) {
 	srv := pegHandlerTestServer(t,
 		false, // gate denies every pair — AUDD's USD books are bot dust
@@ -1079,11 +1063,10 @@ func TestAssetGet_DeclaredPeg_DustCataloguePriceReplacedByPeg(t *testing.T) {
 	}
 }
 
-// TestAssetGet_SubstanceGate_NonPeggedDustDetailWithheld —
-// closure for every asset, not just pegged ones: a NON-configured
-// asset whose only price is the ungated catalogue overlay now has that
-// price (and the pills derived from it) withheld on the detail path,
-// matching the listing's verdict for the same pair set.
+// TestAssetGet_SubstanceGate_NonPeggedDustDetailWithheld — the gate covers every asset, not just
+// pegged ones: a NON-configured asset whose only price is the catalogue overlay has that price
+// (and the pills derived from it) withheld on the detail path, matching the listing's verdict
+// for the same pair set.
 func TestAssetGet_SubstanceGate_NonPeggedDustDetailWithheld(t *testing.T) {
 	dustID := "SCAM-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
 	srv := pegHandlerTestServer(t,
@@ -1558,18 +1541,13 @@ func TestAssetGet_readerPopulatesSep1Status(t *testing.T) {
 	}
 }
 
-// TestAssetGet_Kind_SetForReaderPathAndSurvivesResponseCache proves
-// the ADR-0042 cache trap is closed. stubAssetReader — like
-// the real storage.timescale AssetReader implementation — has no
-// reason to know about the `kind` wire-shape discriminator, so its
-// fixture row below deliberately carries a zero-value Kind, the same
-// as a not-yet-updated storage layer would. handleAssetGet must stamp
-// Kind AFTER resolveAssetDetail returns but BEFORE renderAssetDetailEnvelope
-// caches the rendered bytes (assets.go's 30s assetDetailCache) — a fix
-// applied only on the FIRST response would leave the cached bytes
-// permanently missing `kind` for the remainder of the TTL window. This
-// test issues the request twice: once to populate the cache, once to
-// hit it, and requires `kind` on both.
+// TestAssetGet_Kind_SetForReaderPathAndSurvivesResponseCache proves the response cache cannot
+// serve a body missing `kind`. The storage-layer reader does not know the `kind` wire-shape
+// discriminator, so the fixture row deliberately carries a zero-value Kind. handleAssetGet must
+// stamp Kind AFTER resolveAssetDetail returns but BEFORE renderAssetDetailEnvelope caches the
+// rendered bytes (assetDetailCache); stamping only the first response would leave the cached
+// bytes without `kind` for the whole TTL. The request is issued twice, to populate the cache and
+// to hit it, and `kind` is required on both.
 func TestAssetGet_Kind_SetForReaderPathAndSurvivesResponseCache(t *testing.T) {
 	reader := &stubAssetReader{
 		byID: map[string]v1.AssetDetail{
@@ -1602,14 +1580,10 @@ func TestAssetGet_Kind_SetForReaderPathAndSurvivesResponseCache(t *testing.T) {
 	}
 }
 
-// TestAssetGet_DeadContextBodyNotCached is the regression proof for
-// handleAssetGet needs a liveness gate between its cache miss
-// and its assetDetailCache.put, so a request whose context died mid-
-// chain (client gone, or the blanket request-timeout deadline) still
-// cached whatever best-effort body it had assembled and replayed it
-// as a fresh 200 for the full 120s TTL. A second, healthy request for
-// the same asset_id must therefore recompute rather than replay the
-// first (dead-context) render.
+// TestAssetGet_DeadContextBodyNotCached pins the liveness gate between handleAssetGet's cache
+// miss and its assetDetailCache.put. A request whose context died mid-chain (client gone, or
+// the request-timeout deadline) must not cache its best-effort body, or it would replay as a
+// fresh 200 for the full TTL. A second, healthy request for the same asset_id must recompute.
 func TestAssetGet_DeadContextBodyNotCached(t *testing.T) {
 	reader := &ctxDeadCountingReader{}
 	srv := v1.New(v1.Options{Assets: reader})
@@ -1651,12 +1625,10 @@ func TestAssetGet_DeadContextBodyNotCached(t *testing.T) {
 	}
 }
 
-// TestAssetGet_ClassicSlugResolves — /v1/assets/{slug} must resolve a
-// migration-0134 public slug to its (code, issuer) identity when the
-// wired reader offers the capability, and keep the 400 for genuinely
-// unresolvable ids. Without this, slug URLs would be resolvable ONLY through
-// the explorer's build cache, so any page not baked at build time
-// 404 (operator report: /assets/usdt-gasu4kif).
+// TestAssetGet_ClassicSlugResolves — /v1/assets/{slug} must resolve a public slug to its
+// (code, issuer) identity when the wired reader offers the capability, and keep the 400 for
+// genuinely unresolvable ids. Otherwise slug URLs resolve ONLY through the explorer's build
+// cache and any page not baked at build time 404s.
 func TestAssetGet_ClassicSlugResolves(t *testing.T) {
 	const usdtID = "USDT-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
 	reader := slugStubAssetReader{
@@ -1844,24 +1816,16 @@ func TestAssetGet_WarningSerialisationShape(t *testing.T) {
 }
 
 // TestAssetGet_NonUSDFiat_ServesPriceFromFXQuotes pins that the
-// asset DETAIL page for a non-USD fiat must resolve price_usd (and hence
-// market_cap_usd) through the same fx_quotes-first chain the asset LISTING
-// already used.
+// asset DETAIL page for a non-USD fiat resolves price_usd (and hence market_cap_usd) through the
+// same fx_quotes-first chain the asset LISTING uses.
 //
-// The two paths must not drift. The listing path tries fx_quotes
-// before PriceReader; populateFiatView must too rather than
-// calling PriceReader alone. storePriceReader fast-paths ANY
-// fiat-quoted request to ErrPriceNotFound — no on-chain trades exist for a
-// fiat/fiat pair — so the detail endpoint served price_usd: null and
-// market_cap_usd: null for every non-USD currency, while the listing beside
-// it showed correct values for the same asset.
+// The two paths must not drift: populateFiatView must try fx_quotes before PriceReader.
+// storePriceReader fast-paths ANY fiat-quoted request to ErrPriceNotFound (no on-chain trades
+// exist for a fiat/fiat pair), so PriceReader alone leaves both fields null while the listing
+// shows correct values.
 //
-// Fiats are non-Stellar, so the detail page is /v1/external/assets/{slug}
-// (they are routed off /v1/assets). This test wires an FX reader and NO PriceReader at all, so a non-null price
-// proves the fx_quotes path ran rather than a price reader happening to
-// answer.
-//
-// Without the fx_quotes-first chain in populateFiatView both fields would be null.
+// Fiats are non-Stellar, so the detail page is /v1/external/assets/{slug}. The test wires an FX
+// reader and NO PriceReader, so a non-null price proves the fx_quotes path ran.
 func TestAssetGet_NonUSDFiat_ServesPriceFromFXQuotes(t *testing.T) {
 	// 1 EUR = 1.17 USD.
 	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{

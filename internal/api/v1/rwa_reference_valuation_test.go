@@ -2,13 +2,9 @@ package v1_test
 
 // GET /v1/rwa/assets — the reference-priced (NAV-style) valuation.
 //
-// Real-world assets are bought and held, not traded. Measured on the
-// production deployment, four of the six members of the set carry an
-// independent oracle valuation of their instrument and only two have
-// ever produced a market price this platform will publish — so a
-// surface that values the set at observed market prices alone reports
-// nothing at all for half of it, while an oracle prices the underlying
-// instrument daily.
+// Real-world assets are bought and held, not traded, so a surface that values the set at
+// observed market prices alone reports nothing for much of it, while an oracle prices the
+// underlying instrument daily.
 //
 // The fixture below is that shape:
 //
@@ -125,9 +121,8 @@ const (
 
 // rwaProductionShapedServer builds the six-asset fixture above.
 //
-// withOracle: false wires no oracle at all, which is how the market
-// basis is measured in isolation — the reference snapshot is then
-// unavailable and no row can carry a reference valuation.
+// withOracle: false wires no oracle at all, which measures the market basis in isolation: the
+// reference snapshot is unavailable and no row can carry a reference valuation.
 func rwaProductionShapedServer(t *testing.T, withOracle bool) *v1.Server {
 	t.Helper()
 	bound := []timescale.Sep1BoundCurrency{
@@ -172,17 +167,13 @@ func rwaProductionShapedServer(t *testing.T, withOracle bool) *v1.Server {
 		},
 	}
 	if withOracle {
-		// The four bound instruments, at the values measured on the
-		// production stream — plus rwa:XAU, which the stream really
-		// does carry and which nothing may be bound to.
+		// The four bound instruments, plus rwa:XAU, which the stream carries and which nothing
+		// may be bound to.
 		//
-		// XAU is in the fixture precisely BECAUSE the feed exists. It
-		// prices a troy ounce of spot metal, so a join on the code
-		// would hand a token called XAU $4,115.67 a unit and value 120
-		// of them at nearly half a million dollars. The feed being
-		// absent would make that failure untestable; the feed being
-		// present makes the refusal load-bearing. AUMTL is the other
-		// case: no oracle prices an instrument of that name at all.
+		// XAU is in the fixture precisely BECAUSE the feed exists. It prices a troy ounce of
+		// spot metal, so a join on the code would value a token called XAU at the metal's
+		// price. With the feed present the refusal is load-bearing. AUMTL is the other case:
+		// no oracle prices an instrument of that name at all.
 		opts.Oracle = rwaOracle(t,
 			rwaOracleRow(t, "redstone", "rwa:CETES", "fiat:USD", "69485", 6),
 			rwaOracleRow(t, "redstone", "rwa:TESOURO", "fiat:USD", "245350", 6),
@@ -219,24 +210,18 @@ func renderValuation(v v1.RWAValuation) string {
 	}, "|")
 }
 
-// TestRWAAssets_MarketCapIsUnchangedByTheReferenceBasis is the property
-// most worth protecting, and the one this whole change is measured
-// against.
+// TestRWAAssets_MarketCapIsUnchangedByTheReferenceBasis is the property most worth protecting.
 //
-// `market_cap_usd` means one thing: circulating supply times a price
-// somebody was observed paying, admitted only after the thin-market
-// substance gate, the dust-liquidity guard and the scam-issuer
-// suppression have each declined to withhold it. A consumer relying on
-// that figure must keep getting the same number, whatever the oracle
-// stream happens to carry.
+// `market_cap_usd` means one thing: circulating supply times a price somebody was observed
+// paying, admitted only after the thin-market substance gate, the dust-liquidity guard and the
+// scam-issuer suppression have each declined to withhold it. A consumer relying on it must get
+// the same number whatever the oracle stream carries.
 //
-// So the SAME six-asset fixture is served twice — once with the oracle
-// wired and once with no oracle at all — and every field on the market
-// basis is compared across the two. The second basis is fully populated
-// in one run and entirely absent in the other, which is precisely the
-// perturbation that would expose a fold: sum the two totals together,
-// let a reference valuation fill in for a withheld market cap, or let a
-// reference-valued row count as valued, and the two runs diverge here.
+// So the SAME six-asset fixture is served twice, with the oracle wired and with no oracle at
+// all, and every market-basis field is compared across the two. The second basis is fully
+// populated in one run and absent in the other, which exposes any fold: summing the two totals,
+// letting a reference valuation fill in for a withheld market cap, or counting a
+// reference-valued row as valued.
 func TestRWAAssets_MarketCapIsUnchangedByTheReferenceBasis(t *testing.T) {
 	withOracle := getRWA(t, rwaProductionShapedServer(t, true))
 	without := getRWA(t, rwaProductionShapedServer(t, false))
@@ -323,15 +308,11 @@ func TestRWAAssets_MarketCapIsUnchangedByTheReferenceBasis(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_ReferenceValuationCoversTheAssetsNobodyTrades is the
-// point of the second basis.
+// TestRWAAssets_ReferenceValuationCoversTheAssetsNobodyTrades is the point of the second basis.
 //
-// USTRY and USDY have no market price, so they contribute nothing to
-// `market_cap_usd` and are counted as unvalued there — correctly, since
-// nobody was observed paying anything for them. Both nevertheless have
-// a bound, current, dollar-denominated oracle valuation of the
-// instrument they anchor to, and a circulating supply on chain. The
-// reference basis values them; the market basis still does not.
+// USTRY and USDY have no market price, so they add nothing to `market_cap_usd` and count as
+// unvalued there. Both have a bound, current, dollar-denominated oracle valuation and an
+// on-chain supply: the reference basis values them; the market basis still does not.
 func TestRWAAssets_ReferenceValuationCoversTheAssetsNobodyTrades(t *testing.T) {
 	v := getRWA(t, rwaProductionShapedServer(t, true))
 	byCode := rwaByCode(t, v)
@@ -380,11 +361,10 @@ func TestRWAAssets_ReferenceValuationCoversTheAssetsNobodyTrades(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_ReferenceTotalIsTheSumOfTheRows — add up the column and
-// you land on the published total, exactly, with no rounding drift
-// between the levels. Same property `market_cap_usd` has, and the
-// reason both sum already-rounded 2-dp strings with exact rational
-// arithmetic rather than re-deriving from prices.
+// TestRWAAssets_ReferenceTotalIsTheSumOfTheRows: the column sums to the published total
+// exactly, with no rounding drift between levels. Like `market_cap_usd`, both sum
+// already-rounded 2-dp strings with exact rational arithmetic rather than re-deriving from
+// prices.
 func TestRWAAssets_ReferenceTotalIsTheSumOfTheRows(t *testing.T) {
 	v := getRWA(t, rwaProductionShapedServer(t, true))
 
@@ -418,16 +398,13 @@ func TestRWAAssets_ReferenceTotalIsTheSumOfTheRows(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_UnreferencedAssetsStayUnvaluedOnBothBases — XAU and
-// AUMTL have no reference at all, and no fallback may be invented for
-// them.
+// TestRWAAssets_UnreferencedAssetsStayUnvaluedOnBothBases: XAU and AUMTL have no reference and
+// no fallback may be invented for them.
 //
-// They fail for DIFFERENT reasons and both reasons are reported. An
-// oracle does publish a feed called XAU, but it prices a troy ounce of
-// spot metal: its ratio to a token price is a unit conversion wearing a
-// premium's clothes, and its product with a token supply is not a
-// valuation of anything. Nothing prices an instrument called AUMTL at
-// all. Neither may be answered with a nearby number.
+// They fail for DIFFERENT reasons and both are reported. An oracle publishes a feed called XAU,
+// but it prices a troy ounce of spot metal, so its ratio to a token price is a unit conversion
+// and its product with a token supply values nothing. Nothing prices an instrument called
+// AUMTL at all. Neither may be answered with a nearby number.
 func TestRWAAssets_UnreferencedAssetsStayUnvaluedOnBothBases(t *testing.T) {
 	v := getRWA(t, rwaProductionShapedServer(t, true))
 	byCode := rwaByCode(t, v)
@@ -466,11 +443,9 @@ func TestRWAAssets_UnreferencedAssetsStayUnvaluedOnBothBases(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_NoReferenceValuationOmitsTheTotal — with no oracle
-// wired nothing is reference-valued, and the total is ABSENT rather
-// than "0.00". A zero there asserts that the backing behind every
-// tokenized treasury in the set is worth nothing, which is the one
-// reading certain to be wrong.
+// TestRWAAssets_NoReferenceValuationOmitsTheTotal: with no oracle wired nothing is
+// reference-valued and the total is ABSENT rather than "0.00", since a zero would assert the
+// backing of every tokenized treasury is worth nothing.
 func TestRWAAssets_NoReferenceValuationOmitsTheTotal(t *testing.T) {
 	v := getRWA(t, rwaProductionShapedServer(t, false))
 
@@ -501,11 +476,9 @@ func TestRWAAssets_NoReferenceValuationOmitsTheTotal(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_BothBasesTotalsOnlyTheOverlap — the two totals are sums
-// over DIFFERENT rows, so subtracting one from the other measures
-// nothing. `both_bases` restricts each to the members carrying both, so
-// the difference between those two figures is the aggregate gap between
-// what the market pays and what the reference says it is worth.
+// TestRWAAssets_BothBasesTotalsOnlyTheOverlap: the two totals sum DIFFERENT rows, so their
+// difference means nothing. `both_bases` restricts each to the members carrying both, so the
+// difference there is the aggregate gap between market price and reference value.
 func TestRWAAssets_BothBasesTotalsOnlyTheOverlap(t *testing.T) {
 	v := getRWA(t, rwaProductionShapedServer(t, true))
 
@@ -539,12 +512,10 @@ func TestRWAAssets_BothBasesTotalsOnlyTheOverlap(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_EveryReferenceValuationCarriesItsProvenance — a dollar
-// figure with no traceable source is worse than an absent one here,
-// because it cannot be checked and cannot be challenged. Every row
-// carrying a reference valuation must name the feed, the publisher, the
-// denominator and the vintage behind it, and the summary must name the
-// oracles the total is made of.
+// TestRWAAssets_EveryReferenceValuationCarriesItsProvenance: a dollar figure with no traceable
+// source is worse than an absent one, since it cannot be checked or challenged. Every row with a
+// reference valuation must name the feed, publisher, denominator and vintage behind it, and the
+// summary must name the oracles the total is made of.
 func TestRWAAssets_EveryReferenceValuationCarriesItsProvenance(t *testing.T) {
 	v := getRWA(t, rwaProductionShapedServer(t, true))
 
@@ -604,17 +575,14 @@ func TestRWAAssets_EveryReferenceValuationCarriesItsProvenance(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_ReferenceBasisNamesItselfAsAClaim — the field name is
-// only one of three places the distinction is carried, and prose is the
-// one a careless reader actually reads. The basis must say, in the
-// response itself, that nobody was observed paying this, and the
-// market-cap basis must say the reference figure is not in its total.
+// TestRWAAssets_ReferenceBasisNamesItselfAsAClaim: the field name is one of three places the
+// distinction is carried, and prose is the one a careless reader reads. The response must say
+// nobody was observed paying this figure, and the market-cap basis must say the reference
+// figure is not in its total.
 //
-// The "nobody was seen paying it" claim is asserted here against an
-// ORACLE-priced total, which is the only kind it is true of. A
-// listing-priced row IS a price somebody paid, on venues this index does
-// not gate, and TestRWAAssets_ListingBasisDoesNotInheritTheOracleWording
-// pins that the prose says so instead of inheriting this sentence.
+// That claim is asserted against an ORACLE-priced total, the only kind it is true of. A
+// listing-priced row IS a price somebody paid, on venues this index does not gate;
+// TestRWAAssets_ListingBasisDoesNotInheritTheOracleWording pins that its prose says so.
 func TestRWAAssets_ReferenceBasisNamesItselfAsAClaim(t *testing.T) {
 	v := getRWA(t, rwaProductionShapedServer(t, true))
 
@@ -633,12 +601,10 @@ func TestRWAAssets_ReferenceBasisNamesItselfAsAClaim(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_FlaggedIssuerGetsNoReferenceValuationEither — a
-// scam-class directory tag withholds every valuation, a third party's
-// included. The per-unit case is already covered; this is the
-// supply-multiplied form, which is the LARGER claim: a real
-// instrument's net asset value times an impersonator's own float, from
-// an oracle that never named the impersonator.
+// TestRWAAssets_FlaggedIssuerGetsNoReferenceValuationEither: a scam-class directory tag
+// withholds every valuation, a third party's included. This is the supply-multiplied form, the
+// LARGER claim: a real instrument's net asset value times an impersonator's own float, from an
+// oracle that never named the impersonator.
 func TestRWAAssets_FlaggedIssuerGetsNoReferenceValuationEither(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
@@ -689,15 +655,12 @@ func rwaValuationArm(t *testing.T, v v1.RWAAssetsView) []v1.RWAFunnelStage {
 	return out
 }
 
-// TestRWAAssets_FunnelAccountsForEveryUnvaluedRow is the integration
-// the funnel demands: an accounting that stops at "served" says nothing
-// about whether an admitted asset carries a reference valuation, and a
-// reader would have to filter the rows by hand to find out.
+// TestRWAAssets_FunnelAccountsForEveryUnvaluedRow: an accounting that stops at "served" says
+// nothing about whether an admitted asset carries a reference valuation.
 //
-// The arm continues past the served set and counts every row that
-// carries no figure under the reason that refused it, on the same
-// three-actor vocabulary the membership arms use — so a coverage gap
-// somebody can close reads differently from the definition working.
+// The arm continues past the served set and counts every row carrying no figure under the
+// reason that refused it, on the same three-actor vocabulary the membership arms use, so a
+// coverage gap somebody can close reads differently from the definition working.
 func TestRWAAssets_FunnelAccountsForEveryUnvaluedRow(t *testing.T) {
 	v := getRWA(t, rwaProductionShapedServer(t, true))
 	stages := rwaValuationArm(t, v)
@@ -796,11 +759,9 @@ func TestRWAAssets_FunnelValuationArmDoesNotAdmitOrRefuse(t *testing.T) {
 			t.Errorf("membership stage %d moved with the reference basis:\n  %s\n  %s", i, a[i], b[i])
 		}
 	}
-	// The comparison above perturbs both runs identically, so it cannot
-	// see a change that affects them equally — a drop invented on a
-	// membership stage, for instance. The arithmetic can: a drop across
-	// the arm boundary is unreconcilable by construction, and the funnel
-	// says so rather than absorbing it.
+	// The comparison above perturbs both runs identically, so it cannot see a change that
+	// affects them equally (a drop invented on a membership stage). The arithmetic can: a drop
+	// across the arm boundary is unreconcilable and the funnel says so rather than absorbing it.
 	for name, v := range map[string]v1.RWAAssetsView{"with the oracle": withOracle, "without": without} {
 		if !v.Funnel.Balanced {
 			t.Errorf("%s: the funnel does not balance — a stage gained a drop it cannot account for: %+v",
@@ -868,19 +829,13 @@ func rwaContractServerWithOracle(
 	})
 }
 
-// TestRWAAssets_ContractMemberStatesWhyItIsNotReferenceValued is the
-// decision the contract arm forced, end to end.
+// TestRWAAssets_ContractMemberStatesWhyItIsNotReferenceValued: a contract-issued member has a
+// supply from the certified lake and its own declared decimals, yet is not reference-valued
+// because nothing binds a contract ADDRESS to an oracle feed. The only available join is the
+// symbol the contract declares, and pricing a token by a self-declared ticker is the join this
+// surface refuses.
 //
-// A contract-issued member reaches this surface with everything the
-// arithmetic needs: a supply from the certified lake and its own
-// declared decimals. It is still not reference-valued, because nothing
-// binds a contract ADDRESS to an oracle feed — the only available join
-// is the symbol the contract itself declares, and pricing a token by a
-// self-declared ticker is the join this whole surface refuses.
-//
-// What matters is that the refusal is STATED. A silently absent figure
-// would be indistinguishable from an oversight, and a reader could not
-// tell "we will not do this" from "we forgot".
+// The refusal must be STATED: a silently absent figure cannot be told from an oversight.
 func TestRWAAssets_ContractMemberStatesWhyItIsNotReferenceValued(t *testing.T) {
 	// The oracle publishes rwa:USTRY, and the contract's on-chain
 	// symbol is USTRY. The refusal has to hold with the tempting join
@@ -926,19 +881,14 @@ func TestRWAAssets_ContractMemberStatesWhyItIsNotReferenceValued(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_FunnelDistinguishesACoverageGapFromARefusal is what
-// the `actor` field is FOR, and the six-asset production fixture cannot
-// prove it: every refusal in that set is the definition working, so a
-// funnel that hardcoded `definition` on every drop would look correct.
+// TestRWAAssets_FunnelDistinguishesACoverageGapFromARefusal is what the `actor` field is FOR.
+// The six-asset fixture cannot prove it: every refusal there is the definition working, so a
+// funnel hardcoding `definition` on every drop would look correct.
 //
-// This fixture holds one of each. USTRY is bound, fed and has a supply,
-// so it is valued. CETES is bound and fed and has NO supply reading —
-// a gap in this platform's own pipeline that an operator can close.
-// XAU is refused because the feed of that name prices a troy ounce,
-// which nobody can or should fix.
-//
-// A reader deciding whether to chase something needs those three told
-// apart, and the difference is exactly one string per drop.
+// This fixture holds one of each. USTRY is bound, fed and has a supply, so it is valued. CETES
+// is bound and fed but has NO supply reading, a gap in this platform's pipeline an operator can
+// close. XAU is refused because the feed of that name prices a troy ounce, which nobody should
+// fix. A reader needs those three told apart; the difference is one string per drop.
 func TestRWAAssets_FunnelDistinguishesACoverageGapFromARefusal(t *testing.T) {
 	bound := []timescale.Sep1BoundCurrency{
 		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
@@ -1004,12 +954,10 @@ func TestRWAAssets_FunnelDistinguishesACoverageGapFromARefusal(t *testing.T) {
 // the population it narrowed from and where the rest went — every
 // stage, every drop, with the arithmetic closing.
 func TestRWAAssets_FunnelAccountsForTheWholePopulation(t *testing.T) {
-	// The shape of the production deployment in miniature: most issuer
-	// accounts have never had their toml fetched, a few payloads will
-	// not decode, a few declare nothing, and of the declarations that
-	// exist the overwhelming majority name somebody else's account.
-	// The fixture materialises only the three survivors, so the
-	// pre-filter drop absorbs the rest of the bound population.
+	// Production in miniature: most issuer accounts never had their toml fetched, some payloads
+	// will not decode, some declare nothing, and most declarations name somebody else's
+	// account. Only the three survivors are materialised, so the pre-filter drop absorbs the
+	// rest of the bound population.
 	upstream := timescale.Sep1BoundCensus{
 		IssuersWithHomeDomain:      44376,
 		IssuersWithPayload:         14635,
@@ -1135,13 +1083,10 @@ func TestRWAAssets_FunnelCountsStaleAttestations(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_FunnelSeparatesNeverFetchedFromDeclaresNothing pins the
-// distinction the surface most needs and least had. An issuer whose
-// stellar.toml nobody has fetched, one whose payload will not decode,
-// and one that decoded and declares nothing are three different
-// findings with three different owners. Collapsed into one silent
-// `continue`, they are indistinguishable — and the first of the three
-// is the one an operator can fix today.
+// TestRWAAssets_FunnelSeparatesNeverFetchedFromDeclaresNothing: an issuer whose stellar.toml
+// was never fetched, one whose payload will not decode, and one that decoded and declares
+// nothing are three findings with three owners. Collapsed into one silent `continue` they are
+// indistinguishable, and the first is the one an operator can fix.
 func TestRWAAssets_FunnelSeparatesNeverFetchedFromDeclaresNothing(t *testing.T) {
 	// IssuersFetchedWithoutPayload is zero here on purpose: this census
 	// says no domain has been reached and come back empty, so all six
@@ -1177,25 +1122,16 @@ func TestRWAAssets_FunnelSeparatesNeverFetchedFromDeclaresNothing(t *testing.T) 
 	}
 }
 
-// TestRWAAssets_FunnelDoesNotCallAReachedDomainUnfetched is the
-// regression for a label that was false on both halves.
+// TestRWAAssets_FunnelDoesNotCallAReachedDomainUnfetched: the gap between issuers publishing a
+// domain and issuers holding a payload must not be labelled wholesale as
+// `sep1_attestation_never_fetched` (actor `operator`, a backlog somebody here could clear).
+// Almost all of that gap is domains already attempted that served nothing storable (dead,
+// parked, or publishing no SEP-1 document). Labelling them an operator backlog overstates the
+// coverage within reach and this side's share of the gap, on a page whose purpose is saying who
+// can move a number.
 //
-// The gap between the issuers publishing a domain and the issuers
-// holding a payload was published entirely as
-// `sep1_attestation_never_fetched`, actor `operator` — a backlog
-// somebody here could clear. Measured on production the gap
-// was 40,838 issuers and exactly ONE of them had never been attempted:
-// an overnight drain had already reached the other 40,837, and their
-// domains served nothing storable (quantumstellar.vercel.app,
-// 5138.8888skulls.com, rivalcoins.io — dead, parked, or publishing no
-// SEP-1 document). The surface named all of them an operator's unfetched
-// backlog, overstating both the coverage within reach and this side's
-// share of the gap, on a page whose whole purpose is saying who can
-// move a number.
-//
-// The fixture is that production shape. A fetch that ran and came back
-// empty belongs to the issuer; only the genuinely untried one belongs
-// to the operator.
+// The fixture has that shape: a fetch that ran and came back empty belongs to the issuer; only
+// the genuinely untried one belongs to the operator.
 func TestRWAAssets_FunnelDoesNotCallAReachedDomainUnfetched(t *testing.T) {
 	upstream := timescale.Sep1BoundCensus{
 		IssuersWithHomeDomain: 76658,
@@ -1243,14 +1179,12 @@ func TestRWAAssets_FunnelDoesNotCallAReachedDomainUnfetched(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_FunnelSaysUnbalancedWhenTheFetchSplitCannotHold — the
-// two halves of the domain-bearing population are read by different
-// queries, so they can contradict each other. The wire numbers are
-// clamped (a drop larger than the gap it explains is nonsense to
-// publish), and the clamp must not be able to make an impossible census
-// read as sound: `balanced` comes from the census check as well as the
-// stage arithmetic, and the census check bounds the two counts against
-// the population independently.
+// TestRWAAssets_FunnelSaysUnbalancedWhenTheFetchSplitCannotHold: the two halves of the
+// domain-bearing population come from different queries, so they can contradict each other. The
+// wire numbers are clamped (a drop larger than the gap it explains is nonsense), and the clamp
+// must not make an impossible census read as sound: `balanced` comes from the census check as
+// well as the stage arithmetic, and the census check bounds the two counts against the
+// population independently.
 func TestRWAAssets_FunnelSaysUnbalancedWhenTheFetchSplitCannotHold(t *testing.T) {
 	upstream := timescale.Sep1BoundCensus{
 		// 4 payloads plus 8 reached-and-empty is 12 issuers, out of a
@@ -1273,11 +1207,10 @@ func TestRWAAssets_FunnelSaysUnbalancedWhenTheFetchSplitCannotHold(t *testing.T)
 	}
 }
 
-// TestRWAAssets_DuplicateDeclarationIsServedOnceAndCounted — SEP-1 does
-// not forbid a toml declaring the same asset twice, and identity here is
-// (code, issuer), so the second declaration is the SAME asset. Serving
-// it twice would put its market cap into the summary, the class total
-// and the issuer total twice each.
+// TestRWAAssets_DuplicateDeclarationIsServedOnceAndCounted: SEP-1 does not forbid a toml
+// declaring the same asset twice, and identity is (code, issuer), so the second declaration is
+// the SAME asset. Serving it twice would double its market cap in the summary, class total and
+// issuer total.
 func TestRWAAssets_DuplicateDeclarationIsServedOnceAndCounted(t *testing.T) {
 	bound := []timescale.Sep1BoundCurrency{
 		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
@@ -1321,11 +1254,9 @@ func TestRWAAssets_DuplicateDeclarationIsServedOnceAndCounted(t *testing.T) {
 	checkFunnelArithmetic(t, v)
 }
 
-// TestRWAAssets_AdmittedButNeverObservedIsCounted — an asset can meet
-// every requirement and still have no row in the catalogue, because the
-// index has never seen it on chain. It is correctly absent from the set;
-// it was NOT correct for it to vanish without a count, which made
-// "admitted" and "served" silently different numbers.
+// TestRWAAssets_AdmittedButNeverObservedIsCounted: an asset can meet every requirement yet have
+// no catalogue row because the index has never seen it on chain. It is correctly absent from the
+// set, but must be counted, or "admitted" and "served" silently differ.
 func TestRWAAssets_AdmittedButNeverObservedIsCounted(t *testing.T) {
 	bound := []timescale.Sep1BoundCurrency{
 		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
@@ -1349,16 +1280,12 @@ func TestRWAAssets_AdmittedButNeverObservedIsCounted(t *testing.T) {
 	checkFunnelArithmetic(t, v)
 }
 
-// TestRWAAssets_IssuerAssetPageTruncationIsReported — the per-issuer
-// listing read is capped, and the cap has always been DOCUMENTED as
-// reported ("the cap is reported the same way the issuer cap is") while
-// nothing reported it. An issuer with more classic assets than one page
-// has its tail unread, so a member in that tail disappears from the set
-// with nothing to show for it.
+// TestRWAAssets_IssuerAssetPageTruncationIsReported: the per-issuer listing read is capped, and
+// the cap must be reported. An issuer with more classic assets than one page has its tail unread,
+// so a member in that tail would disappear from the set with nothing to show for it.
 //
-// The count is issuers-with-an-unread-tail, not assets, so it is served
-// as its own signal and kept out of the asset arithmetic. Counting it
-// as assets would make the funnel close by inventing a number.
+// The count is issuers-with-an-unread-tail, not assets, so it is its own signal and kept out of
+// the asset arithmetic; counting it as assets would make the funnel close by inventing a number.
 func TestRWAAssets_IssuerAssetPageTruncationIsReported(t *testing.T) {
 	const page = 500
 	rows := make([]timescale.AssetRow, 0, page)
@@ -1402,15 +1329,12 @@ func TestRWAAssets_FunnelIsNotServedAsZerosWhenUnmeasured(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_FunnelSaysUnbalancedWhenTheCensusDoesNot — an
-// accounting that cannot be reconciled must SAY so on the wire. A
-// reader silently failing to make the numbers meet is the outcome the
-// whole structure exists to prevent, and it is worse than publishing no
-// numbers at all.
+// TestRWAAssets_FunnelSaysUnbalancedWhenTheCensusDoesNot: an accounting that cannot be
+// reconciled must SAY so on the wire; a reader silently failing to make the numbers meet is
+// worse than no numbers at all.
 //
-// The fixture is a census that cannot describe any deployment: more
-// issuers carrying a fetched payload than carrying a home_domain, when
-// the payload is fetched FROM the home_domain.
+// The fixture is a census no deployment could produce: more issuers carrying a fetched payload
+// than carrying a home_domain, when the payload is fetched FROM the home_domain.
 func TestRWAAssets_FunnelSaysUnbalancedWhenTheCensusDoesNot(t *testing.T) {
 	upstream := timescale.Sep1BoundCensus{
 		// Fewer issuers with a home_domain than with a payload, which
@@ -1588,12 +1512,10 @@ func TestRWAAssets_ServesTheDiscountToTheInstrumentValuation(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_ImpersonatorGetsNoInstrumentValuation is the
-// impersonation case in its sharpest form. An issuer flagged AFTER
-// admission keeps its row — this surface hides nothing it admitted — but
-// gets no valuation of any kind, INCLUDING a third party's. Handing an
-// impersonator the real instrument's oracle NAV would publish a bigger
-// claim than the one the flag suppressed.
+// TestRWAAssets_ImpersonatorGetsNoInstrumentValuation is the impersonation case in its sharpest
+// form. An issuer flagged AFTER admission keeps its row (nothing admitted is hidden) but gets no
+// valuation of any kind, INCLUDING a third party's: the real instrument's oracle NAV would
+// publish a bigger claim than the one the flag suppressed.
 func TestRWAAssets_ImpersonatorGetsNoInstrumentValuation(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
@@ -1677,11 +1599,9 @@ func TestRWAAssets_UnpricedAssetIsNotComparedToZero(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_SpotFeedIsNotServedAsATokenValuation carries the
-// unit-scope refusal through the handler. `rwa:XAU` is spot gold per
-// troy ounce; a token coded XAU is a token of unstated size, and their
-// ratio published as a percentage would read as a 99.99% discount on an
-// ordinary token.
+// TestRWAAssets_SpotFeedIsNotServedAsATokenValuation carries the unit-scope refusal through the
+// handler. `rwa:XAU` is spot gold per troy ounce; a token coded XAU has unstated size, and their
+// ratio published as a percentage would read as a huge discount on an ordinary token.
 func TestRWAAssets_SpotFeedIsNotServedAsATokenValuation(t *testing.T) {
 	srv := rwaServerWithOracle(t,
 		[]timescale.Sep1BoundCurrency{rwaBound("XAU", rwaGoodIssuer, "etherfuse.com", "commodity")},
@@ -1766,13 +1686,10 @@ func TestRWAAssets_NoOracleReaderStillServesTheSet(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_FailedOracleReadIsNotServedAsAnAbsence is D2 through the
-// real handler. A reader wired but erroring is the ordinary production
-// failure — a refused connection, a timed-out scan — and it must not
-// publish "no oracle publishes a valuation for this instrument" on every
-// row. From process start until the first successful read there is
-// nothing to carry forward, so this is exactly the window in which the
-// wrong status would be served.
+// TestRWAAssets_FailedOracleReadIsNotServedAsAnAbsence: a reader wired but erroring (refused
+// connection, timed-out scan) must not publish "no oracle publishes a valuation for this
+// instrument" on every row. From process start until the first successful read there is nothing
+// to carry forward, which is exactly the window in which the wrong status would be served.
 func TestRWAAssets_FailedOracleReadIsNotServedAsAnAbsence(t *testing.T) {
 	failing := &rwaOracleStub{
 		stubOracleReader: &stubOracleReader{},
@@ -1806,19 +1723,13 @@ func TestRWAAssets_FailedOracleReadIsNotServedAsAnAbsence(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_ReferenceIsBoundToTheIssuerNotTheCode is the identity
-// rule this whole surface is built on, applied to the figure the last
-// change added.
+// TestRWAAssets_ReferenceIsBoundToTheIssuerNotTheCode is the identity rule this surface is built
+// on: identity is (code, issuer), never the code alone.
 //
-// Two recognised issuers each publish a domain-bound SEP-1 entry for
-// USTRY. One is the issuer whose instrument the oracle feed tracks; the
-// other is an unrelated token that happens to share the ticker. A join
-// on the code alone answers BOTH with the same treasury valuation, and
-// the unrelated token — trading at $0.20 — is published at an 81%
-// discount to a security it has nothing to do with.
-//
-// That is the attacker-authored-pricing class in a new coordinate:
-// identity is (code, issuer), never the code alone.
+// Two recognised issuers each publish a domain-bound SEP-1 entry for USTRY. One is the issuer
+// whose instrument the oracle feed tracks; the other is an unrelated token sharing the ticker. A
+// join on the code alone would give BOTH the same treasury valuation and publish the unrelated
+// token at a large discount to a security it has nothing to do with.
 func TestRWAAssets_ReferenceIsBoundToTheIssuerNotTheCode(t *testing.T) {
 	srv := rwaServerWithOracle(t,
 		[]timescale.Sep1BoundCurrency{
@@ -1960,17 +1871,15 @@ func TestRWAAssets_FullIssuerPageMakesTheTotalALowerBound(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_RefusesAssetsFailingTheDefinition is the regression that
-// matters most. Four assets are attested; three fail a requirement and
-// MUST be absent, not merely downranked:
+// TestRWAAssets_RefusesAssetsFailingTheDefinition: four assets are attested; three fail a
+// requirement and MUST be absent, not merely downranked:
 //
 //   - the same instrument code from a scam-flagged lookalike issuer,
 //   - a real-world declaration from an issuer nobody recognises,
 //   - a recognised issuer's token that declares `crypto` — outside the
 //     closed real-world vocabulary — and whose code no oracle prices.
 //
-// Each was checked to fail on its own, so a single over-broad rule
-// cannot make the whole assertion pass.
+// Each fails on its own, so a single over-broad rule cannot make the whole assertion pass.
 func TestRWAAssets_RefusesAssetsFailingTheDefinition(t *testing.T) {
 	bound := []timescale.Sep1BoundCurrency{
 		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
@@ -2029,10 +1938,9 @@ func TestRWAAssets_RefusesAssetsFailingTheDefinition(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_OracleBasisNeedsARecognisedIssuer pins the one arm that
-// matches on a CODE. An RWA oracle prices an instrument called XAU;
-// dozens of Stellar accounts issue a token called XAU. The oracle basis
-// admits one only when an independent party has already recognised the
+// TestRWAAssets_OracleBasisNeedsARecognisedIssuer pins the one arm that matches on a CODE. An
+// RWA oracle prices an instrument called XAU, but many Stellar accounts issue a token called
+// XAU. The oracle basis admits one only when an independent party has already recognised the
 // issuing account, and it never invents an anchor class.
 func TestRWAAssets_OracleBasisNeedsARecognisedIssuer(t *testing.T) {
 	bound := []timescale.Sep1BoundCurrency{
@@ -2142,17 +2050,14 @@ func TestRWAAssets_NoPublishedValuationOmitsTheTotal(t *testing.T) {
 	}
 }
 
-// TestRWAAssets_IssuerFlaggedAfterAdmissionRendersWithheld — the
-// membership set is cached for ten minutes, so an issuer can acquire a
-// scam-class tag while a member row is still in it. The row is then
-// served with the same suppression /v1/assets applies: the price and
-// market cap are withheld and the status says why. Membership hides
-// nothing it admitted; it withholds the number.
+// TestRWAAssets_IssuerFlaggedAfterAdmissionRendersWithheld: the membership set is cached for ten
+// minutes, so an issuer can acquire a scam-class tag while a member row is still in it. The row
+// is then served with the same suppression /v1/assets applies: price and market cap withheld and
+// the status says why. Membership hides nothing it admitted; it withholds the number.
 //
-// The stub directory answers the BATCH lookup used by the row-fill
-// overlay with the flag, and the single lookup the membership build
-// consumed with a clean entry — reproducing the staleness window
-// directly.
+// The stub directory answers the BATCH lookup used by the row-fill overlay with the flag, and
+// the single lookup the membership build consumed with a clean entry, reproducing the staleness
+// window directly.
 func TestRWAAssets_IssuerFlaggedAfterAdmissionRendersWithheld(t *testing.T) {
 	srv := v1.New(v1.Options{
 		Sep1Cache: &stubSep1BoundReader{bound: []timescale.Sep1BoundCurrency{
@@ -2316,12 +2221,10 @@ const (
 // stubSep1BoundReader serves canned issuer-bound SEP-1 entries. It also
 // satisfies v1.Sep1CachedReader so it can be wired as Options.Sep1Cache.
 //
-// It censuses what it serves the way the real scan does, so a test that
-// asserts on the funnel is asserting against an accounting that closes
-// rather than against numbers a stub invented. `upstream` lets a test
-// state the population BEFORE the bound entries — the issuer rows and
-// declarations a real deployment holds — which is the part of the
-// funnel no fixture of bound entries can express on its own.
+// It censuses what it serves the way the real scan does, so funnel assertions run against an
+// accounting that closes rather than numbers a stub invented. `upstream` lets a test state the
+// population BEFORE the bound entries (issuer rows and declarations a real deployment holds),
+// which no fixture of bound entries can express on its own.
 type stubSep1BoundReader struct {
 	bound    []timescale.Sep1BoundCurrency
 	upstream timescale.Sep1BoundCensus
@@ -2383,10 +2286,9 @@ func (l *rwaListStub) ListAssetsExt(
 
 // LatestSupplyObservations satisfies the optional supply seam
 // fillMarketCapsFromSupply type-asserts for, so these tests exercise
-// the real market-cap fill rather than a path where every row is
-// unvalued for want of a supply reader. The stub ignores the freshness
-// bound — [TestLatestPreciseSupply_AsksForABoundedRead] is what pins that
-// the serving path asks for one.
+// the real market-cap fill rather than a path where every row is unvalued for want of a supply
+// reader. The stub ignores the freshness bound; [TestLatestPreciseSupply_AsksForABoundedRead]
+// pins that the serving path asks for one.
 func (l *rwaListStub) LatestSupplyObservations(
 	context.Context, time.Duration,
 ) (map[string]timescale.SupplyObservation, error) {
@@ -2562,23 +2464,19 @@ func rwaDropCount(stages map[string]v1.RWAFunnelStage, stage, reason string) int
 func checkFunnelArithmetic(t *testing.T, v v1.RWAAssetsView) {
 	t.Helper()
 	st := v.Funnel.Stages
-	// Stages that COUNT a population an earlier stage already dropped
-	// and that nothing follows from. They take no part in the
-	// narrowing, so no subtraction relates them to their neighbours on
-	// either side. Re-derived here from the wire rather than read out
-	// of production, so this check stays independent of the code it is
-	// checking.
+	// Stages that COUNT a population an earlier stage already dropped and that nothing follows
+	// from. They take no part in the narrowing, so no subtraction relates them to their
+	// neighbours. Re-derived from the wire, not read out of production, so this check stays
+	// independent of the code it checks.
 	terminal := map[string]bool{
 		"directory_recognised_issuing_accounts":     true,
 		"listing_contracts_without_curated_binding": true,
 	}
 	for i := 0; i+1 < len(st); i++ {
 		cur, next := st[i], st[i+1]
-		// An ARM BOUNDARY. The arms narrow different populations from
-		// different roots and meet only at the served set, so the last
-		// stage of one arm has no arithmetic relation to the first
-		// stage of the next — and must carry no drops, since a drop
-		// across it could not be accounted for anywhere.
+		// An ARM BOUNDARY. The arms narrow different populations from different roots and meet
+		// only at the served set, so the last stage of one arm has no arithmetic relation to the
+		// first stage of the next and must carry no drops; none could be accounted for.
 		if cur.Arm != next.Arm {
 			if len(cur.Dropped) > 0 {
 				t.Errorf("stage %q is the last of the %q arm and drops %d reasons — "+
@@ -2731,12 +2629,9 @@ func rwaServerWithOracle(
 	})
 }
 
-// rwaOtherRecognisedIssuer is a SECOND directory-recognised issuer that
-// also publishes a domain-bound SEP-1 entry for a code an oracle prices.
-// Nothing about it is exotic: asset codes are not unique on Stellar, and
-// the network holds many accounts issuing tokens called USTRY, BENJI or
-// XAU. It exists here because a code-keyed join cannot tell it apart
-// from the issuer whose instrument the feed actually tracks.
+// rwaOtherRecognisedIssuer is a SECOND directory-recognised issuer that also publishes a
+// domain-bound SEP-1 entry for a code an oracle prices. Asset codes are not unique on Stellar,
+// and a code-keyed join cannot tell it apart from the issuer whose instrument the feed tracks.
 const rwaOtherRecognisedIssuer = "GAXSPCTVGFIVYGHT7JLJZV57HCN5KUYDJ6DMPLNWUKL7A5A3HKCNW7JW"
 
 // rwaCountingListStub counts the per-issuer listing reads /v1/rwa/assets
