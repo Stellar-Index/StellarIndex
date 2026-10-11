@@ -2,133 +2,108 @@
 # config-apply-gate.sh — deploy.yml post-deploy forcing function.
 #
 # deploy-binary.yml swaps BINARIES ONLY: it does NOT render the ansible
-# stellarindex.toml, sync Prometheus rules, install systemd units, or apply
-# DB schema. So when a release changed any of those surfaces, the feature
-# they gate ships DEAD and SILENT unless an operator applies the config too
-# (see docs/operations/deploy-config-apply.md).
+# stellarindex.toml, sync Prometheus rules, install systemd units, or apply DB
+# schema. When a release changed any of those, the feature they gate ships DEAD
+# and SILENT unless an operator applies the config too
+# (docs/operations/deploy-config-apply.md).
 #
-# The surfaces below are the role's WHOLE config-bearing tree, not just
-# templates/: tasks/ carries INLINE `content:` blocks and role scripts live
-# in files/. roles/…/defaults/main.yml feeds
-# every template (galexie_ledgers_per_file → galexie.toml.j2), inventory
-# host_vars do the same, handlers/ decide what restarts, and the role
-# COPIES files from outside configs/ansible entirely: configs/healthchecks/*
-# (17-stellarindex-healthchecks.yml), scripts/ops/config-assertions.sh
-# (15-log-discipline.yml), scripts/ops/{ch-schema-snapshot,restore-drill}.sh
-# and scripts/dev/r1-smoke.sh. Deliberately NOT listed: playbooks/ and
-# tasks/deploy-one-binary.yml (the deploy itself runs them — a change
-# there is applied, not dead), migrations/ (deploy-binary.yml migrates)
-# and bin/.
+# SURFACES is the role's WHOLE config-bearing tree, not just templates/: tasks/
+# carries INLINE `content:` blocks, role scripts live in files/, defaults/main.yml
+# and inventory host_vars feed every template (galexie_ledgers_per_file ->
+# galexie.toml.j2), handlers/ decide what restarts, and the role COPIES files
+# from outside configs/ansible: configs/healthchecks/*,
+# scripts/ops/{config-assertions,ch-schema-snapshot,restore-drill}.sh and
+# scripts/dev/r1-smoke.sh. Deliberately NOT listed: playbooks/ and
+# tasks/deploy-one-binary.yml (the deploy runs them, so a change is applied, not
+# dead), migrations/ (deploy-binary.yml migrates) and bin/.
 #
-# This gate diffs the deploying version against a baseline over the config
-# surfaces. The baseline is the version live on the host when the caller
-# knows it (3rd arg — e.g. read from the host's
-# /var/lib/stellarindex/deployed-versions/<binary> sidecar), else the
-# previous release tag by ancestry. Ancestry is WRONG for a skip-ahead
-# deploy (host on v0.45.0, deploying v0.47.2 diffs only v0.47.1..v0.47.2)
-# and for a rollback, so the baseline actually used is always printed.
-# If any surface changed and the operator did NOT pass
-# config_acknowledged=true, it FAILS — a loud, NON-destructive forcing
-# function (the binaries are already deployed by an earlier step; a red
-# gate just says "config still needs applying", which is accurate and
-# actionable). Acknowledging asserts the operator will apply / has applied
-# the config per the runbook.
+# The gate diffs the deploying version against a baseline over those surfaces.
+# Baseline = the version live on the host when the caller knows it (3rd arg, e.g.
+# the host's /var/lib/stellarindex/deployed-versions/<binary> sidecar), else the
+# previous release tag by ancestry. Ancestry is WRONG for a skip-ahead deploy
+# (host on v0.45.0, deploying v0.47.2 diffs only v0.47.1..v0.47.2) and for a
+# rollback, so the baseline used is always printed. If any surface changed and
+# config_acknowledged=true was not passed, it FAILS: a loud, NON-destructive
+# forcing function (the binaries are already deployed; red just says "config
+# still needs applying"). Acknowledging asserts the operator applied it per the
+# runbook.
 #
-# Fail-closed: an unresolvable version/baseline or a failing `git diff`
-# is an ERROR, not "no changes" — a gate that cannot see the diff has no
-# basis for a green.
+# Fail-closed: an unresolvable version/baseline or a failing `git diff` is an
+# ERROR, not "no changes"; a gate that cannot see the diff has no basis for green.
 #
-# THREE OUTCOMES PER CHANGED SURFACE, not two, so a comment-only diff
-# needs no operator decision and a DDL diff is never waved through as
-# "probably comments". Each changed surface lands in exactly one of:
+# THREE OUTCOMES per changed surface, so a comment-only diff needs no operator
+# decision and a DDL diff is never waved through as "probably comments":
 #
-#   comment-only   every added and removed line is blank or a comment in
-#                  that file's syntax, so NOTHING the host renders or
-#                  executes differs. Passed by this gate itself; no
-#                  operator action. Conservative by construction: a file
-#                  type with no known comment convention is substantive,
-#                  and any non-comment payload on either side is
-#                  substantive. (The host's copy still differs TEXTUALLY
-#                  until the config is applied; the weekly ansible-drift
-#                  job is what reports that.)
-#   applied        substantive, and applied AND VERIFIED on this run by
-#                  an automated step that fails closed — passed via
-#                  [applied]. See the bar below.
-#   substantive    everything else. Blocks unless the operator passes
-#                  config_acknowledged=true, which asserts they have
-#                  applied it and VERIFIED it landed.
+#   comment-only   every added and removed line is blank or a comment in that
+#                  file's syntax, so NOTHING the host renders or executes
+#                  differs. Passed by the gate; no operator action. A file type
+#                  with no known comment convention is substantive. (The host
+#                  copy still differs TEXTUALLY until applied; the weekly
+#                  ansible-drift job reports that.)
+#   applied        substantive, but applied AND VERIFIED on this run by an
+#                  automated step that fails closed; passed via [applied].
+#   substantive    everything else. Blocks unless config_acknowledged=true,
+#                  which asserts it was applied and VERIFIED landed.
 #
-# What this gate can and cannot verify itself: nothing. It reads git, not
-# the host. "applied" is evidence its CALLER produced —
-# .github/workflows/deploy.yml verifies two surfaces and passes only
-# those: configs/prometheus/rules.r1/ (apply-rules.sh polls /api/v1/rules)
-# and any deploy/clickhouse/*.sql whose diff adds only whole new CREATE
-# statements, each of whose objects is then confirmed present in
-# system.tables on the target. A systemd unit, an ansible template or a
-# ClickHouse diff that ALTERs an existing object has no such check and is
-# never auto-passed — see the --ddl-objects mode below for exactly which
-# shapes qualify.
+# The gate reads git, not the host, so it verifies nothing itself: "applied" is
+# evidence its CALLER produced. deploy.yml passes only two surfaces:
+# configs/prometheus/rules.r1/ (apply-rules.sh polls /api/v1/rules) and any
+# deploy/clickhouse/*.sql whose diff adds only whole new CREATE statements, each
+# object then confirmed in system.tables on the target. A systemd unit, an
+# ansible template or a ClickHouse diff that ALTERs an existing object has no
+# such check and is never auto-passed (see --ddl-objects).
 #
-# Usage: config-apply-gate.sh <version-tag> [acknowledged] [baseline-tag] [applied]
+# Usage: config-apply-gate.sh <version-tag> [acknowledged] [baseline-tag] [applied] [refuted] [unanswered]
 #   <version-tag>   the deploying tag, e.g. v0.43.0
 #   [acknowledged]  "true" if the operator passed config_acknowledged=true
-#   [applied]       path prefixes this run applied AND verified live
-#   [refuted]       exact paths this run PROVED unapplied by asking the
-#                   host; [acknowledged] cannot clear these
-#   [unanswered]    exact paths this run tried to check on a host that
-#                   runs ClickHouse but did not answer; [acknowledged]
-#                   cannot clear these either
-#   [baseline-tag]  the version live on the host, if known; defaults to
-#                   the previous release tag by ancestry
-#   [applied]       space-separated surface prefixes this deploy already
-#                   applied AND VERIFIED automatically — see below
+#   [baseline-tag]  the version live on the host, if known; defaults to the
+#                   previous release tag by ancestry
+#   [applied]       space-separated surface prefixes this run applied AND
+#                   verified live
+#   [refuted]       exact paths this run PROVED unapplied by asking the host;
+#                   [acknowledged] cannot clear these
+#   [unanswered]    exact paths this run tried to check on a host that runs
+#                   ClickHouse but did not answer; [acknowledged] cannot clear
+#                   these either
 #
-# Two helper modes expose the classification to callers so there is ONE
-# copy of it (scripts/dev/preflight-deploy.sh and deploy.yml both use
-# them rather than re-deriving a second opinion the gate would contradict):
+# Two helper modes expose the classification so there is ONE copy of it
+# (scripts/dev/preflight-deploy.sh and deploy.yml both use them rather than
+# re-deriving an opinion the gate would contradict):
 #
 #   config-apply-gate.sh --payload <baseline> <version> <path>
-#       print the substantive (non-blank, non-comment) diff lines for one
-#       path. EMPTY output means comment-only. Always exit 0.
+#       print the substantive (non-blank, non-comment) diff lines for one path.
+#       EMPTY output means comment-only. Always exit 0.
 #
 #   config-apply-gate.sh --ddl-objects <baseline> <version> <path>
-#       print the `db.object` names a ClickHouse DDL diff CREATES, and
-#       exit 0, ONLY when that file's whole diff is additive whole
-#       statements: every hunk begins with a CREATE
-#       TABLE/MATERIALIZED VIEW/VIEW/DICTIONARY, no substantive line was
-#       removed, and no other DDL/DML verb appears. Otherwise print
-#       nothing and exit 1 — object existence would not prove such a diff
-#       applied. A column added inside an existing `CREATE TABLE IF NOT
-#       EXISTS` is the case this refuses: the object exists either way,
-#       and re-running the file would not add the column.
+#       print the `db.object` names a ClickHouse DDL diff CREATES, and exit 0,
+#       ONLY when the whole diff is additive whole statements: every hunk begins
+#       with a CREATE TABLE/MATERIALIZED VIEW/VIEW/DICTIONARY, no substantive
+#       line was removed, and no other DDL/DML verb appears. Otherwise print
+#       nothing and exit 1, since object existence would not prove the diff
+#       applied. A column added inside an existing `CREATE TABLE IF NOT EXISTS`
+#       is refused: the object exists either way and re-running would not add it.
 #
-# The [applied] argument exists so automation can retire surfaces from
-# this gate ONE AT A TIME as they become self-applying, without weakening
-# it for the rest. Today the only such surface is
-# configs/prometheus/rules.r1/, applied by configs/prometheus/apply-rules.sh
-# in the deploy job — which validates with promtool, installs atomically,
-# reconciles deletions, reloads, and then POLLS /api/v1/rules until every
+# [applied] lets automation retire surfaces from this gate ONE AT A TIME as they
+# become self-applying. Today only configs/prometheus/rules.r1/, applied by
+# configs/prometheus/apply-rules.sh: it validates with promtool, installs
+# atomically, reconciles deletions, reloads, then POLLS /api/v1/rules until every
 # expected alert is loaded and healthy, restoring a backup if not.
 #
-# The bar for adding to this list is that last clause: the applier must
-# VERIFY the surface is live and fail if it is not. A step that merely
-# copies a file has not earned an exemption: a copied alert can watch
-# nothing while a deleted one keeps firing. The caller must
-# also pass a surface here ONLY when the apply actually succeeded on this
-# run; a pre-declared list would clear the gate for a step that never ran.
+# The bar for adding to the list is that last clause: the applier must VERIFY the
+# surface is live and fail if not. A step that merely copies a file has not
+# earned an exemption (a copied alert can watch nothing while a deleted one keeps
+# firing). The caller passes a surface ONLY when the apply succeeded on this run;
+# a pre-declared list would clear the gate for a step that never ran.
 set -uo pipefail
 
 # ── Diff classification ──────────────────────────────────────────────
 #
-# Shared with scripts/dev/preflight-deploy.sh and .github/workflows/deploy.yml
-# through the --payload / --ddl-objects modes, so the local preview, the
-# workflow's evidence step and this gate's verdict can never disagree.
+# Shared with scripts/dev/preflight-deploy.sh and deploy.yml via --payload /
+# --ddl-objects, so the preview, the evidence step and the verdict cannot disagree.
 
-# comment_marker <path> — the line-comment token for that file type, or
-# empty when the convention is not known. Empty is DELIBERATELY the
-# conservative answer: the failure to avoid is a rubber-stamped
-# acknowledgement, so an unrecognised type falls to a human reading the
-# diff.
+# comment_marker <path> — the line-comment token for that file type, or empty if
+# unknown. Empty is DELIBERATELY conservative: the failure to avoid is a
+# rubber-stamped acknowledgement, so an unrecognised type goes to a human.
 comment_marker() {
   case "$1" in
     *.sql) printf -- '--' ;;
@@ -138,13 +113,10 @@ comment_marker() {
   esac
 }
 
-# diff_body <baseline> <version> <path> — the diff's CONTENT lines only,
-# one per line, with "@" marking each hunk boundary.
-#
-# Everything before the first @@ is header, so it is dropped by position
-# rather than by pattern. Matching `^---` instead (the obvious spelling)
-# also eats a REMOVED line that begins with `--`: every removed SQL
-# comment, and a removed YAML `---` document separator.
+# diff_body <baseline> <version> <path> — the diff's CONTENT lines only, one per
+# line, with "@" marking each hunk boundary. Header is dropped by position, not
+# by `^---`, which would also eat a REMOVED line starting `--` (a removed SQL
+# comment, a removed YAML `---` separator).
 diff_body() {
   git diff -U0 --no-color --src-prefix=a/ --dst-prefix=b/ "$1" "$2" -- "$3" \
     | awk '
@@ -155,8 +127,8 @@ diff_body() {
       '
 }
 
-# surface_payload <baseline> <version> <path> — the substantive diff
-# lines. EMPTY means comment-only.
+# surface_payload <baseline> <version> <path> — substantive diff lines; EMPTY
+# means comment-only.
 surface_payload() {
   local marker
   marker="$(comment_marker "$3")"
@@ -170,16 +142,13 @@ surface_payload() {
   return 0
 }
 
-# ddl_objects <baseline> <version> <path> — see the --ddl-objects usage
-# above. Exit 1 (printing nothing) whenever object existence would not
-# prove this diff applied.
+# ddl_objects <baseline> <version> <path> — see --ddl-objects above. Exit 1 with
+# no output whenever object existence would not prove the diff applied.
 ddl_objects() {
   # A cut-over DDL declares its CREATEd objects transient (si-cutover-object):
-  # they exist only until the operator renames the new half onto the
-  # canonical name and drops the old. Their absence is therefore the
-  # FINISHED state as much as the never-run one, so existence proves
-  # nothing either way — the surface stays with the operator's
-  # acknowledgement.
+  # they exist only until the operator renames them onto the canonical name, so
+  # absence is the FINISHED state as much as the never-run one. Existence proves
+  # nothing; the surface stays with the operator's acknowledgement.
   local body
   body=$(git show "$2:$3" 2>/dev/null || true)
   if grep -q '^-- si-cutover-object:' <<<"$body"; then
@@ -194,9 +163,8 @@ ddl_objects() {
       if (!substantive(line)) next
       upper = toupper(line)
       creates = (upper ~ /^CREATE (OR REPLACE )?(TABLE|MATERIALIZED VIEW|VIEW|DICTIONARY) (IF NOT EXISTS )?[A-Za-z0-9_]+\.[A-Za-z0-9_]+/)
-      # Each hunk must OPEN a new statement. A hunk that starts mid-body
-      # is a column/engine/setting edit inside an object that already
-      # exists, which existence cannot distinguish from unapplied.
+      # Each hunk must OPEN a new statement; one starting mid-body is an edit
+      # inside an existing object, which existence cannot tell from unapplied.
       if (at_hunk_start && !creates) unverifiable = 1
       at_hunk_start = 0
       if (creates) {
@@ -235,16 +203,15 @@ APPLIED="${4:-}"
 REFUTED="${5:-}"
 UNANSWERED="${6:-}"
 
-# Config surfaces a binary deploy does NOT apply. Directory prefixes are
-# git pathspecs: the trailing slash matches everything beneath them.
-# Keep in lockstep with config-apply-gate-test.sh (one fixture per entry).
+# Config surfaces a binary deploy does NOT apply. Directory prefixes are git
+# pathspecs. Keep in lockstep with config-apply-gate-test.sh (one fixture each).
 SURFACES=(
   'configs/ansible/roles/'
   'configs/ansible/inventory/'
   'configs/healthchecks/'
   'configs/prometheus/rules.r1/'
-  # r1's scrape config and its single-host Loki/promtail: installed by hand
-  # per their READMEs, never by a deploy.
+  # r1's scrape config and single-host Loki/promtail: installed by hand per
+  # their READMEs.
   'configs/prometheus/prometheus.r1.yml'
   'configs/loki/'
   'configs/alertmanager/'
@@ -271,8 +238,7 @@ if [ -n "$BASELINE" ]; then
   PREV="$BASELINE"
   echo "baseline: ${PREV} (host-reported live version)"
 else
-  # Ancestry fallback: the previous release tag = the config baseline
-  # ASSUMED live on the host.
+  # Ancestry fallback: the previous release tag is ASSUMED live on the host.
   PREV="$(git describe --tags --abbrev=0 "${VERSION}^" 2>/dev/null || true)"
   if [ -z "$PREV" ]; then
     echo "note: no release tag before ${VERSION}; skipping config-drift gate (first release / shallow clone)."
@@ -288,15 +254,12 @@ fi
 
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 
-# Subtract surfaces this deploy applied AND verified automatically. They
-# stay in SURFACES above (so the diff still SEES them, and a run that did
-# not apply them still gates on them) — they are only removed from what
-# the operator is asked to acknowledge.
-# Matching is an anchored PATH-PREFIX test, not a substring search. A
-# substring match would let a loose token ("rules") silently exempt
-# deploy/monitoring/rules/ as well as configs/prometheus/rules.r1/ —
-# quietly widening the exemption to a surface nothing applied, which is
-# the failure mode this whole gate exists to prevent.
+# Subtract surfaces this deploy applied AND verified. They stay in SURFACES (the
+# diff still SEES them, and a run that did not apply them still gates); they are
+# only removed from what the operator must acknowledge. Matching is an anchored
+# PATH-PREFIX test: a substring match would let a loose token ("rules") also
+# exempt deploy/monitoring/rules/, widening the exemption to a surface nothing
+# applied.
 AUTO_APPLIED=""
 if [ -n "$APPLIED" ] && [ -n "$CHANGED" ]; then
   remaining=""
@@ -328,12 +291,10 @@ if [ -n "$AUTO_APPLIED" ]; then
   } >>"$SUMMARY" 2>/dev/null || true
 fi
 
-# Separate the comment-only surfaces from the substantive ones. This runs
-# AFTER the [applied] subtraction, so a surface this deploy applied and
-# verified is reported as applied rather than re-judged on its text.
-#
-# Classification is per FILE and the whole set must clear: one substantive
-# file keeps the gate red for the release.
+# Separate comment-only surfaces from substantive ones. Runs AFTER the [applied]
+# subtraction, so an applied-and-verified surface is reported as applied, not
+# re-judged on its text. Classification is per FILE; one substantive file keeps
+# the gate red.
 COMMENT_ONLY=""
 if [ -n "$CHANGED" ]; then
   remaining=""
@@ -371,22 +332,19 @@ if [ -z "$CHANGED" ]; then
   exit 0
 fi
 
-# Surfaces this run PROVED unapplied by ASKING THE HOST — deploy.yml's
-# ch_ddl step found every object the file creates absent from
-# system.tables.
+# Surfaces this run PROVED unapplied by ASKING THE HOST (deploy.yml's ch_ddl step
+# found every object the file creates absent from system.tables).
 #
-# Without this list the gate cannot tell "nobody asked" from "asked, and
-# the answer was no", and a missing table read by a LEFT JOIN 500s its
-# endpoint until applied by hand. config_acknowledged=true is the
-# operator ASSERTING a surface is applied; where the host answered
-# otherwise in this same run that assertion is refuted by the run's own
-# evidence and cannot stand. Surfaces the host was never asked about
-# keep the old behaviour exactly — this NARROWS the acknowledgement to
-# the cases where it is still an open question, it does not remove it.
+# Without this list the gate cannot tell "nobody asked" from "asked, and the
+# answer was no", and a missing table behind a LEFT JOIN 500s its endpoint until
+# applied by hand. config_acknowledged=true asserts a surface is applied; where
+# the host answered otherwise in this same run, the run's own evidence refutes it.
+# Unasked surfaces behave as before, so this NARROWS the acknowledgement only
+# where it is still an open question.
 #
-# Matching is exact-path (the evidence step emits whole paths), the
-# mirror of the [applied] exemption's anchored prefix test: a loose
-# match here would refuse surfaces nobody was asked about.
+# Matching is exact-path (the evidence step emits whole paths), the mirror of the
+# [applied] anchored prefix test: a loose match would refuse surfaces nobody asked
+# about.
 # changed_in <space-separated paths> → the CHANGED paths it names, one per line.
 changed_in() {
   [ -n "$1" ] || return 0
@@ -423,9 +381,8 @@ if [ -n "$REFUTED_HERE" ]; then
   exit 1
 fi
 
-# Surfaces the same step tried to check on a host that runs ClickHouse but
-# did not answer. Silence could be hiding a refutation, so the operator's
-# assertion is held to the same bar: re-run once the host answers.
+# Surfaces the same step tried to check on a ClickHouse host that did not answer.
+# Silence could hide a refutation, so the assertion is held to the same bar.
 UNANSWERED_HERE="$(changed_in "$UNANSWERED")"
 if [ -n "$UNANSWERED_HERE" ]; then
   n=$(printf '%s\n' "$UNANSWERED_HERE" | grep -c . || true)

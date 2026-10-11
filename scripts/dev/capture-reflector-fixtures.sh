@@ -2,41 +2,27 @@
 # shellcheck disable=SC2016 # $vars inside single quotes are jq variables, not shell ones.
 # Capture real Reflector UpdateEvent fixtures from a live stellar-rpc.
 #
-# Writes a JSON fixture per matched event to
-# test/fixtures/reflector/<wasm_hash>/<ledger>_<tx>.json. Fixtures are
-# consumed by internal/sources/reflector/decode_test.go (TODO:
-# integration-tag replay path) — SDK-encoded tests in that file cover
-# the wire-format path today; these real captures become the
-# regression corpus once landed.
+# Writes one JSON fixture per matched event to
+# test/fixtures/reflector/<wasm_hash>/<ledger>_<tx>.json. Consumed by
+# internal/sources/reflector/decode_test.go (TODO: integration-tag replay);
+# SDK-encoded tests cover the wire format today, these become the regression
+# corpus once landed. Fixtures are pinned per WASM hash so old ledger ranges
+# keep decoding after the contract upgrades
+# (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 #
-# Usage:
-#   scripts/dev/capture-reflector-fixtures.sh \
-#     [-e http://127.0.0.1:8000] \
-#     [-c CALI2BYU...] \
-#     [-n 10] \
-#     [-s <start_ledger>]
+# Usage: scripts/dev/capture-reflector-fixtures.sh [-e URL] [-c CONTRACT] [-n N] [-s LEDGER]
+#   -e  stellar-rpc endpoint (default http://127.0.0.1:8000; on r1 the local
+#       admin port, remote probing needs a tunnel or VPN).
+#   -c  Reflector contract ID (default: DEX variant from VERSIONS.md; others:
+#       CAFJZQWS... CEX, CBKGPWGK... FX).
+#   -n  Max events (default 10). One update per ~5 min per variant, so 10
+#       covers ~50 min.
+#   -s  Start ledger (default latestLedger - 200); lower it for a longer window.
 #
-# Flags:
-#   -e  stellar-rpc endpoint (default: http://127.0.0.1:8000).
-#       On r1 this is the local stellar-rpc admin port.
-#   -c  Reflector contract ID (default: DEX variant from VERSIONS.md).
-#       Other variants: CAFJZQWS… (CEX), CBKGPWGK… (FX).
-#   -n  Max events to capture (default: 10). Reflector emits one
-#       update every ~5 min per variant; 10 covers ~50 min of data.
-#   -s  Start ledger (default: latestLedger - 200). Bump backwards if
-#       you need fixtures across a longer window.
+# Environment: JQ, CURL (binary paths, default jq / curl, both required);
+# WASM_HASH (directory the fixtures land under, see below).
 #
-# Environment:
-#   JQ               Path to jq binary. Default: `jq`. Required.
-#   CURL             Path to curl binary. Default: `curl`. Required.
-#
-# Prerequisites:
-#   - jq + curl on PATH.
-#   - Network path to the stellar-rpc endpoint. On r1 the local
-#     endpoint (http://127.0.0.1:8000) is always reachable; remote
-#     probing requires a tunnel or VPN.
-#
-# Output format (per fixture):
+# Output per fixture:
 #   {
 #     "contract_id":  "C…",
 #     "wasm_hash":    "…",                 -- from getLedgerEntries
@@ -46,10 +32,6 @@
 #     "topics":       ["AAAADwAA…","AAAADwAA…","AAAABQAA…"],
 #     "value":        "AAAAEAAA…"
 #   }
-#
-# See docs/architecture/ingest-pipeline.md#contract-schema-evolution for WHY fixtures
-# are pinned per WASM hash (we need to keep decoding old ledger ranges
-# after the contract upgrades).
 
 set -euo pipefail
 
@@ -79,9 +61,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 FIXTURES_ROOT="$REPO_ROOT/test/fixtures/reflector"
 mkdir -p "$FIXTURES_ROOT"
 
-# Pre-encoded Symbol("REFLECTOR") / Symbol("update") — these are the
-# same constants the decoder uses for classification. Hand-written
-# here to avoid a Go build step in a shell script; keep in sync
+# Pre-encoded Symbol("REFLECTOR") / Symbol("update"), the decoder's
+# classification constants. Hand-written to avoid a Go build step; keep in sync
 # with internal/scval/scval_test.go TestGolden_symbolBytes.
 TOPIC0='AAAADwAAAAlSRUZMRUNUT1IAAAA='
 TOPIC1='AAAADwAAAAZ1cGRhdGUAAA=='
@@ -94,7 +75,6 @@ rpc_call() {
     -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$method\",\"params\":$params}"
 }
 
-# Resolve start ledger.
 if [[ -z "$START_LEDGER" ]]; then
   latest_resp="$(rpc_call getLatestLedger '{}')"
   LATEST="$(echo "$latest_resp" | "$JQ" -r '.result.sequence')"
@@ -103,11 +83,8 @@ if [[ -z "$START_LEDGER" ]]; then
   echo "latest ledger: $LATEST → starting from $START_LEDGER"
 fi
 
-# Resolve contract WASM hash — pins the fixture to a version per
-# docs/architecture/ingest-pipeline.md#contract-schema-evolution.
-# Using a simpler approach: query getContractInfo via getLedgerEntries
-# would need an ScAddress-encoded key. For the capture script, we
-# accept a pre-supplied WASM_HASH env var so the script stays simple.
+# Pin the fixture to a contract version. Deriving the hash needs an
+# ScAddress-encoded getLedgerEntries key, so the script takes WASM_HASH instead.
 WASM_HASH="${WASM_HASH:-unknown-wasm-hash}"
 if [[ "$WASM_HASH" == "unknown-wasm-hash" ]]; then
   echo "note: WASM_HASH env var not set — fixtures will land under /unknown-wasm-hash/." >&2
@@ -116,13 +93,10 @@ fi
 OUT_DIR="$FIXTURES_ROOT/$WASM_HASH"
 mkdir -p "$OUT_DIR"
 
-# Fetch events matching REFLECTOR/update topic, scoped to the
-# contract so we don't pull the entire network's event stream.
-# Third topic slot is a wildcard — real events carry
-# topic[2] = u64 timestamp (ms), and stellar-rpc's length-aware
-# filter drops events whose topic array is longer than the filter
-# array unless the tail slot is "*" (WildCardExactOne per
-# go-stellar-sdk/protocols/rpc/get_events.go:21).
+# Events for REFLECTOR/update, scoped to the contract. The third topic slot is
+# a wildcard: real events carry topic[2] = u64 timestamp (ms), and stellar-rpc's
+# length-aware filter drops events with a longer topic array unless the tail is
+# "*" (WildCardExactOne, go-stellar-sdk/protocols/rpc/get_events.go:21).
 params="$("$JQ" -nc \
   --arg c "$CONTRACT_ID" \
   --arg t0 "$TOPIC0" \
@@ -152,9 +126,8 @@ echo "$resp" | "$JQ" -c '.result.events[]' | while read -r evt; do
   tx="$(echo "$evt" | "$JQ" -r '.txHash')"
   closed="$(echo "$evt" | "$JQ" -r '.ledgerClosedAt')"
   topics="$(echo "$evt" | "$JQ" -c '.topic // .topics')"
-  # stellar-rpc exposes `value` as a string (base64 ScVal) in the
-  # current API shape. Older protocol versions wrapped it as
-  # {xdr: "..."} — tolerate both for capture-script portability.
+  # `value` is a base64 ScVal string; older protocol versions wrapped it as
+  # {xdr: "..."}. Tolerate both.
   value="$(echo "$evt" | "$JQ" -r 'if (.value|type) == "object" then .value.xdr else .value end')"
 
   out="$OUT_DIR/${ledger}_${tx:0:12}.json"
