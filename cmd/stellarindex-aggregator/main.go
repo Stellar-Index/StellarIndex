@@ -1,9 +1,7 @@
 // Binary stellarindex-aggregator computes VWAP over the ingested canonical trade stream and writes
 // pre-aggregated results to Redis, so API requests serve from cache rather than recomputing. Its
-// workers (VWAP, triangulation, outlier filter, confidence + ADR-0019 freeze, divergence cache,
-// supply snapshots) are each driven from one orchestrator.Config field
-// (internal/aggregate/orchestrator); TOML knobs are under [aggregate] in
-// docs/reference/config/README.md.
+// workers are each driven from one orchestrator.Config field (internal/aggregate/orchestrator);
+// TOML knobs are under [aggregate] in docs/reference/config/README.md.
 //
 // VWAP is exchange-class only by default: aggregator and oracle classes would double-count or mix
 // methodologies. CAGG refresh stays Timescale-driven; the orchestrator never refreshes manually.
@@ -259,15 +257,13 @@ func run(cfgPath string, dryRun bool) error {
 	//
 	// The freeze WRITER is deliberately NOT gated on the checker: the Phase 2 confidence lifecycle
 	// (stepPhase2Freeze) runs on every scored bucket and REFUSES publication when its 3-signal AND
-	// fires. Gated on the checker, a Phase-1-off deployment would engage real freezes that write NO
-	// Redis marker, so frozen windows would serve their last value with flags.frozen absent: a stale
-	// price presented as fresh. rdb is always non-nil here, so the writer is built unconditionally.
+	// fires. Gated on the checker, a Phase-1-off deployment would engage real freezes with NO Redis
+	// marker, so frozen windows would serve a stale price as fresh. rdb is always non-nil here.
 	//
 	// ─── Price withholding ([pricing_guard]) ─────────────────────
-	// The same pair decision /v1/price serves under, built once and consulted by every
-	// customer-facing price this binary pushes (price-alert, anomaly.freeze and divergence.firing
-	// webhooks). A scam-flagged issuer or a thin market must not reach a signed delivery the API
-	// itself would refuse to publish.
+	// The same pair decision /v1/price serves under, consulted by every customer-facing price this
+	// binary pushes (price-alert, anomaly.freeze and divergence.firing webhooks). A scam-flagged
+	// issuer or a thin market must not reach a signed delivery the API itself would refuse to publish.
 	withholding := pricingguard.Gate{
 		Substance: buildAggregatorSubstanceGate(cfg.PricingGuard, store, logger),
 		Scam: pricingguard.NewScamGate(store, pricingguard.ScamGateOptions{
@@ -417,10 +413,9 @@ func run(cfgPath string, dryRun bool) error {
 	// 10^(base_decimals-quote_decimals) (aggregate.AdjustPrice). One blocking refresh so the first
 	// Tick, which runs before the cache's background loop, does not see an empty snapshot.
 	//
-	// FATAL on failure: a refresh failure keeps the last-good snapshot, but at BOOT there is none,
-	// and an empty map says "nothing is flagged" for every offender, publishing windows unnormalized
-	// (wrong by 10^(7-decimals)) into prices_1m and the aggregates that outlive the outage. A wrong
-	// price is a false statement; refusing to start is recoverable and loud.
+	// FATAL on failure: at BOOT there is no last-good snapshot, and an empty map says "nothing is
+	// flagged", publishing windows unnormalized (wrong by 10^(7-decimals)) into prices_1m and the
+	// aggregates that outlive the outage. Refusing to start is recoverable and loud.
 	decimalsLookup := newDecimalsCache(store, logger.With("component", "decimals-cache"))
 	if err := decimalsLookup.Refresh(rootCtx); err != nil {
 		return fmt.Errorf("decimals-cache initial refresh (refusing to publish unnormalized VWAP): %w", err)
@@ -568,10 +563,8 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 
 	// ─── Change-summary rollup worker ───────────────────────────
-	// Refreshes the change_summary_5m table every 5 min so every
-	// list view + delta strip on the explorer reads in O(1) rather
-	// than re-scanning prices_1m per request. See migrations/0022.
-	// Constructed above (before the dry-run check); started here.
+	// Refreshes change_summary_5m every 5 min so list views and delta strips read in O(1) instead
+	// of re-scanning prices_1m per request. Constructed above (before the dry-run check).
 	refresherWG.Add(1)
 	go func() {
 		defer worker.Recover(logger, "change-summary")
@@ -620,10 +613,9 @@ func run(cfgPath string, dryRun bool) error {
 
 	// ─── Asset volume-character rollup worker (§2) ──────────────
 	// Folds the trailing-window account-structure roll over `trades` (each trade counted on BOTH
-	// sides, folded onto canonical assets) into asset_volume_character, so /v1/assets{,/{id}} read
-	// a keyed-on-PK lookup instead of a ~4s per-request roll that tripped the request timeout and
-	// returned null on busy assets. Always on. Runs after the alias registry is installed, so its
-	// canonical fold matches the per-asset read.
+	// sides, folded onto canonical assets) into asset_volume_character, so /v1/assets{,/{id}} do a
+	// PK lookup instead of a ~4s per-request roll. Runs after the alias registry is installed, so
+	// its canonical fold matches the per-asset read.
 	assetCharRollup := assetcharacterrollup.New(store, assetcharacterrollup.Options{
 		Interval:     assetcharacterrollup.DefaultInterval,
 		StartupDelay: assetcharacterrollup.DefaultStartupDelay,
@@ -702,10 +694,8 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Freeze-recovery worker ────────────────────────
-	// Closes durable freeze rows once the Redis marker TTL elapses;
-	// without it, the freeze_events table accumulates open rows
-	// forever even after the anomaly clears. Wired only when the
-	// freeze writer itself is wired (anomaly + Redis both present).
+	// Closes durable freeze rows once the Redis marker TTL elapses, else freeze_events keeps open
+	// rows after the anomaly clears. Wired only when the freeze writer is.
 	if freezeRecovery != nil {
 		refresherWG.Add(1)
 		go func() {
@@ -795,8 +785,8 @@ func run(cfgPath string, dryRun bool) error {
 	// reboot clickhouse-server spends minutes loading metadata and this unit's After= does not name
 	// it, so one failed dial would leave the aggregator unguarded until restart.
 	//
-	// MarkEnabled seeds the sweep heartbeat before the dial, so decimals_guard_sweep_stale measures
-	// a cold boot from now and a lake-less aggregator reads "disabled", not "stale".
+	// MarkEnabled seeds the sweep heartbeat before the dial, so a lake-less aggregator reads
+	// "disabled", not "stale".
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		decimalsguard.MarkEnabled(time.Now())
 		refresherWG.Add(1)
@@ -833,10 +823,9 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Price-alert evaluator ─────────────────────────────────
-	// Off by default. When [price_alerts] enabled=true, each tick sweeps the enabled alert rows
-	// against the latest closed 1m VWAP and enqueues ACCOUNT-scoped `price.alert` deliveries (via
-	// ListWebhooksForAccount, not the global fan-out). Lives here because this binary writes
-	// prices_1m; delivery is the separate internal/customerwebhook worker in the API binary.
+	// Off by default. Each tick sweeps the enabled alert rows against the latest closed 1m VWAP and
+	// enqueues ACCOUNT-scoped `price.alert` deliveries (via ListWebhooksForAccount, not the global
+	// fan-out). Lives here because this binary writes prices_1m; delivery is the API binary's job.
 	if cfg.PriceAlerts.Enabled {
 		paStore := postgresstore.New(store.DB())
 		paWorker := pricealerts.New(
@@ -1318,14 +1307,13 @@ const maxSupplyLakeClampLedgers = clickhouse.LatestLedgerLookbackLedgers
 // time.Now(): a wall-clock stamp corrupts point-in-time supply queries.
 //
 // Resolution has two load-bearing steps:
-//  1. The chain cursor names the position, not MAX(last_ledger) over every
-//     cursor: an operator backfilling near the tip would win the max and stamp
-//     the snapshot at a ledger no component was observed at. MAX survives only
-//     as the named pre-first-run fallback.
-//  2. The lake's landed tip bounds it. ingestion_cursors leads stellar.ledgers
-//     by seconds, so an exact lookup routinely misses; resolution clamps to the
-//     newest landed ledger at or before the cursor, reading only the
-//     [maxSupplyLakeClampLedgers] below it (unbounded prunes no partition).
+//  1. The chain cursor names the position, not MAX(last_ledger) over every cursor: an operator
+//     backfilling near the tip would win the max and stamp the snapshot at a ledger no component
+//     was observed at. MAX survives only as the pre-first-run fallback.
+//  2. The lake's landed tip bounds it. ingestion_cursors leads stellar.ledgers by seconds, so an
+//     exact lookup routinely misses; resolution clamps to the newest landed ledger at or before
+//     the cursor, reading only the [maxSupplyLakeClampLedgers] below it (unbounded prunes no
+//     partition).
 //
 // Fail-closed: no cursor, no landed row within the clamp, or a lake trailing the cursor by more
 // than that, returns a retryable no_ledger error, never a wall-clock guess.

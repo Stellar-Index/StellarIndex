@@ -111,9 +111,9 @@ const (
 //	distribute_rewards (1 event):  asset
 //
 // Neither event carries an amount; it surfaces on the reward token's SEP-41 `transfer` in the SAME
-// op (event_index+1), which needs a cross-decoder join and is NOT correlated here, so the amount
-// is stored NULL rather than a misleading "0". distribute_rewards is a pool-wide announcement
-// with no user field, so it is decoded from its single event, not the buffer.
+// op (event_index+1), a cross-decoder join not done here, so the amount is stored NULL rather
+// than a misleading "0". distribute_rewards has no user field, so it is decoded from its single
+// event, not the buffer.
 const (
 	EventActionWithdrawRewards   = "withdraw_rewards"
 	EventActionDistributeRewards = "distribute_rewards"
@@ -171,11 +171,10 @@ const (
 	// canonical.Asset.SacContractID()); use aquarius.MainnetXLMSAC or canonical.XLMSacContractID.
 )
 
-// MainnetPools is the curated gated pool set (ADR-0040 mechanism 2), from the factory's
-// `query_pools()` cross-checked against lake activity. The decoder also self-registers from the
-// factory's create events, so this is a cold-start root for pools created outside the streamed
-// window. A pool missing from BOTH fail-closes and surfaces as an ADR-0033 recognition gap,
-// never silently mis-attributed.
+// MainnetPools is the curated gated pool set, from the factory's `query_pools()` cross-checked
+// against lake activity. The decoder also self-registers from the factory's create events, so
+// this is a cold-start root for pools created outside the streamed window. A pool missing from
+// BOTH fail-closes and surfaces as a recognition gap, never silently mis-attributed.
 var MainnetPools = []string{
 	"CBHCRSVX3ZZ7EGTSYMKPEFGZNWRVCSESQR3UABET4MIW52N4EVU6BIZX",
 	"CBCZGGNOEUZG4CAAE7TGTQQHETZMKUT4OIPFHHPKEUX46U4KXBBZ3GLH",
@@ -202,11 +201,8 @@ var MainnetStakeContracts = []string{
 	"CAF3UJ45ZQJP6USFUIMVMGOUETUTXEC35R2247VJYIVQBGKTKBZKNBJ3",
 	// CBBUVHCE… is deliberately absent: a bond-instrument contract whose WASM has none of the stake
 	// literals; it only shares the "bond" topic word. The 13 below are genuine per-pool stake
-	// contracts the activity snapshot missed. Evidence of identity:
-	//   - the first 11 co-occur in their pool's factory create transaction (the factory deploys
-	//     pool + stake together), paired 1:1 with a curated pool above;
-	//   - CDOXQONPND... and CDEQYRWFU... are driven by the phoenix reward keeper CBZ7M5B3Y4WW...,
-	//     which also drives the seeded stakes above.
+	// contracts: the first 11 co-occur in their pool's factory create transaction, and
+	// CDOXQONPND... and CDEQYRWFU... are driven by the phoenix reward keeper CBZ7M5B3Y4WW....
 	"CABWEFVXUB3XWYPTWFETEGJR2WRGE2ZKYYLZDLV3EBUVFMOU4ENK4DJC", // ↔ pool CBHCRSVX (factory create @51,572,026)
 	"CAIR3UPW2PEP27QZWX4XGMO65W6LJ3XCRA3F5G7Z3D52MNOVF5K5YZ56", // ↔ pool CBCZGGNO (factory create @51,572,030)
 	"CDP6DT2YU75ZMOPTTCQ563H2XZDDWHPWKRQ6N2W5LNVE5HHRSB4MMRNQ", // ↔ pool CAZ6W4WH (factory create @51,572,101)
@@ -311,11 +307,10 @@ var (
 	TopicInitTokenA = scval.MustEncodeString("XYK LP token_a") // topic[1]
 	TopicInitTokenB = scval.MustEncodeString("XYK LP token_b")
 
-	// TopicInitLPShareStaking is the per-pool STAKE contract's initialize topic[1]: it announces
-	// its LP-share token at deploy (body = one Address). It maps to NO phoenix_initialize row (that
-	// table models the pool's token slots): recognised but NOT projected, raw event kept in the
-	// soroban_events landing zone. Stake contracts are gated, so these pass Matches(); recognising
-	// the topic keeps them from counting as undecodable-but-matched blind spots in the ADR-0033
+	// TopicInitLPShareStaking is the per-pool STAKE contract's initialize topic[1] (body = one
+	// Address). It maps to NO phoenix_initialize row, which models the pool's token slots, so it
+	// is recognised but not projected. Stake contracts are gated and pass Matches(); recognising
+	// the topic keeps them from counting as undecodable-but-matched blind spots in the
 	// re-derive (reconcile.go).
 	TopicInitLPShareStaking = scval.MustEncodeString("LP Share token staking contract")
 

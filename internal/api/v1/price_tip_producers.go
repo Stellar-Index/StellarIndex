@@ -38,10 +38,9 @@ const tipProducerLinger = 30 * time.Second
 // loop and leave unbounded compute loops polling the database.
 //
 // The key is (asset, quote, window_seconds) with window_seconds CLIENT-CHOSEN in [1,60], and the
-// Hub's topic reaper cannot shed it (a live producer re-publishes every window). 512 caps the
-// worst case short of starving the DB pool; tune with [Server.SetMaxTipProducers]. A lingering
-// producer still counts, but at either global bound the oldest lingering entries are evicted, so
-// only subscribed demand can refuse a mint.
+// Hub's topic reaper cannot shed it. 512 caps the worst case short of starving the DB pool; tune
+// with [Server.SetMaxTipProducers]. At either global bound the oldest lingering entries are
+// evicted, so only subscribed demand can refuse a mint.
 const defaultMaxTipProducers = 512
 
 // defaultMaxTipProducersPerCaller caps how many producers ONE caller may have minted and still
@@ -52,9 +51,8 @@ const defaultMaxTipProducers = 512
 // callers. So each producer is charged to its minter while its registry entry lives; releasing
 // the connection does not return the slot.
 //
-// 24 sits just above the per-IP concurrent-stream cap ([config].api.max_streams_per_ip), under 5%
-// of the pool. Joining an ALREADY-RUNNING producer is never charged. Tune with
-// [Server.SetMaxTipProducersPerCaller].
+// 24 sits just above the per-IP concurrent-stream cap, under 5% of the pool. Joining an
+// ALREADY-RUNNING producer is never charged. Tune with [Server.SetMaxTipProducersPerCaller].
 const defaultMaxTipProducersPerCaller = 24
 
 // defaultMaxTipTicksPerMinute bounds the AGGREGATE compute rate of every registered producer; each
@@ -72,10 +70,10 @@ const defaultMaxTipTicksPerMinutePerCaller = defaultMaxTipProducersPerCaller * (
 // defaultTipTickConcurrency caps how many producer ticks may be inside computeTip at once.
 //
 // The tick budgets bound the AVERAGE rate, not instantaneous load: hundreds of producers can fire
-// together (a restart re-minting them, a Postgres stall releasing a backlog), each holding a pool
-// connection for its whole compute. Detached producers must not take the API's request
-// connections, so ticks queue for a slot and a tick that cannot get one within its own budget is
-// skipped. 4 leaves 21 of a 25-connection pool to requests while draining the ~102 ticks/s budget.
+// together (a restart, a Postgres stall releasing a backlog), each holding a pool connection for
+// its whole compute. Detached producers must not take the API's request connections, so ticks
+// queue for a slot and a tick that cannot get one within its own budget is skipped. 4 leaves 21 of
+// a 25-connection pool to requests while draining the ~102 ticks/s budget.
 const defaultTipTickConcurrency = 4
 
 // tipTicksPerMinute is the compute rate of a producer on a window-second
@@ -478,8 +476,7 @@ func decrementOrDelete(m map[string]int, k string, n int) {
 
 // acquire is [tipProducerRegistry.acquireFor] with no principal to charge, for in-process callers.
 // The HTTP path must always use acquireFor with a resolved caller
-// (pinned by TestTipProducerCaller_KeysOnTheRotatableBlock). In-process callers reach this form
-// and have no logger to pass.
+// (pinned by TestTipProducerCaller_KeysOnTheRotatableBlock).
 //
 //nolint:unparam // logger mirrors acquireFor's shape; only in-process
 func (r *tipProducerRegistry) acquire(
@@ -588,10 +585,9 @@ func (r *tipProducerRegistry) spawn(ctx context.Context, key tipProducerKey, p *
 
 // respawnIfLive is spawn's exit hook. A recovered panic leaves the entry live with refs>0 but
 // nothing computing, and release() only starts the linger at refs==0, so without a respawn a
-// connected subscriber would get heartbeats only. ctx.Err() != nil means the linger cancelled it
-// deliberately: never respawned. Otherwise, after [tipProducerRestartBackoff], the loop is
-// relaunched on the same context if key's entry is still THIS record. refs and the caller charge
-// are untouched.
+// connected subscriber would get heartbeats only. A cancelled ctx means the linger ended it
+// deliberately and it is never respawned; otherwise, after [tipProducerRestartBackoff], the loop
+// is relaunched if key's entry is still THIS record. refs and the caller charge are untouched.
 func (r *tipProducerRegistry) respawnIfLive(ctx context.Context, key tipProducerKey, p *tipProducer) {
 	if ctx.Err() != nil {
 		return

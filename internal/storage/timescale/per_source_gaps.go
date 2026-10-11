@@ -32,7 +32,6 @@ type GapDetectorTarget struct {
 
 	// Genesis is the first ledger at which this source could have data: the contract deploy
 	// ledger for Soroban sources, 2 for SDEX. Density is distinct / (tip - Genesis + 1).
-	// Off-chain sources with no genesis do not belong here.
 	//
 	// Literal because storage may not import internal/sources (lint-imports
 	// L/storage-below-compute); TestCatalogueGenesisLocksStepWithGapDetectorTargets pins each
@@ -57,15 +56,11 @@ type GapDetectorTarget struct {
 	// ([gapDetectorStatementTimeoutMS], 13 min).
 	ScanCadence time.Duration
 
-	// DistinctLedgerCountSQL optionally replaces the statement [Store.CountDistinctLedgers] runs.
-	// Empty (every target but soroban-events) means the generic
-	//
-	//	SELECT COUNT(DISTINCT <LedgerColumn>) FROM <Table>
-	//	 WHERE <LedgerColumn> BETWEEN $1 AND $2 [AND (<WhereFilter>)]
-	//
-	// When set it MUST be a complete statement binding $1/$2 as the inclusive ledger range and
-	// returning one bigint, because the generic query full-scans a table with no leading-`ledger`
-	// index. Interpolated verbatim, so the compile-time-only rule of Table / WhereFilter applies.
+	// DistinctLedgerCountSQL optionally replaces the generic COUNT(DISTINCT <LedgerColumn>) that
+	// [Store.CountDistinctLedgers] runs. When set it MUST be a complete statement binding $1/$2 as
+	// the inclusive ledger range and returning one bigint, because the generic query full-scans a
+	// table with no leading-`ledger` index. Interpolated verbatim, so the compile-time-only rule
+	// of Table / WhereFilter applies.
 	DistinctLedgerCountSQL string
 
 	// CloseTimeColumn names the close-time partition column of a hypertable partitioned by time
@@ -251,8 +246,7 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 }
 
 // ApplicableGapDetectorTargets drops targets whose source does not exist on this network and
-// returns the rest in scan order, logging the exclusion set once so an operator sees why a
-// target's gauges are absent.
+// returns the rest in scan order, logging the exclusion set once.
 //
 // Every Genesis is a pubnet deploy ledger, so on a test net the scan window is inverted and
 // [Store.FindPerSourceLedgerGaps] would reject it every cycle. Pubnet, and an empty or unknown
@@ -369,11 +363,8 @@ func (s *Store) MaxLedgerInWindow(ctx context.Context, target GapDetectorTarget,
 }
 
 // FindPerSourceLedgerGaps finds contiguous ledger gaps >= minGapSize in the target's hypertable
-// within [from, to]; the same shape as [FindSorobanEventsLedgerGaps], parameterised per target.
-//
-// seedLedger, when positive and below `from`, is UNION-ALLed in as a synthetic prior row so a gap
-// spanning the window boundary is still detected (see [perSourceLedgerGapsQuery]). Pass 0 for no
-// seed.
+// within [from, to]. A positive seedLedger below `from` is UNION-ALLed in as a synthetic prior row
+// so a gap spanning the window boundary is still detected (see [perSourceLedgerGapsQuery]).
 //
 // target.Table and target.LedgerColumn are interpolated into the SQL and not validated, so
 // callers MUST pass a target from [DefaultGapDetectorTargets], never user input.

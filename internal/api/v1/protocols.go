@@ -75,11 +75,10 @@ func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build fun
 
 // protoDetailRefreshLocked kicks ONE detached rebuild for key, returning the existing flight's done
 // channel when one is already up. Caller holds protoDetailMu. The rebuild runs on its own
-// background context + protocolDetailRefreshTimeout, NEVER a request deadline. A healthy build
-// replaces the entry; a non-ok build (timed out or degraded, including a FAST failure such as
-// ClickHouse down) is cached only when no HEALTHY entry exists: registry-only beats 503 for a cold
-// key, but one prewarm sweep during a ClickHouse outage must not blank every page's analytics
-// while stamping them fresh.
+// background context + protocolDetailRefreshTimeout, NEVER a request deadline. A non-ok build
+// (including a FAST failure such as ClickHouse down) is cached only when no HEALTHY entry exists:
+// registry-only beats 503 for a cold key, but a prewarm sweep during an outage must not blank
+// every page's analytics while stamping them fresh.
 func (s *Server) protoDetailRefreshLocked(key string, build func(context.Context) ProtocolDetailView) chan struct{} {
 	if ch, inflight := s.protoDetailFlight[key]; inflight {
 		return ch
@@ -276,11 +275,8 @@ type ProtocolContractsReader interface {
 }
 
 // protocolContractCounter is the OPTIONAL count-without-enumeration capability the contracts reader
-// may add; a reader without it leaves every contract_count derived from the roster.
-//
-// It exists for a protocol whose contract set dwarfs the roster paths' LIMIT 5000 (sorocredit
-// deploys one child per position): a capped roster would publish 5,000, an unenumerated one 0,
-// both wrong where an exact COUNT is cheap.
+// may add. It exists for a protocol whose contract set dwarfs the roster paths' LIMIT 5000: a
+// capped roster would publish 5,000, an unenumerated one 0, both wrong where an exact COUNT is cheap.
 type protocolContractCounter interface {
 	// CountSourceContracts returns the exact total; ok=false with a nil error means no count-only
 	// path, so the caller counts its roster.
@@ -401,11 +397,11 @@ type ProtocolEventTypeView struct {
 	Count     int64  `json:"count"`
 }
 
-// ─── Bespoke per-category analytics (the Dune-surpassing block) ──────
+// ─── Bespoke per-category analytics ──────
 //
 // ProtocolBespoke is a generic rendering container (KPIs + named time-series + named top-N tables)
-// filled with content bespoke to each protocol's category. The UI renders the three shapes
-// generically, so retuning a category's metrics is a server-side data change.
+// filled per protocol category. The UI renders the three shapes generically, so retuning a
+// category's metrics is a server-side data change.
 
 // ProtocolBespoke is the category-specific analytics block on
 // GET /v1/protocols/{name}. Absent when no bespoke reader is wired or the
@@ -1045,9 +1041,9 @@ var _ protocolLedgerAtCloseTimeReader = (*clickhouse.ExplorerReader)(nil)
 
 // protocolWindowFloor derives the raw readers' ledger cutoff AND the fast reader's day-grain
 // cutoff from ONE close_time boundary: tip's close_time minus protocolActivityWindowDays. A
-// ledger-count multiple of a nominal per-day cadence is wrong because pubnet runs well below it,
-// so the window would overshoot the published activity_window_days. Falls back to the
-// ledger-count approximation only when the reader can't resolve close_time.
+// ledger-count multiple of a nominal cadence overshoots the published activity_window_days
+// because pubnet runs below it. Falls back to that approximation only when close_time can't be
+// resolved.
 func (s *Server) protocolWindowFloor(ctx context.Context, tip uint32) (sinceLedger uint32, sinceDay time.Time) {
 	fallback := uint32(1) // whole chain inside the window
 	if tip > protocolActivityWindowLedgers {
@@ -1168,11 +1164,10 @@ func (s *Server) protocolVerdicts(ctx context.Context) (verdicts map[string]time
 	return out, true, verdictsStale
 }
 
-// protocolContractsErr returns name's registered instances in the unified wire shape:
-// soroswap_pairs for soroswap, protocol_contracts for the factory-gated sources, empty for the
-// rest. A nil reader is NOT an error (unwired is a genuine empty roster); a store read that
-// ERRORS is returned so the caller can degrade honestly instead of masking it as an empty
-// roster. protocolContracts wraps this and swallows the error to empty.
+// protocolContractsErr returns name's registered instances in the unified wire shape. A nil
+// reader is NOT an error (unwired is a genuine empty roster); a store read that ERRORS is
+// returned so the caller can degrade honestly instead of masking it as an empty roster.
+// protocolContracts wraps this and swallows the error to empty.
 func (s *Server) protocolContractsErr(ctx context.Context, name string) ([]ProtocolContractView, error) {
 	if name == "soroswap" {
 		return s.soroswapContractsErr(ctx)
@@ -1274,11 +1269,9 @@ func (s *Server) fastActivity(ctx context.Context) protocolFastActivityReader {
 		return fast
 	}
 
-	// Unsettled: probe WITHOUT holding protocolFastMu. A non-definitive answer never settles, so
-	// a wedged ClickHouse would otherwise re-probe under the lock on every call and serialise
-	// every detail build's fast-vs-raw decision behind one stuck probe. Concurrent probes may
-	// race; only a definitive answer is recorded, so the cost is a few redundant
-	// DailyActivityAvailable calls, never a wrong verdict.
+	// Unsettled: probe WITHOUT holding protocolFastMu, or a wedged ClickHouse would re-probe under
+	// the lock and serialise every detail build behind one stuck probe. Concurrent probes may race;
+	// only a definitive answer is recorded, so the cost is redundant probes, never a wrong verdict.
 	avail, definitive := fast.DailyActivityAvailable(ctx)
 	if definitive {
 		s.protocolFastMu.Lock()

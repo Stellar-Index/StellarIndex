@@ -115,15 +115,11 @@ type AssetDetail struct {
 	// catalogue, via the asset's slug. Omitted for classic rows with no catalogue entry; it backs
 	// the ?asset_class= filter.
 	Class string `json:"class,omitempty"`
-	// Sep1Status is the state of the SEP-1 overlay for this asset:
-	//   - "not_applicable" — no home-domain (native, fiat, SAC-only).
-	//   - "not_fetched"    — no fetch has been attempted for this issuer.
-	//     OURS, never a statement about the issuer.
-	//   - "verified"       — SEP-1 fetched + matching [[CURRENCIES]] entry found.
-	//   - "no_match"       — SEP-1 fetched but no matching issuer+code entry.
-	//   - "unreachable"    — a fetch was attempted and produced nothing storable (404, dead
-	//     name, TLS failure, unparseable document), or a held payload past its attestation age
-	//     whose domain is failing now. THEIRS, and the one an issuer can act on.
+	// Sep1Status is the SEP-1 overlay state: not_applicable (no home domain), not_fetched (no fetch
+	// attempted; OURS, never a statement about the issuer), verified (matching [[CURRENCIES]]
+	// entry), no_match (fetched, no matching issuer+code) or unreachable (a fetch produced nothing
+	// storable, or a held payload past its attestation age whose domain is failing now; THEIRS, and
+	// the one an issuer can act on).
 	Sep1Status string `json:"sep1_status"`
 
 	// ─── SEP-1 overlay fields (populated when Sep1Status=="verified") ─
@@ -177,12 +173,11 @@ type AssetDetail struct {
 	// self-clears when the aggregator's lockstep reconcile repairs the projection.
 	MarketCapDecimalsMismatch bool `json:"market_cap_decimals_mismatch,omitempty"`
 
-	// ListingReference / ListingValuation are a listing-sourced second opinion for a
-	// verified-catalogue asset whose market cap this index declines to publish (see
-	// asset_listing_valuation.go). They are NOT a market cap and must never be summed into one:
-	// market_cap_usd is an observed trade price past the gates, listing_valuation.value_usd is
-	// supply times a third party's figure for venues we do not observe. Present together on a
-	// published valuation; listing_valuation alone, with only a status, when the arm refuses.
+	// ListingReference / ListingValuation are a listing-sourced second opinion for a verified asset
+	// whose market cap this index declines to publish (asset_listing_valuation.go). They are NOT a
+	// market cap and must never be summed into one: value_usd is supply times a third party's
+	// figure for venues we do not observe. Present together when published; listing_valuation
+	// alone, with only a status, when the arm refuses.
 	ListingReference *AssetListingReference `json:"listing_reference,omitempty"`
 	ListingValuation *AssetListingValuation `json:"listing_valuation,omitempty"`
 
@@ -308,11 +303,10 @@ type AssetDetail struct {
 	IssuerScamReason string `json:"issuer_scam_reason,omitempty"`
 
 	// IssuerDirectoryTags / IssuerDirectoryDomain / IssuerDirectoryName mirror the third-party
-	// account_directory label for the issuer; clients should warn on malicious/unsafe/fraud/scam/
-	// hack/phishing. Display-only, except scam-class tags, which withhold dollar figures
-	// (suppressScamIssuerPricing) and demote the listing rank without touching verified status or
-	// the substance/decimals gates. Distinct from IssuerScamReason (the in-binary list).
-	// Best-effort: omitted when unlisted or the lookup fails.
+	// account_directory label for the issuer. Display-only, except scam-class tags, which withhold
+	// dollar figures (suppressScamIssuerPricing) and demote the listing rank without touching
+	// verified status or the substance/decimals gates. Distinct from IssuerScamReason (the
+	// in-binary list). Best-effort: omitted when unlisted or the lookup fails.
 	IssuerDirectoryTags   []string `json:"issuer_directory_tags,omitempty"`
 	IssuerDirectoryDomain string   `json:"issuer_directory_domain,omitempty"`
 	IssuerDirectoryName   string   `json:"issuer_directory_name,omitempty"`
@@ -323,13 +317,10 @@ type AssetDetail struct {
 	// fields it feeds (incl. market_cap_usd / fdv_usd) are missing, not absent.
 	f2ReadFailed bool
 
-	// VolumeCharacter classifies trailing-window volume by account structure:
-	//   - "market"       — honest multi-account activity (default).
-	//   - "operational"  — an issuer-side mint/redeem wrap corridor; real, but not market activity.
-	//   - "concentrated" — >90% of volume in one account pair on a market-styled pair (wash,
-	//     ping-pong, dust-bot).
-	// Analytics/display only: it does not re-rank or feed pricing or verification. Omitted when
-	// the reader is not wired.
+	// VolumeCharacter classifies trailing-window volume by account structure: "market" (default),
+	// "operational" (an issuer-side mint/redeem wrap corridor: real, but not market activity) or
+	// "concentrated" (>90% of volume in one account pair on a market-styled pair). Analytics only:
+	// it does not re-rank or feed pricing or verification. Omitted when the reader is not wired.
 	VolumeCharacter string `json:"volume_character,omitempty"`
 
 	// VolumeCharacterSignals are the account-structure signals VolumeCharacter derives from.
@@ -685,11 +676,10 @@ func isValidClassicCode(s string) bool {
 
 // handleAssetList serves GET /v1/assets; parameters are documented in the OpenAPI spec.
 //
-// Row filters are validated before dispatch. They narrow the spine before the alias fold on the
-// default and unified listings, so a filtered SAC-wrapped asset's volume_24h_usd is its classic arm
-// alone. The class-scoped catalogue listings ignore them rather than 400, because the explorer
-// sends both on every keystroke; dropped filters are named in flags.filters_ignored. With no
-// AssetReader wired it returns an empty list in the normal envelope.
+// Row filters narrow the spine before the alias fold, so a filtered SAC-wrapped asset's
+// volume_24h_usd is its classic arm alone. The class-scoped catalogue listings ignore them rather
+// than 400 (the explorer sends both on every keystroke) and name them in flags.filters_ignored.
+// With no AssetReader wired it returns an empty list in the normal envelope.
 func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	// Parse + validate query params FIRST — bad input is 400
 	// regardless of whether the backing reader is wired.
@@ -818,10 +808,8 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 const AssetsListOverfetchBy = 1
 
 // handleAssetListFromAssets serves /v1/assets when an AssetsReader is wired, projecting
-// ListAssetsExt rows into AssetDetail with the catalogue overlay.
-//
-// code + issuer push down to the indexed classic_assets columns, type narrows the spine or folds
-// to an empty page, and q substring-matches code / slug / issuer.
+// ListAssetsExt rows into AssetDetail with the catalogue overlay. code + issuer push down to the
+// indexed classic_assets columns.
 //
 // The same order must be threaded through cursor validate and encode: the observation_count_desc
 // and volume_24h_usd_desc keysets differ in shape, and the wrong one rejects a good cursor or
@@ -950,13 +938,11 @@ func (s *Server) buildAssetListPage(
 	return env, out, nil
 }
 
-// fillMarketCapsFromSupply fills market_cap and circulating_supply on listing rows where supply
-// covers the asset and a USD price exists; the base query avoids a per-row supply lookup.
-// Best-effort: it never fails the response.
+// fillMarketCapsFromSupply fills market_cap and circulating_supply on listing rows with a supply
+// reading and a USD price. Best-effort: it never fails the response.
 //
-// sourceCounts maps asset_id to the number of distinct venues behind the row's USD price. A
-// single-venue price with 24h volume below aggregate.min_market_cap_volume_usd has its market cap
-// suppressed (null, market_cap_low_liquidity=true); a missing entry is unmeasured, not suppressed.
+// sourceCounts maps asset_id to the distinct venues behind the row's price; a single-venue price
+// under aggregate.min_market_cap_volume_usd has its cap suppressed. A missing entry is unmeasured.
 func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetail, sourceCounts map[string]int) {
 	// Precise supply: the ADR-0011 observer's latest reading, bounded by [preciseSupplyMaxAge].
 	// Authoritative (includes claimable and LP-locked holdings), so preferred.
@@ -1000,12 +986,11 @@ var (
 )
 
 // latestPreciseSupply reads the supply observer's latest observation per asset, authoritative
-// because it covers all four holding domains and applies the operator's locked-set policy. A
-// missing method or read error yields nil (best-effort overlay).
+// because it covers all four holding domains and applies the locked-set policy. A missing method
+// or read error yields nil (best-effort overlay).
 //
 // Bounded by [preciseSupplyMaxAge] so a stale figure cannot outrank a disagreeing live lake
-// reading; the daily supply_1d roll-up is no substitute, as its newest bucket ages to ~27 hours.
-// Shared with the RWA read path so both use one supply preference order.
+// reading; the supply_1d roll-up is no substitute, as its newest bucket ages to ~27 hours.
 func (s *Server) latestPreciseSupply(ctx context.Context) map[string]timescale.SupplyObservation {
 	sr, ok := s.AssetsReader.(preciseSupplyReader)
 	if !ok {
@@ -1081,11 +1066,10 @@ func (s *Server) fillRowMarketCap(
 // applyConfirmedListingDecimals puts a listing row's supply divisor on the scale its price is on.
 // The row is stamped 7, but asset_price_snapshot stores a true-scale price for tokens with a
 // confirmed nonstandard_decimals_assets row, so supply / 10^7 would be off by 10^(decimals - 7).
-// It keys on the table the writer joins so price and divisor switch on one fact, and overwrites
-// `decimals` so the published divisor is the one the cap used.
+// It keys on the table the writer joins so price and divisor switch on one fact.
 //
-// The projection lags fresh or not-yet-traded Soroban tokens, so those also attempt the same
-// bounded live lake read and lockstep refusal as [Server.applyTokenDecimals].
+// The projection lags fresh Soroban tokens, so those also attempt the bounded lake read and
+// lockstep refusal of [Server.applyTokenDecimals].
 func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDetail) {
 	confirmed, hasConfirmed := s.NonstandardDecimals.Lookup(row.AssetID)
 	if hasConfirmed {
@@ -1116,12 +1100,9 @@ func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDe
 //
 // A price is allowed when any plausible backing pair (vs XLM, fiat:USD, or a declared USD peg)
 // clears the substance floor. Withheld rows lose price_usd and its change pills; raw facts stay.
-// Verdicts are cached ~60s per pair.
-//
 // Runs before fillMarketCapsFromSupply so a withheld price cannot back a market cap. A row the
-// gate could not measure (store error, deadline) is withheld too, and unmeasured lets the caller
-// stamp flags.stale (an outage, not a verdict). Under admitThin a measured-thin row keeps
-// price_usd flagged thin_market, minus its pills.
+// gate could not measure is withheld too, and unmeasured lets the caller stamp flags.stale (an
+// outage, not a verdict). Under admitThin a measured-thin row keeps price_usd flagged thin_market.
 func (s *Server) applySubstanceGateToListing(ctx context.Context, rows []AssetDetail, admitThin bool) (unmeasured bool) {
 	if s.Substance == nil {
 		return false
@@ -1218,10 +1199,9 @@ const declaredPegFXMaxAge = 7 * 24 * time.Hour
 // fillDeclaredPegPricesInListing applies [Server.fillDeclaredPegPrice] to every listing row,
 // memoising the FX lookup per fiat ticker so several pegs to one currency cost one fx_quotes read.
 //
-// Ordering is load-bearing. Run it after applySubstanceGateToListing, which nils PriceUSD for any
-// substance-failing row and would strip the fill. Run it after fillMarketCapsFromSupply, which
-// computes market_cap only for market-priced rows, so a peg-filled row keeps market_cap null:
-// only the conversion basis is published, no derived valuation. The fill never fabricates history.
+// Ordering is load-bearing: after applySubstanceGateToListing, which nils PriceUSD for a
+// substance-failing row and would strip the fill; and after fillMarketCapsFromSupply, so a
+// peg-filled row keeps market_cap null (only the conversion basis is published).
 func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []AssetDetail) {
 	refs := s.globalMarketRefs(ctx, rows)
 	if len(s.FiatPeggedClassics) == 0 && refs == nil {
@@ -1237,8 +1217,7 @@ func (s *Server) fillDeclaredPegPricesInListing(ctx context.Context, rows []Asse
 
 // fillDeclaredPegPrice fills one row's PriceUSD from the operator's declared fiat peg
 // (pricing_guard.fiat_pegged_classic_assets) only when no market-derived price survived, so a
-// market price always wins. Filled rows are stamped PriceBasis="declared_peg". This covers assets
-// like AUDD, whose dust-authored USD books the substance gate rightly withholds.
+// market price always wins. Filled rows are stamped PriceBasis="declared_peg".
 //
 // memo caches fiat ticker to resolved price within one request (nil value means looked up,
 // unavailable); pass nil on single-row paths. A vetted global ticker's market price
@@ -1444,13 +1423,11 @@ func (s *Server) endClassicSupplyFlight(done chan struct{}) {
 }
 
 // dustLiquiditySuppressed reports whether a market cap or FDV backed by sourceCount venues and
-// volume24hUSD must be suppressed as dust liquidity: negligible liquidity times a large supply
-// asserts a valuation the market cannot support.
+// volume24hUSD must be suppressed as dust liquidity.
 //
 // The rule is a single backing venue AND sub-floor volume; the AND is load-bearing. floor <= 0
 // disables the guard. Unmeasured inputs never suppress: sourceCount == 0, or a nil, unparseable or
-// non-positive volume (the plain volume reader reports a bogus "0" for pure-Soroban SEP-41
-// tokens). Only a positive, parseable, sub-floor volume is genuine dust.
+// non-positive volume (the volume reader reports a bogus "0" for pure-Soroban SEP-41 tokens).
 func dustLiquiditySuppressed(sourceCount int, volume24hUSD *string, floor float64) bool {
 	// sourceCount <= 1 proceeds: 0 is unmeasured, but a positive measured sub-floor volume is
 	// itself evidence of dust, and impersonator assets live in the unmeasured-count arm. Native
@@ -1477,12 +1454,9 @@ func dustLiquiditySuppressed(sourceCount int, volume24hUSD *string, floor float6
 // own observed trading that no market has valued anything close to it. It is the ceiling to
 // [dustLiquiditySuppressed]'s floor, which cannot see real small volume claiming a vastly larger cap.
 //
-// The ratio is days to turn over (cap / trailing-24h volume). The default line (50,000, ~137
-// years) sits an order of magnitude above the highest recognised asset, so a merely illiquid asset
-// keeps its cap. Only the claim that a market valued the asset is withheld, not the asset.
-//
-// Unmeasured inputs never suppress, mirroring the floor: a nil, unparseable or non-positive volume
-// is a data gap, not evidence of thin trading.
+// The ratio is days to turn over (cap / trailing-24h volume); the default line (50,000, ~137
+// years) sits an order of magnitude above the highest recognised asset. Unmeasured inputs never
+// suppress, mirroring the floor: a missing volume is a data gap, not evidence of thin trading.
 func capExceedsObservedTurnover(capUSD string, volume24hUSD *string, maxRatio float64) bool {
 	if maxRatio <= 0 || volume24hUSD == nil {
 		return false
@@ -1503,9 +1477,8 @@ func capExceedsObservedTurnover(capUSD string, volume24hUSD *string, maxRatio fl
 // or "" on unparseable input or a negative result. circulating is raw integer units; big.Float
 // keeps huge supplies exact (ADR-0003).
 //
-// A zero result renders "0.00", not "", to agree with [usdMarketValue] on the detail endpoint
-// (a zero-supply asset is a legitimate reading). Dust suppression is the caller's job
-// ([Server.fillMarketCapsFromSupply]), so this stays a pure value computer.
+// A zero result renders "0.00", not "", to agree with [usdMarketValue] on the detail endpoint.
+// Dust suppression is the caller's job ([Server.fillMarketCapsFromSupply]).
 func computeMarketCapUSD(circRaw, priceRaw string, decimals int) string {
 	circ, ok := new(big.Float).SetPrec(128).SetString(circRaw)
 	if !ok {
@@ -1630,11 +1603,9 @@ var _ sep1ImagesReader = (*timescale.Store)(nil)
 // cachedSep1Images returns the SEP-1 logo map ([buildSep1ImageMap] -> safe image URL) built from
 // every verified issuer's cached payload.
 //
-// It is stale-while-revalidate: the caller gets the cached map immediately and a refresh runs
-// behind it on a detached context once past [sep1ImagesTTL]. Inline refresh would make one request
-// wait for the whole scan at every expiry, and a cancelled scan would not advance sep1ImagesAt.
-// Logos are decoration, so every failure degrades to "no logo". It returns nil when no reader
-// exposing AllSep1Images is wired.
+// Stale-while-revalidate: the caller gets the cached map and a refresh runs behind it on a
+// detached context once past [sep1ImagesTTL]; inline refresh would make one request wait for the
+// whole scan at every expiry. Every failure degrades to "no logo". Nil without an AllSep1Images reader.
 func (s *Server) cachedSep1Images(ctx context.Context) map[string]string {
 	reader, ok := s.Sep1Cache.(sep1ImagesReader)
 	if !ok {
@@ -1717,11 +1688,8 @@ func (s *Server) endSep1ImagesFlight(done chan struct{}) {
 }
 
 // PrewarmSep1Images fills the SEP-1 logo map out of band so the first /v1/assets after a deploy
-// does not render fallback avatars.
-//
-// A prewarm must hit the same cache slot as the handler. That holds structurally: the map is one
-// keyless process-wide entry, and this calls the same [Server.readSep1Images] as the handler path.
-// Best-effort: no reader, no capability or a failed scan leaves the cache as it was.
+// does not render fallback avatars. It hits the handler's cache slot (one keyless process-wide
+// entry, same [Server.readSep1Images]). Best-effort: a failed scan leaves the cache as it was.
 func (s *Server) PrewarmSep1Images(ctx context.Context) {
 	reader, ok := s.Sep1Cache.(sep1ImagesReader)
 	if !ok {
@@ -1861,13 +1829,9 @@ func normaliseAssetClass(raw string) string {
 // verified-currency catalogue: cross-chain identities (USDC the currency, GBP the fiat), distinct
 // from classic_assets' per-issuer rows.
 //
-// Rows have asset_id = slug (routed by /v1/assets/{slug} to GlobalAssetView) and type = "global",
-// with no issuer / contract_id / home_domain / sep1_status; consumers discriminate wire shape on
-// that absence. market_cap_usd is filled for fiat via fxHistory, null otherwise (no supply data).
-//
-// The class is the query: no row filter narrows it. `filters` only names the ignored ones in
-// `flags.filters_ignored`, because the explorer sends them on every keystroke and a 400 would
-// break it.
+// Rows have asset_id = slug (routed to GlobalAssetView) and type = "global", with no issuer /
+// contract_id / home_domain / sep1_status; consumers discriminate wire shape on that absence.
+// The class is the query: `filters` only names the ignored row filters in `flags.filters_ignored`.
 func (s *Server) handleAssetListFromCatalogue(
 	w http.ResponseWriter, r *http.Request,
 	class string, filters assetListFilters, limit int, cursor string,
@@ -2003,12 +1967,9 @@ func catalogueRowImage(vc *currency.VerifiedCurrency, images map[string]string) 
 
 // writeCataloguePage ranks the rows by market cap, paginates them and writes the envelope. The
 // cursor names the slugs already served rather than an offset: caps move between requests, so an
-// offset into a re-ranked list duplicates or skips rows, while "the rest, ranked now" does
-// neither. The catalogue is a few dozen rows, which bounds the cursor.
-//
-// Rows are filled BEFORE ranking and slicing ([Server.fillAndRankCatalogueRows]). `flags` is
-// carried onto every page including the empty one, since a past-the-end page dropped the row
-// filters just the same.
+// offset into a re-ranked list duplicates or skips rows. The catalogue is a few dozen rows, which
+// bounds the cursor. Rows are filled BEFORE ranking ([Server.fillAndRankCatalogueRows]), and
+// `flags` rides on every page including the empty one.
 func (s *Server) writeCataloguePage(
 	w http.ResponseWriter, r *http.Request,
 	rows []AssetDetail, limit int, cursor string, flags Flags,
@@ -2102,10 +2063,8 @@ func (s *Server) fillAndRankCatalogueRows(ctx context.Context, rows []AssetDetai
 
 // fillCataloguePricesForPage resolves the headline USD price for each catalogue row through
 // buildGlobalAssetView's three-tier fallback chain, so listing rows match the single-asset view.
-//
-// Each lookup is a point read on prices_1m / the triangulated FX cache; the fan-out is bounded and
-// parallel under the request context. Rows that already carry a price are skipped, and market cap
-// is adopted only when the row has none (fiat rows are pre-filled).
+// Each lookup is a point read on prices_1m / the triangulated FX cache, bounded and parallel.
+// Rows that already carry a price are skipped; market cap is adopted only when the row has none.
 func (s *Server) fillCataloguePricesForPage(ctx context.Context, page []AssetDetail) {
 	if s.VerifiedCurrencies == nil {
 		return
@@ -2138,11 +2097,9 @@ func (s *Server) catalogueRowPricing(ctx context.Context, vc *currency.VerifiedC
 }
 
 // onChainListingPriceUSD returns the on-chain USD price the /v1/assets listing shows for assetID,
-// or nil when no reader is wired, the row is absent or it carries no price. It prices Stellar-only
-// verified tokens the global CEX/aggregator tier misses.
-//
-// The price is held to the same substance gate as the classic listing row and the detail page
-// (fail closed), so a dust market cannot price a catalogue row that /v1/price withholds.
+// or nil when no reader is wired, the row is absent or it carries no price. The price passes the
+// same fail-closed substance gate as the classic row, so a dust market cannot price a catalogue
+// row that /v1/price withholds.
 func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *string {
 	if s.AssetsReader == nil || assetID == "" {
 		return nil
@@ -2198,11 +2155,8 @@ func projectCatalogueRow(vc *currency.VerifiedCurrency) AssetDetail {
 }
 
 // sortAssetDetailsByMarketCapDesc sorts rows in place by market_cap_usd descending; an absent cap
-// sinks to the bottom, keeping source order among them (stable sort). The classic path orders in
-// SQL instead.
-//
-// A zero cap ranks as absent: computeMarketCapUSD emits "0.00" for a zero-supply asset, which is
-// no evidence of size that an unknown one lacks.
+// sinks to the bottom in source order (stable sort). A zero cap ranks as absent: "0.00" for a
+// zero-supply asset is no evidence of size.
 func sortAssetDetailsByMarketCapDesc(rows []AssetDetail) {
 	sort.SliceStable(rows, func(i, j int) bool {
 		ai := rankableMarketCap(rows[i].MarketCapUSD)
@@ -2251,9 +2205,9 @@ func bigFloatFromOptionalString(s *string) *big.Float {
 //   - "classic:<inner>"     -> classic phase via ListAssetsExt; inner is the volume cursor.
 //   - "classic:"            -> classic phase fresh start (catalogue exhausted).
 //
-// A page never spans phases (mixed pages would break the single ordering predicate); a catalogue
-// tail shorter than `limit` is returned alone with a "classic:" next cursor. `filters` narrows
-// BOTH phases, since the catalogue suppresses the classic twins of rows it serves.
+// A page never spans phases (mixed pages would break the single ordering predicate); a short
+// catalogue tail is returned alone with a "classic:" next cursor. `filters` narrows BOTH phases,
+// since the catalogue suppresses the classic twins of rows it serves.
 func (s *Server) handleAssetListUnified(
 	w http.ResponseWriter, r *http.Request,
 	filters assetListFilters, limit int, cursor string,
@@ -2416,14 +2370,10 @@ func (s *Server) fetchClassicUnifiedRows(
 		// Without Q the explorer's search box would round-trip to the
 		// same page.
 		Q: filters.q,
-		// Row filters push down to the spine as on the default listing. They narrow BEFORE
-		// foldAliasTwins, so under `type=classic` a SAC-wrapped asset's row carries its
-		// classic-arm volume alone (the SAC twin is excluded, nothing to merge); that is the
-		// documented contract in the OpenAPI `type` parameter.
-		//
-		// Pushdown rather than fold-then-filter: filtering after the fold would fetch the
-		// unfiltered page and drop rows in Go, an unbounded spine scan for a short page. `code` /
-		// `issuer` / `q` are indexed classic_assets columns.
+		// Row filters push down to the spine as on the default listing, BEFORE foldAliasTwins, so
+		// under `type=classic` a SAC-wrapped asset's row carries its classic-arm volume alone (the
+		// documented OpenAPI contract). Fold-then-filter would fetch the unfiltered page and drop
+		// rows in Go, an unbounded spine scan for a short page.
 		Code:   filters.code,
 		Issuer: filters.issuer,
 		Type:   filters.typ,
@@ -2451,13 +2401,11 @@ func (s *Server) fetchClassicUnifiedRows(
 		out = append(out, assetDetailFromAssetRow(row))
 	}
 	// Alias-fold FIRST: collapse a SAC-form row into its canonical classic/native row before
-	// catalogue twin suppression, so the SAC volume folds onto the classic twin the catalogue phase
-	// represents and "USDC shows twice" cannot happen.
+	// catalogue twin suppression, so "USDC shows twice" cannot happen.
 	//
 	// NOT under type=soroban: the fold drops an alias row whose canonical primary is absent from the
 	// page, and that predicate excludes every canonical classic row, so the contract arm would come
-	// back empty. Skipping loses nothing, since the arm the fold merges into is the one the caller
-	// filtered out.
+	// back empty. Skipping loses nothing: the arm it merges into was filtered out.
 	var mergedAliases map[string]struct{}
 	if filters.typ != "soroban" {
 		out, mergedAliases = s.foldAliasTwins(out)
@@ -2474,14 +2422,12 @@ func (s *Server) fetchClassicUnifiedRows(
 	// AFTER the gate (which would strip it) and the market-cap fill (so no valuation derives from
 	// it); see fillDeclaredPegPricesInListing's ordering contract.
 	s.fillDeclaredPegPricesInListing(r.Context(), out)
-	// Curated issuer label (account_directory), one batch query for the page's issuers. Display
-	// only except the scam-class tags, which withhold the row's price and market cap
-	// (suppressScamIssuerPricing).
+	// Curated issuer label (account_directory), one batch query per page. Scam-class tags withhold
+	// the row's price and market cap (suppressScamIssuerPricing).
 	//
-	// BEFORE the listing-valuation arm: that arm refuses scam-tagged issuers and reads the tags
-	// from a field only this call populates; run first, its refusal would be dead and it would
-	// publish a dollar figure for a flagged issuer beneath a nulled price_usd. Every price producer
-	// runs above this line, so none can undo the suppression.
+	// BEFORE the listing-valuation arm: that arm reads the scam tags from a field only this call
+	// populates; run first, it would publish a dollar figure for a flagged issuer beneath a nulled
+	// price_usd. Every price producer runs above this line, so none can undo the suppression.
 	s.fillIssuerDirectoryTags(r.Context(), out)
 	settleListingThinRows(out)
 	// LAST among the valuation producers: it reads the outcome of every one above it (served cap,
@@ -2494,8 +2440,7 @@ func (s *Server) fetchClassicUnifiedRows(
 	// `hasMore` alone, NOT `hasMore && len(out) > 0`: `out` shrinks after the query (twin
 	// suppression, alias folding), and gating on it would emit no cursor for a page whose rows all
 	// folded away, reading as end-of-pagination with rows unserved. The cursor comes from the RAW
-	// last row, which exists whenever hasMore is true. Short pages are inherent to post-query
-	// folding; a top-up refetch is not worth the weight.
+	// last row, which exists whenever hasMore is true.
 	if hasMore {
 		// Cursor shape <rank_tier>:<sort_vol_or_blank>:<asset_id> encodes exactly what the ORDER BY
 		// ranks on (rank tier, then the concentration-adjusted SortVolume24hUSD, not the raw
@@ -2542,12 +2487,9 @@ func normaliseAssetIDInput(raw string) string {
 //
 // Dispatch: a path parameter matching a verified-currency slug (case-insensitive) routes to
 // [handleGlobalAsset]; otherwise it parses as a canonical asset_id (native | CODE-G... | C... |
-// fiat:CODE) and serves the per-Stellar-asset view. Slug lookup runs first; canonical ids have
-// anchored prefixes, so only "xlm" collides.
-//
-// /v1/assets/XLM serves GlobalAssetView (no asset_id) while /v1/assets/native serves AssetDetail;
-// that dual-shape contract is documented, and clients discriminate on wire shape. The slug branch
-// short-circuits first, so normalizeXLMAliases never runs for "XLM".
+// fiat:CODE). Slug lookup runs first; canonical ids have anchored prefixes, so only "xlm" collides:
+// /v1/assets/XLM serves GlobalAssetView while /v1/assets/native serves AssetDetail (documented;
+// clients discriminate on wire shape), and normalizeXLMAliases never runs for "XLM".
 func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	rawID := normaliseAssetIDInput(r.PathValue("asset_id"))
 
@@ -2669,13 +2611,13 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	withholdPriceSeriesWhenUnpriced(&detail)
 	clearThinWhenUnpriced(&detail)
 
-	// Listing-priced valuation, LAST like the listing paths' call, since it reads what every
-	// producer and suppressor left to decide whether a hole needs filling. The figure lands in
-	// `listing_valuation` under its own provenance and gives the row no market cap.
+	// Listing-priced valuation, LAST: it reads what every producer and suppressor left to decide
+	// whether a hole needs filling. The figure lands in `listing_valuation` under its own
+	// provenance and gives the row no market cap.
 	//
-	// The slice round-trip lets one implementation serve both surfaces. This path's supply comes
-	// from asset_supply_history, never the lake's flow totals, so valuing what the handler holds
-	// would price only trustline-visible tokens; applyListingValuations does the lake read itself.
+	// This path's supply comes from asset_supply_history, never the lake's flow totals, so valuing
+	// what the handler holds would price only trustline-visible tokens; applyListingValuations
+	// does the lake read itself.
 	listingRows := []AssetDetail{detail}
 	s.applyListingValuations(ctx, listingRows)
 	detail = listingRows[0]
@@ -2756,9 +2698,8 @@ func (s *Server) resolveAssetDetail(w http.ResponseWriter, r *http.Request, pars
 // lake's contract-instance METADATA. Classic and native are 7 by protocol.
 //
 // It is also the lockstep check between the two decimals resolvers: detail.Decimals divides supply
-// for market_cap_usd / fdv_usd, while the USD price was normalised through the
-// `nonstandard_decimals_assets` projection. Invariant: projection row present <=> lake decimals
-// != 7, and equal when present.
+// while the USD price was normalised through `nonstandard_decimals_assets`. Invariant: projection
+// row present <=> lake decimals != 7, and equal when present.
 //
 //   - lake readable, projection agrees: serve the lake value.
 //   - lake readable, projection DISAGREES: serve the lake value but flag MarketCapDecimalsMismatch
@@ -3180,14 +3121,12 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 // applySep1Overlay attaches the issuer's cached SEP-1 metadata (`issuers.sep1_payload`, filled by
 // the `sep1-refresh` cron) to detail and sets `sep1_status` to `verified` (payload matched a
 // [[CURRENCIES]] entry), `no_match`, `not_fetched` (no payload yet) or `not_applicable` (no
-// issuer). It never fetches SEP-1 live: a live HTTPS fetch per uncached request dominated
-// /v1/assets/{id} p95.
+// issuer). It never fetches SEP-1 live: a live HTTPS fetch per uncached request dominated p95.
 //
-// sep1StatusForNoPayload separates two opposite findings for an issuer with no payload.
-// `not_fetched` is ours: nothing has run, or only runs a systemic outage voided. `unreachable` is
-// theirs: the domain was reached and served nothing storable. Conflating them hides the one
-// finding an issuer can act on. With no fetch-state reader wired it falls back to `not_fetched`,
-// which claims nothing about the issuer.
+// sep1StatusForNoPayload separates two opposite findings for an issuer with no payload:
+// `not_fetched` is ours (nothing has run, or only runs a systemic outage voided), `unreachable` is
+// theirs (the domain was reached and served nothing storable). Conflating them hides the one
+// finding an issuer can act on. Without a fetch-state reader it falls back to `not_fetched`.
 func (s *Server) sep1StatusForNoPayload(ctx context.Context, issuer string) string {
 	rd, ok := s.Sep1Cache.(Sep1FetchStateReader)
 	if !ok {
@@ -3352,13 +3291,13 @@ func findMatchingCachedCurrency(sep *timescale.IssuerSep1Cached, asset canonical
 //
 // Two checks: a scheme allow-list (refuses javascript:, data:, file:, blob:), and refusal of
 // attribute-breakout characters (`"`, `'`, `<`, `>`, backtick, whitespace/control bytes) that
-// would let a naive non-escaping template (`<img src="` + url + `">`) break out.
+// would let a naive non-escaping template break out.
 //
 // It deliberately does NOT validate the HOST: a hostile issuer can still point a viewer at a
 // private address (client-side SSRF), which the explorer closes with `isSafePublicImageUrl`
-// (web/explorer/src/lib/safe-domain.ts) and third-party consumers must replicate. Nor is it an
-// escaping substitute: `name` and `description` come from the same untrusted stellar.toml. The
-// image is never fetched, as that would make every catalogue read call an issuer-chosen host.
+// (web/explorer/src/lib/safe-domain.ts) and third-party consumers must replicate. It is no
+// escaping substitute either: `name` and `description` come from the same untrusted stellar.toml.
+// The image is never fetched, which would call an issuer-chosen host on every catalogue read.
 func isSafeImageURL(s string) bool {
 	if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") {
 		return false
@@ -3516,11 +3455,10 @@ func (s *Server) normalizeCatalogueReadUSDByID(value, assetID string) (string, b
 // [Server.normalizeCatalogueUSD] plus the decision of whether the value was rounded before the
 // correction (needing the precision floor) or effectively after it.
 //
-// The value answers that itself: ROUND(x, n)::text carries exactly n fraction places, so a string
-// with at least catalogueUSDRoundDigits + k places (correction 10^k) is already corrected at full
-// precision and needs no floor. A shorter one was rounded on the raw scale and keeps the
-// fail-closed floor, so a tiny 18-decimals price is withheld rather than published as exactly 10
-// USD. An asset with no confirmed row passes through byte-identical.
+// ROUND(x, n)::text carries exactly n fraction places, so a string with at least
+// catalogueUSDRoundDigits + k places (correction 10^k) is already corrected at full precision.
+// A shorter one was rounded on the raw scale and keeps the fail-closed floor, so a tiny
+// 18-decimals price is withheld rather than published as exactly 10 USD.
 func (s *Server) normalizeCatalogueReadUSD(value string, asset canonical.Asset) (string, bool) {
 	scaleUp := aggregate.ResolveDecimals(s.NonstandardDecimals, asset) - aggregate.StandardDecimals
 	roundedAfter := scaleUp > 0 && decimalFractionPlaces(value) >= catalogueUSDRoundDigits+scaleUp
@@ -3539,16 +3477,12 @@ func decimalFractionPlaces(v string) int {
 }
 
 // priceSeriesPublishable is the one rule for whether a payload may carry a derived price-over-time
-// claim: a sparkline, a price_history_* series, or an all-time high.
-//
-//   - PriceUSD must be non-nil, which already covers rows withheld by the substance gate or
-//     scam-issuer suppression.
-//   - The row must not be a declared-peg or global-market fill. Its headline comes from outside
-//     its own Stellar market, so charting that market's history beside it states a provenance the
-//     price lacks, and that market is the dust the substance gate refused.
-//
-// It is shared with [withholdPriceSeriesWhenUnpriced] so the detail page cannot serve a series
-// the listing declined to draw.
+// claim (sparkline, price_history_* series, all-time high). PriceUSD must be non-nil, which covers
+// rows withheld by the substance gate or scam-issuer suppression. The row must not be a
+// declared-peg or global-market fill: charting its own Stellar market beside a headline from
+// outside it states a provenance the price lacks, and that market is the dust the gate refused.
+// Shared with [withholdPriceSeriesWhenUnpriced] so the detail page cannot serve a series the
+// listing declined to draw.
 func priceSeriesPublishable(d *AssetDetail) bool {
 	if d == nil {
 		return false
@@ -3608,9 +3542,9 @@ func (s *Server) suppressCatalogueTwins(rows []AssetDetail) []AssetDetail {
 // appears once. The listing SQL joins literal asset_ids, so a USDC-SAC row would otherwise surface
 // beside classic USDC even though AliasRegistry unifies them everywhere else.
 //
-// The canonical id survives and the alias's trailing-24h volume and trade count aggregate onto it.
-// Price, supply and change stay the canonical form's own: the SAC pool is the thin fallback, never
-// the headline (canonical.AssetAliases's SAC-last money-safety invariant).
+// The alias's trailing-24h volume and trade count aggregate onto the canonical id. Price, supply
+// and change stay the canonical form's own: the SAC pool is the thin fallback, never the headline
+// (canonical.AssetAliases's SAC-last money-safety invariant).
 //
 // Runs before suppressCatalogueTwins so a verified currency's canonical row receives its SAC volume
 // first. The page is ranked on unfolded per-arm volume, so a Soroban-heavy wrapper can outrank its
@@ -3804,15 +3738,13 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 
 // mergeContractArmVolume adds a catalogue entry's SAC wrapper's trailing-24h volume and trade count
 // onto its classic twin row, so the catalogue row publishes classic + contract, not the classic arm
-// alone. This is not new money: foldAliasTwins merges the wrapper onto the classic twin, then
-// suppressCatalogueTwins discards that row in favour of the catalogue row, which would otherwise
-// under-report the whole contract arm.
+// alone. foldAliasTwins merges the wrapper onto the classic twin, then suppressCatalogueTwins
+// discards that row for the catalogue row, which would otherwise under-report the contract arm.
 //
 // Classic issuance only (native XLM has no classic_assets row), and SAC forms only: the alias class
 // also holds `crypto:XLM`, a disjoint off-chain CEX population that must not enter an on-Stellar
-// figure. GetAssetByAssetID is used rather than the listing reader because a wrapper has no issuer
-// to filter on. Only the additive activity counters are taken (mergeAliasVolume); price, changes
-// and supply stay the classic form's own (SAC-last invariant).
+// figure. GetAssetByAssetID is used because a wrapper has no issuer to filter on. Only the additive
+// counters are taken (mergeAliasVolume); price, changes and supply stay the classic form's own.
 func (s *Server) mergeContractArmVolume(ctx context.Context, dst *AssetDetail, assetID string) {
 	s.mergeContractArmVolumeExcept(ctx, dst, assetID, nil)
 }
@@ -3919,13 +3851,11 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 // carryTwinIssuerVerdict moves the twin's issuer verdict (curated scam reason and directory labels)
 // onto the catalogue row, then re-applies the price suppression it carries.
 //
-// A catalogue row has no issuer, so `type: "global"` rows stay issuer-less on the wire and
-// fillIssuerDirectoryTags skips them; copying the twin's G-address would break that discriminator,
-// carrying the answer does not. It is not redundant with the twin's own suppression:
-// fillCataloguePricesForPage fills price_usd / market_cap_usd from the global tier first, which
-// mergeTwinStats' fill-only-if-nil merge leaves standing, so a flagged issuer's verified currency
-// would serve a price while the classic row and detail page carry null. Labels ride along because
-// a silent row reads as "no data".
+// `type: "global"` rows stay issuer-less on the wire, so the twin's G-address is not copied, only
+// the answer. It is not redundant with the twin's own suppression: fillCataloguePricesForPage
+// fills price_usd / market_cap_usd from the global tier first, which mergeTwinStats' fill-only-if-
+// nil merge leaves standing, so a flagged issuer's currency would serve a price while the classic
+// row and detail page carry null. Labels ride along because a silent row reads as "no data".
 func carryTwinIssuerVerdict(dst *AssetDetail, twin AssetDetail) {
 	if twin.IssuerScamReason != "" {
 		dst.IssuerScamReason = twin.IssuerScamReason

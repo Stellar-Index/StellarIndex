@@ -37,9 +37,8 @@ const explorerReadTimeout = 8 * time.Second
 // ctx, not r.Context(): the driver often returns its own cancellation error that does not unwrap
 // to context.DeadlineExceeded, so the context itself is the reliable signal.
 //
-// A 1:1 mirror of v1's handlerTimedOut (envelope.go), which this package cannot import (cycle).
-// Keep the two in sync, including recording a true verdict for usage metering, which makes the
-// read billable.
+// Mirrors v1's handlerTimedOut (envelope.go), which this package cannot import (cycle). Keep the
+// two in sync, including recording a true verdict for usage metering, which makes the read billable.
 func readTimedOut(callCtx context.Context, err error) bool {
 	timedOut := errors.Is(err, context.DeadlineExceeded) ||
 		callCtx.Err() == context.DeadlineExceeded
@@ -135,12 +134,9 @@ const (
 	retryAfterDependencyDown = "30"
 )
 
-// ExplorerReader is the seam the explorer endpoints (ADR-0038) read the certified ClickHouse lake
-// through (the full chain to genesis). *clickhouse.ExplorerReader satisfies it; nil disables the
-// endpoints (503).
-//
-// It is also the read seam behind a few v1 handlers outside this package (SAC resolution, lending
-// TVL, liquidity-pool reserves); v1 aliases its own ExplorerReader to this type.
+// ExplorerReader is the seam the explorer endpoints read the certified ClickHouse lake through
+// (the full chain to genesis). *clickhouse.ExplorerReader satisfies it; nil disables the endpoints
+// (503). A few v1 handlers outside this package also read through it; v1 aliases it.
 type ExplorerReader interface {
 	RecentLedgers(ctx context.Context, limit int, beforeSeq uint32) ([]clickhouse.LedgerHeader, error)
 	LedgerBySeq(ctx context.Context, seq uint32) (clickhouse.LedgerHeader, bool, error)
@@ -259,8 +255,7 @@ type ContractsReader interface {
 // registers its exported methods on the mux.
 //
 // Response writing and the cross-cutting reads (LookupUSDPrice, IsKnownSAC, LakeWatermark,
-// ParseWindowDays) are injected function values, not imports of package v1, which would cycle.
-// Each mirrors a v1 helper 1:1; see server.go for the wiring.
+// ParseWindowDays) are injected function values, since importing package v1 would cycle.
 type Handler struct {
 	Reader             ExplorerReader
 	Logger             *slog.Logger

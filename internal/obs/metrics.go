@@ -238,10 +238,7 @@ func registerAppMetricsTail() {
 		VerifyArchiveCheckpointsTotal,
 		VerifyArchiveMismatchesTotal,
 
-		// Passkey sign-in refusal counter, registered here rather than
-		// beside its AdminAuditWriteFailuresTotal neighbour in
-		// [registerAppMetrics] for the same funlen reason as
-		// SourceUnrepresentableSymbolsTotal below.
+		// Passkey sign-in refusal counter; registered here to keep registerAppMetrics under funlen.
 		PasskeyLoginRefusalsTotal,
 		PasskeyCredentialChangesTotal,
 
@@ -252,30 +249,20 @@ func registerAppMetricsTail() {
 		DivergencePairQuorumMet,
 		DivergenceMaxAbsFraction,
 		DivergencePairsOver,
-		// Readiness-check gauge — the only alertable signal
-		// ClickHouse has, since it is the one dependency on r1 with no
-		// Prometheus exporter of its own.
+		// Readiness-check gauge: the only alertable signal for ClickHouse, which has no exporter.
 		DependencyUp,
 
-		// Scam-gate directory-lookup fail-open counter, registered
-		// here rather than beside its PriceServeScamWithheldTotal neighbour
-		// in [registerAppMetrics] for the same funlen reason as
-		// SourceUnrepresentableSymbolsTotal below.
+		// Scam-gate directory-lookup fail-open counter; registered here for the funlen ceiling.
 		ScamGateLookupFailuresTotal,
 
 		// Belongs beside SourceUnknownSymbolsTotal; registered here because registerAppMetrics sits on
 		// the funlen ceiling (docs/contributing/add-metric.md). TestHandler_ExposesMetrics scrapes for it.
 		SourceUnrepresentableSymbolsTotal,
 
-		// Served-tier shutdown-loss counter; the Postgres twin of
-		// ChLiveSinkLedgersTotal{outcome="dropped"}, registered here for
-		// the same funlen reason as its neighbour above.
+		// Served-tier shutdown-loss counter, the Postgres twin of ChLiveSinkLedgersTotal{outcome="dropped"}.
 		SinkUndrainedRowsTotal,
 
-		// Aggregator catalogue/allow-list gap gauge, registered here
-		// rather than beside its DiscoveryRecordFailuresTotal neighbour in
-		// [registerAppMetrics] for the same funlen reason as
-		// SourceUnrepresentableSymbolsTotal above.
+		// Aggregator catalogue/allow-list gap gauge; registered here for the funlen ceiling.
 		AggregatorCatalogueTickersSkipped,
 
 		// Chainlink decimals()-verify fail-open counter, registered here rather than beside
@@ -284,10 +271,7 @@ func registerAppMetricsTail() {
 		ChainlinkFeedPollsTotal,
 		ChainlinkFeedLastSuccessUnix,
 
-		// Dispatcher-level counters, registered here rather than
-		// beside their SourceDecodeErrorsTotal neighbour in
-		// [registerAppMetrics] for the same funlen reason as
-		// SourceUnrepresentableSymbolsTotal above.
+		// Dispatcher-level counters; registered here for the funlen ceiling.
 		DispatcherTxReadErrorsTotal,
 		DispatcherTxEventReadErrorsTotal,
 		DispatcherEntryMetaUnsupportedTotal,
@@ -498,10 +482,8 @@ func seedBoundedLabelSeries() {
 	} {
 		LoginCodeLockoutErrorsTotal.WithLabelValues(op)
 	}
-	// PRV-2: the magic-link retention sweep's single fail-soft path.
-	// Seeded so a background janitor that has never failed and one that
-	// emits no series are distinguishable — same reasoning as the
-	// login-code lockout reaper above.
+	// The magic-link retention sweep's single fail-soft path, seeded so a janitor that has never
+	// failed is distinguishable from one emitting no series.
 	for _, op := range []string{MagicLinkTokenOpSweep} {
 		MagicLinkTokenErrorsTotal.WithLabelValues(op)
 	}
@@ -810,16 +792,13 @@ var IngestGapDetectorTip = prometheus.NewGauge(
 	},
 )
 
-// IngestGapDetectorDurationSeconds measures detector-cycle latency.
-// Operators chart `outcome=ok` p95/p99 separately from `error`
-// outcomes (see wave-100 obstest patterns).
+// IngestGapDetectorDurationSeconds measures detector-cycle latency; chart `outcome=ok` p95/p99
+// separately from `error`.
 var IngestGapDetectorDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name: "stellarindex_ingest_gap_detector_duration_seconds",
 		Help: "Wall-clock duration of one data-gap detector cycle, by (source, table, outcome). Buckets extend to 600s because soroban_events scans on r1 measure ~300s against ~50M distinct ledgers.",
-		// Extended buckets to 600 because the soroban_events scan on
-		// r1 is ~300s; the original 60s cap put every successful
-		// scan in the overflow bucket.
+		// Buckets reach 600s because the soroban_events scan takes ~300s.
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600},
 	},
 	[]string{"source", "table", "outcome"},
@@ -952,7 +931,7 @@ var SourceLastEventUnix = prometheus.NewGaugeVec(
 
 // SourceLastInsertUnix stamps the latest trade row actually inserted per source (a generation-guarded
 // corrective UPDATE does not count). Diverging from SourceLastEventUnix flags a stuck cursor or replay
-// loop, as seen on r1 (157 SDEX insert attempts/min, all duplicates, max(ts) 11h old).
+// loop that keeps attempting duplicate inserts.
 var SourceLastInsertUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_source_last_insert_unix",
@@ -2011,7 +1990,7 @@ var LoginCodeLockoutErrorsTotal = prometheus.NewCounterVec(
 // mode can join it without changing the metric's shape.
 const (
 	// MagicLinkTokenOpSweep — the retention sweep failed. Rows an
-	// unauthenticated caller can create (POST /v1/auth/login, PRV-2)
+	// unauthenticated caller can create (POST /v1/auth/login)
 	// accumulate until it recovers.
 	MagicLinkTokenOpSweep = "sweep"
 )
@@ -2333,8 +2312,8 @@ var AggregatorWindowTruncatedTotal = prometheus.NewCounter(
 )
 
 // AggregatorVWAPCacheWriteErrorsTotal counts failed Redis SETs in the VWAP cache write. Sustained, cached
-// pairs 404 on /v1/price while flags.stale stays off; a Redis BGSAVE failure once did this for ~9h
-// (internal/incidents/data/). Alert on rate(_total[5m]) > 0 for ≥ 2m.
+// pairs 404 on /v1/price while flags.stale stays off (e.g. a Redis BGSAVE failure). Alert on
+// rate(_total[5m]) > 0 for ≥ 2m.
 var AggregatorVWAPCacheWriteErrorsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_vwap_cache_write_errors_total",
