@@ -197,13 +197,6 @@ internal/storage/timescale/trades_chunks.go	long-block
 internal/storage/timescale/trades_chunks.go	long-block
 internal/storage/timescale/transitive_price.go	long-block
 internal/storage/timescale/transitive_price.go	long-block
-internal/storage/timescale/usd_fx_resolver.go	long-block
-internal/storage/timescale/usd_fx_resolver.go	long-block
-internal/storage/timescale/usd_fx_resolver.go	long-block
-internal/storage/timescale/usd_fx_resolver.go	long-block
-internal/storage/timescale/usd_fx_resolver.go	long-block
-internal/storage/timescale/usd_fx_resolver.go	long-block
-internal/storage/timescale/usd_fx_resolver.go	long-block
 internal/storage/timescale/usd_volume_quote_spec.go	long-block
 internal/storage/timescale/usd_volume_reconcile.go	long-block
 internal/storage/timescale/usd_volume_restamp.go	long-block
