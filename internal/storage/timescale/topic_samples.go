@@ -27,10 +27,9 @@ type TopicSample struct {
 // trailing-window bound (computeGapScanWindow): recognition needs ONE example per shape and a
 // recent one is as good as an old one, so scanning the whole range is wasted IO.
 //
-// Full-history recognition is NOT this window's job: the `-ch` ClickHouse path
-// (computeRecognitionGapsCH / clickhouse.DistinctTopicShapes) is the authoritative ADR-0033
-// Claim 2a check. This Postgres path backs ad hoc runs; shapes whose only activity predates the
-// window are found by [Store.distinctSorobanContractTopicPairs].
+// Full-history recognition is not this window's job: the ClickHouse path (computeRecognitionGapsCH)
+// is the authoritative ADR-0033 Claim 2a check. This Postgres path backs ad hoc runs; shapes
+// active only before the window are found by [Store.distinctSorobanContractTopicPairs].
 const distinctTopicSampleWindow = 30 * 24 * time.Hour
 
 // DistinctSorobanTopicSamples returns one representative row per distinct (contract_id,
@@ -229,10 +228,11 @@ func (s *Store) distinctSorobanContractTopicPairs(ctx context.Context) ([][2]str
 // distinctSorobanContractTopicPairsQuery: an equality filter on the composite index's exact
 // columns (contract_id, topic_0_sym) and LIMIT 1 with no ORDER BY, so Postgres stops at the first
 // matching index entry instead of sorting the pair's rows.
-// It carries NO per-pair count/min/max aggregate: for a DORMANT pair with millions of ancient
-// rows that would scan the whole row set and exhaust the run budget. Recognition only needs the
-// EXAMPLE ROW, so fallback-sampled pairs report Count = -1 ("not measured"), and each fetch runs
-// under its own short deadline so a pathological pair degrades to a logged skip.
+//
+// No per-pair count/min/max aggregate: for a DORMANT pair with millions of ancient rows it would
+// scan the whole row set and exhaust the run budget. Recognition needs only the EXAMPLE ROW, so
+// fallback-sampled pairs report Count = -1 ("not measured"), and each fetch runs under its own
+// short deadline so a pathological pair degrades to a logged skip.
 const oneSorobanTopicSampleQuery = `
         SELECT e.ledger, e.ledger_close_time, e.tx_hash, e.op_index, e.event_index,
                e.contract_id, e.contract_id_hex, e.topic_count, e.topic_0_sym,
@@ -308,9 +308,9 @@ func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym
 
 // pairTimeoutSkip reports whether a PHASE 3 per-pair fetch failed because ITS OWN deadline
 // (pairCtx, oneSorobanTopicSampleTimeout) expired, as opposed to the caller's ctx being canceled
-// or a genuine query error, and logs it. Without the log the shape would yield no recognition gap
-// and no trace, and dormant rarely-emitted shapes, the class the audit exists to catch, are the
-// likeliest to time out. Split out so the classification is unit-testable without a live query.
+// or a genuine query error, and logs it. Without the log the shape would yield no gap and no
+// trace, and dormant rarely-emitted shapes, the class the audit exists to catch, are the likeliest
+// to time out. Split out so the classification is unit-testable without a live query.
 func pairTimeoutSkip(pairCtx, ctx context.Context, contractID, topic0Sym string, from, to uint32) bool {
 	if pairCtx.Err() == nil || ctx.Err() != nil {
 		return false

@@ -8,18 +8,16 @@ import (
 )
 
 // This file is the read side for GET /v1/accounts/{g_strkey}/positions: six per-protocol fold
-// queries, one per venue table the ADR-0035-gated sources write into. Each is a
-// `WHERE <user_col> = $1 GROUP BY <venue_col...>` bounded by positionsVenueLimit (defence in
-// depth) and served by a user-leading index.
+// queries, one per venue table. Each is a `WHERE <user_col> = $1 GROUP BY <venue_col...>` bounded
+// by positionsVenueLimit and served by a user-leading index.
 //
-// Net-position amounts are computed HERE, in SQL, as a per-venue SUM of signed per-event deltas
-// ("event_derived" basis), because the served tier is append-only (ADR-0031/0032) and none of
-// these tables track a running balance. sorocredit's credit_positions is the exception (see
-// CreditPositionsByOwner): it has no per-event amount, so its figure is the protocol's own
-// latest published statement ("basis: stateful").
+// Net amounts are a per-venue SUM of signed per-event deltas ("event_derived" basis), because the
+// served tier is append-only and none of these tables track a running balance. sorocredit's
+// credit_positions is the exception (see CreditPositionsByOwner): it has no per-event amount, so
+// its figure is the protocol's own latest published statement ("basis: stateful").
 //
-// Every fold orders by its venue key before the LIMIT so which venues survive
-// positionsVenueLimit is not plan-dependent.
+// Every fold orders by its venue key before the LIMIT so which venues survive positionsVenueLimit
+// is not plan-dependent.
 const positionsVenueLimit = 500
 
 // queryFold runs one of this file's `WHERE <user_col> = $1 ... LIMIT $2` fold queries and scans
@@ -52,15 +50,14 @@ func queryFold[T any](ctx context.Context, db *sql.DB, label, query string, args
 //
 // SupplyNet sums `token_amount` (the UNDERLYING amount, NOT the b-token `b_or_d_amount`) signed
 // +supply/+supply_collateral, -withdraw/-withdraw_collateral. BorrowNet sums the same column
-// signed +borrow/+flash_loan, -repay: a flash_loan mints d-tokens that stay owed until a `repay`
-// burns them, so excluding it would net that repay to negative debt. Summed per event, the fold
-// cannot reflect accrued interest.
+// signed +borrow/+flash_loan, -repay: a flash_loan mints d-tokens owed until a `repay` burns them,
+// so excluding it would net that repay to negative debt. Summed per event, the fold cannot
+// reflect accrued interest.
 //
 // SupplySuperseded / BorrowSuperseded mark a leg an auction or bad-debt write-off has moved
 // b/d-tokens into or out of (blendAuctionMovesSQL). Those moves carry no underlying amount, so
 // the nets stop describing the position; SupplyTokens/BorrowTokens then hold the exact b/d-token
-// balance, telling a fully seized leg (zero) from a partly seized one. A superseded leg exists
-// even with no blend_positions row (a filler that only received a lot).
+// balance (zero for a fully seized leg). A superseded leg exists even with no blend_positions row.
 type BlendPositionFold struct {
 	Pool               string
 	Asset              string
@@ -179,8 +176,8 @@ const blendPositionsByUserSQL = `
 // via any blend_positions event or auction move, with independent supply and borrow nets (see
 // BlendPositionFold for the sign convention and superseded flags).
 //
-// Sargable: `WHERE user_address = $1` is served by blend_positions_user_ts_idx, so the GROUP BY
-// sees only that user's rows. The move side reads only rare fill and bad_debt rows.
+// Sargable: `WHERE user_address = $1` uses blend_positions_user_ts_idx, so the GROUP BY sees only
+// that user's rows; the move side reads only rare fill and bad_debt rows.
 func (s *Store) BlendPositionsByUser(ctx context.Context, address string) ([]BlendPositionFold, error) {
 	return queryFold(ctx, s.db, "BlendPositionsByUser", blendPositionsByUserSQL, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (BlendPositionFold, error) {
 		var (
@@ -212,8 +209,8 @@ func (s *Store) BlendPositionsByUser(ctx context.Context, address string) ([]Ble
 // BlendBackstopFold is one pool's backstop-share fold for a user, read from blend_backstop_events.
 //
 // SharesNet sums `amount2`, signed +deposit/-withdraw: the decoder puts shares minted and burned
-// in Amount2 (decodeDeposit / decodeWithdraw). Shares only mint on deposit and burn on withdraw,
-// so this is an exact current share count and amount_semantics is "shares".
+// in Amount2. Shares only mint on deposit and burn on withdraw, so this is an exact current share
+// count and amount_semantics is "shares".
 //
 // queue_withdrawal / dequeue_withdrawal are DELIBERATELY EXCLUDED: they are intent-only (queued
 // shares stay staked until the matching `withdraw`) and carry shares in `Amount`, not `Amount2`,
@@ -260,9 +257,8 @@ func (s *Store) BlendBackstopSharesByUser(ctx context.Context, address string) (
 // phoenix_stake_events.
 //
 // NetAmount sums `amount`, the always-positive share-token amount (the action carries the
-// direction), signed +bond/-unbond. Only action IN ('bond','unbond') is read;
-// `withdraw_rewards`/`distribute_rewards` carry NULL amount and are a reward-claim surface, not a
-// stake-balance change, so the WHERE clause excludes them.
+// direction), signed +bond/-unbond. Only action IN ('bond','unbond') is read; reward actions carry
+// NULL amount and are not a stake-balance change.
 type PhoenixStakeFold struct {
 	StakeContract string
 	LPToken       string
@@ -305,9 +301,8 @@ func (s *Store) PhoenixStakeByUser(ctx context.Context, address string) ([]Phoen
 // VAULT layer only.
 //
 // SharesNet sums `df_tokens` (always the magnitude; direction is in `direction`), signed
-// +deposit/-withdraw. STRATEGY-layer rows (Actor = the vault contract itself moving capital
-// into/out of Blend, not an end user) are excluded by `layer = 'vault'`: the two layers live in
-// different actor identity spaces and cannot be folded together.
+// +deposit/-withdraw. STRATEGY-layer rows (Actor = the vault contract itself) are excluded by
+// `layer = 'vault'`: the layers have different actor identity spaces and cannot be folded.
 type DefindexVaultFold struct {
 	ContractID   string
 	SharesNet    string
@@ -348,9 +343,8 @@ func (s *Store) DefindexVaultSharesByUser(ctx context.Context, address string) (
 // CreditPositionFold is one sorocredit position for an owner, read from credit_positions
 // LEFT-JOINed against that position's MOST RECENT credit_statements row.
 //
-// Unlike other protocols here, sorocredit has no per-event amount to sum: credit_positions is an
-// identity registry (one row per opened position). The closest thing to its size is the
-// protocol's own latest `StatementPublished` amount ("basis: stateful").
+// sorocredit has no per-event amount to sum: credit_positions is an identity registry, so the
+// closest thing to a size is the protocol's latest `StatementPublished` amount ("basis: stateful").
 //
 // LatestAmount is empty / LatestActivity the zero time when no statement exists yet; the handler
 // surfaces that as no reportable amount rather than guessing 0.
@@ -423,11 +417,10 @@ func (s *Store) CreditPositionsByOwner(ctx context.Context, address string) ([]C
 // AquariusGaugeFold is one pool's gauge-position fold for a user, read from
 // aquarius_rewards_events, `position_update` kind only.
 //
-// NetDelta sums `attributes->>'delta'`, a SIGNED decimal string (negative on withdrawal, so it is
-// not promoted to the always >= 0 Amount field). The signed sum is the position's size as of the
-// latest checkpoint, but decodePositionUpdate marks the field itself best-effort: an observed
-// correlation, not a confirmed contract-source semantic. The handler therefore does not call it
-// "shares" or "underlying".
+// NetDelta sums `attributes->>'delta'`, a SIGNED decimal string (negative on withdrawal, so not
+// the always >= 0 Amount field). The signed sum is the position's size as of the latest
+// checkpoint, but decodePositionUpdate marks the field best-effort (an observed correlation, not a
+// confirmed contract semantic), so the handler does not call it "shares" or "underlying".
 type AquariusGaugeFold struct {
 	ContractID   string
 	NetDelta     string

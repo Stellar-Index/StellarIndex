@@ -40,7 +40,7 @@ type FXQuote struct {
 // The upsert is generation-guarded because rate_usd is the denominator of every fiat-quoted
 // usd_volume: DO UPDATE applies only if `derive_generation <= EXCLUDED.derive_generation`. The
 // live worker writes generation 0; fx-history-backfill stamps a POSITIVE generation
-// ([SetDeriveGeneration]) so its corrected rate wins and survives a later live refresh.
+// ([SetDeriveGeneration]) so its corrected rate survives a later live refresh.
 //
 // The per-source `entries` tally is bumped inline: `xmax = 0` marks a genuinely new row, and the
 // HAVING clause skips duplicates, updates and guard skips, so a re-run never inflates it.
@@ -97,11 +97,8 @@ func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error 
 	return nil
 }
 
-// ListFXHistory returns daily snapshots for `ticker` in
-// [from, to], ascending. Empty slice when nothing matches.
-//
-// Used by /v1/currencies/{ticker} to populate `history_1y`,
-// `history_all`, etc. on the response.
+// ListFXHistory returns daily snapshots for `ticker` in [from, to], ascending (empty when nothing
+// matches), for the `history_*` fields of /v1/currencies/{ticker}.
 func (s *Store) ListFXHistory(ctx context.Context, ticker string, from, to time.Time) ([]FXQuote, error) {
 	const stmt = `
 		SELECT bucket, ticker, rate_usd::text, inverse_usd::text, COALESCE(source, '')
@@ -164,10 +161,10 @@ func (s *Store) LatestFXQuotes(ctx context.Context, since time.Time) ([]FXQuote,
 
 // ─── forex-snap read path (fx_quotes-first) ─────────────────────────
 //
-// The connector-path FX sources that read the `trades` hypertable are disabled in production; the
-// active feed (`massive`) writes `fx_quotes`. A trades-only forex-snap ([Store.FXQuoteAtOrBefore])
-// would therefore always fall back to cached VWAP while fresh quotes sat in fx_quotes. The helpers
-// below are the fx_quotes-first leg; the trades read is only a fallback for re-enabled connectors.
+// The active FX feed (`massive`) writes `fx_quotes`, while the connector-path sources that feed
+// `trades` are disabled in production, so a trades-only forex-snap ([Store.FXQuoteAtOrBefore])
+// would always fall back to cached VWAP. The helpers below are the fx_quotes-first leg; the
+// trades read is only a fallback for re-enabled connectors.
 
 // fxQuotesSnapLookback bounds how far back the snap read accepts a row. Buckets are daily and the
 // feed skips weekends/holidays for some tickers, so 7 days tolerates the longest routine gap while
@@ -213,8 +210,8 @@ func fxSnapTickers(pair canonical.Pair) []string {
 // QuoteAmount/BaseAmount orientation) from latest-per-ticker fx_quotes rows keyed by ticker.
 //
 // Math is exact *big.Rat: rate_usd(T) is "T per 1 USD", so price(B/Q) = rate_usd(Q) / rate_usd(B),
-// with a USD side contributing exactly 1. The other direction would invert every served
-// fiat-quoted pair. The cached `inverse_usd` column is NOT used; inversion happens in Rat space.
+// with a USD side contributing exactly 1; the other direction would invert every fiat-quoted
+// pair. The cached `inverse_usd` column is NOT used; inversion happens in Rat space.
 //
 // observedAt is the OLDEST bucket used (the staler input governs freshness). The source label is
 // the sorted "+"-join of distinct row sources (a cross can mix providers); NULL-source rows read
@@ -279,7 +276,7 @@ func fxSnapFromRows(pair canonical.Pair, rows map[string]fxSnapRow) (*big.Rat, t
 // (ticker, bucket DESC) index makes each ticker a bounded descending scan.
 //
 // Returns [ErrNoFXQuote] when any needed ticker has no row in the window (caller falls back to
-// trades). Other DB errors propagate: a broken read means no chained-fiat output is trustworthy.
+// trades). Other DB errors propagate: a broken read leaves no trustworthy chained-fiat output.
 func (s *Store) fxQuotesSnapAtOrBefore(
 	ctx context.Context,
 	pair canonical.Pair,

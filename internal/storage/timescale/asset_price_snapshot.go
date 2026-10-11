@@ -14,9 +14,9 @@ import (
 
 // asset_price_snapshot: the per-asset headline-price rollup behind the GET /v1/assets listing.
 //
-// Deriving the price per request costs twelve `DISTINCT ON ... FROM prices_1m` CTEs per asset per
-// uncached variant, so [assetPriceCTEs] runs off the request path on the volume rollup's cadence
-// and the listing LEFT JOINs the result.
+// Deriving the price per request costs twelve `DISTINCT ON ... FROM prices_1m` CTEs per asset, so
+// [assetPriceCTEs] runs off the request path on the volume rollup's cadence and the listing LEFT
+// JOINs the result.
 //
 // Not a continuous aggregate: the substrate is a `DISTINCT ON` over a UNION of quote forms, XLM
 // identities and both directions, which no `GROUP BY` expresses. Not a materialised view: REFRESH
@@ -32,22 +32,21 @@ import (
 // the listing. It is spliced into the listing's LEFT JOIN (see [listAssetsBaseSelect]) so SQL
 // enforces the bound.
 //
-// 15 minutes is 7 missed passes of the 2-minute refresh: wide enough that an aggregator restart or
-// Postgres hiccup never blanks the flagship page, narrow enough that a price cannot drift
-// materially before the row stops being served.
+// 15 minutes is 7 missed passes of the 2-minute refresh: wide enough that a restart never blanks
+// the page, narrow enough that a price cannot drift materially before the row stops being served.
 const assetPriceSnapshotMaxAge = "15 minutes"
 
 // priceArmPickExpr names the arm that prices an asset: 'native' (XLM itself, from the xlm_usd
 // anchor), 'direct' (a USD-proxy market) or 'xlm' (an XLM market triangulated through the anchor
 // `ax` taken at that market's own minute); NULL when none can.
 //
-// The arm with the NEWER observation wins: choosing by arm order let any USD print in the 7-day
-// lookback beat an XLM market trading this minute, serving a days-old price as current. A
-// triangulated observation is as old as its XLM-market minute; on a tie the direct arm wins, as it
-// has no triangulation error. An XLM market with no anchor within [xlmUSDAnchorMaxAge] cannot
-// price, so an older direct row still does. Native XLM with no fresh anchor is unpriced rather than
-// read from its own possibly week-old direct row: no fresh XLM/USD on any venue is an outage, and
-// every XLM-quoted asset is unpriced with it.
+// The arm with the NEWER observation wins: arm order would let any USD print in the 7-day lookback
+// beat an XLM market trading this minute, serving a days-old price as current. A triangulated
+// observation is as old as its XLM-market minute; on a tie the direct arm wins (no triangulation
+// error). An XLM market with no anchor within [xlmUSDAnchorMaxAge] cannot price, so an older direct
+// row still does. Native XLM with no fresh anchor is unpriced rather than read from a possibly
+// week-old direct row: no fresh XLM/USD anywhere is an outage, and every XLM-quoted asset is
+// unpriced with it.
 const priceArmPickExpr = `CASE
 		      WHEN ca.asset_id = 'native'
 		        THEN CASE WHEN (SELECT vwap FROM xlm_usd) IS NOT NULL THEN 'native' END
@@ -127,9 +126,8 @@ func priceChangePctExpr(lookback string) string {
 // an 18-decimals token's 1e-11 raw ratio from rounding to zero.
 //
 // A READER OF THIS COLUMN MUST NOT NORMALISE IT AGAIN. The change columns need no factor: the scale
-// cancels in each ratio. A MULTIPLIER OF THIS COLUMN MUST USE THE SAME DECIMALS: a market cap
-// divides a smallest-unit supply by the token's real decimals, not 7
-// (v1.Server.applyConfirmedListingDecimals).
+// cancels in each ratio. A MULTIPLIER MUST USE THE SAME DECIMALS: a market cap divides a
+// smallest-unit supply by the token's real decimals, not 7 (v1.Server.applyConfirmedListingDecimals).
 //
 // The CASE, rather than a COALESCE'd factor of 1, keeps unconfirmed assets' stored value
 // byte-identical; power(numeric, numeric) with an integral exponent is exact (ADR-0003).
@@ -170,10 +168,10 @@ const (
 //	(q, asset) row: asset leg = vwap * volume_priced,  q leg = volume_priced
 //
 // volume_priced, not volume: vwap covers only trades with both legs > 0, so its weight must too.
-// Preferring one direction prices an asset from a side of its book that may be days stale.
+// Preferring one direction could price an asset from a side of its book that is days stale.
 //
-// asset is "" for every asset (the rollup) or a scalar SQL expression that pins the arm to one
-// asset (the detail query).
+// asset is "" for every asset (the rollup) or a scalar SQL expression pinning the arm to one asset
+// (the detail query).
 func unionPriceArmCTE(name, quotes, window, asset string) string {
 	var baseSide, flipped string
 	if asset != "" {
@@ -216,8 +214,8 @@ func unionPriceArmCTE(name, quotes, window, asset string) string {
 
 // assetPriceArmCTEs renders the eight per-asset arms [priceArmJoins] reads, now and at each change
 // lookback: `direct_usd*` against the USD proxies ([usdProxyQuotes]: fiat:USD, and USDC taken AS
-// USD per the aggregator's stablecoin-proxy policy, in its classic and SAC forms because Soroban
-// venues carry the SAC id) and `asset_vs_xlm*` against XLM in both identity forms ([xlmQuotes]).
+// USD per the stablecoin-proxy policy, in classic and SAC forms because Soroban venues carry the
+// SAC id) and `asset_vs_xlm*` against XLM in both identity forms ([xlmQuotes]).
 // TestProxyQuoteLists_Lockstep pins both IN-lists. xlmQuoteList is an [xlmQuotesBound] form; the
 // caller binds the network's native SAC at that placeholder.
 func assetPriceArmCTEs(asset, xlmQuoteList string) string {
@@ -267,13 +265,11 @@ const (
 // and backing source count from [assetPriceCTEs] and upserts one row per asset.
 //
 // Spine: the assets that CAN have a price (`direct_usd` union `asset_vs_xlm` union native), not
-// the whole catalogue; an asset without a row in those CTEs within the 7-day lookback is unpriced
-// anyway.
+// the whole catalogue; an asset without a row in those CTEs within the 7-day lookback is unpriced.
 //
 // Money stays NUMERIC end to end (ADR-0003): `price_usd` and the three change columns are stored
-// unrounded and unformatted, and the listing applies the `ROUND(..., 10)::text` /
-// `to_char(..., 'FM999999990.00')` wire rendering. The decimals correction for a CONFIRMED
-// non-7-decimals token is applied here, before anything is rounded (see
+// unrounded and unformatted; the listing applies the wire rendering. The decimals correction for a
+// CONFIRMED non-7-decimals token is applied here, before anything is rounded (see
 // [snapshotNormalizedPriceUSDExpr]).
 //
 // `computed_at` is stamped to the transaction timestamp so the sibling prune can drop assets whose
@@ -363,10 +359,9 @@ func execRowCount(ctx context.Context, tx *sql.Tx, q string, args ...any) (int64
 // RefreshAssetListingRollups recomputes BOTH rollups the /v1/assets listing LEFT JOINs,
 // asset_volume_24h and asset_price_snapshot, and atomically replaces their contents.
 //
-// One transaction, on purpose: the two are joined onto the same spine row, so committing together
-// means a listing row's volume and price are from the same pass. Upsert + prune take row-level
-// locks only, never the ACCESS EXCLUSIVE that would stall concurrent reads of a customer-facing
-// endpoint.
+// One transaction, on purpose: the two are joined onto the same spine row, so a listing row's
+// volume and price come from the same pass. Upsert + prune take row-level locks only, never the
+// ACCESS EXCLUSIVE that would stall concurrent reads of the listing.
 //
 // Called on the aggregator's asset-rollup cadence (assetvolrollup.DefaultInterval, 2 min) via
 // [Store.RefreshAssetVolume24h].
@@ -379,8 +374,8 @@ func (s *Store) RefreshAssetListingRollups(ctx context.Context) error {
 
 	// Bound this transaction's footprint: it shares the primary with the customer-facing API.
 	//
-	// work_mem: the 7-day asset_vs_xlm DISTINCT ON sorts ~48k rows and spills at the 32 MB session
-	// default; 96 MB removes the spill (64 MB does not). It is a per-sort-NODE ceiling.
+	// work_mem: the 7-day asset_vs_xlm DISTINCT ON sort spills at the 32 MB session default; 96 MB
+	// removes the spill (64 MB does not). It is a per-sort-NODE ceiling.
 	//
 	// statement_timeout is a wedge guard, not a budget: the pass takes seconds, so 10 minutes only
 	// fires on something pathological; the transaction aborts, BOTH rollups keep their last good

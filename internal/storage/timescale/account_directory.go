@@ -64,8 +64,8 @@ const directoryUpsertChunk = 500
 // `stellarindex-ops directory-override -clear-scam-flag` ([Store.ClearDirectoryScamFlag]); undo
 // with `-delete` ([Store.DeleteDirectoryOverride]), after which the next sync restores upstream.
 //
-// An override REPLACES the upstream label rather than layering over it; one row per address keeps
-// the consumers listed at DirectoryScamFlagTags from disagreeing.
+// An override REPLACES the upstream label, not layers over it: one row per address keeps the
+// consumers listed at DirectoryScamFlagTags in agreement.
 const DirectoryOperatorOverrideSource = "operator-override"
 
 // ErrDirectoryNotScamFlagged is returned by [Store.ClearDirectoryScamFlag]
@@ -135,11 +135,11 @@ func CanonicalDirectoryTags(tags []string) []string {
 // [ErrDirectoryChurnExceeded] and the table is left as it was.
 //
 // A scam tag withholds the issuer's price and market cap (pricingguard.ScamGate), so a truncated
-// or mis-generated upstream snapshot could otherwise clear those flags, or flag thousands of
-// issuers, in one transaction with nothing failing. The un-flag cap is sized on the flagged set,
-// because flagged rows are a minority and a row-sized cap admitted clearing most of them.
-// A legitimate mass change ships with `directory-sync -accept-churn`. The first sync of a source
-// is unbounded by construction. Fractions and floors are conservative placeholders, not measured.
+// or mis-generated snapshot could otherwise clear those flags, or flag thousands of issuers, in
+// one transaction with nothing failing. The un-flag cap is sized on the flagged set because
+// flagged rows are a minority and a row-sized cap would admit clearing most of them. A legitimate
+// mass change ships with `directory-sync -accept-churn`; a source's first sync is unbounded.
+// Fractions and floors are conservative placeholders, not measured.
 type DirectoryChurnLimit struct {
 	Fraction    float64
 	Floor       int64
@@ -436,8 +436,8 @@ func buildDirectoryUpsert(chunk []DirectoryEntry, source string) (string, []any)
 // operator and reason are stored (override_by, override_reason) so the lifted flag can be
 // reviewed; a blank either is refused before anything is read.
 //
-// found=false (no error) means the address has no row. A row with no
-// scam-class tag is refused with [ErrDirectoryNotScamFlagged].
+// found=false (no error) means the address has no row. A row with no scam-class tag is refused
+// with [ErrDirectoryNotScamFlagged].
 func (s *Store) ClearDirectoryScamFlag(ctx context.Context, address, operator, reason string) (before, after DirectoryEntry, found bool, err error) {
 	if strings.TrimSpace(operator) == "" {
 		return before, after, false, ErrDirectoryOverrideOperatorRequired

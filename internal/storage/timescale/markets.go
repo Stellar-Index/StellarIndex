@@ -63,8 +63,7 @@ type Pool struct {
 // so tests can override it.
 //
 // 14 days keeps the compressed chunks at the boundary within shared buffers; 30 days took ~9 s
-// and 90 days ~16-19 s, past the 30 s client deadline, and a concurrent backfill evicting recent
-// chunks pushes even the cold 14d call to ~7 s. A materialised market catalogue would remove
+// and 90 days ~16-19 s, past the 30 s client deadline. A materialised market catalogue would remove
 // the bound.
 var MarketsRecencyWindow = 14 * 24 * time.Hour
 
@@ -94,11 +93,10 @@ func (s *Store) DistinctPairsExt(ctx context.Context, cursor string, limit int, 
 	return s.distinctPairsCommon(ctx, "", "", cursor, limit, order)
 }
 
-// SourceMarkets returns one page of pairs the source observed in the trailing
-// MarketsRecencyWindow, with that venue's own 24h volume, trade count and last price from the
-// per-source CAGG /v1/pools reads. It does NOT route through distinctPairsCommon: the pair-wide
-// price CAGGs have no per-source grain (only a `sources` array), so filtering them would return
-// the whole market's figures. See [sourceMarketsCommon].
+// SourceMarkets returns one page of pairs the source observed in the trailing MarketsRecencyWindow,
+// with that venue's own 24h figures from the per-source CAGG /v1/pools reads. It bypasses
+// distinctPairsCommon because the pair-wide price CAGGs have no per-source grain. See
+// [sourceMarketsCommon].
 func (s *Store) SourceMarkets(ctx context.Context, source, cursor string, limit int, order MarketsOrder) ([]Market, string, error) {
 	return s.sourceMarketsCommon(ctx, source, cursor, limit, order)
 }
@@ -115,9 +113,7 @@ func (s *Store) AssetMarkets(ctx context.Context, asset, cursor string, limit in
 // A pair filter (Base and Quote both set) matches either stored orientation and returns rows in
 // the canonical orientation (canonical.Orient). Single-side filters match that side of the
 // canonical orientation. Every asset filter matches all alias forms (canonical.AssetAliasStrings).
-//
-// Asset is the OR-shape (base = X OR quote = X). The handler makes it exclusive with
-// Base/Quote; combining them here has undefined semantics.
+// Asset is the OR-shape (base = X OR quote = X); combining it with Base/Quote is undefined.
 type PoolsFilter struct {
 	Sources []string
 	Base    string
@@ -125,9 +121,8 @@ type PoolsFilter struct {
 	Asset   string
 }
 
-// AllPools returns every (source, base, quote) tuple observed in the trailing
-// MarketsRecencyWindow, backing /v1/pools. Unlike DistinctPairsExt it does not collapse across
-// sources: one pair traded on soroswap and sdex is one row there and two here.
+// AllPools returns every (source, base, quote) tuple observed in the trailing MarketsRecencyWindow,
+// backing /v1/pools. Unlike DistinctPairsExt it does not collapse across sources.
 //
 // The cursor is "<vol_or_blank>:<source>|<base>|<quote>" for volume-desc and
 // "<source>|<base>|<quote>" for pair-asc: DistinctPairsExt's keyset shape with source prepended.
@@ -219,8 +214,7 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 // perSourcePoolsCTE is the per-(source, base, quote) scan of the pools_per_source_1h CAGG shared
 // by /v1/pools (buildPoolsQuery) and the source-filtered /v1/markets (buildSourceMarketsQuery).
 // One literal makes their agreement structural: filtering the PAIR-WIDE prices_1m/prices_1d CAGGs
-// by `source = ANY(sources)` selects BUCKETS a venue printed in, not its contribution, and would
-// disagree with /v1/pools by orders of magnitude.
+// by `source = ANY(sources)` selects BUCKETS a venue printed in, not its contribution.
 //
 // Callers append their filters, GROUP BY and ordering. $1 is the recency-window lower bound,
 // bound first by every caller, and sacAliasFoldBind's arrays sit at $foldIdx, $foldIdx+1. Rows
@@ -442,11 +436,10 @@ func aliasFoldCTE(formsIdx int) string {
 // CAGG as /v1/pools (via [perSourcePoolsCTE]) and drops the source dimension: one row per
 // canonical pair with THAT venue's own 24h count, USD volume and last price.
 //
-// Not distinctPairsCommon with a source filter: prices_1m/prices_1d group by (bucket, base,
-// quote) with an `array_agg(DISTINCT source)` column, so `$source = ANY(p.sources)` tests bucket
-// membership, not contribution; a pair soroswap printed 3 times, in minutes SDEX printed 1000
-// times in, would report SDEX's 1000. Only pools_per_source_1h has the per-source grain, and its
-// 5-minute end_offset (prices_1d: 6 hours) keeps last_price minutes old.
+// Not distinctPairsCommon with a source filter: prices_1m/prices_1d carry an
+// `array_agg(DISTINCT source)` column, so `$source = ANY(p.sources)` tests bucket membership, not
+// contribution (a venue with 3 prints would report another venue's 1000). Only pools_per_source_1h
+// has the per-source grain, and its 5-minute end_offset keeps last_price minutes old.
 func (s *Store) sourceMarketsCommon(ctx context.Context, source, cursor string, limit int, order MarketsOrder) ([]Market, string, error) {
 	if limit < 1 {
 		limit = 100
@@ -479,9 +472,9 @@ func (s *Store) sourceMarketsCommon(ctx context.Context, source, cursor string, 
 //
 // $1 since, $2 cursor, $3 limit+1 (overfetch by one), $4 source.
 //
-// bucket_close_at is `date_trunc('day', last_trade_at)`, not read from prices_1d: prices_1d is
+// bucket_close_at is `date_trunc('day', last_trade_at)`, not read from prices_1d: that CAGG is
 // pair-wide and its newest materialized bucket is the PREVIOUS day (6h end_offset,
-// materialized_only), while the per-source last_trade_at gives the documented day exactly.
+// materialized_only).
 func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, order MarketsOrder) (string, []any) {
 	canonBase, canonQuote, flipped := canonOrientSQL(7)
 	forms, canons := sacAliasFoldBind() // $5, $6
@@ -647,13 +640,9 @@ func buildMarketRow(baseRaw, quoteRaw string, lastAt, bucketCloseAt time.Time, c
 }
 
 // ValidateMarketsCursor returns an error if a non-empty cursor does not match the shape
-// encodeMarketsCursor emits for the order; handlers should answer 400. Without it a bad cursor
-// degrades silently:
-//
-//   - MarketsOrderPair: `(base || '|' || quote) > $cursor` becomes a collation-dependent
-//     lexicographic skip.
-//   - MarketsOrderVolume24hDesc: `split_part($cursor, ':', 1)::numeric` raises a Postgres
-//     numeric-syntax error, a 500 that burns CPU per request.
+// encodeMarketsCursor emits for the order; handlers should answer 400. Otherwise a bad pair cursor
+// becomes a collation-dependent lexicographic skip, and a bad volume cursor raises a Postgres
+// numeric-syntax error in `split_part($cursor, ':', 1)::numeric`, a 500 that burns CPU per request.
 func ValidateMarketsCursor(cursor string, order MarketsOrder) error {
 	if cursor == "" {
 		return nil
@@ -752,15 +741,15 @@ const distinctPairsActivityCTEs = `
 //     so cursor ":<pair>" resumes into the null-volume tail. The (vol, pair) keyset compare is
 //     strict-less on vol DESC and strict-greater on pair ASC.
 func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limit int, order MarketsOrder) (string, []any) {
-	// /v1/markets is a directory listing, not a history view: reading prices_1m x 14 days blew
+	// /v1/markets is a directory listing, not a history view: reading prices_1m x 14 days blows
 	// the 8s handler ceiling. So the 14d active-pair set comes from prices_1d and only the 24h
 	// figures read prices_1m (chunk-pruned to the last day, so exact). A rolling 24h window is not
 	// bucket-additive over a coarser CAGG: prices_1h understated 24h volume ~9%.
 	//
 	// d and h are FULL OUTER JOINed because prices_1d (6h end_offset, materialized_only) has no
 	// row yet for a pair whose first trade is today. last_price, last_trade_at and
-	// bucket_close_at prefer h, falling back to d only for pairs idle over 24h; count_24h is
-	// COALESCE'd to 0 for those.
+	// bucket_close_at prefer h, falling back to d only for pairs idle over 24h (count_24h is then
+	// COALESCE'd to 0).
 	//
 	// $5 is a text[] of the asset's alias forms: XLM is keyed `native`, `crypto:XLM` or its SAC
 	// depending on venue, so a scalar match omitted markets. canon collapses flipped orientations
@@ -850,10 +839,10 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 //
 // Shape: a UNION ALL of two single-direction branches, each aggregate reading the smallest
 // window that produces it. `(A AND B) OR (B AND A)` cannot drive trades_pair_ts_idx /
-// prices_1m_pair_bucket_idx (see [closedVWAP1mAtOrBeforeQuery]); one shared 14-day aggregate
-// read 17.2M rows for crypto:BTC/crypto:USDT and ran 95.7s cold, past the 8s handler ceiling.
-// The `, base_asset` tiebreaker makes the last_price order total once a bucket holds both
-// orientations. Guarded by TestPairMarketQueryShape.
+// prices_1m_pair_bucket_idx (see [closedVWAP1mAtOrBeforeQuery]), and one shared 14-day aggregate
+// scans millions of rows cold, past the 8s handler ceiling. The `, base_asset` tiebreaker makes
+// the last_price order total once a bucket holds both orientations. Guarded by
+// TestPairMarketQueryShape.
 const pairMarketQuery = `
         WITH last_trade AS (
             SELECT MAX(ts) AS ts FROM (

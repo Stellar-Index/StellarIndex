@@ -11,12 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// assetAliasArray returns the canonical alias forms of assetKey as a []string for `= ANY($n)`.
-// It is the seam that makes an asset-detail read alias-complete: volume/ATH/markets aggregate
-// over EVERY form (XLM's native / crypto:XLM / SAC, plus configured classic-SAC wrappers), not
-// the spelling the caller passed. Forms come in canonical priority order (SAC LAST, see
-// [canonical.AssetAliases]) so an array_position price pick prefers the deep classic form over a
-// thin SAC pool. A key that does not parse falls back to itself.
+// assetAliasArray returns every canonical alias form of assetKey for `= ANY($n)`, so detail reads
+// aggregate over all identities (XLM's native / crypto:XLM / SAC), not the caller's spelling.
+// Order is canonical priority with the SAC last, so array_position prefers the deep classic pool.
+// A key that does not parse falls back to itself.
 func assetAliasArray(assetKey string) []string {
 	a, err := canonical.ParseAsset(assetKey)
 	if err != nil {
@@ -85,11 +83,9 @@ type AssetRow struct {
 	Change1hPct  *string
 	Change24hPct *string
 	Change7dPct  *string
-	// SourceCount is the number of DISTINCT venues behind PriceUSD, across every prices_1m row
-	// (both directions) of the minute the price came from. The market-cap valuation guard reads it
-	// (single venue AND sub-floor volume suppresses the cap). Nil means "unmeasured" and never
-	// suppresses: the price was triangulated (native XLM) or came from a single-row slug/native
-	// query for a verified currency.
+	// SourceCount is the number of DISTINCT venues behind PriceUSD in the price's minute. The
+	// market-cap guard suppresses the cap on a single venue with sub-floor volume. Nil means
+	// "unmeasured" (triangulated or single-row price) and never suppresses.
 	SourceCount *int
 
 	// VolumeCharacter is the market|operational|concentrated label from the
@@ -135,9 +131,8 @@ type ListAssetsOptions struct {
 	Code string
 	// Type, when non-empty, narrows to one listing arm: "classic" or "soroban" (discovered
 	// contracts, whose code / issuer / slug are NULL). Anything else is an ERROR from
-	// ListAssetsExt, never an ignored filter: the spine has no native or fiat row, so such a
-	// caller must fold to an empty page itself, and silently dropping the value would return the
-	// unfiltered page, indistinguishable from a filtered one.
+	// ListAssetsExt, never an ignored filter: an ignored value would return the unfiltered page,
+	// indistinguishable from a filtered one.
 	Type string
 	// Cursor is the keyset cursor returned by the previous
 	// response's NextCursor field. Empty for the first page.
@@ -175,25 +170,23 @@ type SupplyObservation struct {
 
 // LatestSupplyObservations returns the most-recent supply observation per
 // canonical asset_id, restricted to observations no older than maxAge.
-// Keys are canonical asset_ids: the observer's CODE:ISSUER and `XLM` become the listing's
-// CODE-ISSUER and `native`. Coverage is whatever the observer's watch-list covers.
+// Keys are the listing's asset ids (CODE-ISSUER, `native`); coverage is the observer's watch-list.
 //
-// It reads the observation log, not the supply_1d CAGG: supply_1d is a daily `last()` roll-up
-// whose end_offset makes the newest bucket a COMPLETED PREVIOUS day (~2.9h to ~26.9h old), which
-// can understate USDC supply by several percent, and a 24h vintage bound would disable the arm
-// since every bucket is older by construction. The log ticks every five minutes.
+// It reads the observation log, not the supply_1d CAGG: that daily roll-up's newest bucket is a
+// completed previous day (~2.9h to ~26.9h old), which understates supply and would fail any 24h
+// vintage bound. The log ticks every five minutes.
 //
 // maxAge must be positive; a non-positive value admits nothing, so the caller falls back to its
 // next arm rather than publish an observation of unknown vintage.
 func (s *Store) LatestSupplyObservations(ctx context.Context, maxAge time.Duration) (map[string]SupplyObservation, error) {
 	// Postgres computes the cutoff, not the caller: rows carry the writer's clock, and a reader's
-	// clock would turn skew into a phantom staleness verdict on a healthy observer.
+	// clock would turn skew into a phantom staleness verdict.
 	//
 	// $1 is cast and multiplied by an interval LITERAL: an untyped bind beside INTERVAL fails with
-	// 42883 on every call, a whole-arm outage no unit test sees.
+	// 42883 on every call.
 	//
-	// The bound is the ONLY predicate (no `OR unbounded` escape): a disjunction cannot be resolved
-	// at plan time, so chunk exclusion stops and the read walks the hypertable at ~10x the cost.
+	// The bound is the ONLY predicate (no `OR unbounded` escape): a disjunction defeats plan-time
+	// chunk exclusion and the read walks the whole hypertable at ~10x the cost.
 	const q = `
         SELECT CASE WHEN asset_key = 'XLM' THEN 'native'
                     ELSE replace(asset_key, ':', '-') END AS asset_id,
@@ -278,14 +271,12 @@ func scanAssetRow(scanner interface {
 	var r AssetRow
 	var (
 		firstLedger, lastLedger int64
-		// slug, code and issuer_g_strkey are NULL by nature for Soroban-native rows (no issuer
-		// account, no SEP-1 code), yet AssetRow holds plain strings; scanning NULL into them fails
-		// the WHOLE request. Handled at the scan, not per-column COALESCE, so one fix covers the
-		// set and any future nullable Soroban column.
+		// slug, code and issuer_g_strkey are NULL for Soroban-native rows, yet AssetRow holds plain
+		// strings; scanning NULL into them would fail the WHOLE request. Handled at the scan so one
+		// fix covers any future nullable column.
 		//
 		// Empty string, NOT the contract id: a contract asset has no code or issuer, and the id
-		// would state something false. (slug does fall back to asset_id: that is its real URL
-		// segment.)
+		// would state something false. (slug does fall back to asset_id: its real URL segment.)
 		slug              sql.NullString
 		code              sql.NullString
 		issuerGStrkey     sql.NullString
@@ -350,31 +341,26 @@ func nullStringPtr(ns sql.NullString) *string {
 
 // adjustedVolume24hExpr is the concentration-adjusted 24h volume the default volume sort ranks
 // on: raw volume (alias `vol`) times (1 - top_account_pair_vol_share) for assets that
-// asset_volume_character (alias `avc`) labels `concentrated` or `operational`, raw otherwise. A
-// wash-traded asset sinks in proportion to its concentration while the raw volume_24h_usd stays
-// unchanged and visible (demote, never hide or alter).
+// asset_volume_character (alias `avc`) labels `concentrated` or `operational`. Wash-traded assets
+// sink while raw volume_24h_usd stays visible (demote, never hide or alter).
 //
-// It is a SORT KEY, not a displayed value, and must be identical in THREE places (the listing
-// SELECT as sort_vol_usd, assetsOrderBy, assetsCursorPredicate), hence one const. It is all
-// NUMERIC so the cursor round-trips exactly (::text out, ::numeric in).
+// It is a SORT KEY that must be identical in THREE places (the listing SELECT as sort_vol_usd,
+// assetsOrderBy, assetsCursorPredicate), hence one const. It is all NUMERIC so the cursor
+// round-trips exactly (::text out, ::numeric in).
 const adjustedVolume24hExpr = `(COALESCE(vol.vol_usd, 0) * ` +
 	`CASE WHEN avc.character IN ('concentrated', 'operational') ` +
 	`THEN GREATEST(0::numeric, 1::numeric - avc.top_account_pair_vol_share::numeric) ` +
 	`ELSE 1::numeric END)`
 
-// listingPriceUSDExpr is the USD price the listing serves, before wire rounding. The price chain
-// ([snapshotPriceUSDExpr]) is resolved once per aggregator pass into asset_price_snapshot; the
-// stored value is already decimals-normalised for a confirmed non-7-decimals token
-// ([snapshotNormalizedPriceUSDExpr]) and is never scaled again. One expression lets
-// listingRankTierExpr splice it into the SELECT, ORDER BY and keyset WHERE, and because the `aps`
-// join carries the staleness ceiling, "unpriced" and "too stale to serve" land in the same tier.
+// listingPriceUSDExpr is the USD price the listing serves, before wire rounding. It is resolved
+// once per aggregator pass into asset_price_snapshot and already decimals-normalised
+// ([snapshotNormalizedPriceUSDExpr]), so it is never scaled again. The `aps` join carries the
+// staleness ceiling, so "unpriced" and "too stale to serve" land in the same rank tier.
 const listingPriceUSDExpr = `aps.price_usd`
 
 // scamFlagTagsSQLArray inlines [DirectoryScamFlagTags] as a SQL array LITERAL, not a bind
-// parameter: the predicate is spliced into the SELECT, ORDER BY and keyset WHERE at three
-// different positional-argument offsets, so it must be parameter-free. The values are a
-// compile-time vocabulary, never caller input, and mustSQLTextArrayLiteral panics at init on
-// anything outside [a-z].
+// parameter, because the predicate is spliced at three different positional-argument offsets.
+// The values are a compile-time vocabulary; mustSQLTextArrayLiteral panics at init outside [a-z].
 var scamFlagTagsSQLArray = mustSQLTextArrayLiteral(DirectoryScamFlagTags)
 
 // mustSQLTextArrayLiteral renders a lowercase-ASCII word list as a
@@ -400,10 +386,9 @@ func mustSQLTextArrayLiteral(vals []string) string {
 }
 
 // directoryScamFlaggedExpr is TRUE when the row's ISSUER carries a scam-class directory tag. It
-// is the SQL twin of pricingguard.IsDirectoryScamFlagged over the same [DirectoryScamFlagTags],
-// lowercased on both sides, so an asset showing the explorer's "Flagged" pill is exactly one
-// this demotes. dir.tags is NULL for most rows; unnest(NULL) yields no rows, so EXISTS is false
-// and the row ranks normally (fail-open, like the directory overlay and scam pricing gate).
+// is the SQL twin of pricingguard.IsDirectoryScamFlagged, lowercased on both sides, so a "Flagged"
+// asset is exactly one this demotes. dir.tags is NULL for most rows; unnest(NULL) yields no
+// rows, so EXISTS is false and the row ranks normally (fail-open).
 var directoryScamFlaggedExpr = `EXISTS (SELECT 1 FROM unnest(dir.tags) t ` +
 	`WHERE lower(t) = ANY(` + scamFlagTagsSQLArray + `))`
 
@@ -415,12 +400,10 @@ const rankTierMarker = "/*RANK_TIER*/"
 // before the volume / observation-count key:
 //
 //	0 - rankable.
-//	1 - unpriced (volume order only): that listing is a price/market-cap table, so a row with no
-//	    price must not outrank a priced one. The observation-count order ranks activity, so it
-//	    keeps tiers {0, 2} only.
-//	2 - directory-flagged (every order): the issuer carries a scam-class tag. The row stays, but
-//	    we refuse to RANK it; its price is withheld, and ranking it on volume would put a
-//	    wash-traded token near the top.
+//	1 - unpriced (volume order only): a price/market-cap table must not rank an unpriced row above
+//	    a priced one. The observation-count order ranks activity, so it keeps tiers {0, 2} only.
+//	2 - directory-flagged (every order): the row stays but is never RANKED, since volume ranking
+//	    would put a wash-traded token near the top.
 //
 // It is emitted as rank_tier so the keyset cursor encodes the value the ORDER BY ranks on (a
 // cursor omitting the leading key skips or repeats rows), and repeated verbatim in assetsOrderBy
@@ -438,7 +421,7 @@ func listingRankTierExpr(order AssetsOrder) string {
 // It reads NO hypertable and NO continuous aggregate: both money columns come from
 // worker-maintained rollups keyed on asset_id (asset_volume_24h, asset_price_snapshot), so a page
 // costs the spine plus three small hash joins whatever the limit / cursor / filter. Per-call
-// `DISTINCT ON ... FROM prices_1m` CTEs cost seconds; to need prices_1m here, add a rollup column.
+// `DISTINCT ON ... FROM prices_1m` CTEs cost seconds; add a rollup column instead.
 //
 // Volume is prices_1m.volume_usd over the trailing 24h where the asset is base OR quote
 // (internal/aggregate/assetvolrollup). Price and change come from refreshAssetPriceSnapshotUpsert,
@@ -629,8 +612,8 @@ func listAssetsBaseSelectSQL(order AssetsOrder) string {
 //
 // prices_1m.volume_usd is sum(coalesce(usd_volume, 0)), so an unvalued trade adds 0; unpriced_trades
 // counts them so readers flag vol_usd as a lower bound. The count is LEFT JOINed and never creates
-// a row, since the Soroban listing spine admits a contract on an asset_volume_24h row. Its ts
-// window is a superset of the closed-bucket one, so it can over-flag at the edges, never under-flag.
+// a row (the Soroban spine admits a contract on an asset_volume_24h row). Its window is a superset
+// of the closed-bucket one: it can over-flag at the edges, never under-flag.
 const refreshAssetVolumeUpsert = `
 WITH vol AS (
   SELECT asset_id, SUM(volume_usd) AS vol_usd
@@ -743,8 +726,7 @@ func escapeLikePattern(s string) string {
 // classic_assets has a non-NULL issuer_g_strkey, the discovered-contract arm selects NULL. Empty
 // means no predicate. The value is a closed enum, so it is matched, never interpolated.
 //
-// Any OTHER value is an error, not a skipped case: composing the filter away would serve the
-// unfiltered page under a 200, indistinguishable from a filter that matched everything. Callers
+// Any OTHER value is an error: skipping it would serve the unfiltered page under a 200. Callers
 // fold `native` / `fiat` to an empty page first, as the spine holds no such row.
 func assetsTypeCondition(typ string) (string, error) {
 	switch typ {
@@ -779,8 +761,8 @@ func assetsCursorArgs(cursor string, order AssetsOrder) []any {
 // argEnd-2.
 //
 // The tuple is (rank_tier ASC, sort_key, asset_id ASC) and the predicate mirrors it LEADING KEY
-// FIRST: `t > ct OR (t = ct AND <rest>)`. With the tier in the ORDER BY but not the WHERE, page 2
-// would resume at the cursor's volume inside tier 0 and skip every higher-volume tier-1/2 row.
+// FIRST: `t > ct OR (t = ct AND <rest>)`. Without the tier in the WHERE, page 2 would resume at
+// the cursor's volume inside tier 0 and skip every higher-volume tier-1/2 row.
 func assetsCursorPredicate(order AssetsOrder, argEnd int) string {
 	tier := listingRankTierExpr(order)
 	if order == AssetsOrderVolume24hUSDDesc {
@@ -794,10 +776,8 @@ func assetsCursorPredicate(order AssetsOrder, argEnd int) string {
 			adjustedVolume24hExpr, argEnd-1, adjustedVolume24hExpr, argEnd-1, argEnd)
 	}
 	// Spelled out like the volume arm: observation_count ranks DESC but asset_id ASC, and a SQL
-	// row-constructor compare is same-direction on every element. `(observation_count, asset_id)
-	// < ($n, $m)` would test asset_id < $m on a tie, re-serving rows and skipping others. Ties are
-	// the norm in the long tail, so a plain walk would repeat some rows, miss others, then report
-	// has_more=false as if complete.
+	// row-constructor compare is same-direction on every element, so it would test asset_id < $m
+	// on a tie. Ties are the norm in the long tail, so rows would repeat or be skipped.
 	return fmt.Sprintf(
 		"(%s > $%d::int OR (%s = $%d::int AND "+
 			"(ca.observation_count < $%d OR "+
@@ -820,9 +800,9 @@ func assetsOrderBy(order AssetsOrder) string {
 }
 
 // splitAssetsCursor splits a listing cursor into rank tier, sort-key prefix and asset_id. It
-// accepts "<tier>:<sort_key>:<asset_id>" (the tier leads because it is the leading ORDER BY key)
-// and the two-field "<sort_key>:<asset_id>", read as tier 0 so an in-flight cursor resumes
-// (re-serving a demoted row at most once) instead of 400ing.
+// accepts "<tier>:<sort_key>:<asset_id>" (the tier leads as the leading ORDER BY key) and the
+// two-field "<sort_key>:<asset_id>", read as tier 0 so an in-flight cursor resumes instead of
+// 400ing.
 //
 // asset_id carries no ':' (CODE-Gxxxx, bare C-strkeys, "native"), so counting separators is
 // unambiguous. ok=false means no ':' at all.
@@ -876,14 +856,14 @@ type AssetPricePoint struct {
 //
 // These reads stay RAW because the API corrects a confirmed non-7-decimals token
 // (v1.Server.normalizeCatalogueUSD); correcting here too would apply the factor twice. Rounding
-// still belongs here, since it runs before that correction: a flat ROUND(raw, 10) on an
-// 18-decimals token would turn a 1 USD price (raw 1e-11) into zero. Rounding the raw ratio to
-// 10 + k places, where the correction is 10^k, IS rounding the corrected price:
+// runs before that correction: a flat ROUND(raw, 10) on an 18-decimals token would turn a 1 USD
+// price (raw 1e-11) into zero. Rounding the raw ratio to 10 + k places, where the correction is
+// 10^k, IS rounding the corrected price:
 //
 //	ROUND(raw, 10 + k) * 10^k  ==  ROUND(raw * 10^k, 10)
 //
-// k comes from nonstandard_decimals_assets, floored at zero (no confirmed row gives exactly 10);
-// the API reads it back from the text, as ROUND(x, n)::text has exactly n fraction places.
+// k comes from nonstandard_decimals_assets, floored at zero; the API reads it back from the text,
+// as ROUND(x, n)::text has exactly n fraction places.
 //
 // Three spellings of one expression differ only in how the asset is named. MAX because the
 // alias-array form may match more than one spelling.
@@ -1150,13 +1130,11 @@ var getAssetPriceHistory7dSQL = `
 // paths are excluded: one bad XLM/USD reading on a thin day could fabricate an ATH.
 //
 // The metric is the highest day-VWAP, not the highest tick, so volume weighting rejects dust prints.
-// The `USDT-GCQTGZQQ...` issuer is EXCLUDED from every USD allowlist (there is no Tether on
-// Stellar; that asset trades unpegged). USD proxies are [usdProxyQuotes]; new ones need a
-// verified-catalogue entry.
+// The `USDT-GCQTGZQQ...` issuer is EXCLUDED from every USD allowlist (that asset trades unpegged).
+// USD proxies are [usdProxyQuotes]; new ones need a verified-catalogue entry.
 //
 // A day-bucket counts only if its pair cleared [athMinDayVolumeUSD] and [athMinDayTrades], so a
-// lone print on an empty book cannot set the high. The floor is a display filter, not
-// attack-resistant: a self-dealt day above it still can.
+// lone print cannot set the high. The floor is a display filter, not attack-resistant.
 type AssetATH struct {
 	USD string // numeric, fixed-point string (preserves precision)
 	At  string // RFC-3339 day-bucket the high was set
@@ -1752,10 +1730,9 @@ func parseAssetCursor(cursor string) (tier int, obsCount int64, assetID string) 
 }
 
 // EncodeAssetsCursor renders the keyset cursor for the LAST row of a page:
-// `<rank_tier>:<sort_key>:<asset_id>`, the full ORDER BY tuple, leading key first, exactly what
-// the query ranked the row on. It pairs with [parseAssetCursor] / [parseVolumeCursor] and lives
-// here so the encode side cannot drift from assetsOrderBy and assetsCursorPredicate. A nil
-// RankTier encodes as tier 0, the tier a two-field cursor resumes in.
+// `<rank_tier>:<sort_key>:<asset_id>`, the full ORDER BY tuple exactly as the query ranked the row.
+// It pairs with [parseAssetCursor] / [parseVolumeCursor] and lives here so the encode side cannot
+// drift from assetsOrderBy and assetsCursorPredicate. A nil RankTier encodes as tier 0.
 func EncodeAssetsCursor(row AssetRow, order AssetsOrder) string {
 	tier := 0
 	if row.RankTier != nil {

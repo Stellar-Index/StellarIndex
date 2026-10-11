@@ -28,17 +28,17 @@ const gapDetectorPerTargetTimeout = 15 * time.Minute
 // the Go-side cancel does not reach PG.
 //
 // INVARIANT: MUST be <= gapDetectorPerTargetTimeout, one constant for both queries. A longer PG
-// bound would let a query Go abandoned keep running for hours while each later cycle stacks
-// another. Pinned by TestGapDetectorStatementTimeoutWithinGoBudget.
+// bound would let an abandoned query keep running while each later cycle stacks another. Pinned
+// by TestGapDetectorStatementTimeoutWithinGoBudget.
 const gapDetectorStatementTimeoutMS = 780_000 // 13 min, in ms
 
 // GapDetectorSafetyLookback bounds how far below tip one cycle re-scans (~200k ledgers, ~11.5
 // days). Steady state scans only [previous high-water, tip]; this binds only after the detector
 // was down long enough that the high-water fell further behind, capping the catch-up.
 //
-// The detector is a SUPPORTING signal for the recent ingest frontier (ADR-0033). The authoritative
-// deep-history verdict is completeness_snapshots, from genesis. Re-walking [genesis, tip] every
-// 30 min buys nothing and at sep41_transfers' size costs two ~13-min scans per cycle.
+// The detector is a SUPPORTING signal for the recent ingest frontier (ADR-0033); the authoritative
+// deep-history verdict is completeness_snapshots. Re-walking [genesis, tip] each cycle would cost
+// two ~13-min scans at sep41_transfers' size.
 const GapDetectorSafetyLookback = int64(200_000)
 
 // GapDetectorFirstScanCap bounds the FIRST-ever scan of a target (no high-water yet): 2M ledgers
@@ -55,8 +55,7 @@ const gapDetectorHighWaterSource = "gap-detector-scan"
 // gapDetectorLastPresentSource is the ingestion_cursors `source` holding, per target, the highest
 // ledger observed PRESENT in the last scanned window (unlike the high-water, which advances even
 // when no row existed). It seeds [Store.FindPerSourceLedgerGaps] so a gap spanning a window
-// boundary still pairs with the row after it once the writer resumes, instead of being dropped
-// because the preceding row sat in an earlier window.
+// boundary still pairs with the row after it instead of being dropped.
 const gapDetectorLastPresentSource = "gap-detector-last-present"
 
 // computeGapScanWindow returns the lower bound `from` of the trailing window a cycle scans:
@@ -64,9 +63,8 @@ const gapDetectorLastPresentSource = "gap-detector-last-present"
 //   - firstRun            -> from = max(genesis, tip - FirstScanCap)
 //   - steady / post-error -> from = max(genesis, prevHighWater, tip - SafetyLookback)
 //
-// The result is clamped non-negative; FindPerSourceLedgerGaps still rejects from > tip. The gap
-// scan and the coverage math share this `from`, so density (distinct / (tip - from + 1)) has
-// numerator and denominator scoped to the same window.
+// The result is clamped non-negative. The gap scan and the coverage math share this `from`, so
+// density (distinct / (tip - from + 1)) has numerator and denominator scoped to the same window.
 func computeGapScanWindow(genesis, tip, prevHighWater int64, firstRun bool) int64 {
 	var from int64
 	if firstRun {
@@ -148,9 +146,9 @@ func persistGapScanSeed(ctx context.Context, store *Store, logger *slog.Logger, 
 // process state and can read 100% while data is missing, so this scans the data tables directly.
 //
 // A transient Postgres error on one target neither clears its gauges nor halts the others; the
-// paired `stellarindex_ingest_gap_detector_runs_total{outcome=error}` counter exposes a sustained
-// outage. The first cycle runs immediately; targets whose cadence has not elapsed since their last
-// persisted scan are skipped and re-emitted from persisted state (see [seedGapDetectorState]).
+// runs_total{outcome=error} counter exposes a sustained outage. Targets whose cadence has not
+// elapsed since their last persisted scan are skipped and re-emitted from persisted state (see
+// [seedGapDetectorState]).
 func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger, network string) error {
 	if store == nil {
 		return nil
@@ -199,8 +197,7 @@ var gapDetectorRunOutcomes = []string{"ok", "error"}
 // not obs). A CounterVec creates a series on first Inc(), and since the schedule is seeded from
 // persisted cursors (see [seedGapDetectorState]) a restart can run NO scan for hours. Without
 // this, the `stellarindex_ingest_gap_detector_silent` alert's `absent_over_time(runs_total[15m])`
-// clause would read "no scan due yet" as "detector dead"; the staleness clause on
-// last_success_unix still covers a wedged target.
+// clause would read "no scan due yet" as "detector dead".
 func preregisterGapDetectorSeries(targets []GapDetectorTarget) {
 	for _, t := range targets {
 		for _, outcome := range gapDetectorRunOutcomes {
@@ -259,7 +256,7 @@ type gapDetectorCursorReader func(ctx context.Context, source, sub string) (Curs
 //   - The target's source_coverage_snapshots row re-emits the last-known gap and distinct gauges,
 //     so `stellarindex_ingest_gap_detected` is not blind for a cadence after each deploy.
 //
-// A target with no cursor or a cursor read error (logged) gets no entry, so the first cycle scans it.
+// A target with no cursor, or a cursor read error (logged), gets no entry and is scanned at once.
 func seedGapDetectorState(ctx context.Context, targets []GapDetectorTarget, getCursor gapDetectorCursorReader, snapshots []SourceCoverage, logger *slog.Logger, now time.Time) map[string]time.Time {
 	byKey := make(map[string]SourceCoverage, len(snapshots))
 	for _, cov := range snapshots {
@@ -319,8 +316,7 @@ func runOneGapDetectorCycle(ctx context.Context, store *Store, logger *slog.Logg
 }
 
 // gapScanFrom computes this cycle's trailing-window lower bound (see [computeGapScanWindow]) and
-// logs a first-ever scan. It scans only [from, tip] because re-walking [genesis, tip] is two
-// ~13-min scans per cycle at sep41_transfers' size; the detector only needs the frontier.
+// logs a first-ever scan. It scans only [from, tip] because the detector only needs the frontier.
 //
 // `from` is floored at target.Genesis: below it lie pre-genesis "gaps" (the protocol did not
 // exist) that would deflate gap_free_pct. The same `from` feeds the caller's distinct/expected

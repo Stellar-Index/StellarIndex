@@ -6,26 +6,22 @@ import (
 	"time"
 )
 
-// SourceCoverage is the ADR-0031 unified read shape for "how
-// covered is source S right now." Derived purely from data
-// (count-distinct vs gap-detector gauges); no cursor inputs.
+// SourceCoverage is the unified read shape for "how covered is source S right now", derived purely
+// from data (count-distinct vs gap-detector gauges); no cursor inputs.
 //
 // Two complementary numbers per source:
 //
-//   - **DensityPct** = DistinctLedgers / ExpectedLedgers (capped [0, 1]). Raw
-//     coverage. Dense sources (SDEX, Soroswap) approach 1.0; sparse sources (Blend
-//     auctions, CCTP) are naturally low because the contract doesn't emit per ledger.
-//   - **GapFreePct** = 1 - MaxGapLedgers / ExpectedLedgers. Goes
-//     to 1.0 when no contiguous gap larger than the per-target
-//     [GapDetectorTarget.EffectiveMinGapSize] threshold exists.
-//     Sparse sources running cleanly hit 1.0 even though their
-//     DensityPct is low — they're emitting on cadence, just not
-//     every ledger.
+//   - **DensityPct** = DistinctLedgers / ExpectedLedgers (capped [0, 1]). Dense sources (SDEX,
+//     Soroswap) approach 1.0; sparse sources (Blend auctions, CCTP) are naturally low because the
+//     contract does not emit per ledger.
+//   - **GapFreePct** = 1 - MaxGapLedgers / ExpectedLedgers. It is 1.0 when no contiguous gap
+//     larger than [GapDetectorTarget.EffectiveMinGapSize] exists, so sparse sources running
+//     cleanly still hit 1.0.
 //
-// Both honest: a cascade incident drops both; natural sparsity drops only DensityPct.
+// A cascade incident drops both; natural sparsity drops only DensityPct.
 //
-// LastUpdated is the gap detector's last successful cycle for this source —
-// operators read it to confirm the signal isn't stale during an incident.
+// LastUpdated is the gap detector's last successful cycle for this source, so operators can
+// confirm the signal is not stale during an incident.
 type SourceCoverage struct {
 	Source          string
 	Table           string
@@ -38,11 +34,9 @@ type SourceCoverage struct {
 	LastUpdated     time.Time
 }
 
-// countDistinctLedgersQuery is the statement [Store.CountDistinctLedgers]
-// runs for a target: the target's DistinctLedgerCountSQL override when
-// set, else the generic COUNT(DISTINCT <ledger column>) over the
-// target's own table. Factored out so the per-target routing is
-// pinned by a unit test without a database
+// countDistinctLedgersQuery is the statement [Store.CountDistinctLedgers] runs for a target: its
+// DistinctLedgerCountSQL override when set, else the generic COUNT(DISTINCT <ledger column>).
+// Factored out so the routing is pinned without a database
 // (TestCountDistinctLedgersQueryRoutesOnlySorobanEventsToCensus).
 func countDistinctLedgersQuery(target GapDetectorTarget) string {
 	if target.DistinctLedgerCountSQL != "" {
@@ -59,23 +53,17 @@ func countDistinctLedgersQuery(target GapDetectorTarget) string {
 	)
 }
 
-// CountDistinctLedgers returns the number of ledgers in [from, to]
-// the target has data for: COUNT(DISTINCT <ledger column>) over the
-// target's hypertable (optionally filtered by WhereFilter), or the
-// target's [GapDetectorTarget.DistinctLedgerCountSQL] when it names a
-// cheaper source of the same number (soroban-events reads the
-// ledger_ingest_log census — see [sorobanEventsDistinctLedgerCountSQL]).
+// CountDistinctLedgers returns the number of ledgers in [from, to] the target has data for:
+// COUNT(DISTINCT <ledger column>) over its hypertable (optionally filtered by WhereFilter), or its
+// [GapDetectorTarget.DistinctLedgerCountSQL] when that names a cheaper source of the same number
+// (soroban-events reads the ledger_ingest_log census, see [sorobanEventsDistinctLedgerCountSQL]).
 //
-// SAFETY: target.Table, target.LedgerColumn, target.WhereFilter,
-// target.DistinctLedgerCountSQL are interpolated directly into the
-// SQL — same identifier injection concern + same construction
-// discipline as [FindPerSourceLedgerGaps] (ADR-0030: caller MUST pass
-// a compile-time const from [DefaultGapDetectorTargets]).
+// SAFETY: target.Table, LedgerColumn, WhereFilter and DistinctLedgerCountSQL are interpolated
+// directly into the SQL, so the caller MUST pass a compile-time const from
+// [DefaultGapDetectorTargets], as with [FindPerSourceLedgerGaps].
 //
-// Returns 0 (no error) when to == 0 — the caller hasn't resolved
-// tip yet, so there's nothing meaningful to scan. Same shape as
-// [FindPerSourceLedgerGaps] so callers can use both in one
-// branch.
+// Returns 0 (no error) when to == 0: the caller has not resolved tip yet. Same shape as
+// [FindPerSourceLedgerGaps] so callers can use both in one branch.
 func (s *Store) CountDistinctLedgers(ctx context.Context, target GapDetectorTarget, from, to int64) (int64, error) {
 	if from < 0 || to < from {
 		return 0, fmt.Errorf("timescale: CountDistinctLedgers invalid range [%d,%d]", from, to)
@@ -85,14 +73,11 @@ func (s *Store) CountDistinctLedgers(ctx context.Context, target GapDetectorTarg
 	}
 	query := countDistinctLedgersQuery(target)
 
-	// SQL-level statement_timeout — see FindPerSourceLedgerGaps.
-	// CountDistinctLedgers walks the same rows as the gap scan and
-	// Go-side cancellation doesn't always propagate to PG, so the
-	// PG-side abort is what actually prevents in-flight scans
-	// accumulating across cycles. It MUST be the gap detector's own
-	// [gapDetectorStatementTimeoutMS] (13 min, under the 15-min Go
-	// per-target budget), NOT the 2h ops/verify constant: that would let
-	// every over-budget count outlive its Go context as a 2h orphan backend.
+	// SQL-level statement_timeout, as in FindPerSourceLedgerGaps: Go-side cancellation does not
+	// always propagate to PG, so the PG-side abort is what stops scans accumulating across
+	// cycles. It MUST be the gap detector's own [gapDetectorStatementTimeoutMS] (13 min, under the
+	// 15-min Go per-target budget), NOT the 2h ops constant, which would let an over-budget count
+	// outlive its Go context as an orphan backend.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("timescale: CountDistinctLedgers begin: %w", err)
@@ -109,14 +94,12 @@ func (s *Store) CountDistinctLedgers(ctx context.Context, target GapDetectorTarg
 	return n, nil
 }
 
-// ExpectedLedgersFor returns the size of the [genesis, tip]
-// window for a source. For sources without a known genesis
-// (off-chain CEX/FX, external pollers) returns 0 + nil — the
-// caller surfaces a freshness signal instead of a density.
+// ExpectedLedgersFor returns the size of the [genesis, tip] window for a source. Sources without a
+// known genesis (off-chain CEX/FX, external pollers) return 0 + nil, and the caller surfaces a
+// freshness signal instead of a density.
 //
-// Encoded here rather than in obs/handler so the projection's
-// numerator and denominator come from one helper, no risk of the
-// two being computed against different windows. ADR-0031 §Decision.
+// It lives here so numerator and denominator come from one helper and cannot be computed against
+// different windows.
 func ExpectedLedgersFor(genesis, tip int64) int64 {
 	if genesis <= 0 || tip <= 0 || tip < genesis {
 		return 0
@@ -124,18 +107,12 @@ func ExpectedLedgersFor(genesis, tip int64) int64 {
 	return tip - genesis + 1
 }
 
-// SourceCoverageFromCounts assembles a [SourceCoverage] from the
-// raw inputs the gap detector already computes per cycle:
+// SourceCoverageFromCounts assembles a [SourceCoverage] from the raw inputs the gap detector
+// already computes per cycle: distinctLedgers (CountDistinctLedgers), expectedLedgers
+// (ExpectedLedgersFor) and maxGap / gapCount (reduced from FindPerSourceLedgerGaps).
 //
-//   - distinctLedgers: from CountDistinctLedgers
-//   - expectedLedgers: from ExpectedLedgersFor(genesis, tip)
-//   - maxGap, gapCount: from the existing FindPerSourceLedgerGaps
-//     result reduction
-//
-// Centralised so the percentage math has one home — the
-// /v1/diagnostics/ingestion handler reads the resulting struct,
-// it doesn't recompute. Returned percentages are honest 0..1
-// floats; the handler renders them as basis points or %.
+// Centralised so the percentage math has one home; the /v1/diagnostics/ingestion handler reads
+// the struct and does not recompute. Percentages are 0..1 floats.
 func SourceCoverageFromCounts(source, table string, distinctLedgers, expectedLedgers, maxGap, gapCount int64, lastUpdated time.Time) SourceCoverage {
 	density, gapFree := percentagesFromCounts(distinctLedgers, expectedLedgers, maxGap)
 	return SourceCoverage{
@@ -173,12 +150,9 @@ func percentagesFromCounts(distinct, expected, maxGap int64) (density, gapFree f
 	return density, gapFree
 }
 
-// UpsertSourceCoverage writes one row into source_coverage_snapshots
-// for the given (source, table). Idempotent — overwrites the prior
-// row on PK conflict. Called by the gap detector after a successful
-// scan cycle so the diagnostic handler in the API binary can read
-// a fresh coverage projection without re-running the heavy
-// LAG-over-DISTINCT query at request time. ADR-0031.
+// UpsertSourceCoverage writes one source_coverage_snapshots row for (source, table), overwriting
+// on PK conflict. The gap detector calls it after each successful scan so the API can read a fresh
+// projection without re-running the heavy LAG-over-DISTINCT query at request time.
 func (s *Store) UpsertSourceCoverage(ctx context.Context, cov SourceCoverage) error {
 	const q = `
         INSERT INTO source_coverage_snapshots
@@ -207,11 +181,9 @@ func (s *Store) UpsertSourceCoverage(ctx context.Context, cov SourceCoverage) er
 	return nil
 }
 
-// ListSourceCoverage returns every row in source_coverage_snapshots
-// ordered by source. Called by the /v1/diagnostics/ingestion
-// handler at request time — single cheap query, no decoding.
-// Returns an empty slice + nil error if the table is empty (fresh
-// deploy before the first detector cycle has written anything).
+// ListSourceCoverage returns every source_coverage_snapshots row ordered by source, one cheap query
+// for the /v1/diagnostics/ingestion handler. An empty table (fresh deploy before the first
+// detector cycle) returns an empty slice and nil error.
 func (s *Store) ListSourceCoverage(ctx context.Context) ([]SourceCoverage, error) {
 	const q = `
         SELECT source, "table", distinct_ledgers, expected_ledgers,

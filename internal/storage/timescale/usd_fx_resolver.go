@@ -33,15 +33,13 @@ type VWAPUSDFXResolver struct {
 	// `<asset>/<peg>` for each until one returns a row.
 	usdPegs []string
 
-	// pegForms is [usdPegs] made ALIAS-COMPLETE: each classic peg plus the SAC contract wrapping
-	// it, which is what [VWAPUSDFXResolver.queryDirectLeg] binds to `quote_asset = ANY(...)`.
-	// [USDVolumeQuoteSpec.QuoteUSDPegInfo] lets a SAC inherit its classic's peg, and a Soroban pool
-	// quoting in the USDC SAC is the same declared dollar, so both tiers must agree on the set.
+	// pegForms is [usdPegs] made alias-complete: each classic peg plus its SAC wrapper, bound to
+	// `quote_asset = ANY(...)` by [VWAPUSDFXResolver.queryDirectLeg]. A Soroban pool quoting in the
+	// USDC SAC is the same declared dollar, so the exact and FX tiers must agree on the set.
 	//
-	// It is built by [usdPegForms] from the operator's `[supply].sac_wrappers`, not from
-	// [canonical.AssetAliases]: the alias registry is installed only by the api and aggregator
-	// binaries, so the indexer and `stellarindex-ops` (which write `usd_volume`) would silently
-	// collapse back to the classic form.
+	// Built by [usdPegForms] from `[supply].sac_wrappers`, not [canonical.AssetAliases]: the alias
+	// registry is installed only by the api and aggregator binaries, so the indexer and
+	// `stellarindex-ops` (which write `usd_volume`) would silently collapse to the classic form.
 	pegForms []string
 
 	// pegAssets and xlmForms are the quote spelling sets the direct and the
@@ -198,13 +196,12 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 
 // usdPegForms expands the classic USD-peg list into the asset FORMS a prices_1m `quote_asset` may
 // carry for that peg: each declared peg plus its declared SAC wrapper. The membership rule matches
-// [NewUSDVolumeQuoteSpec] and the Soroban arm of [USDVolumeQuoteSpec.QuoteUSDPegInfo]; a peg the
-// exact tier honours but this tier cannot see is a silent coverage hole.
+// [NewUSDVolumeQuoteSpec] and [USDVolumeQuoteSpec.QuoteUSDPegInfo]; a peg the exact tier honours
+// but this tier cannot see is a silent coverage hole.
 //
-// It is strict on a malformed WRAPPER because a dropped one silently under-counts volume. Declared
-// pegs bind verbatim ([NewUSDVolumeQuoteSpec] rejects unparseable ones), except that a parseable
-// peg goes through [classicKey] so "CODE:ISSUER" binds the stored "CODE-ISSUER" form. Order is
-// deterministic so the bound array and query plan are stable.
+// A malformed WRAPPER is an error because dropping it would silently under-count volume. Pegs
+// bind verbatim, except that [classicKey] maps "CODE:ISSUER" to the stored "CODE-ISSUER" form.
+// Order is deterministic so the bound array and query plan are stable.
 func usdPegForms(classicPegs []string, sacWrappers map[string]string) ([]string, error) {
 	forms := make([]string, 0, len(classicPegs))
 	seen := make(map[string]struct{}, len(classicPegs))
@@ -427,12 +424,12 @@ func (r *VWAPUSDFXResolver) substanceAllows(
 // weakest currency, well beyond the 8 decimals of `usd_volume`. [trimNumericText] drops the padding.
 const fiatUSDRateScale = 18
 
-// usdPriceForFiat resolves the USD price of one fiat unit from `fx_quotes`. A fiat asset can NEVER
+// usdPriceForFiat resolves the USD price of one fiat unit from `fx_quotes`. A fiat asset can never
 // resolve through [VWAPUSDFXResolver.queryDB] (prices_1m holds crypto only), so without this every
-// CEX pair quoted in a non-USD currency would get `usd_volume` NULL and deflate its aggregates.
+// CEX pair quoted in a non-USD currency would get `usd_volume` NULL.
 //
 // The rate is an exact *big.Rat from [fxSnapFromRows]; the float-derived `inverse_usd` column is
-// deliberately NOT used (ADR-0003). Two deviations from the prices_1m path:
+// NOT used (ADR-0003). Two deviations from the prices_1m path:
 //
 //   - Freshness is NOT applied: fx_quotes buckets are daily and weekday-only, so a 1h bound would
 //     reject every fiat rate; [fxQuotesSnapLookback] (7 days) bounds it instead.
@@ -537,9 +534,8 @@ func trimNumericText(s string) string {
 // ─── tier 3b: the XLM bridge ─────────────────────────────────────────
 
 // bridgeLegMinUSDVolume is the dust floor a bridge bucket must clear before its VWAP may value
-// another trade. Amounts are integer stroops, so a fill of a few stroops has ~100% quantisation
-// error. VWAP already shrugs off a crumb inside a real bucket, but a bucket holding ONLY dust would
-// let it set the rate for every trade bridging through the pair. $0.01 matches the OHLC-extremes
+// another trade. A few-stroop fill has ~100% quantisation error, and a bucket holding ONLY dust
+// would set the rate for every trade bridging through the pair. $0.01 matches the OHLC-extremes
 // floor so the dust defences agree (docs/operations/finding-dust-trades-set-chart-extremes.md).
 const bridgeLegMinUSDVolume = "0.01"
 
@@ -601,10 +597,9 @@ func bridgeRate(xlmPerAsset *big.Rat, usdPerXLMText string) (string, bool) {
 }
 
 // rateScaleFor returns the decimal places needed to render r with `sig` significant digits.
-// big.Rat renders only at a fixed scale, but bridged rates span ~1e0 to below 1e-12 with the
-// token's decimals, so a fixed scale truncates small ones or bloats large ones. Counting leading
-// zeros keeps precision constant in relative terms. It is deliberately float-free (ADR-0003): a
-// log10 would be the obvious way to reintroduce float error into money math.
+// big.Rat renders only at a fixed scale, but bridged rates span ~1e0 to below 1e-12, so a fixed
+// scale truncates small rates or bloats large ones. Counting leading zeros keeps relative
+// precision constant and stays float-free (ADR-0003), unlike log10.
 func rateScaleFor(r *big.Rat, sig int) int {
 	if r == nil || r.Sign() == 0 {
 		return sig
@@ -724,9 +719,9 @@ func xlmLegQuery(lowerBound string) string {
 //
 // It cannot use `volume_usd` as the bridge leg does: that sums `usd_volume`, which this resolver
 // itself writes, so a never-priced pair could never clear it (prices_1m coalesces NULL to 0).
-// `vwap * volume_priced` is instead the sum of quote_amount over trades with both legs > 0, exact
-// to within NUMERIC rounding. Not `volume_quote`, which also counts zero-base trades and would let
-// a quote-only row carry a dust fill over the floor. Matched quotes are operator pegs, so it is dollars.
+// `vwap * volume_priced` is the sum of quote_amount over trades with both legs > 0, exact to
+// NUMERIC rounding. Not `volume_quote`, which counts zero-base trades and would let a quote-only
+// row carry a dust fill over the floor. Matched quotes are operator pegs, so it is dollars.
 const directLegMinQuoteVolume = "0.01"
 
 // pegQuoteScaleDenominator converts a prices_1m `vwap * volume_priced` product from raw stroops to
@@ -817,9 +812,9 @@ func directLegQuery(bounded bool) string {
 // [USDVolumeQuoteSpec] (declared USD-pegged classics + SAC wrappers) and the [VWAPUSDFXResolver]
 // (FX-anchored rates and fiat quotes).
 //
-// Every trade-writing process must install BOTH. A partial install is destructive: InsertTrade and
-// BatchInsertTrades upsert `usd_volume = EXCLUDED.usd_volume` unconditionally (trades.go), gated
-// only by `derive_generation`, so a re-derive without the resolvers writes NULL over correct values.
+// Every trade-writing process must install BOTH. A partial install is destructive: the trade
+// upserts set `usd_volume = EXCLUDED.usd_volume` gated only by `derive_generation`, so a re-derive
+// without the resolvers writes NULL over correct values.
 //
 // Empty `classicUSDPegs` is a no-op (both tiers stay nil).
 func InstallUSDVolumeResolution(store *Store, classicUSDPegs []string, sacWrappers map[string]string) error {

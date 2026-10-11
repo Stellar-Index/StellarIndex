@@ -11,23 +11,19 @@ import (
 // Read side for GET /v1/accounts/{g_strkey}/trades: per-address historic trades
 // out of the `trades` hypertable.
 //
-// ACCOUNT ATTRIBUTION: taker is the acting account (tx-level source for sdex, the
-// user/sender for aquarius, phoenix and comet, the SwapEvent `to` recipient for
-// soroswap; older soroswap rows carry NULL unless re-derived). maker is the
-// resting-offer account (sdex only). Both are NULL for off-chain CEX/FX rows
-// (ledger=0), so the read serves "trades where this address is recorded as taker
-// or maker".
+// ACCOUNT ATTRIBUTION: taker is the acting account (tx-level source for sdex, the user/sender for
+// aquarius, phoenix and comet, the SwapEvent `to` recipient for soroswap; older soroswap rows
+// carry NULL unless re-derived). maker is the resting-offer account (sdex only). Both are NULL for
+// off-chain CEX/FX rows (ledger=0).
 //
-// QUERY SHAPE: two index-friendly arms UNION'd, not `taker = $1 OR maker = $1`: an
-// OR across two columns cannot ride one account-leading index in output order, so
-// the planner sorts the account's whole history before the LIMIT. Each arm has its
-// own ORDER BY + LIMIT on its partial index (migration 0123); the union of two top-N
-// arms contains the union's top N. The maker arm excludes rows where the address is
-// ALSO the taker so a self-crossed sdex trade appears once.
+// QUERY SHAPE: two index-friendly arms UNION'd, not `taker = $1 OR maker = $1`: an OR across two
+// columns cannot ride one account-leading index in output order, so the planner would sort the
+// account's whole history before the LIMIT. Each arm has its own ORDER BY + LIMIT on its partial
+// index (migration 0123); the union of two top-N arms contains the union's top N. The maker arm
+// excludes rows where the address is ALSO the taker so a self-crossed sdex trade appears once.
 //
-// KEYSET: (ts DESC, ledger DESC, tx_hash DESC, op_index DESC). ts alone is not
-// unique and (ts, ledger, op_index) collides for two same-account txs in one
-// ledger, so tx_hash rides in the tuple.
+// KEYSET: (ts DESC, ledger DESC, tx_hash DESC, op_index DESC). (ts, ledger, op_index) collides
+// for two same-account txs in one ledger, so tx_hash rides in the tuple.
 
 // accountTradesMaxLimit clamps one page. Mirrors the sibling explorer
 // listings' 200-row ceiling.
@@ -36,11 +32,9 @@ const (
 	accountTradesMaxLimit     = 200
 )
 
-// AccountTradeRow is one per-address trade row. Amounts are decimal
-// strings straight from the NUMERIC columns (ADR-0003 — i128 amounts
-// exceed IEEE 754 double precision; nothing in this path may pass
-// through a float). USDVolume is "" when the stored column is NULL
-// (unknown — the aggregator could not value the trade), never "0".
+// AccountTradeRow is one per-address trade row. Amounts are decimal strings straight from the
+// NUMERIC columns (i128 amounts exceed double precision; nothing here may pass through a float).
+// USDVolume is "" when the stored column is NULL (the trade could not be valued), never "0".
 type AccountTradeRow struct {
 	Source      string
 	Ledger      uint32
@@ -78,17 +72,13 @@ type AccountTradesCursor struct {
 // IsSet reports whether the cursor points past an already served row.
 func (c AccountTradesCursor) IsSet() bool { return !c.Ts.IsZero() }
 
-// accountTradesInnerCols is the per-arm column list. base/quote amounts
-// and usd_volume are cast to text server-side so the driver never sees a
-// float (ADR-0003).
+// accountTradesInnerCols is the per-arm column list. base/quote amounts and usd_volume are cast to
+// text server-side so the driver never sees a float.
 //
-// The two COALESCE expressions MUST carry explicit aliases. Without them
-// PostgreSQL names both output columns `coalesce`, so the outer SELECT's
-// reference to `usd_volume` resolves against nothing and the statement
-// fails at PLAN time (`pq: column "usd_volume" does not exist ...
-// (42703)`) — GET /v1/accounts/{id}/trades would return 500 for every
-// account. A test that only asserts substrings of the query STRING cannot
-// see this; it needs real SQL execution.
+// The two COALESCE expressions MUST carry explicit aliases. Without them PostgreSQL names both
+// output columns `coalesce`, so the outer SELECT's reference to `usd_volume` fails at PLAN time
+// (42703) and every account's trades read returns 500. A test asserting substrings of the query
+// STRING cannot see this; it needs real SQL execution.
 const accountTradesInnerCols = `source, ledger, tx_hash, op_index, ts,
 	       base_asset, quote_asset,
 	       base_amount::text AS base_amount, quote_amount::text AS quote_amount,
@@ -102,27 +92,18 @@ const accountTradesOuterCols = `source, ledger, tx_hash, op_index, ts,
 	       base_asset, quote_asset,
 	       base_amount, quote_amount, usd_volume, routed_via, signer`
 
-// accountTradesQuery builds the two-arm UNION described in the file
-// header. hasCursor appends the keyset tuple comparison to both arms.
+// accountTradesQuery builds the two-arm UNION described in the file header. hasCursor appends the
+// keyset tuple comparison to both arms.
 //
-// Placeholder layout (hasCursor=true):
-//
-//	$1 address · $2 ts floor · $3..$6 cursor · $7 limit (arm 1)
-//	$1 address · $2 ts floor · $3..$6 cursor · $7 limit (arm 2, same params)
-//
-// Without a cursor the limit moves to $3.
-//
-// Both arms reuse the same numbered placeholders, so the caller passes
-// each value once regardless of arm count.
+// Placeholder layout (hasCursor=true): $1 address, $2 ts floor, $3..$6 cursor, $7 limit. Both arms
+// reuse the same numbered placeholders, so the caller passes each value once. Without a cursor
+// the limit moves to $3.
 func accountTradesQuery(hasCursor bool) string {
-	// $2 is always the compression-horizon ts floor computed by
-	// tradesUncompressedHorizon: the per-account partial indexes exist only on
-	// UNCOMPRESSED chunks — a compressed chunk has no btree, so an arm that
-	// descends into one decompress-scans it. The floor is the END of the
-	// newest COMPRESSED chunk, so ts >= floor can never resolve to a
-	// compressed chunk and ChunkAppend excludes them outright. The caller
-	// surfaces the floor as an explicit coverage note rather than serving a
-	// silently-partial "all time" answer.
+	// $2 is always the compression-horizon ts floor from tradesUncompressedHorizon: the per-account
+	// partial indexes exist only on UNCOMPRESSED chunks, and an arm descending into a compressed
+	// one decompress-scans it. The floor is the END of the newest COMPRESSED chunk, so ts >= floor
+	// never resolves to a compressed chunk and ChunkAppend excludes them. The caller surfaces the
+	// floor as a coverage note rather than serving a silently-partial "all time" answer.
 	cursorClause := ""
 	limitPh := "$3"
 	if hasCursor {
@@ -139,31 +120,25 @@ func accountTradesQuery(hasCursor bool) string {
 	) u` + orderBy
 }
 
-// tradesHorizonFailClosedWindow is the fail-CLOSED floor served on a
-// catalog lookup error: short enough that it is always inside the
-// compression policy's compress_after window (15 days on `trades`, see
-// TradesCompressionPolicy) with margin, so it can never claim a chunk
-// that might already be compressed as index-safe.
+// tradesHorizonFailClosedWindow is the fail-CLOSED floor served on a catalog lookup error: always
+// inside the compression policy's compress_after window (15 days on `trades`, see
+// TradesCompressionPolicy) with margin, so it never claims a possibly compressed chunk as
+// index-safe.
 const tradesHorizonFailClosedWindow = 24 * time.Hour
 
-// tradesUncompressedHorizon returns the floor below which per-account
-// trades reads have no usable index (see accountTradesQuery): the END
-// of the NEWEST COMPRESSED chunk — not the start of the oldest
-// uncompressed one.
+// tradesUncompressedHorizon returns the floor below which per-account trades reads have no usable
+// index (see accountTradesQuery): the END of the NEWEST COMPRESSED chunk, not the start of the
+// oldest uncompressed one.
 //
-// The two are not interchangeable: compression is not a time prefix. An old
-// chunk can sit uncompressed (a stuck compression job, a late-arriving
-// backfill) while everything after it has already compressed, and
-// min(range_start) over uncompressed chunks then picks that ancient straggler
-// as the "floor".
+// Compression is not a time prefix: an old chunk can sit uncompressed (a stuck compression job, a
+// late-arriving backfill) while everything after it has compressed, and min(range_start) over
+// uncompressed chunks would pick that straggler as the "floor".
 //
-// Cached for 10 minutes; the horizon only moves when the compression policy
-// compresses another chunk. Fails CLOSED — a short recent window
-// (tradesHorizonFailClosedWindow), NOT epoch. AccountTrades and
-// computeAccountActivity already render any non-zero, post-1971 horizon as an
-// honest "showing trades since <date>" / trades_total_since coverage note, so
-// failing closed degrades into that same channel instead of silently serving
-// as if all history were indexed.
+// Cached for 10 minutes; the horizon only moves when the compression policy compresses another
+// chunk. Fails CLOSED to a short recent window (tradesHorizonFailClosedWindow), NOT epoch.
+// AccountTrades and computeAccountActivity render any non-zero, post-1971 horizon as an honest
+// "showing trades since <date>" / trades_total_since coverage note, so failing closed degrades
+// into that channel instead of silently serving as if all history were indexed.
 func (s *Store) tradesUncompressedHorizon(ctx context.Context) time.Time {
 	tradesHorizonMu.Lock()
 	defer tradesHorizonMu.Unlock()
@@ -253,10 +228,9 @@ func (s *Store) ListAccountTrades(ctx context.Context, address string, limit int
 	return out, horizon, nil
 }
 
-// CountAccountTrades returns the address's attributed trade count (taker or
-// maker side, each row once) SINCE the returned horizon — the compression
-// boundary below which the per-account partial indexes don't exist. The OR
-// here stays deliberate: with the ts floor the scan is confined to indexed
+// CountAccountTrades returns the address's attributed trade count (taker or maker side, each row
+// once) SINCE the returned horizon, the compression boundary below which the per-account partial
+// indexes do not exist. The OR stays deliberate: with the ts floor the scan is confined to indexed
 // uncompressed chunks, where a bitmap-or counts each row once.
 func (s *Store) CountAccountTrades(ctx context.Context, address string) (int64, time.Time, error) {
 	horizon := s.tradesUncompressedHorizon(ctx)

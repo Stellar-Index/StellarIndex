@@ -26,10 +26,10 @@ import (
 // # The substance gate
 //
 // Every tier prices off a leg whose USD rate nobody trading the pair can author: native XLM or a
-// vendor fiat feed (`fx_quotes`). A token/token pair has NO tier here and must stay unpriced:
-// valuing it would read the tier-3b `<token>/XLM` bridge, which is whatever the last counterparty
-// wrote. Scans are an ALLOW-LIST on the tier's own leg and the Go gate ([restampScope])
-// re-asserts the tier, so a widened scan fails CLOSED.
+// vendor fiat feed (`fx_quotes`). A token/token pair has NO tier here and must stay unpriced, since
+// valuing it would read a `<token>/XLM` bridge that is whatever the last counterparty wrote. Scans
+// are an ALLOW-LIST on the tier's own leg and the Go gate ([restampScope]) re-asserts the tier, so
+// a widened scan fails CLOSED.
 
 type (
 	// RestampScanParams scopes one window of an estimated-tier re-derive.
@@ -105,7 +105,7 @@ type restampGate func(canonical.Trade, *USDVolumeQuoteSpec) restampTierVerdict
 //
 // The error is for a rate source that could not be read at all. The live insert path swallows
 // that (the trade lands with usd_volume NULL); a backfill must not, or a broken read would report
-// a whole population as unpriceable and a configuration failure would read as a finding.
+// a whole population as unpriceable.
 type restampValuer func(canonical.Trade) (*string, error)
 
 // restampTierScan is one tier's half of the shared walk: what to scan and
@@ -144,10 +144,9 @@ func restampScanSources(all []string, allow map[string]bool) []string {
 //
 // READ-ONLY: this is the whole dry run. [Store.ApplyUSDVolumeRestampPlan] consumes the plan
 // verbatim, so "-write writes exactly the rows the dry run reported" holds by construction.
-//
-// Requires the USD-volume resolution to be installed ([InstallUSDVolumeResolution]); without a
-// resolver every tier declines every row, a configuration error dressed as a finding. Refused up
-// front, like [Store.reDeriveNullVolumeGuard].
+// Without an installed USD-volume resolution ([InstallUSDVolumeResolution]) every tier declines
+// every row, a configuration error dressed as a finding, so it is refused up front like
+// [Store.reDeriveNullVolumeGuard].
 func (s *Store) planRestampTier(ctx context.Context, p RestampScanParams, t restampTierScan) (*RestampPlan, error) {
 	if !p.To.After(p.From) {
 		return nil, fmt.Errorf("timescale: %s restamp: empty window [%s, %s)", t.Tier, p.From, p.To)
@@ -206,21 +205,19 @@ func (s *Store) planRestampTier(ctx context.Context, p RestampScanParams, t rest
 // restampDecide judges ONE scanned row for ONE tier.
 //
 // `value` is injected so the rules are testable without a live prices_1m / fx_quotes; production
-// passes a closure over the insert path's own function, so the stored number is the one the
-// insert path computes for the same row.
+// passes a closure over the insert path's own function, so the stored number matches it.
 //
 // Three rules make this a re-derive rather than a guess, for every tier:
 //
 //  1. THE VALUE COMES FROM THE LIVE FUNCTION (`value`).
-//  2. ONLY THAT FUNCTION. A row it declines is REPORTED, never valued through a
-//     second route: a fallback estimate at a HIGH derive_generation is the one
-//     state a later correction cannot claw back.
-//  3. NEVER WRITE NULL OVER A VALUE. A declined row that already carries a
-//     number keeps it, counted in [XLMBaseRestampStats.AnchorDeclinedStored].
+//  2. ONLY THAT FUNCTION. A row it declines is REPORTED, never valued through a second route: a
+//     fallback estimate at a HIGH derive_generation is the one state a later correction cannot
+//     claw back.
+//  3. NEVER WRITE NULL OVER A VALUE. A declined row that already carries a number keeps it,
+//     counted in [XLMBaseRestampStats.AnchorDeclinedStored].
 //
-// Read generically, `xlmBaseQuotePegged` is "a leg is a declared USD peg, so an
-// EXACT tier owns this row" and `xlmBaseNotDEX` is "outside this tier's
-// source/leg scope".
+// Read generically, `xlmBaseQuotePegged` is "a leg is a declared USD peg, so an EXACT tier owns
+// this row" and `xlmBaseNotDEX` is "outside this tier's source/leg scope".
 func restampDecide(
 	row restampScanRow,
 	spec *USDVolumeQuoteSpec,
@@ -283,8 +280,8 @@ func restampDecide(
 // restampScope decides whether one scanned row is IN the tier `gate` describes, and rebuilds it
 // into the [canonical.Trade] the decoder produced so the value function sees the same object as
 // the insert path. The tier decision lives beside [tradeUSDVolume] so branch order and selected
-// population cannot drift; here is only the row-shaped part: parsing the two asset ids and
-// amounts, with [tradeUSDVolume]'s positive-amount bail-outs.
+// population cannot drift; this is only the row-shaped part (asset ids and amounts, with
+// [tradeUSDVolume]'s positive-amount bail-outs).
 func restampScope(row restampScanRow, spec *USDVolumeQuoteSpec, gate restampGate) (canonical.Trade, xlmBaseDisposition, bool) {
 	base, err := canonical.ParseAsset(row.BaseAsset)
 	if err != nil {

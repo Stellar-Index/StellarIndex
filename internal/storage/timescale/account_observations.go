@@ -17,11 +17,9 @@ import (
 //
 // Last-writer-wins on conflict: an account touched several times in one ledger writes successive
 // rows for the same (account_id, ledger), and the AccountEntry post-state is monotonic within a
-// ledger, so the latest write is final. ON CONFLICT DO UPDATE overrides values; observed_at is
-// the ledger close time and stays the same.
+// ledger, so the latest write is final. observed_at is the ledger close time and stays the same.
 //
-// It rejects a zero-value AccountID and nil Balance up front, which would otherwise surface as a
-// less obvious NOT NULL violation deeper in the stack.
+// A zero-value AccountID and nil Balance are rejected up front rather than as a NOT NULL violation.
 func (s *Store) InsertAccountObservation(ctx context.Context, o domain.AccountObservation) error {
 	if o.AccountID == "" {
 		return errors.New("timescale: InsertAccountObservation: AccountID is empty")
@@ -99,9 +97,9 @@ type AccountObservation struct {
 // ledger ≤ asOf, or [ErrNotFound] when the account has none in scope (the caller then falls back
 // to operator-static config).
 //
-// `account_observations.ledger` is int4, so a uint32 above MaxInt32 would make the driver fail
-// with out-of-range (22003). Callers wanting "no upper bound" should pass `math.MaxInt32`, not
-// `^uint32(0)`; this function also caps high values so a caller bug cannot flood resolver errors.
+// `account_observations.ledger` is int4, so a uint32 above MaxInt32 fails with out-of-range
+// (22003). Callers wanting "no upper bound" pass `math.MaxInt32`, not `^uint32(0)`; high values
+// are capped here too so a caller bug cannot flood resolver errors.
 func (s *Store) LatestAccountObservationAtOrBefore(ctx context.Context, accountID string, asOfLedger uint32) (AccountObservation, error) {
 	const maxInt32 = uint32(math.MaxInt32)
 	if asOfLedger > maxInt32 {
@@ -206,10 +204,10 @@ func scanAccountObservation(sc interface{ Scan(dest ...any) error }) (AccountObs
 }
 
 // UpsertAccountObserverWatermark advances the observer's TRUE processed-ledger watermark. The
-// live indexer calls it every ledger it drives the observer over, REGARDLESS of whether a
-// watched balance changed, so the watermark tracks liveness rather than the last write.
+// live indexer calls it every ledger, REGARDLESS of whether a watched balance changed, so the
+// watermark tracks liveness rather than the last write.
 //
-// Singleton row (id=1). The WHERE-clause guard makes a lower-or-equal value a silent no-op, so an
+// Singleton row (id=1). The WHERE guard makes a lower-or-equal value a silent no-op, so an
 // out-of-order or replayed caller can never regress the anchor (mirrors [Store.UpsertCursor]).
 // processed_ledger is bigint, so no int4 cap applies.
 func (s *Store) UpsertAccountObserverWatermark(ctx context.Context, processedLedger uint32) error {
@@ -232,10 +230,10 @@ func (s *Store) UpsertAccountObserverWatermark(ctx context.Context, processedLed
 // freshness gate treats as a permissive bypass.
 //
 // It reads the watermark, not MAX(ledger) FROM account_observations: that table only gets a row
-// when a watched balance CHANGES, so in a quiet period MAX(ledger) goes stale while the observer
-// is healthy (false-rejecting the XLM freshness gate) and would equally hide a dead observer.
-// The watermark advances every ledger (see [Store.UpsertAccountObserverWatermark]), so only a
-// dead observer freezes it, and the gate then fails closed past the horizon.
+// when a watched balance CHANGES, so MAX(ledger) goes stale in a quiet period (false-rejecting the
+// XLM freshness gate). The watermark advances every ledger (see
+// [Store.UpsertAccountObserverWatermark]), so only a dead observer freezes it, and the gate then
+// fails closed past the horizon.
 func (s *Store) MaxAccountObservationLedger(ctx context.Context, asOfLedger uint32) (uint32, error) {
 	const maxInt32 = uint32(math.MaxInt32)
 	if asOfLedger > maxInt32 {

@@ -14,7 +14,7 @@ import (
 //
 // FirstLedger is the earliest ledger the cursor's range covers, so the [FirstLedger, LastLedger]
 // span only grows forward. It is zero while the column is NULL; density coverage then credits no
-// live span instead of falling back to sourceGenesisLedger, which would inflate density to 100%.
+// live span rather than falling back to sourceGenesisLedger, which would inflate density to 100%.
 type Cursor struct {
 	Source      string
 	Sub         string
@@ -28,8 +28,7 @@ type Cursor struct {
 //
 // One list, because reap-cursors (never DELETE these rows) and /v1/diagnostics/cursors (never
 // classify them `abandoned`) must agree on which rows it covers: an old row here means ingest is
-// STUCK, so it is the row an operator most needs to see. One-shot shard rows outlive their work
-// by design.
+// STUCK, the row an operator most needs to see. One-shot shard rows outlive their work by design.
 var liveCursorSources = []string{"ledgerstream", "projector"}
 
 // LiveCursorSources returns a copy of the live cursor namespaces.
@@ -45,7 +44,7 @@ func IsLiveCursorSource(source string) bool {
 // the configured backfill ledger".
 //
 // first_ledger is read via COALESCE(..., 0), so NULL scans as FirstLedger=0. Callers that must
-// tell "none persisted" from "covers ledger 0" use ListCursors with sourceGenesisLedger fallback.
+// tell "none persisted" from "covers ledger 0" use ListCursors with the genesis fallback.
 func (s *Store) GetCursor(ctx context.Context, source, sub string) (Cursor, error) {
 	const q = `
         SELECT source, COALESCE(sub_source, ''),
@@ -98,10 +97,10 @@ func (s *Store) ListCursors(ctx context.Context) ([]Cursor, error) {
 // UpsertCursor stores the cursor, advancing any existing row for (source, sub).
 //
 // The DO UPDATE WHERE refuses to regress last_ledger (a lower-or-equal value is a silent no-op),
-// guarding against callers without their own guard and two indexers racing in a bad deploy.
+// guarding against two indexers racing in a bad deploy.
 //
-// first_ledger is set on INSERT as the lower-bound coverage anchor and intentionally preserved by
-// COALESCE on UPDATE, so restarts never move it; a NULL is filled by the first UPDATE.
+// first_ledger is the lower-bound coverage anchor, set on INSERT and preserved by COALESCE on
+// UPDATE so restarts never move it; a NULL is filled by the first UPDATE.
 func (s *Store) UpsertCursor(ctx context.Context, source, sub string, lastLedger uint32) error {
 	const q = `
         INSERT INTO ingestion_cursors (source, sub_source, first_ledger, last_ledger, last_updated)
@@ -134,7 +133,7 @@ type CursorRead struct {
 // UpsertCursor's forward-only guard is wrong for the projector, whose write derives from a read up
 // to PerSourceTimeout old: a [Store.RewindCursor] landing in the gap would be overwritten by the
 // stale forward write and nothing re-projected. Comparing to the value READ makes the rewind win
-// in any interleaving; under READ COMMITTED a parked advance re-evaluates `last_ledger = $3`.
+// in any interleaving (under READ COMMITTED a parked advance re-evaluates `last_ledger = $3`).
 //
 // expected.Exists=false is the first-cycle seed (INSERT ... ON CONFLICT DO NOTHING). newLast must
 // be strictly above expected.LastLedger; moving backward is RewindCursor's job.
@@ -174,11 +173,10 @@ func (s *Store) AdvanceCursorFrom(ctx context.Context, source, sub string, expec
 }
 
 // RewindCursor moves an existing cursor BACKWARD to lastLedger, the deliberate path that
-// UpsertCursor's forward-only guard refuses. projector-replay uses it for historical
-// re-projection; through UpsertCursor a rewind would match zero rows and silently write nothing.
-//
-// It errors if the row does not exist (rewinding a never-run source is operator error, not a seed
-// path) and refuses to move FORWARD, since fast-forwarding skips data.
+// UpsertCursor's forward-only guard refuses (through UpsertCursor a rewind would match zero rows
+// and silently write nothing). It errors if the row does not exist (rewinding a never-run source
+// is operator error, not a seed path) and refuses to move FORWARD, since fast-forwarding skips
+// data.
 //
 // It returns the ledger the row held when rewound, which can exceed the caller's earlier read if a
 // projector cycle committed in between; the re-walked range runs up to it. The FOR UPDATE CTE
@@ -209,10 +207,10 @@ func (s *Store) RewindCursor(ctx context.Context, source, sub string, lastLedger
 
 // ReapCursors deletes ingestion_cursors rows with last_updated strictly older than cutoff, skipping
 // sources in `protected` and, when `source` is non-empty, rows outside that source. It returns the
-// rows deleted; reap-cursors previews, then applies with the same arguments and [LiveCursorSources].
+// rows deleted.
 //
 // `protected` is a parameter so the SQL guard is testable against a list the test controls; the
-// caller's Go-side planner applies the same exclusion and the two agreeing is the point.
+// caller's Go-side planner applies the same exclusion and the two must agree.
 //
 // A cutoff-predicated DELETE is exact because last_updated only moves FORWARD: no row can enter
 // the `< cutoff` set between preview and apply, and one that leaves it was just written to.

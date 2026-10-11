@@ -105,8 +105,8 @@ func (s *Store) LedgerRangeToOracleTimeRange(ctx context.Context, fromLedger, to
 // the refresh allow-list, [CAGGsLiveForever] and the usd_volume restamp derive from.
 // TestTradesCAGGsMatchCatalog holds it against the migrated schema.
 //
-// Ten read `trades` directly; twap_1h / twap_1d are built on prices_1m's materialisation, so
-// prices_1m must lead and the twaps trail or they re-materialise from stale input.
+// twap_1h / twap_1d are built on prices_1m's materialisation, so prices_1m must lead and the
+// twaps trail or they re-materialise from stale input.
 //
 // MinWindow is Timescale's minimum refresh window: refresh_continuous_aggregate rejects
 // (SQLSTATE 22023) a window narrower than 2x bucket width. Callers pad up to it with
@@ -177,7 +177,7 @@ func IsRefreshableCAGG(viewName string) bool { return allowedCAGGViews[viewName]
 // must be here, because the policy refresher only rolls forward and an omitted rung is a
 // permanent hole in every backfilled range.
 //
-// Only prices_1m has a retention policy (shipped disabled); where armed, refreshing an older
+// Only prices_1m has a retention policy (disabled by default); where armed, refreshing an older
 // chunk is wasted work, not a fault. twap_1h / twap_1d are built FROM prices_1m, so they are not
 // rungs, but [PlanCAGGRefresh] refreshes them after forcing prices_1m over their window.
 //
@@ -220,9 +220,9 @@ func PadRefreshWindow(from, to time.Time, minWindow time.Duration) (time.Time, t
 // policy refresher only rolls FORWARD within its look-back window. Idempotent; an unknown view
 // name fails loudly.
 //
-// Every CALL runs under a statement_timeout from [CAGGRefreshTimeout] on the pinned connection,
-// so a wedged refresh fails THIS call with a [*CAGGRefreshTimeoutError] instead of holding the
-// ops backfill pool and its `-parallel` siblings behind ingest.caggRefreshMu until SIGINT.
+// Every call runs under a statement_timeout from [CAGGRefreshTimeout] on the pinned connection,
+// so a wedged refresh fails THIS call with a [*CAGGRefreshTimeoutError] instead of holding its
+// parallel siblings behind ingest.caggRefreshMu.
 func (s *Store) RefreshContinuousAggregate(ctx context.Context, viewName string, from, to time.Time) error {
 	return s.RefreshContinuousAggregateWithTimeout(ctx, viewName, from, to, CAGGRefreshTimeout(to.Sub(from)))
 }
@@ -293,8 +293,8 @@ func (s *Store) refreshCAGG(ctx context.Context, viewName string, from, to time.
 	//
 	// The ~3.0s budget covers only SHORT collisions (the policy refresher's tick, an operator's
 	// slice), not a long refresh: prices_1m over a weekly chunk runs for minutes. In-process
-	// fan-out must not rely on it; the backfill holds ingest.caggRefreshMu so its workers never
-	// contend, and a caller that skips that exhausts these five attempts with a hard error.
+	// fan-out must hold ingest.caggRefreshMu instead, or it exhausts these attempts with a hard
+	// error.
 	//
 	// The timeout is per ATTEMPT: a 55P03 loser never started materialising, so the winning
 	// retry gets the full budget.
@@ -333,9 +333,8 @@ func isConcurrentRefreshErr(err error) bool {
 // has materialised. Nothing in prices_1h is pruned, so `trades`, prices_1h and this stat span the
 // same history; prices_1m may not, where its retention policy is armed.
 //
-// A wide range therefore says the since-genesis backfill is healthy for prices_1h alone. It is
-// NOT evidence that the finer grains are materialised over the same span (see
-// [CAGGsLiveForever]).
+// A wide range says the backfill is healthy for prices_1h alone, NOT that finer grains are
+// materialised over the same span (see [CAGGsLiveForever]).
 type CAGGCoverage struct {
 	EarliestBucket time.Time
 	LatestBucket   time.Time
@@ -489,10 +488,10 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 // [TestSeedSourceEntryCountsFoldsEveryPerSourceHypertable]; a watched table left out would have
 // its tally overwritten by a re-seed.
 //
-// pipeline/sink.go's bumpEntryCount adds +1 unconditionally, so a replay double-counts. Each
-// folded table holds exactly one idempotent row per bumped event, so a re-seed corrects the
-// drift. A source spread over several tables has disjoint event sets, so the outer GROUP BY sum
-// is the honest total. SeedSourceEntryCounts returns the number of source rows reconciled.
+// pipeline/sink.go's bumpEntryCount adds +1 unconditionally, so a replay double-counts; each
+// folded table holds one idempotent row per bumped event, so a re-seed corrects the drift. A
+// source spread over several tables has disjoint event sets, so the outer GROUP BY sum is the
+// honest total. SeedSourceEntryCounts returns the number of source rows reconciled.
 const seedSourceEntryCountsSQL = `
         INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
         SELECT source, sum(c)::bigint, now()
@@ -650,9 +649,7 @@ func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
 //   - the trades + oracle_updates + fx_quotes insert paths bump INLINE inside the idempotent
 //     INSERT (`HAVING count(*) > 0`), so a re-walk over stored rows is a no-op.
 //   - pipeline/sink.go::bumpEntryCount adds n = 1 per event UNCONDITIONALLY, so re-driving a sink
-//     over an ingested range double-counts.
-//
-// [Store.SeedSourceEntryCounts] SET-resets every source, so such over-counts are transient.
+//     over an ingested range double-counts until [Store.SeedSourceEntryCounts] SET-resets it.
 func (s *Store) BumpSourceEntryCount(ctx context.Context, source string, n int64) error {
 	if n <= 0 {
 		return nil

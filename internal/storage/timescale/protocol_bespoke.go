@@ -9,10 +9,8 @@ import (
 
 // BespokeBlock is the served-tier, per-category bespoke analytics for a protocol page (mapped 1:1
 // to api/v1.ProtocolBespoke; timescale cannot import v1): headline KPIs, named time-series and
-// named top-N tables, so the UI renders three generic shapes while the DATA is bespoke.
-//
-// All numeric values are PRE-FORMATTED strings: the store owns formatting so amounts above 2^53
-// stay exact (ADR-0003).
+// named top-N tables. All numeric values are pre-formatted strings so amounts above 2^53 stay
+// exact.
 type BespokeBlock struct {
 	Category   string
 	KPIs       []BespokeKPI
@@ -92,18 +90,17 @@ func (s *Store) BuildProtocolBespoke(ctx context.Context, source, category strin
 	return nil, nil
 }
 
-// bespokeBridge builds the bridge bespoke block: DIRECTIONAL (in/out)
-// USDC-denominated flow volumes, daily series, and per-domain tables.
+// bespokeBridge builds the bridge bespoke block: directional (in/out) USDC-denominated flow
+// volumes, daily series, and per-domain tables.
 //
-// Amount scales are per-bridge and DIFFERENT, both checked against the USDC SAC leg of a real tx
-// (the external-scaling trap, AGENTS.md):
-//   - cctp_events.amount is CANONICAL 6-decimal USDC (exactly 10x below the SAC mint, matching the
+// Amount scales differ per bridge (the external-scaling trap):
+//   - cctp_events.amount is canonical 6-decimal USDC (10x below the SAC mint, matching the
 //     on-chain token_decimal_config {canonical:6, local:7}) EXCEPT mint_and_forward, which
-//     restates its op's mint_and_withdraw amount at the LOCAL 7-decimal scale and is therefore
+//     restates its op's mint_and_withdraw amount at the local 7-decimal scale and is therefore
 //     excluded from flow sums entirely (see protocol_bespoke_cctp.go);
-//   - rozo_events.amount is LOCAL 7-decimal SAC stroops (identical to the SAC transfer).
+//   - rozo_events.amount is local 7-decimal SAC stroops (identical to the SAC transfer).
 //
-// Values are rendered as decimal USDC strings via exact NUMERIC division, never floats (ADR-0003).
+// Values are rendered as decimal USDC strings via exact NUMERIC division, never floats.
 func (s *Store) bespokeBridge(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
 	since := fmt.Sprintf("%d days", windowDays)
 	switch source {
@@ -132,9 +129,9 @@ func bridgeSeriesGrain(windowDays int) (trunc, format string) {
 const completeDayCutoffSQL = `date_trunc('day', now())`
 
 // completeDaysOnly returns a WHERE fragment (leading " AND ") excluding the current,
-// still-accumulating day from a DAILY-grain series: otherwise today's partial bucket renders as a
+// still-accumulating day from a daily-grain series: otherwise today's partial bucket renders as a
 // plummeting final point, indistinguishable from a real activity collapse. Empty at the 24h
-// window, whose HOURLY grain keeps its live edge. col is a code-owned column name, never request
+// window, whose hourly grain keeps its live edge. col is a code-owned column name, never request
 // input. It applies to the point-producing scan only; top-N ranking CTEs may keep the live day.
 func completeDaysOnly(windowDays int, col string) string {
 	if windowDays == 1 {
@@ -252,10 +249,9 @@ func (s *Store) dexSourceAugments(ctx context.Context, blk *BespokeBlock, source
 }
 
 // aquariusReserveBlocks augments the Aquarius DEX block with pool liquidity depth from
-// aquarius_reserves: a pool-depth KPI, a latest-snapshot recency KPI and a per-pool
-// latest-reserves table in native token base units. Aquarius pools have no independently
-// published price, so USD TVL is NOT computed; the appended Note says so. Empty-safe: a no-op
-// when no reserves were captured.
+// aquarius_reserves: pool-depth and snapshot-recency KPIs and a per-pool latest-reserves table in
+// native token base units. Aquarius pools have no independently published price, so USD TVL is
+// NOT computed; the appended Note says so. A no-op when no reserves were captured.
 func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, windowDays int) error {
 	pools, err := s.LatestAquariusReserves(ctx, windowDays)
 	if err != nil {
@@ -330,14 +326,12 @@ func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, wi
 }
 
 // aquariusRewardsBlocks augments the Aquarius DEX block with the rewards-gauge / governance
-// surface (aquarius_rewards_events, aquarius_admin): lifetime and 30d KPIs, a 30d claim_reward
-// volume table per reward token, a lifetime per-kind event table, a recent-governance table and a
-// daily claim_reward series.
+// surface (aquarius_rewards_events, aquarius_admin).
 //
 // The claim_reward drill-down is fixed at 30 days regardless of windowDays (a comparable window);
 // the per-kind breakdown and governance total are unwindowed lifetime figures; the daily series
-// follows windowDays. Empty-safe: a no-op when neither event kind was captured, and each
-// KPI/table/series degrades independently on an empty result.
+// follows windowDays. A no-op when neither event kind was captured, and each KPI/table/series
+// degrades independently on an empty result.
 func (s *Store) aquariusRewardsBlocks(ctx context.Context, blk *BespokeBlock, windowDays int) error {
 	byKind, err := s.AquariusRewardsLifetimeByKind(ctx)
 	if err != nil {
@@ -485,11 +479,11 @@ func (s *Store) aquariusGovernanceTable(ctx context.Context, blk *BespokeBlock) 
 // cometLiquidityBlocks augments the Comet DEX block with pool liquidity flow from comet_liquidity:
 // LP-activity KPIs and a per-(pool, token) net-flow table in native token base units.
 //
-// Depth is a WINDOW net flow (added - removed), NOT an absolute reserve or USD TVL: Comet emits no
+// Depth is a window net flow (added - removed), NOT an absolute reserve or USD TVL: Comet emits no
 // post-state reserve snapshot and has no published price. Comet is contract-identity gated
-// (comet.MainnetGatedSet), so a look-alike Balancer-v1 deployment cannot land NEW rows; rows
+// (comet.MainnetGatedSet), so a look-alike Balancer-v1 deployment cannot land new rows; rows
 // captured before the gate came from a topic-only decoder and are not re-verified. Both caveats
-// are appended as Notes. Empty-safe: a no-op when no liquidity events were captured.
+// are appended as Notes. A no-op when no liquidity events were captured.
 func (s *Store) cometLiquidityBlocks(ctx context.Context, blk *BespokeBlock, windowDays int) error {
 	flows, err := s.LatestCometLiquidityFlows(ctx, windowDays)
 	if err != nil {
@@ -553,10 +547,10 @@ func (s *Store) cometLiquidityBlocks(ctx context.Context, blk *BespokeBlock, win
 // phoenix_liquidity: LP-activity KPIs and a per-pool two-token net-flow table in native token base
 // units.
 //
-// Depth is a WINDOW net flow (provide - withdraw), NOT an absolute reserve or USD TVL: Phoenix
-// events carry moved amounts, not post-state reserves, and Phoenix has no published price. Phoenix
-// IS contract-identity gated, so unlike Comet it needs no pre-gate-rows caveat. Empty-safe: a
-// no-op when no liquidity events were captured.
+// Depth is a window net flow (provide - withdraw), NOT an absolute reserve or USD TVL: Phoenix
+// events carry moved amounts, not post-state reserves, and Phoenix has no published price.
+// Phoenix is contract-identity gated, so unlike Comet it needs no pre-gate-rows caveat. A no-op
+// when no liquidity events were captured.
 func (s *Store) phoenixLiquidityBlocks(ctx context.Context, blk *BespokeBlock, windowDays int) error {
 	flows, err := s.LatestPhoenixLiquidityFlows(ctx, windowDays)
 	if err != nil {
@@ -714,12 +708,11 @@ func (s *Store) lendingEmissionKPIs(ctx context.Context, blk *BespokeBlock, wind
 	return nil
 }
 
-// lendingPositionBlocks fills the position-activity KPIs, the per-asset
-// net-position table, the per-pool activity table, and the daily
-// position-event series.
+// lendingPositionBlocks fills the position-activity KPIs, the per-asset net-position table, the
+// per-pool activity table, and the daily position-event series.
 //
-// COUNT-first: blend_positions rows mix many tokens at per-asset decimals with no USD valuation at
-// this layer, so a headline "Net supplied/borrowed" KPI (token_amount summed ACROSS assets) or
+// Count-first: blend_positions rows mix many tokens at per-asset decimals with no USD valuation at
+// this layer, so a headline "Net supplied/borrowed" KPI (token_amount summed across assets) or
 // per-pool cross-asset sums with a "Util %" ratio would be meaningless numbers with authoritative
 // labels. Amount sums survive only where scoped to a single asset (the per-asset table).
 func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
@@ -828,12 +821,11 @@ func (s *Store) lendingAuctionBlocks(ctx context.Context, blk *BespokeBlock, sin
 // lendingBackstopKPIs fills the backstop deposit/withdraw volume KPIs (the
 // table is sparse — degrades to 0).
 func (s *Store) lendingBackstopKPIs(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
-	// The `amount` column carries DIFFERENT units per event_kind: deposit/withdraw are underlying
-	// TOKENS, queue_withdrawal/dequeue_withdrawal are backstop-LP SHARES, and
+	// The `amount` column carries different units per event_kind: deposit/withdraw are underlying
+	// tokens, queue_withdrawal/dequeue_withdrawal are backstop-LP shares, and
 	// distribute/gulp_emissions/claim/donate are BLND emissions. Summing across kinds yields a
-	// meaningless mixed-unit figure dominated by the most frequent kind (queue_withdrawal, per
-	// docs/protocols/blend.md), so this token-volume KPI sums only the two token-denominated kinds.
-	// The event COUNT stays unfiltered: it is a coherent all-kinds tally.
+	// mixed-unit figure dominated by the most frequent kind, so this token-volume KPI sums only the
+	// two token-denominated kinds. The event count stays unfiltered: it is a coherent tally.
 	var backstopVol, backstopCount string
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(sum(amount) FILTER (WHERE event_kind IN ('deposit','withdraw')),0)::text,
