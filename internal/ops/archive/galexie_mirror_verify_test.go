@@ -188,9 +188,12 @@ func TestGalexieMirrorVerify_PresenceDifferences(t *testing.T) {
 	if !strings.Contains(out, "ledger=1003 cause=local-only") || !strings.Contains(out, "upstream_etag=none") {
 		t.Fatalf("local-only object not reported:\n%s", out)
 	}
-	if res.missingLocal != 1 || res.partitionsCompared != 1 || res.partitionsUpstreamOnly != 1 || len(res.findings) != 1 {
+	if !strings.Contains(out, "MISSING partition="+partitionOf(1002)+" ledger=1002 upstream_etag=ee") {
+		t.Fatalf("missing-local object not reported:\n%s", out)
+	}
+	if len(res.missing) != 1 || res.partitionsCompared != 1 || res.partitionsUpstreamOnly != 1 || len(res.findings) != 1 {
 		t.Fatalf("missing_local=%d compared=%d upstream_only=%d findings=%d, want 1/1/1/1",
-			res.missingLocal, res.partitionsCompared, res.partitionsUpstreamOnly, len(res.findings))
+			len(res.missing), res.partitionsCompared, res.partitionsUpstreamOnly, len(res.findings))
 	}
 }
 

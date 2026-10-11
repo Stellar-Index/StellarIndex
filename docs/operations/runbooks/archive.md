@@ -810,7 +810,7 @@ If the fill itself fails, follow `/var/log/galexie-mirror.log`. Common causes: b
   - `local-differs`: our copy is newer than upstream's and still differs; something rewrote our object (re-mirror from another source, manual copy, write fault). Treat ours as suspect.
   - `local-only`: upstream no longer lists a key we hold in a partition both sides have; usually an upstream deletion, confirm before acting.
 
-  `missing-local` and `unverifiable` (multipart ETag, equal size) are informational and never fire the alert.
+  `missing-local` and `unverifiable` (multipart ETag, equal size) are informational and never fire the alert. Each missing-local object prints as `MISSING partition=<p> ledger=<n> upstream_etag=… upstream_size=… upstream_modified=… key=…`, so a gap can be located and handed to the fill.
 - Fix: re-run one range by hand (read-only):
 
   ```bash
