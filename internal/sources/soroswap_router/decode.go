@@ -27,13 +27,7 @@ var ErrUnknownFunction = errors.New("soroswap_router: unknown function")
 //	    deadline:         u64,
 //	) -> Vec<i128>   // realized per-hop amounts
 //
-//	swap_tokens_for_exact_tokens(
-//	    amount_out:       i128,
-//	    amount_in_max:    i128,
-//	    path:             Vec<Address>,
-//	    to:               Address,
-//	    deadline:         u64,
-//	) -> Vec<i128>
+// swap_tokens_for_exact_tokens has the same shape with (amount_out, amount_in_max) first.
 //
 // The return value is not routed to us; realized amounts come from the same tx's SoroswapPair("swap") events.
 func decodeRouterArgs(
