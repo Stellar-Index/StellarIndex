@@ -11,21 +11,10 @@ import (
 // mint a fresh one otherwise.
 const HeaderRequestID = "X-Request-ID"
 
-// RequestID ensures every request has an X-Request-ID.
-//
-//   - If the incoming request already has one AND it only contains
-//     trace-safe characters (alphanum plus `-`, `_`, `.`), it's
-//     kept (up to 128 bytes; longer values are truncated).
-//   - Otherwise — missing, too exotic, or empty after sanitising —
-//     a freshly-generated 16-byte random hex string.
-//
-// The resulting ID is:
-//   - placed on the response header as X-Request-ID
-//   - stored in the request context ([RequestIDFrom])
-//
-// The default UUIDv7 standard was considered but a 32-char hex
-// is smaller, collision-free at our scale, and doesn't carry a
-// timestamp (which can leak information about clock skew).
+// RequestID ensures every request has an X-Request-ID, set on the response header and in the
+// request context ([RequestIDFrom]). An incoming ID made only of trace-safe characters
+// (alphanum, `-`, `_`, `.`) is kept, truncated to 128 bytes; otherwise a random 16-byte hex ID
+// is generated. Not a UUIDv7, whose timestamp can leak clock skew.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(HeaderRequestID)
@@ -43,12 +32,9 @@ func RequestID(next http.Handler) http.Handler {
 	})
 }
 
-// isSafeRequestID accepts non-empty strings up to 128 bytes
-// containing only trace-safe characters: alphanum + `-` + `_` +
-// `.`. Anything else — CR/LF, spaces, quotes, percent-encoded
-// bytes, unicode — gets rejected so the middleware mints a fresh
-// ID. Keeps headers valid for net/http serialization and logs free
-// of injection surface.
+// isSafeRequestID accepts non-empty strings up to 128 bytes of alphanum, `-`, `_` and `.`.
+// Anything else (CR/LF, spaces, quotes, unicode) is rejected so headers stay valid and logs
+// are free of injection.
 func isSafeRequestID(s string) bool {
 	if s == "" || len(s) > 128 {
 		return false

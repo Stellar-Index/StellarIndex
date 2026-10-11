@@ -26,13 +26,9 @@ const touchTimeout = 2 * time.Second
 // disconnect must not read the same as a provider failure.
 const sendTimeout = 10 * time.Second
 
-// newTouchCtx returns a fresh context for the async TouchSession
-// goroutine. It uses context.WithoutCancel to inherit values
-// (logger / tracing / etc) from the request context but
-// deliberately drop its cancellation — by the time the goroutine
-// runs, the request handler will likely have already returned and
-// cancelled its context, but we still want the touch write to
-// land. A 2 s timeout caps a stuck write.
+// newTouchCtx returns a context for the async TouchSession goroutine. It keeps the request's values
+// but drops its cancellation, since the handler has usually returned by then; a 2 s timeout caps a
+// stuck write.
 func newTouchCtx(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(parent), touchTimeout)
 }
@@ -46,31 +42,16 @@ func parseIP(s string) net.IP {
 	return net.ParseIP(s)
 }
 
-// Middleware returns an HTTP middleware that resolves the
-// session cookie (if present + valid) and plants a
-// SessionContext on the request context. The wrapped handler
-// can call SessionFromContext to read it.
+// Middleware resolves a valid session cookie and plants a SessionContext for SessionFromContext.
+// Anonymous requests (no, invalid, revoked or expired cookie) pass through untouched; gating is
+// RequireSession's job.
 //
-// Anonymous requests (no cookie / invalid cookie / revoked
-// session / expired session) pass through untouched —
-// downstream RequireSession (separate middleware) is what
-// gates routes that require authentication.
-//
-// touchEvery debounces TouchSession writes: the first request
-// in a minute updates last_seen_at; subsequent requests inside
-// that minute skip the DB write. Hot-row contention on a
-// single session would otherwise dominate at high request
-// rates from a single tab.
+// TouchSession writes are debounced per minute so a single busy tab does not cause hot-row
+// contention on its session.
 func Middleware(cfg *Config) func(http.Handler) http.Handler {
-	// Defensive defaults. The auth Handlers get a validated Config
-	// copy via NewHandlers (validate() fills these in), but the
-	// resolver Middleware is constructed straight from the caller's
-	// Config, which may never have run validate(). resolveSession
-	// calls cfg.Now() and cfg.Logger.Warn() — a nil here panics every
-	// authenticated request, which is exactly how /v1/account/me
-	// started 500-ing after a successful magic-link login. Default the
-	// fields resolveSession depends on so the middleware is
-	// self-sufficient regardless of how the Config was built.
+	// The caller's Config may never have run validate(), and resolveSession calls cfg.Now() and
+	// cfg.Logger.Warn(); a nil here would panic every authenticated request. Default them so the
+	// middleware does not depend on how the Config was built.
 	if cfg.Now == nil {
 		cfg.Now = func() time.Time { return time.Now().UTC() }
 	}
@@ -123,14 +104,9 @@ func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (Sessio
 		// ErrNotFound covers absent, revoked and expired (the
 		// store filters expires_at > now()). The user re-logs-in.
 		if !errors.Is(err, platform.ErrNotFound) {
-			// Log only `err`, never the cookie token or its hash. The
-			// bearer credential is the cookie token; the table stores
-			// only sha256(token), so the internal sess.ID is not a
-			// replayable secret — but the incoming cookie value is, and
-			// this branch fires on any transient store error, so a
-			// 60-second Postgres hiccup must not emit one live 30-day
-			// token per authenticated request into a journal that ships
-			// to Loki with 30-day retention.
+			// Log only `err`, never the cookie token: it is the bearer credential, and this branch
+			// fires on any transient store error, so a database hiccup must not write one live
+			// long-lived token per request into logs that ship to Loki.
 			cfg.Logger.Warn("session lookup", "err", err)
 		}
 		return SessionContext{}, false
@@ -171,19 +147,12 @@ func resolveSession(r *http.Request, cfg *Config, tracker *touchTracker) (Sessio
 	if tracker.shouldTouch(sess.ID, cfg.Now()) {
 		parent := r.Context()
 		go func(parent context.Context, id uuid.UUID, ip string, ua string) {
-			// This fire-and-forget write runs in its OWN
-			// goroutine, so an unrecovered panic here terminates the
-			// WHOLE process — nothing upstream (middleware.Recoverer
-			// et al) wraps a bare `go func(){}()`. Recover so a panic
-			// only drops this one touch-write instead of taking down
-			// every in-flight request.
+			// This runs in its own goroutine, so an unrecovered panic would terminate the whole
+			// process; no upstream Recoverer wraps it. Recover so a panic only drops this touch.
 			defer func() {
 				if r := recover(); r != nil {
-					// worker.Report, not a bare log, so the panic moves
-					// stellarindex_worker_panics_total and reaches the
-					// page rule + runbook. Deliberately no session_id in
-					// the label or the message: the worker label must stay
-					// a bounded constant.
+					// worker.Report moves stellarindex_worker_panics_total so the panic pages. No
+					// session_id in the label or message: the worker label must stay bounded.
 					worker.Report(cfg.Logger, "api-dashboard-session-touch", r)
 				}
 			}()
@@ -241,20 +210,12 @@ func (t *touchTracker) shouldTouch(id uuid.UUID, now time.Time) bool {
 	return true
 }
 
-// sweepLocked opportunistically evicts entries whose last-touch has
-// aged past interval. resolveSession has no "session ended"
-// signal to delete on, so without this every distinct session ID ever
-// seen stays in the map for the lifetime of the process — one
-// permanent entry per session, unbounded growth. An entry this old can
-// no longer suppress a touch anyway (shouldTouch's own staleness check
-// already treats it as due again), so it's pure dead weight; evicting
-// it bounds the map to roughly "sessions active within the last
-// interval" instead.
+// sweepLocked evicts entries whose last touch has aged past interval. resolveSession has no
+// session-ended signal, so without this the map grows by one entry per session forever; an aged
+// entry no longer suppresses a touch anyway.
 //
-// Rate-limited to once per interval (checked against lastSweep) so a
-// request-heavy deployment doesn't pay an O(map size) scan on every
-// single touch — only on the (at most) one touch per interval that
-// already does a map write.
+// It runs at most once per interval (see lastSweep) so a busy deployment does not pay an
+// O(map size) scan on every touch.
 //
 // Caller must hold t.mu.
 func (t *touchTracker) sweepLocked(now time.Time) {

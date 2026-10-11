@@ -20,15 +20,11 @@ type OriginPolicy struct {
 	credentials bool
 }
 
-// AllowsCredentialed reports whether `origin` is one the operator
-// explicitly allow-listed for CREDENTIALED cross-origin access — the
-// only kind that can drive a cookie-authenticated dashboard write.
+// AllowsCredentialed reports whether origin is explicitly allow-listed for CREDENTIALED
+// cross-origin access, the only kind that may drive a cookie-authenticated dashboard write.
 //
-// The `*` wildcard deliberately does NOT satisfy this. A wildcard
-// means "this is a public read API"; it cannot mean "any site on the
-// internet may act on a logged-in customer's behalf" — and
-// [CORS] already refuses to pair the wildcard with credentials, so a
-// wildcard deployment never carries cookies cross-origin anyway.
+// The `*` wildcard deliberately does NOT satisfy this: it means a public read API, not that any
+// site may act for a logged-in customer. [CORS] likewise refuses wildcard plus credentials.
 func (p *OriginPolicy) AllowsCredentialed(origin string) bool {
 	if p == nil || origin == "" || !p.credentials {
 		return false
@@ -49,26 +45,19 @@ func OriginPolicyFrom(ctx context.Context) (*OriginPolicy, bool) {
 	return p, ok
 }
 
-// RequireSameSiteWrite rejects state-changing requests that did not
-// originate from this deployment's own site or an operator-allow-listed
-// origin (OWASP CSRF Prevention Cheat Sheet, "Verifying Origin With
+// RequireSameSiteWrite rejects state-changing requests that did not originate from this
+// deployment's own site or an operator-allow-listed origin (OWASP "Verifying Origin With
 // Standard Headers").
 //
-// `SameSite=Lax` alone is not a CSRF defence for the dashboard's
-// cookie-authed mutations: it is a *site*-level control, so it does nothing
-// about a sibling origin under the same registrable domain (any
-// `*.stellarindex.io` host), nor about unauthenticated routes that MINT a
-// session (`/v1/auth/login`, `/v1/auth/verify-code`: login CSRF). This
-// guard closes both.
+// `SameSite=Lax` alone is not enough: it is site-level, so it ignores a sibling origin under the
+// same registrable domain (any `*.stellarindex.io` host) and unauthenticated routes that MINT a
+// session (`/v1/auth/login`, `/v1/auth/verify-code`: login CSRF).
 //
-// Policy: safe methods (GET / HEAD / OPTIONS) pass. Otherwise `Origin` is
-// used when present, else the origin derived from `Referer`; `Origin: null`
-// is NOT trusted and falls through to Referer. Neither present: reject
-// (fail-closed), safe because every guarded route is browser-only and
-// cookie-authenticated (programmatic clients use `Authorization: Bearer`,
-// where this is not mounted). Same origin as the request, or allow-listed
-// for credentialed CORS ([OriginPolicy.AllowsCredentialed] says why `*` is
-// not accepted): pass. Anything else: 403 problem+json.
+// Policy: safe methods pass. Otherwise `Origin` is used, else the origin derived from `Referer`;
+// `Origin: null` is NOT trusted and falls through to Referer. Neither present: reject
+// (fail-closed), safe because guarded routes are browser-only and cookie-authenticated
+// (programmatic clients use Bearer, where this is not mounted). A same-origin or
+// [OriginPolicy.AllowsCredentialed] origin passes; anything else gets 403 problem+json.
 func RequireSameSiteWrite(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -118,15 +107,11 @@ func writeOriginOf(r *http.Request) (origin, reason string) {
 	}
 }
 
-// requestOrigin reconstructs this deployment's own origin as the
-// browser would have computed it for the request: scheme + host.
+// requestOrigin reconstructs this deployment's own origin (scheme + host) as a browser would.
 //
-// `X-Forwarded-Proto` is honoured because the production topology
-// terminates TLS at Caddy and forwards cleartext to :3000, so
-// r.TLS is nil for genuine https traffic. Spoofing it buys an
-// attacker nothing: a browser sets `Origin` itself and a client
-// that can forge BOTH headers can already forge the whole request
-// and doesn't need CSRF to reach the victim's cookie.
+// `X-Forwarded-Proto` is honoured because TLS terminates at Caddy, so r.TLS is nil for genuine
+// https. Spoofing it gains nothing: a browser sets `Origin` itself, and a client able to forge
+// both headers needs no CSRF to use the victim's cookie.
 func requestOrigin(r *http.Request) string {
 	scheme := "http"
 	switch {

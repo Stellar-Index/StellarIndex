@@ -2,13 +2,10 @@ package dashboardauth
 
 // Passkey (WebAuthn) handler tests.
 //
-// Coverage note: a FULL WebAuthn ceremony (real attestation +
-// assertion signatures) needs an authenticator; go-webauthn ships no
-// public helper for forging one. These tests therefore cover every
-// layer AROUND the library's signature check — endpoint gating,
-// ceremony-cookie integrity (HMAC, purpose binding, expiry, user
-// binding), option shapes, storage semantics, and the session-mint
-// path — and trust the pinned library for the cryptographic core.
+// A full WebAuthn ceremony needs a real authenticator and go-webauthn ships no helper to forge
+// one. These tests cover every layer around the library's signature check (endpoint gating,
+// ceremony-cookie integrity, option shapes, storage, session mint) and trust the pinned library
+// for the cryptographic core.
 
 import (
 	"bytes"
@@ -217,12 +214,8 @@ func TestPasskeyBeginRegister_RequiresSessionAndExcludesExisting(t *testing.T) {
 	if opts.PublicKey.AuthenticatorSelection.ResidentKey != "required" {
 		t.Fatalf("residentKey = %q, want required (discoverable login depends on it)", opts.PublicKey.AuthenticatorSelection.ResidentKey)
 	}
-	// BOTH fields, because they are set by two options that write the
-	// same struct: WithAuthenticatorSelection replaces it wholesale and
-	// WithResidentKeyRequirement patches two of its fields, so getting
-	// the order wrong silently drops one of these. The credential
-	// registered here is a passwordless first factor — without UV it is
-	// possession-only.
+	// Both fields: two options write the same struct (one replaces it, one patches it), so a
+	// wrong order silently drops one. Without UV a passwordless credential is possession-only.
 	if opts.PublicKey.AuthenticatorSelection.UserVerification != "required" {
 		t.Fatalf("userVerification = %q, want required", opts.PublicKey.AuthenticatorSelection.UserVerification)
 	}

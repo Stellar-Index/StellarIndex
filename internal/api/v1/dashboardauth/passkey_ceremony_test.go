@@ -2,20 +2,13 @@ package dashboardauth
 
 // Ceremony-lifecycle tests: expiry, single-use, and user verification.
 //
-// These drive the REAL flow — HandlePasskeyBeginLogin, then
-// HandlePasskeyFinishLogin with an assertion that actually verifies —
-// rather than hand-building a webauthn.SessionData and asserting on
-// the helper that consumes it. That distinction is the whole reason
-// this file exists: the shipped suite covered the ceremony cookie by
-// constructing SessionData with an Expires field the production path
-// never populated, so it passed while every expiry guard in the
-// package was dead code.
+// These drive the real flow (HandlePasskeyBeginLogin, then HandlePasskeyFinishLogin with an
+// assertion that actually verifies) rather than hand-building a webauthn.SessionData: a
+// hand-built Expires the production path never populates would pass while every expiry guard
+// was dead code.
 //
-// The missing piece was an authenticator. [softAuthenticator] below is
-// one: a P-256 key plus the ~40 bytes of CBOR/flags the library
-// verifies against. It is not a mock of our code — the library's real
-// signature verification runs — so a test that reaches "200 + session
-// cookie" has proven the whole chain.
+// [softAuthenticator] is a P-256 key plus the CBOR/flags the library verifies. The library's real
+// signature verification runs, so reaching "200 + session cookie" proves the whole chain.
 
 import (
 	"context"
@@ -73,12 +66,8 @@ func newSoftAuthenticator(t *testing.T, userID uuid.UUID) *softAuthenticator {
 
 // cosePublicKey encodes the public key the way an authenticator would
 // hand it to us at registration: a COSE_Key CBOR map
-// {1: 2 (EC2), 3: -7 (ES256), -1: 1 (P-256), -2: x, -3: y}.
-//
-// Hand-rolled rather than pulled from a CBOR library: it is six fixed
-// header bytes around two 32-byte coordinates, and a test-only
-// dependency on the encoder the library happens to use would be a
-// worse trade than this comment.
+// {1: 2 (EC2), 3: -7 (ES256), -1: 1 (P-256), -2: x, -3: y}. Hand-rolled because it is only fixed
+// header bytes around two 32-byte coordinates.
 func (a *softAuthenticator) cosePublicKey() []byte {
 	x := a.key.PublicKey.X.FillBytes(make([]byte, 32))
 	y := a.key.PublicKey.Y.FillBytes(make([]byte, 32))
@@ -143,12 +132,9 @@ func (a *softAuthenticator) assertionBody(t *testing.T, challenge string, flags 
 
 // ─── Rig helpers ──────────────────────────────────────────────────
 
-// movableClock is a test clock that starts at the REAL current time
-// and can be advanced. Anchoring on the real clock matters: the
-// go-webauthn library stamps SessionData.Expires from time.Now()
-// (there is no clock seam), so a rig frozen in the past would find
-// every ceremony eternally fresh no matter how far its own clock
-// moved.
+// movableClock is a test clock that starts at the real current time and can be advanced. The
+// real anchor matters: go-webauthn stamps SessionData.Expires from time.Now() (no clock seam),
+// so a rig frozen in the past would find every ceremony eternally fresh.
 type movableClock struct {
 	mu     sync.Mutex
 	base   time.Time
@@ -229,25 +215,14 @@ func finishLogin(t *testing.T, rig *passkeyRig, cookie *http.Cookie, body string
 
 // ─── Passkey ceremony regressions ─────────────────────────────
 
-// TestPasskeyFinishLogin_ChallengeIsSingleUse — a HIGH-severity case. A
-// captured finish-login request (ceremony cookie + assertion body) must
-// not be an unlimited-use session mint: the assertion still verifies on
-// the second POST because it is byte-identical, so only marking the
-// challenge spent stops it. Replaying it must fail.
+// TestPasskeyFinishLogin_ChallengeIsSingleUse: a captured finish-login request (ceremony cookie +
+// assertion body) must not be an unlimited-use session mint. The replayed assertion still
+// verifies because it is byte-identical, so only marking the challenge spent stops it.
 //
-// The signature COUNTER here is 0, deliberately, and it is what makes
-// this test test the right thing. A counter that advances would make
-// the library's clone-warning refuse the replay for us
-// (UpdateCounter: `authDataCount <= SignCount` → CloneWarning), and
-// the test would pass with the consumption step deleted. But
-// go-webauthn exempts 0 from that check — `(authDataCount != 0 ||
-// a.SignCount != 0)` — because plenty of authenticators don't
-// implement counters at all: Apple/iCloud passkeys, the single most
-// common passkey on the internet, report 0 forever. For those
-// credentials the sign counter is no replay defence whatsoever, so
-// single-use ceremonies are the ONLY thing standing between a
-// captured request and an endless session supply. Model the
-// zero-counter authenticator or you are testing the wrong guard.
+// The signature counter is 0 deliberately. An advancing counter would make the library's
+// clone-warning refuse the replay, and the test would pass with the consumption step deleted.
+// go-webauthn exempts 0 from that check because many authenticators (Apple/iCloud passkeys)
+// report 0 forever; for those the ceremony's single use is the only replay defence.
 func TestPasskeyFinishLogin_ChallengeIsSingleUse(t *testing.T) {
 	rig, auth, _ := newLiveClockPasskeyRig(t)
 	cookie, challenge := beginLogin(t, rig)
@@ -294,10 +269,8 @@ func TestPasskeyFinishLogin_CeremonyExpires(t *testing.T) {
 }
 
 // TestPasskeyBeginLogin_StampsServerSideExpiry pins the library
-// configuration the expiry check depends on. go-webauthn only sets
-// SessionData.Expires when Config.Timeouts.<ceremony>.Enforce is true,
-// and that field defaults FALSE — so this asserts on the produced
-// cookie rather than on our intent.
+// configuration the expiry check depends on: go-webauthn sets SessionData.Expires only when
+// Timeouts.<ceremony>.Enforce is true (default false), so this asserts on the produced cookie.
 func TestPasskeyBeginLogin_StampsServerSideExpiry(t *testing.T) {
 	rig := newPasskeyRig(t)
 	before := time.Now().UTC()
@@ -342,11 +315,8 @@ func TestPasskeyCeremony_ZeroExpiryRefused(t *testing.T) {
 	}
 }
 
-// TestPasskeyFinishLogin_RequiresUserVerification — the MEDIUM
-// finding. With UV neither requested nor required, a passkey sign-in
-// was possession-only: whoever holds the authenticator is the account,
-// no biometric or PIN involved. An assertion whose UV bit is clear
-// must now be refused.
+// TestPasskeyFinishLogin_RequiresUserVerification: without UV a passkey sign-in is
+// possession-only, so an assertion whose UV bit is clear must be refused.
 func TestPasskeyFinishLogin_RequiresUserVerification(t *testing.T) {
 	rig, auth, _ := newLiveClockPasskeyRig(t)
 	cookie, challenge := beginLogin(t, rig)
@@ -487,11 +457,9 @@ func TestInProcessPasskeyCeremonyGuard_ConcurrentClaimsHaveOneWinner(t *testing.
 	}
 }
 
-// TestConsumeCeremony_SingleUsePerPurpose covers the registration
-// half of the seam, which no forged-attestation test reaches: the
-// same helper both finish handlers call is one-shot, and the two
-// purposes keep independent slots so finishing a registration can
-// never spend a login's challenge (or vice versa).
+// TestConsumeCeremony_SingleUsePerPurpose covers the registration half of the seam, which no
+// forged-attestation test reaches: the shared helper is one-shot and the two purposes keep
+// independent slots, so finishing a registration never spends a login's challenge.
 func TestConsumeCeremony_SingleUsePerPurpose(t *testing.T) {
 	rig := newPasskeyRig(t)
 	ctx := context.Background()
@@ -547,14 +515,10 @@ func TestPasskeyFinishLogin_FailsClosedWhenGuardUnavailable(t *testing.T) {
 	}
 }
 
-// evictableCeremonyGuard models a Redis ceremony guard whose markers
-// live in an allkeys-lru keyspace: both the legacy spent-set (Consume)
-// and the begin-time reservation (Reserve/ClaimReserved) sit in maps
-// that evict() empties, exactly as an LRU pass under memory pressure
-// would. Implementing BOTH the base contract and the reservation
-// upgrade lets the same fake drive the spent-set (Consume) and reservation
-// (ClaimReserved) finish paths through the real handlers — so the test
-// below is red against the bare spent-set and green against the fix.
+// evictableCeremonyGuard models a Redis guard in an allkeys-lru keyspace: both the spent-set
+// (Consume) and the reservation (Reserve/ClaimReserved) live in maps that evict() empties, as an
+// LRU pass would. Implementing both lets one fake drive both finish paths through the real
+// handlers, so the eviction test is red against the bare spent-set.
 type evictableCeremonyGuard struct {
 	mu    sync.Mutex
 	spent map[string]bool // Consume's spent-marker (the vulnerable path)
@@ -605,19 +569,11 @@ func (g *evictableCeremonyGuard) evict() {
 	g.live = map[string]bool{}
 }
 
-// TestPasskeyFinishLogin_SurvivesSpentMarkerEviction is
-// W1-auth-passkey-1. R1's Redis runs allkeys-lru, so the ceremony
-// spent-marker can be EVICTED before its TTL under memory pressure — an
-// attacker floods the shared instance via open registration's
-// no-expiry apikey mirror. With the bare SETNX spent-set, a captured
-// finish-login replayed after that eviction found the slot free and
-// minted a SECOND live session for the victim: account takeover from a
-// single captured request, defeating the very guard built to stop it.
-// The begin-time reservation must make that replay fail CLOSED.
-//
-// Counter is 0 (as in the single-use test) so the library's clone-
-// warning can't refuse the replay for us — the ceremony guard is the
-// only thing under test.
+// TestPasskeyFinishLogin_SurvivesSpentMarkerEviction: Redis runs allkeys-lru, so a spent-marker
+// can be evicted before its TTL under memory pressure. With a bare SETNX spent-set, a captured
+// finish-login replayed after eviction would find the slot free and mint a second live session
+// (account takeover from one captured request). The begin-time reservation must make the
+// replay fail closed. Counter is 0 (as in the single-use test) so only the guard is under test.
 func TestPasskeyFinishLogin_SurvivesSpentMarkerEviction(t *testing.T) {
 	rig, auth, _ := newLiveClockPasskeyRig(t)
 	guard := newEvictableCeremonyGuard()
@@ -721,11 +677,9 @@ func TestPasskeyBeginLogin_OptionsAndCeremonyCookie(t *testing.T) {
 	}
 }
 
-// TestPasskeyBeginLogin_CappedPerIP — begin-login is anonymous and each
-// call reserves a ceremony in the shared allkeys-lru Redis, so one IP
-// must not be able to mint reservations at the anonymous request
-// ceiling. Past the cap the call is refused with 429 and, crucially,
-// writes no reservation; another IP keeps its own budget.
+// TestPasskeyBeginLogin_CappedPerIP: begin-login is anonymous and each call reserves a ceremony
+// in the shared Redis, so one IP must not mint reservations at the anonymous request ceiling.
+// Past the cap the call gets 429 and writes no reservation; another IP keeps its own budget.
 func TestPasskeyBeginLogin_CappedPerIP(t *testing.T) {
 	rig := newPasskeyRig(t)
 	guard := newEvictableCeremonyGuard()

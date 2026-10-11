@@ -6,36 +6,20 @@ import (
 	"time"
 )
 
-// RequestTimeout returns middleware that bounds every non-streaming
-// request's context to d, so EVERY handler inherits a deadline even
-// when it forgets to wrap its own DB/ClickHouse read.
+// RequestTimeout bounds every non-streaming request's context to d, as a backstop for handlers
+// that forget their own DB/ClickHouse timeout. The server WriteTimeout does not cancel an
+// in-flight query, so a few slow unauthenticated requests could otherwise pin the small
+// ClickHouse pools indefinitely. Per-handler timeouts (8s) layer under this and fire first.
 //
-// Without it a handful of slow unauthenticated requests could hold every
-// connection of the API's small ClickHouse pools (16 explorer, 8 supply)
-// open indefinitely (the server WriteTimeout does NOT cancel an in-flight
-// query). Per-handler context.WithTimeout wrappers (8s on the hot reads)
-// still layer UNDER this and fire first; this is the backstop.
-//
-// d SHOULD be longer than the per-read timeouts (8s) and shorter than the
-// http.Server WriteTimeout. d <= 0 disables the middleware.
-//
-// Streaming (SSE) endpoints are EXCLUDED: a deadline would sever the
-// stream mid-flight. The exempt routes are the exact set in streamingPaths.
+// d SHOULD exceed the per-read timeouts and stay below the http.Server WriteTimeout; d <= 0
+// disables it. SSE routes (streamingPaths) are exempt because a deadline would sever the stream.
 func RequestTimeout(d time.Duration) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// EscapedPath, not Path. The mux routes on the escaped
-			// form, but r.URL.Path is DECODED — so
-			// /v1/assets/native%2Fstream decodes to a path ending
-			// "/stream" while still routing to the ordinary
-			// /v1/assets/{asset_id} handler. Keying the exemption on the
-			// decoded form would let any trailing-wildcard route forge it and
-			// run with NO deadline at all.
-			//
-			// Deliberately not "move the check after the mux": that would
-			// mean moving RequestTimeout INSIDE the mux, leaving the
-			// pre-handler stack without a deadline — the gap this
-			// middleware's placement exists to close.
+			// EscapedPath, not Path: the mux routes on the escaped form, while Path is decoded,
+			// so /v1/assets/native%2Fstream would forge the "/stream" exemption and run with
+			// no deadline. The check cannot move after the mux, which would leave the
+			// pre-handler stack without a deadline.
 			if d <= 0 || isStreamingPath(r.URL.EscapedPath()) {
 				next.ServeHTTP(w, r)
 				return
@@ -47,11 +31,9 @@ func RequestTimeout(d time.Duration) Middleware {
 	}
 }
 
-// streamingPaths is the exact set of SSE routes. An exact set rather than
-// a `/stream` suffix test: any route ending in a wildcard would otherwise
-// match when a caller sets that wildcard to "stream". A new SSE route must
-// be added here; TestRequestTimeout_StreamExemptionCannotBeForged fails
-// until it is.
+// streamingPaths is the exact set of SSE routes, not a `/stream` suffix test, which a caller
+// could forge through any trailing-wildcard route. A new SSE route must be added here;
+// TestRequestTimeout_StreamExemptionCannotBeForged fails until it is.
 var streamingPaths = map[string]bool{
 	"/v1/ledger/stream":       true,
 	"/v1/price/stream":        true,
@@ -59,11 +41,8 @@ var streamingPaths = map[string]bool{
 	"/v1/observations/stream": true,
 }
 
-// isStreamingPath reports whether p is one of the long-lived SSE endpoints.
-//
-// MUST be called with the ESCAPED path. The escaped form is what the mux
-// itself routes on, so the exemption and the router cannot disagree about
-// what a request is.
+// isStreamingPath reports whether p is a long-lived SSE endpoint. p MUST be the ESCAPED path,
+// the form the mux routes on, so the exemption and the router cannot disagree.
 func isStreamingPath(p string) bool {
 	return streamingPaths[p]
 }

@@ -12,18 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestNewHandlers_ValidatesCallerConfigInPlace is the login-config
-// regression for the by-value-Config/validate-on-a-copy pattern:
-// main.go builds ONE Config (authCfg), hands it to NewHandlers to
-// build the handlers, then hands the SAME variable's address to
-// Middleware — exactly the shape reproduced here. If NewHandlers
-// validated a local copy (the old `func NewHandlers(cfg Config)`),
-// validate()'s defaults (Generator.Secret, Logger, Now,
-// PasskeyCeremonyGuard) would land on that copy and never reach the
-// caller's own cfg, silently leaving Middleware (or any other
-// consumer built from the same variable) with the undefaulted zero
-// values. NewHandlers now takes *Config, so the caller's own struct
-// carries every default after the call.
+// TestNewHandlers_ValidatesCallerConfigInPlace: one Config is passed to NewHandlers and then to
+// Middleware. NewHandlers must validate the caller's struct, not a copy, or validate()'s defaults
+// (Generator.Secret, Logger, Now, PasskeyCeremonyGuard) never reach Middleware.
 func TestNewHandlers_ValidatesCallerConfigInPlace(t *testing.T) {
 	cfg := Config{
 		Accounts:         newFakeAccountStore(),
@@ -60,27 +51,13 @@ func TestNewHandlers_ValidatesCallerConfigInPlace(t *testing.T) {
 	}
 }
 
-// TestAsyncTouchSessionGoroutineRecovers is a guard-coverage test for
-// the fire-and-forget `go func(){...}()` inside resolveSession
-// that writes TouchSession MUST register a recover(). An unrecovered
-// panic in that goroutine terminates the WHOLE API process — nothing
-// upstream wraps a bare `go func(){}()` spawned from inside a request
-// handler, and the dashboard session-resolve path runs on every
-// authenticated request.
+// TestAsyncTouchSessionGoroutineRecovers requires the fire-and-forget TouchSession goroutine in
+// resolveSession to register a recover(). An unrecovered panic there terminates the whole API
+// process, and this path runs on every authenticated request.
 //
-// Shape rather than a behavioural test, matching
-// internal/api/v1/source_shape_rules_internal_test.go's rationale for the
-// same problem class: actually driving a real panic through
-// TouchSession and observing "the test process didn't crash" is not a
-// safe or deterministic thing to assert inline (an unrecovered panic
-// there would take the whole `go test` binary down with it, not just
-// fail this one test). Parsing the source and requiring a deferred
-// recover() inside the spawned literal is the reliable regression
-// guard: it fails on the unfixed code (no recover in the goroutine)
-// and passes once the guard is added.
-//
-// Proven red: deleting the `defer func(){ recover() ... }()` from the
-// goroutine in resolveSession fails this test.
+// It checks source shape, as internal/api/v1/source_shape_rules_internal_test.go does for the same
+// problem class, because driving a real panic would take down the whole test binary. Deleting the
+// deferred recover() from the goroutine fails this test.
 func TestAsyncTouchSessionGoroutineRecovers(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "middleware.go", nil, 0)

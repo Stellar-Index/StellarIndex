@@ -15,22 +15,17 @@ import (
 // LoginIntentCookieName is the short-lived cookie binding a magic link to
 // the browser that asked for it.
 //
-// Login CSRF: without it, `GET /v1/auth/callback` would mint a session from
-// a token carried purely in the query string, and `sessionSameSite()`
-// returns Lax, which *permits* top-level cross-site GET navigation. An
-// attacker could request a magic link for their OWN account and mail it to
-// a victim; the victim's browser would receive the attacker's session
-// cookie, and everything the victim then did (minting an API key, attaching
-// a payment method) would land in the attacker's dashboard. Single use and
-// the 15-minute TTL do not touch this.
+// Login CSRF defence: GET /v1/auth/callback mints a session from a query-string token, and
+// sessionSameSite() is Lax, which permits top-level cross-site GET navigation. Without the
+// binding, an attacker could mail a victim a magic link for the attacker's OWN account, and
+// everything the victim then did (minting an API key, adding a payment method) would land in
+// the attacker's dashboard. Single use and the TTL do not prevent this.
 //
-// The binding: `POST /v1/auth/login` stamps this cookie with a random
-// per-browser id and mints a token whose second half is a MAC of its first
-// half and that id ([Generator.newBoundToken]); the callback refuses to
-// mint a session unless the MAC verifies against the presenting browser's
-// id. The attacker cannot plant a cookie on the API's own host (the __Host-
-// prefix) nor compute a tag without the server secret. Distinct from
-// [SessionCookieName] so one credential cannot be read as the other.
+// POST /v1/auth/login stamps this cookie with a random per-browser id and mints a token whose
+// second half is a MAC of its first half and that id ([Generator.newBoundToken]); the callback
+// refuses unless the MAC verifies against the presenting browser's id. The attacker cannot plant
+// a cookie on the API host (__Host- prefix) nor compute a tag without the server secret.
+// Distinct from [SessionCookieName] so one credential cannot be read as the other.
 const LoginIntentCookieName = "__Host-stellarindex_login_intent"
 
 // loginIntentBrowserLen is the hex length of a browser id and of a
@@ -93,15 +88,11 @@ func (g *Generator) newBoundToken(browser string) (plaintext string, hash []byte
 	return plaintext, hash, g.CodeForHash(hash), nil
 }
 
-// setLoginIntentCookie stamps this browser's login-intent id and returns
-// it: the id the request already carries, else a fresh random one. It
-// depends on nothing but the request's own cookie, so a throttled login
-// and a real send emit the same value and leave the same state behind —
-// no sequence of requests can tell them apart — and any number of links
-// requested from one browser stay redeemable there.
-//
-// TTL mirrors MagicLinkTTL, refreshed on every request: the id is
-// worthless once the newest link it binds has expired.
+// setLoginIntentCookie stamps this browser's login-intent id and returns it: the id the request
+// already carries, else a fresh random one. It depends only on the request's own cookie, so a
+// throttled login and a real send leave identical state (enumeration resistance) and any number
+// of links requested from one browser stay redeemable there. TTL mirrors MagicLinkTTL, refreshed
+// per request.
 func (h *Handlers) setLoginIntentCookie(w http.ResponseWriter, r *http.Request) string {
 	var browser string
 	if c, err := r.Cookie(LoginIntentCookieName); err == nil && isLoginIntentHex(c.Value) {
@@ -127,13 +118,11 @@ func (h *Handlers) clearLoginIntentCookie(w http.ResponseWriter) {
 	http.SetCookie(w, c)
 }
 
-// LoginDeviceCookieName marks a browser that has completed a sign-in for
-// one address. From this browser, for that address, POST /v1/auth/login
-// still gets a link when the per-address send cap is full
-// ([Handlers.admitSignedInBrowser]), and POST /v1/auth/verify-code charges
-// its own code budget instead of the per-address one ([Handlers.HandleVerifyCode]);
-// anyone who knows the address can fill the shared ones. It authenticates nothing and
-// is scoped by Path to the /v1/auth routes.
+// LoginDeviceCookieName marks a browser that has completed a sign-in for one address. From it,
+// POST /v1/auth/login still gets a link when the per-address send cap is full
+// ([Handlers.admitSignedInBrowser]) and POST /v1/auth/verify-code charges its own code budget
+// ([Handlers.HandleVerifyCode]), because anyone who knows the address can fill the shared ones.
+// It authenticates nothing and is scoped by Path to the /v1/auth routes.
 const LoginDeviceCookieName = "stellarindex_login_device"
 
 // loginDeviceTTL is the longest cookie lifetime browsers honour (RFC 6265bis
@@ -185,11 +174,9 @@ func (h *Handlers) hasLoginDeviceProof(r *http.Request, email string) bool {
 	return hmac.Equal([]byte(mac), []byte(loginDeviceMAC(h.cfg.Generator.Secret, email, expires)))
 }
 
-// hasLoginIntent reports whether this browser is the one that asked
-// for the magic link whose plaintext is given.
-//
-// Constant-time compared: the tag is half of the emailed plaintext, so a
-// timing oracle here would leak progress on the token itself.
+// hasLoginIntent reports whether this browser asked for the magic link whose plaintext is given.
+// The tag compare is constant-time: the tag is half the emailed plaintext, so a timing oracle
+// would leak progress on the token itself.
 func (h *Handlers) hasLoginIntent(r *http.Request, plaintext string) bool {
 	c, err := r.Cookie(LoginIntentCookieName)
 	if err != nil || !isLoginIntentHex(c.Value) || !isLoginIntentHex(plaintext) {

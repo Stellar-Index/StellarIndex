@@ -21,16 +21,10 @@ import (
 
 // The audit contract.
 //
-// `POST /v1/account/admin/lookup` hands a staff member another customer's
-// billing email, tier, status and EVERY user's email + last-login. Without an audit record
-// the only record that the access happened would be one `Logger.Info` line,
-// while every sibling admin surface (account override, key mint/revoke,
-// status notice) wrote a durable platform.AuditEntry.
-//
-// A log line is not a privacy audit trail: it is rotated on journal
-// retention, is not queryable per-account, and never reaches the audit
-// view. These tests pin the durable row — its action, its target, and the
-// actor identity — plus the failure counter that makes a LOST row visible.
+// The look-up hands a staff member another customer's billing email, tier, status and every user's
+// email and last-login. A log line is not a privacy audit trail (rotated, not queryable per
+// account, absent from the audit view), so these tests pin the durable platform.AuditEntry (action,
+// target, actor) and the failure counter that makes a lost row visible.
 
 // fakeAuditSink is a recording platform.AuditStore. `err` (when set) makes
 // Append fail, which is the audit-store-blip path.
@@ -133,11 +127,8 @@ func newAdminLookupFixture(t *testing.T, sink *fakeAuditSink) *adminLookupFixtur
 	}
 }
 
-// lookup drives the handler as `sc` looking up the given dimension. `term` is
-// written in the familiar "email=…" / "slug=…" shorthand, but it is marshalled
-// into the request BODY and the URL is left bare — the look-up term is
-// customer PII and must never appear in a URL. Nothing here
-// may put it back in the query string.
+// lookup drives the handler as `sc`. `term` uses "email=..." / "slug=..." shorthand but is
+// marshalled into the request body; the term is customer PII and must never appear in the URL.
 func (f *adminLookupFixture) lookup(sc SessionContext, term string) *httptest.ResponseRecorder {
 	f.t.Helper()
 	key, value, _ := strings.Cut(term, "=")
@@ -240,11 +231,9 @@ func TestAdminLookup_WritesDurableAuditRow(t *testing.T) {
 	}
 }
 
-// TestAdminLookup_MasksStaffEmailInLogSink pins the behaviour: the staff
-// actor's email must be masked before it reaches the app logger (which
-// ships to Loki), consistent with the package's maskEmail policy — while
-// the durable audit_log row keeps the FULL actor_email as the intended
-// tamper-evident trail.
+// TestAdminLookup_MasksStaffEmailInLogSink: the staff actor's email must be masked before it
+// reaches the app logger (which ships to Loki), while the durable audit_log row keeps the full
+// actor_email as the tamper-evident trail.
 func TestAdminLookup_MasksStaffEmailInLogSink(t *testing.T) {
 	sink := &fakeAuditSink{}
 	f := newAdminLookupFixture(t, sink)
@@ -345,11 +334,10 @@ func TestAdminLookup_NoAuditRowWhenNotFound(t *testing.T) {
 	}
 }
 
-// TestAdminLookup_AuditFailureIsCountedNotSwallowed — the sink is down. The
-// read already happened and cannot be un-done, so the response stays 200 —
-// but the lost row must show up on
-// stellarindex_admin_audit_write_failures_total{surface="staff_customer_lookup"},
-// or an unrecorded PII access is indistinguishable from no access at all.
+// TestAdminLookup_AuditFailureIsCountedNotSwallowed: with the sink down the response stays 200
+// (the read cannot be undone), but the lost row must show on
+// stellarindex_admin_audit_write_failures_total{surface="staff_customer_lookup"}, or an unrecorded
+// PII access looks like no access.
 func TestAdminLookup_AuditFailureIsCountedNotSwallowed(t *testing.T) {
 	sink := &fakeAuditSink{err: errors.New("simulated audit-db blip")}
 	f := newAdminLookupFixture(t, sink)
@@ -399,18 +387,11 @@ func TestAdminLookup_NilAuditSinkStillServes(t *testing.T) {
 	}
 }
 
-// The look-up term must not be reachable via the URL.
+// The look-up term must not be reachable via the URL: a query-string email would be recorded by
+// browser history, proxies, CDNs and Referer headers, beyond what edge log masking can reach.
 //
-// Reading `r.URL.Query()` means a staff member's browser
-// history, the edge proxy, every intermediate CDN and the Referer header on
-// the next navigation each record a real customer's email address verbatim.
-// The 7843f129 Caddy filter masks that in OUR access log only; it cannot
-// reach a browser's history or a third party's log. The address therefore has
-// to stop travelling in the URL at all.
-//
-// This pins the behaviour from both sides, which is what makes it
-// non-vacuous: the query string must NOT resolve an account (it is not
-// an input channel), and the body MUST resolve the same one.
+// Pinned from both sides so it is not vacuous: the query string must NOT resolve an account, and
+// the body MUST resolve the same one.
 func TestAdminLookup_QueryStringIsNotAnInputChannel(t *testing.T) {
 	f := newAdminLookupFixture(t, &fakeAuditSink{})
 
@@ -465,13 +446,9 @@ func TestAdminLookup_MountedAsPostOnly(t *testing.T) {
 	}
 }
 
-// rate_limit_per_min_override / monthly_request_quota_override are
-// `required` in the OpenAPI AdminAccountView schema, and 0 is their
-// meaningful "inherit tier default" value — not an absent one. An
-// `omitempty` json tag drops the key entirely when the value is 0, which
-// breaks that contract for exactly the accounts on tier defaults (the
-// common case). This pins that the keys survive encoding at their
-// zero-value.
+// rate_limit_per_min_override / monthly_request_quota_override are `required` in the OpenAPI
+// AdminAccountView schema, and 0 means "inherit tier default", not absent. An `omitempty` tag would
+// drop the keys for exactly the common case, so this pins that they survive encoding at zero.
 func TestAdminAccountView_OverrideFieldsSurviveZeroValue(t *testing.T) {
 	v := AdminAccountView{
 		ID:     "acct-1",
@@ -498,11 +475,8 @@ func TestAdminAccountView_OverrideFieldsSurviveZeroValue(t *testing.T) {
 	}
 }
 
-// TestAdminAccountView_EffectiveLimits — the staff cockpit
-// fetched rate_limit_per_min_override / monthly_request_quota_override
-// but had no way to see what they actually RESOLVE to without doing the
-// tier-ceiling math by hand. adminAccountView must report what auth
-// enforces on a default-minted key, never the tier ceiling.
+// TestAdminAccountView_EffectiveLimits: adminAccountView must report the limits auth enforces on a
+// default-minted key, never the tier ceiling.
 func TestAdminAccountView_EffectiveLimits(t *testing.T) {
 	cases := []struct {
 		name      string

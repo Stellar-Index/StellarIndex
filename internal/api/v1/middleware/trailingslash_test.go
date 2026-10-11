@@ -79,13 +79,9 @@ func TestTrailingSlashRedirect_noSlashPassesThrough(t *testing.T) {
 	}
 }
 
-// TestTrailingSlashRedirect_refusesProtocolRelativeTarget is the
-// Regression: a request path of "//evil.com/" must NOT redirect
-// to "//evil.com" (a protocol-relative Location a browser resolves as
-// an absolute redirect off the API origin — an unauthenticated open
-// redirect). The middleware must instead fall through to next (which
-// 404s / lets the mux apply its own safe same-origin cleanup) rather
-// than ever emitting that Location.
+// TestTrailingSlashRedirect_refusesProtocolRelativeTarget guards the open redirect: a request
+// path of "//evil.com/" must never produce a "//evil.com" Location. It must fall through to next
+// so the mux 404s or cleans the path.
 func TestTrailingSlashRedirect_refusesProtocolRelativeTarget(t *testing.T) {
 	called := false
 	mw := TrailingSlashRedirect(http.NewServeMux())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -163,13 +159,9 @@ func TestTrailingSlashRedirect_methodAgnostic(t *testing.T) {
 	}
 }
 
-// TestTrailingSlashRedirect_exemptsRegisteredIndexRoute is the
-// regression. `GET /errors/{$}` is registered as the mux's own
-// canonical, exact-match form of "/errors/" — not a client typo of
-// "/errors". Composed with the mux (as server.go wires it), blindly
-// stripping the slash looped forever: the mux's automatic subtree
-// redirect sends "/errors" back to "/errors/", and this middleware
-// 308'd it straight back to "/errors".
+// TestTrailingSlashRedirect_exemptsRegisteredIndexRoute guards the redirect loop: `GET
+// /errors/{$}` is the mux's canonical form of "/errors/", so stripping the slash would bounce
+// forever against the mux's own subtree redirect when composed as server.go wires it.
 func TestTrailingSlashRedirect_exemptsRegisteredIndexRoute(t *testing.T) {
 	mux := http.NewServeMux()
 	indexCalled := false

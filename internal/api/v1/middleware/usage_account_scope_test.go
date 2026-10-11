@@ -17,12 +17,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
 
-// drainAfterResponse blocks until the shared after-response pool has
-// finished every task submitted so far. UsageTracker's counter writes
-// run there, so a test that immediately fires the NEXT request
-// — expecting MonthlyQuota to observe the PREVIOUS one's increment —
-// must synchronize on this first; otherwise it is racing the async
-// write against the following request's read.
+// drainAfterResponse blocks until the after-response pool has finished every submitted task.
+// UsageTracker's counter writes run there, so a test expecting MonthlyQuota to see the previous
+// request's increment must drain first, or it races the async write.
 func drainAfterResponse(t *testing.T) {
 	t.Helper()
 	if !middleware.AfterResponseDrainForTest(afterResponseTestTimeout) {
@@ -30,22 +27,18 @@ func drainAfterResponse(t *testing.T) {
 	}
 }
 
-// The monthly ceiling is a PLAN budget, so the counter it is
-// enforced against must be keyed on the owner ACCOUNT. Keying it on the
-// credential let a customer multiply the plan allowance by the number
-// of keys held and reset it mid-month by revoking and re-minting.
+// The monthly ceiling is a PLAN budget, so its counter must be keyed on the owner ACCOUNT, not
+// the credential: otherwise a customer multiplies the allowance by the number of keys held, or
+// resets it by revoking and re-minting.
 //
-// These two tests run the real writer (UsageTracker) and the real
-// reader (MonthlyQuota, over a real usage.Counter on miniredis) as one
-// loop, because the defect only exists in the pairing: a reader pointed
-// at an account key the writer never writes meters nothing at all.
+// These tests run the real writer (UsageTracker) and reader (MonthlyQuota over a real
+// usage.Counter on miniredis) as one loop, because the defect exists only in the pairing: a
+// reader pointed at an account key the writer never writes meters nothing.
 
-// accountScopeStack wires stamp → UsageTracker → MonthlyQuota → handler
-// over one miniredis-backed counter. The subject is swappable so a test
-// can rotate the caller's credential mid-run (revoke-and-mint) while
-// keeping the owner account fixed. UsageTracker sits OUTSIDE the quota
-// gate, as in production, so a quota 429 is observed and classed as
-// throttled rather than billed.
+// accountScopeStack wires stamp, UsageTracker, MonthlyQuota and a handler over one miniredis
+// counter. The subject is swappable to rotate the credential mid-run while the owner account
+// stays fixed. UsageTracker sits OUTSIDE the quota gate, as in production, so a quota 429 is
+// classed as throttled rather than billed.
 func accountScopeStack(t *testing.T) (*httptest.Server, *usage.Counter, func(auth.Subject)) {
 	t.Helper()
 	mr := miniredis.RunT(t)
