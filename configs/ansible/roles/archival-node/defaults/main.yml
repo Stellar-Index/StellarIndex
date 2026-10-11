@@ -1277,7 +1277,7 @@ stellarindex_reader_access_key: "stellarindex-reader"
 # ───── stellarindex-archive-trimmer (List+Delete, galexie-archive only) ──
 # trim-galexie-archive (galexie-archive-trim.service) is the ONLY caller
 # that deletes hot archive objects. It must NOT run as stellarindex-reader
-# (read-only, DeleteObject denied — CA2-A37-harden-6) and must NOT run as
+# (read-only, DeleteObject denied) and must NOT run as
 # root/galexie-archive-writer either: the fill/write identity keeping its
 # authority separate from the delete path is the same invariant
 # galexie-archive-writer's policy comment documents. Rendered into its own
@@ -1584,7 +1584,7 @@ caddy_site_addresses: "api.stellarindex.io"
 # secret lives in the vault as vault_stellarindex_reader_secret_key.
 stellarindex_reader_secret_key: "{{ vault_stellarindex_reader_secret_key }}"
 
-# Same alias pattern for the trimmer identity (CA2-A37-harden-6).
+# Same alias pattern for the trimmer identity.
 stellarindex_archive_trimmer_secret_key: "{{ vault_stellarindex_archive_trimmer_secret_key }}"
 
 # SEP-41 watched-contract set: the curated SAC-wrapper roster — the same
