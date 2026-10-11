@@ -59,6 +59,19 @@ func (a Asset) sacContractIDOn(passphrase string) (string, error) {
 	return strkey.MustEncode(strkey.VersionByteContract, raw[:]), nil
 }
 
+// ContractAddress is the asset's C-address: a Soroban token's own contract, or the derived SAC for
+// classic and native. ok=false for shapes with neither (fiat, external, raw).
+func (a Asset) ContractAddress() (string, bool) {
+	if a.ContractID != "" {
+		return a.ContractID, true
+	}
+	if a.Type != AssetClassic && a.Type != AssetNative {
+		return "", false
+	}
+	sac, err := a.SacContractID()
+	return sac, err == nil
+}
+
 // SEP11SACAsset resolves a SEP-0011 name ("native" or "CODE:GISSUER", a CAP-67 event's trailing
 // topic) to the classic asset ONLY when contractID is its SAC on the configured network. Any
 // contract can emit that topic, so the name is never an identity; the derivation is.

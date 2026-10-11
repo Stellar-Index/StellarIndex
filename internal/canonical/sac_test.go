@@ -71,3 +71,34 @@ func TestSacContractID_SorobanHasNone(t *testing.T) {
 		t.Error("soroban asset returned a SAC id; want error")
 	}
 }
+
+func TestContractAddress(t *testing.T) {
+	usdc, err := NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
+	soroban, err := NewSorobanAsset(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usd, err := NewFiatAsset("USD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []Asset{usdc, NativeAsset()} {
+		want, err := a.SacContractID()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := a.ContractAddress(); !ok || got != want {
+			t.Errorf("%s: ContractAddress = %q,%v, want its SAC %q", a, got, ok, want)
+		}
+	}
+	if got, ok := soroban.ContractAddress(); !ok || got != token {
+		t.Errorf("soroban: ContractAddress = %q,%v, want the token itself", got, ok)
+	}
+	if got, ok := usd.ContractAddress(); ok {
+		t.Errorf("fiat: ContractAddress = %q, want none", got)
+	}
+}
