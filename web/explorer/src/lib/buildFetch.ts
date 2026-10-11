@@ -170,6 +170,26 @@ export function throttleDelayMs(
   return backoff + Math.floor(Math.random() * 500);
 }
 
+// Max requests in flight per build worker. Uncapped, one export sent ~17 rps of
+// mostly cold long-tail reads, pushed API p95 to ~3s and paged slo_latency_burn.
+export const MAX_IN_FLIGHT = 4;
+let inFlight = 0;
+const slotWaiters: Array<() => void> = [];
+
+async function acquireSlot(): Promise<void> {
+  if (inFlight < MAX_IN_FLIGHT) {
+    inFlight++;
+    return;
+  }
+  await new Promise<void>((resolve) => slotWaiters.push(resolve));
+}
+
+function releaseSlot(): void {
+  const next = slotWaiters.shift();
+  if (next) next();
+  else inFlight--;
+}
+
 // Per-build memo. Module state persists for the lifetime of the
 // `next build` worker, which is exactly the scope we want.
 const memo = new Map<string, Promise<unknown>>();
@@ -247,10 +267,16 @@ async function fetchWithRetry<T>(
   let unavailableWaits = 0;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const res = await fetch(url, {
-        headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      await acquireSlot();
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } finally {
+        releaseSlot();
+      }
       if (res.status === 429) {
         // Rate-limited: wait on the server's terms and DON'T spend a
         // transport attempt — see MAX_THROTTLE_WAITS. Waiting is the
