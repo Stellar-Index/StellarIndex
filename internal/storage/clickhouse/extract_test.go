@@ -7,23 +7,17 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// claimAtomCount must mirror dispatcher.census + sdex.decode exactly,
-// because classic_trade_effect_count is gated against the census
-// oracle. The 1000-ledger PoC
-// sample contains no crossing CreatePassiveSellOffer — so a
-// wrong union-arm accessor (GetManageSellOfferResult instead of
-// GetCreatePassiveSellOfferResult) silently undercounts and slips
-// past the gate. This table covers every claim-bearing op variant.
+// claimAtomCount must mirror dispatcher.census + sdex.decode exactly, because
+// classic_trade_effect_count is gated against the census oracle. A wrong union-arm accessor
+// (GetManageSellOfferResult instead of GetCreatePassiveSellOfferResult) silently undercounts
+// and slips past the gate on ledgers with no crossing CreatePassiveSellOffer, so this table
+// covers every claim-bearing op variant.
 
-// claimNative / claimUSDC are the two DISTINCT legs every fixture claim
-// carries. Leaving
-// AssetSold/AssetBought at their zero value, which is
-// xdr.AssetTypeAssetTypeNative on BOTH legs — a native/native self-cross
-// stellar-core never emits and internal/sources/sdex has always dropped
-// (canonical.NewPair rejects base == quote) — is invisible while
-// sdexclaim.RealTradeCount looks only at amounts; once it applies
-// the decoder's full rule set, a fixture claim has to be shaped like a
-// real one.
+// claimNative / claimUSDC are the two DISTINCT legs every fixture claim carries. Zero-valued
+// AssetSold/AssetBought are native on BOTH legs, a native/native self-cross that stellar-core
+// never emits and internal/sources/sdex drops (canonical.NewPair rejects base == quote).
+// sdexclaim.RealTradeCount applies the decoder's full rule set, so a fixture claim has to be
+// shaped like a real one.
 var (
 	claimNative = xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
 	claimUSDC   = xdr.Asset{
@@ -207,21 +201,16 @@ func TestClaimAtomCount_perOpVariant(t *testing.T) {
 	}
 }
 
-// TestLedgerHeaderCounts_FailedTxBasisMismatch pins the remaining
-// gap: extractOps counts a FAILED transaction's operations into
-// ext.Ledger.OpCount (and TxCount, at the call site in extract.go),
-// while extractEvents excludes a failed transaction entirely from
-// ext.Ledger.SorobanEventCount. The three counts LedgerView exposes
-// (tx_count, op_count, soroban_event_count) therefore run on two
-// different bases with no field distinguishing them.
+// TestLedgerHeaderCounts_FailedTxBasisMismatch: extractOps counts a FAILED transaction's
+// operations into ext.Ledger.OpCount (and TxCount, at the call site in extract.go), while
+// extractEvents excludes a failed transaction from ext.Ledger.SorobanEventCount. The three
+// counts LedgerView exposes (tx_count, op_count, soroban_event_count) therefore run on two
+// bases with no field distinguishing them.
 //
-// This test documents the DEFECT as it stands — it passes today and is
-// meant to start failing (and be deleted) once tx_count/op_count are
-// either gated on `successful` to match soroban_event_count, or a
-// successful_tx_count/applied_op_count pair is added alongside them.
-// The fix needs a new stellar.ledgers column (deploy/clickhouse DDL) and
-// touches internal/storage/clickhouse/sink.go and explorer_reader.go,
-// both outside this unit's assigned files.
+// This documents the DEFECT as it stands: it passes today and should start failing (and be
+// deleted) once tx_count/op_count are gated on `successful` to match soroban_event_count, or a
+// successful_tx_count/applied_op_count pair is added. The fix needs a new stellar.ledgers
+// column (deploy/clickhouse DDL) and touches sink.go and explorer_reader.go.
 func TestLedgerHeaderCounts_FailedTxBasisMismatch(t *testing.T) {
 	ev := gateContractEvent(t)
 	tx := gateTx(t, ev, false) // failed transaction

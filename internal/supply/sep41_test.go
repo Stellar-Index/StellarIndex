@@ -111,11 +111,9 @@ func TestSEP41_Compute_RejectsNonSoroban(t *testing.T) {
 	}
 }
 
-// TestSEP41_Compute_NegativeTotalRejected — burn > mint can never
-// be a real on-chain state for a SEP-41 token whose LIFETIME supply
-// is captured (genesis baseline seeded); an indexer that produces
-// this is mis-summing somewhere. Refuse to publish, and surface the
-// paging sentinel.
+// TestSEP41_Compute_NegativeTotalRejected: burn > mint can never be a real on-chain state for a
+// SEP-41 token whose lifetime supply is captured (genesis baseline seeded); an indexer producing
+// it is mis-summing. Refuse to publish and surface the paging sentinel.
 func TestSEP41_Compute_NegativeTotalRejected(t *testing.T) {
 	reader := &stubSEP41Reader{
 		comps: supply.SEP41SupplyComponents{
@@ -141,12 +139,10 @@ func TestSEP41_Compute_NegativeTotalRejected(t *testing.T) {
 	}
 }
 
-// TestSEP41_Compute_NegativeTotalMissingBaseline — a SAC-wrapper whose
-// pre-Soroban opening balance has NOT been seeded legitimately reads
-// Σburn > Σmint over the Soroban-era-only window (its mints predate
-// Soroban). This is a range-scoped-baseline-missing condition, not
-// corruption — surface the benign sentinel so the refresher reports
-// `missing_baseline` (needs a seed) rather than paging (migration 0088).
+// TestSEP41_Compute_NegativeTotalMissingBaseline: a SAC-wrapper whose pre-Soroban opening balance
+// has not been seeded legitimately reads Σburn > Σmint over the Soroban-era-only window, since its
+// mints predate Soroban. That is a missing range-scoped baseline, not corruption, so surface the
+// benign sentinel and let the refresher report `missing_baseline` (needs a seed) rather than page.
 func TestSEP41_Compute_NegativeTotalMissingBaseline(t *testing.T) {
 	reader := &stubSEP41Reader{
 		comps: supply.SEP41SupplyComponents{
@@ -203,15 +199,13 @@ func TestSEP41_Compute_GenesisBaselineMakesTotalPositive(t *testing.T) {
 	}
 }
 
-// TestSEP41_Compute_GenesisBaselineGuardMatrix locks in the migration-0088
-// money-math guard as a single table: how the sign of the SEP-41 total and the
-// GenesisBaselineSeeded flag route to a published supply, the PAGING sentinel,
-// or the BENIGN one. The reader folds the pre-Soroban baseline (CH lake, ledger
-// < boundary) into the Soroban-era totals (PG, ledger >= boundary) BEFORE
-// Compute runs, so the computer's guard operates purely on the already-folded
-// components — exactly what this exercises. A refactor that drops the
-// seeded-vs-unseeded distinction, lets a negative total through, or shifts a
-// positive total when a (zero) baseline is present regresses one of these rows.
+// TestSEP41_Compute_GenesisBaselineGuardMatrix locks in the genesis-baseline money-math guard as
+// one table: how the sign of the SEP-41 total and the GenesisBaselineSeeded flag route to a
+// published supply, the paging sentinel, or the benign one. The reader folds the pre-Soroban
+// baseline (CH lake, ledger < boundary) into the Soroban-era totals (PG, ledger >= boundary)
+// before Compute runs, so the guard operates on already-folded components. A refactor that drops
+// the seeded-vs-unseeded distinction, lets a negative total through, or shifts a positive total
+// when a zero baseline is present regresses one of these rows.
 func TestSEP41_Compute_GenesisBaselineGuardMatrix(t *testing.T) {
 	asset := mustSoroban(t, validContractID)
 	// Both negative-total sentinels; a case's wantErr is one of these, and the
@@ -518,20 +512,17 @@ func TestSEP41_Compute_ZeroSupplyTokenIsValid(t *testing.T) {
 	}
 }
 
-// Algorithm 3 must not stamp `basis:"admin_exclusion"` on a snapshot
-// where nothing was excluded — the production reader
-// (StorageSEP41SupplyReader) hardcodes AdminBalance=0 because v1
-// doesn't track `set_admin`, and with no per-asset locked-set
-// configured circulating == total. A consumer reading
-// `admin_exclusion` believes the issuer's own holdings were netted
-// out of circulating supply (and therefore out of market cap).
+// Algorithm 3 must not stamp `basis:"admin_exclusion"` on a snapshot where nothing was excluded:
+// the production reader (StorageSEP41SupplyReader) hardcodes AdminBalance=0 because it does not
+// track `set_admin`, and with no per-asset locked-set circulating == total. A consumer reading
+// `admin_exclusion` believes the issuer's own holdings were netted out of circulating supply and
+// market cap.
 //
-// BasisXLMTotalOnly is the precedent: Algorithm 1
-// reports `xlm_total_only`, not `xlm_sdf_reserve_exclusion`, when the
-// reserve-account list is empty.
+// BasisXLMTotalOnly is the precedent: Algorithm 1 reports `xlm_total_only`, not
+// `xlm_sdf_reserve_exclusion`, when the reserve-account list is empty.
 //
-// This table pins the full basis matrix in both directions: a real exclusion must still read `admin_exclusion`, and a
-// no-op exclusion must read `sep41_total_only`.
+// This table pins the full basis matrix in both directions: a real exclusion must still read
+// `admin_exclusion`, and a no-op exclusion must read `sep41_total_only`.
 func TestSEP41_Compute_BasisNeverClaimsAnExclusionThatDidNotHappen(t *testing.T) {
 	asset := mustSoroban(t, validContractID)
 	lockedHolder := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -641,11 +632,10 @@ func TestSEP41_Compute_BasisNeverClaimsAnExclusionThatDidNotHappen(t *testing.T)
 	}
 }
 
-// The two "total only" bases must stay distinct string values and
-// distinct from the exclusion bases — they are wire values consumers
-// switch on, and collapsing any pair would silently re-introduce the
-// lie this fix removes. A slice, not a map literal: duplicate constant
-// map keys do not compile, so a map could never observe a collision.
+// The two "total only" bases must stay distinct string values and distinct from the exclusion
+// bases: they are wire values consumers switch on, and collapsing any pair would mislabel a
+// snapshot. A slice, not a map literal, since duplicate constant map keys do not compile and a map
+// could never observe a collision.
 func TestBasis_TotalOnlyValuesAreDistinct(t *testing.T) {
 	all := []struct {
 		basis supply.Basis

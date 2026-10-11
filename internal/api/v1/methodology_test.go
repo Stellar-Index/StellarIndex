@@ -41,11 +41,8 @@ func TestMethodology_BaselineShape(t *testing.T) {
 	// Every class the registry can stamp on a source must appear,
 	// exactly one of which (exchange) contributes_to_vwap=true.
 	//
-	// Derived from the registry rather than listed literally here: a
-	// hard-coded four in this very test is part of how the served
-	// document came to describe four classes while `sources` served
-	// seven. Four surfaces agreed with each other and none of them
-	// with external.Registry.
+	// Derived from the registry rather than listed literally: a hard-coded count in the test
+	// is how the document and the registry drift apart while every surface agrees with the others.
 	wantClasses := map[string]bool{}
 	for _, md := range external.Registry {
 		wantClasses[string(md.Class)] = md.Class == external.ClassExchange
@@ -99,10 +96,9 @@ func TestMethodology_BaselineShape(t *testing.T) {
 }
 
 // TestMethodology_SourcesCarryOnChain pins that /v1/methodology's
-// per-source rows carry `on_chain`, matching /v1/sources.
-// A consumer reading class=exchange off /v1/methodology
-// cannot otherwise tell a dispatcher-path Stellar venue (sdex,
-// soroswap) from an off-chain reference feed (binance, coinbase).
+// per-source rows carry `on_chain`, matching /v1/sources. Without it a consumer reading
+// class=exchange cannot tell a Stellar venue (sdex, soroswap) from an off-chain reference feed
+// (binance, coinbase).
 func TestMethodology_SourcesCarryOnChain(t *testing.T) {
 	srv := v1.New(v1.Options{})
 	ts := httpTestServer(t, srv)
@@ -199,13 +195,9 @@ func TestMethodology_EmptyStablecoinList(t *testing.T) {
 // TestMethodology_ReferenceTitlesMatchTheADRs holds the endpoint's own
 // reference list to the documents it points at.
 //
-// A reference list is a promise about where a link goes. ADR-0007 was
-// served as "Aggregation policy + cache-key contract"; the real 0007
-// is "Redis as hot-path cache + rate-limit + ephemeral state". Both
-// the id and the URL were right, so nothing 404'd — the reader simply
-// arrived at a different document than the one they were told to
-// expect. Paraphrasing a title is what makes that possible, so the
-// titles are now verbatim and this test keeps them that way.
+// A reference list is a promise about where a link goes. A paraphrased title with a correct id
+// and URL never 404s, yet the reader arrives at a different document than the one described.
+// Titles must therefore be verbatim, and this test keeps them that way.
 func TestMethodology_ReferenceTitlesMatchTheADRs(t *testing.T) {
 	root := methodologyRepoRoot(t)
 	data := servedMethodology(t)
@@ -238,17 +230,10 @@ func TestMethodology_ReferenceTitlesMatchTheADRs(t *testing.T) {
 // `source_classes` the complete glossary for the `class` field on
 // every row of `sources`.
 //
-// `sources` is the whole registry — the same rows /v1/sources serves.
-// `source_classes` is what a consumer looks a row's `class` up in. A
-// class that appears on a row but not in the glossary is a term the
-// document uses without defining, and that is exactly what shipped:
-// four classes described, seven served, and eight router / lending /
-// bridge venues labelled with a word nothing in the response
-// explained. Nothing caught it because the count was asserted
-// nowhere and repeated everywhere — the page said "one of four", the
-// spec said "the four source classes", and the Go type's own godoc
-// said "the four class buckets". Three surfaces agreeing with each
-// other is not the same as any of them agreeing with the registry.
+// `sources` is the whole registry, the same rows /v1/sources serves; `source_classes` is where a
+// consumer looks a row's `class` up. A class on a row but missing from the glossary is a term
+// used without definition. A class count repeated across the page, spec and godoc but asserted
+// nowhere lets surfaces agree with each other while none agrees with the registry.
 func TestMethodology_EveryServedSourceClassIsDescribed(t *testing.T) {
 	data := servedMethodology(t)
 
@@ -307,21 +292,15 @@ func TestMethodology_EveryServedSourceClassIsDescribed(t *testing.T) {
 // `contributes_to_vwap` against the per-source `include_in_vwap` it
 // summarises.
 //
-// The class flags are hand-written literals in methodology.go; the
-// source flags come from the registry. Nothing derives one from the
-// other, so they can disagree — and "what feeds the price" is read
-// off the one-line class summary far more often than off the 30-row
-// table beneath it.
+// The class flags are hand-written literals in methodology.go; the source flags come from the
+// registry. Nothing derives one from the other, and "what feeds the price" is read off the
+// one-line class summary far more often than the per-source table.
 //
-// Only the two directions that are actually wrong are asserted. A
-// class marked as not contributing may not contain a contributing
-// venue (the dangerous direction: the summary would be a false
-// negative about what moves the price), and a class marked as
-// contributing must contain at least one (or the claim is empty).
-// A contributing class holding SOME non-contributing venue is
-// legitimate — a newly added exchange can sit in the registry with
-// include_in_vwap=false until it is trusted — so that is not an
-// error.
+// Only the two wrong directions are asserted. A class marked as not contributing may not contain
+// a contributing venue (the summary would be a false negative about what moves the price), and a
+// class marked as contributing must contain at least one. A contributing class holding SOME
+// non-contributing venue is legitimate: a new exchange can sit in the registry with
+// include_in_vwap=false until it is trusted.
 func TestMethodology_ClassVWAPFlagMatchesItsSources(t *testing.T) {
 	data := servedMethodology(t)
 

@@ -12,39 +12,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// The measured defect this file guards (seen on r1).
+// What this file guards: the listing's "precise" supply arm reads the supply_1d roll-up, whose
+// newest bucket is always a COMPLETED PREVIOUS day, so an unbounded read serves a figure hours
+// old while the envelope reports it fresh, and it must not unconditionally outrank the live
+// lake figure.
 //
-// The listing's "precise" supply arm read supply_1d — a DAILY roll-up of the
-// ADR-0011 supply observer — took max(bucket) with no vintage bound of any
-// kind, and that reading unconditionally outranked the live lake figure. The
-// roll-up's newest bucket is always a COMPLETED PREVIOUS day (its refresh
-// policy's end_offset means the current day's bucket is never fully covered
-// and never materialises), so the served figure was the last observation of
-// the PREVIOUS UTC day — between about 2.9 and about 26.9 hours old on r1's
-// 6-hourly refresh — while the envelope reported it fresh.
+// The obvious repair, promoting the lake arm above the observer, is wrong: the lake over-counts
+// some assets because its flow history carries replayed mints whose burns are missing, and its
+// completeness check fires only on the opposite asymmetry (a NEGATIVE net). So the arm order
+// stands and the observation is read live and bounded.
 //
-// On USDC — this index's single largest served market cap — that published
-// 354,858,863.57 against 375,766,247.91 actually outstanding: 5.57% low, about
-// $21M of market cap, from a number that was correct when it was taken.
-//
-// The obvious repair is the wrong one, and these tests are what pins that
-// shut. Re-measured against Horizon's all-domain totals on the same day, the
-// lake arm cannot be promoted above the observer:
-//
-//	asset  observer          lake              Horizon           lake err
-//	BLND     114,879,423.92    128,119,614.53    114,854,773.04   +11.53%
-//	PHO       77,882,787.15    199,999,999.31     77,882,787.15  +156.79%
-//	USDC     376,302,129.55    375,876,536.51    375,766,247.91    +0.03%
-//
-// The lake over-counts BLND and PHO because its flow history carries replayed
-// historical mints whose matching burns are missing, and its own completeness
-// check fires only on the opposite asymmetry (a NEGATIVE net). So the arm
-// order stands; what changed is that the observation is read live and bounded.
-//
-// observedSupply builds the observation map the serving path now receives, all
-// entries stamped fresh. The store is what enforces vintage — an observation
-// older than the bound is not in the map at all — so "stale" in these tests is
-// expressed the way the serving path actually sees it: an absent entry.
+// observedSupply builds the observation map the serving path receives, all entries stamped
+// fresh. The store enforces vintage, so "stale" here is an absent entry.
 func observedSupply(circ map[string]string) map[string]timescale.SupplyObservation {
 	out := make(map[string]timescale.SupplyObservation, len(circ))
 	for assetID, v := range circ {
@@ -57,15 +36,10 @@ func observedSupply(circ map[string]string) map[string]timescale.SupplyObservati
 	return out
 }
 
-// TestClassicSupplyReading_StaleObservationYieldsToLake is the load-bearing
-// one: a supply observation that is too old to be served must not outrank a
-// live lake reading that disagrees with it.
-//
-// It is expressed at the seam the serving path sees. The vintage bound lives
-// in the store query, so an observation past [preciseSupplyMaxAge] never
-// reaches this map — and the row must then be answered by the lake, with the
-// basis saying so, rather than falling through to nothing or to the
-// trustline-only floor.
+// TestClassicSupplyReading_StaleObservationYieldsToLake: an observation too old to serve must
+// not outrank a disagreeing live lake reading. The vintage bound lives in the store query, so
+// one past [preciseSupplyMaxAge] never reaches this map; the row must then be answered by the
+// lake, with the basis saying so, not by nothing or the trustline-only floor.
 func TestClassicSupplyReading_StaleObservationYieldsToLake(t *testing.T) {
 	const (
 		usdc      = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
@@ -200,12 +174,9 @@ func (p *preciseSupplyStub) LatestSupplyObservations(
 	return p.obs, nil
 }
 
-// TestLatestPreciseSupply_AsksForABoundedRead is the guard against the defect
-// returning by omission. The reading is only as fresh as the bound the serving
-// path asks for, and the arm it replaced asked for none at all — so an
-// unbounded call here is the bug, not a detail. A test that only checked the
-// returned map would pass against exactly the code that shipped the $21M
-// understatement.
+// TestLatestPreciseSupply_AsksForABoundedRead guards against the defect returning by omission.
+// The reading is only as fresh as the bound the serving path asks for, so an unbounded call is
+// the bug; a test that only checked the returned map would pass against the unbounded code.
 func TestLatestPreciseSupply_AsksForABoundedRead(t *testing.T) {
 	stub := &preciseSupplyStub{obs: observedSupply(map[string]string{"native": "1"})}
 	s := &Server{Options: Options{AssetsReader: stub}}
@@ -233,15 +204,11 @@ func TestLatestPreciseSupply_AsksForABoundedRead(t *testing.T) {
 	}
 }
 
-// TestStampCirculatingSupplyNeverOverwrites covers the guard, not the happy
-// path. Two branches attach a supply DELIBERATELY before this fill runs — the
-// dust-suppressed and ticker-collision paths — and a later arm overwriting one
-// would replace a figure the pipeline decided on with one it merely found.
-//
-// The basis is asserted alongside it because the pair travels together. A
-// stamp that skipped the value but wrote the name would leave a row claiming
-// its supply came from an arm that did not produce it, which is worse than the
-// unlabelled row the wire had before either field existed.
+// TestStampCirculatingSupplyNeverOverwrites covers the guard, not the happy path. The
+// dust-suppressed and ticker-collision paths attach a supply DELIBERATELY before this fill
+// runs, and a later arm must not replace it with one it merely found. The basis is asserted
+// too, since the pair travels together: a stamp that skipped the value but wrote the name
+// would claim a supply source that did not produce it.
 func TestStampCirculatingSupplyNeverOverwrites(t *testing.T) {
 	existing := "42"
 	row := AssetDetail{CirculatingSupply: &existing}

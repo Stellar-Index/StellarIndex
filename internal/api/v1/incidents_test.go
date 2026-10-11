@@ -14,15 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/incidents"
 )
 
-// TestHandleIncidentsAtom_LinkTarget pins the per-entry alternate
-// link to the canonical /incident/{slug} route.
-//
-// The atom feed must not emit `https://status.stellarindex.io/#<slug>`,
-// expecting subscribers to land on the home page and scroll to a
-// matching anchor — but the home page doesn't render `id="<slug>"`
-// on the per-incident summary, so feed readers landed on the home
-// page with nothing to scroll to. Per-incident detail lives at
-// `/incident/{slug}`, which is what the feed should point at.
+// TestHandleIncidentsAtom_LinkTarget pins the per-entry alternate link to the canonical
+// /incident/{slug} route. The feed must not emit `https://status.stellarindex.io/#<slug>`: the
+// home page renders no `id="<slug>"` anchor, so readers would land with nothing to scroll to.
 func TestHandleIncidentsAtom_LinkTarget(t *testing.T) {
 	resolved := time.Date(2026, 5, 6, 22, 39, 0, 0, time.UTC)
 	s := newTestServerWithLogger()
@@ -245,15 +239,12 @@ func TestHandleIncidentsAtom_ValidXML(t *testing.T) {
 	}
 }
 
-// TestHandleIncidentsAtom_FeedUpdatedIsMostRecentEntry pins the
-// feed-level <updated> to the most recent entry's <updated>, per
-// RFC 4287 (and the handler's own doc comment). Setting
-// it to time.Now() would syndicate a stale feed as freshly updated
-// on every crawl — a dishonest freshness signal to Feedly/Slack RSS.
+// TestHandleIncidentsAtom_FeedUpdatedIsMostRecentEntry pins the feed-level <updated> to the
+// most recent entry's <updated> (RFC 4287). time.Now() would present a stale feed as freshly
+// updated on every crawl.
 //
-// Entries here are deliberately in the past; the feed <updated> must
-// equal the max entry <updated> (the later of the two incidents'
-// resolved_at), NOT ~now.
+// Entries are deliberately in the past; the feed <updated> must equal the later incident's
+// resolved_at, NOT ~now.
 func TestHandleIncidentsAtom_FeedUpdatedIsMostRecentEntry(t *testing.T) {
 	// Two incidents. The second is the most recent (resolved later),
 	// so its resolved_at is the feed's <updated>.
@@ -341,12 +332,9 @@ func newTestServerWithLogger() *Server {
 	return &Server{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
 
-// TestSummaryFromMarkdown_UTF8SafeTruncation pins the rune-aware
-// truncation path. A naive byte-slice at 397 would split a
-// multi-byte codepoint in half — incident posts with accented
-// characters (é/ñ/ü/…) would emit invalid UTF-8 to the atom feed,
-// rejecting strict validators (W3C feedvalidator.org) and showing
-// replacement characters in the explorer.
+// TestSummaryFromMarkdown_UTF8SafeTruncation pins the rune-aware truncation path. A byte-slice
+// at 397 would split a multi-byte codepoint (é/ñ/ü/…), emitting invalid UTF-8 that strict feed
+// validators reject and the explorer shows as replacement characters.
 func TestSummaryFromMarkdown_UTF8SafeTruncation(t *testing.T) {
 	// Engineer a paragraph where byte 397 falls in the middle of
 	// an `é` codepoint (UTF-8 = 0xC3 0xA9, 2 bytes per rune).

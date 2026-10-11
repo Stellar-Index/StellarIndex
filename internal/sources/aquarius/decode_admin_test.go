@@ -6,21 +6,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Golden decode tests for the eight governance/upgrade admin event
-// kinds (migration 0100). Every topic/body blob below is
-// an UNTOUCHED base64 SCVal captured from the r1 ClickHouse lake
-// (stellar.contract_events). Provenance note: every
-// sample here comes from the FLAGGED parallel router deployment
-// (CA7RQDMM...) or an as-yet-unidentified sibling system contract —
-// see decode_admin.go's package doc for why (these kinds are rare
-// enough on the canonical router that a full-history scoped query,
-// not a LIMIT-3 unscoped one, was needed to find canonical-router
-// occurrences at all: apply_upgrade x7, commit_upgrade x6,
-// set_privileged_addrs x2, apply_transfer_ownership x1,
-// commit_transfer_ownership x1 out of the current lake). Decode
-// correctness does not depend on which contract emitted the bytes —
-// gate-membership is tested separately in adapter_test.go using the
-// standard synthetic-seed pattern.
+// Golden decode tests for the eight governance/upgrade admin event kinds. Every topic/body blob
+// is an untouched base64 SCVal captured from the lake (stellar.contract_events), mostly from the
+// flagged parallel router deployment or a sibling system contract (see decode_admin.go's package
+// doc). Decode correctness does not depend on which contract emitted the bytes; gate membership
+// is tested separately in adapter_test.go with the standard synthetic-seed pattern.
 
 func TestDecodeApplyUpgrade_realFixture(t *testing.T) {
 	e := &events.Event{
@@ -55,13 +45,10 @@ func TestDecodeApplyUpgrade_realFixture(t *testing.T) {
 }
 
 // TestDecodeApplyUpgrade_poolTwoHash_realFixture pins the REGISTERED-POOL
-// wire generation: apply_upgrade carries a 2-element Vec[Bytes] (the
-// applied wasm hash + one staged predecessor), which the old decoder
-// rejected with `body length 2 != 1`, dropping every pool apply_upgrade
-// (686 events / 320 pools). Real r1-lake bytes: pool
-// CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP, ledger
-// 56,505,116 (2025-04-07), part of the protocol-wide staged WASM
-// upgrade. element[0] → Target, element[1] → Attributes["wasm_hash_1"].
+// wire generation: apply_upgrade carries a 2-element Vec[Bytes] (the applied wasm hash plus one
+// staged predecessor), which a decoder pinned to a 1-element body would reject and drop. Real
+// lake bytes from pool CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP.
+// element[0] → Target, element[1] → Attributes["wasm_hash_1"].
 func TestDecodeApplyUpgrade_poolTwoHash_realFixture(t *testing.T) {
 	e := &events.Event{
 		ContractID: "CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP",
@@ -93,12 +80,9 @@ func TestDecodeApplyUpgrade_poolTwoHash_realFixture(t *testing.T) {
 }
 
 // TestDecodeCommitUpgrade_poolThreeHash_realFixture pins the
-// REGISTERED-POOL 3-element commit_upgrade body (the proposed hash + two
-// staged hashes) — the busiest of the arity variations the old `!= 1`
-// guard rejected. Real r1-lake bytes: pool
-// CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP, ledger
-// 62,265,929 (2026-04-24). element[0] → Target, [1] → wasm_hash_1,
-// [2] → wasm_hash_2.
+// REGISTERED-POOL 3-element commit_upgrade body (the proposed hash plus two staged hashes), the
+// busiest of the arity variations a `!= 1` guard would reject. Real lake bytes.
+// element[0] → Target, [1] → wasm_hash_1, [2] → wasm_hash_2.
 func TestDecodeCommitUpgrade_poolThreeHash_realFixture(t *testing.T) {
 	e := &events.Event{
 		ContractID: "CDKVJYMN34ZIEXSLNFYHVAFF6M6FM5E2U6OHXOTBKH2WLBULXOE53YDP",
@@ -128,11 +112,9 @@ func TestDecodeCommitUpgrade_poolThreeHash_realFixture(t *testing.T) {
 
 // TestDecodeSetPrivilegedAddrs_pool5elt_realFixture pins a REGISTERED
 // POOL emitting the 5-element set_privileged_addrs (post-57.7M wire
-// generation) — proving the v2 branch decodes pool bytes exactly as it
-// does the router's. Real r1-lake bytes: pool
-// CBL7MWLEZ4SU6YC5XL4T3WXKNKNO2UQVDVONOQSW5VVCYFWORROHY4AM, ledger
-// 57,697,794 (2025-06-24). The privileged-address set is protocol-wide,
-// so the decoded values match the router's v2 fixture.
+// generation), proving the v2 branch decodes pool bytes exactly as it does the router's. Real
+// lake bytes. The privileged-address set is protocol-wide, so the decoded values match the
+// router's v2 fixture.
 func TestDecodeSetPrivilegedAddrs_pool5elt_realFixture(t *testing.T) {
 	e := &events.Event{
 		ContractID: "CBL7MWLEZ4SU6YC5XL4T3WXKNKNO2UQVDVONOQSW5VVCYFWORROHY4AM",
@@ -159,11 +141,8 @@ func TestDecodeSetPrivilegedAddrs_pool5elt_realFixture(t *testing.T) {
 }
 
 // TestDecodeApplyTransferOwnership_pool_realFixture pins a REGISTERED
-// POOL apply_transfer_ownership (2 topics + Vec[Address×1]) — real
-// r1-lake bytes from pool
-// CCSY43EHJAHT3NQDYKAMJXRFBEEH7OXDL3J3VNGO33UUSEXWNN27GBIZ, ledger
-// 55,363,729 (2025-01-20). Same wire shape as the router's; only the
-// emitter (a pool) and the new EmergencyAdmin address differ.
+// POOL apply_transfer_ownership (2 topics + Vec[Address×1]), real lake bytes. Same wire shape as
+// the router's; only the emitter (a pool) and the new EmergencyAdmin address differ.
 func TestDecodeApplyTransferOwnership_pool_realFixture(t *testing.T) {
 	e := &events.Event{
 		ContractID: "CCSY43EHJAHT3NQDYKAMJXRFBEEH7OXDL3J3VNGO33UUSEXWNN27GBIZ",
@@ -217,10 +196,7 @@ func TestDecodeCommitTransferOwnership_pool_realFixture(t *testing.T) {
 }
 
 // TestDecodeEmergencyMode_pool_realFixtures pins the pool-emitted
-// void-body emergency toggles (real r1-lake bytes: pool
-// CAZERARL4EWIJYX2GRCJF32LG3S2QPL4CMPIGHNZHFAMMNXEARAY5RPP, ledgers
-// 58,787,169 / 58,787,188 — a pool disabling trades under an incident
-// then re-enabling minutes later).
+// void-body emergency toggles (real lake bytes: a pool disabling trades, then re-enabling them).
 func TestDecodeEmergencyMode_pool_realFixtures(t *testing.T) {
 	enable := &events.Event{
 		ContractID: "CAZERARL4EWIJYX2GRCJF32LG3S2QPL4CMPIGHNZHFAMMNXEARAY5RPP",
@@ -321,10 +297,9 @@ func TestDecodeSetPrivilegedAddrs_realFixture(t *testing.T) {
 }
 
 // TestDecodeSetPrivilegedAddrs_v2RealFixture pins the POST-57.7M wire
-// generation (ingest-pipeline.md#contract-schema-evolution): the same shape plus ONE
-// trailing plain Address. Real r1-lake bytes — the canonical router's
-// single 5-element `set_privileged_addrs` event (ledger 57,711,797),
-// which a decoder pinned to arity==4 matches but cannot decode.
+// generation (ingest-pipeline.md#contract-schema-evolution): the same shape plus ONE trailing
+// plain Address. Real lake bytes, the canonical router's 5-element `set_privileged_addrs`
+// event, which a decoder pinned to arity==4 matches but cannot decode.
 func TestDecodeSetPrivilegedAddrs_v2RealFixture(t *testing.T) {
 	e := &events.Event{
 		ContractID: MainnetRouter,

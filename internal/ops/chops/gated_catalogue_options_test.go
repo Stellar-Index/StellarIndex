@@ -22,12 +22,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// registryOnlyContract stands for a pool / vault an operator admitted by
-// writing a protocol_contracts row — the documented seam for adding a
-// contract without a redeploy. It is in NO decoder's in-code curated set
-// and has no factory creation event, so the only way any decoder can know
-// it is the warmed registry options. Shape-valid filler, deliberately not a
-// real contract.
+// registryOnlyContract stands for a pool or vault admitted by a protocol_contracts row (the
+// seam for adding a contract without a redeploy). It is in NO decoder's curated set and has no
+// factory creation event, so only the warmed registry options can make a decoder know it.
+// Shape-valid filler, deliberately not a real contract.
 const registryOnlyContract = "CREGISTRYONLYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 // gatedProbeTopics gives, per gated source, the topics of one business
@@ -113,15 +111,13 @@ func bareCatalogue(t *testing.T) []reconSource {
 	return cat
 }
 
-// TestApplyGatedOptions_EveryGatedSourceAdmitsARegistryOnlyContract pins
-// that a bare re-derive catalogue does not reject registry contracts. A
-// contract admitted only through protocol_contracts is decoded by the live
-// indexer and would be rejected by every bare re-derive: phantom served rows on the
-// completeness axis, and a truncate + `ch-rebuild -write` that rebuilds the
-// table without them.
+// TestApplyGatedOptions_EveryGatedSourceAdmitsARegistryOnlyContract pins that a bare re-derive
+// catalogue does not reject registry contracts. The live indexer decodes a contract admitted
+// only via protocol_contracts, so a rejecting re-derive leaves phantom served rows on the
+// completeness axis and a truncate + `ch-rebuild -write` rebuilds the table without them.
 //
-// Lockstep over pipeline.GatedSourceNames(), not a hand-kept list: a ninth
-// gated source has to appear in the catalogue AND be warmed, or this fails.
+// Lockstep over pipeline.GatedSourceNames(), not a hand-kept list: a new gated source has to
+// appear in the catalogue AND be warmed, or this fails.
 func TestApplyGatedOptions_EveryGatedSourceAdmitsARegistryOnlyContract(t *testing.T) {
 	bare := bareCatalogue(t)
 	warmed, err := applyGatedOptions(bare, warmedLike())
@@ -238,12 +234,10 @@ func TestUnionContractIDs(t *testing.T) {
 	}
 }
 
-// TestCHRebuild_WarmsTheCatalogueGatesBeforeAnythingReadsThem pins the
-// ch-rebuild call site. chRebuild needs ClickHouse and Postgres past the
-// config load, so — like the BackfillSafe legs — the wiring is pinned at the
-// source: the warm exists, it runs on the freshly built catalogue, and it
-// precedes both the preseed (which seeds INTO the decoders the warm
-// rebuilds) and the writer.
+// TestCHRebuild_WarmsTheCatalogueGatesBeforeAnythingReadsThem pins the ch-rebuild call site.
+// chRebuild needs ClickHouse and Postgres past config load, so the wiring is pinned at the
+// source: the warm exists, runs on the freshly built catalogue, and precedes both the preseed
+// (which seeds INTO the decoders the warm rebuilds) and the writer.
 func TestCHRebuild_WarmsTheCatalogueGatesBeforeAnythingReadsThem(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("ch_rebuild.go")
@@ -276,18 +270,14 @@ func TestCHRebuild_WarmsTheCatalogueGatesBeforeAnythingReadsThem(t *testing.T) {
 	}
 }
 
-// TestApplyGatedOptions_TestNetCatalogueHasNothingToWarm bounds the blast
-// radius of the three new call sites onto the non-pubnet deployments.
+// TestApplyGatedOptions_TestNetCatalogueHasNothingToWarm bounds the blast radius of the warm
+// call sites on non-pubnet deployments.
 //
-// Every gated source is anchored to PUBNET contract identities (ADR-0035),
-// so filterCatalogueByNetwork drops all of them on testnet / futurenet
-// . The warm is therefore a no-op there — and, decisively, its
-// FAIL-CLOSED leg cannot fire: applyGatedOptions refuses a gated catalogue
-// entry with no warmed options, and on a test net there is no such entry,
-// so even an entirely empty options map is accepted. compute-completeness
-// runs hourly on both test nets; a warm that could return an error on a
-// catalogue with nothing to warm would have turned their coverage verdict
-// red every tick.
+// Every gated source is anchored to PUBNET contract identities (ADR-0035), so
+// filterCatalogueByNetwork drops all of them on testnet / futurenet. The warm is a no-op there
+// and its FAIL-CLOSED leg cannot fire: applyGatedOptions refuses a gated entry with no warmed
+// options, and a test net has none, so even an empty options map is accepted. Otherwise the
+// hourly compute-completeness would turn the test nets' coverage verdict red every tick.
 func TestApplyGatedOptions_TestNetCatalogueHasNothingToWarm(t *testing.T) {
 	t.Parallel()
 	for _, network := range []string{"testnet", "futurenet"} {

@@ -223,11 +223,9 @@ func newTestDecoder() *Decoder {
 	}))
 }
 
-// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040:
-// phoenix topics are plain string tuples ANY pubnet contract can
-// emit — a perfect topic shape from an unregistered contract must
-// NOT be attributed to phoenix, while the same event from a curated
-// mainnet pool must.
+// TestDecoder_GateRejectsForeignContract pins ADR-0035/0040: phoenix topics are plain string
+// tuples any pubnet contract can emit, so a perfect topic shape from an unregistered contract must
+// not be attributed to phoenix, while the same event from a curated mainnet pool must.
 func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 	d := NewDecoder() // production gate: curated mainnet set only
 	topics := []string{TopicSymbolSwap, TopicSymbolSender}
@@ -250,18 +248,12 @@ func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 	}
 }
 
-// TestGatedSet_SeedsVerifiedCompletenessContracts pins the
-// phoenix projection-completeness seed additions: the legacy XYK pool
-// CAZ6W4WH… and the 13 per-pool stake contracts VERIFIED genuine against
-// the r1 lake (factory pool-create co-occurrence for the pool + 11
-// stakes; the phoenix reward keeper CBZ7M5B3… + phoenix-stake v1.1
-// migration events for the two pre-lake stakes — evidence in events.go).
-// Each must be in MainnetGatedSet() AND a bare PRODUCTION Decoder must
-// attribute a genuine phoenix event from it — otherwise the gated
-// re-derive scores its served rows expected=0 again (the 455
-// phoenix_liquidity + 2,513 phoenix_stake_events rows the gate dropped,
-// plus still-live emissions to ledger ~64M). Addresses are spelled
-// literally so the test cannot agree with a reverted or mistyped seed.
+// TestGatedSet_SeedsVerifiedCompletenessContracts pins the phoenix projection-completeness seed
+// additions: the legacy XYK pool CAZ6W4WH... and the 13 per-pool stake contracts verified genuine
+// against the lake (evidence in events.go). Each must be in MainnetGatedSet() and a bare
+// production Decoder must attribute a genuine phoenix event from it, otherwise the gated
+// re-derive scores its served rows expected=0 again. Addresses are spelled literally so the test
+// cannot agree with a reverted or mistyped seed.
 func TestGatedSet_SeedsVerifiedCompletenessContracts(t *testing.T) {
 	const newPool = "CAZ6W4WHVGQBGURYTUOLCUOOHW6VQGAAPSPCD72VEDZMBBPY7H43AYEC"
 	newStakes := []string{
@@ -357,15 +349,11 @@ func makeFieldEventAt(t *testing.T, fieldTopic, body, txHash, closedAt string) e
 	return ev
 }
 
-// TestDecoder_Decode_rescuesPreUpgradeSevenFieldSwapAtSweep is a
-// sources-decode regression: the
-// PRE-UPGRADE pool WASM (ledgers 51,019,036 → 53,134,167) emitted 7
-// field-events per swap — no "actual received amount" — so the group
-// could never Complete() and was dropped as an orphan at sweep. ALL
-// 5,161 pre-upgrade swaps emitted zero trades (r1-confirmed). An
-// aged-out group whose decode-consumed slots are present must now be
-// DECODED at sweep, not orphaned; a genuinely under-filled group must
-// still count as an orphan.
+// TestDecoder_Decode_rescuesPreUpgradeSevenFieldSwapAtSweep: the pre-upgrade pool WASM (ledgers
+// 51,019,036 → 53,134,167) emitted 7 field-events per swap, without "actual received amount", so
+// the group could never Complete() and was dropped as an orphan at sweep, losing every pre-upgrade
+// swap. An aged-out group whose decode-consumed slots are present must be decoded at sweep; a
+// genuinely under-filled group must still count as an orphan.
 func TestDecoder_Decode_rescuesPreUpgradeSevenFieldSwapAtSweep(t *testing.T) {
 	d := newTestDecoder()
 
@@ -437,16 +425,12 @@ func makeFieldEventIdx(t *testing.T, fieldTopic, body string, eventIndex int) ev
 	return ev
 }
 
-// TestDecoder_Decode_samePoolTwiceInOpKeepsBothSwaps is a
-// regression test: a router multi-hop (or cyclic
-// arbitrage) that routes through the SAME phoenix pool twice in one op
-// emits two swaps whose field-events share ONE groupKey (ledger, tx,
-// op, contract). In the pre-upgrade 7-field era a group never
-// Complete()s, so absorb never emit-and-clears mid-op; without the
-// re-assignment guard the second swap's field-events overwrite the
-// first's slots in place and only ONE trade survives — the first swap
-// is silently dropped. The guard must rotate the first (Decodable)
-// group out so BOTH trades land, with distinct op_index.
+// TestDecoder_Decode_samePoolTwiceInOpKeepsBothSwaps: a router multi-hop (or cyclic arbitrage)
+// routing through the same phoenix pool twice in one op emits two swaps whose field-events share
+// one groupKey (ledger, tx, op, contract). A 7-field group never Complete()s, so absorb never
+// emit-and-clears mid-op; without the re-assignment guard the second swap overwrites the first's
+// slots and the first swap is silently dropped. The guard must rotate the first (Decodable) group
+// out so both trades land, with distinct op_index.
 func TestDecoder_Decode_samePoolTwiceInOpKeepsBothSwaps(t *testing.T) {
 	d := newTestDecoder()
 
@@ -455,11 +439,9 @@ func TestDecoder_Decode_samePoolTwiceInOpKeepsBothSwaps(t *testing.T) {
 	sender := makeC(t, 0x10)
 	zeroI128 := i128Body(t, big.NewInt(0))
 
-	// Two distinct 7-field swaps through the SAME pool in the SAME op.
-	// Swap 1 offers 1,000,000 / returns 2,000,000; swap 2 offers
-	// 3,000,000 / returns 4,000,000. Field EventIndex ranges are
-	// disjoint (swap 1: 0..6, swap 2: 7..13) so the guard can tell a
-	// second-swap field from a redelivery.
+	// Two distinct 7-field swaps through the same pool in the same op: swap 1 offers 1,000,000 /
+	// returns 2,000,000, swap 2 offers 3,000,000 / returns 4,000,000. Field EventIndex ranges are
+	// disjoint (0..6, 7..13) so the guard can tell a second-swap field from a redelivery.
 	swap := func(base int, offer, ret *big.Int) []events.Event {
 		fields := []struct{ topic, body string }{
 			{TopicSymbolSender, addrBody(t, sender)},
@@ -1051,11 +1033,9 @@ func TestDecoder_Bond_completesOnThirdField(t *testing.T) {
 	}
 }
 
-// TestDecoder_BondAndUnbond_independentBuffers proves bond + unbond
-// from the same (ledger, tx, op) do NOT collide — they use distinct
-// per-action correlation maps. (Phoenix's stake contract uses the
-// same field name `amount` for both, so a single shared map would
-// merge them.)
+// TestDecoder_BondAndUnbond_independentBuffers proves bond and unbond from the same (ledger, tx,
+// op) do not collide: they use distinct per-action correlation maps, since the stake contract
+// uses the field name `amount` for both and a shared map would merge them.
 func TestDecoder_BondAndUnbond_independentBuffers(t *testing.T) {
 	restore := installAddressI128Fakes(t)
 	defer restore()
@@ -1149,11 +1129,9 @@ func TestDecoder_Matches_allFiveActions(t *testing.T) {
 
 // ─── consumer.Event impls ───────────────────────────────────────
 
-// TestBuffer_ProvideLiquidity_backfillOldEventsComplete proves the
-// 5-event reassembly survives a 6-hour-old ClosedAt — the same
-// regression guard the swap path has. Without using the event's own
-// ClosedAt for eviction reference, replaying ancient events would
-// evict the first-absorbed field when the 5th arrived.
+// TestBuffer_ProvideLiquidity_backfillOldEventsComplete proves the 5-event reassembly survives a
+// 6-hour-old ClosedAt, as the swap path does. Eviction must use the event's own ClosedAt as its
+// reference, or replaying ancient events would evict the first-absorbed field when the 5th arrives.
 func TestBuffer_ProvideLiquidity_backfillOldEventsComplete(t *testing.T) {
 	restore := installAddressI128Fakes(t)
 	defer restore()
@@ -1184,11 +1162,10 @@ func TestBuffer_ProvideLiquidity_backfillOldEventsComplete(t *testing.T) {
 	}
 }
 
-// TestDecoder_Liquidity_PopulatesEventIndex pins that the completed
-// provide_liquidity / withdraw_liquidity reassembly must carry the
-// FIRST field-event's in-op EventIndex onto the LiquidityChange so two
-// same-(op,action) liquidity actions don't collapse on the
-// phoenix_liquidity PK (migration 0060) via ON CONFLICT.
+// TestDecoder_Liquidity_PopulatesEventIndex pins that a completed provide_liquidity /
+// withdraw_liquidity reassembly carries the first field-event's in-op EventIndex onto the
+// LiquidityChange, so two same-(op,action) liquidity actions don't collapse on the
+// phoenix_liquidity PK via ON CONFLICT.
 func TestDecoder_Liquidity_PopulatesEventIndex(t *testing.T) {
 	restore := installAddressI128Fakes(t)
 	defer restore()
@@ -1291,11 +1268,9 @@ func TestDecoder_WithdrawLiquidity_twoInOneOp(t *testing.T) {
 	}
 }
 
-// TestDecoder_MapSwap_gatedAndDecoded proves the Map-schema swap flows
-// through the production Decode seam: a single event from the gated
-// CBENABXP pool emits one TradeEvent immediately (no buffer), and the
-// same event from an unregistered contract is NOT attributed
-// (ADR-0035/0040 gating).
+// TestDecoder_MapSwap_gatedAndDecoded proves the Map-schema swap flows through the production
+// Decode seam: a single event from the gated CBENABXP pool emits one TradeEvent immediately (no
+// buffer), and the same event from an unregistered contract is not attributed (ADR-0035/0040).
 func TestDecoder_MapSwap_gatedAndDecoded(t *testing.T) {
 	d := NewDecoder() // production gate: curated mainnet set incl. MainnetMapPools
 	ev := mapSwapEvent()

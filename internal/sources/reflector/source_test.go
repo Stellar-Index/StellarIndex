@@ -240,15 +240,11 @@ func TestDecodeUpdate_OpIndexStrideIsFixed(t *testing.T) {
 	}
 }
 
-// TestDecodeUpdate_EventIndexPreventsSameOpCollision is the
-// regression test for a same-op collision: two
-// Reflector update events emitted by the SAME operation
-// (OperationIndex equal) but at DIFFERENT positions in that
-// operation's contract-event list (EventIndex differs) collide
-// if the synthetic OpIndex's fanout base were
-// OperationIndex ALONE. The base must incorporate EventIndex too, so
-// two same-source events within one op get disjoint 1024-wide
-// OpIndex blocks.
+// TestDecodeUpdate_EventIndexPreventsSameOpCollision guards a same-op collision: two Reflector
+// update events from the same operation (equal OperationIndex) at different positions in its
+// contract-event list (different EventIndex) would collide if the synthetic OpIndex fanout base
+// were OperationIndex alone. The base must include EventIndex so such events get disjoint
+// 1024-wide OpIndex blocks.
 func TestDecodeUpdate_EventIndexPreventsSameOpCollision(t *testing.T) {
 	prev, prevTS := decodeUpdateBody, decodeUpdateTimestamp
 	defer func() { decodeUpdateBody, decodeUpdateTimestamp = prev, prevTS }()
@@ -296,18 +292,12 @@ func TestDecodeUpdate_EventIndexPreventsSameOpCollision(t *testing.T) {
 	}
 }
 
-// TestDecodeUpdate_OpIndexStableAcrossAllowlistState is the regression
-// test for op-index stability carried into the oracle
-// capture-totality change: decodeUpdate's OpIndex is derived from
-// the raw update_data vector POSITION, so the rows a mixed
-// known/unknown batch produces for its KNOWN slots must carry the
-// same OpIndex regardless of allow-list state — the unknown slot
-// is a raw:<symbol> row that consumes position 1 and IS emitted
-// (a skipped placeholder would consume the same position and emit
-// nothing). Either way the known row at
-// position 2 keeps OpIndex 2, never the compacted 1, so a later
-// allow-list extension re-derives the same PK and promotes the row
-// in place instead of orphaning/duplicating it.
+// TestDecodeUpdate_OpIndexStableAcrossAllowlistState: decodeUpdate's OpIndex is derived from the
+// raw update_data vector position, so the known slots of a mixed known/unknown batch must carry
+// the same OpIndex regardless of allow-list state. The unknown slot is a raw:<symbol> row that
+// consumes position 1 and is emitted, so the known row at position 2 keeps OpIndex 2, never the
+// compacted 1. A later allow-list extension then re-derives the same PK and promotes the row in
+// place instead of orphaning or duplicating it.
 func TestDecodeUpdate_OpIndexStableAcrossAllowlistState(t *testing.T) {
 	prev, prevTS := decodeUpdateBody, decodeUpdateTimestamp
 	defer func() { decodeUpdateBody, decodeUpdateTimestamp = prev, prevTS }()
@@ -473,10 +463,9 @@ func TestUpdateEvent_sourceMatchesUpdate(t *testing.T) {
 	}
 }
 
-// oracle_updates carries ts in its primary key, so a decoder change that
-// shifts the ts of an already-stored event makes a re-derive INSERT a second
-// row instead of conflicting. These goldens pin the exact ts per input; a
-// failure here means a ts-derivation change needs its own cleanup run (see
+// oracle_updates carries ts in its primary key, so a decoder change that shifts the ts of a
+// stored event makes a re-derive insert a second row instead of conflicting. These goldens pin
+// the exact ts per input; a failure means a ts-derivation change needs its own cleanup run (see
 // "Re-deriving a timestamp" in docs/architecture/ingest-pipeline.md).
 func TestDecodeUpdate_TimestampGolden(t *testing.T) {
 	closedAt := time.Date(2026, 4, 23, 12, 0, 0, 0, time.UTC)
@@ -731,12 +720,10 @@ func TestDecoder_Decode_emptyUpdateDataIsNoOp(t *testing.T) {
 }
 
 func TestDecoder_Decode_malformedClosedAtFailsClosed(t *testing.T) {
-	// LedgerClosedAt empty — decoder FAILS CLOSED (returns the error)
-	// rather than substituting time.Now(). closedAt is the fallback
-	// decodeUpdate uses when topic[2] is missing / out of its sanity
-	// window, so a wall-clock value here would mis-timestamp the row
-	// during a backfill replay. Matches the comet/blend/phoenix
-	// siblings.
+	// LedgerClosedAt empty: the decoder fails closed (returns the error) rather than substituting
+	// time.Now(). closedAt is the fallback when topic[2] is missing or outside its sanity window,
+	// so a wall-clock value would mis-timestamp the row during a backfill replay. Matches the
+	// comet/blend/phoenix siblings.
 	usd := xdr.ScSymbol("USD")
 	symSv := xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &usd}
 	body := encodeUpdateBody(t, []xdr.ScVal{symSv}, []*big.Int{big.NewInt(1_000_000_000_000)})
@@ -804,14 +791,10 @@ func TestDecoder_Decode_propagatesDecodeError(t *testing.T) {
 	}
 }
 
-// quoteForVariant has a default-fallback branch for unknown Variant
-// values (e.g. a future ADR-0014 oracle variant we haven't wired
-// up). Pin: the fallback returns fiat:USD (every real Reflector
-// oracle denominates in USD-equivalent) rather than zero — a
-// zero-asset return would later break canonical.NewPair downstream.
-//
-// TestQuoteForVariant in source_test.go covers DEX/CEX/FX. This
-// adds the default branch.
+// quoteForVariant has a default branch for unknown Variant values (e.g. a future oracle variant
+// not yet wired up). Pin: it returns fiat:USD (every real Reflector oracle denominates in
+// USD-equivalent) rather than zero, since a zero asset would later break canonical.NewPair.
+// TestQuoteForVariant covers DEX/CEX/FX; this adds the default branch.
 
 func TestQuoteForVariant_unknownFallsBackToUSD(t *testing.T) {
 	const bogus Variant = 99

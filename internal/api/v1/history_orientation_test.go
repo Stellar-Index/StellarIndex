@@ -23,19 +23,13 @@ import (
 
 // ─── /v1/history reads both stored directions ─────────────────────────
 //
-// A market has no stored direction of its own: the SDEX decoder records
-// XLM/USDC and USDC/XLM as separate rows, and the page read keys on
-// (base_asset, quote_asset) literally. Reading one direction answered
-// `?base=AQUA&quote=USDC` with an empty page for every market recorded
-// the other way round, while /v1/ohlc and /v1/chart served the same
-// window from the same rows.
+// A market has no stored direction of its own: the SDEX decoder records XLM/USDC and USDC/XLM
+// as separate rows, and the page read keys on (base_asset, quote_asset) literally, so reading
+// one direction returns an empty page for markets recorded the other way round.
 //
-// The reader below is the trades table's own behaviour, which is what
-// makes these assertions worth anything: a row lives under exactly ONE
-// orientation, a read matches that orientation literally, and the
-// cursor and limit are applied in the endpoint's keyset order. Nothing
-// in it knows about flipping — every inversion under test is the
-// handler's.
+// The reader below mimics the trades table: a row lives under exactly ONE orientation, a read
+// matches it literally, and cursor and limit apply in the endpoint's keyset order. It knows
+// nothing about flipping, so every inversion under test is the handler's.
 
 // orientedTradeStore is a HistoryReader backed by a fixed row set held
 // the way `trades` holds it.
@@ -48,22 +42,16 @@ type orientedTradeStore struct {
 	// maxRead is the largest `limit` this store was ever asked for, so a
 	// test can see the completion re-read happen.
 	maxRead int
-	// srcLess is the database's COLLATION for the source column, and it
-	// is swappable because the whole merge design turns on never
-	// comparing that column in Go: a non-C collation weighs `-` and `_`
-	// differently from their code points, so Go's order and the
-	// database's can disagree. Nil is ascending byte order. A merge that
-	// is genuinely collation-agnostic serves every row exactly once
-	// under ANY setting of this, which is what
+	// srcLess is the database's COLLATION for the source column, swappable because the merge
+	// must never compare that column in Go: a non-C collation weighs `-` and `_` differently
+	// from their code points. Nil is ascending byte order. A collation-agnostic merge serves
+	// every row exactly once under ANY setting, which
 	// TestHistory_ExactlyOnceUnderEitherSourceCollation pins.
 	srcLess func(a, b string) bool
 }
 
-// reset replaces the fixture this store answers from, so a model check
-// can run thousands of drains against ONE http test server. Standing up
-// a fresh listener per drain exhausts the machine's ephemeral ports —
-// which it did, as `dial tcp: can't assign requested address`, and only
-// when the package ran as a whole.
+// reset replaces the fixture this store answers from, so a model check can run thousands of
+// drains against ONE http test server; a fresh listener per drain exhausts ephemeral ports.
 func (s *orientedTradeStore) reset(rows []canonical.Trade, srcLess func(a, b string) bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -262,21 +250,17 @@ func drainHistory(t *testing.T, ts *testServer, query string) (rows []v1.TradeRo
 
 // ─── Tie groups that outrun the page ──────────────────────────────────
 //
-// Rows sharing an exact (ts, ledger, tx_hash, op_index) differ only in
-// `source` — one operation attributed to several connectors — and that
-// is the one keyset component the merge refuses to compare, because Go's
-// byte order and the database's collation can disagree on it.
+// Rows sharing an exact (ts, ledger, tx_hash, op_index) differ only in `source` (one operation
+// attributed to several connectors), the one keyset component the merge refuses to compare
+// because Go's byte order and the database's collation can disagree on it.
 //
-// A page that both OPENS and would END inside such a group cannot cut at
-// the group's lower edge (that edge is index 0, and an empty page
-// carrying a cursor stalls the client), so it runs to the group's upper
-// edge instead. That is only sound when the group is COMPLETE in both
-// directions. A direction whose read stopped ON the group holds further
-// rows of it the merge never saw; the cursor, minted from the other
-// direction's row, then excludes them under the database's own
-// `(ts, ledger, tx_hash, op_index, source) >` predicate and they are
-// never served on any page. The read completes the group first, by
-// re-reading the truncated direction with a raised limit.
+// A page that both OPENS and would END inside such a group cannot cut at the group's lower edge
+// (index 0; an empty page carrying a cursor stalls the client), so it runs to the upper edge.
+// That is sound only when the group is COMPLETE in both directions. A direction whose read
+// stopped ON the group holds rows the merge never saw; the cursor, minted from the other
+// direction's row, then excludes them under the database's
+// `(ts, ledger, tx_hash, op_index, source) >` predicate and they are never served. So the read
+// completes the group first, re-reading the truncated direction with a raised limit.
 
 // servedIdentity is the trades primary key as it appears on the wire —
 // the tuple that names ONE stored row. Source alone is not it: the same
@@ -336,22 +320,18 @@ func storedTradeAmounts(t *testing.T, source string, sec int64, txSuffix string,
 
 // ─── The cursor that steps past a complete tie group ──────────────────
 //
-// A cursor naming the last served ROW re-serves the rows of its group
-// that the database orders above it, because the merge puts the
-// requested orientation first on a tie while the database orders the
-// group by `source`. A page that ends on a group proved COMPLETE in both
-// directions therefore resumes past the whole group by key — same
-// (ts, ledger, tx_hash), op_index stepped once, no source at all — which
-// no row of the group can satisfy and every later row can.
+// A cursor naming the last served ROW re-serves the group rows the database orders above it,
+// because the merge puts the requested orientation first on a tie while the database orders
+// the group by `source`. A page ending on a group proved COMPLETE in both directions therefore
+// resumes past the whole group by key (same (ts, ledger, tx_hash), op_index stepped once, no
+// source), which no group row can satisfy and every later row can.
 //
-// Cursor arithmetic has one failure mode a row-shaped cursor does not:
-// a resume point that matches nothing, or that wraps. Both are below.
+// Cursor arithmetic can also fail with a resume point that matches nothing, or that wraps;
+// both are covered below.
 
-// TestHistoryCursor_PastGroupMarkerIsNotASourceName pins the assumption
-// the past-group cursor's wire form rests on: its marker cannot be
-// mistaken for a source, so a cursor cannot be read as the wrong form.
-// Source names are documented as [a-z0-9_-]; this checks the live
-// registry rather than the documentation.
+// TestHistoryCursor_PastGroupMarkerIsNotASourceName pins the assumption the past-group cursor's
+// wire form rests on: its marker cannot be mistaken for a source. It checks the live registry
+// rather than the documented [a-z0-9_-] name shape.
 func TestHistoryCursor_PastGroupMarkerIsNotASourceName(t *testing.T) {
 	t.Parallel()
 	for name := range external.Registry {
@@ -366,6 +346,5 @@ func TestHistoryCursor_PastGroupMarkerIsNotASourceName(t *testing.T) {
 
 // ─── The two permanent guards over the whole design ───────────────────
 //
-// Everything above tests a shape someone thought of. These two test the
-// property instead, against a model of the store, and they are the ones
-// to keep pointing at a change to the merge or the cursor.
+// Everything above tests a shape someone thought of. These two test the property against a
+// model of the store, and are the ones to run on any change to the merge or the cursor.

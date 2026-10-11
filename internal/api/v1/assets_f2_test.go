@@ -59,12 +59,10 @@ func (s *stubVolumeReader) Volume24hUSDForAsset(_ context.Context, assetKey stri
 	return s.volume, s.lowerBound, nil
 }
 
-// TestF2_VolumeReaderReceivesTradeTableKey — the VolumeReader contract
-// pins assetKey to the trades.base_asset/quote_asset shape (canonical
-// `asset.String()`). For native XLM that's "native", NOT "XLM" — the
-// supply-package convention. A call site that passes
-// supply.AssetKey() would never match any trade row,
-// returning "0" for native indefinitely.
+// TestF2_VolumeReaderReceivesTradeTableKey: the VolumeReader contract pins assetKey to the
+// trades.base_asset/quote_asset shape (canonical `asset.String()`). For native XLM that is
+// "native", NOT "XLM" as in the supply package; supply.AssetKey() would never match a trade
+// row and volume would stay "0" for native.
 func TestF2_VolumeReaderReceivesTradeTableKey(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -320,11 +318,9 @@ func TestF2_NativeAssetWithSupplyAndPrice(t *testing.T) {
 	mustContain(t, body, `"price_usd":"0.07"`)
 }
 
-// TestF2_PriceUSDInlinedWithoutSupply pins the contract: even
-// when the asset has no supply snapshot (so market_cap_usd stays
-// null), price_usd must still surface from the price lookup that
-// populateMarketCap already pays for. Wallets that just want the
-// current price shouldn't need a second round-trip.
+// TestF2_PriceUSDInlinedWithoutSupply pins that price_usd still surfaces from the lookup
+// populateMarketCap already pays for when the asset has no supply snapshot (market_cap_usd
+// stays null), so wallets needing only the price avoid a second round-trip.
 func TestF2_PriceUSDInlinedWithoutSupply(t *testing.T) {
 	supplyStub := &stubSupplyLooker{hit: false} // no supply row
 	priceStub := &stubPriceReader{
@@ -420,14 +416,11 @@ func TestF2_NoMaxSupply_OmitsFDV(t *testing.T) {
 	mustContain(t, body, `"market_cap_usd":"3493000000.00"`)
 }
 
-// TestF2_SEP1DeclaredMaxOverlay — ADR-0011 max_supply precedence
-// step 2, applied through supply.Overlay.
-// A classic asset with an uncapped snapshot (no
-// operator override) + an issuer stellar.toml declaring max_number
-// must serve max_supply in RAW units (display × 10^decimals),
-// compute fdv_usd from it, and set max_supply_basis="sep1_declared_max"
-// so the wire says the cap is issuer-self-declared — while supply_basis
-// keeps naming the circulating policy.
+// TestF2_SEP1DeclaredMaxOverlay: ADR-0011 max_supply precedence step 2, via supply.Overlay.
+// A classic asset with an uncapped snapshot (no operator override) and an issuer stellar.toml
+// declaring max_number must serve max_supply in RAW units (display × 10^decimals), compute
+// fdv_usd from it, and set max_supply_basis="sep1_declared_max" so the wire says the cap is
+// issuer-declared, while supply_basis keeps naming the circulating policy.
 func TestF2_SEP1DeclaredMaxOverlay(t *testing.T) {
 	assetID := "USDC-" + testUSDCIssuer
 	snap := supply.Supply{
@@ -603,14 +596,11 @@ func TestF2_PriceLookupErrorFallsThrough(t *testing.T) {
 	}
 }
 
-// TestLookupUSDPrice_StablecoinFiatProxyFallback — when the
-// reader's literal native/fiat:USD lookup misses (the steady-state
-// case on Stellar mainnet — nothing on-chain quotes in fiat:USD),
-// lookupUSDPrice walks the operator's classic USD pegs. Same
-// shape as the handler-side tryStablecoinFiatProxy,
-// but applied at the F2-population layer where the handler's
-// priceFallback isn't reachable. Without this, market_cap_usd /
-// fdv_usd / change_24h_pct would stay null on every on-chain asset.
+// TestLookupUSDPrice_StablecoinFiatProxyFallback: when the literal native/fiat:USD lookup
+// misses (the steady state on mainnet, where nothing quotes in fiat:USD), lookupUSDPrice walks
+// the operator's classic USD pegs, like the handler-side tryStablecoinFiatProxy but at the
+// F2-population layer where priceFallback is unreachable. Otherwise market_cap_usd, fdv_usd
+// and change_24h_pct stay null on every on-chain asset.
 func TestLookupUSDPrice_StablecoinFiatProxyFallback(t *testing.T) {
 	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -678,13 +668,11 @@ func TestChange24hPct_HappyPath(t *testing.T) {
 	mustContain(t, body, `"change_24h_pct":"+1.81"`)
 }
 
-// TestChange24hPct_NilPriceReader_NoPanic — Options documents Prices
-// as independently optional ("nil → 503"), so a Prices==nil but
-// Change24h!=nil wiring is legal. populateChange24h reaches the price
-// lookup on a child goroutine (no middleware.Recoverer cover), so a
-// missing nil-guard there would crash the whole API process, not 500
-// one request. Regression for that latent panic: the request must
-// serve cleanly with the field simply absent.
+// TestChange24hPct_NilPriceReader_NoPanic: Options documents Prices as independently optional
+// ("nil → 503"), so Prices==nil with Change24h!=nil is legal. populateChange24h reaches the
+// price lookup on a child goroutine (no middleware.Recoverer cover), so a missing nil-guard
+// would crash the whole process, not 500 one request. The request must serve cleanly with the
+// field absent.
 func TestChange24hPct_NilPriceReader_NoPanic(t *testing.T) {
 	change24hStub := &stubChange24hReader{prices: map[string]string{"native": "0.07"}}
 	srv := v1.New(v1.Options{Change24h: change24hStub}) // Prices left nil

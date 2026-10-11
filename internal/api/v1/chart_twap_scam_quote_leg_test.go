@@ -15,29 +15,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// Regression suite for the two call sites the pair-aware
-// conversion left behind: /v1/twap and the chart/since-inception series
-// gate both asked the scam gate about the BASE leg alone.
+// Regression suite for the call sites that asked the scam gate about the BASE leg alone:
+// /v1/twap and the chart/since-inception series gate.
 //
-// Naming a directory-flagged issuer as the QUOTE describes the SAME
-// market as naming it as the base: the aggregate reads fold both stored
-// directions and invert the flipped one, so the number served on the
-// swapped request is the withheld price to full precision. Withholding
-// one orientation and publishing the other is not a gate.
+// Naming a directory-flagged issuer as the QUOTE describes the SAME market as naming it as the
+// base: the aggregate reads fold both stored directions and invert the flipped one, so the swapped
+// request serves the withheld price to full precision. Withholding one orientation and
+// publishing the other is not a gate.
 //
-// As in vwap_scam_quote_leg_test.go, these exercise the REAL
-// *pricingguard.ScamGate over a recording stub directory rather than a
-// hand-written fake: a fake that only answers the base-only question
-// would let the test pass against the base-only call site, which is the
-// vacuity this whole class came from. What the directory is ASKED is
-// the proof that the quote leg reached the gate at all.
+// As in vwap_scam_quote_leg_test.go, these exercise the REAL *pricingguard.ScamGate over a
+// recording stub directory rather than a hand-written fake: a fake that only answers the
+// base-only question would pass against a base-only call site. What the directory is ASKED
+// proves the quote leg reached the gate at all.
 
-// chartQuoteLegSeries backs BOTH series reads with one real bucket, so
-// an ungated request answers a 200 carrying an actual price rather than
-// 404-ing for lack of data and passing vacuously.
+// chartQuoteLegSeries backs BOTH series reads with one real bucket, so an ungated request answers
+// 200 with an actual price rather than 404-ing for lack of data and passing vacuously.
 //
-// `points` feeds the windowed read behind /v1/chart (the bucket sits
-// inside the 24h window); `pointsByPair` feeds the since-inception read.
+// `points` feeds the windowed read behind /v1/chart (the bucket sits inside the 24h window);
+// `pointsByPair` feeds the since-inception read.
 func chartQuoteLegSeries(t *testing.T, pair canonical.Pair) *stubHistoryReader {
 	t.Helper()
 	pt := v1.HistoryPoint{
@@ -113,11 +108,9 @@ func TestTWAPServesWhenNeitherLegIsFlagged(t *testing.T) {
 }
 
 // TestChartWithholdsWhenTheQuoteLegIsScamFlagged covers the series
-// surface, where the leak is worse than on a point: an ungated chart
-// hands over the whole trajectory of the flagged market, inverted.
-//
-// The gate must also short-circuit BEFORE the read, so the flagged
-// issuer's series never leaves the store.
+// surface, where the leak is worse than on a point: an ungated chart hands over the whole
+// trajectory of the flagged market, inverted. The gate must also short-circuit BEFORE the read,
+// so the flagged issuer's series never leaves the store.
 func TestChartWithholdsWhenTheQuoteLegIsScamFlagged(t *testing.T) {
 	flagged, err := canonical.NewClassicAsset("RIO", scamQuoteLegIssuer)
 	if err != nil {

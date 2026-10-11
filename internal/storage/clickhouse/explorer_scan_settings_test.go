@@ -5,14 +5,10 @@ import (
 	"testing"
 )
 
-// These tests pin the per-query resource bounds on every SCAN-SHAPED explorer
-// read. The measured fact they encode: at DEFAULT
-// max_threads a ledger_entries_current probe fanned out over the post-D3 part
-// layout to 4.76 GiB — 40× the 89 MiB the identical probe costs at
-// max_threads = 4. Losing the SETTINGS clause from any of these queries
-// silently reintroduces that class, so the clause is asserted per query, in
-// the SQL text (the same convention recognition_query_test.go /
-// event_reader_test.go use for their bounded scans).
+// These tests pin the per-query resource bounds on every scan-shaped explorer read. At default
+// max_threads a ledger_entries_current probe fanned out to 40x the memory it costs at
+// max_threads = 4, so losing the SETTINGS clause silently reintroduces that class. The clause is
+// asserted in the SQL text, as recognition_query_test.go and event_reader_test.go do.
 
 // requireScanSettings asserts q carries the explorerScanSettings pins.
 func requireScanSettings(t *testing.T, name, q string) {
@@ -63,17 +59,12 @@ func TestExplorerScanQueries_CarryBoundedSettings(t *testing.T) {
 	}
 }
 
-// TestClassicCirculatingSupplyQuery_Bounds — this one additionally
-// carries an explicit execution ceiling, and the reason is the same as
-// accountsByWealthQuery's: the Go client pins the connection default to
-// 30s, which is BELOW this query's measured runtime (avg 24-27s, max
-// 75.5s on r1 over 14 days). It survives today only because r1's
-// api_serving profile overrides the value to 184 — a deployment without
-// that override would kill it every time, and the classic-supply
-// fallback would just stop having answers with no error anyone reads.
-// The ceiling must also stay INSIDE the caller's 3-minute detached
-// refresh budget (classicSupplyRefreshBudget), or ClickHouse keeps
-// working on a query nobody is waiting for.
+// TestClassicCirculatingSupplyQuery_Bounds: this query also carries an explicit execution ceiling,
+// as accountsByWealthQuery does. The Go client pins the connection default to 30s, below this
+// query's runtime, so a deployment without the override would kill it every time and the
+// classic-supply fallback would silently stop answering. The ceiling must also stay inside the
+// caller's detached refresh budget (classicSupplyRefreshBudget), or ClickHouse keeps working on a
+// query nobody is waiting for.
 func TestClassicCirculatingSupplyQuery_Bounds(t *testing.T) {
 	requireScanSettings(t, "classicCirculatingSupplyQuery", classicCirculatingSupplyQuery)
 	if !strings.Contains(classicCirculatingSupplyQuery, "max_execution_time = 150") {
@@ -115,13 +106,10 @@ func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
 		t.Error("a first-page exact arm must not carry a cursor clause")
 	}
 
-	// A first page carries no CURSOR clause on either arm. (This is not
-	// asserted as "no WHERE at all", which is a
-	// faithful proxy only while the query has no lower bound — the
-	// tail-window bound is a WHERE on the first page, and is pinned
-	// in explorer_reader_recent_operations_test.go. The property this row
-	// actually protects — the arg count matching the clause count — is
-	// asserted directly.)
+	// A first page carries no cursor clause on either arm. This is not asserted as "no WHERE at
+	// all": the tail-window bound is a WHERE on the first page (pinned in
+	// explorer_reader_recent_operations_test.go). The arg count matching the clause count is
+	// asserted directly.
 	for _, q := range []string{recentOperationsQuery(false, true), recentOperationsQuery(false, false)} {
 		if strings.Contains(q, recentOperationsCursorPredicate) || strings.Contains(q, "(ledger_seq, tx_index, op_index) < (?, ?, ?)") {
 			t.Errorf("recentOperationsQuery(false, …) must not carry a cursor clause:\n%s", q)
@@ -131,13 +119,10 @@ func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
 		}
 	}
 	for _, q := range []string{recentOperationsQuery(true, true), recentOperationsQuery(true, false)} {
-		// The keyset comparison is now spelled index-prunably —
-		// `ledger_seq < ? OR (ledger_seq = ? AND (tx_index, op_index) <
-		// (?, ?))`, exactly equivalent to the tuple form it replaced. The
-		// full shape (including the forbidden tuple-only spelling) is
-		// pinned in explorer_reader_deep_cursor_test.go; this row keeps
-		// asserting the property it always asserted, that a cursor arm
-		// carries a full-primary-key keyset comparison.
+		// The keyset comparison is spelled index-prunably: `ledger_seq < ? OR (ledger_seq = ? AND
+		// (tx_index, op_index) < (?, ?))`. The full shape, including the forbidden tuple-only
+		// spelling, is pinned in explorer_reader_deep_cursor_test.go; this row asserts a cursor
+		// arm carries a full-primary-key keyset comparison.
 		if !strings.Contains(q, recentOperationsCursorPredicate) {
 			t.Errorf("recentOperationsQuery(true, …) missing its keyset cursor comparison:\n%s", q)
 		}
@@ -157,14 +142,11 @@ func TestExplorerScanQueries_ShapePreserved(t *testing.T) {
 	}
 }
 
-// TestNativeHoldersQueries_Shape pins the native arm of AssetHolders
-// (without it /v1/assets/native/holders would serve {"holder_count":0} by
-// construction because native has no trustlines). The load-bearing facts:
-// both native queries read the ACCOUNT entry range — entry_type is the
-// FIRST ORDER BY column, so this is a primary-index range read, and losing
-// the predicate (or reintroducing a trustline/asset one) silently restores
-// the empty board — exclude removed entries, and count only funded
-// accounts.
+// TestNativeHoldersQueries_Shape pins the native arm of AssetHolders; without it
+// /v1/assets/native/holders would serve {"holder_count":0} because native has no trustlines.
+// Both native queries read the ACCOUNT entry range (entry_type is the first ORDER BY column, so
+// a primary-index range read), exclude removed entries and count only funded accounts. Losing
+// the predicate, or reintroducing a trustline/asset one, silently restores the empty board.
 func TestNativeHoldersQueries_Shape(t *testing.T) {
 	for name, q := range map[string]string{
 		"nativeHoldersQuery":      nativeHoldersQuery,

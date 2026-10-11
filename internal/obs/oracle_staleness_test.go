@@ -38,14 +38,10 @@ func gaugeChildren(t *testing.T, vec *prometheus.GaugeVec) map[string]float64 {
 	return out
 }
 
-// TestOracleStaleBudgetMultiplier_IsTheHistoricalThreshold pins the
-// number the alert expression carried as a literal
-// (`> 10 * stellarindex_oracle_resolution_seconds`).
-//
-// The whole safety claim of the per-asset budget is "nothing moves for
-// an asset nobody overrode". That claim rests on this constant being
-// the same 10 the rule carried, so it gets its own test rather than
-// riding along inside a case that would also fail for other reasons.
+// TestOracleStaleBudgetMultiplier_IsTheHistoricalThreshold pins the number the alert expression
+// carries as a literal (`> 10 * stellarindex_oracle_resolution_seconds`). The per-asset budget's
+// safety claim is "nothing moves for an asset nobody overrode", which rests on this constant
+// staying 10, so it gets its own test.
 func TestOracleStaleBudgetMultiplier_IsTheHistoricalThreshold(t *testing.T) {
 	if obs.OracleStaleBudgetMultiplier != 10 {
 		t.Fatalf("OracleStaleBudgetMultiplier = %d, want 10 — the alert read "+
@@ -92,11 +88,10 @@ func TestOracleStalenessBudget_HeartbeatIsNotMultiplied(t *testing.T) {
 	}
 }
 
-// TestOracleStalenessBudget_OverrideAppliesToOnePairOnly is the
-// blast-radius case. An override is a claim about ONE asset; it must
-// not reach the asset next to it, and it must not reach the same asset
-// on another source (reflector-dex's DAI is a different feed with a
-// different publication rhythm from reflector-cex's).
+// TestOracleStalenessBudget_OverrideAppliesToOnePairOnly is the blast-radius case. An override
+// is a claim about ONE asset; it must not reach the asset next to it, nor the same asset on
+// another source (reflector-dex's DAI is a different feed with a different publication rhythm
+// from reflector-cex's).
 func TestOracleStalenessBudget_OverrideAppliesToOnePairOnly(t *testing.T) {
 	obs.DeclareOracleResolution("test-cex", 300)
 	obs.DeclareOracleResolution("test-dex", 300)
@@ -139,15 +134,10 @@ func TestSetOracleStalenessOverrides_Replaces(t *testing.T) {
 	}
 }
 
-// TestOracleStalenessBudget_UndeclaredSourceCannotAlert documents the
-// fallback, which is chosen to be bit-for-bit what the old rule did.
-//
-// An expression that joins against
-// stellarindex_oracle_resolution_seconds, so a source that never
-// declared a resolution had no right-hand side and the alert could not
-// fire for it at all. +Inf reproduces that silence (`age > +Inf` is
-// never true) while still emitting a series, so the gap is visible
-// instead of being an absent row nobody looks for.
+// TestOracleStalenessBudget_UndeclaredSourceCannotAlert documents the fallback. The alert joins
+// against stellarindex_oracle_resolution_seconds, so a source that never declared a resolution
+// has no right-hand side and cannot fire. +Inf reproduces that silence (`age > +Inf` is never
+// true) while still emitting a series, so the gap is visible instead of an absent row.
 func TestOracleStalenessBudget_UndeclaredSourceCannotAlert(t *testing.T) {
 	obs.SetOracleStalenessOverrides(nil)
 	got := obs.OracleStalenessBudget("test-never-declared", "crypto:XLM")
@@ -157,18 +147,14 @@ func TestOracleStalenessBudget_UndeclaredSourceCannotAlert(t *testing.T) {
 	}
 }
 
-// TestRecordOracleUpdate_EveryAgeHasABudget is the "no asset silently
-// loses its alert" guard, and it is deliberately written over the
-// REGISTRY rather than over one call.
+// TestRecordOracleUpdate_EveryAgeHasABudget is the "no asset silently loses its alert" guard,
+// written over the REGISTRY rather than one call.
 //
-// stellarindex_oracle_stale is a bare vector-to-vector comparison:
-// Prometheus evaluates it only where both sides carry identical
-// labels, so an asset with an age and no budget is an asset with no
-// alert — silently, with the rule looking perfectly healthy. This
-// asserts the invariant across every child either vec holds by the
-// time it runs, which is what catches a future writer that sets
-// OracleLastUpdateUnix directly instead of going through
-// RecordOracleUpdate.
+// stellarindex_oracle_stale is a bare vector-to-vector comparison: Prometheus evaluates it only
+// where both sides carry identical labels, so an asset with an age and no budget has no alert
+// while the rule looks healthy. This asserts the invariant across every child either vec holds,
+// which catches a future writer that sets OracleLastUpdateUnix directly instead of going
+// through RecordOracleUpdate.
 func TestRecordOracleUpdate_EveryAgeHasABudget(t *testing.T) {
 	obs.DeclareOracleResolution("test-pairing", 300)
 	obs.SetOracleStalenessOverrides([]obs.OracleStalenessOverride{

@@ -16,23 +16,12 @@ const (
 	cexScale     = 8
 )
 
-// TestCombinedBarServesTrueExtremes pins the post-B11-F1 contract of the
-// combined fiat series: the bucket high/low are the plain max/min of the
-// constituent extremes, with NO price-distance filtering.
-//
-// This REPLACES TestCombinedBarDropsFatFinger, which pinned the 2×-VWAP band
-// (`combinedOutlierBandRatio`). That band was removed by operator decision
-// (docs/operations/finding-dust-trades-set-chart-extremes.md
-// "DECISION"): filter on trade SIZE, never on price divergence. The wicks the
-// band existed for were all dust, and dust is now excluded at the individual
-// TRADE level by the $0.01 notional floor on the CAGG extremes (migration
-// 0115) — which the band, comparing whole-constituent extremes, could never
-// reach. Proof that the dust really is gone is DB-backed:
-// test/integration/pg_pricing_test.go.
-//
-// The band was ALSO a correctness hazard in the other direction: a
-// genuine large trade far from VWAP is a real market event and suppressing it
-// is editing reality. That is what this test asserts.
+// TestCombinedBarServesTrueExtremes pins the combined fiat series contract: the bucket
+// high/low are the plain max/min of the constituent extremes, with NO price-distance filtering.
+// Filter on trade SIZE, never on price divergence: dust is excluded at the individual TRADE
+// level by the notional floor on the CAGG extremes (proved DB-backed in
+// test/integration/pg_pricing_test.go), and a genuine large trade far from VWAP is a real
+// market event whose suppression would edit reality.
 // finalizeCombined renders the bucket and cross-checks that it derived
 // the lift target the caller expected. `scales` lists the scale of every
 // bar handed to acc.add, in the same order; the bucket takes their
@@ -120,24 +109,20 @@ func TestCombinedBarSingleConstituentExtremes(t *testing.T) {
 	}
 }
 
-// TestCombinedBarScaleDrivesVolumeWeighting pins the per-venue scale fix at
-// the accumulator: the SAME two constituent bars must combine to different
-// (and each correct) numbers depending on the scale their venues declare.
+// TestCombinedBarScaleDrivesVolumeWeighting pins per-venue scale handling at the accumulator:
+// the SAME two constituent bars must combine to different (and each correct) numbers depending
+// on the scale their venues declare.
 //
 // One 1000-unit leg at price 0.10 and one 1000-unit leg at 0.12:
 //
-//   - declared 7dp and 8dp, the 7dp leg is really 1000 units and the 8dp
-//     leg is really 1000 units, so the bar is 2000 units at the common 8dp
-//     scale and the volume-weighted price is 0.11;
-//   - declared BOTH 8dp, the first leg really is a tenth of the second, so
-//     1.1e11 units and 0.1181818181 is the right answer and the lift must
-//     not touch it.
+//   - declared 7dp and 8dp, the 7dp leg is really 1000 units and the 8dp leg is really 1000
+//     units, so the bar is 2000 units at the common 8dp scale and the weighted price is 0.11;
+//   - declared BOTH 8dp, the first leg really is a tenth of the second, so 1.1e11 units and
+//     0.1181818181 is right and the lift must not touch it.
 //
-// The second case is the byte-identical guard [aggregate.NormalizeAmountScale]
-// makes for uniform windows, restated for bars: a response whose bars share
-// one scale must come out exactly as it did before any of this existed.
-// Together they show the served numbers move BECAUSE of the declared scale
-// and for no other reason.
+// The second case is the byte-identical guard [aggregate.NormalizeAmountScale] gives uniform
+// windows, restated for bars: bars sharing one scale come out unchanged, so served numbers
+// move only because of the declared scale.
 func TestCombinedBarScaleDrivesVolumeWeighting(t *testing.T) {
 	pow10 := func(n int) string {
 		s := "1"
@@ -210,11 +195,9 @@ func TestCombinedBarScaleDrivesVolumeWeighting(t *testing.T) {
 	}
 }
 
-// TestCombinedBarUnknownScaleIsNeverLifted pins the deliberate posture for a
-// bar whose reader reported no sources: it is left exactly where it is.
-// [ohlcBarScaleUnknown] must not be silently read as the registry fallback
-// of 8, which would lift every OTHER bar against it and manufacture the
-// mis-weight this file removes.
+// TestCombinedBarUnknownScaleIsNeverLifted: a bar whose reader reported no sources is left
+// exactly where it is. [ohlcBarScaleUnknown] must not be read as the registry fallback of 8,
+// which would lift every OTHER bar against it and manufacture a mis-weight.
 func TestCombinedBarUnknownScaleIsNeverLifted(t *testing.T) {
 	if got := barScaleDecimals(nil); got != ohlcBarScaleUnknown {
 		t.Errorf("barScaleDecimals(nil) = %d, want %d — a bar that names no venue "+
@@ -259,13 +242,10 @@ func TestCombinedBarUnknownScaleIsNeverLifted(t *testing.T) {
 	}
 }
 
-// TestCombinedBarStatesScaleOnWire pins that a
-// combined bucket must STATE the smallest-unit scale its v_base/v_quote
-// were lifted to, not just carry it internally. Before this, finalize
-// left VBaseDecimals/VQuoteDecimals at Go's zero value regardless of the
-// bucket's actual lift target — indistinguishable on the wire from a
-// genuine 0dp scale, and silently wrong for the (overwhelmingly common)
-// 7dp/8dp buckets this file lifts.
+// TestCombinedBarStatesScaleOnWire: a combined bucket must STATE the smallest-unit scale its
+// v_base/v_quote were lifted to, not just carry it internally. A zero VBaseDecimals/
+// VQuoteDecimals is indistinguishable on the wire from a genuine 0dp scale and wrong for the
+// common 7dp/8dp buckets.
 func TestCombinedBarStatesScaleOnWire(t *testing.T) {
 	acc := newOHLCBucketAcc()
 	acc.add(&OHLCSeriesBar{

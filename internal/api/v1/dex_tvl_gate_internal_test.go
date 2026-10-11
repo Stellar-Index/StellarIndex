@@ -12,14 +12,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// stubTVLGate withholds exactly the canonical assets it is told to.
-// Keyed on Asset.String() so a test can pin WHICH identity the valuer
-// asked about — the SAC-collapse half of the fix is invisible otherwise.
+// stubTVLGate withholds exactly the canonical assets it is told to, keyed on Asset.String() so a
+// test can pin which identity the valuer asked about.
 //
-// screens mirrors what the production adapter reports (both guards
-// wired, in that order) unless a test sets it: the Basis sentence is
-// composed from it, so a gate that claims fewer screens must describe
-// fewer screens.
+// screens mirrors the production adapter (both guards wired, in that order) unless a test sets
+// it: the Basis sentence is composed from it, so a gate claiming fewer screens must describe
+// fewer.
 type stubTVLGate struct {
 	withhold map[string]bool
 	asked    []string
@@ -38,15 +36,13 @@ func (g *stubTVLGate) Screens() []string {
 	return g.screens
 }
 
-// TestTVLValuer_GateSeesTheCanonicalIdentity pins the SAC-collapse half.
-// A pool leg is a C-strkey by construction, but the scam directory is
-// keyed by the issuer G-address only a CLASSIC asset carries — so a
-// configured classic↔SAC wrapper must reach the gate as its classic
-// twin, or the gate is asked about an identity it can never speak
-// about. Native's SAC must arrive as `native` for the same reason.
+// TestTVLValuer_GateSeesTheCanonicalIdentity pins the SAC-collapse half. A pool leg is a C-strkey,
+// but the scam directory is keyed by the issuer G-address only a classic asset carries, so a
+// configured classic/SAC wrapper must reach the gate as its classic twin. Native's SAC must arrive
+// as `native` for the same reason.
 //
-// NOT parallel: the AliasRegistry is process-global (same convention as
-// installFoldRegistry in assets_fold_alias_test.go).
+// Not parallel: the AliasRegistry is process-global (same convention as installFoldRegistry in
+// assets_fold_alias_test.go).
 func TestTVLValuer_GateSeesTheCanonicalIdentity(t *testing.T) {
 	const (
 		scamCode   = "SCAM"
@@ -90,13 +86,11 @@ func TestTVLValuer_GateSeesTheCanonicalIdentity(t *testing.T) {
 	}
 }
 
-// TestTVLValuer_GateBeatsTheDeclaredPeg pins the ORDERING. The peg
-// shortcut sits between the token→asset resolution and the resolver, so
-// a gate consulted after it would leave every operator-declared peg
-// unscreened — and an operator's 1:1-USD declaration is an older,
-// broader statement than a curated directory's later scam flag on that
-// issuer. Same ordering as the asset detail path:
-// suppressScamIssuerPricing runs after fillDeclaredPegPrice.
+// TestTVLValuer_GateBeatsTheDeclaredPeg pins the ordering. The peg shortcut sits between the
+// token-to-asset resolution and the resolver, so a gate consulted after it would leave every
+// operator-declared peg unscreened, and a 1:1-USD declaration is older and broader than a later
+// scam flag on that issuer. Same ordering as the asset detail path: suppressScamIssuerPricing runs
+// after fillDeclaredPegPrice.
 func TestTVLValuer_GateBeatsTheDeclaredPeg(t *testing.T) {
 	const pegged = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 	gate := &stubTVLGate{withhold: map[string]bool{}}

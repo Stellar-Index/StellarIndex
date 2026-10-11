@@ -5,13 +5,11 @@ import (
 	"testing"
 )
 
-// Rank-tier lockstep. listingRankTierExpr is the listing's LEADING
-// ORDER BY key, and like adjustedVolume24hExpr it has to appear in three
-// places that must stay identical — the SELECT (as rank_tier, so the
-// cursor can encode what the query ranked on), the ORDER BY, and the
-// keyset WHERE. Drop it from any one of them and pagination silently
-// skips or repeats rows; drop it from the ORDER BY and a flagged scam
-// token climbs back above real assets on raw volume.
+// Rank-tier lockstep. listingRankTierExpr is the listing's LEADING ORDER BY key and, like
+// adjustedVolume24hExpr, must appear identically in the SELECT (as rank_tier, so the cursor
+// encodes what the query ranked on), the ORDER BY and the keyset WHERE. Dropping it from one
+// makes pagination skip or repeat rows; dropping it from the ORDER BY lets a flagged scam
+// token climb back above real assets on raw volume.
 
 func TestListingRankTierExpr_ThreeCallSitesStayInStep(t *testing.T) {
 	t.Parallel()
@@ -27,11 +25,9 @@ func TestListingRankTierExpr_ThreeCallSitesStayInStep(t *testing.T) {
 		if !strings.Contains(sel, "LEFT JOIN account_directory") {
 			t.Errorf("order %v: SELECT is missing the account_directory join the tier reads", order)
 		}
-		// The tier's price arm reads asset_price_snapshot
-		// (listingPriceUSDExpr == aps.price_usd) instead of the inline
-		// COALESCE chain, so the tier now depends on that join too — and
-		// on its staleness floor, which is what makes "priced too long
-		// ago to serve" resolve to the same tier as "never priced".
+		// The tier's price arm reads asset_price_snapshot (listingPriceUSDExpr ==
+		// aps.price_usd), so the tier depends on that join and on its staleness floor, which
+		// puts "priced too long ago to serve" in the same tier as "never priced".
 		if !strings.Contains(sel, "LEFT JOIN asset_price_snapshot") {
 			t.Errorf("order %v: SELECT is missing the asset_price_snapshot join the tier reads", order)
 		}
@@ -172,26 +168,17 @@ func TestSplitAssetsCursor_LegacyTwoFieldCursorResumesInTierZero(t *testing.T) {
 // TestAssetsCursorPredicate_MixedDirectionKeysetIsSpelledOut is the class
 // guard for mixed-direction keyset cursors.
 //
-// Every /v1/assets ordering is MIXED-direction: the sort key descends,
-// asset_id ascends to break ties deterministically. SQL's row-constructor
-// comparison — `(a, b) < ($1, $2)` — is SAME-direction on every element,
-// so using it here reads as "…AND asset_id < $2" on a tie. That selects
-// rows the walk has already served and skips the ones it has not: a plain
-// `GET /v1/assets` walk served some assets twice, never served others, and
-// then reported has_more=false as if the walk were complete.
+// Every /v1/assets ordering is MIXED-direction: the sort key descends, asset_id ascends to
+// break ties. SQL's row-constructor comparison `(a, b) < ($1, $2)` is SAME-direction on every
+// element, so on a tie it reads as "…AND asset_id < $2", selecting rows already served and
+// skipping unserved ones, then reporting has_more=false as if the walk were complete.
 //
-// The volume arm always spelled the comparison out correctly; the
-// observation-count arm used the row constructor. The bug was therefore
-// not a missing abstraction — it was one arm of one function disagreeing
-// with its own sibling — so the durable fix is this invariant rather than
-// a shared helper (markets and pools already use the expanded form; a
-// helper across them would be churn on correct code).
+// The invariant is enforced here rather than by a shared helper because the bug was one arm
+// disagreeing with its sibling (markets and pools already use the expanded form). It is
+// derived from source, so a THIRD ordering added later is covered the day it is written.
 //
-// Derived from source, so a THIRD ordering added later is covered on the
-// day it is written rather than when someone notices missing rows.
-//
-// Proven red: restoring `(ca.observation_count, ca.asset_id) < ($2, $3)`
-// fails this test naming AssetsOrderObservationCountDesc.
+// Restoring `(ca.observation_count, ca.asset_id) < ($2, $3)` fails this test naming
+// AssetsOrderObservationCountDesc.
 func TestAssetsCursorPredicate_MixedDirectionKeysetIsSpelledOut(t *testing.T) {
 	t.Parallel()
 	orders := allAssetsOrders()
@@ -227,12 +214,9 @@ func TestAssetsCursorPredicate_MixedDirectionKeysetIsSpelledOut(t *testing.T) {
 
 // allAssetsOrders enumerates every AssetsOrder the package defines.
 //
-// Derived by walking the values rather than listing them, because the
-// guard above advertises that a THIRD ordering added later is covered on
-// the day it is written — and a literal two-element slice would not have
-// been. AssetsOrder is a small int enum; walking upward until
-// assetsOrderBy stops producing a distinct ORDER BY finds them all
-// without depending on a name.
+// Derived by walking the values, not listing them, so a THIRD ordering is covered the day it
+// is written. AssetsOrder is a small int enum; walking upward until assetsOrderBy stops
+// producing a distinct ORDER BY finds them all without depending on a name.
 func allAssetsOrders() []AssetsOrder {
 	var out []AssetsOrder
 	seen := map[string]bool{}

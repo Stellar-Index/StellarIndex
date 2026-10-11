@@ -20,12 +20,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
 )
 
-// goodGzipBody is a minimal valid-gzip-but-NOT-a-real-checkpoint
-// stream — used only by tests that exercise the gzip-integrity guard
-// specifically (TestFill_RejectsInvalidGzip's contrast case, and
-// anywhere content correctness genuinely doesn't matter). Most tests
-// use checkpointGzipBody below, which also passes the XDR
-// content check.
+// goodGzipBody is a valid-gzip-but-NOT-a-real-checkpoint stream, for tests of the gzip-integrity
+// guard alone (e.g. TestFill_RejectsInvalidGzip's contrast case). Most tests use
+// checkpointGzipBody below, which also passes the XDR content check.
 func goodGzipBody() []byte {
 	var buf bytes.Buffer
 	gz := gzip.NewWriter(&buf)
@@ -34,14 +31,10 @@ func goodGzipBody() []byte {
 	return buf.Bytes()
 }
 
-// checkpointGzipBody builds a REAL gzip'd, framed-XDR checkpoint
-// file body for ledger `seq` — a single LedgerHeaderHistoryEntry
-// record with Header.LedgerSeq = seq, matching what
-// validateCheckpointContent requires before a fetched file
-// is placed. Real archive files hold 64 such records (one per ledger
-// in the checkpoint window); one record naming the target seq is
-// sufficient for these tests since validateCheckpointContent stops
-// at the first match.
+// checkpointGzipBody builds a REAL gzip'd, framed-XDR checkpoint file body for ledger `seq`: one
+// LedgerHeaderHistoryEntry with Header.LedgerSeq = seq, as validateCheckpointContent requires
+// before a fetched file is placed. Real files hold 64 such records, but validateCheckpointContent
+// stops at the first match, so one suffices.
 func checkpointGzipBody(seq uint32) []byte {
 	entry := sdkxdr.LedgerHeaderHistoryEntry{
 		Header: sdkxdr.LedgerHeader{LedgerSeq: sdkxdr.Uint32(seq)},
@@ -59,12 +52,9 @@ func checkpointGzipBody(seq uint32) []byte {
 	return buf.Bytes()
 }
 
-// seqFromRelPath extracts the checkpoint sequence encoded in a
-// fetch URL path of the form
-// "/ledger/XX/YY/ZZ/ledger-XXYYZZWW.xdr.gz" — the inverse of the
-// production checkpointPath layout. Used by fakeSource behaviour
-// callbacks that need to serve content matching the REQUESTED seq
-// (content must match, not just be valid gzip).
+// seqFromRelPath extracts the checkpoint sequence from a fetch URL path of the form
+// "/ledger/XX/YY/ZZ/ledger-XXYYZZWW.xdr.gz", the inverse of the production checkpointPath layout.
+// fakeSource callbacks use it to serve content matching the REQUESTED seq.
 func seqFromRelPath(t *testing.T, relPath string) uint32 {
 	t.Helper()
 	base := relPath[strings.LastIndex(relPath, "-")+1:]
@@ -203,12 +193,9 @@ func TestFill_AllSourcesFail(t *testing.T) {
 	}
 }
 
-// TestFill_RejectsWrongCheckpointContent is the regression: a
-// source returns 200 + perfectly valid gzip content, but it's the
-// WRONG checkpoint (a misconfigured/stale mirror serving a different
-// ledger range). The filler must reject it via
-// validateCheckpointContent and fall through to the next source —
-// gzip validity alone is not enough.
+// TestFill_RejectsWrongCheckpointContent: a source returns 200 and valid gzip, but the WRONG
+// checkpoint (a stale or misconfigured mirror). The filler must reject it via
+// validateCheckpointContent and fall through to the next source; gzip validity is not enough.
 func TestFill_RejectsWrongCheckpointContent(t *testing.T) {
 	src1 := fakeSource(t, func(_ string) (int, []byte) {
 		// Always serves checkpoint 127's content, regardless of what
@@ -479,11 +466,9 @@ func TestFiller_ParentDirsAreTraversable(t *testing.T) {
 func TestFill_PerSourceFailuresUseRealSourceNames(t *testing.T) {
 	root := t.TempDir()
 
-	// A checkpoint body that validateCheckpointContent accepts is
-	// non-trivial to synthesise, so BOTH sources here fail — the
-	// assertion under test is the label attribution, which is
-	// identical either way. The healthy-source case is covered by
-	// the existing cross_anchor_fill tests.
+	// Both sources fail here because a body validateCheckpointContent accepts is non-trivial to
+	// synthesise; the label attribution under test is identical either way. The healthy-source
+	// case is covered by the other cross_anchor_fill tests.
 	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))

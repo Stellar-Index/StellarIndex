@@ -155,11 +155,9 @@ func (r *ctxDeadCountingReader) ListAssets(_ context.Context, _ string, _ int) (
 	return nil, "", nil
 }
 
-// TestAssetMetadata_ReturnsOnlyOverlayFields checks the
-// /v1/assets/{id}/metadata endpoint returns the SEP-1 slice
-// without the canonical core (Code, Decimals, Issuer / ContractID).
-// Same overlay path as /v1/assets/{id}; status field carries the
-// resolution outcome.
+// TestAssetMetadata_ReturnsOnlyOverlayFields checks /v1/assets/{id}/metadata returns the SEP-1
+// slice without the canonical core (Code, Decimals, Issuer / ContractID). It shares the overlay
+// path of /v1/assets/{id}; the status field carries the resolution outcome.
 func TestAssetMetadata_ReturnsOnlyOverlayFields(t *testing.T) {
 	issuer := testUSDCIssuer
 	domain := "circle.com"
@@ -242,12 +240,9 @@ func TestAsset_BackfillsHomeDomainFromKnownIssuersMap(t *testing.T) {
 	}
 }
 
-// TestAssetMetadata_ProjectsSEP1IssuanceFields confirms the four
-// SEP-1 issuance declarations (conditions / fixed_number / max_number
-// / is_unlimited) round-trip from AssetDetail through the metadata
-// projection. Pre-overlay state — pretends `applySep1Overlay` has
-// already populated AssetDetail; here we just exercise the
-// projection.
+// TestAssetMetadata_ProjectsSEP1IssuanceFields confirms the four SEP-1 issuance declarations
+// (conditions / fixed_number / max_number / is_unlimited) round-trip from AssetDetail through the
+// metadata projection. AssetDetail is pre-populated as if `applySep1Overlay` had run.
 func TestAssetMetadata_ProjectsSEP1IssuanceFields(t *testing.T) {
 	issuer := testUSDCIssuer
 	domain := "circle.com"
@@ -361,11 +356,8 @@ func TestAsset_ReaderError500(t *testing.T) {
 }
 
 func TestAssetList_NetworkParamIgnored_DefaultPath(t *testing.T) {
-	// The cross-chain ?network= browse surface was removed (Stellar-
-	// focus refactor): the param is now ignored and the listing always
-	// returns the default reader path. Any ?network= value (stellar,
-	// ethereum, potato) yields the same Stellar listing — never a 400
-	// and never external rows.
+	// The ?network= param is ignored: any value (stellar, ethereum, potato) yields the same
+	// Stellar listing from the default reader path, never a 400 and never external rows.
 	xlm := v1.AssetDetail{AssetID: "native", Type: "native", Code: "XLM"}
 	reader := &stubAssetReader{page: []v1.AssetDetail{xlm}, nextCur: ""}
 	srv := v1.New(v1.Options{Assets: reader, VerifiedCurrencies: newTestCatalogue(t)})
@@ -620,11 +612,10 @@ func (unmeasuredSubstanceGate) Probe(context.Context, canonical.Asset, canonical
 	return false, false, pricingguard.FloorNone
 }
 
-// TestAssetList_SubstanceUnmeasured_WithholdsPriceAndStampsStale pins
-// the rule on both /v1/assets listing paths: when the substance gate cannot
-// measure a row, the ungated catalogue price must not be published (so it
-// cannot back a market cap — ADR-0018) and the page must say it is
-// degraded. The control shows a MEASURED withhold stays unflagged.
+// TestAssetList_SubstanceUnmeasured_WithholdsPriceAndStampsStale pins the rule on both
+// /v1/assets listing paths: when the substance gate cannot measure a row, the ungated catalogue
+// price must not be published (so it cannot back a market cap) and the page must say it is
+// degraded. The control shows a measured withhold stays unflagged.
 func TestAssetList_SubstanceUnmeasured_WithholdsPriceAndStampsStale(t *testing.T) {
 	price := "0.42"
 	row := timescale.AssetRow{
@@ -700,11 +691,9 @@ func (p *paginatingAssetsReader) ListAssetsExt(_ context.Context, opts timescale
 	return rows, nil
 }
 
-// TestAssetList_AssetsPaginationEmitsCursor pins the case when the assetsReader
-// catalogue holds more than `limit` rows, /v1/assets MUST emit a next
-// cursor. The previous handler passed `limit` (not limit+1) to the
-// store, so the overfetch sentinel never appeared and the listing was
-// stuck on its first page over a ~199K-asset directory.
+// TestAssetList_AssetsPaginationEmitsCursor pins that when the assetsReader catalogue holds more
+// than `limit` rows, /v1/assets must emit a next cursor. The handler must pass limit+1 to the
+// store so the overfetch sentinel appears; passing `limit` leaves the listing stuck on page one.
 func TestAssetList_AssetsPaginationEmitsCursor(t *testing.T) {
 	srv := v1.New(v1.Options{AssetsReader: &paginatingAssetsReader{total: 1000}})
 	ts := httpTestServer(t, srv)
@@ -807,14 +796,12 @@ func newAssetsLimitedServer(t *testing.T, anonLimit int, withStore bool) (*testS
 	return startHTTPTest(t, v1.New(opts).Handler()), reader
 }
 
-// TestAssetList_ChargesByThePlanSelected is the regression for the
-// second surface. /v1/assets is one route and several query plans, the
-// query string picks the plan, and the limiter charged all of them one
-// token — so the volume-ranked plan (measured 18x the default) and the
-// cache-defeating `q` scan were bought at the cheapest plan's price.
+// TestAssetList_ChargesByThePlanSelected: /v1/assets is one route with several query plans picked
+// by the query string. Charging them all one token would sell the expensive volume-ranked plan
+// and the cache-defeating `q` scan at the cheapest plan's price.
 //
-// Each case is one request into a fresh 100-token window; the assertion
-// is the exact post-charge remainder.
+// Each case is one request into a fresh 100-token window; the assertion is the exact
+// post-charge remainder.
 func TestAssetList_ChargesByThePlanSelected(t *testing.T) {
 	cases := []struct {
 		name, query   string
@@ -903,11 +890,10 @@ func TestAssetList_NoStoreNoSurcharge(t *testing.T) {
 	}
 }
 
-// TestAssetList_QueryLengthIsBounded: `q` was bounded only by the
-// server's header limit while being carried verbatim into the listing
-// cache key and three LIKE patterns. 100 bytes clears the longest value
-// that can match a row (a 69-byte classic asset id); one byte more is a
-// 400 on every path, class-scoped listings included, and reads nothing.
+// TestAssetList_QueryLengthIsBounded: `q` is carried verbatim into the listing cache key and
+// three LIKE patterns, so it must be bounded. 100 bytes clears the longest value that can match
+// a row (a 69-byte classic asset id); one byte more is a 400 on every path, class-scoped
+// listings included, and reads nothing.
 func TestAssetList_QueryLengthIsBounded(t *testing.T) {
 	ts, reader := newAssetsLimitedServer(t, 100, true)
 
@@ -939,16 +925,13 @@ func TestAssetList_QueryLengthIsBounded(t *testing.T) {
 
 // TestAssetList_BootSeededPageIsLabelledStale is the honesty half of the boot seed.
 //
-// A boot-seeded page-set is real data, but it was observed by a
-// PREVIOUS process and is stale by construction. Serving it is the
-// fix; serving it under `flags.stale: false` with `as_of` stamped to
-// the moment of the request would be a new lie — precisely the one
-// /v1/markets was corrected for (markets.go: "never now() over rows a
-// failing refresh has let age past the TTL").
+// A boot-seeded page-set is real data observed by a previous process, so it is stale by
+// construction. Serving it under `flags.stale: false` with `as_of` stamped to the request time
+// would be a lie, the same one /v1/markets avoids (markets.go: "never now() over rows a failing
+// refresh has let age past the TTL").
 //
-// The assertions are on the CORRECTED VALUES: stale must be true, and
-// as_of must equal the seed's real observation time to the second, not
-// merely be non-zero.
+// The assertions are on values: stale must be true, and as_of must equal the seed's real
+// observation time to the second, not merely be non-zero.
 func TestAssetList_BootSeededPageIsLabelledStale(t *testing.T) {
 	const ttl = time.Minute
 	reader := v1.NewCachedAssetsReader(&paginatingAssetsReader{total: 1000}, ttl)
@@ -1055,19 +1038,15 @@ func TestAssetList_UncachedReaderStillFresh(t *testing.T) {
 	}
 }
 
-// The listing's ORDER BY has a LEADING rank-tier key (flagged /
-// unpriced rows sort below rankable ones). The keyset cursor MUST carry
-// that key — a cursor that encodes fewer keys than the ORDER BY ranks on
-// resumes at the wrong place and drops whole tiers of rows. These pin the
-// handler's half of that contract: it emits the store's encoding verbatim
-// (tier first) on BOTH /v1/assets paths, and the emitted cursor is
-// accepted back by the same handler's validator.
+// The listing's ORDER BY has a leading rank-tier key (flagged / unpriced rows sort below rankable
+// ones). The keyset cursor must carry that key: a cursor that encodes fewer keys than the ORDER BY
+// ranks on resumes in the wrong place and drops whole tiers of rows. These pin the handler's half:
+// it emits the store's encoding verbatim (tier first) on both /v1/assets paths, and the emitted
+// cursor is accepted back by the same handler's validator.
 
 // The reported row, as the store would hand it to the handler.
-// Named constants rather than inline literals — a G-strkey spelled out
-// next to a field whose name ends in "Key" trips gitleaks' generic-api-key
-// rule (it is a public issuer address, not a secret), and the sibling
-// directory tests already use this shape.
+// Named constants, not inline literals: a G-strkey next to a field whose name ends in "Key" trips
+// gitleaks' generic-api-key rule (it is a public issuer address, not a secret).
 const (
 	jfkBankIssuer  = "GB7KFNUR5IAIN5NTYM2BUWWUTM6QMUBXF7NHXXKAMRPFLFWR7KL5BANK"
 	jfkBankAssetID = "JFKBANK2-" + jfkBankIssuer

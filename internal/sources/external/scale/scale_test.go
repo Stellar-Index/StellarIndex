@@ -59,12 +59,9 @@ func TestDecimalStringToScaledInt(t *testing.T) {
 	}
 }
 
-// An exponent spelling must round the same way FloatToScaledInt does
-// for the same float — round-to-nearest at exactly targetDecimals,
-// not decimals+2-then-truncate. The
-// "format(decimals+2)+truncate" idiom drops the two extra
-// fractional digits toward zero, giving every value a one-signed
-// downward bias — the same class of bug InvertScaled guards against.
+// An exponent spelling must round the same way FloatToScaledInt does for the same float:
+// round-to-nearest at exactly targetDecimals, not decimals+2-then-truncate, which drops the
+// extra digits toward zero and biases every value downward (the bug class InvertScaled guards).
 func TestSciDecimalStringToScaledInt_MatchesFloatRounding(t *testing.T) {
 	for _, sci := range []string{
 		"1.2345678956e-1",
@@ -119,11 +116,9 @@ func TestPow10(t *testing.T) {
 	}
 }
 
-// SyntheticTxHash must preserve the historical truncated-hex form
-// byte-for-byte: tx_hash is the dedup identity of persisted
-// oracle_updates rows, so a derivation change would re-insert
-// history under new identities. The reference loop below is the
-// per-poller implementation this helper replaced.
+// SyntheticTxHash must preserve the historical truncated-hex form byte-for-byte: tx_hash is the
+// dedup identity of persisted oracle_updates rows, so a derivation change would re-insert
+// history under new identities. The reference loop below is the per-poller implementation.
 func TestSyntheticTxHash_matchesLegacyForm(t *testing.T) {
 	legacy := func(s string) string {
 		var hex strings.Builder
@@ -193,18 +188,13 @@ func TestInvertScaled(t *testing.T) {
 	}
 }
 
-// TestInvertScaledRoundsHalfUp pins the fix: the inverse is rounded
-// half-up, not truncated toward zero.
+// TestInvertScaledRoundsHalfUp pins that the inverse is rounded half-up, not truncated toward
+// zero.
 //
-// Why this matters enough to test at all, given the error is ≤1 ulp: a
-// truncation bias is one-signed. Every inverted rate, on every poll, on all
-// three venues that call this (ECB, exchangeratesapi, Chainlink), lands at or below the true value and never
-// above it — so it does not average out the way symmetric rounding error
-// does. The cases below are chosen so truncation and half-up give provably
-// different answers, in exact integer arithmetic with no float anywhere.
-//
-// Proven red: with the old `Div(Mul(p,p), v)` the >0.5 and ==0.5 cases fail
-// (12 vs 13, 923787 vs 923788).
+// Though the error is ≤1 ulp, truncation bias is one-signed: every inverted rate on every poll
+// (ECB, exchangeratesapi, Chainlink) lands at or below the true value and never above it, so it
+// does not average out like symmetric rounding error. The cases make truncation and half-up give
+// provably different answers, in exact integer arithmetic with no float anywhere.
 func TestInvertScaledRoundsHalfUp(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -236,13 +226,11 @@ func TestInvertScaledRoundsHalfUp(t *testing.T) {
 	}
 }
 
-// TestInvertScaledMatchesRedstoneReciprocal guards against the two
-// implementations of "reciprocal at the same fixed-point scale" drifting
-// apart again. redstone.reciprocalAtScale already rounded half-up; this one
-// truncated, and nothing compared them — which is how the bug survived. The
-// formula is re-derived here rather than imported so this stays a real
-// cross-check and not a tautology (importing redstone from scale would also
-// invert the dependency direction).
+// TestInvertScaledMatchesRedstoneReciprocal guards the two implementations of "reciprocal at
+// the same fixed-point scale" against drifting apart (redstone.reciprocalAtScale rounds
+// half-up). The formula is re-derived here rather than imported so this stays a real
+// cross-check, not a tautology; importing redstone from scale would also invert the dependency
+// direction.
 func TestInvertScaledMatchesRedstoneReciprocal(t *testing.T) {
 	redstoneFormula := func(v *big.Int, decimals int) *big.Int {
 		scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)

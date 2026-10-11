@@ -2,11 +2,9 @@ package external
 
 import "testing"
 
-// TestRegistry_KnownSourcesClassified ensures every source we name
-// in the on-chain decoder packages + the live off-chain connectors
-// has a Registry entry. If this ever fails it means a new source was
-// added without updating the aggregator's source-of-truth map — a
-// bug that would silently exclude the source from VWAP.
+// TestRegistry_KnownSourcesClassified ensures every on-chain decoder package and live
+// off-chain connector has a Registry entry; a missing one would silently exclude the source
+// from VWAP.
 func TestRegistry_KnownSourcesClassified(t *testing.T) {
 	// Keep this list aligned with what internal/sources/ exports.
 	want := []string{
@@ -25,14 +23,10 @@ func TestRegistry_KnownSourcesClassified(t *testing.T) {
 	}
 }
 
-// TestRegistry_RetiredFXIdentityStaysUnregistered pins the outcome of
-// the polygon-forex removal. polygon.io renamed to massive.com, so
-// `polygon-forex` and `massive` named ONE upstream under two brands.
-// The retired entry carried IncludeInVWAP:true, which means re-adding
-// it — plausibly, since it would read as an independent FX vendor
-// sitting disabled beside a working one — double-counts massive's own
-// rates in VWAP and adds a third name to FXSources(). `massive` is the
-// surviving identity; assert both halves so a revert cannot be quiet.
+// TestRegistry_RetiredFXIdentityStaysUnregistered: `polygon-forex` and `massive` are ONE
+// upstream under two brands. Re-adding the retired entry (IncludeInVWAP:true) double-counts
+// massive's own rates in VWAP and adds a third name to FXSources(). `massive` is the
+// surviving identity; both halves are asserted so a revert cannot be quiet.
 func TestRegistry_RetiredFXIdentityStaysUnregistered(t *testing.T) {
 	if _, ok := Registry["polygon-forex"]; ok {
 		t.Error("Registry has a `polygon-forex` entry again — it is the same upstream as `massive` under the pre-rename brand, and with IncludeInVWAP:true it double-counts those rates")
@@ -51,11 +45,9 @@ func TestRegistry_RetiredFXIdentityStaysUnregistered(t *testing.T) {
 	}
 }
 
-// TestIsOnChain_Partition pins the on-chain/off-chain split that the
-// explorer's Stellar-network surfaces filter on. It enumerates EVERY
-// registered source, so adding a new one without classifying it here
-// fails the test — forcing a conscious decision rather than silently
-// landing a reference feed on the /network page.
+// TestIsOnChain_Partition pins the on-chain/off-chain split the explorer's Stellar-network
+// surfaces filter on. It enumerates EVERY registered source, so an unclassified new one fails
+// rather than silently landing a reference feed on the /network page.
 func TestIsOnChain_Partition(t *testing.T) {
 	offChain := map[string]bool{
 		// CEX
@@ -100,11 +92,9 @@ func TestRegistry_TiingoIsReferenceOnly(t *testing.T) {
 }
 
 func TestRegistry_ClassPolicy(t *testing.T) {
-	// Invariant: only ClassExchange may have IncludeInVWAP=true.
-	// Every other class (aggregator, oracle, authority_sanity,
-	// lending, router, bridge) MUST be excluded from VWAP by
-	// default — mixing them in double-counts upstream markets or
-	// imposes someone else's methodology on our output.
+	// Invariant: only ClassExchange may have IncludeInVWAP=true. Every other class MUST be
+	// excluded from VWAP by default; mixing them in double-counts upstream markets or imposes
+	// someone else's methodology on our output.
 	for name, m := range Registry {
 		if m.IncludeInVWAP && m.Class != ClassExchange {
 			t.Errorf("source %q: IncludeInVWAP=true but Class=%q — only ClassExchange may VWAP-contribute by default",
@@ -113,12 +103,9 @@ func TestRegistry_ClassPolicy(t *testing.T) {
 	}
 }
 
-// TestClassBridge_Defined locks down the existence of the
-// ClassBridge constant so a downstream rename / accidental
-// removal would surface as a build break here rather than as a
-// silent classification miss in the registry. The dependent
-// docs (protocols/cctp.md, protocols/rozo.md)
-// reference this class by name; if it disappears the docs lie.
+// TestClassBridge_Defined locks the ClassBridge constant so a rename or removal is a build
+// break here, not a silent classification miss. protocols/cctp.md and protocols/rozo.md
+// reference the class by name.
 func TestClassBridge_Defined(t *testing.T) {
 	t.Parallel()
 	if ClassBridge != "bridge" {
@@ -146,11 +133,9 @@ func TestRegistry_FailClosedOnUnknown(t *testing.T) {
 	}
 }
 
-// TestRegistry_Registered pins the accessor scale checks need: Lookup's
-// zero-value fallback makes "unregistered" and "registered, scale
-// unset" indistinguishable through AmountScaleDecimals() alone, so a
-// caller that must tell them apart (commonAmountScaleDecimals) needs
-// direct registry-membership.
+// TestRegistry_Registered pins the accessor scale checks need: Lookup's zero-value fallback
+// makes "unregistered" and "registered, scale unset" indistinguishable through
+// AmountScaleDecimals() alone, so commonAmountScaleDecimals needs direct registry membership.
 func TestRegistry_Registered(t *testing.T) {
 	if !Registered("binance") {
 		t.Error("Registered(binance) = false, want true — binance has a Registry entry")
@@ -160,15 +145,11 @@ func TestRegistry_Registered(t *testing.T) {
 	}
 }
 
-// TestRegistry_BackfillSafePolicy locks down the WASM-aware default:
-// every on-chain Soroban source starts at BackfillSafe=false until its
-// decoder has been audited against every WASM version that ran for the
-// replay range. SDEX (classic, no WASM) and every off-chain source are
-// BackfillSafe=true. Unknown sources fall back to false (fail-closed).
-//
-// Flipping a source from false→true is the *only* allowed direction,
-// and only after a wasm-history audit. This test exists to make the
-// flip a deliberate, reviewed change rather than a quiet flag toggle.
+// TestRegistry_BackfillSafePolicy locks the WASM-aware default: every on-chain Soroban source
+// is BackfillSafe=false until its decoder is audited against every WASM version in the replay
+// range. SDEX (classic, no WASM) and off-chain sources are true; unknown sources fail closed.
+// Flipping false->true is the only allowed direction, after a wasm-history audit, and this
+// test makes it a deliberate reviewed change.
 func TestRegistry_BackfillSafePolicy(t *testing.T) {
 	wantUnsafe := []string{
 		// All Soroban sources are now audited; the wantUnsafe slot
@@ -229,12 +210,9 @@ func TestRegistry_BackfillSafePolicy(t *testing.T) {
 	}
 }
 
-// TestFXSources_DeterministicLexOrder pins the X2.5 forex-snap
-// helper to its documented contract: every FX-classified source in
-// Registry must appear in the result, exactly once, in lexicographic
-// order. Order matters because the storage primitive's tiebreak
-// (`ORDER BY ts DESC, source DESC`) only stays deterministic if every
-// region computes the same source set.
+// TestFXSources_DeterministicLexOrder: every FX-classified source in Registry must appear
+// exactly once, in lexicographic order. The storage tiebreak (`ORDER BY ts DESC, source DESC`)
+// is only deterministic if every region computes the same source set.
 func TestFXSources_DeterministicLexOrder(t *testing.T) {
 	got := FXSources()
 
@@ -322,16 +300,10 @@ func TestAggregatorSources_DeterministicLexOrder(t *testing.T) {
 }
 
 func TestEvents_SourceFieldDelegatesToCanonical(t *testing.T) {
-	// The consumer.Event contract's Source() method labels metrics
-	// by venue. For external sources where one TradeEvent type
-	// covers many venues, Source() MUST delegate to the embedded
-	// canonical.Trade.Source — otherwise every external venue
-	// would collapse into a single "external.trade" metric label.
-	//
-	// Can't easily construct a full canonical.Trade here without
-	// importing canonical and building valid Pair/Amount values, so
-	// just check EventKind + that the Source field path exists by
-	// compiling.
+	// Source() labels metrics by venue and MUST delegate to the embedded canonical.Trade.Source,
+	// or every external venue collapses into one "external.trade" label. Building a full
+	// canonical.Trade needs valid Pair/Amount values, so this checks EventKind and that the
+	// Source field path compiles.
 	var te TradeEvent
 	if got := te.EventKind(); got != "external.trade" {
 		t.Errorf("TradeEvent.EventKind() = %q, want external.trade", got)

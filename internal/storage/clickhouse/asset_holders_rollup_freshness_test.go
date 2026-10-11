@@ -43,13 +43,9 @@ func holdersRollupLake(t *testing.T, listed bool, boardAt, tableAt time.Time) *s
 	}}
 }
 
-// TestHoldersRollupBoard_RefusesAStaleCycle pins: a board whose cycle
-// stamp is older than holdersRollupMaxAge (the rollup timer has wedged) must
-// not be served as the current holders board — ok=false sends AssetHolders
-// to the live per-request scans instead.
-//
-// Red against a holdersRollupBoard that never judges
-// computed_at's age: it returns ok=true with the 3h-old balance=200/total=500.
+// TestHoldersRollupBoard_RefusesAStaleCycle: a board whose cycle stamp is older than
+// holdersRollupMaxAge (the rollup timer has wedged) must not be served as the current holders
+// board; ok=false sends AssetHolders to the live per-request scans instead.
 func TestHoldersRollupBoard_RefusesAStaleCycle(t *testing.T) {
 	stale := time.Now().UTC().Truncate(time.Second).Add(-3 * time.Hour)
 	r := &ExplorerReader{conn: holdersRollupLake(t, true, stale, stale)}
@@ -64,12 +60,9 @@ func TestHoldersRollupBoard_RefusesAStaleCycle(t *testing.T) {
 	}
 }
 
-// TestHoldersRollupBoard_RefusesAStaleCycleForAnUnlistedAsset pins the other
-// half: an asset with no row in either table is "authoritatively zero
-// holders" only for a CURRENT cycle. Under a wedged rollup, an asset issued
-// since the last cycle would otherwise be served as having no holders.
-//
-// Red against a holdersRollupBoard that never judges age: ok=true, total=0.
+// TestHoldersRollupBoard_RefusesAStaleCycleForAnUnlistedAsset: an asset with no row in either
+// table is "authoritatively zero holders" only for a CURRENT cycle. Under a wedged rollup, an
+// asset issued since the last cycle would otherwise be served as having no holders.
 func TestHoldersRollupBoard_RefusesAStaleCycleForAnUnlistedAsset(t *testing.T) {
 	stale := time.Now().UTC().Truncate(time.Second).Add(-3 * time.Hour)
 	r := &ExplorerReader{conn: holdersRollupLake(t, false, time.Time{}, stale)}
@@ -109,19 +102,11 @@ func TestHoldersRollupBoard_ServesAFreshCycle(t *testing.T) {
 	}
 }
 
-// TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead pins: a
-// group EXCHANGE landing between the board-rows read and the count read must
-// not serve a board from one cycle paired with a count from another. The
-// stub reports the rows query as still on cycle1 the first time (as if read
-// before the swap) and the count query as already on cycle2 (as if read
-// after) — the exact shape one EXCHANGE landing between the two queries
-// produces — so holdersRollupBoard must retry, and the retried (self-
-// consistent, both cycle2) pair is what must be served.
-//
-// Red against a holdersRollupBoard that has no
-// computed_at comparison at all: it returns the FIRST (torn) pair —
-// balance=100 paired with total=999 — instead of retrying to the
-// self-consistent balance=200/total=500.
+// TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead: a group EXCHANGE landing between the
+// board-rows read and the count read must not serve a board from one cycle paired with a count
+// from another. The stub reports the rows query on cycle1 the first time (read before the swap)
+// and the count query already on cycle2 (read after), so holdersRollupBoard must retry and serve
+// the self-consistent (both cycle2) pair rather than the FIRST, torn one.
 func TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead(t *testing.T) {
 	cycle1 := time.Now().UTC().Truncate(time.Second).Add(-50 * time.Minute)
 	cycle2 := cycle1.Add(30 * time.Minute)

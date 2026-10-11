@@ -17,30 +17,24 @@ import (
 // in the schema AND be visible in the file the reader was told to copy.
 const selfHostingGuide = "docs/operations/self-hosting.md"
 
-// configRefRe matches a backticked, table-qualified config reference in either
-// form the guide uses: "`[storage] clickhouse_addr`" or
-// "`storage.clickhouse_live_sink = false`". Bare keys ("`redis_addr`") are
-// deliberately NOT matched — without a table they are ambiguous, and prose
-// like "`ledger_entry_changes`" (a ClickHouse table, not a config key) would
-// otherwise be swept in.
+// configRefRe matches a backticked, table-qualified config reference in either form the guide
+// uses: "`[storage] clickhouse_addr`" or "`storage.clickhouse_live_sink = false`". Bare keys
+// ("`redis_addr`") are deliberately not matched: without a table they are ambiguous, and prose
+// like "`ledger_entry_changes`" (a ClickHouse table, not a config key) would be swept in.
 var configRefRe = regexp.MustCompile("`(?:\\[([a-z][a-z_0-9]*)\\] +([a-z][a-z_0-9]*)|([a-z][a-z_0-9]*)\\.([a-z][a-z_0-9]*))")
 
-// TestSelfHostingGuide_ConfigRefs holds the guide to the two promises it
-// makes about configuration, both of which had broken:
+// TestSelfHostingGuide_ConfigRefs holds the guide to the two promises it makes about
+// configuration:
 //
-//	(1) Every key it names resolves against the real schema. The guide told
-//	    operators to set `ingestion.clickhouse_projector_source`, but that
-//	    field lives under [storage] — and Load rejects unknown keys as a hard
-//	    error, so following the guide literally left every binary refusing to
-//	    start with "config: unknown keys in ...".
-//	(2) Every key it names is present in configs/example.toml. The guide's
-//	    §4.3 says to copy that file and edit `[storage] clickhouse_addr` /
-//	    `clickhouse_live_sink` — neither of which appeared anywhere in it,
-//	    leaving the ON-by-default ClickHouse dual-sink (ADR-0041) as a knob
-//	    the operator could not see, on a deployment with no ClickHouse.
+//	(1) Every key it names resolves against the real schema. Load rejects unknown keys as a hard
+//	    error, so a key under the wrong table leaves every binary refusing to start with
+//	    "config: unknown keys in ...".
+//	(2) Every key it names is present in configs/example.toml. The guide's §4.3 says to copy that
+//	    file and edit `[storage] clickhouse_addr` / `clickhouse_live_sink`; a key missing from it
+//	    hides the on-by-default ClickHouse dual-sink from an operator with no ClickHouse.
 //
-// Commented-out keys count as present: example.toml documents opt-in knobs
-// that way, and a commented line is still a key the reader can find and edit.
+// Commented-out keys count as present: example.toml documents opt-in knobs that way, and a
+// commented line is still a key the reader can find and edit.
 func TestSelfHostingGuide_ConfigRefs(t *testing.T) {
 	root := filepath.Join("..", "..")
 
@@ -120,11 +114,10 @@ func tomlKeysIn(body string) map[string]bool {
 	return keys
 }
 
-// TestSelfHostingGuide_ClickHouseNativePort pins the one port three places must
-// agree on: storage.clickhouse_addr's default, the ansible role's
-// clickhouse_tcp_port, and the guide's instruction to move clickhouse-server
-// there. ClickHouse's own default native port is 9000, which the guide's
-// MinIO (§4.4) already holds, so a guide that only names the dial address
+// TestSelfHostingGuide_ClickHouseNativePort pins the one port three places must agree on:
+// storage.clickhouse_addr's default, the ansible role's clickhouse_tcp_port, and the guide's
+// instruction to move clickhouse-server there. ClickHouse's own default native port is 9000,
+// which the guide's MinIO (§4.4) already holds, so a guide that only names the dial address
 // leaves the indexer dialling a port nothing listens on.
 func TestSelfHostingGuide_ClickHouseNativePort(t *testing.T) {
 	root := filepath.Join("..", "..")

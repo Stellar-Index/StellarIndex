@@ -9,12 +9,10 @@ import (
 	"time"
 )
 
-// TestAccountTradesQuery_Shape pins the per-address trades read to the
-// two-arm UNION discipline its file header documents: each arm keys one
-// account column (taker / maker — the columns migration 0123 indexes),
-// carries its OWN ORDER BY + LIMIT so it walks its partial index in
-// output order and stops after one page, and the maker arm excludes
-// taker-duplicated rows so a self-crossed trade appears once.
+// TestAccountTradesQuery_Shape pins the two-arm UNION discipline of the per-address trades read:
+// each arm keys one indexed account column (taker / maker), carries its OWN ORDER BY + LIMIT so
+// it walks its partial index in output order and stops after one page, and the maker arm
+// excludes taker-duplicated rows so a self-crossed trade appears once.
 func TestAccountTradesQuery_Shape(t *testing.T) {
 	for _, hasCursor := range []bool{false, true} {
 		q := accountTradesQuery(hasCursor)
@@ -74,26 +72,19 @@ func TestClampAccountTradesLimit(t *testing.T) {
 	}
 }
 
-// TestAccountTradesQuery_OuterColumnsExistInSubquery pins the invariant
-// whose violation made this endpoint 500 for every account, always.
-//
-// The outer SELECT projects from the UNION subquery by NAME, so every
-// name it lists must be an output column of both arms. That held for
-// plain columns and for `x::text` (a cast preserves the name), but NOT
-// for the empty-string coalesce
+// TestAccountTradesQuery_OuterColumnsExistInSubquery: the outer SELECT projects from the UNION
+// subquery by NAME, so every name it lists must be an output column of both arms. Plain columns
+// and `x::text` (a cast preserves the name) satisfy that, but
 //
 //	COALESCE(usd_volume::text, '')
 //
-// — PostgreSQL names that output column `coalesce`, so `usd_volume`
-// resolved against nothing and the statement failed at PLAN time with
-// 42703. The endpoint had therefore
-// never served a row, and TestAccountTradesQuery_Shape could not see it
-// because it asserts substrings of the query STRING rather than the
-// relationship between the two column lists.
+// does not: PostgreSQL names the output column `coalesce`, so `usd_volume` resolves against
+// nothing and the statement fails at PLAN time with 42703 for every account.
+// TestAccountTradesQuery_Shape cannot see this because it asserts substrings of the query STRING,
+// not the relationship between the two column lists.
 //
-// This test compares the two lists structurally, so it fails for ANY
-// future expression added to the inner list without an alias — not just
-// the two COALESCEs that caused the original outage.
+// This test compares the lists structurally, so it fails for ANY expression added to the inner
+// list without an alias.
 func TestAccountTradesQuery_OuterColumnsExistInSubquery(t *testing.T) {
 	produced := make(map[string]bool)
 	for _, col := range strings.Split(accountTradesInnerCols, ",") {
@@ -101,11 +92,9 @@ func TestAccountTradesQuery_OuterColumnsExistInSubquery(t *testing.T) {
 		if col == "" {
 			continue
 		}
-		// An aliased expression contributes its alias; a bare column
-		// contributes itself. Anything else (an unaliased expression)
-		// contributes a name PostgreSQL derives from the function —
-		// which is the bug this test exists to catch, so record the
-		// expression verbatim and let the comparison below fail.
+		// An aliased expression contributes its alias; a bare column contributes itself. An
+		// unaliased expression gets a PostgreSQL-derived name, the bug this test catches, so
+		// record it verbatim and let the comparison below fail.
 		name := col
 		if i := strings.LastIndex(strings.ToUpper(col), " AS "); i >= 0 {
 			name = strings.TrimSpace(col[i+4:])
@@ -128,11 +117,9 @@ func TestAccountTradesQuery_OuterColumnsExistInSubquery(t *testing.T) {
 	}
 }
 
-// resetTradesHorizonCache clears the package-level horizon cache
-// (tradesUncompressedHorizon caches across every *Store instance) so a
-// test controls whether the function issues a query, and restores the
-// prior value afterward. Callers must not run in parallel with each
-// other or with anything else touching the cache.
+// resetTradesHorizonCache clears the package-level horizon cache (shared by every *Store) so a
+// test controls whether a query is issued, and restores it afterward. Callers must not run in
+// parallel with anything else touching the cache.
 func resetTradesHorizonCache(t *testing.T) {
 	t.Helper()
 	tradesHorizonMu.Lock()
@@ -146,17 +133,11 @@ func resetTradesHorizonCache(t *testing.T) {
 	})
 }
 
-// TestTradesUncompressedHorizon_QueryShape pins the root-cause fix:
-// the floor must come from max(range_end) over COMPRESSED chunks, never
-// from min(range_start) over uncompressed ones. A min(range_start) expression
-// would let an old uncompressed straggler chunk (a stuck compression job, a
-// late-arriving backfill) drag the floor to that chunk's start — 2021
-// was observed on r1 while 313 of 472 trades chunks were already
-// compressed — because it is NOT a time prefix: a chunk newer than the
-// straggler can be compressed while the straggler itself is not. The
-// new floor's source set is compressed chunks only, so a straggler
-// (uncompressed, by definition excluded from that set) cannot reach it
-// at all, regardless of how old it is.
+// TestTradesUncompressedHorizon_QueryShape: the floor must come from max(range_end) over
+// COMPRESSED chunks, never min(range_start) over uncompressed ones. Uncompressed chunks are NOT
+// a time prefix (a stuck compression job or late backfill leaves an old straggler while newer
+// chunks are compressed), so min(range_start) would drag the floor back over compressed data.
+// Sourcing from compressed chunks only keeps any straggler out of the floor, however old.
 func TestTradesUncompressedHorizon_QueryShape(t *testing.T) {
 	resetTradesHorizonCache(t)
 	newestCompressedEnd := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
@@ -185,11 +166,9 @@ func TestTradesUncompressedHorizon_QueryShape(t *testing.T) {
 	}
 }
 
-// TestTradesUncompressedHorizon_StrandedChunkDoesNotWidenFloor: a
-// straggler uncompressed chunk predating the newest compressed chunk is
-// an anomaly worth logging, but it must NOT alter the served floor —
-// widening it back down toward the straggler would reintroduce the
-// exact compressed-chunk scan this floor exists to avoid.
+// TestTradesUncompressedHorizon_StrandedChunkDoesNotWidenFloor: an uncompressed straggler older
+// than the newest compressed chunk is worth logging but must NOT alter the served floor;
+// widening it would reintroduce the compressed-chunk scan the floor exists to avoid.
 func TestTradesUncompressedHorizon_StrandedChunkDoesNotWidenFloor(t *testing.T) {
 	resetTradesHorizonCache(t)
 	newestCompressedEnd := time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)
@@ -204,13 +183,10 @@ func TestTradesUncompressedHorizon_StrandedChunkDoesNotWidenFloor(t *testing.T) 
 	}
 }
 
-// TestTradesUncompressedHorizon_FailsClosedOnLookupError: a catalog
-// lookup error must degrade to a short, recent floor — NOT epoch/zero.
-// Epoch means "no floor", which sends the read straight into the
-// unindexed full-history scan that caused the original 8s-timeout/503
-// incident; a short recent floor instead surfaces through the same
-// "showing trades since <date>" / trades_total_since coverage note a
-// legitimate horizon does.
+// TestTradesUncompressedHorizon_FailsClosedOnLookupError: a catalog lookup error must degrade to
+// a short, recent floor, NOT epoch/zero. Epoch means "no floor" and sends the read into the
+// unindexed full-history scan (timeout/503); a short recent floor instead surfaces through the
+// same "showing trades since <date>" / trades_total_since coverage note a legitimate horizon does.
 func TestTradesUncompressedHorizon_FailsClosedOnLookupError(t *testing.T) {
 	resetTradesHorizonCache(t)
 	store, _ := newScriptedStore(t, scriptedResult{err: errors.New("catalog unavailable")})

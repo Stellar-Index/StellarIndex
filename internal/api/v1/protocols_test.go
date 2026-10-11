@@ -184,12 +184,10 @@ func TestHandleProtocolsList_Happy(t *testing.T) {
 // TestHandleProtocolsList_CompletenessCarriesProjectionFloor pins the
 // served-tier floor onto the directory row too.
 //
-// /v1/protocols republishes `complete` from the same
-// completeness_snapshots row /coverage serves, and it prints it
-// directly beneath the protocol's own `genesis_ledger` — so the summary
-// reads as "complete from genesis" unless the served tier's real floor
-// travels with it. sdex is the live case: genesis_ledger 2, served tier
-// from 61,609,957.
+// /v1/protocols republishes `complete` from the same completeness_snapshots row /coverage serves,
+// directly beneath the protocol's own `genesis_ledger`, so the summary reads as "complete from
+// genesis" unless the served tier's real floor travels with it. sdex is the live case: its
+// genesis_ledger is far below the served tier's floor.
 func TestHandleProtocolsList_CompletenessCarriesProjectionFloor(t *testing.T) {
 	srv := v1.New(v1.Options{
 		CompletenessReader: &stubCompletenessReader{snaps: []timescale.CompletenessSnapshot{
@@ -234,10 +232,9 @@ func TestHandleProtocolsList_CompletenessCarriesProjectionFloor(t *testing.T) {
 }
 
 // TestHandleProtocolDetail_AquariusEventKindsMatchDecoder is the
-// registry↔decoder lockstep check: the
-// published /v1/protocols/aquarius event_kinds list must contain every
-// EventKind() the aquarius consumer package's event types emit, so a
-// decoder kind can never again silently go unpublished.
+// registry↔decoder lockstep check: the published /v1/protocols/aquarius event_kinds list must
+// contain every EventKind() the aquarius consumer package's event types emit, so a decoder kind
+// cannot silently go unpublished.
 func TestHandleProtocolDetail_AquariusEventKindsMatchDecoder(t *testing.T) {
 	ts := protocolsTestServer(t)
 
@@ -413,11 +410,9 @@ func TestHandleProtocols_NilReaderDegradation(t *testing.T) {
 		t.Fatalf("total = %d, want 18", env.Data.TotalProtocols)
 	}
 	for _, p := range env.Data.Protocols {
-		// blend carries 3 statically-known Backstop + Emitter module
-		// contracts (ExtraContracts) — like Factories, they're registry
-		// constants, not DB reads, so they survive nil readers. Its
-		// dynamic joins (events, completeness) still degrade to
-		// zero/absent.
+		// blend carries statically-known Backstop + Emitter module contracts (ExtraContracts);
+		// like Factories they are registry constants, not DB reads, so they survive nil readers.
+		// Its dynamic joins (events, completeness) still degrade to zero/absent.
 		wantContracts := 0
 		if p.Name == "blend" {
 			wantContracts = 3
@@ -535,10 +530,9 @@ func TestHandleProtocolDetail_LakeAnalytics(t *testing.T) {
 }
 
 // TestHandleProtocolDetail_ProjectionFallback verifies that when the
-// protocol_contracts registry is empty for a source, the roster falls back to
-// the projected-table contracts — so defindex/phoenix/comet/cctp/rozo aren't
-// starved of their contract set just because the factory-enumeration registry
-// isn't seeded.
+// protocol_contracts registry is empty for a source, the roster falls back to the
+// projected-table contracts, so defindex/phoenix/comet/cctp/rozo are not starved of their
+// contract set just because the factory-enumeration registry isn't seeded.
 func TestHandleProtocolDetail_ProjectionFallback(t *testing.T) {
 	srv := v1.New(v1.Options{
 		ProtocolContracts: &stubProtocolContractsReader{
@@ -566,10 +560,9 @@ func TestHandleProtocolDetail_ProjectionFallback(t *testing.T) {
 }
 
 // stubProtocolBespokeReader is a fake bespoke-block builder for the
-// per-protocol page's bespoke-section test — records call count + the
-// windowDays of each call so the TTL-cache tests can assert the build only
-// runs once per (protocol, window) cache slot and receives the requested
-// window.
+// per-protocol page's bespoke-section test. It records call count and windowDays so the
+// TTL-cache tests can assert the build runs once per (protocol, window) cache slot and receives
+// the requested window.
 type stubProtocolBespokeReader struct {
 	blocks  map[string]*timescale.BespokeBlock
 	calls   int
@@ -583,18 +576,12 @@ func (s *stubProtocolBespokeReader) BuildProtocolBespoke(_ context.Context, sour
 }
 
 // TestHandleProtocolDetail_AquariusRewardsBespoke verifies the aquarius
-// rewards-gauge + governance bespoke section (protocol_bespoke.go's
-// aquariusRewardsBlocks) reaches the wire unmodified: the generic
-// ProtocolBespoke KPI/table/series shapes carry the rewards content
-// (lifetime totals, the 30d claim_reward drill-down, the per-kind
-// breakdown table, the recent-governance table, and the daily claim
-// series), and the TTL-cached detail view (protocolDetailTTL,
-// cachedProtocolDetail) serves the SAME bespoke content on a cache hit —
-// every field (including Bespoke) is populated inside the cached build()
-// closure BEFORE the entry is written to s.protoDetailCache, so a cache
-// hit can never serve a partially-populated bespoke block (the
-// AssetLookup kind-discriminator class of cache bug this repo has hit
-// before).
+// rewards-gauge + governance bespoke section (protocol_bespoke.go's aquariusRewardsBlocks)
+// reaches the wire unmodified through the generic ProtocolBespoke KPI/table/series shapes, and
+// the TTL-cached detail view (protocolDetailTTL, cachedProtocolDetail) serves the SAME bespoke
+// content on a cache hit. Every field (including Bespoke) is populated inside the cached
+// build() closure BEFORE the entry is written to s.protoDetailCache, so a cache hit can never
+// serve a partially-populated bespoke block.
 func TestHandleProtocolDetail_AquariusRewardsBespoke(t *testing.T) {
 	bespoke := &stubProtocolBespokeReader{blocks: map[string]*timescale.BespokeBlock{
 		"aquarius": {
@@ -823,15 +810,12 @@ func TestHandleProtocols_TVLJoin(t *testing.T) {
 }
 
 // TestHandleProtocolsList_TVLJoinIsAtomicAcrossRefresh is the
-// regression: GET /v1/protocols joins the per-protocol tvl block and
-// the headline tvl_total from the DEX TVL cache. Both must come from
-// the SAME refresh cycle. Serving them via two independent
-// Snapshot()/Total() reads lets a concurrent Refresh() land between
-// them, pairing one cycle's per-protocol figure with a different
-// cycle's total — here made observable because the toggling reader
-// makes each cycle's aquarius figure exactly $10.00 or $20.00, so a
-// mismatch shows up as tvl_total.tvl_usd disagreeing with the
-// aquarius row it names in tvl_total.protocols.
+// regression: GET /v1/protocols joins the per-protocol tvl block and the headline tvl_total from
+// the DEX TVL cache, and both must come from the SAME refresh cycle. Two independent
+// Snapshot()/Total() reads let a concurrent Refresh() land between them, pairing one cycle's
+// per-protocol figure with another cycle's total. The toggling reader makes each cycle's
+// aquarius figure exactly $10.00 or $20.00, so a mismatch shows up as tvl_total.tvl_usd
+// disagreeing with the aquarius row it names in tvl_total.protocols.
 func TestHandleProtocolsList_TVLJoinIsAtomicAcrossRefresh(t *testing.T) {
 	reader := &togglingAquariusReader{}
 	cache := v1.NewDEXTVLCache(v1.DEXTVLSources{
@@ -886,11 +870,9 @@ func TestHandleProtocolsList_TVLJoinIsAtomicAcrossRefresh(t *testing.T) {
 		if !included || aq.TVL == nil {
 			continue
 		}
-		// aquarius is the only protocol the toggling reader feeds, so
-		// the reconciled total must equal that row's own figure
-		// exactly — any disagreement means the response paired a
-		// per-protocol row from one refresh cycle with a total from
-		// another.
+		// aquarius is the only protocol the toggling reader feeds, so the reconciled total must
+		// equal that row's own figure exactly; any disagreement means the response paired rows
+		// from different refresh cycles.
 		if aq.TVL.TVLUSD != env.Data.TVLTotal.TVLUSD {
 			mismatches++
 		}

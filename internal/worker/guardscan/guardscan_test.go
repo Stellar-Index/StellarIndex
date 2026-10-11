@@ -9,12 +9,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
-// fixture writes a Go file into a temp package inside THIS module, so
-// the scanner's module-relative import resolution (go.mod lookup +
-// import-path → directory mapping) is exercised for real rather than
-// mocked. The package sits under internal/worker/guardscan/testdata at
-// run time, which is inside the module tree but not compiled into any
-// binary (go tooling ignores testdata/).
+// fixture writes a Go file into a temp package inside THIS module, so the scanner's
+// module-relative import resolution (go.mod lookup + import-path → directory mapping) is
+// exercised for real rather than mocked. The package sits under testdata/, inside the module
+// tree but ignored by go tooling.
 func fixture(t *testing.T, name, src string) string {
 	t.Helper()
 	dir := filepath.Join("testdata", name)
@@ -95,11 +93,10 @@ func work() {}
 	}
 }
 
-// TestScan_NamedSameFileCallee is a named same-file callee in miniature: a walk that
-// returns early on any callee that is not a *ast.FuncLit would leave
-// `go loop(ctx)` not merely unchecked but INVISIBLE, and the
-// site count certifying the guard "covers everything" would not
-// include it. Both spellings must now be seen, and told apart.
+// TestScan_NamedSameFileCallee: a walk that returns early on any callee that is not a
+// *ast.FuncLit leaves `go loop(ctx)` not merely unchecked but INVISIBLE, and the site count
+// certifying the guard "covers everything" would omit it. Both spellings must be seen and told
+// apart.
 func TestScan_NamedSameFileCallee(t *testing.T) {
 	path := fixture(t, "named", `package main
 
@@ -150,15 +147,12 @@ func work() {}
 	}
 }
 
-// TestScan_NamedCalleeGoStmtsAreWalked: a `go` statement
-// resolved to a named callee is checked for whether the callee itself
-// defers the guard, but the callee may start further goroutines of its
-// own — in another file of the same package, as here. If
-// ScanFile only parsed the ONE file it was given, `workers.go`'s own
-// `go` statements would never be visited, let alone required to be
-// guarded: `sites found: 1` with the guarded helper reporting Recovers
-// and the two unrecovered goroutines it starts invisible. ScanFile must
-// surface all three sites, attributing the two inner ones to workers.go.
+// TestScan_NamedCalleeGoStmtsAreWalked: a `go` statement resolved to a named callee is checked
+// for whether the callee defers the guard, but the callee may start further goroutines, here
+// in another file of the same package. If ScanFile parsed only the ONE file it was given,
+// `workers.go`'s own `go` statements would never be visited: `sites found: 1` with the two
+// unrecovered goroutines invisible. ScanFile must surface all three sites, attributing the two
+// inner ones to workers.go.
 func TestScan_NamedCalleeGoStmtsAreWalked(t *testing.T) {
 	dir := filepath.Join("testdata", "namedcallee_gostmts")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -222,18 +216,14 @@ func run() {
 	}
 }
 
-// TestScan_CrossPackageResolvesRealModuleSource points the resolver at a
-// REAL package of this module — internal/worker — and checks it lands on
-// the real declarations. This is the leg that proves go.mod discovery and
-// the import-path → directory mapping work against the actual tree, not
-// just against fixtures.
+// TestScan_CrossPackageResolvesRealModuleSource points the resolver at a REAL package of this
+// module, internal/worker, proving go.mod discovery and the import-path → directory mapping
+// work against the actual tree, not just fixtures.
 //
-// Both targets correctly report Recovers=false, and that is the point
-// worth pinning: worker.Recover's body calls recover() but DEFERS
-// nothing, so a `go worker.Recover(…)` would not guard anything —
-// recover() only fires from a function the panicking goroutine deferred.
-// A scanner that grep'd for the word "recover" in a resolved body would
-// answer true here and certify an unguarded goroutine.
+// Both targets correctly report Recovers=false: worker.Recover's body calls recover() but
+// DEFERS nothing, so `go worker.Recover(…)` guards nothing, since recover() only fires from a
+// function the panicking goroutine deferred. A scanner matching the word "recover" in a
+// resolved body would certify an unguarded goroutine.
 func TestScan_CrossPackageResolvesRealModuleSource(t *testing.T) {
 	path := fixture(t, "crosspkg", `package main
 
@@ -265,11 +255,9 @@ func run(logger *slog.Logger) {
 	}
 }
 
-// TestScan_CrossPackageGuardedCallee is the positive half: a callee in
-// another package of this module that DOES defer a guard must be
-// resolved and accepted, and its unguarded sibling in the same package
-// must not be. Two fixture packages rather than one, so the module-local
-// import path is followed for real (go.mod → directory → parse → index).
+// TestScan_CrossPackageGuardedCallee is the positive half: a callee in another package of this
+// module that DOES defer a guard is accepted, and its unguarded sibling is not. Two fixture
+// packages, so the module-local import path is followed for real.
 func TestScan_CrossPackageGuardedCallee(t *testing.T) {
 	fixture(t, "dep", `package dep
 
@@ -362,12 +350,10 @@ func run(logger *slog.Logger) {
 	}
 }
 
-// TestScan_UnresolvableFailsClosed is the safety property that makes the
-// syntactic approach sound. A callee this scanner cannot follow —
-// here a method on a type from OUTSIDE the module — must come back as
-// KindUnresolved so the calling test can fail and demand a literal
-// wrapper. Silently skipping it would be a guard that widens itself
-// every time someone writes an unusual spelling.
+// TestScan_UnresolvableFailsClosed is the safety property that makes the syntactic approach
+// sound. A callee the scanner cannot follow, here a method on a type from OUTSIDE the module,
+// must come back as KindUnresolved so the calling test fails and demands a literal wrapper;
+// silently skipping it would widen the guard for every unusual spelling.
 func TestScan_UnresolvableFailsClosed(t *testing.T) {
 	path := fixture(t, "unresolvable", `package main
 

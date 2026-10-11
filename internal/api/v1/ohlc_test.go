@@ -155,11 +155,9 @@ func TestOHLC_ReaderError500(t *testing.T) {
 	}
 }
 
-// ohlcPairAwareReader is a per-pair history reader scoped to this
-// test file. The shared stubHistoryReader returns the same trade
-// slice regardless of pair, which the stablecoin-fiat fallback
-// can't exercise. Mirrors the pairAwareHistoryReader in vwap_test.go;
-// kept colocated until that helper merges.
+// ohlcPairAwareReader is a per-pair history reader scoped to this file: the shared
+// stubHistoryReader returns the same trades regardless of pair, which the stablecoin-fiat
+// fallback cannot exercise. Mirrors pairAwareHistoryReader in vwap_test.go.
 type ohlcPairAwareReader struct {
 	stubHistoryReader
 	tradesByPair map[string][]canonical.Trade
@@ -172,17 +170,11 @@ func (r *ohlcPairAwareReader) TradesInRange(_ context.Context, pair canonical.Pa
 	return r.tradesByPair[pair.Base.String()+"/"+pair.Quote.String()], nil
 }
 
-// TestOHLC_StablecoinFiatProxyFallback — when the literal
-// X/fiat:USD pair has zero trades but the operator declared a
-// USDC peg, the OHLC handler retries against X/<USDC-classic> and
-// returns the bar with flags.triangulated=true. Mirrors
-// /v1/chart's chartStablecoinFallback and the same fallback on
-// /v1/price, /v1/price/tip, /v1/vwap, /v1/twap and
-// /v1/oracle/lastprice.
-//
-// Without this, /v1/ohlc?base=native&quote=fiat:USD 404s with
-// "no trades in window" out of the box — /v1/ohlc is
-// a launch-blocking surface for the asset-detail page.
+// TestOHLC_StablecoinFiatProxyFallback: when the literal X/fiat:USD pair has zero trades but
+// the operator declared a USDC peg, the OHLC handler retries against X/<USDC-classic> and
+// returns the bar with flags.triangulated=true. Mirrors /v1/chart's chartStablecoinFallback and
+// the same fallback on /v1/price, /v1/price/tip, /v1/vwap, /v1/twap and /v1/oracle/lastprice.
+// Without it /v1/ohlc?base=native&quote=fiat:USD 404s with "no trades in window".
 func TestOHLC_StablecoinFiatProxyFallback(t *testing.T) {
 	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -254,19 +246,11 @@ func TestOHLC_StablecoinFiatProxy_NoPegLeaves404(t *testing.T) {
 	}
 }
 
-// TestOHLC_DefaultOutlierFilterRejectsDustTrade exercises the default outlier filter.
-// A bar full of normal native/USDC trades plus one 1-stroop ↔
-// 1-stroop SDEX dust print (price=1.0, ~6× the real XLM/USDC ratio)
-// must NOT have High pegged to $1 — the default 4σ filter drops the
-// outlier before ComputeOHLC sees it.
-//
-// Guards against `/v1/ohlc?base=native&quote=fiat:USD` serving
-// High=1.0000000000: ComputeOHLC iterates raw trades and
-// accepts any positive base+quote — a single dust ManageOffer cross
-// at the offer-book boundary trumps every legitimate print.
-//
-// ?outlier_sigma=0 still surfaces the dust High for callers
-// who want raw inspection; default surfaces the real cluster.
+// TestOHLC_DefaultOutlierFilterRejectsDustTrade: a bar of normal native/USDC trades plus one
+// 1-stroop ↔ 1-stroop SDEX dust print (price=1.0, ~6× the real ratio) must NOT have High pegged
+// to $1; the default 4σ filter drops the outlier before ComputeOHLC sees it. ComputeOHLC
+// accepts any positive base+quote, so one dust ManageOffer cross would otherwise trump every
+// legitimate print. ?outlier_sigma=0 still surfaces the dust High for raw inspection.
 func TestOHLC_DefaultOutlierFilterRejectsDustTrade(t *testing.T) {
 	t0 := time.Unix(1_772_000_000, 0).UTC()
 	trades := make([]canonical.Trade, 0, 30)
@@ -366,11 +350,10 @@ func TestOHLC_NonstandardDecimals(t *testing.T) {
 	}
 }
 
-// A count majority of dust prints must not become the single-bar OHLC
-// by trimming a volume majority: 3 × 1,000,000 XLM at 0.100 and
-// 4 × 30,000 XLM at 0.114 would serve a 200 bar of the 4 wash prints
-// alone. The window is contested, so the default filter withholds it
-// as all-filtered rather than serving either side or claiming "no trades".
+// A count majority of dust prints must not become the single-bar OHLC by trimming a volume
+// majority: 3 × 1,000,000 XLM at 0.100 and 4 × 30,000 XLM at 0.114 would serve a bar of the 4
+// wash prints alone. The window is contested, so the default filter withholds it as
+// all-filtered rather than serving either side or claiming "no trades".
 func TestOHLC_DustCountMajorityWindowIsWithheldNotServed(t *testing.T) {
 	t0 := time.Unix(1_772_000_000, 0).UTC()
 	trades := make([]canonical.Trade, 0, 7)
@@ -420,17 +403,14 @@ func TestOHLC_VolumeScale_CEXWindowIsEightDecimals(t *testing.T) {
 	}
 }
 
-// TestOHLC_VolumeScale_SurvivesOutlierFilterDroppingTheOnlyCEXPrint is
-// the narrow window a scale fix could re-open: the scale must be
-// resolved over the PRE-outlier-filter population, because the lift to
-// the common scale ran over that population and the filter does not
-// un-lift the rows it keeps.
+// TestOHLC_VolumeScale_SurvivesOutlierFilterDroppingTheOnlyCEXPrint: the scale must be
+// resolved over the PRE-outlier-filter population, because the lift to the common scale ran
+// over that population and the filter does not un-lift the rows it keeps.
 //
-// Four honest on-chain prints at 1e7 plus one aberrant CEX print at 1e8:
-// the CEX print is dropped by the default sigma, but the four survivors
-// were already multiplied by ten to meet it. A bar that resolves its
-// scale over the post-filter slice states 7 for integers that are at 8
-// and renders 14000 USD where the market did 1400.
+// Four honest on-chain prints at 1e7 plus one aberrant CEX print at 1e8: the CEX print is
+// dropped by the default sigma, but the four survivors were already multiplied by ten. A bar
+// resolving its scale over the post-filter slice states 7 for integers at 8 and renders 14000
+// USD where the market did 1400.
 func TestOHLC_VolumeScale_SurvivesOutlierFilterDroppingTheOnlyCEXPrint(t *testing.T) {
 	base := time.Unix(1_772_000_000, 0).UTC()
 	reader := &stubHistoryReader{
@@ -486,11 +466,9 @@ func TestOHLC_VolumeScale_OnChainWindowIsSevenDecimals(t *testing.T) {
 	}
 }
 
-// TestOHLC_VolumeScale_UnregisteredSourceIsUnknown pins that a source
-// absent from external.Registry must not be answered with the registry's
-// CEX-flavoured 8-decimal fallback. An unregistered on-chain DEX at 1e7
-// would otherwise be stated as 8, overstating its volume tenfold the
-// opposite way.
+// TestOHLC_VolumeScale_UnregisteredSourceIsUnknown: a source absent from external.Registry must
+// not get the registry's CEX-flavoured 8-decimal fallback; an unregistered on-chain DEX at 1e7
+// would be stated as 8, misstating its volume tenfold.
 func TestOHLC_VolumeScale_UnregisteredSourceIsUnknown(t *testing.T) {
 	base := time.Unix(1_772_000_000, 0).UTC()
 	reader := &stubHistoryReader{

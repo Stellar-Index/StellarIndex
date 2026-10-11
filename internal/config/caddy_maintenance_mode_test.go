@@ -12,33 +12,22 @@ import (
 
 // ─── The serving kill-switch ─────────────────────────────
 //
-// `sudo touch /etc/caddy/MAINTENANCE_MODE` is the documented way to
-// stop serving during a live data-integrity incident
-// (docs/operations/runbooks/api.md). It answered 503 on
-// /v1/price — and kept streaming the wrong prices on
-// /v1/price/stream, /v1/price/tip/stream, /v1/observations/stream and
-// /v1/ledger/stream, with no signal that the switch was partial.
+// `sudo touch /etc/caddy/MAINTENANCE_MODE` is the documented way to stop serving during a live
+// data-integrity incident (docs/operations/runbooks/api.md). It must 503 every route, stream
+// routes (/v1/price/stream, /v1/price/tip/stream, /v1/observations/stream, /v1/ledger/stream)
+// included, or a partial switch keeps streaming wrong prices with no signal.
 //
-// The cause is not visible in the source order of the Caddyfile:
-// OUTSIDE a `route` block Caddy sorts a site's directives by its own
-// fixed directive order, in which `handle` ranks ABOVE `respond`. With
-// the stream proxy in a bare `handle @sse { … }` block, the compiled
-// srv0 subroute came out
+// OUTSIDE a `route` block Caddy sorts a site's directives by its own fixed order, in which
+// `handle` ranks ABOVE `respond`. A stream proxy in a bare `handle @sse { … }` block therefore
+// compiled ahead of the maintenance 503:
 //
 //	[vars+headers, encode, sse-handle, maintenance-503, /metrics, proxy]
 //
-// so a stream request was proxied and returned before the 503 was ever
-// reached. Measured, not reasoned: `caddy adapt` on the old file
-// produces exactly that order, and real caddy 2.11.4 in front of a
-// stub SSE upstream answered 200 + event data on all four stream
-// routes with MAINTENANCE_MODE present.
-//
-// `route` is the one construct that makes source order authoritative,
-// so the kill-switch and the stream proxy now live in ONE `route`
-// block with the 503 first. These tests pin that in both copies of the
-// file — the hand-kept configs/caddy/Caddyfile.api and the ansible
-// template that is what actually reaches the host — because a fix in
-// only one of them is cosmetic.
+// so stream requests were proxied before the 503 was reached. `route` is the one construct
+// that makes source order authoritative, so the kill-switch and the stream proxy live in ONE
+// `route` block with the 503 first. These tests pin that in both copies of the file, the
+// hand-kept configs/caddy/Caddyfile.api and the ansible template that reaches the host,
+// because a fix in only one of them is cosmetic.
 //
 // Two properties, both directions:
 //   - switch ENGAGED: nothing, stream routes included, gets past the 503;
@@ -55,12 +44,10 @@ type caddyDirective struct {
 	text  string
 }
 
-// caddyDirectives strips comments and blank lines and annotates what is
-// left with its brace depth. Caddyfiles are formatted one directive per
-// line by `caddy fmt`, a block opens with a trailing `{` and closes
-// with a line that is nothing but `}` — placeholders such as
-// `{client_ip}` never sit at either end of a line, so they do not
-// disturb the count.
+// caddyDirectives strips comments and blank lines and annotates what is left with its brace
+// depth. `caddy fmt` puts one directive per line, a block opens with a trailing `{` and closes
+// with a line that is only `}`; placeholders such as `{client_ip}` never sit at either end of
+// a line, so they do not disturb the count.
 func caddyDirectives(t *testing.T, path string) []caddyDirective {
 	t.Helper()
 	var out []caddyDirective
@@ -84,15 +71,12 @@ func caddyDirectives(t *testing.T, path string) []caddyDirective {
 	return out
 }
 
-// TestCaddyKillSwitchOutranksTheStreamProxy is the ordering property
-// itself, asserted on the text so it holds wherever the suite runs
-// (TestCaddyKillSwitchCompiledOrder below proves the same thing through
+// TestCaddyKillSwitchOutranksTheStreamProxy asserts the ordering property on the text so it
+// holds wherever the suite runs (TestCaddyKillSwitchCompiledOrder below proves it through
 // caddy itself when the binary is on PATH).
 //
-// The assertion is deliberately structural rather than "line 190 is
-// before line 218": file order is exactly what does NOT decide this.
-// What decides it is that both directives sit in one `route` block,
-// maintenance first.
+// The assertion is structural, not "line N is before line M": file order does NOT decide this,
+// both directives sitting in one `route` block with maintenance first does.
 func TestCaddyKillSwitchOutranksTheStreamProxy(t *testing.T) {
 	for _, path := range caddyfiles {
 		t.Run(filepath.Base(path), func(t *testing.T) {
@@ -171,9 +155,8 @@ func caddyStreamProxyBlock(t *testing.T, path string) string {
 
 // ─── The same property, proved through caddy ────────────────────────
 //
-// Caddy's directive order is precisely the thing a careful human reader
-// gets wrong, so when the binary is
-// available the compiled config is the witness, not the text.
+// Caddy's directive order is what a careful reader gets wrong, so when the binary is available
+// the compiled config is the witness, not the text.
 
 // caddyCompiledRoute is one route of an adapted config, flattened into
 // evaluation order (a subroute's children run where the subroute sits).
@@ -219,11 +202,9 @@ func caddyAdapt(t *testing.T, caddyBin, path string) []caddyCompiledRoute {
 	return flat
 }
 
-// caddyFlatten walks adapted routes depth-first, which is the order
-// Caddy evaluates them in. A `handle` block compiles to a subroute
-// carrying the matcher with its children matchless underneath, so the
-// enclosing match is carried down — otherwise the handler that the
-// matcher actually guards looks unconditional.
+// caddyFlatten walks adapted routes depth-first, Caddy's evaluation order. A `handle` block
+// compiles to a subroute with the matcher on the parent and matchless children, so the
+// enclosing match is carried down; otherwise the guarded handler looks unconditional.
 func caddyFlatten(t *testing.T, routes []json.RawMessage, inherited string) []caddyCompiledRoute {
 	t.Helper()
 	var flat []caddyCompiledRoute

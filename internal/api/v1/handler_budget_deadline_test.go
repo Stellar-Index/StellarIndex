@@ -16,23 +16,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// The gap requestDeadlineExpired cannot close, pinned on the two
-// archetypes: a handler that caps its OWN read with
-// context.WithTimeout(r.Context(), 8s) — /v1/twap — and one at 12s —
-// /v1/liquidity-pools. Under the shipping 15s api.request_timeout the
-// inner budget always blows FIRST, so r.Context() is still alive when the
-// store returns its deadline error. That is the dominant shape: every
-// request-derived budget in this package is 3-12s.
+// The gap requestDeadlineExpired cannot close, pinned on two archetypes: a handler capping its
+// OWN read with context.WithTimeout(r.Context(), 8s) (/v1/twap) and one at 12s
+// (/v1/liquidity-pools). Under the shipping 15s api.request_timeout the inner budget blows
+// FIRST, so r.Context() is still alive when the store returns its deadline error.
 //
-// The state under test is therefore a deadline error arriving on a LIVE
-// request — not an expired r.Context(), which request_deadline_problem_
-// test.go already covers, and which these two handlers never reach first.
+// The state under test is a deadline error arriving on a LIVE request, not an expired
+// r.Context(), which request_deadline_problem_test.go already covers.
 
-// deadlineOnLiveRequestErr is what a store hands back when the per-call
-// context deadlined: the driver's own message WRAPPING
-// context.DeadlineExceeded. Wrapped rather than bare, because that is how
-// it arrives in production and because errors.Is is the only thing that
-// makes the wrapped form legible.
+// deadlineOnLiveRequestErr is what a store returns when the per-call context deadlined: the
+// driver's message WRAPPING context.DeadlineExceeded, as in production, so only errors.Is
+// recognises it.
 func deadlineOnLiveRequestErr(what string) error {
 	return fmt.Errorf("%s: %w", what, context.DeadlineExceeded)
 }
@@ -63,11 +57,9 @@ func quietServer() *Server {
 	return &Server{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
 
-// assertRequestTimeout checks the full retryable-timeout contract: the
-// status, the problem type in the BODY (a 503 whose body still says
-// `errors/internal` sends the reader to the opposite conclusion), and
-// no-store (a timeout cached by a CDN is replayed to everyone on that
-// key for the whole TTL).
+// assertRequestTimeout checks the full retryable-timeout contract: the status, the problem type
+// in the BODY (a 503 saying `errors/internal` misleads the reader), and no-store (a CDN-cached
+// timeout is replayed to everyone on that key for the whole TTL).
 func assertRequestTimeout(t *testing.T, rec *httptest.ResponseRecorder, endpoint string) {
 	t.Helper()
 	if rec.Code != http.StatusServiceUnavailable {
@@ -136,13 +128,10 @@ func (deadlineTokenSupplyReader) TokenSupply(
 	return clickhouse.TokenSupply{}, deadlineOnLiveRequestErr("sum supply_flows")
 }
 
-// The 502 leg of the same upgrade, and the only handler family that
-// raises one. /v1/assets/{asset_id}/supply reports a failed lake read as
-// StatusBadGateway — "our upstream broke" — so an 8s ceiling this process
-// imposed rendered as "Supply read failed" and sent the reader looking at
-// ClickHouse for a bound ClickHouse never set. Same reasoning as the 500
-// legs above: the deadline is neither this server's fault nor its
-// upstream's, and it clears on retry.
+// The 502 leg of the same upgrade, and the only handler family that raises one.
+// /v1/assets/{asset_id}/supply reports a failed lake read as StatusBadGateway, so the 8s
+// ceiling this process imposed would read as an upstream fault. As with the 500 legs above,
+// the deadline is neither this server's fault nor its upstream's, and it clears on retry.
 func TestHandlerOwnBudget_AssetSupplyDeadlineOnLiveRequestIs503(t *testing.T) {
 	s := quietServer()
 	s.TokenSupply = deadlineTokenSupplyReader{}
@@ -158,11 +147,9 @@ func TestHandlerOwnBudget_AssetSupplyDeadlineOnLiveRequestIs503(t *testing.T) {
 	assertRequestTimeout(t, rec, "/v1/assets/{asset_id}/supply")
 }
 
-// The other half of the contract, on the same two handlers: a plain
-// storage fault carrying NO deadline is still a 500. Without this the
-// upgrade above could be satisfied by relabelling every internal error,
-// which would hide real faults from the 5xx dashboards that separate "we
-// are broken" from "we are slow".
+// The other half of the contract, on the same two handlers: a plain storage fault carrying NO
+// deadline is still a 500. Otherwise relabelling every internal error would satisfy the upgrade
+// above and hide real faults from the 5xx dashboards.
 type brokenHistoryReader struct{ HistoryReader }
 
 func (brokenHistoryReader) TradesInRange(
@@ -211,18 +198,11 @@ func TestHandlerOwnBudget_AssetSupplyNonDeadlineFaultStays502(t *testing.T) {
 	}
 }
 
-// TestHandlerOwnBudget_MarketSourcesDeadlineOnLiveRequestIs503 is the
-// regression guard: /v1/markets/sources had no per-handler budget
-// and no handlerTimedOut branch, so a store-side deadline — however it
-// fired — fell through the bare `if err != nil` as a plain 500
-// market-sources-error: indistinguishable from a real bug, and booked as
-// a permanent availability failure rather than the retryable capacity
-// signal a deadline actually is. It must report a retryable 503 naming
-// the specific endpoint that stalled — the same shape as the cold-path
-// aggregates that carry their own per-call context (history.go,
-// chart.go's `-timeout` types), rather than the generic
-// requestTimeoutType writeProblemErr sites (twap, liquidity-pools) fall
-// back to when they have no context of their own to inspect.
+// TestHandlerOwnBudget_MarketSourcesDeadlineOnLiveRequestIs503: a store-side deadline in
+// /v1/markets/sources must not fall through as a plain 500 market-sources-error, which reads
+// as a permanent failure rather than a retryable capacity signal. It must report a retryable
+// 503 naming the specific endpoint, like the cold-path aggregates with their own per-call
+// context (history.go, chart.go `-timeout` types), not the generic requestTimeoutType.
 func TestHandlerOwnBudget_MarketSourcesDeadlineOnLiveRequestIs503(t *testing.T) {
 	for _, q := range []string{
 		"/v1/markets/sources?asset=native",
@@ -273,16 +253,10 @@ func TestHandlerOwnBudget_MarketSourcesNonDeadlineFaultStays500(t *testing.T) {
 	}
 }
 
-// TestHandlerOwnBudget_OracleSEP40DeadlineOnLiveRequestIs503 is the
-// regression guard. /v1/oracle/lastprice, /v1/oracle/prices and
-// /v1/oracle/x_last_price passed r.Context() straight to the PriceReader
-// with no per-handler budget and no handlerTimedOut branch, so a
-// store-side deadline fell through the bare `if err != nil` as a plain
-// 500 — indistinguishable from a real bug, and booked as a permanent
-// availability failure rather than the retryable capacity signal a
-// deadline actually is. Each must report a retryable 503 naming the
-// specific endpoint that stalled, the same contract as
-// /v1/markets/sources.
+// TestHandlerOwnBudget_OracleSEP40DeadlineOnLiveRequestIs503: a store-side deadline in
+// /v1/oracle/lastprice, /v1/oracle/prices and /v1/oracle/x_last_price must not surface as a
+// plain 500 (a permanent-looking failure). Each must report a retryable 503 naming the
+// endpoint, the same contract as /v1/markets/sources.
 func TestHandlerOwnBudget_OracleSEP40DeadlineOnLiveRequestIs503(t *testing.T) {
 	cases := []struct {
 		name       string

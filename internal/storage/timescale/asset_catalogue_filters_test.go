@@ -7,23 +7,14 @@ import (
 	"testing"
 )
 
-// This file replaced asset_catalogue_pushdown_test.go, which guarded the
-// `chosen_assets` pushdown: a CTE prepended ahead of the spine that
-// narrowed the listing's eight per-asset price CTEs to one issuer's
-// assets, so a FILTERED /v1/assets did not read 256k prices_1m rows for
-// a one-row result.
+// The price CTEs live in refreshAssetPriceSnapshotUpsert and the listing LEFT JOINs the rollup,
+// so a filtered listing is narrowed by the outer WHERE on `ca` alone over a keyed-on-PK price
+// lookup, with no per-request prices_1m scan. What is pinned here is the ARGUMENT-BINDING
+// contract of buildAssetsQuery: which filter takes which positional placeholder, and that a
+// filter never silently drops.
 //
-// The pushdown was removed along with the thing it narrowed. The price CTEs moved to
-// refreshAssetPriceSnapshotUpsert and the listing LEFT JOINs the rollup,
-// so a filtered listing is narrowed by the outer WHERE on `ca` alone
-// over a keyed-on-PK price lookup — the shape pushdown existed to
-// approximate. What survives, and is still worth pinning, is the
-// ARGUMENT-BINDING contract of buildAssetsQuery: which filter takes
-// which positional placeholder, and that a filter never silently drops.
-//
-// TestListAssetsBaseSelect_NoPerRequestPriceScan (asset_price_snapshot_test.go)
-// is the guard that the pushdown must never come back, because the CTEs
-// it narrowed must never come back.
+// TestListAssetsBaseSelect_NoPerRequestPriceScan (asset_price_snapshot_test.go) guards that the
+// per-request price CTEs never come back.
 
 // mustBuildAssetsQuery composes a listing query for a filter set the
 // spine can express. Every case below passes such a set, so an error is
@@ -129,13 +120,9 @@ func TestBuildAssetsQuery_FilterBinding(t *testing.T) {
 	}
 }
 
-// TestBuildAssetsQuery_QFilterEscapesLikeMetacharacters pins that `q`
-// is a caller-supplied literal, not a pattern, so a client sending its
-// own `%` or `_` must match those characters literally rather than
-// have them act as SQL LIKE wildcards once wrapped in `%...%`. Before
-// the fix, `q="A_B"` (typed to search for the three literal characters
-// "A_B") matched any row with "A", any single character, then "B" —
-// e.g. "AxB" — which is not what the caller searched for.
+// TestBuildAssetsQuery_QFilterEscapesLikeMetacharacters pins that `q` is a caller-supplied
+// literal, not a pattern: a client's own `%` or `_` must match literally rather than act as SQL
+// LIKE wildcards once wrapped in `%...%`, e.g. `q="A_B"` must not match "AxB".
 func TestBuildAssetsQuery_QFilterEscapesLikeMetacharacters(t *testing.T) {
 	t.Parallel()
 	sql, args := mustBuildAssetsQuery(t, 50, "", "", "", "A_B%C", "", AssetsOrderObservationCountDesc)
@@ -151,30 +138,25 @@ func TestBuildAssetsQuery_QFilterEscapesLikeMetacharacters(t *testing.T) {
 	}
 }
 
-// TestBuildAssetsQuery_QFilterMatchesSorobanContractID pins that a
-// Soroban-native row has NULL code/slug/issuer (see the discovered-
-// contract arm of listAssetsBaseSelect), so the q predicate's slug leg
-// must fall back to ca.asset_id — exactly as the base SELECT's own
-// "slug" column already does (COALESCE(ca.slug, ca.code, ca.asset_id))
-// — or type=soroban&q=<contract id> can never match a row.
+// TestBuildAssetsQuery_QFilterMatchesSorobanContractID: a Soroban-native row has NULL
+// code/slug/issuer (see the discovered-contract arm of listAssetsBaseSelect), so the q
+// predicate's slug leg must fall back to ca.asset_id, as the base SELECT's own "slug" column does
+// (COALESCE(ca.slug, ca.code, ca.asset_id)), or type=soroban&q=<contract id> never matches.
 func TestBuildAssetsQuery_QFilterMatchesSorobanContractID(t *testing.T) {
 	t.Parallel()
 	sql, _ := mustBuildAssetsQuery(t, 50, "", "", "", "CAUP7", "soroban", AssetsOrderObservationCountDesc)
-	// The trailing "LIKE LOWER(" pins this to the q PREDICATE specifically
-	// — listAssetsBaseSelect's SELECT list also has a
-	// "COALESCE(ca.slug, ca.code, ca.asset_id)" (its "slug" output
-	// column), so matching that substring alone would pass whether or
-	// not the WHERE clause was ever fixed.
+	// The trailing "LIKE LOWER(" pins this to the q PREDICATE: the SELECT list also has
+	// "COALESCE(ca.slug, ca.code, ca.asset_id)" (its "slug" column), so that substring alone
+	// would pass regardless of the WHERE clause.
 	if !strings.Contains(sql, "LOWER(COALESCE(ca.slug, ca.code, ca.asset_id)) LIKE LOWER(") {
 		t.Errorf("q predicate must fall back to ca.asset_id (the only identifying column a Soroban-native row has); got:\n%s", sql)
 	}
 }
 
-// TestBuildAssetsQuery_UnknownTypeIsRefused — an unrecognised non-empty
-// `type` must NOT compose away into the unfiltered page. The listing has
-// ~199k rows and answers every request with a plausible 200, so a
-// silently-dropped filter is served as data the caller believes is
-// narrowed. Refusing is the only outcome the caller can tell apart.
+// TestBuildAssetsQuery_UnknownTypeIsRefused: an unrecognised non-empty `type` must NOT compose
+// away into the unfiltered page. The listing answers every request with a plausible 200, so a
+// silently-dropped filter is served as data the caller believes is narrowed; refusing is the
+// only outcome the caller can tell apart.
 func TestBuildAssetsQuery_UnknownTypeIsRefused(t *testing.T) {
 	t.Parallel()
 	for _, typ := range []string{"bogus", "native", "fiat", "CLASSIC", " classic"} {
@@ -196,11 +178,9 @@ func TestBuildAssetsQuery_UnknownTypeIsRefused(t *testing.T) {
 	}
 }
 
-// TestListAssetsExt_UnknownTypeSurfacesTheError — the refusal must reach
-// the caller rather than being swallowed between the builder and the
-// query. The Store carries a nil *sql.DB on purpose: that is what proves
-// the guard runs BEFORE QueryContext, since reaching the round-trip at
-// all panics on it.
+// TestListAssetsExt_UnknownTypeSurfacesTheError: the refusal must reach the caller rather than be
+// swallowed between the builder and the query. The Store carries a nil *sql.DB on purpose: it
+// proves the guard runs BEFORE QueryContext, since reaching the round-trip panics.
 func TestListAssetsExt_UnknownTypeSurfacesTheError(t *testing.T) {
 	t.Parallel()
 	s := &Store{}

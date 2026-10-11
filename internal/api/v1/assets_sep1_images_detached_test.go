@@ -17,16 +17,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// blockingSep1Reader is a SEP-1 image reader that stands in for the r1
-// scan: it announces that it started, then blocks until the test releases
-// it, and records whether the context it was handed was cancelled while it
-// worked.
+// blockingSep1Reader is a SEP-1 image reader that stands in for the slow scan: it announces that
+// it started, then blocks until the test releases it, and records whether the context it was
+// handed was cancelled while it worked.
 //
-// That last field is the whole point. On r1 the refresh ran on the calling
-// request's context, so when curl gave up at 10 s the scan died with it —
-// `WARN "sep1 image refresh failed" err="timescale: AllSep1Images rows:
-// context canceled"`, logged at the exact second of each smoke timeout.
-// A detached refresh must never see its caller's cancellation.
+// That last field is the point: a refresh running on the calling request's context dies when the
+// client gives up. A detached refresh must never see its caller's cancellation.
 type blockingSep1Reader struct {
 	entered   chan struct{} // one send per call
 	release   chan struct{} // test closes this to let the scan finish
@@ -62,15 +58,12 @@ func (b *blockingSep1Reader) AllSep1Images(ctx context.Context) ([]timescale.Sep
 	return b.imgs, nil
 }
 
-// TestCachedSep1Images_RequestNeverBlocksOnRefresh is the regression for
-// the /v1/assets stall: 202 failing smoke samples over 4 days, 10-13 s
-// against a normal 10 ms, because whichever request found the logo map
-// expired rebuilt it INLINE on its own context.
+// TestCachedSep1Images_RequestNeverBlocksOnRefresh is the regression for the /v1/assets stall:
+// whichever request found the logo map expired rebuilt it INLINE on its own context.
 //
-// The assertion needs no timing heuristic. The reader is held open for the
-// whole test, so if cachedSep1Images returns at all, it returned without
-// waiting for the scan. Against a blocking implementation this test does not fail
-// on a threshold — it deadlocks until the outer timeout.
+// The assertion needs no timing heuristic. The reader is held open for the whole test, so if
+// cachedSep1Images returns at all, it returned without waiting for the scan. Against a blocking
+// implementation the test does not fail on a threshold; it deadlocks until the outer timeout.
 func TestCachedSep1Images_RequestNeverBlocksOnRefresh(t *testing.T) {
 	t.Parallel()
 
@@ -195,11 +188,9 @@ func TestCachedSep1Images_FailedRefreshServesLastGoodAndDoesNotStorm(t *testing.
 }
 
 // TestNewServer_PrewarmSep1ImagesThroughProductionConstructor exercises the
-// constructor production actually uses — v1.New(v1.Options{Sep1Cache:
-// store}) at cmd/stellarindex-api/main.go:1334 — rather than a &Server{}
-// literal, so a regression that drops Sep1Cache from the Options mapping
-// is caught here and not on r1. It then serves a real /v1/assets response
-// through the real handler and checks the logo actually lands on a row.
+// constructor production uses (v1.New with Options.Sep1Cache) rather than a &Server{} literal,
+// so a regression that drops Sep1Cache from the Options mapping is caught here. It then serves a
+// real /v1/assets response through the real handler and checks the logo lands on a row.
 func TestNewServer_PrewarmSep1ImagesThroughProductionConstructor(t *testing.T) {
 	t.Parallel()
 

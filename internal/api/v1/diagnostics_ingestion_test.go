@@ -34,16 +34,11 @@ type ingestionEnvelope struct {
 	} `json:"flags"`
 }
 
-// TestDiagnosticsIngestion_StaleWhenNetworkStatsErrors pins the
-// stale-on-error path: when the underlying GetNetworkStats reader errors
-// (e.g. a Redis cascade caused a Postgres timeout
-// downstream), the snapshot's ledger fields stay at zero — and the
-// response MUST flip flags.stale:true rather than serve fresh-
-// looking zeros. A naive handler would return flags.stale:false with every
-// counter at 0; peer endpoints like /v1/network/stats either
-// returned the same error as 500 problem+json or, under partial
-// availability, served real data — the contradiction was the
-// "different storage path" symptom.
+// TestDiagnosticsIngestion_StaleWhenNetworkStatsErrors pins the stale-on-error path: when the
+// GetNetworkStats reader errors, the snapshot's ledger fields stay at zero and the response MUST
+// flip flags.stale:true rather than serve fresh-looking zeros. Peer endpoints like
+// /v1/network/stats return the error or real data, so a handler reporting stale:false with every
+// counter at 0 would contradict them.
 func TestDiagnosticsIngestion_StaleWhenNetworkStatsErrors(t *testing.T) {
 	reader := &stubNetworkStatsReader{err: errors.New("storage broke")}
 	srv := v1.New(v1.Options{NetworkStats: reader})
@@ -66,12 +61,9 @@ func TestDiagnosticsIngestion_StaleWhenNetworkStatsErrors(t *testing.T) {
 	}
 }
 
-// TestDiagnosticsIngestion_StaleWhenReadersNotWired pins the
-// degraded-handler path for a cold deployment that never wired
-// the readers — same condition /v1/network/stats handles by
-// returning 503. The ingestion endpoint composes multiple sub-
-// readers so a 503 would be wrong (partial data is still useful);
-// instead we mark flags.stale:true to signal the consumer.
+// TestDiagnosticsIngestion_StaleWhenReadersNotWired pins the degraded path for a deployment that
+// never wired the readers, which /v1/network/stats answers with 503. This endpoint composes
+// several sub-readers, so partial data is still useful and it marks flags.stale:true instead.
 func TestDiagnosticsIngestion_StaleWhenReadersNotWired(t *testing.T) {
 	// No NetworkStats, no Cursors → both critical fillers no-op.
 	srv := v1.New(v1.Options{})
@@ -129,11 +121,9 @@ func TestDiagnosticsIngestion_FreshWhenReadersOK(t *testing.T) {
 	}
 }
 
-// TestDiagnosticsIngestion_StaleWhenCursorsErrors pins the second
-// critical filler: a Postgres-level error on ListCursors flips
-// flags.stale:true even when network stats came through OK. Under
-// a Redis cascade a partial outage could surface this exact
-// shape: ledger fields populated, backfill section empty.
+// TestDiagnosticsIngestion_StaleWhenCursorsErrors pins the second critical filler: a Postgres
+// error on ListCursors flips flags.stale:true even when network stats came through OK (ledger
+// fields populated, backfill section empty).
 func TestDiagnosticsIngestion_StaleWhenCursorsErrors(t *testing.T) {
 	vol := "100.00"
 	netReader := &stubNetworkStatsReader{
@@ -163,17 +153,13 @@ func TestDiagnosticsIngestion_StaleWhenCursorsErrors(t *testing.T) {
 	}
 }
 
-// TestDiagnosticsIngestion_ServesBothCompletenessAxes pins both axes. ADR-0033/ADR-0034
-// verdicts are TWO-AXIS:
-// `lake_complete` (archive proven genesis-to-tip) and `complete` (that
-// plus the retention-scoped projection reconcile). A source is routinely
-// lake_complete=true with complete=false.
+// TestDiagnosticsIngestion_ServesBothCompletenessAxes pins both axes of the two-axis verdict
+// (ADR-0033/ADR-0034): `lake_complete` (archive proven genesis-to-tip) and `complete` (that plus
+// the retention-scoped projection reconcile). A source is routinely lake_complete=true with
+// complete=false.
 //
-// /v1/diagnostics/ingestion — the snapshot the public status page reads —
-// projected only the SERVED axis, so the page could not distinguish "the
-// data does not exist" from "the data exists and the projection is
-// catching up". The two-axis verdict reached /v1/coverage and
-// /diagnostics alone.
+// The snapshot the public status page reads must carry both, or the page cannot tell "the data
+// does not exist" from "the data exists and the projection is catching up".
 func TestDiagnosticsIngestion_ServesBothCompletenessAxes(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	srv := v1.New(v1.Options{

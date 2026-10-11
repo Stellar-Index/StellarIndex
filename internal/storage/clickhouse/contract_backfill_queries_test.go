@@ -9,12 +9,10 @@ import (
 	"testing"
 )
 
-// BackfillContractActiveLedgers and BackfillContractInstanceChanges dial their
-// own connection via openRead, so — like BackfillTxHashIndex — they cannot be
-// driven end-to-end by the stubConn harness. Their per-window INSERT…SELECT is
-// package-level (a const, or a pure builder) precisely so its text stays
-// testable; the walk that
-// drives it is covered in ledger_window_test.go.
+// BackfillContractActiveLedgers and BackfillContractInstanceChanges dial their own connection
+// via openRead, so like BackfillTxHashIndex they cannot be driven by the stubConn harness. Their
+// per-window INSERT…SELECT is package-level (a const or pure builder) so its text stays
+// testable; the walk that drives it is covered in ledger_window_test.go.
 
 // readDeployDDL returns one deploy/clickhouse artifact as text.
 func readDeployDDL(t *testing.T, name string) string {
@@ -49,14 +47,13 @@ func stripSQLComments(ddl string) string {
 // TestContractActiveLedgersBackfillQuery_Shape pins the two things this
 // INSERT…SELECT gets wrong most easily.
 //
-// GROUP BY, not DISTINCT: they compute the same set, but DISTINCT cannot use
-// external aggregation, so it CANNOT spill — a dense 5M-ledger window's
-// distinct set blew the 8 GiB limit on the first r1 run (Code 241 at window
-// [40M,45M]). GROUP BY plus max_bytes_before_external_group_by spills to disk
-// and the window merely gets slower.
+// GROUP BY, not DISTINCT: they compute the same set, but DISTINCT cannot use external
+// aggregation so it CANNOT spill, and a dense 5M-ledger window's distinct set exceeds the memory
+// limit (Code 241). GROUP BY plus max_bytes_before_external_group_by spills to disk and the
+// window merely gets slower.
 //
-// The window predicate is what bounds each iteration's work at all; losing it
-// turns a resumable job into one unbounded scan of contract_events.
+// The window predicate bounds each iteration's work; losing it turns a resumable job into one
+// unbounded scan of contract_events.
 func TestContractActiveLedgersBackfillQuery_Shape(t *testing.T) {
 	q := contractActiveLedgersBackfillQuery
 
@@ -95,16 +92,12 @@ func TestContractActiveLedgersBackfillQuery_Shape(t *testing.T) {
 	}
 }
 
-// TestContractInstanceBackfillQuery_MatchesTheMaterializedView is the lockstep
-// assertion the Go doc comment asks for in prose: the backfill and
-// contract_instance_changes_mv must extract the SAME fixed offsets from the
-// SAME wire layout, because they fill ONE table — the MV live-forward, the
-// backfill behind it. A drifted offset in either does not fail; it writes
-// wrong contract hashes or wrong wasm hashes into the explorer's code-history
-// timeline, stamped as complete.
-//
-// Every expression below is byte-offset-bearing, so an off-by-one is a silent
-// data corruption rather than an error.
+// TestContractInstanceBackfillQuery_MatchesTheMaterializedView is the lockstep assertion: the
+// backfill and contract_instance_changes_mv must extract the SAME fixed offsets from the SAME
+// wire layout because they fill ONE table (the MV live-forward, the backfill behind it). A
+// drifted offset does not fail; it writes wrong contract or wasm hashes into the code-history
+// timeline, stamped as complete. Every expression below is byte-offset-bearing, so an
+// off-by-one is silent corruption rather than an error.
 func TestContractInstanceBackfillQuery_MatchesTheMaterializedView(t *testing.T) {
 	q := contractInstanceBackfillQuery(ContractInstanceChangesTable)
 	mv := stripSQLComments(readDeployDDL(t, "contract_instance_changes.sql"))

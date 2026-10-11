@@ -13,27 +13,16 @@ import (
 // GET /v1/rwa/assets — the EVIDENCE behind C2's second arm, as opposed
 // to its verdict.
 //
-// These tests exist because of a production episode. The
-// listing sync completed at 17:01:21Z having written 50 good rows, and
-// the funnel went on reporting the arm closed for the next ten and a
-// half minutes — correctly, because the set in hand had been built from
-// a read taken at 17:00:28Z, fifty-three seconds before the rows
-// landed. Nothing was broken. Nothing needed fixing.
-//
-// Establishing that took four production queries, a role-switch test
-// and a row-level-security check, because the response published the
-// VERDICT — an arm reporting nothing corroborated — and none of the
-// evidence for it. Three unrelated states of the world produce that
-// same verdict:
+// The response must publish the evidence behind a closed arm, not only the verdict, because
+// three unrelated states produce the same "nothing corroborated" verdict:
 //
 //   - a directory nobody has ever synced,
 //   - a sync that stopped days ago and left every row to age out,
 //   - a healthy directory this set simply predates.
 //
-// They call for three different responses: run the sync, go and fix the
-// sync, and do nothing at all. Told apart from the wire now, and the
-// tests below are one per state plus the two states that publish no
-// evidence at all.
+// They call for different responses (run the sync, fix the sync, do nothing), so they must be
+// told apart on the wire. The tests below are one per state plus the two states that publish
+// no evidence at all.
 
 // rwaEvidenceServer wires the listing arm with nothing else able to
 // admit a row, so the funnel under test is arm 2's alone.
@@ -49,16 +38,11 @@ func rwaEvidenceServer(t *testing.T, listings v1.RWAListingDirectoryReader) *v1.
 	)
 }
 
-// The test that would have answered the question directly: a set built
-// from a read taken BEFORE the sync landed must say, on the wire, when
-// it looked and what it saw.
+// A set built from a read taken BEFORE the sync landed must say, on the wire, when it looked
+// and what it saw.
 //
-// Without the timestamp this is unanswerable after the fact by anyone,
-// at any cost. Every count beside it can be re-derived by reading the
-// table again a minute later — and reading the table again a minute
-// later is precisely what produces the misleading answer, because by
-// then the sync has run and the directory looks healthy while the
-// response still reports a closed arm.
+// Without the timestamp this is unanswerable after the fact: re-reading the table later shows
+// a healthy directory while the response still reports a closed arm.
 func TestRWAListingEvidence_DatesTheReadThatClosedTheArm(t *testing.T) {
 	// The directory as it stood before the first sync ever completed.
 	before := time.Now().UTC().Add(-time.Second)
@@ -90,13 +74,11 @@ func TestRWAListingEvidence_DatesTheReadThatClosedTheArm(t *testing.T) {
 	}
 }
 
-// One case per state of the world that closes the arm. The verdict is
-// identical in all three; only the evidence separates them.
+// One case per state that closes the arm. The verdict is identical in all three; only the
+// evidence separates them.
 //
-// `entries` counts FRESH rows only — the storage layer's invariant is
-// Entries = Contracts + Classic, with Stale counted BESIDE them and
-// never inside them — so the two zero-entry states are told apart by
-// `stale`, and by nothing else on the wire.
+// `entries` counts FRESH rows only (storage invariant: Entries = Contracts + Classic, with
+// Stale counted BESIDE them), so the two zero-entry states are told apart by `stale` alone.
 func TestRWAListingEvidence_SeparatesTheThreeClosedArmStates(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -153,11 +135,9 @@ func TestRWAListingEvidence_SeparatesTheThreeClosedArmStates(t *testing.T) {
 	}
 }
 
-// A HEALTHY arm publishes its evidence too. Without this a change that
-// only ever emitted the block on the closed path would pass everything
-// above, and the one comparison the block exists for — this set's read
-// against the sync's own clock — would be unavailable exactly when a
-// reader is trying to confirm that a recovery has landed.
+// A HEALTHY arm publishes its evidence too. Otherwise a change emitting the block only on the
+// closed path would pass everything above, and the comparison of this set's read against the
+// sync's clock would be unavailable exactly when confirming a recovery.
 func TestRWAListingEvidence_PublishedOnTheHealthyPathToo(t *testing.T) {
 	view := getRWA(t, rwaEvidenceServer(t, &stubRWAListings{
 		rows: []timescale.ListingEntry{listed(rwaListedBoundEUTBL, "eutbl", "eutbl", "1.22")},
@@ -174,15 +154,12 @@ func TestRWAListingEvidence_PublishedOnTheHealthyPathToo(t *testing.T) {
 	}
 }
 
-// A read that did not ANSWER has observed nothing, and must publish
-// nothing rather than a census of zeros.
+// A read that did not ANSWER has observed nothing, and must publish nothing rather than a
+// census of zeros.
 //
-// This is the distinction the whole block turns on. Zeros from a failed
-// query render identically to zeros from an empty table, and the second
-// is a finding about the directory while the first is a finding about
-// our own connection. The absent block is therefore a statement in its
-// own right: refusals reported with no evidence beside them are
-// refusals whose source could not be read at all.
+// Zeros from a failed query look identical to zeros from an empty table, but the second is a
+// finding about the directory and the first about our own connection. An absent block means
+// the source could not be read at all.
 func TestRWAListingEvidence_AFailedReadPublishesNone(t *testing.T) {
 	view := getRWA(t, rwaEvidenceServer(t, &stubRWAListings{err: errRWAListingRead}))
 	if ev := view.Funnel.ListingDirectory; ev != nil {

@@ -16,18 +16,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// The measured defect this file guards.
-//
-// stellar.ledger_entries_current populates its `asset` column for
-// entry_type='trustline' ONLY, so the broad classic supply map — a GROUP BY on
-// that column — cannot see the supply held in claimable balances, liquidity-pool
-// reserves, or a Stellar Asset Contract's own contract_data balances. Against
-// Horizon the hidden remainder was CETES +36.605%, TESOURO +10.594%, USTRY
-// +10.272%, USDY +1.274%, with 99.9% of it SAC-held.
-//
-// The numbers below are that CETES shape at a round scale: a trustline sum of
-// 100.0000000 units against a true supply of 136.6000000 — a 36.6% uplift, the
-// extra sitting where a trustline query structurally cannot look.
+// What this file guards: stellar.ledger_entries_current populates its `asset` column for
+// entry_type='trustline' ONLY, so the broad classic supply map (a GROUP BY on that column)
+// cannot see supply held in claimable balances, liquidity-pool reserves, or a Stellar Asset
+// Contract's own contract_data balances. The fixtures model that shape: a trustline sum of
+// 100.0000000 units against a true supply of 136.6000000.
 const (
 	cetesIssuer = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
 	cetesAsset  = "CETES-" + cetesIssuer
@@ -84,13 +77,10 @@ func (e *trustlineOnlyExplorer) ClassicCirculatingSupply(context.Context) (map[s
 	return e.supply, nil
 }
 
-// lakeSupplyServer wires the two readers onto a Server the way
-// cmd/stellarindex-api/main.go does: the token-supply reader on `tokenSupply`
-// (production: *clickhouse.SupplyReader via NewSupplyReaderAuth) and the
-// trustline sum behind `explorer` (production: *clickhouse.ExplorerReader).
-// assetsReader is left nil so latestPreciseSupply yields nothing — CETES and
-// every other RWA asset are outside the operator's watched_classic_assets set,
-// which is exactly why they fall through to these two readers at all.
+// lakeSupplyServer wires the two readers onto a Server the way cmd/stellarindex-api/main.go
+// does: the token-supply reader on `tokenSupply` and the trustline sum behind `explorer`.
+// assetsReader stays nil so latestPreciseSupply yields nothing; RWA assets are outside
+// watched_classic_assets, which is why they fall through to these two readers.
 func lakeSupplyServer(t *testing.T, lakeTotal string) (*Server, *lakeSupplyStub) {
 	t.Helper()
 	sac, err := mustSACFor(cetesAsset)
@@ -138,14 +128,10 @@ func cetesRow() []AssetDetail {
 	}}
 }
 
-// TestListingSupplySeesSupplyOutsideTrustlines is the regression that would
-// have caught the defect. It runs the production listing fill —
-// Server.fillMarketCapsFromSupply, the function handleAssets and the RWA
-// classic arm both call — over an asset whose supply is 36.6% invisible to the
-// trustline sum, and asserts the served circulating supply is the whole of it.
-//
-// Without the fix, fillRowMarketCap reads `broad` alone, so it serves
-// 1000000000 and a $100.00 market cap against a real $136.60.
+// TestListingSupplySeesSupplyOutsideTrustlines runs the production listing fill
+// (Server.fillMarketCapsFromSupply, shared by handleAssets and the RWA classic arm) over an
+// asset whose supply is 36.6% invisible to the trustline sum, and asserts the served
+// circulating supply is the whole of it. Reading `broad` alone would under-serve it.
 func TestListingSupplySeesSupplyOutsideTrustlines(t *testing.T) {
 	s, stub := lakeSupplyServer(t, cetesTrueSupply)
 	rows := cetesRow()
@@ -200,15 +186,10 @@ func TestRWAFillMissingSupplySeesSupplyOutsideTrustlines(t *testing.T) {
 	}
 }
 
-// TestLakeSupplyNeverFallsBelowTheTrustlineFloor is the safety property the
-// whole change rests on: every trustline balance was minted, so the trustline
-// sum is a PROVABLE LOWER BOUND on issued supply. A lake reading below it is
-// proof the contract's flows are incompletely seeded — never evidence that the
-// trustline sum is too high — so the served figure must not drop.
-//
-// Without this guard a partially-seeded supply_flows row would silently
-// REPLACE a correct figure with a smaller one, turning a fix for an
-// understatement into a new understatement.
+// TestLakeSupplyNeverFallsBelowTheTrustlineFloor: every trustline balance was minted, so the
+// trustline sum is a PROVABLE LOWER BOUND on issued supply. A lake reading below it means the
+// contract's flows are incompletely seeded, not that the sum is too high, so the served
+// figure must not drop; a partially-seeded supply_flows row must not replace a correct figure.
 func TestLakeSupplyNeverFallsBelowTheTrustlineFloor(t *testing.T) {
 	s, _ := lakeSupplyServer(t, "3") // absurdly under-seeded
 	rows := cetesRow()
@@ -254,13 +235,11 @@ func (failingClassicExplorer) ClassicCirculatingSupply(context.Context) (map[str
 	return nil, errors.New("classic supply GROUP BY exceeded its budget")
 }
 
-// TestStaleTrustlineSumCannotOutrankALowerLakeReading — the trustline-sum
-// map is the one supply arm the listing max()es against a live reading, so
-// it is the one arm whose age decides the answer. Once its refresh starts
-// failing, the last good map would be served forever: a pre-burn sum would then
-// beat the post-burn lake total and publish supply that has been burned.
-// Past classicSupplyMaxAge the map is not served, whether the refresh is
-// rate-limited (no attempt this request) or attempted and failed.
+// TestStaleTrustlineSumCannotOutrankALowerLakeReading: the trustline-sum map is the one
+// supply arm the listing max()es against a live reading, so its age decides the answer. If
+// its refresh fails and the last good map is served forever, a pre-burn sum beats the
+// post-burn lake total and publishes burned supply. Past classicSupplyMaxAge the map is not
+// served, whether the refresh is rate-limited or attempted and failed.
 func TestStaleTrustlineSumCannotOutrankALowerLakeReading(t *testing.T) {
 	const postBurnLake = "400000000"
 	for _, tc := range []struct {

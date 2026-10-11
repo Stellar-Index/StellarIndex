@@ -11,29 +11,20 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// Every reference_valuation on /v1/rwa/assets is circulating_supply
-// multiplied by an oracle price, so the completeness of the supply is half
-// of every total this surface publishes. The row served the supply and
-// nothing else: no basis, no floor marker — as in production, where a BENJI
-// row came back with exactly two supply-adjacent keys, `basis` (the MEMBERSHIP basis) and `circulating_supply`.
+// Every reference_valuation on /v1/rwa/assets is circulating_supply multiplied by an oracle
+// price, so the completeness of the supply is half of every total this surface publishes. A row
+// must therefore carry the supply basis and a floor marker, not just the supply.
 //
-// These tests drive the production fills and then the production
-// projection, because the defect was not in the reading. The reading names
-// its arm already; what was missing is that the name stopped at the
-// internal struct and never reached the wire.
+// These tests drive the production fills and then the production projection: the reading already
+// names its arm, and what must be pinned is that the name reaches the wire from the internal
+// struct.
 
-// TestRWARowDeclaresTheTrustlineFallbackAsAFloor runs the RWA fill over an
-// asset the lake cannot answer for. That is a reachable degraded state
-// rather than a hypothetical: on r1, ~19h after the
-// last request had warmed the lake cache, the listing served PYUSD at
-// 3,149,454 against a lake total of 11,778,001 and XRF at 21,895,149
-// against 118,333,629.
+// TestRWARowDeclaresTheTrustlineFallbackAsAFloor runs the RWA fill over an asset the lake cannot
+// answer for, a reachable degraded state once the lake cache has gone cold.
 //
-// In that state the figure is the trustline sum, blind by construction to
-// claimable balances, liquidity-pool reserves and SAC-held supply. The
-// assertion is on the DECLARATION, not the number: serving it is
-// defensible, serving it under the same shape as a four-domain total is
-// not.
+// In that state the figure is the trustline sum, blind by construction to claimable balances,
+// liquidity-pool reserves and SAC-held supply. The assertion is on the DECLARATION, not the
+// number: serving it is defensible, serving it under the same shape as a four-domain total is not.
 func TestRWARowDeclaresTheTrustlineFallbackAsAFloor(t *testing.T) {
 	s, _ := lakeSupplyServer(t, "") // no lake reading for CETES at all
 	rows := cetesRow()
@@ -60,11 +51,9 @@ func TestRWARowDeclaresTheTrustlineFallbackAsAFloor(t *testing.T) {
 	}
 }
 
-// TestRWARowDoesNotMarkAFourDomainTotalAsAFloor is the control. A
-// lower-bound marker on every row carries exactly as much information as
-// one on no row, so the lake arm — which cannot miss a holding domain,
-// because a flow does not know where the token came to rest — must come
-// back unmarked.
+// TestRWARowDoesNotMarkAFourDomainTotalAsAFloor is the control. A lower-bound marker on every row
+// carries as much information as one on no row, so the lake arm, which cannot miss a holding
+// domain because a flow does not know where the token came to rest, must come back unmarked.
 func TestRWARowDoesNotMarkAFourDomainTotalAsAFloor(t *testing.T) {
 	s, _ := lakeSupplyServer(t, cetesTrueSupply)
 	rows := cetesRow()
@@ -85,11 +74,9 @@ func TestRWARowDoesNotMarkAFourDomainTotalAsAFloor(t *testing.T) {
 	}
 }
 
-// TestRWARowWithNoBasisNamesNoArm covers the state the projection must NOT
-// invent its way out of. A supply attached by a branch that carries no
-// basis — the dust-suppressed and ticker-collision paths both do — reaches
-// the wire as a figure with no provenance, and naming an arm that did not
-// answer would be worse than naming none.
+// TestRWARowWithNoBasisNamesNoArm: a supply attached by a branch that carries no basis (the
+// dust-suppressed and ticker-collision paths) reaches the wire with no provenance, and the
+// projection must not invent one; naming an arm that did not answer is worse than naming none.
 func TestRWARowWithNoBasisNamesNoArm(t *testing.T) {
 	circ := "5000000000"
 	s, _ := lakeSupplyServer(t, "")
@@ -110,12 +97,10 @@ func TestRWARowWithNoBasisNamesNoArm(t *testing.T) {
 	}
 }
 
-// TestRWAContractRowNamesTheFlowSum covers the other arm, end to end: the
-// production fill and then the production projection. A contract row's
-// supply comes from a different reader over a different population, and it
-// was the one arm that attached a figure with no basis at all — so a
-// contract row and a classic row were indistinguishable on the wire even
-// when one was a floor and the other was not.
+// TestRWAContractRowNamesTheFlowSum covers the other arm end to end (production fill, then
+// production projection). A contract row's supply comes from a different reader over a different
+// population, so it must carry a basis too; otherwise a contract row and a classic row look the
+// same on the wire even when one is a floor and the other is not.
 func TestRWAContractRowNamesTheFlowSum(t *testing.T) {
 	const contractID = "CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA"
 	total, _ := new(big.Int).SetString("123450000000", 10)
@@ -148,11 +133,10 @@ func TestRWAContractRowNamesTheFlowSum(t *testing.T) {
 	}
 }
 
-// TestRWARowOmitsSupplyProvenanceWhenThereIsNone guards the serialisation
-// rather than the struct. Both fields are omitempty, so a row with no
-// supply must not grow a `supply_basis: ""` or a
-// `circulating_supply_lower_bound: false` that a consumer would read as a
-// positive statement about a figure that is not there.
+// TestRWARowOmitsSupplyProvenanceWhenThereIsNone guards the serialisation, not the struct. Both
+// fields are omitempty, so a row with no supply must not grow a `supply_basis: ""` or a
+// `circulating_supply_lower_bound: false` that a consumer would read as a positive statement
+// about a figure that is not there.
 func TestRWARowOmitsSupplyProvenanceWhenThereIsNone(t *testing.T) {
 	b, err := json.Marshal(RWAAsset{AssetID: "FOO-GAFOO"})
 	if err != nil {

@@ -10,28 +10,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// FuzzDisplayB64 fuzzes the one accessor in this package that is reached
-// with an ATTACKER-CHOSEN ScVal and no schema expectation at all.
+// FuzzDisplayB64 fuzzes the one accessor in this package reached with an attacker-chosen ScVal and
+// no schema expectation. Every other scval accessor is called by a decoder that knows the shape it
+// wants and errors on a mismatch. [scval.DisplayB64] renders whatever base64 a contract emitted for
+// the explorer's event views, so its contract is a set of totality properties: it must not panic,
+// must degrade rather than error, and must stay bounded.
 //
-// Everything else in internal/scval is called by a decoder that already
-// knows the shape it wants and returns an error on a mismatch.
-// [scval.DisplayB64] is different: the explorer's event views hand it
-// whatever base64 the contract emitted and render the result, so its
-// contract is a set of TOTALITY properties rather than a value — it must
-// not panic, must degrade rather than error, and must stay bounded.
+// Both defects it has had were of that class:
 //
-// Both defects this function has actually had were of that class and both
-// were found by reading rather than by a test:
+//   - the zero-value ScVal reports Type==Bool with a nil B pointer, so MustB dereferenced nil and
+//     panicked; reachable because MapField returns xdr.ScVal{} on a miss and the miss path logged
+//     the value;
+//   - truncateDisplay sliced bytes, so a multi-byte rune straddling the cut produced invalid UTF-8.
 //
-//   - the zero-value ScVal reports Type==Bool with a nil B pointer, so
-//     MustB dereferenced nil and panicked the goroutine (display.go:74) — reachable because MapField returns
-//     xdr.ScVal{} on a miss and the miss path logged the value;
-//   - truncateDisplay sliced BYTES, so a multi-byte rune straddling byte
-//     120 produced invalid UTF-8 (display.go:159).
-//
-// A fuzz target is the durable guard for that class: it exercises the
-// type switch's every arm, including the arms a hand-written fixture
-// never reaches, against bodies no contract we watch would emit.
+// A fuzz target exercises every arm of the type switch, including arms a hand-written fixture
+// never reaches, against bodies no watched contract would emit.
 //
 // Runs as a plain seed-corpus test under `go test`; the generative run is
 // `go test -run=^$ -fuzz=FuzzDisplayB64 -fuzztime=20s ./internal/scval/`.
@@ -92,26 +85,21 @@ func FuzzDisplayB64(f *testing.F) {
 			t.Fatalf("DisplayB64 is not deterministic:\n first: %q\nsecond: %q", got, again)
 		}
 
-		// Property 4 — bounded output. This is what displayMaxDepth and
-		// truncateDisplay exist for: "a pathological nested value can't
-		// blow the stack or the response size" (display.go:17). Every
-		// terminal is itself bounded (Symbol ≤ 32 by the XDR decoder,
-		// String truncated at 120, i256/u256 ≤ 78 digits, strkey ≤ 69),
-		// and a container truncates its joined children, so no body may
-		// render past this ceiling. An unbounded render is a response-size
-		// amplification: one event field, arbitrarily many bytes.
+		// Property 4 — bounded output, which is what displayMaxDepth and truncateDisplay exist for.
+		// Every terminal is itself bounded (Symbol ≤ 32 by the XDR decoder, String truncated at 120,
+		// i256/u256 ≤ 78 digits, strkey ≤ 69) and a container truncates its joined children, so no
+		// body may render past this ceiling. An unbounded render amplifies response size: one event
+		// field, arbitrarily many bytes.
 		const maxRendered = 256
 		if len(got) > maxRendered {
 			t.Fatalf("rendered %d bytes (> %d) — the display bound is not holding:\n%q",
 				len(got), maxRendered, got)
 		}
 
-		// Property 5 — the truncation marker is the only ellipsis the
-		// renderer emits, and it always terminates the fragment it
-		// truncated. A "…" in the MIDDLE of a container's children means
-		// a child was dropped rather than the join being cut, which
-		// would make a truncated render indistinguishable from a
-		// complete one.
+		// Property 5 — the truncation marker is the only ellipsis the renderer emits, and it always
+		// terminates the fragment it truncated. A "…" in the middle of a container's children means
+		// a child was dropped rather than the join being cut, making a truncated render
+		// indistinguishable from a complete one.
 		if i := strings.Index(got, "…"); i >= 0 && i != len(got)-len("…") {
 			rest := got[i+len("…"):]
 			if strings.Trim(rest, "]}") != "" {

@@ -117,11 +117,10 @@ func TestReconcileCounts(t *testing.T) {
 
 // ─── the symmetric-soft-fail blind spot ─────────────────
 
-// brokenDecoder MATCHES every "MATCH" row and then fails Decode on rows in
-// one specific ledger — the shape of a real decoder bug (a payload variant
-// the decoder claims by topic and then cannot parse). The projector running
-// the SAME decoder over the SAME bytes drops those rows too, which is what
-// makes the defect invisible to a row-count reconcile.
+// brokenDecoder matches every "MATCH" row and then fails Decode on rows in one specific ledger,
+// like a decoder that claims a payload variant by topic and cannot parse it. The projector runs
+// the same decoder over the same bytes and drops those rows too, which makes the defect
+// invisible to a row-count reconcile.
 type brokenDecoder struct{ badLedger uint32 }
 
 func (brokenDecoder) Matches(ev events.Event) bool { return ev.ContractID == "MATCH" }
@@ -136,19 +135,14 @@ func (d brokenDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
 // TestReDeriveOutputCountsByKindFromEvents_UndecodableMatchedNetsToZero guards the
 // symmetric-soft-fail blind spot.
 //
-// Scenario: ledger 101 holds two events the decoder CLAIMS (Matches == true)
-// and then fails to Decode. The projector failed on the identical rows when
-// it ran, so the served table holds zero rows for ledger 101 too.
+// Ledger 101 holds two events the decoder claims (Matches == true) and then fails to Decode. The
+// projector failed on the same rows, so the served table holds zero rows for ledger 101 too.
 //
-// The row-count reconcile therefore reports ledger 101 CLEAN — expected 0,
-// actual 0 — even though two rows were provably dropped from the served tier.
-// That netting is structural: the check is "expected == actual" and both
-// sides are blind in the same place, so no assertion over the counts can
-// ever catch it.
-//
-// The only signal is the blindness itself. This asserts the re-derive
-// reports it, with the exact affected ledger and the correct per-class
-// counts, so the caller can refuse to certify the range.
+// The row-count reconcile therefore reports ledger 101 clean (expected 0, actual 0) although two
+// rows were dropped from the served tier. Both sides are blind in the same place, so no
+// assertion over the counts can catch it; the only signal is the blindness itself. This asserts
+// the re-derive reports it, with the exact ledger and per-class counts, so the caller can
+// refuse to certify the range.
 func TestReDeriveOutputCountsByKindFromEvents_UndecodableMatchedNetsToZero(t *testing.T) {
 	const badLedger uint32 = 101
 	es := fakeEventStreamer{evs: []events.Event{
@@ -198,17 +192,13 @@ func TestReDeriveOutputCountsByKindFromEvents_UndecodableMatchedNetsToZero(t *te
 
 // ─── recovered decoder PANIC == a blind spot, never a crash ─────
 
-// panicDecoder MATCHES every "MATCH" row and PANICS (rather than returning an
-// error) on rows in one specific ledger — the shape of a decoder that hits an
-// upgraded / historical WASM event shape it cannot parse. The projector
-// RECOVERS this exact panic in processEventSafely, drops the row, and advances
-// the cursor ("backfill sees every prior version"), so the served tier is
-// missing whatever that event would have produced. The re-derive — the
-// mechanism that exists to make such drops VISIBLE — must recover it the SAME
-// way (a blind spot); if it let the panic escape, the whole
-// compute-completeness run would crash before writing any completeness_snapshot
-// and EVERY source's verdict would freeze, hiding the loss behind a
-// crash-looping ops job.
+// panicDecoder matches every "MATCH" row and panics (rather than returning an error) on rows in
+// one specific ledger, like a decoder hitting an upgraded or historical WASM event shape. The
+// projector recovers this panic in processEventSafely, drops the row and advances the cursor,
+// so the served tier is missing what the event would have produced. The re-derive exists to
+// make such drops visible, so it must recover the same way and record a blind spot. If the
+// panic escaped, compute-completeness would crash before writing any completeness_snapshot and
+// every source's verdict would freeze, hiding the loss behind a crash-looping job.
 type panicDecoder struct{ panicLedger uint32 }
 
 func (panicDecoder) Matches(ev events.Event) bool { return ev.ContractID == "MATCH" }
@@ -327,14 +317,12 @@ func (d *sweepDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	return []consumer.Event{fakeOutput{}, rescued}, nil
 }
 
-// TestReDeriveOutputCountsByKindFromEvents_SweptOutputCountsAtOwnLedger pins
-// the eventLedgerCarrier contract: a sweep-rescued output is counted at ITS
-// ledger (where the served row lives), not at the sweep-trigger event's —
-// while a plain output still counts at the stream event's ledger. Without the
-// carrier, the rescued trade lands at the trigger ledger and a strict
-// per-ledger reconcile reports a ± shift pair (missing at 100 / phantom at
-// 160) against a served tier that is perfectly correct — the noise
-// that forced phoenix onto aggregate netting.
+// TestReDeriveOutputCountsByKindFromEvents_SweptOutputCountsAtOwnLedger pins the
+// eventLedgerCarrier contract: a sweep-rescued output is counted at its own ledger (where the
+// served row lives), not at the sweep-trigger event's, while a plain output still counts at the
+// stream event's ledger. Without the carrier, a strict per-ledger reconcile reports a shift pair
+// (missing at 100 / phantom at 160) against a correct served tier, the noise that forced phoenix
+// onto aggregate netting.
 func TestReDeriveOutputCountsByKindFromEvents_SweptOutputCountsAtOwnLedger(t *testing.T) {
 	es := fakeEventStreamer{evs: []events.Event{
 		evAt(100, "MATCH", 0), // first field of the buffered group
@@ -373,11 +361,10 @@ func (p panickingMatcher) Decode(events.Event) ([]consumer.Event, error) {
 	panic("decode should not be reached when Matches panics")
 }
 
-// TestSafeMatches_PanicBecomesAnError pins the ops-path twin of the
-// dispatcher's poison-ledger class: a decoder that panics while
-// DECIDING OWNERSHIP must not take the reconciling binary down with it. It
-// must read as an error so the caller records a blind spot — a ledger the
-// re-derive could not evaluate must never be certified clean.
+// TestSafeMatches_PanicBecomesAnError pins the ops-path twin of the dispatcher's poison-ledger
+// class: a decoder that panics while deciding ownership must not take the reconciling binary
+// down. It must read as an error so the caller records a blind spot; a ledger the re-derive
+// could not evaluate must never be certified clean.
 func TestSafeMatches_PanicBecomesAnError(t *testing.T) {
 	matched, err := safeMatches(panickingMatcher{panicOnMatch: true}, events.Event{})
 	if err == nil {
@@ -426,18 +413,14 @@ func TestReDeriveOutputCountsByKindFromEvents_RecoversMatchesPanic(t *testing.T)
 	}
 }
 
-// matchPanicDecoder panics in MATCHES on rows in one specific ledger and
-// behaves normally everywhere else — the [panickingMatcher] shape, but
-// drivable through a whole re-derive stream rather than one direct call.
+// matchPanicDecoder panics in Matches on rows in one specific ledger and behaves normally
+// elsewhere: the [panickingMatcher] shape, drivable through a whole re-derive stream.
 //
-// This is what a malformed / upgraded-WASM row does to a real decoder's
-// ownership test: Matches type-asserts the topic vector and reads body
-// fields, so it panics as readily as Decode does. The projector recovers
-// that panic and drops the row; the completeness re-derive exists to make
-// the drop VISIBLE, so it must recover it the same way and record the
-// ledger as a blind spot — never let it escape and crash the
-// compute-completeness run (no snapshot written, every source's verdict
-// frozen), and never let the ledger net to zero and read CLEAN.
+// A malformed or upgraded-WASM row does this to a real decoder, since Matches type-asserts the
+// topic vector and reads body fields. The projector recovers the panic and drops the row; the
+// re-derive must recover it the same way and record the ledger as a blind spot. It must neither
+// let the panic crash compute-completeness (no snapshot written, every verdict frozen) nor let
+// the ledger net to zero and read clean.
 type matchPanicDecoder struct{ panicLedger uint32 }
 
 func (d matchPanicDecoder) Matches(ev events.Event) bool {

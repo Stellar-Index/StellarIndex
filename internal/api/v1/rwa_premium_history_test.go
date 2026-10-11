@@ -3,19 +3,15 @@ package v1_test
 // GET /v1/rwa/premium — the token's price against the instrument's net
 // asset value, over time.
 //
-// The point of the surface is the ratio; the point of these tests is
-// everything the ratio is NOT allowed to do. A premium is built from two
-// sampled observations, so unlike its sibling /v1/rwa/history it may not
-// carry either leg across a day it was not observed on — and because it
-// re-derives a market price rather than reading the served one, it must
-// hold that price to a thin-market floor or it becomes a way to publish,
-// on a past day, exactly the claim the live surface refuses.
+// The point of the surface is the ratio; the point of these tests is everything the ratio is NOT
+// allowed to do. A premium is built from two sampled observations, so unlike its sibling
+// /v1/rwa/history it may not carry either leg across a day it was not observed on. Because it
+// re-derives a market price rather than reading the served one, it must hold that price to a
+// thin-market floor or it publishes, for a past day, the claim the live surface refuses.
 //
-// Production wiring: v1.New with Options.OracleHistory = *timescale.Store
-// and Options.MarketHistory = *timescale.Store (see
-// cmd/stellarindex-api/main.go). The tests below use the SAME
-// constructor — there is no test-only server builder — and substitute
-// only those two readers.
+// Production wiring: v1.New with Options.OracleHistory and Options.MarketHistory (see
+// cmd/stellarindex-api/main.go). The tests use the SAME constructor, substituting only those two
+// readers.
 
 import (
 	"context"
@@ -203,8 +199,7 @@ func TestRWAPremium_AFailedReadIsNotAnEmptySeries(t *testing.T) {
 //
 // Day 1: market 1.0800 against a 1.0700 close → +0.9346% premium.
 // Day 2: market 1.0600 against a 1.0700 close → −0.9346% discount.
-// The sign is the whole point of the surface, so both directions are
-// asserted rather than one.
+// The sign is the point of the surface, so both directions are asserted.
 func TestRWAPremium_MeasuresTheDaysVWAPAgainstTheDaysOracleClose(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	id := premAssetID("USTRY", rwaGoodIssuer)
@@ -314,10 +309,9 @@ func TestRWAPremium_BothLegsReadFromABoundedFloor(t *testing.T) {
 // ─── the gaps, which are the endpoint ───────────────────────────────
 
 // TestRWAPremium_SilentOracleDayIsAHoleNotACarriedNAV. The market
-// traded on day 2 and the oracle said nothing. Carrying day 1's NAV
-// forward would draw a premium against a valuation nobody published —
-// the exact fabrication the sibling series is allowed to make on its
-// SUPPLY leg and neither series may make on a price.
+// traded on day 2 and the oracle said nothing. Carrying day 1's NAV forward would draw a premium
+// against a valuation nobody published: allowed for the sibling series' SUPPLY leg, never for a
+// price.
 func TestRWAPremium_SilentOracleDayIsAHoleNotACarriedNAV(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	id := premAssetID("USTRY", rwaGoodIssuer)
@@ -387,11 +381,10 @@ func TestRWAPremium_SilentMarketDayIsAHoleNotACarriedPrice(t *testing.T) {
 	}
 }
 
-// TestRWAPremium_AThinDayIsWithheldAndCounted. This is the gate the
-// endpoint could most easily have routed around. The point-in-time
-// premium compares against the SERVED price, which a thin market
-// withholds; a history built on the raw daily VWAP would publish, for
-// every past day, exactly the claim the live surface refuses.
+// TestRWAPremium_AThinDayIsWithheldAndCounted. This is the gate the endpoint could most easily
+// route around. The point-in-time premium compares against the SERVED price, which a thin market
+// withholds; a history built on the raw daily VWAP would publish, for every past day, the claim
+// the live surface refuses.
 func TestRWAPremium_AThinDayIsWithheldAndCounted(t *testing.T) {
 	bound, dir, rows := oneBoundMember()
 	id := premAssetID("USTRY", rwaGoodIssuer)
@@ -509,17 +502,14 @@ func TestRWAPremium_ATokenThatHasNeverTradedIsNamedNotHidden(t *testing.T) {
 
 // TestRWAPremium_ScamFlaggedIssuerGetsNoSeries.
 //
-// The flagged issuer here holds a (code, issuer) the curated table DOES
-// bind, and both legs answer for it. Nothing is published, because the
-// scam flag excludes at MEMBERSHIP time (rwa.Qualify R3) — the issuer
-// never becomes a set member, so no downstream surface can price it.
+// The flagged issuer holds a (code, issuer) the curated table DOES bind, and both legs answer
+// for it. Nothing is published, because the scam flag excludes at MEMBERSHIP time (rwa.Qualify
+// R3): the issuer never becomes a set member, so no downstream surface can price it.
 //
-// The endpoint carries its OWN suppression as well, ahead of the
-// binding lookup, and that ordering is pinned in
-// TestRWAPremiumCandidates_SuppressesAFlaggedIssuerBeforeReadingTheBinding
-// — it cannot be reached from here precisely because the upstream gate
-// gets there first, which is the correct arrangement and worth
-// asserting in both places.
+// The endpoint carries its OWN suppression as well, ahead of the binding lookup, pinned in
+// TestRWAPremiumCandidates_SuppressesAFlaggedIssuerBeforeReadingTheBinding. It cannot be reached
+// from here because the upstream gate gets there first, which is correct and asserted in both
+// places.
 func TestRWAPremium_ScamFlaggedIssuerGetsNoSeries(t *testing.T) {
 	bound := []timescale.Sep1BoundCurrency{
 		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),

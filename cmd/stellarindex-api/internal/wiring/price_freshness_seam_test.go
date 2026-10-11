@@ -9,35 +9,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// StorePriceReader's `now func() time.Time` and `vwapFreshness
-// time.Duration` seams exist for no reason other than to be injected by a
-// test, so the staleness rule needs a test that drives them.
+// StorePriceReader's `now func() time.Time` and `vwapFreshness time.Duration` seams exist only to
+// be injected by a test, so the staleness rule needs a test that drives them.
 //
-// Losing the staleness term would not, on its own, let the ~250k
-// dormant/delisted long tail be served as a months-old
-// bucket with stale=false. The
-// substance gate runs twelve lines earlier in LatestPrice, its window
-// is trailing-24h, and a pair dormant for months yields volume=0 and
-// fails the first comparison — so the read returns ErrPriceWithheld and
-// the staleness expression is never evaluated. That gate is on by
-// default and is itself tested (internal/pricingguard/substance_test.go).
+// Losing the staleness term would not, on its own, serve the dormant long tail as a months-old
+// bucket with stale=false: the substance gate runs earlier in LatestPrice over a trailing-24h
+// window, a dormant pair has volume=0, and the read returns ErrPriceWithheld before the
+// staleness expression is evaluated (that gate is tested in
+// internal/pricingguard/substance_test.go).
 //
-// The coverage gap remains, and this closes the part of
-// it that CAN be closed here. LatestPrice is NOT unit-testable from
-// this package: StorePriceReader.S is a concrete *timescale.Store with
-// an unexported db field and no injectable constructor, so exercising
-// the read end-to-end needs the testcontainers integration harness, not
-// a fake. These tests pin the two seams the staleness rule
-// parameterises — the default window and the clock — so the constant
-// cannot be silently changed and the nil-fallbacks cannot rot.
+// LatestPrice itself is not unit-testable here: StorePriceReader.S is a concrete
+// *timescale.Store with no injectable constructor, so the end-to-end read needs the
+// testcontainers harness. These tests pin the two seams the rule parameterises, the default
+// window and the clock, so the constant cannot be silently changed and the nil-fallbacks cannot
+// rot.
 
 // TestStorePriceReaderFreshnessDefault pins the freshness window.
 //
-// 15 minutes is a deliberate choice between two failure modes: well
-// above the structural 1-2 minute closed-bucket floor, so an ACTIVE
-// pair is never falsely marked stale; and decisive on a genuinely
-// dormant one, which is the bug it was introduced for — a 200-day-old
-// VWAP served with stale=false.
+// 15 minutes sits between two failure modes: well above the 1-2 minute closed-bucket floor, so an
+// active pair is never falsely marked stale, and decisive on a dormant one, which would
+// otherwise serve a months-old VWAP with stale=false.
 func TestStorePriceReaderFreshnessDefault(t *testing.T) {
 	t.Parallel()
 
@@ -88,36 +79,26 @@ func TestStorePriceReaderClock(t *testing.T) {
 // TestStorePriceReaderStalenessBoundary states the rule the two seams
 // exist to make testable, at its boundary.
 //
-// It mirrors LatestPrice's expression exactly, including the two
-// details that are easy to get wrong:
+// The rule has two details that are easy to get wrong:
 //
 //		stale := lowConfidence || r.clock().Sub(bucket.Add(time.Minute)) > r.freshnessWindow()
 //
-//	  - the age is measured from the bucket's CLOSE (start + 1 minute),
-//	    not its start — a 1-minute CAGG bucket is not closed until its
-//	    minute elapses, so measuring from the start would report every
-//	    bucket a minute older than it is and shift the boundary;
-//	  - `lowConfidence` short-circuits, so a low-confidence read is stale
-//	    regardless of age.
+//	  - the age is measured from the bucket's close (start + 1 minute), not its start; a 1-minute
+//	    CAGG bucket is not closed until its minute elapses, so measuring from the start would
+//	    report every bucket a minute older than it is and shift the boundary;
+//	  - `lowConfidence` short-circuits, so a low-confidence read is stale regardless of age.
 //
-// Reproduced rather than called: StorePriceReader.S is a concrete
-// *timescale.Store with an unexported db field and no injectable
-// constructor, so the surrounding read needs the testcontainers
-// harness. This pins the arithmetic and the boundary; the integration
-// suite owns the wiring.
+// This pins the arithmetic and the boundary; the integration suite owns the surrounding read.
 func TestStorePriceReaderStalenessBoundary(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	r := StorePriceReader{Now: func() time.Time { return now }}
 
-	// Calls the REAL rule. Re-implementing the expression
-	// locally would certify nothing: deleting the
-	// `> r.freshnessWindow()` term from LatestPrice would leave the test green
-	// while /v1/price served months-old buckets with stale=false. The rule
-	// lives in StorePriceReader.
-	// bucketIsStale so a unit test can reach it; LatestPrice calls the
-	// same method.
+	// Calls the real rule. Re-implementing the expression locally would certify nothing: deleting
+	// the `> r.freshnessWindow()` term from LatestPrice would leave the test green while
+	// /v1/price served months-old buckets with stale=false. The rule lives in
+	// StorePriceReader.bucketIsStale so a unit test can reach it; LatestPrice calls the same method.
 	stale := r.bucketIsStale
 
 	for _, tc := range []struct {

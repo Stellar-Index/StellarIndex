@@ -13,28 +13,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Regression suite: /v1/assets accepted `order_by`
-// and never read it.
+// Regression suite: /v1/assets must read `order_by`. The storage layer supports
+// AssetsOrderVolume24hUSDDesc (its own ORDER BY branch, keyset cursor, predicate and rank-tier
+// expression), so a missing wire-to-store mapping would:
 //
-// The storage layer had supported AssetsOrderVolume24hUSDDesc all
-// along — its own ORDER BY branch, keyset cursor args, cursor
-// predicate and rank-tier expression, and the unified path passes it.
-// Only the wire-to-store wiring was missing, so:
+//   - serve the top N by all-time observation count when a caller asked for 24h volume;
+//   - keep a high-volume asset with a modest lifetime count out of the candidate set while a
+//     dormant high-lifetime-count asset holds a slot;
+//   - return 200 for `order_by=TOTAL_GARBAGE`, unlike /v1/markets which 400s.
 //
-//   - the explorer home page requested
-//     `?limit=10&order_by=volume_24h_usd_desc`, was served the top ten
-//     by ALL-TIME observation count, and re-sorted just those ten
-//     client-side under the caption "Ranked by trailing-24h trading
-//     volume across every venue we ingest";
-//   - an asset with $2M of 24h volume but a modest lifetime count
-//     could not enter the candidate set at all, while a dormant
-//     high-lifetime-count asset held a slot and rendered as a dash;
-//   - `order_by=TOTAL_GARBAGE` returned 200, unlike /v1/markets which
-//     has always 400'd on an unrecognised value.
-//
-// These tests pin the request→store mapping directly, because RD-02
-// existed precisely for want of that pin: every layer worked in
-// isolation and nothing asserted they were connected.
+// These tests pin the request→store mapping directly: every layer worked in isolation and
+// nothing asserted they were connected.
 
 // orderCapturingAssets records the ListAssetsOptions the handler built.
 type orderCapturingAssets struct {
@@ -139,12 +128,8 @@ func TestAssetsOrderByGarbageIs400(t *testing.T) {
 
 // TestAssetsOrderByWithAssetClassIs400 — the catalogue and unified
 // listings rank on their own fixed schemes, each with a keyset cursor
-// encoding THAT scheme's keys, so they cannot honour a caller-chosen
-// order. They say so rather than accepting the parameter and ignoring
-// it; silently ignoring is the defect this whole change is about.
-//
-// No existing caller regresses: of the explorer's four callers, only
-// the home page sends order_by, and it sends no asset_class.
+// encoding THAT scheme's keys, so they cannot honour a caller-chosen order. They must say so
+// rather than accept the parameter and silently ignore it.
 func TestAssetsOrderByWithAssetClassIs400(t *testing.T) {
 	for _, class := range []string{"all", "fiat", "stablecoin", "crypto"} {
 		t.Run(class, func(t *testing.T) {
@@ -177,12 +162,10 @@ func TestAssetsAssetClassWithoutOrderByStillServes(t *testing.T) {
 
 // TestAssetsCursorIsEncodedUnderTheActiveOrder — the two orders have
 // DIFFERENT keyset shapes (`<rank_tier>:<observation_count>:<asset_id>`
-// vs `<rank_tier>:<vol_or_blank>:<asset_id>`). Validating an incoming
-// cursor under the wrong order rejects a good one; encoding the next
-// one under the wrong order emits keys the following page's predicate
-// reads positionally as something else, which skips or repeats rows
-// instead of erroring. So the order must reach BOTH cursor calls, not
-// just the query.
+// vs `<rank_tier>:<vol_or_blank>:<asset_id>`). Validating an incoming cursor under the wrong
+// order rejects a good one; encoding the next one under the wrong order emits keys the next
+// page's predicate reads positionally as something else, skipping or repeating rows instead of
+// erroring. So the order must reach BOTH cursor calls, not just the query.
 func TestAssetsCursorIsEncodedUnderTheActiveOrder(t *testing.T) {
 	// A cursor valid under the volume order must be accepted when that
 	// order is the one requested.

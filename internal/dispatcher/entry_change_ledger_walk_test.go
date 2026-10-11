@@ -166,14 +166,11 @@ func balanceOf(c xdr.LedgerEntryChange) int64 {
 	return int64(c.Updated.Data.Account.Balance)
 }
 
-// TestProcessLedger_FailedTxFeeChangesAreObserved pins that a FAILED transaction still debits its fee on chain,
-// stellar-core commits that fee change, and the lake's
-// clickhouse.extractEntryChanges has always recorded it. The live
-// dispatcher must not `continue` past the whole tx before the entry-change
-// walk, or the balance observer never sees the debit — the observed balance
-// drifted above the on-chain balance by the fee, and the live path and the
-// lake disagreed by exactly the failed-tx fee set (so an ADR-0034 re-derive
-// could never reconcile).
+// TestProcessLedger_FailedTxFeeChangesAreObserved: a FAILED transaction still debits its fee
+// on chain and the lake's clickhouse.extractEntryChanges records it. The live dispatcher must
+// not `continue` past the whole tx before the entry-change walk, or the balance observer
+// misses the debit and the live path and lake disagree by exactly the failed-tx fee set, so a
+// re-derive from the lake could never reconcile.
 func TestProcessLedger_FailedTxFeeChangesAreObserved(t *testing.T) {
 	// Ledger: one successful tx, then one FAILED tx whose fee debits
 	// ecWalkAccount from 1000 to 900.
@@ -204,14 +201,12 @@ func TestProcessLedger_FailedTxFeeChangesAreObserved(t *testing.T) {
 	}
 }
 
-// TestProcessLedger_FeePhasePrecedesApplyPhase pins that stellar-core charges the fee for EVERY transaction
-// in the tx set before applying ANY of them, so on chain every fee change
-// precedes every apply-phase change. The per-tx walk (tx1 fee, tx1 apply,
-// tx2 fee, ...) gave tx2's FEE-phase balance a HIGHER IntraLedgerSeq than
-// tx1's APPLY-phase balance for the same account — and IntraLedgerSeq is
-// exactly the tiebreak that makes the FINAL intra-ledger change win the
-// balance upsert. The result was a fee-phase balance published as the
-// ledger-final balance.
+// TestProcessLedger_FeePhasePrecedesApplyPhase: stellar-core charges the fee for EVERY
+// transaction in the tx set before applying ANY, so every fee change precedes every
+// apply-phase change. A per-tx walk (tx1 fee, tx1 apply, tx2 fee) would give tx2's FEE-phase
+// balance a HIGHER IntraLedgerSeq than tx1's APPLY-phase balance for the same account, and
+// IntraLedgerSeq is the tiebreak that makes the FINAL change win the balance upsert, so a
+// fee-phase balance would be published as ledger-final.
 func TestProcessLedger_FeePhasePrecedesApplyPhase(t *testing.T) {
 	// One account, touched twice in one ledger:
 	//   tx1 fee   → balance 990   (fee phase)
@@ -426,17 +421,11 @@ func TestProcessLedger_emptyLedgerYieldsNoOutputs(t *testing.T) {
 	}
 }
 
-// TestProcessLedger_EvictedKeysReachTheEntryDecoders pins that Soroban state archival is the one way a ledger entry
-// leaves the live state WITHOUT a transaction touching it: when its TTL
-// lapses, core evicts it at ledger close and reports it only in the
-// LedgerCloseMeta's evicted-keys list. The three-phase walk reads
-// transaction meta, so it could never see one.
-//
-// The consequence was not cosmetic. The decoders handled Restored — the
-// other half of the same lifecycle — so an archived SAC balance's last
-// write stood as the holder's current balance forever and the served supply
-// component stayed permanently above the truth with no path to
-// self-correct.
+// TestProcessLedger_EvictedKeysReachTheEntryDecoders: Soroban state archival is the one way an
+// entry leaves live state WITHOUT a transaction touching it. When its TTL lapses, core evicts
+// it at ledger close and reports it only in the LedgerCloseMeta's evicted-keys list, which the
+// three-phase tx-meta walk cannot see. Without it an archived SAC balance's last write stands
+// as the holder's balance forever and the served supply stays permanently above the truth.
 func TestProcessLedger_EvictedKeysReachTheEntryDecoders(t *testing.T) {
 	env, proc := mkEntryWalkTx(t, 0x55, true, nil, []xdr.LedgerEntryChange{accountBalanceChange(1000)})
 	lcm := mkEntryWalkLedger(4244,
@@ -506,11 +495,9 @@ func TestProcessLedger_EvictedKeysReachTheEntryDecoders(t *testing.T) {
 	}
 }
 
-// TestProcessLedger_NoEvictionsEmitsNothingExtra keeps the negative half
-// honest: a ledger with an empty eviction list must walk exactly the
-// transaction-phase changes it always did. The eviction phase is additive,
-// which is also why it does not renumber IntraLedgerSeq (see
-// [EntryWalkVersion]).
+// TestProcessLedger_NoEvictionsEmitsNothingExtra is the negative half: a ledger with an empty
+// eviction list walks exactly the transaction-phase changes. The eviction phase is additive,
+// so it does not renumber IntraLedgerSeq (see [EntryWalkVersion]).
 func TestProcessLedger_NoEvictionsEmitsNothingExtra(t *testing.T) {
 	env, proc := mkEntryWalkTx(t, 0x66, true,
 		[]xdr.LedgerEntryChange{accountBalanceChange(990)},
@@ -597,15 +584,12 @@ func TestProcessLedger_UpgradesCountedWithoutEntryDecoders(t *testing.T) {
 
 // ─── OpArgs provenance gate + lazy state-write enrichment ────────────
 //
-// The op's top-level InvokeContract args belong to the CALLEE of that
-// top-level call. Pre-gate, ProcessLedger attached them to EVERY event
-// the op produced — including events emitted by OTHER contracts reached
-// as sub-invocations. That let a wrapper contract call
-// adapter.write_prices with the genuine signed payload while its own
-// (attacker-chosen) top-level args were handed to the adapter-event
-// decoder as if they were the write_prices args — feed-attribution
-// steering. These tests pin the gate at the ProcessLedger level: args
-// attach exactly when invoked-contract == emitting-contract.
+// The op's top-level InvokeContract args belong to the CALLEE of that call. Attaching them to
+// EVERY event the op produced, including events from OTHER contracts reached as
+// sub-invocations, lets a wrapper contract call adapter.write_prices with the genuine signed
+// payload while its own attacker-chosen args reach the adapter-event decoder as the
+// write_prices args (feed-attribution steering). These tests pin the gate at the ProcessLedger
+// level: args attach exactly when invoked-contract == emitting-contract.
 
 // provContracts: A is the invoked (callee) contract, B a sub-invoked
 // contract emitting in the same op.

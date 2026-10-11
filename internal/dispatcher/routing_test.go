@@ -44,11 +44,9 @@ func TestEndToEndRouting_withRealFixtures(t *testing.T) {
 	//   aquarius       → one Trade per event.
 	//   phoenix        → 8 events → one Trade on the 8th, nil on 1-7.
 	//   comet          → one Trade per swap event.
-	// Accounting: events-seen-per-source, outputs-emitted-per-
-	// source. Sources with correlation state (soroswap, phoenix)
-	// emit FEWER outputs than events seen — that's the point of
-	// the buffer. The assertion below verifies the ratios per
-	// source instead of insisting on one-output-per-event.
+	// Accounting is events seen vs outputs emitted per source. Sources with correlation state
+	// (soroswap, phoenix) emit fewer outputs than events seen, which is the point of the buffer,
+	// so the assertion checks per-source ratios rather than one output per event.
 	eventsSeen := map[string]int{}    // by fixture dir
 	outputsByName := map[string]int{} // by emitted canonical.*.Source
 
@@ -74,16 +72,12 @@ func TestEndToEndRouting_withRealFixtures(t *testing.T) {
 		}
 	}
 
-	// Per-source output-count expectations, derived from known
-	// fixture counts. These double as a drift canary: if someone
-	// adds fixtures the ratios shift and the assertion nudges them
-	// to update the expected counts here.
-	//   reflector: each fixture's event yields MANY OracleUpdates
-	//     (one per asset in the update_data vector) — so we assert
-	//     on minimums, not exact.
+	// Per-source output-count expectations, derived from fixture counts; adding fixtures shifts the
+	// ratios and forces an update here.
+	//   reflector: each event yields many OracleUpdates (one per asset in the update_data vector),
+	//     so we assert minimums, not exact counts.
 	//   aquarius: 1 trade per fixture event.
-	//   soroswap: 1 trade per (swap + sync) pair, so outputs =
-	//     events / 2.
+	//   soroswap: 1 trade per (swap + sync) pair, so outputs = events / 2.
 	//   phoenix: 1 trade per (8-event) fixture group.
 	if got := outputsByName["aquarius"]; got != eventsSeen["aquarius"] {
 		t.Errorf("aquarius: got %d outputs for %d events; want 1:1",
@@ -123,11 +117,9 @@ func TestEndToEndRouting_withRealFixtures(t *testing.T) {
 	}
 }
 
-// validateOutput is a shared sanity check on the canonical payload
-// each consumer.Event wraps. All we need at the dispatch layer is
-// that the source name stamps right and the identity fields are
-// non-zero; per-source decode-correctness is covered in each
-// source's real_fixture_test.go.
+// validateOutput is a shared sanity check on the canonical payload each consumer.Event wraps. The
+// dispatch layer only needs the source name stamped and identity fields non-zero; decode
+// correctness is covered in each source's real_fixture_test.go.
 func validateOutput(o interface{}) error {
 	switch e := o.(type) {
 	case soroswap.TradeEvent:
@@ -193,11 +185,9 @@ func fmtAny(v any) string {
 	return "(non-string)"
 }
 
-// soroswapDecoderWithStubbedTokens pre-seeds a Soroswap Decoder's
-// pair registry with stub tokens for every Soroswap fixture. The
-// real decoder flow learns these from factory new_pair events;
-// fixtures don't include those, so we seed directly. The stubs are SAC
-// contract assets because every production seed path yields that form.
+// soroswapDecoderWithStubbedTokens pre-seeds a Soroswap Decoder's pair registry with stub tokens
+// for every fixture, since the real flow learns them from factory new_pair events that fixtures
+// lack. The stubs are SAC contract assets because every production seed path yields that form.
 func soroswapDecoderWithStubbedTokens(t *testing.T) *soroswap.Decoder {
 	t.Helper()
 	xlm, err := canonical.NewSorobanAsset(canonical.XLMSacContractID)
@@ -225,20 +215,14 @@ func soroswapDecoderWithStubbedTokens(t *testing.T) *soroswap.Decoder {
 	return d
 }
 
-// orderedFixturesForReplay reorders fixture paths so the replay
-// matches real on-chain ordering — critical for sources with
-// correlation buffers. Alphabetical ordering of os.ReadDir groups
-// all swap_* files before any sync_* file, which spans wall-clock
-// gaps larger than the buffer's orphan-eviction maxAge (5 min)
-// and strands every swap before its sync arrives.
+// orderedFixturesForReplay reorders fixture paths to match on-chain ordering, which matters for
+// sources with correlation buffers. Alphabetical os.ReadDir order puts all swap_* files before any
+// sync_* file, spanning gaps larger than the buffer's orphan-eviction maxAge and stranding every
+// swap before its sync arrives.
 //
-// On-chain, swap and sync of the same trade land in the same tx
-// within seconds; the dispatcher sees them adjacent. This helper
-// simulates that by pairing swap_* with sync_* of the same tx_hash
-// prefix and yielding them consecutively.
-//
-// For sources without correlation buffers (reflector / aquarius /
-// phoenix), this is a no-op — alphabetical order is fine.
+// On-chain, swap and sync of one trade land in the same tx and the dispatcher sees them adjacent.
+// This pairs swap_* with sync_* of the same tx_hash prefix and yields them consecutively. For
+// sources without correlation buffers (reflector / aquarius / phoenix) alphabetical order is fine.
 func orderedFixturesForReplay(t *testing.T, source string, files []string) []string {
 	t.Helper()
 	if source != "soroswap" {

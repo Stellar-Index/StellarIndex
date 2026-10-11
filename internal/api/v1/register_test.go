@@ -526,12 +526,9 @@ func (m *recordingMirror) RevokeKeyByID(_ context.Context, _, keyID string) erro
 	return nil
 }
 
-// TestRegister_MirrorsKeyIntoValidatorStore is the v0.32.0
-// post-deploy regression: /v1/register wrote only the Postgres
-// MANAGEMENT row while r1's auth middleware validates against REDIS,
-// so the 200 response carried a key that 401'd on first use. The mint
-// must mirror the SAME plaintext into the validator store when one is
-// wired.
+// TestRegister_MirrorsKeyIntoValidatorStore: auth validates against the Redis store, not the
+// Postgres management row, so the mint must mirror the SAME plaintext there when one is wired.
+// Otherwise the returned key 401s on first use.
 func TestRegister_MirrorsKeyIntoValidatorStore(t *testing.T) {
 	accounts := newFakeRegisterAccountStore()
 	keys := newFakeRegisterKeyStore()
@@ -587,17 +584,11 @@ func TestRegister_MirrorFailureIsNotA200(t *testing.T) {
 	}
 }
 
-// TestRegister_MirrorFailureSuspendsOrphanForReaper is the
-// regression: when the credential mirror fails, the register path must
-// (a) commit NO durable api_keys row (mirror-first ordering) and
-// (b) quarantine the leftover account row as a `signup-race:` suspension
-// so the existing signupreaper reclaims it — instead of leaving a
-// permanent active account + api_keys pair that can never authenticate
-// and that ReapSuspendedOrphans structurally cannot match.
-//
-// RED on the wrong ordering (Postgres key committed BEFORE the mirror,
-// no suspend on failure): the api_keys row persists AND the account stays
-// active.
+// TestRegister_MirrorFailureSuspendsOrphanForReaper: when the credential mirror fails, register
+// must (a) commit NO durable api_keys row (mirror-first ordering) and (b) quarantine the
+// leftover account as a `signup-race:` suspension so signupreaper reclaims it. Otherwise an
+// active account + api_keys pair that can never authenticate stays, and ReapSuspendedOrphans
+// cannot match it.
 func TestRegister_MirrorFailureSuspendsOrphanForReaper(t *testing.T) {
 	accounts := newFakeRegisterAccountStore()
 	keys := newFakeRegisterKeyStore()
@@ -634,16 +625,10 @@ func TestRegister_MirrorFailureSuspendsOrphanForReaper(t *testing.T) {
 	}
 }
 
-// TestRegister_ManagementRowFailureRollsBackMirror covers the mirror-
-// first inversion: when the mirror succeeds but the durable management
-// row then fails, the mirrored credential must be rolled back so no
-// working key ever outlives its management record (the "unlistable/
-// unrevokable key" hazard mirror-first would otherwise introduce), and
-// the orphan account is still suspended for the reaper.
-//
-// RED on the wrong ordering: the mirror runs AFTER the key store, so a
-// key-store failure returned before any mirror write — the mirror is
-// never called (call==0) and never rolled back.
+// TestRegister_ManagementRowFailureRollsBackMirror: when the mirror succeeds but the durable
+// management row then fails, the mirrored credential must be rolled back so no working key
+// outlives its management record (an unlistable, unrevokable key), and the orphan account is
+// still suspended for the reaper.
 func TestRegister_ManagementRowFailureRollsBackMirror(t *testing.T) {
 	accounts := newFakeRegisterAccountStore()
 	keys := newFakeRegisterKeyStore()
@@ -673,13 +658,9 @@ func TestRegister_ManagementRowFailureRollsBackMirror(t *testing.T) {
 	}
 }
 
-// TestRegister_RequiresContentType is the CORS
-// regression: a header-less POST is a CORS *simple* request, so
-// `fetch(url, {method:"POST", mode:"no-cors"})` on any page created an
-// account + a permanent credential per visitor and burned a token from
-// the per-IP throttle this endpoint shares with /v1/signup — the exact
-// cross-site vector the Content-Type gate exists to close, left open by
-// only validating the header when present.
+// TestRegister_RequiresContentType: a header-less POST is a CORS *simple* request, so any page
+// could create an account and credential per visitor and burn the per-IP throttle shared with
+// /v1/signup. The Content-Type gate must reject a missing header, not only a wrong one.
 func TestRegister_RequiresContentType(t *testing.T) {
 	accounts := newFakeRegisterAccountStore()
 	keys := newFakeRegisterKeyStore()
@@ -714,14 +695,9 @@ func repoRootForRegisterDocsTest(t *testing.T) string {
 	return ""
 }
 
-// TestRegisterDocsCurlExamplesIncludeContentTypeHeader guards
-// that requireJSONContentType
-// (csrf.go) unconditionally 415s a header-less POST /v1/register — the
-// header is REQUIRED, not merely validated when present (a header-less
-// POST is itself a CORS *simple* request no preflight would catch), as
-// TestRegister_RequiresContentType above pins. Every published curl
-// one-liner for this endpoint must therefore carry the header, or an
-// agent following it gets 415 on its first call.
+// TestRegisterDocsCurlExamplesIncludeContentTypeHeader: requireJSONContentType (csrf.go) 415s a
+// header-less POST /v1/register (see TestRegister_RequiresContentType), so every published curl
+// one-liner for this endpoint must carry the header or the first call fails.
 func TestRegisterDocsCurlExamplesIncludeContentTypeHeader(t *testing.T) {
 	root := repoRootForRegisterDocsTest(t)
 	const marker = "curl -X POST https://api.stellarindex.io/v1/register"
