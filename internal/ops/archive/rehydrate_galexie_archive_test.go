@@ -57,9 +57,7 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// TestRehydratePaths_AlignsDownToFileBoundary verifies that a -from
-// value sitting mid-file expands down to the file's start boundary
-// so the file containing -from is in the rehydrate set.
+// TestRehydratePaths_AlignsDownToFileBoundary: a mid-file -from expands down to its file's start boundary.
 func TestRehydratePaths_AlignsDownToFileBoundary(t *testing.T) {
 	t.Parallel()
 	schema := datastore.DataStoreSchema{
@@ -85,10 +83,7 @@ func TestRehydratePaths_AlignsDownToFileBoundary(t *testing.T) {
 	}
 }
 
-// TestRehydratePaths_NoDuplicates verifies that the iteration
-// emits each unique file path exactly once across a multi-file
-// range. Adjacent ledgers share a file at LedgersPerFile > 1, so
-// the dedupe map matters.
+// TestRehydratePaths_NoDuplicates: each file path is emitted once across a multi-file range, since adjacent ledgers share a file.
 func TestRehydratePaths_NoDuplicates(t *testing.T) {
 	t.Parallel()
 	schema := datastore.DataStoreSchema{
@@ -111,10 +106,7 @@ func TestRehydratePaths_NoDuplicates(t *testing.T) {
 	}
 }
 
-// TestRehydratePaths_HandlesZeroLedgersPerFile guards the
-// defensive fallback — a malformed schema would otherwise cause
-// an infinite loop. The function must degrade to single-ledger
-// stepping (the Galexie default).
+// TestRehydratePaths_HandlesZeroLedgersPerFile: a malformed zero schema degrades to single-ledger stepping instead of looping forever.
 func TestRehydratePaths_HandlesZeroLedgersPerFile(t *testing.T) {
 	t.Parallel()
 	schema := datastore.DataStoreSchema{
@@ -127,9 +119,7 @@ func TestRehydratePaths_HandlesZeroLedgersPerFile(t *testing.T) {
 	}
 }
 
-// TestRehydratePaths_SingleLedgerFile_DefaultCase mirrors the
-// production Galexie shape on r1 (LedgersPerFile=1) — one file
-// per ledger.
+// TestRehydratePaths_SingleLedgerFile_DefaultCase mirrors the r1 Galexie shape, one file per ledger.
 func TestRehydratePaths_SingleLedgerFile_DefaultCase(t *testing.T) {
 	t.Parallel()
 	schema := datastore.DataStoreSchema{
@@ -142,8 +132,7 @@ func TestRehydratePaths_SingleLedgerFile_DefaultCase(t *testing.T) {
 	}
 }
 
-// TestRehydratePaths_TerminatesAtUint32Max pins termination when the
-// step past -to would overflow uint32.
+// TestRehydratePaths_TerminatesAtUint32Max pins termination when the step past -to would overflow uint32.
 func TestRehydratePaths_TerminatesAtUint32Max(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -169,13 +158,7 @@ func TestRehydratePaths_TerminatesAtUint32Max(t *testing.T) {
 	}
 }
 
-// TestRehydrateFiles_TransientColdErrorIsNotMissing is the
-// regression: a transient cold-tier fault (Exists errors, or GetFile
-// fails despite Exists having just confirmed presence) must be
-// counted as an error — NOT as "missing" — so the command's
-// `errs > 0` non-zero exit actually fires. Silently folding a
-// transient fault into "missing" both mislabels a real infra problem
-// as a data gap and could still exit 0.
+// TestRehydrateFiles_TransientColdErrorIsNotMissing: a transient cold-tier fault counts as an error, not "missing", so the non-zero exit fires and a real infra problem is not mislabelled a data gap.
 func TestRehydrateFiles_TransientColdErrorIsNotMissing(t *testing.T) {
 	hot := &fakeRehydrateStore{exists: map[string]bool{}} // nothing in hot
 	cold := &fakeRehydrateStore{
@@ -196,9 +179,7 @@ func TestRehydrateFiles_TransientColdErrorIsNotMissing(t *testing.T) {
 	}
 }
 
-// TestRehydrateFiles_GenuineGapIsMissing: cold.Exists definitively
-// returning false (no error) is the ONLY path that should increment
-// missing.
+// TestRehydrateFiles_GenuineGapIsMissing: only a definitive cold.Exists false increments missing.
 func TestRehydrateFiles_GenuineGapIsMissing(t *testing.T) {
 	hot := &fakeRehydrateStore{exists: map[string]bool{}}
 	cold := &fakeRehydrateStore{exists: map[string]bool{"a": false}}
@@ -214,9 +195,7 @@ func TestRehydrateFiles_GenuineGapIsMissing(t *testing.T) {
 	}
 }
 
-// TestRehydrateFiles_GetFileErrorAfterExistsIsError: cold.Exists
-// confirms presence but the subsequent GetFile still fails — a
-// transient read fault on a file that IS there, not a gap.
+// TestRehydrateFiles_GetFileErrorAfterExistsIsError: GetFile failing after Exists confirmed presence is a transient fault, not a gap.
 func TestRehydrateFiles_GetFileErrorAfterExistsIsError(t *testing.T) {
 	hot := &fakeRehydrateStore{exists: map[string]bool{}}
 	cold := &fakeRehydrateStore{
@@ -235,9 +214,7 @@ func TestRehydrateFiles_GetFileErrorAfterExistsIsError(t *testing.T) {
 	}
 }
 
-// TestRehydrateFiles_HappyPathCopies: the successful copy path still
-// works end to end (regression guard against over-correcting into
-// always-error).
+// TestRehydrateFiles_HappyPathCopies: the successful copy path still works end to end.
 func TestRehydrateFiles_HappyPathCopies(t *testing.T) {
 	hot := &fakeRehydrateStore{exists: map[string]bool{}}
 	cold := &fakeRehydrateStore{
@@ -256,8 +233,7 @@ func TestRehydrateFiles_HappyPathCopies(t *testing.T) {
 	}
 }
 
-// TestRehydrateFiles_AlreadyInHotIsSkipped: hot.Exists=true short-
-// circuits before ever touching cold.
+// TestRehydrateFiles_AlreadyInHotIsSkipped: hot.Exists=true short-circuits before touching cold.
 func TestRehydrateFiles_AlreadyInHotIsSkipped(t *testing.T) {
 	hot := &fakeRehydrateStore{exists: map[string]bool{"a": true}}
 	cold := &fakeRehydrateStore{}
@@ -270,9 +246,7 @@ func TestRehydrateFiles_AlreadyInHotIsSkipped(t *testing.T) {
 	}
 }
 
-// TestRehydrateExitError_AllMissingFailsClosed: a run where every requested path is missing in cold (the symptom
-// of a hot/cold schema mismatch, where every hot-shaped key 404s
-// against cold) must exit non-zero, not report a clean run.
+// TestRehydrateExitError_AllMissingFailsClosed: every path missing in cold (a hot/cold schema mismatch) must exit non-zero.
 func TestRehydrateExitError_AllMissingFailsClosed(t *testing.T) {
 	err := rehydrateExitError(5, 5, 0)
 	if err == nil {
@@ -280,9 +254,7 @@ func TestRehydrateExitError_AllMissingFailsClosed(t *testing.T) {
 	}
 }
 
-// TestRehydrateExitError_PartialMissingIsNotAFailure: `missing` on
-// its own, short of the full set, is a legitimate diagnostic signal
-// (a genuine, expected archive gap) and must NOT fail the run.
+// TestRehydrateExitError_PartialMissingIsNotAFailure: partial `missing` is an expected archive gap and must not fail the run.
 func TestRehydrateExitError_PartialMissingIsNotAFailure(t *testing.T) {
 	err := rehydrateExitError(5, 2, 0)
 	if err != nil {
@@ -290,8 +262,7 @@ func TestRehydrateExitError_PartialMissingIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestRehydrateExitError_ErrorsAlwaysFailRegardlessOfMissing:
-// existing errs>0 behaviour is preserved.
+// TestRehydrateExitError_ErrorsAlwaysFailRegardlessOfMissing: errs>0 always fails.
 func TestRehydrateExitError_ErrorsAlwaysFailRegardlessOfMissing(t *testing.T) {
 	err := rehydrateExitError(5, 0, 1)
 	if err == nil {
@@ -299,9 +270,7 @@ func TestRehydrateExitError_ErrorsAlwaysFailRegardlessOfMissing(t *testing.T) {
 	}
 }
 
-// TestRehydrateExitError_EmptyRangeIsNotAFailure: an empty requested
-// range (from==to with no files, or a zero-length paths slice) must
-// not trip the all-missing guard via a 0==0 comparison.
+// TestRehydrateExitError_EmptyRangeIsNotAFailure: an empty range must not trip the all-missing guard via 0==0.
 func TestRehydrateExitError_EmptyRangeIsNotAFailure(t *testing.T) {
 	err := rehydrateExitError(0, 0, 0)
 	if err != nil {

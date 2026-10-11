@@ -7,16 +7,7 @@ import (
 	"testing"
 )
 
-// TestMintKey_RejectsMalformedIdentifier — input-validation.
-// -identifier's own help text documents a
-// kebab-case slug shape ("e.g. customer-acme-corp"); enforcing only
-// non-emptiness would let anything else (spaces,
-// uppercase, control characters, an unbounded length) pass
-// straight through to store.Create and get persisted. This asserts
-// the CLI actually rejects out-of-shape identifiers BEFORE reaching
-// config load / Redis — flag validation must fail fast on args
-// alone, no config file or network required for these cases to be
-// caught.
+// TestMintKey_RejectsMalformedIdentifier: the documented kebab-case slug shape must be enforced at the CLI boundary, before config load or Redis, so out-of-shape values never reach store.Create.
 func TestMintKey_RejectsMalformedIdentifier(t *testing.T) {
 	baseArgs := []string{"-config", "/nonexistent.toml", "-label", "Acme Corp"}
 
@@ -49,11 +40,7 @@ func TestMintKey_RejectsMalformedIdentifier(t *testing.T) {
 	}
 }
 
-// TestMintKey_AcceptsWellFormedIdentifier_PastValidation confirms the
-// positive case: a documented-shape identifier clears the new checks
-// and the function proceeds to the NEXT gate (tier / config load),
-// not the identifier/label validation — i.e. the pattern isn't
-// accidentally rejecting the very shape it documents as valid.
+// TestMintKey_AcceptsWellFormedIdentifier_PastValidation: a documented-shape identifier clears validation and reaches the next gate (tier / config load).
 func TestMintKey_AcceptsWellFormedIdentifier_PastValidation(t *testing.T) {
 	err := Mint([]string{
 		"-config", "/nonexistent.toml",
@@ -82,9 +69,7 @@ func TestMintKey_RejectsOverlongLabel(t *testing.T) {
 	}
 }
 
-// mint-key refuses, before any config / Redis / Postgres access, a mint
-// with no recorded reason, an operator key without acknowledgement, and a
-// budget or scope outside what every other mint surface accepts.
+// mint-key refuses, before any config / Redis / Postgres access, a mint with no reason, an operator key without acknowledgement, or a budget or scope outside what other mint surfaces accept.
 func TestMintKey_RequiresReasonAckAndBounds(t *testing.T) {
 	base := []string{"-config", "/nonexistent.toml", "-identifier", "customer-acme", "-label", "Acme", "-actor", "alice"}
 	cases := []struct {
@@ -118,9 +103,7 @@ func TestMintKey_RequiresReasonAckAndBounds(t *testing.T) {
 	}
 }
 
-// Without -write mint-key validates and previews the grant and never reaches
-// the key store: Redis points at a closed port, so a run that tried to mint
-// would fail on the ping.
+// Without -write mint-key previews and never reaches the key store: Redis points at a closed port, so a minting run would fail on the ping.
 func TestMintKey_DryRunMintsNothing(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "closed-redis.toml")
 	if err := os.WriteFile(cfg, []byte("[storage]\nredis_addr = \"127.0.0.1:1\"\n"), 0o600); err != nil {

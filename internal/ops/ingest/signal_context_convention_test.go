@@ -18,12 +18,7 @@ import (
 // in WithTimeout / WithCancel / NotifyContext / opsutil.SignalContext.
 var bareBackgroundCtx = regexp.MustCompile(`^\s*\w*[cC]tx\w*\s*:?=\s*context\.Background\(\)\s*$`)
 
-// TestOpsSubcommandsNeverRunOnABareBackgroundContext — an ops run context
-// with neither signal handling nor a deadline cannot be cancelled on
-// SIGTERM, so a wedged ClickHouse or archive read holds the process until it
-// is killed with nothing flushed or closed. Every stellarindex-ops
-// subcommand under internal/ops derives its context from
-// opsutil.SignalContext or a bounded context instead.
+// TestOpsSubcommandsNeverRunOnABareBackgroundContext: ops contexts derive from opsutil.SignalContext or a bounded context so SIGTERM cancels.
 func TestOpsSubcommandsNeverRunOnABareBackgroundContext(t *testing.T) {
 	var hits []string
 	scanned := 0

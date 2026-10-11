@@ -12,11 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// TestSplitRange_VariousSizes — pinning the split semantics across
-// the corner cases the chunk orchestrator can hit. Final-chunk
-// absorbs-remainder is the load-bearing property; tests check both
-// the count and the boundary contiguity invariant
-// (chunks[i].to + 1 == chunks[i+1].from).
+// TestSplitRange_VariousSizes pins split corner cases; the final chunk absorbs the remainder and chunks stay contiguous.
 func TestSplitRange_VariousSizes(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -64,8 +60,7 @@ func hashFrom(b byte) sdkxdr.Hash {
 	return h
 }
 
-// TestStitchChunks_SingleChunkPasses — a single chunk has no
-// boundary to check; stitch must succeed.
+// TestStitchChunks_SingleChunkPasses: a single chunk has no boundary to check.
 func TestStitchChunks_SingleChunkPasses(t *testing.T) {
 	results := []chunkResult{
 		{Idx: 0, FirstSeq: 100, LastSeq: 199, FirstPrevHash: hashFrom(0x99), LastHash: hashFrom(0xCC), Verified: 100},
@@ -75,9 +70,7 @@ func TestStitchChunks_SingleChunkPasses(t *testing.T) {
 	}
 }
 
-// TestStitchChunks_HappyPath — adjacent chunks where chunk[i].
-// LastHash matches chunk[i+1].FirstPrevHash AND seqs are
-// contiguous → no error.
+// TestStitchChunks_HappyPath: matching LastHash/FirstPrevHash and contiguous seqs give no error.
 func TestStitchChunks_HappyPath(t *testing.T) {
 	results := []chunkResult{
 		{Idx: 0, FirstSeq: 100, LastSeq: 199, LastHash: hashFrom(0xAA), Verified: 100},
@@ -89,8 +82,7 @@ func TestStitchChunks_HappyPath(t *testing.T) {
 	}
 }
 
-// TestStitchChunks_HashMismatch — chunk[1].FirstPrevHash differs
-// from chunk[0].LastHash → error names both chunks + ledger.
+// TestStitchChunks_HashMismatch: a differing boundary hash errors, naming both chunks and the ledger.
 func TestStitchChunks_HashMismatch(t *testing.T) {
 	results := []chunkResult{
 		{Idx: 0, FirstSeq: 100, LastSeq: 199, LastHash: hashFrom(0xAA), Verified: 100},
@@ -107,8 +99,7 @@ func TestStitchChunks_HashMismatch(t *testing.T) {
 	}
 }
 
-// TestStitchChunks_SeqGap — chunk[0].LastSeq + 1 != chunk[1].FirstSeq
-// (a missing ledger between chunks) → error.
+// TestStitchChunks_SeqGap: a missing ledger between chunks is an error.
 func TestStitchChunks_SeqGap(t *testing.T) {
 	results := []chunkResult{
 		{Idx: 0, FirstSeq: 100, LastSeq: 199, LastHash: hashFrom(0xAA), Verified: 100},
@@ -123,8 +114,7 @@ func TestStitchChunks_SeqGap(t *testing.T) {
 	}
 }
 
-// TestCheckResumeFromHash_HappyPath — operator-supplied hex matches
-// the observed FirstPrevHash → no error.
+// TestCheckResumeFromHash_HappyPath: an operator hash matching the observed FirstPrevHash passes.
 func TestCheckResumeFromHash_HappyPath(t *testing.T) {
 	h := hashFrom(0xAA)
 	hex := "aa" + strings.Repeat("00", 31)
@@ -133,9 +123,7 @@ func TestCheckResumeFromHash_HappyPath(t *testing.T) {
 	}
 }
 
-// TestCheckResumeFromHash_Mismatch — operator passed a hash that
-// doesn't match the observed FirstPrevHash; error names the seam
-// ledger + both hashes so the operator can audit.
+// TestCheckResumeFromHash_Mismatch: a mismatching hash errors naming the seam ledger and both hashes.
 func TestCheckResumeFromHash_Mismatch(t *testing.T) {
 	h := hashFrom(0xAA)
 	wrongHex := "bb" + strings.Repeat("00", 31)
@@ -150,9 +138,7 @@ func TestCheckResumeFromHash_Mismatch(t *testing.T) {
 	}
 }
 
-// TestCheckResumeFromHash_BadHex — operator typo (non-hex chars,
-// wrong length) surfaces as a parse error rather than silently
-// passing.
+// TestCheckResumeFromHash_BadHex: a non-hex or wrong-length hash is a parse error, never a silent pass.
 func TestCheckResumeFromHash_BadHex(t *testing.T) {
 	tests := []struct {
 		name string
@@ -172,14 +158,7 @@ func TestCheckResumeFromHash_BadHex(t *testing.T) {
 	}
 }
 
-// TestStitchChunks_EmptyChunkInMiddleWithRealGapErrors is the
-// regression: a chunk that processed zero ledgers is excluded from
-// the pairwise comparison, but the check is re-targeted at the
-// nearest non-empty neighbours on EITHER side — it must NOT be
-// skipped outright. Here chunk[0].LastSeq=199 and chunk[2].FirstSeq=
-// 300 (a real 100-ledger gap the empty middle chunk was supposed to
-// cover but verified nothing in), so stitching the surrounding
-// non-empty chunks must surface it as a boundary gap.
+// TestStitchChunks_EmptyChunkInMiddleWithRealGapErrors: a real gap across an empty chunk must surface via the nearest non-empty neighbours.
 func TestStitchChunks_EmptyChunkInMiddleWithRealGapErrors(t *testing.T) {
 	results := []chunkResult{
 		{Idx: 0, FirstSeq: 100, LastSeq: 199, LastHash: hashFrom(0xAA), Verified: 100},
@@ -200,11 +179,7 @@ func TestStitchChunks_EmptyChunkInMiddleWithRealGapErrors(t *testing.T) {
 	}
 }
 
-// TestStitchChunks_EmptyChunkInMiddleNoRealGapPasses: when the
-// surrounding non-empty chunks DO connect cleanly across the empty
-// middle chunk (the empty chunk's range genuinely had zero LCMs, not
-// a hole), the stitch still passes — the fix must not turn every
-// legitimate empty chunk into a false failure.
+// TestStitchChunks_EmptyChunkInMiddleNoRealGapPasses: neighbours that connect across a genuinely empty chunk still pass.
 func TestStitchChunks_EmptyChunkInMiddleNoRealGapPasses(t *testing.T) {
 	results := []chunkResult{
 		{Idx: 0, FirstSeq: 100, LastSeq: 199, LastHash: hashFrom(0xAA), Verified: 100},
@@ -216,9 +191,7 @@ func TestStitchChunks_EmptyChunkInMiddleNoRealGapPasses(t *testing.T) {
 	}
 }
 
-// TestStitchChunks_AllEmptyPasses: every chunk empty (e.g. -from/-to
-// entirely before any bucket exists) has no non-empty pair to check
-// — passes trivially.
+// TestStitchChunks_AllEmptyPasses: with every chunk empty there is no pair to check.
 func TestStitchChunks_AllEmptyPasses(t *testing.T) {
 	results := []chunkResult{
 		{Idx: 0, Verified: 0},
@@ -229,9 +202,7 @@ func TestStitchChunks_AllEmptyPasses(t *testing.T) {
 	}
 }
 
-// TestStitchChunks_TrailingEmptyChunkPasses: an empty chunk at the
-// END with no non-empty chunk after it has nothing to compare
-// against — passes.
+// TestStitchChunks_TrailingEmptyChunkPasses: a trailing empty chunk has nothing to compare against.
 func TestStitchChunks_TrailingEmptyChunkPasses(t *testing.T) {
 	results := []chunkResult{
 		{Idx: 0, FirstSeq: 100, LastSeq: 199, LastHash: hashFrom(0xAA), Verified: 100},
@@ -244,24 +215,7 @@ func TestStitchChunks_TrailingEmptyChunkPasses(t *testing.T) {
 
 // ─── a boundary divergence must be PAGEABLE ─────────
 
-// TestStitchChunks_BoundaryBreakIsPageable pins the boundary half of the
-// divergence-page rule. A divergence landing on a worker-chunk BOUNDARY
-// (rather than inside a chunk) aborted the run without ever touching
-// obs.VerifyArchiveMismatchesTotal — so the P1
-// stellarindex_stellar_archive_divergence page, which selects that
-// counter, could not fire for it. It surfaced only as the
-// severity-TICKET stellarindex_verify_archive_unit_failed, which is
-// exactly the "a genuine archive-correctness event pages nobody"
-// defect the P1 counter exists to remove. With the r1 units' 12 workers there
-// are ~11 such boundaries in every nightly run.
-//
-// Asserts the whole loop the page depends on rather than the
-// increment alone: the count must survive
-// collectVerifyArchiveMismatches' fold over chunk_idx and land in
-// the exported .prom file at the corrected value, under the `reason`
-// the runbook documents.
-//
-// Not t.Parallel: obs.VerifyArchiveMismatchesTotal is process-global.
+// TestStitchChunks_BoundaryBreakIsPageable: a divergence on a chunk BOUNDARY must move obs.VerifyArchiveMismatchesTotal and reach the .prom file (not t.Parallel: process-global).
 func TestStitchChunks_BoundaryBreakIsPageable(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -319,14 +273,7 @@ func TestStitchChunks_BoundaryBreakIsPageable(t *testing.T) {
 	}
 }
 
-// TestCheckResumeFromHash_MismatchIsPageable — the cross-RUN seam is
-// the same correctness class as the cross-chunk one (our bytes do not
-// chain onto what the previous run certified), so it feeds the same
-// counter. The second half is the load-bearing half: an operator
-// typo in -resume-from-hash is an INPUT error, not a divergence, and
-// must not move a severity-page counter.
-//
-// Not t.Parallel: obs.VerifyArchiveMismatchesTotal is process-global.
+// TestCheckResumeFromHash_MismatchIsPageable: a cross-RUN seam mismatch feeds the page counter, an -resume-from-hash typo must not (not t.Parallel: process-global).
 func TestCheckResumeFromHash_MismatchIsPageable(t *testing.T) {
 	obs.VerifyArchiveMismatchesTotal.Reset()
 	t.Cleanup(obs.VerifyArchiveMismatchesTotal.Reset)

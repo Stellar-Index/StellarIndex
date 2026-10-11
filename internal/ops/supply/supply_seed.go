@@ -67,24 +67,9 @@ func openSeedStore(ctx context.Context, dryRun bool, dsn string) (*timescale.Sto
 	return timescale.Open(ctx, dsn)
 }
 
-// supplySeedObservations seeds account_observations from the ClickHouse lake for
-// every `[supply] sdf_reserve_accounts` entry (ADR-0021).
-//
-// The live AccountEntry observer only writes when an account CHANGES, so a
-// dormant reserve account never gets an observation and the chained
-// reserve-balance reader stays on the static map. One pass reads each account's
-// latest AccountEntry from stellar.ledger_entries_current and inserts it at the
-// account's true last-modified ledger; the insert is idempotent (`ON CONFLICT DO
-// NOTHING` on (account_id, ledger)).
-//
-// Accounts with no lake row (dormant since before the entry-change capture
-// window) are reported, not fabricated: run `stellarindex-ops state-snapshot`
-// with the account-state scope first to fill them from a history-archive
-// checkpoint.
-//
-// A pass that reaches the end of its watchlist upserts
-// account_observation_seed_provenance (migration 0189); -dry-run never writes
-// it and an error mid-pass returns before it. Without -write it is a dry run.
+// supplySeedObservations seeds account_observations from the ClickHouse lake for every [supply] sdf_reserve_accounts entry (ADR-0021).
+// Each account's latest AccountEntry is inserted at its true last-modified ledger, idempotently; accounts with no lake row are reported, not fabricated (run state-snapshot first).
+// Without -write it is a dry run; only a pass reaching the end of its watchlist upserts account_observation_seed_provenance (migration 0189).
 func supplySeedObservations(args []string) error {
 	flags, err := parseSeedFlags(args)
 	if err != nil {
@@ -206,13 +191,8 @@ func seedOneAccount(ctx context.Context, reader *clickhouse.ExplorerReader, stor
 	return seedOutcomeSeeded, seed.LedgerSeq, nil
 }
 
-// accountObservationSeedProvenance builds the audit record for one COMPLETE
-// `supply seed-observations` pass (migration 0189). Factored out of
-// supplySeedObservations so the record shape — nil ledger bounds when
-// nothing was seeded — is testable without a live store. watched and
-// missingAccounts are the actual G-strkeys (the store sorts them
-// deterministically before writing); accounts_watched/accounts_missing are
-// their lengths.
+// accountObservationSeedProvenance builds the audit record for one COMPLETE seed pass (migration 0189), factored out for testing;
+// ledger bounds are nil when nothing was seeded, and accounts_watched/accounts_missing are the lengths of the G-strkey slices.
 func accountObservationSeedProvenance(watched []string, seeded, missing, removed int, minLedger, maxLedger uint32, haveLedgerBounds bool, missingAccounts []string) timescale.AccountObservationSeedProvenance {
 	p := timescale.AccountObservationSeedProvenance{
 		AccountsWatched: len(watched),

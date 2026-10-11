@@ -11,9 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestScopeSACWrappers — -contracts narrows the pass (and so the
-// provenance it touches) to the named wrappers; a typo is an error, never an
-// empty pass, and no flag means every configured wrapper.
+// TestScopeSACWrappers: -contracts narrows the pass to the named wrappers, a typo is an error (never an empty pass), and no flag means every configured wrapper.
 func TestScopeSACWrappers(t *testing.T) {
 	configured := map[string]string{"CPHO": "PHO:G1", "CBLND": "BLND:G2", "CKALE": "KALE:G3"}
 
@@ -56,9 +54,7 @@ func (f *fakeClaimableStore) InsertClaimableObservation(_ context.Context, o tim
 	return nil
 }
 
-// TestClaimableSeedWriterRowFallback — a failed batch does not
-// abort an hours-long pass. Its rows are retried one by one, the good ones
-// land, and the bad one is named in a non-zero exit.
+// TestClaimableSeedWriterRowFallback: a failed batch does not abort the pass; rows are retried one by one, good ones land, and the bad one is named in a non-zero exit.
 func TestClaimableSeedWriterRowFallback(t *testing.T) {
 	store := &fakeClaimableStore{bad: map[string]bool{"b": true}}
 	w := &claimableSeedWriter{ctx: context.Background(), store: store, tallies: map[string]*claimableSeedTally{}}
@@ -79,9 +75,7 @@ func TestClaimableSeedWriterRowFallback(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedWriterCancelledBatchStops — a batch that failed because the
-// run's deadline expired is returned, not retried row by row against a dead
-// context.
+// TestClaimableSeedWriterCancelledBatchStops: a batch that failed on the run's expired deadline is returned, not retried row by row.
 func TestClaimableSeedWriterCancelledBatchStops(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -95,8 +89,7 @@ func TestClaimableSeedWriterCancelledBatchStops(t *testing.T) {
 	}
 }
 
-// TestSeedProgress — the heartbeat total advances with every reduced window
-// and every emitted row, so the long silent walk is not read as a hang.
+// TestSeedProgress: the heartbeat total advances with every reduced window and emitted row, so the long silent walk is not read as a hang.
 func TestSeedProgress(t *testing.T) {
 	p := &seedProgress{}
 	p.window(100, 349)

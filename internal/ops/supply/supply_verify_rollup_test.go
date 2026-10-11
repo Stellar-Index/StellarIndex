@@ -62,9 +62,7 @@ func (f *fakeRollupReader) SEP41SupplyEventKindResum(_ context.Context, contract
 	return f.truth[contractID], nil
 }
 
-// TestVerifyRollupDrifts_Agreement: checkpoint fold == authoritative
-// re-sum for every contract ⇒ zero drift, and the check reports the full
-// contract count.
+// TestVerifyRollupDrifts_Agreement: checkpoint equal to the authoritative re-sum means zero drift and a full checked count.
 func TestVerifyRollupDrifts_Agreement(t *testing.T) {
 	r := &fakeRollupReader{
 		checkpoints: []timescale.SEP41RollupCheckpoint{
@@ -98,9 +96,7 @@ func TestVerifyRollupDrifts_Agreement(t *testing.T) {
 	}
 }
 
-// TestVerifyRollupDrifts_KaleDoubleFold: the incident signature — a
-// re-derive re-folded history below the checkpoint, so checkpoint =
-// 2×truth. The reconcile must flag it with Delta = +truth.
+// TestVerifyRollupDrifts_KaleDoubleFold: a re-derive that re-folded history below the checkpoint (2x truth) is flagged with Delta = +truth.
 func TestVerifyRollupDrifts_KaleDoubleFold(t *testing.T) {
 	r := &fakeRollupReader{
 		checkpoints: []timescale.SEP41RollupCheckpoint{
@@ -128,8 +124,7 @@ func TestVerifyRollupDrifts_KaleDoubleFold(t *testing.T) {
 	}
 }
 
-// TestVerifyRollupDrifts_ToleranceAbsorbs: a small in-flight advance
-// within -tolerance is not reported.
+// TestVerifyRollupDrifts_ToleranceAbsorbs: a small in-flight advance within -tolerance is not reported.
 func TestVerifyRollupDrifts_ToleranceAbsorbs(t *testing.T) {
 	r := &fakeRollupReader{
 		checkpoints: []timescale.SEP41RollupCheckpoint{
@@ -145,8 +140,7 @@ func TestVerifyRollupDrifts_ToleranceAbsorbs(t *testing.T) {
 	}
 }
 
-// TestVerifyRollupDrifts_ContractsFilterPlumbed: the -contracts subset is
-// forwarded to the reader unchanged.
+// TestVerifyRollupDrifts_ContractsFilterPlumbed: the -contracts subset reaches the reader unchanged.
 func TestVerifyRollupDrifts_ContractsFilterPlumbed(t *testing.T) {
 	r := &fakeRollupReader{
 		checkpoints: []timescale.SEP41RollupCheckpoint{
@@ -170,11 +164,7 @@ func TestVerifyRollupDrifts_ContractsFilterPlumbed(t *testing.T) {
 	}
 }
 
-// TestVerifyRollupDrifts_MissingContractReported: a requested contract
-// with no sep41_supply_rollup row at all (a watched contract whose row
-// was deleted, or that never got one) must come back in `missing`, not
-// silently drop out of the checked count — that's the "unexamined, not
-// clean" gap the row-deletion residue names.
+// TestVerifyRollupDrifts_MissingContractReported: a requested contract with no rollup row lands in `missing`, not out of the checked count.
 func TestVerifyRollupDrifts_MissingContractReported(t *testing.T) {
 	r := &fakeRollupReader{
 		checkpoints: []timescale.SEP41RollupCheckpoint{
@@ -218,28 +208,21 @@ func TestReportRollupDrifts_OKAndDrift(t *testing.T) {
 	}
 }
 
-// TestRollupExitDecision_ZeroCheckedIsError: an empty sep41_supply_rollup
-// table or a -contracts filter that matched nothing must not be certified
-// clean — checked==0 must produce a non-nil error even though drifts is
-// empty ("OK: 0 checkpoint(s) reconcile" exiting
-// 0 would be indistinguishable from a genuine all-clean run).
+// TestRollupExitDecision_ZeroCheckedIsError: checked==0 must error, or an empty table or empty filter would certify as clean.
 func TestRollupExitDecision_ZeroCheckedIsError(t *testing.T) {
 	if err := rollupExitDecision(nil, 0, nil); err == nil {
 		t.Fatal("checked=0, drifts=nil must return a non-nil error, got nil")
 	}
 }
 
-// TestRollupExitDecision_CleanNonZeroIsOK: a genuine all-clean run (at
-// least one checkpoint checked, zero drift) must still exit 0.
+// TestRollupExitDecision_CleanNonZeroIsOK: at least one checkpoint checked with zero drift exits 0.
 func TestRollupExitDecision_CleanNonZeroIsOK(t *testing.T) {
 	if err := rollupExitDecision(nil, 3, nil); err != nil {
 		t.Fatalf("checked=3, drifts=nil must return nil, got %v", err)
 	}
 }
 
-// TestRollupExitDecision_DriftIsErrorRegardlessOfChecked: drift always
-// wins even if checked also happens to be 0 (defensive; drift can't
-// actually occur with checked=0, but the error must not be masked).
+// TestRollupExitDecision_DriftIsError: drift always errors, even if checked is 0.
 func TestRollupExitDecision_DriftIsError(t *testing.T) {
 	r := &fakeRollupReader{
 		checkpoints: []timescale.SEP41RollupCheckpoint{{ContractID: "KALE", Fold: kt(2000, 0, 0), LastLedger: 1}},
@@ -254,20 +237,14 @@ func TestRollupExitDecision_DriftIsError(t *testing.T) {
 	}
 }
 
-// TestRollupExitDecision_MissingIsError: a watched contract with no
-// checkpoint row must fail the run even with zero drift — the row-deletion
-// residue this guards is invisible to drift and checked-count alone.
+// TestRollupExitDecision_MissingIsError: a watched contract with no checkpoint row fails the run even with zero drift.
 func TestRollupExitDecision_MissingIsError(t *testing.T) {
 	if err := rollupExitDecision(nil, 2, []string{"C_GONE"}); err == nil {
 		t.Fatal("missing contract present must return a non-nil error, got nil")
 	}
 }
 
-// TestResolveVerifyRollupContracts pins the default-selection precedence:
-// an explicit -contracts flag wins; otherwise the configured watched set
-// is used (so the run cross-checks against it, not "every row the table
-// happens to hold"); with neither, nil ("check all") is the only sane
-// fallback.
+// TestResolveVerifyRollupContracts pins precedence: explicit -contracts, else the configured watched set, else nil (check all).
 func TestResolveVerifyRollupContracts(t *testing.T) {
 	watched := []string{"C_WATCHED_1", "C_WATCHED_2"}
 	explicit := []string{"C_EXPLICIT"}

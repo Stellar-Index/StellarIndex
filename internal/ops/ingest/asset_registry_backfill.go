@@ -23,15 +23,9 @@ import (
 
 // ─── sizing constants ───────────────────────────────────────────────────
 
-// assetRegistryPageDefault is how many distinct assets one ClickHouse page
-// returns.
-//
-// The LIMIT cannot stop an aggregation early, so every page re-aggregates
-// the lake's trustline range and the page size trades passes against
-// per-pass cost. 25,000 puts the ~512k-asset population at ~21 pages,
-// which is few enough that the repeated scans stay a rounding error beside
-// the Postgres write, and small enough that a page lands on the heartbeat
-// well inside the 30-minute flat-progress alert window.
+// assetRegistryPageDefault is how many distinct assets one ClickHouse page returns.
+// LIMIT cannot stop the aggregation early, so each page re-scans the trustline
+// range; 25,000 (~21 pages) keeps repeat scans cheap yet lands within the 30-minute progress alert.
 const assetRegistryPageDefault = 25000
 
 // assetRegistryBatchDefault is how many observations are handed to the
@@ -40,15 +34,8 @@ const assetRegistryPageDefault = 25000
 // cancellation point covers.
 const assetRegistryBatchDefault = 2000
 
-// assetRegistryBytesPerAsset is the pre-flight's per-asset disk estimate:
-// the heap tuple (an asset_id and a slug of ~70 bytes each, a 56-byte
-// issuer strkey, a code, eight timestamps/integers, the tuple header) plus
-// its share of the six indexes on the table, plus WAL for the write.
-//
-// It is an ESTIMATE and the pre-flight says so. It is deliberately generous
-// — roughly 3x a tight reading of the row — because the number exists to
-// refuse a run that would fill the volume, not to predict the final table
-// size to the megabyte.
+// assetRegistryBytesPerAsset is the pre-flight's deliberately generous (~3x) per-asset disk
+// estimate (heap tuple, six indexes, WAL); it exists to refuse a run that would fill the volume.
 const assetRegistryBytesPerAsset = 800
 
 // assetRegistryLogEvery throttles the stderr progress line to one per this
@@ -93,23 +80,10 @@ type assetRegistryCounts struct {
 
 // ─── entry point ────────────────────────────────────────────────────────
 
-// assetRegistryBackfill populates `classic_assets` (and therefore `issuers`)
-// from trustline holdings in the ClickHouse lake.
-//
-// Why: the registry writer runs only from InsertTrade/BatchInsertTrades, so an
-// asset that is held but never traded on the SDEX never reaches classic_assets,
-// issuers, the SEP-1 fetch or RWA candidacy (a held-not-traded fund like BENJI
-// had zero rows). This job closes that gap from the lake.
-//
-// Why an ops job and not a live hook: the lake is the source of truth for entry
-// state (ADR-0034) and coverage is derived from data (ADR-0031). The reconcile is
-// idempotent and monotone, so a missed run costs only freshness, and it keeps a
-// Postgres upsert off the dispatcher hot path for every trustline change.
-//
-// Resuming: the walk is keyset-paginated on the asset string, ascending. Any early
-// stop prints a RESUME line carrying -resume-from <asset_id>. Resuming is an
-// optimisation only: both writes are idempotent and monotone (LEAST/GREATEST), so
-// a restart from the beginning converges to the same rows.
+// assetRegistryBackfill populates classic_assets (and issuers) from trustline holdings in the lake.
+// Held-but-never-traded assets never reach the registry via InsertTrade, so this closes the gap
+// (lake is source of truth, ADR-0034). Keyset-paginated; early stops print a RESUME line with
+// -resume-from, and writes are idempotent and monotone so a restart from zero converges.
 func assetRegistryBackfill(args []string) error {
 	fs := flag.NewFlagSet("asset-registry-backfill", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -256,11 +230,8 @@ func assetRegistryWalk(
 	nextLog := int64(assetRegistryLogEvery)
 	for {
 		if ctx.Err() != nil {
-			// Timeout or signal. NOT an error: the walk is resumable by
-			// construction and the RESUME line says from where. A
-			// -timeout that binds is the DESIGNED end of a bounded run,
-			// so surfacing it as a failure would make every healthy
-			// nightly run exit non-zero.
+			// Timeout or signal is NOT an error: the walk is resumable and the RESUME line says from where;
+			// a binding -timeout is the designed end of a bounded run.
 			_, _ = fmt.Fprintln(o.out, "asset-registry-backfill: budget reached or signal received — stopping early.")
 			return false, nil //nolint:nilerr // ctx.Err() here is the budget or the operator, not a fault
 		}
@@ -300,15 +271,8 @@ func assetRegistryWalk(
 	}
 }
 
-// assetRegistryPageSize narrows the next page to what -limit still allows.
-//
-// Without it a tranche of 1,000 against a 25,000-row page would scan
-// 25,000 assets and count the overshoot as progress — which matters
-// because -limit exists precisely so an operator can land the population
-// in measured steps and check the listing spine between them.
-//
-// Never returns zero: the caller stops as soon as scanned reaches the
-// limit, so it is only ever asked while at least one asset remains.
+// assetRegistryPageSize narrows the next page to what -limit still allows, so a small
+// tranche does not count a full page's overshoot as progress. Never returns zero.
 func assetRegistryPageSize(o assetRegistryOpts, scanned int64) int {
 	if o.limit <= 0 {
 		return o.page
@@ -319,29 +283,14 @@ func assetRegistryPageSize(o assetRegistryOpts, scanned int64) int {
 	return o.page
 }
 
-// errAssetRegistryWriteStoppedByContext marks a write-phase error that is
-// really the wall-clock budget or a signal landing mid-batch, not a store
-// fault. [assetRegistryWalk] converts it back into the same non-error early
-// stop the paging loop already uses, so a -timeout expiring during the
-// (usually majority-of-the-run) Postgres write phase does not turn a
-// designed stop into a failed run.
+// errAssetRegistryWriteStoppedByContext marks a write-phase error that is really the budget or a
+// signal; [assetRegistryWalk] turns it back into the non-error early stop.
 var errAssetRegistryWriteStoppedByContext = errors.New("asset-registry-backfill: context ended during write")
 
-// assetRegistryWritePage converts one lake page into observations and hands
-// them to the registry writer in -batch slices.
-//
-// The lake's asset string is PARSED, never split: identity is (code,
-// issuer), and eighteen assets on this network wear the code BENJI. A
-// string that will not parse, or that parses as something other than a
-// classic credit asset, is counted and dropped rather than guessed at.
-//
-// c.cursor only ever advances to an asset this call KNOWS is safe to skip
-// on resume: one already handed to a batch that RegisterClassicAssetsHeld
-// returned success for, or — once the whole page is done — the page's last
-// asset. It must NOT advance while a page is merely being parsed: a batch
-// midway through the page can still fail, and TrustlineAssetsAfter's
-// resume is strictly-after, so a cursor that ran ahead of the writes would
-// permanently skip every asset between the failed batch and the page end.
+// assetRegistryWritePage hands one lake page to the registry writer in -batch slices.
+// Asset strings are PARSED, never split (identity is (code, issuer)); unparseable or non-credit
+// assets are counted and dropped. c.cursor advances only past assets whose batch succeeded
+// (resume is strictly-after), or to the page end once done; running ahead would skip assets.
 func assetRegistryWritePage(
 	ctx context.Context,
 	store assetRegistryStore,
@@ -398,11 +347,8 @@ func assetRegistryWritePage(
 		// Only NOW is it true that every asset up to and including this
 		// one was written. Advance past this batch, never further.
 		c.cursor = obsAsset[end-1]
-		// Per BATCH, not per page. stellarindex_ops_job_no_progress
-		// fires on 30 minutes of flat progress_total, and the only
-		// structurally-flat phase here is the ClickHouse aggregation
-		// at the head of a page; reporting once per page would put the
-		// whole Postgres write phase inside that flat window too.
+		// Per BATCH, not per page: the flat-progress alert fires after 30 minutes, so page-level
+		// reporting would put the whole write phase inside that window.
 		hb.Progress(uint64(c.scanned), uint64(c.maxLedger)) //nolint:gosec // scanned is a non-negative running count
 	}
 	// The whole page wrote cleanly, including any trailing seeds that were
@@ -415,21 +361,9 @@ func assetRegistryWritePage(
 
 // ─── pre-flight ─────────────────────────────────────────────────────────
 
-// assetRegistryPreflight refuses a write run that could fill the Postgres
-// data volume.
-//
-// It is deliberately modest about what it is guarding. The write here is a
-// few hundred megabytes, not the hundreds of gigabytes a chunk decompress
-// moves — so this reports the arithmetic and gets out of the way, rather
-// than pretending to a precision it does not have. What it will not do is
-// start a multi-hour run on a volume that is already nearly full.
-//
-// The figure compared is, in order of preference: -min-free-bytes when the
-// operator gave one (trusted as stated, warned about loudly), otherwise
-// statfs on the directory Postgres reports for `classic_assets`. Neither
-// available is a WARNING here rather than a refusal — unlike the chunk
-// restamp, whose failure mode is a half-decompressed 160 GB chunk, the
-// worst this job can do to a full volume is fail an INSERT.
+// assetRegistryPreflight refuses a write run that could fill the Postgres data volume.
+// Free space comes from -min-free-bytes (trusted as stated) else statfs on the classic_assets
+// directory; neither available is a warning, since the worst case here is a failed INSERT.
 func assetRegistryPreflight(ctx context.Context, o assetRegistryOpts, scanner assetRegistryScanner, before timescale.ClassicAssetRegistryStats) error {
 	if o.dryRun {
 		return nil
@@ -490,12 +424,8 @@ func freeBytesOnVolume(path string) (uint64, error) {
 
 // ─── reporting ──────────────────────────────────────────────────────────
 
-// assetRegistryResumeLine is the exact command that continues this walk.
-//
-// Printed on every early exit, in full, because an operator reading a
-// journal at 03:00 should not have to reconstruct which flags the run
-// carried. The population flags are repeated verbatim for the same reason
-// the chunk restamp repeats its own.
+// assetRegistryResumeLine is the exact command that continues this walk, printed in full on every
+// early exit with the population flags repeated verbatim.
 func assetRegistryResumeLine(o assetRegistryOpts, cursor string) string {
 	if cursor == "" {
 		return "RESUME: nothing was scanned — rerun the same command.\n"

@@ -20,19 +20,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// extractWasmFromGalexie pulls raw WASM bytes for Soroban-contract WASM
-// hashes by walking the local Galexie LCM archive. It beats RPC
-// `getLedgerEntry` because it works for evicted (TTL-expired) WASMs, does not
-// depend on a public RPC's retention, and runs offline.
-//
-// For each target hash it scans LCM in [from, to] for a `LedgerEntryChange`
-// with `Data.Type == ContractCode` and a matching `ContractCode.Hash`, and
-// writes `ContractCode.Code` to `<output-dir>/<hash>.wasm`. Both Created
-// (UPLOAD_CONTRACT_WASM) and Restored changes carry the bytes, so both are
-// accepted.
-//
-// Defaults: from=2 (the walker skips pre-Soroban LCMs). to=0 walks to archive
-// tip; set it explicitly when running parallel.
+// extractWasmFromGalexie pulls raw WASM for Soroban contract hashes by walking the local Galexie LCM archive (works for evicted WASMs, offline).
+// It writes ContractCode.Code from Created and Restored LedgerEntryChanges to <output-dir>/<hash>.wasm. Defaults: from=2; to=0 walks to the archive tip (set it explicitly when running parallel).
 func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocyclo // linear diagnostic, splitting reduces readability
 	fs := flag.NewFlagSet("extract-wasm-from-galexie", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -134,11 +123,7 @@ func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocy
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Passed straight to ledgerstream.Stream, -to 0 is an unbounded live
-	// tail, so an absent hash's "MISSING ... exit non-zero" path would be
-	// unreachable — the walk would never end. -follow is the explicit
-	// opt-in for that; otherwise resolve -to to a real tip once, up
-	// front (same helper wasm-history uses).
+	// -to 0 into ledgerstream.Stream is an unbounded live tail, which would make the "MISSING ... exit non-zero" path unreachable; -follow opts in, otherwise resolve -to to a real tip once (as wasm-history does).
 	resolvedTo := uint32(*to)
 	if *to == 0 && !*follow {
 		tip, tipErr := resolveArchiveTip(ctx, lsCfg)
@@ -247,12 +232,7 @@ func extractWasmFromGalexie(args []string) error { //nolint:funlen,gocognit,gocy
 	return nil
 }
 
-// scanLCMForWasmCode walks every operation's LedgerEntryChanges
-// in this LCM, looking for ContractCode entries whose hash matches
-// the watch set. The first match per hash wins; subsequent matches
-// (from Restored events at later ledgers) are silently skipped to
-// avoid clobbering and to allow concurrent workers to be lock-free
-// on the write path.
+// scanLCMForWasmCode walks every operation's LedgerEntryChanges for ContractCode hashes in the watch set. The first match per hash wins and later ones are skipped, keeping the write path lock-free across workers.
 func scanLCMForWasmCode(
 	lcm sdkxdr.LedgerCloseMeta,
 	wantHashes map[sdkxdr.Hash]struct{},
@@ -291,15 +271,7 @@ func scanLCMForWasmCode(
 	return nil
 }
 
-// maybeWriteWasmCode inspects a single LedgerEntryChange. If it's a
-// Created or Restored ContractCode entry whose hash matches a target
-// AND the target hasn't been written yet, the WASM bytes are
-// written to <outputDir>/<hash>.wasm.
-//
-// The lock granularity is the whole `found` map; this is fine because
-// (a) most LCMs touch zero ContractCode entries, (b) writes are
-// rare per-walk, and (c) the lock-free hot path is just the
-// LedgerEntryType discriminator check.
+// maybeWriteWasmCode writes the WASM to <outputDir>/<hash>.wasm for a ContractCode change matching a not-yet-written target. The lock covers the whole `found` map, which is cheap because most LCMs touch no ContractCode.
 func maybeWriteWasmCode(
 	change *sdkxdr.LedgerEntryChange,
 	wantHashes map[sdkxdr.Hash]struct{},
@@ -308,16 +280,7 @@ func maybeWriteWasmCode(
 	foundMu *sync.Mutex,
 	found map[sdkxdr.Hash]string,
 ) {
-	// Match every change type that carries a [LedgerEntry] body
-	// (everything except LEDGER_ENTRY_REMOVED, which carries a
-	// LedgerKey instead). Created + Restored alone are not enough: the
-	// wasm-history walker finds ContractInstance updates under Updated
-	// too, and an r1 walk matching only those two returned MISSING for
-	// every hash in the same archive the wasm-history walker reads
-	// cleanly. State is the pre-image of an Updated change in V2/V3
-	// LCMs; if a ContractCode entry already exists at the target hash
-	// and is being TTL-extended or otherwise touched, the bytes are
-	// still in the State / Updated entry body.
+	// Match every change type carrying a LedgerEntry body (all but REMOVED). Created + Restored alone are not enough: ContractCode touched by a TTL extension or update still carries its bytes in State / Updated, and matching only two types reported MISSING for hashes wasm-history finds.
 	var entry *sdkxdr.LedgerEntry
 	switch change.Type {
 	case sdkxdr.LedgerEntryChangeTypeLedgerEntryCreated:
@@ -350,13 +313,7 @@ func maybeWriteWasmCode(
 		foundMu.Unlock()
 		return
 	}
-	// Claim the hash before writing (still under the lock) so a concurrent
-	// worker matching the same hash later (e.g. a Restored entry at a
-	// later ledger) doesn't race the write, but don't record it as FOUND
-	// yet: found is the walk's completion receipt (drives -early-exit, the
-	// wrote N/N summary, and the missing-hash exit code), so it must not
-	// be issued before the write it attests to has happened. An empty
-	// value marks "claimed, write in flight".
+	// Claim the hash under the lock before writing so a concurrent worker cannot race it, but do not mark it FOUND yet: found is the completion receipt (drives -early-exit, the N/N summary and the exit code) and must not precede the write. Empty value = claimed, write in flight.
 	found[cc.Hash] = ""
 	foundMu.Unlock()
 

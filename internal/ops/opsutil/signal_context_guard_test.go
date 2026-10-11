@@ -11,9 +11,7 @@ import (
 	"testing"
 )
 
-// Every stellarindex-ops subcommand must take its shutdown context from
-// SignalContext, the one place that restores the default action after the
-// first signal; a hand-rolled signal.Notify/NotifyContext swallows the second.
+// TestOpsSubcommandsUseSignalContext: shutdown contexts come from SignalContext; a hand-rolled signal.Notify swallows the second signal.
 func TestOpsSubcommandsUseSignalContext(t *testing.T) {
 	root := filepath.Join("..")
 	scanned := 0

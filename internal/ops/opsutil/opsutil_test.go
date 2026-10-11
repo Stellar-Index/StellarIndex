@@ -28,12 +28,7 @@ func testConfig() config.Config {
 	return cfg
 }
 
-// TestNewBoundedLedgerStreamConfig_TolerateTrailingMissingDefault is the
-// critical regression: the helper exists specifically so ops
-// subcommands cannot forget to opt into TolerateTrailingMissing. If
-// this assertion breaks, the trailing-edge missing-file failure
-// (project_62_diagnosis_2026_05_25) is back in scope for
-// verify-decoders and scan-soroban-events.
+// TestNewBoundedLedgerStreamConfig_TolerateTrailingMissingDefault: the helper must default TolerateTrailingMissing so subcommands cannot forget it.
 func TestNewBoundedLedgerStreamConfig_TolerateTrailingMissingDefault(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{}
@@ -49,11 +44,7 @@ func TestNewBoundedLedgerStreamConfig_TolerateTrailingMissingDefault(t *testing.
 	}
 }
 
-// TestWriteGate_FailsClosed pins the shared write-gate contract (ops
-// write-gate unification): every mutating subcommand previews by
-// DEFAULT and writes only on an explicit -write. A regression here — a
-// default that reports Enabled()==true, or -dry-run overriding -write —
-// silently re-arms the default-WRITE convention the fix removed.
+// TestWriteGate_FailsClosed: every mutating subcommand previews by default and writes only on explicit -write; -dry-run never overrides it.
 func TestWriteGate_FailsClosed(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -85,9 +76,7 @@ func TestWriteGate_FailsClosed(t *testing.T) {
 	}
 }
 
-// TestWriteGate_BannerText locks the exact loud-banner strings the
-// remediation requires: the operator must be able to tell a dry run from
-// a live write at a glance, so the text is a contract, not cosmetic.
+// TestWriteGate_BannerText locks the dry-run and live-write banner strings; the text is a contract.
 func TestWriteGate_BannerText(t *testing.T) {
 	if got := captureStderr(t, func() { PrintWriteBanner(false) }); !strings.Contains(got, "═══ DRY RUN — no writes; pass -write to apply ═══") {
 		t.Errorf("dry-run banner = %q, want the DRY RUN banner", got)
@@ -117,11 +106,7 @@ func captureStderr(t *testing.T, fn func()) string {
 	return <-done
 }
 
-// TestNewBoundedLedgerStreamConfig_BucketPassThrough confirms the
-// helper threads the caller's bucket into destination_bucket_path
-// unmodified — verify-archive uses bucket-by-parameter while
-// verify-decoders uses cfg.Storage.S3BucketLive, so the helper
-// cannot pick the bucket itself.
+// TestNewBoundedLedgerStreamConfig_BucketPassThrough: the caller's bucket reaches destination_bucket_path unmodified.
 func TestNewBoundedLedgerStreamConfig_BucketPassThrough(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{}
@@ -155,15 +140,7 @@ func TestNewBoundedLedgerStreamConfig_BucketPassThrough(t *testing.T) {
 	}
 }
 
-// TestNewBoundedLedgerStreamConfig_BoundedBuffer is the regression for
-// the ch-backfill -parallel OOM: the helper must return an
-// explicit, small Buffered override rather than leaving Buffered nil
-// (which would fall through to the SDK's
-// ingest.DefaultBufferedStorageBackendConfig — BufferSize=10000,
-// NumWorkers=10 for Galexie's 1-ledger-per-file schema). A nil
-// Buffered here is exactly the regression: N concurrent
-// ledgerstream.Stream walkers each get an independent, un-bounded
-// prefetch queue and multiply memory by N.
+// TestNewBoundedLedgerStreamConfig_BoundedBuffer: Buffered must be an explicit small override, never nil (N walkers would multiply memory).
 func TestNewBoundedLedgerStreamConfig_BoundedBuffer(t *testing.T) {
 	t.Parallel()
 	cfg := testConfig()
@@ -181,12 +158,7 @@ func TestNewBoundedLedgerStreamConfig_BoundedBuffer(t *testing.T) {
 	}
 }
 
-// TestNewBoundedLedgerStreamConfig_BufferShrinksWithParallelism asserts
-// the per-walker BufferSize scales DOWN as -parallel grows, so total
-// buffer memory across N concurrent walkers (ch-backfill, wasm-history,
-// verify-archive all split a bounded range and walk chunks
-// concurrently) stays roughly constant instead of multiplying by N —
-// the direct fix for the -parallel 2 / -parallel 4 OOMs.
+// TestNewBoundedLedgerStreamConfig_BufferShrinksWithParallelism: per-walker BufferSize falls as -parallel grows so total memory stays flat.
 func TestNewBoundedLedgerStreamConfig_BufferShrinksWithParallelism(t *testing.T) {
 	t.Parallel()
 	cfg := testConfig()
@@ -232,8 +204,7 @@ type ledgerstreamBufferedConfigLike struct {
 	numWorkers uint32
 }
 
-// TestWriteGate_RequireStatedMode: a run naming neither flag is refused;
-// either flag states the mode.
+// TestWriteGate_RequireStatedMode: a run naming neither -write nor -dry-run is refused.
 func TestWriteGate_RequireStatedMode(t *testing.T) {
 	for _, tc := range []struct {
 		args    []string
@@ -259,10 +230,7 @@ func TestWriteGate_RequireStatedMode(t *testing.T) {
 // across lines after the opening parenthesis.
 var dryRunFlagDecl = regexp.MustCompile(`Bool\(\s*"dry-run"`)
 
-// TestNoOpsSubcommandDeclaresADryRunOptOut is the structural guard for the
-// default-WRITE shape: a subcommand that declares its own -dry-run
-// and no -write writes unless the operator remembers to opt out. Mutating
-// subcommands build their FlagSet with NewMutatingFlagSet instead.
+// TestNoOpsSubcommandDeclaresADryRunOptOut: mutating subcommands use NewMutatingFlagSet, not their own -dry-run without -write (default-WRITE shape).
 func TestNoOpsSubcommandDeclaresADryRunOptOut(t *testing.T) {
 	scanned := 0
 	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {

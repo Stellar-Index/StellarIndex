@@ -40,8 +40,7 @@ func (f *fakeAccountEraser) SlugErased(context.Context, string) (bool, error) {
 	return f.erasedSlug, nil
 }
 
-// TestAccountErase_DryRunWritesNothingAndPrintsNoAddress — the default
-// pass only plans, and its output never carries an email.
+// TestAccountErase_DryRunWritesNothingAndPrintsNoAddress: the default pass only plans and never prints an email.
 func TestAccountErase_DryRunWritesNothingAndPrintsNoAddress(t *testing.T) {
 	f := &fakeAccountEraser{}
 	var out bytes.Buffer
@@ -57,8 +56,7 @@ func TestAccountErase_DryRunWritesNothingAndPrintsNoAddress(t *testing.T) {
 	}
 }
 
-// TestAccountErase_WriteErasesAsStaff — an operator erasure is recorded
-// as a staff action.
+// TestAccountErase_WriteErasesAsStaff: an operator erasure is recorded as a staff action.
 func TestAccountErase_WriteErasesAsStaff(t *testing.T) {
 	f := &fakeAccountEraser{}
 	var out bytes.Buffer
@@ -71,8 +69,7 @@ func TestAccountErase_WriteErasesAsStaff(t *testing.T) {
 	}
 }
 
-// TestAccountErase_FinishDryRunRefusesALiveSlug — the dry run says what
-// -write would refuse.
+// TestAccountErase_FinishDryRunRefusesALiveSlug: the dry run says what -write would refuse.
 func TestAccountErase_FinishDryRunRefusesALiveSlug(t *testing.T) {
 	f := &fakeAccountEraser{}
 	if err := runAccountEraseWith(context.Background(), &bytes.Buffer{}, f, f, uuid.Nil, "acme", true); err == nil {

@@ -16,58 +16,23 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Textfile export of the verify-archive mismatch counter.
-//
-// The P1 `stellarindex_stellar_archive_divergence` page selects
-// `stellarindex_verify_archive_mismatches_total`, whose only other export is
-// the opt-in `-metrics-listen` endpoint, which nothing scrapes. A short-lived
-// batch job cannot be scraped reliably, so this uses the node_exporter
-// textfile pattern.
-//
-// Three properties keep the counter usable by `increase()`:
-//
-//  1. CUMULATIVE: each run adds to the total the previous run left on disk.
-//  2. ZERO-SEEDED: all three `reason` values are emitted even at 0, since a
-//     series that first APPEARS at 1 yields `increase() == 0` and the page
-//     would miss the first divergence.
-//  3. AGGREGATED OVER chunk_idx, a per-run worker index: a mismatch on a
-//     never-seen chunk_idx would create a new series, defeating property 2.
-//
-// The `tier` label keeps the tier-a and tier-b `.prom` files from exposing
-// the same label set, which the textfile collector rejects as a duplicate.
+// Textfile export of the verify-archive mismatch counter for the P1 stellarindex_stellar_archive_divergence page (node_exporter textfile pattern; the batch job cannot be scraped).
+// Three properties keep it usable by increase(): CUMULATIVE across runs; ZERO-SEEDED for all three reason values (a series first appearing at 1 yields increase()==0);
+// AGGREGATED OVER the per-run chunk_idx (a new chunk_idx would create a new series). The tier label stops tier-a and tier-b .prom files exposing duplicate label sets.
 
 const (
-	// verifyArchiveMismatchMetric is the counter the P1
-	// `stellarindex_stellar_archive_divergence` rule selects. It is
-	// also declared in internal/obs (the in-process
-	// `-metrics-listen` path); the name is the contract between
-	// the two and the rule files.
+	// verifyArchiveMismatchMetric is the counter the P1 divergence rule selects; the name is the contract with internal/obs and the rule files.
 	verifyArchiveMismatchMetric = "stellarindex_verify_archive_mismatches_total"
 
 	verifyArchiveMismatchHelp = "Chain breaks, sequence gaps, and checkpoint mismatches found by verify-archive, cumulative per reason across runs on this host."
 
-	// verifyArchiveLastSuccessMetric is the unix time of the last run
-	// that COMPLETED CLEANLY on this host, per tier.
-	//
-	// A staleness page reading node_systemd_timer_last_trigger_seconds
-	// would measure when the TIMER last fired — independent of the
-	// triggered service's exit status. A job that failed every single
-	// night would keep that gauge perfectly fresh, and the page for
-	// "the archive has not been verified" would be defeated by exactly
-	// the scenario it names.
-	//
-	// Only a clean exit advances this. A failed run carries the prior
-	// value forward, so the gauge answers "when did verification last
-	// SUCCEED", which is the question the alert asks.
+	// verifyArchiveLastSuccessMetric is the unix time of the last clean run per tier. Only a clean exit advances it (a failed run carries the prior value),
+	// because node_systemd_timer_last_trigger_seconds measures the timer, which stays fresh while the job fails every night.
 	verifyArchiveLastSuccessMetric = "stellarindex_verify_archive_last_success_unix"
 
 	verifyArchiveLastSuccessHelp = "Unix time of the last verify-archive run that completed cleanly on this host, per tier. Zero when no run has ever succeeded."
 
-	// maxPriorTextfileBytes bounds the read-back of our own
-	// previous output. The file is a few hundred bytes; anything
-	// vastly larger is not ours and we would rather start from a
-	// clean counter reset than parse an unbounded blob on the ops
-	// path.
+	// maxPriorTextfileBytes bounds the read-back of our own output; anything vastly larger is not ours, so start from a counter reset.
 	maxPriorTextfileBytes = 1 << 20
 )
 
@@ -76,12 +41,8 @@ const (
 // every write so the series exist before the first divergence.
 var verifyArchiveMismatchReasons = []string{"chain", "checkpoint", "sdf-sample", "sequence"}
 
-// collectVerifyArchiveMismatches reads THIS run's mismatch counts
-// back out of the process registry, summed over chunk_idx. Reading
-// the live collector (rather than threading a return value up from
-// the walk) means every present and future `.Inc()` site is covered
-// automatically, including the chunk-abort paths that return an
-// error before the orchestrator can aggregate results.
+// collectVerifyArchiveMismatches reads THIS run's mismatch counts from the process registry, summed over chunk_idx;
+// reading the live collector covers every .Inc() site, including chunk-abort paths that return before aggregation.
 func collectVerifyArchiveMismatches() map[string]uint64 {
 	ch := make(chan prometheus.Metric, 32)
 	go func() {
@@ -111,17 +72,8 @@ func collectVerifyArchiveMismatches() map[string]uint64 {
 	return totals
 }
 
-// writeVerifyArchiveTextfile folds this run's mismatch counts into
-// whatever the previous run left at path and writes the result via
-// the standard node_exporter atomic-write protocol: write
-// `<path>.tmp`, then rename. The collector skips `.tmp` files, so a
-// partial write never appears in a scrape.
-//
-// tier is the run's `-tier` value; only prior samples carrying the
-// SAME tier are carried forward, so re-pointing a unit at a
-// different tier starts a fresh zero baseline instead of
-// transplanting another tier's total onto the new series (which
-// would read as a jump and false-page).
+// writeVerifyArchiveTextfile folds this run's counts into the previous run's file at path and writes atomically (<path>.tmp then rename; the collector skips .tmp).
+// Only prior samples with the SAME tier carry forward, so re-pointing a unit at another tier starts a zero baseline instead of a false-paging jump.
 func writeVerifyArchiveTextfile(path, tier string, runTotals map[string]uint64, succeeded bool, now time.Time) error {
 	totals := readPriorVerifyArchiveTextfile(path, tier)
 	for reason, n := range runTotals {
@@ -194,12 +146,8 @@ func renderVerifyArchiveTextfile(w io.Writer, tier string, totals map[string]uin
 	return nil
 }
 
-// readPriorVerifyArchiveLastSuccess recovers the last clean-completion
-// timestamp this writer recorded earlier for tier. Best-effort for
-// the same reason as the counter reader: a missing or malformed file
-// degrades to "never succeeded" (0), which makes the staleness alert
-// fire rather than go quiet — the safe direction for a signal whose
-// whole job is to notice absence.
+// readPriorVerifyArchiveLastSuccess recovers the last clean-completion timestamp for tier. A missing or malformed file reads as 0 (never succeeded),
+// so the staleness alert fires rather than going quiet.
 func readPriorVerifyArchiveLastSuccess(path, tier string) int64 {
 	f, err := os.Open(path) //nolint:gosec // operator-supplied path, the same one we write
 	if err != nil {
@@ -227,16 +175,8 @@ func readPriorVerifyArchiveLastSuccess(path, tier string) int64 {
 	return 0
 }
 
-// readPriorVerifyArchiveTextfile parses the cumulative per-reason
-// totals out of a textfile this function's writer produced earlier.
-//
-// Best-effort by design: a missing file (first run ever, operator
-// wiped the collector dir), an unreadable one, or a malformed line
-// all degrade to "no prior state" rather than failing the run. An
-// ops binary that refused to publish metrics because it could not
-// parse its own last output would recreate the blind spot this file
-// removes. To Prometheus that degradation is an ordinary counter
-// reset.
+// readPriorVerifyArchiveTextfile parses the cumulative per-reason totals from an earlier textfile. Best-effort: a missing, unreadable or malformed file
+// degrades to no prior state (a Prometheus counter reset) rather than failing the run.
 func readPriorVerifyArchiveTextfile(path, tier string) map[string]uint64 {
 	totals := map[string]uint64{}
 	f, err := os.Open(path) //nolint:gosec // operator-supplied path, the same one we write

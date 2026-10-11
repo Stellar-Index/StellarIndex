@@ -8,13 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
 )
 
-// TestBuildVerifyDispatcher_unionsProtocolContractsSeed pins that
-// a pool admitted only via protocol_contracts (not yet in the
-// in-code curated set) must be visible to verify-decoders when
-// -seed-protocol-contracts is used, mirroring production's
-// GatedRegistryOptions gate. Without the union, verify-decoders
-// would report this pool's decoder silent even though it is emitting
-// — a false diagnosis of a live decoder as dead.
+// TestBuildVerifyDispatcher_unionsProtocolContractsSeed pins that a pool admitted only via protocol_contracts is visible to verify-decoders with -seed-protocol-contracts, mirroring production's GatedRegistryOptions gate; otherwise a live decoder is falsely diagnosed as dead.
 func TestBuildVerifyDispatcher_unionsProtocolContractsSeed(t *testing.T) {
 	const laterPool = "CBQ7Y7VDT6IHOWL7X5JQE5U3JFHFQD5H6QNRPY3EM52ELHKGXAA6UWSN" // not in comet.MainnetGatedSet()
 	ev := events.Event{ContractID: laterPool, Topic: []string{comet.TopicSymbolPool, comet.TopicSymbolSwap}}

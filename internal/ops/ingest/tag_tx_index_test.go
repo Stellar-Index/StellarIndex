@@ -53,8 +53,7 @@ func (m txIndexMapLake) TxLedgerIndexes(_ context.Context, hashes []string) (map
 	return out, nil
 }
 
-// The tag-tx-index preview may read untagged rows but must never reach the
-// UPDATE; -write must.
+// The tag-tx-index preview may read untagged rows but must never reach the UPDATE; -write must.
 func TestTagTxIndexWindow_PreviewNeverTags(t *testing.T) {
 	t0 := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	keys := []timescale.TxIndexKey{
@@ -85,9 +84,7 @@ func TestTagTxIndexWindow_PreviewNeverTags(t *testing.T) {
 	}
 }
 
-// An UPDATE into a compressed chunk decompresses it inside the transaction;
-// -write over a range touching one must refuse before walking anything,
-// while the preview still runs.
+// An UPDATE into a compressed chunk decompresses it inside the transaction, so -write over such a range refuses before walking while the preview still runs.
 func TestRunTagTxIndex_WriteRefusesCompressedChunk(t *testing.T) {
 	t0 := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	keys := []timescale.TxIndexKey{{Ledger: 10, TxHash: "aa", MinTs: t0.Add(time.Hour), MaxTs: t0.Add(time.Hour)}}
@@ -126,8 +123,7 @@ func TestRunTagTxIndex_WriteRefusesCompressedChunk(t *testing.T) {
 	}
 }
 
-// The policy can compress a chunk mid-run; the per-window recheck must stop
-// the walk before the window that now touches it.
+// The policy can compress a chunk mid-run; the per-window recheck must stop the walk before the window that now touches it.
 func TestRunTagTxIndex_WriteRechecksEachWindow(t *testing.T) {
 	t0 := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	store := &compressingChunkStore{txIndexKeysStore: txIndexKeysStore{chunks: []timescale.TradeChunk{

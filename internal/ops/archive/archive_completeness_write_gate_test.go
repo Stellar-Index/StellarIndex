@@ -15,18 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// TestArchiveCompletenessFix_DryRunByDefault pins that `fix` and
-// `verify` registered neither -write nor -dry-run and fetched over HTTP,
-// then os.Create/os.Rename/os.Chown'd into -archive-root unconditionally
-// — the daily systemd timer runs `verify` unattended, with no preview and
-// no confirmation, so a stale -archive-root default or a mis-templated
-// mount got checkpoints written into the wrong tree with nobody looking.
-//
-// Without -write, `fix` must report the residual-missing exit (1 missing
-// checkpoint in a 1-checkpoint range) WITHOUT constructing a filler or
-// touching the filesystem — asserted here by the archive root staying
-// completely empty, which also proves no HTTP fetch was attempted (this
-// repo forbids tests that need network access).
+// TestArchiveCompletenessFix_DryRunByDefault pins that without -write `fix` reports the residual-missing exit and touches nothing (empty root, no HTTP fetch).
 func TestArchiveCompletenessFix_DryRunByDefault(t *testing.T) {
 	root := t.TempDir()
 
@@ -45,8 +34,7 @@ func TestArchiveCompletenessFix_DryRunByDefault(t *testing.T) {
 	}
 }
 
-// TestArchiveCompletenessVerify_DryRunByDefault is fix's sibling assertion
-// for the mode the systemd timer actually fires.
+// TestArchiveCompletenessVerify_DryRunByDefault is fix's sibling assertion for the mode the timer runs.
 func TestArchiveCompletenessVerify_DryRunByDefault(t *testing.T) {
 	root := t.TempDir()
 
@@ -65,9 +53,7 @@ func TestArchiveCompletenessVerify_DryRunByDefault(t *testing.T) {
 	}
 }
 
-// TestArchiveCompletenessFix_NothingMissingIgnoresWriteGate: an
-// already-complete range must return cleanly regardless of -write —
-// there is nothing to gate.
+// TestArchiveCompletenessFix_NothingMissingIgnoresWriteGate: a complete range returns cleanly regardless of -write.
 func TestArchiveCompletenessFix_NothingMissingIgnoresWriteGate(t *testing.T) {
 	root := t.TempDir()
 	// seq=63 -> ledger/00/00/00/ledger-0000003f.xdr.gz

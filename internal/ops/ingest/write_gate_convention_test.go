@@ -12,10 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestPreviewPathsNeverReachTheStore is the behavioural half: the gate is
-// only worth its flag if the preview branch actually writes nothing. Each
-// of these is handed a NIL *timescale.Store, so any call through to the
-// datastore panics on the nil dereference instead of quietly passing.
+// TestPreviewPathsNeverReachTheStore hands each preview a nil *timescale.Store so any datastore call panics instead of passing.
 func TestPreviewPathsNeverReachTheStore(t *testing.T) {
 	ctx := context.Background()
 	var store *timescale.Store // deliberately nil — see the doc above

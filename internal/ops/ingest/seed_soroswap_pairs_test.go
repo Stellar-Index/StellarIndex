@@ -10,9 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// A keyed stellar-rpc provider carries its API key in the URL path
-// (e.g. .../v2/<KEY>), the same shape that must not be printed raw to
-// stderr. logSeedStart must not repeat it.
+// TestLogSeedStartRedactsKeyedRPCEndpoint: a keyed RPC URL carries its API key in the path, so logSeedStart must not print it raw.
 func TestLogSeedStartRedactsKeyedRPCEndpoint(t *testing.T) {
 	var buf bytes.Buffer
 	const pathCredentialFragment = "provider-cred-9f2c7a1b4e6d8091"
@@ -49,9 +47,7 @@ func (f *fakeSoroswapPairStore) InsertSoroswapPairIfAbsent(_ context.Context, pa
 	return true, nil
 }
 
-// An RPC answer that contradicts a registered pair (here: token0/token1
-// swapped) must never reach the store; the run fails and names the pair.
-// A pair the registry lacks is inserted.
+// TestSoroswapPairSeederNeverRewritesRegisteredPair: an RPC answer contradicting a registered pair never reaches the store and the run names the pair; an unregistered pair is inserted.
 func TestSoroswapPairSeederNeverRewritesRegisteredPair(t *testing.T) {
 	store := &fakeSoroswapPairStore{rows: []timescale.SoroswapPair{
 		{PairStrkey: "PAIR_P", Token0Strkey: "TOKEN_A", Token1Strkey: "TOKEN_B"},
@@ -97,8 +93,7 @@ func TestSoroswapPairSeederDryRunWritesNothing(t *testing.T) {
 	}
 }
 
-// The indexer can register a pair between the snapshot and the insert;
-// the store keeps the indexer's row and the run still succeeds.
+// TestSoroswapPairSeederKeepsRowRegisteredDuringSweep: a pair the indexer registers mid-run keeps the indexer's row and the run succeeds.
 func TestSoroswapPairSeederKeepsRowRegisteredDuringSweep(t *testing.T) {
 	store := &fakeSoroswapPairStore{lostRace: map[string]bool{"PAIR_N": true}}
 	s, err := newSoroswapPairSeeder(context.Background(), &bytes.Buffer{}, store, true)

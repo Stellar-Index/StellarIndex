@@ -13,10 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// Run is the internal/ops/diagnostics package's entry point — see
-// discovery.Run's doc comment for the calling convention shared by
-// every internal/ops/* package post-split. args[0] is the subcommand
-// verb (one of the five this package owns); args[1:] are its flags.
+// Run is the entry point of the diagnostics ops package; see discovery.Run for the shared calling convention. args[0] is the subcommand verb.
 func Run(args []string) error {
 	switch args[0] {
 	case "rpc-probe":

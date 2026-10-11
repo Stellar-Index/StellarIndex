@@ -55,11 +55,7 @@ func newPrefixedHotBucket(t *testing.T, bucketPath string) (*fakeHotBucket, stri
 	return b, bucket, prefix
 }
 
-// TestDeleteTrimCandidates_DeletesTheListedObject: with a configured bucket
-// path carrying a trailing slash, the hand-built key
-// (TrimPrefix(prefix+"/", "/") + p) was "archive//FFFF…", which names no
-// object; S3 answered success and the run reported deleted=N while the
-// disk never moved. The key must be the one the listing used.
+// TestDeleteTrimCandidates_DeletesTheListedObject: the delete key must be the one the listing used; a hand-built key with a doubled slash named no object, S3 answered success, and the disk never moved.
 func TestDeleteTrimCandidates_DeletesTheListedObject(t *testing.T) {
 	t.Parallel()
 	for _, bucketPath := range []string{"galexie-archive", "galexie-archive/archive", "galexie-archive/archive/"} {
@@ -80,9 +76,7 @@ func TestDeleteTrimCandidates_DeletesTheListedObject(t *testing.T) {
 	}
 }
 
-// TestDeleteTrimCandidates_UnverifiedDeleteFails: a DeleteObject that
-// returns success while the object still resolves is not a deletion. It
-// must fail the run, not be counted.
+// TestDeleteTrimCandidates_UnverifiedDeleteFails: a DeleteObject that succeeds while the object still resolves is not a deletion and must fail the run.
 func TestDeleteTrimCandidates_UnverifiedDeleteFails(t *testing.T) {
 	t.Parallel()
 	b, bucket, prefix := newPrefixedHotBucket(t, "galexie-archive/archive")
@@ -96,8 +90,7 @@ func TestDeleteTrimCandidates_UnverifiedDeleteFails(t *testing.T) {
 	}
 }
 
-// TestCheckTrimCutoff: --older-than-ledger was unbounded against the tip, so
-// -older-than-ledger 4294967295 would trim the hot tier to the live seam.
+// TestCheckTrimCutoff: --older-than-ledger must be bounded against the tip, or a huge value would trim the hot tier to the live seam.
 func TestCheckTrimCutoff(t *testing.T) {
 	t.Parallel()
 	const tip = 62_000_000

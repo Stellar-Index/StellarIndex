@@ -19,37 +19,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// ledgerCloseTimeReader resolves a ledger's real on-chain close time. The
-// authoritative every-ledger source is ClickHouse stellar.ledgers (satisfied
-// by *clickhouse.ExplorerReader); kept as an interface so
-// resolveSnapshotLedger is unit-testable without a live lake. found=false means
-// the ledger has no lake row.
+// ledgerCloseTimeReader resolves a ledger's real close time from ClickHouse stellar.ledgers (found=false means no lake row); an interface so resolveSnapshotLedger is testable without a lake.
 type ledgerCloseTimeReader interface {
 	CloseTimeForLedger(ctx context.Context, ledger uint32) (time.Time, bool, error)
-	// LatestLedgerAtOrBefore returns the newest stellar.ledgers row in
-	// [maxSeq-maxAutoSnapshotClampLedgers, maxSeq]. Used by the AUTO
-	// snapshot-ledger path to clamp the live cursor to the lake's landed
-	// tip (see resolveSnapshotLedger); found=false means the lake holds no
-	// row in that window, which is every position this resolver would
-	// accept a snapshot at.
+	// LatestLedgerAtOrBefore returns the newest stellar.ledgers row in [maxSeq-maxAutoSnapshotClampLedgers, maxSeq]; found=false means none in that window.
 	LatestLedgerAtOrBefore(ctx context.Context, maxSeq uint32) (uint32, time.Time, bool, error)
 }
 
-// maxAutoSnapshotClampLedgers bounds how far the auto snapshot-ledger clamp
-// may walk back from the live cursor to the lake's landed tip. The gap the
-// clamp exists to absorb is the dual-sink landing race — seconds, single-digit
-// ledgers. A gap beyond this bound is not a race, it is a stalled lake
-// (archivist down, CH sink wedged), and stamping a snapshot half an hour
-// behind the cursor would hide that stall — so the resolver fails closed
-// exactly as it did before the clamp existed. 512 ledgers ≈ 45 min at
-// mainnet's ~5.3s cadence: far above any landing race, far below a day.
-//
-// It IS the lookup's own scan window rather than a second copy of the number:
-// [clickhouse.ExplorerReader.LatestLedgerAtOrBefore] reads
-// [clickhouse.LatestLedgerLookbackLedgers] below the cursor and no further,
-// so what this refuses and what the lake is read for cannot drift apart. Same
-// value and rationale as
-// cmd/stellarindex-aggregator/main.go::maxSupplyLakeClampLedgers.
+// maxAutoSnapshotClampLedgers bounds how far the auto snapshot-ledger clamp may walk back from the live cursor to the lake's landed tip.
+// The clamp absorbs the dual-sink landing race (single-digit ledgers); a larger gap is a stalled lake and must fail closed, not be hidden.
+// It is the lookup's own scan window ([clickhouse.LatestLedgerLookbackLedgers]) so refusal and read cannot drift; same value as cmd/stellarindex-aggregator maxSupplyLakeClampLedgers.
 const maxAutoSnapshotClampLedgers = clickhouse.LatestLedgerLookbackLedgers
 
 // cursorReader is the ingestion-cursor half of resolveSnapshotLedger's
@@ -60,19 +39,10 @@ type cursorReader interface {
 	ListCursors(ctx context.Context) ([]timescale.Cursor, error)
 }
 
-// chainCursorSource is the ingestion_cursors row that records how far the
-// LIVE indexer has walked the chain — cmd/stellarindex-indexer's
-// `cursorSource` constant. It is the one cursor whose value is, by
-// definition, "the chain position the supply components were derived
-// from"; every other row in that table belongs to an ops job
-// (backfill/<range>, projector/<source>, census-backfill, projected-rebuild,
-// gap-detector high-water) and describes that job's own progress.
+// chainCursorSource is the ingestion_cursors row for the live indexer's walk (the indexer's `cursorSource`): the only cursor that means "chain position the supply components derive from"; the rest are ops-job progress.
 const chainCursorSource = "ledgerstream"
 
-// Run is the internal/ops/supply package's entry point — see
-// discovery.Run's doc comment for the calling convention shared by
-// every internal/ops/* package. This package owns one top-level
-// subcommand (`supply`) with its own sub-dispatch below.
+// Run is the entry point of the supply ops package; see discovery.Run for the shared calling convention.
 func Run(args []string) error {
 	switch args[0] {
 	case "supply":
@@ -82,19 +52,7 @@ func Run(args []string) error {
 	}
 }
 
-// supplyCmd dispatches the supply sub-subcommand: `audit` (read),
-// `snapshot` (write), `seed-observations` (lake-derived ADR-0021
-// bootstrap for dormant reserve accounts), `seed-sac-balances`
-// (lake-derived bootstrap for dormant contract-held SAC balances,
-// migration 0014), `seed-claimable-balances` (lake-derived bootstrap
-// for the claimable component of Algorithm 2, migration 0012 — an
-// unseeded claimable_observations held 997 rows with a floor of ledger
-// 63,301,831, which was the whole of AQUA's 13.2% under-read vs
-// Horizon), `seed-sep41-genesis` (lake-derived pre-Soroban
-// opening-balance seed for SAC-wrappers, migration 0088),
-// `verify-rollup` (the derived-checkpoint reconcile that catches
-// sep41_supply_rollup fold drift, e.g. a KALE 2× double-fold). Future
-// modes (e.g. `recompute`, `policy-validate`) plug in here.
+// supplyCmd dispatches the supply subcommands: audit (read), snapshot (write), seed-observations, seed-sac-balances, seed-claimable-balances, seed-sep41-genesis (lake-derived bootstraps) and verify-rollup (sep41_supply_rollup fold-drift reconcile).
 func supplyCmd(args []string) error {
 	const usage = "usage: supply <audit|snapshot|seed-observations|seed-sac-balances|seed-claimable-balances|seed-sep41-genesis|verify-rollup> [flags]"
 	if len(args) == 0 {
@@ -123,20 +81,8 @@ func supplyCmd(args []string) error {
 	}
 }
 
-// supplySnapshot computes a fresh supply snapshot and writes it to
-// asset_supply_history. The CLI is native-XLM-only: Algorithm 2 (classic) and
-// Algorithm 3 (SEP-41) run on the aggregator-resident goroutine path (`[supply]
-// aggregator_refresh_enabled`); per `docs/operations/supply-snapshot.md`
-// §"Asset-class scope" the two refresh paths are mutually exclusive and the
-// goroutine path is canonical for non-XLM assets.
-//
-// Reserve balances come from the chained-fallback reader (live LCM AccountEntry
-// observer when populated; operator-static `[supply] reserve_balances_stroops`
-// as bring-up fallback).
-//
-// ObservedAt is stamped with the chosen ledger's REAL close time from
-// stellar.ledgers (via -ch-addr), not the wall-clock, so a re-derived historical
-// snapshot stays point-in-time correct.
+// supplySnapshot computes a supply snapshot and writes it to asset_supply_history. The CLI is native-XLM-only: classic and SEP-41 assets use the aggregator goroutine path (docs/operations/supply-snapshot.md), and the two paths are mutually exclusive.
+// ObservedAt is the chosen ledger's REAL close time from stellar.ledgers (-ch-addr), never wall-clock, so a re-derived historical snapshot stays point-in-time correct.
 func supplySnapshot(args []string) error {
 	fs := flag.NewFlagSet("supply snapshot", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -291,8 +237,7 @@ func (a supplyStoreLookup) LatestAccountObservationAtOrBefore(ctx context.Contex
 	}, nil
 }
 
-// MaxAccountObservationLedger forwards the account-observer watermark used by
-// the XLM freshness gate.
+// MaxAccountObservationLedger forwards the account-observer watermark used by the XLM freshness gate.
 func (a supplyStoreLookup) MaxAccountObservationLedger(ctx context.Context, asOfLedger uint32) (uint32, error) {
 	return a.s.MaxAccountObservationLedger(ctx, asOfLedger)
 }
@@ -309,21 +254,8 @@ func supplySnapshotMaybeEmitFailure(textfileOut, assetRaw string, startedAt time
 	return cause
 }
 
-// resolveSnapshotLedger picks the ledger to attribute the snapshot to AND
-// resolves that ledger's real on-chain close time to stamp as ObservedAt.
-// Operator-supplied -ledger wins; otherwise the max last_ledger across all
-// ingestion cursors.
-//
-// ObservedAt is the ledger's close_time from ClickHouse stellar.ledgers, NEVER
-// time.Now(): a wall-clock stamp on a re-derived HISTORICAL snapshot silently
-// corrupts point-in-time supply queries. Fail-closed: a missing stellar.ledgers
-// row is a genuine lake gap worth surfacing, not a wall-clock guess.
-//
-// KNOWN LIMIT: a stalled supply observer can leave a component balance behind
-// the snapshot ledger; the per-component reader's at-or-before query silently
-// returns an older row. See `supplyAggregatorLedgers` in
-// cmd/stellarindex-aggregator/main.go; the full fix needs per-component ledger
-// threading into snapshot acceptance.
+// resolveSnapshotLedger picks the snapshot ledger (operator -ledger wins, else the live ledgerstream cursor) and stamps ObservedAt with its close_time from stellar.ledgers, NEVER time.Now(): a wall-clock stamp corrupts point-in-time supply queries.
+// Fail closed: a missing lake row is a gap to surface. KNOWN LIMIT: a stalled supply observer can leave a component behind the snapshot ledger (see supplyAggregatorLedgers in cmd/stellarindex-aggregator/main.go).
 func resolveSnapshotLedger(ctx context.Context, store cursorReader, closeTimes ledgerCloseTimeReader, opLedger uint32) (uint32, time.Time, error) {
 	ledger := opLedger
 	if ledger == 0 {
@@ -338,17 +270,7 @@ func resolveSnapshotLedger(ctx context.Context, store cursorReader, closeTimes l
 		}
 		fmt.Fprintf(os.Stderr, "supply: auto-resolved snapshot ledger %d from the %q cursor\n", ledger, chosen)
 
-		// The ledgerstream cursor (Postgres, realtime) leads the lake's
-		// stellar.ledgers (CH sink, lands seconds later) by design, so the
-		// cursor's own row is routinely not landed yet at the moment a
-		// timer-driven snapshot fires — r1's daily unit failed EVERY run on
-		// exactly this race. The snapshot doesn't need the
-		// cursor ledger specifically; it needs a real chain position with a
-		// real close time. Clamp to the newest LANDED ledger at or before
-		// the cursor — bounded, so a genuinely stalled lake still fails
-		// closed instead of being papered over, and bounded in the lake
-		// READ too: the lookup scans only the ledgers this resolver would
-		// accept, not all of chain history below the cursor.
+		// The ledgerstream cursor leads the lake by seconds, so its own row may not be landed yet when a timer fires. Clamp to the newest LANDED ledger at or before the cursor, bounded so a stalled lake still fails closed and the lake read scans only that window.
 		lakeLedger, lakeClose, found, err := closeTimes.LatestLedgerAtOrBefore(ctx, ledger)
 		if err != nil {
 			return 0, time.Time{}, fmt.Errorf("resolve lake tip at or before cursor ledger %d: %w", ledger, err)
@@ -356,11 +278,7 @@ func resolveSnapshotLedger(ctx context.Context, store cursorReader, closeTimes l
 		if !found {
 			return 0, time.Time{}, fmt.Errorf("stellar.ledgers has no row within %d ledgers below cursor ledger %d — lake empty, gapped below the chain position, or a sink stalled further back than the clamp would accept; refusing to stamp the snapshot with wall-clock time", maxAutoSnapshotClampLedgers, ledger)
 		}
-		// The production reader cannot return a row beyond the bound — it is
-		// the same constant as its scan window — so this stays as this
-		// resolver's own invariant over whatever ledgerCloseTimeReader it was
-		// handed, because stamping an unchecked row is the failure being
-		// prevented.
+		// The production reader cannot return a row beyond the bound (same constant as its scan window); this stays as the resolver's own invariant over any ledgerCloseTimeReader, since stamping an unchecked row is the failure being prevented.
 		if gap := ledger - lakeLedger; gap > maxAutoSnapshotClampLedgers {
 			return 0, time.Time{}, fmt.Errorf("lake tip %d trails the %q cursor %d by %d ledgers (> %d) — that is a stalled lake, not a landing race; refusing to stamp a snapshot that far behind the chain", lakeLedger, chosen, ledger, gap, maxAutoSnapshotClampLedgers)
 		}
@@ -383,21 +301,9 @@ func resolveSnapshotLedger(ctx context.Context, store cursorReader, closeTimes l
 	return ledger, closeTime, nil
 }
 
-// autoSnapshotLedger picks the chain position a `-ledger`-less supply snapshot is
-// stamped at, and names the cursor it came from. Pure, so it is testable without
-// Postgres.
-//
-// It must not be MAX(last_ledger) over ingestion_cursors: that table holds JOB
-// positions, not chain positions. Only `ledgerstream` (the live indexer's walk)
-// means "how far the data behind a supply component has been ingested"; the rest
-// (backfill/<from>-<to>, projector/<source>, ...) are ops jobs' progress through
-// operator-chosen ranges. MAX could stamp the snapshot "as of ledger Y" while
-// every component balance was observed at the indexer's lower position: a real
-// number with a wrong ledger attribution, on the most-consumed number we serve.
-//
-// The ledgerstream cursor wins whenever it exists. The MAX fallback covers a host
-// whose indexer has not yet written a ledgerstream row; its source is named in the
-// returned string. The KNOWN LIMIT on resolveSnapshotLedger still applies.
+// autoSnapshotLedger picks the stamp ledger for a `-ledger`-less snapshot and names the source cursor. Pure.
+// It must not be MAX(last_ledger) over ingestion_cursors, which holds JOB positions: only `ledgerstream` means how far supply data has been ingested, and MAX could attribute a wrong ledger to the most-consumed number we serve.
+// The MAX fallback only covers a host with no ledgerstream row yet; the KNOWN LIMIT on resolveSnapshotLedger still applies.
 func autoSnapshotLedger(cursors []timescale.Cursor) (ledger uint32, source string) {
 	for _, c := range cursors {
 		if c.Source == chainCursorSource {
@@ -420,23 +326,8 @@ func autoSnapshotLedger(cursors []timescale.Cursor) (ledger uint32, source strin
 	return best.LastLedger, name + " (no " + chainCursorSource + " cursor yet — FALLBACK)"
 }
 
-// supplyAudit prints the latest supply snapshot for an asset, plus
-// optional history trail and SAC-wrapped cross-check. Used during
-// supply-divergence triage per docs/operations/runbooks/supply.md
-// (section supply_cross_check_divergence).
-//
-// Asset is the one positional arg in canonical wire form
-// (native | CODE-ISSUER | <C-strkey>), accepted before, between or after
-// the flags. Flags:
-//
-//	-config PATH            Required. TOML config (Postgres DSN).
-//	-cross-check <asset>    Other asset (typically the SAC
-//	                        counterpart of a classic, or vice
-//	                        versa). When set, fetches its snapshot
-//	                        and runs supply.CrossCheck per ADR-0011.
-//	-history-hours N        Print the trailing N-hour snapshot
-//	                        window so an operator sees the trend.
-//	                        Default 0 (latest only).
+// supplyAudit prints the latest supply snapshot for an asset (one positional arg: native | CODE-ISSUER | C-strkey, anywhere among the flags), with optional history and SAC cross-check
+// (docs/operations/runbooks/supply.md). Flags: -config PATH (required), -cross-check <asset> (runs supply.CrossCheck per ADR-0011), -history-hours N (default 0, latest only).
 func supplyAudit(args []string) error {
 	a, err := parseSupplyAuditArgs(args)
 	if err != nil {
@@ -533,11 +424,7 @@ func parseSupplyAuditArgs(args []string) (supplyAuditArgs, error) {
 	return a, nil
 }
 
-// fetchSupplyOrReport fetches the latest supply for assetKey,
-// returning a typed error when no snapshot exists (so the caller
-// can decide whether absence is a hard fail or just informational).
-// At v1 we treat absence as a hard fail — the audit subcommand only
-// makes sense when the asset has been observed.
+// fetchSupplyOrReport fetches the latest supply for assetKey and returns a typed error when no snapshot exists; audit treats absence as a hard fail.
 func fetchSupplyOrReport(ctx context.Context, store *timescale.Store, assetKey, displayName string) (supply.Supply, error) {
 	snap, err := store.LatestSupply(ctx, assetKey)
 	if errors.Is(err, timescale.ErrNotFound) {
@@ -609,19 +496,8 @@ func printSupplyHistory(ctx context.Context, store *timescale.Store, assetKey st
 	return nil
 }
 
-// crossCheckWrapClass resolves which invariant the CLI should check
-// for this pair, mirroring the aggregator's derivation
-// (buildCrossCheckRefresher): a SAC the operator has attested is
-// 100% wrapped gets the strict ADR-0011 equality compare, everything
-// else gets the subset-bound compare.
-//
-// Running WrapClassFull equality unconditionally is a GUARANTEED
-// failure for every partially-wrapped pair — classic supply that never
-// entered the SAC is exactly the gap the subset bound exists to
-// tolerate. Every r1 pair is partial_wrap, so the runbook's own
-// diagnostic command would report "OVER TOLERANCE ✗ — investigate" and
-// exit non-zero on healthy data, and the runbook tells operators to
-// chain `|| operator-escalate`.
+// crossCheckWrapClass picks the invariant, mirroring buildCrossCheckRefresher: an attested fully-wrapped SAC gets the strict ADR-0011 equality compare, everything else the subset bound.
+// Equality on a partially-wrapped pair is a guaranteed false failure (classic supply that never entered the SAC), which would make the runbook's diagnostic report an error on healthy data.
 func crossCheckWrapClass(fullyWrapped []string, sacID string) supply.WrapClass {
 	for _, id := range fullyWrapped {
 		if id == sacID {
@@ -631,11 +507,7 @@ func crossCheckWrapClass(fullyWrapped []string, sacID string) supply.WrapClass {
 	return supply.WrapClassPartial
 }
 
-// runSupplyCrossCheck fetches the counterpart's snapshot and runs the
-// wrap-class-appropriate cross-check. For a fully-wrapped pair the two
-// totals must agree within 1 stroop per ADR-0011; for a partially
-// wrapped one the SAC total must merely not EXCEED the classic total
-// (the subset bound). See [crossCheckWrapClass].
+// runSupplyCrossCheck fetches the counterpart's snapshot and runs the wrap-class cross-check: equality within 1 stroop (ADR-0011) for fully-wrapped, SAC total not exceeding classic for partial. See [crossCheckWrapClass].
 func runSupplyCrossCheck(
 	ctx context.Context,
 	store *timescale.Store,

@@ -19,23 +19,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ─── stellarindex-ops hubble-check ──────────────────────────────────
-//
-// Compares our SDEX trades hypertable against SDF's
-// `crypto-stellar.crypto_stellar.history_trades` BigQuery table over the same ledger
-// range and reports every ledger whose row count disagrees: short means a decoder
-// coverage gap, long means over-eagerness. It gates backfill correctness.
-//
-// Not covered: per-trade amount errors that net to zero within a ledger; Soroban DEX
-// trades (see hubble-soroban-events); off-chain sources (Hubble is on-chain only).
-//
-// Cost: a 1M-ledger range scans ~5–10 GB (<= $0.05 on-demand). Every query carries
-// -max-bytes-billed (default 100 GB) so a mistyped range fails unbilled;
-// -dry-run-bytes prints the estimate first.
-//
-// Auth: Application Default Credentials (`gcloud auth application-default login
-// --project=<your-bq-project>` or GOOGLE_APPLICATION_CREDENTIALS) with
-// roles/bigquery.dataViewer + roles/bigquery.jobUser on -bigquery-project.
+// hubble-check compares our SDEX trades against SDF's Hubble history_trades BigQuery table per ledger; it gates backfill correctness.
+// Every query carries -max-bytes-billed (default 100 GB) so a mistyped range fails unbilled; auth is Application Default Credentials.
+// Not covered: zero-net per-trade amount errors, Soroban DEX trades, off-chain sources.
 
 func hubbleCheck(args []string) error { //nolint:gocognit,gocyclo,funlen // flag parse + several diagnostic early-exit modes; linear, splitting reduces clarity.
 	fs := flag.NewFlagSet("hubble-check", flag.ContinueOnError)
@@ -337,11 +323,7 @@ type ledgerDiff struct {
 	Theirs int
 }
 
-// diffLedgerCounts compares two count maps and returns the ledgers
-// where they differ. Sparse on both sides — a ledger absent from
-// `ours` is treated as count=0 (and same for `theirs`). Output is
-// sorted by ledger ascending so the report is deterministic across
-// runs and easy to grep against the verifier's progress log.
+// diffLedgerCounts returns the ledgers where the maps differ (absent = 0), sorted ascending for a deterministic report.
 func diffLedgerCounts(ours, theirs map[uint32]int) []ledgerDiff {
 	seen := make(map[uint32]struct{}, len(ours)+len(theirs))
 	for k := range ours {
@@ -361,26 +343,11 @@ func diffLedgerCounts(ours, theirs map[uint32]int) []ledgerDiff {
 	return out
 }
 
-// ─── -with-amounts variant ────────────────────────────────────────
-//
-// Per-ledger COUNT(*) catches missing or extra trades but doesn't
-// catch per-trade amount errors that net to zero across a ledger
-// (one over-counted + one under-counted = same total count). The
-// -with-amounts variant adds SUM(selling_amount) + SUM(buying_amount)
-// to both sides and reports any ledger where ANY of count, sell-sum,
-// or buy-sum diverges past the configured tolerance.
-//
-// Tolerance is in basis points of the larger side's value — covers
-// minor floating-point drift between Postgres NUMERIC sums and
-// BigQuery NUMERIC sums (none expected at integer-stroop scale, but
-// the knob exists for future-proofing).
+// -with-amounts adds SUM(selling_amount)+SUM(buying_amount) so per-trade errors netting to zero in a ledger are caught;
+// the tolerance is in basis points of the larger side.
 
-// hubbleStroopsPerUnit is stellar-etl's scaling factor
-// (utils.ConvertStroopValueToReal) between the raw i64 stroop amount and
-// the whole-unit FLOAT64 Hubble stores in selling_amount/buying_amount.
-// hubbleStroopsPerUnitLiteral is the same value inlined into the BigQuery
-// SQL text (see fetchHubbleStats) since query parameters aren't usable
-// inside an aggregate expression there.
+// hubbleStroopsPerUnit is stellar-etl's stroop-to-whole-unit factor for Hubble's FLOAT64 amounts;
+// the Literal form is inlined in SQL because parameters are unusable inside an aggregate there.
 const hubbleStroopsPerUnit = 10_000_000
 
 const hubbleStroopsPerUnitLiteral = "10000000"
@@ -492,22 +459,8 @@ func fetchOurSDEXStats(ctx context.Context, store *timescale.Store, from, to uin
 	return out, rows.Err()
 }
 
-// hubbleZeroAmountCounts counts Hubble history_trades in the range with a zero
-// amount: oneSide (exactly one of selling/buying is 0), both (both 0), anyZero
-// (either). Diagnoses the SDEX off-by-one: our decoder's guard.
-//
-// READ THE SPLIT CAREFULLY. The decoder drops only BOTH-zero claim
-// atoms (sdex/decode.go: `soldAmount <= 0 && boughtAmount <= 0`) and
-// deliberately KEEPS one-side-zero fills — a rounding artifact where one
-// leg rounds to 0, which are real trades Hubble also records. So the
-// figure that explains a per-ledger shortfall is `both`, NOT `anyZero`.
-//
-// Treating the guard as `||` (anyZero == shortfall) would mislead: an
-// operator seeing anyZero == shortfall would conclude "fully
-// explained by the zero-amount artifact — not a decoder gap", and write
-// off every one-side-zero fill in (shortfall - both) as expected. Those
-// are real SDEX history missing from `trades`, which is exactly what
-// this tool exists to catch.
+// hubbleZeroAmountCounts counts Hubble trades with a zero amount (oneSide, both, anyZero). The decoder drops only BOTH-zero atoms,
+// so `both`, not `anyZero`, explains a shortfall; one-side-zero fills are real trades missing from `trades`.
 func hubbleZeroAmountCounts(ctx context.Context, bq hubbleBQ, from, to uint32) (oneSide, both, anyZero int64, err error) {
 	q := bq.query("SELECT " +
 		"COUNTIF((selling_amount = 0) != (buying_amount = 0)) AS one_side, " +
@@ -601,16 +554,8 @@ func hubbleDupCheck(ctx context.Context, bq hubbleBQ, from, to uint32) (total, d
 	return row.Total, row.Distinct, nil
 }
 
-// hubbleStatsSQL builds the -with-amounts BigQuery text. Pulled out of
-// fetchHubbleStats so the stroop-scaling can be asserted without a live
-// BigQuery client.
-//
-// selling_amount/buying_amount are Hubble's whole-unit FLOAT64 columns
-// (stellar-etl's utils.ConvertStroopValueToReal divides the raw stroop
-// int64 by hubbleStroopsPerUnit before loading BigQuery). Scale the SUM
-// back up to stroops in SQL so the STRING this parses into big.Int is both
-// integral (no decimal point to trip SetString) and directly comparable to
-// our stroop-scale base_amount/quote_amount sums.
+// hubbleStatsSQL builds the -with-amounts query, scaling Hubble's whole-unit FLOAT64 sums back to integral stroops
+// so they parse into big.Int and compare with our stroop sums.
 func hubbleStatsSQL() string {
 	return "SELECT history_operation_id >> 32 AS ledger, COUNT(*) AS n, " +
 		"COALESCE(CAST(ROUND(SUM(selling_amount) * " + hubbleStroopsPerUnitLiteral + ") AS STRING), '0') AS sum_sell, " +

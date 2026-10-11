@@ -27,25 +27,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 )
 
-// ─── stellarindex-ops trim-galexie-archive ──────────────────────
-//
-// Per ADR-0027: the DESTRUCTIVE operator that deletes cold-eligible LCM files
-// from the local hot tier (galexie-archive MinIO bucket) once their presence
-// in the cold tier is verified. Safety stack (each is independent):
-//
-//   1. --dry-run is the DEFAULT; deletion needs --commit (or the shared
-//      -write). Mismatched flags are refused before any S3 call.
-//   2. Every candidate is HEAD'd against the cold tier and SKIPPED if
-//      cold.Exists is false. --no-verify-upstream is only for
-//      restore-from-backup workflows.
-//   3. --max-files caps deletions per run (default 100000, refused above
-//      trimMaxFilesCeiling).
-//   4. --older-than-ledger is REQUIRED and must sit at least
-//      trimMinHotWindowLedgers below the hot archive's newest ledger.
-//   5. The cold tier MUST be configured (cfg.Storage.S3ColdBucketArchive);
-//      without one every trim is unrecoverable data loss.
-//   6. A deletion counts only once the hot datastore no longer resolves the
-//      path; see deleteTrimCandidates.
+// trim-galexie-archive (ADR-0027) is DESTRUCTIVE: dry-run by default (deletion needs --commit/-write), every candidate HEAD'd against the cold tier,
+// --max-files capped, --older-than-ledger required and below the hot tip by trimMinHotWindowLedgers, cold tier required;
+// a deletion counts only once the hot datastore stops resolving the path (deleteTrimCandidates).
 
 const (
 	// trimMaxFilesCeiling bounds --max-files: ~1.6% of the 63.6M-object
@@ -82,11 +66,7 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 		opts.dryRun = true
 	}
 
-	// LoadWithEnv (not bare Load) so the STELLARINDEX_* env overrides —
-	// the injected Postgres DSN / Redis + ClickHouse secrets — take
-	// effect, matching every other binary (cmd/stellarindex-{api,indexer,
-	// aggregator} and the rest of internal/ops). Bare Load would leave
-	// this operator reading the placeholder TOML DSN/secrets.
+	// LoadWithEnv, not Load, so STELLARINDEX_* env overrides (injected DSN and secrets) apply as in every other binary.
 	cfg, err := config.LoadWithEnv(opts.cfgPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -137,14 +117,8 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 
 	var cold datastore.DataStore
 	if opts.verifyUpstream {
-		// pipeline.NewColdDataStore, NOT datastore.NewDataStore: the
-		// SDK builds every S3 client from the ambient AWS credential
-		// chain, which on r1 carries local MinIO's keys (the hot tier
-		// authenticates through it). Presenting those to real AWS
-		// fails every cold read with `InvalidAccessKeyId ... does not
-		// exist in our records`. That matters doubly HERE: this operator
-		// DELETES hot files, and a cold tier that cannot authenticate is a
-		// cold tier that cannot prove the upstream copy exists.
+		// pipeline.NewColdDataStore, NOT datastore.NewDataStore: the SDK uses the ambient AWS chain, which on r1 holds MinIO's keys,
+		// so cold reads fail to authenticate and the upstream copy could never be proven to exist before deleting hot files.
 		cold, err = pipeline.NewColdDataStore(rootCtx, cfg.Storage)
 		if err != nil {
 			return fmt.Errorf("cold datastore: %w", err)
@@ -152,19 +126,8 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 		defer func() { _ = cold.Close() }()
 	}
 
-	// Raw S3 client for DeleteObject — the SDK's datastore.DataStore has no
-	// Delete method. Same shape as the SDK's NewS3DataStore (path-style).
-	// Auth comes from the standard AWS env vars; STELLARINDEX_S3_ACCESS_KEY +
-	// STELLARINDEX_S3_SECRET_KEY map to the dedicated
-	// stellarindex-archive-trimmer MinIO identity (List+Delete,
-	// galexie-archive only) via the systemd EnvironmentFile, NOT MinIO's root.
-	//
-	// This client is HOT-ONLY, so it does NOT share the cold-tier credential
-	// hazard: every argument comes from cfg.Storage.S3* (the MinIO block), it
-	// only DeleteObjects out of hotBucket, and any ambient AWS_* fallback
-	// holds MinIO's credentials, the right ones for this endpoint. That is
-	// also why the cold path cannot reuse buildS3Client: one ambient chain is
-	// correct for exactly one of the two backends.
+	// Raw S3 client for DeleteObject (the SDK datastore has none), path-style. Credentials come from the dedicated trimmer MinIO identity
+	// (List+Delete, galexie-archive only) via the systemd EnvironmentFile, never MinIO root. Hot-only, so it avoids the cold-tier ambient-credential hazard.
 	hotBucket, hotKeyPrefix, err := splitBucketPath(cfg.Storage.S3BucketArchive)
 	if err != nil {
 		return fmt.Errorf("parse archive bucket path: %w", err)
@@ -193,13 +156,7 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 		return err
 	}
 	if len(parts) == 0 {
-		// No partition directories at all: either the bucket is empty,
-		// or it was written with filesPerPartition<=1 (SDK
-		// GetObjectKeyFromSequenceNumber emits a flat layout then).
-		// Scan the whole bucket as one unnamed partition so the flat
-		// case is enumerated COMPLETELY rather than silently trimming
-		// nothing — silently trimming nothing is the exact failure
-		// partition-scoped enumeration exists to prevent.
+		// No partition directories: the bucket is empty or flat (filesPerPartition<=1). Scan it as one unnamed partition so trimming nothing is never silent.
 		parts = []hotPartition{{}}
 	}
 
@@ -207,13 +164,8 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 	if err != nil {
 		return err
 	}
-	// A bare `hot file enumeration total_files=1000` line is
-	// indistinguishable from a healthy "nothing to trim", which is how a
-	// bucket of 63.6M objects can look empty. An operator must be
-	// able to read, from one line, HOW MUCH of the archive was actually
-	// looked at: enumeration_complete=false means this plan is a prefix
-	// of the trimmable set (the --max-files cap stopped the scan), not
-	// the whole of it.
+	// Log how much of the archive was looked at: enumeration_complete=false means the plan is a prefix (the --max-files cap stopped the scan),
+	// not a healthy nothing-to-trim.
 	logger.Info("hot partition scan",
 		"partitions_total", plan.partitionsTotal,
 		"partitions_scanned", plan.partitionsScanned,
@@ -289,16 +241,8 @@ type s3ObjectDeleter interface {
 	DeleteObject(ctx context.Context, params *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 
-// deleteTrimCandidates deletes each candidate from the hot bucket, one
-// DeleteObject per object so a partial failure leaves a clear position
-// (re-run --dry-run to see what's left).
-//
-// S3 and MinIO answer success for an absent key, so a DeleteObject return
-// proves nothing. The key is built with path.Join exactly as the SDK's S3
-// datastore builds it for ListFilePaths/Exists, and a deletion counts only
-// once hot.Exists — the same key space the candidate was listed from — stops
-// resolving the path. A path that still resolves means the delete key names
-// a different object; that is systematic, so the run aborts on the first.
+// deleteTrimCandidates deletes one object per call so a partial failure leaves a clear position. S3/MinIO succeed for absent keys, so a deletion
+// counts only once hot.Exists (same key space as the listing) stops resolving the path; a path that still resolves aborts the run.
 func deleteTrimCandidates(ctx context.Context, logger *slog.Logger, del s3ObjectDeleter, hot trimColdChecker, bucket, keyPrefix string, candidates []string) (deleted, errs int, err error) {
 	for _, p := range candidates {
 		if err := ctx.Err(); err != nil {
@@ -328,35 +272,16 @@ func deleteTrimCandidates(ctx context.Context, logger *slog.Logger, del s3Object
 	return deleted, errs, nil
 }
 
-// ─── partition-scoped enumeration ────────────────────────────────
-//
-// One unbounded hot.ListFilePaths call cannot enumerate this archive: the SDK
-// clamps it to 1000 keys, so Limit:0 means "1000", not "all". galexie-archive
-// holds ~63.6M objects (one per ledger, 64000 per partition).
-//
-// Worse, those 1000 are the wrong ones. Partition directories are named
-// "%08X--<start>-<end>/" with hex = MaxUint32-start, so a lexicographic
-// listing returns the NEWEST objects first, all above any useful cutoff. The
-// result is "candidates=0", which is also what a fully-trimmed archive looks
-// like, so it reads like success.
-//
-// Instead: discover partitions (one delimited listing), skip those entirely
-// at/above the cutoff, and page StartAfter through the rest. A straddling
-// partition is enumerated and filtered per file.
-//
-// The per-file safety chain applies to every file. --max-files caps deletions
-// for the whole run, not per partition: the counter lives on trimPlan.
+// Partition-scoped enumeration: one hot.ListFilePaths call is clamped to 1000 keys, and partition names embed MaxUint32-start so those are the NEWEST,
+// all above the cutoff, giving candidates=0 that looks like success. Discover partitions, skip those wholly at/above the cutoff,
+// and page StartAfter through the rest. --max-files caps the whole run (counter on trimPlan).
 
 // trimListPageSize is the SDK's hard per-call ceiling (see above). We
 // request it explicitly rather than relying on the Limit:0 default,
 // because "0 means 1000" is the trap this whole block exists to avoid.
 const trimListPageSize = 1000
 
-// trimFileLister / trimColdChecker are the slices of
-// datastore.DataStore the planner actually calls, split out so the
-// enumeration is unit-testable against a fake that reproduces the
-// SDK's 1000-key clamp — without live S3/MinIO. datastore.DataStore
-// satisfies both structurally (same seam idiom as rehydrateStore).
+// trimFileLister and trimColdChecker are the slices of datastore.DataStore the planner calls, so tests can fake the SDK's 1000-key clamp.
 type trimFileLister interface {
 	ListFilePaths(ctx context.Context, options datastore.ListFileOptions) ([]string, error)
 }
@@ -373,12 +298,8 @@ type s3PrefixLister interface {
 	ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
 }
 
-// hotPartition is one top-level partition directory of the Galexie
-// archive: "%08X--<startLedger>-<endLedger>/", key-relative (the
-// bucket's own key prefix already trimmed off). parsed is false when
-// the directory name doesn't match that layout — such a partition is
-// SCANNED, never skipped, since we can't prove its contents are above
-// the cutoff.
+// hotPartition is one top-level partition directory ("%08X--<start>-<end>/", key-relative); parsed is false when the name does not match,
+// and such a partition is SCANNED, never skipped, since its range is unproven.
 type hotPartition struct {
 	prefix string
 	start  uint32
@@ -410,12 +331,8 @@ type trimPlan struct {
 // Hex is validated against MaxUint32-start by parsePartitionPrefix.
 var partitionNameRE = regexp.MustCompile(`^([0-9A-Fa-f]{8})--(\d+)-(\d+)$`)
 
-// parsePartitionPrefix extracts a partition's declared ledger range
-// from its directory name. A name that doesn't match the schema — or
-// whose hex doesn't equal MaxUint32-start — is returned unparsed, so
-// the caller scans it rather than trusting a range it can't verify.
-// Skipping on a mis-read name would silently leave trimmable data
-// behind, which is the failure mode this file is fixing.
+// parsePartitionPrefix extracts a partition's ledger range from its name; a mismatch (or hex != MaxUint32-start) returns unparsed so the caller scans it,
+// since skipping on a mis-read name would silently leave trimmable data behind.
 func parsePartitionPrefix(prefix string) hotPartition {
 	part := hotPartition{prefix: prefix}
 	m := partitionNameRE.FindStringSubmatch(strings.TrimSuffix(prefix, "/"))
@@ -438,23 +355,8 @@ func parsePartitionPrefix(prefix string) hotPartition {
 	return part
 }
 
-// listHotPartitions discovers the archive's top-level partition
-// directories with a delimited listing — CommonPrefixes, so S3 rolls
-// up the 63.6M objects into the 995 directories that contain them in
-// a single round trip.
-//
-// It pages, deliberately: MaxKeys caps CommonPrefixes at 1000 exactly
-// as it caps objects, and the 1001st partition begins at ledger
-// 64,000,000, which the network has passed: an unpaged delimited listing
-// would silently truncate, reintroducing the 1000-key truncation one level up.
-//
-// Discovery is ground truth rather than derived from the schema
-// manifest: a partition already trimmed empty stops being returned, so
-// the chunked re-runs in docs/operations/lcm-cache-tiering.md §Step 4
-// don't pay a LIST call per already-emptied partition.
-//
-// The second return is the count of root-level objects (e.g.
-// .config.json) — reported, not scanned.
+// listHotPartitions discovers top-level partitions with a delimited listing (CommonPrefixes). It pages: MaxKeys caps prefixes at 1000 and the archive
+// has passed that, so an unpaged listing would truncate. Discovery is ground truth so emptied partitions drop out. Second return: root-level object count (reported, not scanned).
 func listHotPartitions(ctx context.Context, api s3PrefixLister, bucket, keyPrefix string) ([]hotPartition, int, error) {
 	prefix := ""
 	if keyPrefix != "" {
@@ -492,20 +394,8 @@ func listHotPartitions(ctx context.Context, api s3PrefixLister, bucket, keyPrefi
 	}
 }
 
-// comparePartitions orders partitions oldest-ledger-first. That is the
-// order a tiering trim wants: the oldest ledgers are the most
-// cold-eligible, so when --max-files stops a run early it stops having
-// done the most useful work, and the next run picks up what is left.
-// Unparsed names sort last — they are scanned, but they must not
-// displace known-old data under the cap.
-//
-// Ordering WITHIN a partition is the backend's, i.e. lexicographic,
-// i.e. newest-ledger-first (filenames embed MaxUint32-ledger). A capped
-// run therefore takes whole old partitions plus the newest slice of the
-// partition where the cap bit. That is a harmless artefact — every file
-// in a partition spans the same 64000-ledger band and is equally
-// cold-eligible — and re-sorting 64000 keys per partition to "fix" it
-// would buy nothing.
+// comparePartitions orders oldest-ledger-first so a --max-files stop has done the most cold-eligible work; unparsed names sort last.
+// Order within a partition is the backend's (newest-first), a harmless artefact since every file spans the same cold-eligible band.
 func comparePartitions(a, b hotPartition) int {
 	switch {
 	case a.parsed && b.parsed:
@@ -519,12 +409,8 @@ func comparePartitions(a, b hotPartition) int {
 	}
 }
 
-// planTrim walks the partitions oldest-first and builds the deletion
-// plan. Partitions entirely at/above the cutoff are skipped WITHOUT
-// enumerating their contents (the whole point of scoping by
-// partition); everything else — including the one partition that
-// straddles the cutoff, and any partition whose name we couldn't
-// parse — is enumerated in full and filtered per file.
+// planTrim walks partitions oldest-first, skipping those wholly at/above the cutoff WITHOUT enumerating them; the straddling partition and
+// unparsed names are enumerated in full and filtered per file.
 func planTrim(ctx context.Context, logger *slog.Logger, hot trimFileLister, cold trimColdChecker, parts []hotPartition, opts trimOpts) (trimPlan, error) {
 	ordered := slices.Clone(parts)
 	slices.SortFunc(ordered, comparePartitions)
@@ -557,11 +443,7 @@ func planTrim(ctx context.Context, logger *slog.Logger, hot trimFileLister, cold
 	return plan, nil
 }
 
-// scanPartition enumerates one partition COMPLETELY — paging with
-// StartAfter (the SDK's own pagination handle; see its
-// LedgerFileIter, which uses the same last-key-as-cursor idiom) — and
-// buckets every file it finds. It returns early only when the shared
-// --max-files cap is reached.
+// scanPartition enumerates one partition COMPLETELY, paging with StartAfter, and returns early only when the shared --max-files cap is reached.
 func scanPartition(ctx context.Context, logger *slog.Logger, hot trimFileLister, cold trimColdChecker, part hotPartition, opts trimOpts, plan *trimPlan) error {
 	plan.partitionsScanned++
 	var startAfter string
@@ -689,21 +571,13 @@ func splitBucketPath(bucketPath string) (bucket, prefix string, err error) {
 	return parsed.Host, strings.TrimPrefix(parsed.Path, "/"), nil
 }
 
-// buildS3Client builds an *s3.Client with path-style addressing
-// (required by MinIO) and the operator-configured endpoint /
-// region / credentials. accessKeyEnv + secretKeyEnv are env-var
-// NAMES (not values) — they're resolved at call time so the
-// binary inherits whatever the systemd EnvironmentFile sets.
+// buildS3Client builds a path-style (MinIO) *s3.Client; accessKeyEnv and secretKeyEnv are env-var NAMES, resolved at call time.
 func buildS3Client(ctx context.Context, endpoint, region, accessKeyEnv, secretKeyEnv string) (*s3.Client, error) {
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 	if err != nil {
 		return nil, fmt.Errorf("load aws config: %w", err)
 	}
-	// Prefer explicit creds from the env-var names cfg.Storage points
-	// at. The SDK's default chain also picks them up if the env vars
-	// match its canonical names (AWS_ACCESS_KEY_ID etc.), but we go
-	// explicit to align with the rest of the codebase's env-var
-	// naming convention.
+	// Prefer explicit creds from the env-var names cfg.Storage points at, matching the codebase's env naming convention.
 	ak := os.Getenv(accessKeyEnv)
 	sk := os.Getenv(secretKeyEnv)
 	if ak != "" && sk != "" {

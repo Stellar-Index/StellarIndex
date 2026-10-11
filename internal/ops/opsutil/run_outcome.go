@@ -5,10 +5,7 @@ package opsutil
 
 import "fmt"
 
-// RunOutcome is a write-path run's row accounting. Err is the one place a
-// dropped row becomes a non-zero exit: a backfill writes with no
-// dead-letter, so a row the writer rejected is lost unless the run fails
-// loudly, and an idempotent command that exits 0 is never re-run.
+// RunOutcome is a write-path run's row accounting; Err is the one place a dropped row becomes a non-zero exit, since a backfill has no dead-letter and an idempotent command that exits 0 is never re-run.
 type RunOutcome struct {
 	Verb      string // subcommand name; prefixes the error
 	Noun      string // what one row is, e.g. "trade", "oracle update"

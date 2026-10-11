@@ -6,8 +6,7 @@ import (
 	"testing"
 )
 
-// A walk the trailing-missing tolerance ended early returns nil from
-// ledgerstream.Stream; only the delivered count can tell it from a full one.
+// TestRangeWalkCoverage: a walk ended early by the trailing-missing tolerance returns nil from ledgerstream.Stream, so only the delivered count tells it from a full one.
 func TestRangeWalkCoverage(t *testing.T) {
 	t.Parallel()
 	const bucket = "galexie-archive"

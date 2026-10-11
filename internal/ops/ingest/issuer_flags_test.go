@@ -14,19 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The `issuer-flags` drain against merged issuers.
-//
-// Reading only LIVE AccountEntry rows left every issuer that has merged its
-// account away permanently unresolved — on r1: 10,239 of 59,241, and
-// of the first 1,000 by primary key, 985 are merged accounts (a `removed` row
-// in the current-state projection), 1 is live again, 14 are below the
-// projection's floor. The lake CAN recover the merged ones: the same probe
-// resolved 985/985 pre-images out of their 782 removal ledgers in 0.874s,
-// and 979 of those pre-images still carry the account's self-declared
-// home_domain (`stellarkraken.com`, `stellarbrunch.com`, …) — the identity
-// claim that must NOT ride along with the flags.
-//
-// Real r1 keys and ledgers are used as fixtures throughout.
+// Fixtures for the issuer-flags drain against merged issuers: merged accounts (a removed row in the current-state projection)
+// are recoverable from their removal-ledger pre-images, but the self-declared home_domain in those pre-images must NOT ride along with the flags.
+// Real r1 keys and ledgers are used throughout.
 const (
 	// Merged away at ledger 54,564,588; pre-image flags 0, and the dead
 	// account still declares `stellarbrunch.com`.
@@ -157,11 +147,7 @@ func runOpts() issuerFlagsOpts {
 	return issuerFlagsOpts{limit: 5000, batch: 500, out: io.Discard}
 }
 
-// TestRunIssuerFlags_RecoversMergedIssuersWithProvenance is the central
-// case: the drain must fall through to the last-known reader for the misses,
-// persist what it finds WITH its provenance, and count the three outcomes
-// apart. A merged issuer is not counted `absent`: it gets a second read
-// from the last-known reader, so it does not stay unresolved for good.
+// TestRunIssuerFlags_RecoversMergedIssuersWithProvenance: misses fall through to the last-known reader, persist with provenance, and the three outcomes are counted apart (merged is not absent).
 func TestRunIssuerFlags_RecoversMergedIssuersWithProvenance(t *testing.T) {
 	store := &stubIssuerFlagsStore{needFlags: []string{mergedIssuerA, liveIssuer, mergedIssuerB, absentIssuer}}
 	reader := &stubIssuerFlagsReader{
@@ -220,11 +206,7 @@ func TestRunIssuerFlags_RecoversMergedIssuersWithProvenance(t *testing.T) {
 	}
 }
 
-// TestRunIssuerFlags_FallbackIsOfferedOnlyTheMisses — the fallback must never
-// be handed a key the live reader already answered. Offering the whole chunk
-// would widen a partition-pruned read over the 150-billion-row changes log
-// for no gain, and would put a live account one code change away from being
-// resolved to its own pre-image.
+// TestRunIssuerFlags_FallbackIsOfferedOnlyTheMisses: the fallback is never handed a key the live reader answered, or a live account could resolve to its own pre-image.
 func TestRunIssuerFlags_FallbackIsOfferedOnlyTheMisses(t *testing.T) {
 	store := &stubIssuerFlagsStore{needFlags: []string{mergedIssuerA, liveIssuer, absentIssuer}}
 	reader := &stubIssuerFlagsReader{
@@ -253,10 +235,7 @@ func TestRunIssuerFlags_FallbackIsOfferedOnlyTheMisses(t *testing.T) {
 	}
 }
 
-// TestRunIssuerFlags_LiveEntryOutranksAStalePreImage — an account re-created
-// at an address that was once merged is LIVE, and a lake that still returns
-// its pre-image must not win. Ordering, not deduplication, is what guarantees
-// this: the fallback is only ever offered the misses.
+// TestRunIssuerFlags_LiveEntryOutranksAStalePreImage: an account re-created at a once-merged address is live; ordering (fallback sees only misses) guarantees its pre-image never wins.
 func TestRunIssuerFlags_LiveEntryOutranksAStalePreImage(t *testing.T) {
 	store := &stubIssuerFlagsStore{needFlags: []string{liveIssuer}}
 	reader := &stubIssuerFlagsReader{
@@ -286,11 +265,7 @@ func TestRunIssuerFlags_LiveEntryOutranksAStalePreImage(t *testing.T) {
 	}
 }
 
-// TestRunIssuerFlags_RecheckRevivesARecreatedIssuer — the re-check pass is
-// what stops the provenance column being a one-way latch. A
-// `last_known_before_removal` row has auth_required SET, so the primary
-// queue (`auth_required IS NULL`) can never see it again; without this pass a
-// re-created issuer would serve its pre-removal flags for good.
+// TestRunIssuerFlags_RecheckRevivesARecreatedIssuer: the re-check pass keeps provenance from being a one-way latch, since last_known_before_removal rows never re-enter the primary queue.
 func TestRunIssuerFlags_RecheckRevivesARecreatedIssuer(t *testing.T) {
 	store := &stubIssuerFlagsStore{
 		needRecheck: []string{mergedIssuerA, liveIssuer},
@@ -324,9 +299,7 @@ func TestRunIssuerFlags_RecheckRevivesARecreatedIssuer(t *testing.T) {
 	}
 }
 
-// TestRunIssuerFlags_RecheckQueueIsBounded — the re-check queue is bounded by
-// the same -limit as the primary queue, so a run cannot silently become
-// unbounded work on a 10k-row residue.
+// TestRunIssuerFlags_RecheckQueueIsBounded: the re-check queue honours the same -limit as the primary queue.
 func TestRunIssuerFlags_RecheckQueueIsBounded(t *testing.T) {
 	store := &stubIssuerFlagsStore{}
 	reader := &stubIssuerFlagsReader{}
@@ -363,9 +336,7 @@ func TestRunIssuerFlags_DryRunWritesNothing(t *testing.T) {
 	}
 }
 
-// TestRunIssuerFlags_FallbackErrorIsFatal — a lake read that FAILS is not the
-// same as one that finds nothing. Swallowing it would count real merged
-// issuers as `absent` and quietly reproduce the defect this fixes.
+// TestRunIssuerFlags_FallbackErrorIsFatal: a failed lake read is not an empty one; swallowing it would count merged issuers as absent.
 func TestRunIssuerFlags_FallbackErrorIsFatal(t *testing.T) {
 	boom := errors.New("clickhouse: connection reset")
 	store := &stubIssuerFlagsStore{needFlags: []string{mergedIssuerA}}
@@ -396,9 +367,7 @@ func (r *deadlineIssuerFlagsReader) BulkAccountAuthFlags(ctx context.Context, gs
 	return nil, ctx.Err()
 }
 
-// TestRunIssuerFlags_DeadlineMidReadIsAGracefulStop — the timeout usually
-// lands inside a lake read rather than between batches. That is the same
-// resumable stop: the run keeps the batches it wrote and exits cleanly.
+// TestRunIssuerFlags_DeadlineMidReadIsAGracefulStop: a timeout inside a lake read is the same resumable stop as between batches.
 func TestRunIssuerFlags_DeadlineMidReadIsAGracefulStop(t *testing.T) {
 	store := &stubIssuerFlagsStore{needFlags: []string{liveIssuer, mergedIssuerA}}
 	reader := &deadlineIssuerFlagsReader{stubIssuerFlagsReader{
@@ -413,8 +382,7 @@ func TestRunIssuerFlags_DeadlineMidReadIsAGracefulStop(t *testing.T) {
 	}
 }
 
-// TestRunIssuerFlags_CancelMidReadIsFatal — only the run's own deadline is a
-// graceful stop; a cancelled context is not swallowed.
+// TestRunIssuerFlags_CancelMidReadIsFatal: only the run's own deadline is a graceful stop; a cancelled context is not swallowed.
 func TestRunIssuerFlags_CancelMidReadIsFatal(t *testing.T) {
 	store := &stubIssuerFlagsStore{needFlags: []string{liveIssuer, mergedIssuerA}}
 	reader := &deadlineIssuerFlagsReader{}
@@ -445,9 +413,7 @@ func runUntilDeadline(t *testing.T, store *stubIssuerFlagsStore, reader issuerFl
 	return out.String()
 }
 
-// TestRunIssuerFlags_DeadlineMidRecheckCountsOnlyReadRows — the summary is
-// self-accounting, so a batch the deadline cut off must not be reported as
-// examined (it would read as still_merged without ever being read).
+// TestRunIssuerFlags_DeadlineMidRecheckCountsOnlyReadRows: a batch cut off by the deadline must not be reported as examined.
 func TestRunIssuerFlags_DeadlineMidRecheckCountsOnlyReadRows(t *testing.T) {
 	store := &stubIssuerFlagsStore{needRecheck: []string{mergedIssuerA, mergedIssuerB}}
 	out := runUntilDeadline(t, store, &deadlineIssuerFlagsReader{answer: 1})
@@ -458,9 +424,7 @@ func TestRunIssuerFlags_DeadlineMidRecheckCountsOnlyReadRows(t *testing.T) {
 	}
 }
 
-// TestRunIssuerFlags_DeadlineMidChainRecheckCountsOnlyReadRows — every
-// examined row must land in exactly one of corrected/agreed/unread, including
-// on a run the deadline cut off mid-read.
+// TestRunIssuerFlags_DeadlineMidChainRecheckCountsOnlyReadRows: every examined row lands in exactly one of corrected/agreed/unread, even on a cut-off run.
 func TestRunIssuerFlags_DeadlineMidChainRecheckCountsOnlyReadRows(t *testing.T) {
 	store := &stubIssuerFlagsStore{needChainRead: []timescale.IssuerAuthFlagsOnRecord{
 		onRecord(absentIssuer, 0, "somewhere.example", timescale.AuthFlagsSourceLive, 64100000),
@@ -474,21 +438,9 @@ func TestRunIssuerFlags_DeadlineMidChainRecheckCountsOnlyReadRows(t *testing.T) 
 	}
 }
 
-// The `issuer-flags` drain's CHAIN RE-CHECK pass.
-//
-// `issuers.home_domain` stopped being write-once, but nothing scheduled ever
-// re-read a row that already held one: the primary queue is `auth_required IS
-// NULL` and the last-known re-check covers only merged accounts, so a FILLED,
-// live-sourced row was invisible to both. `issuer-enrich`, the job whose whole
-// purpose is to sync the column, is a manual one-shot with no timer. An anchor
-// that moved domain with SetOptions and let the old name lapse therefore kept
-// the lapsed name until someone ran a backfill by hand — while the hourly
-// SEP-1 refresh kept fetching it, and whoever registered it next could serve a
-// stellar.toml listing the anchor's issuer account back and inherit its
-// verified org identity.
-//
-// The founding case's real keys: the ex-apay ETH issuer moved to
-// ultracapital.xyz when Ultra Stellar acquired apay.io's wrapped assets.
+// Fixtures for the chain re-check pass: a filled, live-sourced row is invisible to the primary queue and the merged re-check,
+// so a lapsed home_domain would keep being fetched by SEP-1 refresh and could be inherited by whoever registers it next.
+// Real keys: the ex-apay ETH issuer moved to ultracapital.xyz.
 const (
 	// A filled, live-sourced row on r1 whose stored domain has lapsed.
 	lapsedDomainIssuer       = "GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55"
@@ -514,13 +466,7 @@ func onRecord(g string, flags uint32, domain, source string, asOf uint32) timesc
 	return rec
 }
 
-// TestRunIssuerFlags_ChainRecheckCorrectsALapsedHomeDomain is the defect.
-//
-// The row is the exact shape the drain leaves behind: flags resolved, source
-// `live`, and a home_domain that was true when it was written. The account has
-// since declared a different one on-chain. A run must re-read it and write the
-// chain's answer back — that is the on-chain remediation path, which
-// would otherwise have no effect.
+// TestRunIssuerFlags_ChainRecheckCorrectsALapsedHomeDomain: a filled live row whose account now declares a different domain must be re-read and corrected.
 func TestRunIssuerFlags_ChainRecheckCorrectsALapsedHomeDomain(t *testing.T) {
 	store := &stubIssuerFlagsStore{
 		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
@@ -556,10 +502,7 @@ func TestRunIssuerFlags_ChainRecheckCorrectsALapsedHomeDomain(t *testing.T) {
 	}
 }
 
-// TestRunIssuerFlags_ChainRecheckWritesOnlyWhatTheChainChanged — re-offering
-// the whole filled set (r1: 49,002 rows) is only affordable because a run that
-// changes nothing writes nothing. It also keeps the `written` counter meaning
-// "rows the chain corrected" rather than "rows we touched".
+// TestRunIssuerFlags_ChainRecheckWritesOnlyWhatTheChainChanged: re-offering every filled row is affordable only because an unchanged run writes nothing, and written means rows corrected.
 func TestRunIssuerFlags_ChainRecheckWritesOnlyWhatTheChainChanged(t *testing.T) {
 	const agreeing = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
 	store := &stubIssuerFlagsStore{
@@ -595,14 +538,7 @@ func TestRunIssuerFlags_ChainRecheckWritesOnlyWhatTheChainChanged(t *testing.T) 
 	}
 }
 
-// TestRunIssuerFlags_ChainRecheckClearsADomainTheChainNoLongerDeclares is the
-// cleared-domain half of the lapsed-domain takeover. BulkAccountAuthFlags
-// returns every LIVE account and decodes home_domain from its entry, so an
-// empty reading is the account declaring none — not a field the lake did not
-// return. The anchor below ran SetOptions(home_domain="") at the SAME ledger
-// the row was filled at, so nothing but the domain distinguishes the reading
-// from the record: the pass must still write it, or the lapsed name stays in
-// the SEP-1 refresh queue.
+// TestRunIssuerFlags_ChainRecheckClearsADomainTheChainNoLongerDeclares: an empty reading from a live entry is the account declaring none, so the pass must write it or the lapsed name stays queued.
 func TestRunIssuerFlags_ChainRecheckClearsADomainTheChainNoLongerDeclares(t *testing.T) {
 	store := &stubIssuerFlagsStore{
 		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
@@ -628,9 +564,7 @@ func TestRunIssuerFlags_ChainRecheckClearsADomainTheChainNoLongerDeclares(t *tes
 	}
 }
 
-// TestRunIssuerFlags_ChainRecheckLeavesAnUnchangedDeclaredNoneAlone keeps the
-// pass writing only differences: a row that already holds no domain agrees
-// with a live entry that declares none.
+// TestRunIssuerFlags_ChainRecheckLeavesAnUnchangedDeclaredNoneAlone: a row holding no domain agrees with a live entry declaring none, so nothing is written.
 func TestRunIssuerFlags_ChainRecheckLeavesAnUnchangedDeclaredNoneAlone(t *testing.T) {
 	store := &stubIssuerFlagsStore{
 		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
@@ -650,12 +584,7 @@ func TestRunIssuerFlags_ChainRecheckLeavesAnUnchangedDeclaredNoneAlone(t *testin
 	}
 }
 
-// TestRunIssuerFlags_ChainRecheckRelabelsAnIssuerThatMergedAfterFilling is the
-// merged half. A row filled `live` whose account has since merged is absent
-// from the live reader; a pass that leaves it alone keeps its `live`
-// label and home_domain for good. It must ask the last-known reader, and
-// write what that reader returns: the removal-ledger flags and NO domain. A
-// key neither reader answers for (a coverage gap) is still left untouched.
+// TestRunIssuerFlags_ChainRecheckRelabelsAnIssuerThatMergedAfterFilling: a live-labelled row whose account merged must take the last-known reader's flags and no domain; a key neither reader answers stays untouched.
 func TestRunIssuerFlags_ChainRecheckRelabelsAnIssuerThatMergedAfterFilling(t *testing.T) {
 	store := &stubIssuerFlagsStore{
 		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
@@ -685,10 +614,7 @@ func TestRunIssuerFlags_ChainRecheckRelabelsAnIssuerThatMergedAfterFilling(t *te
 	}
 }
 
-// TestRunIssuerFlags_ChainRecheckClearsAMergedRowsStoredDomain covers rows
-// already labelled last-known that still hold a domain stored while the
-// account was live. The queue offers them; the account is still merged, and
-// re-writing the same reading clears the identity.
+// TestRunIssuerFlags_ChainRecheckClearsAMergedRowsStoredDomain: a last-known row still holding a domain stored while live is re-written to clear the identity.
 func TestRunIssuerFlags_ChainRecheckClearsAMergedRowsStoredDomain(t *testing.T) {
 	store := &stubIssuerFlagsStore{
 		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
@@ -709,10 +635,7 @@ func TestRunIssuerFlags_ChainRecheckClearsAMergedRowsStoredDomain(t *testing.T) 
 	}
 }
 
-// TestRunIssuerFlags_ChainRecheckFillsAnUnlabelledRow — a pre-migration-0153
-// row carries flags with no provenance label. Its VALUES may well agree with
-// the chain, but "unknown provenance" is not the same claim as `live`, so the
-// pass must still write it once and stamp it.
+// TestRunIssuerFlags_ChainRecheckFillsAnUnlabelledRow: a pre-migration row with flags but no provenance is written once and stamped, since unknown provenance is not live.
 func TestRunIssuerFlags_ChainRecheckFillsAnUnlabelledRow(t *testing.T) {
 	store := &stubIssuerFlagsStore{
 		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
@@ -737,11 +660,7 @@ func TestRunIssuerFlags_ChainRecheckFillsAnUnlabelledRow(t *testing.T) {
 	}
 }
 
-// TestRunIssuerFlags_ChainRecheckHasItsOwnBound — the widened queue must not
-// silently inherit -limit (5,000 nightly on r1), because it is ordered by
-// primary key: a cap would re-read the same head every run and never reach the
-// tail. It gets its own knob, defaulting to "every filled row", and the pass
-// runs LAST so it cannot take budget from the primary drain either way.
+// TestRunIssuerFlags_ChainRecheckHasItsOwnBound: the pass must not inherit -limit (primary-key order would re-read the same head forever); it has its own knob and runs last.
 func TestRunIssuerFlags_ChainRecheckHasItsOwnBound(t *testing.T) {
 	store := &stubIssuerFlagsStore{}
 	reader := &stubIssuerFlagsReader{}
@@ -760,9 +679,7 @@ func TestRunIssuerFlags_ChainRecheckHasItsOwnBound(t *testing.T) {
 	}
 }
 
-// TestRunIssuerFlags_ChainRecheckDryRunWritesNothing — the write gate covers
-// the third pass too; an ungated pass would be a nightly writer an operator
-// could not rehearse.
+// TestRunIssuerFlags_ChainRecheckDryRunWritesNothing: the write gate covers the third pass too.
 func TestRunIssuerFlags_ChainRecheckDryRunWritesNothing(t *testing.T) {
 	store := &stubIssuerFlagsStore{
 		needChainRead: []timescale.IssuerAuthFlagsOnRecord{
@@ -785,11 +702,7 @@ func TestRunIssuerFlags_ChainRecheckDryRunWritesNothing(t *testing.T) {
 	}
 }
 
-// TestRunIssuerFlags_ChainRecheckStartsAtTheDaysBatch — the queue is ordered
-// by primary key and a run can stop on its timeout, so a walk that always
-// starts at the head leaves the same tail unexamined every night. Each day's
-// run must start one batch further on and wrap, putting every batch at the
-// head of the walk once per cycle.
+// TestRunIssuerFlags_ChainRecheckStartsAtTheDaysBatch: each day's run starts one batch further on and wraps, so a timeout never leaves the same tail unexamined.
 func TestRunIssuerFlags_ChainRecheckStartsAtTheDaysBatch(t *testing.T) {
 	keys := []string{"GA", "GB", "GC", "GD", "GE"}
 	recs := make([]timescale.IssuerAuthFlagsOnRecord, 0, len(keys))

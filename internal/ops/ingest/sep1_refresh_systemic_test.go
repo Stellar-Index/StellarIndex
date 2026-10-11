@@ -31,16 +31,8 @@ func sep1Run(reachedOK, reachedFailed, neverOK, neverFailed int) ([]timescale.Is
 	return cands, failed
 }
 
-// TestSep1RunVerdict pins the systemic-outage guard: it trips on domains
-// that served a stellar.toml before and now fail, never on domains that
-// have never answered.
-//
-// The guard exists because a retry backoff cannot tell "this domain is
-// dead" from "our DNS is down" — both are a failed fetch — and an
-// unguarded backoff would walk the whole population to the 30-day cap
-// during an outage on our side and then go quiet, with the
-// data-freshness watchdog staying green throughout (it reads
-// max(sep1_resolved_at), which a FAILED attempt stamps too).
+// TestSep1RunVerdict pins the systemic-outage guard: it trips on domains that served a stellar.toml before and now fail, never on never-answered ones.
+// A retry backoff cannot tell a dead domain from our DNS being down, and would walk the population to the 30-day cap with the freshness watchdog still green.
 func TestSep1RunVerdict(t *testing.T) {
 	r := defaultSystemicFailureRate
 	for _, tc := range []struct {
@@ -110,9 +102,7 @@ func TestSep1RunVerdict(t *testing.T) {
 	}
 }
 
-// TestSep1RunVerdictTestnetShape guards the fixture itself: the testnet
-// batch is 97% failures overall, so a verdict over raw attempts trips on
-// it, and only the reached-domain population keeps it green.
+// TestSep1RunVerdictTestnetShape guards the fixture: the testnet batch is 97% failures, so only the reached-domain population keeps the verdict green.
 func TestSep1RunVerdictTestnetShape(t *testing.T) {
 	cands, failed := sep1Run(19, 0, 0, 731)
 	if len(cands) != 750 || len(failed) != 731 {

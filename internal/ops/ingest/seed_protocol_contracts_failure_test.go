@@ -72,9 +72,7 @@ func seedTestMeta() pipeline.GatedMeta {
 	}
 }
 
-// A failed protocol_contracts upsert must fail the run: the gated decoder
-// drops that child's events forever, so "upserted N" + exit 0 is a false
-// deploy-precondition pass.
+// TestWalkFactoryCreations_UpsertFailureFailsRun: a failed upsert must fail the run, since the gate drops that child's events forever.
 func TestWalkFactoryCreations_UpsertFailureFailsRun(t *testing.T) {
 	store := &flakyUpsertStore{ledgers: []uint32{11, 12, 13}, failOn: map[string]bool{"CHILD12": true}}
 	n, err := walkFactoryCreations(context.Background(), store, true, "seedtest", seedTestMeta(), 20)
@@ -100,8 +98,7 @@ func TestWalkFactoryCreations_AllUpsertsLandIsNil(t *testing.T) {
 	}
 }
 
-// The lake stream reads without FINAL: a creation event in an unmerged
-// duplicate part must be counted and upserted once, not twice.
+// TestWalkFactoryCreations_DuplicatePartCountedOnce: the lake stream reads without FINAL, so a creation event in an unmerged duplicate part is counted once.
 func TestWalkFactoryCreations_DuplicatePartCountedOnce(t *testing.T) {
 	store := &flakyUpsertStore{ledgers: []uint32{11, 12}, dupParts: true}
 	n, err := walkFactoryCreations(context.Background(), store, true, "seedtest", seedTestMeta(), 20)

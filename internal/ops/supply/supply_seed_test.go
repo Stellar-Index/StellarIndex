@@ -5,13 +5,7 @@ import (
 	"testing"
 )
 
-// TestAccountObservationSeedProvenance — seed-observations must leave an
-// audit trail, or a pass run weeks ago is indistinguishable from one that
-// never ran. This pins the record shape supplySeedObservations upserts only
-// at the end of a COMPLETE pass (never on -dry-run, never mid-loop): nil
-// ledger bounds when nothing was seeded, populated bounds otherwise, and the
-// watched/missing G-strkeys carried through so a `missing` count traces to a
-// specific account even after the configured watchlist later changes.
+// TestAccountObservationSeedProvenance pins the audit record supplySeedObservations upserts only at the end of a COMPLETE pass (never on -dry-run or mid-loop): nil ledger bounds when nothing was seeded, else populated, with watched/missing G-strkeys carried through.
 func TestAccountObservationSeedProvenance(t *testing.T) {
 	watched := []string{"GA", "GB", "GC"}
 

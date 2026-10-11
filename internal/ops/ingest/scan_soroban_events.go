@@ -20,18 +20,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// scanSorobanEvents streams a bounded galexie ledger range and dumps
-// every Soroban contract event (optionally filtered to a topic[0]
-// string and/or a single contract) as one JSON object per line:
-//
-//	{ledger, contract_id, tx_hash, op_index, topics:[...], body:{...}}
-//
-// It is the in-infra analogue of hubble-soroban-events (which needs
-// BigQuery): the authoritative "what does contract X actually emit
-// on-chain" answer, used to discover real contract addresses + event
-// schemas before writing or auditing a decoder. No DB writes — a
-// catch-all dispatcher.Decoder reuses the dispatcher's LCM→event
-// extraction so we never reimplement SCVal/LCM parsing.
+// scanSorobanEvents dumps every Soroban contract event in a bounded galexie range as one JSON object per line
+// (optionally filtered by topic[0] and/or contract), to discover real addresses and schemas before
+// writing a decoder. No DB writes; reuses the dispatcher's LCM extraction rather than reparsing SCVal.
 func scanSorobanEvents(args []string) error { //nolint:funlen,gocognit,gocyclo // linear diagnostic; splitting reduces readability
 	fs := flag.NewFlagSet("scan-soroban-events", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -177,11 +168,7 @@ func scalarString(sv sdkxdr.ScVal) string {
 	return ""
 }
 
-// renderB64SCVal parses a base64 SCVal and renders it to a
-// JSON-friendly value, recursing up to depth. Maps render with their
-// keys as the JSON object keys (the field names we're hunting), each
-// value as a short "type=sample" — enough to reconstruct an event
-// schema without dumping unbounded nested data.
+// renderB64SCVal renders a base64 SCVal to a JSON-friendly value up to depth, with map keys as object keys and values as short "type=sample".
 func renderB64SCVal(b64 string, depth int) any {
 	sv, err := scval.Parse(b64)
 	if err != nil {

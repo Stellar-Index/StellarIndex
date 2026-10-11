@@ -16,25 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// censusBackfill populates the ledger_ingest_log substrate record for
-// a historical ledger range (ADR-0033 Phase 2). The live indexer
-// writes this record going forward; this subcommand walks Galexie
-// metadata for [from, to] and writes the decoder-independent census
-// (soroban_event_count + classic_trade_effect_count) plus the
-// hash-chain anchors for ledgers that predate live capture.
-//
-// No decoder runs — this is a pure structural walk (dispatcher.
-// CensusLedger), so it is fast and safe to re-run: UpsertLedgerIngestLog
-// is ON CONFLICT DO UPDATE, so overlapping ranges and re-runs converge.
-//
-// Resume: checkpoints into ingestion_cursors as
-// (source='census-backfill', sub_source='<from>-<to>'). Re-running the
-// same -from/-to resumes from the last processed ledger. Restart-safe.
-//
-// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN that
-// walks and censuses the range — coverage check included, so a wrong
-// bucket still fails loudly — and reports the substrate rows it WOULD
-// write, persisting neither them nor a checkpoint. -write applies.
+// censusBackfill writes the decoder-independent ledger_ingest_log census and hash-chain anchors for a historical range (ADR-0033 Phase 2).
+// Pure structural walk; re-runs converge (UpsertLedgerIngestLog is ON CONFLICT DO UPDATE) and resume from the ingestion_cursors checkpoint.
+// Fail-closed (opsutil.WriteGate): the default is a DRY RUN that walks and reports; -write applies.
 func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // linear walk + checkpoint loop; splitting reduces clarity (same as backfillRouter).
 	fs, gate := opsutil.NewMutatingFlagSet("census-backfill")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -101,19 +85,8 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 		skipped       int
 		persisted     int    // ledgers whose substrate row is durably committed
 		lastProcessed uint32 // last ledger we actually WROTE a row for (logging only)
-		// `wm` is the durable resume checkpoint — the highest ledger such
-		// that EVERY ledger from startLedger through it was persisted (no
-		// census error, no skip, no upsert failure). The moment any ledger
-		// in the run is left un-persisted the watermark FREEZES, so the
-		// checkpoint can never stride PAST a gap. Checkpointing
-		// `lastProcessed` (the last row written) would advance right over
-		// mid-range skipped ledgers: on resume the cursor would sit beyond
-		// the gap and the skipped ledgers would never be re-read, leaving a
-		// permanent substrate hole. Freezing instead re-reads the gap on the
-		// next run (idempotent UpsertLedgerIngestLog converges) — and if the
-		// ledger is still unreadable the run makes no forward progress,
-		// which is a LOUD stall rather than a silent gap (the "durable
-		// watermark = last fully-committed" posture).
+		// wm is the resume checkpoint: the highest ledger with EVERY ledger up to it persisted. It freezes at the first
+		// un-persisted ledger so the checkpoint never strides past a gap; a stuck ledger stalls loudly, not silently.
 		wm             contiguousWatermark
 		lastCheckpoint = time.Now()
 	)
@@ -143,14 +116,8 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 				fmt.Fprintf(os.Stderr, "census-backfill: ledger %d census: %v\n", lcm.LedgerSequence(), cerr)
 				return nil
 			}
-			// A ledger we could not fully read (a malformed tx, or a tx
-			// whose GetTransactionEvents failed — e.g. an unsupported
-			// future meta version) must NOT get an authoritative
-			// "complete" substrate row: its SorobanEventCount undercounts,
-			// so a projection reconcile against it would falsely pass.
-			// Skip it; a later re-run on a fixed reader writes the real
-			// row. The checkpoint must stay behind the skip so that "later
-			// re-run" actually re-reads it.
+			// A ledger not fully read (malformed tx, failed GetTransactionEvents) must NOT get an authoritative "complete" row:
+			// its SorobanEventCount undercounts. Skip it; the checkpoint stays behind so a re-run re-reads it.
 			if census.TxReadErrors > 0 || census.TxEventReadErrors > 0 {
 				skipped++
 				wm.gap()
@@ -187,13 +154,8 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 		},
 	)
 
-	// Flush a final checkpoint at the contiguous watermark — the last
-	// ledger with NO un-persisted ledger before it — so a resume picks up
-	// exactly at the first gap (whether we finished, were interrupted, or
-	// hit an archive/read gap). Never past it. Use a FRESH bounded
-	// context: on a graceful SIGINT the parent ctx is already canceled by
-	// the time Stream returns, and checkpointing with it would fail
-	// instantly and drop the final resume watermark.
+	// Flush the final checkpoint at the contiguous watermark, never past it. Use a FRESH bounded context:
+	// on SIGINT the parent ctx is already canceled and would drop the final watermark.
 	if wm.seq > 0 && write {
 		fctx, fcancel := context.WithTimeout(context.Background(), 30*time.Second)
 		if err := store.UpsertCursor(fctx, cursorSrc, cursorSub, wm.seq); err != nil {
@@ -221,40 +183,15 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	return nil
 }
 
-// censusBucket resolves which galexie bucket a census-backfill walk reads.
-//
-// The live bucket (cfg.Storage.S3BucketLive) cannot hold the pre-live
-// ranges this command exists to serve (ADR-0033 Phase 2), and
-// TolerateTrailingMissing makes an entirely-absent range look like a clean
-// walk, so defaulting to it would print "done" and exit 0 having written
-// nothing.
-//
-// The seam policy itself lives in opsutil.ResolveStreamBucket so the two
-// commands cannot drift apart; this wrapper is census-backfill's own
-// named seam (mirrors chops.backfillBucket).
+// censusBucket resolves the galexie bucket a census-backfill walk reads. The live bucket cannot hold pre-live ranges
+// and TolerateTrailingMissing would make that look like a clean walk (ADR-0033); policy lives in opsutil.ResolveStreamBucket.
 func censusBucket(cfg config.Config, override string, from, to uint32) (string, error) {
 	return opsutil.ResolveStreamBucket(cfg, override, from, to)
 }
 
-// censusCoverage turns a census-backfill run that did not persist its whole range
-// into a hard error, naming the bucket it read.
-//
-// Two roads lead to a silent exit 0:
-//   - the run read the WRONG BUCKET. The live bucket cannot hold a historic range,
-//     and because opsutil.NewBoundedLedgerStreamConfig opts into
-//     TolerateTrailingMissing, an entirely absent range looks like a clean walk.
-//   - the run persisted only PART of the range. Every non-persisting path in the
-//     callback logs and continues so one bad ledger doesn't abort a multi-day
-//     walk, and the watermark freezes the resume cursor at the first gap, but the
-//     process would still exit 0.
-//
-// The bar is "[from,to] has a substrate row in ledger_ingest_log", which the
-// projection reconcile measures completeness against (ADR-0033). Re-running is
-// safe (UpsertLedgerIngestLog is ON CONFLICT DO UPDATE), so failing closed costs a
-// re-run and failing open costs a hole nobody looks for.
-//
-// `from` is the ledger the run STARTED at (post-resume), not -from: ledgers banked
-// by an earlier run must not be re-charged, or every resumed run would fail.
+// censusCoverage fails a run that did not persist its whole range (wrong bucket or partial persist), naming the bucket,
+// because the reconcile measures completeness against a ledger_ingest_log row per ledger (ADR-0033). Failing closed costs a re-run; failing open costs a hole.
+// `from` is where the run STARTED (post-resume), so ledgers banked by an earlier run are not re-charged.
 func censusCoverage(from, to uint32, persisted, skipped int, bucket string, interrupted bool) error {
 	want := int64(to) - int64(from) + 1
 	switch {
@@ -271,21 +208,8 @@ func censusCoverage(from, to uint32, persisted, skipped int, bucket string, inte
 	return nil
 }
 
-// contiguousWatermark tracks the highest ledger sequence such that every
-// ledger from the run's start through it has been durably persisted, with
-// NO gap (skipped or failed ledger) before it. It is the durability-honest
-// resume checkpoint for an in-order ledger walk.
-//
-// Callers report each ledger's outcome in stream order: persisted(seq) for
-// a ledger whose row is durably committed, gap() for one that was skipped
-// or failed to persist. The first gap FREEZES the watermark — subsequent
-// persisted() calls do not advance it — so the checkpoint can never move
-// past an un-persisted ledger. `seq` is 0 until the first contiguous
-// ledger is persisted (so callers gate the checkpoint on seq > 0).
-//
-// Correctness depends on in-order delivery (ledgerstream.Stream walks
-// [from, to] ascending): once frozen, the watermark holds the last ledger
-// before the first gap, which is exactly where a resume must re-read from.
+// contiguousWatermark tracks the highest ledger such that every ledger from the run's start through it is durably persisted.
+// The first gap() freezes it; it relies on in-order delivery. seq is 0 until the first persisted ledger.
 type contiguousWatermark struct {
 	seq    uint32
 	frozen bool

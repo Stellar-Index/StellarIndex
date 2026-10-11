@@ -22,25 +22,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 )
 
-// ─── stellarindex-ops galexie-mirror-verify ─────────────────────
-//
-// Compares every object of the local Galexie mirror (galexie-archive
-// on MinIO) with the same key on the upstream public dataset (the
-// storage.s3_cold_* tier, aws-public-blockchain in production) by
-// ETag and size, partition by partition.
-//
-// galexie-archive-fill copies only what is absent, so an upstream
-// re-export of a ledger we already hold is invisible to it, and
-// header-hash checks (verify-archive) cannot see a changed meta body.
-// Galexie objects are single-part uploads, whose ETag is the MD5 of
-// the body on both AWS and MinIO, so equal ETags mean equal bytes.
-//
-// Last-Modified classifies a mismatch: our copy's Last-Modified is the
-// time we mirrored it, so an upstream object modified after that was
-// re-exported after we copied it; otherwise our copy is what changed.
-//
-// Read-only. Exit non-zero on any listing error, content mismatch, or
-// object we hold that upstream no longer lists.
+// galexie-mirror-verify compares every object of the local Galexie mirror with the upstream public dataset (storage.s3_cold_* tier) by ETag and size, partition by partition.
+// galexie-archive-fill copies only absent objects and verify-archive checks header hashes, so an upstream re-export is invisible to both; single-part ETags are body MD5s, so equal ETags mean equal bytes.
+// Last-Modified classifies a mismatch (upstream newer than our mirror time = re-exported). Read-only; exits non-zero on a listing error, mismatch, or object upstream no longer lists.
 
 const (
 	mirrorCauseUpstreamRewritten = "upstream-rewritten"

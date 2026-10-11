@@ -10,11 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// fakeCloseTimeReader is a DB-free ledgerCloseTimeReader: it serves a preset
-// close time (or a not-found / error) for whatever ledger it's asked about,
-// recording the ledger so the plumbing can be asserted. The exact-lookup
-// knobs serve the operator -ledger branch; the lake* knobs serve the auto
-// branch's LatestLedgerAtOrBefore clamp.
+// fakeCloseTimeReader is a DB-free ledgerCloseTimeReader serving a preset close time (or not-found / error) and recording the ledger asked; the exact-lookup knobs serve the operator -ledger branch, the lake* knobs the auto clamp.
 type fakeCloseTimeReader struct {
 	closeTime time.Time
 	found     bool
@@ -42,17 +38,7 @@ func (f *fakeCloseTimeReader) LatestLedgerAtOrBefore(_ context.Context, maxSeq u
 	return f.lakeLedger, f.lakeClose, f.lakeFound, f.lakeErr
 }
 
-// TestResolveSnapshotLedger_StampsLedgerCloseTimeNotWallClock is the
-// M4-callers proof for the ops-supply caller. resolveSnapshotLedger must
-// stamp ObservedAt with the chosen ledger's REAL close_time (resolved from
-// stellar.ledgers via the close-time reader) — NEVER time.Now(). The fixture
-// close time is deliberately ~2.5y stale, so a wall-clock stamp (returning
-// time.Now().UTC() from both branches) is unmistakable. A re-derived
-// historical supply snapshot stamped with the write-time corrupts every
-// point-in-time supply/observation query.
-//
-// The operator -ledger branch is exercised (opLedger>0), which never touches
-// the store, so a nil store keeps the test DB-free.
+// TestResolveSnapshotLedger_StampsLedgerCloseTimeNotWallClock: ObservedAt must be the chosen ledger's REAL close_time, never time.Now() (the fixture is ~2.5y stale so a wall-clock stamp is unmistakable); nil store since the operator branch never touches it.
 func TestResolveSnapshotLedger_StampsLedgerCloseTimeNotWallClock(t *testing.T) {
 	const opLedger = 40_000_000
 	closeTime := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -76,10 +62,7 @@ func TestResolveSnapshotLedger_StampsLedgerCloseTimeNotWallClock(t *testing.T) {
 	}
 }
 
-// TestResolveSnapshotLedger_FailsClosedOnMissingLedgerRow proves the
-// fail-closed fallback choice: when the chosen ledger has no stellar.ledgers
-// row, the resolver returns an error rather than silently falling back to
-// time.Now() (which would reintroduce the M4-callers corruption).
+// TestResolveSnapshotLedger_FailsClosedOnMissingLedgerRow: a ledger with no stellar.ledgers row errors rather than falling back to time.Now().
 func TestResolveSnapshotLedger_FailsClosedOnMissingLedgerRow(t *testing.T) {
 	reader := &fakeCloseTimeReader{found: false}
 	if _, _, err := resolveSnapshotLedger(context.Background(), nil, reader, 40_000_000); err == nil {
@@ -97,16 +80,7 @@ func (f *fakeCursorReader) ListCursors(context.Context) ([]timescale.Cursor, err
 	return f.cursors, f.err
 }
 
-// TestAutoSnapshotLedger_PrefersTheChainCursor is a regression guard.
-//
-// ingestion_cursors is a table of JOB positions, not chain positions.
-// Taking MAX(last_ledger) over all of them let any ops job decide what
-// ledger a supply snapshot claims to be as-of. The reachable case, encoded
-// here: the live indexer is behind (restart / re-derive / maintenance) at
-// ledger 63,000,000 while an operator backfills a range near the tip, whose
-// cursor reaches 63,900,000. Every component balance summed into the
-// snapshot was observed at the INDEXER's position — so 63,900,000 is a
-// false attribution for the most-consumed number the product serves.
+// TestAutoSnapshotLedger_PrefersTheChainCursor guards against MAX(last_ledger) over ingestion_cursors, which holds JOB positions: an ops backfill cursor at 63,900,000 must not override the indexer's 63,000,000, where the component balances were observed.
 func TestAutoSnapshotLedger_PrefersTheChainCursor(t *testing.T) {
 	cursors := []timescale.Cursor{
 		{Source: "backfill", Sub: "63500000-63900000", LastLedger: 63_900_000},
@@ -123,10 +97,7 @@ func TestAutoSnapshotLedger_PrefersTheChainCursor(t *testing.T) {
 	}
 }
 
-// TestAutoSnapshotLedger_FallsBackWhenNoChainCursor keeps the pre-first-run
-// case working (a host seeding supply before the indexer has written its
-// cursor) — and requires the fallback to NAME itself, so the run log states
-// that a job cursor supplied the stamp rather than the chain.
+// TestAutoSnapshotLedger_FallsBackWhenNoChainCursor: the fallback works before the indexer's first cursor and NAMES itself in the run log.
 func TestAutoSnapshotLedger_FallsBackWhenNoChainCursor(t *testing.T) {
 	cursors := []timescale.Cursor{
 		{Source: "backfill", Sub: "1-100", LastLedger: 100},
@@ -141,18 +112,14 @@ func TestAutoSnapshotLedger_FallsBackWhenNoChainCursor(t *testing.T) {
 	}
 }
 
-// TestAutoSnapshotLedger_NoCursors — an empty table resolves to 0 so the
-// caller can fail closed with its "pass -ledger explicitly" error.
+// TestAutoSnapshotLedger_NoCursors: an empty table resolves to 0 so the caller fails closed.
 func TestAutoSnapshotLedger_NoCursors(t *testing.T) {
 	if ledger, _ := autoSnapshotLedger(nil); ledger != 0 {
 		t.Errorf("ledger = %d, want 0", ledger)
 	}
 }
 
-// TestResolveSnapshotLedger_AutoUsesChainCursorEndToEnd wires the same
-// scenario through resolveSnapshotLedger itself (opLedger=0), proving the
-// lake lookup is bounded by the CHAIN cursor's ledger and not the ops
-// job's, and that the lake's landed row supplies both position and stamp.
+// TestResolveSnapshotLedger_AutoUsesChainCursorEndToEnd: the lake lookup is bounded by the CHAIN cursor's ledger, and the landed row supplies both position and stamp.
 func TestResolveSnapshotLedger_AutoUsesChainCursorEndToEnd(t *testing.T) {
 	closeTime := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	reader := &fakeCloseTimeReader{lakeLedger: 63_000_000, lakeClose: closeTime, lakeFound: true}
@@ -176,13 +143,7 @@ func TestResolveSnapshotLedger_AutoUsesChainCursorEndToEnd(t *testing.T) {
 	}
 }
 
-// TestResolveSnapshotLedger_AutoClampsToLandedLakeTip is the
-// r1 regression: the ledgerstream cursor (Postgres, realtime) leads the
-// lake's stellar.ledgers (CH sink, lands seconds later), so at the moment
-// a timer-driven snapshot fires the cursor's own row is routinely absent
-// — the daily unit failed EVERY run. The auto path must clamp to the
-// newest landed ledger at or before the cursor and stamp THAT ledger's
-// close time.
+// TestResolveSnapshotLedger_AutoClampsToLandedLakeTip: the realtime cursor leads the lake by seconds, so the auto path clamps to the newest landed ledger at or before it and stamps that ledger's close time.
 func TestResolveSnapshotLedger_AutoClampsToLandedLakeTip(t *testing.T) {
 	lakeClose := time.Date(2026, 8, 22, 1, 15, 0, 0, time.UTC)
 	reader := &fakeCloseTimeReader{lakeLedger: 64_063_584, lakeClose: lakeClose, lakeFound: true}
@@ -205,10 +166,7 @@ func TestResolveSnapshotLedger_AutoClampsToLandedLakeTip(t *testing.T) {
 	}
 }
 
-// TestResolveSnapshotLedger_AutoFailsClosedOnStalledLake bounds the clamp:
-// a lake trailing the cursor by more than maxAutoSnapshotClampLedgers is a
-// stalled sink, not a landing race, and stamping a snapshot that far
-// behind the chain would hide the stall.
+// TestResolveSnapshotLedger_AutoFailsClosedOnStalledLake: a lake behind the cursor by more than maxAutoSnapshotClampLedgers is a stalled sink, not a race.
 func TestResolveSnapshotLedger_AutoFailsClosedOnStalledLake(t *testing.T) {
 	reader := &fakeCloseTimeReader{
 		lakeLedger: 64_000_000 - maxAutoSnapshotClampLedgers - 1,
@@ -223,9 +181,7 @@ func TestResolveSnapshotLedger_AutoFailsClosedOnStalledLake(t *testing.T) {
 	}
 }
 
-// TestResolveSnapshotLedger_AutoFailsClosedOnEmptyLake — no landed ledger
-// at or before the cursor means the lake is empty or wholly gapped; never
-// fall back to wall-clock.
+// TestResolveSnapshotLedger_AutoFailsClosedOnEmptyLake: no landed ledger at or before the cursor never falls back to wall-clock.
 func TestResolveSnapshotLedger_AutoFailsClosedOnEmptyLake(t *testing.T) {
 	reader := &fakeCloseTimeReader{lakeFound: false}
 	cursors := &fakeCursorReader{cursors: []timescale.Cursor{
@@ -236,9 +192,7 @@ func TestResolveSnapshotLedger_AutoFailsClosedOnEmptyLake(t *testing.T) {
 	}
 }
 
-// TestResolveSnapshotLedger_OperatorLedgerStaysExact — the clamp is an
-// AUTO-path affordance only. An operator-named -ledger absent from the
-// lake is a genuine gap and must fail exactly as before, never shift.
+// TestResolveSnapshotLedger_OperatorLedgerStaysExact: the clamp is auto-only; an operator-named -ledger absent from the lake fails, never shifts.
 func TestResolveSnapshotLedger_OperatorLedgerStaysExact(t *testing.T) {
 	reader := &fakeCloseTimeReader{found: false, lakeLedger: 39_999_000, lakeFound: true}
 	if _, _, err := resolveSnapshotLedger(context.Background(), nil, reader, 40_000_000); err == nil {
@@ -249,11 +203,7 @@ func TestResolveSnapshotLedger_OperatorLedgerStaysExact(t *testing.T) {
 	}
 }
 
-// TestAutoSnapshotClampMatchesLookupWindow is the operator-path half of the
-// same lockstep as
-// cmd/stellarindex-aggregator/supply_snapshot_ledger_test.go's: the ledgers
-// this resolver refuses past are exactly the ledgers the lake lookup reads,
-// so neither can be widened or narrowed alone.
+// TestAutoSnapshotClampMatchesLookupWindow: the ledgers the resolver refuses past equal the ledgers the lake lookup reads (lockstep with cmd/stellarindex-aggregator/supply_snapshot_ledger_test.go).
 func TestAutoSnapshotClampMatchesLookupWindow(t *testing.T) {
 	if maxAutoSnapshotClampLedgers != clickhouse.LatestLedgerLookbackLedgers {
 		t.Errorf("maxAutoSnapshotClampLedgers = %d but the lookup scans %d ledgers below the cursor — the refusal bound and the scan window must be the same constant",

@@ -16,9 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestParseStalledCursor covers every branch of the sub_source parser
-// + skip-reason path. Inputs are crafted to mirror the actual cursor
-// shapes seen in production.
+// TestParseStalledCursor covers every branch of the sub_source parser and skip-reason path, using real cursor shapes.
 func TestParseStalledCursor(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -157,11 +155,7 @@ func TestParseStalledCursor(t *testing.T) {
 	}
 }
 
-// TestParseStalledCursor_RoundTripsBackfillCursorSub pins the contract
-// between `backfillCursorSub` (the producer) and `parseStalledCursor`
-// (the consumer) — if either side changes its format the round-trip
-// breaks and this test fires before resume-stalled silently drops
-// every stalled cursor as "doesn't match shape".
+// TestParseStalledCursor_RoundTripsBackfillCursorSub pins the format contract between backfillCursorSub (producer) and parseStalledCursor (consumer).
 func TestParseStalledCursor_RoundTripsBackfillCursorSub(t *testing.T) {
 	opts := backfillOpts{
 		from:    62_200_000,
@@ -183,10 +177,7 @@ func TestParseStalledCursor_RoundTripsBackfillCursorSub(t *testing.T) {
 	}
 }
 
-// TestOverlapsAnyDataGap covers the small interval-overlap helper.
-// The function is the gate's primitive — a bug here would let
-// false-positive plans through (act on cursors that aren't real
-// gaps) or filter out genuine ones (miss real coverage holes).
+// TestOverlapsAnyDataGap covers the gate's interval-overlap primitive; a bug lets false positives through or filters real gaps.
 func TestOverlapsAnyDataGap(t *testing.T) {
 	gaps := []timescale.LedgerGap{
 		{Start: 62642781, End: 62735517, Size: 92737},
@@ -218,10 +209,7 @@ func TestOverlapsAnyDataGap(t *testing.T) {
 	}
 }
 
-// TestPlanHasSorobanDecoder verifies which decoder shapes route
-// through the data-gap gate. SDEX-only plans skip the gate (no
-// data-derived gap signal for the trades table yet); any plan
-// containing at least one Soroban-era decoder name DOES go through.
+// TestPlanHasSorobanDecoder verifies which decoder shapes route through the data-gap gate: SDEX-only plans skip it, any Soroban-era decoder goes through.
 func TestPlanHasSorobanDecoder(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -235,11 +223,8 @@ func TestPlanHasSorobanDecoder(t *testing.T) {
 		{name: "mixed sdex + Soroban DEXes", sources: []string{"aquarius", "comet", "phoenix", "sdex", "soroswap"}, want: true},
 		{name: "empty", sources: nil, want: false},
 		{name: "unknown decoder", sources: []string{"some-future-source"}, want: false},
-		// sorocredit and blend_emitter are BackfillSafe Soroban lending
-		// sources (external/registry.go) whose raw events land in
-		// soroban_events (dispatcher.go case list) — missing
-		// from the hand-kept list they would silently gate against the SDEX
-		// trades scan instead.
+		// sorocredit and blend_emitter are BackfillSafe Soroban sources whose raw events land in soroban_events;
+		// missing from the hand-kept list they would silently gate against the SDEX trades scan.
 		{name: "sorocredit alone", sources: []string{"sorocredit"}, want: true},
 		{name: "blend_emitter alone", sources: []string{"blend_emitter"}, want: true},
 		{name: "mixed blend + blend_emitter", sources: []string{"blend", "blend_emitter"}, want: true},
@@ -254,11 +239,7 @@ func TestPlanHasSorobanDecoder(t *testing.T) {
 	}
 }
 
-// TestSorobanDecoderNamesCoversDispatcherSourceSet pins
-// sorobanDecoderNames to pipeline.SorobanSourceNames (in turn derived
-// from BuildDispatcher's switch) so a source added to the dispatcher
-// without updating the shared list fails CI here instead of silently
-// mis-gating resume-stalled.
+// TestSorobanDecoderNamesCoversDispatcherSourceSet pins sorobanDecoderNames to pipeline.SorobanSourceNames so a source added to the dispatcher fails CI here instead of mis-gating resume-stalled.
 func TestSorobanDecoderNamesCoversDispatcherSourceSet(t *testing.T) {
 	for _, name := range pipeline.SorobanSourceNames {
 		if _, ok := sorobanDecoderNames[name]; !ok {
@@ -270,9 +251,7 @@ func TestSorobanDecoderNamesCoversDispatcherSourceSet(t *testing.T) {
 	}
 }
 
-// TestHasNonSorobanDecoder_AndGateSelection verifies hasNonSorobanDecoder
-// (used both to select the mixed-plan gate path and to decide whether
-// anyPlanNeedsClassicGate must build the classicGapGate at all).
+// TestHasNonSorobanDecoder_AndGateSelection verifies hasNonSorobanDecoder, which selects the mixed-plan gate path and whether the classicGapGate is built.
 func TestHasNonSorobanDecoder_AndGateSelection(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -305,11 +284,7 @@ func TestHasNonSorobanDecoder_AndGateSelection(t *testing.T) {
 	}
 }
 
-// TestGateAgainstDataGaps_HappyPath puts a cascade-gap signature
-// + a false-positive cursor + an SDEX-only cursor through the gate
-// and pins the expected post-gate skip state. The whole point of
-// this commit: false positives go from "actionable" to "skip" with
-// a self-explanatory reason, real-gap cursors stay actionable.
+// TestGateAgainstDataGaps_HappyPath: a cascade-gap cursor stays actionable, while a false-positive cursor and an SDEX-only cursor become skips with a reason.
 func TestGateAgainstDataGaps_HappyPath(t *testing.T) {
 	gaps := []timescale.LedgerGap{
 		{Start: 62642781, End: 62735517, Size: 92737}, // cascade gap
@@ -377,12 +352,7 @@ func TestGateAgainstDataGaps_HappyPath(t *testing.T) {
 	}
 }
 
-// TestGateAgainstDataGaps_MixedPlanChecksBothSides is the mixed-plan
-// regression: a plan with BOTH a Soroban decoder and an SDEX decoder
-// must not be skipped as a cursor-inventory false positive on a clean
-// soroban_events check alone — the SDEX side needs its own
-// independent confirmation via the same data-derived gate a
-// classic-only plan gets.
+// TestGateAgainstDataGaps_MixedPlanChecksBothSides: a plan with both Soroban and SDEX decoders needs the SDEX side independently confirmed, not skipped on a clean soroban_events check alone.
 func TestGateAgainstDataGaps_MixedPlanChecksBothSides(t *testing.T) {
 	mixedPlan := func() stalledCursorPlan {
 		return stalledCursorPlan{
@@ -449,11 +419,7 @@ func TestGateAgainstDataGaps_MixedPlanChecksBothSides(t *testing.T) {
 	})
 }
 
-// TestGateClassicPlan_DataDerived pins the SDEX data-derived gate's
-// decision table: with an available classicGapGate, SDEX-only plans
-// are gated by (a) the served-tier retention floor and (b) real gap
-// overlap in trades[source='sdex'] — instead of the historical
-// blanket "not implemented for non-Soroban" skip.
+// TestGateClassicPlan_DataDerived pins the SDEX gate's decision table: with a classicGapGate, SDEX-only plans are gated by the served-tier retention floor and real gap overlap in trades[source='sdex'].
 func TestGateClassicPlan_DataDerived(t *testing.T) {
 	gate := classicGapGate{
 		available: true,
@@ -513,10 +479,7 @@ func TestGateClassicPlan_DataDerived(t *testing.T) {
 	}
 }
 
-// TestSdexGapTarget guards the registry coupling: the classic gate
-// reuses the gap detector's sdex/trades target definition, so if
-// that target is ever renamed or removed the gate silently degrades
-// to the blanket skip — this test makes that a loud failure instead.
+// TestSdexGapTarget guards the coupling to the gap detector's sdex/trades target: a rename would silently degrade the gate to the blanket skip.
 func TestSdexGapTarget(t *testing.T) {
 	target, ok := sdexGapTarget()
 	if !ok {
@@ -530,21 +493,7 @@ func TestSdexGapTarget(t *testing.T) {
 	}
 }
 
-// TestPlanResumeStalled_FilterSemantics verifies the cursor-list →
-// plan-list filter chain without touching Postgres: it operates on a
-// pre-built slice that mimics what ListCursors would return, and
-// calls the REAL matchesSourceFilter helper planResumeStalled uses
-// (not a re-implementation) so this test can't drift from the actual
-// filter behaviour. (The real planResumeStalled wraps
-// store.ListCursors; this test exercises the post-list filter logic
-// via a parallel helper to avoid the testcontainers cost for what is
-// pure CPU work.)
-//
-// Filter precedence: source-prefix → min-lag → source-filter (decoder
-// portion only — see matchesSourceFilter). -max-resumes is
-// NOT part of this chain: it is applied by applyMaxResumesCap
-// AFTER the data-gap gate, so it is covered by
-// TestApplyMaxResumesCap_AppliesAfterGate instead.
+// TestPlanResumeStalled_FilterSemantics verifies the cursor-list to plan-list filter chain without Postgres, calling the real matchesSourceFilter. Precedence: source-prefix, min-lag, source-filter (decoder portion only). -max-resumes is applied later by applyMaxResumesCap (see TestApplyMaxResumesCap_AppliesAfterGate).
 func TestPlanResumeStalled_FilterSemantics(t *testing.T) {
 	now := time.Now().UTC()
 	rows := []timescale.Cursor{
@@ -629,9 +578,7 @@ func TestPlanResumeStalled_FilterSemantics(t *testing.T) {
 	}
 }
 
-// TestMatchesSourceFilter_DecoderPortionOnly is the decoder-portion
-// regression: the filter must match only the decoder-CSV portion of sub_source,
-// never the numeric <from>-<to> range prefix.
+// TestMatchesSourceFilter_DecoderPortionOnly: the filter matches only the decoder-CSV portion of sub_source, never the numeric from-to prefix.
 func TestMatchesSourceFilter_DecoderPortionOnly(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -654,10 +601,7 @@ func TestMatchesSourceFilter_DecoderPortionOnly(t *testing.T) {
 	}
 }
 
-// TestApplyMaxResumesCap_AppliesAfterGate pins the cap
-// placement: the cap must count only genuinely
-// actionable (non-skip) plans, and any actionable plan past the cap
-// is marked skip (not silently dropped or, worse, never gathered).
+// TestApplyMaxResumesCap_AppliesAfterGate pins that the cap counts only actionable plans and marks any past it as skip, not dropped.
 func TestApplyMaxResumesCap_AppliesAfterGate(t *testing.T) {
 	plans := []stalledCursorPlan{
 		{cursor: timescale.Cursor{Sub: "a"}, skip: true, skipReason: "gated out"},
@@ -690,8 +634,7 @@ func TestApplyMaxResumesCap_AppliesAfterGate(t *testing.T) {
 	}
 }
 
-// TestApplyMaxResumesCap_ZeroMeansNoCap: -max-resumes 0 (the default)
-// must not skip anything.
+// TestApplyMaxResumesCap_ZeroMeansNoCap: -max-resumes 0 (the default) skips nothing.
 func TestApplyMaxResumesCap_ZeroMeansNoCap(t *testing.T) {
 	plans := []stalledCursorPlan{
 		{cursor: timescale.Cursor{Sub: "a"}},
@@ -706,11 +649,7 @@ func TestApplyMaxResumesCap_ZeroMeansNoCap(t *testing.T) {
 	}
 }
 
-// TestNewDataGapGateContext_HasDeadline is the bounded-gate regression: the
-// data-gap gate queries (the per-decoder and classic gap scans) must
-// run under a bounded context, not the raw SIGINT/SIGTERM rootCtx,
-// because a full-table scan can wedge resume-stalled indefinitely with
-// no deadline to bound it.
+// TestNewDataGapGateContext_HasDeadline: the gap-gate scans must run under a bounded context, not the raw signal rootCtx, or a full-table scan can wedge resume-stalled.
 func TestNewDataGapGateContext_HasDeadline(t *testing.T) {
 	rootCtx := context.Background()
 	if _, ok := rootCtx.Deadline(); ok {
@@ -745,10 +684,7 @@ func withdrawBackfillSafe(t *testing.T, source string) {
 	t.Cleanup(func() { external.Registry[source] = orig })
 }
 
-// TestResumeChunkPathEnforcesSourcePolicy pins that the chunk path
-// resume-stalled drives (runBackfillChunk -> buildChunkDispatcher)
-// refuses what `backfill` refuses, rather than relying on backfill's
-// flag parser, which resume-stalled never calls.
+// TestResumeChunkPathEnforcesSourcePolicy pins that the chunk path resume-stalled drives refuses what backfill refuses, without relying on backfill's flag parser.
 func TestResumeChunkPathEnforcesSourcePolicy(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -774,9 +710,7 @@ func TestResumeChunkPathEnforcesSourcePolicy(t *testing.T) {
 	})
 }
 
-// TestGateSourcePolicySkipsRefusedCursors pins that the plan (and so the
-// dry-run) marks a refused cursor SKIP with the refusal as its reason,
-// instead of listing it as RESUME.
+// TestGateSourcePolicySkipsRefusedCursors pins that the plan (and dry-run) marks a refused cursor SKIP with the refusal as reason, not RESUME.
 func TestGateSourcePolicySkipsRefusedCursors(t *testing.T) {
 	withdrawBackfillSafe(t, "sdex")
 	plans := []stalledCursorPlan{
@@ -803,9 +737,7 @@ func TestGateSourcePolicySkipsRefusedCursors(t *testing.T) {
 	}
 }
 
-// TestGateSourcePolicyRawSorobanEvents pins that a raw soroban-events
-// cursor is skipped only when projection reads the ClickHouse lake; with it
-// off the projector reads Postgres soroban_events, so the gap is real.
+// TestGateSourcePolicyRawSorobanEvents pins that a raw soroban-events cursor is skipped only when projection reads the ClickHouse lake; otherwise the projector reads Postgres and the gap is real.
 func TestGateSourcePolicyRawSorobanEvents(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -833,10 +765,7 @@ func TestGateSourcePolicyRawSorobanEvents(t *testing.T) {
 	}
 }
 
-// TestRunResumeForCursorContainsChunkPanic pins panic containment on the resume path:
-// a panic in one chunk (here a nil store dereferenced by the resume
-// cursor lookup) becomes that cursor's error instead of killing the
-// process and every cursor still queued behind it.
+// TestRunResumeForCursorContainsChunkPanic pins that a panic in one chunk becomes that cursor's error rather than killing the process and the queued cursors.
 func TestRunResumeForCursorContainsChunkPanic(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	opts := backfillOpts{resume: true, sources: []string{"sdex"}}
@@ -854,9 +783,7 @@ func TestRunResumeForCursorContainsChunkPanic(t *testing.T) {
 	}
 }
 
-// TestBackfillChunkGate_UnreachableLakeRefusesPerWASMSource: the chunk path
-// every backfill and resume-stalled run takes refuses a BackfillPerWASM
-// source (band) whose lake cannot be read.
+// TestBackfillChunkGate_UnreachableLakeRefusesPerWASMSource: the shared chunk path refuses a BackfillPerWASM source (band) whose lake cannot be read.
 func TestBackfillChunkGate_UnreachableLakeRefusesPerWASMSource(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	var cfg config.Config
@@ -868,8 +795,7 @@ func TestBackfillChunkGate_UnreachableLakeRefusesPerWASMSource(t *testing.T) {
 	}
 }
 
-// TestBackfillChunkGate_OncePerRun: chunks sharing a run's opts reuse its
-// one gate verdict instead of re-walking the lake per chunk.
+// TestBackfillChunkGate_OncePerRun: chunks sharing a run's opts reuse one gate verdict instead of re-walking the lake.
 func TestBackfillChunkGate_OncePerRun(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	var cfg config.Config
@@ -889,11 +815,7 @@ func TestBackfillChunkGate_OncePerRun(t *testing.T) {
 	}
 }
 
-// Sequential resume (parallel<=1) must key the chunk on the ORIGINAL
-// declared from, so backfillCursorSub reproduces the stalled row's
-// sub_source and advances it in place instead of forking a sibling row.
-// Parallel resume splits the remaining range into sub-chunks that each
-// need their own cursor row, so the base is last_ledger+1.
+// TestResumeChunkFrom: sequential resume keys the chunk on the ORIGINAL from so backfillCursorSub advances the stalled row in place; parallel resume splits into sub-chunks that each need their own cursor row, so the base is last_ledger+1.
 func TestResumeChunkFrom(t *testing.T) {
 	orig := timescale.Cursor{
 		Sub:        "62200000-62210000:aquarius,band,sdex",
@@ -918,9 +840,7 @@ func TestResumeChunkFrom(t *testing.T) {
 	}
 }
 
-// A decoder plan is gated on its own registered table(s) only. Neither a
-// clean soroban_events scan nor a missing gap target may skip it, and
-// -force-classic-cursors keeps an SDEX-only plan the default gate skips.
+// TestGateAgainstDataGaps_StaysActionable: a decoder plan is gated on its own registered tables only, and -force-classic-cursors keeps an SDEX-only plan the default gate skips.
 func TestGateAgainstDataGaps_StaysActionable(t *testing.T) {
 	blendPlan := stalledCursorPlan{
 		cursor:    timescale.Cursor{Sub: "51500000-51600000:blend"},

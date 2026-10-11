@@ -10,30 +10,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ─── the deployed unit must EXPORT the P1 counter ────────────
-//
-// `stellarindex_stellar_archive_divergence` (severity: page) selects
-// `stellarindex_verify_archive_mismatches_total`. Declaring that
-// counter in internal/obs is not enough to make the page fireable —
-// the metric also needs an EXPORT PATH in the deployed topology, and
-// it had none: the only exporter was the opt-in `-metrics-listen`
-// HTTP endpoint, which neither verify-archive unit passed and which
-// `configs/prometheus/prometheus.r1.yml` has no scrape job for. A
-// real chain break therefore opened a P3 ticket
-// (`stellarindex_verify_archive_unit_failed`) instead of paging.
-//
-// `scripts/ci/lint-metric-refs.sh` cannot catch this class: it asks
-// "does anything in the repo emit this name?", and internal/obs
-// always did. This test asks the question that actually matters —
-// "does the unit that runs on r1 wire an export path?" — because
-// neither `go vet` nor `promtool` can see across the Go ↔ systemd
-// seam. Same reasoning as
-// internal/ops/chops/clickhouse_serving_profile_test.go.
-//
-// Both trees are asserted: the ansible template is the authority for
-// r1 (maintainer-workflow.md — r1 config is ansible-managed) and the
-// deploy/systemd copy is the operator-facing reference. A fix in one
-// and not the other is how they drift.
+// The deployed unit must EXPORT the P1 counter: the stellarindex_stellar_archive_divergence page selects
+// stellarindex_verify_archive_mismatches_total, which needs an export path in the deployed topology. lint-metric-refs.sh
+// cannot see this Go-to-systemd seam, so both the ansible template (r1 authority) and deploy/systemd copy are asserted.
 
 // verifyArchiveUnitFiles are the four unit definitions that run
 // `stellarindex-ops verify-archive` on a scheduled timer.
@@ -70,13 +49,7 @@ func TestVerifyArchiveUnits_ExportMismatchCounter(t *testing.T) {
 	}
 }
 
-// TestVerifyArchiveUnits_TierLabelIsUnique pins the other half of the
-// duplicate-series hazard: node_exporter merges every .prom in its
-// directory into ONE target, so two units exposing the same metric
-// with the same label set make the whole textfile collector report a
-// scrape error for the directory. The `tier` label the emitter writes
-// comes from the unit's `-tier` flag, so tier-a and tier-b must
-// differ in BOTH the file they write and the tier they label it with.
+// TestVerifyArchiveUnits_TierLabelIsUnique: tier-a and tier-b must differ in output file and `tier` label, or node_exporter's merged textfile directory errors.
 func TestVerifyArchiveUnits_TierLabelIsUnique(t *testing.T) {
 	t.Parallel()
 	pairs := map[string]string{} // "<prom>|<tier>" -> first unit that claimed it
@@ -129,26 +102,9 @@ func readRepoFile(t *testing.T, rel string) string {
 	return string(b)
 }
 
-// ─── the DOCUMENTED APPLY must render both units ────
-//
-// Wiring `-textfile-output` into the unit templates only closes the
-// P1's export path if the templates actually reach r1. The runbook
-// prescribes `--tags ops-jobs` (deliberately: a full archival-node
-// run can restart galexie, and a galexie restart is a ~9-minute
-// mainnet cold catchup), and the tier-a
-// install/enable tasks carry that tag. The tier-b block did not: it
-// is a separate `when: verify_archive_tier_b_enabled` block added
-// later, and it was never tagged. So the documented apply rendered
-// tier-a's unit, skipped tier-b's, and the confirm step still read
-// green off tier-a alone — a half-applied fix that reads healthy,
-// with the CHECKPOINT tier (the cross-archive anchor the P1's own
-// summary describes) left permanently unwired.
-//
-// Neither `go vet`, `promtool`, nor the jinja/ansible linters can
-// see a missing tag; `ansible-playbook --list-tasks --tags ops-jobs`
-// can, but ansible is not a build dependency of this repo. So the
-// tag is pinned here, next to the ExecStart assertion it exists to
-// deliver.
+// The DOCUMENTED APPLY must render both units: the runbook applies with `--tags ops-jobs` (a full run
+// could restart galexie), so every tier-a/tier-b/Tier D install task must carry that tag or the apply
+// half-renders yet reads healthy. No linter sees a missing tag, so it is pinned here.
 
 // opsJobsTaskFile is the role task file that installs and enables
 // the verify-archive units.
@@ -169,11 +125,8 @@ func TestVerifyArchiveUnits_ReachableUnderOpsJobsTag(t *testing.T) {
 		t.Fatalf("%s parsed to zero tasks", opsJobsTaskFile)
 	}
 
-	// Every top-level task or block that installs, enables or removes
-	// a verify-archive tier-a/tier-b unit, or the Tier D cron, must be
-	// selected by `--tags ops-jobs`. Tier D has no unit file (it is a
-	// root cron, not a systemd unit) so it needs its own needle rather
-	// than the tier-a/tier-b trailing-dot pattern.
+	// Every top-level task installing, enabling or removing a tier-a/tier-b unit or the Tier D cron must be selected by
+	// `--tags ops-jobs`; Tier D is a root cron with no unit file, so it needs its own needle.
 	needles := []string{"verify-archive-tier-a.", "verify-archive-tier-b.", "stellarindex-verify-archive-tier-d"}
 
 	seen := 0

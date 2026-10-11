@@ -10,9 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// A partial-wrap result whose escrow leg never ran has divergence 0 by
-// construction; the CLI must not print that as a pass or exit 0 on it
-// (ADR-0011: read SubsetBoundChecked alongside WithinTolerance).
+// TestReportCrossCheck: a partial-wrap result whose escrow leg never ran has divergence 0 by construction and must not print as a pass (ADR-0011: read SubsetBoundChecked beside WithinTolerance).
 func TestReportCrossCheck(t *testing.T) {
 	t.Parallel()
 
@@ -113,9 +111,7 @@ func TestReportCrossCheck(t *testing.T) {
 	}
 }
 
-// A pair the aggregator refuses as misaligned must not get a
-// verdict from the CLI either: the runbook sends the operator here
-// exactly when the daemon reported `misaligned`.
+// TestCrossCheckAndReport_MisalignedPairHasNoVerdict: a pair the aggregator refuses as misaligned gets no CLI verdict either.
 func TestCrossCheckAndReport_MisalignedPairHasNoVerdict(t *testing.T) {
 	t.Parallel()
 	classic := supply.Supply{

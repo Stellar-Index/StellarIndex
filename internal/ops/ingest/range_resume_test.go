@@ -29,9 +29,7 @@ func (m memCursors) upsert(source, sub string, ledger uint32) {
 	}
 }
 
-// TestResumeRangeStartDoesNotSkipAnEarlierRepair: a completed repair of a
-// later ledger gap must not make a subsequent repair of an EARLIER gap start
-// past its own -to ("nothing to do", exit 0, window left NULL).
+// TestResumeRangeStartDoesNotSkipAnEarlierRepair: completing a repair of a later gap must not make an earlier gap's repair start past its own -to.
 func TestResumeRangeStartDoesNotSkipAnEarlierRepair(t *testing.T) {
 	for _, src := range []string{"tag-signer", "tag-routed-via"} {
 		t.Run(src, func(t *testing.T) {

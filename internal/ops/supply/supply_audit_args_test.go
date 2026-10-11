@@ -13,10 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// TestParseSupplyAuditArgs_AssetAnywhere: the asset is accepted before,
-// between or after the flags. Go's flag package stops at the first
-// positional, so the asset-first form both triage runbooks prescribe
-// parsed no flags and failed with "-config is required".
+// TestParseSupplyAuditArgs_AssetAnywhere: the asset is accepted before, between or after the flags (flag stops at the first positional, which broke the runbooks' asset-first form).
 func TestParseSupplyAuditArgs_AssetAnywhere(t *testing.T) {
 	t.Parallel()
 	want := supplyAuditArgs{cfgPath: "/etc/stellarindex.toml", crossCheck: "CCW6", asset: "USDC-GA5Z", historyHours: 24}
@@ -61,9 +58,7 @@ func TestParseSupplyAuditArgs_Rejects(t *testing.T) {
 
 var supplyAuditInvocationRE = regexp.MustCompile(`stellarindex-ops supply audit ([^\n` + "`" + `|;]*)`)
 
-// TestDocumentedSupplyAuditInvocationsParse runs every `stellarindex-ops
-// supply audit` line under docs/ through the parser, so a documented form
-// the handler rejects fails here instead of mid-page.
+// TestDocumentedSupplyAuditInvocationsParse runs every `supply audit` line under docs/ through the parser, so a documented form the handler rejects fails here.
 func TestDocumentedSupplyAuditInvocationsParse(t *testing.T) {
 	t.Parallel()
 	docs := filepath.Join("..", "..", "..", "docs")
@@ -93,8 +88,7 @@ func TestDocumentedSupplyAuditInvocationsParse(t *testing.T) {
 	}
 }
 
-// TestCrossCheckNextActionParses: the next-action line an over-tolerance
-// cross-check prints must be a command the handler accepts.
+// TestCrossCheckNextActionParses: the next-action line an over-tolerance cross-check prints must be accepted by the handler.
 func TestCrossCheckNextActionParses(t *testing.T) {
 	t.Parallel()
 	classic := supply.Supply{AssetKey: "classic", TotalSupply: big.NewInt(1_000), SACWrappedStroops: big.NewInt(500)}

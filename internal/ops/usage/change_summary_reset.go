@@ -11,17 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ChangeSummaryReset deletes one change_summary_5m row. The upsert ratchets
-// ath/atl with GREATEST/LEAST, so a bad extreme already stored can only be
-// cleared by removing the row; the aggregator's change-summary worker
-// recreates it from the trailing 30 days on its next pass (≤5 min).
-//
-// Usage:
-//
-//	stellarindex-ops change-summary-reset -config /etc/stellarindex.toml \
-//	  -entity-type coin -entity-id crypto:XLM -write
-//
-// Dry-run unless -write. Safe to re-run: deleting an absent row is a no-op.
+// ChangeSummaryReset deletes one change_summary_5m row so a bad stored ath/atl (the upsert ratchets with GREATEST/LEAST) is recomputed by the worker; dry-run unless -write, safe to re-run.
 func ChangeSummaryReset(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("change-summary-reset")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")

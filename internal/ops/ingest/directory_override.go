@@ -14,10 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// directory-override is the operator's lever for a FALSE-POSITIVE scam
-// flag in account_directory: the flag withholds the issuer's price
-// across every gated surface, and a hand `UPDATE` is overwritten by the
-// next daily directory-sync. See timescale.DirectoryOperatorOverrideSource.
+// directory-override clears a FALSE-POSITIVE scam flag in account_directory, which withholds the issuer's price on every gated surface; a hand UPDATE is overwritten by the next daily directory-sync. See timescale.DirectoryOperatorOverrideSource.
 //
 //	stellarindex-ops directory-override -config PATH -address G… -clear-scam-flag -reason TEXT [-actor NAME] -write
 //	stellarindex-ops directory-override -config PATH -address G… -delete -write

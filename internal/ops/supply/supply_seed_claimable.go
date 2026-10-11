@@ -17,33 +17,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// claimableSeedBatchSize is how many seeded observations go into one
-// multi-row INSERT. Big enough that the seed is not round-trip-bound (a
-// network-wide pass can emit millions of rows), small enough that the
-// statement stays well inside Postgres' 65,535-bind-parameter ceiling —
-// 7 columns x 2,000 rows = 14,000 parameters.
+// claimableSeedBatchSize is rows per multi-row INSERT: large enough to avoid round-trip-bound seeding, small enough for the 65,535 bind-parameter limit (7 columns x 2,000 = 14,000).
 const claimableSeedBatchSize = 2000
 
-// supplySeedClaimableBalances seeds claimable_observations from the ClickHouse
-// lake for every currently-live claimable balance paying a classic credit asset
-// (ADR-0022 / migration 0012). It is the claimable analogue of `supply
-// seed-sac-balances -full-history`.
-//
-// The live observer only sees balances created since it started. The seed
-// reduces ClaimableBalanceEntry state latest-write-wins out of
-// stellar.ledger_entry_changes and is idempotent: rows land at each balance's
-// true last-modified ledger with intra_ledger_seq = [timescale.SeedIntraLedgerSeq],
-// so a later live observation (notably a claim's is_removal row) always wins. A
-// balance the served tier holds as live but the lake shows claimed gets an
-// is_removal tombstone; one the lake has no record of fails the pass by name.
-//
-// Every classic credit asset is seeded by default (a partial seed under-reports
-// the rest); -assets narrows a run and prints a PARTIAL banner. Native
-// claimable balances belong to Algorithm 1 and are never seeded.
-//
-// Run under run-heavy-job.sh on r1. All writes happen at the end, so a
-// -timeout mid-scan loses the pass. Without -write it is a dry run. Only a
-// clean pass upserts claimable_seed_provenance (migration 0184).
+// supplySeedClaimableBalances seeds claimable_observations from the lake for every live claimable balance paying a classic credit asset (ADR-0022).
+// Idempotent, latest-write-wins at intra_ledger_seq = timescale.SeedIntraLedgerSeq so live rows win; a balance the lake has no record of fails the pass by name.
+// All classic credit assets by default (-assets narrows and prints PARTIAL); native belongs to Algorithm 1. Writes happen at the end, so a -timeout loses the pass; without -write it is a dry run; only a clean pass upserts claimable_seed_provenance.
 func supplySeedClaimableBalances(args []string) error {
 	fs := flag.NewFlagSet("supply seed-claimable-balances", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -168,11 +147,7 @@ func servedAssetKeys(served map[string]timescale.LiveClaimable) map[string]strin
 	return out
 }
 
-// unresolvedClaimablesErr fails the pass for served-live balances at or below
-// the walk's upper ledger that the lake neither re-seeded nor retracted: the
-// walk has no record of them, so their served rows keep counting toward supply
-// and need investigating by hand. A row above walkTo is newer than the walk and
-// is not judged.
+// unresolvedClaimablesErr fails the pass for served-live balances at or below the walk's upper ledger that the lake neither re-seeded nor retracted, since their rows would keep counting toward supply; rows above walkTo are not judged.
 func unresolvedClaimablesErr(unresolved map[string]timescale.LiveClaimable, walkTo uint32) error {
 	var ids []string
 	for id, row := range unresolved {
@@ -188,15 +163,8 @@ func unresolvedClaimablesErr(unresolved map[string]timescale.LiveClaimable, walk
 		len(ids), walkTo, ids[0], unresolved[ids[0]].AssetKey)
 }
 
-// parseClaimableSeedAssets turns the -assets flag into the CODE:ISSUER set the
-// lake reader filters on. Empty input means EVERY classic credit asset (nil
-// set) — the default, and the only value that leaves the supply numbers whole.
-//
-// Entries go through supply.CanonicalizeWatchedClassic, so an operator may
-// paste either the canonical wire form (`AQUA-GBNZ…`) or the storage form
-// (`AQUA:GBNZ…`) and a typo is a loud error rather than a silently-empty
-// filter — a dash/colon mismatch that failed open in production zeroed three
-// supply components.
+// parseClaimableSeedAssets turns -assets into the CODE:ISSUER filter set; empty means every classic credit asset (nil), the only value that keeps supply whole.
+// Entries go through supply.CanonicalizeWatchedClassic, so a typo or dash/colon mismatch is a loud error, not a silently-empty filter.
 func parseClaimableSeedAssets(raw string) (map[string]struct{}, error) {
 	fields := strings.Split(raw, ",")
 	entries := make([]string, 0, len(fields))
@@ -247,11 +215,7 @@ func (t *claimableSeedTally) observe(ledger uint32) {
 	}
 }
 
-// claimableSeedWriter tallies every emitted seed and (unless -dry-run)
-// accumulates it into batched upserts. Batching matters here in a way it does
-// not for the SAC seed: this pass can emit one row per claimable balance live
-// on the entire network, and a row-at-a-time writer would be round-trip-bound
-// for hours after an already-hours-long scan.
+// claimableSeedWriter tallies every seed and, unless dry-run, batches upserts, because a pass can emit a row per live claimable balance on the whole network.
 type claimableSeedWriter struct {
 	// ctx is held rather than passed because the batch flush happens inside
 	// the lake reader's per-seed callback, which takes no context.
@@ -318,11 +282,7 @@ func (w *claimableSeedWriter) add(seed clickhouse.ClaimableBalanceSeed) error {
 		// A tombstone at the claim's ledger retracts a balance the served
 		// tier still holds as live; every other seed is a live balance.
 		IsRemoval: seed.IsRemoval,
-		// The seed is the authoritative reconstructed FINAL state for its
-		// ledger, so it sits at the top of the intra-ledger order —
-		// unbeatable within its walk_version (a stamped re-derive under a higher
-		// version replaces it), so a live per-ledger change can't overwrite it
-		// and a re-seed stays corrective under the `<=` guard.
+		// The seed is the authoritative final state for its ledger, so it sits at the top of the intra-ledger order: live per-ledger changes cannot overwrite it and a re-seed stays corrective under the `<=` guard.
 		IntraLedgerSeq: timescale.SeedIntraLedgerSeq,
 	})
 	if len(w.pending) < claimableSeedBatchSize {

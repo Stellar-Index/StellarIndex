@@ -11,11 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/metadata"
 )
 
-// The parser reports which tables it could not read. If that record
-// stops at the storage boundary, every consumer downstream of the
-// issuers row reads "the issuer declared nothing here" where the truth
-// is "we could not read the table that would have said" — which is the
-// absent-versus-zero mistake, one layer down.
+// TestPayloadCarriesTheTablesThatCouldNotBeRead: unreadable tables must survive the storage boundary, or consumers read absent as declared-nothing.
 func TestPayloadCarriesTheTablesThatCouldNotBeRead(t *testing.T) {
 	sep := &metadata.SEP1{
 		OrgName:   "WisdomTree, Inc.",
@@ -55,9 +51,7 @@ func TestPayloadCarriesTheTablesThatCouldNotBeRead(t *testing.T) {
 	}
 }
 
-// A document that parsed whole must not grow a key. Almost every row is
-// one of these, and a field present-but-empty on all of them is how a
-// reader learns to stop looking at it.
+// TestWholeDocumentPayloadCarriesNoRecoveryKey: a fully parsed document must not grow a recovery key.
 func TestWholeDocumentPayloadCarriesNoRecoveryKey(t *testing.T) {
 	sep := &metadata.SEP1{
 		OrgName:       "Example",

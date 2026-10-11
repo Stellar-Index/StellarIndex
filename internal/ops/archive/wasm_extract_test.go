@@ -9,14 +9,7 @@ import (
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// TestMaybeWriteWasmCode_AcceptsAllEntryBearingChangeTypes is the
-// regression test for the r1-walk bug: the
-// original implementation only matched Created + Restored, which
-// caused the tool to return MISSING for every hash even though
-// the wasm-history walker (which handles Created + Updated +
-// Restored) read the same archive cleanly. The fix adds Updated
-// and State so any LedgerEntry-bearing change carrying matching
-// ContractCode bytes is captured.
+// TestMaybeWriteWasmCode_AcceptsAllEntryBearingChangeTypes: Created, Updated, Restored and State changes with ContractCode bytes are captured.
 func TestMaybeWriteWasmCode_AcceptsAllEntryBearingChangeTypes(t *testing.T) {
 	tmp := t.TempDir()
 
@@ -88,9 +81,7 @@ func TestMaybeWriteWasmCode_AcceptsAllEntryBearingChangeTypes(t *testing.T) {
 	}
 }
 
-// TestMaybeWriteWasmCode_IgnoresRemoved verifies the function
-// short-circuits on REMOVED changes (which carry a LedgerKey, not
-// a LedgerEntry — different XDR shape, no bytes to extract).
+// TestMaybeWriteWasmCode_IgnoresRemoved: REMOVED changes carry a LedgerKey, not a LedgerEntry, so there are no bytes to extract.
 func TestMaybeWriteWasmCode_IgnoresRemoved(t *testing.T) {
 	tmp := t.TempDir()
 	var hash sdkxdr.Hash
@@ -108,12 +99,7 @@ func TestMaybeWriteWasmCode_IgnoresRemoved(t *testing.T) {
 	}
 }
 
-// TestMaybeWriteWasmCode_FailedWriteDoesNotMarkFound is the
-// regression: found is the walk's completion receipt (drives -early-exit,
-// the "wrote N/N" summary, and the missing-hash exit code), so a write
-// that fails must leave the hash absent from it rather than recording a
-// path that was never actually written — otherwise a full-disk or
-// permission failure reports "wrote N/N", exit 0, with no file on disk.
+// TestMaybeWriteWasmCode_FailedWriteDoesNotMarkFound: found is the completion receipt, so a failed write must leave the hash absent.
 func TestMaybeWriteWasmCode_FailedWriteDoesNotMarkFound(t *testing.T) {
 	tmp := t.TempDir()
 	// output-dir itself does not exist, so os.WriteFile's open fails —

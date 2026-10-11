@@ -63,12 +63,7 @@ func testPair(t *testing.T) (canonical.Asset, canonical.Asset) {
 	return asset, quote
 }
 
-// TestUnfreezePair_ClearsMarkerAndClosesDurableRow pins the whole point of
-// the subcommand: ADR-0019 says an escalated freeze "stays active until
-// manual unfreeze", and manual unfreeze has to do BOTH halves — the Redis
-// marker (the serving path's authority for flags.frozen) and the
-// freeze_events row (the explorer's durable timeline). Doing only one leaves
-// the two surfaces disagreeing about whether the pair is frozen.
+// TestUnfreezePair_ClearsMarkerAndClosesDurableRow: manual unfreeze (ADR-0019) must do both halves, the Redis marker and the freeze_events row, or the two surfaces disagree.
 func TestUnfreezePair_ClearsMarkerAndClosesDurableRow(t *testing.T) {
 	asset, quote := testPair(t)
 	clearer := &recordingClearer{}
@@ -89,10 +84,7 @@ func TestUnfreezePair_ClearsMarkerAndClosesDurableRow(t *testing.T) {
 	}
 }
 
-// TestUnfreezePair_MarkerFirstAndNothingElseOnFailure — if the Redis clear
-// fails, the pair is STILL FROZEN on the serving path, so the durable row
-// must not be closed. Closing it would publish a "recovered" timeline for a
-// price that is still being withheld: the dishonest direction.
+// TestUnfreezePair_MarkerFirstAndNothingElseOnFailure: if the Redis clear fails the pair is still frozen, so the durable row must not be closed.
 func TestUnfreezePair_MarkerFirstAndNothingElseOnFailure(t *testing.T) {
 	asset, quote := testPair(t)
 	clearer := &recordingClearer{err: errors.New("redis: connection refused")}
@@ -110,10 +102,7 @@ func TestUnfreezePair_MarkerFirstAndNothingElseOnFailure(t *testing.T) {
 	}
 }
 
-// TestUnfreezePair_AlreadyClosedRowIsNotAFailure — the recovery worker polls
-// every 60s and may have closed the row already, and a repeat unfreeze is a
-// legitimate operator action. Neither is an error: the end state is the
-// intended one.
+// TestUnfreezePair_AlreadyClosedRowIsNotAFailure: a row the recovery worker already closed, or a repeat unfreeze, is not an error.
 func TestUnfreezePair_AlreadyClosedRowIsNotAFailure(t *testing.T) {
 	asset, quote := testPair(t)
 	clearer := &recordingClearer{}
@@ -141,10 +130,7 @@ func TestUnfreezePair_DryRunTouchesNothing(t *testing.T) {
 	}
 }
 
-// TestFreezeUnfreeze_RequiresReasonForAMutation — an unfreeze overrides an
-// automated safety control on a money surface. The admin API hard-400s a
-// privileged write with no X-Reason; the CLI equivalent must refuse too,
-// BEFORE it opens Postgres or Redis.
+// TestFreezeUnfreeze_RequiresReasonForAMutation: an unfreeze overrides a safety control on a money surface, so the CLI refuses without a reason before opening Postgres or Redis, like the admin API.
 func TestFreezeUnfreeze_RequiresReasonForAMutation(t *testing.T) {
 	err := FreezeUnfreeze([]string{
 		"-config", "/nonexistent/stellarindex.toml",
@@ -170,8 +156,7 @@ func TestFreezeUnfreeze_RequiresReasonForAMutation(t *testing.T) {
 	}
 }
 
-// TestFreezeUnfreeze_RequiresPairOrList — the command must not fall through
-// to some default target when neither a pair nor -list was given.
+// TestFreezeUnfreeze_RequiresPairOrList: with neither a pair nor -list the command must not fall back to a default target.
 func TestFreezeUnfreeze_RequiresPairOrList(t *testing.T) {
 	err := FreezeUnfreeze([]string{"-config", "/nonexistent/stellarindex.toml"})
 	if err == nil || !strings.Contains(err.Error(), "-asset and -quote are required") {
@@ -179,11 +164,7 @@ func TestFreezeUnfreeze_RequiresPairOrList(t *testing.T) {
 	}
 }
 
-// TestFreezeUnfreeze_UnconfiguredRedisIsAnErrorNotAPanic — redis_addr is
-// optional config, and redisclient.Build returns nil for it. The command
-// ADR-0019 names as the exit from an escalated freeze must report that
-// misconfiguration, not die on a nil Close. The DSN points at a closed
-// port, so the refusal must also come before any Postgres connect.
+// TestFreezeUnfreeze_UnconfiguredRedisIsAnErrorNotAPanic: redis_addr is optional and redisclient.Build returns nil, so the command must report it (before any Postgres connect), not die on a nil Close.
 func TestFreezeUnfreeze_UnconfiguredRedisIsAnErrorNotAPanic(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "stellarindex.toml")
 	body := "[stellar]\nnetwork = \"pubnet\"\n\n[storage]\npostgres_dsn = \"postgres://u:p@127.0.0.1:1/db?connect_timeout=1\"\nredis_addr = \"\"\n"
@@ -246,11 +227,7 @@ func (f *fakeLadderStore) markRecovered(asset, quote canonical.Asset) {
 	f.closed[f.key(asset, quote)] = true
 }
 
-// tickProbingRecoverer stands in for the real MarkRecovered and, before
-// stamping recovered_at, performs the exact read an aggregator tick would
-// perform at that instant: freeze.Writer.LoadState against the SAME Redis +
-// ladder store. That is the race window — Clear has run, MarkRecovered has
-// not — so whatever this probe sees is what a concurrent tick would act on.
+// tickProbingRecoverer stands in for MarkRecovered and, before stamping recovered_at, does the read an aggregator tick would do (freeze.Writer.LoadState), which is the race window after Clear.
 type tickProbingRecoverer struct {
 	aggregator *freeze.Writer
 	ladder     *fakeLadderStore
@@ -268,26 +245,7 @@ func (r *tickProbingRecoverer) MarkRecovered(ctx context.Context, asset, quote c
 	return nil
 }
 
-// TestUnfreezePair_OperatorWinsTheRehydrateRace pins the direction of the
-// one race this command has.
-//
-// `unfreezePair` deliberately clears the Redis marker FIRST and stamps
-// recovered_at second (the marker is the serving path's authority, so
-// clearing it is what republishes the price). Since migration 0119 the
-// durable ladder is ALSO an authority: an aggregator tick that finds no
-// marker but a live open ladder rehydrates the freeze and re-writes the
-// marker. A tick landing in the window between those two steps would
-// therefore resurrect the freeze, and the operator's MarkRecovered would
-// then close a row the aggregator had already replaced — the unfreeze
-// silently undone, on a pair that by construction never unfreezes itself.
-//
-// The fix is the wiring in [newFreezeWriterForOps]: with the ladder store
-// passed, Clear retires the ladder in the same call that deletes the marker,
-// so the window is empty by construction rather than merely narrow.
-//
-// This asserts the corrected observation, not just an end state: at the
-// instant MarkRecovered runs, a concurrent aggregator tick must already see
-// the pair as NOT frozen.
+// TestUnfreezePair_OperatorWinsTheRehydrateRace: Clear must retire the durable ladder with the marker (newFreezeWriterForOps), so a tick between unfreeze steps cannot rehydrate the freeze.
 func TestUnfreezePair_OperatorWinsTheRehydrateRace(t *testing.T) {
 	asset, quote := testPair(t)
 
@@ -357,11 +315,7 @@ func TestUnfreezePair_OperatorWinsTheRehydrateRace(t *testing.T) {
 	}
 }
 
-// TestUnfreezePair_AuditsWhoAndWhyBeforeTheServingPathChanges — the command
-// overrides a safety control on a money surface, so its -reason must not go
-// to stderr only (no actor, no audit_log row). The row must land, name the
-// actor and reason, and come before anything changes; with no row, nothing
-// may change.
+// TestUnfreezePair_AuditsWhoAndWhyBeforeTheServingPathChanges: an audit_log row naming actor and reason must land before anything changes; with no row, nothing changes.
 func TestUnfreezePair_AuditsWhoAndWhyBeforeTheServingPathChanges(t *testing.T) {
 	asset, quote := testPair(t)
 	audit := &recordingAudit{}
@@ -400,11 +354,7 @@ func TestUnfreezePair_AuditsWhoAndWhyBeforeTheServingPathChanges(t *testing.T) {
 	}
 }
 
-// TestNewFreezeWriterForOps_ReadsTheDurableLadder — `-list`'s ladder column
-// must survive a Redis flush too. Before the ladder store was wired here,
-// the exact situation an operator is most likely to be investigating (an
-// escalated freeze whose marker evaporated) printed as EXTS 0 / ESCALATED
-// false: it lied in the reassuring direction.
+// TestNewFreezeWriterForOps_ReadsTheDurableLadder: -list's ladder column must survive a Redis flush instead of printing EXTS 0 / ESCALATED false for an evaporated marker.
 func TestNewFreezeWriterForOps_ReadsTheDurableLadder(t *testing.T) {
 	asset, quote := testPair(t)
 
@@ -442,16 +392,7 @@ func TestNewFreezeWriterForOps_ReadsTheDurableLadder(t *testing.T) {
 	}
 }
 
-// TestListOpenFreezes_DistinguishesRehydratedFromGone — the STATE column
-// must not collapse "Redis lost the marker, the ladder is still holding"
-// into "GONE".
-//
-// Before migration 0119 the column was a marker-only probe, so a flushed
-// Redis printed GONE — which an operator reads as "nothing to do here" on
-// exactly the pair whose marker just evaporated. After 0119 LoadState falls
-// back to the ladder, so a marker-only reading of `present` would swing the
-// other way and print `live` for a marker that does not exist. Both are
-// wrong; the three states have to be distinguished.
+// TestListOpenFreezes_DistinguishesRehydratedFromGone: the STATE column must tell a lost marker with a held ladder apart from GONE and from a live marker, since LoadState falls back to the ladder.
 func TestListOpenFreezes_DistinguishesRehydratedFromGone(t *testing.T) {
 	asset, quote := testPair(t)
 

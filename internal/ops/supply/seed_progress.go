@@ -17,11 +17,8 @@ func startSeedHeartbeat(job, path string) *opsutil.JobHeartbeat {
 	return hb
 }
 
-// seedProgress feeds a seed pass's heartbeat one monotone total: ledgers
-// reduced by the lake walk, then rows emitted. The walk emits nothing until its
-// last window, so without the ledger count stellarindex_ops_job_no_progress
-// could not tell hours of healthy reduction from a hang. The cursor is the
-// highest ledger reduced.
+// seedProgress feeds a seed pass's heartbeat one monotone total (ledgers reduced, then rows emitted), since the walk emits nothing
+// until its last window and stellarindex_ops_job_no_progress could not otherwise tell reduction from a hang. The cursor is the highest ledger reduced.
 type seedProgress struct {
 	hb     *opsutil.JobHeartbeat
 	total  uint64

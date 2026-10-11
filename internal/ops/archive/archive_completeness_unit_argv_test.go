@@ -14,17 +14,7 @@ var archiveCompletenessUnitFiles = []string{
 	"deploy/systemd/archive-completeness.service",
 }
 
-// TestArchiveCompletenessUnits_NoDeadArchiveToDefault pins that the
-// ansible template shipped `Environment=ARCHIVE_TO=0`, which the binary
-// refuses outright ("-to is required") — the exact landmine the deploy/
-// reference unit's own comment already documents fixing ("a self-hoster
-// who followed the wiring above got a unit that failed on every single
-// timer tick"). It is inert today only because EnvironmentFile= always
-// overrides a literal Environment= regardless of directive order, so
-// compute-archive-to.sh's runtime write wins whenever it runs — but a
-// non-zero default can only ever be MISLEADING (an operator inspecting
-// or copying the unit sees a value that never actually takes effect)
-// and was never load-bearing, so neither unit may ship one.
+// TestArchiveCompletenessUnits_NoDeadArchiveToDefault: neither unit may ship a non-zero ARCHIVE_TO default; the binary refuses 0 and a literal Environment= is always overridden by EnvironmentFile=, so it can only mislead.
 func TestArchiveCompletenessUnits_NoDeadArchiveToDefault(t *testing.T) {
 	t.Parallel()
 	for _, rel := range archiveCompletenessUnitFiles {
@@ -58,12 +48,7 @@ func substituteArchiveCompletenessUnitVars(body string) string {
 	return r.Replace(body)
 }
 
-// TestArchiveCompletenessUnits_ExecStartParses runs each unit's
-// `archive-completeness verify` invocation through the real FlagSet
-// (mirrors TestTrimUnits_ExecStartParses). A flag the parser does
-// not define, or the ARCHIVE_TO=0 landmine, exits 1 before anything is
-// checked — a daily timer reports only `failed`, indistinguishable from
-// "nothing to check" to anyone not reading the journal.
+// TestArchiveCompletenessUnits_ExecStartParses runs each unit's `archive-completeness verify` invocation through the real FlagSet; an unknown flag or ARCHIVE_TO=0 would fail the timer with only `failed` to show.
 func TestArchiveCompletenessUnits_ExecStartParses(t *testing.T) {
 	t.Parallel()
 	for _, rel := range archiveCompletenessUnitFiles {

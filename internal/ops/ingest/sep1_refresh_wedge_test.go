@@ -15,11 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// hostileTOML is the hostile shape: 4,000 nested
-// inline tables. 16 KB — comfortably inside the resolver's 1 MiB body
-// cap, publishable by any account with 1 XLM — and measured at 1.81 GiB
-// of decoder allocation in 0.72s before the parse budget existed. The
-// refresh unit runs under MemoryMax=2G, so that is a cgroup SIGKILL.
+// hostileTOML is 4,000 nested inline tables: 16 KB, inside the resolver's 1 MiB cap, yet 1.81 GiB of decoder allocation
+// before the parse budget existed, a cgroup SIGKILL under the unit's MemoryMax=2G.
 func hostileTOML() string {
 	return "a = " + strings.Repeat("{b=", 4000) + "1" + strings.Repeat("}", 4000)
 }
@@ -34,15 +31,8 @@ code = "GOOD"
 issuer = "GBEHIND"
 `
 
-// sep1CallLog records, in order, every store write the refresh loop
-// makes AND every stellar.toml fetch the real resolver performs.
-// Ordering ACROSS those two is the property under test — "the marker is
-// durable before the decode can kill the worker" is a statement about
-// where the fetch sits in the sequence, not about the writes alone — so
-// the log is one interleaved sequence and not a set of counters.
-//
-// The fetch entries are appended from the test server's handler
-// goroutine, hence the mutex.
+// sep1CallLog records, in one interleaved sequence, every store write and every stellar.toml fetch, because the property under test
+// is ordering (the marker is durable before the decode can kill the worker). Fetches arrive from the server goroutine, hence the mutex.
 type sep1CallLog struct {
 	mu  sync.Mutex
 	seq []string
@@ -128,20 +118,7 @@ func sep1TestResolver(srv *httptest.Server) *metadata.Resolver {
 	)
 }
 
-// TestSep1RefreshLoopSurvivesAHostileTOML is the wedge at the production entry point: one issuer serving a hostile
-// document must not stop the refresh reaching the ~76,000 issuers
-// behind it, and must not return as candidate #1 on every later run.
-//
-// Three assertions, one per link of the chain:
-//
-//  1. the run COMPLETES and the healthy issuer behind the poison one is
-//     reached and written (no starvation);
-//  2. the poison issuer is MARKED — so the retry ladder defers it rather
-//     than `ORDER BY … NULLS FIRST` re-serving it forever — exactly once,
-//     and BEFORE its document is fetched, because the moment the worker
-//     can be killed is during the decode and not after it;
-//  3. the whole loop stays inside a small allocation budget, i.e. the
-//     hostile document was refused rather than decoded.
+// TestSep1RefreshLoopSurvivesAHostileTOML: a hostile document must not stop the refresh reaching later issuers or return as candidate #1 on every run. Asserts: the run completes and the healthy issuer behind is written; the poison issuer is marked exactly once, BEFORE its fetch; the loop stays inside a small allocation budget.
 func TestSep1RefreshLoopSurvivesAHostileTOML(t *testing.T) {
 	const (
 		poison  = "GPOISON"
@@ -198,13 +175,7 @@ func TestSep1RefreshLoopSurvivesAHostileTOML(t *testing.T) {
 	}
 }
 
-// TestSep1RefreshLoopMarksBeforeASuccessToo pins the other half of the
-// ordering rule: a HEALTHY issuer is marked before its fetch as well.
-// Anything less would make the pre-mark conditional on predicting the
-// outcome, which is exactly the assumption the wedge exploited. The mark
-// costs a success nothing, because SetIssuerSep1Payload clears the
-// ladder in the same statement that writes the payload — proved against
-// Postgres in test/integration/pg_assets_sep1_test.go.
+// TestSep1RefreshLoopMarksBeforeASuccessToo: a healthy issuer is marked before its fetch as well, so the pre-mark never depends on predicting the outcome; SetIssuerSep1Payload clears the ladder in the same statement (test/integration/pg_assets_sep1_test.go).
 func TestSep1RefreshLoopMarksBeforeASuccessToo(t *testing.T) {
 	log := &sep1CallLog{}
 	srv, domain := sep1TestDomain(t, log, "GBEHIND", healthyTOML)
@@ -219,9 +190,7 @@ func TestSep1RefreshLoopMarksBeforeASuccessToo(t *testing.T) {
 	}
 }
 
-// A payload discarded because home_domain moved mid-fetch is not a failed
-// attempt: the move already reset the row's ladder, so the key must stay out
-// of the systemic unwind's list.
+// TestSep1RefreshLoopMovedDomainIsNotAFailure: a payload discarded because home_domain moved mid-fetch already reset the ladder, so the key stays out of the unwind list.
 func TestSep1RefreshLoopMovedDomainIsNotAFailure(t *testing.T) {
 	log := &sep1CallLog{moved: map[string]bool{"GBEHIND": true}}
 	srv, domain := sep1TestDomain(t, log, "GBEHIND", healthyTOML)
@@ -232,9 +201,7 @@ func TestSep1RefreshLoopMovedDomainIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestSep1RefreshLoopDryRunWritesNothing guards the operator-facing
-// invariant the pre-mark could most easily have broken: -dry-run must
-// still touch no rows.
+// TestSep1RefreshLoopDryRunWritesNothing: -dry-run must still touch no rows despite the pre-mark.
 func TestSep1RefreshLoopDryRunWritesNothing(t *testing.T) {
 	log := &sep1CallLog{}
 	srv, domain := sep1TestDomain(t, log, "GBEHIND", healthyTOML)

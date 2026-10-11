@@ -12,10 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// TestReadVerifyArchiveState_missingFileReturnsZero confirms the
-// first-run path: no state file yet means we get an empty state
-// without error, so the caller can compute -from from explicit
-// flags only.
+// TestReadVerifyArchiveState_missingFileReturnsZero: a missing state file yields an empty state without error (first run).
 func TestReadVerifyArchiveState_missingFileReturnsZero(t *testing.T) {
 	t.Parallel()
 	got, err := readVerifyArchiveState(filepath.Join(t.TempDir(), "does-not-exist.json"))
@@ -30,9 +27,7 @@ func TestReadVerifyArchiveState_missingFileReturnsZero(t *testing.T) {
 	}
 }
 
-// TestReadVerifyArchiveState_emptyPathReturnsZero covers the
-// state-file-disabled path: empty path means the operator opted out
-// of incremental, so we return empty state without error.
+// TestReadVerifyArchiveState_emptyPathReturnsZero: an empty path (incremental disabled) returns an empty state without error.
 func TestReadVerifyArchiveState_emptyPathReturnsZero(t *testing.T) {
 	t.Parallel()
 	got, err := readVerifyArchiveState("")
@@ -44,8 +39,7 @@ func TestReadVerifyArchiveState_emptyPathReturnsZero(t *testing.T) {
 	}
 }
 
-// TestWriteRead_roundTrip exercises the atomic-rename write path
-// + read parse. Uses t.TempDir so cleanup is automatic.
+// TestWriteRead_roundTrip exercises the atomic-rename write and the read parse.
 func TestWriteRead_roundTrip(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "state.json")
@@ -79,9 +73,7 @@ func TestWriteRead_roundTrip(t *testing.T) {
 	}
 }
 
-// TestWriteVerifyArchiveState_createsParentDir covers the
-// mkdir -p semantics. Operator should never have to pre-create
-// /var/lib/stellarindex for the write to succeed.
+// TestWriteVerifyArchiveState_createsParentDir: the write creates missing parent directories (mkdir -p).
 func TestWriteVerifyArchiveState_createsParentDir(t *testing.T) {
 	t.Parallel()
 	tmpdir := t.TempDir()
@@ -94,9 +86,7 @@ func TestWriteVerifyArchiveState_createsParentDir(t *testing.T) {
 	}
 }
 
-// TestResolveIncrementalFrom covers the four interesting branches:
-// no prior state, fresh prior state, prior > overlap (normal case),
-// prior < overlap (would underflow without floor).
+// TestResolveIncrementalFrom covers no prior state, fresh prior state, prior > overlap, and prior < overlap (underflow without the floor).
 func TestResolveIncrementalFrom(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -217,13 +207,7 @@ func TestResolveIncrementalFrom(t *testing.T) {
 	}
 }
 
-// TestResolveIncremental_strictBoundaryHashLinesUp is the
-// regression in the terms the operator actually hits: with
-// -safety-overlap 0 the saved LastVerifiedHash must be exactly the
-// hash checkResumeFromHash sees as the first chunk's FirstPrevHash
-// (= the hash of effectiveFrom - 1). Resuming AT last-verified made
-// that comparison hash(L) vs hash(L-1), so strict mode failed every
-// single run.
+// TestResolveIncremental_strictBoundaryHashLinesUp: with -safety-overlap 0 the saved LastVerifiedHash must be the hash checkResumeFromHash sees as FirstPrevHash (effectiveFrom - 1), or strict mode fails every run.
 func TestResolveIncremental_strictBoundaryHashLinesUp(t *testing.T) {
 	t.Parallel()
 	const lastVerified = 60_000_000
@@ -245,11 +229,8 @@ func TestResolveIncremental_strictBoundaryHashLinesUp(t *testing.T) {
 	}
 }
 
-// TestResolveIncrementalResumeHash_tierAll pins the hash source for a
-// multi-tier run: the bounding (lowest high-water) tier, so the hash is
-// provably the one at effectiveFrom-1. The checkpoint tier records no
-// hash, so when it lags, strict mode must skip rather than compare the
-// chain hash at the wrong ledger.
+// TestResolveIncrementalResumeHash_tierAll pins the hash source for a multi-tier run: the lowest high-water tier, so the hash is at effectiveFrom-1;
+// the checkpoint tier records no hash, so a lagging one makes strict mode skip.
 func TestResolveIncrementalResumeHash_tierAll(t *testing.T) {
 	t.Parallel()
 	chainBound := VerifyArchiveState{Tiers: map[string]VerifyArchiveTierState{
@@ -269,9 +250,7 @@ func TestResolveIncrementalResumeHash_tierAll(t *testing.T) {
 	}
 }
 
-// TestUpdateTierState confirms the only-advances-forward semantics:
-// a new run that covers a lower ledger range than prior state DOES
-// NOT regress the high-water mark.
+// TestUpdateTierState: a run covering a lower range than prior state does not regress the high-water mark.
 func TestUpdateTierState(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 14, 17, 0, 0, 0, time.UTC)
@@ -328,8 +307,7 @@ func TestUpdateTierState(t *testing.T) {
 	}
 }
 
-// TestStartTierProgress seeds the per-chunk tracking the resume path
-// reads on the next run.
+// TestStartTierProgress seeds the per-chunk tracking the resume path reads.
 func TestStartTierProgress(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
@@ -360,8 +338,7 @@ func TestStartTierProgress(t *testing.T) {
 	}
 }
 
-// TestMarkChunkDone flips the right chunk + records its terminal
-// hash. Non-target chunks stay untouched.
+// TestMarkChunkDone flips the target chunk and records its terminal hash, leaving others untouched.
 func TestMarkChunkDone(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
@@ -394,8 +371,7 @@ func TestMarkChunkDone(t *testing.T) {
 	}
 }
 
-// TestResumeChunks_planMatch returns just the not-Done chunks when
-// the prior run's plan matches the current.
+// TestResumeChunks_planMatch returns just the not-Done chunks when the prior plan matches.
 func TestResumeChunks_planMatch(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
@@ -425,8 +401,7 @@ func TestResumeChunks_planMatch(t *testing.T) {
 	}
 }
 
-// TestResumeChunks_allDone collapses to a no-op signal when every
-// chunk in the prior plan is Done.
+// TestResumeChunks_allDone collapses to a no-op signal when every prior chunk is Done.
 func TestResumeChunks_allDone(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
@@ -445,9 +420,7 @@ func TestResumeChunks_allDone(t *testing.T) {
 	}
 }
 
-// TestResumeChunks_planDiffers ignores prior progress when from /
-// to / workers / chunk-count don't match exactly (operator changed
-// flags between runs, or live ingest moved tip).
+// TestResumeChunks_planDiffers ignores prior progress when from, to, workers or chunk-count differ.
 func TestResumeChunks_planDiffers(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
@@ -482,9 +455,7 @@ func TestResumeChunks_noPriorState(t *testing.T) {
 	}
 }
 
-// TestState_jsonRoundTripWithInProgress confirms the new InProgress
-// field survives marshal+unmarshal, and that absence (legacy state
-// files) parses cleanly as nil.
+// TestState_jsonRoundTripWithInProgress: InProgress survives a JSON round trip, and legacy files without it parse as nil.
 func TestState_jsonRoundTripWithInProgress(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 5, 24, 12, 0, 0, 0, time.UTC)
@@ -533,9 +504,7 @@ func TestState_jsonRoundTripWithInProgress(t *testing.T) {
 	}
 }
 
-// TestPinnedTipFromPriorRun_returnsPriorTo confirms an in-progress
-// run's To is adopted when From + Workers match the requested values
-// — the path that makes a SIGTERMed bootstrap actually resumable.
+// TestPinnedTipFromPriorRun_returnsPriorTo: an in-progress run's To is adopted when From and Workers match, which makes a SIGTERMed bootstrap resumable.
 func TestPinnedTipFromPriorRun_returnsPriorTo(t *testing.T) {
 	t.Parallel()
 	st := VerifyArchiveState{
@@ -558,8 +527,7 @@ func TestPinnedTipFromPriorRun_returnsPriorTo(t *testing.T) {
 	}
 }
 
-// TestPinnedTipFromPriorRun_noPriorReturnsFalse confirms a fresh
-// state file (no InProgress) doesn't pretend to have a pinned tip.
+// TestPinnedTipFromPriorRun_noPriorReturnsFalse: a state file without InProgress has no pinned tip.
 func TestPinnedTipFromPriorRun_noPriorReturnsFalse(t *testing.T) {
 	t.Parallel()
 	st := VerifyArchiveState{Tiers: map[string]VerifyArchiveTierState{}}
@@ -568,9 +536,7 @@ func TestPinnedTipFromPriorRun_noPriorReturnsFalse(t *testing.T) {
 	}
 }
 
-// TestPinnedTipFromPriorRun_mismatchedFromOrWorkersReturnsFalse
-// confirms a prior in-progress run with different parameters is
-// NOT silently adopted — operator changed flags → fresh resolution.
+// TestPinnedTipFromPriorRun_mismatchedFromOrWorkersReturnsFalse: a prior run with different parameters is not adopted.
 func TestPinnedTipFromPriorRun_mismatchedFromOrWorkersReturnsFalse(t *testing.T) {
 	t.Parallel()
 	st := VerifyArchiveState{
@@ -588,10 +554,7 @@ func TestPinnedTipFromPriorRun_mismatchedFromOrWorkersReturnsFalse(t *testing.T)
 	}
 }
 
-// TestPinnedTipFromPriorRun_zeroToReturnsFalse covers the edge case
-// where a prior InProgress was seeded with To=0 (shouldn't happen in
-// practice, but defensive): no pinned tip → fall through to live
-// resolution, don't propagate a bad tip.
+// TestPinnedTipFromPriorRun_zeroToReturnsFalse: a prior InProgress seeded with To=0 yields no pinned tip, falling through to live resolution.
 func TestPinnedTipFromPriorRun_zeroToReturnsFalse(t *testing.T) {
 	t.Parallel()
 	st := VerifyArchiveState{

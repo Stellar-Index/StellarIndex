@@ -18,18 +18,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// ─── cross-region-monitor ──────────────────────────────────────────
-//
-// Runs cross-region-check on a fixed interval, exporting Prometheus
-// metrics on a configurable port instead of writing to stdout. Same
-// per-region fetch + per-bucket analysis code path as the one-shot
-// check; only the outer loop and the output sink differ.
-//
-// Intended as a sidecar systemd service on the observability host; a
-// Grafana panel scrapes :9479/metrics. Alertmanager fires on:
-//
-//   rate(stellarindex_cross_region_divergences_total[10m]) > 0
-//   rate(stellarindex_cross_region_fetch_errors_total[5m])  > 0.1
+// cross-region-monitor runs cross-region-check on an interval and exports Prometheus metrics (:9479/metrics)
+// instead of stdout; same fetch and analysis path as the one-shot, only the loop and sink differ.
+// Alerts fire on rate(stellarindex_cross_region_divergences_total[10m]) > 0 and rate(..._fetch_errors_total[5m]) > 0.1.
 
 func crossRegionMonitor(args []string) error { //nolint:funlen,gocognit,gocyclo // single-purpose long-running loop
 	fs := flag.NewFlagSet("cross-region-monitor", flag.ContinueOnError)
@@ -143,31 +134,15 @@ func crossRegionMonitor(args []string) error { //nolint:funlen,gocognit,gocyclo 
 	return srv.ListenAndServe()
 }
 
-// healthStaleAfter is how much silence /healthz tolerates from the tick
-// loop before it reports unhealthy. Three missed intervals plus one full
-// per-region timeout: two consecutive skipped ticks (a slow sweep that
-// overran its interval, a transient region stall) stay green, a third
-// does not. Deriving it from the operator's own -interval/-timeout keeps
-// the threshold correct at any tick rate without a fourth flag to get
-// wrong.
+// healthStaleAfter is how long /healthz tolerates tick silence: three intervals plus one region timeout,
+// derived from -interval/-timeout so two skipped ticks stay green and a third does not.
 func healthStaleAfter(interval, timeout time.Duration) time.Duration {
 	return 3*interval + timeout
 }
 
-// crossRegionHealth is the /healthz verdict, split out so the staleness and
-// reachability rules are testable without a listener.
-//
-// "The loop has run once" would be a latch: a dead tick goroutine, or every
-// region unreachable for a week, would still answer 200. Two recency-bounded
-// facts instead:
-//
-//   - lastRunUnix: a sweep completed. Stale means the loop is stuck or
-//     resolveAnchor keeps failing (it returns before the store).
-//   - lastReachedUnix: a sweep reached at least one region. Stale means every
-//     fetch is failing while the loop still turns.
-//
-// "Reached" reuses allFailed(): a PARTIAL region failure stays green and is
-// reported via stellarindex_cross_region_fetch_errors_total.
+// crossRegionHealth is the /healthz verdict. "Has run once" would be a latch, so it uses two recency-bounded
+// facts: lastRunUnix (a sweep completed) and lastReachedUnix (a sweep reached a region, via allFailed();
+// partial failure stays green and is reported by the fetch_errors metric).
 func crossRegionHealth(exp *crossRegionExporter, now time.Time, staleAfter time.Duration) (int, string) {
 	last := exp.lastRunUnix.Load()
 	if last == 0 {
@@ -234,12 +209,8 @@ func runOneTick(
 				}
 			}
 
-			// Run the analysis but discard its stdout output — we
-			// only need the divergence and compared bools. The diff
-			// itself is already in the metrics labels (region pair)
-			// for ops to triage. compared feeds tickOutcome's
-			// "inconclusive" label; the "error" outcome stays scoped
-			// to allFailed().
+			// Discard the analysis stdout: divergence is in the metric labels, and compared feeds tickOutcome's
+			// "inconclusive" label (the "error" outcome stays scoped to allFailed()).
 			divergence, compared := analyseRegionResults(metric, pair, bucketFrom, bucketTo, results, io.Discard)
 
 			outcome := tickOutcome(divergence, compared, allFailed(results))
@@ -247,11 +218,8 @@ func runOneTick(
 				exp.divergences.WithLabelValues(pair, metric.String()).Inc()
 			}
 			if !allFailed(results) {
-				// `reached` deliberately means "we contacted a region",
-				// not "we compared" — TestRunOneTick_ReachedStamped-
-				// OnPartialFailure pins that, and a monitor that 503s
-				// because a PEER is down would report the wrong subject.
-				// The outcome label carries the compared-vs-not fact.
+				// `reached` means "we contacted a region", not "we compared" (pinned by TestRunOneTick_ReachedStampedOnPartialFailure);
+				// the outcome label carries the compared fact.
 				reached = true
 			}
 			exp.checksTotal.WithLabelValues(pair, metric.String(), outcome).Inc()
@@ -293,11 +261,7 @@ type crossRegionExporter struct {
 	lastReachedGauge prometheus.Gauge
 	inFlight         prometheus.Gauge
 
-	// lastRunUnix is the wall clock of the last completed sweep, and
-	// lastReachedUnix of the last sweep that reached at least one region.
-	// Both feed /healthz (crossRegionHealth); the gauges above are the
-	// Prometheus-scrapable twins, so the same two facts can be alerted on
-	// without polling /healthz.
+	// lastRunUnix and lastReachedUnix (last sweep / last sweep reaching a region) feed /healthz; the gauges above are their Prometheus twins.
 	lastRunUnix     atomic.Int64
 	lastReachedUnix atomic.Int64
 }
@@ -363,20 +327,12 @@ func newCrossRegionExporter(reg prometheus.Registerer) *crossRegionExporter {
 	return exp
 }
 
-// String makes crossRegionMetric usable as a Prometheus label value
-// without a type assertion every call site.
+// String makes crossRegionMetric usable as a Prometheus label value.
 func (m crossRegionMetric) String() string { return string(m) }
 
-// tickOutcome labels one (pair, metric) sweep.
-//
-// "inconclusive" is the case that must not read as "ok":
-// analyseRegionResults returns compared=false when fewer than two
-// regions responded, and documents that such a sample "proves NOTHING".
-// Labelled "ok", ONE region down in a two-region fleet would emit the
-// same time series as a genuine agreement — divergences flat,
-// last_reached fresh, /healthz 200, and zero comparisons actually
-// performed. The one-shot sibling treats the same state as a hard
-// failure and exits 1.
+// tickOutcome labels one (pair, metric) sweep. "inconclusive" (compared=false: fewer than two regions
+// responded) must not read as "ok", or one region down would look like genuine agreement with zero
+// comparisons; the one-shot treats it as a hard failure.
 func tickOutcome(divergence, compared, allFailed bool) string {
 	switch {
 	case allFailed:

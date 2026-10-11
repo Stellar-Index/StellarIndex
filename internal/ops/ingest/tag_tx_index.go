@@ -15,23 +15,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// tagTxIndex is the historical / recovery half of trades.tx_index
-// (migration 0196): the live sweeper (pipeline.RunTxIndexTagger) covers only
-// a trailing 30-min window, so rows older than that — a lake outage, a
-// projector replay, the SDEX history backfill — are tagged here through the
-// same pipeline.TagTxIndexWindow walk.
-//
-// Windowed by ts, the trades partition key, so each window's UPDATEs prune
-// to its chunks. No checkpoint: the tag is first-wins, so a re-run re-reads
-// an already-tagged window as an empty page and moves on.
-//
-// -write refuses a range that touches a compressed (or partially
-// compressed) trades chunk: an UPDATE there decompresses the chunk inside
-// the transaction, which does not converge and bloats WAL. Tag history
-// before compress_after has elapsed.
-//
-// Fail-closed (opsutil.WriteGate): the default run reports how many
-// transactions it WOULD tag and writes nothing; -write applies.
+// tagTxIndex is the historical/recovery half of trades.tx_index: the live sweeper covers only a trailing
+// 30-min window, so older rows are tagged here via pipeline.TagTxIndexWindow, windowed by ts (the
+// partition key). No checkpoint: tagging is first-wins. -write refuses a range touching a compressed
+// trades chunk (the UPDATE decompresses it in-transaction and bloats WAL). Fail-closed via opsutil.WriteGate.
 func tagTxIndex(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("tag-tx-index")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

@@ -8,8 +8,7 @@ import (
 	"testing"
 )
 
-// A range where neither side returned a row compared nothing; the verdict
-// must fail rather than log "every ledger matches" and exit 0.
+// TestHubbleCountVerdict_EmptyBothSidesIsError: a range with no rows on either side compared nothing and must fail.
 func TestHubbleCountVerdict_EmptyBothSidesIsError(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
@@ -32,8 +31,7 @@ func TestHubbleStatVerdict_EmptyBothSidesIsError(t *testing.T) {
 	}
 }
 
-// ledgers_checked counts distinct ledgers, not ours+theirs rows: two
-// ledgers present on both sides is 2.
+// TestHubbleCountVerdict_LedgersCheckedIsDistinct: ledgers_checked counts distinct ledgers, not rows.
 func TestHubbleCountVerdict_LedgersCheckedIsDistinct(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))

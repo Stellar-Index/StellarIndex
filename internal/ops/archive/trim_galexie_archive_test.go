@@ -15,10 +15,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 )
 
-// TestParseTrimFlags covers the trim flag gates: every safety primitive
-// (HEAD-before-delete, the max-files ceiling, the second acknowledgement for
-// -no-verify-upstream, no dry-run beside a commit) is asserted here. The
-// parser leaves dryRun false by default; trimGalexieArchive promotes it.
+// TestParseTrimFlags covers the trim safety gates: HEAD-before-delete, the max-files ceiling, the second acknowledgement for -no-verify-upstream, and no dry-run beside a commit.
 func TestParseTrimFlags(t *testing.T) {
 	t.Parallel()
 	base := []string{"-older-than-ledger", "1000"}
@@ -145,26 +142,9 @@ func TestMinMaxInt(t *testing.T) {
 	}
 }
 
-// ─── the "trim can never trim" regression ─────────────
-//
-// trim-galexie-archive enumerated the hot bucket with ONE
-// `hot.ListFilePaths(ctx, datastore.ListFileOptions{})` call. The SDK
-// clamps Limit<=0 to 1000 keys (support/datastore/datastore.go:24
-// `listFilePathsMaxLimit = 1000`, applied in s3.go), and Galexie's
-// partition names embed MaxUint32-startLedger as their sort key, so
-// those 1000 keys were always the NEWEST 1000 — always above the
-// cutoff. Measured on r1 against a 63.6M-object archive:
-//
-//	-older-than-ledger 10000000 -dry-run
-//	  hot file enumeration  total_files=1000
-//	  trim plan ready       candidates=0 skipped_too_fresh=999
-//
-// (999, not 1000, because the first key lexicographically is
-// `.config.json`, which ParseRangeFromObjectKey rejects — the fake
-// below carries that object too.)
-//
-// The fakes reproduce the two behaviours that made the bug: the
-// 1000-key clamp, and newest-first ordering.
+// Regression "trim can never trim": one unpaged ListFilePaths call is clamped by the SDK to 1000 keys, and Galexie's names embed MaxUint32-startLedger,
+// so those were always the NEWEST 1000 (all above the cutoff; 999 skipped, not 1000, since .config.json is rejected by ParseRangeFromObjectKey).
+// The fakes reproduce the 1000-key clamp and newest-first ordering.
 
 // sdkListFilePathsMaxLimit mirrors the SDK's unexported
 // listFilePathsMaxLimit. If the SDK ever raises it, these tests still
@@ -214,9 +194,7 @@ func (f *fakeHotArchive) partitionsOf(t *testing.T) []hotPartition {
 	return parts
 }
 
-// ListFilePaths reproduces support/datastore/s3.go: Limit<=0 or >1000
-// is clamped to 1000, results are prefix-filtered, StartAfter-exclusive
-// and lexicographically ascending.
+// ListFilePaths reproduces support/datastore/s3.go: Limit<=0 or >1000 clamps to 1000, prefix-filtered, StartAfter-exclusive, ascending.
 func (f *fakeHotArchive) ListFilePaths(_ context.Context, o datastore.ListFileOptions) ([]string, error) {
 	f.listFileCalls++
 	if f.listFileErr != nil {
@@ -249,9 +227,7 @@ func (f *fakeHotArchive) ListFilePaths(_ context.Context, o datastore.ListFileOp
 	return out, nil
 }
 
-// ListObjectsV2 reproduces the delimited-listing semantics discovery
-// depends on: CommonPrefixes roll-up, MaxKeys counting prefixes as
-// entries, and continuation tokens.
+// ListObjectsV2 reproduces the delimited-listing semantics discovery needs: CommonPrefixes roll-up, MaxKeys counting prefixes, continuation tokens.
 func (f *fakeHotArchive) ListObjectsV2(_ context.Context, in *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
 	f.listObjectCalls++
 	prefix := aws.ToString(in.Prefix)
@@ -338,11 +314,8 @@ func ledgerOf(t *testing.T, key string) uint32 {
 	return low
 }
 
-// ledgerSetOf returns the ledgers a candidate list covers, ascending.
-// The SET is the contract, not the order: filenames embed
-// MaxUint32-ledger, so INSIDE a partition keys sort newest-ledger-first
-// (ledger 499's FFFFFE0C-- sorts before ledger 0's FFFFFFFF--). Only
-// the partition walk is oldest-first.
+// ledgerSetOf returns the ledgers a candidate list covers, ascending. The set is the contract, not the order:
+// inside a partition keys sort newest-ledger-first (names embed MaxUint32-ledger); only the partition walk is oldest-first.
 func ledgerSetOf(t *testing.T, keys []string) []uint32 {
 	t.Helper()
 	out := make([]uint32, 0, len(keys))
@@ -366,18 +339,7 @@ func trimTestOpts(olderThan uint32, maxFiles int) trimOpts {
 	return trimOpts{olderThan: olderThan, verifyUpstream: true, maxFiles: maxFiles}
 }
 
-// TestPlanTrim_EnumeratesPastTheSDKThousandKeyCap is THE regression for
-// the SDK key cap. 3000 objects across 6 partitions of 500; cutoff 1250.
-//
-// With one unbounded ListFilePaths call this yields
-// files_enumerated=1000, candidates=0, skipped_too_fresh=999 — the
-// 1000 keys the SDK returns are the lexicographically-first ones,
-// which with Galexie's descending hex names are `.config.json` plus
-// ledgers 2999..2001. Every one is above the cutoff. Same shape, same
-// off-by-one-from-.config.json, as a real r1 run.
-//
-// With paging: every one of the 1250 sub-cutoff files is found, and the
-// three partitions that sit entirely above the cutoff are never read.
+// TestPlanTrim_EnumeratesPastTheSDKThousandKeyCap is THE regression for the SDK key cap (3000 objects, 6 partitions of 500, cutoff 1250). One unbounded call would see only .config.json plus ledgers 2999..2001, all above the cutoff; paging finds all 1250 sub-cutoff files and never reads the three partitions above it.
 func TestPlanTrim_EnumeratesPastTheSDKThousandKeyCap(t *testing.T) {
 	t.Parallel()
 	hot := newFakeArchive(t, 500, 3000)
@@ -412,14 +374,7 @@ func TestPlanTrim_EnumeratesPastTheSDKThousandKeyCap(t *testing.T) {
 	}
 }
 
-// TestPlanTrim_StraddlingPartitionIsFilteredPerFile pins the boundary
-// case the partition-scoping optimisation could get wrong in either
-// direction: skipping the straddling partition wholesale silently
-// leaves trimmable data behind; trimming it wholesale deletes hot files
-// that are still above the cutoff.
-//
-// 2000 objects in ONE partition also forces intra-partition
-// StartAfter paging (2 full pages + a terminating one).
+// TestPlanTrim_StraddlingPartitionIsFilteredPerFile: a partition straddling the cutoff must be filtered per file (skipping it leaves trimmable data; trimming it deletes hot files). 2000 objects in one partition also force intra-partition StartAfter paging.
 func TestPlanTrim_StraddlingPartitionIsFilteredPerFile(t *testing.T) {
 	t.Parallel()
 	hot := newFakeArchive(t, 2000, 2000)
@@ -447,10 +402,7 @@ func TestPlanTrim_StraddlingPartitionIsFilteredPerFile(t *testing.T) {
 	}
 }
 
-// TestPlanTrim_MaxFilesCapsAcrossPartitions: --max-files caps the whole
-// RUN, not each partition. With 4 partitions fully below the cutoff and
-// a cap of 600, the plan must stop mid-second-partition — 600
-// candidates total, not 600 per partition.
+// TestPlanTrim_MaxFilesCapsAcrossPartitions: --max-files caps the whole run, not each partition (cap 600 over 4 partitions stops mid-second-partition).
 func TestPlanTrim_MaxFilesCapsAcrossPartitions(t *testing.T) {
 	t.Parallel()
 	hot := newFakeArchive(t, 500, 2000)
@@ -470,21 +422,15 @@ func TestPlanTrim_MaxFilesCapsAcrossPartitions(t *testing.T) {
 	if plan.partitionsUnvisited != 2 {
 		t.Errorf("partitionsUnvisited = %d, want 2", plan.partitionsUnvisited)
 	}
-	// Oldest partition first, and the cap bites 100 files into the
-	// SECOND partition: all 500 of 0..499, plus 100 from 500-999.
-	// (Those 100 are 900..999 because keys sort newest-first within a
-	// partition — see ledgerSetOf.) A per-partition counter would have
-	// yielded 1000 candidates here, not 600.
+	// Oldest partition first, and the cap bites 100 files into the second partition (900..999, since keys sort newest-first within a partition).
+	// A per-partition counter would have yielded 1000 candidates.
 	want := append(ledgerSeq(0, 499), ledgerSeq(900, 999)...)
 	if got := ledgerSetOf(t, plan.candidates); !slices.Equal(got, want) {
 		t.Errorf("capped candidate set = %d ledgers spanning %d..%d, want 500 from the first partition + 100 from the second", len(got), got[0], got[len(got)-1])
 	}
 }
 
-// TestPlanTrim_SkipsAboveCutoffPartitionsWithoutListing: partitions
-// entirely at/above the cutoff cost ZERO object listings. Without this,
-// a chunked trim over a 63.6M-object archive would re-page the whole
-// bucket on every invocation.
+// TestPlanTrim_SkipsAboveCutoffPartitionsWithoutListing: partitions at or above the cutoff cost zero listings, so a chunked trim does not re-page the bucket every run.
 func TestPlanTrim_SkipsAboveCutoffPartitionsWithoutListing(t *testing.T) {
 	t.Parallel()
 	hot := newFakeArchive(t, 500, 2000)
@@ -505,9 +451,7 @@ func TestPlanTrim_SkipsAboveCutoffPartitionsWithoutListing(t *testing.T) {
 	}
 }
 
-// TestPlanTrim_VerifyUpstreamStillGatesEveryCandidate: the safety chain
-// is unchanged by the enumeration rewrite. A file the cold tier does
-// not hold — or that errors on HEAD — is never a deletion candidate.
+// TestPlanTrim_VerifyUpstreamStillGatesEveryCandidate: a file the cold tier lacks, or that errors on HEAD, is never a deletion candidate.
 func TestPlanTrim_VerifyUpstreamStillGatesEveryCandidate(t *testing.T) {
 	t.Parallel()
 	hot := newFakeArchive(t, 500, 1500)
@@ -537,10 +481,7 @@ func TestPlanTrim_VerifyUpstreamStillGatesEveryCandidate(t *testing.T) {
 	}
 }
 
-// TestPlanTrim_UnparsedPartitionNameIsScannedNotSkipped: safe posture.
-// A directory whose name we cannot bucket must be read, not assumed
-// fresh — assuming would silently leave trimmable data behind, which is
-// the failure class this file is fixing.
+// TestPlanTrim_UnparsedPartitionNameIsScannedNotSkipped: a directory name we cannot bucket must be read, not assumed fresh, or trimmable data is silently left behind.
 func TestPlanTrim_UnparsedPartitionNameIsScannedNotSkipped(t *testing.T) {
 	t.Parallel()
 	hot := newFakeArchive(t, 500, 1000)
@@ -559,8 +500,7 @@ func TestPlanTrim_UnparsedPartitionNameIsScannedNotSkipped(t *testing.T) {
 	}
 }
 
-// TestPlanTrim_PropagatesListErrors: an enumeration that fails must
-// fail the run, not silently plan a partial trim.
+// TestPlanTrim_PropagatesListErrors: a failed enumeration must fail the run, not plan a partial trim.
 func TestPlanTrim_PropagatesListErrors(t *testing.T) {
 	t.Parallel()
 	hot := newFakeArchive(t, 500, 1000)
@@ -575,11 +515,7 @@ func TestPlanTrim_PropagatesListErrors(t *testing.T) {
 	}
 }
 
-// TestListHotPartitions_PagesPastOneThousandCommonPrefixes: MaxKeys
-// caps CommonPrefixes at 1000 exactly as it caps objects. r1 has 995+
-// partitions and gains one every 64000 ledgers — #1001 lands at
-// ledger 64,000,000. An unpaged delimited listing would reintroduce the very
-// bug this change removes, one level up.
+// TestListHotPartitions_PagesPastOneThousandCommonPrefixes: MaxKeys caps CommonPrefixes at 1000 like objects, so an unpaged delimited listing would reintroduce the key-cap bug one level up.
 func TestListHotPartitions_PagesPastOneThousandCommonPrefixes(t *testing.T) {
 	t.Parallel()
 	const partitions = 1200
@@ -614,10 +550,7 @@ func TestListHotPartitions_PagesPastOneThousandCommonPrefixes(t *testing.T) {
 	}
 }
 
-// TestListHotPartitions_TrimsBucketKeyPrefix: ListFilePaths' Prefix is
-// relative to the datastore's key prefix, while ListObjectsV2 returns
-// absolute keys. Discovery must hand back the relative form or every
-// subsequent page request would double the prefix and return nothing.
+// TestListHotPartitions_TrimsBucketKeyPrefix: ListFilePaths' Prefix is relative to the datastore key prefix while ListObjectsV2 returns absolute keys, so discovery must return the relative form.
 func TestListHotPartitions_TrimsBucketKeyPrefix(t *testing.T) {
 	t.Parallel()
 	hot := newFakeArchive(t, 500, 1000)
@@ -641,8 +574,7 @@ func TestListHotPartitions_TrimsBucketKeyPrefix(t *testing.T) {
 	}
 }
 
-// TestParsePartitionPrefix covers the real names seen on r1 plus the
-// rejects that must fall back to "scan it, don't trust it".
+// TestParsePartitionPrefix covers real names seen on r1 plus rejects that must fall back to "scan it, don't trust it".
 func TestParsePartitionPrefix(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -679,9 +611,7 @@ func TestParsePartitionPrefix(t *testing.T) {
 	}
 }
 
-// TestComparePartitions_OldestFirstUnparsedLast pins the scan order the
-// --max-files cap depends on: a capped run must spend its budget on the
-// oldest (most cold-eligible) ledgers.
+// TestComparePartitions_OldestFirstUnparsedLast pins the scan order --max-files depends on: a capped run spends its budget on the oldest ledgers.
 func TestComparePartitions_OldestFirstUnparsedLast(t *testing.T) {
 	t.Parallel()
 	parts := []hotPartition{

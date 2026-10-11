@@ -53,10 +53,7 @@ func writeSelfCheckpointJSON(t *testing.T, root string, seq uint32, body string)
 	}
 }
 
-// TestVerifyArchivePeers_SelfIsAParticipant pins that Tier D compares
-// OUR archive with the peers' consensus: canonical peers agreeing with
-// each other must not pass a run whose local bytes diverge or are absent.
-// The range [64,191] samples checkpoints 127 and 191.
+// TestVerifyArchivePeers_SelfIsAParticipant: Tier D compares OUR archive with the peers' consensus, so agreeing peers must not pass a run whose local bytes diverge or are absent (range [64,191] samples 127 and 191).
 func TestVerifyArchivePeers_SelfIsAParticipant(t *testing.T) {
 	t.Parallel()
 	peers := strings.Join([]string{newTierDPeer(t, "aa"), newTierDPeer(t, "aa"), newTierDPeer(t, "aa")}, ",")
@@ -137,8 +134,7 @@ func TestVerifyArchivePeers_SelfIsAParticipant(t *testing.T) {
 	}
 }
 
-// TestVerifyArchivePeers_RejectsNonHTTPPeer pins that a file:// peer is
-// refused up front instead of failing every fetch and being skipped.
+// TestVerifyArchivePeers_RejectsNonHTTPPeer: a file:// peer is refused up front, not skipped after failing every fetch.
 func TestVerifyArchivePeers_RejectsNonHTTPPeer(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

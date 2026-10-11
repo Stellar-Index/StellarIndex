@@ -14,12 +14,7 @@ var trimUnitFiles = []string{
 	"deploy/systemd/galexie-archive-trim.service",
 }
 
-// TestTrimUnits_ExecStartParses runs each scheduled unit's argv through the
-// subcommand's own FlagSet. A flag the parser does not define exits 1 before
-// anything is enumerated, which a monthly timer reports only as `failed` —
-// indistinguishable from "nothing to trim" to anyone not reading the journal
-// . The unit must also be a real run: without -commit it is a
-// dry-run that deletes nothing, and it must keep upstream verification on.
+// TestTrimUnits_ExecStartParses runs each scheduled unit's argv through the subcommand's own FlagSet, since an undefined flag exits 1 and a monthly timer reports only "failed". The unit must also be a real run: without -commit it deletes nothing, and it must keep upstream verification on.
 func TestTrimUnits_ExecStartParses(t *testing.T) {
 	t.Parallel()
 	for _, rel := range trimUnitFiles {
@@ -52,17 +47,7 @@ func TestTrimUnits_ExecStartParses(t *testing.T) {
 	}
 }
 
-// TestTrimUnits_UsesDeleteCapableIdentity pins that the trim
-// unit has a delete-capable credential source, not only /etc/default/stellarindex-ops,
-// which carries the read-only stellarindex-reader identity (List/Get, no
-// s3:DeleteObject — 09-minio.yml). Every DeleteObject call in
-// trim_galexie_archive.go therefore returned AccessDenied, and a monthly
-// run silently "deleted 0/N" forever. The unit loads a second,
-// trim-dedicated EnvironmentFile carrying the stellarindex-archive-trimmer
-// identity AFTER stellarindex-ops, so it overrides STELLARINDEX_S3_*
-// without touching the AWS_* pair the read/list path still needs from
-// stellarindex-reader. Order matters — systemd's later EnvironmentFile
-// wins — so this checks both presence and position, not just presence.
+// TestTrimUnits_UsesDeleteCapableIdentity pins that the trim unit loads a delete-capable credential file (stellarindex-archive-trimmer) AFTER stellarindex-ops, because the read-only reader identity cannot s3:DeleteObject and every delete would AccessDenied silently. Later EnvironmentFile wins in systemd, so this checks position as well as presence.
 func TestTrimUnits_UsesDeleteCapableIdentity(t *testing.T) {
 	t.Parallel()
 	for _, rel := range trimUnitFiles {

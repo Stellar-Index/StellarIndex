@@ -25,11 +25,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// validateFollowFlags checks the -follow/-to/-parallel combination shared by
-// wasm-history and extract-wasm-from-galexie: -follow is the explicit opt-in
-// for an unbounded live tail, so it can't be combined with an explicit -to,
-// and a bounded parallel split has no meaning without a fixed upper bound.
-// Pure — unit-testable without a live archive.
+// validateFollowFlags checks the -follow/-to/-parallel combination: -follow is the opt-in for an unbounded tail, so it excludes an explicit -to,
+// and a parallel split needs a fixed upper bound. Pure.
 func validateFollowFlags(toolName string, to uint, follow bool, parallel uint) error {
 	if follow && to != 0 {
 		return fmt.Errorf("%s: -follow tails indefinitely and is incompatible with an explicit -to", toolName)
@@ -40,16 +37,8 @@ func validateFollowFlags(toolName string, to uint, follow bool, parallel uint) e
 	return nil
 }
 
-// resolveArchiveTip opens a one-shot DataStore against the same config a
-// walker will use and returns the archive's current latest ledger — the
-// same primitive verify-archive's -workers>1 tip resolution and
-// trim-galexie-archive's hot-tip lookup already use, applied here so
-// wasm-history's -to=0 default means "the tip, once" rather than
-// ledgerstream.Stream's "tail forever". Unlike verify-archive's
-// resolution, this one has no serial-walk fallback to demote to: a
-// bounded-output walker with no upper bound would just hang, so a
-// resolution failure (e.g. no bucket ListObjectsV2) is returned to the
-// caller as a hard error instead.
+// resolveArchiveTip returns the archive's latest ledger once, so wasm-history's -to=0 means the tip rather than tailing forever.
+// Unlike verify-archive there is no serial fallback: a bounded walker with no upper bound would hang, so failure is a hard error.
 func resolveArchiveTip(ctx context.Context, lsCfg ledgerstream.Config) (uint32, error) {
 	ds, err := datastore.NewDataStore(ctx, lsCfg.DataStore)
 	if err != nil {
@@ -154,21 +143,14 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 		bucketName = cfg.Storage.S3BucketArchive
 	}
 
-	// wasm-history walks tend to scan recent ranges (audit trailing N
-	// months). The trailing edge can be at the live tip; if -to
-	// overshoots a not-yet-uploaded partition the walk would error
-	// otherwise. newBoundedLedgerStreamConfig opts into
-	// TolerateTrailingMissing for us.
+	// Walks often end at the live tip; newBoundedLedgerStreamConfig opts into TolerateTrailingMissing so an overshooting -to does not error.
 	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, bucketName, int(*parallel))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// ledgerstream.Stream reads to==0 as "tail live, unbounded", and a
-	// walker whose entire output is one JSON document emitted at
-	// completion (see below) would then never emit it. -follow is the
-	// explicit opt-in for that; otherwise resolve -to to a real tip once,
-	// up front, same as verify-archive's -workers>1 tip resolution.
+	// ledgerstream.Stream reads to==0 as an unbounded live tail, so a walker emitting one JSON at completion would never emit; -follow opts in,
+	// otherwise resolve -to to a real tip once.
 	resolvedTo := uint32(*to)
 	if *to == 0 && !*follow {
 		tip, tipErr := resolveArchiveTip(ctx, lsCfg)
@@ -253,30 +235,14 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 		return err
 	}
 
-	// Coverage last, so the operator still gets the JSON (its ranges are
-	// honest about what was observed) but the exit code is not. This
-	// output is copied into docs/operations/wasm-audits/* and is what a
-	// BackfillSafe determination rests on, so "the walk covered less of
-	// the range than you asked for" has to be impossible to miss — and
-	// stderr alone is easy to miss when stdout is redirected to a file,
-	// which is exactly how the runbook invokes this.
+	// Coverage last: the operator still gets the JSON, but the exit code fails. The output feeds BackfillSafe determinations,
+	// and stderr alone is easy to miss when stdout is redirected.
 	return wasmWalkCoverage(uint32(*from), resolvedTo, totalScanned, bucketName)
 }
 
-// wasmWalkCoverage turns a wasm-history walk that did not deliver its
-// whole range into a hard error, naming the bucket it read. An
-// unbounded walk (-to 0, the live tail) has no requested count and is
-// exempt.
-//
-// Same defect class as chops.walkCoverage / chops.backfillCoverage /
-// ingest.censusCoverage. opsutil.NewBoundedLedgerStreamConfig always
-// sets TolerateTrailingMissing — deliberately, because -to here may sit
-// at the live tip — so a missing partition within 65,536 ledgers of -to
-// comes back as a clean walk-complete and the JSON is simply computed
-// over fewer ledgers. The per-contract ranges now close at the last
-// ledger actually observed rather than at -to, so the artifact no
-// longer overstates its coverage; this makes the shortfall itself
-// unmissable.
+// wasmWalkCoverage turns a walk that did not cover its whole range into a hard error naming the bucket (unbounded -to is exempt).
+// TolerateTrailingMissing makes a missing partition near -to look like a clean walk; per-contract ranges close at the last observed ledger,
+// and this makes the shortfall itself unmissable.
 func wasmWalkCoverage(from, to uint32, scanned uint64, bucket string) error {
 	if to == 0 {
 		return nil
@@ -377,24 +343,9 @@ func writeCodeUploadsOutput(path string, workers []workerResult) error {
 	return nil
 }
 
-// wasmHistoryMergeJSONL rebuilds the canonical wasm-history JSON from the
-// per-worker JSONL transition logs that `wasm-history -checkpoint-dir` wrote,
-// to recover a walk that died before its end-of-run JSON write.
-//
-// Flags:
-//   - -checkpoint-dir: directory containing wasm-history-w*.jsonl files.
-//   - -to:             upper-bound ledger of the original walk; closes the
-//     last open range per contract.
-//   - -output:         path for the merged JSON (default stdout).
-//
-// The merge mirrors [mergeWasmHistories]: read files in lexical (worker) order,
-// sort each contract's transitions by at_ledger, collapse adjacent same-hash
-// transitions (a worker's first sight of an already-known hash is not one), then
-// build wasmRange[]: each range closes at the next transition's at_ledger - 1,
-// the last at -to.
-//
-// Empty-history contracts are NOT emitted: the JSONL only carries observed
-// transitions. This only recovers what was seen before the crash.
+// wasmHistoryMergeJSONL rebuilds the canonical JSON from per-worker JSONL logs (-checkpoint-dir, -to closing the last open range, -output),
+// recovering a walk that died before its final write. Mirrors [mergeWasmHistories]. Empty-history contracts are not emitted;
+// only transitions seen before the crash are recovered.
 func wasmHistoryMergeJSONL(args []string) error {
 	fs := flag.NewFlagSet("wasm-history-merge-jsonl", flag.ContinueOnError)
 	checkpointDir := fs.String("checkpoint-dir", "",
@@ -466,15 +417,9 @@ func wasmHistoryMergeJSONL(args []string) error {
 	return nil
 }
 
-// readAllTransitionJSONL reads every path into `transitions` and
-// returns the ledger to close the last open range of each contract
-// at. It starts from the operator's requested `to` and is pulled
-// down to the least-far extent any worker file actually proves it
-// reached — a worker's own watermark line if present, else its
-// highest observed transition. Without this, a worker that died
-// mid-flight (the exact scenario this recovery tool exists for)
-// would have its last range published as extending all the way to
-// -to, an artefact nobody verified.
+// readAllTransitionJSONL reads every path into transitions and returns the ledger that closes each contract's last open range:
+// the requested `to`, pulled down to the least-far extent any worker file proves (watermark or highest transition),
+// so a crashed worker's last range is not published out to an unverified -to.
 func readAllTransitionJSONL(paths []string, to uint32, transitions map[string][]transitionRecord) (uint32, error) {
 	totalLines := 0
 	closeAt := to
@@ -505,17 +450,9 @@ func readAllTransitionJSONL(paths []string, to uint32, transitions map[string][]
 	return closeAt, nil
 }
 
-// readTransitionJSONL appends every transition record in path's JSONL to
-// the per-contract slice in `transitions`. Returns the number of
-// transition lines successfully decoded. Reads line-by-line (not a
-// streaming json.Decoder) so it knows WHICH line failed to parse: a
-// malformed/truncated LAST line is tolerated (a crashed walk may leave a
-// half-written final line — "recover what we have" beats "fail
-// outright"), but a malformed line anywhere else is a hard error.
-// newTransitionLog truncates the file on open, so it holds one run's
-// lines and a crash can only damage the last one; an earlier malformed
-// line is corruption, and skipping it would silently drop the
-// transitions after it from the merge.
+// readTransitionJSONL appends a file's transition records per contract and returns the decoded count. A malformed LAST line is tolerated
+// (a crash can leave a half-written final line; the log is truncated on open so only the last can be damaged);
+// a malformed line elsewhere is corruption and a hard error, since skipping it would silently drop later transitions.
 func readTransitionJSONL(path string, transitions map[string][]transitionRecord) (count int, extent uint32, hasExtent bool, err error) {
 	// gosec G304: path comes from -checkpoint-dir glob expansion; the
 	// merge tool is itself a privileged ops command that operators run
@@ -568,20 +505,13 @@ func readTransitionJSONL(path string, transitions map[string][]transitionRecord)
 	return count, extent, hasExtent, nil
 }
 
-// buildRangesFromTransitions converts a per-contract sorted
-// transition slice into the wasmRange shape `wasmHistory` emits.
-// Adjacent same-hash transitions are collapsed (the second one is
-// just a downstream worker's first re-observation of an unchanged
-// hash). The last open range closes at `to`.
+// buildRangesFromTransitions converts sorted per-contract transitions into wasmRange values, collapsing adjacent same-hash entries;
+// the last open range closes at `to`.
 func buildRangesFromTransitions(trs []transitionRecord, to uint32) []wasmRange {
 	if len(trs) == 0 {
 		return nil
 	}
-	// Collapse adjacent same-hash entries. We keep the EARLIEST
-	// at_ledger for each run (matching the walker's first-observation
-	// semantic). Tracking the previous hash via a local string avoids
-	// the trs[i-1] index expression that gosec G602 flags as a
-	// slice-bound risk.
+	// Collapse adjacent same-hash entries, keeping the EARLIEST at_ledger (first observation). A local previous-hash avoids the trs[i-1] gosec G602 flag.
 	collapsed := trs[:0]
 	prevHash := ""
 	for _, r := range trs {
@@ -621,16 +551,8 @@ type workerResult struct {
 	upperEnd    uint32 // last ledger the worker actually saw (inclusive)
 }
 
-// runWasmHistoryWorkers splits [from,to] into `parallel` contiguous
-// chunks and runs each in its own goroutine. Returns per-worker
-// state maps in worker-order plus the total ledgers scanned.
-//
-// When `checkpointDir` is non-empty, each worker also writes one
-// JSONL line per observed transition to
-// `<checkpointDir>/wasm-history-w<i>.jsonl`. This gives crash-
-// resilience for long-running walks: if a worker dies mid-flight,
-// the per-worker JSONL contains every transition it saw before the
-// crash. The final stdout JSON is unchanged.
+// runWasmHistoryWorkers splits [from,to] into `parallel` contiguous chunks, one goroutine each, and returns per-worker state in worker order
+// plus total ledgers scanned. With checkpointDir set each worker also appends transitions to wasm-history-w<i>.jsonl for crash recovery.
 func runWasmHistoryWorkers( //nolint:funlen // worker scaffolding; long function is the cleanest expression of the tier-2 fan-out
 	ctx context.Context,
 	lsCfg ledgerstream.Config,
@@ -700,15 +622,8 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 	startedAt time.Time,
 	errCh chan<- error,
 ) {
-	// upperEnd stays 0 until the walk delivers something. It is the
-	// LAST LEDGER OBSERVED, not the requested bound: mergeWasmHistories
-	// closes every open WASM range at it, so it becomes the ToLedger
-	// the tool publishes as observed coverage. Seeding it from b.To
-	// here would let a walk that stopped early — a hole inside
-	// TolerateTrailingMissing's 65,536-ledger window, or SIGINT through
-	// the shared signal context — still claim the whole requested
-	// chunk. A worker that delivers nothing leaves it 0 and contributes
-	// no state, so no range can be closed at a ledger nobody saw.
+	// upperEnd stays 0 until the walk delivers: it is the LAST LEDGER OBSERVED, not the requested bound, because mergeWasmHistories closes open ranges at it.
+	// Seeding it from b.To would let a walk that stopped early claim the whole chunk; a worker delivering nothing contributes no state.
 	workerScanned := uint64(0)
 
 	// Per-worker transition log (optional). nil → no incremental writes.
@@ -766,12 +681,7 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 			fmt.Fprintf(os.Stderr, "wasm-history: w%d write extent watermark: %v\n", workerIdx, werr)
 		}
 	}
-	// Add the un-counted residue. `-progress-every 0` means "disable
-	// progress output"; an unconditional `workerScanned % progressEvery`
-	// would panic on divide-by-zero AFTER the expensive ledger walk
-	// had finished. Either branch: progressEvery == 0 → add the
-	// full workerScanned (nothing was counted in-loop); otherwise
-	// add the residue.
+	// Add the un-counted residue. -progress-every 0 disables progress output, and `% progressEvery` would panic after the walk finished.
 	if progressEvery == 0 {
 		totalScanned.add(workerScanned)
 	} else {
@@ -782,21 +692,9 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 	}
 }
 
-// mergeWasmHistories combines per-worker state maps into one per-contract
-// timeline. Workers scan disjoint, ledger-ordered chunks (opsutil.SplitRange gives
-// worker i the i-th contiguous range), so each worker's per-contract ranges are
-// rebuilt into point transitions (one per range's FromLedger) and concatenated in
-// worker order, reproducing the transition stream a serial (-parallel 1) walk
-// would have produced. buildRangesFromTransitions (also used by
-// wasm-history-merge-jsonl) then collapses hash-unchanged worker boundaries.
-//
-// Stitching only at an exact chunk boundary is not enough: a worker's first
-// transition lands on that boundary only when the version changed on the very
-// first ledger of its chunk. A chunk with no instance write at all would
-// contribute nothing, leaving a silent hole in the timeline.
-//
-// The final range's close point is the LAST worker's upperEnd (the true last
-// ledger observed by the whole walk), not the operator's requested -to.
+// mergeWasmHistories combines per-worker state into one per-contract timeline. Workers scan disjoint ordered chunks, so each worker's ranges become
+// point transitions concatenated in worker order, as a serial walk would produce; buildRangesFromTransitions collapses unchanged hashes at boundaries.
+// The final range closes at the LAST worker's upperEnd (last ledger observed), not -to.
 func mergeWasmHistories(
 	workers []workerResult,
 	watch map[sdkxdr.Hash]string,
@@ -849,17 +747,8 @@ func (a *atomicUint64) load() uint64 {
 	return a.v
 }
 
-// scanLCMForWasmChanges walks every operation's LedgerEntryChanges
-// in lcm and updates state when a watched contract's instance
-// executable hash changes (or first appears).
-//
-// Performance note: every value access on the SDK XDR types is a
-// deep copy (LedgerCloseMetaV1 includes TxProcessing[] — potentially
-// thousands of bytes per ledger). At this hot path we use pointer
-// access exclusively — `lcm.V1`, `entry.Data.ContractData`,
-// `cd.Val.Instance` — to avoid per-ledger XDR copies. An earlier
-// implementation using GetV1() / GetContractData() / GetInstance()
-// burned ~6 minutes of 99% CPU on a 100k-ledger sample.
+// scanLCMForWasmChanges updates state when a watched contract's instance executable hash changes or first appears.
+// Hot path: use pointer access (lcm.V1, entry.Data.ContractData, cd.Val.Instance), since SDK XDR value accessors deep-copy per ledger.
 func scanLCMForWasmChanges(
 	lcm sdkxdr.LedgerCloseMeta,
 	watch map[sdkxdr.Hash]string,
@@ -899,16 +788,8 @@ func scanLCMForWasmChanges(
 	return nil
 }
 
-// scanLCMForStorageRotations walks every operation's
-// LedgerEntryChanges in lcm and records non-Instance ContractData
-// changes for any watched contract. Mirrors scanLCMForWasmChanges
-// but with the inverse Key.Type filter.
-//
-// "Storage rotation" here means any modification to a contract's
-// custom storage entries (per-instance balance, factory parameter,
-// admin pointer, etc.) that the wasm-history walker's
-// instance-only filter ignores. Useful for catching admin storage
-// flips like Soroswap factory's `set_pair_wasm` rotation.
+// scanLCMForStorageRotations records non-Instance ContractData changes (custom storage such as admin flips) for watched contracts,
+// the inverse Key.Type filter of scanLCMForWasmChanges.
 func scanLCMForStorageRotations(
 	lcm sdkxdr.LedgerCloseMeta,
 	watch map[sdkxdr.Hash]string,
@@ -944,11 +825,7 @@ func scanLCMForStorageRotations(
 	return nil
 }
 
-// recordStorageChange appends one entry per non-Instance
-// ContractData change for a watched contract. Captures the raw key
-// XDR (base64) + a best-effort `key_hint` summary for human
-// readability. Doesn't decode the value (kept raw to keep the
-// scanner's hot path tight).
+// recordStorageChange appends one entry per non-Instance ContractData change: the raw key XDR (base64) and a best-effort key_hint; the value is not decoded.
 func recordStorageChange(
 	change *sdkxdr.LedgerEntryChange,
 	watch map[sdkxdr.Hash]string,
@@ -1007,12 +884,7 @@ func recordStorageChange(
 	})
 }
 
-// storageKeyHint returns a best-effort one-line human summary of
-// an SCVal key so an operator skimming output can recognise common
-// storage patterns (Symbol("ADMIN"), Vec[Symbol("PAIR"), Address],
-// etc.) without round-tripping the base64-encoded XDR through a
-// decoder. Returns "" when the key shape doesn't fit a simple
-// pattern.
+// storageKeyHint returns a best-effort one-line summary of an SCVal key for human skimming, or "" when the shape is not simple.
 func storageKeyHint(k sdkxdr.ScVal) string {
 	switch k.Type {
 	case sdkxdr.ScValTypeScvSymbol:
@@ -1044,19 +916,8 @@ func storageKeyHint(k sdkxdr.ScVal) string {
 	return ""
 }
 
-// scanLCMForCodeUploads walks LedgerEntryChanges in lcm looking
-// for ContractCode entry Created/Restored events — i.e. raw WASM
-// upload events emitted when someone calls UploadContractWasm.
-//
-// Captured globally (not per-watched-contract) because the upload
-// is independent of which contract may later reference the
-// resulting hash. Returns the (possibly extended) slice; caller
-// reassigns to keep the per-worker accumulator in sync.
-//
-// We capture both Created (a fresh upload) and Restored (a TTL-
-// extended upload restored from cold storage) for completeness.
-// `Updated` is excluded — Soroban doesn't update ContractCode
-// bytes (the bytes are immutable; only the entry's TTL changes).
+// scanLCMForCodeUploads records ContractCode Created/Restored entries (WASM uploads) globally, since an upload is independent of which contract later
+// references the hash. Updated is excluded: ContractCode bytes are immutable. Returns the possibly extended slice; the caller must reassign it.
 func scanLCMForCodeUploads(
 	lcm sdkxdr.LedgerCloseMeta,
 	uploads []codeUpload,
@@ -1124,11 +985,7 @@ func maybeAppendCodeUpload(
 	})
 }
 
-// scanLedgerEntryChange checks one LedgerEntryChange for a
-// watched-contract instance update. Updates state in place.
-//
-// Takes the change by pointer to avoid copying the (potentially
-// deep) LedgerEntry tree on every call.
+// scanLedgerEntryChange checks one change for a watched-contract instance update, updating state in place; it takes the change by pointer to avoid deep copies.
 func scanLedgerEntryChange(
 	change *sdkxdr.LedgerEntryChange,
 	watch map[sdkxdr.Hash]string,
@@ -1235,14 +1092,8 @@ func recordInstanceRemoval(
 	recordWasmTransition(state, contractHash, instanceRemovedMarker, seq, tlog)
 }
 
-// recordWasmTransition advances a contract's history when its
-// executable hash differs from the one seen before. First-seen
-// opens an initial range; same-hash repeats are no-ops.
-//
-// When tlog is non-nil, the transition is also appended to the
-// per-worker JSONL log (one line per transition) — the crash-
-// resilient checkpoint mechanism. Same-hash repeats produce no
-// log line either, since they're not transitions.
+// recordWasmTransition advances a contract's history when its executable hash differs from the last seen (first-seen opens a range, repeats are no-ops),
+// and appends the transition to the per-worker JSONL log when tlog is non-nil.
 func recordWasmTransition(
 	state map[sdkxdr.Hash]*wasmContractState,
 	contract sdkxdr.Hash,
@@ -1276,20 +1127,8 @@ func recordWasmTransition(
 	}
 }
 
-// transitionLog is a per-worker append-only JSONL writer for
-// crash-resilient walks. One line per transition observed:
-//
-//	{"contract": "C...", "wasm_hash": "abc...", "at_ledger": 12345}
-//
-// The writer is buffered (4 KiB default) and flushed every
-// transition (transitions are rare relative to ledgers, so the
-// flush overhead is negligible). The file is O_TRUNC'd on open:
-// -checkpoint-dir is a stable, operator-chosen directory
-// reused across INDEPENDENT wasm-history invocations, and each
-// invocation is a fresh walk, not a resume of a prior run's. With
-// O_APPEND a second run's lines would land after a first run's
-// partial/crashed tail, and wasm-history-merge-jsonl's last-line-only
-// tolerance would then silently drop everything the second run wrote.
+// transitionLog is a per-worker JSONL writer, flushed per transition, for crash-resilient walks. The file is O_TRUNC'd on open because -checkpoint-dir is reused
+// across INDEPENDENT invocations; with O_APPEND a crashed tail would make merge-jsonl's last-line-only tolerance drop the next run's lines.
 type transitionLog struct {
 	f     *os.File
 	enc   *json.Encoder
@@ -1333,14 +1172,7 @@ func (t *transitionLog) append(contract sdkxdr.Hash, wasmHash string, seq uint32
 	})
 }
 
-// setExtent appends a watermark line recording how far this worker
-// actually scanned (seq, its true upperEnd) — distinct from any
-// transition. wasmHistoryMergeJSONL needs this because a JSONL file
-// otherwise records only WHERE transitions landed, never HOW FAR the
-// worker got: a worker that crashed without seeing another
-// transition after ledger X would leave the merge tool no way to
-// distinguish "scanned through -to, hash never changed again" from
-// "crashed at X, everything after is unknown".
+// setExtent appends a watermark line with how far this worker scanned, which wasmHistoryMergeJSONL needs to tell scanned-through-to from crashed-at-X.
 func (t *transitionLog) setExtent(seq uint32) error {
 	return t.enc.Encode(transitionRecord{AtLedger: seq, Watermark: true})
 }

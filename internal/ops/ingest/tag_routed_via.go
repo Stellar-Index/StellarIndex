@@ -13,24 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// tagRoutedVia is the HISTORICAL half of router attribution (migration 0025
-// Phase B). It walks soroswap_router_swaps in ledger windows and back-tags every
-// same-(ledger, tx_hash) soroswap `trades` row via timescale.TagTradesRoutedVia,
-// the primitive the live sweeper uses, so historical and live tagging policy
-// (first-wins, soroswap-scoped, time-bounded, call-path-attributed) cannot drift.
-// A row whose router call was a sub_invocation gets its outermost wrapping
-// contract's registry name when registered (migrations 0101/0103); otherwise it
-// falls back to routed_via='soroswap-router'.
-//
-// SQL-only. Each window is one UPDATE bounded by the window's router-swap
-// close-time span so TimescaleDB prunes trades chunks; windows over compressed
-// chunks decompress segments, hence windowed rather than one statement.
-//
-// Idempotent and resumable: tagged rows never match (routed_via IS NULL), and
-// progress checkpoints into ingestion_cursors as (source='tag-routed-via',
-// sub_source='<from>-<to>') after each window (-resume defaults to true).
-//
-// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN; -write applies.
+// tagRoutedVia is the historical half of router attribution: it walks soroswap_router_swaps in windows and back-tags the same-(ledger, tx_hash) soroswap trades via timescale.TagTradesRoutedVia, the live sweeper's primitive, so the two cannot drift.
+// A sub_invocation row gets its outermost wrapping contract's registry name when registered, else routed_via='soroswap-router'.
+// SQL-only; each window is one UPDATE bounded by the router-swap close-time span (compressed chunks decompress segments, hence windows). Idempotent and resumable via ingestion_cursors (source='tag-routed-via'); -resume defaults true. Fail-closed (opsutil.WriteGate): dry run unless -write.
 func tagRoutedVia(args []string) error { //nolint:funlen,gocognit,gocyclo // linear windowed pass: flags → bounds → per-window UPDATE + checkpoint
 	fs, gate := opsutil.NewMutatingFlagSet("tag-routed-via")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

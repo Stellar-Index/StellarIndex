@@ -7,8 +7,7 @@ import (
 	"testing"
 )
 
-// TestDiffLedgerCounts_AllAgree is the green-pass case: identical
-// counts on both sides return zero diffs. No allocation, no fanfare.
+// TestDiffLedgerCounts_AllAgree: identical counts on both sides return zero diffs.
 func TestDiffLedgerCounts_AllAgree(t *testing.T) {
 	ours := map[uint32]int{100: 5, 101: 2, 102: 0}
 	theirs := map[uint32]int{100: 5, 101: 2, 102: 0}
@@ -17,10 +16,7 @@ func TestDiffLedgerCounts_AllAgree(t *testing.T) {
 	}
 }
 
-// TestDiffLedgerCounts_Missing is the most common alert path:
-// we're missing rows on a ledger Hubble has data for. Catches
-// decoder coverage gaps — exactly the failure mode this tool exists
-// to detect.
+// TestDiffLedgerCounts_Missing is the common alert path: rows missing on a ledger Hubble has, i.e. a decoder coverage gap.
 func TestDiffLedgerCounts_Missing(t *testing.T) {
 	ours := map[uint32]int{100: 5}
 	theirs := map[uint32]int{100: 7}
@@ -33,10 +29,7 @@ func TestDiffLedgerCounts_Missing(t *testing.T) {
 	}
 }
 
-// TestDiffLedgerCounts_Extra is the rarer-but-still-real case: we
-// emitted MORE rows than Hubble. Either we're decoding events
-// that aren't trades, or we're double-counting something. Either
-// way it's a bug.
+// TestDiffLedgerCounts_Extra: emitting MORE rows than Hubble means non-trade events decoded or double-counting; either way a bug.
 func TestDiffLedgerCounts_Extra(t *testing.T) {
 	ours := map[uint32]int{200: 9}
 	theirs := map[uint32]int{200: 4}
@@ -49,11 +42,7 @@ func TestDiffLedgerCounts_Extra(t *testing.T) {
 	}
 }
 
-// TestDiffLedgerCounts_AbsenceIsZero confirms the sparse-map
-// semantics: a ledger present on one side and absent on the other
-// is treated as count=0 on the absent side, NOT as "skip". A
-// ledger where Hubble has 3 rows and we have 0 is a divergence we
-// must report — that's the decoder-skipping-an-entire-shape case.
+// TestDiffLedgerCounts_AbsenceIsZero: a ledger absent on one side counts as 0 there, not skipped, so Hubble 3 vs us 0 (a decoder skipping a whole shape) is reported.
 func TestDiffLedgerCounts_AbsenceIsZero(t *testing.T) {
 	ours := map[uint32]int{}
 	theirs := map[uint32]int{500: 3}
@@ -72,12 +61,7 @@ func TestDiffLedgerCounts_AbsenceIsZero(t *testing.T) {
 	}
 }
 
-// TestDiffLedgerCounts_SortedByLedger locks down the report
-// ordering. The diff list goes through reportLedgerDiffs which
-// caps + writes to stderr — operators expect to see ledgers in
-// ascending order so the report can be diffed across runs.
-// Without sorting, map iteration order makes the output
-// non-deterministic and hard to grep.
+// TestDiffLedgerCounts_SortedByLedger locks ascending ledger order, so reports diff across runs despite map iteration order.
 func TestDiffLedgerCounts_SortedByLedger(t *testing.T) {
 	ours := map[uint32]int{300: 1, 100: 1, 200: 1}
 	theirs := map[uint32]int{300: 9, 100: 9, 200: 9}
@@ -93,11 +77,7 @@ func TestDiffLedgerCounts_SortedByLedger(t *testing.T) {
 	}
 }
 
-// TestDiffLedgerCounts_BothEmpty covers the edge case: no data
-// either side. This happens on a -from -to range that's outside
-// the ingested window. There is no divergence to report here; the
-// run-level verdict (hubbleCountVerdict) is what refuses to call an
-// empty comparison a pass.
+// TestDiffLedgerCounts_BothEmpty: no data either side yields no divergence; hubbleCountVerdict refuses to call an empty comparison a pass.
 func TestDiffLedgerCounts_BothEmpty(t *testing.T) {
 	if got := diffLedgerCounts(map[uint32]int{}, map[uint32]int{}); len(got) != 0 {
 		t.Errorf("empty inputs should yield empty output, got %+v", got)
@@ -107,11 +87,7 @@ func TestDiffLedgerCounts_BothEmpty(t *testing.T) {
 	}
 }
 
-// TestHubbleCheck_FlagValidation exercises the argv-parsing guards.
-// We don't load config or hit BigQuery — those run later in
-// hubbleCheck() — so this test just stops at the flag-validation
-// boundary. Same fail-loud philosophy as backfill: refuse to run
-// on missing required flags rather than guessing defaults.
+// TestHubbleCheck_FlagValidation exercises the argv guards, which fail loudly before config load or BigQuery.
 func TestHubbleCheck_FlagValidation(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -158,9 +134,7 @@ func statsOf(count int, sumSell, sumBuy int64) ledgerStats {
 	}
 }
 
-// TestDiffLedgerStats_AllAgree confirms the green path: identical
-// stats on both sides, zero diffs. No false positives from the
-// big.Int comparison.
+// TestDiffLedgerStats_AllAgree: identical stats yield zero diffs, with no false positives from the big.Int comparison.
 func TestDiffLedgerStats_AllAgree(t *testing.T) {
 	ours := map[uint32]ledgerStats{
 		100: statsOf(5, 1_000_000, 12_000_000),
@@ -175,10 +149,7 @@ func TestDiffLedgerStats_AllAgree(t *testing.T) {
 	}
 }
 
-// TestDiffLedgerStats_AmountMismatchAtSameCount is the alert path
-// the -with-amounts variant exists for: counts agree but a per-trade
-// amount diverged. Count-only check would miss this; stats check
-// catches it via the SumSell mismatch.
+// TestDiffLedgerStats_AmountMismatchAtSameCount: counts agree but an amount diverged, which only the stats check (SumSell) catches.
 func TestDiffLedgerStats_AmountMismatchAtSameCount(t *testing.T) {
 	ours := map[uint32]ledgerStats{200: statsOf(3, 1_000_000, 12_000_000)}
 	theirs := map[uint32]ledgerStats{200: statsOf(3, 1_000_001, 12_000_000)}
@@ -191,10 +162,7 @@ func TestDiffLedgerStats_AmountMismatchAtSameCount(t *testing.T) {
 	}
 }
 
-// TestDiffLedgerStats_ToleranceBps confirms that a small drift is
-// tolerated when -tolerance-bps > 0, and rejected at strict zero.
-// Same input produces different outcomes based on the tolerance —
-// that's the whole point of the knob.
+// TestDiffLedgerStats_ToleranceBps: a small drift passes with -tolerance-bps > 0 and fails at strict zero.
 func TestDiffLedgerStats_ToleranceBps(t *testing.T) {
 	// 1 bp ≈ 0.01% — at scale 1_000_000_000 that's a 100k allowance.
 	ours := map[uint32]ledgerStats{300: statsOf(1, 1_000_000_000, 1_000_000_000)}
@@ -209,9 +177,7 @@ func TestDiffLedgerStats_ToleranceBps(t *testing.T) {
 	}
 }
 
-// TestSumsWithinTolerance_StrictAndLoose is a pure-function unit
-// test for the tolerance comparator. Boundary cases: equal,
-// off-by-one, and the tolerance/larger ratio threshold.
+// TestSumsWithinTolerance_StrictAndLoose unit-tests the comparator: equal, off-by-one and the tolerance/larger ratio threshold.
 func TestSumsWithinTolerance_StrictAndLoose(t *testing.T) {
 	mustHold := func(a, b int64, bps int, want bool) {
 		t.Helper()
@@ -227,11 +193,7 @@ func TestSumsWithinTolerance_StrictAndLoose(t *testing.T) {
 	mustHold(1_000_000, 1_001_000, 1, false) // 0.1% exceeds 1 bp
 }
 
-// TestDiffLedgerStats_OneSidedAbsenceFlagsBothCountAndSums covers
-// the "we have data, Hubble doesn't" (or vice versa) case. Treats
-// absence as zero; reports count + both sum diffs. Important
-// because a complete decoder failure on a ledger looks like this:
-// no rows our side, full rows Hubble side.
+// TestDiffLedgerStats_OneSidedAbsenceFlagsBothCountAndSums: absence is zero, so a ledger with data on one side reports count and both sum diffs (a complete decoder failure looks like this).
 func TestDiffLedgerStats_OneSidedAbsenceFlagsBothCountAndSums(t *testing.T) {
 	ours := map[uint32]ledgerStats{}
 	theirs := map[uint32]ledgerStats{500: statsOf(3, 1_000_000, 5_000_000)}
@@ -250,13 +212,7 @@ func TestDiffLedgerStats_OneSidedAbsenceFlagsBothCountAndSums(t *testing.T) {
 	}
 }
 
-// TestHubbleStatsSQL_ScalesSumsToStroops pins that Hubble's
-// selling_amount/buying_amount are whole-unit FLOAT64 (stellar-etl divides
-// by 1e7 on load), while our side sums stroop-scale base_amount/quote_amount.
-// Comparing them raw is off by exactly hubbleStroopsPerUnit, and a
-// non-integral SUM aborts fetchHubbleStats' big.Int.SetString outright. The
-// query must ROUND(SUM(...) * hubbleStroopsPerUnit) before casting to
-// STRING so both sides land on the same integer stroop scale.
+// TestHubbleStatsSQL_ScalesSumsToStroops pins that Hubble's amounts are whole-unit FLOAT64 while ours are stroops; the query must ROUND(SUM(...) * hubbleStroopsPerUnit) before casting to STRING so both sides share an integer stroop scale and big.Int.SetString does not abort.
 func TestHubbleStatsSQL_ScalesSumsToStroops(t *testing.T) {
 	sql := hubbleStatsSQL()
 
@@ -279,12 +235,7 @@ func TestHubbleStatsSQL_ScalesSumsToStroops(t *testing.T) {
 		t.Errorf("hubbleStroopsPerUnitLiteral = %d, want %d (hubbleStroopsPerUnit)", gotLiteral, hubbleStroopsPerUnit)
 	}
 
-	// Demonstrates why scaling has to happen SQL-side rather than after
-	// big.Int.SetString: an un-scaled whole-unit sum like "12.3456789"
-	// (Hubble's real shape for a non-integral trade total) is not a valid
-	// base-10 integer string and SetString rejects it outright — exactly
-	// the "parse Hubble SUM(selling_amount)" failure the finding names.
-	// The scaled, rounded stroop value the fixed query produces IS valid.
+	// An unscaled whole-unit sum like "12.3456789" is not a valid base-10 integer, so scaling must be SQL-side; the scaled, rounded stroop value is valid.
 	if _, ok := new(big.Int).SetString("12.3456789", 10); ok {
 		t.Fatalf("test assumption broken: unscaled decimal string unexpectedly parsed as big.Int")
 	}

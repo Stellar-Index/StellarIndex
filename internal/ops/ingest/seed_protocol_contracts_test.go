@@ -29,12 +29,7 @@ func (f *fakeGatedSeedStore) StreamContractEvents(context.Context, uint32, uint3
 	return nil
 }
 
-// TestSeedOneGatedSource_defindexSeedsCuratedSet pins that
-// `seed-protocol-contracts -source defindex` writes DeFindex's curated
-// vaults + strategies. Its factories route it to the factory walk, which
-// seeds nothing because the decoder never admits a child from the
-// permissionless factory's `create` events; the CLI must not exit 0 with
-// "upserted 0".
+// TestSeedOneGatedSource_defindexSeedsCuratedSet: `seed-protocol-contracts -source defindex` must write the curated vaults + strategies; the factory walk seeds nothing here, and the CLI must not exit 0 with "upserted 0".
 func TestSeedOneGatedSource_defindexSeedsCuratedSet(t *testing.T) {
 	want := defindex.MainnetGatedSet()
 

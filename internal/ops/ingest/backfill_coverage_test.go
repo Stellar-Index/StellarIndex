@@ -8,14 +8,7 @@ import (
 	"testing"
 )
 
-// `backfill` must not fail open on a PARTIAL walk by erroring only on
-// walked == 0: its two siblings (chops.backfillCoverage,
-// censusCoverage) fail any short walk. The scenario:
-// -from 62,800,000 -to 62,900,000 against the hourly-mirrored archive,
-// whose top ~720 ledgers are not mirrored yet. ledgerstream tolerates
-// the miss (it is within 65,536 of the walk's own `to`), the walk ends
-// without an error at 99,280 of 100,001, and the chunk would refresh
-// the CAGGs, log "chunk complete" and exit 0.
+// TestBackfillChunkCoverage_PartialWalkFails: a short but non-empty walk (archive top not yet mirrored) must fail, not refresh CAGGs and exit 0.
 func TestBackfillChunkCoverage_PartialWalkFails(t *testing.T) {
 	t.Parallel()
 	chunk := chunkRange{from: 62_800_000, to: 62_900_000}
@@ -35,8 +28,7 @@ func TestBackfillChunkCoverage_PartialWalkFails(t *testing.T) {
 	}
 }
 
-// The total-miss refusal must survive, message shape
-// included (it names the bucket, which is the usual culprit).
+// TestBackfillChunkCoverage_ZeroWalkStillFails: a zero walk still errors and the message names the bucket.
 func TestBackfillChunkCoverage_ZeroWalkStillFails(t *testing.T) {
 	t.Parallel()
 	err := backfillChunkCoverage(chunkRange{from: 2, to: 1_000_000}, 2, 0, "galexie-live")
@@ -48,8 +40,7 @@ func TestBackfillChunkCoverage_ZeroWalkStillFails(t *testing.T) {
 	}
 }
 
-// The guard must not fire on the walks that ARE complete — above all a
-// resumed chunk, which only owes the ledgers above its prior cursor.
+// TestBackfillChunkCoverage_CompleteWalksPass: complete walks, including a resumed chunk owing only ledgers above its cursor, pass.
 func TestBackfillChunkCoverage_CompleteWalksPass(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -77,10 +68,7 @@ func TestBackfillChunkCoverage_CompleteWalksPass(t *testing.T) {
 	}
 }
 
-// The guard is only worth anything if it runs BEFORE the chunk is
-// refreshed and recorded as done. runBackfillChunk needs S3 and Postgres,
-// so pin the ordering at the source: inside that function the coverage
-// call precedes both the CAGG refresh and the completing log line.
+// TestRunBackfillChunk_CoverageCheckPrecedesRefreshAndCompletion pins at the source that the coverage check precedes the CAGG refresh and the completion log.
 func TestRunBackfillChunk_CoverageCheckPrecedesRefreshAndCompletion(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("backfill.go")
@@ -111,9 +99,7 @@ func TestRunBackfillChunk_CoverageCheckPrecedesRefreshAndCompletion(t *testing.T
 	}
 }
 
-// Q209: a SIGINT/SIGTERM mid-chunk checkpointed and returned nil, so
-// backfill() saw no chunk error, logged "backfill complete" and exited 0
-// over a partially walked, un-refreshed range.
+// TestBackfillChunkInterrupted_FailsOnCancel: a SIGINT/SIGTERM mid-chunk must return an error, not nil over an unrefreshed range.
 func TestBackfillChunkInterrupted_FailsOnCancel(t *testing.T) {
 	t.Parallel()
 	chunk := chunkRange{from: 62_800_000, to: 62_900_000}
@@ -136,9 +122,7 @@ func TestBackfillChunkInterrupted_FailsOnCancel(t *testing.T) {
 	}
 }
 
-// An interrupt that lands after the last ledger drained must not record the
-// chunk as done: -resume short-circuits on cursor >= chunk.to and would
-// skip the CAGG refresh the interrupt prevented.
+// TestInterruptedCheckpoint_NeverMarksChunkComplete: an interrupt after the last ledger must not mark the chunk done, or -resume skips the CAGG refresh.
 func TestInterruptedCheckpoint_NeverMarksChunkComplete(t *testing.T) {
 	t.Parallel()
 	chunk := chunkRange{from: 100, to: 200}
@@ -155,9 +139,7 @@ func TestInterruptedCheckpoint_NeverMarksChunkComplete(t *testing.T) {
 	}
 }
 
-// runBackfillChunk needs S3 and Postgres, so pin the wiring at the source:
-// the interrupt branch returns the chunk error, not nil, and runs before
-// the CAGG refresh and the "chunk complete" line.
+// TestRunBackfillChunk_InterruptFailsChunk pins at the source that the interrupt branch returns the chunk error before the CAGG refresh.
 func TestRunBackfillChunk_InterruptFailsChunk(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("backfill.go")

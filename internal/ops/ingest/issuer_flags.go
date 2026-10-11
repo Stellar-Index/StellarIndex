@@ -54,24 +54,9 @@ type issuerFlagsCounts struct {
 	chainMerged     int // of the agreed+corrected, rows answered by the last-known reader
 }
 
-// issuerFlagsCmd persists issuer AccountEntry auth flags into the `issuers` table
-// as a durable fallback for the API's read-time enrichment (under burst the refresh
-// gate degrades and the page renders "not yet resolved").
-//
-// Incremental: -limit bounds a run over the "auth_required IS NULL" queue in
-// primary-key order.
-//
-// Merged issuers: a miss falls through to RemovedAccountsLastKnownAuthFlags, which
-// recovers the pre-image from the removing ledger. Such rows are stored with
-// provenance (`last_known_before_removal` + removal ledger) and WITHOUT home_domain:
-// it is history and can no longer be checked against SEP-1. A second pass re-checks
-// them so an account re-created at the address flips back to `live`; the primary
-// queue cannot see them (auth_required is set).
-//
-// A third pass re-offers every filled, live-sourced row to the live reader and writes
-// back only rows that DIFFER. Otherwise an anchor that moves domain keeps the lapsed
-// home_domain, and whoever registers it next could serve a stellar.toml that inherits
-// the issuer's verified org identity. It runs last, bounded by -chain-recheck-limit.
+// issuerFlagsCmd persists issuer AccountEntry auth flags into `issuers` as a durable fallback for read-time enrichment.
+// Merged issuers are stored as `last_known_before_removal` with no home_domain (it can no longer be checked against SEP-1) and re-checked in a second pass.
+// A third pass re-offers filled live rows and writes only rows that differ, so a lapsed home_domain cannot be inherited by whoever registers it next.
 func issuerFlagsCmd(args []string) error {
 	fs := flag.NewFlagSet("issuer-flags", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -185,12 +170,7 @@ func runIssuerFlags(ctx context.Context, store issuerFlagsStore, reader issuerFl
 	_, _ = fmt.Fprintf(o.out,
 		"issuer-flags: chain re-check processed %d of %d filled row(s) — corrected=%d agreed=%d unread=%d (merged=%d)\n",
 		c.chainSeen, c.chainCandidates, c.chainCorrected, c.chainAgreed, c.chainUnread, c.chainMerged)
-	// `absent` is expected and not a failure: an issuer merged before the
-	// current-state projection's floor has no `removed` row to recover a
-	// pre-image from, and one whose account entry is outside the lake's
-	// captured window simply keeps rendering "not yet resolved" until it is
-	// captured. Reported so the operator can see coverage rather than infer
-	// it from silence.
+	// `absent` is expected, not a failure: a merge before the projection floor, or an entry outside the captured window, has no pre-image to recover. Reported so coverage is visible.
 	return nil
 }
 
@@ -269,13 +249,8 @@ func issuerFlagsResolveChunk(
 	return nil
 }
 
-// issuerFlagsRecheckPass re-offers every persisted `last_known_before_removal`
-// row to the LIVE reader, so an account re-created at the same address is
-// relabelled `live` with its current flags.
-//
-// Only live hits are re-persisted. A row whose account is still merged has
-// not changed — its removal ledger is fixed — so re-writing it would be
-// ~10k no-op UPDATEs per run for nothing.
+// issuerFlagsRecheckPass re-offers `last_known_before_removal` rows to the live reader so a re-created account flips back to `live`.
+// Only live hits are re-persisted; a still-merged row cannot have changed.
 func issuerFlagsRecheckPass(
 	ctx context.Context, store issuerFlagsStore, reader issuerFlagsReader,
 	o issuerFlagsOpts, c *issuerFlagsCounts,
@@ -335,19 +310,8 @@ func issuerFlagsRecheckChunk(
 	return nil
 }
 
-// issuerFlagsChainRecheckPass re-offers every FILLED, live-sourced row to the
-// live reader and writes back only the rows the chain has moved past.
-//
-// This is the pass that lets an on-chain correction reach a row the drain has
-// already filled. Both other queues are one-shot by construction — the
-// primary is `auth_required IS NULL` and the re-check covers only last-known
-// rows — so without it `issuers.home_domain` would be re-read by nothing on
-// a timer, and an anchor that moved domain and let the old name lapse would
-// keep the lapsed name until someone ran a backfill by hand.
-//
-// Ordered LAST and bounded by its own limit, so widening the re-offer cannot
-// take budget from the primary drain: by the time this runs, that pass has
-// already finished, and this one breaks on the run's timeout like the others.
+// issuerFlagsChainRecheckPass re-offers every filled, live-sourced row to the live reader and writes back only rows the chain has moved past.
+// The other queues are one-shot, so without it a lapsed home_domain would never be re-read. It runs last under its own limit so it cannot take budget from the primary drain.
 func issuerFlagsChainRecheckPass(
 	ctx context.Context, store issuerFlagsStore, reader issuerFlagsReader,
 	o issuerFlagsOpts, c *issuerFlagsCounts,
@@ -376,11 +340,7 @@ func issuerFlagsChainRecheckPass(
 	return nil
 }
 
-// rotateChainRecheck returns recs starting at batch (day mod batches) and
-// wrapping to the head. The queue is ordered by primary key and a run can stop
-// on its timeout; walking it from the head every night would leave the same
-// tail unexamined indefinitely, whereas this puts every batch at the head of
-// the walk once per `batches` days without persisting a cursor.
+// rotateChainRecheck returns recs starting at batch (day mod batches), wrapping to the head, so a timeout-truncated walk does not leave the same tail unexamined, with no persisted cursor.
 func rotateChainRecheck(recs []timescale.IssuerAuthFlagsOnRecord, batch, day int) []timescale.IssuerAuthFlagsOnRecord {
 	batches := (len(recs) + batch - 1) / batch
 	if batches <= 1 || day <= 0 {
@@ -392,21 +352,8 @@ func rotateChainRecheck(recs []timescale.IssuerAuthFlagsOnRecord, batch, day int
 	return append(out, recs[:start]...)
 }
 
-// issuerFlagsChainRecheckChunk re-reads one batch and persists only the
-// readings that DIFFER from what the row holds.
-//
-// Writing only the differences is what makes re-offering the whole filled set
-// affordable every night, and it keeps `written` meaning "rows the chain
-// corrected" rather than "rows we touched".
-//
-// A key the live reader does not answer for goes to the last-known reader,
-// exactly as in the primary drain: absence from the current-state projection
-// is what a merged account and a lake-coverage gap both look like, so only
-// the fallback, which reads an actual `removed` row, may conclude "merged".
-// Without it an issuer that merged after its row was filled would keep its
-// `live` label and its home_domain for good, and the SEP-1 refresh would keep fetching
-// that domain for whoever registers it once it lapses. A key neither reader
-// answers for changes NOTHING.
+// issuerFlagsChainRecheckChunk re-reads one batch and persists only readings that differ, so `written` means rows the chain corrected.
+// A key the live reader misses goes to the last-known reader, because only its actual `removed` row may conclude "merged" (a lake gap looks the same); a key neither answers changes nothing.
 func issuerFlagsChainRecheckChunk(
 	ctx context.Context, store issuerFlagsStore, reader issuerFlagsReader,
 	o issuerFlagsOpts, chunk []timescale.IssuerAuthFlagsOnRecord, c *issuerFlagsCounts,
@@ -469,13 +416,8 @@ func chainRecheckMisses(keys []string, live map[string]clickhouse.AccountAuthFla
 	return misses
 }
 
-// issuerAuthFlagsOnRecordAgrees reports whether persisting `fresh` would leave
-// the row exactly as it is. It mirrors what PersistIssuerAuthFlags actually
-// WRITES rather than comparing the structs field for field: for a labelled
-// reading the column becomes exactly fresh.HomeDomain, so an empty one — a
-// live account declaring none, or a merged account whose identity is not
-// kept — disagrees with any stored domain. Only an unlabelled reading's empty
-// value is COALESCEd away.
+// issuerAuthFlagsOnRecordAgrees reports whether persisting fresh would leave the row unchanged, mirroring what PersistIssuerAuthFlags writes.
+// A labelled reading overwrites home_domain even with empty; only an unlabelled empty is COALESCEd away.
 func issuerAuthFlagsOnRecordAgrees(rec timescale.IssuerAuthFlagsOnRecord, fresh timescale.IssuerAuthFlags) bool {
 	if !boolPtrIs(rec.Required, fresh.Required) ||
 		!boolPtrIs(rec.Revocable, fresh.Revocable) ||
@@ -504,15 +446,8 @@ func u32PtrEq(a, b *uint32) bool {
 	return *a == *b
 }
 
-// issuerAuthFlagsRow maps one lake reading onto its persist row, carrying the
-// provenance across the package boundary unchanged.
-//
-// HomeDomain is copied verbatim, NOT re-derived: the lake reader is what
-// guarantees a last-known reading has none (a merged account's self-declared
-// domain can no longer be checked against SEP-1's bidirectional
-// [[CURRENCIES]] back-reference), and PersistIssuerAuthFlags refuses one that
-// slipped through. Blanking it here as well would hide a reader regression
-// from both.
+// issuerAuthFlagsRow maps one lake reading onto its persist row, carrying provenance unchanged.
+// HomeDomain is copied verbatim, not re-derived: the reader guarantees last-known readings have none and PersistIssuerAuthFlags refuses one that slipped through; blanking here would hide a reader regression.
 func issuerAuthFlagsRow(gStrkey string, f clickhouse.AccountAuthFlags) timescale.IssuerAuthFlags {
 	row := timescale.IssuerAuthFlags{
 		GStrkey:    gStrkey,

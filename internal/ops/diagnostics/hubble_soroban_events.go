@@ -16,26 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// ─── stellarindex-ops hubble-soroban-events ─────────────────────────
-//
-// Per-ledger event counts from `crypto-stellar.crypto_stellar.history_contract_events`
-// for a set of contract IDs, with an optional topic[0]/topic[1] filter. hubble-check
-// cannot cover Soroban DEXes: history_trades has no decoded view of them.
-//
-// Deliberately NOT a built-in cross-check: the events-to-trades ratio differs per
-// source, so the operator picks the filter and compares with our row counts
-// (docs/operations/hubble-event-counts.md):
-//
-//   - Soroswap: 2 events per trade (swap + sync) → filter topic[1]='swap'
-//   - Aquarius: 1 per trade (topic[0]='trade')
-//   - Phoenix:  8 per trade (one per field) → filter topic[1]='offer_amount'
-//   - Comet:    1 per swap (topic[0]='POOL', topic[1]='swap')
-//   - Reflector: 1 event fans out to N OracleUpdate rows
-//   - Redstone:  1 event per write_prices call → N rows
-//   - Band:      ZERO events; coverage cannot be checked here
-//
-// Cost: ~20–40 GB scanned per 1M-ledger range with a contract_id filter.
-// -dry-run-bytes prints the estimate; -max-bytes-billed caps the real query.
+// stellarindex-ops hubble-soroban-events: per-ledger event counts from Hubble history_contract_events for contract IDs with an optional topic filter, since history_trades has no decoded Soroban DEX view.
+// Deliberately not a built-in cross-check: events-per-trade differs per source (docs/operations/hubble-event-counts.md). Scans ~20-40 GB per 1M ledgers; -dry-run-bytes estimates, -max-bytes-billed caps.
 
 func hubbleSorobanEvents(args []string) error {
 	fs := flag.NewFlagSet("hubble-soroban-events", flag.ContinueOnError)
@@ -189,30 +171,14 @@ func hubbleSorobanEventsDryRun(
 	return stat.Statistics.TotalBytesProcessed, nil
 }
 
-// buildSorobanEventsQuery returns the SQL + bound parameters for the
-// per-ledger Hubble event-count query. Builds the optional topic
-// filters into the WHERE clause; empty filter strings drop the
-// corresponding AND. Pulled out of fetch + dry-run so both paths
-// run literally the same SQL.
+// buildSorobanEventsQuery returns the SQL and parameters for the per-ledger event-count query; empty filters drop their AND, and the fetch and dry-run paths share it.
 func buildSorobanEventsQuery(
 	from, to uint32,
 	contracts []string,
 	topic0, topic1 string,
 ) (string, []bigquery.QueryParameter, error) {
-	// COUNT(DISTINCT contract_event_xdr): Hubble's history_contract_events can
-	// carry duplicate rows from overlapping batch loads (observed 2× on some
-	// ranges), so a raw COUNT(*) over-reports. Dedup by the event's raw XDR —
-	// its identity — to match our one-row-per-event ClickHouse lake. Group by
-	// the ledger alone: the caller keys on it, and a wider key splits one
-	// ledger's duplicates into separate groups.
-	//
-	// Known gap: contract_event_xdr encodes only contract id + type + topics
-	// + data (xdr.ContractEvent has no tx hash or operation index), so two
-	// genuinely distinct events in the same ledger with byte-identical
-	// contents (e.g. a bot replaying the same call) collapse to one here.
-	// That under-counts Hubble's side and can make a real decoder gap look
-	// smaller than it is. See docs/operations/hubble-event-counts.md
-	// "When totals differ" for the operator-facing version of this caveat.
+	// COUNT(DISTINCT contract_event_xdr): Hubble can carry duplicate rows from overlapping batch loads, so dedup by the event's raw XDR; group by ledger alone so duplicates do not split groups.
+	// Known gap: the XDR has no tx hash or op index, so byte-identical events in one ledger collapse and Hubble's side under-counts (docs/operations/hubble-event-counts.md, "When totals differ").
 	q := "SELECT ledger_sequence AS ledger, COUNT(DISTINCT contract_event_xdr) AS n " +
 		"FROM `crypto-stellar.crypto_stellar.history_contract_events` " +
 		"WHERE ledger_sequence BETWEEN @from AND @to " +

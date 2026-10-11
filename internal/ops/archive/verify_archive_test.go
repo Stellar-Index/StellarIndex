@@ -17,12 +17,7 @@ import (
 	"time"
 )
 
-// TestCheckpointAnchorDecision_AllMissedFailsRegardlessOfFlag is the
-// all-missed regression: checkpointsOK==0 && checkpointsMissed>0 (every
-// checkpoint anchor missed) must return a non-nil error even when
-// -fail-on-missed is NOT set — an all-missed range verified nothing
-// against the cross-anchor archive and must not be certified
-// complete or advance the checkpoint tier's high-water mark.
+// TestCheckpointAnchorDecision_AllMissedFailsRegardlessOfFlag: an all-missed range errors even without -fail-on-missed.
 func TestCheckpointAnchorDecision_AllMissedFailsRegardlessOfFlag(t *testing.T) {
 	for _, failOnMissed := range []bool{false, true} {
 		err := checkpointAnchorDecision(0, 5, failOnMissed)
@@ -35,8 +30,7 @@ func TestCheckpointAnchorDecision_AllMissedFailsRegardlessOfFlag(t *testing.T) {
 	}
 }
 
-// TestCheckpointAnchorDecision_AllMatchedIsClean: every checkpoint
-// matched — clean regardless of failOnMissed.
+// TestCheckpointAnchorDecision_AllMatchedIsClean: all matched is clean regardless of failOnMissed.
 func TestCheckpointAnchorDecision_AllMatchedIsClean(t *testing.T) {
 	for _, failOnMissed := range []bool{false, true} {
 		if err := checkpointAnchorDecision(10, 0, failOnMissed); err != nil {
@@ -45,9 +39,7 @@ func TestCheckpointAnchorDecision_AllMatchedIsClean(t *testing.T) {
 	}
 }
 
-// TestCheckpointAnchorDecision_PartialMiss: SOME matched, some
-// missed — the pre-existing -fail-on-missed gate applies (distinct
-// from the all-missed case).
+// TestCheckpointAnchorDecision_PartialMiss: some missed falls under the -fail-on-missed gate, not the all-missed rule.
 func TestCheckpointAnchorDecision_PartialMiss(t *testing.T) {
 	if err := checkpointAnchorDecision(8, 2, false); err != nil {
 		t.Errorf("partial miss with -fail-on-missed=false should be clean, got %v", err)
@@ -61,8 +53,7 @@ func TestCheckpointAnchorDecision_PartialMiss(t *testing.T) {
 	}
 }
 
-// TestVerifyArchive_FailOnMissedDefaultsOn pins ADR-0017 X1.7: a manual
-// run that omits the flag must still exit non-zero on a partial miss.
+// TestVerifyArchive_FailOnMissedDefaultsOn pins ADR-0017 X1.7: omitting the flag still exits non-zero on a partial miss.
 func TestVerifyArchive_FailOnMissedDefaultsOn(t *testing.T) {
 	orig := os.Stderr
 	r, w, err := os.Pipe()
@@ -91,21 +82,14 @@ func TestVerifyArchive_FailOnMissedDefaultsOn(t *testing.T) {
 	}
 }
 
-// TestCheckpointAnchorDecision_NoCheckpointsAttempted: 0/0 (the
-// doCheckpoint gate wasn't even reached, or the range genuinely had
-// zero checkpoint positions upstream) must not be treated as the
-// all-missed failure — checkpointsMissed must be > 0 to trigger it.
+// TestCheckpointAnchorDecision_NoCheckpointsAttempted: 0/0 is not the all-missed failure, which needs checkpointsMissed > 0.
 func TestCheckpointAnchorDecision_NoCheckpointsAttempted(t *testing.T) {
 	if err := checkpointAnchorDecision(0, 0, false); err != nil {
 		t.Errorf("0 matched / 0 missed should not trip the all-missed guard, got %v", err)
 	}
 }
 
-// TestWatchdogGate pins the hung-walk gate: a systemd WATCHDOG=1
-// ping fired every 30s unconditionally detects a crashed process but
-// is blind to a HUNG one — the exact failure the unit's
-// WatchdogSec=1h exists to catch. The ping must be withheld
-// while the walk is armed but not advancing.
+// TestWatchdogGate: an unconditional systemd WATCHDOG=1 ping is blind to a HUNG walk, so the ping is withheld while the walk is armed but not advancing.
 func TestWatchdogGate(t *testing.T) {
 	t.Parallel()
 	var p verifyArchiveProgressTracker
@@ -175,12 +159,7 @@ func TestPeerSampleCheckpointsAlwaysIncludesBothEnds(t *testing.T) {
 	}
 }
 
-// TestPeerCheckpointBounds pins Tier D's sample range. Fabricating
-// `lastCP = firstCP + 640` for an unbounded -to would make a default
-// `-tier peers` run sample ledgers 63..703 — pure genesis — and print
-// "peer cross-check OK"; that form also underflows for to < 64 and drops
-// `to` itself when `to` was
-// exactly a checkpoint.
+// TestPeerCheckpointBounds pins Tier D's range: no fabricated lastCP for unbounded -to, no underflow below 64, `to` kept when a checkpoint.
 func TestPeerCheckpointBounds(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -226,9 +205,7 @@ func TestPeerCheckpointBounds(t *testing.T) {
 	}
 }
 
-// TestPeerArchiveTip: an unbounded -to resolves against the peers'
-// published tip, and takes the LOWEST of them so a checkpoint one peer
-// hasn't uploaded yet isn't sampled as a divergence.
+// TestPeerArchiveTip: an unbounded -to resolves to the LOWEST peer tip so a not-yet-uploaded checkpoint is not sampled as divergence.
 func TestPeerArchiveTip(t *testing.T) {
 	t.Parallel()
 	newPeer := func(t *testing.T, currentLedger uint32) string {
@@ -278,12 +255,7 @@ func TestPeerArchiveTip(t *testing.T) {
 	}
 }
 
-// TestFetchHistoryCheckpoint_RejectsZeroCurrentLedger pins the
-// zero-value case: a 200 response that isn't a real checkpoint (an error
-// envelope, `null`, or a not-yet-uploaded object behind a CDN that
-// 200s on a miss) decodes to the historyCheckpoint zero value. Returned
-// as success, checkpointsEqual on two such zero values would report "peers agree"
-// with zero bytes of checkpoint data actually compared.
+// TestFetchHistoryCheckpoint_RejectsZeroCurrentLedger: a 200 decoding to the zero value must fail, not report peers agree on nothing.
 func TestFetchHistoryCheckpoint_RejectsZeroCurrentLedger(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -300,10 +272,7 @@ func TestFetchHistoryCheckpoint_RejectsZeroCurrentLedger(t *testing.T) {
 	}
 }
 
-// TestPeerCheckpointQuorum_RequiresMajority pins quorum:
-// two survivors of a seven-peer set must not be reported as network
-// consensus — quorum is a strict majority of the configured peers,
-// not a flat floor of 2.
+// TestPeerCheckpointQuorum_RequiresMajority: quorum is a strict majority of the configured peers, not a flat floor of 2.
 func TestPeerCheckpointQuorum_RequiresMajority(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -325,11 +294,7 @@ func TestPeerCheckpointQuorum_RequiresMajority(t *testing.T) {
 	}
 }
 
-// TestPeerArchiveTip_ExcludesStalePeer pins tip staleness: a
-// peer whose published tip trails the freshest responding peer by
-// more than peerTipStalenessWindow (an abandoned-but-still-serving
-// archive) must not silently become the resolved -to and cap the
-// verified window at its stale tip.
+// TestPeerArchiveTip_ExcludesStalePeer: a peer trailing the freshest by more than peerTipStalenessWindow must not cap the verified window.
 func TestPeerArchiveTip_ExcludesStalePeer(t *testing.T) {
 	t.Parallel()
 	newPeer := func(t *testing.T, currentLedger uint32) string {
@@ -356,10 +321,7 @@ func TestPeerArchiveTip_ExcludesStalePeer(t *testing.T) {
 	}
 }
 
-// TestDefaultTier1Peers_AllHTTPS pins HTTPS-only peers: Tier D
-// exists to detect on-path forks across the archive network, so a
-// plaintext http:// entry in defaultTier1Peers is forgeable by
-// exactly the class of attacker the tier is meant to catch.
+// TestDefaultTier1Peers_AllHTTPS: Tier D detects on-path forks, so a plaintext http:// peer is forgeable by the attacker it targets.
 func TestDefaultTier1Peers_AllHTTPS(t *testing.T) {
 	t.Parallel()
 	for _, p := range defaultTier1Peers {
@@ -369,12 +331,7 @@ func TestDefaultTier1Peers_AllHTTPS(t *testing.T) {
 	}
 }
 
-// TestVerifyArchive_PeersTier_HonoursFromLastVerified pins the
-// Tier D -from-last-verified wiring: `-tier peers -from-last-
-// verified` must sample checkpoints from the incremental watermark
-// (effectiveFrom), not from the raw -from flag (default 2, i.e.
-// checkpoint 63 at genesis). Calling verifyArchivePeers with
-// uint32(*from) would silently ignore -from-last-verified for Tier D.
+// TestVerifyArchive_PeersTier_HonoursFromLastVerified: `-tier peers -from-last-verified` samples from effectiveFrom, not the raw -from.
 func TestVerifyArchive_PeersTier_HonoursFromLastVerified(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

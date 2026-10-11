@@ -6,21 +6,8 @@ import (
 	"testing"
 )
 
-// TestVerifyWalkCoverage guards the delivered-equals-requested rule for
-// verify-decoders. REQUESTED is -to minus -from plus one; DELIVERED is
-// totalLedgers, incremented once per LedgerCloseMeta handed to the
-// dispatcher.
-//
-// The claim this command exists to make is "decoder X fired / did not
-// fire over [from,to]". That claim was computed over whatever the walk
-// happened to deliver, and two defaults made short walks routine: the
-// bucket was hardcoded to the TRIMMED live bucket with no override
-// flag, and opsutil.NewBoundedLedgerStreamConfig always sets
-// TolerateTrailingMissing, so a hole within 65,536 ledgers of -to
-// returns a clean walk-complete. A wrong-bucket run therefore printed
-// every decoder as silent and exited 0 — which reads as "every topic
-// or schema has drifted", the loudest possible false positive from a
-// tool whose whole job is to detect exactly that.
+// TestVerifyWalkCoverage guards delivered-equals-requested for verify-decoders: REQUESTED is -to minus -from plus one, DELIVERED is totalLedgers.
+// A wrong-bucket or short walk (TolerateTrailingMissing hides holes near -to) would print every decoder silent and exit 0, a false "all drifted".
 func TestVerifyWalkCoverage(t *testing.T) {
 	t.Parallel()
 
@@ -57,12 +44,8 @@ func TestVerifyWalkCoverage(t *testing.T) {
 	}
 }
 
-// TestVerifyDecoders_ResolvesBucketAndGatesCoverage pins the call site.
-// verifyDecoders needs a config file, an S3-backed galexie and (for the
-// Soroswap seed) an RPC endpoint before it runs a line, so the wiring is
-// pinned at the source — the same way
-// ingest.TestRunBackfillChunk_CoverageCheckPrecedesRefreshAndCompletion
-// pins its sibling rule.
+// TestVerifyDecoders_ResolvesBucketAndGatesCoverage pins the call site at the source (verifyDecoders needs a config, S3-backed galexie and an RPC endpoint),
+// like ingest.TestRunBackfillChunk_CoverageCheckPrecedesRefreshAndCompletion.
 func TestVerifyDecoders_ResolvesBucketAndGatesCoverage(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("verify_decoders.go")

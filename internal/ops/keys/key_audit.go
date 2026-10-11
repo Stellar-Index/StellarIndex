@@ -16,14 +16,12 @@ import (
 // opsKeyReasonMaxLen bounds the -reason stored in one audit_log row.
 const opsKeyReasonMaxLen = 512
 
-// AuditSink is the audit_log writer mint-key and upgrade-key record
-// through (postgresstore.AuditStore in production).
+// AuditSink is the audit_log writer mint-key and upgrade-key record through.
 type AuditSink interface {
 	Append(ctx context.Context, e platform.AuditEntry) error
 }
 
-// ValidateReason requires the -reason recorded with every CLI key
-// action, the counterpart of the admin API's X-Reason header.
+// ValidateReason requires the -reason recorded with every CLI key action (the admin API's X-Reason counterpart).
 func ValidateReason(reason string) error {
 	r := strings.TrimSpace(reason)
 	if r == "" {
@@ -58,8 +56,7 @@ func appendKeyAudit(ctx context.Context, sink AuditSink, action, command, keyID,
 	return AppendOpsAudit(ctx, sink, action, command, "api_key", keyID, actor, reason, detail)
 }
 
-// AppendOpsAudit writes one staff-actor audit_log row for a privileged CLI
-// action on (targetKind, targetID).
+// AppendOpsAudit writes one staff-actor audit_log row for a privileged CLI action on (targetKind, targetID).
 func AppendOpsAudit(ctx context.Context, sink AuditSink, action, command, targetKind, targetID, actor, reason string, detail map[string]any) error {
 	meta := map[string]any{"actor": actor, "reason": strings.TrimSpace(reason), "via": "stellarindex-ops " + command}
 	for k, v := range detail {

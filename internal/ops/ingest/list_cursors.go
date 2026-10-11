@@ -12,13 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// listCursors loads the storage layer and prints every per-source
-// ingestion cursor — source, sub (pair contract or ""), last ledger,
-// and age of the last update.
-//
-// Operators use this to spot lagging sources without needing psql
-// or a dashboard. Empty output means no source has written a cursor
-// yet, which usually indicates a fresh deploy.
+// listCursors prints every per-source ingestion cursor (source, sub, last ledger, age); empty
+// output usually means a fresh deploy.
 func listCursors(args []string) error {
 	fs := flag.NewFlagSet("list-cursors", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

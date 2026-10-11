@@ -1,37 +1,16 @@
 // Copyright 2026 Stellar Index contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package archive holds the stellarindex-ops archive-integrity + WASM
-// history subcommands: `verify-archive`, `archive-completeness`,
-// `cross-region-check`, `cross-region-monitor`, `trim-galexie-archive`,
-// `rehydrate-galexie-archive`, `galexie-mirror-verify`, `wasm-history`,
-// `wasm-history-merge-jsonl`, `extract-wasm-from-galexie`,
-// `compare-entry-changes`.
-//
-// wasm-history/extract-wasm-from-galexie live here rather than in
-// internal/ops/discovery because they're code-coupled with
-// verify-archive: verify_archive.go declares the wasm-history JSON
-// output types (wasmRange, contractHistory, wasmContractState,
-// storageChange, contractStorageHistory, codeUpload) that
-// wasm_history.go builds, and both walk their ranges in chunks from
-// internal/ops/opsutil.SplitRange. Splitting them into separate packages
-// would mean a cross-package cycle or moving six structurally-tied types
-// into opsutil for no real decoupling benefit. The discovery package's
-// own concern (listing the contracts the SEP-41 and oracle sniffers
-// recorded) is unrelated to either.
-//
-// The dispatch table in cmd/stellarindex-ops/main.go calls Run below.
+// Package archive holds the stellarindex-ops archive-integrity and WASM-history subcommands (verify-archive,
+// archive-completeness, cross-region-*, galexie archive trim/rehydrate/mirror-verify, wasm-history*, compare-entry-changes).
+// wasm-history lives here, not in ops/discovery, because it shares verify_archive.go's JSON output types and SplitRange chunking. Run is called from cmd/stellarindex-ops/main.go.
 package archive
 
 import (
 	"fmt"
 )
 
-// Run is the internal/ops/archive package's entry point — see
-// discovery.Run's doc comment for the calling convention shared by
-// every internal/ops/* package. args[0] is the subcommand
-// verb (one of the eleven this package owns, `archive-completeness` and
-// `wasm-history-merge-jsonl` included); args[1:] are its flags.
+// Run is the package entry point (see discovery.Run for the shared convention); args[0] is the subcommand verb, args[1:] its flags.
 func Run(args []string) error {
 	switch args[0] {
 	case "verify-archive":

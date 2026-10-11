@@ -16,18 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/redisclient"
 )
 
-// mintKeyIdentifierPattern enforces the shape this flag's own help
-// text documents ("kebab-case slug, e.g. customer-acme-corp"):
-// lowercase alphanumeric segments joined by single hyphens.
-//
-// Without it, -identifier would be checked only for non-empty, which is
-// all store.Create (internal/auth/store.go) checks. Today the only caller
-// is a trusted operator running this CLI by hand, so an out-of-shape
-// value is low-risk; but any future HTTP-handler reuse of the SAME
-// auth.RedisAPIKeyStore.Create path would make Identifier
-// attacker-influenced rather than operator-typed. Enforcing the
-// documented shape here — at the CLI's input boundary — closes the gap
-// for this call site now, before that reuse happens.
+// mintKeyIdentifierPattern enforces the documented kebab-case slug shape for -identifier (lowercase alphanumeric segments joined by single hyphens).
+// store.Create only checks non-empty, so validate at the CLI boundary before any reuse makes Identifier attacker-influenced.
 var mintKeyIdentifierPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 const (
@@ -73,26 +63,7 @@ type keyMinter interface {
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
 }
 
-// Mint issues an API key directly via the Redis API-key store: the
-// operator-only bootstrap for a customer's first key, before the
-// self-service /v1/account/keys flow is usable.
-//
-// Usage:
-//
-//	stellarindex-ops mint-key \
-//	  -config /etc/stellarindex.toml \
-//	  -identifier customer-acme-corp \
-//	  -label 'ACME Corp - production' \
-//	  -tier apikey \
-//	  -rate-limit-per-min 1000 \
-//	  -reason 'onboarding ticket 1234' \
-//	  -write
-//
-// Every mint lands a "key.mint" audit_log row (actor, reason, tier, scopes,
-// budget, expiry); a mint whose row cannot be written is revoked and its
-// plaintext never shown. -tier operator also needs -confirm-operator.
-// Without -write nothing is minted. The plaintext key is printed to stdout
-// ONCE (the store keeps only its hash); pipe it to a secure transport.
+// Mint issues an API key directly via the Redis API-key store: the operator-only bootstrap for a customer's first key, before /v1/account/keys is usable. Usage: stellarindex-ops mint-key -config PATH -identifier SLUG -label TEXT -tier apikey -rate-limit-per-min N -reason TEXT -write Every mint lands a "key.mint" audit_log row; a mint whose row cannot be written is revoked and its plaintext never shown. -tier operator also needs -confirm-operator. Without -write nothing is minted. The plaintext key is printed to stdout ONCE (the store keeps only its hash).
 func Mint(args []string) error {
 	opts, err := parseMintKeyFlags(args)
 	if err != nil {

@@ -6,14 +6,8 @@ import (
 	"testing"
 )
 
-// TestWasmWalkCoverage pins the coverage rule for wasm-history.
-// REQUESTED is -to minus -from plus one; DELIVERED is totalScanned, the
-// sum of the per-worker ledger counts. An unbounded walk (-to 0, the
-// live tail) has no requested count and is exempt.
-//
-// This output is copied into docs/operations/wasm-audits/* and is what a
-// BackfillSafe determination rests on, so a walk that covered less than
-// the operator asked for cannot be allowed to exit 0.
+// TestWasmWalkCoverage pins the coverage rule: DELIVERED (totalScanned) must equal REQUESTED (-to minus -from plus one); an unbounded walk (-to 0) is exempt.
+// The output feeds docs/operations/wasm-audits/* and BackfillSafe determinations, so a short walk must not exit 0.
 func TestWasmWalkCoverage(t *testing.T) {
 	t.Parallel()
 
@@ -56,16 +50,8 @@ func TestWasmWalkCoverage(t *testing.T) {
 	}
 }
 
-// TestWasmHistory_GatesCoverageAfterEmittingJSON pins the call site.
-// wasmHistory needs a config file and an S3-backed galexie before it
-// runs a line, so the wiring is pinned at the source — the same way
-// ingest.TestRunBackfillChunk_CoverageCheckPrecedesRefreshAndCompletion
-// pins its sibling rule.
-//
-// Ordering is the point: the JSON must still be written (its ranges are
-// honest about what was observed, and a partial audit is worth having)
-// and the coverage error must come after it, so the operator gets both
-// the artifact and a non-zero exit.
+// TestWasmHistory_GatesCoverageAfterEmittingJSON pins the call site at the source (wasmHistory needs a config and S3-backed galexie).
+// The JSON is written first (a partial audit is still worth having) and the coverage error comes after, so the operator gets both the artifact and a non-zero exit.
 func TestWasmHistory_GatesCoverageAfterEmittingJSON(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("wasm_history.go")
@@ -96,13 +82,8 @@ func TestWasmHistory_GatesCoverageAfterEmittingJSON(t *testing.T) {
 	}
 }
 
-// TestRunOneWasmHistoryWorker_UpperEndComesFromTheWalk guards the other
-// half at the source: upperEnd must be assigned from the ledger the walk
-// callback receives, never seeded from the requested chunk bound. The
-// executing proof is
-// TestWasmHistoryWorker_ShortWalk_UpperEndIsLastObserved (build tag
-// integration); this one runs in the default suite so the regression
-// cannot slip in between integration runs.
+// TestRunOneWasmHistoryWorker_UpperEndComesFromTheWalk: upperEnd must be assigned from the ledger the walk callback receives, never seeded from the requested bound.
+// The executing proof is an integration-tagged test; this one runs in the default suite.
 func TestRunOneWasmHistoryWorker_UpperEndComesFromTheWalk(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("wasm_history.go")

@@ -18,13 +18,8 @@ const (
 	testImpersonatorBenji = "BENJI-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 )
 
-// stubScanner serves pre-canned lake pages, keyset-paginated on the asset
-// string exactly as the real scanner does, and records the cursors it was
-// asked for so a resume can be asserted rather than assumed.
-//
-// It SORTS its own asset list because the real query is ORDER BY asset: a
-// stub that emitted them in declaration order would let a walk that
-// mishandles the cursor look correct.
+// stubScanner serves canned lake pages keyset-paginated on the asset string and records the cursors it was asked for.
+// It SORTS its assets because the real query is ORDER BY asset; declaration order would let a cursor-mishandling walk look correct.
 type stubScanner struct {
 	assets     []string
 	askedAfter []string
@@ -73,11 +68,7 @@ func (s *stubScanner) TrustlineAssetsAfter(_ context.Context, after string, limi
 }
 
 // stubRegistryStore records what the walk handed the writer.
-//
-// errAfterCalls, when set, lets err fire on a LATER call rather than the
-// first — needed to put a page's earlier batches through cleanly and fail
-// an interior one, the only way to distinguish a cursor that tracks writes
-// from one that tracks parsing.
+// errAfterCalls lets err fire on a LATER call, to fail an interior batch and tell a cursor that tracks writes from one that tracks parsing.
 type stubRegistryStore struct {
 	got           []timescale.ClassicAssetHolding
 	stats         timescale.ClassicAssetRegistryStats
@@ -113,9 +104,7 @@ func testOpts(out *bytes.Buffer) assetRegistryOpts {
 	}
 }
 
-// TestAssetRegistryBackfill_RegistersHeldButNeverTradedAsset is the unit-level
-// mirror of the integration regression test: an asset the lake holds a
-// trustline for reaches the registry writer, keyed on (code, issuer).
+// TestAssetRegistryBackfill_RegistersHeldButNeverTradedAsset: an asset the lake holds a trustline for reaches the registry writer, keyed on (code, issuer).
 func TestAssetRegistryBackfill_RegistersHeldButNeverTradedAsset(t *testing.T) {
 	var out bytes.Buffer
 	o := testOpts(&out)
@@ -148,11 +137,7 @@ func TestAssetRegistryBackfill_RegistersHeldButNeverTradedAsset(t *testing.T) {
 	}
 }
 
-// TestAssetRegistryBackfill_SkipsAssetsWithNoIssuerIdentity — native and
-// pool-share trustlines have no (code, issuer) and must be counted out, not
-// guessed at. The SQL filters them; this proves the Go side refuses them
-// too, so a lake that starts emitting a new asset spelling cannot smuggle a
-// bogus row into the registry.
+// TestAssetRegistryBackfill_SkipsAssetsWithNoIssuerIdentity: native and pool-share trustlines have no (code, issuer) and are counted out, not guessed at.
 func TestAssetRegistryBackfill_SkipsAssetsWithNoIssuerIdentity(t *testing.T) {
 	var out bytes.Buffer
 	o := testOpts(&out)
@@ -182,9 +167,7 @@ func TestAssetRegistryBackfill_SkipsAssetsWithNoIssuerIdentity(t *testing.T) {
 	}
 }
 
-// TestAssetRegistryBackfill_ResumeReEntersAfterTheCursor pins that
-// -resume-from is passed through as the FIRST page cursor: a resumed run
-// must not re-walk the finished prefix.
+// TestAssetRegistryBackfill_ResumeReEntersAfterTheCursor: -resume-from is the FIRST page cursor, so a resume does not re-walk the finished prefix.
 func TestAssetRegistryBackfill_ResumeReEntersAfterTheCursor(t *testing.T) {
 	var out bytes.Buffer
 	o := testOpts(&out)
@@ -206,9 +189,7 @@ func TestAssetRegistryBackfill_ResumeReEntersAfterTheCursor(t *testing.T) {
 	}
 }
 
-// TestAssetRegistryBackfill_LimitStopsEarlyAndPrintsResume — a bounded
-// tranche must stop, must NOT claim completion, and must print the exact
-// command that continues it.
+// TestAssetRegistryBackfill_LimitStopsEarlyAndPrintsResume: a bounded tranche stops, does not claim completion, and prints the continuing command.
 func TestAssetRegistryBackfill_LimitStopsEarlyAndPrintsResume(t *testing.T) {
 	var out bytes.Buffer
 	o := testOpts(&out)
@@ -239,8 +220,7 @@ func TestAssetRegistryBackfill_LimitStopsEarlyAndPrintsResume(t *testing.T) {
 	}
 }
 
-// TestAssetRegistryBackfill_DryRunWritesNothing — the write gate defaults to
-// dry-run, and a dry run must reach the lake but never the writer.
+// TestAssetRegistryBackfill_DryRunWritesNothing: the default dry run reaches the lake but never the writer.
 func TestAssetRegistryBackfill_DryRunWritesNothing(t *testing.T) {
 	var out bytes.Buffer
 	o := testOpts(&out)
@@ -259,13 +239,7 @@ func TestAssetRegistryBackfill_DryRunWritesNothing(t *testing.T) {
 	}
 }
 
-// TestAssetRegistryBackfill_ErrorNeverResumesPastAnUnwrittenAsset — a
-// failed run is resumable too, but strictly-after resume (TrustlineAssetsAfter)
-// means a RESUME line naming an asset skips it forever on re-entry. Since
-// the only asset here was never durably written (the store call failed),
-// the printed cursor must NOT be that asset — it must stay at whatever
-// cursor was already durable (here, none), so a rerun retries it instead
-// of silently dropping it from the registry.
+// TestAssetRegistryBackfill_ErrorNeverResumesPastAnUnwrittenAsset: resume is strictly-after, so the printed cursor must not name an asset whose store call failed.
 func TestAssetRegistryBackfill_ErrorNeverResumesPastAnUnwrittenAsset(t *testing.T) {
 	var out bytes.Buffer
 	o := testOpts(&out)
@@ -284,14 +258,7 @@ func TestAssetRegistryBackfill_ErrorNeverResumesPastAnUnwrittenAsset(t *testing.
 	}
 }
 
-// TestAssetRegistryBackfill_ErrorMidPageResumesAfterLastWrittenBatchOnly —
-// a page bigger than one batch must not print a RESUME cursor past assets
-// that were parsed but never reached the writer. c.cursor is set while the
-// whole page is parsed (before any write); if it tracked parsing instead of
-// completed writes, an interior batch failure would still print a cursor
-// at the LAST asset of the page, permanently skipping every asset between
-// the failed batch and the page end on resume (TrustlineAssetsAfter is
-// strictly-after).
+// TestAssetRegistryBackfill_ErrorMidPageResumesAfterLastWrittenBatchOnly: the cursor tracks completed writes, not page parsing, or an interior batch failure would skip assets on resume.
 func TestAssetRegistryBackfill_ErrorMidPageResumesAfterLastWrittenBatchOnly(t *testing.T) {
 	var out bytes.Buffer
 	o := testOpts(&out)
@@ -327,8 +294,7 @@ func TestAssetRegistryBackfill_ErrorMidPageResumesAfterLastWrittenBatchOnly(t *t
 	}
 }
 
-// TestAssetRegistryPreflight_RefusesWhenTheVolumeCannotHoldTheWrite —
-// the guard must refuse before a long run starts, and say what it compared.
+// TestAssetRegistryPreflight_RefusesWhenTheVolumeCannotHoldTheWrite: the guard refuses before a long run starts and says what it compared.
 func TestAssetRegistryPreflight_RefusesWhenTheVolumeCannotHoldTheWrite(t *testing.T) {
 	var out bytes.Buffer
 	o := testOpts(&out)
@@ -342,9 +308,7 @@ func TestAssetRegistryPreflight_RefusesWhenTheVolumeCannotHoldTheWrite(t *testin
 	}
 }
 
-// TestAssetRegistryPreflight_TrustsTheOverrideLoudly — an operator running
-// off the database host asserts the figure, and the tool must say that
-// nothing was measured rather than implying it was.
+// TestAssetRegistryPreflight_TrustsTheOverrideLoudly: with an asserted figure the tool says nothing was measured.
 func TestAssetRegistryPreflight_TrustsTheOverrideLoudly(t *testing.T) {
 	var out bytes.Buffer
 	o := testOpts(&out)
@@ -358,8 +322,7 @@ func TestAssetRegistryPreflight_TrustsTheOverrideLoudly(t *testing.T) {
 	}
 }
 
-// TestAssetRegistryPreflight_SizesFromTheLakeCount — the denominator is the
-// measured lake population, so a grown lake raises the estimated need.
+// TestAssetRegistryPreflight_SizesFromTheLakeCount: a grown lake raises the estimated need.
 func TestAssetRegistryPreflight_SizesFromTheLakeCount(t *testing.T) {
 	var out bytes.Buffer
 	o := testOpts(&out)
@@ -373,8 +336,7 @@ func TestAssetRegistryPreflight_SizesFromTheLakeCount(t *testing.T) {
 	}
 }
 
-// TestAssetRegistryPreflight_RefusesWhenTheLakeCannotBeCounted — no
-// denominator, no guess.
+// TestAssetRegistryPreflight_RefusesWhenTheLakeCannotBeCounted: no denominator, no guess.
 func TestAssetRegistryPreflight_RefusesWhenTheLakeCannotBeCounted(t *testing.T) {
 	var out bytes.Buffer
 	o := testOpts(&out)

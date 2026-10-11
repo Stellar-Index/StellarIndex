@@ -10,9 +10,7 @@ import (
 	"testing"
 )
 
-// TestArchiveCompleteness_RejectsLedgerBeyondUint32: -from/-to parse as
-// uint but ledger sequences are uint32, so an oversized -to must be refused
-// rather than wrapped into a different (possibly vacuous) range.
+// TestArchiveCompleteness_RejectsLedgerBeyondUint32: an oversized -to must be refused, not wrapped into a different (possibly vacuous) range, since ledgers are uint32.
 func TestArchiveCompleteness_RejectsLedgerBeyondUint32(t *testing.T) {
 	over := strconv.FormatUint(math.MaxUint32+1, 10)
 	cases := []struct {

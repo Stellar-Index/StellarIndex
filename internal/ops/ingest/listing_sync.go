@@ -22,30 +22,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// listing-sync caches the Stellar slice of an independent
-// price-aggregation platform's own per-coin platform→address map into
-// the `asset_listing_directory` table (migration 0160): one HTTPS GET of
-// the public coin catalogue, a second for the prices of just the coins
-// that carry a Stellar address, a full upsert, and a prune of the rows
-// the upstream no longer carries.
-//
-// Run from an hourly timer:
-//
-//	stellarindex-ops listing-sync -config /etc/stellarindex.toml
-//
-// Sibling of `directory-sync`: same flags, same fail-closed write gate, same
-// "refuse an empty parse so a broken fetch can never prune the table to
-// nothing" guard, and same posture: what it caches CORROBORATES an address, it
-// does not attest to one. The table has no scam flags; absence means "not listed".
+// listing-sync caches the Stellar slice of a price-aggregation platform's per-coin platform-to-address map into asset_listing_directory (migration 0160); run hourly.
+// Sibling of directory-sync: same flags, fail-closed write gate, and refusal of an empty parse so a broken fetch can never prune the table.
+// What it caches corroborates an address, it does not attest to one; absence means "not listed".
 const (
 	listingSource = "coingecko"
 
-	// listingProBaseURL / listingDemoBaseURL — a Pro key authenticates
-	// ONLY against the pro host; the public host answers a Pro key with
-	// HTTP 400 / error_code 10010. This is the same auto-selection the
-	// price poller does (internal/sources/external/coingecko), and it
-	// exists so an operator who provisions a paid key does not also have
-	// to know that the hostname changes.
+	// A Pro key authenticates ONLY against the pro host (the public host answers it with HTTP 400 / error_code 10010);
+	// same auto-selection as internal/sources/external/coingecko.
 	listingProBaseURL  = "https://pro-api.coingecko.com"
 	listingDemoBaseURL = "https://api.coingecko.com"
 
@@ -56,32 +40,16 @@ const (
 	// inside each coin's `platforms` object.
 	listingStellarPlatformKey = "stellar"
 
-	// listingMaxResponseBytes bounds every response read. The catalogue
-	// is ~3.7 MB today; 64 MB is an order-of-magnitude guard against a
-	// response that never ends from a compromised or misconfigured
-	// -base-url, not a tight fit — the same reasoning, and the same kind
-	// of headroom, as directoryMaxTarballBytes.
+	// listingMaxResponseBytes bounds every response read: an order-of-magnitude guard (catalogue is ~3.7 MB) against an endless
+	// response from a bad -base-url, as with directoryMaxTarballBytes.
 	listingMaxResponseBytes = 64 << 20
 
-	// listingMarketsBatch is the upstream's maximum page size for the
-	// markets endpoint.
-	//
-	// The id list is CHUNKED into batches of this size rather than
-	// walked with `page=1,2,3…`. Both stay inside the same limit, but
-	// they ask different questions: the markets endpoint orders by market
-	// cap, so paging over a filtered id set asks "give me the Nth page of
-	// a ranking that is moving underneath me" — a coin whose cap crosses
-	// a page boundary between two requests is returned twice or not at
-	// all. Chunking asks a fixed question per request ("these 250 ids"),
-	// which cannot lose a member.
+	// listingMarketsBatch is the upstream's maximum page size for the markets endpoint.
+	// Ids are chunked rather than paged: the endpoint orders by market cap, so paging a filtered set can return a coin twice or never as the ranking moves.
 	listingMarketsBatch = 250
 
-	// listingFetchTimeout bounds each HTTP request including the body
-	// read. http.DefaultClient has NO timeout: a third-party host that
-	// accepts the connection and then stops sending would hang this
-	// command forever, which looks like a slow network rather than a
-	// bug. The run's own -timeout ctx bounds it as well; this makes the
-	// bound unconditional.
+	// listingFetchTimeout bounds each HTTP request including the body read; http.DefaultClient has no timeout,
+	// so a stalled third-party host would hang the command forever.
 	listingFetchTimeout = 60 * time.Second
 )
 
@@ -97,22 +65,8 @@ const (
 	listingFormClassic
 )
 
-// listingContractRe / listingClassicRe match the two address forms the
-// table's CHECK accepts. Anything matching NEITHER is skipped and
-// counted rather than failing the run — the same posture as
-// directoryAddressRe, and for the same reason: a malformed upstream row
-// is upstream's problem, and letting it abort the whole hourly pass
-// hands a third party a switch that turns this sync off.
-//
-// Two details that are easy to get wrong and both occur live:
-//
-//   - The classic code class is `[A-Za-z0-9]`, not `[A-Z0-9]`. Stellar
-//     asset codes are case-SENSITIVE alphanumerics, and four listed
-//     assets carry a lowercase letter (MXNe, sUSD, yUSDC, yETH). An
-//     uppercase-only pattern silently discards all four as malformed.
-//   - A classic CODE may itself begin with C (CETES-, C1USD-), so the
-//     contract test has to be the anchored 56-char strkey pattern and
-//     never a "starts with C" shortcut.
+// listingContractRe / listingClassicRe match the two address forms the table's CHECK accepts; anything else is skipped and counted, so a malformed upstream row cannot abort the hourly pass.
+// The classic code class is [A-Za-z0-9] (codes are case-sensitive; MXNe, sUSD, yUSDC, yETH are listed), and a code may start with C (CETES-), so the contract test must be the anchored 56-char strkey, never "starts with C".
 var (
 	listingContractRe = regexp.MustCompile(`^C[A-Z2-7]{55}$`)
 	listingClassicRe  = regexp.MustCompile(`^[A-Za-z0-9]{1,12}-G[A-Z2-7]{55}$`)
@@ -128,27 +82,16 @@ type listingCatalogueRow struct {
 	Platforms map[string]string `json:"platforms"`
 }
 
-// listingMarket is the subset of one `/coins/markets` element this sync
-// reads.
-//
-// CurrentPrice is a [json.Number] — deliberately, and this is the ADR-0003
-// boundary for this path. The upstream ships the price as a JSON number,
-// and a JSON number decoded into a float64 has already lost digits by the
-// time anything looks at it; there is no later point at which the loss
-// can be detected, because a float64 prints back as a plausible decimal.
-// json.Number keeps the LITERAL the upstream printed, and that literal is
-// what reaches the NUMERIC column.
+// listingMarket is the subset of one /coins/markets element this sync reads.
+// CurrentPrice is a [json.Number] (ADR-0003): a float64 decode loses digits undetectably, while json.Number keeps the literal that reaches the NUMERIC column.
 type listingMarket struct {
 	ID           string      `json:"id"`
 	CurrentPrice json.Number `json:"current_price"`
 	LastUpdated  string      `json:"last_updated"`
 }
 
-// listingPrice is one upstream price together with the upstream's OWN
-// publication time. Both or neither: a price whose publication time is
-// missing or unparseable is not a price this sync will carry, because
-// its freshness is then unverifiable and the storage layer's 24-hour
-// price bound is measured on exactly that column.
+// listingPrice is one upstream price with the upstream's own publication time. Both or neither:
+// without a parseable time its freshness is unverifiable, and the storage layer's 24-hour price bound is measured on that column.
 type listingPrice struct {
 	USD string
 	At  time.Time
@@ -171,11 +114,8 @@ type listingCounts struct {
 	Skipped int
 	// Priced is how many entries ended up carrying a price.
 	Priced int
-	// PriceRejected counts upstream price records DISCARDED because they
-	// carried a price with no usable publication time. Counted rather
-	// than silently dropped: it is the number that distinguishes "the
-	// platform publishes no price for these" from "the platform changed
-	// its timestamp format and this sync now serves nothing".
+	// PriceRejected counts price records discarded for lacking a usable publication time; it distinguishes
+	// "no price published" from "the timestamp format changed".
 	PriceRejected int
 }
 
@@ -256,15 +196,7 @@ type listingClient struct {
 }
 
 // newListingClient resolves the API key and, from it, the host.
-//
-// The keys are the indexer's own [external.coingecko] pair (env
-// COINGECKO_API_KEY / COINGECKO_DEMO_API_KEY), so one credential serves
-// both and this command cannot run unauthenticated while the indexer is
-// keyed.
-//
-// An override passed as -base-url wins over the key-derived host, so an
-// operator can point the run at a mirror or a proxy without also having to
-// change which key it sends.
+// The keys are the indexer's own [external.coingecko] pair (COINGECKO_API_KEY / COINGECKO_DEMO_API_KEY); a -base-url override wins over the key-derived host.
 func newListingClient(baseURL string, keys config.CoinGeckoVenueConfig) *listingClient {
 	c := &listingClient{
 		authMode: "none",
@@ -290,11 +222,8 @@ func (c *listingClient) get(ctx context.Context, path string, q url.Values) (*ht
 		return nil, fmt.Errorf("listing-sync: build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	// The key goes in a request HEADER, never the query string.
-	// A transport error's *url.Error embeds the request URL in its
-	// message, so a key in the query string leaks into every log line
-	// that reports a failed fetch. The upstream still accepts the
-	// `x_cg_*_api_key` query parameters — those are the leaky form.
+	// The key goes in a request HEADER, never the query string: a transport error's *url.Error embeds the URL,
+	// so a query-string key would leak into every log line reporting a failed fetch.
 	if c.key != "" {
 		req.Header.Set(c.keyHeader, c.key)
 	}
@@ -322,18 +251,8 @@ func (c *listingClient) fetchStellarListings(ctx context.Context) ([]timescale.L
 	return parseListingCatalogue(io.LimitReader(resp.Body, listingMaxResponseBytes))
 }
 
-// parseListingCatalogue streams the catalogue array one element at a time and
-// returns the Stellar-carrying entries plus the census of the pass.
-//
-// Streaming rather than unmarshalling the whole array: 21k coin objects
-// each holding a platforms map is a large live heap to build in order to
-// keep 50 of them, on a host that also runs a captive stellar-core,
-// Postgres and ClickHouse. Only one coin object is live at a time here.
-//
-// A malformed ADDRESS is data and is skipped + counted. A JSON decode
-// failure mid-array is NOT — the stream is unsynchronised at that point
-// and nothing after it can be trusted, so it is fatal. That is the same
-// line directory-sync draws between a bad account file and a bad tarball.
+// parseListingCatalogue streams the catalogue array one element at a time and returns the Stellar-carrying entries plus the census of the pass.
+// Streaming avoids building ~21k coin objects on a host that also runs core, Postgres and ClickHouse. A malformed address is skipped and counted; a JSON decode failure mid-array is fatal because the stream is unsynchronised.
 func parseListingCatalogue(r io.Reader) ([]timescale.ListingEntry, listingCounts, error) {
 	var (
 		counts  listingCounts
@@ -390,12 +309,8 @@ func parseListingCatalogue(r io.Reader) ([]timescale.ListingEntry, listingCounts
 			Source:    listingSource,
 		})
 	}
-	// An empty result means the upstream layout changed or the fetch was
-	// truncated, not that a platform listing ~50 Stellar assets delisted
-	// all of them within the hour. Refuse here rather than hand
-	// ReplaceListingDirectory a set that would prune the table to
-	// nothing — the storage layer refuses it too, and the message is more
-	// useful from this side.
+	// An empty result means the upstream layout changed or the fetch was truncated, not a mass delisting;
+	// refuse here rather than hand ReplaceListingDirectory a set that prunes the table to nothing.
 	if len(entries) == 0 {
 		return nil, counts, fmt.Errorf(
 			"listing-sync: parsed 0 Stellar entries from %d coins (%d skipped) — refusing; upstream shape changed or the fetch was truncated",
@@ -461,21 +376,9 @@ func (c *listingClient) fetchListingPrices(
 	return out, rejected, nil
 }
 
-// parseMarkets streams a markets response into id → price.
-//
-// A coin is ABSENT from the result whenever it has no price, or has a
-// price with no parseable `last_updated`. Absence is the whole encoding
-// of "unpriced" — there is no zero-value entry that a later reader could
-// mistake for a price of nothing, and no timestamp is invented to stand
-// in for one the upstream did not publish. A fabricated `priced_at`
-// would defeat the storage layer's 24-hour price bound completely, since
-// that bound is measured on precisely that column. A `last_updated`
-// more than [timescale.ListingPriceMaxFutureSkew] ahead of now is
-// rejected for the same reason: that bound has no meaning for it.
-//
-// The rejected count is returned rather than logged here so the caller
-// can put it in the run summary: a price record discarded silently is
-// indistinguishable from a coin the platform never priced.
+// parseMarkets streams a markets response into id to price.
+// A coin is ABSENT when it has no price or no parseable last_updated (or one beyond [timescale.ListingPriceMaxFutureSkew]); a fabricated priced_at would defeat the storage layer's 24-hour bound.
+// The rejected count is returned so the caller can put it in the run summary.
 func parseMarkets(r io.Reader, now time.Time) (map[string]listingPrice, int, error) {
 	ceiling := now.Add(timescale.ListingPriceMaxFutureSkew)
 	out := map[string]listingPrice{}

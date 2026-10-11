@@ -27,22 +27,8 @@ import (
 	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
 )
 
-// verifyExternal starts every enabled off-chain connector, drains
-// the shared sink for up to -timeout, and prints a per-venue table
-// of first trades / oracle updates observed. Exits early once every
-// enabled venue has emitted at least one output.
-//
-// "Enabled" means cfg.External.<venue>.enabled = true AND (for
-// paid-tier venues) the API key is non-empty after env resolution.
-// Free venues (binance, kraken, bitstamp, coinbase, coingecko, ecb)
-// start unconditionally once enabled; paid venues (
-// coinmarketcap, cryptocompare, exchangeratesapi) need their
-// respective API keys.
-//
-// Like verify-decoders, this writes nothing to Timescale or Redis —
-// it's purely a diagnostic that the connector goroutines reach live
-// vendor endpoints and produce well-formed canonical.Trade /
-// canonical.OracleUpdate rows.
+// verifyExternal starts every enabled off-chain connector, drains the sink for up to -timeout and prints a per-venue table.
+// Paid venues need a non-empty API key after env resolution. Writes nothing to Timescale or Redis.
 func verifyExternal(args []string) error { //nolint:funlen,gocognit,gocyclo // dispatch-heavy; splitting would reduce linearity
 	fs := flag.NewFlagSet("verify-external", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -155,11 +141,7 @@ DRAIN:
 	return silentVerdict("verify-external", "enabled venues", silent, len(enabled), *failOnSilent)
 }
 
-// buildVerifyExternal mirrors cmd/stellarindex-indexer/main.go's
-// startExternalConnectors — just without the indexer's logger +
-// sink wiring. Returns the StreamerSpec/PollerSpec lists ready for
-// external.Run plus the flat list of enabled venue names the caller
-// waits on.
+// buildVerifyExternal mirrors the indexer's startExternalConnectors without its logger and sink wiring.
 func buildVerifyExternal(cfg config.ExternalConfig) ([]external.StreamerSpec, []external.PollerSpec, []string, error) { //nolint:funlen,gocognit,gocyclo // dispatch-heavy; splitting would reduce linearity
 	var streamers []external.StreamerSpec
 	var pollers []external.PollerSpec
@@ -255,14 +237,7 @@ func buildVerifyExternal(cfg config.ExternalConfig) ([]external.StreamerSpec, []
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("coinmarketcap: %w", err)
 		}
-		// Mirror the
-		// indexer/aggregator wiring — bind the verified-currency
-		// catalogue's CMC IDs so the poller queries by
-		// `id=<numeric>` instead of the ambiguous `symbol=`
-		// path. Without this the verify-external run uses the
-		// ambiguous symbol path and an operator auditing CMC
-		// drift sees stale-shape data even when the indexer is
-		// on the safe path.
+		// Bind the catalogue's CMC IDs so the poller queries by id, not the ambiguous symbol, matching the indexer.
 		if cat, catErr := currency.LoadEmbedded(); catErr == nil {
 			p.CMCIDs = cat.CoinMarketCapIDs()
 		}

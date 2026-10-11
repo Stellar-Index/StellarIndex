@@ -17,24 +17,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// detectGaps compares every LIVE per-source cursor (see
-// [timescale.LiveCursorSources]) against the stellar-rpc network tip and reports
-// any source lagging by more than `threshold` ledgers. One-shot job namespaces
-// (backfill, projected-rebuild, ...) are excluded: their last_ledger is a
-// historical range end, so including them only produces false LAGGING verdicts.
-// Exits non-zero when a live source is lagging or no live cursor exists, so it
-// works as a health probe from cron.
-//
-// Sources with several sub-cursors (the projector tracks one per decoder) use the
-// MINIMUM last-ledger: the slowest position matters.
-//
-// Two more failure modes are checked:
-//   - A source in ingestion.enabled_sources (for a projected domain, also
-//     registered by [projector.BuildRegistry]) with no ingestion_cursors row would
-//     vanish from the verdict, since the lag table only sees existing rows. See
-//     [catalogueMissingProjectorSources].
-//   - The RPC tip is asserted fresh against wall-clock (its closeTime), so a stuck
-//     RPC node cannot make every source read "ok" against a frozen tip.
+// detectGaps compares every LIVE per-source cursor (see [timescale.LiveCursorSources]) against the stellar-rpc tip and exits non-zero when one lags by more than threshold or none exists.
+// One-shot job namespaces are excluded (their last_ledger is a range end); multi-cursor sources use the MINIMUM.
+// It also flags enabled projector sources with no cursor row (see [catalogueMissingProjectorSources]) and asserts the RPC tip is fresh against wall-clock.
 func detectGaps(args []string) error {
 	fs := flag.NewFlagSet("detect-gaps", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -100,11 +85,7 @@ func detectGaps(args []string) error {
 
 	minBySource := minLedgerBySource(cursors)
 	if len(minBySource) == 0 {
-		// An empty (or all-one-shot) cursor table is exactly the "every live
-		// source is stalled" state this probe exists to catch — it must not
-		// read as ok. Runbooks (ingestion.md, ingestion-sink.md,
-		// ledger-ingest.md) send an operator here expecting a non-zero exit
-		// to mean something; a silent 0 would bury that signal.
+		// An empty or all-one-shot cursor table is the "every live source is stalled" state this probe exists to catch; it must not read as ok.
 		return fmt.Errorf("no live cursor (%v) found against tip %d — ingest may never have started or every live cursor was lost",
 			timescale.LiveCursorSources(), tip.Sequence)
 	}
@@ -130,14 +111,8 @@ func detectGaps(args []string) error {
 	return nil
 }
 
-// expectedProjectorSources returns the ("projector", <name>) cursor
-// names this deployment's config commits it to running, or nil when the
-// projector isn't enabled at all (no "projector" cursor is expected in
-// that case). Building the real registry — rather than re-deriving the
-// enabled/projected split by hand — is what keeps this in sync with
-// buildSource's dispatch table and the sep41 unconditional-registration
-// special case; the gated contract-set argument is nil because only
-// Source.Name is read here, never the decoders themselves.
+// expectedProjectorSources returns the ("projector", name) cursors the config commits to running, or nil when the projector is off.
+// It builds the real registry so it stays in sync with buildSource's dispatch; only Source.Name is read.
 func expectedProjectorSources(cfg config.Config) ([]string, error) {
 	if !cfg.Ingestion.Projector.Enabled {
 		return nil, nil
@@ -153,11 +128,7 @@ func expectedProjectorSources(cfg config.Config) ([]string, error) {
 	return names, nil
 }
 
-// catalogueMissingProjectorSources returns the names in `expected`
-// with no ("projector", <name>) row in cursors. A source enabled in
-// ingestion.enabled_sources whose cursor was reaped or never created
-// would otherwise vanish from the verdict, because minLedgerBySource
-// only ever looks at rows that exist.
+// catalogueMissingProjectorSources returns names in expected with no ("projector", name) cursor row, which would otherwise vanish from the verdict.
 func catalogueMissingProjectorSources(cursors []timescale.Cursor, expected []string) []string {
 	have := make(map[string]bool, len(cursors))
 	for _, c := range cursors {
@@ -175,11 +146,7 @@ func catalogueMissingProjectorSources(cursors []timescale.Cursor, expected []str
 	return missing
 }
 
-// parseRPCCloseTime parses stellar-rpc's getLatestLedger closeTime — a
-// decimal Unix-seconds string — into a time.Time. A missing or
-// malformed value fails closed rather than being read as "no signal,
-// assume fresh", which would let a stuck RPC node's tip pass every
-// source as ok.
+// parseRPCCloseTime parses getLatestLedger closeTime (Unix-seconds string). Missing or malformed fails closed, not "assume fresh".
 func parseRPCCloseTime(raw string) (time.Time, error) {
 	secs, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
@@ -188,20 +155,8 @@ func parseRPCCloseTime(raw string) (time.Time, error) {
 	return time.Unix(secs, 0), nil
 }
 
-// minLedgerBySource reduces cursors to the minimum LastLedger per source,
-// restricted to [timescale.LiveCursorSources] (ledgerstream, projector).
-//
-// ingestion_cursors also holds one-shot job shards (backfill,
-// projected-rebuild, census-backfill, tag-signer, …)
-// whose last_ledger is a historical range end by design — a FINISHED
-// shard's row never advances again. Without this filter those namespaces
-// would report LAGGING by millions of ledgers on a perfectly healthy
-// system, because the probe cannot tell "stuck" from "done".
-// reap-cursors and /v1/diagnostics/cursors draw this same line (see
-// [timescale.IsLiveCursorSource]'s doc comment).
-//
-// For sources that track multiple sub-cursors (the projector tracks one
-// per registered decoder), this is the slowest position, not the fastest.
+// minLedgerBySource reduces cursors to the minimum LastLedger per source, restricted to [timescale.LiveCursorSources].
+// One-shot job shards keep a historical last_ledger that never advances, so including them reports false LAGGING. For multi-cursor sources the slowest position wins.
 func minLedgerBySource(cursors []timescale.Cursor) map[string]uint32 {
 	minBySource := map[string]uint32{}
 	for _, c := range cursors {

@@ -31,10 +31,7 @@ func closedURL(t *testing.T) string {
 	return "http://" + addr
 }
 
-// TestDetectGaps_RPCFlagOverridesDeadConfigEndpoint pins that -rpc replaces
-// stellar.rpc_endpoints[0] for the tip read: r1's rendered config named a
-// loopback stellar-rpc the host does not run, so without an override the
-// command died on "rpc:" before comparing a single cursor.
+// TestDetectGaps_RPCFlagOverridesDeadConfigEndpoint: -rpc replaces stellar.rpc_endpoints[0] for the tip read, since a rendered config may name a loopback stellar-rpc the host does not run.
 func TestDetectGaps_RPCFlagOverridesDeadConfigEndpoint(t *testing.T) {
 	var tipCalls atomic.Int32
 	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,11 +72,7 @@ func TestDetectGaps_RPCFlagOverridesDeadConfigEndpoint(t *testing.T) {
 	}
 }
 
-// TestDetectGaps_StaleRPCTipFailsBeforeStorage pins the RPC-tip freshness gate: an RPC tip
-// trusted as ground truth with no freshness check of its own
-// would let a stuck or disconnected stellar-rpc node make every cursor compare
-// "ok" against a frozen tip. A tip whose closeTime is far in the past
-// must now fail closed, before the command ever reaches storage.
+// TestDetectGaps_StaleRPCTipFailsBeforeStorage pins the freshness gate: a stuck stellar-rpc would otherwise make every cursor compare "ok" against a frozen tip, so a far-past closeTime fails closed before storage.
 func TestDetectGaps_StaleRPCTipFailsBeforeStorage(t *testing.T) {
 	staleClose := time.Now().Add(-1 * time.Hour).Unix()
 	stale := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -106,8 +99,7 @@ func TestDetectGaps_StaleRPCTipFailsBeforeStorage(t *testing.T) {
 	}
 }
 
-// TestParseRPCCloseTime pins the fail-closed contract: a missing
-// or malformed closeTime must error, never silently read as "now".
+// TestParseRPCCloseTime: a missing or malformed closeTime errors, never reads as "now".
 func TestParseRPCCloseTime(t *testing.T) {
 	now := time.Now().Unix()
 	got, err := parseRPCCloseTime(strconv.FormatInt(now, 10))
@@ -125,10 +117,7 @@ func TestParseRPCCloseTime(t *testing.T) {
 	}
 }
 
-// TestDetectGaps_ProjectorEnabledDefaultSourcesRegistryOK pins that
-// enabling the projector with the default enabled_sources set builds a
-// registry without error — the catalogue-join step ahead
-// of the RPC/storage calls must not itself break a routine config.
+// TestDetectGaps_ProjectorEnabledDefaultSourcesRegistryOK: enabling the projector with the default enabled_sources builds a registry without error.
 func TestDetectGaps_ProjectorEnabledDefaultSourcesRegistryOK(t *testing.T) {
 	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -154,11 +143,7 @@ func TestDetectGaps_ProjectorEnabledDefaultSourcesRegistryOK(t *testing.T) {
 	}
 }
 
-// TestCatalogueMissingProjectorSources_ReapedSourceFlagged pins the catalogue join:
-// a source catalogued in ingestion.enabled_sources (and thus registered
-// by projector.BuildRegistry) whose ("projector", <name>) cursor row was
-// reaped, or never created, must be reported — not silently absent from
-// the verdict because minLedgerBySource only looks at rows that exist.
+// TestCatalogueMissingProjectorSources_ReapedSourceFlagged: a catalogued source whose ("projector", name) cursor row was reaped or never created must be reported, not absent because minLedgerBySource only sees existing rows.
 func TestCatalogueMissingProjectorSources_ReapedSourceFlagged(t *testing.T) {
 	cursors := []timescale.Cursor{
 		{Source: "ledgerstream", Sub: "", LastLedger: 900_000},
@@ -176,8 +161,7 @@ func TestCatalogueMissingProjectorSources_ReapedSourceFlagged(t *testing.T) {
 	}
 }
 
-// TestCatalogueMissingProjectorSources_NothingMissing pins the negative
-// case so the check doesn't cry wolf on a fully-cursored catalogue.
+// TestCatalogueMissingProjectorSources_NothingMissing: a fully-cursored catalogue raises no flag.
 func TestCatalogueMissingProjectorSources_NothingMissing(t *testing.T) {
 	cursors := []timescale.Cursor{
 		{Source: "ledgerstream", Sub: "", LastLedger: 900_000},
@@ -191,12 +175,7 @@ func TestCatalogueMissingProjectorSources_NothingMissing(t *testing.T) {
 	}
 }
 
-// TestMinLedgerBySource_ExcludesOneShotJobNamespaces pins that
-// a finished one-shot job's shard rows (backfill, projected-rebuild,
-// census-backfill, …) must not surface in the per-source verdict at
-// all — their last_ledger is a historical range end, millions of
-// ledgers behind tip on a perfectly healthy system, and including
-// them turned a healthy detect-gaps run into a false LAGGING report.
+// TestMinLedgerBySource_ExcludesOneShotJobNamespaces: finished one-shot job shards (backfill, projected-rebuild, census-backfill, ...) sit millions of ledgers behind tip and would cause a false LAGGING report.
 func TestMinLedgerBySource_ExcludesOneShotJobNamespaces(t *testing.T) {
 	cursors := []timescale.Cursor{
 		{Source: "ledgerstream", Sub: "", LastLedger: 900_000},
@@ -229,10 +208,7 @@ func TestMinLedgerBySource_ExcludesOneShotJobNamespaces(t *testing.T) {
 	}
 }
 
-// TestArchivalNodeConfig_RPCEndpointsNotLoopback pins that the rendered
-// stellar.rpc_endpoints never names a loopback host: the archival-node role
-// deploys no stellar-rpc, so such an endpoint is dead and detect-gaps (the
-// cursor-stuck / ingestion-lag runbook step) fails on every run.
+// TestArchivalNodeConfig_RPCEndpointsNotLoopback: the archival-node role deploys no stellar-rpc, so a loopback endpoint is dead and would fail detect-gaps on every run.
 func TestArchivalNodeConfig_RPCEndpointsNotLoopback(t *testing.T) {
 	role := filepath.Join("..", "..", "..", "configs", "ansible", "roles", "archival-node")
 	tmpl, err := os.ReadFile(filepath.Join(role, "templates", "stellarindex.toml.j2"))

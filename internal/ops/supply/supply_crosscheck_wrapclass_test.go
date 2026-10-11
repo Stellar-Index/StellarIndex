@@ -6,18 +6,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// The CLI must pick the same invariant the aggregator's cross-check
-// refresher picks: strict ADR-0011 equality ONLY for a SAC the operator
-// has attested is fully wrapped, and the subset bound for everything
-// else.
-//
-// Running the equality compare unconditionally in
-// `supply audit -cross-check` is a guaranteed failure for a partially
-// wrapped pair — classic supply that never entered the SAC is exactly
-// the gap the subset bound exists to tolerate. Every configured r1 pair
-// is partial_wrap, so the runbook's own diagnostic command would print
-// "OVER TOLERANCE ✗ — investigate" and exit non-zero on healthy data,
-// while the runbook tells operators to chain `|| operator-escalate`.
+// TestCrossCheckWrapClass: the CLI picks the aggregator's invariant, strict ADR-0011 equality ONLY for a SAC attested fully wrapped and the subset bound otherwise;
+// unconditional equality would fail every partial_wrap pair (all configured r1 pairs) on healthy data.
 func TestCrossCheckWrapClass(t *testing.T) {
 	t.Parallel()
 

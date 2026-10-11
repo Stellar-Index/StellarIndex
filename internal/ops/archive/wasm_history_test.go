@@ -7,10 +7,7 @@ import (
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// TestValidateFollowFlags is the regression: -follow (the explicit
-// opt-in for an unbounded live tail) must reject an explicit -to and a
-// bounded parallel split, and must not fire at all for a plain -to=0 run
-// (that case is resolved to a real tip elsewhere, not rejected here).
+// TestValidateFollowFlags: -follow must reject an explicit -to and a bounded parallel split, and not fire for a plain -to=0 run.
 func TestValidateFollowFlags(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -35,8 +32,7 @@ func TestValidateFollowFlags(t *testing.T) {
 	}
 }
 
-// TestRecordWasmTransition_FirstSeen confirms an initial deploy
-// opens an entry whose ToLedger is unset (open range).
+// TestRecordWasmTransition_FirstSeen: an initial deploy opens an entry with ToLedger unset.
 func TestRecordWasmTransition_FirstSeen(t *testing.T) {
 	state := map[sdkxdr.Hash]*wasmContractState{}
 	var contract sdkxdr.Hash
@@ -55,8 +51,7 @@ func TestRecordWasmTransition_FirstSeen(t *testing.T) {
 	}
 }
 
-// TestRecordWasmTransition_RepeatSameHash is a no-op — the same
-// hash seen at successive ledgers must NOT split into ranges.
+// TestRecordWasmTransition_RepeatSameHash: the same hash at successive ledgers must NOT split ranges.
 func TestRecordWasmTransition_RepeatSameHash(t *testing.T) {
 	state := map[sdkxdr.Hash]*wasmContractState{}
 	var contract sdkxdr.Hash
@@ -69,8 +64,7 @@ func TestRecordWasmTransition_RepeatSameHash(t *testing.T) {
 	}
 }
 
-// TestRecordWasmTransition_Upgrade closes the prior range and
-// opens a new one when the hash flips.
+// TestRecordWasmTransition_Upgrade closes the prior range and opens a new one when the hash flips.
 func TestRecordWasmTransition_Upgrade(t *testing.T) {
 	state := map[sdkxdr.Hash]*wasmContractState{}
 	var contract sdkxdr.Hash
@@ -95,9 +89,7 @@ func TestRecordWasmTransition_Upgrade(t *testing.T) {
 	}
 }
 
-// TestScanLedgerEntryChange_IgnoresUnrelatedContract — a watched
-// contract update should NOT trigger when an unrelated contract
-// changes.
+// TestScanLedgerEntryChange_IgnoresUnrelatedContract: an unrelated contract's change must not trigger.
 func TestScanLedgerEntryChange_IgnoresUnrelatedContract(t *testing.T) {
 	var watched, other sdkxdr.Hash
 	watched[0] = 0xAA
@@ -114,8 +106,7 @@ func TestScanLedgerEntryChange_IgnoresUnrelatedContract(t *testing.T) {
 	}
 }
 
-// TestScanLedgerEntryChange_CapturesWatchedUpgrade — a watched
-// contract update emits a transition.
+// TestScanLedgerEntryChange_CapturesWatchedUpgrade: a watched contract update emits a transition.
 func TestScanLedgerEntryChange_CapturesWatchedUpgrade(t *testing.T) {
 	var watched sdkxdr.Hash
 	watched[0] = 0xAA
@@ -143,9 +134,7 @@ func TestScanLedgerEntryChange_CapturesWatchedUpgrade(t *testing.T) {
 	}
 }
 
-// TestScanLedgerEntryChange_RecordsInstanceRemoval — deleting a watched
-// contract's instance entry closes its hash range; unwatched contracts and
-// non-instance keys are ignored.
+// TestScanLedgerEntryChange_RecordsInstanceRemoval: deleting a watched instance entry closes its range; unwatched contracts and non-instance keys are ignored.
 func TestScanLedgerEntryChange_RecordsInstanceRemoval(t *testing.T) {
 	var watched, other sdkxdr.Hash
 	watched[0] = 0xAA
@@ -185,10 +174,7 @@ func TestScanLedgerEntryChange_RecordsInstanceRemoval(t *testing.T) {
 	}
 }
 
-// TestScanLCMForWasmChanges_V2LedgerCloseMeta is the P23 regression:
-// pubnet emits LedgerCloseMetaV2 (TransactionMeta V4) after the P23
-// boundary, and the scanner must not silently skip it the way a
-// `lcm.V != 1` guard did.
+// TestScanLCMForWasmChanges_V2LedgerCloseMeta: pubnet emits LedgerCloseMetaV2 after P23 and the scanner must not skip it.
 func TestScanLCMForWasmChanges_V2LedgerCloseMeta(t *testing.T) {
 	var watched sdkxdr.Hash
 	watched[0] = 0xAA
@@ -232,9 +218,7 @@ func TestScanLCMForWasmChanges_V2LedgerCloseMeta(t *testing.T) {
 	}
 }
 
-// TestScanLCMForWasmChanges_UnsupportedVersionErrors confirms an
-// unknown LedgerCloseMeta or TransactionMeta arm fails loudly
-// instead of silently reporting zero changes.
+// TestScanLCMForWasmChanges_UnsupportedVersionErrors: an unknown LCM or TransactionMeta arm fails loudly, not as zero changes.
 func TestScanLCMForWasmChanges_UnsupportedVersionErrors(t *testing.T) {
 	state := map[sdkxdr.Hash]*wasmContractState{}
 	lcm := sdkxdr.LedgerCloseMeta{V: 99}
@@ -333,9 +317,7 @@ func makeStorageChange(t *testing.T, contract sdkxdr.Hash, keySymbol string) sdk
 	}
 }
 
-// TestRecordStorageChange_CapturesNonInstanceKeys is the storage-
-// rotation scanner's positive path: a watched contract has a
-// non-Instance ContractData change → one storageChange recorded.
+// TestRecordStorageChange_CapturesNonInstanceKeys: a non-Instance ContractData change on a watched contract records one storageChange.
 func TestRecordStorageChange_CapturesNonInstanceKeys(t *testing.T) {
 	var watched sdkxdr.Hash
 	watched[0] = 0xa1
@@ -363,10 +345,7 @@ func TestRecordStorageChange_CapturesNonInstanceKeys(t *testing.T) {
 	}
 }
 
-// TestRecordStorageChange_SkipsInstanceKey ensures the storage-
-// rotation scanner ignores the LedgerKeyContractInstance row
-// (already covered by the wasm-history tracker; including it would
-// double-count and pollute the storage log).
+// TestRecordStorageChange_SkipsInstanceKey: the instance row is already tracked by wasm-history and would double-count.
 func TestRecordStorageChange_SkipsInstanceKey(t *testing.T) {
 	var watched sdkxdr.Hash
 	watched[0] = 0xa2
@@ -384,8 +363,7 @@ func TestRecordStorageChange_SkipsInstanceKey(t *testing.T) {
 	}
 }
 
-// TestRecordStorageChange_SkipsUnwatchedContract ensures the
-// scanner short-circuits on contracts not in the watch list.
+// TestRecordStorageChange_SkipsUnwatchedContract: contracts outside the watch list are short-circuited.
 func TestRecordStorageChange_SkipsUnwatchedContract(t *testing.T) {
 	var unrelated sdkxdr.Hash
 	unrelated[0] = 0xff
@@ -422,8 +400,7 @@ func makeCodeUploadChange(t *testing.T, hash [32]byte, code []byte) sdkxdr.Ledge
 	}
 }
 
-// TestMaybeAppendCodeUpload_CapturesCreatedAndRestored covers the
-// two change types the code-upload scanner accepts.
+// TestMaybeAppendCodeUpload_CapturesCreatedAndRestored covers the two accepted change types.
 func TestMaybeAppendCodeUpload_CapturesCreatedAndRestored(t *testing.T) {
 	var hash [32]byte
 	hash[0] = 0xca
@@ -465,9 +442,7 @@ func TestMaybeAppendCodeUpload_CapturesCreatedAndRestored(t *testing.T) {
 	}
 }
 
-// TestMaybeAppendCodeUpload_IgnoresOtherEntryTypes ensures
-// non-ContractCode entries (Account, Trustline, ContractData) are
-// not picked up by the code-upload scanner.
+// TestMaybeAppendCodeUpload_IgnoresOtherEntryTypes: non-ContractCode entries are not picked up.
 func TestMaybeAppendCodeUpload_IgnoresOtherEntryTypes(t *testing.T) {
 	var contract sdkxdr.Hash
 	var w [32]byte
@@ -478,9 +453,7 @@ func TestMaybeAppendCodeUpload_IgnoresOtherEntryTypes(t *testing.T) {
 	}
 }
 
-// TestStorageKeyHint covers the common SCVal key shapes the hint
-// helper recognises. Best-effort summaries; doesn't need to cover
-// every SCVal variant.
+// TestStorageKeyHint covers the common SCVal key shapes the best-effort hint recognises.
 func TestStorageKeyHint(t *testing.T) {
 	mkSym := func(s string) sdkxdr.ScVal {
 		sym := sdkxdr.ScSymbol(s)
@@ -504,9 +477,7 @@ func TestStorageKeyHint(t *testing.T) {
 	}
 }
 
-// TestBuildRangesFromTransitions covers the merge tool's core
-// reconstruction logic — JSONL transitions back to the wasmRange
-// shape `wasmHistory` would have produced at end-of-run.
+// TestBuildRangesFromTransitions covers rebuilding the end-of-run wasmRange shape from JSONL transitions.
 func TestBuildRangesFromTransitions(t *testing.T) {
 	t.Run("single transition closes at -to", func(t *testing.T) {
 		trs := []transitionRecord{{Contract: "C...", WasmHash: "a", AtLedger: 100}}
@@ -570,16 +541,7 @@ func TestBuildRangesFromTransitions(t *testing.T) {
 	})
 }
 
-// TestMergeWasmHistories_NoGapWhenLaterWorkerSeesNoTransition is the
-// regression test: worker 0's chunk sees hash
-// "a" deployed at ledger 100 and no further change before its chunk
-// ends at 500. Worker 1's chunk [501,1000] sees NO instance write at
-// all for this contract (the hash simply continued unchanged) — the
-// old worker-adjacency heuristic only stitched worker 1 into worker
-// 0's range when worker 1 contributed a transition landing exactly
-// on the chunk boundary, so a worker with zero writes left a
-// 500-ledger hole: the merged range stopped at worker 0's upperEnd
-// (500) instead of extending through the whole walk (1000).
+// TestMergeWasmHistories_NoGapWhenLaterWorkerSeesNoTransition: a later worker with zero writes must still extend the earlier range through the whole walk.
 func TestMergeWasmHistories_NoGapWhenLaterWorkerSeesNoTransition(t *testing.T) {
 	var contract sdkxdr.Hash
 	contract[0] = 0x02
@@ -604,9 +566,7 @@ func TestMergeWasmHistories_NoGapWhenLaterWorkerSeesNoTransition(t *testing.T) {
 	}
 }
 
-// TestReadTransitionJSONL_RoundTrip writes a synthetic JSONL file
-// (matching the shape `transitionLog.append` produces) and confirms
-// the merge tool's reader consumes it correctly.
+// TestReadTransitionJSONL_RoundTrip reads a synthetic file shaped like transitionLog.append output.
 func TestReadTransitionJSONL_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/wasm-history-w0.jsonl"
@@ -642,12 +602,7 @@ func TestReadTransitionJSONL_RoundTrip(t *testing.T) {
 	}
 }
 
-// TestReadTransitionJSONL_WatermarkAuthoritative proves that
-// when a worker's JSONL file
-// carries a watermark line, that value — not the highest transition
-// at_ledger — is the returned extent, even when it's LOWER than the
-// last transition would suggest (the worker kept scanning after its
-// last transition but crashed before reaching -to).
+// TestReadTransitionJSONL_WatermarkAuthoritative: a worker's watermark line, not the highest at_ledger, is the extent, even when lower (the worker crashed before -to).
 func TestReadTransitionJSONL_WatermarkAuthoritative(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/wasm-history-w0.jsonl"
@@ -676,10 +631,7 @@ func TestReadTransitionJSONL_WatermarkAuthoritative(t *testing.T) {
 	}
 }
 
-// TestReadTransitionJSONL_TruncatedTail proves the merge tool
-// recovers from a half-written trailing line — exactly the failure
-// shape a crashed walker would produce. The good lines must still
-// land in the transitions map.
+// TestReadTransitionJSONL_TruncatedTail: a half-written trailing line (crashed walker) is tolerated and the good lines still count.
 func TestReadTransitionJSONL_TruncatedTail(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/wasm-history-w0.jsonl"
@@ -702,13 +654,7 @@ func TestReadTransitionJSONL_TruncatedTail(t *testing.T) {
 	}
 }
 
-// TestReadTransitionJSONL_MidFileCorruptionErrors is the
-// regression: a malformed line that is NOT the file's last line means a
-// second run's lines landed after a first run's crash residue (the
-// O_APPEND-across-runs defect), not a crash-truncated tail — a
-// break-on-first-error reader would silently drop every transition after
-// it and return success. It must be a hard error, and the good
-// lines AFTER the corrupt one must not be silently lost from the count.
+// TestReadTransitionJSONL_MidFileCorruptionErrors: a malformed NON-last line (a second run appended after crash residue) is a hard error, and the good lines after it must not be lost from the count.
 func TestReadTransitionJSONL_MidFileCorruptionErrors(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/wasm-history-w0.jsonl"

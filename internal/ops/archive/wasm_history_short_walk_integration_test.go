@@ -12,34 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ledgerstream"
 )
 
-// TestWasmHistoryWorker_ShortWalk_UpperEndIsLastObserved is the
-// regression guard for the wasm-history site of the
-// "a short walk reads as full coverage" class.
-//
-// Shape of the defect it pins. workerResult.upperEnd is documented as
-// "last ledger the worker actually saw (inclusive)" and is what
-// mergeWasmHistories uses to CLOSE each watched contract's open WASM
-// range — i.e. it becomes the ToLedger of the coverage range printed
-// in the tool's stdout JSON. A buggy version assigns it from the REQUESTED
-// chunk bound (b.To) before the walk started and never re-assigned, so
-// a walk that stopped early published the requested bound as observed
-// coverage: "contract C ran wasm hash H through ledger <to>" for a
-// ledger the worker never opened.
-//
-// Reaching the short walk is not exotic: every ops subcommand builds
-// its ledgerstream.Config through opsutil.NewBoundedLedgerStreamConfig,
-// which always sets TolerateTrailingMissing, and that converts the
-// SDK's missing-object error into a clean walk-complete (nil) for any
-// hole within 65,536 ledgers of -to. The fixture below reproduces
-// exactly that: ledgers [from, lastSeeded] exist on the datastore and
-// [lastSeeded+1, to] do not.
-//
-// The assertion is exact and prefetch-race-proof: ledgers are handed
-// to the callback in order from `from`, so the last one observed is
-// always `from + scanned - 1` (and upperEnd must be 0 when nothing
-// was delivered at all). Whatever the SDK's buffer happened to
-// deliver before it hit the hole, upperEnd must equal it — and can
-// never be the unobserved requested bound.
+// TestWasmHistoryWorker_ShortWalk_UpperEndIsLastObserved: upperEnd closes each contract's WASM range, so after a short walk (TolerateTrailingMissing) it must be the last ledger observed, never the requested bound.
 func TestWasmHistoryWorker_ShortWalk_UpperEndIsLastObserved(t *testing.T) {
 	const (
 		from       = uint32(300)
@@ -122,12 +95,8 @@ func TestWasmHistoryWorker_ShortWalk_UpperEndIsLastObserved(t *testing.T) {
 	}
 }
 
-// tolerantFilesystemLedgerstreamConfig is filesystemLedgerstreamConfig
-// plus the TolerateTrailingMissing that every ops subcommand gets from
-// opsutil.NewBoundedLedgerStreamConfig. Production wasm-history never
-// walks without it (see the comment above its lsCfg construction), so a
-// short-walk fixture must carry it too or it exercises a configuration
-// no operator runs.
+// tolerantFilesystemLedgerstreamConfig adds the TolerateTrailingMissing that every ops subcommand gets
+// from opsutil.NewBoundedLedgerStreamConfig, so the fixture matches the configuration operators run.
 func tolerantFilesystemLedgerstreamConfig(dir string) ledgerstream.Config {
 	cfg := filesystemLedgerstreamConfig(dir)
 	cfg.TolerateTrailingMissing = true

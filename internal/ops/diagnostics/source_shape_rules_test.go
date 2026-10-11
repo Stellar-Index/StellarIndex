@@ -13,9 +13,7 @@ import (
 	"testing"
 )
 
-// TestSourceShapeRules pins source shapes that no behavioural test can reach.
-// Each rule parses the package's sources with go/ast and fails on the same
-// defect it did as a standalone test.
+// TestSourceShapeRules pins source shapes no behavioural test can reach, by parsing the package sources with go/ast.
 func TestSourceShapeRules(t *testing.T) {
 	rules := []struct {
 		name string

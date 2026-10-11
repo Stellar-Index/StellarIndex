@@ -15,25 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// sep1RefreshCmd resolves the SEP-1 stellar.toml for every issuer with a
-// home_domain and writes the parsed payload to `issuers.sep1_payload`, bumping
-// `sep1_resolved_at`. Run hourly from sep1-refresh.timer.
-//
-// Per-issuer failures are logged and counted, not fatal. The resolver's 10s request
-// timeout and SSRF guard, the parser's structural-depth limit and the per-issuer
-// [sep1PerIssuerBudget] keep one slow or malicious domain from stalling the batch.
-//
-// A failure advances that issuer's retry ladder (migration 0159), so a dead
-// home_domain settles at ~1 attempt/month; a success clears it. The loop is
-// SEQUENTIAL on purpose: TOML parsing is superlinear on attacker-authored input (a
-// measured 4.5 GB from 38 KB) and the unit runs under MemoryMax=2G, so concurrent
-// parses would multiply the cost that ceiling exists to bound.
-//
-// sep1DomainOverrides maps issuers whose ON-CHAIN home_domain no longer serves a
-// stellar.toml to the domain that does. Hand-vetted like the API's knownIssuers:
-// the on-chain value is authoritative for identity, but the TOML's location can
-// rot independently (circle.com/.well-known/stellar.toml 404s while the legacy
-// Centre domain still serves the full document).
+// sep1DomainOverrides maps issuers whose on-chain home_domain no longer serves a stellar.toml to the domain that does; the on-chain value stays authoritative for identity.
+// The refresh loop is sequential on purpose: TOML parsing is superlinear on hostile input and the unit runs under MemoryMax=2G.
 var sep1DomainOverrides = map[string]string{
 	// USDC / EURC issuers — Circle (Centre) toml.
 	"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN": "centre.io",
@@ -128,27 +111,11 @@ type sep1Resolver interface {
 	Resolve(ctx context.Context, domain string) (*metadata.SEP1, error)
 }
 
-// sep1PerIssuerBudget bounds one issuer's fetch + parse.
-//
-// The resolver already carries a 10s per-REQUEST timeout, which is not
-// the same thing: a domain that answers slowly but steadily, or a body
-// that takes a long time to decode, spends wall-clock that the request
-// timeout never sees. This ceiling is what makes "one issuer cannot
-// starve the other 76,000" a property of the loop rather than a
-// property of whichever timeout happened to fire first.
+// sep1PerIssuerBudget bounds one issuer's fetch and parse; the 10s per-request timeout does not see slow steady answers or long decodes.
 const sep1PerIssuerBudget = 30 * time.Second
 
-// sep1RefreshLoop resolves each candidate in turn and returns the
-// success count, the g_strkeys of every attempt that produced no payload,
-// and the subset of those that failed on OUR side. The failed keys are
-// carried out (rather than just counted) so a systemic verdict can take
-// the ladder step back for exactly those rows and nothing else; the
-// our-fault keys get that step back even when the run is not systemic,
-// because a streak is served as sep1_status=unreachable.
-//
-// Sequential on purpose — see the package docblock: the TOML parser's
-// cost is superlinear on attacker-authored input and the unit runs under
-// a 2G ceiling.
+// sep1RefreshLoop resolves each candidate in turn, returning the success count, the keys of failed attempts and the subset that failed on our side.
+// Sequential on purpose (parser cost is superlinear on hostile input under a 2G ceiling).
 func sep1RefreshLoop(
 	ctx context.Context, store sep1Store, chain sep1ChainReader, resolver sep1Resolver,
 	candidates []timescale.IssuerSep1Candidate, dryRun bool,
@@ -185,21 +152,9 @@ const (
 	sep1OurFault
 )
 
-// refreshOneSep1Issuer fetches, parses and stores one issuer's stellar.toml,
-// reporting whether a payload was written and, if not, whose fault that was.
-//
-// The attempt is marked FIRST. The candidate query is `ORDER BY sep1_resolved_at
-// ASC NULLS FIRST`, so an unstamped row stays candidate #1 every run. The input
-// class that most needs marking (an oversized or hostile document) is the one that
-// gets the worker cgroup-SIGKILLed under MemoryMax=2G, so marking on the way out of
-// a failure never runs and the same row would head the queue forever. Stamping
-// before the fetch lets the retry ladder defer the poison row.
-//
-// The pre-mark costs a healthy issuer nothing: SetIssuerSep1Payload resets
-// sep1_consecutive_failures and sep1_next_attempt_after in the same statement
-// (test/integration/pg_assets_sep1_test.go). The mark happens once per issuer per
-// run, so the systemic-outage unwind, which takes back one step per failed key,
-// still balances.
+// refreshOneSep1Issuer fetches, parses and stores one issuer's stellar.toml, reporting whether a payload was written and whose fault a failure was.
+// The attempt is marked FIRST: a hostile document can get the worker SIGKILLed before any on-failure mark, leaving the unstamped row at the head of the queue forever.
+// The pre-mark is free for healthy issuers because SetIssuerSep1Payload resets the ladder in the same statement.
 func refreshOneSep1Issuer(
 	ctx context.Context, store sep1Store, chain sep1ChainReader, resolver sep1Resolver,
 	c timescale.IssuerSep1Candidate, dryRun bool,
@@ -227,12 +182,7 @@ func refreshOneSep1Issuer(
 		fmt.Printf("FAIL  %s  %s  %v\n", c.GStrkey, c.HomeDomain, err)
 		return sep1Failed
 	}
-	// Bidirectional SEP-1 verification: the org is only "verified" if the
-	// fetched toml's [[CURRENCIES]] lists THIS issuer back — i.e. the domain
-	// owner attests to this account. Without it, anyone can set their
-	// account's home_domain to a reputable domain and inherit its ORG_NAME
-	// (spoofing). Callers MUST only merge/group issuers by org when this is
-	// true; one-directional matches are "claimed, unverified".
+	// Bidirectional SEP-1 verification: the org is verified only if the toml's [[CURRENCIES]] lists THIS issuer back; otherwise anyone could claim a reputable home_domain and inherit its ORG_NAME.
 	orgVerified := tomlListsIssuer(sep.Currencies, c.GStrkey)
 	payload, jerr := marshalSep1Payload(sep, orgVerified)
 	if jerr != nil {
@@ -279,11 +229,7 @@ const (
 	sep1DomainUnchecked
 )
 
-// confirmSep1Domain re-reads the issuer's live home_domain and re-binds the
-// row when the chain has moved. The stored column is a copy of an older
-// reading, and fetching a domain the account no longer declares would verify
-// whoever holds that name now; an account with no live entry (merged, or
-// outside the lake) cannot be confirmed and is not fetched.
+// confirmSep1Domain re-reads the live home_domain and re-binds the row when the chain moved; an account with no live entry cannot be confirmed and is not fetched.
 func confirmSep1Domain(
 	ctx context.Context, store sep1Store, chain sep1ChainReader,
 	c timescale.IssuerSep1Candidate, dryRun bool,
@@ -320,13 +266,8 @@ func confirmSep1Domain(
 	return c, sep1DomainConfirmed
 }
 
-// sep1Candidates picks the run's work: one named issuer, or the head of
-// the staleness queue. An empty slice with a nil error means "nothing to
-// do" and the caller returns cleanly.
-//
-// The targeted path deliberately bypasses BOTH the staleness filter and
-// the retry ladder — it is the operator's override for a domain the queue
-// has deferred (a newly-onboarded org, or one that just fixed its TOML).
+// sep1Candidates picks one named issuer or the head of the staleness queue; empty with nil error means nothing to do.
+// The targeted path bypasses the staleness filter and the retry ladder as the operator override.
 func sep1Candidates(
 	ctx context.Context, store *timescale.Store, issuer string, olderThan time.Duration, limit int,
 ) ([]timescale.IssuerSep1Candidate, error) {
@@ -350,22 +291,8 @@ func sep1Candidates(
 	return candidates, nil
 }
 
-// Systemic-outage guard.
-//
-// A backoff cannot tell "this domain is dead" from "our DNS is down", and the
-// freshness watchdog reads max(sep1_resolved_at), which a failed attempt stamps like
-// a success. So the run judges ITSELF only on domains that HAVE served a stellar.toml
-// (the row holds a payload): a never-answering domain failing again says nothing about
-// us, and counting them made the verdict a property of the network. When it trips:
-//
-//  1. The ladder step applied to every failed domain is unwound, so recovery is
-//     immediate rather than metered over 30 days.
-//  2. The run returns an error, so the systemd oneshot fails and
-//     stellarindex_systemd_unit_failed (infra.yml) tickets it.
-//
-// A healthy run's regression rate is near zero (migration 0159), so 90% sits far
-// above that and below "everything is broken". minAttempts counts only reached
-// domains, so a short run cannot trip it on a handful.
+// Systemic-outage guard: a failed attempt stamps sep1_resolved_at like a success, so the run judges itself only on domains that have served a toml (the row holds a payload).
+// When it trips, the ladder step on every failed domain is unwound and the run errors so the systemd-failed alert fires; 90% sits above a healthy run's near-zero regression rate.
 const (
 	defaultSystemicFailureRate = 0.90
 	systemicMinAttempts        = 50
@@ -428,21 +355,8 @@ func unwindSep1Backoff(store *timescale.Store, keys []string, dryRun bool) {
 	fmt.Printf("Unwound the retry backoff on %d issuer(s); their schedule is untouched.\n", n)
 }
 
-// markSep1Attempted bumps sep1_resolved_at so an issuer under attempt
-// moves to the BACK of the refresh queue, and advances its retry ladder
-// so a domain that serves nothing stops costing an attempt a day.
-//
-// The queue is `ORDER BY sep1_resolved_at ASC NULLS FIRST`, so a row
-// left NULL stays candidate #1 on every subsequent run. It is called
-// exactly ONCE per issuer per run, BEFORE the fetch — see
-// [refreshOneSep1Issuer] for why the ordering is the whole point, and
-// why a success (which clears the ladder in the same statement that
-// writes its payload) pays nothing for it. Best-effort: a failure to
-// mark is logged, not fatal.
-//
-// The streak count is echoed so the journal shows WHY a domain went
-// quiet. Without it a reader of a later run cannot tell a domain that
-// was skipped from one that was never a candidate.
+// markSep1Attempted bumps sep1_resolved_at and advances the retry ladder, called once per issuer per run BEFORE the fetch (see refreshOneSep1Issuer).
+// Best-effort: a failure to mark is logged, not fatal.
 func markSep1Attempted(ctx context.Context, store sep1Store, gStrkey string, dryRun bool) {
 	if dryRun {
 		return
@@ -457,14 +371,8 @@ func markSep1Attempted(ctx context.Context, store sep1Store, gStrkey string, dry
 	}
 }
 
-// tomlListsIssuer reports whether the fetched SEP-1 toml's [[CURRENCIES]] lists
-// the given issuer back — the bidirectional half of org verification. Without
-// this match, ORG_NAME from a self-declared home_domain is spoofable.
-//
-// Binds via [timescale.Sep1EntryBindsTo], the same canonicalisation
-// AllSep1Images/BoundSep1Currencies use — a byte-exact compare here would
-// verify:false (and warn "unverified") an issuer that those paths already
-// treat as bound, e.g. one that types its own key lowercase.
+// tomlListsIssuer reports whether the toml's [[CURRENCIES]] lists the issuer back, the bidirectional half of org verification.
+// It binds via timescale.Sep1EntryBindsTo, the same canonicalisation the other readers use; a byte-exact compare would disagree with them.
 func tomlListsIssuer(currencies []metadata.Currency, issuer string) bool {
 	for _, cur := range currencies {
 		if timescale.Sep1EntryBindsTo(cur.Issuer, issuer) {
@@ -474,11 +382,7 @@ func tomlListsIssuer(currencies []metadata.Currency, issuer string) bool {
 	return false
 }
 
-// marshalSep1Payload builds the compact sep1_payload JSON persisted to the
-// issuers row: OrgName/OrgVerified/Documentation for /v1/issuers, plus the
-// per-currency overlay /v1/assets/{id} reads (this cron is the source of
-// truth, so that handler does a DB lookup rather than a live fetch). Raw
-// is excluded — nothing reads it.
+// marshalSep1Payload builds the compact sep1_payload JSON stored on the issuers row (org fields plus the per-currency overlay /v1/assets/{id} reads); Raw is excluded.
 func marshalSep1Payload(sep *metadata.SEP1, orgVerified bool) ([]byte, error) {
 	currencies := make([]map[string]any, 0, len(sep.Currencies))
 	for _, c := range sep.Currencies {
@@ -514,13 +418,7 @@ func marshalSep1Payload(sep *metadata.SEP1, orgVerified bool) ([]byte, error) {
 		"Currencies":    currencies,
 		"FetchedAt":     sep.FetchedAt.UTC().Format(time.RFC3339),
 	}
-	// A document that did not parse whole travels with the list of
-	// tables that were skipped. Without it the storage boundary erases
-	// the difference between "the issuer declared nothing here" and
-	// "we could not read the table that would have said", and every
-	// consumer downstream of this row reads the first when the second
-	// is true. Absent on the documents that parsed whole, which is
-	// almost all of them, so no row grows that did not have to.
+	// A document that did not parse whole carries its skipped tables, so storage does not turn "could not read the table" into "issuer declared nothing". Absent on whole parses.
 	if len(sep.RecoveredSections) > 0 {
 		skipped := make([]map[string]any, 0, len(sep.RecoveredSections))
 		for _, sec := range sep.RecoveredSections {

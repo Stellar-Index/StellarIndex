@@ -13,11 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
-// TestRunOneTick_Agreement is the steady-state path: every region
-// returns the same price for the same bucket. After one tick the
-// "ok" outcome counter increments and the "divergence" counter
-// stays at zero — the alert ratio in production is "rate(divergences)
-// > 0", and we need this case not to trip it.
+// TestRunOneTick_Agreement is the steady state: matching prices bump only the "ok" counter, so the rate(divergences) > 0 alert stays quiet.
 func TestRunOneTick_Agreement(t *testing.T) {
 	resp := func() crossRegionResponse {
 		return crossRegionResponse{
@@ -54,10 +50,7 @@ func TestRunOneTick_Agreement(t *testing.T) {
 	}
 }
 
-// TestRunOneTick_Divergence is the alert path: r2 returns a different
-// price. The divergences counter increments, the checks_total under
-// outcome=divergence increments, and outcome=ok stays at zero. Spot-
-// checks the per-pair label so the alert can be filtered by pair.
+// TestRunOneTick_Divergence is the alert path: a differing price bumps divergences and checks_total{outcome=divergence}, labelled per pair.
 func TestRunOneTick_Divergence(t *testing.T) {
 	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	to := from.Add(30 * time.Second)
@@ -88,11 +81,7 @@ func TestRunOneTick_Divergence(t *testing.T) {
 	}
 }
 
-// TestRunOneTick_FetchErrorTracked covers the partial-failure path:
-// one region's HTTP fetch fails, the other succeeds. The fetch_errors
-// counter increments for the failed region only — divergences stay
-// at zero (we don't flag divergence based on a fetch failure, that
-// would conflate "region down" with "regions disagree").
+// TestRunOneTick_FetchErrorTracked: a failed region fetch bumps fetch_errors only, never divergences ("region down" is not "regions disagree").
 func TestRunOneTick_FetchErrorTracked(t *testing.T) {
 	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	to := from.Add(30 * time.Second)
@@ -126,9 +115,7 @@ func TestRunOneTick_FetchErrorTracked(t *testing.T) {
 	}
 }
 
-// TestAllFailed_Outcome confirms the "outcome=error" counter only
-// increments when every region failed — distinguishes "the whole
-// monitoring host can't reach anything" from "regions agree on data".
+// TestAllFailed_Outcome: outcome=error increments only when every region failed.
 func TestAllFailed_Outcome(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "down", http.StatusBadGateway)
@@ -150,17 +137,9 @@ func TestAllFailed_Outcome(t *testing.T) {
 	}
 }
 
-// ─── /healthz must reflect the LAST tick, not the first ────
-//
-// A verdict of `lastRunUnix != 0` is a latch the very first
-// sweep set and nothing ever cleared, so the monitor reported healthy
-// forever afterwards no matter what happened to the tick loop or to the
-// regions. Each case below is a state in which such a handler returns
-// 200 and the real one must not.
+// /healthz must reflect the LAST tick, not the first. A latch on lastRunUnix != 0 stays healthy forever; each case below is a state where such a handler returns 200 and the real one must not.
 
-// TestCrossRegionHealth_StaleTick — the loop stopped ticking (goroutine
-// wedged/dead, or resolveAnchor failing every time so lastRunUnix is
-// never re-stored). The last sweep is older than the staleness bound.
+// TestCrossRegionHealth_StaleTick: the loop stopped ticking, so the last sweep is older than the staleness bound.
 func TestCrossRegionHealth_StaleTick(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	exp := newCrossRegionExporter(reg)
@@ -181,10 +160,7 @@ func TestCrossRegionHealth_StaleTick(t *testing.T) {
 	}
 }
 
-// TestCrossRegionHealth_EveryRegionFailing — the loop is ticking fine,
-// but every region fetch has failed since startup. runOneTick still
-// stamps lastRunUnix on such a sweep (the sweep DID complete), which is
-// exactly why that latch stays green while the monitor was blind.
+// TestCrossRegionHealth_EveryRegionFailing: ticks complete (so lastRunUnix is stamped) but every fetch failed; health must still go red.
 func TestCrossRegionHealth_EveryRegionFailing(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	exp := newCrossRegionExporter(reg)
@@ -204,11 +180,7 @@ func TestCrossRegionHealth_EveryRegionFailing(t *testing.T) {
 	}
 }
 
-// TestCrossRegionHealth_RegionsWentAwayAfterAGoodStart is the regions-vanish
-// scenario in its most literal form: the first sweep succeeded (so the
-// old latch was set for good), then every region went away and stayed
-// away. The loop keeps ticking, so lastRunUnix stays fresh; only
-// lastReachedUnix goes stale.
+// TestCrossRegionHealth_RegionsWentAwayAfterAGoodStart: the loop ticks but every region vanished, so only lastReachedUnix goes stale.
 func TestCrossRegionHealth_RegionsWentAwayAfterAGoodStart(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	exp := newCrossRegionExporter(reg)
@@ -228,8 +200,7 @@ func TestCrossRegionHealth_RegionsWentAwayAfterAGoodStart(t *testing.T) {
 	}
 }
 
-// TestCrossRegionHealth_Healthy pins the positive case so the fix can't
-// be "return 503 always": a recent sweep that reached regions is 200.
+// TestCrossRegionHealth_Healthy: a recent sweep that reached regions is 200, so the fix cannot be "always 503".
 func TestCrossRegionHealth_Healthy(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	exp := newCrossRegionExporter(reg)
@@ -244,8 +215,7 @@ func TestCrossRegionHealth_Healthy(t *testing.T) {
 	}
 }
 
-// TestCrossRegionHealth_BeforeFirstSweep keeps the one behaviour the old
-// handler got right: 503 until something has actually run.
+// TestCrossRegionHealth_BeforeFirstSweep: 503 until something has run.
 func TestCrossRegionHealth_BeforeFirstSweep(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	exp := newCrossRegionExporter(reg)
@@ -258,11 +228,7 @@ func TestCrossRegionHealth_BeforeFirstSweep(t *testing.T) {
 	}
 }
 
-// TestRunOneTick_AllFailedDoesNotStampReached is the end-to-end half:
-// a real sweep against two dead regions must NOT advance the
-// reachability clock, so the health verdict above can go red. Without it
-// runOneTick would stamp lastRunUnix and the handler would call that
-// healthy.
+// TestRunOneTick_AllFailedDoesNotStampReached: a sweep against two dead regions must not advance the reachability clock.
 func TestRunOneTick_AllFailedDoesNotStampReached(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "down", http.StatusBadGateway)
@@ -291,10 +257,7 @@ func TestRunOneTick_AllFailedDoesNotStampReached(t *testing.T) {
 	}
 }
 
-// TestRunOneTick_ReachedStampedOnPartialFailure — one region up, one
-// down still counts as "reached": the fetch-error counter carries the
-// partial failure, and flipping /healthz red for it would page on a
-// single region's blip. Pins the boundary crossRegionHealth documents.
+// TestRunOneTick_ReachedStampedOnPartialFailure: one region up still counts as reached; fetch_errors carries the failure and /healthz must not page on one blip.
 func TestRunOneTick_ReachedStampedOnPartialFailure(t *testing.T) {
 	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	to := from.Add(30 * time.Second)
@@ -319,9 +282,7 @@ func TestRunOneTick_ReachedStampedOnPartialFailure(t *testing.T) {
 	}
 }
 
-// TestHealthStaleAfter pins the threshold derivation: three missed ticks
-// plus one full per-region timeout. A regression to a fixed constant
-// would silently mis-tune every non-default -interval.
+// TestHealthStaleAfter pins the threshold: three missed ticks plus one per-region timeout, so non-default -interval values stay tuned.
 func TestHealthStaleAfter(t *testing.T) {
 	if got, want := healthStaleAfter(60*time.Second, 10*time.Second), 190*time.Second; got != want {
 		t.Errorf("healthStaleAfter(60s, 10s) = %s, want %s", got, want)
@@ -331,8 +292,7 @@ func TestHealthStaleAfter(t *testing.T) {
 	}
 }
 
-// TestAllFailed_Helper directly exercises the helper used by
-// runOneTick to flag the "everyone is unreachable" outcome.
+// TestAllFailed_Helper exercises the helper runOneTick uses to flag "everyone is unreachable".
 func TestAllFailed_Helper(t *testing.T) {
 	cases := []struct {
 		name string
@@ -365,21 +325,8 @@ func stubResponse(t *testing.T, body crossRegionResponse) *httptest.Server {
 	}))
 }
 
-// TestRunOneTick_PartialFailureIsNotLabelledOK is the regression test
-// for a sweep that labels itself ok without comparing anything.
-//
-// runOneTick discarded analyseRegionResults' `compared` return and
-// defaulted outcome to "ok", so a sweep in which fewer than two regions
-// responded — i.e. one where NOTHING was compared — emitted the same
-// time series as a genuine agreement. In a two-region fleet that means
-// one region being down produces a permanent green: divergences flat,
-// last_reached fresh, /healthz 200, and zero comparisons performed.
-// analyseRegionResults documents that such a sample "proves NOTHING",
-// and the one-shot sibling exits 1 on it.
-//
-// The existing TestRunOneTick_FetchErrorTracked builds this exact
-// scenario and asserts fetchErrors and divergences — but never the
-// outcome label, which is why the defect was invisible.
+// TestRunOneTick_PartialFailureIsNotLabelledOK: a sweep where fewer than two regions responded compared nothing and must not carry the "ok" label.
+// Otherwise one region down in a two-region fleet is a permanent green: analyseRegionResults says such a sample proves NOTHING.
 func TestRunOneTick_PartialFailureIsNotLabelledOK(t *testing.T) {
 	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	to := from.Add(30 * time.Second)

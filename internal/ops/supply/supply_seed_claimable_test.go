@@ -11,17 +11,8 @@ import (
 
 const seedClaimableIssuer = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
 
-// TestParseClaimableSeedAssets pins the scope contract. The DEFAULT must be
-// "every classic credit asset" (a nil set): claimable balances have no
-// operator-curated watched set, and a seed that quietly covered only some
-// assets would leave the rest under-reported in exactly the way this command
-// exists to fix.
-//
-// It also pins the dash/colon acceptance. A production bug that
-// zeroed three supply components was a dash-form config string compared
-// against colon-form decoded keys, failing OPEN (observed nothing, reported
-// success). Routing -assets through supply.CanonicalizeWatchedClassic makes a
-// typo a loud error instead.
+// TestParseClaimableSeedAssets pins the scope contract: the DEFAULT is every classic credit asset (a nil set), since a partial seed would leave the rest under-reported.
+// It also pins dash/colon acceptance: a dash-form config string against colon-form decoded keys failed OPEN once, so -assets goes through supply.CanonicalizeWatchedClassic and a typo is loud.
 func TestParseClaimableSeedAssets(t *testing.T) {
 	wantKey := "AQUA:" + seedClaimableIssuer
 
@@ -61,9 +52,7 @@ func TestParseClaimableSeedAssets(t *testing.T) {
 	})
 }
 
-// TestClaimableSeedTally_ObserveTracksMinMaxLedger — the MIN is the operator's
-// evidence that the pass actually reached below the live observer's ledger
-// 63,301,831 floor rather than re-confirming rows that were already there.
+// TestClaimableSeedTally_ObserveTracksMinMaxLedger: the MIN is the evidence that the pass reached below the live observer's floor (ledger 63,301,831).
 func TestClaimableSeedTally_ObserveTracksMinMaxLedger(t *testing.T) {
 	tally := &claimableSeedTally{sum: big.NewInt(0)}
 	if tally.haveLedgerBounds {
@@ -87,10 +76,7 @@ func TestClaimableSeedTally_ObserveTracksMinMaxLedger(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedWriterDryRunTallies — -dry-run must produce the full
-// per-asset report (count + summed balance, as *big.Int per ADR-0003) while
-// buffering nothing for the writer. A dry run that queued rows would flush
-// them on the next non-dry call path.
+// TestClaimableSeedWriterDryRunTallies: -dry-run produces the full per-asset report (count and balance as *big.Int, ADR-0003) while buffering nothing, so rows cannot flush on a later path.
 func TestClaimableSeedWriterDryRunTallies(t *testing.T) {
 	w := &claimableSeedWriter{dryRun: true, tallies: map[string]*claimableSeedTally{}}
 	aqua, usdc := "AQUA:"+seedClaimableIssuer, "USDC:"+seedClaimableIssuer
@@ -128,10 +114,8 @@ func TestClaimableSeedWriterDryRunTallies(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedWriterRowShape — every buffered live row must carry the seed
-// posture: is_removal=false and
-// intra_ledger_seq = SeedIntraLedgerSeq, so a live per-ledger observation can
-// never overwrite the reconstructed final state and a re-seed stays corrective
+// TestClaimableSeedWriterRowShape: buffered rows carry the seed posture (is_removal=false, intra_ledger_seq = SeedIntraLedgerSeq),
+// so a live observation never overwrites the reconstructed final state and a re-seed stays corrective.
 func TestClaimableSeedWriterRowShape(t *testing.T) {
 	w := &claimableSeedWriter{tallies: map[string]*claimableSeedTally{}}
 	if err := w.add(clickhouse.ClaimableBalanceSeed{
@@ -158,9 +142,7 @@ func TestClaimableSeedWriterRowShape(t *testing.T) {
 	}
 }
 
-// TestClaimableSeedWriterTombstone — a tombstone seed is written as an
-// is_removal row at the claim's ledger, counted as a retraction rather than a
-// balance, and resolves its served id.
+// TestClaimableSeedWriterTombstone: a tombstone seed is an is_removal row at the claim's ledger, counted as a retraction, and resolves its served id.
 func TestClaimableSeedWriterTombstone(t *testing.T) {
 	aqua := "AQUA:" + seedClaimableIssuer
 	w := &claimableSeedWriter{
@@ -186,8 +168,7 @@ func TestClaimableSeedWriterTombstone(t *testing.T) {
 	}
 }
 
-// TestUnresolvedClaimablesErr — a served-live balance the walk has no record of
-// fails the pass by name; one newer than the walk's upper ledger is not judged.
+// TestUnresolvedClaimablesErr: a served-live balance the walk has no record of fails the pass by name; one newer than the walk's upper ledger is not judged.
 func TestUnresolvedClaimablesErr(t *testing.T) {
 	unresolved := map[string]timescale.LiveClaimable{
 		"old":   {AssetKey: "AQUA:G1", Ledger: 40_000_000},

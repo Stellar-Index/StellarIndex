@@ -46,10 +46,7 @@ func (f *fakeReplayRewinder) widest() timescale.ProjectionDirtyWindow {
 	return out
 }
 
-// A projector cycle that commits between the replay's cursor read and its
-// rewind makes the re-walk rewrite ledgers above the read. The recorded
-// window and the returned re-walk bound must both cover them, or
-// compute-completeness carries its old clean claim over rewritten rows.
+// A projector cycle committing between the replay's cursor read and its rewind makes the re-walk rewrite ledgers above the read; the recorded window and returned bound must cover them, or compute-completeness keeps a stale clean claim.
 func TestRewindRecordingDirtyWindow_CoversACycleCommittedAfterTheRead(t *testing.T) {
 	const target, read, advanced = 100, 500, 520
 	f := &fakeReplayRewinder{cursorAtRewind: advanced}
@@ -95,9 +92,7 @@ func TestRewindRecordingDirtyWindow_RefusesToRewindWithoutARecord(t *testing.T) 
 	}
 }
 
-// The live projector writes at derive_generation 0, so a replay cannot
-// overwrite a row a re-derive stamped higher; the operator must be told
-// which tool corrects those rows.
+// The live projector writes at derive_generation 0, so a replay cannot overwrite a re-derived higher row; the operator must be told which tool corrects those.
 func TestRewindRecordingDirtyWindow_StatesTheGenerationLimit(t *testing.T) {
 	f := &fakeReplayRewinder{cursorAtRewind: 500}
 	var out strings.Builder

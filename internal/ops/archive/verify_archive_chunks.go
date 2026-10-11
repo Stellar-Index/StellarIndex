@@ -21,15 +21,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// startVerifyArchiveMetrics spins up a tiny http.Server on addr
-// exposing /metrics from the obs Registry. Returns a stop function
-// that gracefully shuts down the server (≤ 5 s for in-flight scrapes
-// to drain). Used when -metrics-listen is supplied.
-//
-// Errors when the bind itself fails (port already in use, perms);
-// scrape failures during the run don't propagate to the caller —
-// the server just logs and continues, so a flaky scraper can't
-// stall verification.
+// startVerifyArchiveMetrics serves /metrics from the obs Registry on addr and returns a stop function (5 s drain).
+// A bind failure is an error; scrape failures are only logged so they cannot stall verification.
 func startVerifyArchiveMetrics(addr string) (func(), error) {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", obs.Handler())
@@ -58,20 +51,8 @@ func startVerifyArchiveMetrics(addr string) (func(), error) {
 	}, nil
 }
 
-// checkResumeFromHash compares the first chunk's FirstPrevHash
-// against an operator-supplied hex hash. Used to prove cross-run
-// continuity: when a previous verification halted partway, the
-// operator records its last verified ledger's hash and passes it on
-// the resume run via -resume-from-hash; this check enforces the
-// boundary explicitly rather than relying on the implicit-overlap
-// proof from re-reading the seam ledger.
-//
-// Errors:
-//   - hex parse failures (operator typo, wrong length) — surfaced
-//     with a clear message that names the expected format.
-//   - hash mismatch — names both hashes + the seam ledger so the
-//     operator can audit which side is wrong (likely indexer or
-//     archive corruption between runs).
+// checkResumeFromHash compares the first chunk's FirstPrevHash with the operator's -resume-from-hash, proving cross-run continuity explicitly.
+// A bad hex string or a mismatch is an error naming the expected format or both hashes and the seam ledger.
 func checkResumeFromHash(expectedHex string, firstPrevHash sdkxdr.Hash, firstSeq uint32) error {
 	expectedBytes, err := hex.DecodeString(expectedHex)
 	if err != nil {
@@ -83,11 +64,7 @@ func checkResumeFromHash(expectedHex string, firstPrevHash sdkxdr.Hash, firstSeq
 	var expected sdkxdr.Hash
 	copy(expected[:], expectedBytes)
 	if expected != firstPrevHash {
-		// A cross-RUN boundary break is the same correctness class as
-		// an in-chunk one: our archive's bytes do not chain onto what
-		// the previous run certified. The two returns above are
-		// operator input errors (bad hex), NOT divergence — they must
-		// not touch the counter.
+		// A cross-RUN boundary break is divergence like an in-chunk one and counts; the bad-hex returns above are input errors and must not.
 		obs.VerifyArchiveMismatchesTotal.WithLabelValues("0", "chain").Inc()
 		return fmt.Errorf("resume-from-hash boundary mismatch at ledger %d:\n"+
 			"  -resume-from-hash         = %s\n"+
@@ -97,13 +74,7 @@ func checkResumeFromHash(expectedHex string, firstPrevHash sdkxdr.Hash, firstSeq
 	return nil
 }
 
-// chunkResult is what verifyChunk returns. Carries the running
-// counters AND the boundary hashes the orchestrator needs to stitch
-// adjacent chunks into one chain-validation pass.
-//
-// Empty (zero-value) firstSeq/lastSeq indicate the chunk processed
-// zero ledgers — only happens when the chunk's range is empty
-// (degenerate splits) or the underlying bucket lacks the range.
+// chunkResult holds a chunk's running counters and boundary hashes for stitching; zero firstSeq/lastSeq means it processed zero ledgers.
 type chunkResult struct {
 	Idx           int
 	From          uint32
@@ -125,22 +96,8 @@ type chunkResult struct {
 	CheckpointsUnmirrored int
 }
 
-// stitchChunks validates the boundary between adjacent NON-EMPTY chunks: the
-// left chunk's last hash must equal the right chunk's first
-// PreviousLedgerHash, and left.LastSeq + 1 must equal right.FirstSeq.
-//
-// Empty chunks (zero ledgers) are skipped when choosing which pairs to
-// compare, but the check is re-targeted at the nearest non-empty neighbours,
-// so an empty chunk cannot absorb an interior gap.
-//
-// A boundary failure increments obs.VerifyArchiveMismatchesTotal with the
-// same reasons as verifyChunk ("sequence" for a gap, "chain" for a hash
-// break), labelled with the LEFT chunk's index. That increment makes the
-// failure pageable: the P1 stellarindex_stellar_archive_divergence rule
-// selects that counter, so without it a break on a worker-chunk boundary
-// would only surface as the ticket-severity
-// stellarindex_verify_archive_unit_failed. verify_archive_textfile.go exports
-// the counter.
+// stitchChunks validates the boundary between adjacent NON-EMPTY chunks (hash chain and LastSeq+1 == FirstSeq), so an empty chunk cannot absorb a gap.
+// A failure increments obs.VerifyArchiveMismatchesTotal ("sequence" or "chain", labelled with the LEFT chunk) so it pages via the P1 divergence rule.
 func stitchChunks(results []chunkResult) error {
 	nonEmpty := make([]chunkResult, 0, len(results))
 	for _, r := range results {
@@ -189,9 +146,7 @@ const (
 	checkpointAnchorUnmirrored
 )
 
-// String is the `outcome` label value on
-// obs.VerifyArchiveCheckpointsTotal. "matched"/"missed" are the
-// pre-existing values and keep their meaning; "unmirrored" is new.
+// String is the `outcome` label value on obs.VerifyArchiveCheckpointsTotal; "unmirrored" is the newest value.
 func (o checkpointAnchorOutcome) String() string {
 	switch o {
 	case checkpointAnchorMatched:
@@ -204,20 +159,9 @@ func (o checkpointAnchorOutcome) String() string {
 	return "unknown"
 }
 
-// classifyCheckpointAnchor reads the cross-anchor mirror's canonical
-// header hash for checkpoint seq and classifies it against ours.
-//
-// An ABSENT file is only "missed" when the mirror claims to cover
-// that checkpoint. Above the mirror's high-water the walk is simply
-// ahead of the fill job — on r1 the mirror is filled at 02:2x UTC and
-// the tier-B walk runs at 04:38 UTC, so ~23 checkpoints closed in
-// between are absent on every single run, by design. Counting those
-// as missing archive data would make ADR-0017's hard invariant
-// unenforceable on the deployed path: the flag that enforces it could
-// not be turned on without failing every night.
-//
-// Errors (read failure, hash divergence) abort the chunk walk; the
-// caller bumps the mismatch counter and propagates.
+// classifyCheckpointAnchor classifies the mirror's header hash for checkpoint seq against ours. An ABSENT file is "missed" only when the mirror
+// covers that checkpoint; above its high-water the walk is ahead of the fill job by design, and counting those would make ADR-0017's invariant unenforceable.
+// Read failures and hash divergence abort the chunk walk.
 func classifyCheckpointAnchor(archiveRoot string, seq uint32, ourHash sdkxdr.Hash, cov archiveMirrorCoverage) (checkpointAnchorOutcome, error) {
 	expected, hit, err := readArchivedLedgerHash(archiveRoot, seq)
 	switch {
@@ -236,21 +180,8 @@ func classifyCheckpointAnchor(archiveRoot string, seq uint32, ourHash sdkxdr.Has
 	return checkpointAnchorMatched, nil
 }
 
-// verifyChunk walks one chunk's ledger range and returns the
-// counters + boundary hashes the orchestrator needs to stitch
-// chunks. Pure walk-logic — no parent-context creation, no flag
-// parsing; the caller controls those.
-//
-// Every chunk validates ledger N's PreviousLedgerHash against ledger
-// N-1's hash within this chunk, whatever the tier: sequence/hash
-// continuity is intrinsic to the LCM stream and costs nothing extra,
-// and gating it on the "chain" tier would leave a checkpoint-only run
-// (Tier B, the nightly) with no gap detection at all.
-// Cross-chunk boundaries are validated by stitchChunks instead.
-//
-// Errors abort the chunk's walk; the orchestrator's errgroup
-// cancels sibling chunks. The verification semantics match a serial
-// single-chunk walk one-for-one.
+// verifyChunk walks one chunk and returns counters and boundary hashes. Every chunk checks PreviousLedgerHash continuity whatever the tier,
+// or a checkpoint-only run would have no gap detection; cross-chunk boundaries are stitchChunks's job. Errors abort the walk.
 //
 //nolint:gocognit,funlen,gocyclo // walk-loop linearity beats premature splitting
 func verifyChunk(
@@ -366,34 +297,15 @@ type chunkOrchestratorOpts struct {
 	// false) treats every absent checkpoint as missed.
 	MirrorCoverage archiveMirrorCoverage
 
-	// ChunkIdxs maps each position in `chunks` to the chunk's
-	// ORIGINAL idx in the parent run's full pre-resume chunk list.
-	// nil ⇒ identity (0, 1, …, len(chunks)-1). When resume has
-	// filtered already-Done chunks out, this preserves the original
-	// numbering so the progress log + state-file row stay
-	// consistent across restarts ("chunk[5]" always means the same
-	// 5M-ledger slice).
+	// ChunkIdxs maps each position in chunks to its ORIGINAL idx in the pre-resume list (nil is identity), keeping progress logs and state rows consistent.
 	ChunkIdxs []int
 
-	// OnChunkDone is invoked synchronously after each chunk's
-	// walker returns without error, with the chunk's original idx
-	// and its terminal chunkResult. nil ⇒ no-op. The caller
-	// (verifyArchiveLCMWalk) writes a state-file update marking
-	// the chunk Done so a subsequent SIGTERMed run can skip it.
+	// OnChunkDone is called synchronously after each chunk succeeds (nil is a no-op); the caller marks the chunk Done in the state file.
 	OnChunkDone func(originalIdx int, res chunkResult)
 }
 
-// runVerifyChunks orchestrates parallel chunk verification. Splits
-// the range, runs `workers` chunks concurrently via errgroup,
-// stitches boundary hashes after all chunks complete.
-//
-// First chunk error cancels siblings (errgroup semantics) — fail-fast
-// matches the serial walk's behaviour where a single mismatch
-// aborts the whole verification.
-//
-// Returns the aggregated chunkResult counters as a single
-// chunkResult (Idx=-1, From/To = the input range) for the orchestrator
-// to print as the final summary, plus any walk error.
+// runVerifyChunks splits the range, runs chunks concurrently via errgroup (first error cancels siblings), stitches boundaries,
+// and returns the aggregated chunkResult (Idx=-1).
 func runVerifyChunks(
 	ctx context.Context,
 	lsCfg ledgerstream.Config,

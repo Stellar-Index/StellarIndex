@@ -16,8 +16,7 @@ import (
 
 const signalHelperEnv = "OPSUTIL_SIGNAL_HELPER"
 
-// The scenarios run in a re-exec'd child because the property under test
-// is whether the process dies on a signal, which would kill the test binary.
+// TestSignalContextHelperProcess runs the scenarios in a re-exec'd child, since the property under test (the process dies on a signal) would kill the test binary.
 func TestSignalContextHelperProcess(t *testing.T) {
 	mode := os.Getenv(signalHelperEnv)
 	if mode == "" {

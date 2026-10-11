@@ -171,11 +171,7 @@ func readLines(t *testing.T, path string) []string {
 	return strings.Fields(string(b))
 }
 
-// TestTrimCutoffBecomesFillFloor: after the trim's ExecStartPre computes its
-// cutoff, the next fill must not re-mirror any partition the trim is about to
-// delete (every file below the cutoff). With the floor sourced from a static
-// inventory var (default 0) instead, the fill re-downloads the whole trimmed
-// range every hour.
+// TestTrimCutoffBecomesFillFloor: the fill must not re-mirror partitions below the trim's cutoff, which the trim is about to delete.
 func TestTrimCutoffBecomesFillFloor(t *testing.T) {
 	t.Parallel()
 	h := newFillHarness(t)
@@ -227,9 +223,7 @@ func TestTrimCutoffBecomesFillFloor(t *testing.T) {
 	}
 }
 
-// TestFillRefusesConcurrentRun: a second fill (a manual PARTIALS=... run while
-// the timer's run is mid-mirror) must not start, whoever invoked it — its
-// work lists would otherwise be rewritten under the first run's xargs.
+// TestFillRefusesConcurrentRun: a second fill must not start, or its work lists are rewritten under the first run's xargs.
 func TestFillRefusesConcurrentRun(t *testing.T) {
 	t.Parallel()
 	h := newFillHarness(t)
@@ -255,10 +249,7 @@ func TestFillRefusesConcurrentRun(t *testing.T) {
 	}
 }
 
-// TestFillMirrorsNothingWhenNothingIsMissing: with the local archive already
-// matching AWS the needs-work list is empty, and Phase 3 must make no mirror
-// call. An xargs that runs its command once on empty input hands the worker
-// an empty partition, which mirrors the whole pubnet bucket past the floor.
+// TestFillMirrorsNothingWhenNothingIsMissing: an empty needs-work list makes no mirror call; xargs on empty input would mirror the whole bucket past the floor.
 func TestFillMirrorsNothingWhenNothingIsMissing(t *testing.T) {
 	t.Parallel()
 	h := newFillHarness(t)
@@ -275,10 +266,7 @@ func TestFillMirrorsNothingWhenNothingIsMissing(t *testing.T) {
 	}
 }
 
-// TestFillRefusesNonPartitionNames: partition names come from the upstream
-// bucket listing and the fill runs as root. A listed name that is not a
-// Galexie partition must never be parsed as shell or used as an mc path; the
-// valid partitions are still mirrored and the run then fails loudly.
+// TestFillRefusesNonPartitionNames: upstream names are never parsed as shell or used as an mc path; valid ones still mirror.
 func TestFillRefusesNonPartitionNames(t *testing.T) {
 	t.Parallel()
 	h := newFillHarness(t)
@@ -306,9 +294,7 @@ func TestFillRefusesNonPartitionNames(t *testing.T) {
 	}
 }
 
-// TestFillRefusesBadPartialsBeforeDeleting: PARTIALS is operator input fed to
-// `mc rm --recursive --force`. One entry that is not a partition refuses the
-// whole list before anything is deleted; a valid list deletes exactly those.
+// TestFillRefusesBadPartialsBeforeDeleting: PARTIALS feeds `mc rm --recursive --force`, so one invalid entry refuses the list before any delete.
 func TestFillRefusesBadPartialsBeforeDeleting(t *testing.T) {
 	t.Parallel()
 	h := newFillHarness(t)
@@ -336,9 +322,7 @@ func TestFillRefusesBadPartialsBeforeDeleting(t *testing.T) {
 	}
 }
 
-// TestFillHonoursArchiveDest: a node filling a remote object store sets
-// ARCHIVE_DEST; every listing, delete and mirror must target it, and none
-// may fall back to the local MinIO bucket.
+// TestFillHonoursArchiveDest: with ARCHIVE_DEST set, every listing, delete and mirror targets it and never the local MinIO bucket.
 func TestFillHonoursArchiveDest(t *testing.T) {
 	t.Parallel()
 	h := newFillHarness(t)
@@ -371,9 +355,7 @@ func TestFillHonoursArchiveDest(t *testing.T) {
 	}
 }
 
-// TestFillRefusesMalformedArchiveDest: ARCHIVE_DEST prefixes a recursive
-// force-delete, so a value naming an alias root, a bucket root with a
-// trailing slash, or a relative segment stops the run before any mc call.
+// TestFillRefusesMalformedArchiveDest: ARCHIVE_DEST prefixes a recursive force-delete, so a malformed value stops the run before any mc call.
 func TestFillRefusesMalformedArchiveDest(t *testing.T) {
 	t.Parallel()
 	const good = "FFD5FFFF--2688000-2751999"

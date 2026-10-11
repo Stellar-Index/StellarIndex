@@ -31,34 +31,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// SorobanEventsPseudoSource is the backfill-only source name that
-// populates the `soroban_events` raw-event landing zone (ADR-0029).
-// It is NOT registered with internal/sources/external.Registry —
-// soroban-events is a pseudo-source: the catch-all dispatcher hook
-// sees every event regardless of per-source decoder routing, so
-// the backfill swaps the per-source decoder chain for "no decoders,
-// raw sink only" when this name is requested.
-//
-// Used as -source soroban-events on the ops command line. Not
-// permitted alongside other sources in the same invocation (the
-// pseudo-source isn't a peer of trades / oracles — it's the
-// distinct "raw-event capture" mode of operation).
+// SorobanEventsPseudoSource is the backfill-only source that populates the soroban_events landing zone (ADR-0029).
 const SorobanEventsPseudoSource = "soroban-events"
 
-// stellarindex-ops backfill: replays a bounded ledger range through the same
-// dispatcher + decoder + sink path the live indexer uses; CAGGs auto-materialise
-// on the inserted rows. It differs from the indexer in three ways:
-//
-//  1. Bounded range [-from, -to]; ledgerstream.Stream exits at -to, no live tail.
-//  2. No cursor row written: sharing the indexer's `ledgerstream` cursor would
-//     make the indexer mis-resume from a historical ledger on its next start.
-//  3. BackfillSafe gate: every on-chain Soroban source is BackfillSafe=false until
-//     its decoder is audited against every WASM version that ran in the range
-//     (contracts upgrade in place). Backfill refuses an unsafe source.
-//
-// Idempotency is the storage layer's job: trades dedupes on (source, ledger,
-// tx_hash, op_index, ts), so a re-run is a no-op only when the replay reproduces
-// the same timestamp.
+// stellarindex-ops backfill replays a bounded ledger range through the live dispatcher + decoder + sink path. Unlike the indexer it writes no
+// cursor on the shared `ledgerstream` row (the indexer would resume from a historical ledger) and refuses sources that are not BackfillSafe
+// (contracts upgrade in place). Idempotency is the storage layer's: trades dedupes on (source, ledger, tx_hash, op_index, ts).
 
 // backfillOpts holds the parsed + validated CLI inputs. Pulled out
 // of the entry point so flag-parsing + validation are unit-testable
@@ -72,20 +50,9 @@ type backfillOpts struct {
 	dryRun   bool
 	resume   bool // when true, look up the prior cursor and skip already-processed ledgers
 	parallel int  // number of concurrent chunks to run; 1 = sequential (default)
-	// refreshCAGGs controls the post-chunk continuous-aggregate
-	// materialisation call. Defaults to true. Without it a backfilled
-	// range's CAGG buckets stay unmaterialised until the policy
-	// refresher's natural cadence picks the inserts up. Operators
-	// should leave this on; the only legitimate reason to disable
-	// is debugging a refresh failure where re-running the
-	// underlying chunk is the desired recovery path.
+	// refreshCAGGs controls the post-chunk CAGG materialisation; leave on unless debugging a refresh failure.
 	refreshCAGGs bool
-	// heartbeat publishes liveness + progress for the whole run.
-	// Shared by every chunk goroutine — JobHeartbeat is
-	// mutex-guarded and walkedTotal is atomic, so the per-chunk
-	// callbacks can report into it concurrently. nil-safe: an inert
-	// heartbeat (no node_exporter textfile dir) makes every call a
-	// no-op, which is the laptop/CI case.
+	// heartbeat is shared by every chunk goroutine (mutex-guarded, atomic walkedTotal); an inert heartbeat makes every call a no-op.
 	heartbeat   *opsutil.JobHeartbeat
 	walkedTotal *atomic.Uint64
 	// heartbeatPath is the -heartbeat flag: an explicit node_exporter
@@ -119,13 +86,7 @@ type chunkRange struct {
 	to   uint32
 }
 
-// planBackfillChunks splits [from, to] into n contiguous,
-// non-overlapping sub-ranges. The last chunk absorbs any rounding
-// remainder so the union of the chunks covers [from, to] exactly.
-//
-// Caller invariants (enforced by parseBackfillFlags): n >= 1,
-// to >= from. With n == 1, returns the original range as a single
-// chunk (sequential mode, same shape as the pre-parallelism path).
+// planBackfillChunks splits [from, to] into n contiguous sub-ranges; the last absorbs rounding so the union is exact. Callers guarantee n >= 1, to >= from.
 func planBackfillChunks(from, to uint32, n int) []chunkRange {
 	if n <= 1 {
 		return []chunkRange{{from: from, to: to}}
@@ -156,11 +117,7 @@ func planBackfillChunks(from, to uint32, n int) []chunkRange {
 // pollute the indexer's resume position.
 const backfillCursorSource = "backfill"
 
-// backfillCursorSub returns the sub-source key that distinguishes
-// concurrent / overlapping backfill runs. We need the (from, to,
-// sorted-sources) tuple in the key so two operators replaying
-// different ranges or different source subsets don't share a cursor
-// row and step on each other.
+// backfillCursorSub keys the cursor on (from, to, sorted sources) so concurrent or overlapping runs never share a cursor row.
 func backfillCursorSub(opts backfillOpts) string {
 	sorted := make([]string, len(opts.sources))
 	copy(sorted, opts.sources)
@@ -196,16 +153,8 @@ func backfill(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	// The main on-chain backfill re-processes ledgers that may overlap live
-	// ingest (gap-fill within the trades window / running alongside live). It
-	// writes the same trade PKs, so ON CONFLICT UPDATEs the existing rows.
-	// Without the USD-volume resolvers installed it computes usd_volume=NULL
-	// and — at the default gen 0 — still wins the guard (0<=0), overwriting
-	// live-ingested correct values with NULL. Mirror the indexer /
-	// backfill_external / ch_rebuild wiring: a positive generation so a
-	// corrected re-derive is authoritative, AND the resolvers so it writes
-	// real values (not NULL). The reDeriveNullVolumeGuard backstops any
-	// future omission.
+	// Re-processing may overlap live ingest and ON CONFLICT UPDATE the same trade PKs: install the USD-volume resolvers and a positive generation
+	// so the rewrite carries real values, not NULL (see reDeriveNullVolumeGuard).
 	store.SetDeriveGeneration(time.Now().Unix())
 	if err := timescale.InstallUSDVolumeResolution(
 		store,
@@ -249,12 +198,7 @@ func backfill(args []string) error {
 		return err
 	}
 
-	// Parallel path. Each chunk is independent: its own dispatcher,
-	// its own events channel, its own PersistEvents goroutine, its
-	// own cursor row keyed on the chunk-specific (from, to). The
-	// shared store's connection pool fans across chunks (postgres
-	// max_connections is the only ceiling — typical 100 vs ~3 conns
-	// per chunk = 30+ chunks supported on stock config).
+	// Parallel path: each chunk has its own dispatcher, channel, PersistEvents goroutine and cursor row; the shared pool is capped by postgres max_connections.
 	if err := runChunksGuarded(logger, "backfill-chunk", chunks, func(chunkLogger *slog.Logger, c chunkRange) error {
 		return runBackfillChunk(rootCtx, chunkLogger, opts, cfg, store, c)
 	}); err != nil {
@@ -271,13 +215,7 @@ func backfill(args []string) error {
 	return nil
 }
 
-// runChunkGuarded runs one chunk's work (run) with panic recovery so a
-// panic inside a single parallel chunk cannot take the whole backfill
-// process down: an unrecovered panic in any goroutine terminates
-// the entire Go process, not just the goroutine that panicked. The
-// panicking chunk is reported via worker.Report (same accounting as every
-// other detached worker) and surfaced through errCh so the backfill still
-// returns a non-nil error instead of silently completing short.
+// runChunkGuarded recovers a panic in one chunk (it would otherwise kill the process), reports it via worker.Report and returns it through errCh so the backfill still fails.
 func runChunkGuarded(logger *slog.Logger, name string, i int, c chunkRange, errCh chan<- error, wg *sync.WaitGroup, run func() error) {
 	defer wg.Done()
 	defer func() {
@@ -314,15 +252,7 @@ func runChunksGuarded(logger *slog.Logger, name string, chunks []chunkRange, run
 	return errors.Join(combined...)
 }
 
-// buildChunkDispatcher constructs the per-chunk dispatcher and,
-// when the soroban-events pseudo-source is in play, wires the
-// RawEventSink (ADR-0029). Returns the dispatcher + the sink (nil
-// when not pseudo so the caller can branch on it for teardown).
-//
-// Factored out of runBackfillChunk to keep that function within
-// the funlen limit; the dispatcher-construction surface had grown
-// to ~50 lines that read linearly but blew the limit when combined
-// with the chunk lifecycle.
+// buildChunkDispatcher builds the per-chunk dispatcher and, for the soroban-events pseudo-source, wires the RawEventSink (ADR-0029); the sink is nil otherwise.
 func buildChunkDispatcher(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -354,11 +284,7 @@ func buildChunkDispatcher(
 
 	var soroswapOpts []soroswap.DecoderOption
 	if !pseudo && len(realSources) > 0 {
-		// Soroswap pair registry — load and arm live-upsert. Each
-		// chunk runs its own dispatcher so each calls this
-		// independently; the store is shared so chunks see each
-		// other's upserted pairs on next load. See
-		// internal/pipeline/soroswap_registry.go.
+		// Each chunk loads and arms the Soroswap pair registry itself; the store is shared, so chunks see each other's upserts (pipeline/soroswap_registry.go).
 		var err error
 		soroswapOpts, err = pipeline.SoroswapPersistenceOptions(ctx, store, logger, ctx)
 		if err != nil {
@@ -394,12 +320,7 @@ func buildChunkDispatcher(
 	return disp, rawSink, nil
 }
 
-// runBackfillChunk processes a single chunkRange end-to-end:
-// dispatcher build → events channel → PersistEvents goroutine →
-// ledgerstream over [chunk.from, chunk.to] → cursor upsert per
-// ledger. Cursor sub_source is chunk-specific (uses chunk.from /
-// chunk.to, NOT the overall opts.from / opts.to) so concurrent
-// chunks never share a cursor row.
+// runBackfillChunk processes one chunk end to end; its cursor sub_source uses chunk.from/to, never the overall range, so chunks never share a cursor row.
 //
 //nolint:gocognit,funlen // chunk lifecycle is linear setup → stream → teardown; splitting reduces readability of dependency-construction order.
 func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpts, cfg config.Config, store *timescale.Store, chunk chunkRange) error { //nolint:gocyclo // one cohesive backfill orchestration: chunk stream -> async drain -> post-drain durable cursor; splitting scatters the watermark narrative
@@ -448,15 +369,7 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		persistLoss = pipeline.PersistEvents(ctx, logger, store, events, pipeline.SinkModeAll, nil)
 	}()
 
-	// Ctx-cancel safety net for the raw-event sink (ADR-0029).
-	// PushEvent applies back-pressure (blocks when the buffer is
-	// full) — required for cursor coherence — but the dispatcher's
-	// hot path has no ctx awareness, so a blocked PushEvent would
-	// pin the Stream callback even after rootCtx is cancelled. If
-	// ctx fires while the producer is mid-dispatch we early-Stop
-	// the sink so blocked PushEvent calls unblock via the stopping
-	// channel, the dispatcher returns, and ledgerstream.Stream can
-	// honour cancellation.
+	// Ctx-cancel safety net (ADR-0029): PushEvent back-pressure has no ctx awareness, so early-Stop the sink on cancel to unblock the dispatcher.
 	if rawSink != nil {
 		go func() {
 			select {
@@ -468,20 +381,10 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	}
 
 	streamCfg := pipeline.LedgerstreamConfig(cfg, opts.bucket)
-	// Count actual LCM callbacks so the chunk-complete log line can
-	// distinguish "this chunk walked N ledgers" from "the chunk
-	// covered an N-ledger range." On a run against a bucket with no
-	// files in the target range, a `ledgers=` value holding the chunk's
-	// [from,to] range size reads as a false-positive "backfill
-	// complete", and the operator moves on with the gap unfilled.
+	// Count actual LCM callbacks: a chunk that walked nothing must not log a range size as "ledgers=" and read as complete.
 	var (
 		walked uint64
-		// lastFullyEnqueued is the last ledger whose events were FULLY enqueued onto the
-		// sink channel (ProcessLedger returned nil). This is NOT yet a
-		// "durably persisted" marker — the async PersistEvents drain (+
-		// batched trades + the soroban rawSink) commit the rows later. The
-		// cursor is advanced to this value only AFTER the drain below
-		// confirms every enqueued row landed.
+		// lastFullyEnqueued is the last ledger fully enqueued onto the sink channel, not yet durable; the cursor advances only after the drain confirms it landed.
 		lastFullyEnqueued uint32
 	)
 	streamErr := ledgerstream.Stream(ctx, streamCfg, startFrom, chunk.to,
@@ -497,13 +400,7 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 			if opts.walkedTotal != nil {
 				opts.heartbeat.Progress(opts.walkedTotal.Add(1), uint64(lcm.LedgerSequence()))
 			}
-			// DO NOT advance the cursor here. Advancing at enqueue time
-			// would move the resume watermark PAST rows still buffered in the
-			// sink channel / trade batch / rawSink — a crash between this
-			// enqueue and the async commit would lose those rows with the
-			// cursor already beyond them. Record only the last fully-enqueued
-			// ledger; the durable advance happens after <-sinkDone +
-			// rawSink.Stop() below prove the rows committed.
+			// Do not advance the cursor here: rows are still buffered, and a crash before the async commit would lose them behind the watermark. The durable advance follows <-sinkDone and rawSink.Stop().
 			lastFullyEnqueued = lcm.LedgerSequence()
 			return nil
 		},
@@ -517,30 +414,11 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	// is durable; every checkpoint below uses the capped value.
 	lastFullyEnqueued, lossErr := capCheckpointAtLoss(lastFullyEnqueued, startFrom, persistLoss, rawMin, rawUnlanded)
 
-	// The resume cursor advances ONLY after this point, and ONLY after a
-	// successful — or explicitly-skipped — CAGG refresh below. The sink
-	// goroutine has fully drained (<-sinkDone: every enqueued event either
-	// committed or block-and-retried per ADR-0041) and the soroban rawSink
-	// has flushed its final batch (Stop above), and lastFullyEnqueued is
-	// capped below anything either dropped or abandoned, so every row
-	// for ledgers [startFrom, lastFullyEnqueued] is durable — but a chunk
-	// is not "complete" for resume purposes until its CAGGs are
-	// materialised too: the resume gate below (`c.LastLedger >=
-	// chunk.to` → short-circuit, skip re-walk AND re-refresh) would
-	// otherwise trust a chunk whose trades are durably inserted but
-	// still invisible to the served price views, and a crash between
-	// an early cursor-advance and materialisation would leave them
-	// un-refreshed forever.
+	// The cursor advances only after the sink drained (ADR-0041), the rawSink flushed, and the CAGG refresh succeeded or was skipped: the resume gate
+	// (`c.LastLedger >= chunk.to`) would otherwise trust a chunk whose trades are invisible to served views.
 	streamFailed := streamErr != nil && !errors.Is(streamErr, context.Canceled)
 	if streamFailed || (lossErr != nil && ctx.Err() == nil) {
-		// The stream itself aborted, or a sink left rows unlanded (the
-		// cursor is already capped below them). Still checkpoint whatever fully
-		// drained before the abort — those rows are durably committed
-		// above — so a resume continues from the failure point instead
-		// of restarting the whole chunk. This does NOT wait for a CAGG
-		// refresh: the chunk failed outright (the returned error fails
-		// the run visibly), and a subsequent successful resume performs
-		// its own CAGG refresh before ITS checkpoint.
+		// Stream aborted or a sink left rows unlanded: still checkpoint what drained so a resume continues from the failure point. No CAGG refresh wait; a resume does its own before its checkpoint.
 		checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment
 		if !streamFailed {
 			return lossErr
@@ -559,20 +437,8 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		return ierr
 	}
 
-	// Report BOTH the chunk's range size and the count of ledgers
-	// actually walked; when they differ, the bucket was missing
-	// files. Fail loudly on a complete miss across a non-zero range —
-	// that's almost always a mistargeted bucket (wrong --bucket flag,
-	// wrong endpoint, wrong region), and a silent success would send
-	// a false-positive "gap filled" signal.
-	//
-	// A PARTIAL walk fails too — see backfillChunkCoverage.
-	// The check sits BEFORE the CAGG refresh and the completing
-	// checkpoint so a short chunk is never refreshed-and-recorded as
-	// done; the rows that did drain are checkpointed exactly as the
-	// stream-abort branch above does, so a -resume continues from the
-	// truncation point (and fails again, loudly, while the objects are
-	// still absent).
+	// Report the chunk's range and the walked count: a complete miss on a non-zero range is almost always a wrong bucket and must fail loudly, as must a partial walk
+	// (backfillChunkCoverage). This runs BEFORE the CAGG refresh and completing checkpoint; drained rows are still checkpointed so -resume continues from the truncation point.
 	if cerr := backfillChunkCoverage(chunk, startFrom, walked, opts.bucket); cerr != nil {
 		logger.Error("chunk INCOMPLETE",
 			"from", chunk.from,
@@ -599,22 +465,8 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	case pseudo:
 		logger.Info("skipping CAGG refresh — soroban-events has no CAGGs")
 	case opts.refreshCAGGs:
-		// Force-materialise the long-lived CAGGs over the chunk's
-		// timestamp range. Raw `trades` carry no retention policy
-		// (migration 0031, ADR-0034), so this is a correctness-of-the-
-		// served-view concern, not a data-loss one: without this refresh the
-		// backfilled range's CAGG buckets stay unmaterialised — the
-		// rows are in `trades` but absent from every OHLC/VWAP read —
-		// until the next policy run or a manual refresh covers them.
-		//
-		// Every aggregate rooted on a table the chunk wrote is refreshed
-		// ([timescale.TradesCAGGs], [timescale.OracleCAGGs]): a view left
-		// out keeps a permanent hole in every backfilled range.
-		//
-		// A refresh failure here is FATAL to the chunk — the function returns
-		// before the checkpoint below, so the durable cursor does NOT advance
-		// past an unmaterialised chunk. A resume re-walks and re-attempts the
-		// refresh.
+		// Force-materialise every CAGG rooted on a table the chunk wrote ([timescale.TradesCAGGs], [timescale.OracleCAGGs]); an omitted view keeps a permanent hole in served OHLC/VWAP.
+		// A refresh failure is fatal to the chunk and the cursor does not advance, so a resume re-attempts it.
 		if err := refreshCAGGsForChunk(ctx, logger, store, chunk); err != nil {
 			return fmt.Errorf("post-chunk CAGG refresh: %w", err)
 		}
@@ -628,25 +480,10 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	return nil
 }
 
-// backfillChunkCoverage turns a chunk walk that did not cover its range into a
-// hard error, naming the bucket it read.
-//
-// Erroring on walked == 0 alone fails open. pipeline.LedgerstreamConfig opts every
-// walk into TolerateTrailingMissing, and ledgerstream measures that window against
-// the walk's own `to` (the CHUNK's top, not the network tip), so for any chunk
-// "trailing edge" degrades to "anywhere in the range": a missing object ends the
-// walk WITHOUT an error, and the SDK drops its prefetch buffer so it stops up to a
-// buffer short of the hole. Without this check the chunk would log "chunk
-// complete" and exit 0, leaving a trade hole whose only evidence is a success.
-//
-// The default bucket is the archive, an hourly mirror of live, so a `-to` near the
-// tip legitimately comes up short; that is an incomplete backfill too. Failing
-// closed costs a `-resume` re-run (writes are idempotent); failing open costs a
-// hole nobody looks for.
-//
-// `startFrom` is the ledger this run started at (post-resume), not chunk.from:
-// ledgers banked by an earlier run must not be re-charged here (same rule as
-// censusCoverage).
+// backfillChunkCoverage turns a chunk walk that did not cover its range into a hard error naming the bucket.
+// Fail closed: ledgerstream tolerates a missing object anywhere in the chunk (TolerateTrailingMissing is measured against the chunk's own `to`) and
+// stops short without error, so walked == 0 alone fails open and leaves a hole whose only evidence is a success. The archive mirrors live hourly, so a
+// `-to` near the tip also comes up short; a `-resume` re-run is cheap (writes are idempotent). startFrom is the post-resume start, so earlier-banked ledgers are not re-charged.
 func backfillChunkCoverage(chunk chunkRange, startFrom uint32, walked uint64, bucket string) error {
 	if startFrom > chunk.to {
 		return nil // nothing was requested of this run
@@ -674,11 +511,7 @@ func backfillChunkCoverage(chunk chunkRange, startFrom uint32, walked uint64, bu
 	return nil
 }
 
-// drainRawSink stops the soroban-events sink (nil when not wired),
-// letting it flush its residual buffer under its own drain grace, and
-// reports the lowest ledger it dropped or abandoned. A drop is not only
-// a hard-kill artefact: a graceful SIGINT while the sink applies
-// back-pressure drops the rest of the in-flight ledger's rows.
+// drainRawSink stops the soroban-events sink (nil when not wired), flushes its buffer and returns the lowest ledger it dropped or abandoned; a graceful SIGINT under back-pressure also drops rows.
 func drainRawSink(logger *slog.Logger, rawSink *sorobanevents.AsyncSink) (uint32, bool) {
 	if rawSink == nil {
 		return 0, false
@@ -703,11 +536,7 @@ func drainRawSink(logger *slog.Logger, rawSink *sorobanevents.AsyncSink) (uint32
 	return rawSink.LowestUnlandedLedger()
 }
 
-// capCheckpointAtLoss lowers the resume checkpoint below the first row a
-// sink failed to land, and returns an error naming the loss so the chunk
-// fails. An abandoned row with no ledger (a non-trade served-tier event)
-// gives no safe cap, so the checkpoint falls below startFrom: nothing new
-// is recorded and a resume re-walks the chunk's remainder (idempotent).
+// capCheckpointAtLoss lowers the resume checkpoint below the first row a sink failed to land and returns an error naming the loss. A loss with no ledger gives no safe cap, so the checkpoint falls below startFrom and a resume re-walks the remainder.
 func capCheckpointAtLoss(lastFullyEnqueued, startFrom uint32, loss pipeline.ShutdownLoss, rawMin uint32, rawUnlanded bool) (uint32, error) {
 	if loss.Rows == 0 && !rawUnlanded {
 		return lastFullyEnqueued, nil
@@ -756,13 +585,7 @@ func interruptedCheckpoint(chunk chunkRange, lastFullyEnqueued uint32) uint32 {
 	return lastFullyEnqueued
 }
 
-// checkpointBackfillChunk durably advances the backfill cursor to
-// lastFullyEnqueued. No-op when nothing was fully enqueued (or
-// enqueued below startFrom — nothing new to record). Uses a FRESH
-// bounded context: on a graceful SIGINT the parent ctx is already
-// canceled by the time callers reach this point, and passing it would
-// make the checkpoint fail instantly — silently discarding the resume
-// watermark for the ledgers just drained.
+// checkpointBackfillChunk durably advances the cursor to lastFullyEnqueued (no-op if nothing new). It uses a FRESH bounded context: on SIGINT the parent ctx is already cancelled and would discard the resume watermark.
 func checkpointBackfillChunk(logger *slog.Logger, store *timescale.Store, cursorSub string, lastFullyEnqueued, startFrom uint32) {
 	if lastFullyEnqueued == 0 || lastFullyEnqueued < startFrom {
 		return
@@ -776,11 +599,7 @@ func checkpointBackfillChunk(logger *slog.Logger, store *timescale.Store, cursor
 	}
 }
 
-// caggRefresher is the storage seam refreshCAGGsForChunk depends on —
-// split out so its failure-aggregation logic (a per-view failure must
-// make the WHOLE refresh fail, not just log and continue) is
-// unit-testable with a fake, without a live Postgres. *timescale.Store
-// satisfies this structurally.
+// caggRefresher is the storage seam for refreshCAGGsForChunk, so its failure aggregation is testable with a fake; *timescale.Store satisfies it.
 type caggRefresher interface {
 	LedgerRangeToTimeRange(ctx context.Context, from, to uint32) (time.Time, time.Time, error)
 	LedgerRangeToOracleTimeRange(ctx context.Context, from, to uint32) (time.Time, time.Time, error)
@@ -788,36 +607,14 @@ type caggRefresher interface {
 	timescale.CAGGStepRefresher
 }
 
-// caggRefreshMu serialises the refresh loop across every `-parallel` worker in
-// this process.
-//
-// TimescaleDB rejects the loser of two concurrent refreshes of the SAME aggregate
-// with 55P03 immediately instead of waiting. [timescale.Store.RefreshContinuousAggregate]
-// absorbs that with a bounded retry, enough for cheap views but not for prices_1m,
-// the first and longest rung (cost scales with the chunk's trade count). A worker
-// that loses that race fails, a refresh failure is fatal to the chunk, and the
-// cursor does not checkpoint.
-//
-// The lock is broader than the race: 55P03 is per aggregate, so one mutex also
-// serialises refreshes of different views (W×V×t instead of (W+V−1)×t). Decode +
-// insert, where a backfill's wall-clock goes, stays parallel outside the lock. A
-// failed chunk costs more than the lost throughput at V=19 views; a per-view lock
-// is the shape to reach for if the refresh tail ever dominates. The retry budget
-// is left for genuine contention from another process.
+// caggRefreshMu serialises CAGG refreshes across `-parallel` workers in this process. TimescaleDB rejects the loser of two concurrent
+// refreshes of the same aggregate with 55P03, and the bounded retry is not enough for prices_1m; the lock is broader than the race on purpose.
+// Decode + insert stay parallel outside it. Consider a per-view lock if the refresh tail ever dominates.
 var caggRefreshMu sync.Mutex
 
-// refreshCAGGsForChunk refreshes every aggregate rooted on a table the
-// chunk wrote — [timescale.TradesCAGGs] over the chunk's trades time
-// span, [timescale.OracleCAGGs] over its oracle_updates span — in
-// [timescale.PlanCAGGRefresh] order, so twap_* re-materialise only after
-// prices_1m has been forced under them. Idempotent.
-//
-// Every independent view is still attempted after one fails — a single
-// wedged view must not leave the rest un-materialised — but any failure
-// makes the function return a non-nil error, so the caller does NOT
-// advance the durable cursor past the chunk. A view built on prices_1m is
-// skipped when prices_1m's own refresh failed: recomputing it from stale
-// minute rows would overwrite good history.
+// refreshCAGGsForChunk refreshes every aggregate rooted on a table the chunk wrote in [timescale.PlanCAGGRefresh] order. Idempotent.
+// Every independent view is attempted after one fails, but any failure returns an error so the cursor does not advance; views built on prices_1m
+// are skipped when its refresh failed, since recomputing from stale minute rows would overwrite good history.
 func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store caggRefresher, chunk chunkRange) error {
 	plan, err := chunkCAGGRefreshPlan(ctx, logger, store, chunk)
 	if err != nil || len(plan) == 0 {
@@ -932,13 +729,7 @@ func validateBackfillRangeFlags(cfgPath string, from, to uint, parallel int) err
 	return nil
 }
 
-// parseBackfillFlags parses CLI args, loads config, and validates the
-// result. Returns the resolved opts + the loaded config so the entry
-// point can wire them up. Returns a non-nil error on any validation
-// failure, including the BackfillSafe gate.
-//
-// Split out from backfill() so unit tests can drive validation
-// without spinning up postgres + galexie.
+// parseBackfillFlags parses args, loads config and validates (including the BackfillSafe gate); split out so validation is testable without postgres + galexie.
 func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 	var opts backfillOpts
 	var cfg config.Config
@@ -1007,24 +798,15 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 		return opts, cfg, err
 	}
 
-	// The soroban-events pseudo-source is exclusive: it captures
-	// every event regardless of per-source decoder routing, so
-	// running it alongside other sources would double-bill ledger
-	// reads without changing what soroban_events sees. Refuse rather
-	// than silently merge.
+	// The soroban-events pseudo-source is exclusive: combining it would double-bill ledger reads and change nothing, so refuse rather than merge.
 	if hasSorobanEventsPseudo(sources) && len(sources) > 1 {
 		return opts, cfg, fmt.Errorf(
 			"-source %q is exclusive — run it alone, not mixed with other source names %v",
 			SorobanEventsPseudoSource, sources)
 	}
 
-	// Deliberately NOT opsutil.ResolveStreamBucket: that policy's
-	// no-seam default is the LIVE bucket, kept for ch-live-catchup.sh,
-	// and live cannot hold the historic ranges this command exists to
-	// walk. The archive is the full history plus an hourly mirror of
-	// live, so it is the right default on both sides of a seam; its one
-	// weakness — the mirror lagging a -to near the tip — fails the chunk
-	// in backfillChunkCoverage instead of exiting 0.
+	// Deliberately NOT opsutil.ResolveStreamBucket: its no-seam default is the LIVE bucket, which cannot hold the historic ranges
+	// backfill walks. The archive is full history plus an hourly mirror of live; a -to near the tip fails in backfillChunkCoverage.
 	bucket := cfg.Storage.S3BucketArchive
 	if *bucketOverride != "" {
 		bucket = *bucketOverride
@@ -1048,11 +830,7 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 	return opts, cfg, nil
 }
 
-// hasSorobanEventsPseudo reports whether `sources` contains the
-// `soroban-events` pseudo-source name. The pseudo-source is the
-// catch-all raw-event capture mode; it must be filtered out of
-// every BackfillSafe / KnownSources check because it isn't in any
-// of those registries — it's the dispatcher's RawEventSink seam.
+// hasSorobanEventsPseudo reports whether sources contains the pseudo-source, which must be excluded from BackfillSafe/KnownSources checks (it is in no registry).
 func hasSorobanEventsPseudo(sources []string) bool {
 	for _, s := range sources {
 		if strings.EqualFold(s, SorobanEventsPseudoSource) {
@@ -1083,11 +861,7 @@ type dirtyWindowRecorder interface {
 	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
 }
 
-// recordBackfillDirtyWindows records a dirty window over [opts.from, opts.to]
-// for every backfilled source compute-completeness audits. Backfill rewrites
-// served rows below the verdict watermark, which voids the clean claim an
-// incremental run would otherwise carry over them. Any error must stop the
-// backfill before its first write.
+// recordBackfillDirtyWindows records a dirty window over [opts.from, opts.to] for every audited source: backfill rewrites served rows below the verdict watermark, voiding any carried-over clean claim. Any error must stop the backfill before its first write.
 func recordBackfillDirtyWindows(ctx context.Context, rec dirtyWindowRecorder, cfg config.Config, opts backfillOpts) error {
 	if opts.dryRun {
 		return nil
@@ -1107,16 +881,9 @@ func recordBackfillDirtyWindows(ctx context.Context, rec dirtyWindowRecorder, cf
 	return nil
 }
 
-// recordRawBackfillProjectorWindows covers a soroban-events backfill landing
-// raw rows for a projected source while the projector tails Postgres
-// soroban_events: the projector never reads behind its cursor, so rows landed
-// at or below it stay unprojected until a projector-replay rewinds it. The
-// backfill must not project them itself (invariant [7]); it records a dirty
-// window over the FULL [from,to] and names the replay that closes it. The
-// cursor is read once, before an hours-long backfill, so it cannot say which
-// rows will land behind it; a source whose cursor is still below from gets a
-// window it may not need, which only a completeness verdict clears (the
-// projector's forward pass does not).
+// recordRawBackfillProjectorWindows covers a soroban-events backfill landing raw rows for a projected source: the projector never reads behind its cursor,
+// so those rows stay unprojected until a projector-replay rewinds it. The backfill must not project them itself (invariant [7]); it records a dirty window
+// over the FULL [from,to] (the cursor is read once, before the run), which only a completeness verdict clears.
 func recordRawBackfillProjectorWindows(ctx context.Context, logger *slog.Logger, store dirtyWindowRecorder, cfg config.Config, opts backfillOpts) error {
 	if opts.dryRun || cfg.Storage.ClickHouseProjectorSource || !hasSorobanEventsPseudo(opts.sources) {
 		return nil
@@ -1156,18 +923,8 @@ func checkBackfillSourcePolicy(sources []string, cfg config.Config, fromLedger, 
 	return checkBackfillSources(sources, fromLedger, toLedger)
 }
 
-// checkBackfillSources returns nil when every source in `sources`
-// is BackfillSafe, otherwise an error explaining which subset
-// blocked the run and why. Distinguishes supply-observer names
-// from genuinely audit-pending Soroban sources so the operator
-// gets a targeted message rather than the generic WASM-audit one.
-//
-// Special-case: the `soroban-events` pseudo-source is exempt from
-// the BackfillSafe gate. It captures raw events to the
-// soroban_events landing zone without per-source decoding, so the
-// "Soroban DeFi contracts upgrade in place" concern doesn't apply —
-// the raw XDR is stored as-is for FUTURE decoders to interpret
-// against the right WASM-version mapping.
+// checkBackfillSources returns nil when every source is BackfillSafe, else an error naming the blocked subset; supply-observer names get a targeted message.
+// The soroban-events pseudo-source is exempt: raw XDR is stored as-is, so the upgrade-in-place concern does not apply.
 func checkBackfillSources(sources []string, fromLedger, toLedger uint32) error {
 	// Strip the pseudo-source before the BackfillSafe lookup; it
 	// isn't in external.Registry by design.
@@ -1202,11 +959,7 @@ func checkBackfillSources(sources []string, fromLedger, toLedger uint32) error {
 		sorobanPending, fromLedger, toLedger)
 }
 
-// checkBackfillNotProjected refuses any source the projector writes.
-// backfill persists with SinkModeAll and builds gated decoders with an
-// empty registry, so a projected source here is either a second writer
-// to the projector's tables (invariant [7]) or, for blend, a run that
-// writes nothing and exits 0.
+// checkBackfillNotProjected refuses any source the projector writes: it would be a second writer (invariant [7]) or, for blend, a run that writes nothing and exits 0.
 func checkBackfillNotProjected(sources []string, cfg config.Config) error {
 	var projected, rest []string
 	for _, s := range sources {
@@ -1239,17 +992,8 @@ func unsafeBackfillSources(sources []string) []string {
 	return out
 }
 
-// knownSupplyObserverNames is the closed set of supply-observer
-// package names the indexer registers. None of these are in
-// external.Registry (supply observers plug into a different
-// dispatcher hook than price/oracle sources) — but we want a
-// targeted error message when an operator tries to backfill one,
-// rather than the generic "WASM-hash audit pending" message.
-//
-// Update this set when a new supply observer ships under
-// internal/supply/. Keeping the list local to backfill.go avoids
-// a cross-cutting "supply registry" abstraction for this single
-// error-message use case.
+// knownSupplyObserverNames is the closed set of supply-observer names the indexer registers, none in external.Registry; it gives a targeted error on backfill.
+// Update it when a new observer ships under internal/supply/.
 var knownSupplyObserverNames = map[string]struct{}{
 	"accounts":           {},
 	"trustlines":         {},

@@ -20,16 +20,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Erase is the operator path for an erasure request received
-// outside the dashboard, and for finishing one whose post-commit Redis
-// cleanup did not complete. It calls the same
-// accounterasure.Eraser as DELETE /v1/dashboard/account.
-//
-//	stellarindex-ops account-erase -config PATH -account-id UUID [-write]
-//	stellarindex-ops account-erase -config PATH -finish-slug SLUG [-write]
-//
-// Dry-run unless -write: it prints what would be removed. Output carries
-// counts and ids only, never an address.
+// Erase is the operator path for an account erasure (or finishing one); dry-run unless -write, output never carries an address.
 func Erase(args []string) error {
 	fs := flag.NewFlagSet("account-erase", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

@@ -27,25 +27,9 @@ type rollupTruthReader interface {
 	SEP41SupplyEventKindResum(ctx context.Context, contractID string, asOfLedger uint32, statementTimeout time.Duration) (timescale.SEP41KindTotals, error)
 }
 
-// supplyVerifyRollup runs internal/completeness.ReconcileRunningTotals, the
-// fourth ADR-0033 integrity check (derived-checkpoint reconcile).
-//
-// It diffs every watched contract's sep41_supply_rollup checkpoint against a
-// re-sum of the sep41_supply_events rows it folds (ledger <= last_ledger) and
-// reports any (contract, kind) differing by more than -tolerance. It catches a
-// checkpoint double-fold, which row-count reconciles cannot see because the raw
-// rows are correct.
-//
-// The re-sum is the same-source PG aggregate, not the lake: the PG observer is
-// watched-set-gated and bare-i128-only, so per-contract totals legitimately
-// differ from the lake (migrations 0085/0088).
-//
-// Each re-sum can scan every chunk of a hundreds-of-millions-row hypertable, so
-// this is a one-shot post-re-derive check, never a per-tick job; run it on r1
-// under run-heavy-job.sh.
-//
-// A requested contract with no checkpoint row is reported MISSING and fails the
-// run. A small -tolerance absorbs a worker advance racing the re-sum.
+// supplyVerifyRollup runs completeness.ReconcileRunningTotals, the fourth ADR-0033 integrity check: it diffs each watched contract's sep41_supply_rollup checkpoint against a re-sum of the rows it folds (ledger <= last_ledger) and fails on drift beyond -tolerance.
+// The re-sum is the same-source PG aggregate, not the lake (the observer is watched-set-gated and bare-i128-only, migrations 0085/0088).
+// It scans hundreds of millions of rows: a one-shot post-re-derive check, run on r1 under run-heavy-job.sh. A requested contract with no checkpoint is MISSING and fails the run.
 func supplyVerifyRollup(args []string) error {
 	fs := flag.NewFlagSet("supply verify-rollup", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -100,11 +84,7 @@ func supplyVerifyRollup(args []string) error {
 	return decision
 }
 
-// verifyRollupFail is the early-failure path: a config/storage/query error
-// before checked/drift/missing counts exist. Mirrors
-// supplySnapshotMaybeEmitFailure — emits the minimal failure textfile
-// (carrying the previous last_success_timestamp forward) without masking
-// the original cause.
+// verifyRollupFail is the early-failure path before counts exist: it emits the minimal failure textfile (carrying last_success_timestamp forward) without masking the cause.
 func verifyRollupFail(textfileOut string, startedAt time.Time, cause error) error {
 	if textfileOut != "" {
 		_ = supply.WriteVerifyRollupFailureTextfile(textfileOut, time.Since(startedAt).Seconds())
@@ -112,13 +92,8 @@ func verifyRollupFail(textfileOut string, startedAt time.Time, cause error) erro
 	return cause
 }
 
-// rollupExitDecision is the DB-free core of the command's exit status: a
-// missing watched contract or a drift is always fatal, and — so "nothing
-// checked" is never conflated with "all clean" — checking zero checkpoints
-// is fatal too. An empty sep41_supply_rollup table or a -contracts filter
-// that matched nothing must not print "OK: 0 checkpoint(s) reconcile" and
-// exit 0; that reads as a clean bill of health when in fact nothing was
-// verified.
+// rollupExitDecision is the DB-free core of the exit status: a missing contract or a drift is fatal, and checking zero checkpoints is fatal too,
+// so "nothing checked" is never reported as all clean.
 func rollupExitDecision(drifts []completeness.TotalsDrift, checked int, missing []string) error {
 	if len(missing) > 0 {
 		return fmt.Errorf("verify-rollup: %d watched contract(s) have no sep41_supply_rollup checkpoint — unexamined, not clean: %s", len(missing), strings.Join(missing, ", "))
@@ -132,17 +107,8 @@ func rollupExitDecision(drifts []completeness.TotalsDrift, checked int, missing 
 	return nil
 }
 
-// verifyRollupDrifts is the DB-free core: for each checkpoint it computes
-// the same-source bounded re-sum (truth) at the checkpoint's own
-// last_ledger, then hands both maps to
-// completeness.ReconcileRunningTotals. Returns the drifts (empty = clean),
-// the number of contracts checked, and — when contractIDs was given
-// explicitly (an operator -contracts subset, or the watched-set default) —
-// which of those requested contracts came back with no checkpoint row at
-// all (missing, sorted). Bounding the re-sum at each contract's
-// last_ledger is load-bearing: the fold covers exactly ledger ≤
-// last_ledger, so summing to the tip would count the (correctly)
-// un-folded live delta and false-positive.
+// verifyRollupDrifts is the DB-free core: it re-sums each checkpoint's contract up to that checkpoint's own last_ledger and hands both maps to completeness.ReconcileRunningTotals.
+// Bounding at last_ledger is load-bearing: summing to the tip would count the correctly un-folded live delta as drift. Missing lists requested contracts with no checkpoint row (sorted).
 func verifyRollupDrifts(ctx context.Context, r rollupTruthReader, contractIDs []string, tolerance *big.Int, stmtTimeout time.Duration) (drifts []completeness.TotalsDrift, checked int, missing []string, err error) {
 	checkpoints, err := r.ListSEP41RollupCheckpoints(ctx, contractIDs)
 	if err != nil {
@@ -175,11 +141,7 @@ func kindTotalsToRunning(t timescale.SEP41KindTotals) completeness.RunningTotals
 	return completeness.RunningTotals{Mint: t.Mint, Burn: t.Burn, Clawback: t.Clawback}
 }
 
-// reportRollupDrifts writes a stable, diffable report: one row per
-// (contract, kind) drift with checkpoint / truth / delta, or an OK line
-// when clean. Delta > 0 is an over-count (double-fold signature),
-// Delta < 0 an under-count (a below-checkpoint edit the worker never
-// re-summed).
+// reportRollupDrifts writes a stable, diffable report: one row per (contract, kind) drift, or an OK line. Delta > 0 is an over-count (double-fold), Delta < 0 an under-count.
 func reportRollupDrifts(out io.Writer, drifts []completeness.TotalsDrift, checked int, tolerance *big.Int) {
 	if len(drifts) == 0 {
 		_, _ = fmt.Fprintf(out, "OK: %d checkpoint(s) reconcile with the authoritative re-sum (0 drift, tolerance %s)\n", checked, tolerance)
@@ -209,13 +171,8 @@ func reportRollupMissing(out io.Writer, missing []string) {
 	}
 }
 
-// resolveVerifyRollupContracts is the DB-free default-selection core: an
-// explicit -contracts flag always wins (operator-scoped / resumed run);
-// otherwise the run cross-checks against the configured watched set so a
-// watched contract whose checkpoint row was deleted is reported MISSING
-// rather than silently absent from "every row the table happens to hold".
-// Falls back to nil ("check all") only when nothing is configured (the
-// SEP-41 pipeline is off) — there is no watched set to cross-check against.
+// resolveVerifyRollupContracts is the DB-free default selection: an explicit -contracts wins; otherwise the configured watched set, so a deleted checkpoint is reported MISSING.
+// It falls back to nil (check all) only when nothing is configured.
 func resolveVerifyRollupContracts(explicit, watched []string) []string {
 	if len(explicit) > 0 {
 		return explicit

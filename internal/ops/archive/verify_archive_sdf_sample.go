@@ -13,12 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Tier C: sample ledgers and compare each of our galexie objects with
-// the same key in SDF's public dataset (the storage.s3_cold_* tier) by
-// ETag and size. Galexie objects are single-part uploads, so equal
-// ETags mean equal bytes. Reuses galexie-mirror-verify's comparison;
-// the difference is the bounded random sample, cheap enough to run
-// without listing whole partitions.
+// Tier C: sample ledgers and compare our galexie objects with the same key in SDF's public dataset by ETag and size (single-part uploads, so equal ETags mean equal bytes).
+// Reuses galexie-mirror-verify's comparison on a bounded random sample, avoiding whole-partition listing.
 
 const sdfSampleReason = "sdf-sample"
 

@@ -10,10 +10,7 @@ import (
 	"testing"
 )
 
-// TestDocsCiteTheDeployedConfigPath — every `-config /etc/stellarindex…`
-// an operator copies out of docs/ must name the file ansible actually
-// templates. Runbooks citing /etc/stellarindex/config.toml sent operators
-// mid-incident to a path that does not exist on any host.
+// TestDocsCiteTheDeployedConfigPath: every `-config /etc/stellarindex...` in docs/ must name the file ansible actually templates.
 func TestDocsCiteTheDeployedConfigPath(t *testing.T) {
 	root := ingestDocsRepoRoot(t)
 	task, err := os.ReadFile(filepath.Join(root, "configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml"))
