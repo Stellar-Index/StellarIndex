@@ -199,7 +199,7 @@ func TestWatermark(t *testing.T) {
 	}
 }
 
-// TestSubstrateCountIntact pins FINDING CA2-A14: SubstrateProblem's endpoint
+// TestSubstrateCountIntact pins that SubstrateProblem's endpoint
 // guard only tested `present > 0`, so a hole covering BOTH overlap ledgers of
 // a window seam (e.g. from=2, substrateWindow=5_000_000, ledgers 5_000_001
 // and 5_000_002 missing) sits outside every window's local gap/chain scan —

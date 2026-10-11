@@ -7,7 +7,7 @@ import (
 )
 
 // TestContractDetailCache_PutProtectsUnexpiredCodeHistory is the
-// CA2-A03-harden-3 regression guard. A "ch:" (code-history) entry has a
+// Regression guard. A "ch:" (code-history) entry has a
 // 24h TTL and is only re-stamped once a day, so under global-oldest-cachedAt
 // eviction it is ALWAYS the chronologically oldest entry next to the
 // 1-5 minute "pos:"/"act:" classes — and gets evicted first however hot it

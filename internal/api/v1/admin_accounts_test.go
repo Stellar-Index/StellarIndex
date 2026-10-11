@@ -465,7 +465,7 @@ func TestAdminAccountOverrides_CloseRevokesSessions(t *testing.T) {
 	})
 }
 
-// TestAdminAccountGet_AppendsReadAudit pins CA2-A39-harden-0: the operator
+// TestAdminAccountGet_AppendsReadAudit: the operator
 // account read returns the billing email, so each successful GET lands one
 // durable "admin.account.read" row naming the operator credential and the
 // account it read, and a refused read lands none.

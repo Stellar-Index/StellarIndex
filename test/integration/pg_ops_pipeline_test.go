@@ -1044,7 +1044,7 @@ func TestDiscoveryRoundTrip(t *testing.T) {
 	}
 }
 
-// TestDiscoveryRoundTrip_EventCountDelta is the CA2-A10-correct-4
+// TestDiscoveryRoundTrip_EventCountDelta is a
 // regression at the storage layer: a Hit with Count set (as
 // AsyncSink.flushPending produces when it flushes an accumulated
 // in-process-dedup delta) must increment event_count by that many,
@@ -1203,7 +1203,7 @@ func TestCountDistinctLedgersSorobanEventsReadsCensus(t *testing.T) {
 // gap, correctly so (nothing is missing INSIDE that window). Cycle B
 // scans [41001, 81010] and only sees the second burst: with no seed,
 // the resumed rows never pair with the pre-halt rows and the 80,000-
-// ledger gap is silently dropped forever, exactly as CA2-A10's
+// ledger gap is silently dropped forever, exactly as the
 // blend_positions walkthrough describes. With B seeded from A's
 // highest-observed ledger (1005, persisted as the "last present"
 // cursor), the same window pairs the seed against 81005 and reports

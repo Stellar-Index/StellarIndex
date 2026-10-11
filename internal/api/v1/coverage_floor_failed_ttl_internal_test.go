@@ -29,7 +29,7 @@ func (erroringCoverageFloorReader) EarliestBucketLiteralQuote(context.Context, c
 	return time.Time{}, false, errors.New("prices_1d unavailable")
 }
 
-// TestCoverageFloor_FailedProbeUsesShortTTL is CA2-A02-harden-6: a
+// TestCoverageFloor_FailedProbeUsesShortTTL: a
 // transient store error must not poison the advisory
 // coverage_from/outside_coverage annotation for the same thirty
 // minutes a genuine floor answer earns. The failed entry's expiry must

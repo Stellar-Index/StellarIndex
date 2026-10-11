@@ -256,7 +256,7 @@ func TestCoinGeckoSupplyReference_UnsupportedAsset(t *testing.T) {
 // BaseURL, an APIKey must auto-switch the host to the Pro tier — same
 // as the ingest poller's DefaultEndpoint/ProEndpoint switch — or every
 // supply lookup 404s and the cross-check the operator paid a Pro key
-// for stays permanently dark (CA2-A24-harden-4).
+// for stays permanently dark.
 func TestCoinGeckoSupplyReference_APIKeyAutoSwitchesToProHost(t *testing.T) {
 	ref := NewCoinGeckoSupplyReference(CoinGeckoSupplyOptions{APIKey: "pro-key-placeholder"}) // gitleaks:allow
 	if ref.baseURL != coinGeckoProBaseURL {

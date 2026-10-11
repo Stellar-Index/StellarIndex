@@ -26,7 +26,7 @@ func (s *stubFXHistoryReader) ListFXHistory(_ context.Context, _ string, _, _ ti
 	return s.points, s.err
 }
 
-// TestChart_Fiat_GranularitySnappedToDaily covers CA2-A02-correct-2:
+// TestChart_Fiat_GranularitySnappedToDaily:
 // fx_quotes is a one-row-per-UTC-day series, so a fiat:fiat chart must
 // report granularity=1d (never the requested sub-daily grain) and must
 // not raise truncated/discontinuous against a daily grid it was never

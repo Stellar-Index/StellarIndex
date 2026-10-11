@@ -354,7 +354,7 @@ func TestHandleIssuer_ScamSuppressesSEP1Payload(t *testing.T) {
 // a failure to load the per-asset list shouldn't 500 the whole
 // issuer detail page. It must also carry a coverage_note so a
 // failed read is distinguishable on the wire from a genuine
-// zero-asset issuer (CA2-A04-harden-9).
+// zero-asset issuer.
 func TestHandleIssuer_AssetsSoftFail(t *testing.T) {
 	reader := &stubIssuersReader{
 		row: timescale.IssuerRow{

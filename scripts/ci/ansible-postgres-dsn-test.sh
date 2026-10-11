@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ansible-postgres-dsn-test.sh — the archival-node role's Postgres DSN must
-# carry its credentials percent-encoded (CA2-A37-harden-9).
+# carry its credentials percent-encoded.
 #
 # The DSN is a URL. A raw '/', '#', '@', '?' or ':' in the password ends the
 # userinfo early, so pgx / lib/pq fail with `invalid port ":ab" after host`

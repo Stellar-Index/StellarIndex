@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# prepush-native-fmt-guard-test.sh — fixture test for CA2-A38-correct-3.
+# prepush-native-fmt-guard-test.sh — fixture test.
 #
 # The native profile runs `make verify` (and its `make fmt`) inside a
 # disposable scratch checkout, never the committed HEAD directly. If a

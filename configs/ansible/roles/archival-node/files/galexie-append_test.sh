@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# galexie-append_test.sh — CA2-A37-correct-1 / CA2-A37-harden-1: a failed
+# galexie-append_test.sh — a failed
 # `mc alias set` (MinIO reachable at boot, restarts mid-run) would leave
 # last_exported="" and fall through silently to the fresh-deploy fallback
 # (GALEXIE_START or archive-tip-minus-margin), which can skip past ledgers

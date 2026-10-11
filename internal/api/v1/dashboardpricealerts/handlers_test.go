@@ -404,7 +404,7 @@ func TestHandleUpdate_HappyPath(t *testing.T) {
 	}
 }
 
-// TestCooldownAboveInt4_Rejected400 pins CA2-A03-harden-6: the column is
+// TestCooldownAboveInt4_Rejected400: the column is
 // int4, so a cooldown past math.MaxInt32 must be a client 400 on create
 // and PATCH, never reach the store (where pgx refuses to encode it and
 // the handler answered 500).

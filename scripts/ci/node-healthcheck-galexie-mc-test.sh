@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# node-healthcheck-galexie-mc-test.sh — CA2-A37-harden-4: Check 4.5 (galexie
+# node-healthcheck-galexie-mc-test.sh — Check 4.5 (galexie
 # upload-freshness) must FAIL when `mc` cannot reach MinIO, not silently
 # treat that as "bucket empty". node-healthcheck.service runs
 # DynamicUser+ProtectHome=true, so a persisted `mc alias set local` under

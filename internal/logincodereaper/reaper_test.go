@@ -240,7 +240,7 @@ func TestRun_SweepsImmediately(t *testing.T) {
 	}
 }
 
-// TestRun_DrainsBacklogBeyondOnePassCap pins CA2-A33-harden-1: the store
+// TestRun_DrainsBacklogBeyondOnePassCap: the store
 // deletes at most a fixed number of rows per call, and one anonymous IP
 // can insert more than that per hour. If a capped pass waited a full
 // Interval the table would grow without bound, so one tick must keep

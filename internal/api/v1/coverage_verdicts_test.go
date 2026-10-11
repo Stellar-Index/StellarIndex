@@ -631,7 +631,7 @@ func TestHandleCoverageVerdicts_NetworkScoping(t *testing.T) {
 }
 
 // TestHandleCoverageVerdicts_StaleGateIgnoresNotApplicableSource pins
-// CA2-A02-correct-4: a pubnet-only row surviving in
+// A pubnet-only row surviving in
 // completeness_snapshots on a testnet deployment (same fixture shape as
 // TestHandleCoverageVerdicts_NetworkScoping, but with a decades-old
 // computed_at — no testnet audit will ever recompute it) must not

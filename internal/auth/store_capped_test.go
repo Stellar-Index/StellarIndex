@@ -15,7 +15,7 @@ import (
 )
 
 // TestCreateCapped_ConcurrentBurstMintsOnlyToCeiling pins
-// CA2-A01-harden-6: an identifier one key below its ceiling fires a
+// An identifier one key below its ceiling fires a
 // concurrent burst of self-service mints. A count taken apart from the
 // write lets every request read 24 < 25 and mint; the capped create must
 // issue exactly one key and refuse the rest.

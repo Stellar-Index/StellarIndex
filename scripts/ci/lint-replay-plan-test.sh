@@ -220,8 +220,8 @@ touch_commit internal/sources/demo/pairs.go "feat(demo): add three more pairs"
 runGate
 expect "venue pairs.go widening without a plan fails" 1 "~ internal/sources/demo/pairs.go"
 
-# --- 2d. a non-decode.go file that decides recorded amounts (CA2-A38-correct-4:
-# consumer.go correlates two events into the reserves it records — the
+# --- 2d. a non-decode.go file that decides recorded amounts
+# (consumer.go correlates two events into the reserves it records — the
 # soroswap Swap/Sync class) is the same danger class as a decoder ------
 mkrepo 0
 touch_commit internal/sources/demo/consumer.go "fix(demo): change swap/sync correlation window"
