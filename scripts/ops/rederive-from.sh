@@ -1,25 +1,22 @@
 #!/bin/bash
 # rederive-from.sh — re-derive all history from ledger L in one command:
-#   1. lake: ch-backfill every 1M-ledger window of [L,TO] from galexie-archive,
-#      -workers windows at a time, each through phaseD-range.sh (retry cap,
-#      disk guard, done-state);
+#   1. lake: ch-backfill each 1M-ledger window of [L,TO] from galexie-archive,
+#      -workers at a time, via phaseD-range.sh (retry cap, disk guard, done-state);
 #   2. seed stellar.supply_flows over [L,TO] (ch-supply-flows-seed.sh);
-#   3. projected-rebuild -from L for each -projected source, behind the live
+#   3. projected-rebuild -from L per -projected source, behind the live
 #      projector's tail (its one-writer guard stays on);
-#   4. seed-entry-counts, so the counters match the rebuilt tables.
-# Workers pull windows newest-first from one queue rather than owning fixed
-# contiguous shards: recent windows hold far more rows than early ones, so
-# fixed shards leave the run waiting on whichever worker owns the tip.
+#   4. seed-entry-counts, so counters match the rebuilt tables.
+# Workers pull windows newest-first from one queue, not fixed shards: recent
+# windows hold far more rows, so fixed shards wait on the worker owning the tip.
 #
 # Resume: state lives in -state-dir (default keyed by L). A window is recorded
 # only after ch-backfill exits 0 and each later stage leaves a done marker, so
 # re-running the same command skips finished work at any -workers. TO is
-# pinned on the first run: a moved end would leave the last window short.
+# pinned on the first run (a moved end would leave the last window short).
 # Every step is idempotent (RMT lake, ON CONFLICT DO NOTHING served tier).
 #
-# Memory scales with -workers x -parallel ch-backfill goroutines; see
-# ordinal-rederive-chunks.sh for the measured per-goroutine cost. Run under
-# run-heavy-job.sh on r1:
+# Memory scales with -workers x -parallel ch-backfill goroutines (per-goroutine
+# cost: ordinal-rederive-chunks.sh). Run under run-heavy-job.sh on r1:
 #   run-heavy-job.sh rederive /usr/local/sbin/rederive-from.sh -from L \
 #     -workers 6 -parallel 3 -projected soroswap,aquarius,phoenix
 set -uo pipefail
@@ -83,8 +80,8 @@ log() { echo "$(date -u +%FT%TZ) [rederive] $*" >> "$LOG"; }
 die() { log "$1"; echo "rederive-from: $1" >&2; exit "${2:-1}"; }
 
 mkdir -p "$SDIR" || die "cannot create state dir $SDIR"
-# One run per state dir: a second would double every worker's memory. A lock
-# whose holder is gone (kill -9) is taken over so a resume never needs a hand.
+# One run per state dir (a second doubles worker memory). A lock whose holder
+# is gone (kill -9) is taken over so a resume needs no hand cleanup.
 LOCK="$SDIR/lock"
 if ! mkdir "$LOCK" 2>/dev/null; then
   holder="$(cat "$LOCK/pid" 2>/dev/null)"
@@ -134,9 +131,9 @@ worker() {
   done
 }
 
-# kill_tree PID: TERM a worker and everything under it, so no ch-backfill
-# outlives the run and races the resumed one. Each process is stopped before
-# its children are listed, so it cannot start a window the listing misses.
+# kill_tree PID: TERM a worker and its descendants so no ch-backfill outlives
+# the run and races the resumed one. STOP before listing children so none
+# starts a window the listing misses.
 kill_tree() {
   local c
   kill -STOP "$1" 2>/dev/null

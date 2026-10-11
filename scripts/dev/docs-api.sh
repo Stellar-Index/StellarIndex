@@ -1,37 +1,25 @@
 #!/usr/bin/env bash
 # Regenerate the rendered API reference from openapi/stellar-index.v1.yaml.
 #
-# Output is a Scalar API reference page: a small static index.html
-# that loads @scalar/api-reference from a pinned CDN bundle and
-# points it at a spec file copied alongside it.
-#
-# CI verifies the rendered output is in sync with the spec on every
-# PR that touches either side. To regenerate locally:
-#
-#     make docs-api
-#
-# No Node install needed — Scalar's standalone bundle is fetched
-# at view time from the CDN, so this script only needs `cp` to copy
-# the spec next to the index.html.
+# Output is a static Scalar index.html that loads @scalar/api-reference from a
+# pinned CDN bundle at view time (no Node install) and points it at a spec copy
+# beside it. CI verifies it is in sync with the spec on every PR touching
+# either side. Regenerate locally: make docs-api
 
 set -euo pipefail
 
-# CDN-pinned Scalar standalone bundle. Bumping requires updating
-# this constant and re-running `make docs-api` so the committed
-# index.html records the new version. The standalone bundle is
-# self-contained: HTML, CSS, and JS in one URL.
+# CDN-pinned Scalar standalone bundle (HTML, CSS and JS in one URL). Bumping
+# means updating this and re-running `make docs-api` so the committed
+# index.html records the version.
 SCALAR_VERSION="1.55.3"
 
-# Subresource Integrity hash for the pinned bundle above. The docs
-# host loads this script from a third-party CDN (jsdelivr); SRI makes
-# the browser reject the script if jsdelivr ever serves bytes that
-# don't match this hash (CDN compromise / tampering). It MUST be
-# recomputed whenever SCALAR_VERSION changes, or the script will be
-# blocked and the docs page will render blank:
+# Subresource Integrity hash for the bundle above, loaded from a third-party
+# CDN (jsdelivr): the browser rejects bytes that do not match (CDN tampering).
+# MUST be recomputed whenever SCALAR_VERSION changes, or the script is blocked
+# and the page renders blank:
 #
 #   curl -sL "https://cdn.jsdelivr.net/npm/@scalar/api-reference@${SCALAR_VERSION}/dist/browser/standalone.js" \
 #     | openssl dgst -sha384 -binary | openssl base64 -A
-#
 SCALAR_SRI="sha384-lqNSpgZBaLA+vZvHYhcvbchU39mp7CC1Els+8Cxe2rZ34jCZp7iQM8ySSD4KZId5"
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
@@ -40,9 +28,8 @@ cd "$REPO_ROOT"
 OUT_DIR="docs/reference/api"
 mkdir -p "$OUT_DIR"
 
-# Copy the OpenAPI spec next to the rendered HTML. Scalar fetches
-# it via the relative URL at view time, so it must live under the
-# same CF Pages project root.
+# Scalar fetches the spec by relative URL, so it must sit under the same CF
+# Pages project root as index.html.
 cp openapi/stellar-index.v1.yaml "$OUT_DIR/stellar-index.v1.yaml"
 
 cat > "$OUT_DIR/index.html" <<EOF

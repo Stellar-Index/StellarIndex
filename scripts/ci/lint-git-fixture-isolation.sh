@@ -1,29 +1,25 @@
 #!/usr/bin/env bash
-# A script that creates a git repository must first strip the GIT_*
-# redirect variables it may have inherited.
+# A script that creates a git repository must first strip the GIT_* redirect
+# variables it may have inherited.
 #
-# WHY THIS EXISTS. `git init` honours an inherited GIT_DIR
-# AHEAD of its own `-C`. A git hook is invoked with GIT_DIR,
-# GIT_INDEX_FILE and friends EXPORTED, and scripts/dev/lint-changed.sh
-# dispatches changed `*-test.sh` files — which the pre-commit hook runs.
-# So committing a change to a test that builds a git fixture ran that
-# fixture's `git -C "$tmp" init` against the REAL repository: core.bare
-# was set on the live checkout (detaching its working tree), and the
-# fixture's commits and branches landed on main. git printed one line,
-# `warning: re-init`, and the test reported success.
+# WHY. `git init` honours an inherited GIT_DIR AHEAD of its own `-C`. A git
+# hook runs with GIT_DIR, GIT_INDEX_FILE and friends EXPORTED, and
+# scripts/dev/lint-changed.sh (run by the pre-commit hook) dispatches changed
+# `*-test.sh` files. A fixture's `git -C "$tmp" init` therefore ran against
+# the REAL repository: core.bare was set on the live checkout and the
+# fixture's commits landed on main. git printed only `warning: re-init` and
+# the test passed.
 #
 # Reproduce, with a throwaway victim:
 #
 #     export GIT_DIR="$victim/.git"
 #     git -C "$scratch" init -q     # creates NO $scratch/.git
 #
-# The rule: before the first `git … init`, the script must clear the
-# redirect variables. Clearing alone is not sufficient in practice — a
-# missed variable fails the same silent way — so a fixture SHOULD also
-# assert that `git -C "$tmp" rev-parse --absolute-git-dir` lands under
-# its own directory. This gate enforces the clearing, which is the part
-# that can be checked mechanically, and names the assertion in its
-# failure text.
+# The rule: clear the redirect variables before the first `git … init`. A
+# missed variable fails the same silent way, so a fixture SHOULD also assert
+# that `git -C "$tmp" rev-parse --absolute-git-dir` lands under its own
+# directory. This gate enforces only the mechanically checkable clearing and
+# names the assertion in its failure text.
 #
 # Usage: lint-git-fixture-isolation.sh [file ...]   (default: scripts/)
 # Exit 0 clean, 1 on an unguarded fixture, 2 on a usage error.
@@ -35,8 +31,7 @@ cd "$root"
 if [ "$#" -gt 0 ]; then
     files=("$@")
 else
-    # No mapfile: bash 3.2 (macOS) does not have it, and a gate that
-    # dies on the developer machine is a gate that only runs in CI.
+    # No mapfile: bash 3.2 (macOS) lacks it, and a gate that dies locally only runs in CI.
     files=()
     while IFS= read -r line; do files+=("$line"); done < <(find scripts -name '*.sh' -type f | sort)
 fi
@@ -54,20 +49,16 @@ for f in "${files[@]}"; do
     case "$f" in *.sh) ;; *) continue ;; esac
     scanned=$((scanned + 1))
 
-    # First NON-COMMENT line that creates a repository. A `git init` inside
-    # a usage comment is not a fixture and must not trip this gate.
-    # Verified empirically against every real form in this tree:
-    #   git init -q .            git -C "$d" init -q
-    #   git -C "$tmp" init -q -b main
-    # and against the shapes that must NOT trip it: a `git init` inside a
-    # comment, `git commit`, `git config`.
+    # First NON-COMMENT line that creates a repository (a `git init` in a
+    # usage comment must not trip this). Forms matched: `git init -q .`,
+    # `git -C "$d" init -q`, `git -C "$tmp" init -q -b main`; not matched:
+    # `git commit`, `git config`.
     init_hits=$(grep -nE '^[^#]*[^-[:alnum:]_]?git[^|#]*[[:space:]]init([[:space:]]|$)' "$f" 2>/dev/null || true)
     init_line=${init_hits%%$'\n'*}
     init_line=${init_line%%:*}
     [ -z "$init_line" ] && continue
 
-    # The clearing must come BEFORE the init: unsetting afterwards leaves
-    # the hijack already done.
+    # The clearing must come BEFORE the init; unsetting afterwards is too late.
     guard_hits=$(grep -nE '^[^#]*(unset[[:space:]]+[^#]*GIT_DIR|env[[:space:]]+-u[[:space:]]*GIT_DIR|GIT_DIR=)' "$f" 2>/dev/null || true)
     guard_line=${guard_hits%%$'\n'*}
     guard_line=${guard_line%%:*}

@@ -1,29 +1,27 @@
 #!/usr/bin/env bash
 # migration-followup-gate.sh — deploy.yml pre-playbook forcing function.
 #
-# Some migrations blank data a deployment then has to rebuild by hand: an
-# unqualified DELETE before a projector-replay (0164 cctp/rozo), or a
-# continuous aggregate recreated WITH NO DATA before its refresh. The
-# migration cannot run that rebuild itself, and until someone does, reads
-# of that data serve empty. Each such up.sql carries one header line per
-# command, enforced by pass 10 of scripts/ci/lint-migrations.sh:
+# Some migrations blank data a deployment must then rebuild by hand: an
+# unqualified DELETE before a projector-replay, or a continuous aggregate
+# recreated WITH NO DATA before its refresh. The migration cannot run that
+# rebuild itself, and until someone does, reads serve empty. Each such up.sql
+# carries one header line per command (enforced by pass 10 of
+# scripts/ci/lint-migrations.sh):
 #
 #   -- REQUIRED-FOLLOWUP: <command>
 #
-# This gate lists those lines from every up.sql the deploying version ADDS
-# over the baseline, and FAILS unless the operator passed
-# followups_acknowledged=true. It runs before the playbook, so nothing
-# blanks until someone has said they will run the rebuild; the commands are
-# also written to the step summary.
+# This gate lists those lines from every up.sql the deploying version ADDS over
+# the baseline and FAILS unless the operator passed followups_acknowledged=true.
+# It runs before the playbook, so nothing blanks until someone has said they
+# will run the rebuild; the commands also go to the step summary.
 #
-# Baseline: the version live on the host when the caller knows it (3rd
-# arg), else the previous release tag by ancestry — the same rule as
-# config-apply-gate.sh. A skip-ahead deploy therefore lists the markers of
-# every skipped release, and a rollback adds no migrations and passes.
+# Baseline: the version live on the host when the caller knows it (3rd arg),
+# else the previous release tag by ancestry, as in config-apply-gate.sh. A
+# skip-ahead deploy lists the markers of every skipped release; a rollback adds
+# no migrations and passes.
 #
-# Fail-closed: an unresolvable version/baseline or a failing git command
-# is an ERROR, never "no follow-ups".
-#
+# Fail-closed: an unresolvable version/baseline or a failing git command is an
+# ERROR, never "no follow-ups".
 # Usage: migration-followup-gate.sh <version-tag> [acknowledged] [baseline-tag]
 set -uo pipefail
 

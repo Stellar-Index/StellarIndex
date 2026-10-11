@@ -2,28 +2,23 @@
 # galexie-archive-mirror.sh — off-site mirror of the Galexie archive
 # (off-site-backup-plan.md §1, NS03).
 #
-# The archive (source of truth for a re-derive) had no off-site copy of any
-# kind: only the ZFS local snapshot exists, which does nothing for a pool or
-# box loss. This mirrors it to an R2 (or any S3-compatible) bucket via the
-# MinIO client so a lost box restores from off-box in hours, not the
-# 1-2 week re-ingest this doc's RTO table measures.
+# The archive (source of truth for a re-derive) otherwise has only a local ZFS
+# snapshot, which does not survive a pool or box loss. This mirrors it to an R2
+# (or any S3-compatible) bucket via the MinIO client so a lost box restores
+# from off-box in hours, not the 1-2 week re-ingest.
 #
-# Mechanism: `mc mirror` from the local galexie-archive bucket to a
-# destination alias. `mc mirror` is incremental (only new/changed objects),
-# so this is cheap to run often. Credentials/endpoint come from
-# /etc/default/galexie-archive-mirror (a systemd EnvironmentFile, read
-# VERBATIM by the unit — never sourced by this script) as an `mc alias set`
-# the unit performs before invoking this script, or as MC_HOST_<alias> in
-# the process environment; either way this script only ever sees DEST_ALIAS.
+# Mechanism: incremental `mc mirror` from the local galexie-archive bucket to
+# a destination alias, so cheap to run often. Credentials/endpoint come from
+# /etc/default/galexie-archive-mirror (a systemd EnvironmentFile read VERBATIM
+# by the unit, never sourced here) as an `mc alias set` the unit runs first, or
+# as MC_HOST_<alias> in the environment; this script only sees DEST_ALIAS.
 #
-# Verification: a plain `mc mirror` can exit 0 while having copied nothing
-# useful (e.g. it silently no-ops against a bucket it cannot list past page
-# one). After the real mirror this runs `mc mirror --dry-run` against the
-# same pair: a clean sync reports zero outstanding objects. The dry-run's
-# exit status is captured SEPARATELY from its stdout — mc can exit non-zero
-# (auth/network failure) while printing nothing, and treating empty stdout
-# alone as "nothing left to copy" would stamp success on a dry-run that
-# never actually ran. Success requires exit 0 AND empty stdout.
+# Verification: `mc mirror` can exit 0 having copied nothing useful (e.g. a
+# bucket it cannot list past page one), so a follow-up `mc mirror --dry-run`
+# must report zero outstanding objects. Its exit status is captured SEPARATELY
+# from stdout: mc can fail (auth/network) while printing nothing, and empty
+# stdout alone would stamp success on a dry-run that never ran. Success needs
+# exit 0 AND empty stdout.
 #
 # Emits (node_exporter textfile collector):
 #   stellarindex_galexie_archive_mirror_configured           1 iff DEST_ENDPOINT is set
@@ -75,8 +70,7 @@ write_metrics() {
 
 main() {
   if [[ -z "$DEST_ENDPOINT" ]]; then
-    # A run that copied nothing must not read as a successful unit in
-    # systemctl / journalctl; the gap shows as a failed unit, not a green one.
+    # An unconfigured run must show as a failed unit, not a green one.
     note "no DEST_ENDPOINT configured — the archive has no off-site mirror on this host (stellarindex_galexie_archive_mirror_stale tickets it)"
     write_metrics
     return 1

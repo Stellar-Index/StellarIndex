@@ -1,36 +1,28 @@
 #!/usr/bin/env bash
 # i128 truncation grep-guard, Go side (ADR-0003).
 #
-# Fast zero-dependency first line of defence: reject `int64(<x>.Lo)` /
-# `int32(<x>.Lo)` / `int16(<x>.Lo)` / `int8(<x>.Lo)` / `int(<x>.Lo)` —
-# truncating a 128-bit Soroban value to its low word, discarding the
-# high word (the classic KALIEN-class precision-loss bug); the narrower
-# int32/16/8 conversions lose even more of the low word. The correct
-# decode passes lo as uint64 to
-# canonical.FromInt128Parts(int64(p.Hi), uint64(p.Lo)).
-# `\bint(8|16|32|64)?\(` deliberately does NOT match the correct
-# `uint64(p.Lo)` (the `\b` fails inside `uint`), and the pattern targets
-# only `.Lo` so the correct signed high-word cast `int64(p.Hi)` is not
-# flagged. Narrowing casts of `.Hi` (and the Int256 HiHi/LoLo words) are
-# left to the deep go/types guard below.
+# Fast zero-dependency first line of defence: reject `int64(<x>.Lo)` (also
+# int32/16/8/int) — truncating a 128-bit Soroban value to its low word and
+# discarding the high word. Correct: canonical.FromInt128Parts(int64(p.Hi),
+# uint64(p.Lo)). `\bint(8|16|32|64)?\(` does NOT match `uint64(p.Lo)` (`\b`
+# fails inside `uint`), and targeting only `.Lo` leaves the correct signed
+# `int64(p.Hi)` alone. Narrowing of `.Hi` (and Int256 HiHi/LoLo) is left to
+# the deep go/types guard.
 #
 # Siblings:
-#   - internal/canonical/i128_truncation_guard_test.go — the DEEP
-#     guard: a repo-wide go/types walk that catches every lossy
-#     conversion shape of the xdr 128/256-bit part words (sign
-#     reinterpretation, narrowing, floats) and every math/big
-#     Int64/Uint64/Float64 narrowing, with //i128:ok escapes.
-#   - scripts/ci/lint-migrations.sh — the SQL side (money columns
-#     must be NUMERIC, with lint-money:ok escapes).
+#   - internal/canonical/i128_truncation_guard_test.go — the DEEP guard: a
+#     repo-wide go/types walk over every lossy conversion of the xdr 128/256-bit
+#     words and every math/big Int64/Uint64/Float64 narrowing (//i128:ok escapes).
+#   - scripts/ci/lint-migrations.sh — the SQL side (money columns must be
+#     NUMERIC, with lint-money:ok escapes).
 #
 # Exit 0 clean, non-zero on any violation. Wired into `make verify`.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 fail=0
 
-# i128 truncation in Go (production code; tests exempt). Skip comment
-# lines (the ADR/decoder docstrings mention int64(parts.Lo) to WARN
-# against it — that's not a violation).
+# Production code only (tests exempt). Comment lines are skipped: docstrings
+# mention int64(parts.Lo) to WARN against it.
 hits=$(grep -rnE '\bint(8|16|32|64)?\([A-Za-z_][A-Za-z0-9_.]*\.Lo\)' \
   --include='*.go' internal/ cmd/ pkg/ 2>/dev/null \
   | grep -v '_test\.go' \
@@ -42,11 +34,9 @@ if [ -n "$hits" ]; then
   fail=1
 fi
 
-# The same truncation one hop away: `lo := p.Lo` (or `=`) and then
-# `int64(lo)` further down the same file. File-local and flow-
-# insensitive by design — the go/types guard is the authority on locals;
-# this is its fast mirror, so the grep gate and the deep gate reject the
-# same rewrite of the same bug.
+# The same truncation one hop away: `lo := p.Lo`, then `int64(lo)` later in
+# the file. File-local and flow-insensitive by design; the go/types guard is
+# the authority on locals and this is its fast mirror.
 go_files=()
 while IFS= read -r f; do go_files+=("$f"); done \
   < <(find internal cmd pkg -name '*.go' ! -name '*_test.go' 2>/dev/null | sort)
@@ -70,11 +60,9 @@ if [ -n "$vhits" ]; then
   fail=1
 fi
 
-# Widen-then-narrow in one expression: `new(big.Float).SetInt(x).Float64()`
-# leaves no parts word for the patterns above. The go/types guard judges
-# every math/big Int64/Uint64/Float64 by receiver type; this catches the
-# inline spelling. A `//i128:ok <reason>` on the line or the one above
-# exempts it, matching the deep guard.
+# Widen-then-narrow in one expression (`new(big.Float).SetInt(x).Float64()`)
+# leaves no parts word for the patterns above; the deep guard judges it by
+# receiver type. `//i128:ok <reason>` on the line or the one above exempts it.
 bhits=$(awk '
     FNR == 1 { prev = "" }
     /^[[:space:]]*\/\// { prev = $0; next }

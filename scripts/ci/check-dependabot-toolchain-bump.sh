@@ -2,37 +2,26 @@
 # check-dependabot-toolchain-bump.sh — refuse a Dependabot PR that rides a
 # language-toolchain change in under a dependency-patch label.
 #
-# The go-minor-patch Dependabot group can raise the `go` directive a
-# minor version alongside ordinary module bumps. Dependabot's semver parser
-# reads 1.25 -> 1.26 as a "minor" bump because it treats the `go`
-# directive like any other module version, but for the Go toolchain a
-# minor version IS a language/runtime change — new vet rules, a new
-# `go` binary requirement, and a `govulncheck` built against the old
-# toolchain that cannot analyse the new module graph, so the
-# vulnerability gate goes dark with a
-# message that looked like an unrelated tool failure, not a reviewable
-# decision. A human bumping the Go version chooses to and says so in
-# the PR; Dependabot's grouped-patch label hides that choice.
+# Dependabot's semver parser reads a `go` directive bump 1.25 -> 1.26 as a
+# "minor" module bump, so the go-minor-patch group can carry it. For the Go
+# toolchain a minor IS a language/runtime change: new vet rules, a new `go`
+# binary requirement, and a govulncheck built on the old toolchain that cannot
+# analyse the new module graph (the vulnerability gate goes dark with an
+# unrelated-looking error). A human bumping Go says so in the PR; the grouped
+# label hides that choice.
 #
-# THE RULE. Only PRs authored by dependabot[bot] are in scope — a human
-# raising the Go version is a deliberate, reviewed decision and this
-# gate has nothing to add to it. Within a dependabot PR, a diff that
-# touches the `go` or `toolchain` directive line of go.mod, or the
-# `engines` / `packageManager` key of any package.json, fails closed
-# and names the exact line, so the PR is rejected with the right reason
-# instead of merged and diagnosed later from a govulncheck error.
+# THE RULE. Only PRs authored by dependabot[bot] are in scope. In one, a diff
+# touching the `go` or `toolchain` line of go.mod, or the `engines` /
+# `packageManager` key of any package.json, fails closed and names the line.
 #
 # Usage:
 #   git diff "$BASE_SHA" "$HEAD_SHA" -- go.mod '**/package.json' \
 #     | check-dependabot-toolchain-bump.sh "$PR_AUTHOR"
 #
-# Reads a unified diff (as produced by `git diff`) on stdin. Only the
-# `+++ b/<path>` file headers and `+`/`-` content lines are used, so a
-# diff produced by `diff -u old new` (as the fixtures below do, with no
-# git repository at all) works identically.
+# Reads a unified diff on stdin; only `+++ b/<path>` headers and `+`/`-`
+# content lines are used, so `diff -u old new` fixtures (no git repo) work.
 #
-# Exit 0 — PR author is not dependabot[bot], or the diff has no
-#          toolchain-version line. Nothing to block.
+# Exit 0 — author is not dependabot[bot], or no toolchain-version line changed.
 # Exit 1 — a dependabot[bot] PR touches a toolchain-version line. Blocked.
 set -euo pipefail
 
@@ -42,11 +31,9 @@ if [ "$#" -ne 1 ]; then
 fi
 PR_AUTHOR="$1"
 
-# Always drain stdin first, even when the actor check below will make the
-# result moot — a `git diff ... | check-dependabot-toolchain-bump.sh`
-# caller must never see a broken pipe because this script decided the
-# input didn't matter and exited early (lint-shell-sigpipe.sh's class of
-# defect, applied to a consumer rather than a `head`/`sort` producer).
+# Always drain stdin first, even when the author check makes it moot: an
+# early exit would hand a `git diff | …` caller a broken pipe
+# (lint-shell-sigpipe.sh's class of defect, on the consumer side).
 DIFF_TEXT="$(cat)"
 
 if [ "$PR_AUTHOR" != "dependabot[bot]" ]; then

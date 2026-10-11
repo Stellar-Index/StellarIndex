@@ -2,28 +2,23 @@
 # find-external-gaps.sh — report DAY-level holes in each external (CEX/oracle)
 # source's trade history.
 #
-# Why this exists, and why `find-data-gaps` does not cover it: that tool is
-# LEDGER-scoped. It walks per-source targets over a ledger range, which is the
-# right shape for on-chain sources and structurally unable to see an external
-# one — a Kraken fill has no ledger. So the only gap detector in the tree could
-# not, even in principle, notice a CEX source going dark.
-#
-# One went unnoticed for 26 months. Measured on r1: `kraken` held no XLM/USD
-# trades at all between 2024-04-01 and 2026-04-30, which is why prices_1m/1h/1d
-# for crypto:XLM/fiat:USD began only in 2026-05, and in turn why 1,738,671 SDEX
-# trades in 2026-03/04 could not be valued and were stored with a NULL
-# usd_volume. One invisible hole produced a seven-figure row count of missing
-# valuations two layers downstream.
+# `find-data-gaps` does not cover this: it is LEDGER-scoped, right for on-chain
+# sources but unable to see an external one (a Kraken fill has no ledger), so a
+# CEX source could go dark unnoticed. One did, for 26 months; it left
+# prices_1m/1h/1d for crypto:XLM/fiat:USD empty and ~1.7M SDEX trades stored
+# with a NULL usd_volume.
 #
 # A reported gap is not automatically a defect: a venue can genuinely not trade
-# a pair for a while (kraken has no XLM/USD between 2017-09 and 2018-01 — its
-# own API returns zero for those days, so our data matches the venue). This
-# reports; a human decides which holes are ours.
+# a pair for a while (kraken has no XLM/USD between 2017-09 and 2018-01; its own
+# API returns zero for those days). This reports; a human decides which holes
+# are ours.
 #
 # Usage:
 #   find-external-gaps.sh                     # every external source
 #   find-external-gaps.sh kraken bitstamp     # named sources
 #   MIN_GAP_DAYS=3 find-external-gaps.sh      # only runs >= 3 days (default 2)
+# Env: STELLARINDEX_POSTGRES_DSN (required). Exit 0 no gaps, 1 gaps found,
+# 2 DSN unset.
 set -euo pipefail
 
 MIN_GAP_DAYS="${MIN_GAP_DAYS:-2}"
@@ -35,15 +30,14 @@ fi
 
 SOURCES=("$@")
 if [ "${#SOURCES[@]}" -eq 0 ]; then
-    # The external tier only. On-chain sources belong to find-data-gaps, which
-    # judges them on ledger contiguity rather than wall-clock days.
+    # External tier only; on-chain sources belong to find-data-gaps (ledger contiguity).
     SOURCES=(kraken coinbase bitstamp binance)
 fi
 
 rc=0
 for src in "${SOURCES[@]}"; do
-    # One scan per source. Days with zero rows INSIDE the source's own active
-    # range are holes; outside it they are simply "not started yet" / "ended".
+    # One scan per source. Zero-row days INSIDE the source's active range are
+    # holes; outside it they are "not started yet" / "ended".
     out="$(psql "$DSN" -tAF'|' <<SQL
 WITH bounds AS (
     SELECT min(ts)::date AS lo, max(ts)::date AS hi

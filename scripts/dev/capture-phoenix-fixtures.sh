@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016 # $vars inside single quotes are jq variables, not shell ones.
-# Capture real Phoenix swap events from a live stellar-rpc, group
-# the 8 per-swap field events by (ledger, tx_hash, op_index), and
-# write one fixture JSON per complete swap to
-# test/fixtures/phoenix/<wasm_hash>/swap_*.json.
-#
-# Incomplete groups (fewer than 8 events) are dropped — they'd fail
-# the RawSwap.Complete() check at runtime anyway.
+# Capture real Phoenix swap events from a live stellar-rpc, group the 8
+# per-swap field events by (ledger, tx_hash, op_index), and write one fixture
+# JSON per complete swap to test/fixtures/phoenix/<wasm_hash>/swap_*.json.
+# Groups under 8 events are dropped (they fail RawSwap.Complete() anyway).
 #
 # Usage:
 #   scripts/dev/capture-phoenix-fixtures.sh \
@@ -17,8 +14,7 @@
 # Env:
 #   WASM_HASH  Directory label for captured fixtures.
 #
-# See docs/architecture/ingest-pipeline.md#contract-schema-evolution for why fixtures
-# are per-WASM-hash.
+# Why fixtures are per-WASM-hash: docs/architecture/ingest-pipeline.md#contract-schema-evolution
 
 set -euo pipefail
 
@@ -29,9 +25,8 @@ JQ="${JQ:-jq}"
 CURL="${CURL:-curl}"
 WASM_HASH="${WASM_HASH:-unknown-wasm-hash}"
 
-# Known Phoenix pool contracts. The capture
-# script scopes by these contractIds to avoid pulling unrelated
-# events. Extend as new pools are deployed.
+# Known Phoenix pool contracts; scoping by contractId avoids unrelated events.
+# Extend as new pools are deployed.
 PHOENIX_POOLS=(
   "CBHCRSVX3ZZ7EGTSYMKPEFGZNWRVCSESQR3UABET4MIW52N4EVU6BIZX"  # XLM/USDC
   "CD5XNKK3B6BEF2N7ULNHHGAMOKZ7P6456BFNIHRF4WNTEDKBRWAE7IAA"  # PHO/USDC
@@ -76,9 +71,8 @@ if [[ -z "$START_LEDGER" ]]; then
   echo "latest ledger: $latest → starting from $START_LEDGER"
 fi
 
-# Build contract-ids array + topic filter. Pinning topic[0] =
-# String("swap") + wildcard at position 1 catches all 8
-# per-field events in a single server-side pass.
+# Pinning topic[0] = String("swap") with a wildcard at position 1 catches all
+# 8 per-field events in one server-side pass.
 pools_json="$("$JQ" -nc --args '$ARGS.positional' "${PHOENIX_POOLS[@]}")"
 params="$("$JQ" -nc \
   --argjson start "$START_LEDGER" \
@@ -97,10 +91,8 @@ count="$(echo "$resp" | "$JQ" '.result.events | length')"
 echo "captured $count field events"
 [[ "$count" == "0" ]] && exit 0
 
-# Group by (ledger, tx_hash, op_index) and emit one fixture file
-# per complete 8-event group. python3 is the path of least
-# resistance here — pure jq grouping of 8 events per key with
-# payload preservation is fiddly.
+# Group by (ledger, tx_hash, op_index), one fixture per complete 8-event group;
+# pure jq grouping with payload preservation is fiddly, so python3.
 python3 - "$resp" "$OUT_DIR" "$WASM_HASH" <<'PY'
 import json, sys, os
 from collections import defaultdict

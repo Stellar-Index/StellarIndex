@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
-# lint-systemd-hardening.sh — every unit the archival-node role renders
-# names the account it runs as and carries the baseline sandbox, and every
-# wall-clock timer pins its zone.
-#
-# The role's units are unusually consistent: nearly every one sets User=,
-# NoNewPrivileges, PrivateTmp and the Protect-Kernel/CGroup trio, and
-# every fixed-hour OnCalendar ends in UTC. Past outliers
-# (pgbackrest-backup with no sandbox at all, node-healthcheck running as
-# root by omission, a timer firing at 02:00 host-local) all had one thing
-# in common: nothing noticed a directive that was simply absent.
+# lint-systemd-hardening.sh — every unit the archival-node role renders names
+# the account it runs as and carries the baseline sandbox, and every
+# wall-clock timer pins its zone. Past outliers (a unit with no sandbox, one
+# running as root by omission, a timer at host-local 02:00) shared one cause:
+# nothing noticed a directive that was simply absent.
 #
 # Rules, over $ROLE/templates/systemd:
 #   *.service.j2  — User= or DynamicUser=yes (running as root must be
@@ -18,10 +13,10 @@
 #                   disabled. DynamicUser=yes implies the first two.
 #   *.timer.j2    — an OnCalendar= with a fixed hour ends in " UTC".
 #
-# A unit that genuinely cannot take a directive is declared in
+# A unit that cannot take a directive is declared in
 # $ROLE/templates/systemd/HARDENING-EXCEPTIONS as <unit>:<directive> with
 # the reason. A declared exception the unit no longer needs fails too, so
-# the list only ever shrinks by deleting lines.
+# the list only shrinks.
 #
 # Run: bash scripts/ci/lint-systemd-hardening.sh
 set -uo pipefail

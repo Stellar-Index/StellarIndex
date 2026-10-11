@@ -17,9 +17,9 @@
 #   DRILL_MIN_PROTOCOL=29 bash scripts/ops/protocol-upgrade-drill.sh golden.txt
 #
 # golden.txt: one ledger sequence per line; blank lines and #-comments ignored.
-# Exit code = number of FAILed checks (capped 255). An unreachable base, an
-# HTTP error on either side, a truncated list or an unparsable body is a FAIL, never a pass: the
-# drill must not read "could not compare" as "identical". Exit 2 = refused to
+# Exit code = number of FAILed checks (capped 255). An unreachable base, HTTP
+# error on either side, truncated list or unparsable body is a FAIL, never a
+# pass: "could not compare" must not read as "identical". Exit 2 = refused to
 # run (missing bases, missing/empty/malformed golden list).
 set -o pipefail
 
