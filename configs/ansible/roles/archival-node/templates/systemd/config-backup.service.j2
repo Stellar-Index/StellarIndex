@@ -1,0 +1,40 @@
+# systemd unit: encrypted config / secrets backup (off-site-backup-plan.md §3).
+# Rendered by Ansible. Runs scripts/ops/config-backup.sh.
+
+[Unit]
+Description=Stellar Index — encrypted config and secrets backup
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/off-site-backup-plan.md
+After=network-online.target
+
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/stellarindex-ops
+Environment=AGE_RECIPIENT={{ config_backup_age_recipient }}
+Environment=OUT_DIR={{ config_backup_dir }}
+Environment=RETAIN_DAYS={{ config_backup_retain_days }}
+{% if config_backup_mc_target | default('') != '' %}
+Environment=BACKUP_MC_TARGET={{ config_backup_mc_target }}
+{% endif %}
+ExecStart=/usr/local/bin/config-backup.sh
+# Root: most of what it archives is root-only.
+User=root
+
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+TimeoutStartSec=15min
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths={{ config_backup_dir }} /var/lib/node_exporter/textfile_collector
+
+[Install]
+WantedBy=multi-user.target
