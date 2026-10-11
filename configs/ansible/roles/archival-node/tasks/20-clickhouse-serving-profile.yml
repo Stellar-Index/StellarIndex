@@ -1,34 +1,18 @@
 ---
-# ClickHouse serving-query isolation (ADR-0048 D4) — a dedicated
-# settings profile + user for the API's public-serving ClickHouse
-# reads (GET /v1/ledgers, /v1/tx, /v1/accounts/* — including ADR-0048
-# D5's GET /v1/accounts/{g}/movements, the read that made this a hard
-# prerequisite: see ADR-0048's Consequences section), isolated from
-# every OTHER ClickHouse connection this repo makes (the indexer's
-# real-time dual-sink, the aggregator's own explorer reader,
-# stellarindex-ops backfills / ch-rebuild / gates / replays) — which
-# authenticate as `ops_batch` / `live_daemon` below when those are
-# enabled, and otherwise as CH's unauthenticated `default` user.
+# ClickHouse serving-query isolation (ADR-0048 D4): a dedicated settings profile
+# + user for the API's public-serving CH reads (/v1/ledgers, /v1/tx,
+# /v1/accounts/*), isolated from every other CH connection (indexer dual-sink,
+# aggregator explorer reader, stellarindex-ops), which use `ops_batch` /
+# `live_daemon` below when enabled, else CH's unauthenticated `default`.
 #
-# NOT applied to r1 by the PR that added this file — codify-only, per
-# AGENTS.md's ansible-drift rule ("any config change on r1 lands in
-# configs/ansible/ in the same PR" — the CODIFICATION is the same PR;
-# the APPLY is a separate, deliberate operator step). Operator apply
-# command (run --check --diff FIRST):
-#
+# Codify-only: apply is a separate operator step (run --check --diff FIRST):
 #   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
 #     --tags clickhouse-serving-profile --check --diff
-#   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
-#     --tags clickhouse-serving-profile
 #
-# Provisioning the CH-side user (this file) does nothing on its own —
-# the API only authenticates as it once storage.clickhouse_serving_user
-# is also set in stellarindex.toml (internal/config/config.go's
-# StorageConfig.ClickHouseServingUser; templated below from
-# clickhouse_serving_user, default "api_serving") AND the indexer/api
-# services are restarted to pick up the new config + env — a SEPARATE,
-# coordinated step (14-stellarindex-services.yml's existing tags),
-# deliberately not folded into this task file.
+# The API authenticates as this user only once storage.clickhouse_serving_user
+# is set in stellarindex.toml (clickhouse_serving_user, default "api_serving";
+# internal/config/config.go StorageConfig.ClickHouseServingUser) and the
+# indexer/api are restarted: a separate step (14-stellarindex-services.yml).
 
 - name: Assert ClickHouse serving-profile password is set (ADR-0048 D4)
   ansible.builtin.assert:
@@ -197,22 +181,14 @@
       </clickhouse>
   when: clickhouse_serving_profile_enabled | bool
   no_log: true   # content embeds the password's SHA-256 digest
-  # Deliberately NO `notify: Restart clickhouse-server`: a
-  # users.d drop-in (profiles / users / quotas) is HOT-RELOADED by
-  # clickhouse-server's users-config reloader, so a restart is never
-  # what applies it — it would only bounce the lake (minutes of
-  # explorer/lake downtime + cold caches on r1's 9.3 TB) for nothing.
-  # The reload + verify tasks below apply it and PROVE it on the host
-  # instead (21-clickhouse-drop-guard.yml's pattern). The one CH change
-  # in this role that genuinely needs the restart — tcp_port /
-  # listen_host in 08-clickhouse.yml's config.d/si-override.xml — keeps
-  # its own notify.
+  # Deliberately NO `notify: Restart clickhouse-server`: users.d drop-ins are
+  # hot-reloaded, and a restart would bounce the lake (minutes of downtime, cold
+  # caches) for nothing. The reload + verify tasks below apply and prove it
+  # (21-clickhouse-drop-guard.yml's pattern).
   tags: [clickhouse, clickhouse-serving-profile]
 
 - name: Reload ClickHouse config so the api_serving drop-in is live (no restart)
-  # `SYSTEM RELOAD CONFIG` is idempotent and makes the users.d pick-up
-  # immediate rather than waiting on the reloader's poll. Skipped under
-  # --check (command modules do not run there).
+  # Idempotent; makes the users.d pick-up immediate. Skipped under --check.
   when:
     - clickhouse_serving_profile_enabled | bool
     - not ansible_check_mode
@@ -223,11 +199,8 @@
   tags: [clickhouse, clickhouse-serving-profile]
 
 - name: Verify the api_serving profile + user are live in ClickHouse
-  # system.users / system.settings_profiles are the LIVE access
-  # entities after the reload — a drop-in the server rejected (malformed
-  # XML keeps the PREVIOUS users config, it does not crash the server)
-  # shows up here as 0. Retried because the reloader polls (default
-  # 2 s). Skipped under --check for the same reason as above.
+  # The LIVE access entities after the reload: a rejected drop-in (malformed XML
+  # keeps the PREVIOUS config) reads as 0. Retried: the reloader polls (2 s).
   when:
     - clickhouse_serving_profile_enabled | bool
     - not ansible_check_mode
@@ -247,41 +220,24 @@
 
 # ───── ops_batch: the LOW-priority counterpart ─────────
 #
-# WHY: a runbook-prescribed `stellarindex-ops ch-rebuild -sep41` dry-run
-# over 2M ledgers (run under run-heavy-job.sh: CPUWeight=50, IOWeight=50,
-# MemoryMax=20G) drove r1's load to 12.9 and starved the AGGREGATOR's
-# supply refresher — stellarindex_aggregator_supply_refresh_error_dominant
-# fired for all 39 watched contracts within 3 minutes; killing the job
-# cleared it. The cgroup caps bound the ops PROCESS; the contention was
-# INSIDE clickhouse-server, where the ops job's heavy-FINAL scans and the
-# aggregator's supply reads both ran as CH's unauthenticated `default`
-# user — the same identity, so CH's query scheduler had nothing to yield
-# with. api_serving above protects the API; nothing else protects the
-# aggregator/indexer side from a batch job. This profile is that
-# protection: a dedicated user every stellarindex-ops CH connection
-# authenticates as (internal/storage/clickhouse/ops_auth.go reads
-# STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD from
-# /etc/default/stellarindex-ops, templated by 09-minio.yml).
+# WHY: a heavy `stellarindex-ops ch-rebuild` under run-heavy-job.sh starved the
+# AGGREGATOR's supply refresher. The cgroup caps bound the ops PROCESS, but the
+# contention was INSIDE clickhouse-server, where both ran as the unauthenticated
+# `default` user, so CH's scheduler had nothing to yield with. This dedicated
+# user (internal/storage/clickhouse/ops_auth.go reads
+# STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD from /etc/default/stellarindex-ops,
+# templated by 09-minio.yml) protects the aggregator/indexer from batch jobs.
 #
-# Same discipline as api_serving: vault-sourced password (assert below),
-# SHA-256 digest only in the drop-in, loopback-only, pinned to `stellar`,
-# codify-only in the PR that adds it. Gated OFF by default
-# (clickhouse_ops_batch_profile_enabled: false in defaults/main.yml):
-# the assert below fires only on an explicit enable, so the weekly
-# ansible-drift.yml --check against r1 stays green until the operator
-# flips the flag in an inventory together with that inventory's
-# vault_clickhouse_ops_batch_password. Activation, per host:
-#   ansible-vault edit inventory/r1.secrets.yml   # add the password
-#   (set clickhouse_ops_batch_profile_enabled: true in inventory/r1.yml)
+# Same discipline as api_serving: vault password (assert below), SHA-256 digest
+# only in the drop-in, loopback-only, pinned to `stellar`. Gated OFF by default
+# (clickhouse_ops_batch_profile_enabled) so ansible-drift stays green until an
+# inventory flips it together with vault_clickhouse_ops_batch_password.
+# Activation, per host:
 #   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
 #     --tags clickhouse-ops-batch-profile,minio,heavy-job-wrapper --check --diff
-# (all three tags: the CH user AND the env file must move together, or
-# the next ops job authenticates with a credential CH does not know;
-# heavy-job-wrapper re-renders /usr/local/sbin/run-heavy-job.sh, which
-# imports the pair from /etc/default/stellarindex-ops into every wrapped
-# job itself — 14-stellarindex-services.yml — so how the runbooks launch
-# jobs does not change; an older rendered wrapper does not
-# import it, hence the tag).
+# All three tags: the CH user, the env file and the run-heavy-job.sh wrapper
+# (which imports the pair into every wrapped job) must move together, or ops
+# jobs authenticate with a credential CH does not know.
 
 - name: Assert ClickHouse ops-batch profile password is set
   ansible.builtin.assert:
@@ -398,14 +354,10 @@
       </clickhouse>
   when: clickhouse_ops_batch_profile_enabled | bool
   no_log: true   # content embeds the password's SHA-256 digest
-  # Deliberately NO `notify: Restart clickhouse-server` (the r1
-  # --check --diff of the FIRST enable showed one): this is a
-  # users.d drop-in, hot-reloaded by clickhouse-server — the notify
-  # would restart the 9.3 TB lake (minutes of explorer/lake
-  # downtime + cold caches) for a change a config reload applies. The
-  # first enable must not bounce the lake; the reload + verify tasks
-  # below apply and prove it instead (same pattern as api_serving above
-  # and 21-clickhouse-drop-guard.yml).
+  # Deliberately NO `notify: Restart clickhouse-server`: users.d drop-ins are
+  # hot-reloaded, and a restart would bounce the lake (minutes of downtime, cold
+  # caches) for nothing. The reload + verify tasks below apply and prove it
+  # (21-clickhouse-drop-guard.yml's pattern).
   tags: [clickhouse, clickhouse-ops-batch-profile]
 
 - name: Render the ops_batch client credential files (root:stellarindex 0640)
@@ -451,9 +403,8 @@
   tags: [clickhouse, clickhouse-ops-batch-profile]
 
 - name: Verify the ops_batch profile + user are live in ClickHouse
-  # LIVE access entities after the reload; a rejected drop-in (the
-  # server keeps the previous users config) reads as 0 here and fails
-  # the apply. Retried because the reloader polls (default 2 s).
+  # LIVE access entities after the reload; a rejected drop-in reads as 0 and fails
+  # the apply. Retried: the reloader polls (2 s).
   when:
     - clickhouse_ops_batch_profile_enabled | bool
     - not ansible_check_mode
@@ -490,22 +441,17 @@
   until: (ch_ops_batch_client_probe.stdout | trim) == clickhouse_ops_batch_user
   tags: [clickhouse, clickhouse-ops-batch-profile]
 
-# ───── live_daemon: a named identity for the live daemons ──────────────
-#
-# The indexer dual-sink, the aggregator's readers and rollups, and the
-# API/indexer readers with no serving user reach CH as its unauthenticated
-# `default` user. This user gives them a password-backed identity so
-# `default` can be restricted later without cutting them off. It uses the
-# stock `default` settings profile, so priority and limits are exactly
-# what those connections run with today. Gated OFF by default
-# (clickhouse_live_daemon_profile_enabled, defaults/main.yml). Activation,
-# per host: add vault_clickhouse_live_daemon_password to the inventory's
-# secrets, set the flag, then
+# The indexer dual-sink, aggregator readers/rollups and API/indexer readers with
+# no serving user reach CH as unauthenticated `default`. This user gives them a
+# password-backed identity so `default` can be restricted later. It uses the
+# stock `default` profile, so priority and limits are unchanged. Gated OFF by
+# default (clickhouse_live_daemon_profile_enabled). Activation, per host: add
+# vault_clickhouse_live_daemon_password, set the flag, then
 #   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
 #     --tags clickhouse-live-daemon-profile,stellarindex --check --diff
-# (both tags: the CH user AND /etc/default/stellarindex must move together;
-# the env template only renders the pair once both flag and password are
-# set, and its notify restarts the daemons onto it).
+# Both tags: the CH user AND /etc/default/stellarindex must move together (the
+# env template renders the pair only when flag and password are set, and its
+# notify restarts the daemons onto it).
 
 - name: Assert ClickHouse live-daemon password is set
   ansible.builtin.assert:
@@ -567,8 +513,7 @@
       </clickhouse>
   when: clickhouse_live_daemon_profile_enabled | bool
   no_log: true   # content embeds the password's SHA-256 digest
-  # No restart notify: users.d is hot-reloaded; the tasks below apply and
-  # verify it (same as api_serving / ops_batch above).
+  # No restart notify: users.d is hot-reloaded (see api_serving above).
   tags: [clickhouse, clickhouse-live-daemon-profile]
 
 - name: Reload ClickHouse config so the live_daemon drop-in is live (no restart)
@@ -596,40 +541,34 @@
   until: ch_live_daemon_user_live.stdout == '1'
   tags: [clickhouse, clickhouse-live-daemon-profile]
 
-# ───── ops_monitor / ops_admin: the last callers of `default` ───────────
+# `default` takes no password, so every local uid is a passwordless superuser
+# over loopback. These users give its remaining callers a password-backed
+# identity so `default` can be locked later:
+#   ops_monitor: read-only probes (config-assertions, data-freshness,
+#     ch-schema-drift, restore-drill). Stock `default` profile plus readonly=2,
+#     NOT ops_batch's priority 100, which would time probes out into alerts.
+#   ops_admin: root shells and this role's own clickhouse-client tasks, via
+#     /root/.clickhouse-client/config.xml. `default`'s envelope minus access
+#     management.
+# Each flag also renders that user's client credential files (ops_monitor's
+# root:stellarindex 0640, root's ops_admin config 0600). Client files carry
+# <port> because a -C file or ~/.clickhouse-client/config.xml REPLACES
+# /etc/clickhouse-client/config.xml, so config.d/zz-port.xml is not merged and a
+# portless file hangs on MinIO's :9000 (15-log-discipline.yml). Credential tasks
+# are no_log + diff: false; review with --check only, never --diff.
 #
-# `default` takes no password, so every local uid gets a
-# passwordless superuser over loopback. These two users give its remaining
-# callers a password-backed identity so `default` can be locked later:
-#   ops_monitor — read-only probes (config-assertions, data-freshness,
-#     ch-schema-drift, restore-drill). Stock `default` profile plus
-#     readonly=2, so a probe keeps normal priority: on ops_batch's
-#     priority 100 a heavy job would time freshness probes out into alerts.
-#   ops_admin — root shells and this role's own clickhouse-client tasks,
-#     through /root/.clickhouse-client/config.xml. The same envelope as
-#     `default` minus access management.
-# Each flag also renders that user's client credential files: ops_monitor's
-# root:stellarindex 0640 (data-freshness runs as stellarindex), root's
-# ops_admin config root 0600. Client files carry <port> because a -C file or
-# ~/.clickhouse-client/config.xml REPLACES /etc/clickhouse-client/config.xml,
-# so config.d/zz-port.xml is not merged and a portless file hangs on
-# MinIO's :9000 (15-log-discipline.yml). Every task that renders a
-# credential is no_log + diff: false; review these with --check only,
-# never --diff.
+# A view created by ops_admin with `SQL SECURITY DEFINER` runs as ops_admin;
+# before dropping the user, check system.tables for `DEFINER = ops_admin`.
 #
-# A view created by ops_admin with an explicit `SQL SECURITY DEFINER` runs
-# as ops_admin; before dropping the user, check system.tables for `DEFINER = ops_admin`.
-#
-# Gated OFF by default (defaults/main.yml). Activation, per host: add
-# vault_clickhouse_ops_{monitor,admin}_password (alphanumeric) to the
-# inventory's secrets, set the flags, then
+# Gated OFF by default. Activation, per host: add
+# vault_clickhouse_ops_{monitor,admin}_password (alphanumeric), set the flags, then
 #   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
 #     --tags clickhouse-ops-monitor-profile,clickhouse-ops-admin-profile --check
-# Root's bare clickhouse-client becomes ops_admin (a client config with
-# <user> makes the client ignore CLICKHOUSE_USER/CLICKHOUSE_PASSWORD).
-# Installed scripts pick their identity by file and fall back to `default`
-# while it is absent: read-only probes ops-monitor.netrc, ch-lake-backup.sh
-# ops-admin.netrc, ch-supply and ch-live-catchup ops_batch's files.
+# Root's bare clickhouse-client becomes ops_admin (a client config with <user>
+# makes the client ignore CLICKHOUSE_USER/CLICKHOUSE_PASSWORD). Scripts pick their
+# identity by file and fall back to `default` while it is absent: probes use
+# ops-monitor.netrc, ch-lake-backup.sh ops-admin.netrc, ch-supply and
+# ch-live-catchup ops_batch's files.
 
 - name: Find ops credential backups a killed run left behind
   # A killed run skips the blocks' always:, leaving `~` copies of the

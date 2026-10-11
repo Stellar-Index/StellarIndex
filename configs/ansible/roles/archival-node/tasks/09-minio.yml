@@ -1,19 +1,13 @@
 ---
 # Single-node MinIO so Galexie has an S3-compatible target locally.
-# Production HA MinIO (9-node EC) is a later concern — tracked against
-# the HA plan. See TODO(#0).
+# Production HA MinIO (9-node EC) is a later concern.
 
-# Fail fast if the operator hasn't supplied the MinIO release SHA256:
-# without a pinned digest a root-owned executable is installed without
+# Fail fast without a pinned MinIO digest: a root-owned executable must have
 # provenance.
 #
-# dl.min.io, Docker Hub (`minio/minio`, `minio/mc`) and quay.io/minio do
-# not serve pullable binaries — MinIO Inc distributes source only (its
-# GitHub releases ship no binary assets). The one channel serving a
-# pullable, anonymously-accessible minio + mc pair is the community
-# `chainguard-forks/minio` build published to cgr.dev — both binaries
-# live in the same image, so one pinned pull covers both. There is no
-# separate `mc` release to pin, so there is no `mc_version`.
+# MinIO Inc ships no binaries (dl.min.io, Docker Hub, quay.io carry none). The
+# only pullable minio + mc pair is the community `chainguard-forks/minio`
+# image on cgr.dev; one pinned pull covers both, so there is no `mc_version`.
 - name: assert minio_image is digest-pinned
   ansible.builtin.assert:
     that:
@@ -50,9 +44,8 @@
     - minio
     - mc
 
-# An existing host keeps the binary it runs: a pin bump must not silently
-# swap the server under a live lake on the next apply. Replacing one is a
-# planned upgrade, opted into per run with -e minio_allow_binary_upgrade=true.
+# An existing host keeps its binary so a pin bump cannot swap the server under
+# a live lake; upgrade per run with -e minio_allow_binary_upgrade=true.
 - name: Decide whether to install the pinned MinIO binaries
   ansible.builtin.set_fact:
     minio_bin_missing: >-
@@ -82,10 +75,8 @@
   when: minio_bin_install | bool
 
 - name: Extract minio + mc from the pinned image
-  # Runs the image's own `cp` as root against a bind-mounted host dir —
-  # avoids `podman create`/`cp`/`rm` bookkeeping for a one-shot copy.
-  # The image's default user is a non-root UID (chainguard convention);
-  # `--user=0:0` is required to write into /usr/local/bin.
+  # Runs the image's own `cp` as root against a bind-mounted dir. `--user=0:0` is
+  # required: the image's default user is non-root and cannot write /usr/local/bin.
   ansible.builtin.command:
     argv:
       - podman
@@ -166,11 +157,8 @@
     - not (ansible_check_mode and minio_unit is changed)
 
 # ──── Bucket creation ─────────────────────────────────────────────
-# Bootstrap the buckets galexie + pgBackRest + ad-hoc backups need.
-# `mc` is MinIO's CLI, extracted from minio_image above alongside the
-# server binary (not the apt package — there isn't one in stable at
-# time of writing). Both `mc alias set` and `mc mb -p` are idempotent
-# so this re-runs safely.
+# Buckets for galexie + pgBackRest + ad-hoc backups. `mc` comes from minio_image
+# (no stable apt package). `mc alias set` and `mc mb -p` are idempotent.
 
 - name: Wait for MinIO API to be reachable on :9000
   ansible.builtin.uri:
@@ -182,14 +170,10 @@
   until: minio_live.status == 200
 
 - name: Configure mc alias for local MinIO
-  # The credentials go in on STDIN, never on argv: with ACCESSKEY/SECRETKEY
-  # omitted, `mc alias set` reads them from stdin (one per line; it only
-  # prints the "Enter … Key:" prompts on a tty). Anything on argv is
-  # readable by every local uid in /proc/<pid>/cmdline (+ ps, + auditd
-  # execve records) for the life of the call. MC_HOST_<alias> env would also
-  # avoid argv but is transient; the root-run ops scripts
-  # (galexie-archive-*.sh) rely on the PERSISTED `local` alias, so stdin it
-  # is. no_log prevents Ansible from echoing the stdin/vars on failure.
+  # Credentials go in on STDIN, never argv: anything on argv is readable by every
+  # local uid via /proc/<pid>/cmdline, ps and auditd. MC_HOST_<alias> is transient,
+  # but the root-run galexie-archive-*.sh scripts rely on the PERSISTED `local`
+  # alias. no_log keeps Ansible from echoing stdin/vars on failure.
   # Guarded by scripts/ci/lint-ansible-tasks.sh (secret-on-argv).
   ansible.builtin.command:
     argv:
@@ -209,12 +193,9 @@
   changed_when: "'Bucket created successfully' in mc_mb.stdout"
 
 # ──── Least-privilege user for galexie ────────────────────────────
-# galexie gets its own user with a bucket-restricted policy, not MinIO
-# root creds — it can write to galexie-live only, not backups or
-# galexie-archive.
+# galexie gets a bucket-restricted user (galexie-live write only), not root creds.
 
-# The policy JSONs below are copied into this dir; `copy` doesn't create
-# parents, so a fresh build (dir absent) failed here. r1 already had it.
+# `copy` does not create parents; the policy JSONs below land in this dir.
 - name: Ensure MinIO policies directory exists
   ansible.builtin.file:
     path: /etc/minio/policies
@@ -262,8 +243,7 @@
     mode: "0755"
 
 - name: Install / update galexie-writer MinIO policy
-  # `mc admin policy create` is idempotent when the policy exists —
-  # pass the same JSON and it's a no-op. If JSON changed it updates.
+  # `mc admin policy create` is idempotent; changed JSON updates the policy.
   ansible.builtin.command:
     argv:
       - /usr/local/bin/mc
@@ -276,10 +256,10 @@
   changed_when: false
 
 - name: Create galexie-writer MinIO user (vault-supplied creds)
-  # `mc admin user add` updates the secret if the user already exists.
-  # SECRETKEY omitted from argv on purpose: `mc admin user add ALIAS
-  # ACCESSKEY` reads the secret from stdin, so it never appears in
-  # /proc/<pid>/cmdline (secret-on-argv, scripts/ci/lint-ansible-tasks.sh).
+  # `mc admin user add` updates the secret if the user exists.
+  # SECRETKEY omitted from argv on purpose: `mc admin user add` reads it from
+  # stdin, keeping it out of /proc/<pid>/cmdline (secret-on-argv,
+  # scripts/ci/lint-ansible-tasks.sh).
   ansible.builtin.command:
     argv:
       - /usr/local/bin/mc
@@ -307,25 +287,16 @@
   failed_when: false   # mc returns non-zero if policy already attached
 
 # ──── galexie-archive-writer (write on galexie-archive only) ───────
-# `/etc/default/galexie-backfill` (07-galexie.yml) exports this
-# identity's key pair from vault, and docs/operations/
-# credential-rotation.md lists it — so the MinIO user, its policy and
-# the attachment are codified here too. A hand-made identity drifts:
-# the live secret stops matching the vaulted one (`SignatureDoesNotMatch`
-# on every call) and nothing notices, because the hourly
-# galexie-archive-fill job writes as the `local` alias — MinIO ROOT (see
-# the credential-hygiene section of docs/operations/credential-rotation.md).
+# `/etc/default/galexie-backfill` (07-galexie.yml) exports this identity's keys
+# from vault. Codifying it makes `mc admin user add` re-sync the secret on every
+# apply (a hand-made identity drifts to SignatureDoesNotMatch unnoticed, since
+# the hourly galexie-archive-fill job writes as MinIO root via `local`), and
+# gives rehydrate/backfill a non-root identity. See docs/operations/
+# credential-rotation.md.
 #
-# Codifying it does three things at once: `mc admin user add`
-# re-syncs the secret from vault on every apply (the drift can't
-# persist), the identity gains a bucket-scoped policy instead of none,
-# and the rehydrate/backfill procedures get an identity to use that
-# isn't root.
-#
-# Deliberately WRITE, not write+delete: the delete paths on this bucket
-# (trim-galexie-archive, the fill script's empty-partition sweep) are
-# separately gated destructive operations and must not inherit their
-# authority from the identity that merely fills the archive.
+# Deliberately WRITE, not write+delete: delete paths on this bucket
+# (trim-galexie-archive, the fill script's empty-partition sweep) are separately
+# gated and must not inherit authority from the identity that fills the archive.
 
 - name: Render galexie-archive-writer MinIO policy
   ansible.builtin.copy:
@@ -369,11 +340,10 @@
   changed_when: false
 
 - name: Create galexie-archive-writer MinIO user (vault-supplied creds)
-  # `mc admin user add` updates the secret if the user already exists —
-  # which is exactly what repairs the drifted `archivewriter` alias.
-  # SECRETKEY omitted from argv on purpose: `mc admin user add ALIAS
-  # ACCESSKEY` reads the secret from stdin, so it never appears in
-  # /proc/<pid>/cmdline (secret-on-argv, scripts/ci/lint-ansible-tasks.sh).
+  # `mc admin user add` updates the secret if the user exists.
+  # SECRETKEY omitted from argv on purpose: `mc admin user add` reads it from
+  # stdin, keeping it out of /proc/<pid>/cmdline (secret-on-argv,
+  # scripts/ci/lint-ansible-tasks.sh).
   ansible.builtin.command:
     argv:
       - /usr/local/bin/mc
@@ -415,11 +385,8 @@
   no_log: true
 
 # ──── stellarindex-reader (read-only on both buckets) ──────────────
-# Used by stellarindex-ops verify-archive today, and by the indexer +
-# api once they have systemd units. Scoped to BOTH galexie-live and
-# galexie-archive because the indexer stitches across them at the
-# seam. NOT a writer — galexie-writer / galexie-archive-writer cover
-# the write paths separately.
+# Used by stellarindex-ops verify-archive, and by the indexer + api later. Scoped
+# to BOTH buckets because the indexer stitches across them at the seam. Not a writer.
 
 - name: Render stellarindex-reader MinIO policy
   ansible.builtin.copy:
@@ -463,9 +430,9 @@
   changed_when: false
 
 - name: Create stellarindex-reader MinIO user (vault-supplied creds)
-  # SECRETKEY omitted from argv on purpose: `mc admin user add ALIAS
-  # ACCESSKEY` reads the secret from stdin, so it never appears in
-  # /proc/<pid>/cmdline (secret-on-argv, scripts/ci/lint-ansible-tasks.sh).
+  # SECRETKEY omitted from argv on purpose: `mc admin user add` reads it from
+  # stdin, keeping it out of /proc/<pid>/cmdline (secret-on-argv,
+  # scripts/ci/lint-ansible-tasks.sh).
   ansible.builtin.command:
     argv:
       - /usr/local/bin/mc
@@ -493,17 +460,10 @@
   failed_when: false   # mc returns non-zero if policy already attached
 
 # ──── stellarindex-archive-trimmer (list+delete, galexie-archive only) ──
-# galexie-archive-trim.service's only prior credential
-# source was stellarindex-reader (read-only — every DeleteObject came
-# back AccessDenied, so a run "deleted 0/N" every time). Root and
-# galexie-archive-writer both have delete authority on this bucket but
-# are deliberately not used here either: galexie-archive-writer's policy
-# comment above documents the invariant that the fill/write identity
-# must not also authorize the destructive trim path, and running trim as
-# root would reintroduce the same "delete path = full admin" problem the
-# galexie-archive-writer codification fixed for writes. This identity is
-# scoped to exactly what trim needs: list the bucket and delete from it,
-# nothing else.
+# Trim needs delete authority, but not from stellarindex-reader (read-only) nor
+# from root or galexie-archive-writer: the fill/write identity must not also
+# authorize the destructive trim path (see its policy comment above). This
+# identity can list the bucket and delete from it, nothing else.
 - name: Render stellarindex-archive-trimmer MinIO policy
   ansible.builtin.copy:
     dest: /etc/minio/policies/stellarindex-archive-trimmer.json
@@ -542,9 +502,9 @@
   changed_when: false
 
 - name: Create stellarindex-archive-trimmer MinIO user (vault-supplied creds)
-  # SECRETKEY omitted from argv on purpose: `mc admin user add ALIAS
-  # ACCESSKEY` reads the secret from stdin, so it never appears in
-  # /proc/<pid>/cmdline (secret-on-argv, scripts/ci/lint-ansible-tasks.sh).
+  # SECRETKEY omitted from argv on purpose: `mc admin user add` reads it from
+  # stdin, keeping it out of /proc/<pid>/cmdline (secret-on-argv,
+  # scripts/ci/lint-ansible-tasks.sh).
   ansible.builtin.command:
     argv:
       - /usr/local/bin/mc
@@ -572,27 +532,18 @@
   failed_when: false   # mc returns non-zero if policy already attached
 
 - name: Template /etc/default/stellarindex-ops (env vars for stellarindex-ops batch jobs)
-  # Sourced by interactive `stellarindex-ops` invocations, by
-  # run-heavy-job.sh (which imports the CH ops-batch pair below into
-  # every wrapped job, 14-stellarindex-services.yml) and by the ops
-  # timer units (verify-archive-tier-*, ch-schema-*, restore-drill).
-  # NOT by the stellarindex-{indexer,aggregator,api} service units —
-  # those source /etc/default/stellarindex (14-stellarindex-services.yml
-  # templates) and must keep doing so: this file carries the
-  # low-priority ClickHouse identity, which would demote them.
+  # Sourced by interactive `stellarindex-ops`, run-heavy-job.sh (which imports the
+  # CH ops-batch pair into every wrapped job, 14-stellarindex-services.yml) and the
+  # ops timer units (verify-archive-tier-*, ch-schema-*, restore-drill). NOT by the
+  # indexer/aggregator/api units, which source /etc/default/stellarindex: this
+  # file carries the low-priority ClickHouse identity, which would demote them.
   #
-  # The AWS SDK that powers the datastore reader (verify-archive +
-  # indexer ledgerstream) reads creds from AWS_ACCESS_KEY_ID /
-  # AWS_SECRET_ACCESS_KEY. The STELLARINDEX_S3_* duplicates are for
-  # config-load.go's ApplyEnvOverrides path. STELLARINDEX_POSTGRES_DSN
-  # carries the application-db password so the file-on-disk
-  # /etc/stellarindex.toml stays password-free.
+  # The AWS SDK reads AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY; the
+  # STELLARINDEX_S3_* duplicates feed config-load.go's ApplyEnvOverrides.
+  # STELLARINDEX_POSTGRES_DSN keeps /etc/stellarindex.toml password-free.
   #
-  # Mode 0640 root:stellarindex — the
-  # stellarindex service user (04-users.yml) needs group read
-  # for the units + interactive `stellarindex-ops` runs that source
-  # this file after de-privileging. Note: 09-minio runs after
-  # 04-users, so the group exists by the time this templates.
+  # Mode 0640 root:stellarindex: the service user needs group read. 09-minio runs
+  # after 04-users, so the group exists.
   ansible.builtin.copy:
     dest: /etc/default/stellarindex-ops
     owner: root

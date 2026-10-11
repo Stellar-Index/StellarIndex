@@ -5,11 +5,9 @@
 # nftables admits 9100 only from internal_cidrs and drops :9473 off-host.
 # Promtail ships journald logs to the local Loki (:3100).
 
-# Node-exporter source-of-truth: the Debian package
-# `prometheus-node-exporter`. It auto-updates for CVE coverage and owns
-# :9100, so no hand-installed binary can squat the port. We keep the
-# same collectors and the same textfile_collector dir for full
-# metric-source continuity (archive_completeness.prom,
+# Node-exporter comes from the Debian package `prometheus-node-exporter`: it
+# auto-updates for CVEs and owns :9100 so no hand-installed binary can squat the
+# port. Collectors and the textfile dir are unchanged (archive_completeness.prom,
 # sla_probe.prom, galexie_archive_tip_lag.prom etc.).
 - name: Install prometheus-node-exporter Debian package
   ansible.builtin.apt:
@@ -18,13 +16,11 @@
     update_cache: true
     cache_valid_time: 3600
 
-# Textfile-collector landing dir. cmd/stellarindex-sla-probe writes
-# its prom file here; cmd/stellarindex-ops verify-archive +
-# archive-completeness + supply-snapshot write here too. Without
-# this dir + the matching --collector.textfile flag below, every
-# alert in deploy/monitoring/rules/{sla-probe,archive-completeness,
-# supply-snapshot,verify-archive}.yml is permanently silent — the
-# SLA evidence chain has a gap.
+# Textfile-collector landing dir for cmd/stellarindex-sla-probe and
+# stellarindex-ops verify-archive / archive-completeness / supply-snapshot.
+# Without it and the matching --collector.textfile flag, every alert in
+# deploy/monitoring/rules/{sla-probe,archive-completeness,supply-snapshot,
+# verify-archive}.yml is permanently silent.
 - name: Ensure node_exporter textfile-collector dir
   ansible.builtin.file:
     path: /var/lib/node_exporter/textfile_collector
@@ -37,15 +33,10 @@
     # Sticky: a group writer cannot delete or rename over another writer's .prom.
     mode: "1775"
 
-# /etc/default/supply-snapshot — operator override that wires the
-# textfile-collector path the supply-snapshot binary writes its
-# success metric to. Without this, the binary runs successfully on
-# its daily cadence but emits no metric, and
-# `stellarindex_supply_snapshot_never_initialized` (alert in
-# deploy/monitoring/rules/supply-snapshot.yml) fires permanently.
-# The asset coverage limitation (only XLM today) is documented in
-# the unit comments + tracked separately — this file just unblocks
-# the SLA-evidence chain.
+# /etc/default/supply-snapshot wires the textfile path the binary writes its
+# success metric to. Without it the daily run succeeds but emits no metric, and
+# `stellarindex_supply_snapshot_never_initialized`
+# (deploy/monitoring/rules/supply-snapshot.yml) fires permanently.
 - name: Install /etc/default/supply-snapshot (textfile metric wiring)
   ansible.builtin.copy:
     dest: /etc/default/supply-snapshot
@@ -61,15 +52,12 @@
   tags: [observability, supply-snapshot]
 
 # ── GO sla-probe stack (retired) ──────────────────────────────────
-# One owner per metric file. A second probe stack
-# (deploy/systemd/sla-probe.{service,timer} + /etc/default/sla-probe
-# + sla-probe.secret) beside 17-stellarindex-healthchecks' wrapper
-# stack (stellarindex-sla-probe.*) would write THE SAME textfile
-# (sla_probe.prom) — last-writer-wins, so a keyless/stale-key GO run
-# (401/429s → availability ~7%) stomps the wrapper's passing verdicts
-# and holds stellarindex_sla_probe_unit_failed red. The wrapper stack
-# (Healthchecks.io fanout + textfile) is the owner; the tasks below
-# remove the GO stack wherever it exists.
+# One owner per metric file. The GO stack (deploy/systemd/sla-probe.*,
+# /etc/default/sla-probe, sla-probe.secret) writes the SAME sla_probe.prom as
+# 17-stellarindex-healthchecks' wrapper stack (stellarindex-sla-probe.*);
+# last-writer-wins, so a keyless GO run (401/429s) stomps the wrapper's verdicts
+# and holds stellarindex_sla_probe_unit_failed red. The tasks below remove the
+# GO stack wherever it exists.
 - name: Retire the GO sla-probe timer + service (superseded by stellarindex-sla-probe)
   ansible.builtin.systemd:
     name: "{{ item }}"
@@ -93,11 +81,9 @@
   notify: Reload systemd
   tags: [observability, sla-probe]
 
-# Configure the Debian package's ARGS to mirror the legacy flags
-# so existing textfile_collector .prom files (and their alerts)
-# remain visible after the cutover. `--collector.textfile` is
-# implied by `--collector.textfile.directory` in node_exporter
-# ≥1.7.x — dropped to avoid the deprecation warning.
+# Mirror the legacy flags in the package's ARGS so existing textfile .prom files
+# stay visible. `--collector.textfile` is implied by
+# `--collector.textfile.directory` in node_exporter >= 1.7, so it is omitted.
 - name: Template /etc/default/prometheus-node-exporter
   ansible.builtin.copy:
     dest: /etc/default/prometheus-node-exporter
@@ -116,11 +102,9 @@
     enabled: true
     daemon_reload: true
 
-# Idempotent cleanup for boxes with a hand-rolled node_exporter.service:
-# stop + disable it so the two binaries never collide on :9100. The
-# unit file + /usr/local/bin/node_exporter binary are left in place as a
-# zero-downtime rollback path (`systemctl stop
-# prometheus-node-exporter && systemctl start node_exporter`).
+# Cleanup for hand-rolled node_exporter.service: stop + disable it so the two
+# binaries never collide on :9100. The unit and /usr/local/bin/node_exporter
+# stay as a zero-downtime rollback path.
 - name: Stop legacy node_exporter.service (176596608 cutover)
   ansible.builtin.systemd:
     name: node_exporter.service
@@ -167,12 +151,9 @@
   when: run_stellar_core | bool
 
 # ── Promtail → Loki (journald log shipping) ──────────────────────────
-# Codifies the hand-install documented in configs/loki/README.md
-# (Grafana APT repo + `promtail` system package). Loki itself is
-# still the single-host system package on r1 (same README) — this
-# block manages only the shipper side. The rendered config matches
-# configs/loki/promtail.r1.yml on r1 (host label = region_id,
-# push URL = loki_push_url).
+# Manages only the shipper (Grafana APT repo + `promtail` package; see
+# configs/loki/README.md). The rendered config matches configs/loki/promtail.r1.yml
+# (host label = region_id, push URL = loki_push_url).
 
 - name: Ensure /etc/apt/keyrings exists
   ansible.builtin.file:
@@ -266,17 +247,10 @@
   when: run_promtail | bool
   tags: [observability, promtail]
 
-# Converge a host that ships to a Loki that is not there. This role
-# installs PROMTAIL but never Loki itself — r1's Loki is a hand-install
-# (configs/loki/README.md), so a host that gets the shipper without a
-# receiver runs it against a dead endpoint forever. Both test nets were
-# in exactly that state: promtail active, loki_push_url pointing at
-# localhost:3100, and no loki unit on the box at all (`systemctl
-# is-enabled loki` -> not-found, /var/lib/loki empty). Log aggregation
-# there silently did nothing.
-#
-# Ansible does not remove what it stops templating, so stop it explicitly
-# where promtail is disabled. Idempotent on a host that never had it.
+# This role installs PROMTAIL but never Loki (r1's Loki is a hand-install, see
+# configs/loki/README.md), so a host with a shipper and no receiver ships to a
+# dead endpoint forever. Ansible does not remove what it stops templating, so
+# stop it explicitly where promtail is disabled. Idempotent.
 - name: Remove promtail where it is disabled (no Loki to ship to)
   when: not (run_promtail | bool)
   block:
@@ -295,17 +269,14 @@
 
 - name: galexie catchup-refusal probe (script + timer)
   # 'History: Skipping catchup' in the journal means galexie has stopped
-  # ingesting, and nothing else watches for it. Every minute: count
-  # refusals in the last 5min, write node-exporter textfile metrics; the
-  # rule trees alert on >0 sustained.
+  # ingesting, and nothing else watches for it. Every minute: count refusals in
+  # the last 5min and write node-exporter textfile metrics; rules alert on >0.
   #
-  # It also reports ITS OWN health — the _probe_read_ok, _probe_journal_lines
-  # and _probe_last_run_unix series below, written on every run — because
-  # its consumer stellarindex_galexie_catchup_refused is severity `page`
-  # and EVERY way this producer could fail would land on the count 0, which
-  # is also the healthy value. A page frozen at zero is indistinguishable
-  # from a quiet one. stellarindex_galexie_catchup_probe_degraded reads
-  # those three.
+  # It also reports ITS OWN health (_probe_read_ok, _probe_journal_lines,
+  # _probe_last_run_unix), because the consumer
+  # stellarindex_galexie_catchup_refused is severity `page` and every producer
+  # failure lands on 0, the healthy value. stellarindex_galexie_catchup_probe_degraded
+  # reads those three.
   #
   # Runbook: docs/operations/runbooks/archive.md#stellarindex_galexie_catchup_probe_degraded
   # Fixtures: scripts/ci/galexie-catchup-probe-test.sh
@@ -458,18 +429,13 @@
     - not (ansible_check_mode and galexie_catchup_probe_timer is changed)
 
 # ── Stellar-stack upstream version-lag probe ─────────────────────────
+# A stellar-core without support for a newly activated protocol freezes ingest,
+# and a stale galexie crash-loops on the first ledger with new XDR; both can sit
+# unnoticed for weeks unless something compares versions.
 #
-# Watches whether the installed Stellar toolchain lags upstream. A
-# stellar-core without support for a newly activated protocol freezes
-# ingest until upgraded, and a stale galexie crash-loops on the first
-# ledger carrying new XDR — both can sit unnoticed for weeks after the
-# upstream release unless something compares versions.
-#
-# Daily probe, same textfile-collector shape as the galexie catchup
-# probe above (script + oneshot service + timer, all root-owned,
-# writing to the SAME node_exporter textfile dir with the SAME
-# chmod-644-before-mv discipline — see that probe's comments for why
-# both of those matter). Runbook:
+# Daily, same textfile shape as the galexie catchup probe above (root-owned
+# script + oneshot + timer, same textfile dir, chmod 644 before mv; see that
+# probe's comments). Runbook:
 # docs/operations/runbooks/stellar-node.md#stellar-stack-version-lag
 - name: stellar-stack version-lag probe (script)
   ansible.builtin.copy:
@@ -686,13 +652,10 @@
   notify: Reload systemd
 
 - name: stellar-stack version-lag probe timer
-  # Daily — the components tracked here (apt-packaged binaries + one
-  # upstream Go project) don't move fast enough to need more frequent
-  # checks; daily is enough to keep the response window for a
-  # protocol-major release well inside the weeks-long runway a network
-  # activation vote gives operators. Slotted at 05:07 UTC, spaced from
-  # the other daily jobs (archive-completeness ~02:17, verify-archive-
-  # tier-a ~03:23, supply-snapshot 04:42).
+  # Daily is enough: the tracked components move slowly relative to the
+  # weeks-long runway a protocol activation vote gives. 05:07 UTC avoids the other
+  # daily jobs (archive-completeness ~02:17, verify-archive-tier-a ~03:23,
+  # supply-snapshot 04:42).
   ansible.builtin.copy:
     dest: /etc/systemd/system/stellar-stack-version-probe.timer
     owner: root
@@ -723,22 +686,16 @@
     - not (ansible_check_mode and stellar_stack_version_probe_timer is changed)
 
 # ── StellarIndex OWN-binary version-skew probe ────────────────────
-# The probe above watches THIRD-PARTY components (core, archivist,
-# galexie). This one watches our own binaries: a binary missing from
-# the deploy workflow's list is never updated, and a deploy that never
-# touches a binary still exits 0, so drift across releases goes
-# unreported.
+# The probe above watches third-party components; this one watches ours. A
+# binary missing from the deploy workflow's list is never updated, and a deploy
+# that skips a binary still exits 0.
 #
-# stellarindex-ops is not a bystander: many units on r1 exec it,
-# including the data-integrity gates (verify-archive tier-a/b,
-# archive-completeness, ch-schema-drift, restore-drill). A stale
-# gate binary validates the lake with retired rules — it PASSES
-# when it should fail, which is the worst direction for a gate.
+# stellarindex-ops matters most: many units exec it, including the integrity
+# gates (verify-archive tier-a/b, archive-completeness, ch-schema-drift,
+# restore-drill). A stale gate PASSES when it should fail.
 #
-# Why a textfile probe and not a /metrics endpoint: ops and migrate
-# are CLI binaries invoked by timers. They have no long-lived
-# process to scrape, so the only way to observe their installed
-# version is to ask the file on disk.
+# Textfile probe, not /metrics: ops and migrate are timer-invoked CLIs with no
+# long-lived process to scrape.
 - name: Install StellarIndex binary version-skew probe
   ansible.builtin.copy:
     dest: /usr/local/sbin/stellarindex-binary-version-probe.sh
@@ -925,11 +882,9 @@
   tags: [observability]
 
 - name: StellarIndex binary version-skew probe timer
-  # Every 30 min, and Persistent=true so it re-runs after a reboot.
-  # Much more frequent than the daily upstream probe because this one
-  # answers "did the deploy I just ran actually land everywhere?" —
-  # a question with a same-session answer. Offset :09/:39 to stay
-  # clear of the :00/:30 scrape and rollup crowd.
+  # Every 30 min, Persistent=true so it re-runs after a reboot. More frequent than
+  # the daily upstream probe because it answers "did the deploy I just ran land
+  # everywhere?". Offset :09/:39 to stay clear of the :00/:30 scrape crowd.
   ansible.builtin.copy:
     dest: /etc/systemd/system/stellarindex-binary-version-probe.timer
     owner: root
@@ -954,23 +909,17 @@
     enabled: true
     state: started
     daemon_reload: true
-  # Check mode never really writes the unit, so systemd cannot find it and
-  # this task fails — on a host that has not yet had a real apply. That is
-  # exactly a new or lean host, where `--check --diff` is most worth
-  # running, and one failure here aborts the preview for every task after
-  # it. The test nets hit this while r1 did not, purely because r1 already
-  # had the unit from an earlier apply.
+  # Check mode never writes the unit, so systemd cannot find it and this task
+  # fails on a host without a prior real apply (new or lean hosts), aborting the
+  # preview for every later task.
   when: not ansible_check_mode
   tags: [observability]
 
 # ── Ledger-meta decode probe (reactive protocol backstop) ─────────
-# The version-lag probe above is the PRIMARY defence, but it compares
-# released upstream versions and so cannot know the network has begun
-# emitting new XDR. A galexie that cannot decode a new protocol can
-# still ingest that protocol's ledgers until one actually contains the
-# breaking arm (e.g. parallel-execution structures), then dies. This
-# probe watches for the decode failure itself and names the cause, so
-# it surfaces as "component is behind a protocol" instead of generic
+# The version-lag probe above compares released versions and cannot know the
+# network has begun emitting new XDR. A galexie that cannot decode it keeps
+# ingesting until a ledger contains the breaking arm, then dies. This probe
+# watches the decode failure itself and names the cause, instead of generic
 # tip-lag. See docs/operations/protocol-upgrades.md.
 - name: Install ledger-meta decode probe
   ansible.builtin.copy:
@@ -1031,16 +980,10 @@
   tags: [observability, protocol-guard]
 
 # ── Per-process memory-mapping headroom probe ─────────────────────
-#
-# ClickHouse can exhaust the kernel's per-process mapping limit
-# (vm.max_map_count), then goes into a std::bad_alloc storm and crashes,
-# taking dependent jobs with it. The limit is sysctl_tunings'
-# vm.max_map_count (defaults/main.yml); this probe
-# watches headroom against it so a crash is not the first signal.
-#
-# node_exporter has no per-process mapping series (its procfs
-# collector is system-wide), so this is a textfile producer.
-# Alerts: deploy/monitoring/rules/memory-mappings.yml.
+# ClickHouse exhausting vm.max_map_count (sysctl_tunings, defaults/main.yml)
+# goes into a std::bad_alloc storm and crashes. This probe watches headroom so a
+# crash is not the first signal. node_exporter has no per-process mapping series,
+# so it is a textfile producer. Alerts: deploy/monitoring/rules/memory-mappings.yml.
 - name: Install memory-mapping headroom probe
   ansible.builtin.copy:
     src: memory-mappings.sh
@@ -1050,12 +993,10 @@
     mode: "0755"
   tags: [observability, memory-mappings]
 
-# Templated units rather than an inline `content:` block: the inline
-# probes in this file carry no hardening at all, and this one runs as
-# root by requirement (/proc/<pid>/maps of another uid). The .j2 pair
-# is the majority idiom in this role and the one with the sandbox
-# directives — see the unit's own header for why root, and why
-# ProtectProc= is deliberately unset.
+# Templated .j2 units rather than inline `content:`: this probe runs as root by
+# requirement (/proc/<pid>/maps of another uid) and the .j2 pair carries the
+# sandbox directives; see the unit's header for why root and why ProtectProc= is
+# unset.
 - name: Install memory-mapping probe systemd service + timer
   ansible.builtin.template:
     src: "systemd/{{ item }}.j2"
@@ -1082,31 +1023,22 @@
   tags: [observability, memory-mappings]
 
 # ── TimescaleDB job/CAGG health probe ─────────────────────────────
+# Producer for stellarindex_timescale_cagg_stale and
+# stellarindex_timescale_compression_lag (deploy/monitoring/rules/storage.yml);
+# without it they can never fire. Same shape as the probes above (root-owned
+# script + oneshot + timer, same textfile dir, chmod 644 before mv).
 #
-# Producer for the metrics stellarindex_timescale_cagg_stale and
-# stellarindex_timescale_compression_lag in
-# deploy/monitoring/rules/storage.yml read; without it they can never
-# fire. Same shape as the galexie-catchup and stellar-stack-version
-# probes above: script + oneshot service + timer, root-owned, writing
-# to the SAME node_exporter textfile dir with the SAME
-# chmod-644-before-mv discipline — see the galexie probe for why both
-# of those matter.
+# stellarindex_timescale_job_failures_total is the only evidence of CAGG refresh
+# runs that fail with "failed to start job" (background-worker starvation, sized
+# in postgresql.conf.j2) but get a slot on a later tick: last_run_status reads
+# Success and the caggs are never stale.
 #
-# It also emits stellarindex_timescale_job_failures_total, which is
-# not decoration: CAGG refresh runs can fail with "failed to start job"
-# (background-worker starvation, sized in postgresql.conf.j2) while the
-# jobs get a slot on a later tick, so last_run_status reads Success and
-# the caggs are never stale — the counter is the only evidence.
+# It reports ITS OWN health (_probe_query_ok, _probe_rows, _probe_last_run_unix)
+# because the alerts above all fail quiet over an absent series;
+# stellarindex_timescale_probe_degraded reads those three.
 #
-# It also reports ITS OWN health — stellarindex_timescale_probe_query_ok,
-# _probe_rows and _probe_last_run_unix, written on every run — because
-# the three alerts above all fail quiet: `>` and `time() - x` over an
-# absent series are empty, so a blind alert is indistinguishable from a
-# healthy one. stellarindex_timescale_probe_degraded reads those three.
-#
-# It also carries the PG lock-convoy gauges, which live here rather
-# than in postgres_exporter because the exporter can itself be in the
-# convoy they exist to report — see the block comment on the query.
+# The PG lock-convoy gauges live here, not in postgres_exporter, because the
+# exporter can itself be in the convoy (see the block comment on the query).
 #
 # Runbooks: docs/operations/runbooks/timescale.md#stellarindex_timescale_cagg_stale,
 # docs/operations/runbooks/timescale.md#stellarindex_timescale_probe_degraded,
@@ -1658,11 +1590,9 @@
   notify: Reload systemd
 
 - name: TimescaleDB job/CAGG health probe timer
-  # Every minute. The fastest CAGG here refreshes on a 30s schedule and
-  # the stale rule trips at 5x the interval (150s), so a slower probe
-  # would let the freshness metric itself age past the threshold and
-  # fire a FALSE stale alert — the metric's own staleness must stay
-  # well inside the window it is used to judge.
+  # Every minute: the fastest CAGG refreshes every 30s and the stale rule trips at
+  # 5x (150s), so a slower probe would age the freshness metric past the threshold
+  # and fire a FALSE stale alert.
   ansible.builtin.copy:
     dest: /etc/systemd/system/timescale-jobs-probe.timer
     owner: root
@@ -1694,31 +1624,16 @@
   when: not (ansible_check_mode and timescale_jobs_probe_units is changed)
 
 # ── Redirect the Debian collectors into the dir we actually read ───
+# `prometheus-node-exporter-collectors` ships apt + nvme probes whose output is
+# hardcoded to /var/lib/prometheus/node-exporter, but node_exporter reads
+# --collector.textfile.directory=/var/lib/node_exporter/textfile_collector, so
+# nvme_*, apt_upgrades_pending and node_reboot_required would scrape 0 series.
+# r1's NVMe is not replaceable on demand, so wear/media errors need lead time.
 #
-# `prometheus-node-exporter-collectors` ships apt + nvme probes on
-# 5-minute timers, and both hardcode their output into
-# /var/lib/prometheus/node-exporter — Debian's default textfile dir.
-# This host runs node_exporter with
-# --collector.textfile.directory=/var/lib/node_exporter/textfile_collector
-# (see the ARGS above), so without a redirect every one of those
-# samples is written and thrown away: nvme_percentage_used_ratio,
-# nvme_available_spare_ratio, nvme_media_errors_total,
-# apt_upgrades_pending and node_reboot_required would scrape 0 series.
-#
-# That is the same wrong-dir failure the galexie probe guards against,
-# inherited from the package — and it matters more than it looks: r1's
-# NVMe is not replaceable on demand, so drive wear and media errors are
-# exactly what we want a long lead time on.
-#
-# Fixed with systemd drop-ins rather than by editing the packaged units
-# (drop-ins survive package upgrades) and rather than by moving OUR
-# probes to Debian's dir (that would churn every working producer). The
-# empty `ExecStart=` is required to clear the packaged value before
-# setting a new one.
+# systemd drop-ins, not edits to the packaged units (they survive upgrades) and
+# not moving OUR probes (churn). The empty `ExecStart=` clears the packaged value.
 - name: Install prometheus-node-exporter-collectors Debian package
-  # Ships the apt/nvme timers + scripts the drop-ins below repoint;
-  # without this the drop-in ExecStart= commands reference scripts
-  # that were never installed.
+  # Ships the apt/nvme timers + scripts the drop-ins repoint.
   ansible.builtin.apt:
     name: prometheus-node-exporter-collectors
     state: present
@@ -1759,9 +1674,7 @@
   notify: Reload systemd
 
 - name: Drop the now-stale copies from Debian's unread textfile dir
-  # Left in place they are simply dead files, but a future operator
-  # finding two textfile dirs with overlapping names has no way to tell
-  # which one is live. Removing them makes the answer unambiguous.
+  # Left in place they are dead files that make two textfile dirs ambiguous.
   ansible.builtin.file:
     path: "/var/lib/prometheus/node-exporter/{{ item }}"
     state: absent
