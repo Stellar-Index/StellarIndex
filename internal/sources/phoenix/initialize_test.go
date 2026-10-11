@@ -6,12 +6,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Real mainnet initialize bodies captured from the ClickHouse lake
-// (pool CBENABXP…, 40 events / 19 pools). Each is a single Address (the
-// announced token contract); topic[1] carries the slot.
-// The base64 bodies are split into concatenated chunks purely so the
-// secret scanner (gitleaks) doesn't flag the short high-entropy Address
-// XDR as a generic-api-key false positive — they decode identically.
+// Real mainnet initialize bodies from the ClickHouse lake (pool CBENABXP…). Each is a single
+// Address (the announced token contract); topic[1] carries the slot. The base64 bodies are
+// split into concatenated chunks only so gitleaks doesn't flag the short high-entropy Address
+// XDR as a generic-api-key false positive; they decode identically.
 const (
 	realInitTokenABody = "AAAAEgAAAAEltP" + "zYWa7C+mNIQ4xI" + "mzw8EMmLbSG+T9" + "PLMMtolT75dw=="
 	realInitTokenBBody = "AAAAEgAAAAGt78" + "5ZruUpaPdgYdSU" + "wlJbdWWfpClqZf" + "SZ7ynlZHfklg=="
@@ -61,17 +59,13 @@ func TestDecodeInitialize_realBodies(t *testing.T) {
 	}
 }
 
-// Real per-pool STAKE contract initialize event captured from the
-// ClickHouse lake: stake contract CABWEFVX…, ledger 51,572,026, tx
-// 02cea787…, topic = ("initialize","LP Share token staking contract"),
-// body = a single Address (the LP-share token). The base64 body is
-// concatenated in chunks so gitleaks doesn't flag the short high-entropy
-// Address XDR — it decodes identically (same convention as the pool-init
-// bodies above). This is the shape the stake-contract gated
-// seed makes Matches() and decodeInitializeEvent must not error on — the 20
-// undecodable-but-matched blind ledgers (first=51,572,026) in the
-// projection re-derive. It must now Decode to NO output (recognized, not
-// projected), NOT an error.
+// Real per-pool STAKE contract initialize event from the ClickHouse lake: stake contract
+// CABWEFVX…, ledger 51,572,026, tx 02cea787…, topic = ("initialize","LP Share token staking
+// contract"), body = a single Address (the LP-share token). The base64 body is chunked for
+// gitleaks like the pool-init bodies above. The stake-contract gated seed makes Matches() true
+// for this shape, and decodeInitializeEvent must not error on it: it must Decode to NO output
+// (recognized, not projected), NOT an error, or projection re-derive hits undecodable blind
+// ledgers.
 const (
 	realStakeInitContract = "CABWEFVXUB3XWYPTWFETEGJR2WRGE2ZKYYLZDLV3EBUVFMOU4ENK4DJC"
 	realStakeInitBody     = "AAAAEgAAAAFmKV" + "chSUzLfJpaiqii" + "gI0VlWhzDQX79" + "g+CV3YA/NDDsA=="

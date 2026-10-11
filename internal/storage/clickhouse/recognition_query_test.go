@@ -8,13 +8,11 @@ import (
 	"testing"
 )
 
-// TestDistinctShapesWindowQuery_NoWideColumns pins the structural half of the
-// recognition OOM fix: the distinct-shape scan reads ONLY the
-// narrow identity columns. Any argMax(topics_xdr)/argMax(data_xdr)
-// exemplar state — one wide string pair per distinct key — is what scales the
-// query's footprint with the post-P23 distinct-shape population until it dies
-// at any server memory cap. topics_xdr is read only for the non-Symbol
-// topic[0] key, and is empty for every Symbol shape.
+// TestDistinctShapesWindowQuery_NoWideColumns pins the structural half of the recognition OOM
+// fix: the distinct-shape scan reads ONLY the narrow identity columns. argMax(topics_xdr) or
+// argMax(data_xdr) exemplar state (a wide string pair per distinct key) scales the footprint
+// with the distinct-shape population until it dies at any memory cap. topics_xdr is read only
+// for the non-Symbol topic[0] key, and is empty for every Symbol shape.
 func TestDistinctShapesWindowQuery_NoWideColumns(t *testing.T) {
 	q := distinctShapesWindowQuery(ClassicTokenTopic0Syms)
 	for _, forbidden := range []string{"data_xdr", "op_args_xdr", "argMax"} {
@@ -59,12 +57,10 @@ func TestDistinctShapesWindowQuery_BoundedSettings(t *testing.T) {
 	}
 }
 
-// TestDistinctShapesWatchedQuery_IncludesTopicsAndContracts pins the
-// watched-SEP41 scoped census: unlike the global scan's NOT IN
-// exclusion, this query INCLUDEs the given topic[0] set and restricts to the
-// given contract set — the shape that lets a watched SEP-41 source's own
-// classic-token event kinds be audited without re-scanning the firehose for
-// every contract in the lake.
+// TestDistinctShapesWatchedQuery_IncludesTopicsAndContracts pins the watched-SEP41 scoped
+// census: unlike the global scan's NOT IN exclusion, this query INCLUDEs the given topic[0]
+// set and restricts to the given contract set, so a watched source's classic-token event
+// kinds can be audited without re-scanning the firehose for every contract in the lake.
 func TestDistinctShapesWatchedQuery_IncludesTopicsAndContracts(t *testing.T) {
 	q := distinctShapesWatchedQuery(FirehoseExcludeSyms, []string{"CAAA", "CBBB"})
 	for _, required := range []string{

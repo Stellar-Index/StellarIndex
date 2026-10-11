@@ -28,13 +28,10 @@ func TestContractVocabularyContainsTheClassicOne(t *testing.T) {
 	}
 }
 
-// TestFundIsNotAcceptedFromASEP1Declaration is the half of the split that
-// matters. `fund` exists because the contract arm makes its OWN statement
-// from a primary source, reviewed in code. The classic arm READS the issuer's
-// free-text anchor_asset_type, where accepting a term SEP-1 does not define
-// is accepting an invented spelling — the exact failure the closed set exists
-// to prevent, in a population that already carries `equity`, `etf`, `metal`,
-// `rwa` and `sovereign`.
+// TestFundIsNotAcceptedFromASEP1Declaration is the half of the split that matters. `fund` exists
+// because the contract arm makes its OWN statement from a primary source, reviewed in code. The
+// classic arm READS the issuer's free-text anchor_asset_type, where accepting a term SEP-1 does
+// not define is accepting an invented spelling, the failure the closed set exists to prevent.
 func TestFundIsNotAcceptedFromASEP1Declaration(t *testing.T) {
 	for _, declared := range []string{"fund", "Fund", " FUND "} {
 		if got := rwa.AnchorClass(declared); got != "" {
@@ -63,12 +60,10 @@ func TestContractVocabularyIsExactlyTheClassicOnePlusFund(t *testing.T) {
 	}
 }
 
-// TestTheOvernightSwapFundIsNotFiledAsABond is the specific refusal this
-// change was made to avoid having to make. The fund holds 152 listed equities
-// at 119% of net assets and swaps every penny of that return away for an
-// overnight index rate; `bond` is false on the assets and false on the
-// exposure, and it would have been the single most visible number on the
-// surface attached to the single most falsifiable false claim.
+// TestTheOvernightSwapFundIsNotFiledAsABond pins a specific refusal. The fund holds listed
+// equities and swaps that return away for an overnight index rate; `bond` is false on the assets
+// and on the exposure, and filing it as one would attach a falsifiable claim to a highly visible
+// number.
 func TestTheOvernightSwapFundIsNotFiledAsABond(t *testing.T) {
 	var seen int
 	for _, b := range rwa.ContractInstrumentBindings() {
@@ -86,11 +81,10 @@ func TestTheOvernightSwapFundIsNotFiledAsABond(t *testing.T) {
 	}
 }
 
-// TestTheTBillFundsKeepTheClassTheyShippedWith — the widening must not
-// reclassify anything already published. The T-Bill funds are invested in
-// short-dated sovereign debt, `bond` is defensible for them, and moving them
-// would change what an existing row says about an instrument that has not
-// changed.
+// TestTheTBillFundsKeepTheClassTheyShippedWith pins that widening the vocabulary does not
+// reclassify anything already published. The T-Bill funds hold short-dated sovereign debt, so
+// `bond` is defensible, and moving them would change what an existing row says about an
+// unchanged instrument.
 func TestTheTBillFundsKeepTheClassTheyShippedWith(t *testing.T) {
 	var seen int
 	for _, b := range rwa.ContractInstrumentBindings() {
@@ -108,11 +102,10 @@ func TestTheTBillFundsKeepTheClassTheyShippedWith(t *testing.T) {
 	}
 }
 
-// TestOpenAPIAnchorClassEnumMatchesContractVocabulary pins the wire contract
-// to the Go vocabulary it serves. `anchor_class` is populated from BOTH the
-// classic and contract arms: a term the contract arm may legally
-// emit (`fund`) but the spec's enum omits is an undocumented value on every
-// Spiko SAFO row, live, with no way for a generated client to model it.
+// TestOpenAPIAnchorClassEnumMatchesContractVocabulary pins the wire contract to the Go
+// vocabulary it serves. `anchor_class` is populated from BOTH the classic and contract arms: a
+// term the contract arm may legally emit (`fund`) but the spec's enum omits is an undocumented
+// value a generated client cannot model.
 func TestOpenAPIAnchorClassEnumMatchesContractVocabulary(t *testing.T) {
 	raw, err := os.ReadFile("../../openapi/stellar-index.v1.yaml")
 	if err != nil {

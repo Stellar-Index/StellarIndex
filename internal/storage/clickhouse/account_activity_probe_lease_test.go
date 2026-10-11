@@ -9,13 +9,10 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// accountActivityLake models ONE ClickHouse under ONE long-lived reader for
-// stellar.account_activity: a watermark table that starts holding rows and
-// can be TRUNCATEd (rows removed, object still present) under the running
-// process — the same "empties mid-process" shape the probe lease covers for
-// tx_hash_index, exercised here through accountActivityAvailable /
-// accountActivityWatermark, a second call site. Query-shape
-// classifiers (isAccountActivityProbe, isAccountActivityLookup) are shared
+// accountActivityLake models one ClickHouse under one long-lived reader for
+// stellar.account_activity: a watermark table that starts with rows and can be TRUNCATEd under the
+// running process, the "empties mid-process" shape the probe lease covers for tx_hash_index, here
+// through accountActivityAvailable / accountActivityWatermark. Query-shape classifiers are shared
 // with explorer_reader_watermark_test.go.
 type accountActivityLake struct {
 	rows bool
@@ -38,15 +35,11 @@ func (l *accountActivityLake) respond(q string) (driver.Rows, error) {
 	}
 }
 
-// TestAccountActivityWatermark_PositiveLeaseRenewsAfterTruncate pins the lease
-// against its SECOND site, accountActivityAvailable in explorer_reader.go:
-// the requireRows lease is the SAME
-// shared primitive every requireRows probe goes through, not a special case
-// wired only for tx_hash_index. Absent the lease, a positive verdict here
-// would never be re-confirmed for the process lifetime: the probe query
-// (`SELECT last_ledger … LIMIT 1`) would run exactly once, cold, and never
-// again — including after stellar.account_activity is TRUNCATEd under the
-// running reader. The lease requires ONE renewal probe once it expires.
+// TestAccountActivityWatermark_PositiveLeaseRenewsAfterTruncate pins the lease at its second
+// site, accountActivityAvailable: the requireRows lease is the shared primitive every requireRows
+// probe uses, not a special case for tx_hash_index. Without it a positive verdict would never be
+// re-confirmed, including after stellar.account_activity is TRUNCATEd under the running reader.
+// The lease requires one renewal probe once it expires.
 func TestAccountActivityWatermark_PositiveLeaseRenewsAfterTruncate(t *testing.T) {
 	lake := &accountActivityLake{rows: true}
 	conn := &stubConn{respond: lake.respond}

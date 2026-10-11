@@ -23,11 +23,9 @@ func directoryEntriesN(n int) []DirectoryEntry {
 	return out
 }
 
-// TestBuildDirectoryUpsert_PlaceholderLayout — 4 params per row plus
-// exactly one shared source param at the tail position every row
-// references. A drifted placeholder count corrupts column/value
-// alignment silently (the driver reports nothing when counts still
-// happen to match).
+// TestBuildDirectoryUpsert_PlaceholderLayout pins 4 params per row plus one shared source param at
+// the tail that every row references. A drifted placeholder count corrupts column/value alignment
+// silently when the counts still happen to match.
 func TestBuildDirectoryUpsert_PlaceholderLayout(t *testing.T) {
 	chunk := directoryEntriesN(3)
 	q, args := buildDirectoryUpsert(chunk, "stellar-expert")
@@ -52,13 +50,10 @@ func TestBuildDirectoryUpsert_PlaceholderLayout(t *testing.T) {
 	}
 }
 
-// TestDedupDirectoryEntriesByAddress — RA-3: two upstream files
-// declaring the same address body would put the same conflict key
-// twice into one multi-row upsert chunk, which Postgres rejects
-// ("ON CONFLICT DO UPDATE command cannot affect row a second time"),
-// aborting the whole day's sync. ReplaceDirectory must collapse
-// duplicate addresses (last-wins) before chunking so the statement is
-// always single-key-per-chunk.
+// TestDedupDirectoryEntriesByAddress: two upstream files declaring the same address would put the
+// same conflict key twice into one multi-row upsert, which Postgres rejects ("ON CONFLICT DO
+// UPDATE command cannot affect row a second time"), aborting the sync. ReplaceDirectory must
+// collapse duplicate addresses (last wins) before chunking.
 func TestDedupDirectoryEntriesByAddress(t *testing.T) {
 	in := []DirectoryEntry{
 		{Address: "GA", Name: "first-A", Source: "stellar-expert"},
@@ -190,11 +185,9 @@ func TestDirectoryChurn_BoundsUnflagged(t *testing.T) {
 	}
 }
 
-// TestDirectoryChurnLimit_Ceiling pins the arithmetic behind the sync
-// refusal: 5 % of the held rows, never below the floor, unbounded
-// for a source's first sync and for the operator's explicit opt-in.
-// The refusal itself runs against Postgres in
-// test/integration/pg_accounts_test.go.
+// TestDirectoryChurnLimit_Ceiling pins the arithmetic behind the sync refusal: 5 % of held rows,
+// never below the floor, unbounded for a source's first sync and the operator's explicit opt-in.
+// The refusal itself runs against Postgres in test/integration/pg_accounts_test.go.
 func TestDirectoryChurnLimit_Ceiling(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -220,11 +213,9 @@ func TestDirectoryChurnLimit_Ceiling(t *testing.T) {
 	}
 }
 
-// TestDirectoryChurn_UnflagCeilingIsSizedOnTheFlaggedSet: the un-flag
-// cap is a fraction of the addresses flagged before the sync, not of
-// every row the source holds. Flagged rows are a minority, so a
-// row-sized cap (925 on the live table) admitted clearing almost the
-// whole flagged set in one run.
+// TestDirectoryChurn_UnflagCeilingIsSizedOnTheFlaggedSet: the un-flag cap is a fraction of the
+// addresses flagged before the sync, not of every row the source holds. Flagged rows are a
+// minority, so a row-sized cap would admit clearing almost the whole flagged set in one run.
 func TestDirectoryChurn_UnflagCeilingIsSizedOnTheFlaggedSet(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -283,17 +274,12 @@ func TestReplaceDirectoryWithin_RefusesBeforeTheDB(t *testing.T) {
 	}
 }
 
-// TestBuildDirectoryUpsert_ConflictArmIsOwnershipScoped — the conflict
-// arm must update only rows the syncing source already OWNS.
-//
-// Two things broke when it did not. Migration 0136 promises the table is
-// "scoped by `source` so a future second directory source can coexist
-// without the syncs deleting each other's rows", and an unconditional
-// `source = EXCLUDED.source` makes every sync steal every shared address
-// from the other. And with `source` rewritten there is no durable
-// operator override for a false-positive scam flag at all: a hand-held
-// correction is adopted into the upstream snapshot and overwritten by
-// the next daily run, while the issuer's price stays withheld.
+// TestBuildDirectoryUpsert_ConflictArmIsOwnershipScoped: the conflict arm must update only rows
+// the syncing source already OWNS. The table is scoped by `source` so directory sources can
+// coexist without deleting each other's rows, and an unconditional `source = EXCLUDED.source`
+// would make every sync steal shared addresses. It would also leave no durable operator override
+// for a false-positive scam flag: a hand-held correction would be adopted into the upstream
+// snapshot and overwritten by the next run while the issuer's price stays withheld.
 func TestBuildDirectoryUpsert_ConflictArmIsOwnershipScoped(t *testing.T) {
 	q, _ := buildDirectoryUpsert(directoryEntriesN(2), "stellar-expert")
 
@@ -309,11 +295,10 @@ func TestBuildDirectoryUpsert_ConflictArmIsOwnershipScoped(t *testing.T) {
 	}
 }
 
-// TestReplaceDirectory_RefusesReservedOverrideSource — a sync running as
-// the operator source would adopt every override into its snapshot and
-// then prune the ones that snapshot omits, deleting the corrections the
-// source exists to protect. Must refuse before touching the DB (s.db is
-// nil here, so a DB call would panic — reaching the guard proves order).
+// TestReplaceDirectory_RefusesReservedOverrideSource: a sync running as the operator source would
+// adopt every override into its snapshot, then prune those it omits, deleting the corrections the
+// source exists to protect. It must refuse before touching the DB (s.db is nil here, so a DB call
+// would panic and reaching the guard proves the order).
 func TestReplaceDirectory_RefusesReservedOverrideSource(t *testing.T) {
 	s := &Store{}
 	_, _, err := s.ReplaceDirectory(context.Background(), DirectoryOperatorOverrideSource, directoryEntriesN(1))

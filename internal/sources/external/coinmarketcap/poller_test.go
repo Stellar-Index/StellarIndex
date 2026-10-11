@@ -269,11 +269,9 @@ func TestPollOnce_IDMode_MismatchedID_Skips(t *testing.T) {
 	probe.assertSurfaced(t, "ticker=XLM", "requested_id=512", "returned_id=999")
 }
 
-// TestPollOnce_PartialCoverage_SplitsIntoTwoRequests: When
-// some tickers have a CMC id and some don't, the poller must issue
-// one `id=` request and one `symbol=` request, never a single request
-// carrying both selectors (CMC accepts only one; the shipped seed
-// produces exactly this partial-coverage shape for USDT0).
+// TestPollOnce_PartialCoverage_SplitsIntoTwoRequests: when some tickers have a CMC id and
+// some don't, the poller must issue one `id=` and one `symbol=` request, never a single
+// request carrying both selectors (CMC accepts only one; USDT0 hits this shape).
 func TestPollOnce_PartialCoverage_SplitsIntoTwoRequests(t *testing.T) {
 	var queries []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -317,12 +315,9 @@ func TestPollOnce_PartialCoverage_SplitsIntoTwoRequests(t *testing.T) {
 	}
 }
 
-// TestPollOnce_IDModeUsesNumericIDs — when the poller is configured with `CMCIDs`,
-// the upstream request must use `id=<numeric>,...` instead of
-// `symbol=<TICKER>,...`. Captures the actual query the test
-// server received and asserts the returned price for the
-// numeric-ID-keyed entry maps back to the canonical asset
-// (XLM in this fixture).
+// TestPollOnce_IDModeUsesNumericIDs — with `CMCIDs` configured, the upstream request must
+// use `id=<numeric>,...` instead of `symbol=<TICKER>,...`, and the price for a
+// numeric-ID-keyed entry must map back to the canonical asset (XLM here).
 func TestPollOnce_IDModeUsesNumericIDs(t *testing.T) {
 	var capturedQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -434,13 +429,9 @@ func TestPollInterval_Default(t *testing.T) {
 	}
 }
 
-// TestPollOnce_ShippedSeed_NeverMixesSelectors: The shipped
-// verified-currency catalogue has more coingecko_id entries than
-// coinmarketcap_id entries (USDT0 is on the crypto allow-list with a
-// CoinGecko id and no CMC id), so wiring CMCIDs from the real catalogue
-// reproduces the partial-coverage shape live: some tickers resolve to
-// `id=`, at least one falls back to `symbol=`. A single request setting
-// both selectors together fails it.
+// TestPollOnce_ShippedSeed_NeverMixesSelectors: the shipped catalogue has more coingecko_id
+// than coinmarketcap_id entries (USDT0 has no CMC id), so wiring CMCIDs from it reproduces
+// the partial-coverage shape live. A single request setting both selectors fails it.
 func TestPollOnce_ShippedSeed_NeverMixesSelectors(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {
@@ -532,12 +523,9 @@ func TestPoller_NameAndClass(t *testing.T) {
 	}
 }
 
-// decimalStringToScaledInt mirrors the helper in exchangeratesapi /
-// exchangeratesapi. CMC's prices come from /v2 quotes/latest as
-// floats; the helper is the back-stop converter when we already
-// have a decimal string. Pin the edge cases so a refactor that
-// drops scientific-notation rejection (silently producing an
-// invalid integer) is caught.
+// decimalStringToScaledInt mirrors the helper in exchangeratesapi. It is the back-stop
+// converter for a decimal string; the edge cases are pinned so a refactor that drops
+// scientific-notation rejection (silently producing an invalid integer) is caught.
 
 func TestDecimalStringToScaledInt_edges(t *testing.T) {
 	cases := []struct {

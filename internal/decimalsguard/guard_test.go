@@ -32,12 +32,9 @@ func (f *fakeReader) RecentSorobanDEXTrades(_ context.Context, since time.Time) 
 	return f.refs, nil
 }
 
-// dormantReader simulates a trades history where a single trade happened at
-// a fixed point in the past. RecentSorobanDEXTrades only returns the ref
-// when the caller's `since` reaches back far enough to include that trade —
-// mirroring the real time-bounded `ts >= $1` SQL predicate
-// (soroban_dex_assets.go). Used to prove Backfill's wide window catches a
-// token that a Sweep-sized short window cannot see.
+// dormantReader simulates a single trade at a fixed point in the past. RecentSorobanDEXTrades
+// returns the ref only when `since` reaches back far enough, mirroring the real `ts >= $1`
+// predicate, to prove Backfill's wide window sees a token a Sweep-sized window cannot.
 type dormantReader struct {
 	tradedAt time.Time
 	ref      timescale.SorobanDEXTradeRef
@@ -215,11 +212,9 @@ func TestSweep_PropagatesEnumerationError(t *testing.T) {
 	}
 }
 
-// TestSweep_StampsHeartbeatOnSuccess proves a completed Sweep pass — even
-// one that finds zero offenders — stamps
-// obs.DecimalsGuardSweepLastSuccessUnix. Without this stamp, a healthy "found nothing" sweep and a guard that never armed at all
-// (e.g. a ClickHouse that failed to answer at aggregator boot) are both
-// silent: the offender counters sit at zero either way.
+// TestSweep_StampsHeartbeatOnSuccess proves a completed Sweep, even one finding zero offenders,
+// stamps obs.DecimalsGuardSweepLastSuccessUnix. Without it a healthy "found nothing" sweep and a
+// guard that never armed look identical: the offender counters sit at zero either way.
 func TestSweep_StampsHeartbeatOnSuccess(t *testing.T) {
 	reader := &fakeReader{} // no refs at all — a completed, offender-free pass.
 	resolver := &fakeResolver{decimals: map[string]uint32{}}
@@ -257,9 +252,8 @@ func TestSweep_DoesNotStampHeartbeatOnEnumerationFailure(t *testing.T) {
 }
 
 // TestMarkEnabled_SeedsHeartbeatUntilFirstSweep pins the never-armed arm of
-// stellarindex_decimals_guard_sweep_stale: an enabled guard whose lake dial
-// or Backfill is still running must read "enabled at T", not the Unix epoch
-// (which the alert would read as 56 years stale from the first scrape), and
+// stellarindex_decimals_guard_sweep_stale: an enabled guard still dialling the lake or running
+// Backfill must read "enabled at T", not the Unix epoch (decades stale on the first scrape), and
 // a failed pass must leave that seed in place rather than refresh it.
 func TestMarkEnabled_SeedsHeartbeatUntilFirstSweep(t *testing.T) {
 	obs.DecimalsGuardSweepLastSuccessUnix.Set(0)
@@ -364,15 +358,11 @@ func TestSweep_WriterErrorDoesNotBlockDetection(t *testing.T) {
 	}
 }
 
-// TestReport_RetriesWriteAfterTransientFailure is the latch-before-fallible-
-// write regression (the 100×-price class). The persistence latch
-// must be set ONLY after a SUCCESSFUL write, so a transient DB failure leaves
-// the asset eligible for a retry on the next sweep — never marked "handled"
-// while the corrective row was never written, which would strand a
-// non-7-decimal token on a 10^(7-decimals)-skewed served price until the
-// process restarts. It also proves the retry stops once a write finally
-// succeeds (fire exactly once on SUCCESS), and that the observability alarm
-// still fires exactly once regardless of the write outcome.
+// TestReport_RetriesWriteAfterTransientFailure guards against latching before a fallible write.
+// The persistence latch must be set ONLY after a SUCCESSFUL write, so a transient DB failure
+// leaves the asset eligible for retry on the next sweep instead of stranding a non-7-decimal
+// token on a 10^(7-decimals)-skewed served price until restart. The retry stops once a write
+// succeeds, and the observability alarm fires exactly once regardless of the write outcome.
 func TestReport_RetriesWriteAfterTransientFailure(t *testing.T) {
 	const (
 		src   = "soroswap"
@@ -423,12 +413,10 @@ func TestReport_RetriesWriteAfterTransientFailure(t *testing.T) {
 
 // ─── Backfill (one-time startup self-seed pass) ────────────────────────────
 
-// TestBackfill_DormantOffenderGetsUpserted pins the dormant-offender case:
-// a non-7-decimals token traded once, went dormant, and stopped appearing
-// in the periodic sweep's short window. It proves (a) Sweep's short window genuinely cannot see a
-// 30-day-old trade, and (b) Backfill's wide window does, and self-seeds
-// nonstandard_decimals_assets through the same classify+report path Sweep
-// uses — without any operator hand-seed.
+// TestBackfill_DormantOffenderGetsUpserted pins the dormant-offender case: a non-7-decimals token
+// that traded once and left the periodic sweep's short window. Sweep's window cannot see a
+// 30-day-old trade, while Backfill's wide window does and self-seeds nonstandard_decimals_assets
+// through the same classify+report path, with no operator hand-seed.
 func TestBackfill_DormantOffenderGetsUpserted(t *testing.T) {
 	const (
 		src   = "aquarius"
@@ -539,11 +527,9 @@ func TestBackfill_DefaultsWindowWhenUnset(t *testing.T) {
 	}
 }
 
-// TestBackfill_ThrottlesUncachedResolverCalls proves the startup pass paces
-// its ClickHouse decimals() lookups: two DISTINCT uncached assets are each
-// throttled once, but a repeated asset hits the resolved cache and adds no
-// further delay — so a large historical asset set doesn't hammer the lake
-// in a tight loop, without re-throttling assets it has already resolved.
+// TestBackfill_ThrottlesUncachedResolverCalls proves the startup pass paces its ClickHouse
+// decimals() lookups: each DISTINCT uncached asset is throttled once, while a repeated asset hits
+// the resolved cache with no further delay, so a large asset set cannot hammer the lake.
 func TestBackfill_ThrottlesUncachedResolverCalls(t *testing.T) {
 	const src = "soroswap"
 	assetA := "fake-contract-throttle-a"

@@ -27,16 +27,12 @@ func (b *blockingReadyCheck) Ping(context.Context) error {
 func (b *blockingReadyCheck) Name() string   { return "blocking" }
 func (b *blockingReadyCheck) Critical() bool { return false }
 
-// TestHandleReadyz_ConcurrentCallerAbandonsViaContext is the regression
-// test that handleReadyz does not hold readyzMu across the
-// whole check round (computeReadyz), so a second caller would queue
-// synchronously on the mutex with no way to honour its own request
-// context. On an unauthenticated, rate-limit-exempt route, that meant
-// every concurrent probe blocked for up to the round's full budget
-// regardless of its own deadline. The fix runs the round detached and
-// has waiters select on it alongside their own ctx — a caller whose
-// context expires must get its handler call back promptly, without
-// waiting for the round in flight to finish.
+// TestHandleReadyz_ConcurrentCallerAbandonsViaContext guards that handleReadyz does not hold
+// readyzMu across the whole check round (computeReadyz). A second caller would otherwise queue
+// on the mutex with no way to honour its own request context, and on this unauthenticated,
+// rate-limit-exempt route every concurrent probe would block for the round's full budget. The
+// round runs detached and waiters select on it alongside their own ctx, so a caller whose
+// context expires gets its handler call back promptly.
 func TestHandleReadyz_ConcurrentCallerAbandonsViaContext(t *testing.T) {
 	blocker := &blockingReadyCheck{started: make(chan struct{}), release: make(chan struct{})}
 	srv := New(Options{ReadyChecks: []ReadyChecker{blocker}})
@@ -91,12 +87,9 @@ func (b *blockingLakeCheck) Ping(context.Context) error {
 func (b *blockingLakeCheck) Name() string   { return "clickhouse" }
 func (b *blockingLakeCheck) Critical() bool { return false }
 
-// TestHandleLivezLake_ConcurrentCallerAbandonsViaContext mirrors
-// TestHandleReadyz_ConcurrentCallerAbandonsViaContext for the
-// second endpoint: /v1/livez/lake's 1s TTL against a 5s ping budget was
-// exactly the head-of-line-blocking gap the finding named — every
-// probe blocked on livezLakeMu across the ping, up to 5s, on the route
-// an operator polls to decide whether to drain a region.
+// TestHandleLivezLake_ConcurrentCallerAbandonsViaContext mirrors the readyz test for
+// /v1/livez/lake, whose 1s TTL against a 5s ping budget let every probe block on livezLakeMu
+// across the ping, on the route an operator polls to decide whether to drain a region.
 func TestHandleLivezLake_ConcurrentCallerAbandonsViaContext(t *testing.T) {
 	blocker := &blockingLakeCheck{started: make(chan struct{}), release: make(chan struct{})}
 	srv := New(Options{ReadyChecks: []ReadyChecker{blocker}})

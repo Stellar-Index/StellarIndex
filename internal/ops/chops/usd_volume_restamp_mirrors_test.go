@@ -17,20 +17,16 @@ import (
 
 // ─── `-tier xlm-quote` / `-tier cex-fx` — the two mirror tiers' walks ────
 //
-// The driver is pinned tier-agnostically by the xlm-base tests beside
-// this file (plan, pre-flight, lock, policy dance, tracing, re-listing),
-// and the per-row decisions are pinned in the storage package against the
-// live valuation functions. What is pinned HERE is that the two new tiers
-// drive that SAME walk — bracketing each compressed chunk, writing only
-// through the guarded in-chunk apply, carrying the run's generation — and
-// that each one names ITSELF in the header, the summary and the RESUME
-// line, so an operator can never mistake one tier's report for another's.
+// The driver is pinned tier-agnostically by the xlm-base tests beside this file, and the
+// per-row decisions in the storage package. Pinned HERE: the two mirror tiers drive that SAME
+// walk (bracketing each compressed chunk, writing only through the guarded in-chunk apply,
+// carrying the run's generation), and each names ITSELF in the header, summary and RESUME
+// line so an operator cannot mistake one tier's report for another's.
 
-// fakeMirrorChunkStore is the mirror tiers' seam double. It reuses the
-// driver double for the chunk/policy/lock half and answers the shared
-// row-list plan/apply pair, so the same dirty-row bookkeeping (a row is
-// planned until an apply takes it) makes "a rerun skips finished chunks"
-// observable without a database.
+// fakeMirrorChunkStore is the mirror tiers' seam double. It reuses the driver double for the
+// chunk/policy/lock half and answers the shared row-list plan/apply pair; dirty-row bookkeeping
+// (a row is planned until an apply takes it) makes "a rerun skips finished chunks" observable
+// without a database.
 type fakeMirrorChunkStore struct {
 	*fakeChunkStore
 	// staleness records what tolerance the cex-fx planner was handed.
@@ -227,11 +223,10 @@ func TestMirrorChunkRestamp_ResumeLineNamesTheTierAndItsFlags(t *testing.T) {
 	}
 }
 
-// TestValidateRestampTierFlags_MirrorTiers is the flag contract for the
-// two new tiers: they take the estimated tiers' flags, `-tier exact`
-// still refuses them, `-fx-max-staleness` belongs to cex-fx ALONE, and an
-// unknown tier names every accepted spelling. A flag silently ignored on
-// a money-column writer is the failure this closes.
+// TestValidateRestampTierFlags_MirrorTiers is the flag contract for the mirror tiers: they take
+// the estimated tiers' flags, `-tier exact` still refuses them, `-fx-max-staleness` belongs to
+// cex-fx ALONE, and an unknown tier names every accepted spelling. A flag silently ignored on a
+// money-column writer is the failure this closes.
 func caseValidateRestampTierFlags_MirrorTiers(t *testing.T) {
 	t.Parallel()
 	for _, tier := range []string{restampTierXLMQuote, restampTierCEXFX} {
@@ -283,15 +278,11 @@ func TestValidateRestampFXStaleness(t *testing.T) {
 	}
 }
 
-// TestPrintReport_NamesTheRunningTierNotTheXLMBaseOne pins the
-// tier name. printReport (usd_volume_restamp_xlmbase.go) is the shared
-// report chokepoint EVERY estimated tier's walk finishes through — the
-// xlm-base run this file's tests exercise, and the xlm-quote/cex-fx
-// mirrors here. Its scanLabel/declineLabel lines are templated
-// on the running tier; the report's own header line must not hard-code
-// "tier xlm-base", or an operator reading an xlm-quote or cex-fx banner
-// would see the wrong tier name on every line above the ones the walk
-// itself supplies.
+// TestPrintReport_NamesTheRunningTierNotTheXLMBaseOne pins the tier name. printReport
+// (usd_volume_restamp_xlmbase.go) is the shared report chokepoint EVERY estimated tier's walk
+// finishes through. Its scanLabel/declineLabel lines are templated on the running tier; the
+// header line must not hard-code "tier xlm-base", or an xlm-quote or cex-fx banner would show
+// the wrong tier name.
 func TestPrintReport_NamesTheRunningTierNotTheXLMBaseOne(t *testing.T) {
 	store := newFakeMirrorChunkStore(nil)
 	run := newEstimatedRestampRun(xlmBaseRestampOptions{Slice: time.Hour, Batch: 1}, xlmQuoteTierProfile(store))

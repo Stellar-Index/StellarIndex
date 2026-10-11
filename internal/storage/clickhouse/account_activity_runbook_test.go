@@ -11,26 +11,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Regression tests for stellar.account_activity's "exact upper bound
-// by construction" invariant (deploy/clickhouse/account_activity.sql) only
-// holds once the Step-2 windowed backfill has covered every account, and the
-// bound it feeds is a HARD `ledger_seq <=` on the account-history readers —
-// a partial backfill silently hides history.
+// Regression tests for stellar.account_activity's "exact upper bound by construction" invariant
+// (deploy/clickhouse/account_activity.sql). It only holds once the Step-2 windowed backfill has
+// covered every account, and the bound is a HARD `ledger_seq <=` on the account-history readers,
+// so a partial backfill silently hides history.
 //
-// These tests run the runbook's OWN text, extracted verbatim from the SQL
-// file's comments (what an operator copy-pastes, not a paraphrase), through
-// the SHIPPED /usr/local/sbin/run-heavy-job.sh, extracted from the ansible
-// task that installs it (the technique of scripts/ci/run-heavy-job-test.sh).
-// A pass-through stand-in for the wrapper cannot see the wrapper's own
-// lock branch: when the per-job lock is held every caller is refused
-// with exit 75 (a manual run prints "refusing to start", a
-// systemd-launched one prints "skipping this fire") without running
-// the payload.
+// The tests run the runbook's OWN text, extracted verbatim from the SQL file's comments, through
+// the SHIPPED /usr/local/sbin/run-heavy-job.sh, extracted from the ansible task that installs it
+// (the technique of scripts/ci/run-heavy-job-test.sh). A pass-through stand-in cannot see the
+// wrapper's lock branch: when the per-job lock is held every caller is refused with exit 75 (a
+// manual run prints "refusing to start", a systemd-launched one "skipping this fire").
 //
-// Every way the runbook can end WITHOUT covering (Step 2) or checking
-// (Step 3) every window must end non-zero and without its success line.
-// Whether the Step-3 SQL itself can see a gap in a later window needs a real
-// ClickHouse: test/integration/clickhouse_accounts_test.go.
+// Every way the runbook can end WITHOUT covering (Step 2) or checking (Step 3) every window must
+// end non-zero and without its success line. Whether the Step-3 SQL sees a gap in a later window
+// needs a real ClickHouse: test/integration/clickhouse_accounts_test.go.
 
 // runbookCodeLineRE matches a runbook code line: `--` followed by at least
 // three spaces (the file's indent convention for embedded bash/SQL; prose
@@ -111,12 +105,10 @@ func shippedHeavyJobWrapper(t *testing.T) string {
 	return ""
 }
 
-// Stubs for the binaries the wrapper and the runbook call. flock counts
-// calls per lock fd (its last argument: 9 is the wrapper's per-job lock, 8
-// its host-wide lock) and fails the one AA_FLOCK_FAIL_ON names as
-// "<fd>:<nth call on it>", so each lock-held branch is hit on purpose; id
-// answers AA_UID so both wrapper branches run on any machine; systemd-run
-// drops its own options and execs the command, as a scope does.
+// Stubs for the binaries the wrapper and the runbook call. flock counts calls per lock fd (its
+// last argument: 9 is the per-job lock, 8 the host-wide lock) and fails the one AA_FLOCK_FAIL_ON
+// names as "<fd>:<nth call on it>", so each lock-held branch is hit on purpose. id answers
+// AA_UID so both wrapper branches run anywhere; systemd-run drops its options and execs.
 const (
 	stubFlock = `#!/bin/bash
 fd="${!#}"

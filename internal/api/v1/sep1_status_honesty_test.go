@@ -38,15 +38,10 @@ func (payloadOnlyStub) GetIssuerSep1Cached(context.Context, string) (*timescale.
 
 const sep1TestIssuer = "GDMBNMFJ3TRFLASJ6UGETFME3PJPNKPU24C7KFDBEBPQFG2CI6UC3JG6"
 
-// TestSep1StatusSeparatesOurBacklogFromTheirBrokenFile is the regression.
-// Both states reach this code as a nil payload, and they are opposite
-// findings: one is our queue, the other is the issuer's published document.
-//
-// Measured in production: an asset manager's stellar.toml carried an
-// unterminated string on line 20. One missing quote made the file
-// unparseable, so thirteen live RWA-class declarations were refused — and
-// every asset page reported `not_fetched`, which says we never tried. The
-// fetch had run five days running.
+// TestSep1StatusSeparatesOurBacklogFromTheirBrokenFile is the regression. Both states reach
+// this code as a nil payload but are opposite findings: one is our queue, the other the
+// issuer's published document. A stellar.toml that fails to parse must not report
+// `not_fetched`, which says we never tried.
 func TestSep1StatusSeparatesOurBacklogFromTheirBrokenFile(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
@@ -74,10 +69,9 @@ func TestSep1StatusSeparatesOurBacklogFromTheirBrokenFile(t *testing.T) {
 }
 
 // TestSep1StatusClaimsNothingWithoutAFetchStateReader — the seam is optional,
-// consulted by type assertion, and a deployment without it must behave exactly
-// as it did before. The fallback direction is load-bearing: `not_fetched`
-// blames nobody, `unreachable` blames the issuer, so an unwired reader must
-// never produce the second.
+// consulted by type assertion, and a deployment without it must behave as without the seam.
+// The fallback direction is load-bearing: `not_fetched` blames nobody, `unreachable` blames
+// the issuer, so an unwired reader must never produce the second.
 func TestSep1StatusClaimsNothingWithoutAFetchStateReader(t *testing.T) {
 	s := &Server{Options: Options{Sep1Cache: payloadOnlyStub{}}, logger: discardLogger()}
 
@@ -102,12 +96,9 @@ func TestSep1StatusDoesNotBlameTheIssuerForOurReadFailure(t *testing.T) {
 }
 
 // TestApplySep1OverlayReportsTheIssuersBrokenFile is the WIRING half. The
-// three tests above call the helper directly, so they stay green against a
-// build that computes the right answer and then discards it at the call site —
-// which is exactly the state this test was written after finding, twice in one
-// session.
-//
-// It drives the production overlay and asserts on the field a client reads.
+// three tests above call the helper directly, so they stay green against a build that computes
+// the right answer and discards it at the call site. It drives the production overlay and
+// asserts on the field a client reads.
 func TestApplySep1OverlayReportsTheIssuersBrokenFile(t *testing.T) {
 	asset, err := canonical.ParseAsset("WTGX-" + sep1TestIssuer)
 	if err != nil {

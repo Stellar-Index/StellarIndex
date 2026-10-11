@@ -11,12 +11,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// TestInsertSupply_RejectsInvalidRows: every case must fail before the
-// DB call (the Store has a nil *sql.DB, so reaching it would panic).
-// The computers always populate AssetKey + both supplies; a zero-value or
-// half-filled Supply is a caller bug. Migration 0117 carries no CHECK on
-// SACWrappedStroops, so this guard is its only enforcement: a negative
-// escrow reading would satisfy the cross-check's escrow bound.
+// TestInsertSupply_RejectsInvalidRows: every case must fail before the DB call (the Store has a
+// nil *sql.DB, so reaching it would panic). The computers always populate AssetKey + both
+// supplies; a zero-value or half-filled Supply is a caller bug. Migration 0117 carries no CHECK on
+// SACWrappedStroops, so this guard is its only enforcement: a negative escrow reading would
+// satisfy the cross-check's escrow bound.
 func TestInsertSupply_RejectsInvalidRows(t *testing.T) {
 	cases := []struct {
 		name string
@@ -141,12 +140,10 @@ func TestAssembleSupply_RejectsBadNumeric(t *testing.T) {
 	}
 }
 
-// TestAssembleSupply_SACWrappedRoundTrips — the sac_wrapped_stroops
-// column (migration 0117) must come back as the EXACT component the
-// writer stored, including values beyond int64. This is the input to
-// the cross-check's escrow leg (SACWrapped ≤ sac_total), so a decode
-// that silently truncated would turn a real violation into a green
-// check.
+// TestAssembleSupply_SACWrappedRoundTrips — the sac_wrapped_stroops column must come back as the
+// EXACT component the writer stored, including values beyond int64. It feeds the cross-check's
+// escrow leg (SACWrapped ≤ sac_total), so a silently truncating decode would turn a real violation
+// into a green check.
 func TestAssembleSupply_SACWrappedRoundTrips(t *testing.T) {
 	const sacWrapped = "1236670485295609000" // > 2^59, i128-shaped
 	got, err := assembleSupply("BLND:GDJEHTBE", time.Now(), "9000000000000000000", "9000000000000000000",
@@ -163,11 +160,10 @@ func TestAssembleSupply_SACWrappedRoundTrips(t *testing.T) {
 	}
 }
 
-// TestAssembleSupply_NullSACWrappedStaysNil — a pre-0117 row (or a
-// non-classic algorithm) has SQL NULL here. It MUST assemble to nil,
-// not to zero: zero is a meaningful component value and the escrow
-// bound 0 ≤ sac_total holds vacuously, so a zero coercion would report
-// a green, "checked" cross-check that verified nothing.
+// TestAssembleSupply_NullSACWrappedStaysNil — a row from before the column (or a non-classic
+// algorithm) has SQL NULL here. It MUST assemble to nil, not zero: zero is a meaningful value and
+// the escrow bound 0 ≤ sac_total holds vacuously, so coercion would report a green, "checked"
+// cross-check that verified nothing.
 func TestAssembleSupply_NullSACWrappedStaysNil(t *testing.T) {
 	got, err := assembleSupply("USDC:GA1", time.Now(), "100", "90",
 		sql.NullString{}, "issuer_exclusion", 1, sql.NullString{Valid: false})

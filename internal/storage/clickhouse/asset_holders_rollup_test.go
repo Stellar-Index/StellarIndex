@@ -21,15 +21,11 @@ func isHoldersCount(q string) bool {
 	return strings.Contains(q, "stellar.asset_holders_counts")
 }
 
-// TestHoldersRollupSwapIsAtomic pins RA-2: the five live↔staging swaps must be
-// issued as ONE multi-pair EXCHANGE TABLES statement, not five sequential
-// EXCHANGE calls. ClickHouse commits a multi-pair EXCHANGE as a single metadata
-// transaction, so a crash/ctx-cancel/CH-restart between swaps cannot leave the
-// board swapped-new while counts/stats/histograms hold the previous cycle's
-// data — the half-swapped state holdersRollupBoard trusts as authoritative.
-//
-// Red against five separate EXCHANGE statements: the
-// exactly-one assertion counts 5 and fails.
+// TestHoldersRollupSwapIsAtomic pins that the five live↔staging swaps are issued as one multi-pair
+// EXCHANGE TABLES statement, not five sequential EXCHANGE calls. ClickHouse commits a multi-pair
+// EXCHANGE as a single metadata transaction, so a crash, ctx-cancel or restart between swaps cannot
+// leave the board new while counts/stats/histograms hold the previous cycle, the half-swapped state
+// holdersRollupBoard trusts as authoritative.
 func TestHoldersRollupSwapIsAtomic(t *testing.T) {
 	// All five live tables that must swap as a group.
 	wantPairs := []string{
@@ -69,16 +65,10 @@ func TestHoldersRollupSwapIsAtomic(t *testing.T) {
 	}
 }
 
-// TestHoldersRollupStatementsShareOneCycleStamp pins the property
-// readHoldersRollupCycle/readAccountsStatsCycle depend on: every staging
-// INSERT in one cycle must bake in the SAME computed_at, not each table's own
-// row-level default. Two inserts disagreeing here would make every
-// consistency check in holdersRollupBoard/AccountsStats fire on every read,
-// even for a perfectly healthy cycle.
-//
-// Red against statements (each relying on its own
-// `DEFAULT now()`): the two insert statements checked below carry no
-// explicit computed_at value at all, so this substring search fails.
+// TestHoldersRollupStatementsShareOneCycleStamp pins the property readHoldersRollupCycle and
+// readAccountsStatsCycle depend on: every staging INSERT in one cycle bakes in the same computed_at,
+// not each table's own `DEFAULT now()`. Disagreeing stamps would trip every consistency check in
+// holdersRollupBoard/AccountsStats on every read, even for a healthy cycle.
 func TestHoldersRollupStatementsShareOneCycleStamp(t *testing.T) {
 	cycleAt := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	stamp := "toDateTime('" + cycleAt.Format(holdersRollupTimeLayout) + "', 'UTC')"

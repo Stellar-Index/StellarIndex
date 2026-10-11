@@ -26,12 +26,10 @@ func (f fakeSchemaReader) SchemaMigrationVersion(context.Context) (uint, bool, e
 	return f.version, f.dirty, f.err
 }
 
-// TestSchemaVersionChecker_Ping pins the schema assertion: the
-// checker fails-closed when the applied schema head is BELOW what the
-// binary was built against, or when schema_migrations is dirty, and
-// passes only when the applied head is >= expected and clean. This is
-// the property that lets /readyz drain a migrations-skipped or
-// binary-swapped node instead of serving stale data behind a 200.
+// TestSchemaVersionChecker_Ping pins the schema assertion: the checker fails closed when the
+// applied schema head is BELOW what the binary was built against, or when schema_migrations is
+// dirty, and passes only when the head is >= expected and clean. That lets /readyz drain a
+// migrations-skipped or binary-swapped node instead of serving stale data behind a 200.
 func TestSchemaVersionChecker_Ping(t *testing.T) {
 	t.Parallel()
 	exp := v1.ExpectedSchemaVersion
@@ -97,13 +95,11 @@ func TestSchemaVersionChecker_Ping(t *testing.T) {
 	}
 }
 
-// TestSchemaVersionChecker_DirtyAtomicRollbackDoesNotDrain pins that
-// a dirty row at an ATOMIC migration (anything but the 0030 exception)
-// means Postgres rolled the failed attempt back, so the schema is intact
-// at version-1. If that still satisfies ExpectedSchemaVersion, the
-// CRITICAL checker must pass — draining every backend over a rollback
-// that never touched the served schema is the defect. The dirty row
-// itself is still surfaced, but non-critically, by NewSchemaDirtyChecker.
+// TestSchemaVersionChecker_DirtyAtomicRollbackDoesNotDrain pins that a dirty row at an ATOMIC
+// migration (anything but the 0030 exception) means Postgres rolled the failed attempt back, so
+// the schema is intact at version-1. If that still satisfies ExpectedSchemaVersion, the CRITICAL
+// checker must pass: draining every backend over a rollback that never touched the served schema
+// is the defect. NewSchemaDirtyChecker still surfaces the dirty row, non-critically.
 func TestSchemaVersionChecker_DirtyAtomicRollbackDoesNotDrain(t *testing.T) {
 	t.Parallel()
 	exp := v1.ExpectedSchemaVersion
@@ -128,11 +124,10 @@ func TestSchemaVersionChecker_DirtyAtomicRollbackDoesNotDrain(t *testing.T) {
 	}
 }
 
-// TestExpectedSchemaVersionMatchesMigrationsHead is the registry-parity
-// guard: v1.ExpectedSchemaVersion MUST equal the highest-numbered
-// migration under migrations/. Adding a migration without bumping the
-// constant would silently weaken the schema assertion (the binary would
-// accept a schema older than it was built against), so this fails CI.
+// TestExpectedSchemaVersionMatchesMigrationsHead is the registry-parity guard:
+// v1.ExpectedSchemaVersion MUST equal the highest-numbered migration under migrations/. Adding a
+// migration without bumping the constant would silently weaken the schema assertion (the binary
+// would accept a schema older than it was built against), so this fails CI.
 func TestExpectedSchemaVersionMatchesMigrationsHead(t *testing.T) {
 	t.Parallel()
 

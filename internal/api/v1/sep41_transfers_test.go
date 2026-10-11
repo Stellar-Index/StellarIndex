@@ -33,12 +33,10 @@ func serverWithSEP41Reader(reader SEP41TransfersReader) *Server {
 	return s
 }
 
-// TestSEP41Transfers_LadderBudgetLeavesTheFallbackAtLeastHalf pins the
-// premise of the store's lookback-ladder budget: the handler's deadline
-// is the only budget the read has, the ladder may spend at most half of
-// it, and whatever is left is the full-history fallback's. The store
-// cannot import this package and this package does not export its
-// deadline, so this is the one place the two constants meet.
+// TestSEP41Transfers_LadderBudgetLeavesTheFallbackAtLeastHalf pins the premise of the store's
+// lookback-ladder budget: the handler's deadline is the read's only budget, the ladder may
+// spend at most half, and the rest is the full-history fallback's. The store cannot import
+// this package, so this is the one place the two constants meet.
 func TestSEP41Transfers_LadderBudgetLeavesTheFallbackAtLeastHalf(t *testing.T) {
 	if 2*timescale.SEP41TransferLadderBudget > sep41TransfersReadTimeout {
 		t.Fatalf("timescale.SEP41TransferLadderBudget=%s is more than half of sep41TransfersReadTimeout=%s — the fallback would run on less time than the ladder that failed to answer",
@@ -98,11 +96,9 @@ func TestSEP41Transfers_InvalidContractID_Returns400(t *testing.T) {
 }
 
 func TestSEP41Transfers_InvalidFromOrTo_Returns400(t *testing.T) {
-	// Post-CAP-67 the SEP-41 from/to accepts every valid holder strkey
-	// (G/C/M/B/L). The 400-rejected set is now narrower: only
-	// genuinely-invalid strings are bad input; a C-strkey is a
-	// legitimate Soroban-contract destination per the rc.88 SEP-41
-	// fix bundle.
+	// Post-CAP-67 the SEP-41 from/to accepts every valid holder strkey (G/C/M/B/L), so only
+	// genuinely-invalid strings are bad input; a C-strkey is a legitimate Soroban-contract
+	// destination.
 	cases := []struct {
 		name string
 		q    string
@@ -124,11 +120,9 @@ func TestSEP41Transfers_InvalidFromOrTo_Returns400(t *testing.T) {
 	}
 }
 
-// TestSEP41Transfers_AllHolderTypesAccepted_ReachReader ensures
-// the post-CAP-67 widening (G/C/M/B/L) reaches the reader rather
-// than 400-ing at the validation boundary. Each valid strkey gets
-// a query that the stub reader returns empty for; what matters is
-// that we *get* to the reader.
+// TestSEP41Transfers_AllHolderTypesAccepted_ReachReader ensures the post-CAP-67 widening
+// (G/C/M/B/L) reaches the reader rather than 400-ing at validation. The stub returns empty;
+// what matters is that each valid strkey gets to the reader.
 func TestSEP41Transfers_AllHolderTypesAccepted_ReachReader(t *testing.T) {
 	// One representative of each post-CAP-67 holder type — the
 	// canonical.Is*-test fixtures pin the underlying strkey
@@ -189,14 +183,10 @@ func TestSEP41Transfers_ValidInputs_ReachReader(t *testing.T) {
 	}
 }
 
-// TestSEP41Transfers_UnreachableStorageMapsTo503 is the wire-level half of
-// With Postgres refusing connections, GET
-// /v1/contracts/{id}/transfers must answer the retryable 503 its handler
-// already reserves for transient storage failures — not 500.
-//
-// Red without the fix: transientStorageErr(pgxDialRefused()) was false, so
-// the handler fell to its `sep41-transfers-error` 500 branch and this test
-// fails on `status = 500, want 503`.
+// TestSEP41Transfers_UnreachableStorageMapsTo503 is the wire-level half: with Postgres
+// refusing connections, GET /v1/contracts/{id}/transfers must answer the retryable 503 its
+// handler reserves for transient storage failures, not 500 (the `sep41-transfers-error`
+// branch, which a false transientStorageErr(pgxDialRefused()) would reach).
 func TestSEP41Transfers_UnreachableStorageMapsTo503(t *testing.T) {
 	srv := serverWithSEP41Reader(&unreachableTransfersReader{err: pgxDialRefused()})
 	srv.logger = slog.New(slog.NewTextHandler(io.Discard, nil))

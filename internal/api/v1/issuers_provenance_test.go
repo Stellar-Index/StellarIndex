@@ -2,11 +2,9 @@ package v1_test
 
 // Auth-flag provenance on /v1/issuers/{g_strkey}.
 //
-// ~10.2k of ~59.2k known issuers (r1) have merged their account
-// away. Their auth flags ARE recoverable from the last state before removal,
-// but a recovered value is a HISTORICAL RECORD, not the issuer's current
-// authorisation policy — so the wire has to say which it is, and the read
-// path must never let a historical reading freeze in place.
+// Issuers that merged their account away still have auth flags recoverable from the last state
+// before removal, but that is a HISTORICAL RECORD, not the current authorisation policy: the wire
+// has to say which it is, and the read path must never let a historical reading freeze in place.
 
 import (
 	"os"
@@ -22,12 +20,10 @@ import (
 
 const provenanceIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
-// TestIssuerAuthFlagsSourceIsLockstepped — `auth_flags_source` is an
-// enumerated string set with copies that are never colocated: the Go
-// constants, the published OpenAPI enum, and the Postgres CHECK in migration
-// 0153. Adding a member to one and not the others compiles green while the
-// database rejects every write and the spec-derived clients cannot express
-// the value, so the copies are reconciled here.
+// TestIssuerAuthFlagsSourceIsLockstepped — `auth_flags_source` is an enumerated string set with
+// copies never colocated: the Go constants, the published OpenAPI enum, and the Postgres CHECK in
+// migration 0153. Adding a member to one only compiles green while the database rejects every
+// write and spec-derived clients cannot express the value, so the copies are reconciled here.
 func TestIssuerAuthFlagsSourceIsLockstepped(t *testing.T) {
 	want := []string{
 		string(clickhouse.AuthFlagsSourceLastKnownBeforeRemoval),

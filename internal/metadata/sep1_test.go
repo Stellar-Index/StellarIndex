@@ -318,14 +318,11 @@ func TestResolver_AcceptsHostPort(t *testing.T) {
 	}
 }
 
-// TestResolver_TruncatesOversizedFields is the Finding 1 regression.
-// The 1 MiB whole-body cap does not bound a single field, so a hostile
-// issuer could serve a ~1 MiB ORG_NAME that we store + serve verbatim
-// (every /v1/issuers response, the explorer's issuer <h1>). We cap each
-// copied string at parse time, truncating on a UTF-8 rune boundary.
-// Multibyte runes at the boundary prove the cut is not mid-codepoint:
-// a byte-count truncation would corrupt the final "é" into invalid
-// UTF-8, which utf8.ValidString would catch.
+// TestResolver_TruncatesOversizedFields: the 1 MiB whole-body cap does not bound a single
+// field, so a hostile issuer could serve a ~1 MiB ORG_NAME that we store and serve verbatim
+// (every /v1/issuers response, the explorer's issuer <h1>). Each copied string is capped at
+// parse time on a UTF-8 rune boundary; multibyte runes at the boundary prove the cut is not
+// mid-codepoint (a byte-count cut would corrupt the final "é", which utf8.ValidString catches).
 func TestResolver_TruncatesOversizedFields(t *testing.T) {
 	const (
 		shortCap = 256  // maxShortFieldRunes
@@ -415,15 +412,8 @@ func newLocalResolver(t *testing.T, srv *httptest.Server) *metadata.Resolver {
 		AllowPrivateIPs: true, // test-only
 	})
 
-	// Swap in the test server's client — it accepts the server's
-	// self-signed cert. We replace metadata.Resolver's inner
-	// http.Client by round-tripping through an unexported field
-	// via reflection, which is ugly — OR we provide a test-only
-	// override.
-	//
-	// Simplest alternative: skip TLS + use the server's RootCAs
-	// via the httptest.Server.Client(). Achieve that by giving
-	// the Resolver an HTTP client we control.
+	// The httptest server's client accepts its self-signed cert, so give the Resolver an HTTP
+	// client we control instead of reaching into an unexported field.
 	r = useTestServerClient(r, srv)
 	return r
 }
@@ -501,10 +491,9 @@ func TestResolver_RejectsDeclaredOversizedBody(t *testing.T) {
 }
 
 // TestResolver_RejectsStreamedOversizedBody pins the second, independent
-// guard: a body that arrives WITHOUT (or despite) an honest Content-Length
-// — chunked transfer, or a lying header — must still be capped once actual
-// bytes exceed the limit. Without this half, a compressed or chunked
-// response could smuggle an unbounded body past the Content-Length check.
+// guard: a body arriving WITHOUT (or despite) an honest Content-Length (chunked, or a lying
+// header) must still be capped once actual bytes exceed the limit, or it would smuggle an
+// unbounded body past the Content-Length check.
 func TestResolver_RejectsStreamedOversizedBody(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// No Content-Length set: net/http switches to chunked transfer and

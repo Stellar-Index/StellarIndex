@@ -5,25 +5,15 @@ import (
 	"testing"
 )
 
-// These pin the SQL shape of txOutcomesByHashQuery, in the same
-// spirit-and-convention as explorer_scan_settings_test.go: the clause that
-// makes this query cheap is invisible at the call site, and losing it is
-// silent — the query still compiles, still returns the right rows, and costs
-// four orders of magnitude more.
+// These pin the SQL shape of txOutcomesByHashQuery, as explorer_scan_settings_test.go does: the
+// clause that makes it cheap is invisible at the call site, and losing it is silent (same rows,
+// orders of magnitude more scanned).
 //
-// The measured fact these encode (r1, cold, three real 50-op
-// pages of idle accounts, use_query_condition_cache=0):
-//
-//	ledger_seq IN (<50 ledgers>)        319k-508k rows /  24-38 MiB /  32-61 ms
-//	ledger_seq >= lo AND ledger_seq <= hi  1.69-2.04 BILLION rows / 122-147 GiB / >60s (did not finish)
-//
-// An operation-list page is not contiguous, so [lo,hi] is not "the page" — it
-// is every ledger between the page's oldest and newest op, which for a sparse
-// account is millions. The tx_hash bloom_filter(0.01) cannot rescue that: 50
-// hash probes false-positive on ~39% of candidate granules. At the explorer's
-// own PAGE_SIZE=50 the span form blew stampTxOutcomes' budget on every idle
-// account, so 0 of 50 operations got transaction_successful and the whole page
-// rendered with an UNKNOWN outcome behind the coverage note.
+// An operation-list page is not contiguous, so a [lo,hi] ledger span is every ledger between the
+// page's oldest and newest op, millions for a sparse account (over a billion rows scanned versus
+// about 500k for ledger_seq IN (<the page's ledgers>)). The tx_hash bloom filter cannot rescue
+// the span: 50 hash probes false-positive on a large share of granules. The span form blew
+// stampTxOutcomes' budget on idle accounts, so the whole page rendered with an UNKNOWN outcome.
 
 func TestTxOutcomesByHashQuery_PrunesOnTheExactLedgerSet(t *testing.T) {
 	q := txOutcomesByHashQuery
@@ -51,26 +41,17 @@ func TestTxOutcomesByHashQuery_PrunesOnTheExactLedgerSet(t *testing.T) {
 }
 
 func TestTxOutcomesByHashQuery_KeepsFinal(t *testing.T) {
-	// FINAL is REQUIRED here, not incidental, and it is deliberately NOT
-	// rewritten to `ORDER BY ingested_at DESC LIMIT 1 BY tx_hash`:
+	// FINAL is required, and deliberately not rewritten to ORDER BY ingested_at DESC LIMIT 1 BY:
 	//
-	//   - stellar.transactions is ReplacingMergeTree(ingested_at) and the
-	//     duplicates are real — r1's partition 63 carries 183.5M duplicated
-	//     (ledger_seq, tx_index) key-groups, so without read-time dedup this
-	//     serves a duplicate/stale verdict.
-	//   - `ingested_at` is DateTime, ONE-SECOND resolution. A re-ingest batch
-	//     that rewrites many rows inside one wall-clock second TIES on the
-	//     version column, and a bare SELECT cannot break that tie — it would
-	//     silently keep serving the STALE verdict. That is the
-	//     ReplacingMergeTree tie trap; txByLedgerAndHash documents the same trap on this table.
-	//     FINAL breaks the tie on real insertion order.
+	//   - stellar.transactions is ReplacingMergeTree(ingested_at) and holds real duplicates, so
+	//     without read-time dedup this serves a duplicate or stale verdict.
+	//   - ingested_at is DateTime with one-second resolution: a re-ingest batch rewriting many
+	//     rows inside one second ties on the version column, and a bare SELECT cannot break the
+	//     tie (txByLedgerAndHash documents the same trap). FINAL uses real insertion order.
 	//
-	// FINAL is only ruinous when the granule selection comes from a SKIP index
-	// over a WIDE primary-key range, because PrimaryKeyExpand then re-expands
-	// it (measured on the old span form: 32,930 bloom-selected granules
-	// expanded back to 74,938). Once ledger_seq is a point set that expansion
-	// has nothing to expand, which is what makes keeping FINAL affordable:
-	// 32-61 ms with it vs 17-18 ms without, on the same pages.
+	// FINAL is only ruinous when a skip index over a wide primary-key range picks the granules,
+	// because PrimaryKeyExpand re-expands them. With ledger_seq a point set there is nothing to
+	// expand, which keeps FINAL affordable.
 	if !strings.Contains(txOutcomesByHashQuery, "FINAL") {
 		t.Errorf("txOutcomesByHashQuery dropped FINAL — a same-second re-ingest tie "+
 			"would now serve the STALE transaction verdict (audit DAT-10):\n%s",

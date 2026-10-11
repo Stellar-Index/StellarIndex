@@ -13,12 +13,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// filteringSep1Reader serves canned bound entries THROUGH the caller's
-// keep filter, the way the production scan does
-// (timescale.boundSep1CurrenciesFromPayload counts a refused entry as
-// EntriesFiltered and never materialises it). The sibling test calls
-// admitClassicCandidates directly and so never meets the filter; this
-// reader is what lets a test meet it.
+// filteringSep1Reader serves canned bound entries THROUGH the caller's keep filter, as the
+// production scan does (timescale.boundSep1CurrenciesFromPayload counts a refused entry as
+// EntriesFiltered and never materialises it). The sibling test calls admitClassicCandidates
+// directly and never meets the filter; this reader lets a test meet it.
 type filteringSep1Reader struct {
 	bound []timescale.Sep1BoundCurrency
 }
@@ -63,14 +61,12 @@ func (d fixedDirectory) DirectoryEntriesByAddresses(_ context.Context, addresses
 	return out, nil
 }
 
-// The failure: the sibling arm and the ISIN arm both shipped
-// green and had zero live effect, because the scan's pre-filter read the
-// code and the anchor TYPE only. A Franklin-shaped declaration — code no
-// oracle prices, type `other`, a well-formed ISIN in anchor_asset — was
-// counted as EntriesFiltered before either arm ran. This drives the
-// production filter through the production build and asserts the row
-// the two arms exist for is admitted, with the recognition the sibling
-// arm publishes.
+// The failure guarded: the sibling arm and the ISIN arm can pass their own tests yet have no
+// live effect when the scan's pre-filter reads only the code and the anchor TYPE. A
+// Franklin-shaped declaration (code no oracle prices, type `other`, a well-formed ISIN in
+// anchor_asset) is then counted as EntriesFiltered before either arm runs. This drives the
+// production filter through the production build and asserts the row the two arms exist for
+// is admitted, with the recognition the sibling arm publishes.
 func TestBuildRWAClassicMembership_FranklinShapedCandidatePassesThePreFilter(t *testing.T) {
 	const (
 		listed   = "GBHNGLLIE3KWGKCHIKMHJ5HVZHYIK7WTBE4QF5PLAKL4CJGSEU7HZIW5"

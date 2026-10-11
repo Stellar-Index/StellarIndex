@@ -85,13 +85,11 @@ func TestRecentContracts_CensusCoverageGapFallsBack(t *testing.T) {
 	}
 }
 
-// TestRecentContracts_StaleCensusHeadFallsBack pins the stale-head
-// fallback: the census reaches back to the floor
-// (min(day) passes) but its HEAD is frozen days ago because the
-// census-rollup timer stalled. The old gate checked min(day) only, so it
-// served a ranking missing the last N days — stamped current. The reader
-// must now detect the stale head (max(day) older than censusHeadMaxLag vs
-// the server's today()) and fall through to the always-fresh exact scan.
+// TestRecentContracts_StaleCensusHeadFallsBack pins the stale-head fallback: the census reaches
+// back to the floor (min(day) passes) but its HEAD is frozen because the census-rollup timer
+// stalled. Checking min(day) alone would serve a ranking missing the last N days, stamped current.
+// The reader must detect the stale head (max(day) older than censusHeadMaxLag vs the server's
+// today()) and fall through to the always-fresh exact scan.
 func TestRecentContracts_StaleCensusHeadFallsBack(t *testing.T) {
 	base := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	today := base.Add(30 * 24 * time.Hour) // "now" is 30 days past the floor day
@@ -221,18 +219,13 @@ func (e *execRecorder) stagingTables() map[string]bool {
 	return out
 }
 
-// TestRunCensusDay_PrivateStagingPerRun is the private-staging regression:
-// the 30-min census-rollup timer and a manual `ch-census-rollup -backfill`
-// are two separate processes that both drive RunCensusDay against the
-// current UTC day. Without per-run staging both DROP/INSERT/REPLACE against the ONE
-// shared stellar.contracts_census_daily_staging table, so an interleaving
-// (timer REPLACE landing after the backfill's staging clear but before its
-// INSERT) swaps an EMPTY staging partition into the live table and serves
-// zero census rows for `today`. The fix gives every run its OWN private
-// staging table, so no two concurrent runs can ever touch the same staging
-// table. This test drives two runs concurrently and asserts exactly that —
-// and that neither run uses the old SHARED name, so it fails against a
-// shared-staging implementation.
+// TestRunCensusDay_PrivateStagingPerRun is the private-staging regression: the census-rollup timer
+// and a manual `ch-census-rollup -backfill` are separate processes that both drive RunCensusDay
+// against the current UTC day. With one shared staging table, an interleaving (timer REPLACE
+// landing after the backfill's staging clear but before its INSERT) swaps an EMPTY staging
+// partition into the live table and serves zero census rows for `today`. Every run therefore uses
+// its OWN private staging table. This test drives two runs concurrently and asserts they never
+// touch the same table and neither uses the old SHARED name.
 func TestRunCensusDay_PrivateStagingPerRun(t *testing.T) {
 	day := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
 

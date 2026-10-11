@@ -15,24 +15,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestOracleStreamUnparsedRowsAreCounted pins that an oracle_updates row
-// whose stored canonical text will not parse is DROPPED LOUDLY.
+// TestOracleStreamUnparsedRowsAreCounted pins that an oracle_updates row whose stored canonical
+// text will not parse is dropped loudly (log and metric). Dropping is correct, since there is
+// nothing to serve for an asset we cannot name, but silence matters here: the documented fix
+// for a mislabelled row is a raw SQL UPDATE on a column with no CHECK constraint, so a typo
+// would make the row vanish from /v1/oracle/streams and look like a successful relabel.
 //
-// The drop itself is correct — there is nothing sane to serve for an
-// asset we cannot name. What was wrong is that it happened with no log,
-// metric or error, so the row simply vanished from /v1/oracle/streams and
-// the explorer /oracles page.
-//
-// The silence mattered most exactly when it was most likely: the
-// documented remediation for a mislabelled oracle row is an operator-run
-// raw SQL UPDATE against that column, which has no CHECK constraint. A
-// typo deleted the row from the served surface rather than erroring, and
-// the operator would watch it disappear and reasonably conclude the
-// relabel had worked.
-//
-// This asserts the PARSER's verdict on the shapes an operator typo
-// actually produces; [TestLatestOracleStreams_DropsUnparseableRowsLoudly]
-// drives the real reader.
+// This asserts the parser's verdict on the shapes an operator typo produces;
+// [TestLatestOracleStreams_DropsUnparseableRowsLoudly] drives the real reader.
 func TestOracleStreamUnparsedRowsAreCounted(t *testing.T) {
 	// Shapes a hand-written UPDATE plausibly produces. Each must FAIL to
 	// parse — if canonical ever starts accepting one, the drop (and this
@@ -58,14 +48,11 @@ func TestOracleStreamUnparsedRowsAreCounted(t *testing.T) {
 	}
 }
 
-// TestLatestOracleStreams_DropsUnparseableRowsLoudly drives
-// [Store.LatestOracleStreams] itself through the scripted driver, rather
-// than self-incrementing the counter: `dropped` could be
-// declared and read but never incremented in either parse-fail continue
-// branch, leaving the "not SILENT" slog.Warn summary unreachable
-// dead code even though the per-row counter fired correctly. One healthy
-// row, one with an unparseable asset, one with an unparseable quote —
-// both continue branches must fire.
+// TestLatestOracleStreams_DropsUnparseableRowsLoudly drives [Store.LatestOracleStreams] itself
+// through the scripted driver rather than self-incrementing the counter: `dropped` could go
+// unincremented in a parse-fail continue branch, leaving the slog.Warn summary unreachable while
+// the per-row counter still fired. One healthy row, one with an unparseable asset and one with
+// an unparseable quote exercise both continue branches.
 func TestLatestOracleStreams_DropsUnparseableRowsLoudly(t *testing.T) {
 	var buf bytes.Buffer
 	prevLogger := slog.Default()

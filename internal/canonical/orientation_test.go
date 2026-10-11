@@ -53,12 +53,9 @@ func TestOrient_Symmetric(t *testing.T) {
 	}
 }
 
-// TestOrient_XLMAliasFamilyRanksIdentically pins that all three
-// canonical spellings of XLM (native, crypto:XLM, the SAC wrapper) must
-// orient identically against the same counter-asset. quoteRank must not
-// recognise only "native" and the SAC address, or a
-// crypto:XLM-spelled market could orient inversely to the same market
-// spelled native.
+// TestOrient_XLMAliasFamilyRanksIdentically pins that all three spellings of XLM (native,
+// crypto:XLM, the SAC wrapper) orient identically against the same counter-asset. quoteRank must
+// not recognise only "native" and the SAC, or a crypto:XLM market could orient inversely.
 func TestOrient_XLMAliasFamilyRanksIdentically(t *testing.T) {
 	for _, a := range xlmAliasFamily {
 		id := a.String()
@@ -80,19 +77,14 @@ func TestOrient_XLMAliasFamilyRanksIdentically(t *testing.T) {
 	}
 }
 
-// TestOrient_StablecoinRankIsIssuerAgnostic is the SEC-B12
-// characterization test. A classic token whose CODE collides with a
-// real stablecoin ticker but whose ISSUER is an unrelated (possibly
-// hostile) account still ranks as a quote — orientation deliberately
-// does not know about issuers.
+// TestOrient_StablecoinRankIsIssuerAgnostic is a characterization test. A classic token whose
+// CODE collides with a stablecoin ticker but whose ISSUER is an unrelated (possibly hostile)
+// account still ranks as a quote: orientation deliberately does not know about issuers.
 //
-// This test exists to make that deliberate, not accidental: the
-// behaviour is safe only because no path converts a rank-3 asset into
-// a fiat value without re-checking the issuer (aggregate.FiatProxy
-// refuses every classic asset, including Circle's genuine USDC — see
-// TestFiatProxy_NonCryptoAssetsReturnFalse). Anyone changing this
-// ranking, or adding a code-keyed USD substitution, has to reckon
-// with that invariant first.
+// That is safe only because no path converts a rank-3 asset into a fiat value without
+// re-checking the issuer (aggregate.FiatProxy refuses every classic asset, including the genuine
+// USDC; see TestFiatProxy_NonCryptoAssetsReturnFalse). Changing this ranking or adding a
+// code-keyed USD substitution must reckon with that invariant first.
 func TestOrient_StablecoinRankIsIssuerAgnostic(t *testing.T) {
 	const scamUSDC = "USDC-GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF5"
 

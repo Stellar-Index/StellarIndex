@@ -13,25 +13,19 @@ import (
 
 // Provenance guards on the issuer auth-flag persist path.
 
-// A real r1 residue issuer: merged away at ledger 54,564,588, its pre-image
-// still declaring `stellarbrunch.com`. A Stellar G-strkey is a PUBLIC account
-// address (the ed25519 public key), not a credential — it is hoisted to a
-// constant so `GStrkey:` never sits beside a high-entropy literal, which is
-// what gitleaks' generic-api-key rule keys on.
+// A merged-away issuer whose pre-image still declares a home domain. A Stellar G-strkey is a
+// PUBLIC account address, not a credential; it is hoisted to a constant so `GStrkey:` never
+// sits beside a high-entropy literal, which gitleaks' generic-api-key rule keys on.
 const mergedIssuer = "GA2PQOJ26IP24ECRXEZ4BE6BEIB4HNDWSA2E6JVPFIP6KO6BKOEAZ6XW"
 
-// TestIssuerAuthFlagsValidate_RefusesADeadAccountsDomain is the one that
-// matters most. A merged account's home_domain is a self-declared identity
-// claim that can no longer be checked against SEP-1's bidirectional
-// [[CURRENCIES]] back-reference, so persisting one creates an impersonation
-// surface on exactly the accounts nobody can verify on-chain any more. It is
-// not hypothetical: 979 of 985 pre-images recovered from a 1,000-issuer r1
-// sample still carry one, `stellarkraken.com` and
-// `stellarbrunch.com` among them.
+// TestIssuerAuthFlagsValidate_RefusesADeadAccountsDomain matters most. A merged account's
+// home_domain is a self-declared identity claim that can no longer be checked against SEP-1's
+// bidirectional [[CURRENCIES]] back-reference, so persisting one creates an impersonation
+// surface on accounts nobody can verify on-chain any more. Nearly all recovered pre-images
+// still carry one.
 //
-// The lake reader blanks it, which is the primary defence. This is the second
-// one, at the durable-storage boundary, so a future caller assembling rows by
-// hand cannot be the way it gets in.
+// The lake reader blanks it (primary defence); this is the second, at the durable-storage
+// boundary, so a caller assembling rows by hand cannot let it in.
 func TestIssuerAuthFlagsValidate_RefusesADeadAccountsDomain(t *testing.T) {
 	asOf := uint32(54564588)
 	f := IssuerAuthFlags{
@@ -106,13 +100,11 @@ func TestIssuerAuthFlagsValidate_AcceptsTheThreeLegitimateShapes(t *testing.T) {
 	}
 }
 
-// TestIssuerAuthFlagsSourceMirrorsTheMigrationCheck — auth_flags_source is an
-// enumerated string set whose copies are never colocated: these constants,
-// the clickhouse.AuthFlagsSource constants, the OpenAPI enum, and migration
-// 0153's CHECK. A member added to one compiles green while the database
-// rejects every insert. The API package pins the other three against each
-// other; this pins the served-tier store's copy, which cannot import the lake
-// reader to compare directly.
+// TestIssuerAuthFlagsSourceMirrorsTheMigrationCheck — auth_flags_source is an enumerated set
+// whose copies are never colocated: these constants, the clickhouse.AuthFlagsSource constants,
+// the OpenAPI enum, and the migration CHECK. A member added to one compiles green while the
+// database rejects every insert. The API package pins the other three against each other; this
+// pins the served-tier store's copy, which cannot import the lake reader.
 func TestIssuerAuthFlagsSourceMirrorsTheMigrationCheck(t *testing.T) {
 	want := []string{AuthFlagsSourceLastKnownBeforeRemoval, AuthFlagsSourceLive}
 	sort.Strings(want)

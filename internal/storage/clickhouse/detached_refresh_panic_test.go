@@ -9,35 +9,27 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// The explorer's ClickHouse-side stale-while-revalidate refreshers
-// run detached goroutines inside the stellarindex-api process, kicked from
-// request paths on attacker-chosen keys. An unrecovered panic in ANY
-// goroutine terminates the WHOLE process, so each of them has to recover.
+// The explorer's ClickHouse-side stale-while-revalidate refreshers run detached goroutines
+// kicked from request paths on attacker-chosen keys. An unrecovered panic in ANY goroutine
+// kills the WHOLE process, so each must recover.
 //
-// Recovery alone is not the fix, though, and these tests exist to pin the
-// second half: a contained panic that does not ALSO release the thing the
-// goroutine owned converts a process crash into a permanent wedge, which is
-// worse — the crash at least ends with a fresh process. So every case below
-// asserts three things about the panicking refresh:
+// Recovery alone is not enough: a contained panic that does not ALSO release what the
+// goroutine owned turns a crash into a permanent wedge. So every case asserts about the
+// panicking refresh:
 //
-//  1. the process survives (the test binary reaching its assertions at all
-//     is that assertion — a bare `go func` would have taken it down);
-//  2. the waiter is RELEASED with an honest failure, not left blocked and
-//     not told "success, here is an empty answer"; and
-//  3. the cache accepts a NEW flight afterwards, i.e. the single-flight
-//     marker was cleared, so the panic costs one refresh and not the rest
-//     of the process's life.
+//  1. the process survives (a bare `go func` would have taken the test binary down);
+//  2. the waiter is RELEASED with an honest failure, not left blocked and not told
+//     "success, here is an empty answer"; and
+//  3. the cache accepts a NEW flight afterwards, i.e. the single-flight marker was cleared,
+//     so the panic costs one refresh and not the rest of the process's life.
 //
-// It also pins the panic as VISIBLE: stellarindex_worker_panics_total is the
-// only signal that a background worker died, so a recover that does not move
-// it is a silent dead worker wearing the costume of a fix.
+// It also pins the panic as VISIBLE: stellarindex_worker_panics_total is the only signal that
+// a background worker died, so a recover that does not move it is a silent dead worker.
 
-// The account-state and wealth refreshers already release their flight from
-// a defer, so what these two pin is the guard itself — plus the fact that
-// the release still happens once the panic is contained rather than fatal.
-// The panic source is the real one a zero-value reader produces:
-// ExplorerReader.conn is nil, so the scan's first r.conn.Query dereferences
-// a nil interface.
+// The account-state and wealth refreshers already release their flight from a defer, so
+// these two pin the guard itself and that the release still happens once the panic is
+// contained. The panic source is real: ExplorerReader.conn is nil on a zero-value reader, so
+// the scan's first r.conn.Query dereferences a nil interface.
 func TestAccountStateRefresh_PanicReleasesFlightAndSurvives(t *testing.T) {
 	const workerName = "explorer-account-state-refresh"
 	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName))

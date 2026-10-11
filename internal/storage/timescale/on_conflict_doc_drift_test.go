@@ -6,12 +6,10 @@ import (
 	"testing"
 )
 
-// docCommentAbove returns the contiguous "//" comment block immediately
-// preceding the line containing declLine, joined into one
-// whitespace-normalized string. Used to test the doc comment on a
-// specific declaration in isolation, rather than the whole file (which
-// would also match unrelated code, e.g. a field or SQL clause that
-// happens to share a substring with a stale doc phrase).
+// docCommentAbove returns the contiguous "//" comment block immediately preceding the line
+// containing declLine, joined into one whitespace-normalized string. It tests one
+// declaration's doc comment in isolation, since matching the whole file would also hit
+// unrelated code (a field or SQL clause sharing a substring with a stale doc phrase).
 func docCommentAbove(t *testing.T, text, declLine string) string {
 	t.Helper()
 	lines := strings.Split(text, "\n")
@@ -36,12 +34,10 @@ func docCommentAbove(t *testing.T, text, declLine string) string {
 	return strings.Join(comment, " ")
 }
 
-// TestOnConflictDocsMatchGenerationGuardedUpsert guards that doc
-// comments on writers backed by a generation-guarded corrective
-// ON CONFLICT ... DO UPDATE (migration 0110) must not describe the
-// pre-migration DO NOTHING / no-op / positional-PK behaviour those
-// upserts replaced. A doc that still claims "no-op" or omits a PK
-// column the query actually conflicts on is stale.
+// TestOnConflictDocsMatchGenerationGuardedUpsert guards that doc comments on writers backed
+// by a generation-guarded corrective ON CONFLICT ... DO UPDATE (migration 0110) do not
+// describe the DO NOTHING / no-op / positional-PK behaviour those upserts replaced. A doc
+// that still claims "no-op" or omits a PK column the query conflicts on is stale.
 func TestOnConflictDocsMatchGenerationGuardedUpsert(t *testing.T) {
 	cases := []struct {
 		name           string

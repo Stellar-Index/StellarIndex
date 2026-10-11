@@ -11,11 +11,9 @@ import (
 
 // ─── real-lake golden frames (base64 XDR) ────────────────────────
 //
-// Captured via a read-only ClickHouse query against the
-// r1 raw lake (stellar.contract_events), scoped by topic_0_sym +
-// ledger_seq — see internal/sources/blend/README.md "Known gap" for
-// the evidence trail. These PIN the V1 pool-factory's simpler
-// vocabulary: if a decode helper drifts, the asserted fields change.
+// Captured from the raw lake (stellar.contract_events) by topic_0_sym and ledger_seq; see
+// internal/sources/blend/README.md "Known gap" for the evidence trail. They pin the V1
+// pool-factory's simpler vocabulary: if a decode helper drifts, the asserted fields change.
 
 // TestGolden_UpdateEmissionsV1 pins decodeUpdateEmissions against a
 // real V1 pool event: ledger 51,524,668, pool CDVQVKOY…, tx
@@ -54,12 +52,11 @@ func TestGolden_UpdateEmissionsV1(t *testing.T) {
 	}
 }
 
-// TestGolden_NewLiquidationAuctionV1 pins decodeNewLiquidationAuctionV1
-// against a real V1 pool event: ledger 51,611,821, pool CDVQVKOY…, tx
-// c128f9ce…. Topic: [Symbol("new_liquidation_auction"),
-// Address(user)]. Body: Map{bid, block, lot} — the SAME AuctionData
-// shape decodeAuctionData already parses for V2's new_auction, but
-// with no auction_type topic and no percent field.
+// TestGolden_NewLiquidationAuctionV1 pins decodeNewLiquidationAuctionV1 against a real V1
+// pool event (ledger 51,611,821, pool CDVQVKOY…, tx c128f9ce…). Topic:
+// [Symbol("new_liquidation_auction"), Address(user)]. Body: Map{bid, block, lot}, the same
+// AuctionData shape decodeAuctionData parses for V2's new_auction, but with no auction_type
+// topic and no percent field.
 func TestGolden_NewLiquidationAuctionV1(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -117,11 +114,10 @@ func TestGolden_NewLiquidationAuctionV1(t *testing.T) {
 	}
 }
 
-// TestGolden_DeleteLiquidationAuctionV1 pins
-// decodeDeleteLiquidationAuctionV1 against the single real V1
-// occurrence: ledger 54,890,906, pool CBP7NO6F…, tx 24fb3d09…. Topic:
-// [Symbol("delete_liquidation_auction"), Address(user)]. Body:
-// ScvVoid (not parsed — same convention as V2's delete_auction).
+// TestGolden_DeleteLiquidationAuctionV1 pins decodeDeleteLiquidationAuctionV1 against the
+// single real V1 occurrence (ledger 54,890,906, pool CBP7NO6F…, tx 24fb3d09…). Topic:
+// [Symbol("delete_liquidation_auction"), Address(user)]. Body: ScvVoid, not parsed, as with
+// V2's delete_auction.
 func TestGolden_DeleteLiquidationAuctionV1(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{

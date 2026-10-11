@@ -69,13 +69,9 @@ func TestProbeOneHost_OK(t *testing.T) {
 	host, cleanup := startTLSServer(t, want)
 	t.Cleanup(cleanup)
 
-	// httptest's TLS server uses a self-signed cert. probeOneHost
-	// hits `InsecureSkipVerify=false` by default — so we expect
-	// the dial to fail signature verification. The probe code
-	// path should still emit a dial_error outcome. To get the
-	// happy-path coverage, set InsecureSkipVerify in this test
-	// via a focused override; the real production code keeps
-	// strict verification.
+	// httptest's TLS server uses a self-signed cert, so the default strict verification would
+	// fail the dial with a dial_error outcome. For happy-path coverage this test overrides
+	// InsecureSkipVerify; production keeps strict verification.
 	prev := tlsConfigOverride
 	tlsConfigOverride = func(c *tls.Config) { c.InsecureSkipVerify = true } //nolint:gosec // test override only
 	t.Cleanup(func() { tlsConfigOverride = prev })
@@ -95,13 +91,11 @@ func TestProbeOneHost_OK(t *testing.T) {
 	}
 }
 
-// TestProbeOneHost_CertFailingVerificationIsStillRead is the
-// regression guard. The production dial verifies the chain,
-// so an expired or mis-issued leaf failed the handshake and was counted
-// as a bare dial_error with its NotAfter never read: after a restart the
-// host had no gauge at all, and the one condition the probe exists to
-// catch was reported as "unreachable". The handshake error carries the
-// unverified chain; the probe must record the leaf and say which failure.
+// TestProbeOneHost_CertFailingVerificationIsStillRead guards the production dial, which
+// verifies the chain: an expired or mis-issued leaf fails the handshake, and must not be counted
+// as a bare dial_error with its NotAfter unread (no gauge, and the condition the probe exists to
+// catch reported as "unreachable"). The handshake error carries the unverified chain; the probe
+// must record the leaf and say which failure.
 func TestProbeOneHost_CertFailingVerificationIsStillRead(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

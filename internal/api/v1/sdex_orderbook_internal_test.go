@@ -191,11 +191,10 @@ func TestAggregateOrderBookSide_ExactLevelsAndInversion(t *testing.T) {
 	}
 }
 
-// TestSDEXOrderBookCache_MaintainObservesMetrics pins the op-qualified
-// outcome labels: Load records load_ok/load_error, Advance records
-// advance_ok/advance_error/advance_held, and the pre-Load Advance no-op
-// records NOTHING (counting it as ok would mask a stuck load behind a
-// healthy advance rate).
+// TestSDEXOrderBookCache_MaintainObservesMetrics pins the op-qualified outcome labels: Load
+// records load_ok/load_error, Advance records advance_ok/advance_error/advance_held, and the
+// pre-Load Advance no-op records nothing (counting it as ok would mask a stuck load behind
+// a healthy advance rate).
 func TestSDEXOrderBookCache_MaintainObservesMetrics(t *testing.T) {
 	count := func(outcome string) uint64 {
 		return obstest.HistogramSampleCount(t, obs.SDEXOrderBookMaintainDurationSeconds, "outcome", outcome)
@@ -228,11 +227,10 @@ func TestSDEXOrderBookCache_MaintainObservesMetrics(t *testing.T) {
 		t.Errorf("load_ok observations = %d, want %d", got, loadOK+1)
 	}
 
-	// A held tick (next == cursor, no error — the reader's early return
-	// below an unhealed lake hole) must NOT count as advance_ok: that
-	// would mask a stuck cursor behind a healthy-looking advance rate,
-	// exactly the gap that check closes. cursor is 0 post-Load here
-	// (reader.cursor is unset); nextCursor defaults to the same 0.
+	// A held tick (next == cursor, no error: the reader's early return below an unhealed lake
+	// hole) must not count as advance_ok, or a stuck cursor hides behind a healthy-looking
+	// advance rate. cursor is 0 post-Load here (reader.cursor is unset); nextCursor defaults
+	// to the same 0.
 	if err := c.Advance(context.Background()); err != nil {
 		t.Fatalf("held Advance: %v", err)
 	}
@@ -261,13 +259,11 @@ func TestSDEXOrderBookCache_MaintainObservesMetrics(t *testing.T) {
 	}
 }
 
-// TestSDEXOrderBookCache_ZombieQuarantineAndVerify pins the
-// crossed-book fix: a loaded offer whose version carries
-// intra_ledger_seq == 0 (the version-tie-ambiguous class — its
-// same-ledger `removed` sibling may have lost the ReplacingMergeTree
-// merge arbitrarily) is NOT served until the change-stream probe
-// proves no removal exists at its ledger. Proven-dead zombies are
-// dropped for good; proven-live offers graduate into the served book.
+// TestSDEXOrderBookCache_ZombieQuarantineAndVerify pins the crossed-book fix: a loaded offer
+// whose version carries intra_ledger_seq == 0 (version-tie-ambiguous, since its same-ledger
+// `removed` sibling may have lost the ReplacingMergeTree merge arbitrarily) is not served
+// until the change-stream probe proves no removal exists at its ledger. Proven-dead zombies
+// are dropped; proven-live offers graduate into the served book.
 func TestSDEXOrderBookCache_ZombieQuarantineAndVerify(t *testing.T) {
 	const usdc = "USDC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 	reader := &stubOfferBookReader{
@@ -334,10 +330,9 @@ func TestSDEXOrderBookCache_ZombieQuarantineAndVerify(t *testing.T) {
 	}
 }
 
-// TestCrossedPairCount_TouchingIsNotCrossed pins the tripwire to the
-// on-chain invariant: a PASSIVE offer rests against an opposite offer at
-// exactly the inverse price (a 1:1 stablecoin maker is the common case),
-// so a touching book is legal and must read 0 or the alert on this gauge
+// TestCrossedPairCount_TouchingIsNotCrossed pins the tripwire to the on-chain invariant: a
+// passive offer rests against an opposite offer at exactly the inverse price (common for a
+// 1:1 stablecoin maker), so a touching book is legal and must read 0 or the gauge's alert
 // fires forever. Only best bid > best ask is impossible on a resting book.
 func TestCrossedPairCount_TouchingIsNotCrossed(t *testing.T) {
 	const usdc = "USDC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
@@ -357,11 +352,10 @@ func TestCrossedPairCount_TouchingIsNotCrossed(t *testing.T) {
 	}
 }
 
-// TestSDEXOrderBookCache_AdvanceSupersedesPendingAndCrossedGauge pins
-// two behaviours: (1) a tip-forward change resolves a quarantined
-// key's fate without waiting for verification, and (2) the
-// crossed-pairs gauge fires when the SERVED book itself is crossed
-// (the residual class verification cannot disprove).
+// TestSDEXOrderBookCache_AdvanceSupersedesPendingAndCrossedGauge pins two behaviours: a
+// tip-forward change resolves a quarantined key's fate without waiting for verification, and
+// the crossed-pairs gauge fires when the served book itself is crossed (the residual class
+// verification cannot disprove).
 func TestSDEXOrderBookCache_AdvanceSupersedesPendingAndCrossedGauge(t *testing.T) {
 	const usdc = "USDC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 	reader := &stubOfferBookReader{
@@ -543,12 +537,11 @@ func TestSDEXOrderBookCache_MaintainTickReloadsPeriodically(t *testing.T) {
 	}
 }
 
-// TestSDEXOrderBookCache_ReloadKeepsVerificationVerdicts guards the
-// periodic re-load against its own side effect: Load quarantines every
-// intra_ledger_seq == 0 winner, so a naive daily re-load would pull every
-// long-resting pre-intra-era offer OUT of the served book until the probe
-// backlog drained again. An offer already served at the identical version
-// keeps its verdict; anything else is still quarantined.
+// TestSDEXOrderBookCache_ReloadKeepsVerificationVerdicts guards the periodic re-load against
+// its own side effect: Load quarantines every intra_ledger_seq == 0 winner, so a naive
+// re-load would pull every long-resting pre-intra-era offer out of the served book until
+// the probe backlog drained again. An offer already served at the identical version keeps
+// its verdict; anything else is still quarantined.
 func TestSDEXOrderBookCache_ReloadKeepsVerificationVerdicts(t *testing.T) {
 	const usdc = "USDC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 	live := bookOffer("live", 1, 100, "native", usdc, 1, 2, 40<<32) // intra 0 — suspect

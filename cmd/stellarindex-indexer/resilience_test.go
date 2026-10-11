@@ -11,13 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestRetryUntil_RetriesUntilTheDependencyComesBack is the behavioural
-// half of the signer-tagger resilience guard. startSignerTagger must not
-// dial ClickHouse ONCE, on the caller's goroutine: a single failure would
-// disable AMM signer attribution for the lifetime of the process, so a
-// ClickHouse restart during a deploy would leave trades.signer NULL until
-// somebody restarted the indexer. The answer is not "log it louder", it is "keep trying", and the
-// property that matters is that attempt N+1 happens at all.
+// TestRetryUntil_RetriesUntilTheDependencyComesBack is the behavioural half of the signer-tagger
+// resilience guard. startSignerTagger must not dial ClickHouse once: a single failure would
+// disable AMM signer attribution for the process lifetime and leave trades.signer NULL after a
+// ClickHouse restart. What matters is that attempt N+1 happens at all.
 func TestRetryUntil_RetriesUntilTheDependencyComesBack(t *testing.T) {
 	calls := 0
 	start := time.Now()
@@ -92,15 +89,12 @@ func TestRetryUntil_StopsOnCancellation(t *testing.T) {
 	}
 }
 
-// TestWaitBounded_ReturnsFalseWhenTheWaitOutlivesTheBudget covers the
-// indexer's shutdown path. externalWait() must not be
-// called bare, between two deadline-bounded steps, or one wedged CEX/FX
-// connector holds the whole binary until systemd escalated to SIGKILL —
-// the one shutdown that skips the sink drain entirely.
+// TestWaitBounded_ReturnsFalseWhenTheWaitOutlivesTheBudget covers the indexer's shutdown path.
+// externalWait() must not be called bare between deadline-bounded steps, or one wedged CEX/FX
+// connector holds the binary until systemd SIGKILLs it, skipping the sink drain.
 //
-// The false return is load-bearing, not cosmetic: main uses it to decide
-// NOT to close the shared events channel, because a connector that is
-// still running is still a sender and a send on a closed channel panics.
+// The false return is load-bearing: main uses it to NOT close the shared events channel, since
+// a still-running connector is still a sender and a send on a closed channel panics.
 func TestWaitBounded_ReturnsFalseWhenTheWaitOutlivesTheBudget(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
@@ -131,12 +125,9 @@ func TestWaitBounded_ReturnsTrueOnCleanDrain(t *testing.T) {
 	}
 }
 
-// TestWaitBounded_PanicIsCountedAndReportedAsNotDrained: a fault inside a
-// connector's teardown leaves us unable to say whether its senders have
-// stopped, so the honest answer is "not drained" — the direction that
-// skips close(events). And it must not crash the process on the way out:
-// a panic in this goroutine would skip main's defers and take the sink
-// drain with it, which is exactly what the shutdown path exists to run.
+// TestWaitBounded_PanicIsCountedAndReportedAsNotDrained: a fault in a connector's teardown
+// leaves its senders' state unknown, so the answer is "not drained" (skip close(events)). The
+// panic must also not crash the process, or main's defers and the sink drain would be skipped.
 func TestWaitBounded_PanicIsCountedAndReportedAsNotDrained(t *testing.T) {
 	const workerName = "panicking-connector-drain"
 	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName))

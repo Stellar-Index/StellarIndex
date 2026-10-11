@@ -136,11 +136,9 @@ func TestCrossCheckRefresher_RejectsBadInput(t *testing.T) {
 	}
 }
 
-// TestCrossCheckRefresher_WithinTolerance — equal totals → "within"
-// outcome + gauge=0. Pair's WrapClass is left unset (defaults to
-// [supply.WrapClassPartial]); an exact match is Within under either
-// class, so this doesn't exercise the class-dependent branch — see
-// the WrapClass-specific tests below for that.
+// TestCrossCheckRefresher_WithinTolerance — equal totals → "within" outcome + gauge=0. WrapClass is
+// left unset (defaults to [supply.WrapClassPartial]); an exact match is Within under either class,
+// so the class-dependent branch is covered by the WrapClass-specific tests below.
 func TestCrossCheckRefresher_WithinTolerance(t *testing.T) {
 	t.Parallel()
 	classic := supply.Supply{
@@ -178,11 +176,9 @@ func TestCrossCheckRefresher_WithinTolerance(t *testing.T) {
 	}
 }
 
-// TestCrossCheckRefresher_PartialWrapClassicExceedsSacIsBenign pins that a pair
-// with the default (partial-wrap) class where classic total vastly
-// exceeds SAC total — the AQUA shape (Alg-2 ≈ 86.4B, Alg-3 ≈ 0), a
-// false positive under an equality compare — lands Within with zero
-// divergence, NOT Over.
+// TestCrossCheckRefresher_PartialWrapClassicExceedsSacIsBenign pins that a default (partial-wrap)
+// pair whose classic total vastly exceeds the SAC total (the AQUA shape, a false positive under an
+// equality compare) lands Within with zero divergence, NOT Over.
 func TestCrossCheckRefresher_PartialWrapClassicExceedsSacIsBenign(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
@@ -274,13 +270,11 @@ func TestCrossCheckRefresher_PartialWrapWithoutEscrowIsUnchecked(t *testing.T) {
 	}
 }
 
-// TestCrossCheckRefresher_MisalignedLedgersNeitherPassesNorPages is
-// the misaligned-ledger guard. Each side's snapshot is read as "the LATEST for
-// this asset_key" from its own per-asset refresher, so nothing makes
-// them contemporaneous. A SAC snapshot 50k ledgers (~3 days) ahead of
-// a stalled classic snapshot made the subset bound report an
-// over-mint that never happened — a P3 page on a stale read. It must
-// instead report `misaligned`: no verdict, no gauge.
+// TestCrossCheckRefresher_MisalignedLedgersNeitherPassesNorPages is the misaligned-ledger guard.
+// Each side's snapshot is the LATEST for its asset_key from its own refresher, so nothing makes
+// them contemporaneous. A SAC snapshot far ahead of a stalled classic snapshot would make the
+// subset bound report an over-mint that never happened. It must instead report `misaligned`:
+// no verdict, no gauge.
 func TestCrossCheckRefresher_MisalignedLedgersNeitherPassesNorPages(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
@@ -364,16 +358,12 @@ func TestCrossCheckRefresher_FullWrapStillAlertsOnMismatch(t *testing.T) {
 	}
 }
 
-// TestCrossCheckRefresher_PartialWrapEscrowExceedsSacFires pins leg 2:
-// since leg 1 is diagnostic-only, leg 2 (classic.SACWrappedStroops ≤ sac.TotalSupply)
-// is the ONLY direction that can raise
-// stellarindex_supply_cross_check_divergence_stroops, yet every other
-// partial-wrap fixture in this file leaves SACWrappedStroops nil, so
-// CrossCheckSubsetBound's leg 2 never evaluates (SubsetBoundChecked
-// stays false) through this refresher's production entry point. A
-// classic snapshot recording more escrowed-in-SAC stroops than the
-// SAC's own total_supply is impossible under correct accounting and
-// MUST page.
+// TestCrossCheckRefresher_PartialWrapEscrowExceedsSacFires pins leg 2: leg 1 is diagnostic-only,
+// so leg 2 (classic.SACWrappedStroops ≤ sac.TotalSupply) is the ONLY direction that can raise
+// stellarindex_supply_cross_check_divergence_stroops, yet every other partial-wrap fixture here
+// leaves SACWrappedStroops nil, so leg 2 never evaluates through the production entry point. A
+// classic snapshot with more escrowed-in-SAC stroops than the SAC's own total_supply is impossible
+// under correct accounting and MUST page.
 func TestCrossCheckRefresher_PartialWrapEscrowExceedsSacFires(t *testing.T) {
 	t.Parallel()
 	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
@@ -508,11 +498,10 @@ func TestCrossCheckRefresher_PerPairIsolation(t *testing.T) {
 	}
 }
 
-// TestCrossCheckRefresher_NonEvaluableOutcomeClearsGauge — a pair whose
-// last tick agreed must not keep serving that agreement once it stops
-// being evaluable: Prometheus re-exports a GaugeVec series on every
-// scrape, so a stalled classic refresher would otherwise read as a
-// healthy 0 forever while the divergence alert stays silent.
+// TestCrossCheckRefresher_NonEvaluableOutcomeClearsGauge — a pair whose last tick agreed must not
+// keep serving that agreement once it stops being evaluable: Prometheus re-exports a GaugeVec
+// series on every scrape, so a stalled classic refresher would otherwise read as a healthy 0
+// forever while the divergence alert stays silent.
 func TestCrossCheckRefresher_NonEvaluableOutcomeClearsGauge(t *testing.T) {
 	t.Parallel()
 	const classicKey, sacKey = "USDC:G...", "CCONTRACT"

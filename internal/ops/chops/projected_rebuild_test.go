@@ -21,13 +21,10 @@ import (
 
 // ─── buildWindowPlan: gap-free, overlap-free, exact coverage ──────────────
 
-// TestBuildWindowPlan_ExactCoverageNoGapsNoOverlaps is the core correctness
-// property the parallel scheduler depends on: whatever the window size,
-// the plan's windows union to EXACTLY [from,to] with no gap and no overlap,
-// in ascending order. A bug here would silently drop or double-process
-// ledgers under concurrency (harder to notice than a single-threaded walk
-// missing a range, because ON CONFLICT DO NOTHING absorbs an overlap
-// silently and a gap has no local symptom).
+// TestBuildWindowPlan_ExactCoverageNoGapsNoOverlaps pins the property the parallel scheduler
+// depends on: whatever the window size, the windows union to EXACTLY [from,to], ascending, with
+// no gap or overlap. A bug would silently drop or double-process ledgers: ON CONFLICT DO NOTHING
+// absorbs an overlap and a gap has no local symptom.
 func TestBuildWindowPlan_ExactCoverageNoGapsNoOverlaps(t *testing.T) {
 	cases := []struct {
 		name           string
@@ -94,13 +91,9 @@ func TestBuildWindowPlan_InvalidRangeReturnsNil(t *testing.T) {
 
 // ─── windowScheduler: concurrency-safe claim ───────────────────────────────
 
-// TestWindowScheduler_ConcurrentClaimExactlyOnce spins many goroutines
-// against one scheduler built from a fixed window plan and asserts every
-// window is claimed by EXACTLY one caller — the property the parallel
-// worker pool depends on for "no gaps, no overlaps" under real
-// concurrency (buildWindowPlan proves the plan itself is gap/overlap-free;
-// this proves the scheduler doesn't hand a window to two workers or skip
-// one under a race).
+// TestWindowScheduler_ConcurrentClaimExactlyOnce asserts that many goroutines on one scheduler
+// claim every window EXACTLY once. buildWindowPlan proves the plan is gap/overlap-free; this
+// proves the scheduler never hands a window to two workers or skips one under a race.
 func TestWindowScheduler_ConcurrentClaimExactlyOnce(t *testing.T) {
 	plan := buildWindowPlan(1000, 1000+237*50-1, 50) // 237 windows
 	if len(plan) != 237 {
@@ -167,12 +160,10 @@ func TestWindowCursorSub_Format(t *testing.T) {
 	}
 }
 
-// TestPendingWindows_ResumeFiltering pins the resume semantics: a window is
-// skipped ONLY when its checkpoint's last_ledger is at or past its OWN
-// upper bound. A missing entry, a different source's entry (prefix
-// collision guard), and a stale/partial entry (last < w.To — shouldn't
-// happen in practice since checkpoints are written after a window fully
-// streams, but defensive) must all be retried, never silently skipped.
+// TestPendingWindows_ResumeFiltering pins the resume semantics: a window is skipped ONLY when
+// its checkpoint's last_ledger is at or past its OWN upper bound. A missing entry, another
+// source's entry (prefix collision guard) and a stale or partial entry (last < w.To, defensive)
+// must all be retried, never silently skipped.
 func TestPendingWindows_ResumeFiltering(t *testing.T) {
 	plan := []opsutil.RangeChunk{
 		{From: 100, To: 199}, // done

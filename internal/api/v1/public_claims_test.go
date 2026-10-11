@@ -19,31 +19,20 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// TestPublicClaimsMatchTheDeployment pins the handful of factual claims
-// the README and the OpenAPI `info.description` make about this API —
-// the description is served to every consumer through the rendered
-// reference at docs.stellarindex.io, so a stale sentence there is a
-// published falsehood, not an internal note.
+// TestPublicClaimsMatchTheDeployment pins the factual claims the README and the OpenAPI
+// `info.description` make about this API. The description is rendered at docs.stellarindex.io,
+// so a stale sentence is a published falsehood. Each claim was checked against the hosted
+// deployment:
 //
-// Each entry below was measured against the hosted deployment rather
-// than reasoned about:
+//   - "complete since-inception history" is false: daily XLM/USD OHLC has a start and a gap.
+//   - "back to 2015" on /price/at and /price/changes is false: the early years return no bars.
+//   - "protocol 23" is stale: /v1/ledgers reports the current protocol_version.
+//   - "/healthz, /readyz, /version" 404 on the hosted API: registered routes are /v1-prefixed
+//     and /metrics is loopback-only.
+//   - "SEP-10 web auth" must not be listed flatly as shipped: the handlers answer 503 "no SEP-10
+//     validator wired" without a server signing seed, which the hosted deployment does not set.
 //
-//   - "complete since-inception history": a measurement concluded that any
-//     full-history claim would be false. Daily OHLC for XLM/USD starts
-//     2018-07-01 and has no bars between 2021-01-31 and 2026-03-12.
-//   - "back to 2015" on /price/at and /price/changes: same measurement —
-//     2015/2016/2017 return zero bars.
-//   - "protocol 23": pubnet has been on 27 since the P27 upgrade;
-//     /v1/ledgers reports protocol_version 27.
-//   - "/healthz, /readyz, /version": those paths 404 on the hosted API.
-//     The routes registered in server.go are /v1-prefixed, and /metrics
-//     is loopback-only (never public).
-//   - "SEP-10 web auth" listed flatly under What's shipped: the handlers
-//     exist but answer 503 "no SEP-10 validator wired" without a server
-//     signing seed, which the hosted deployment does not set.
-//
-// Assertions run over whitespace-collapsed text so a reflow of the
-// surrounding prose can't quietly hollow the check out.
+// Assertions run over whitespace-collapsed text so a reflow of the prose cannot hollow them out.
 func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 	root := repoRootForClaims(t)
 
@@ -185,12 +174,9 @@ func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 	}
 }
 
-// TestErrorDocExampleMatchesRateLimitResponse holds the api-design.md
-// §11 problem example to the 429 the rate-limit middleware really
-// writes: same `type` URL and status, and no body field the response
-// does not carry (the doc showed `errors/rate-limit-exceeded`
-// and a `retry_after` body field; the code emits `errors/rate-limited`
-// and carries the delay only in the Retry-After header).
+// TestErrorDocExampleMatchesRateLimitResponse holds the api-design.md section 11 problem example
+// to the 429 the rate-limit middleware really writes: same `type` URL (`errors/rate-limited`) and
+// status, and no body field the response lacks (the delay is only in the Retry-After header).
 func TestErrorDocExampleMatchesRateLimitResponse(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join(repoRootForClaims(t), "docs/reference/api-design.md"))
 	if err != nil {

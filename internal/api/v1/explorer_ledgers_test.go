@@ -36,11 +36,9 @@ type stubExplorerReader struct {
 	accountState   clickhouse.AccountState
 	cap67WM        uint32
 	accountsStats  clickhouse.AccountsStats
-	// accountCreators backs GET /v1/accounts/creators; creatorsLimit
-	// records the limit the handler asked for, so a test can pin the
-	// handler's clamping rather than trusting it.
-	// creatorsAccount / sponsorsAccount record the ?account= filter the
-	// handler passed through, so a test can pin that a malformed value
+	// accountCreators backs GET /v1/accounts/creators; creatorsLimit records the limit the
+	// handler asked for, so a test can pin its clamping. creatorsAccount / sponsorsAccount
+	// record the ?account= filter passed through, so a test can pin that a malformed value
 	// never reaches the reader and a well-formed one always does.
 	accountCreators clickhouse.AccountCreators
 	creatorsLimit   int
@@ -51,13 +49,11 @@ type stubExplorerReader struct {
 	cohortRelation  string
 	sponsorsLimit   int
 	sponsorsAccount string
-	// accountGraph backs GET /v1/accounts/{g}/graph. graphCreatedEdges /
-	// graphSponsoredEdges are the FULL outbound edge sets; the stub
-	// applies the keyset cursor and the limit the way the ClickHouse
-	// statement does, so a pagination test exercises the handler's real
-	// contract instead of a pre-sliced fixture. graphRelation /
-	// graphLimit / graphCursor record what the handler asked for, so a
-	// test can pin the parsing rather than trust it.
+	// accountGraph backs GET /v1/accounts/{g}/graph. graphCreatedEdges / graphSponsoredEdges
+	// are the FULL outbound edge sets; the stub applies the keyset cursor and limit the way the
+	// ClickHouse statement does, so a pagination test exercises the real contract rather than a
+	// pre-sliced fixture. graphRelation / graphLimit / graphCursor record what the handler
+	// asked for, so a test can pin the parsing.
 	accountGraph        clickhouse.AccountGraph
 	graphCreatedEdges   []clickhouse.AccountGraphEdge
 	graphSponsoredEdges []clickhouse.AccountGraphEdge
@@ -106,11 +102,9 @@ func (s *stubExplorerReader) LedgerBySeq(_ context.Context, seq uint32) (clickho
 			return l, true, nil
 		}
 	}
-	// The stub only ever lists the tip entry explicitly, but
-	// windowFloorLedger's close_time binary search needs an answer for
-	// every intermediate sequence too. Synthesize one from the newest
-	// known entry at the theoretical 5s cadence (17,280/day) — the exact
-	// rate these tests' expected since_ledger values were computed against.
+	// The stub lists only the tip entry, but windowFloorLedger's close_time binary search needs
+	// an answer for every intermediate sequence. Synthesize one from the newest known entry at
+	// the 5s cadence (17,280/day), the rate the expected since_ledger values assume.
 	if len(s.ledgers) == 0 {
 		return clickhouse.LedgerHeader{}, false, nil
 	}
@@ -424,11 +418,10 @@ func (s *stubExplorerReader) AccountGraph(_ context.Context, _, relation string,
 	return out, true, nil
 }
 
-// AccountGraphHistory mirrors the real reader's contract: a graph whose
-// creation arm has no covered span has not completed a cycle, and a
-// series over it would claim "this account has never created anything".
-// AccountCohort serves the stub's cohort when a cycle "completed"
-// (cohortOK) and records the relation asked for.
+// AccountGraphHistory mirrors the real reader: a graph whose creation arm has no covered span
+// has not completed a cycle, and a series over it would falsely claim "this account has never
+// created anything". AccountCohort serves the stub's cohort when a cycle "completed" (cohortOK)
+// and records the relation asked for.
 func (s *stubExplorerReader) AccountCohort(_ context.Context, _ string, relation string) (clickhouse.AccountCohort, bool, error) {
 	if s.err != nil {
 		return clickhouse.AccountCohort{}, false, s.err
@@ -746,11 +739,10 @@ func TestExplorer_ContractDetail_InvalidID(t *testing.T) {
 	}
 }
 
-// The contract-activity cursor must carry the tx_hash discriminator: the
-// legacy 3-part (ledger, op_index, event_index) tuple is not unique
-// (single-op txs all tie at 0.0) and paging on it permanently skipped tied
-// rows. A 4-part cursor round-trips; the legacy
-// 3-part form is rejected as invalid rather than silently mis-paged.
+// The contract-activity cursor must carry the tx_hash discriminator: the 3-part (ledger,
+// op_index, event_index) tuple is not unique (single-op txs all tie at 0.0), so paging on it
+// permanently skips tied rows. A 4-part cursor round-trips; the 3-part form is rejected as
+// invalid rather than silently mis-paged.
 func TestExplorer_ContractDetail_CursorRequiresTxHash(t *testing.T) {
 	const cid = "CAM7DY53G63XA4AJRS24Z6VFYAFSSF76C3RZ45BE5YU3FQS5255OOABP"
 	base := explorerTestServer(t, &stubExplorerReader{})

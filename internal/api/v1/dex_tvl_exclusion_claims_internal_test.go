@@ -13,40 +13,24 @@ import (
 	"testing"
 )
 
-// The scope exclusions are PROSE ON A MONEY SURFACE. Every
-// /v1/protocols response carries them in tvl_total.excluded, and
-// handleProtocolTVL serves the matching one as the 404 detail on
-// /v1/protocols/{name}/tvl — so a reader deciding whether the headline
-// omits something they care about is reading these sentences, not the
-// code.
+// The scope exclusions are PROSE ON A MONEY SURFACE. Every /v1/protocols response carries them in
+// tvl_total.excluded, and handleProtocolTVL serves the matching one as the 404 detail on
+// /v1/protocols/{name}/tvl, so a reader deciding whether the headline omits something is reading
+// these sentences, not the code.
 //
-// That makes a location claim inside one a published claim about the
-// API's own shape, and those rot silently: the blend entry asserted
-// that lending supplied-value "is published
-// per-protocol as bespoke.tvl_usd". No such field is on the wire —
-// the lending protocol block carries event and user COUNTS only, and
-// says so itself (timescale/bespoke_lending.go: "Pool-level figures
-// are event/user COUNTS only"). The only lending tvl_usd the API
-// serves is per-POOL, on GET /v1/lending/pools/{pool}/reserves. A
-// reader who went looking for the excluded number was sent to a field
-// that does not exist.
+// A location claim inside one is a published claim about the API's own shape, and those rot
+// silently: the blend entry once said lending supplied-value "is published per-protocol as
+// bespoke.tvl_usd", a field that is not on the wire (the lending protocol block carries event and
+// user COUNTS only; the only lending tvl_usd is per-POOL, on /v1/lending/pools/{pool}/reserves).
 //
-// The rule below is the narrowest one that catches that: an exclusion
-// that claims we publish or serve the figure elsewhere must NAME the
-// route, and the route must be one this server actually registers. An
-// exclusion making no location claim (defindex's double-counting
-// argument) is unconstrained.
+// The narrowest rule that catches that: an exclusion claiming we publish or serve the figure
+// elsewhere must NAME the route, and the route must be one this server registers. An exclusion
+// making no location claim (defindex's double-counting argument) is unconstrained.
 //
-// KNOWN LIMIT: registered is not the same as ANSWERS. This guard
-// parses route registrations out of server.go; it cannot tell a working
-// route from one that 503s. The blend exclusion cited
-// /v1/lending/pools/{pool}/reserves while that route timed out on the
-// largest Blend pool, and this test was green throughout — a reader
-// following the pointer got the 503 the exclusion was supposed to
-// explain away. What that route ACTUALLY answers is now covered where it
-// can be measured rather than parsed:
-// test/integration/clickhouse_entries_test.go executes the reserve read against
-// a real ClickHouse and bounds what it costs.
+// KNOWN LIMIT: registered is not the same as ANSWERS. This guard parses route registrations out of
+// server.go and cannot tell a working route from one that 503s. What the reserves route actually
+// answers is covered where it can be measured: test/integration/clickhouse_entries_test.go
+// executes the reserve read against a real ClickHouse and bounds its cost.
 
 // exclusionLocationClaim matches the verbs that promise a reader they
 // can go and read the number somewhere.
@@ -134,11 +118,9 @@ func TestDEXTVLExclusions_ReasonsAreSettled(t *testing.T) {
 	}
 }
 
-// registeredV1Routes reads the route patterns server.go hands to the
-// mux. Source-level rather than behavioural because registerRoutes runs
-// inside a Server whose construction needs live backends; the property
-// worth protecting is only that a cited path is one of the strings this
-// package routes at all. Same posture as the AST wiring guard in
+// registeredV1Routes reads the route patterns server.go hands to the mux. Source-level because
+// registerRoutes runs inside a Server whose construction needs live backends; the property is only
+// that a cited path is one this package routes at all. Same posture as the AST wiring guard in
 // cmd/stellarindex-api.
 func registeredV1Routes(t *testing.T) map[string]bool {
 	t.Helper()

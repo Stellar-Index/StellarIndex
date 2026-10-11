@@ -266,13 +266,10 @@ func TestDecoder_Decode_MessageSent(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_FullCensusEvents exercises the full Matches +
-// Decode path for all 16 remaining topics from a known CCTP contract,
-// guarding the dispatcher_adapter.go switch statement (a Classify
-// case with no matching switch arm would silently fall through to
-// ErrUnknownEvent instead of emitting a row) — same guard as
-// governance_test.go's TestDecoder_Decode_GovernanceEvents for the
-// first 5.
+// TestDecoder_Decode_FullCensusEvents exercises Matches + Decode for the 16 remaining topics from a
+// known CCTP contract, guarding the dispatcher_adapter.go switch (a Classify case with no matching
+// arm would fall through to ErrUnknownEvent instead of emitting a row), as
+// TestDecoder_Decode_GovernanceEvents does for the first 5.
 func TestDecoder_Decode_FullCensusEvents(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()
@@ -330,12 +327,9 @@ func TestDecoder_Decode_FullCensusEvents(t *testing.T) {
 	}
 }
 
-// TestDecoder_Decode_GovernanceEvents exercises the full Matches +
-// Decode path for all 5 governance topics from a known CCTP
-// contract, guarding the dispatcher_adapter.go switch statement
-// added alongside Classify/decode (a Classify case with no matching
-// switch arm would silently fall through to ErrUnknownEvent instead
-// of emitting a row).
+// TestDecoder_Decode_GovernanceEvents exercises Matches + Decode for the 5 governance topics from a
+// known CCTP contract, guarding the dispatcher_adapter.go switch (a Classify case with no matching
+// arm would fall through to ErrUnknownEvent instead of emitting a row).
 func TestDecoder_Decode_GovernanceEvents(t *testing.T) {
 	t.Parallel()
 	d := NewDecoder()

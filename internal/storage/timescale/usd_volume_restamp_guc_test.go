@@ -26,22 +26,16 @@ const (
 // TestRestampExactTierUSDVolume_DecompressionCapNeverEscapesTheTransaction
 // pins the GUC hygiene of [Store.RestampExactTierUSDVolume].
 //
-// The hazard is pooling, not SQL: `database/sql`'s Conn.Close returns the
-// connection TO THE POOL, and pgx v5's stdlib adapter resets nothing on
-// reuse (its default ResetSession only pings, and discards a conn left
-// mid-transaction — pgx v5 stdlib/sql.go). A session-level
-// `SET timescaledb.max_tuples_decompressed_per_dml_transaction = 0` would
-// therefore ride that pooled connection for the process lifetime and
-// silently uncap every later DML that landed on it. `SET LOCAL` inside the
-// write transaction is unwound by Postgres at COMMIT/ROLLBACK.
+// The hazard is pooling, not SQL: database/sql's Conn.Close returns the connection to the pool
+// and pgx v5's stdlib adapter resets nothing on reuse. A session-level
+// `SET timescaledb.max_tuples_decompressed_per_dml_transaction = 0` would ride that pooled
+// connection and silently uncap every later DML on it, whereas `SET LOCAL` inside the write
+// transaction is unwound at COMMIT/ROLLBACK.
 //
-// [gucConn] models exactly those two semantics — transaction-local vs
-// session GUC scoping, and pgx's no-op session reset — so the pool
-// reuse the hazard needs is observable without a database. The test
-// asserts BOTH halves: the cap is still lifted for the restamp's own
-// UPDATE (a "fix" that drops the SET would abort a real day's DML — one
-// day needed 265k tuples), and no statement after it sees
-// anything but the default.
+// [gucConn] models transaction-local vs session GUC scoping and pgx's no-op session reset, so
+// pool reuse is observable without a database. The test asserts both halves: the cap is lifted
+// for the restamp's own UPDATE (dropping the SET would abort a real day's DML), and no later
+// statement sees anything but the default.
 func TestRestampExactTierUSDVolume_DecompressionCapNeverEscapesTheTransaction(t *testing.T) {
 	ctx := context.Background()
 	conn := newGUCConn()
@@ -107,13 +101,10 @@ func TestRestampExactTierUSDVolume_DecompressionCapNeverEscapesTheTransaction(t 
 }
 
 // -----------------------------------------------------------------
-// GUC-scoping driver fake — models the two behaviours the hazard needs:
-// Postgres's SET vs SET LOCAL scoping (LOCAL is unwound by COMMIT /
-// ROLLBACK; a plain SET outlives the transaction) and pgx v5 stdlib's
-// no-op ResetSession (a pooled connection keeps its session state). Same
-// "testable without a database" discipline as the canned driver in
-// vwap_direction_combine_test.go, but this one has to be STATEFUL: the
-// defect is invisible in the SQL text and only shows up on reuse.
+// GUC-scoping driver fake: models SET vs SET LOCAL scoping (LOCAL is unwound by COMMIT/ROLLBACK,
+// a plain SET outlives the transaction) and pgx v5 stdlib's no-op ResetSession. Unlike the
+// canned driver in vwap_direction_combine_test.go it is stateful, because the defect is
+// invisible in the SQL text and only shows up on connection reuse.
 // -----------------------------------------------------------------
 
 type gucDML struct {

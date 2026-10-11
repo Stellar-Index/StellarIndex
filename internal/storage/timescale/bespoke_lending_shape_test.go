@@ -15,10 +15,8 @@ import (
 )
 
 // assertLendingCountsNotAmountSums guards the lending honesty rule: series
-// and breakdown queries over the mixed-asset blend tables must weight by
-// event COUNT, never by summed raw token amounts (rows mix many tokens at
-// per-asset decimals with no USD valuation — a cross-asset sum is
-// meaningless).
+// and breakdown queries over the mixed-asset blend tables must weight by event COUNT, never
+// by summed raw token amounts (rows mix tokens at per-asset decimals with no USD valuation).
 func assertLendingCountsNotAmountSums(t *testing.T, name, q string) {
 	t.Helper()
 	if !strings.Contains(q, "count(*)") {
@@ -113,11 +111,9 @@ func TestLendingSeriesQueriesCountBased(t *testing.T) {
 
 // TestLendingPerPoolSeriesQueryShape guards the top-5 cap and the
 // volume-descending fold order the per-pool series collector depends on
-// (rows for one pool must arrive contiguously, most-active pool first).
-// Both the top-5 selection and the outer fold order carry an explicit pool
-// tiebreak: two pools tied on window event count would otherwise sort by
-// bucket first and interleave, fragmenting collectLendingPoolSeries's
-// consecutive-key fold into duplicate one/two-point series per pool.
+// (rows for one pool must arrive contiguously, most-active pool first). Both carry an
+// explicit pool tiebreak: pools tied on window event count would otherwise interleave by
+// bucket and fragment collectLendingPoolSeries's consecutive-key fold into duplicate series.
 func TestLendingPerPoolSeriesQueryShape(t *testing.T) {
 	q := lendingPerPoolSeriesQuery(30)
 	if !strings.Contains(q, "LIMIT 5") {
@@ -149,10 +145,9 @@ func TestLendingAllTimeKPIQueryShape(t *testing.T) {
 }
 
 // TestCreditQueriesShape guards the sorocredit extensions: the settlement
-// series may sum settled_amount (single-denomination USDC — the one
-// honest sum), the positions series is count-based, and the all-time
-// position KPIs are unwindowed and scoped to credit_positions (the only
-// credit_* table with an owner column).
+// series may sum settled_amount (single-denomination USDC, the one honest sum), the
+// positions series is count-based, and the all-time position KPIs are unwindowed and scoped
+// to credit_positions (the only credit_* table with an owner column).
 func TestCreditQueriesShape(t *testing.T) {
 	settle := creditSettlementSeriesQuery(30)
 	if !strings.Contains(settle, "sum(settled_amount)") {
@@ -177,13 +172,10 @@ func TestCreditQueriesShape(t *testing.T) {
 }
 
 // TestCreditUSDCDecimalsAreClassicSevenNotOffChainSix guards the sorocredit
-// bespoke block's served decimal-scale documentation. sorocredit's USDC leg
-// is USDC's Stellar-classic SAC wrapper, and every classic Stellar asset —
-// including a SAC wrapping one — is uniformly 7-decimal fixed point
-// on-chain (see cmd/stellarindex-aggregator/main.go: "classic (7-decimal)
-// credit asset"), never the off-chain (e.g. Ethereum) 6-decimal USDC
-// convention. A consumer trusting a "6-decimal" hint would misread every
-// served settlement/withdrawal amount by 10x.
+// bespoke block's served decimal-scale documentation. sorocredit's USDC leg is a SAC wrapper
+// of a classic asset, uniformly 7-decimal on-chain (see cmd/stellarindex-aggregator/main.go:
+// "classic (7-decimal) credit asset"), never the off-chain 6-decimal USDC convention; a
+// "6-decimal" hint would misread every settlement/withdrawal amount by 10x.
 func TestCreditUSDCDecimalsAreClassicSevenNotOffChainSix(t *testing.T) {
 	for name, note := range map[string]string{
 		"creditAmountUnitsNote":      creditAmountUnitsNote,
@@ -293,11 +285,9 @@ func assertBlendFold(t *testing.T, name, q string, want map[string]int) {
 }
 
 // TestBlendFoldsCountFlashLoanAsDebt — a Blend flash_loan mints d-tokens
-// that only a later repay burns (migration 0045 body: tokens_out,
-// d_tokens_minted). A fold that drops the flash_loan but subtracts its
-// repay serves flash_loan 1000 + repay 1000 as an open -1000 debt, and a
-// kept flash loan as no debt at all. Every blend net fold must sign it
-// as borrow does.
+// that only a later repay burns (tokens_out, d_tokens_minted). A fold that drops the
+// flash_loan but subtracts its repay serves flash_loan 1000 + repay 1000 as an open -1000
+// debt. Every blend net fold must sign it as borrow does.
 func TestBlendFoldsCountFlashLoanAsDebt(t *testing.T) {
 	ctx := context.Background()
 	empty := scriptedResult{cols: []string{"x"}}

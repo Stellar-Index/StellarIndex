@@ -59,12 +59,10 @@ func TestXLMDecimalToStroops(t *testing.T) {
 	}
 }
 
-// TestXLMDecimalToStroops_NeverRoutesThroughFloat64 pins the exact-integer
-// property that motivates reusing scale.DecimalStringToScaledInt at all
-// (ADR-0003): a value with more significant digits than float64's 53-bit
-// mantissa can represent exactly must still round-trip losslessly. XLM's
-// real total supply (~1.05e18 stroops) is comfortably inside this range but
-// this pins the parser itself, independent of realistic XLM magnitudes.
+// TestXLMDecimalToStroops_NeverRoutesThroughFloat64 pins the exact-integer property that
+// motivates reusing scale.DecimalStringToScaledInt (ADR-0003): a value with more significant
+// digits than float64's 53-bit mantissa holds must still round-trip losslessly. This pins the
+// parser itself, independent of realistic XLM magnitudes.
 func TestXLMDecimalToStroops_NeverRoutesThroughFloat64(t *testing.T) {
 	// 2^53 + 1 = 9007199254740993 is the canonical "smallest integer a
 	// float64 cannot represent exactly" probe value.
@@ -349,12 +347,10 @@ func TestPrintReconcileReport_CountsErrors(t *testing.T) {
 	}
 }
 
-// TestPrintReconcileReport_StaleMergedHeld is the stale-merged regression: a
-// MERGED_OR_ABSENT account where we still hold a positive balance must be
-// counted separately (not silently folded into the report-only
-// MERGED_OR_ABSENT bucket), and a MERGED_OR_ABSENT account with a ZERO
-// balance must NOT be counted (that's the expected/healthy shape — we
-// correctly show nothing for a gone account).
+// TestPrintReconcileReport_StaleMergedHeld: a MERGED_OR_ABSENT account where we still hold a
+// positive balance must be counted separately (not folded into the report-only
+// MERGED_OR_ABSENT bucket), and one with a ZERO balance must NOT be counted, since showing
+// nothing for a gone account is the healthy shape.
 func TestPrintReconcileReport_StaleMergedHeld(t *testing.T) {
 	results := []reconcileResult{
 		{Account: "G1", Outcome: outcomeMergedOrAbsent, OurStroops: 0},   // healthy: nothing held

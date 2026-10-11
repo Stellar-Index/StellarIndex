@@ -17,10 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// If an upstream 429 only returned an error, the poll loop's
-// fixed-cadence ticker would re-fire 60 s later, hitting the venue
-// again — observed live on r1 as one WARN per minute.
-// These tests pin the behaviour:
+// If an upstream 429 only returned an error, the fixed-cadence poll ticker would re-fire and
+// hit the venue again. These tests pin the behaviour:
 //   - 429 arms a cooldown using Retry-After (or exponential backoff).
 //   - Subsequent PollOnce calls during cooldown skip the HTTP request
 //     entirely and return (nil, nil, nil) — distinct from an error.
@@ -266,18 +264,13 @@ func TestPollOnce_ProAPIKeyWinsOverDemo(t *testing.T) {
 }
 
 // TestPollOnce_429_LowRetryAfter_StillGrowsBackoff — a Retry-After
-// branch that takes the hint at face value (clamped to MinBackoff)
-// bypasses the doubling. CoinGecko's free tier
-// returns Retry-After consistently below MinBackoff (≈30s), so
-// clamping lands the cooldown at exactly MinBackoff = 60s
-// forever. The runner's PollInterval is also 60s, so each
-// recovery attempt produces another 429 → another 60s cooldown
-// → indefinite throttling at one 429-per-minute. Observed live
-// on r1 for a full day.
+// branch that takes the hint at face value (clamped to MinBackoff) bypasses the doubling.
+// CoinGecko's free tier returns Retry-After below MinBackoff, so the cooldown would sit at
+// exactly MinBackoff, equal to the runner's PollInterval, and every recovery attempt would
+// draw another 429 forever.
 //
-// applyBackoff treats Retry-After as a FLOOR, not a
-// ceiling — consecutive 429s grow the cooldown exponentially
-// regardless of what the venue claims you can retry after.
+// applyBackoff treats Retry-After as a FLOOR, not a ceiling: consecutive 429s grow the
+// cooldown exponentially regardless of what the venue claims.
 func TestPollOnce_429_LowRetryAfter_StillGrowsBackoff(t *testing.T) {
 	srv, _ := newCountingServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		// Simulate CoinGecko free tier: Retry-After consistently
@@ -296,11 +289,8 @@ func TestPollOnce_429_LowRetryAfter_StillGrowsBackoff(t *testing.T) {
 		t.Fatalf("first cooldown = %v, want ~MinBackoff (%v)", first, MinBackoff)
 	}
 
-	// Second 429 (cooldown reset for the test by stomping nextAllowedAt
-	// — the runner would not call PollOnce until cooldown expired, but
-	// in production we'd then get another 429 and need to grow). Force
-	// the second call by clearing nextAllowedAt without touching
-	// currentBackoff.
+	// Second 429: force the call by clearing nextAllowedAt (the runner would wait out the
+	// cooldown) without touching currentBackoff, which must keep growing.
 	p.mu.Lock()
 	p.nextAllowedAt = time.Time{}
 	p.mu.Unlock()

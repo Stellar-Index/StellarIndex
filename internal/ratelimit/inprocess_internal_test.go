@@ -11,17 +11,13 @@ import (
 
 // TestLocalStore_SweepsAtMostOncePerWindow pins that invariant.
 //
-// The attack it encodes: hold the fallback limiter above its key cap
-// inside a single window (a distinct-key flood is the *only* way to get
-// there, i.e. exactly when the limiter matters most). A size-triggered branch
-// that re-ran a full O(n) scan of the map under the
-// global mutex on EVERY subsequent take would do so — a scan that provably deletes
-// nothing, because every surviving entry names the current window — so
-// each request paid for a walk of every other client's counter and the
-// limiter became the cheapest way to stall the process.
+// The attack it encodes: a distinct-key flood holds the fallback limiter above its key cap
+// inside one window, exactly when the limiter matters most. A size-triggered branch that
+// re-ran a full O(n) scan under the global mutex on EVERY subsequent take would scan in vain
+// (every surviving entry names the current window), so each request would walk every other
+// client's counter and the limiter would become the cheapest way to stall the process.
 //
-// A window's scan must happen once. The counter asserts the exact
-// number, not "few".
+// A window's scan must happen once. The counter asserts the exact number, not "few".
 func TestLocalStore_SweepsAtMostOncePerWindow(t *testing.T) {
 	const windowDur = time.Minute
 	now := time.Unix(1_700_000_000, 0)
@@ -53,10 +49,9 @@ func TestLocalStore_SweepsAtMostOncePerWindow(t *testing.T) {
 }
 
 // TestLocalStore_OverflowIsBoundedAndFailsClosed pins the memory
-// bound at the unit level: past the cap the map does not grow, and the
-// overflow population shares one fail-CLOSED budget rather than each
-// flood key minting a private one. The exported-API twin of this test
-// (TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket) drives the
+// bound at the unit level: past the cap the map does not grow, and the overflow population
+// shares one fail-CLOSED budget rather than each flood key minting a private one. Its
+// exported-API twin (TestInProcess_FloodBeyondKeyCap_SharesFailClosedBucket) drives the
 // real 100k cap.
 func TestLocalStore_OverflowIsBoundedAndFailsClosed(t *testing.T) {
 	const windowDur = time.Minute

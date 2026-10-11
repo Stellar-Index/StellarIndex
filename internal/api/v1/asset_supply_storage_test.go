@@ -84,12 +84,9 @@ func zeroFlows() clickhouse.TokenSupply {
 	}
 }
 
-// TestSupplyFallsBackToContractStorageWhenNoFlows is the test that would have
-// caught the gap this endpoint shipped with.
-//
-// Twenty-four private-credit deal tokens emitted no SEP-41 events at all, so
-// every one of them served a confident total_supply of "0" while holding a
-// nine-figure supply in contract storage.
+// TestSupplyFallsBackToContractStorageWhenNoFlows: tokens that emit no SEP-41 events at all (some
+// private-credit deal tokens) would otherwise serve a confident total_supply of "0" while holding
+// a large supply in contract storage.
 func TestSupplyFallsBackToContractStorageWhenNoFlows(t *testing.T) {
 	st := &fakeStorageSupply{out: dealStorageSupply()}
 	rec := serveSupplyWithStorage(t, zeroFlows(), st, storageDealContractID)
@@ -134,9 +131,8 @@ func TestSupplyFallsBackToContractStorageWhenNoFlows(t *testing.T) {
 
 // TestSupplyDoesNotConsultStorageWhenFlowsExist is the double-count guard.
 //
-// Event-derived and storage-derived supply measure the SAME tokens from
-// opposite ends — issuance and distribution. Adding them, or preferring one
-// after having summed both, would roughly double every figure that has both.
+// Event-derived and storage-derived supply measure the SAME tokens from opposite ends (issuance
+// and distribution). Adding them, or preferring one after summing both, would double the figure.
 func TestSupplyDoesNotConsultStorageWhenFlowsExist(t *testing.T) {
 	st := &fakeStorageSupply{out: dealStorageSupply()}
 	flows := clickhouse.TokenSupply{
@@ -194,9 +190,8 @@ func TestSupplyIsNotFoundWhenNoFlowsAndStorageDeclines(t *testing.T) {
 // TestSupplyStorageFallbackFlagsInconsistency pins that a contract whose own
 // holder count exceeds what we can see is still SERVED, but marked.
 //
-// That gap is exactly what an archived contract-data entry looks like from
-// here. Refusing would hide a real, mostly-correct figure; serving it silently
-// would present a floor as a total.
+// That gap is what an archived contract-data entry looks like from here. Refusing would hide a
+// real, mostly-correct figure; serving it silently would present a floor as a total.
 func TestSupplyStorageFallbackFlagsInconsistency(t *testing.T) {
 	out := dealStorageSupply()
 	missing := uint32(8) // contract says eight holders; the lake shows six

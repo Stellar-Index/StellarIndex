@@ -189,12 +189,10 @@ type fakeUnknownContractReporter struct {
 
 func (f *fakeUnknownContractReporter) UnknownContractDrops() int { return f.drops }
 
-// TestStats_UnknownContractDropsSurfacedViaDuckTypedInterface pins
-// that a decoder that drops a fully decoded event for want of a
-// contract-identity mapping (returning (nil, nil), so the dispatcher's
-// own DecodeErrors counter never sees it) must still surface through
-// Stats() so internal/pipeline can wire it to a metric. Before the
-// fix, Stats() had no UnknownContractDrops collection at all.
+// TestStats_UnknownContractDropsSurfacedViaDuckTypedInterface pins that a decoder dropping a fully
+// decoded event for want of a contract-identity mapping (returning (nil, nil), invisible to the
+// dispatcher's DecodeErrors counter) still surfaces through Stats() for internal/pipeline to
+// wire to a metric.
 func TestStats_UnknownContractDropsSurfacedViaDuckTypedInterface(t *testing.T) {
 	dec := &fakeUnknownContractReporter{
 		fakeDecoder: fakeDecoder{name: "soroswap", topic0: "T"},
@@ -584,20 +582,15 @@ func TestDispatch_RawEventHook_NilSinkIsNoop(t *testing.T) {
 	}
 }
 
-// TestStats_concurrentWithDispatch is a regression guard.
-// Before the statsMu fix, the dispatch goroutine's `++` mutations of
-// eventsSeen / decodeErrors / unmatchedHits raced the statsflush
-// goroutine's Stats() snapshot, producing a fatal `concurrent map
-// read and map write` panic. Run under `-race` this fails loudly if
-// the lock is ever removed.
+// TestStats_concurrentWithDispatch guards statsMu: the dispatch goroutine's mutations of
+// eventsSeen / decodeErrors / unmatchedHits must not race the statsflush goroutine's Stats()
+// snapshot (a fatal "concurrent map read and map write"). Under `-race` it fails loudly if the
+// lock is removed.
 //
-// The matched arm exercises eventsSeen + decodeErrors (the decoder
-// returns an error every call); the unmatched arm exercises
-// unmatchedHits. A second goroutine hammers Stats() the whole time.
-//
-// The decoder is stateless (no internal hit counters) so the two
-// writer goroutines sharing it don't themselves race — the only
-// shared mutable state under test is the dispatcher's counters.
+// The matched arm exercises eventsSeen + decodeErrors (the decoder errors every call), the
+// unmatched arm exercises unmatchedHits, and a second goroutine hammers Stats() throughout. The
+// decoder is stateless so the writers sharing it do not race; the dispatcher's counters are the
+// only shared mutable state under test.
 func TestStats_concurrentWithDispatch(t *testing.T) {
 	t.Parallel()
 

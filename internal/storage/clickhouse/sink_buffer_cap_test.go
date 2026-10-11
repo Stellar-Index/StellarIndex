@@ -12,13 +12,11 @@ import (
 )
 
 // TestSinkBufferCapBoundedDrop verifies the bounded drop: once the
-// in-memory buffer reaches maxBufferLedgers (a sustained-CH-outage proxy, since
-// the cap is only reached when flushes are failing), Add DROPS the incoming
-// extract with ErrBufferFull instead of growing the buffer unbounded.
+// in-memory buffer reaches maxBufferLedgers (only reached while flushes fail), Add DROPS the
+// incoming extract with ErrBufferFull instead of growing the buffer unbounded.
 //
-// This exercises the cap purely in-memory: with maxBufferLedgers set, Add
-// returns ErrBufferFull BEFORE any auto-flush could be triggered (cap < the
-// flushEvery threshold here), so no ClickHouse connection is needed.
+// Purely in-memory: cap < flushEvery here, so Add returns before any auto-flush and no
+// ClickHouse connection is needed.
 func TestSinkBufferCapBoundedDrop(t *testing.T) {
 	s := &Sink{flushEvery: 1_000_000} // never auto-flush during the test
 	s.SetMaxBufferLedgers(3)
@@ -147,11 +145,9 @@ func fullSink(t *testing.T, conn driver.Conn) *Sink {
 }
 
 // TestSinkFlushOrderLedgersLast pins the invariant declared in the
-// "ORDERING IS LOAD-BEARING" comment on Flush: stellar.ledgers must be the
-// LAST table flushed, after every table the completeness watermark
-// (ContiguousWatermark) depends on, so a present ledgers row is a valid
-// per-ledger commit marker. It observes the REAL PrepareBatch call order
-// Flush issues, not a hand-maintained mirror of it.
+// "ORDERING IS LOAD-BEARING" comment on Flush: stellar.ledgers must be the LAST table
+// flushed, after every table ContiguousWatermark depends on, so a present ledgers row is a
+// valid per-ledger commit marker. It observes the REAL PrepareBatch call order.
 func TestSinkFlushOrderLedgersLast(t *testing.T) {
 	conn := &fakeOrderConn{}
 	s := fullSink(t, conn)
@@ -175,11 +171,10 @@ func TestSinkFlushOrderLedgersLast(t *testing.T) {
 }
 
 // TestSinkFlushPartialFailureWritesNoCommitMarker pins the other half of the
-// commit-marker invariant: when any other table's batch fails, Flush must stop
-// before stellar.ledgers, return the error and keep every buffer for the retry.
-// Ordering alone does not give this — a Flush that collected errors and carried
-// on would still write ledgers last, and ContiguousWatermark would then read a
-// ledger whose events or changes never landed as complete.
+// commit-marker invariant: when any other table's batch fails, Flush must stop before
+// stellar.ledgers, return the error and keep every buffer for the retry. Ordering alone
+// is not enough: a Flush that carried on would write ledgers last and ContiguousWatermark
+// would read a ledger whose events never landed as complete.
 func TestSinkFlushPartialFailureWritesNoCommitMarker(t *testing.T) {
 	baseline := &fakeOrderConn{}
 	if err := fullSink(t, baseline).Flush(context.Background()); err != nil {

@@ -14,9 +14,8 @@ import (
 
 // ─── real-lake golden frames (base64 SCVal) ──────────────────────
 //
-// Captured from real mainnet ledgers; the contract id is the V2
-// backstop. These PIN the reverse-engineered schemas: if a decode
-// helper drifts, the asserted promoted fields change.
+// Captured from real mainnet ledgers (contract id is the V2 backstop). These PIN the
+// reverse-engineered schemas: if a decode helper drifts, the promoted fields change.
 
 const goldenContractV2 = MainnetBackstopV2
 
@@ -156,11 +155,9 @@ func TestGolden_QueueWithdrawal(t *testing.T) {
 	}
 }
 
-// TestGolden_Withdraw pins bug #6 against real lake bytes (ledger
-// 57072018): withdraw's body is (shares_burned, tokens_out) — the
-// opposite element order from deposit's (tokens_in, shares_minted).
-// Amount must be the TOKEN quantity (tokens_out) so it means the same
-// thing as deposit's Amount; Amount2 carries the shares burned.
+// TestGolden_Withdraw pins bug #6 against real lake bytes: withdraw's body is (shares_burned,
+// tokens_out), the opposite order from deposit's (tokens_in, shares_minted). Amount must be
+// the TOKEN quantity (tokens_out), matching deposit's Amount; Amount2 carries shares burned.
 func TestGolden_Withdraw(t *testing.T) {
 	t.Parallel()
 	d, err := decodeWithdraw(goldenEvent(t, "withdraw"))
@@ -208,9 +205,8 @@ func TestGolden_RoundTripViaDecodeOne(t *testing.T) {
 
 // ─── real-lake golden frames: V1/V2-divergent shapes ──
 //
-// These fixtures don't fit the shared goldenFrames map (V1 fixtures
-// use the V1 contract; gulp_emissions/rw_zone/rw_zone_add arity
-// differs by version), so they're constructed inline here, same
+// These don't fit the shared goldenFrames map (V1 uses the V1 contract; gulp_emissions,
+// rw_zone and rw_zone_add arity differs by version), so they are built inline with the same
 // base64-capture convention as goldenEvent.
 
 // TestGolden_GulpEmissions_V1 pins bug #1 against real lake bytes
@@ -353,14 +349,11 @@ func TestGolden_RwZoneAdd_V2(t *testing.T) {
 	}
 }
 
-// TestDecodeRwZoneRemove_SyntheticFromSource covers bug #4.
-// rw_zone_remove has ZERO lake occurrences (never
-// fired on mainnet) so this is SYNTHETIC-FROM-SOURCE, not a real-lake
-// pin: the shape (topics=[sym]; data=bare Address) is taken from
-// blend-contracts-v2 backstop/src/events.rs's actual `let topics =
-// (...)` / `publish()` call, which disagrees with that function's own
-// doc comment (see decode.go's decodeRwZoneRemove doc for the
-// discrepancy). Unverified against real bytes.
+// TestDecodeRwZoneRemove_SyntheticFromSource covers bug #4. rw_zone_remove has ZERO lake
+// occurrences, so this is SYNTHETIC-FROM-SOURCE, not a real-lake pin: the shape (topics=[sym];
+// data=bare Address) comes from blend-contracts-v2 backstop/src/events.rs's actual `publish()`
+// call, which disagrees with that function's own doc comment (see decodeRwZoneRemove's doc).
+// Unverified against real bytes.
 func TestDecodeRwZoneRemove_SyntheticFromSource(t *testing.T) {
 	t.Parallel()
 	pool := contractStrkey(t, 0xBB)

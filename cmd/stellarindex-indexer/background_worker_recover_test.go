@@ -6,40 +6,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
-// TestBackgroundWorkersRecover is a guard-coverage test: every detached
-// background goroutine in this binary must either register panic recovery
-// or be a documented, content-checked CRASH site.
+// TestBackgroundWorkersRecover is a guard-coverage test: every detached background goroutine
+// must either register panic recovery or be a documented, content-checked CRASH site.
 //
-// An unrecovered panic in ANY goroutine terminates the whole Go process —
-// it is not confined to the goroutine that panicked. A fault in an unguarded
-// goroutine such as
-// the decoder-stats flusher, the hashdb drift verifier, a metrics watcher
-// or either attribution tagger stops ingestion for the whole network.
-// Worse, most of those goroutines carry `defer close(done)`, so the
-// channel main waits on still closes and the shutdown path reads a
-// panicked worker as a cleanly-finished one — an invisible death.
+// An unrecovered panic in ANY goroutine terminates the whole process, so an unguarded flusher,
+// verifier, watcher or tagger stops ingestion for the network. Most carry `defer close(done)`,
+// so shutdown would read a panicked worker as cleanly finished.
 //
-// The guard is deliberately NOT uniform, and the exemptions are the
-// interesting part. Two goroutines are load-bearing enough that recovering
-// them would leave a process that looks healthy while persisting nothing,
-// which is strictly worse than exiting; the reasons live next to each one
-// in main.go and are summarised here:
+// The guard is deliberately NOT uniform. Recovering these two would leave a process that looks
+// healthy while persisting nothing, which is worse than exiting (reasons live in main.go):
 //
-//   - the SINK (pipeline.PersistEvents): a guard there is cosmetic — the
-//     writes happen in child goroutines recover() cannot reach — and if
-//     the frame did unwind, nothing would read `events` again while the
-//     process kept serving /metrics with a frozen cursor.
-//   - the METRICS LISTENER (ListenAndServe): net/http already isolates
-//     per-request panics, so a panic here is an accept-loop fault, and
-//     the guard's only output is a counter read over the endpoint that
-//     just died.
+//   - the SINK (pipeline.PersistEvents): the writes happen in child goroutines recover() cannot
+//     reach, and if the frame did unwind nothing would read `events` again while /metrics kept
+//     serving a frozen cursor.
+//   - the METRICS LISTENER (ListenAndServe): net/http already isolates per-request panics, so a
+//     panic here is an accept-loop fault and the guard's counter is read over the dead endpoint.
 //
-// The ledgerstream PRODUCER is a third case and is checked separately
-// below: it recovers, but only to convert the panic into the binary's
-// existing fatal-error path so the sink drain runs first.
+// The ledgerstream PRODUCER is checked separately below: it recovers only to convert the panic
+// into the existing fatal-error path so the sink drain runs first.
 //
-// Proven red: deleting any one `defer worker.Recover(...)` fails this test
-// naming the goroutine's line.
+// Deleting any one `defer worker.Recover(...)` fails this test naming the goroutine's line.
 func TestBackgroundWorkersRecover(t *testing.T) {
 	sites, err := guardscan.ScanFile("main.go", guardscan.Config{
 		Guards: []string{"worker.Recover", "worker.Report"},
@@ -105,22 +91,16 @@ func TestBackgroundWorkersRecover(t *testing.T) {
 	}
 }
 
-// TestLedgerstreamProducerPanicStaysFatal pins the one goroutine that
-// recovers WITHOUT becoming survivable.
+// TestLedgerstreamProducerPanicStaysFatal pins the one goroutine that recovers WITHOUT becoming
+// survivable.
 //
-// The producer drives ingestion: ledgerstream calls its closure
-// synchronously, so a panic in the walk arrives on this stack. Recovering
-// it in place would be the worst outcome available — nothing would send on
-// streamErr, main would block in its select until SIGTERM, and the process
-// would keep answering /metrics and /healthz with the cursor frozen. So
-// the recovery exists only to (a) move stellarindex_worker_panics_total
-// and log the stack, and (b) hand the fault to main as a fatal error, so
-// the up-to-256 already-buffered events are drained before exit rather
-// than discarded — the same hole the error path closes.
+// ledgerstream calls the producer closure synchronously, so a walk panic arrives on this stack.
+// Recovering in place would be the worst outcome: nothing would send on streamErr, main would
+// block until SIGTERM and /metrics and /healthz would answer with the cursor frozen. The
+// recovery only (a) moves stellarindex_worker_panics_total and logs the stack, and (b) hands
+// the fault to main as a fatal error so already-buffered events drain before exit.
 //
-// This test is what stops a later "simplification" from turning that into
-// an ordinary log-and-continue guard: the site must recover AND still
-// signal on streamErr.
+// The site must recover AND still signal on streamErr; this stops a log-and-continue rewrite.
 func TestLedgerstreamProducerPanicStaysFatal(t *testing.T) {
 	sites, err := guardscan.ScanFile("main.go", guardscan.Config{
 		Guards: []string{"worker.Recover", "worker.Report"},

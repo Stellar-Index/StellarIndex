@@ -79,11 +79,9 @@ func TestBoundSep1CurrenciesFromPayload_CountsWhatTheFilterDropped(t *testing.T)
 	}
 }
 
-// One malformed payload must not empty the whole result: the scan
-// walks every issuer, and a single corrupt toml is a data fact about
-// that issuer, not an outage of the surface. It IS counted, because a
-// payload that would not decode and an issuer that declares nothing are
-// different findings with different owners.
+// One malformed payload must not empty the whole result: a single corrupt toml is a fact about
+// that issuer, not an outage of the surface. It IS counted, because a payload that will not
+// decode and an issuer that declares nothing are different findings with different owners.
 func TestBoundSep1CurrenciesFromPayload_CorruptPayloadIsCountedNotSwallowed(t *testing.T) {
 	got, census := boundSep1CurrenciesFromPayload("G1", "", "{not json", nil)
 	if len(got) != 0 {
@@ -113,14 +111,12 @@ func TestBoundSep1CurrenciesFromPayload_DeclaringNothingIsItsOwnBucket(t *testin
 	}
 }
 
-// The binding rule compares ACCOUNTS, not the bytes a toml happened to
-// carry. Surrounding space and the case an issuer typed its own strkey
-// in do not change which account it is — a strkey is base32, so two
-// spellings that differ only in case decode to the same 32 bytes.
+// The binding rule compares ACCOUNTS, not the bytes a toml carried. Surrounding space and the
+// case of an issuer's own strkey do not change which account it is (base32, so spellings that
+// differ only in case decode to the same 32 bytes).
 //
-// This is a canonicalisation, never a relaxation: the test below pins
-// that a DIFFERENT account is still refused, and that the entry is
-// carried under the canonical database spelling rather than the toml's.
+// This is canonicalisation, never relaxation: a DIFFERENT account is still refused, and the
+// entry is carried under the canonical database spelling rather than the toml's.
 func TestBoundSep1CurrenciesFromPayload_BindsOnTheAccountNotTheSpelling(t *testing.T) {
 	const (
 		serving = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
@@ -196,13 +192,11 @@ func TestSep1BoundCensus_ArithmeticCloses(t *testing.T) {
 	}
 }
 
-// The domain-bearing population splits into the issuers holding a
-// payload, the issuers a fetch reached that hold none, and — as a
-// REMAINDER — the ones nothing has tried yet. The first two are counted
-// by different queries, so they can contradict each other, and the
-// surface that publishes them clamps the split to keep its arithmetic
-// printable. Check is what stops that clamp turning an impossible
-// census into a sound-looking one.
+// The domain-bearing population splits into issuers holding a payload, issuers a fetch reached
+// that hold none, and, as a REMAINDER, those nothing has tried yet. The first two come from
+// different queries and can contradict each other, and the publishing surface clamps the split
+// to keep its arithmetic printable. Check stops that clamp turning an impossible census into a
+// sound-looking one.
 func TestSep1BoundCensus_FetchSplitCannotExceedThePopulation(t *testing.T) {
 	base := Sep1BoundCensus{
 		IssuersWithHomeDomain:        10,

@@ -61,13 +61,12 @@ func TestDustLiquiditySuppressed(t *testing.T) {
 	}
 }
 
-// TestListingMarketCap_DustGuard drives the exact decision the listing fill
-// loop (fillMarketCapsFromSupply) makes: suppress-and-flag when dust, else
-// compute the real market cap via computeMarketCapUSD. The three headline
-// cases from the finding are asserted end-to-end over the real functions.
+// TestListingMarketCap_DustGuard drives the decision the listing fill loop
+// (fillMarketCapsFromSupply) makes: suppress-and-flag when dust, else compute the market
+// cap via computeMarketCapUSD, over the real functions.
 //
-// Supply 10^17 raw @ 7dp × $0.50 = $5,000,000,000 — the "billions" an
-// un-guarded dust price would assert.
+// Supply 10^17 raw @ 7dp × $0.50 = $5,000,000,000, the "billions" an unguarded dust price
+// would assert.
 func TestListingMarketCap_DustGuard(t *testing.T) {
 	const (
 		floor = 1000.0
@@ -107,14 +106,11 @@ func TestListingMarketCap_DustGuard(t *testing.T) {
 	}
 }
 
-// TestApplyUnverifiedWarning_ReferenceOnlyTicker — regression guard:
-// a reference-only ticker (USDT — the catalogue knows
-// it as a well-known EXTERNAL asset with no verified Stellar issuance)
-// must still produce the warning + envelope flag. A StellarEntry()==nil
-// "unreachable" bail would silently kill the warning
-// for exactly the tickers impersonators target hardest, so
-// /v1/assets/USDT-G… would serve clean while the listing flags the same
-// row. Pinned against the real embedded catalogue.
+// TestApplyUnverifiedWarning_ReferenceOnlyTicker: a reference-only ticker (USDT, known to
+// the catalogue as an external asset with no verified Stellar issuance) must still produce
+// the warning and envelope flag. A StellarEntry()==nil bail would silence the warning for
+// the tickers impersonators target hardest, so /v1/assets/USDT-G… would serve clean while
+// the listing flags the same row. Pinned against the real embedded catalogue.
 func TestApplyUnverifiedWarning_ReferenceOnlyTicker(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {
@@ -165,11 +161,10 @@ func (g *stubListingGate) Probe(ctx context.Context, base, quote canonical.Asset
 	return g.Allowed(ctx, base, quote, "probe"), true, pricingguard.FloorNone
 }
 
-// TestApplySubstanceGateToListing — the listing's price_usd enrichment
-// (7-day catalogue SQL, outside /v1/price's read path) must respect
-// the same thin-market gate: withheld rows lose price_usd + the change
-// pills, allowed rows keep them, and fiat/crypto catalogue rows are
-// out of scope.
+// TestApplySubstanceGateToListing: the listing's price_usd enrichment (catalogue SQL,
+// outside /v1/price's read path) must respect the same thin-market gate. Withheld rows
+// lose price_usd and the change pills, allowed rows keep them, and fiat/crypto catalogue
+// rows are out of scope.
 func TestApplySubstanceGateToListing(t *testing.T) {
 	peg, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {

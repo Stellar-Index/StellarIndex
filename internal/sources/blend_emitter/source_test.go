@@ -34,12 +34,9 @@ func contractStrkeyFromSeed(t *testing.T, tag byte) string {
 
 // ─── Real-mainnet fixtures ────────────────────────────────────────
 //
-// All base64 topics/body blobs below were pulled DIRECTLY from the
-// certified ClickHouse raw lake (r1, HTTP :8123) — never
-// synthesised — for the Emitter contract
-// CCOQM6S7ICIUWA225O5PSJWUBEMXGFSSW2PQFO6FP4DQEKMS5DASRGRR. Every
-// ledger / tx_hash / op_index / event_index cited is the exact
-// coordinate of the real event.
+// Every base64 topic/body blob below comes from the certified raw lake for the Emitter
+// contract CCOQM6S7ICIUWA225O5PSJWUBEMXGFSSW2PQFO6FP4DQEKMS5DASRGRR, never synthesised.
+// The ledger, tx_hash, op_index and event_index cited are the real event's coordinates.
 
 const (
 	// distribute: ledger 51,524,666, one of 465 lifetime occurrences.
@@ -355,14 +352,11 @@ func TestDecoder_Decode_FailsClosedOnMissingClosedAt(t *testing.T) {
 
 // ─── Gate (ADR-0035/0040) ──────────────────────────────────────────
 
-// TestDecoder_GateRejectsForeignContract pins the load-bearing
-// invariant this whole package exists to enforce: `distribute`
-// COLLIDES with blend_backstop's own `distribute` topic (see
-// events.go's package doc), so a perfectly-shaped `distribute` event
-// from a contract that is NOT the curated Emitter must NOT be
-// attributed to blend_emitter — while the same event from the
-// genuine Emitter must be. Decode itself stays shape-only; the gate
-// lives in Matches, which the dispatcher consults first.
+// TestDecoder_GateRejectsForeignContract pins the invariant this package exists to enforce:
+// `distribute` collides with blend_backstop's own `distribute` topic (see events.go), so a
+// well-shaped event from a contract that is not the curated Emitter must not be attributed to
+// blend_emitter, while the same event from the genuine Emitter must be. Decode stays
+// shape-only; the gate lives in Matches, which the dispatcher consults first.
 func TestDecoder_GateRejectsForeignContract(t *testing.T) {
 	d := NewDecoder() // production gate: in-code curated set only
 	foreign := events.Event{

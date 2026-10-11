@@ -108,11 +108,10 @@ func decodeProblem(t *testing.T, resp *http.Response) v1.Problem {
 	return p
 }
 
-// GET /v1/protocols/{name}/tvl is the per-pool drill-down behind the
-// `tvl` block on /v1/protocols: every pool the protocol figure
-// was summed from, every reserve leg of each, the served-price identity
-// each leg was valued under, and — for a leg that contributed nothing —
-// the reason it was excluded rather than a silent zero.
+// GET /v1/protocols/{name}/tvl is the per-pool drill-down behind the `tvl` block on
+// /v1/protocols: every pool and reserve leg the figure was summed from, the served-price
+// identity each leg was valued under, and, for a leg that contributed nothing, the reason it
+// was excluded rather than a silent zero.
 func TestHandleProtocolTVL_ServesThePoolBreakdown(t *testing.T) {
 	cache := v1.NewDEXTVLCache(v1.DEXTVLSources{
 		AquariusReserves: stubTVLAquariusReader{pools: []timescale.AquariusPoolReserve{{
@@ -213,11 +212,9 @@ func TestHandleProtocolTVL_Refusals(t *testing.T) {
 	}{
 		{"unknown protocol", warm, "/v1/protocols/nope/tvl", http.StatusNotFound, "protocol-not-found", "unknown protocol name"},
 		{"known, no derivation (standing exclusion)", warm, "/v1/protocols/sdex/tvl", http.StatusNotFound, "protocol-tvl-not-derived", "order book"},
-		// A concentrated-liquidity AMM is UNDERIVABLE, not unwired: no
-		// two-sided reserve exists to sum, and the constant-product path
-		// would answer with a figure that means nothing. The refusal must
-		// say that rather than blaming this deployment's wiring — and it
-		// must never be a zero.
+		// A concentrated-liquidity AMM is UNDERIVABLE, not unwired: no two-sided reserve exists
+		// to sum, and the constant-product path would answer with a meaningless figure. The
+		// refusal must say that rather than blame this deployment's wiring, and never be a zero.
 		{"known, no derivation (concentrated liquidity)", warm, "/v1/protocols/sushiswap_v3/tvl", http.StatusNotFound, "protocol-tvl-not-derived", "concentrated liquidity"},
 		{"known, derivation not wired", warm, "/v1/protocols/soroswap/tvl", http.StatusNotFound, "protocol-tvl-not-derived", "not wired"},
 		{"no cache wired", nil, "/v1/protocols/aquarius/tvl", http.StatusServiceUnavailable, "dex-tvl-unavailable", "hasn't wired"},
@@ -271,21 +268,14 @@ func TestHandleProtocolTVL_CarriedForwardIsLabelledStale(t *testing.T) {
 	}
 }
 
-// The drill-down reads only the in-process snapshot: no reserve reader
-// and no price tier is touched per request, so it needs no budget of
-// its own and its cost is bounded by serialisation alone. That is a
-// claim about what the handler TOUCHES, so it is pinned by counting
-// rather than by a clock — over a run of requests against a snapshot
-// far larger than production's pool count (r1 serves a few hundred
-// Aquarius pools) the reserve read and the price lookups both stand
-// still, and every response carries the same data block byte for byte
-// (only the envelope's as_of stamp moves). What the snapshot costs to
-// serialise is measured by BenchmarkHandleProtocolTVL_LargeSnapshot,
-// on a quiet machine: a wall-clock ceiling in the unit suite measures
-// how loaded the runner is, not what the handler does. A 5 s ceiling
-// would spend 1.1 s of itself under -race on an idle
-// machine and breach at 5.3 s under CPU load, on one unchanged
-// commit.
+// The drill-down reads only the in-process snapshot: no reserve reader and no price tier is
+// touched per request, so its cost is bounded by serialisation alone. That is a claim about
+// what the handler TOUCHES, so it is pinned by counting rather than a clock: over many requests
+// against a snapshot far larger than production's pool count, the reserve read and price
+// lookups stand still and every response carries the same data block byte for byte (only the
+// envelope's as_of moves). Serialisation cost is measured by
+// BenchmarkHandleProtocolTVL_LargeSnapshot; a wall-clock ceiling in the unit suite measures
+// runner load, not the handler.
 func TestHandleProtocolTVL_ServesFromMemory(t *testing.T) {
 	const pools = 5_000
 	reader := &countingAquariusReader{}
@@ -306,11 +296,8 @@ func TestHandleProtocolTVL_ServesFromMemory(t *testing.T) {
 	}
 	ts := httpTestServer(t, v1.New(v1.Options{DEXTVL: cache}))
 
-	// A handful of requests, not a crowd: the counters are read after
-	// each one and a handler that read per request moves them on the
-	// first, so further repetitions buy nothing but runtime. Twenty
-	// requests would be a sample size for the clock, and are dropped
-	// here.
+	// A handful of requests suffices: the counters are read after each one, and a handler that
+	// read per request moves them on the first.
 	const requests = 5
 	var first []byte
 	for i := 0; i < requests; i++ {
@@ -390,17 +377,11 @@ func firstDifference(a, b []byte) int {
 	return min(len(a), len(b))
 }
 
-// BenchmarkHandleProtocolTVL_LargeSnapshot — informal perf guard over
-// the drill-down's only per-request cost, serialising the snapshot. It
-// is where the latency half of the test above went: a quiet machine
-// reports a number a regression moves by a multiple (a handler that
-// re-derived or re-read per request is orders out), where the same
-// number inside the gate reported how busy the runner was. Reference
-// on an idle arm64 laptop without -race: 1.72 ms/op over a 1.12 MiB
-// body, for a snapshot an order of magnitude past the few hundred
-// pools r1 serves — 8,700x under the 15 s request deadline. Not
-// gated in CI; run manually via
-// `go test ./internal/api/v1/ -run xxx -bench HandleProtocolTVL`.
+// BenchmarkHandleProtocolTVL_LargeSnapshot is an informal perf guard over the drill-down's only
+// per-request cost, serialising the snapshot. It carries the latency half of the test above: a
+// handler that re-derived or re-read per request moves this number by orders of magnitude,
+// whereas the same number inside the gate would only report runner load. Not gated in CI; run
+// via `go test ./internal/api/v1/ -run xxx -bench HandleProtocolTVL`.
 func BenchmarkHandleProtocolTVL_LargeSnapshot(b *testing.B) {
 	const pools = 5_000
 	reader := &countingAquariusReader{}

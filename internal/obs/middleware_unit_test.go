@@ -10,11 +10,9 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
-// Unit tests for the small helpers inside http_middleware.go.
-// metrics_test.go covers HTTPMetrics end-to-end via httptest;
-// this file exercises the helpers directly so regressions show
-// up at the function level rather than as a metric-label
-// surprise three layers deep.
+// Unit tests for the small helpers inside http_middleware.go. metrics_test.go covers
+// HTTPMetrics end-to-end; this file hits the helpers directly so a regression shows up at
+// the function level, not as a metric-label surprise.
 
 // ─── normalizeMethod ──────────────────────────────────────────
 
@@ -108,12 +106,9 @@ func TestIsStreamingRoute(t *testing.T) {
 
 // ─── IsSyntheticRequest ───────────────────────────────────────
 
-// TestIsSyntheticRequest checks, at the helper
-// level, a synthetic-looking User-Agent must be trusted only when the
-// request also shows it arrived directly on loopback, bypassing
-// haproxy (which stamps X-Forwarded-For on everything it proxies —
-// see IsSyntheticRequest's doc). The UA prefix alone is
-// attacker-controlled and must never be sufficient by itself.
+// TestIsSyntheticRequest checks that a synthetic-looking User-Agent is trusted only when the
+// request also arrived directly on loopback, bypassing haproxy (which stamps X-Forwarded-For
+// on everything it proxies). The UA prefix alone is attacker-controlled and never sufficient.
 func TestIsSyntheticRequest(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -211,15 +206,12 @@ func TestStatusRecorder_Flush_noopWhenInnerDoesntImplementFlusher(t *testing.T) 
 	r.Flush()
 }
 
-// A fast 500 must NOT count in the success histogram, or a 500
-// returning in 5 ms reports as "good" against the latency SLO
-// numerator. The 500's elapsed time only lands in HTTPRequestDuration (the full
+// A fast 500 must NOT count in the success histogram, or it would report as "good" against
+// the latency SLO numerator. Its elapsed time lands only in HTTPRequestDuration (the full
 // distribution); HTTPRequestSuccessDuration stays untouched.
 //
-// This drives the REAL middleware chain (HTTPMetrics → CaptureRoute →
-// ServeMux) rather than hand-observing the histograms, and asserts on
-// before/after deltas of the actual counters so it fails if the
-// middleware ever regresses the 5xx-vs-success split.
+// This drives the REAL middleware chain (HTTPMetrics → CaptureRoute → ServeMux) and asserts
+// on before/after deltas of the actual counters.
 func TestHTTPMetrics_Fast5xxDoesNotCountAsSuccess(t *testing.T) {
 	const (
 		method = "GET"

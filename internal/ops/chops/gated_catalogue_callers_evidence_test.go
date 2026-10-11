@@ -10,20 +10,16 @@ import (
 
 // Class guard: every catalogue consumer warms the gates.
 //
-// warmCatalogueGates / applyGatedOptions give a re-derive the gate the live
-// indexer runs with (curated set ∪ protocol_contracts).
-// buildReconciliationCatalogue takes only a config, so on its own it can
-// only build each gated decoder bare: a contract an operator admitted
-// through protocol_contracts is decoded LIVE and invisible to an unwarmed
-// re-derive. Its served rows then read as phantoms on /v1/coverage, they
-// report as a delta that is not in the data on `verify-reconciliation` and
-// `ch-reproject`, and a `ch-rebuild -write` rebuilds the table without them.
+// warmCatalogueGates / applyGatedOptions give a re-derive the gate the live indexer runs with
+// (curated set ∪ protocol_contracts). buildReconciliationCatalogue takes only a config, so alone
+// it builds each gated decoder bare: a contract admitted through protocol_contracts is decoded
+// live but invisible to an unwarmed re-derive. Its served rows then read as phantoms on
+// /v1/coverage, show a spurious delta in `verify-reconciliation` and `ch-reproject`, and
+// `ch-rebuild -write` rebuilds the table without them.
 //
-// Every non-test consumer of the catalogue must therefore warm it. This
-// test enumerates them from the source tree rather than a hand-kept list,
-// so a FIFTH consumer added tomorrow fails here instead of silently
-// re-deriving on the bare seed. The per-call-site ORDER is pinned
-// separately, below and in TestCHRebuild_WarmsTheCatalogueGatesBeforeAnythingReadsThem.
+// Every non-test consumer of the catalogue must therefore warm it. This test enumerates them
+// from the source tree, not a hand-kept list, so a new consumer fails here. Per-call-site ORDER
+// is pinned below and in TestCHRebuild_WarmsTheCatalogueGatesBeforeAnythingReadsThem.
 func TestRLT430_EveryCatalogueConsumerWarmsTheGates(t *testing.T) {
 	t.Parallel()
 	files, err := filepath.Glob("*.go")
@@ -56,15 +52,12 @@ func TestRLT430_EveryCatalogueConsumerWarmsTheGates(t *testing.T) {
 	}
 }
 
-// TestCatalogueConsumers_WarmBeforeAnythingReadsTheDecoders pins the ORDER
-// at the three call sites the class guard above can only see the presence
-// of. Each of these commands needs ClickHouse and/or Postgres past the
-// config load, so — like the BackfillSafe legs and the ch-rebuild leg —
-// the wiring is pinned at the source: the warm runs on the freshly built
-// catalogue, and it precedes the first reader of that catalogue's decoders
-// (the factory preseed seeds INTO the decoders the warm rebuilds, so a
-// warm after it would discard the seed; the recognition attribution reads
-// src.contractIDs, which the warm widens with the registry-only children).
+// TestCatalogueConsumers_WarmBeforeAnythingReadsTheDecoders pins the ORDER at the three call
+// sites the class guard above only sees the presence of. These commands need ClickHouse and/or
+// Postgres past the config load, so the wiring is pinned at the source: the warm runs on the
+// freshly built catalogue and precedes the first reader of its decoders. The factory preseed
+// seeds INTO the decoders the warm rebuilds, so a later warm would discard the seed, and the
+// recognition attribution reads src.contractIDs, which the warm widens with registry-only children.
 func TestCatalogueConsumers_WarmBeforeAnythingReadsTheDecoders(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

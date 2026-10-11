@@ -210,13 +210,11 @@ func TestDecodeLiquidityPoolOp_withdraw_missingBefore_unavailable(t *testing.T) 
 	}
 }
 
-// TestDecodeLiquidityPoolOp_withdraw_fullDrain_removedEntry covers the
-// full-drain withdrawal: the last shares are withdrawn, so core erases
-// the LiquidityPoolEntry and emits 'state' + 'removed' (key only, no
-// entry payload) with NO 'updated' row. The after-reserves are zero by
-// construction, so both legs must be emitted at the full prior reserve
-// — this must not be misread as ErrEntryChangesUnavailable, which would drop a
-// real on-chain withdrawal AND fire a false fidelity alarm.
+// TestDecodeLiquidityPoolOp_withdraw_fullDrain_removedEntry covers the full-drain withdrawal:
+// core erases the LiquidityPoolEntry and emits 'state' + 'removed' (key only) with NO
+// 'updated' row. After-reserves are zero by construction, so both legs are emitted at the
+// full prior reserve; misreading this as ErrEntryChangesUnavailable would drop a real
+// withdrawal AND fire a false fidelity alarm.
 func TestDecodeLiquidityPoolOp_withdraw_fullDrain_removedEntry(t *testing.T) {
 	withdrawerAddr, _ := mkAccount(t, 0x97)
 	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
@@ -251,12 +249,10 @@ func TestDecodeLiquidityPoolOp_withdraw_fullDrain_removedEntry(t *testing.T) {
 	}
 }
 
-// TestDecodeLiquidityPoolOp_withdraw_zeroLeg_emitsPayingLeg covers the
-// one-sided withdrawal: core computes each leg as
-// floor(shares*reserve/totalShares), so a small withdrawal from a
-// lopsided pool legitimately pays out on B and rounds A to zero. Only
-// the zero leg is dropped — the op is not rejected as
-// ErrMalformedMovement, which would lose the real B-side payout.
+// TestDecodeLiquidityPoolOp_withdraw_zeroLeg_emitsPayingLeg covers the one-sided withdrawal:
+// each leg is floor(shares*reserve/totalShares), so a small withdrawal from a lopsided pool
+// pays B and rounds A to zero. Only the zero leg is dropped; rejecting the op as
+// ErrMalformedMovement would lose the real B-side payout.
 func TestDecodeLiquidityPoolOp_withdraw_zeroLeg_emitsPayingLeg(t *testing.T) {
 	withdrawerAddr, _ := mkAccount(t, 0x99)
 	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
@@ -391,12 +387,10 @@ func mkClaimableBalanceCreatedChange(t *testing.T, balanceIDSeed byte, asset xdr
 	}
 }
 
-// TestDecodeCAP0038Revocation_noLiquidation_emitsNothing is the
-// overwhelmingly common case: a successful AllowTrust with no
-// correlated claimable_balance creation — not an error, not
-// ErrEntryChangesUnavailable (that sentinel is LP-deposit/withdraw
-// specific; this decode path uses zero movements to mean "nothing
-// happened here" the SAME way an ordinary flag change reads).
+// TestDecodeCAP0038Revocation_noLiquidation_emitsNothing is the common case: a successful
+// AllowTrust with no correlated claimable_balance creation. It is not an error and not
+// ErrEntryChangesUnavailable (LP-deposit/withdraw specific); zero movements means "nothing
+// happened here", as for an ordinary flag change.
 func TestDecodeCAP0038Revocation_noLiquidation_emitsNothing(t *testing.T) {
 	op := mkAllowTrustOp(t, 0x97, "USDC", 0)
 	result := mkAllowTrustSuccessResult()

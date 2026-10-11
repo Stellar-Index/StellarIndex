@@ -12,12 +12,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The independent listing directory holds many recognised CLASSIC rows,
-// all priced, alongside fewer contract rows — and
-// only the contract arm read it. A classic member the directory priced
-// was published as `reference_not_bound` beside the contract rows the
-// same directory was pricing, which is one source answering one arm of
-// a surface and not the other.
+// The independent listing directory holds many recognised CLASSIC rows, all priced, alongside
+// fewer contract rows, so the classic arm must read it too. A classic member the directory
+// priced must not be published as `reference_not_bound` beside contract rows the same directory
+// prices: one source must answer both arms of a surface.
 func TestClassicRowTakesItsListingPrice(t *testing.T) {
 	const id = "WTGX-GDMBNMFJ3TRFLASJ6UGETFME3PJPNKPU24C7KFDBEBPQFG2CI6UC3JG6"
 	now := time.Now().UTC()
@@ -91,12 +89,10 @@ func TestImpersonatorDoesNotInheritAListingPrice(t *testing.T) {
 	}
 }
 
-// The directory publishes each asset under ONE address form with no
-// pattern — some by `CODE-GISSUER`, some by the Stellar Asset Contract
-// address alone. /v1/assets already tries both; this arm
-// keyed on the classic id only, so a SAC-listed classic member was
-// refused as `reference_not_bound` while the snapshot in hand named
-// its address. Both surfaces now resolve through [listingEntryIn].
+// The directory publishes each asset under ONE address form with no pattern: some by
+// `CODE-GISSUER`, some by the Stellar Asset Contract address alone. Both /v1/assets and this arm
+// resolve through [listingEntryIn] and must try both forms, or a SAC-listed classic member is
+// refused as `reference_not_bound` while the snapshot names its address.
 func TestClassicRowTakesItsListingPriceUnderTheSACForm(t *testing.T) {
 	const id = "WTGX-GDMBNMFJ3TRFLASJ6UGETFME3PJPNKPU24C7KFDBEBPQFG2CI6UC3JG6"
 	classic, sac := listingAddressesFor(id)

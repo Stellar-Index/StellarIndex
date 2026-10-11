@@ -140,11 +140,9 @@ func TestLedgerStream_EmitsOnAdvance(t *testing.T) {
 	}
 }
 
-// deadlineCapturingCursorsReader advances the ledger like
-// advancingCursorsReader, but records whether each ListCursors call
-// after the first (the stream's synchronous prelude read, which is
-// intentionally unbounded by RequestTimeout on `/stream` paths) was
-// given a ctx with a Deadline.
+// deadlineCapturingCursorsReader advances the ledger like advancingCursorsReader, but records
+// whether each ListCursors call after the first (the synchronous prelude read, intentionally
+// unbounded by RequestTimeout on `/stream` paths) got a ctx with a Deadline.
 type deadlineCapturingCursorsReader struct {
 	mu    sync.Mutex
 	calls int
@@ -175,14 +173,11 @@ func (d *deadlineCapturingCursorsReader) ListCursors(ctx context.Context) ([]tim
 	return []timescale.Cursor{c}, nil
 }
 
-// TestLedgerStream_TickIsBoundedByATimeout is the regression:
-// the per-tick cursors read in the ledger-stream producer must run
-// under its OWN bounded deadline, not the raw per-connection context
-// (which RequestTimeout deliberately leaves undeadlined on `/stream`
-// paths because the connection itself is long-lived by design).
-// Without a per-tick bound, a slow ListCursors call could hold the
-// producer goroutine — and its DB connection — open indefinitely, once
-// per open connection, for as long as the client stays connected.
+// TestLedgerStream_TickIsBoundedByATimeout: the per-tick cursors read in the ledger-stream
+// producer must run under its OWN bounded deadline, not the raw per-connection context (which
+// RequestTimeout leaves undeadlined on `/stream` paths because the connection is long-lived by
+// design). Otherwise a slow ListCursors call could hold the producer goroutine and its DB
+// connection open indefinitely, once per open connection.
 func TestLedgerStream_TickIsBoundedByATimeout(t *testing.T) {
 	reader := &deadlineCapturingCursorsReader{tickHadDeadline: make(chan bool, 1)}
 	srv := v1.New(v1.Options{Cursors: reader})
@@ -226,14 +221,10 @@ func (c *capOrderingCursorsReader) ListCursors(context.Context) ([]timescale.Cur
 	return []timescale.Cursor{{Source: "ledgerstream", LastLedger: 1000, UpdatedAt: time.Now().UTC()}}, nil
 }
 
-// TestLedgerStream_CapRejectsBeforePreflightCompute is the
-// regression (pre-flight-compute ordering): a client rejected by the
-// global concurrency cap must never reach handleLedgerStream's
-// synchronous pre-flight ledgerTip read at all. If the
-// cap were only checked inside StreamFromChannel, AFTER that read had
-// already run, a caller already at the cap would still pay for a full
-// cursors read on every rejected request, turning the cap into a
-// counter rather than an actual admission gate.
+// TestLedgerStream_CapRejectsBeforePreflightCompute: a client rejected by the global
+// concurrency cap must never reach handleLedgerStream's synchronous pre-flight ledgerTip read.
+// If the cap were checked only inside StreamFromChannel, AFTER that read, every rejected request
+// would still pay for a full cursors read, making the cap a counter rather than an admission gate.
 func TestLedgerStream_CapRejectsBeforePreflightCompute(t *testing.T) {
 	streaming.SetMaxConcurrentStreams(1)
 	t.Cleanup(func() { streaming.SetMaxConcurrentStreams(8192) })

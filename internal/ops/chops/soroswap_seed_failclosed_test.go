@@ -18,19 +18,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// The soroswap pair seed is a pre-loop input of compute-completeness (and
-// verify-reconciliation) that must not log and continue on failure while every
-// sibling precondition returns. These tests pin BOTH
-// halves of the corrected contract, through the production function and a real
-// stellar-rpc client against a scripted JSON-RPC server:
+// The soroswap pair seed is a pre-loop input of compute-completeness (and verify-reconciliation)
+// that must fail closed like every sibling precondition, not log and continue. These tests pin
+// BOTH halves of the contract through the production function and a real stellar-rpc client
+// against a scripted JSON-RPC server:
 //
-//   - a seed that is CONFIGURED and fails (no endpoint, RPC error, error
-//     part-way through the sweep) returns an error, and both commands return
-//     that error instead of printing it;
-//   - a seed that is DISABLED (factory_contract empty — the documented disable,
-//     the config default, and the shape both test nets run) is not a failure,
-//     so failing closed on the first half does not abort every source's verdict
-//     on hosts that never had a seed.
+//   - a seed that is CONFIGURED and fails (no endpoint, RPC error, error part-way through the
+//     sweep) returns an error, and both commands return it instead of printing it;
+//   - a seed that is DISABLED (factory_contract empty, the documented disable and config
+//     default) is not a failure, so failing closed does not abort every source's verdict on
+//     hosts that never had a seed.
 
 // seedFixtureStrkey returns a deterministic C-strkey.
 func seedFixtureStrkey(t *testing.T, b byte) string {
@@ -201,14 +198,11 @@ func TestSeedSoroswapForRecon_CleanSweepSeedsTheDecoder(t *testing.T) {
 	}
 }
 
-// One transient response on the very first call of an otherwise clean one-pair
-// sweep. Real backoff, so each shape takes ~2s (1s retry wait + three 300ms
-// throttles). The shapes are the two ends of what a hosted endpoint sends: a
-// proxy's HTML 503, and a rate limit as providers usually word it — HTTP 429
-// over a JSON-RPC error envelope with a server-range code. The second one
-// still failed the seed closed after a single request when the retry read the
-// status out of the client's error text, because the client returned the bare
-// envelope error and the status never reached the classification.
+// One transient response on the first call of an otherwise clean one-pair sweep. Real backoff, so
+// each shape takes ~2s. The shapes are the two ends of what a hosted endpoint sends: a proxy's
+// HTML 503, and a rate limit worded as HTTP 429 over a JSON-RPC error envelope with a
+// server-range code. The retry must classify the status from the response, not the client's
+// error text, because the client returns the bare envelope error.
 func TestSeedSoroswapForRecon_TransientRPCFailureDoesNotFailTheSeed(t *testing.T) {
 	shapes := map[string]func(w http.ResponseWriter, id int){
 		"HTTP 503, HTML body": func(w http.ResponseWriter, _ int) {

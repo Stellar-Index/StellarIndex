@@ -55,13 +55,10 @@ func (r *rosterCacheStubReader) callCount(source string) int {
 	return r.listCalls[source]
 }
 
-// TestProtocolsList_RosterServedFromCache proves the perf fix: a
-// second /v1/protocols request does NOT re-scan the served tier for a
-// source's contract roster — the count is served from the per-server SWR
-// cache. Were handleProtocolsList to call protocolRoster inline per
-// request, the reader would be hit once PER request; the assertion that blend's
-// registry read ran exactly once across two requests fails against that
-// code and passes against the cache.
+// TestProtocolsList_RosterServedFromCache: a second /v1/protocols request must NOT re-scan the
+// served tier for a source's contract roster; the count comes from the per-server SWR cache.
+// Calling protocolRoster inline per request would hit the reader once PER request, failing the
+// assertion that blend's registry read ran exactly once across two requests.
 func TestProtocolsList_RosterServedFromCache(t *testing.T) {
 	reader := &rosterCacheStubReader{
 		bySource: map[string][]timescale.ProtocolContract{
@@ -107,12 +104,10 @@ func TestProtocolsList_RosterServedFromCache(t *testing.T) {
 	}
 }
 
-// TestProtocolsList_RosterFailureOmitsNotZeros proves the honesty fix:
-// when a source's roster read FAILS and no last-good count is cached, the
-// source is OMITTED from the directory and named in coverage_note — never
-// serialised with a fabricated contract_count: 0. A failing read swallowed
-// to an empty roster would make blend appear with contract_count 0
-// and no coverage_note; both assertions fail against that code.
+// TestProtocolsList_RosterFailureOmitsNotZeros: when a source's roster read FAILS and no
+// last-good count is cached, the source is OMITTED from the directory and named in
+// coverage_note, never serialised with a fabricated contract_count: 0. Swallowing the failure
+// into an empty roster would show blend with contract_count 0 and no coverage_note.
 func TestProtocolsList_RosterFailureOmitsNotZeros(t *testing.T) {
 	reader := &rosterCacheStubReader{
 		bySource: map[string][]timescale.ProtocolContract{

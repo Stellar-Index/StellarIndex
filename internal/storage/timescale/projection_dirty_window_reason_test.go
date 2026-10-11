@@ -2,21 +2,18 @@ package timescale
 
 import "testing"
 
-// The Reason column of projection_dirty_windows is the ONLY thing that
-// distinguishes its two writers, and a reader came to depend on
-// that distinction: the projector suppresses stellarindex_projector_lag_high
-// only for a `projector-replay` window, never for a `projected-rebuild`
-// one (whose range routinely covers the live cursor's own position, and
-// under -allow-live-overlap sits wholly above it). These tests pin the
-// format so the classification cannot drift out from under that reader.
+// The Reason column of projection_dirty_windows is the only thing that distinguishes its
+// two writers, and a reader depends on it: the projector suppresses
+// stellarindex_projector_lag_high only for a `projector-replay` window, never for a
+// `projected-rebuild` one (whose range routinely covers the live cursor, and under
+// -allow-live-overlap sits wholly above it). These tests pin the format so the
+// classification cannot drift out from under that reader.
 
-// TestProjectionDirtyWindowReasonIsStableAcrossReleases pins the strings
-// BYTE-FOR-BYTE against what the shipped binaries have written since
-// migration 0125. Rows recorded by an older binary are already in the r1
-// table (they survive until compute-completeness re-verifies the range, up
-// to a day), so a "harmless" wording change here would silently
-// mis-classify live rows — a rebuild row read as a replay is a lag ticket
-// suppressed with no operator rewind on record.
+// TestProjectionDirtyWindowReasonIsStableAcrossReleases pins the strings byte-for-byte
+// against what shipped binaries have written. Rows from an older binary survive in the
+// table until compute-completeness re-verifies the range, so a wording change would
+// mis-classify live rows: a rebuild row read as a replay suppresses a lag ticket with no
+// operator rewind on record.
 func TestProjectionDirtyWindowReasonIsStableAcrossReleases(t *testing.T) {
 	// A real reflector-fx replay reason, verbatim.
 	if got, want := ProjectorReplayReason(64_177_283, 61_602_787),

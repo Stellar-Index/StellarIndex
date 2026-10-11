@@ -7,22 +7,16 @@ import (
 	"testing"
 )
 
-// A pooled-liquidity protocol may be summed into the headline total, or
-// it may be left out — but it may never be left out SILENTLY.
+// A pooled-liquidity protocol may be summed into the headline total, or left out, but never left
+// out SILENTLY.
 //
-// The failure this guards is the one sushiswap_v3 shipped with.
-// The protocol was registered, its trades served, and its category
-// "amm" — and the TVL surface said nothing about it at all: it was
-// absent from tvl_total.excluded, so a reader adding up the headline had
-// no way to learn an indexed AMM was missing from it, and
-// GET /v1/protocols/sushiswap_v3/tvl blamed the omission on this
-// deployment's wiring ("not wired on this deployment") when the real
-// reason is permanent and methodological — concentrated liquidity has no
-// two-sided reserve to sum.
+// An indexed AMM (sushiswap_v3 was the case) absent from tvl_total.excluded gives a reader adding
+// up the headline no way to learn it is missing, and GET /v1/protocols/{name}/tvl would blame the
+// omission on deployment wiring when the real reason is permanent and methodological:
+// concentrated liquidity has no two-sided reserve to sum.
 //
-// Both halves come from dexTVLScopeExclusions, so one entry fixes both
-// surfaces and this guard is what makes the next pooled protocol
-// declare itself.
+// Both halves come from dexTVLScopeExclusions, so one entry fixes both surfaces and this guard
+// makes the next pooled protocol declare itself.
 func TestDEXTVLScope_PooledProtocolIsDerivedOrExplicitlyExcluded(t *testing.T) {
 	t.Parallel()
 
@@ -40,13 +34,10 @@ func TestDEXTVLScope_PooledProtocolIsDerivedOrExplicitlyExcluded(t *testing.T) {
 	}
 
 	for _, p := range protocolRegistry {
-		// Pooled-liquidity and vault/AUM categories only. A
-		// lending/oracle/bridge protocol is not a candidate for an AMM
-		// headline, and the ones that carry a comparable figure (blend,
-		// sorocredit, defindex, upshift) already carry their own
-		// exclusion for a different reason. "yield" is included because
-		// a vault's AUM is the same double-count/no-current-state-figure
-		// shape a reader would otherwise expect summed here.
+		// Pooled-liquidity and vault/AUM categories only. Lending/oracle/bridge protocols are not
+		// AMM-headline candidates, and those carrying a comparable figure (blend, sorocredit,
+		// defindex, upshift) already have their own exclusion. "yield" is included because a
+		// vault's AUM has the same double-count/no-current-state shape a reader might sum.
 		if p.Category != "amm" && p.Category != "dex" && p.Category != "yield" {
 			continue
 		}

@@ -11,12 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// This file pins a supply-drift regression: reserves of a pool whose last liquidity is withdrawn (entry
-// deleted) must stop counting toward the served supply aggregate.
-// Before the removal fix the observer emitted nothing for the deletion,
-// so the last-seen reserves stayed in Σ lp_reserve forever and
-// total/circulating supply (and market cap / FDV downstream) only ever
-// grew.
+// This file pins a supply-drift regression: reserves of a pool whose last liquidity is
+// withdrawn (entry deleted) must stop counting toward the served supply aggregate. If the
+// observer emitted nothing for the deletion, the last-seen reserves would stay in Σ lp_reserve
+// forever and supply (and market cap / FDV downstream) would only ever grow.
 
 // makeLPChangeOfType builds a liquidity-pool change of the given
 // variant. Body-carrying variants carry the full entry; Removed carries
@@ -51,10 +49,9 @@ func makeLPChangeOfType(t *testing.T, ct xdr.LedgerEntryChangeType, poolByte byt
 }
 
 // routeLedger walks one ledger's entry-changes through the dispatcher
-// exactly as [dispatcher.Dispatcher.ProcessLedger] does — in order,
-// with a monotonic IntraLedgerSeq — and returns the Observations the
-// observer emitted. Going through the dispatcher (rather than calling
-// Decode directly) means Matches is exercised too.
+// exactly as [dispatcher.Dispatcher.ProcessLedger] does (in order, with a monotonic
+// IntraLedgerSeq) and returns the Observations emitted. Going through the dispatcher rather
+// than Decode directly exercises Matches too.
 func routeLedger(t *testing.T, disp *dispatcher.Dispatcher, ledger uint32, seq *uint32, changes ...xdr.LedgerEntryChange) []Observation {
 	t.Helper()
 	var out []Observation
@@ -91,9 +88,8 @@ func routeLedger(t *testing.T, disp *dispatcher.Dispatcher, ledger uint32, seq *
 //	   ORDER BY pool_id, ledger DESC) latest
 //	 WHERE NOT is_removal
 //
-// i.e. filter to the asset, keep the LATEST observation per pool_id
-// (ties inside a ledger resolved by intra_ledger_seq, the writer's
-// upsert guard), then sum the ones that are not removals.
+// i.e. filter to the asset, keep the LATEST observation per pool_id (ties inside a ledger
+// resolved by intra_ledger_seq, the writer's upsert guard), then sum the non-removals.
 func servedLPAggregate(obs []Observation, assetKey string) *big.Int {
 	type row struct {
 		ledger    uint32
@@ -123,10 +119,8 @@ func servedLPAggregate(obs []Observation, assetKey string) *big.Int {
 }
 
 // TestServedAggregate_ReturnsToZeroAfterFullWithdraw is the
-// money regression: deposit into a pool, withdraw part of it, then
-// withdraw the rest (pool entry deleted). The served Σ lp_reserve must
-// return to its pre-deposit value (zero) rather than keep counting the
-// withdrawn reserves.
+// money regression: deposit, withdraw part, then withdraw the rest (pool entry deleted). The
+// served Σ lp_reserve must return to zero rather than keep counting withdrawn reserves.
 func TestServedAggregate_ReturnsToZeroAfterFullWithdraw(t *testing.T) {
 	const assetKey = "USDC:" + gIssuerA
 	usdc := makeAsset(t, "USDC", gIssuerA)
@@ -321,11 +315,10 @@ func TestPreImageMemoIsLedgerScoped(t *testing.T) {
 	routeLedger(t, disp, 600, &seq,
 		makeLPChangeOfType(t, xdr.LedgerEntryChangeTypeLedgerEntryCreated, 7, usdc, euro, 10, 20),
 	)
-	// The removal must emit nothing AND must not do so silently. Matches
-	// consults hasPreImage, which does not apply lookupPreImage's ledger
-	// guard, so this is the one shape that reaches Decode unattributable
-	// — and a dropped removal over-reports supply forever, because the
-	// removal is absorbing, not a delta; it must not return (nil, nil).
+	// The removal must emit nothing AND must not do so silently. Matches consults hasPreImage,
+	// which skips lookupPreImage's ledger guard, so this shape reaches Decode unattributable;
+	// a dropped removal over-reports supply forever (it is absorbing, not a delta), so Decode
+	// must not return (nil, nil).
 	evs, err := disp.RouteEntryChange(dispatcher.LedgerEntryChangeContext{
 		Ledger:         601,
 		ClosedAt:       time.Unix(1_770_000_601, 0).UTC(),

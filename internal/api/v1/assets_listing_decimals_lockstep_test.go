@@ -12,12 +12,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// Without this, /v1/assets would never resolve a Soroban row's decimals() on the
-// LISTING page — only the confirmed nonstandard_decimals_assets projection,
-// which lags a freshly-observed or not-yet-DEX-traded token. A listing row
-// kept the default 7 while the SAME asset's detail page read the lake
-// directly and got the true scale, publishing a market cap 10^(7-decimals)x
-// off between the two surfaces in the same second.
+// The LISTING page must resolve a Soroban row's decimals() from the lake, not only from the
+// confirmed nonstandard_decimals_assets projection, which lags a freshly-observed or
+// not-yet-DEX-traded token. Otherwise a listing row keeps the default 7 while the SAME asset's
+// detail page reads the true scale, putting market cap 10^(7-decimals)x off between surfaces.
 //
 // listingLockstepDecStub is the internal-package counterpart of the
 // v1_test package's lockstepDecStub (unexported TokenDecimalsReader,
@@ -42,14 +40,11 @@ func (r *listingLockstepConfirmedReader) LoadNonstandardDecimalsAssets(_ context
 	return r.rows, nil
 }
 
-// TestFillRowMarketCap_SorobanLockstep_LakeNonstandardProjectionUnseeded is
-// PROVEN RED on the unfixed fillRowMarketCap/applyConfirmedListingDecimals,
-// which consulted ONLY the confirmed projection (nil here — the guard
-// hasn't seeded this contract yet) and left row.Decimals at the
-// assetDetailFromAssetRow default of 7. 1000 tokens at 9dp (raw
-// 1000000000000) times the raw 41.32 ratio at the wrong divisor published
-// market_cap_usd="41320.00" — a hundredth of the true 41,320,000,000,000.00
-// scale — instead of refusing.
+// TestFillRowMarketCap_SorobanLockstep_LakeNonstandardProjectionUnseeded: consulting ONLY the
+// confirmed projection (nil here, the guard has not seeded this contract) would leave
+// row.Decimals at the default 7. 1000 tokens at 9dp (raw 1000000000000) at the wrong divisor
+// would publish market_cap_usd="41320.00", a hundredth of the true 41,320,000,000,000.00,
+// instead of refusing.
 func TestFillRowMarketCap_SorobanLockstep_LakeNonstandardProjectionUnseeded(t *testing.T) {
 	const contractID = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
 	s := &Server{Options: Options{TokenDecimals: &listingLockstepDecStub{d: 9, found: true}}}
@@ -154,11 +149,9 @@ func TestFillRowMarketCap_PublishesTheBasisItUsed(t *testing.T) {
 	}
 }
 
-// TestFillRowMarketCap_UnverifiedCollisionSuppressed: an
-// unverified look-alike of a verified ticker must not publish
-// price × supply as a headline valuation (XRP-GBXRPL45… published a
-// $109.5M cap under XRP's ticker off its own manipulable market).
-// circulating_supply (a raw fact) still surfaces.
+// TestFillRowMarketCap_UnverifiedCollisionSuppressed: an unverified look-alike of a verified
+// ticker must not publish price × supply as a headline valuation off its own manipulable
+// market. circulating_supply (a raw fact) still surfaces.
 func TestFillRowMarketCap_UnverifiedCollisionSuppressed(t *testing.T) {
 	s := &Server{Options: Options{MinMarketCapVolumeUSD: 1000}}
 	price := "1.07"

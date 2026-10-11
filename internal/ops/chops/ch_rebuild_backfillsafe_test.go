@@ -181,26 +181,20 @@ func TestCHRebuild_EveryCatalogueSourceResolvesInTheReplayNamespace(t *testing.T
 	}
 }
 
-// ch-rebuild's BackfillSafe gate has two legs, and only the first
-// is reachable from a test of the entry point.
+// ch-rebuild's BackfillSafe gate has two legs, and only the first is reachable from a test of the
+// entry point.
 //
-//   - leg 1 asks about the sources the operator NAMED, before the config
-//     load — TestCHRebuild_WriteRefusesNamedSourceThatIsNotBackfillSafe
-//     drives chRebuild itself and would notice it missing.
-//   - leg 2 asks about everything the run would decode, which with no
-//     -sources is the WHOLE catalogue. It can only be asked once the
-//     catalogue exists, i.e. after the config load and a Postgres open, so
-//     TestCHRebuild_DefaultCatalogueWriteIsGated has to call
-//     reDerivedSourcesInRun/checkCHRebuildBackfillSafe directly. Deleting
-//     the CALL in chRebuild therefore failed no test, and a bare
-//     `ch-rebuild -write` — the widest possible run — would decode every
-//     unaudited source unasked.
+//   - leg 1 asks about the sources the operator NAMED, before the config load;
+//     TestCHRebuild_WriteRefusesNamedSourceThatIsNotBackfillSafe drives chRebuild itself.
+//   - leg 2 asks about everything the run would decode, which with no -sources is the WHOLE
+//     catalogue. It can only be asked after the config load and a Postgres open, so
+//     TestCHRebuild_DefaultCatalogueWriteIsGated calls reDerivedSourcesInRun/
+//     checkCHRebuildBackfillSafe directly. Deleting the CALL in chRebuild would fail no test, and a
+//     bare `ch-rebuild -write` (the widest run) would decode every unaudited source unasked.
 //
-// chRebuild needs ClickHouse and Postgres past that point, so pin the
-// call sites at the source: both legs exist inside chRebuild, leg 1
-// precedes the config load, and leg 2 sits after the catalogue (and the
-// opt-in sep41 catalogue) is built and before anything reaches the
-// writer.
+// chRebuild needs ClickHouse and Postgres past that point, so pin the call sites at the source:
+// both legs exist inside chRebuild, leg 1 precedes the config load, and leg 2 sits after the
+// catalogue (and the opt-in sep41 catalogue) is built and before anything reaches the writer.
 func TestCHRebuild_BothBackfillSafeLegsAreCalledInOrder(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("ch_rebuild.go")
@@ -258,14 +252,10 @@ func funcBodyFrom(src, name string) string {
 	return body
 }
 
-// The gate refuses a `-write` with no -sources (the whole catalogue holds
-// unaudited decoders), so a runbook that prescribes one prescribes a
-// command that cannot run. Two operations docs did:
-// history-completeness-plan.md §2.2 (`-sdex-gaps … -write`, which also
-// lacked the -sdex its pass needs) and sep41-mint-recovery.md §3
-// (`ch-rebuild -sep41 -write -contracts …`). This drives the corrected
-// flag sets through BOTH legs, and shows the forms without -sources
-// are exactly what leg 2 refuses.
+// The gate refuses a `-write` with no -sources (the whole catalogue holds unaudited decoders), so a
+// runbook that prescribes one prescribes a command that cannot run. This drives the documented
+// flag sets (history-completeness-plan.md §2.2 and sep41-mint-recovery.md §3) through BOTH legs,
+// and shows the forms without -sources are exactly what leg 2 refuses.
 func TestCHRebuild_DocumentedWriteCommandsPassBothGateLegs(t *testing.T) {
 	t.Parallel()
 	cat, _, err := buildReconciliationCatalogue(config.Config{})

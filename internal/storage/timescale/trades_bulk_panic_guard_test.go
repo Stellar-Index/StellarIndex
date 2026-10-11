@@ -33,18 +33,14 @@ func bulkPanicTrades(t *testing.T, n int) []canonical.Trade {
 	return rows
 }
 
-// The bulk backfill writer's usd_volume fan-out is a bounded pool of
-// detached goroutines joined by a WaitGroup. JOINED IS NOT PROTECTED: an
-// unrecovered panic in any of them terminates the whole process and the
-// WaitGroup does nothing about it. Without the guard this test does not fail,
-// it CRASHES the test binary.
+// The bulk backfill writer's usd_volume fan-out is a bounded pool of detached goroutines joined
+// by a WaitGroup. JOINED IS NOT PROTECTED: an unrecovered panic in any of them terminates the
+// process, so without the guard this test CRASHES the test binary instead of failing.
 //
-// Containing the panic alone would be strictly worse on this path, which is
-// why the assertion is about the RETURNED VALUE and not about survival. Rows a
-// dead worker never reached keep out[i]'s zero value — a NULL usd_volume — and
-// errAt[i] stays nil, so BulkBackfillTrades would COPY a silently under-valued
-// batch into `trades` and report it landed. A panicked resolve must fail the
-// whole call and hand back no volumes at all.
+// Containing the panic alone would be worse, which is why the assertion is on the RETURNED VALUE.
+// Rows a dead worker never reached keep out[i]'s zero value (a NULL usd_volume) and errAt[i]
+// stays nil, so BulkBackfillTrades would COPY a silently under-valued batch into `trades` and
+// report it landed. A panicked resolve must fail the whole call and return no volumes.
 func TestResolveBulkUSDVolumes_PanickingResolverFailsTheCallNotTheProcess(t *testing.T) {
 	// The literal, not the constant: this label is the alert's contract, so a
 	// rename of bulkResolverWorkerName must fail here rather than silently move
@@ -94,17 +90,15 @@ func TestResolveBulkUSDVolumes_PanickingResolverFailsTheCallNotTheProcess(t *tes
 	}
 }
 
-// The COPY fan-out is the other WaitGroup-joined pool, and its release
-// is errs[i]. copyTradePartitions returns the index ranges that COMMITTED so
-// the caller can keep source_entry_counts exact, and it decides "committed"
-// from errs[i] == nil. So a panic that is merely CONTAINED reports the
-// partition as LANDED with zero rows copied, and the caller credits
-// source_entry_counts for rows that were never written — a silent tally
-// corruption on the SDEX trade writer. The panic must therefore become that
+// The COPY fan-out is the other WaitGroup-joined pool, and its release is errs[i].
+// copyTradePartitions returns the index ranges that COMMITTED (so source_entry_counts stays
+// exact) and decides "committed" from errs[i] == nil. A merely CONTAINED panic would report the
+// partition as LANDED with zero rows copied and credit source_entry_counts for rows never
+// written, a silent tally corruption on the SDEX trade writer. The panic must become that
 // partition's error.
 //
-// The panic is the real one a Store with no pool produces: copyTradeRange's
-// first statement is s.db.Conn(ctx).
+// The panic is the real one a Store with no pool produces: copyTradeRange's first statement is
+// s.db.Conn(ctx).
 func TestCopyTradePartitions_PanickingPartitionIsNotReportedAsLanded(t *testing.T) {
 	const workerName = "timescale-bulk-backfill-copy-partition" // literal: see above
 	before := testutil.ToFloat64(obs.WorkerPanicsTotal.WithLabelValues(workerName))

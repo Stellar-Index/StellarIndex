@@ -12,12 +12,11 @@ import (
 
 // ─── The exact-tier restamp formula ───────────────────────────────
 
-// TestExactTierUSDVolume_TracksTheWaterfall pins the restamp's formula to
-// the INSERT path byte-for-byte: for every exact-tier shape, the value
-// [ExactTierUSDVolume] would write equals what [tradeUSDVolume] writes for
-// the same row — same leg, same scale, same FloatString(8) render. A drift
-// here means the restamp "repairs" rows to a value the writer would never
-// have produced, and verify-usd-volume would then flag the repaired rows.
+// TestExactTierUSDVolume_TracksTheWaterfall pins the restamp's formula to the INSERT path
+// byte-for-byte: for every exact-tier shape, [ExactTierUSDVolume] writes what [tradeUSDVolume]
+// writes for the same row (same leg, scale and FloatString(8) render). A drift means the
+// restamp "repairs" rows to a value the writer would never produce, and verify-usd-volume
+// would then flag them.
 func TestExactTierUSDVolume_TracksTheWaterfall(t *testing.T) {
 	spec := testQuoteSpec(t)
 	usdcAsset, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
@@ -167,12 +166,10 @@ func TestUSDVolumeRestampDecision(t *testing.T) {
 	}
 }
 
-// TestExactTierRestampScope_MirrorsTheDecision pins the SQL scope to the
-// Go decision: the predicate must (1) carry the generation guard,
-// (2) skip rows already satisfying the identity via IS DISTINCT FROM, (3)
-// exclude NULLs unless FillNull, (4) bind the Go-decided leg + 10^decimals
-// per group rather than deciding either in SQL, and (5) refuse non-exact
-// groups outright.
+// TestExactTierRestampScope_MirrorsTheDecision pins the SQL scope to the Go decision: the
+// predicate must (1) carry the generation guard, (2) skip rows already satisfying the identity
+// via IS DISTINCT FROM, (3) exclude NULLs unless FillNull, (4) bind the Go-decided leg and
+// 10^decimals per group rather than deciding either in SQL, and (5) refuse non-exact groups.
 func TestExactTierRestampScope_MirrorsTheDecision(t *testing.T) {
 	from := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	groups := []USDVolumeRestampGroup{

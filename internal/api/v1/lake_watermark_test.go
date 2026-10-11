@@ -84,14 +84,11 @@ func TestLakeWatermark_ServesPreviousOnRefreshError(t *testing.T) {
 	}
 }
 
-// TestLakeWatermark_SlowLakeDoesNotSerialiseCallers. The watermark
-// refresh must never run under the process-global lakeWMMu: every lake-backed
-// route calls lakeWatermark (pools_reserves, asset_supply ×3,
-// liquidity_pools ×2, lending, plus the three explorer account-state sites),
-// so a single slow ClickHouse round-trip inside the critical section makes
-// every concurrent request queue behind it on a non-context-aware mutex and
-// burn its own deadline. Each caller must come back within ITS OWN budget,
-// and the burst must coalesce onto one read.
+// TestLakeWatermark_SlowLakeDoesNotSerialiseCallers: the watermark refresh must never run
+// under the process-global lakeWMMu. Every lake-backed route calls lakeWatermark, so one slow
+// ClickHouse round-trip inside the critical section would queue every concurrent request
+// behind a non-context-aware mutex and burn its deadline. Each caller must return within its
+// own budget, and a burst must coalesce onto one read.
 func TestLakeWatermark_SlowLakeDoesNotSerialiseCallers(t *testing.T) {
 	const (
 		callers   = 8
@@ -148,12 +145,11 @@ func TestLakeWatermark_ColdFailureIsRateLimited(t *testing.T) {
 	}
 }
 
-// TestLakeWatermark_LapsedEntryServedWithoutWaitingOnTheLake. Once
-// the TTL lapses the cached watermark is still perfectly serviceable — its
-// close time only gets older, which is exactly what flags.stale reads — so
-// the caller that happens to notice the lapse must be served from cache
-// immediately while the refresh runs detached, and a failed refresh must
-// neither drop the last-good value nor re-arm an immediate retry.
+// TestLakeWatermark_LapsedEntryServedWithoutWaitingOnTheLake: once the TTL lapses the cached
+// watermark is still serviceable (its close time only gets older, which is what flags.stale
+// reads). The caller that notices the lapse is served from cache while the refresh runs
+// detached, and a failed refresh neither drops the last-good value nor re-arms an
+// immediate retry.
 func TestLakeWatermark_LapsedEntryServedWithoutWaitingOnTheLake(t *testing.T) {
 	wm := &slowWatermark{delay: 400 * time.Millisecond, err: errors.New("lake down")}
 	s := &Server{Options: Options{LakeWatermark: wm}, logger: slog.Default()}

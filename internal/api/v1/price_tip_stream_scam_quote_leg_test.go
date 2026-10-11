@@ -15,31 +15,20 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
-// Regression suite for the LAST two surfaces that asked the
-// scam gate the BASE-ONLY question: /v1/price/tip (computeTip) and the
-// closed-bucket SSE stream (closedStreamWithheld).
+// Regression suite for the scam gate's quote-leg check on /v1/price/tip (computeTip) and the
+// closed-bucket SSE stream (closedStreamWithheld). `?asset=native&quote=<FLAGGED>` describes the
+// same market that `?asset=<FLAGGED>&quote=native` is withheld for, so asking the gate only the
+// base-only question would publish the flagged issuer's own trades unauthenticated, once per
+// closed bucket for the life of an SSE connection.
 //
-// /v1/vwap, /v1/twap, /v1/chart and the reader-backed seams were made
-// pair-aware earlier; these two were not, so the identical bypass stayed
-// live on them: `?asset=native&quote=<FLAGGED>` describes exactly the
-// market that `?asset=<FLAGGED>&quote=native` is withheld for, and it
-// was published — unauthenticated, at 200, computed from the flagged
-// issuer's own trades — on the freshest surface we serve and fanned out
-// once per closed bucket for the hours an SSE connection lives.
-//
-// Deliberately driven through the REAL *pricingguard.ScamGate over a
-// stub directory, following the /v1/vwap quote-leg suite: a hand-written
-// fake that only answers the base-only question would let these tests
-// pass without the pair-aware primitive, which is the exact vacuity this
-// finding class came from. The directory records every address it is
-// asked about, so "the QUOTE leg reached the gate" is proved rather than
-// inferred from a status code.
+// Driven through the REAL *pricingguard.ScamGate over a stub directory, as in the /v1/vwap
+// quote-leg suite: a fake answering only the base-only question would pass without the
+// pair-aware primitive. The directory records every address it is asked about, so "the QUOTE leg
+// reached the gate" is proved rather than inferred from a status code.
 
-// TestPriceTipWithholdsWhenTheQuoteLegIsScamFlagged pins the request
-// surface. The stub price reader holds a snapshot for the inverted
-// orientation, so an ungated handler answers a real 200 with a price —
-// without it the endpoint would 404 for lack of data and the test would
-// pass vacuously.
+// TestPriceTipWithholdsWhenTheQuoteLegIsScamFlagged pins the request surface. The stub reader
+// holds a snapshot for the inverted orientation, so an ungated handler answers 200 with a price;
+// without it the endpoint would 404 for lack of data and the test would pass vacuously.
 func TestPriceTipWithholdsWhenTheQuoteLegIsScamFlagged(t *testing.T) {
 	flagged, err := canonical.NewClassicAsset("RIO", scamQuoteLegIssuer)
 	if err != nil {
@@ -126,15 +115,12 @@ func TestPriceTipServesWhenNeitherLegIsFlagged(t *testing.T) {
 	}
 }
 
-// TestPriceStreamWithholdsWhenTheQuoteLegIsScamFlagged pins the
-// closed-bucket SSE surface at connect, before the response can switch
-// into SSE mode (once the SSE headers are out it is too late to say
-// 404).
+// TestPriceStreamWithholdsWhenTheQuoteLegIsScamFlagged pins the closed-bucket SSE surface at
+// connect, before the response switches to SSE mode (once SSE headers are out it is too late
+// to send a 404).
 //
-// The connect pre-flight and the per-bucket re-check in
-// forwardClosedStream are the SAME predicate — Server.closedStreamWithheld
-// — so pinning it here pins both halves; a connection that cannot be
-// opened cannot be fanned.
+// The connect pre-flight and the per-bucket re-check in forwardClosedStream are the same
+// predicate, Server.closedStreamWithheld, so pinning it pins both halves.
 func TestPriceStreamWithholdsWhenTheQuoteLegIsScamFlagged(t *testing.T) {
 	flagged, err := canonical.NewClassicAsset("RIO", scamQuoteLegIssuer)
 	if err != nil {

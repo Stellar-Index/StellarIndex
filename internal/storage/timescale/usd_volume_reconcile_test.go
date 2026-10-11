@@ -60,12 +60,9 @@ func TestClassifyUSDVolumeTier(t *testing.T) {
 		// Non-exchange source class: tradeUSDVolume returns nil for these
 		// by construction, so any value on such a row came from elsewhere.
 		{"oracle source", "reflector-dex", "native", "fiat:USD", TierUnvaluable, 0},
-		// An UNREGISTERED source: external.Lookup defaults it to
-		// ClassExchange with an EMPTY subclass, so usdVolumeDecimals
-		// declines both legs and the insert path falls through to the FX
-		// tiers. The classifier must mirror that rather than "helpfully"
-		// calling it unvaluable — the two must agree about what the writer
-		// would have done, including in the odd corners.
+		// An UNREGISTERED source: external.Lookup defaults it to ClassExchange with an EMPTY
+		// subclass, so usdVolumeDecimals declines both legs and the insert path falls through to
+		// the FX tiers. The classifier must mirror the writer here, not call it unvaluable.
 		{"unregistered source", "some-new-venue", "native", "fiat:USD", TierEstimated, 0},
 	}
 	for _, tc := range cases {
@@ -112,12 +109,10 @@ func TestUSDVolumeTier_Exact(t *testing.T) {
 
 // TestExactTierDelta_HoldsAndCatchesOneUnit is the core of the exact-tier identity.
 //
-// For an exact tier the stored column must satisfy
-// usd_volume == pegged_leg / 10^decimals with NO tolerance — it is a decimal
-// rescaling of a number already on the row, not a price lookup. This pins
-// both directions: a correct group nets to exactly zero, and a group off by
-// ONE unit at the rendering scale (1e-8 USD) is caught rather than lost in
-// float slop.
+// For an exact tier the stored column must satisfy usd_volume == pegged_leg / 10^decimals with NO
+// tolerance: it is a decimal rescaling of a number already on the row, not a price lookup. Both
+// directions are pinned: a correct group nets to exactly zero, and a group off by ONE unit at the
+// rendering scale (1e-8 USD) is caught rather than lost in float slop.
 func TestExactTierDelta_HoldsAndCatchesOneUnit(t *testing.T) {
 	// 3 on-chain trades, 7-decimal pegged quote leg. Σquote = 4,500,000,000
 	// stroops → $450 exactly.
@@ -138,11 +133,9 @@ func TestExactTierDelta_HoldsAndCatchesOneUnit(t *testing.T) {
 		t.Errorf("a correctly-valued group has delta %s, want exactly 0", delta.FloatString(12))
 	}
 
-	// One unit off at the render scale: $450.00000001. At a REALISTIC daily
-	// volume this magnitude falls below the float64 ulp entirely — see the
-	// DB-backed sibling (test/integration/usd_volume_test.go),
-	// which sizes the fixture to $500M and asserts a naive float check reports
-	// zero. That is why this comparison is exact rational arithmetic.
+	// One unit off at the render scale: $450.00000001. At a realistic daily volume this falls
+	// below the float64 ulp entirely (see test/integration/usd_volume_test.go, where a naive
+	// float check reports zero), which is why this comparison is exact rational arithmetic.
 	g.SumUSDVolume = "450.00000001"
 	delta, ok = ExactTierDelta(g, TierQuotePegged, 7)
 	if !ok {
@@ -193,11 +186,10 @@ func TestExactTierDelta_RefusesInexactTiers(t *testing.T) {
 	}
 }
 
-// TestUSDVolumeRoundingSlack — the slack is DERIVED arithmetic (the worst
-// case of a known rounding rule), never a calibrated threshold. At the
-// decimal scales the peg spec actually produces today (7 on-chain, 8
-// off-chain) the render is lossless, so the slack is exactly ZERO and the
-// identity is checkable with no tolerance whatsoever.
+// TestUSDVolumeRoundingSlack — the slack is DERIVED arithmetic (the worst case of a known rounding
+// rule), never a calibrated threshold. At the decimal scales the peg spec produces (7 on-chain,
+// 8 off-chain) the render is lossless, so the slack is exactly ZERO and the identity is checkable
+// with no tolerance.
 func TestUSDVolumeRoundingSlack(t *testing.T) {
 	for _, decimals := range []int{0, 7, 8} {
 		if s := USDVolumeRoundingSlack(decimals, 1_000_000); s.Sign() != 0 {

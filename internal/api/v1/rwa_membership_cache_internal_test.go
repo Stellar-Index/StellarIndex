@@ -12,33 +12,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The membership cache is the whole of /rwa's latency, so these tests
-// are about WHEN a request waits rather than about what it gets.
+// The membership cache is the whole of /rwa's latency, so these tests are about WHEN a
+// request waits rather than what it gets.
 //
-// The defect they pin is the one [assets_sep1_images_detached_test.go]
-// pins for the logo map, on a surface that had the same shape and no
-// test at all. The set is an indexed scan over every issuer-bound SEP-1
-// payload (1.18M currency entries on r1) plus the curated-directory
-// walk, ~11.5 s, behind a ten-minute TTL — and it was rebuilt INLINE on
-// whichever request happened to find the entry expired. On r1
-// that made the route perfectly bimodal: 39 of 43 requests
-// under 1 s, the other 4 over 10 s. With no more than one page load per
-// TTL window it is roughly one visitor in ten who waits twelve seconds
-// for a page the other nine get in a third of a second.
+// They pin the defect [assets_sep1_images_detached_test.go] pins for the logo map: the set is
+// an expensive indexed scan over every issuer-bound SEP-1 payload plus the curated-directory
+// walk (~10 s) behind a ten-minute TTL, and rebuilding it INLINE on whichever request found
+// the entry expired makes the route bimodal, with an occasional visitor waiting seconds.
 //
-// Like the logo-map tests, the assertions need no timing heuristic: the
-// scan is held open for the whole test, so if the read returns at all
-// it returned without waiting for the rebuild. Against an unguarded rebuild
-// they do not fail on a threshold — they block until the outer timeout.
+// The assertions need no timing heuristic: the scan is held open for the whole test, so if
+// the read returns at all it did not wait for the rebuild. Against an unguarded rebuild they
+// block until the outer timeout rather than failing on a threshold.
 
 // blockingRWASep1Reader stands in for that scan: it announces that it
-// started, blocks until the test releases it, counts how many scans a
-// sequence of reads actually started, and records whether the context
-// it was handed was cancelled while it worked.
+// started, blocks until the test releases it, counts the scans a sequence of reads started,
+// and records whether its context was cancelled while it worked.
 //
-// That last field is the point of detaching. A refresh that ran on the
-// calling request's context would die when the caller gave up, and be
-// restarted, unbounded, by the next caller.
+// That last field is the point of detaching: a refresh on the calling request's context
+// would die when the caller gave up and be restarted, unbounded, by the next caller.
 type blockingRWASep1Reader struct {
 	entered   chan struct{} // one send per call
 	release   chan struct{} // test closes this to let the scan finish

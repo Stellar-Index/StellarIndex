@@ -3,17 +3,14 @@
 
 package chops
 
-// scripts/ops/ch-rebuild-projected.sh is destructive: per window it DELETEs
-// served-tier rows and then asks `ch-rebuild -write` to re-derive them. The
-// tests here EXECUTE the shipped script — not a copy of it — against stubs
-// for `psql` and the ops binary, the way scripts/ci/run-heavy-job-test.sh
-// executes the heavy-job wrapper, and assert on what it actually did: which
-// rows it could delete, what it asked the binary to re-derive, in what
-// order, and what it recorded.
+// scripts/ops/ch-rebuild-projected.sh is destructive: per window it DELETEs served-tier rows and
+// then asks `ch-rebuild -write` to re-derive them. These tests EXECUTE the shipped script, not a
+// copy, against stubs for `psql` and the ops binary (as scripts/ci/run-heavy-job-test.sh does for
+// the heavy-job wrapper), and assert what it did: which rows it could delete, what it asked the
+// binary to re-derive, in what order, and what it recorded.
 //
-// The stub binary speaks the real binary's shapes, including the ugly ones:
-// progress noise on stderr, a refusal as a non-zero exit with nothing on
-// stdout, and the final report on stdout.
+// The stub binary speaks the real binary's shapes, including the ugly ones: progress noise on
+// stderr, a refusal as a non-zero exit with nothing on stdout, and the final report on stdout.
 
 import (
 	"context"
@@ -170,11 +167,10 @@ func (r scriptRun) records() []scriptCall {
 // sequence renders the calls as a compact ordered trace, e.g.
 // "preflight@61000000 psql write@61000000 record@61000000".
 //
-// The four OPS modes are rendered apart because they are not
-// interchangeable: `preflight@` asks, `write@` re-derives, `record@`
-// files an emptied window with the completeness verdict, and `refresh@`
-// re-materialises the trades continuous aggregates. Collapsing the
-// last two into `write@` once hid whether the script filed anything at all.
+// The four OPS modes are rendered apart because they are not interchangeable: `preflight@` asks,
+// `write@` re-derives, `record@` files an emptied window with the completeness verdict, and
+// `refresh@` re-materialises the trades continuous aggregates. Collapsing the last two into
+// `write@` would hide whether the script filed anything at all.
 func (r scriptRun) sequence() string {
 	var out []string
 	for _, c := range r.calls {

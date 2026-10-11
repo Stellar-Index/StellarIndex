@@ -7,17 +7,13 @@ import (
 
 // The contract arm's directory scan.
 //
-// Two properties are testable without a database and both are
-// load-bearing: the census has to refuse to balance when its buckets do
-// not add up, and the count query has to use the SAME predicate the row
-// query uses. A drift between those two would show as a set quietly
-// missing a member while the funnel reported it as admitted.
+// Two properties are testable without a database: the census must refuse to balance when its
+// buckets do not add up, and the count query must use the SAME predicate as the row query,
+// else a member could go quietly missing while the funnel reported it as admitted.
 
 // TestDirectoryRWACensus_BalancesOnlyWhenItAddsUp is the accounting
-// property. Check must return a reason for each way the buckets can
-// fail to reconcile — a census that reported itself sound while its
-// stages disagreed would let the funnel publish `balanced: true` over
-// figures a reader cannot make meet.
+// property. Check must return a reason for each way the buckets can fail to reconcile, else
+// the funnel would publish `balanced: true` over figures a reader cannot make meet.
 func TestDirectoryRWACensus_BalancesOnlyWhenItAddsUp(t *testing.T) {
 	sound := DirectoryRWACensus{
 		Entries: 18439, Accounts: 18000, Contracts: 439,
@@ -47,11 +43,9 @@ func TestDirectoryRWACensus_BalancesOnlyWhenItAddsUp(t *testing.T) {
 // TestDirectoryContractPredicate_IsOneSpelling pins that the census
 // count and the row read cannot disagree about who qualified.
 //
-// They run the same predicate text by construction. If someone splits
-// them into two hand-written clauses, the count and the rows drift apart
-// silently: the funnel says N contracts were recognised, the set carries
-// M, and nothing reconciles the difference because both numbers came
-// from a query that believed itself correct.
+// They run the same predicate text by construction. Splitting it into two hand-written
+// clauses would let count and rows drift apart silently (the funnel says N recognised, the
+// set carries M) with nothing to reconcile the difference.
 func TestDirectoryContractPredicate_IsOneSpelling(t *testing.T) {
 	if !strings.Contains(directoryContractRecognisedSQL, directoryIsContractSQL) {
 		t.Error("the recognised-contract predicate does not restrict to contract addresses")
@@ -62,11 +56,9 @@ func TestDirectoryContractPredicate_IsOneSpelling(t *testing.T) {
 	if !strings.Contains(directoryContractRecognisedSQL, "NOT "+directoryScamTaggedSQL) {
 		t.Error("the recognised-contract predicate does not exclude scam-class tags")
 	}
-	// The scam vocabulary is inlined as a literal, not bound, so the
-	// predicate can be spliced at any argument offset. It must therefore
-	// carry EVERY tag the one Go list carries — a predicate that
-	// silently covered five of six would admit an address the price gate
-	// withholds.
+	// The scam vocabulary is inlined as a literal, not bound, so the predicate can be spliced
+	// at any argument offset. It must carry EVERY tag the one Go list carries, or it would
+	// admit an address the price gate withholds.
 	for _, tag := range DirectoryScamFlagTags {
 		if !strings.Contains(directoryScamTaggedSQL, "'"+tag+"'") {
 			t.Errorf("scam tag %q is missing from the SQL predicate", tag)
@@ -84,10 +76,8 @@ func TestDirectoryContractPredicate_IsOneSpelling(t *testing.T) {
 }
 
 // TestLowerTrimAll_NormalisesTheBoundVocabulary pins the normalisation
-// the predicate depends on. It lowercases the COLUMN side, so a caller
-// passing `Issuer` would match nothing — and the resulting empty set
-// would look exactly like a directory that names no issuers, which is a
-// finding rather than a spelling mistake.
+// the predicate depends on. It lowercases the COLUMN side, so a caller passing `Issuer` would
+// match nothing, and the empty set would look like a directory that names no issuers.
 func TestLowerTrimAll_NormalisesTheBoundVocabulary(t *testing.T) {
 	got := lowerTrimAll([]string{"Issuer", "  ANCHOR ", "", "   ", "custodian"})
 	want := []string{"issuer", "anchor", "custodian"}

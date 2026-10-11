@@ -14,20 +14,14 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// /v1/livez/lake is the ADR-0050 §7.3 lake-route LB probe. It carries
-// readyz's infra exemptions — no auth (middleware/auth.go
-// isUnauthenticatedInfraPath) and no anonymous rate limit
-// (middleware/ratelimit.go SkipHealthAndMetrics) — which is correct for
-// a load-balancer probe but removes every brake an anonymous caller
-// would otherwise hit. Two properties have to hold for that to be safe,
-// and neither holds without explicit handling:
+// /v1/livez/lake is the ADR-0050 §7.3 lake-route LB probe. It carries readyz's infra
+// exemptions (no auth via middleware/auth.go isUnauthenticatedInfraPath, no anonymous rate
+// limit via middleware/ratelimit.go SkipHealthAndMetrics), which removes every brake an
+// anonymous caller would otherwise hit. Two properties make that safe:
 //
-//  1. one lake query per ROUND, not per request (readyz's single-flight,
-//     which the exemption rationale was copied from but the cache was
-//     not), and
-//  2. nothing internal in the public 503 body — the handler wrote
-//     err.Error(), i.e. the ClickHouse endpoint, to any anonymous caller
-//     exactly while the lake was in trouble.
+//  1. one lake query per ROUND, not per request (readyz's single-flight), and
+//  2. nothing internal in the public 503 body: err.Error() would leak the ClickHouse
+//     endpoint to any anonymous caller exactly while the lake is in trouble.
 
 // countingLakeCheck is a "clickhouse" ReadyChecker that counts pings and
 // can flip its verdict mid-test. Ping sleeps briefly so concurrent
@@ -62,11 +56,9 @@ func (c *countingLakeCheck) setErr(err error) {
 	c.err = err
 }
 
-// TestLivezLake_SingleFlightSharesOnePingPerRound — a burst of anonymous
-// probes must cost ONE ClickHouse query, not one per request. Without single-flight,
-// every request would run its own LakeTipLedger under a 5s timeout with no
-// auth and no rate limit in front of it, so N unmetered concurrent
-// callers were N lake queries.
+// TestLivezLake_SingleFlightSharesOnePingPerRound — a burst of anonymous probes must cost ONE
+// ClickHouse query, not one per request. Without single-flight, every request would run its
+// own LakeTipLedger under a 5s timeout with no auth and no rate limit in front of it.
 func TestLivezLake_SingleFlightSharesOnePingPerRound(t *testing.T) {
 	const probes = 24
 	check := &countingLakeCheck{sleep: 30 * time.Millisecond}
@@ -156,13 +148,10 @@ func TestLivezLake_RoundRefreshesAfterTTL(t *testing.T) {
 	}
 }
 
-// TestLivezLake_UnreadyBodyDoesNotEchoPingError — the 503 served to an
-// anonymous caller carries the fixed operator hint, never the driver
-// error. Writing err.Error() into data.detail would leak, because
-// on the real clickhouseChecker (LakeTipLedger) is a dial error naming
-// the ClickHouse host:port — published, unauthenticated, precisely
-// during a lake outage. The error itself must still reach the LOG:
-// scrubbing the wire must not lose the operator's diagnosis.
+// TestLivezLake_UnreadyBodyDoesNotEchoPingError — the 503 served to an anonymous caller carries
+// the fixed operator hint, never the driver error: on the real clickhouseChecker
+// (LakeTipLedger) that is a dial error naming the ClickHouse host:port. The error itself must
+// still reach the LOG, so scrubbing the wire does not lose the operator's diagnosis.
 func TestLivezLake_UnreadyBodyDoesNotEchoPingError(t *testing.T) {
 	const pingErr = "dial tcp 10.9.9.9:9000: connect: connection refused"
 	logger, logs := captureLogger()

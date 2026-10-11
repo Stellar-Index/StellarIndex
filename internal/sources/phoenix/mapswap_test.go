@@ -11,14 +11,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Golden test for the NEWER single-event Map-body swap schema (Q5).
+// Golden test for the newer single-event Map-body swap schema.
 //
-// Real mainnet fixture captured READ-ONLY from the r1 ClickHouse lake
-// (stellar.contract_events):
+// Real mainnet fixture from the ClickHouse lake (stellar.contract_events):
 //
 //	contract_id CBENABXP6C4C7WG6KB7JQOTDS5GIIXF3IX3PIYNZFCDZDWUHITO2HZ4S
 //	ledger_seq  63307899   tx 3cb06db3…   op_index 0   event_index 3
-//	close_time  2026-07-03T09:16:57Z
 //	topics_xdr  ['AAAADwAAAARzd2Fw']            (ScvSymbol("swap"))
 //	data_xdr    (the ScvMap below)
 //
@@ -121,8 +119,7 @@ func TestDecodeSwapMap_realFixture(t *testing.T) {
 	}
 }
 
-// Real CBENABXP Map-schema liquidity events, same READ-ONLY lake capture
-// as the swap above:
+// Real CBENABXP Map-schema liquidity events, captured like the swap above:
 //
 //	provide_liquidity  ledger 63295145  tx d4a3c6f9…  op 0  event 4
 //	withdraw_liquidity ledger 63295946  tx 58225db8…  op 0  event 4

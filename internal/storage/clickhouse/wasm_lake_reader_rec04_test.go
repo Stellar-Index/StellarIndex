@@ -11,28 +11,21 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// TestContractWasmHash_PartialIndexMissFallsBackToLegacy is the
-// residual regression (the instance-changes reader the first fix missed).
+// TestContractWasmHash_PartialIndexMissFallsBackToLegacy pins the fallback for a partly
+// backfilled instance-changes index.
 //
-// instanceChangesIndexAvailable is a table-global `LIMIT 1` emptiness
-// probe: it goes true as soon as the operator-applied
-// stellar.contract_instance_changes holds ANY row — it cannot see whether
-// the paired historical backfill has reached a PARTICULAR contract. So
-// while the index is applied-but-still-backfilling, the per-contract
-// lookup for a not-yet-reached contract returns zero rows even though the
-// contract's executable is fully resolvable from current state.
+// instanceChangesIndexAvailable is a table-global `LIMIT 1` emptiness probe: it goes true once
+// stellar.contract_instance_changes holds ANY row and cannot see whether the historical backfill
+// has reached a PARTICULAR contract. A not-yet-reached contract then returns zero rows even
+// though its executable is resolvable from current state.
 //
-// Without the fallback, contractWasmHash would trust that empty index result as an
-// authoritative not-found (ok=false, err=nil) and ContractWasm would turn it
-// into ErrContractWasmUnresolved — a confidently-wrong "no wasm" 404 for a
-// contract that DOES have code. So only a POSITIVE index verdict (a
-// resolved hash or a SAC verdict) short-circuits; an index MISS falls
-// through to the legacy current-state read (the fallback source of truth),
-// mirroring the contract_active_ledgers empty-walk fallthrough.
+// Trusting that empty result as not-found would make ContractWasm return
+// ErrContractWasmUnresolved, a confidently wrong "no wasm" 404 for a contract that has code. Only
+// a POSITIVE index verdict (a resolved hash or a SAC verdict) short-circuits; a MISS falls
+// through to the legacy current-state read, which is the source of truth.
 //
-// Proven red: revert the `(err == nil && ok)` guard in contractWasmHash
-// back to `err == nil` and this test fails — the reader returns ok=false
-// and never issues the ledger_entries_current read (asserted below).
+// Reverting the `(err == nil && ok)` guard in contractWasmHash fails this test: the
+// ledger_entries_current read (asserted below) would never be issued.
 func TestContractWasmHash_PartialIndexMissFallsBackToLegacy(t *testing.T) {
 	wantHash := wasmHashN(0xCD)
 
@@ -96,12 +89,10 @@ func TestInstanceGenesisCovers_Below(t *testing.T) {
 	}
 }
 
-// TestContractWasmHash_IndexedResolvesPreCaptureContract pins the wasm
-// two-hop item's hop 1: a contract whose
-// instance entry predates live entry capture must resolve its current
-// executable from the genesis-complete contract_instance_changes index
-// — including the SAC verdict — without touching
-// ledger_entries_current.
+// TestContractWasmHash_IndexedResolvesPreCaptureContract pins hop 1 of the wasm lookup: a
+// contract whose instance entry predates live entry capture resolves its current executable
+// (including the SAC verdict) from the genesis-complete contract_instance_changes index,
+// without touching ledger_entries_current.
 func TestContractWasmHash_IndexedResolvesPreCaptureContract(t *testing.T) {
 	wantHash := wasmHashN(0xCD)
 	wantHex := hex.EncodeToString(wantHash[:])

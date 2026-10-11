@@ -2,22 +2,15 @@ package v1
 
 import "testing"
 
-// TestPriceSeriesPublishable_OnePredicateForBothPaths: the listing's
-// sparkline attach and the detail path's series
-// suppression asserted the SAME product rule — "may this payload carry a
-// price-over-time claim?" — in two places, and drifted. The listing
-// excluded declared-peg rows; the detail path did not. So a declared-peg
-// asset got no sparkline on /v1/assets while /v1/assets/{id} served a
-// full price_history_24h/7d drawn from the dust market the substance
-// gate had refused.
+// TestPriceSeriesPublishable_OnePredicateForBothPaths: the listing's sparkline attach and the
+// detail path's series suppression share ONE predicate for "may this payload carry a
+// price-over-time claim?", so they cannot drift (a declared-peg asset must not get a
+// sparkline on /v1/assets yet a full price_history on /v1/assets/{id} drawn from the dust
+// market the substance gate refused).
 //
-// And suppressScamIssuerPricing nulled six fields but not ATH, so a
-// directory-flagged issuer published an all-time-HIGH dollar price next
-// to price_usd: null — a published USD valuation for a token the
-// platform decided must publish none.
-//
-// Both are now one predicate with two callers. This table is the
-// contract; the declared-peg case guards the detail path against testing less.
+// suppressScamIssuerPricing must also null ATH: a directory-flagged issuer must not publish
+// an all-time-high dollar price next to price_usd: null. This table is the contract; the
+// declared-peg case guards the detail path against testing less.
 func TestPriceSeriesPublishable_OnePredicateForBothPaths(t *testing.T) {
 	usd := "0.65"
 	for _, tc := range []struct {
@@ -84,17 +77,10 @@ func TestWithholdPriceSeries_DeclaredPegDropsHistory(t *testing.T) {
 	}
 }
 
-// A declared-peg asset also publishes no all-time high, and that is a
-// DELIBERATE wire change rather than a side effect — pinned here because
-// it shipped unpinned and undescribed, and a reviewer had to reproduce
-// it to find out whether it was intended.
-//
-// The reasoning is the same as for the series: GetAssetATH reads the
-// asset's own USD-QUOTED market, which for a declared-peg asset is the
-// dust market the substance gate refused. The published headline comes
-// from the PEG. So an `ath` beside it states a provenance the price does
-// not have — a dollar high drawn from a market the platform declined to
-// price from.
+// A declared-peg asset also publishes no all-time high, DELIBERATELY. GetAssetATH reads the
+// asset's own USD-QUOTED market, which for a declared-peg asset is the dust market the
+// substance gate refused, while the published headline comes from the PEG. An `ath` beside
+// it would state a provenance the price does not have.
 func TestWithholdPriceSeries_DeclaredPegDropsATH(t *testing.T) {
 	usd := "0.65"
 	d := &AssetDetail{

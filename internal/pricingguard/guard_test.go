@@ -69,11 +69,9 @@ func TestSelectGuardedVWAP1m_ManipulatedBucketServesLKG(t *testing.T) {
 }
 
 func TestSelectGuardedVWAP1m_CandidateBucketExcludedFromOwnBaseline(t *testing.T) {
-	// RecentClosedVWAP1mCombined returns the candidate bucket too (rows[0]
-	// at the same bucket). It must be excluded from the trailing baseline —
-	// otherwise a manipulated candidate would pollute the very baseline
-	// meant to catch it. Here rows[0] duplicates the manipulated candidate
-	// bucket; the guard must still reject using the older clean buckets.
+	// RecentClosedVWAP1mCombined returns the candidate bucket too (rows[0]). It must be excluded
+	// from the trailing baseline, or a manipulated candidate would pollute the baseline meant to
+	// catch it. rows[0] duplicates the candidate bucket; the guard must still reject on older ones.
 	candidate := mkRow(0, "100.0")
 	rows := []timescale.Vwap1mRow{mkRow(0, "100.0")} // same bucket as candidate
 	rows = append(rows, steadyRows(12)...)           // older clean buckets
@@ -129,11 +127,9 @@ func TestSelectGuardedVWAP1m_DepegServedNotRejected(t *testing.T) {
 
 // ─── SelectGuardedVWAP1m: full-row surfacing (headline path) ──────
 //
-// The /v1/assets/{slug} GlobalAssetView headline path surfaces the FULL
-// row (VWAP + Bucket→asOf + TradeCount + Sources). These cases assert that
-// on a manipulation rejection the served row's fields all come from the
-// last-known-good bucket, not the fat-finger candidate. TradeCount in
-// particular is not exercised by the flat-source cases above.
+// The /v1/assets/{slug} GlobalAssetView headline path surfaces the FULL row (VWAP + Bucket→asOf
+// + TradeCount + Sources). On a manipulation rejection every served field must come from the
+// last-known-good bucket, not the candidate; TradeCount is not exercised by the cases above.
 
 // mkGlobalRow builds a combined-direction closed-bucket row at a given
 // minutes-ago offset with the supplied VWAP, trade count, and a single
@@ -298,11 +294,9 @@ func TestGuardServedVWAP1m_ThinHistoryWiderFiniteBand(t *testing.T) {
 }
 
 func TestGuardServedVWAP1mConfidence_EmptyBaselineFirstBucketIsLowConfidence(t *testing.T) {
-	// A thin/new pair's FIRST-EVER served minute has no
-	// trailing baseline (the store returns only the candidate's own bucket,
-	// or nothing). The guard fails OPEN, so a lone manipulated print is
-	// served — but it must come back flagged low-confidence so /v1/price
-	// serves it stale, NOT as a confident stale=false price.
+	// A thin/new pair's FIRST-EVER served minute has no trailing baseline (the store returns only
+	// the candidate's own bucket, or nothing). The guard fails OPEN, so a lone manipulated print
+	// is served, but flagged low-confidence so /v1/price serves it stale, NOT as stale=false.
 	manip := mkRow(0, "999999.0") // a fat-finger first print
 	// Store returns no rows STRICTLY older than the candidate (only the
 	// candidate's own bucket) — the real first-bucket shape.
@@ -337,13 +331,11 @@ func TestGuardServedVWAP1mConfidence_ValidatedBucketIsConfident(t *testing.T) {
 	if served.VWAP != candidate.VWAP || lowConfidence || substituted {
 		t.Fatalf("validated bucket must be confident and unsubstituted, byte-identical; got served=%s lowConfidence=%v substituted=%v", served.VWAP, lowConfidence, substituted)
 	}
-	// Thin (but non-empty, < guardMinSamples) history is still a
-	// validated centre → confident, AND the candidate must actually be
-	// served unchanged (accepted within the wider thin band), not
-	// silently swapped for last-known-good. The fixture must be genuinely
-	// thin (a 12-row populated store is not: guardMinSamples is 5) and
-	// must check both `served` and `substituted`, since only a thin store
-	// exercises [aggregate]'s wider thin-history band.
+	// Thin (non-empty, < guardMinSamples) history is still a validated centre, so confident, AND
+	// the candidate must be served unchanged (within the wider thin band), not swapped for
+	// last-known-good. The fixture must be genuinely thin (12 rows is not; guardMinSamples is 5)
+	// and check both `served` and `substituted`, since only a thin store exercises [aggregate]'s
+	// wider thin-history band.
 	thinStore := fakeTrailing{rows: steadyRows(3)}
 	served, lowConfidence, substituted = GuardServedVWAP1mConfidence(context.Background(), thinStore, nil, testPair(t), mkRow(0, "5.0"))
 	if served.VWAP != "5.0" || lowConfidence || substituted {
@@ -359,11 +351,10 @@ func TestGuardServedVWAP1mConfidence_ValidatedBucketIsConfident(t *testing.T) {
 	}
 }
 
-// RNC27: a rejected candidate — the guard swapping in an older
-// last-known-good bucket — must surface substituted=true so a caller
-// stapling enrichment from a SEPARATE, independently-keyed cache
-// (confidence score, composite-router flags) knows that cache answers
-// for the current tick, not for the older bucket actually served.
+// A rejected candidate (the guard swapping in an older last-known-good bucket) must surface
+// substituted=true so a caller stapling enrichment from a SEPARATE, independently-keyed cache
+// (confidence score, composite-router flags) knows it answers for the current tick, not for the
+// older bucket actually served.
 func TestGuardServedVWAP1mConfidence_RejectedCandidateIsSubstituted(t *testing.T) {
 	candidate := mkRow(0, "100.0") // 100x fat-finger vs. the steady 1.0 baseline
 	rows := steadyRows(12)
@@ -457,11 +448,9 @@ func TestSelectGuardedVWAP1m_BaselineHorizonIsInclusiveAndPerBucket(t *testing.T
 	}
 }
 
-// A guard decision that does not serve the current bucket as a validated
-// price must be countable: without it an operator cannot tell "the
-// guard is holding a manipulated pair" from "the market is quiet". Each
-// path counts the candidate's reason exactly once, and a healthy bucket
-// counts nothing.
+// A guard decision that does not serve the current bucket as a validated price must be countable,
+// or an operator cannot tell "the guard is holding a manipulated pair" from "the market is quiet".
+// Each path counts the candidate's reason exactly once; a healthy bucket counts nothing.
 func TestGuardDegradedDecisionsIncrementMetric(t *testing.T) {
 	pair := testPair(t)
 	ctx := context.Background()

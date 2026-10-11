@@ -13,14 +13,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// /v1/price/at and every /v1/price/changes horizon resolve
-// an instant through a ladder whose finest rung is the SAME raw
-// prices_1m closed bucket /v1/price serves, but they carried only the
-// withholding gates — no trailing-baseline guard. One extra path
-// segment therefore republished the manipulated minute /v1/price
-// refuses. These pin the point-in-time entry point's decisions,
-// including the at-or-before staleness contract that makes it different
-// from the latest-bucket one.
+// /v1/price/at and every /v1/price/changes horizon resolve an instant through a ladder whose
+// finest rung is the SAME raw prices_1m closed bucket /v1/price serves, so they need the
+// trailing-baseline guard too or they republish the manipulated minute /v1/price refuses. These
+// pin the point-in-time entry point's decisions, including the at-or-before staleness contract
+// that differs from the latest-bucket one.
 
 // baseTS is the candidate bucket's close, i.e. the instant a caller
 // asking "price at now" would pass.
@@ -61,13 +58,11 @@ func TestSelectGuardedVWAP1mAt_SaneBucketServedUnchanged(t *testing.T) {
 }
 
 func TestSelectGuardedVWAP1mAt_StaleLKGWithheldNotServed(t *testing.T) {
-	// The last-known-good is older than the rejected candidate by
-	// construction, so it must re-clear the caller's own at-or-before
-	// bound. Here the newest clean bucket closes 11 minutes before `ts`
-	// and the caller allowed 5 — serving it would silently breach the
-	// staleness contract /v1/price/at advertises, so the honest answer
-	// is "no price at this instant" (the handler 404s / nulls the
-	// horizon) rather than the manipulated value.
+	// The last-known-good is older than the rejected candidate by construction, so it must
+	// re-clear the caller's own at-or-before bound. The newest clean bucket closes 11 minutes
+	// before `ts` and the caller allowed 5; serving it would breach the staleness contract
+	// /v1/price/at advertises, so the answer is "no price at this instant" (404 / null horizon),
+	// not the manipulated value.
 	candidate := mkRow(0, "100.0")
 	rows := make([]timescale.Vwap1mRow, 12)
 	for i := range rows {

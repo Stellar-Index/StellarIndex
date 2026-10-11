@@ -9,21 +9,13 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// TestPriceFiatCrossStampsTheOlderLeg pins the honesty of observed_at on
-// the fiat-vs-fiat path once the forex worker can HOLD a rate:
-// when the sanity band refuses the upstream's new UZS bar,
-// the snapshot keeps the last guarded UZS rate with its ORIGINAL
-// per-currency timestamp, under a snapshot PublishedAt that has moved
-// on. Stamping the cross with PublishedAt would present a days-old rate
-// as today's — the "no stale signal" half of the finding.
+// TestPriceFiatCrossStampsTheOlderLeg pins observed_at honesty on the fiat-vs-fiat path when the
+// forex worker holds a rate: a held UZS rate keeps its ORIGINAL per-currency timestamp under a
+// newer snapshot PublishedAt, and stamping the cross with PublishedAt would present it as fresh.
 func TestPriceFiatCrossStampsTheOlderLeg(t *testing.T) {
-	// Relative to "now", not fixed calendar dates: the staleness
-	// gate refuses a snapshot leg older than its configured budget
-	// (default 76h), and a fixed past timestamp would eventually cross
-	// that budget regardless of what this test exercises. The held leg
-	// is deliberately kept well inside the budget — this test pins the
-	// OLDER-LEG-WINS disclosure, not the separate reject-when-stale
-	// behaviour (see TestPriceFiatCrossRefusesAStaleRate).
+	// Relative to now: a fixed past timestamp would eventually cross the staleness budget
+	// (default 76h). The held leg stays well inside it, since this pins OLDER-LEG-WINS, not
+	// reject-when-stale (see TestPriceFiatCrossRefusesAStaleRate).
 	published := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
 	heldSince := published.Add(-10 * time.Hour)
 	currencies := &stubCurrenciesReader{snap: &v1.CurrenciesSnapshot{
@@ -56,13 +48,9 @@ func TestPriceFiatCrossStampsTheOlderLeg(t *testing.T) {
 	}
 }
 
-// TestPriceFiatCrossRefusesAStaleRate is the regression on
-// [Server.tryFiatCrossRate]: [forex.Cache.Latest] never expires a
-// snapshot on its own, so with no bound a stalled forex worker would
-// keep answering forever from its last good fetch — stamped with an
-// observed_at that looks current relative to itself, but is in fact
-// far older than any live rate. Both currencies here are older than
-// the default 76h serving budget.
+// TestPriceFiatCrossRefusesAStaleRate guards [Server.tryFiatCrossRate]: [forex.Cache.Latest] never
+// expires a snapshot, so without a bound a stalled forex worker would answer forever from its last
+// fetch. Both currencies here are older than the default 76h serving budget.
 func TestPriceFiatCrossRefusesAStaleRate(t *testing.T) {
 	stale := time.Now().UTC().Add(-100 * time.Hour)
 	currencies := &stubCurrenciesReader{snap: &v1.CurrenciesSnapshot{
@@ -83,11 +71,9 @@ func TestPriceFiatCrossRefusesAStaleRate(t *testing.T) {
 	}
 }
 
-// TestPriceUSDAnchoredCrossRefusesAStaleRate is the regression on
-// [Server.tryUSDAnchoredFiatCross]: same gap, the USD-anchored path
-// (ADR-0051). The USD leg itself is fresh — only the FX rate that
-// crosses it into BRL is stale — proving the gate looks at the FX
-// leg's OWN freshness, not the derived price's.
+// TestPriceUSDAnchoredCrossRefusesAStaleRate is the same guard on [Server.tryUSDAnchoredFiatCross]
+// (ADR-0051). The USD leg is fresh and only the BRL FX rate is stale, so the gate must look at the
+// FX leg's own freshness, not the derived price's.
 func TestPriceUSDAnchoredCrossRefusesAStaleRate(t *testing.T) {
 	stale := time.Now().UTC().Add(-100 * time.Hour)
 	reader := &usdLegReader{usdPriceFor: "native", price: xlmUSDPrice}

@@ -269,11 +269,8 @@ func TestAsset_JSON_objectForm(t *testing.T) {
 }
 
 func TestAsset_JSON_rejectsNonStringNonObject(t *testing.T) {
-	// UnmarshalJSON's two-stage fallback (try string, then object)
-	// must reject numbers / bools / arrays — otherwise something like
-	// `true` would fall through to the object path and happen to
-	// decode as a zero-value Asset whose Validate() fails. Confirm we
-	// get a real error, not a silent zero value.
+	// UnmarshalJSON's two-stage fallback (string, then object) must reject numbers / bools /
+	// arrays, not let `true` fall through to the object path and decode as a zero-value Asset.
 	for name, body := range map[string]string{
 		"number":       `123`,
 		"bool true":    `true`,
@@ -335,13 +332,10 @@ func TestAsset_SQL_valueScan(t *testing.T) {
 		t.Fatalf("scan bytes: got %+v", d)
 	}
 
-	// Scan NULL → error, and the receiver is left untouched.
-	//
-	// This assertion must not be inverted: Scan(nil) returning nil and
-	// zeroing the receiver would let a NULL column become an Asset with Type=="" that survives every
-	// ==/Equal comparison and only fails if someone remembers to call
-	// Validate. Value() refuses to write anything that fails Validate, so
-	// a NULL in an asset column is a schema/query defect, not data.
+	// Scan NULL → error, and the receiver is left untouched. This must not be inverted:
+	// Scan(nil) returning nil would let a NULL column become an Asset with Type=="" that
+	// survives every ==/Equal comparison. Value() refuses to write anything failing Validate,
+	// so a NULL in an asset column is a schema/query defect, not data.
 	e := a
 	if err := e.Scan(nil); err == nil {
 		t.Fatal("Scan(nil) returned nil — a SQL NULL must not silently become a zero Asset")
@@ -369,11 +363,8 @@ func TestAsset_Validate_bad(t *testing.T) {
 }
 
 func TestAsset_Equal_identityAcrossVariants(t *testing.T) {
-	// Reflexivity + cross-variant inequality. Pair.Validate rejects
-	// a base==quote pair via this method, so a subtle regression
-	// here (e.g. "native equals native returns false") would make
-	// Pair.Validate accept native/native and break invariants way
-	// downstream. Cheap guard.
+	// Reflexivity + cross-variant inequality. Pair.Validate rejects a base==quote pair via this
+	// method, so "native equals native returns false" would let native/native through.
 	native := c.NativeAsset()
 	if !native.Equal(native) {
 		t.Error("NativeAsset().Equal(NativeAsset()) must be true")
@@ -431,16 +422,11 @@ func TestAsset_Value_zeroValueRejected(t *testing.T) {
 	}
 }
 
-// Asset.Scan against a NULL source must ERROR and leave the receiver
-// untouched.
-//
-// Returning nil and zeroing the receiver is the wrong contract: a NULL
-// asset column would produce an Asset with Type=="" that reads as valid
-// everywhere except Validate. Value() will not write such an Asset, so a
-// NULL can only come from a schema/query defect (a LEFT JOIN that
-// missed, a column that should be NOT NULL); failing closed surfaces it
-// at the read instead of laundering it into the domain. A genuinely
-// nullable column must be scanned through sql.NullString + ParseAsset.
+// Asset.Scan against a NULL source must ERROR and leave the receiver untouched. Returning nil
+// would produce an Asset with Type=="" that reads as valid everywhere except Validate. Value()
+// will not write such an Asset, so a NULL can only be a schema/query defect (a LEFT JOIN that
+// missed); failing closed surfaces it at the read. A genuinely nullable column must be scanned
+// through sql.NullString + ParseAsset.
 func TestAsset_Scan_nullIsAnError(t *testing.T) {
 	a := c.NativeAsset()
 	err := a.Scan(nil)

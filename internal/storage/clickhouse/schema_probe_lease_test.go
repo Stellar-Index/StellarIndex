@@ -26,12 +26,10 @@ func newFakeClock() *fakeClock {
 	return &fakeClock{t: time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)}
 }
 
-// liveTxLake models ONE ClickHouse under ONE long-lived reader: a base
-// stellar.transactions table that always holds the transaction, and a
-// stellar.tx_hash_index whose contents the test flips between populated,
-// emptied (TRUNCATE / MV drop) and dropped (the DROP half of the
-// DROP+recreate idiom). probeErr, when set, is what the availability probe
-// alone returns — the store refusing to answer about the index.
+// liveTxLake models ONE ClickHouse under ONE long-lived reader: a base stellar.transactions
+// table that always holds the transaction, and a stellar.tx_hash_index the test flips between
+// populated, emptied (TRUNCATE / MV drop) and dropped (the DROP half of DROP+recreate).
+// probeErr, when set, is what the availability probe alone returns.
 type liveTxLake struct {
 	indexRows   bool
 	indexExists bool
@@ -72,14 +70,11 @@ func (l *liveTxLake) respond(q string) (driver.Rows, error) {
 }
 
 // TestTransactionByHash_IndexEmptiedUnderLiveReaderStopsBeingAuthoritative
-// pins the lease. Without it probeSchema would LATCH a positive verdict for the process
-// lifetime, so the requireRows guard protects only a cold start: an
-// operator TRUNCATEing (or DROP+recreating) stellar.tx_hash_index ahead of
-// a ch-txindex-backfill leaves every already-running API process holding
-// settled=true/present=true, every index lookup misses, and every miss is
-// served as an AUTHORITATIVE 404 for a transaction that exists — until a
-// restart. The verdict is a lease: the SAME reader, with no restart,
-// must stop treating misses as authoritative once the lease runs out.
+// pins the lease. A positive probeSchema verdict latched for the process lifetime would leave
+// a running API holding present=true after an operator TRUNCATEs (or DROP+recreates)
+// stellar.tx_hash_index, so every miss is served as an AUTHORITATIVE 404 for a transaction
+// that exists. The verdict is a lease: the SAME reader must stop treating misses as
+// authoritative once it runs out, with no restart.
 func TestTransactionByHash_IndexEmptiedUnderLiveReaderStopsBeingAuthoritative(t *testing.T) {
 	lake := &liveTxLake{indexExists: true, indexRows: true}
 	conn := &stubConn{respond: lake.respond}
@@ -186,9 +181,8 @@ func TestProbeSchema_UnleasedPositiveVerdictStaysLatched(t *testing.T) {
 }
 
 // TestProbeSchema_UnansweredRenewalIsBoundedStale — a renewal probe that
-// gets NO answer (the renewing request was cancelled, the store is shedding
-// load) must not instantly push every reader onto the scan/503 arm, and
-// must not re-create the latch either: the last verdict is honoured only
+// gets NO answer (cancelled request, store shedding load) must not instantly push every
+// reader onto the scan/503 arm, nor re-create the latch: the last verdict is honoured only
 // up to schemaProbeStaleLeases lease lengths from the last observed row.
 func TestProbeSchema_UnansweredRenewalIsBoundedStale(t *testing.T) {
 	lake := &liveTxLake{indexExists: true, indexRows: true}
@@ -229,10 +223,9 @@ func TestProbeSchema_UnansweredRenewalIsBoundedStale(t *testing.T) {
 }
 
 // TestProbeSchema_RenewalInDropRecreateGapDoesNotLatchAbsent — the lease
-// introduces a re-probe, and a re-probe can land between the DROP and the
-// CREATE of the recreate idiom. UNKNOWN_TABLE there is NOT a deployment
-// shape: latching it would pin the bloom scan on every hash lookup until a
-// restart. A process that has seen the object keeps re-probing instead.
+// re-probe can land between the DROP and the CREATE of the recreate idiom. UNKNOWN_TABLE
+// there is NOT a deployment shape: latching it would pin the bloom scan on every hash lookup.
+// A process that has seen the object keeps re-probing instead.
 func TestProbeSchema_RenewalInDropRecreateGapDoesNotLatchAbsent(t *testing.T) {
 	lake := &liveTxLake{indexExists: true, indexRows: true}
 	conn := &stubConn{respond: lake.respond}
@@ -365,13 +358,10 @@ func TestProbeSchema_DefinitiveAnswersAreCached(t *testing.T) {
 }
 
 // TestProbeSchema_NonAnswerDoesNotLatch pins that a probe error which is not
-// a schema verdict is retried. With a plain sync.Once the FIRST call's outcome
-// is final for the process lifetime: a transport reset, an expired request
-// deadline on a fresh process, or a RESOURCE exception (ClickHouse raises
-// *clickhouse.Exception for overload too, not just schema verdicts) would latch
-// the probe false. For lecVersionProbe that means falling back to ledger_seq as
-// the RMT version key forever, serving non-final intra-ledger balances until
-// someone restarts the API. No error, no metric, no self-heal.
+// a schema verdict is retried. A plain sync.Once would latch the FIRST outcome (transport
+// reset, expired deadline, or a RESOURCE *clickhouse.Exception raised for overload) as false;
+// for lecVersionProbe that means ledger_seq as the RMT version key forever, serving non-final
+// intra-ledger balances with no error, metric or self-heal.
 func TestProbeSchema_NonAnswerDoesNotLatch(t *testing.T) {
 	lecVersioned := func(r *ExplorerReader) bool { return r.ledgerEntriesVersioned(context.Background()) }
 	txIndex := func(r *ExplorerReader) bool { return r.txHashIndexAvailable(context.Background()) }
@@ -452,10 +442,8 @@ func TestProbeSchema_NegativeCacheRateLimitsProbes(t *testing.T) {
 }
 
 // TestProbeSchema_QueryRunsOutsideTheLock — sync.Mutex is not context-aware,
-// so holding it across the probe's network round-trip queues every
-// concurrent reader behind one slow probe and serialises the explorer read
-// path. A second caller must be able to proceed while the first is still in
-// flight.
+// so holding it across the probe round-trip would queue every concurrent reader behind one
+// slow probe. A second caller must proceed while the first is still in flight.
 func TestProbeSchema_QueryRunsOutsideTheLock(t *testing.T) {
 	release := make(chan struct{})
 	entered := make(chan struct{}, 1)

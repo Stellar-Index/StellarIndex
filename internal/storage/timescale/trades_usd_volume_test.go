@@ -416,12 +416,10 @@ func TestBaseAnchorEligible(t *testing.T) {
 	}
 }
 
-// The VWAP-anchored tiers are decimals-independent: prices_1m stores vwap as
-// a RAW ratio X/A for A raw token units, so usd = (A/1e7) x (X/A) x usdPerXLM
-// = (X/1e7) x usdPerXLM and the token's scale cancels. Pricing one economic
-// trade through tokens of 6, 7, 9 and 18 decimals must give an identical
-// usd_volume, which guards against replacing the 1e7 divisor with a
-// per-token decimals lookup.
+// The VWAP-anchored tiers are decimals-independent: prices_1m stores vwap as a RAW ratio X/A, so
+// usd = (X/1e7) x usdPerXLM and the token's scale cancels. One economic trade priced through
+// 6, 7, 9 and 18 decimal tokens must give an identical usd_volume, which guards against
+// replacing the 1e7 divisor with a per-token decimals lookup.
 func TestUSDVolumeIsIndependentOfTokenDecimals(t *testing.T) {
 	t.Parallel()
 	spec := circleSpec(t, nil)
@@ -460,11 +458,9 @@ func TestUSDVolumeIsIndependentOfTokenDecimals(t *testing.T) {
 	}
 }
 
-// Fake-XMR regression: an attacker planted an INDUSX/XLM bridge rate for the
-// cost of the dust floor, and two trades with no XLM leg were stamped ~$91M
-// each. When both legs resolve and disagree beyond usdLegAgreementFactor the
-// FX tier stores the smaller leg's value; within tolerance the quote-side
-// value stays authoritative.
+// Fake-asset regression: a planted bridge rate must not inflate trades with no XLM leg. When both
+// legs resolve and disagree beyond usdLegAgreementFactor the FX tier stores the smaller leg's
+// value; within tolerance the quote-side value stays authoritative.
 func TestTradeUSDVolumeViaFX_LegCrossCheck(t *testing.T) {
 	base := mustAsset(t, "XMR-GDGE5SNCNHIP7HG3EHZWBC6NU3TWYODNXDMGC5CCKNJW555VCEAHPORT")
 	quote := mustAsset(t, "INDUSX-GCBSLNSO4NWX3BUQ2K5HZYW4JV2CWJIBZ3KOY6L3WNNGEX6RE7PINDUS")
@@ -588,12 +584,9 @@ func TestTradeUSDVolume_BaseAnchorRefusesAnUncrossCheckablePrintAboveTheCeiling(
 	}
 }
 
-// TestTradeUSDVolume_BaseAnchorBoundLeavesPlausiblePrintsByteIdentical
-// is the other half of a lossy guard: the refusal must fire ONLY above
-// the ceiling. The token/token class this tier exists for (99.2% of the
-// remaining unpriced trades) keeps its value to the digit,
-// and the boundary itself is inclusive, as it is on the quote side
-// (`> ceiling` refuses; `== ceiling` serves).
+// TestTradeUSDVolume_BaseAnchorBoundLeavesPlausiblePrintsByteIdentical is the other half of a
+// lossy guard: the refusal fires ONLY above the ceiling, plausible token/token prints keep their
+// value to the digit, and the boundary is inclusive as on the quote side (`== ceiling` serves).
 func TestTradeUSDVolume_BaseAnchorBoundLeavesPlausiblePrintsByteIdentical(t *testing.T) {
 	t.Parallel()
 	tokenA := boundTokenA(t)
@@ -633,13 +626,11 @@ func TestTradeUSDVolume_BaseAnchorRefusesJustAboveTheCeiling(t *testing.T) {
 	}
 }
 
-// TestTradeUSDVolume_XLMAnchorIsExemptFromTheBound arms the trigger on
-// the one anchor that must NOT be bounded. XLM is the bridge's own
-// anchor: its rate is a direct XLM/USD market nobody can author, and
-// base_amount is XLM that actually moved, so the value is exact rather
-// than estimated. A ceiling would NULL a real (if enormous) trade, and a
-// cross-check would let a planted token rate drag an exact value DOWN —
-// see [tradeUSDVolumeViaXLMQuoteAnchorFor]. 1e9 XLM x $0.50 = $500M.
+// TestTradeUSDVolume_XLMAnchorIsExemptFromTheBound covers the one anchor that must NOT be
+// bounded. XLM's rate is a direct XLM/USD market nobody can author and base_amount is XLM that
+// actually moved, so the value is exact. A ceiling would NULL a real trade and a cross-check
+// would let a planted token rate drag an exact value DOWN; see
+// [tradeUSDVolumeViaXLMQuoteAnchorFor]. 1e9 XLM x $0.50 = $500M.
 func TestTradeUSDVolume_XLMAnchorIsExemptFromTheBound(t *testing.T) {
 	t.Parallel()
 	stroops, ok := new(big.Int).SetString("10000000000000000", 10) // 1e9 XLM
@@ -662,11 +653,9 @@ func TestTradeUSDVolume_XLMAnchorIsExemptFromTheBound(t *testing.T) {
 	}
 }
 
-// TestRestampAnchorInheritsTheBound pins the shared primitive. The
-// restamp tiers reach the anchor through
-// [tradeUSDVolumeViaXLMBaseAnchorFor] rather than the waterfall, so a
-// bound applied at the waterfall's call sites would have left a backfill
-// free to re-write the very rows the live path now refuses.
+// TestRestampAnchorInheritsTheBound pins the shared primitive. Restamp tiers reach the anchor via
+// [tradeUSDVolumeViaXLMBaseAnchorFor], not the waterfall, so the bound must live there or a
+// backfill could re-write rows the live path refuses.
 func TestRestampAnchorInheritsTheBound(t *testing.T) {
 	t.Parallel()
 	tokenA := boundTokenA(t)

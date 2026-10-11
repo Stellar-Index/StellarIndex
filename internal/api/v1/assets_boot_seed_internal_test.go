@@ -56,21 +56,16 @@ var seedTestOpts = timescale.ListAssetsOptions{
 	Order:  timescale.AssetsOrderVolume24hUSDDesc,
 }
 
-// TestListAssetsCacheKeyMatchesListAssetsExt is the drift guard the
-// boot seed depends on.
+// TestListAssetsCacheKeyMatchesListAssetsExt is the drift guard the boot seed depends on.
 //
-// listAssetsCacheKey duplicates the key expression inside
-// [CachedAssetsReader.ListAssetsExt] because the seed has to address
-// the slot the HANDLER will look up. If the two ever diverge — a field
-// added to ListAssetsOptions and keyed on one side only, a reordered
-// segment, a swapped Issuer/Code — the seed writes a phantom slot: the
-// cache reports healthy, the snapshot is read and installed every boot,
-// and every caller still pays the ~11 s cold fill. Nothing at runtime
-// would say so.
+// listAssetsCacheKey duplicates the key expression inside [CachedAssetsReader.ListAssetsExt]
+// because the seed must address the slot the HANDLER will look up. If the two diverge (a field
+// keyed on one side only, a reordered segment, a swapped Issuer/Code) the seed writes a phantom
+// slot: the cache looks healthy but every caller still pays the cold fill, and nothing at
+// runtime says so.
 //
-// So the real key is not asserted against a literal; it is OBSERVED.
-// ListAssetsExt is driven once and the entry it actually created is
-// read straight out of the map.
+// So the real key is OBSERVED, not asserted against a literal: ListAssetsExt is driven once
+// and the entry it created is read straight out of the map.
 func TestListAssetsCacheKeyMatchesListAssetsExt(t *testing.T) {
 	c := NewCachedAssetsReader(&fakeAssetsUpstream{}, time.Minute)
 	if _, err := c.ListAssetsExt(context.Background(), seedTestOpts); err != nil {
@@ -93,14 +88,12 @@ func TestListAssetsCacheKeyMatchesListAssetsExt(t *testing.T) {
 
 // TestSeedListingServesStaleWithoutBlocking is the boot-seed behaviour itself.
 //
-// Un-seeded, a cold key takes fetchRows branch (C) and BLOCKS on the
-// upstream aggregate — measured at 11,658 ms on an r1 boot.
-// Seeded, the same call must take branch (A'): return the seeded rows
-// immediately and refresh behind the response.
+// Un-seeded, a cold key takes fetchRows branch (C) and BLOCKS on the upstream aggregate.
+// Seeded, the same call must take branch (A'): return the seeded rows immediately and refresh
+// behind the response.
 //
-// The upstream here never returns until released, so a fix that still
-// blocks cannot pass: the test would deadlock on the read rather than
-// merely report a wrong value.
+// The upstream never returns until released, so an implementation that still blocks cannot
+// pass: the test deadlocks on the read rather than merely reporting a wrong value.
 func TestSeedListingServesStaleWithoutBlocking(t *testing.T) {
 	up := newBlockingAssetsUpstream()
 	c := NewCachedAssetsReader(up, time.Minute)
@@ -175,11 +168,9 @@ func TestSeedListingServesStaleWithoutBlocking(t *testing.T) {
 	}
 }
 
-// TestSeedListingRefusals pins every case where seeding must decline
-// and leave the cold-fill behaviour untouched. Each of these
-// would otherwise publish something the cache could not label
-// honestly — or, worse, an empty listing where the real one would have
-// been served.
+// TestSeedListingRefusals pins every case where seeding must decline and leave the cold-fill
+// behaviour untouched. Each would otherwise publish something the cache could not label
+// honestly, or an empty listing where the real one would have been served.
 func TestSeedListingRefusals(t *testing.T) {
 	rows := []timescale.AssetRow{{AssetID: "SEEDED-GAAA"}}
 	past := time.Now().Add(-time.Minute)

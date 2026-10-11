@@ -134,15 +134,12 @@ func TestOwnerAndAsset_AccountOwnedEntries(t *testing.T) {
 	}
 }
 
-// TestExtractEntryChanges_IntraLedgerSeqOrdersLastChangeWins pins the
-// writer contract: extractEntryChanges stamps a
-// per-LEDGER monotonic intra_ledger_seq on every change in canonical walk order
-// so that (a) when the SAME key is changed twice in one ledger the LATER change
-// carries the HIGHER seq — the tie-breaker ledger_entries_current's
-// ReplacingMergeTree version folds in so FINAL keeps the last change — and (b)
-// the counter accumulates ACROSS transactions in the ledger (it is NOT the
-// per-transaction change_index). Both are required for the composite version
-// (ledger_seq<<32 | intra_ledger_seq) to resolve same-ledger ties correctly.
+// TestExtractEntryChanges_IntraLedgerSeqOrdersLastChangeWins pins the writer contract:
+// extractEntryChanges stamps a per-LEDGER monotonic intra_ledger_seq in canonical walk order so
+// (a) when the SAME key changes twice in one ledger the LATER change carries the HIGHER seq,
+// the tie-breaker in ledger_entries_current's ReplacingMergeTree version so FINAL keeps the last
+// change, and (b) the counter accumulates ACROSS transactions (it is NOT the per-transaction
+// change_index). Both are needed for (ledger_seq<<32 | intra_ledger_seq) to resolve ties.
 func TestExtractEntryChanges_IntraLedgerSeqOrdersLastChangeWins(t *testing.T) {
 	acct := xdr.LedgerEntry{
 		LastModifiedLedgerSeq: 100,
@@ -241,17 +238,14 @@ func TestEntryTypeName(t *testing.T) {
 	}
 }
 
-// TestExtractLedgerEntryChanges_FeePhasePrecedesApplyPhase pins fee-phase ordering
-// on the LAKE side, in lockstep with
-// dispatcher.TestProcessLedger_FeePhasePrecedesApplyPhase.
+// TestExtractLedgerEntryChanges_FeePhasePrecedesApplyPhase pins fee-phase ordering on the LAKE
+// side, in lockstep with dispatcher.TestProcessLedger_FeePhasePrecedesApplyPhase.
 //
-// stellar-core charges the fee for EVERY transaction in the tx set before
-// applying ANY of them, so on chain every fee change precedes every
-// apply-phase change. Walking per tx (tx1 fee, tx1 apply, tx2 fee, …) gave
-// tx2's FEE-phase row a HIGHER intra_ledger_seq than tx1's APPLY-phase row
-// for the same key — and intra_ledger_seq is folded into
-// ledger_entries_current's ReplacingMergeTree version, so FINAL would keep
-// the fee-phase entry as the ledger-final state of that key.
+// stellar-core charges the fee for EVERY transaction before applying ANY, so every fee change
+// precedes every apply-phase change. Walking per tx (tx1 fee, tx1 apply, tx2 fee, …) would give
+// tx2's FEE-phase row a HIGHER intra_ledger_seq than tx1's APPLY-phase row for the same key, and
+// since that seq is folded into ledger_entries_current's ReplacingMergeTree version, FINAL
+// would keep the fee-phase entry as the key's ledger-final state.
 func TestExtractLedgerEntryChanges_FeePhasePrecedesApplyPhase(t *testing.T) {
 	acctAt := func(balance int64) xdr.LedgerEntryChange {
 		return xdr.LedgerEntryChange{
@@ -315,11 +309,10 @@ func TestExtractLedgerEntryChanges_FeePhasePrecedesApplyPhase(t *testing.T) {
 	}
 }
 
-// A P23 restoration emits [RESTORED data, RESTORED ttl] with no later update
-// when nothing else touches the entry. Both are post-images (the SDK's
-// ingest.Change reads RESTORED as Pre=nil, Post=entry); dropping the TTL row
-// leaves stellar.ttl_live_until on the lapsed pre-archival value, so the
-// liveness filter serves the restored entry as archived.
+// A P23 restoration emits [RESTORED data, RESTORED ttl] with no later update when nothing else
+// touches the entry. Both are post-images (ingest.Change reads RESTORED as Pre=nil, Post=entry);
+// dropping the TTL row leaves stellar.ttl_live_until on the lapsed value, so the liveness filter
+// serves the restored entry as archived.
 func TestExtractLedgerEntryChanges_RestoredEntryAndTTLAreRecorded(t *testing.T) {
 	const restoredUntil = uint32(5_000_000)
 	contractID := xdr.ContractId{0xC0}

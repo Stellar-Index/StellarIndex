@@ -42,15 +42,12 @@ func censusDDL(t *testing.T, object string) string {
 	return text[start : start+end]
 }
 
-// TestCensusDayFilterHasASkipIndex pins the census rollup's day predicate to
-// a declared minmax skip index on the same column. contract_events is
-// PARTITION BY intDiv(ledger_seq, …) and ORDER BY (ledger_seq, …), and
-// ClickHouse keeps part-level min/max only for partition-key columns — so a
-// WHERE on close_time prunes NOTHING unless the schema declares a skip
-// index for it. Before the index existed, the 30-minute rollup read every
-// granule of the billions-row table per run while its own comment claimed
-// "ClickHouse prunes contract_events parts by its close_time minmax index".
-// Either side may change (the predicate column, the index), but not apart.
+// TestCensusDayFilterHasASkipIndex pins the census rollup's day predicate to a declared minmax
+// skip index on the same column. contract_events is PARTITION BY intDiv(ledger_seq, …) and
+// ORDER BY (ledger_seq, …), and ClickHouse keeps part-level min/max only for partition-key
+// columns, so a WHERE on close_time prunes NOTHING unless the schema declares a skip index for it
+// and every rollup run would read every granule. The predicate column and the index may change,
+// but not apart.
 func TestCensusDayFilterHasASkipIndex(t *testing.T) {
 	where := regexp.MustCompile(`WHERE\s+(\w+)\s*>=\s*\?\s+AND\s+(\w+)\s*<\s*\?`).
 		FindStringSubmatch(censusDayInsert("x"))
@@ -69,11 +66,9 @@ func TestCensusDayFilterHasASkipIndex(t *testing.T) {
 	}
 }
 
-// TestCensusStagingTableIsPerRunOnly pins that no DDL file declares a
-// shared stellar.contracts_census_daily_staging. RunCensusDay CREATEs a
-// crypto-random-suffixed private staging table per run and DROPs it (the
-// private-staging isolation), so a static twin is dead DDL that reads as a
-// second writer path and shows up on every host as an empty orphan.
+// TestCensusStagingTableIsPerRunOnly pins that no DDL file declares a shared
+// stellar.contracts_census_daily_staging. RunCensusDay CREATEs a randomly suffixed private staging
+// table per run and DROPs it, so a static twin is dead DDL that reads as a second writer path.
 func TestCensusStagingTableIsPerRunOnly(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -98,12 +93,10 @@ func TestCensusStagingTableIsPerRunOnly(t *testing.T) {
 	}
 }
 
-// TestCensusDayInsertNamesItsColumns pins censusDayInsert to an EXPLICIT
-// target column list, in the exact order stellar.contracts_census_daily
-// (contracts_census_daily.sql) declares them. A positional INSERT here
-// would depend on the SELECT's alias order matching the table's ALTER
-// history forever; naming the columns makes a future column
-// added to either side fail loudly instead of silently swapping values.
+// TestCensusDayInsertNamesItsColumns pins censusDayInsert to an EXPLICIT target column list, in the
+// exact order stellar.contracts_census_daily (contracts_census_daily.sql) declares them. A
+// positional INSERT would depend on the SELECT's alias order matching the table's ALTER history;
+// naming the columns makes a column added to either side fail loudly instead of swapping values.
 func TestCensusDayInsertNamesItsColumns(t *testing.T) {
 	stmt := censusDayInsert("contracts_census_daily_staging_test")
 	want := `INSERT INTO stellar.contracts_census_daily_staging_test (day, contract_id, events, last_ledger, last_seen)`

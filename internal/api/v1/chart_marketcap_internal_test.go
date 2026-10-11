@@ -76,12 +76,10 @@ func TestMarketCapPoints_NoSupply(t *testing.T) {
 	}
 }
 
-// M2: the supply leg divides by 10^baseDecimals, NOT a hardcoded 10^7. A 9dp
-// token's circulating supply is denominated in 10^9 stroops, so a 10^12-stroop
-// balance is 1000 whole tokens — dividing by 10^7 (the old constant) would
-// report 100,000 tokens and a market cap 100× too large. VWAP here is already
-// the decimals-normalized USD price (the price leg is corrected upstream in
-// handleChartMarketCapCrypto via adjustHistoryPointPrices).
+// M2: the supply leg divides by 10^baseDecimals, NOT a hardcoded 10^7. A 9dp token's supply is
+// in 10^9 units, so a 10^12 balance is 1000 whole tokens; dividing by 10^7 would report
+// 100,000 and a market cap 100x too large. VWAP here is already the decimals-normalized USD
+// price (corrected upstream in handleChartMarketCapCrypto via adjustHistoryPointPrices).
 func TestMarketCapPoints_NonstandardDecimalsSupplyLeg(t *testing.T) {
 	price := []HistoryPoint{{Bucket: day(2026, 7, 1), VWAP: "5.00"}}
 	// 10^12 stroops @9dp = 1000 whole tokens.
@@ -100,11 +98,9 @@ func TestMarketCapPoints_NonstandardDecimalsSupplyLeg(t *testing.T) {
 	}
 }
 
-// TestFiatSupplyWholeUnits_ExactBeyondFloat64 (MNY) — the catalogue
-// carries circulating supply as an EXACT decimal string. Parsing it to
-// float64 (a float path) truncates any value past a float's 53-bit
-// mantissa (~9.007e15). fiatSupplyWholeUnits keeps it exact so the
-// served market cap doesn't silently drop integer digits.
+// TestFiatSupplyWholeUnits_ExactBeyondFloat64 (MNY) — the catalogue carries circulating supply
+// as an EXACT decimal string; parsing to float64 truncates past its 53-bit mantissa (~9.007e15).
+// fiatSupplyWholeUnits stays exact so the served market cap never drops integer digits.
 func TestFiatSupplyWholeUnits_ExactBeyondFloat64(t *testing.T) {
 	// 2^53 + 1 = 9007199254740993 — the smallest integer a float64
 	// cannot represent (it rounds to 9007199254740992).
@@ -176,12 +172,10 @@ func TestFormatCrossRate(t *testing.T) {
 	}
 }
 
-// TestFiatMarketCap_HonoursSupplyDecimals — the listing
-// (fiatMarketCapUSD) and global (populateFiatView) market caps must
-// scale the catalogue supply by 10^supply_decimals exactly as the
-// market-cap chart's fiatSupplyWholeUnits does. A cents-denominated M2
-// (supply_decimals=2) otherwise overstated the cap 100x on those two
-// surfaces while the chart stayed correct.
+// TestFiatMarketCap_HonoursSupplyDecimals — the listing (fiatMarketCapUSD) and global
+// (populateFiatView) market caps must scale catalogue supply by 10^supply_decimals exactly as
+// the chart's fiatSupplyWholeUnits does; a cents-denominated M2 (supply_decimals=2) would
+// otherwise be overstated 100x on those two surfaces.
 func TestFiatMarketCap_HonoursSupplyDecimals(t *testing.T) {
 	vc := &currency.VerifiedCurrency{
 		Ticker:            "USD",
