@@ -42,11 +42,9 @@ type BackfillOptions struct {
 
 // Backfill walks every configured feed's AnswerUpdated logs across the block range and emits one
 // OracleUpdate per historical round. Feeds are walked sequentially to keep the RPC budget
-// predictable and avoid hammering one endpoint.
-//
-// out is CLOSED on completion or error so callers can range over it. Per-chunk errors are logged
-// and counted but do not stop the walk; the first hard error (e.g. RPC down for over a minute) is
-// returned after the close, letting callers tell "completed with gaps" from "completed cleanly".
+// predictable. out is CLOSED on completion or error so callers can range over it. Per-chunk errors
+// are logged and counted but do not stop the walk; the first hard error (e.g. RPC down for over a
+// minute) is returned after the close, so callers can tell "completed with gaps" from clean.
 func (p *Poller) Backfill(ctx context.Context, pairs []canonical.Pair, opts BackfillOptions, out chan<- canonical.OracleUpdate) error {
 	defer close(out)
 

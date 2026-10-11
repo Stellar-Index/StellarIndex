@@ -2,13 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package chops holds the stellarindex-ops ClickHouse-lake subcommands (named chops, not
-// clickhouse, so the import does not shadow internal/storage/clickhouse): the lake backfill,
-// gate, reproject and rebuild tools, the classic-movement backfill, the projected-source
-// catch-up, and the completeness, reconciliation, contiguity, hash-chain and network-state
-// verifiers. The re-derivation helpers they share (reconciliation_catalogue.go,
-// gated_recon_seed.go) live here too.
-//
-// cmd/stellarindex-ops main.go's dispatch table calls Run below.
+// clickhouse, so the import does not shadow internal/storage/clickhouse): the lake backfill, gate,
+// reproject and rebuild tools, the projected-source catch-up, and the completeness,
+// reconciliation, contiguity, hash-chain and network-state verifiers, plus their shared
+// re-derivation helpers. cmd/stellarindex-ops main.go's dispatch table calls Run below.
 package chops
 
 import (
@@ -16,10 +13,8 @@ import (
 )
 
 // Run is the package's entry point; see discovery.Run for the calling convention. args[0] is the
-// subcommand verb, args[1:] its flags.
-//
-// Dispatch is split by role, which keeps each switch under the gocyclo ceiling: lake-mutating
-// verbs rewrite lake or served data, while the verifiers touch no trade or event row.
+// subcommand verb, args[1:] its flags. Dispatch is split by role to keep each switch under the
+// gocyclo ceiling: lake-mutating verbs rewrite lake or served data; verifiers touch no row.
 func Run(args []string) error {
 	if fn, ok := lakeMutatorVerb(args[0]); ok {
 		return fn(args[1:])

@@ -97,8 +97,8 @@ type apiError struct {
 // `Base -> <symbol>` (USD -> EUR = 0.92 means 1 USD buys 0.92 EUR), so rates are inverted where
 // the pair's base asset matches the venue base.
 //
-// Pairs with crypto bases are silently skipped rather than rejected: the venue quotes only
-// fiat-fiat, and mixed-pair configs are normal because exchange streamers already cover crypto.
+// Pairs with crypto bases are skipped rather than rejected: the venue quotes only fiat-fiat, and
+// mixed-pair configs are normal because exchange streamers already cover crypto.
 func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canonical.Trade, []canonical.OracleUpdate, error) { //nolint:gocognit,funlen // dispatch-heavy; splitting would reduce linearity
 	base := p.Base
 	if base == "" {

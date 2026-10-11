@@ -1,12 +1,9 @@
 // Package frankfurter wraps the ECB-backed Frankfurter REST API
 // (https://frankfurter.dev). scripts/ops/fx-history-backfill uses it to populate fx_quotes with
-// 25+ years of daily fiat rates without a paid Massive API key.
-//
-// It publishes ECB reference rates back to 1999-01-04 for ~32 currencies, daily only. The range
-// endpoint returns one JSON document for [from, to], so a 25-year backfill is one HTTP request.
-//
-// See the forex package doc for the reconciliation against external/ecb. This package does not
-// implement external.Connector.
+// 25+ years of daily fiat rates without a paid Massive API key. It serves ECB reference rates back
+// to 1999-01-04 for ~32 currencies, daily only, and the range endpoint returns one JSON document
+// for [from, to], so a 25-year backfill is one request. See the forex package doc for the
+// reconciliation against external/ecb. This package does not implement external.Connector.
 package frankfurter
 
 import (

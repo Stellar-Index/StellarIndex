@@ -14,9 +14,9 @@ var contiguousLakeTip = clickhouse.ContiguousWatermark
 // resolveBackfillTop resolves a windowed lake backfill's inclusive upper ledger against the lake's
 // CONTIGUOUS tip from `from`, never its raw max: the LiveSink drops whole ledgers under buffer
 // pressure, and a pass across such a hole reports done while the missing ledger contributed
-// nothing, permanently for a target with no MV to re-index it after ch-live-catchup heals the
-// lake. to == 0 targets the contiguous tip; an explicit to above it is refused rather than
-// clamped, so a short pass is never reported as the requested range.
+// nothing (permanently, for a target with no MV to re-index it after ch-live-catchup heals the
+// lake). to == 0 targets the contiguous tip; an explicit to above it is refused, not clamped, so
+// a short pass is never reported as the requested range.
 func resolveBackfillTop(ctx context.Context, chAddr string, from, to uint32) (uint32, error) {
 	tip, err := contiguousLakeTip(ctx, chAddr, from)
 	if err != nil {

@@ -42,11 +42,9 @@ type Streamer struct {
 }
 
 // NewStreamer constructs a Streamer with the supplied pair map and defaults for the rest. Logger
-// defaults to slog.Default().
-//
-// Backoff defaults to 5 s initial, 60 s max. With the healthy-connection reset in wsclient.Loop (a
-// connection alive past wsclient.DefaultHealthyConnectionThreshold rewinds backoff on its next
-// failure), reconnect windows are bounded 5-60 s instead of a 60 s blanket.
+// defaults to slog.Default(). Backoff defaults to 5 s initial, 60 s max; wsclient.Loop rewinds it
+// after a connection outlives wsclient.DefaultHealthyConnectionThreshold, so reconnect windows
+// stay within 5-60 s.
 func NewStreamer(pairMap map[string]canonical.Pair) *Streamer {
 	return &Streamer{
 		PairMap:        pairMap,
@@ -65,10 +63,8 @@ func (s *Streamer) Class() external.Class { return external.ClassExchange }
 // Start implements external.Streamer. It connects to the combined stream for the requested pairs
 // and emits canonical.Trade values until ctx is cancelled, reconnecting with bounded exponential
 // backoff on dropped connections; only persistent configuration errors (empty pair list,
-// unparseable URL) return through Start itself.
-//
-// Empty `pairs` is rejected because Binance requires explicit subscription; the caller passes the
-// pair set (e.g. DefaultPairList).
+// unparseable URL) return through Start itself. Empty `pairs` is rejected because Binance
+// requires explicit subscription.
 func (s *Streamer) Start(ctx context.Context, pairs []canonical.Pair) (<-chan canonical.Trade, error) {
 	if len(pairs) == 0 {
 		return nil, errors.New("binance: pairs required — auto-enumeration not yet supported")
@@ -142,11 +138,10 @@ func (s *Streamer) symbolsFor(pairs []canonical.Pair) ([]string, error) {
 	return out, nil
 }
 
-// buildStreamURL turns Binance symbols into the combined-stream URL:
+// buildStreamURL turns Binance symbols into the combined-stream URL, lowercased per Binance
+// convention (the wire-side Symbol arrives uppercase):
 //
 //	wss://stream.binance.com:9443/stream?streams=xlmusdt@aggTrade/btcusdt@aggTrade
-//
-// Symbols are lowercased in the URL per Binance convention; the wire-side Symbol arrives uppercase.
 func (s *Streamer) buildStreamURL(symbols []string) (string, error) {
 	if s.Endpoint == "" {
 		s.Endpoint = WSEndpoint

@@ -13,18 +13,14 @@ import (
 // buildDashboardSender picks the mail transport the dashboard auth flow
 // (and, through the bundle, the public signup flow) sends through.
 //
-// An unset / empty / blank-only Resend credential wires
-// notify.UnconfiguredSender, whose every Send is an error: the
-// login handler refuses with 503 and a counted failure, and signup reports
-// email_verification_sent:false. Configured suppressed addresses are then
-// filtered by notify.SuppressingSender.
+// An unset or blank Resend credential wires notify.UnconfiguredSender, whose every Send is an
+// error: login refuses with 503 and a counted failure, and signup reports
+// email_verification_sent:false. Suppressed addresses are filtered by notify.SuppressingSender.
 //
-// This deliberately does NOT refuse to boot: the dashboard is one surface
-// of the API, and a missing mail credential must not take down price
-// serving with it. Passkey sign-in and existing sessions keep working.
+// This deliberately does NOT refuse to boot: a missing mail credential must not take down price
+// serving. Passkey sign-in and existing sessions keep working.
 //
-// Only the NAME of the env var is ever logged — never the value, nor any
-// part of it.
+// Only the NAME of the env var is ever logged, never the value or any part of it.
 func buildDashboardSender(cfg config.DashboardConfig, logger *slog.Logger) (notify.Sender, error) {
 	inner, err := buildDashboardTransport(cfg, logger)
 	if err != nil {

@@ -1,14 +1,11 @@
 // Package bitstamp streams live trades from Bitstamp's public WebSocket API, adding EUR/GBP depth
 // to the XLM coverage Kraken provides.
 //
-// Differences from Kraken that shape the code:
-//
-//   - One subscribe message per channel, sent sequentially after connect.
-//   - Channel naming is "live_trades_xlmusd" (lowercase, concatenated).
-//   - Only the string forms (price_str, amount_str) are used: no floats on the price path (ADR-0003).
-//   - Microtimestamp is stringified microseconds since epoch.
-//   - Roughly hourly the server sends `bts:request_reconnect`; we close the connection and the
-//     backoff reconnect picks up.
+// Differences from Kraken that shape the code: one subscribe message per channel, sent
+// sequentially after connect; channels are "live_trades_xlmusd" (lowercase, concatenated); only
+// the string forms (price_str, amount_str) are used, so no floats touch the price path (ADR-0003);
+// Microtimestamp is stringified microseconds since epoch; and roughly hourly the server sends
+// `bts:request_reconnect`, on which we close the connection and the backoff reconnect picks up.
 //
 // Wire format reference: https://www.bitstamp.net/websocket/v2/
 package bitstamp

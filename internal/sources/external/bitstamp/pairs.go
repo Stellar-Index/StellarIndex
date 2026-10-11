@@ -9,13 +9,9 @@ import (
 
 // DefaultPairs returns the Bitstamp symbol to canonical.Pair map for the default markets.
 // Symbols are lowercase concatenated ("xlmusd"); the streamer adds the "live_trades_" channel
-// prefix when subscribing.
-//
-// Coverage rationale:
-//   - XLM/USD, XLM/EUR, XLM/GBP: EUR/GBP quotes Kraken also covers, so two venues corroborate.
-//   - XLM/BTC: deep European-retail BTC-pair XLM liquidity.
-//   - BTC/USD, ETH/USD: reference anchors; BTC/EUR: European depth for triangulation.
-//   - Top-cap globals against USD for cross-venue VWAP coverage.
+// prefix when subscribing. XLM EUR/GBP quotes overlap Kraken so two venues corroborate; XLM/BTC
+// has deep European-retail liquidity; BTC/USD and ETH/USD are reference anchors, BTC/EUR gives
+// European depth for triangulation, and top-cap globals against USD widen cross-venue VWAP.
 func DefaultPairs() (map[string]canonical.Pair, error) {
 	xlm, err := canonical.NewCryptoAsset("XLM")
 	if err != nil {

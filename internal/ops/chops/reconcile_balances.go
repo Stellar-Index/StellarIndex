@@ -432,10 +432,9 @@ func clampExitCode(n int) int {
 // stderr. It fails a run on mismatches, on an error rate above -max-error-rate, on verifying zero
 // accounts or fewer than requested (either mode), and on staleMergedHeld.
 //
-// errored counts our-side (ClickHouse) failures only; Horizon outages are excluded. requested is
-// the intended account count, n the results produced (fewer when cancelled), and verified the
-// MATCH or MISMATCH count. staleMergedHeld counts accounts Horizon reports gone that we still
-// hold funded.
+// errored counts our-side (ClickHouse) failures only; Horizon outages are excluded. n is the
+// results produced (fewer than requested when cancelled), verified the MATCH or MISMATCH count,
+// and staleMergedHeld the accounts Horizon reports gone that we still hold funded.
 func reconcileExitError(mismatches, errored, n, requested, verified int, maxErrorRate float64, staleMergedHeld int) (reason string, err error) {
 	// Too many OUR-side errors ⟹ verified nothing reliable; fail even at
 	// zero mismatches.

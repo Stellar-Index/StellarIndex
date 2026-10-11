@@ -22,10 +22,8 @@ import (
 
 // usdVolumeRestamp is the corrective write half of verify-usd-volume. -tier picks the repair:
 // exact (SQL identity), xlm-base and xlm-quote (re-derived in Go from prices_1m), or cex-fx (from
-// fx_quotes).
-//
-// Every tier is a dry run by default, refuses to run over the live ledgerstream cursor (one
-// writer) unless -allow-live-overlap, and is reversible through usd_volume_restamp_log. An
+// fx_quotes). Every tier is a dry run by default, refuses to run over the live ledgerstream cursor
+// (one writer) unless -allow-live-overlap, and is reversible through usd_volume_restamp_log. An
 // unpriceable row is left as is, never blanked or estimated. Token/token pairs are excluded
 // because their only rate is a counterparty-authored bridge.
 func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse, validate the tier's flag set, open+wire the store, run the live-overlap guard, dispatch — splitting scatters each guard away from the flag it guards.

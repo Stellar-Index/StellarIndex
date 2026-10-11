@@ -101,9 +101,9 @@ type rateRow struct {
 // PollOnce implements external.Poller. One GET pulls the day's reference rates and emits one
 // OracleUpdate per (currency, EUR) pair matching the configured fiat list.
 //
-// Pair filtering: we emit for currencies appearing on either side of some configured pair, not
-// by exact combo as the aggregator pollers do, because ECB is "EUR vs N currencies" and an
-// operator who configures XLM/EUR still wants USD/EUR to triangulate through.
+// Pair filtering: we emit for currencies on either side of some configured pair, not by exact
+// combo, because ECB is "EUR vs N currencies" and an operator who configures XLM/EUR still wants
+// USD/EUR to triangulate through.
 func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canonical.Trade, []canonical.OracleUpdate, error) { //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitting would reduce linearity
 	endpoint := p.Endpoint
 	if endpoint == "" {

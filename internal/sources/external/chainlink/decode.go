@@ -13,9 +13,9 @@ import (
 //
 //	(uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
 //
-// Every element occupies a 32-byte ABI word (even uint80), so the response is exactly
-// 5 x 32 = 160 bytes = 320 hex chars plus the 0x prefix. answeredInRound is decoded so the poller
-// can refuse a carried-forward round (answeredInRound < roundId).
+// Every element occupies a 32-byte ABI word (even uint80), so the response is exactly 160 bytes
+// (320 hex chars plus 0x). answeredInRound is decoded so the poller can refuse a carried-forward
+// round (answeredInRound < roundId).
 
 // maxPlausibleUpdatedAtUnix caps the feed-reported updatedAt (Unix seconds) before any clock
 // comparison. A value beyond the int64/timestamptz range would wrap NEGATIVE in the int64() cast
@@ -23,10 +23,9 @@ import (
 const maxPlausibleUpdatedAtUnix = 10_000_000_000 // ~year 2286
 
 // maxUpdatedAtFutureSkew is how far past the poller's own clock a feed-reported updatedAt may sit.
-// Chainlink input is not ledger-anchored, so the poller clock is the only present-time anchor. A
-// future-dated row is refused rather than clamped: it would win every "latest" read for the pair
-// and drive the staleness gauge negative. Ethereum block timestamps never lead real time, so this
-// only absorbs host clock skew.
+// The poller clock is the only present-time anchor here. A future-dated row is refused, not
+// clamped: it would win every "latest" read for the pair and drive the staleness gauge negative.
+// Ethereum block timestamps never lead real time, so this only absorbs host clock skew.
 const maxUpdatedAtFutureSkew = 5 * time.Minute
 
 // checkUpdatedAt validates a raw feed-reported updatedAt against the
@@ -52,11 +51,10 @@ func decodeLatestRoundData(rawHex, feedAddress string, now time.Time) (Round, er
 		return Round{}, fmt.Errorf("%w: latestRoundData expected 160 bytes, got %d", ErrMalformedResult, len(bytes))
 	}
 
-	// roundId is a uint80 padded to 32 bytes; read the FULL 10 bytes (22..32 of word 0). The proxy
-	// roundId is (phaseId<<64)|aggregatorRoundId, and on a phase upgrade the low 64 bits reset
-	// while phaseId increments. Dedup keyed on the low 64 bits would then see round=1 <= prev and
-	// silently stop emitting; the full value stays monotonic. The storage PK is idempotent, so a
-	// re-emit at a phase boundary is safe.
+	// Read the FULL 10-byte uint80 roundId (22..32 of word 0). The proxy roundId is
+	// (phaseId<<64)|aggregatorRoundId and the low 64 bits reset on a phase upgrade, so dedup on them
+	// would see round=1 <= prev and silently stop emitting; the full value stays monotonic. The
+	// storage PK is idempotent, so a re-emit at a phase boundary is safe.
 	roundID := decodeRoundID(bytes[22:32])
 
 	// answer — int256, two's complement, in word 1.
@@ -84,13 +82,11 @@ func decodeLatestRoundData(rawHex, feedAddress string, now time.Time) (Round, er
 	}, nil
 }
 
-// decodeAnswerUpdatedLog parses one eth_getLogs entry from
-// AggregatorV3's AnswerUpdated event. The event is:
+// decodeAnswerUpdatedLog parses one eth_getLogs entry from AggregatorV3's AnswerUpdated event:
 //
 //	event AnswerUpdated(int256 indexed current, uint256 indexed roundId, uint256 updatedAt)
 //
-// Topics: [topic0=hash, topic1=current, topic2=roundId]; data: [updatedAt (uint256)]. One log row
-// yields one Round, as for decodeLatestRoundData.
+// Topics are [hash, current, roundId] and data is [updatedAt]; one log yields one Round.
 func decodeAnswerUpdatedLog(entry LogEntry, now time.Time) (Round, error) {
 	if len(entry.Topics) < 3 {
 		return Round{}, fmt.Errorf("%w: AnswerUpdated expected ≥3 topics, got %d", ErrMalformedResult, len(entry.Topics))

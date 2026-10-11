@@ -20,7 +20,7 @@ import (
 // The list is read from stellar/dashboard common/lumens.js: the accounts table plus
 // networkUpgradeReserveAccount, but not voidAccount, the burn address.
 //
-// The parser fails closed into skipped (no verdict) on a missing or malformed block, any row
+// The parser fails closed into skipped (no verdict) on a missing or malformed block, a row
 // outside the key: "G..." grammar, a missing upgrade-reserve constant, or more than
 // maxPlausibleReserveRetirements retirements at once.
 

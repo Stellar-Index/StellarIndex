@@ -40,10 +40,9 @@ import (
 //
 // Rows are IDENTICAL to the live projector's (same decoder registry, same pipeline.HandleEvent
 // sink) and ON CONFLICT DO NOTHING makes the two writers idempotent against each other.
-//
-// ONE WRITER: it never touches the live projector's cursor and refuses to run while that cursor is
-// inside [-from,-to] (checkLiveCursorGuard) unless -allow-live-overlap, which stays row-safe but
-// is two writers racing one range. Per-window ingestion_cursors checkpoints make -resume exact.
+// ONE WRITER: it never touches the live projector's cursor and refuses to run while that cursor
+// is inside [-from,-to] (checkLiveCursorGuard) unless -allow-live-overlap, which stays row-safe
+// but races two writers over one range. Per-window ingestion_cursors checkpoints make -resume exact.
 func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: parse+validate, build the live decoder, the live-cursor guard, run, report — splitting scatters the guard rationale away from its call site.
 	fs, gate := opsutil.NewMutatingFlagSet("projected-rebuild")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -405,9 +404,9 @@ type ProjectedRebuildOptions struct {
 // emitted and how many failed to insert. A non-zero failure count is inserts a re-run can still
 // land, so the caller must not checkpoint the window (see [checkpointWindow]).
 //
-// A *[pipeline.TradeDroppedError] is counted separately ([projectedRebuildCounters.permanentDrops])
-// and does not hold the window, since it fails identically on re-run and the live projector skips
-// it too. A failed output never stops the loop; the row's other outputs still reach the sink.
+// A *[pipeline.TradeDroppedError] is counted separately and does not hold the window, since it
+// fails identically on re-run and the live projector skips it too. A failed output never stops the
+// loop; the row's other outputs still reach the sink.
 func applyProjectedEvent(
 	ctx context.Context,
 	opts ProjectedRebuildOptions,

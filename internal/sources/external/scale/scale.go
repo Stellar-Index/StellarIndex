@@ -77,9 +77,8 @@ func isDigits(s string) bool {
 // FloatToScaledInt converts a non-negative float to an integer scaled to
 // decimals. Rejects negatives + NaN.
 //
-// It formats to EXACTLY `decimals` places so strconv.FormatFloat rounds to nearest; formatting
-// `decimals+2` places and truncating inside DecimalStringToScaledInt would bias every value
-// downward, the same one-signed bias InvertScaled's rounding removes (ADR-0003: no biased
+// It formats to EXACTLY `decimals` places so FormatFloat rounds to nearest; formatting more and
+// truncating in DecimalStringToScaledInt would bias every value downward (ADR-0003: no biased
 // estimator in the money path).
 func FloatToScaledInt(v float64, decimals int) (*big.Int, error) {
 	if v < 0 || v != v {
@@ -114,10 +113,9 @@ func SciDecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error)
 // 10^(2*decimals) / v, ROUNDED HALF-UP. The FX pollers use it to flip a vendor's "1 base = X
 // quote" rate into the canonical "price of quote-currency in base units". v must be > 0.
 //
-// The rounding is the point: a plain Div truncates toward zero, so every inverted rate lands at or
-// below the true value, a one-signed bias across every poll (ADR-0003: exact big.Int arithmetic,
-// no silent truncation). The formula mirrors [redstone.reciprocalAtScale]; the two must not
-// disagree. It is the srcDecimals == dstDecimals case of [InvertScaledToDecimals].
+// The rounding is the point: a plain Div truncates toward zero, a one-signed bias on every poll
+// (ADR-0003). The formula mirrors [redstone.reciprocalAtScale]; the two must not disagree. It is
+// the srcDecimals == dstDecimals case of [InvertScaledToDecimals].
 func InvertScaled(v *big.Int, decimals int) *big.Int {
 	return InvertScaledToDecimals(v, decimals, decimals)
 }
@@ -126,10 +124,9 @@ func InvertScaled(v *big.Int, decimals int) *big.Int {
 // positive integer scaled at srcDecimals, re-expressed at dstDecimals:
 // round_half_up(10^(srcDecimals+dstDecimals) / v).
 //
-// A weak-currency rate (1 EUR = 25335 VND at 6dp) inverts to a far smaller magnitude, so
-// re-emitting it at the SAME scale leaves one or two significant digits, a ~1.2% quantisation
-// error that exceeds the 50bps divergence threshold this feed polices. dstDecimals widens the
-// output scale without touching the source rate's precision.
+// A weak-currency rate (1 EUR = 25335 VND at 6dp) inverts to a tiny magnitude, so re-emitting it
+// at the SAME scale leaves one or two significant digits, a ~1.2% error that exceeds the 50bps
+// divergence threshold this feed polices. dstDecimals widens the output scale.
 func InvertScaledToDecimals(v *big.Int, srcDecimals, dstDecimals int) *big.Int {
 	num := Pow10(srcDecimals + dstDecimals)
 	// round half-up = floor((2*num + v) / (2*v)) for v > 0.
@@ -145,8 +142,7 @@ func InvertScaledToDecimals(v *big.Int, srcDecimals, dstDecimals int) *big.Int {
 // collide on purpose and the idempotent insert path dedupes repeat polls.
 //
 // It is deliberately NOT a digest: tx_hash is the dedup identity of persisted rows, so changing
-// the derivation would re-insert history under new identities. Distinct venue prefixes keep
-// cross-venue seeds from colliding within the 64-char window.
+// the derivation re-inserts history. Distinct venue prefixes keep seeds from colliding.
 func SyntheticTxHash(seed string) string {
 	h := hex.EncodeToString([]byte(seed))
 	if len(h) >= 64 {
@@ -182,11 +178,10 @@ const LegacyCandleGranularity = time.Hour
 // symbol is the venue-normalised symbol, closeTs the bucket's close time
 // in the venue's native unit (the value its Trade.Timestamp carries).
 //
-// Candles of different granularities close at the same instant, and tx_hash is the only trades PK
-// column that can tell them apart, so granularity is part of the identity.
-// LegacyCandleGranularity keeps the "<SYM>-BF-<close>" seed byte-for-byte; every other granularity
-// is a SHA-256 over a seed that names it. A symbol whose legacy seed would truncate is refused at
-// every granularity, so representability does not depend on the flag.
+// Candles of different granularities close at the same instant and tx_hash is the only trades PK
+// column that can tell them apart, so granularity is part of the identity. The legacy granularity
+// keeps the "<SYM>-BF-<close>" seed byte-for-byte; others are a SHA-256 over a seed naming it.
+// A symbol whose legacy seed would truncate is refused at every granularity.
 func CandleTxHash(symbol string, closeTs int64, granularity time.Duration) (string, error) {
 	legacy, err := StrictSyntheticTxHash(fmt.Sprintf("%s-BF-%020d", symbol, closeTs))
 	if err != nil || granularity == LegacyCandleGranularity {

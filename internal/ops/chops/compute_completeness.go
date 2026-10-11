@@ -312,8 +312,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	// ── System recognition snapshot (gaps on contracts no source owns) ──
 	//
 	// Refreshed on every run, whatever the -source filter, and before the per-source loop so a
-	// pass that runs out of time still publishes it. An upsert error is joined into the run's
-	// error without stopping the loop.
+	// pass that runs out of time still publishes it. An upsert error never stops the loop.
 	var recSnapErr error
 	if !*skipRecognition && !write {
 		fmt.Fprintf(os.Stderr, "compute-completeness: recognition  unattributed=%d (dry-run: not stored)\n", len(unattributed))
@@ -899,8 +898,7 @@ func (sc projectionScope) empty() bool { return sc.From > sc.To }
 // It is per target because each table's history starts at a different ledger. An empty target
 // floors at genesis, failing closed, so a wiped table reconciles expected>0 against served=0.
 // runFrom can only raise the scope; projectionClaim handles what that excludes. A deleted bottom
-// edge is invisible here (detectFloorLoss catches it); reconciling below the served rows would
-// manufacture false gaps.
+// edge is caught by detectFloorLoss; reconciling below the served rows would invent gaps.
 func targetScope(servedMin uint32, haveServedRows bool, genesis, runFrom, hi uint32) projectionScope {
 	lo := servedMin
 	if !haveServedRows || lo < genesis {
@@ -1220,9 +1218,9 @@ type verdictPublisher interface {
 
 // publishSourceVerdict stores a verdict and, when this run earned the clear, discharges the
 // replay-rewind window in the same transaction, but only if the verdict was stored: the
-// never-regress guard can reject a run with a low -to, and the window must then survive to force
-// the next full run to re-reconcile rewritten rows. The clear is optimistic, so a concurrent
-// replay's re-record also survives.
+// never-regress guard can reject a low -to run, and the window must then survive to force the next
+// full run to re-reconcile rewritten rows. The clear is optimistic, so a concurrent replay's
+// re-record also survives.
 func publishSourceVerdict(ctx context.Context, store verdictPublisher, snap timescale.CompletenessSnapshot, win timescale.ProjectionDirtyWindow, earned bool) (timescale.VerdictPublication, error) {
 	var clearWindow *timescale.DirtyWindowClear
 	if earned {
@@ -1331,8 +1329,7 @@ func eventCensusLoss(src reconSource, genesis uint32, shortfalls []clickhouse.Ev
 // coverage watermark's problem set when the claim refuses an otherwise-clean suffix scan, so the
 // watermark does not read full coverage beside substrate_ok=false. It returns 0 when the claim
 // holds or the scan already found a more precise problem. A clean prior opens the unverified
-// band at prior.tip+1; a missing or failing prior floors at genesis so it is not ignored as
-// below genesis.
+// band at prior.tip+1; a missing or failing prior floors at genesis.
 func lakeCoverageProblem(genesis uint32, scanClean, substrateOK bool, prior priorProjection) uint32 {
 	if substrateOK || !scanClean {
 		return 0
@@ -1442,7 +1439,7 @@ func expectedProjection(ctx context.Context, chStreamer completeness.EventStream
 
 // gatedPrefilter builds the contract-id prefilter for a factory-gated source so the re-derive
 // reads only its gated contracts. The set is a superset of what the decoder can accept in
-// [lo,hi], so counts are unchanged and Matches() stays the final gate:
+// [lo,hi], so counts are unchanged and Matches() stays the final gate. It is the union of:
 //
 //   - (a) the decoder's gate after preseeding to lo (GatedContractSet), plus
 //   - (b) every child the lake announces through hi, walked on a throwaway decoder so the real

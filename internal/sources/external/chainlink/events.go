@@ -2,8 +2,8 @@
 // JSON-RPC reads against the AggregatorV3 contract interface.
 //
 // Unlike internal/divergence/chainlink.go (a synchronous cross-check helper), this is a real ingest
-// source: its own poller goroutine dedupes by roundId and writes canonical.OracleUpdate rows to
-// oracle_updates alongside Reflector / Redstone / Band. See README.md for design rationale.
+// source: its poller dedupes by roundId and writes canonical.OracleUpdate rows to oracle_updates.
+// See README.md for design rationale.
 package chainlink
 
 import (
@@ -65,7 +65,7 @@ const (
 //
 //	event AnswerUpdated(int256 indexed current, uint256 indexed roundId, uint256 updatedAt)
 //
-// `current` and `roundId` are indexed (topics[1], topics[2]); `updatedAt` is in the data field.
+// `current` and `roundId` are topics[1] and topics[2]; `updatedAt` is in the data field.
 const AnswerUpdatedSignature = "AnswerUpdated(int256,uint256,uint256)"
 
 // AnswerUpdatedTopic0 is the keccak256 hash of [AnswerUpdatedSignature],
@@ -181,14 +181,12 @@ func newRoundCache() *roundCache {
 }
 
 // shouldEmit reports whether this (feed, roundId) is strictly greater than the last seen, and if
-// so records it. It combines wouldEmit + commitEmit (poller.go) for callers and tests that do not
-// need the split; the production poll path splits them so a failure between check and round build
-// cannot strand the round.
+// so records it. It combines wouldEmit + commitEmit (poller.go); the production poll path splits
+// them so a failure between check and round build cannot strand the round.
 //
-// roundID is the FULL uint80 proxy round id (see decodeRoundID). Comparing the wide value, not the
-// low 64 bits, keeps emission alive across a proxy phase upgrade: aggregatorRoundId resets to ~1
-// but phaseId increments, whereas a low-64-bit key would wedge the feed until restart. A nil
-// roundID is treated as zero.
+// roundID is the FULL uint80 proxy round id (see decodeRoundID). Comparing the wide value keeps
+// emission alive across a proxy phase upgrade (aggregatorRoundId resets to ~1 but phaseId
+// increments); a low-64-bit key would wedge the feed until restart. A nil roundID is zero.
 func (c *roundCache) shouldEmit(feedAddr string, roundID *big.Int) bool {
 	if !c.wouldEmit(feedAddr, roundID) {
 		return false

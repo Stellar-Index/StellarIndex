@@ -65,11 +65,10 @@ func (r StoreHistoryReader) HistoryPointsInRange(ctx context.Context, pair canon
 }
 
 // StoreCoverageFloorReader adapts *timescale.Store to v1.CoverageFloorReader. It is separate from
-// [StoreHistoryReader] on purpose: the serving reader sits behind a 2-minute SWR cache keyed
-// per method, while the floor has its own TTL memo in the handler keyed by the pair's
-// alias-canonical identity, so layering one over the other would cache the same answer twice under
-// different keys. An unknown granularity surfaces as the store's validation error, which the
-// handler renders as "no signal".
+// [StoreHistoryReader] on purpose: the serving reader sits behind a 2-minute SWR cache keyed per
+// method, while the floor has its own TTL memo in the handler keyed by the pair's alias-canonical
+// identity, so layering them would cache one answer twice under different keys. An unknown
+// granularity surfaces as the store's validation error, which the handler renders as "no signal".
 type StoreCoverageFloorReader struct{ S *timescale.Store }
 
 func (r StoreCoverageFloorReader) EarliestBucket(ctx context.Context, pair canonical.Pair, granularity string, from, to time.Time) (time.Time, bool, error) {
@@ -100,13 +99,11 @@ func (r StoreHistoryReader) TWAPPointsInRange(ctx context.Context, pair canonica
 	return convertHistoryPoints(rows), nil
 }
 
-// OHLCSeries adapts [timescale.Store.OHLCSeries] /
-// [timescale.Store.OHLCSeriesReBucketed] to the v1.HistoryReader
-// interface. The interval → view decision is [timescale.OHLCRoutes]: a native row reads its own
-// CAGG, a folded row re-buckets a finer one (5m/30m from prices_1m, 2h/4h/12h from prices_1h, 3d
-// from prices_1d, 2w from prices_1w). Nothing is decided here, so the reader cannot route an
-// interval the store's fold allow-list has not declared. Unknown intervals propagate as
-// v1.ErrUnknownGranularity.
+// OHLCSeries adapts [timescale.Store.OHLCSeries] / [timescale.Store.OHLCSeriesReBucketed] to
+// v1.HistoryReader. The interval → view decision is [timescale.OHLCRoutes]: a native row reads
+// its own CAGG, a folded row re-buckets a finer one (e.g. 5m/30m from prices_1m, 3d from
+// prices_1d). Nothing is decided here, so the reader cannot route an interval the store's fold
+// allow-list has not declared. Unknown intervals propagate as v1.ErrUnknownGranularity.
 func (r StoreHistoryReader) OHLCSeries(ctx context.Context, pair canonical.Pair, interval string, from, to time.Time, limit int) ([]v1.OHLCSeriesBar, error) {
 	route, ok := timescale.OHLCRouteFor(interval)
 	if !ok {

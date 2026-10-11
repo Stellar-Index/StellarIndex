@@ -13,10 +13,10 @@ import (
 // chInstanceBackfill fills stellar.contract_instance_changes (the per-contract instance-executable
 // timeline behind the explorer's code-history read) from ledger_entry_changes history in windowed,
 // resumable INSERT...SELECT chunks. The contract_instance_changes_mv view covers everything ingested
-// after the DDL applies; this covers the history behind it. It MUST run to completion promptly after
-// the DDL, because the reader trusts a present, non-empty index as complete. Same cautions as the
-// sibling backfills: serialize, run under run-heavy-job.sh, resume with the printed -from, and a
-// bare invocation is refused without an explicit -from/-to or -full.
+// after the DDL applies; this covers the history behind it, and MUST run to completion promptly
+// because the reader trusts a present, non-empty index as complete. Cautions as for the sibling
+// backfills: serialize, run under run-heavy-job.sh, resume with the printed -from; a bare
+// invocation is refused without -from/-to or -full.
 func chInstanceBackfill(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("ch-instance-backfill")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
@@ -78,12 +78,11 @@ var (
 	resolveInstanceTop      = resolveBackfillTop
 )
 
-// runInstanceBackfill fills [from, last] and records the genesis watermark through last only when
-// that claim is provable; otherwise it records nothing and the reader keeps its scan (a wrong "no
-// history" is worse than a slow one). The table's only sources are this backfill and its view, so
-// the mark needs: a genesis start, no explicit -to, the same settled view before and after the run,
-// and a contiguous tip at or above the raw lake tip read first. confirm gets the resolved top and
-// reports whether to write.
+// runInstanceBackfill fills [from, last] and records the genesis watermark only when that claim is
+// provable; otherwise the reader keeps its scan (a wrong "no history" is worse than a slow one).
+// The mark needs: a genesis start, no explicit -to, the same settled view before and after the
+// run, and a contiguous tip at or above the raw lake tip read first. confirm gets the resolved top
+// and reports whether to write.
 func runInstanceBackfill(ctx context.Context, addr, table string, from, toFlag, window uint32,
 	confirm func(last uint32) bool, logf func(string, ...any),
 ) error {

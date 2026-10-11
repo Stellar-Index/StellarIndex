@@ -13,12 +13,10 @@ import (
 // tx_hash_index_mv materialized view indexes everything ingested after the schema deploy; this
 // covers the ~10.2B rows behind it. Pure ClickHouse-side SQL, no galexie walk or config needed.
 //
-// Run the full-history backfill alone (not beside other heavy CH jobs) and under the root-<2G
-// watchdog, since heavy CH load can wedge the CH log channel on the small root partition. Each
-// window prints a resume point; on interrupt or failure re-run with that -from.
-//
-// The flag defaults (-from 2 / -to 0=tip) would make a bare invocation start the whole backfill,
-// so the run needs an explicit -from, -to, or -full.
+// Run the full-history backfill alone, under the root-<2G watchdog, since heavy CH load can wedge
+// the CH log channel on the small root partition. Each window prints a resume point; re-run with
+// that -from after an interrupt. The flag defaults (-from 2 / -to 0=tip) would make a bare
+// invocation start the whole backfill, so the run needs an explicit -from, -to, or -full.
 type txIndexBackfillPlan struct {
 	chAddr string
 	from   uint32

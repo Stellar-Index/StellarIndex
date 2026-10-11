@@ -30,7 +30,7 @@ type Currency struct {
 //
 // History7d is the per-ticker daily series, 7 entries oldest to newest, of the price of 1 USD in
 // that currency. It is empty until the history backfill completes or when upstream rejected the
-// historical fetches (currency-api sometimes 404s for less-tracked tickers on weekends/holidays).
+// historical fetches (currency-api sometimes 404s for less-tracked tickers).
 type Snapshot struct {
 	Currencies  []Currency
 	PublishedAt time.Time
@@ -84,10 +84,9 @@ const anchorTicker = "USD"
 // ticker for deterministic output. USD itself is excluded (rate 1.0 is implied), as is any code
 // without a name. A nil `history` installs cleanly with an empty History7d map.
 //
-// The join is CASE-INSENSITIVE on the currency code: the primary client lower-cases both maps,
-// the ECB standby keys on the XML attribute (UPPER) and refreshOnce re-keys reused names by Ticker
-// (UPPER). An exact-case lookup would match nothing on exactly the degraded refreshes and collapse
-// the snapshot to the synthetic USD row.
+// The join is CASE-INSENSITIVE on the currency code: the primary client lower-cases both maps
+// while the ECB standby and re-keyed reused names are UPPER. An exact-case lookup would match
+// nothing on exactly the degraded refreshes and collapse the snapshot to the synthetic USD row.
 func buildSnapshot(rates map[string]float64, names map[string]string, publishedAt, fetchedAt time.Time, history map[string][]HistoryPoint, circulation map[string]CirculationEntry) *Snapshot {
 	rates, names = lowerKeyed(rates), lowerKeyed(names)
 	out := make([]Currency, 0, len(rates)+1)

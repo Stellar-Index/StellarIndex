@@ -19,15 +19,12 @@ import (
 
 // /v1/assets listing snapshots — the boot seed.
 //
-// The prewarm cannot win the startup race: the first listing request arrives before a cold
-// fill can finish. So the last-good page-set outlives the process: each prewarm cycle writes
-// its listing keys here and the next boot seeds [v1.CachedAssetsReader] before the listener
-// starts. The first request then takes the stale-while-revalidate branch with an honest
-// `flags.stale`.
+// The prewarm cannot win the startup race, so each prewarm cycle writes its last-good page-set
+// here and the next boot seeds [v1.CachedAssetsReader] before the listener starts. The first
+// request then takes the stale-while-revalidate branch with an honest `flags.stale`.
 //
-// The key family is declared here, not in internal/cachekeys (ADR-0007), because it has a sole
-// reader and writer; it keeps a named key type, a single builder and a golden-string test.
-// Promote it when a second binary needs to read it.
+// The key family lives here, not in internal/cachekeys (ADR-0007), because it has a sole reader
+// and writer; promote it when a second binary needs to read it.
 
 // assetsListingSnapshotKey is the typed Redis key for the
 // `assets:listing-snapshot:<schema>:<order>:<limit>` family.
@@ -36,10 +33,9 @@ type assetsListingSnapshotKey string
 // String returns the wire-format key.
 func (k assetsListingSnapshotKey) String() string { return string(k) }
 
-// assetsListingSnapshotRedisKey returns the snapshot key for one
-// warmed listing variant. The schema fingerprint is in the key, not the payload, so a binary
-// with a different [timescale.AssetRow] shape finds nothing instead of decoding rows whose
-// added fields would silently read as zero values. Superseded keys expire on
+// assetsListingSnapshotRedisKey returns the snapshot key for one warmed listing variant. The
+// schema fingerprint is in the key, so a binary with a different [timescale.AssetRow] shape
+// finds nothing rather than decoding added fields as zero values; old keys expire on
 // [assetsListingSnapshotTTL].
 func assetsListingSnapshotRedisKey(limit int, order timescale.AssetsOrder) assetsListingSnapshotKey {
 	return assetsListingSnapshotKey(fmt.Sprintf("assets:listing-snapshot:%s:%d:%d",
@@ -55,9 +51,8 @@ const assetsListingSnapshotTTL = 30 * time.Minute
 // publish. Beyond it the seed is refused and the request pays the cold query.
 //
 // The rows carry prices and volumes, so the bound is a freshness decision: 10 minutes matches
-// the longest horizon the handler accepts for its own enrichment reads (classicSupplyTTL,
-// sep1ImagesTTL), and covers any realistic restart while refusing to republish valuations
-// from a long outage.
+// the longest horizon the handler accepts for its own enrichment reads and refuses to
+// republish valuations from a long outage.
 const assetsListingSeedMaxAge = 10 * time.Minute
 
 // assetsListingSnapshotBudget bounds the whole boot-seed read. It runs
@@ -144,12 +139,10 @@ func (s *assetsListingSnapshots) load(
 // were seeded.
 //
 // Call it before the HTTP listener starts; a seed that races the listener loses. It is bounded
-// by [assetsListingSnapshotBudget] so it can be synchronous. It seeds exactly
-// [assetListingPrewarmOptions], and key derivation is shared with the handler
-// (v1.CachedAssetsReader.SeedListing → listAssetsCacheKey).
-//
-// Zero seeded out of a non-empty request set is a real signal (cold Redis, first deploy,
-// schema change or a broken path), so the caller logs (seeded, requested).
+// by [assetsListingSnapshotBudget] so it can be synchronous, and seeds exactly
+// [assetListingPrewarmOptions] through the handler's own key derivation. Zero seeded out of a
+// non-empty request set is a real signal (cold Redis, schema change, broken path), so the
+// caller logs (seeded, requested).
 func seedAssetListingsFromSnapshots(
 	ctx context.Context, logger *slog.Logger, reader *v1.CachedAssetsReader, snaps *assetsListingSnapshots,
 ) (seeded, requested int) {
@@ -183,8 +176,8 @@ func seedAssetListingsFromSnapshots(
 // exported shape (field names + types, in declaration order).
 //
 // JSON is forgiving: a field added to AssetRow would deserialise to its zero value and be
-// served as data. Keying on the shape means a binary with a different AssetRow reads a
-// different key and pays the cold fill. Computed once; it is invariant for a build.
+// served as data. Keying on the shape sends a different AssetRow to a different key and the
+// cold fill. Computed once; it is invariant for a build.
 var assetRowSchemaFingerprint = func() func() string {
 	t := reflect.TypeOf(timescale.AssetRow{})
 	h := sha256.New()

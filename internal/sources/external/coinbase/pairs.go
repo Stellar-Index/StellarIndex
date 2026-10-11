@@ -8,10 +8,9 @@ import (
 
 // DefaultPairs returns the Coinbase Exchange product to canonical.Pair map for the default set.
 // Product IDs use "-" separators ("XLM-USD"). XLM-USD is the flagship pair (US regulated-venue XLM
-// reference); BTC-USD and ETH-USD are anchors; the top-cap USD products round out the triangulation
-// and cross-venue VWAP graph.
-//
-// DASH (delisted) and TRX (never listed) are absent; the Kraken/Bitstamp/Binance venues cover both.
+// reference); BTC-USD and ETH-USD are anchors; the top-cap USD products round out the
+// triangulation and cross-venue VWAP graph. DASH (delisted) and TRX (never listed) are absent;
+// the Kraken/Bitstamp/Binance venues cover both.
 func DefaultPairs() (map[string]canonical.Pair, error) {
 	xlm, err := canonical.NewCryptoAsset("XLM")
 	if err != nil {
@@ -57,11 +56,11 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 		quote  canonical.Asset
 	}{
 		{"XLM-USD", xlm, usd},
-		// BTC + ETH cross-fiat: without Coinbase, BTC-EUR and ETH-EUR are single-source (Bitstamp)
-		// and the ADR-0019 phase-2 freeze fires on them permanently; these give VWAP multi-source
-		// corroboration. XLM-EUR likewise: with only two venues, one going quiet dropped it to
-		// source_count=1, a freeze signal. Coinbase has no XLM-GBP product, so XLM/GBP still relies
-		// on kraken + bitstamp + the triangulated USD/GBP route.
+		// Cross-fiat: without Coinbase, BTC-EUR and ETH-EUR are single-source (Bitstamp) and the
+		// ADR-0019 phase-2 freeze fires permanently; this gives VWAP multi-source corroboration.
+		// XLM-EUR likewise: with two venues, one going quiet drops it to source_count=1, a freeze
+		// signal. There is no XLM-GBP product, so XLM/GBP relies on kraken + bitstamp + the
+		// triangulated USD/GBP route.
 		{"XLM-EUR", xlm, eur},
 		{"BTC-USD", btc, usd},
 		{"BTC-EUR", btc, eur},

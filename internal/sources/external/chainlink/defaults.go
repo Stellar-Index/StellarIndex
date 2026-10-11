@@ -17,13 +17,11 @@ const (
 	DefaultMaxAgeFX     = 76 * time.Hour
 )
 
-// DefaultFeedMap returns the built-in default seed, the sole source of these 6 addresses and
-// their staleness budgets. internal/divergence/chainlink.go derives its default map from this one
-// so the ingest source and the divergence cross-check cannot drift onto different proxies or
-// MaxAge for the same pair. It only applies when [external.chainlink].feed_map is empty.
-//
-// Keys are pair strings, values the (address, decimals, invert) triple, ready for [BuildFeedSet].
-// Decimals=8 throughout. Verified against https://docs.chain.link/data-feeds/price-feeds/addresses.
+// DefaultFeedMap returns the built-in default seed (pair string to address, decimals=8, invert),
+// ready for [BuildFeedSet]. It is the sole source of these addresses and staleness budgets, and
+// internal/divergence/chainlink.go derives its map from it so ingest and the divergence
+// cross-check cannot drift onto different proxies or MaxAge. It applies only when
+// [external.chainlink].feed_map is empty.
 func DefaultFeedMap() map[string]FeedSpec {
 	return map[string]FeedSpec{
 		"crypto:BTC/fiat:USD":  {Address: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", Decimals: 8, MaxAge: DefaultMaxAgeCrypto},
@@ -52,12 +50,10 @@ func DefaultMaxAge(pair string) time.Duration {
 // BuildFeedSet parses operator-supplied feed-map entries (pair string to FeedSpec) into a runtime
 // feed map and the canonical pair list the runner expects. Empty input falls back to
 // [DefaultFeedMap]. A pair string that fails canonical parsing is an error, since a silent skip
-// would hide misconfiguration.
-//
-// Decimals is carried through VERBATIM: an omitted value (0) stays 0, which the Poller reads as
-// "adopt the on-chain decimals()" (decimals.go). Substituting DefaultDecimals would look like an
-// operator-asserted 8 and make the resolver refuse an 18-decimal feed instead of adopting its
-// real scale. MaxAge 0 resolves to [DefaultMaxAge]; a negative one is an error.
+// would hide misconfiguration. Decimals is carried through VERBATIM: an omitted 0 stays 0, which
+// the Poller reads as "adopt the on-chain decimals()" (decimals.go); substituting DefaultDecimals
+// would look operator-asserted and make the resolver refuse an 18-decimal feed. MaxAge 0 resolves
+// to [DefaultMaxAge]; a negative one is an error.
 func BuildFeedSet(operatorMap map[string]FeedSpec) (map[string]FeedSpec, []canonical.Pair, error) {
 	source := operatorMap
 	if len(source) == 0 {

@@ -15,10 +15,10 @@ import (
 // holds the lock.
 //
 // Every rollup cycle runs TRUNCATE(staging) -> fill -> EXCHANGE TABLES on global staging tables.
-// Two processes racing through that have no safe outcome: one can truncate an arm the other is
-// mid-INSERT into, or both can issue the final EXCHANGE. systemd's single-instance guarantee only
-// serializes the timer against itself, not against a manual `stellarindex-ops <job>` run, so the
-// guard lives here. Contention is an error (fail closed), never a block.
+// Two racing processes have no safe outcome: one can truncate an arm the other is mid-INSERT
+// into, or both can issue the final EXCHANGE. systemd only serializes the timer against itself,
+// not against a manual `stellarindex-ops <job>`, so the guard lives here. Contention is an error
+// (fail closed), never a block.
 func acquireRollupLock(job, path string) (func(), error) {
 	path = filepath.Clean(path)
 	dir := filepath.Dir(path)

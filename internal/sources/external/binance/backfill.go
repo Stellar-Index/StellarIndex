@@ -37,8 +37,8 @@ const klineMaxLimit = 1000
 // HTTP call.
 //
 // Pages of up to 1000 candles are fetched serially to respect the venue's rate-limit weight.
-// Trades are NOT deduplicated here; the caller owns the idempotent insert, and TxHash is
-// deterministic from (symbol, close_time_ms) so repeated runs hit the same primary key.
+// Trades are NOT deduplicated here: TxHash is deterministic from (symbol, close_time_ms), so the
+// caller's idempotent insert absorbs repeated runs.
 func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to time.Time, granularity time.Duration) ([]canonical.Trade, error) {
 	if !from.Before(to) {
 		return nil, fmt.Errorf("binance.Backfill: from %v must be before to %v", from, to)

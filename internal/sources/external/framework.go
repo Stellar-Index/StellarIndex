@@ -7,10 +7,11 @@
 //
 //   - [Streamer]   — live WebSocket trade feed (exchange class)
 //   - [Poller]     — periodic REST fetch (aggregator / FX / sovereign)
-//   - [Backfiller] — historical OHLC candles, synthesised to canonical.Trade per bucket (optional; depth
+//   - [Backfiller] — historical OHLC candles, one canonical.Trade per bucket (optional; depth
 //     varies, Kraken caps at 720 intervals)
 //
-// [Registry] holds source class metadata, read by the aggregator at VWAP time to decide contribution.
+// [Registry] holds source class metadata, read by the aggregator at VWAP time to decide
+// contribution.
 package external
 
 import (

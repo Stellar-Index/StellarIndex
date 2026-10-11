@@ -10,13 +10,11 @@ import (
 	"time"
 )
 
-// The lake seams are captured by value when the handlers are built, so a
-// dial that gives up leaves them nil until restart. The window runs before
-// the listener is up, so it must stay well inside the deploy health probe's
-// first attempt (health_grace_seconds); After=clickhouse-server.service
-// covers a co-located reboot race beyond it. Both readers dial concurrently
-// inside the one window, so the listener waits at most
-// clickhouseBootDialBudget in total.
+// The lake seams are captured by value when the handlers are built, so a dial that gives up
+// leaves them nil until restart. The window runs before the listener is up, so it must stay well
+// inside the deploy health probe's first attempt (health_grace_seconds);
+// After=clickhouse-server.service covers a co-located reboot race beyond it. Both readers dial
+// concurrently, so the listener waits at most clickhouseBootDialBudget in total.
 var (
 	clickhouseBootDialBudget     = 7 * time.Second
 	clickhouseBootDialBackoffMin = time.Second

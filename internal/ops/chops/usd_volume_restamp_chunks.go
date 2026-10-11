@@ -501,10 +501,8 @@ const defaultChunkBytesPoll = 30 * time.Second
 //
 // The re-compress is not covered, as its new relation is invisible until commit; the largest
 // chunk's outlasts the alert, which fails safe with one extra ticket (confirm with
-// pg_stat_activity).
-//
-// Fail-soft: a failed poll is skipped, and a never-succeeding one leaves the counter flat, which
-// the alert already covers.
+// pg_stat_activity). A failed poll is skipped; a never-succeeding one leaves the counter flat,
+// which the alert already covers.
 func (w *chunkRestampWalk) watchChunkBytes(ctx context.Context, c timescale.TradeChunk) (stop func()) {
 	poll := w.copts.ChunkBytesPoll
 	if poll <= 0 {

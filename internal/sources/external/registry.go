@@ -8,11 +8,9 @@ import (
 // Registry is the metadata table for every source the aggregator knows, so it can read
 // Registry[trade.Source].Class without importing every source package. A miss falls back to
 // ClassExchange with IncludeInVWAP=false: visible in /v1/sources, fail-closed out of VWAP.
-//
-// Backfill is BackfillPerWASM for on-chain Soroban sources: a replay is admitted only over a range
-// whose every active WASM hash is in internal/wasmaudit/audited_wasm.json, because
-// `update_contract` can change event schemas. Off-chain sources and SDEX are BackfillNoWASM;
-// BackfillUnsafe refuses outright.
+// On-chain Soroban sources are BackfillPerWASM: a replay is admitted only over a range whose every
+// active WASM hash is in internal/wasmaudit/audited_wasm.json, because `update_contract` can
+// change event schemas. Off-chain sources and SDEX are BackfillNoWASM; BackfillUnsafe refuses.
 var Registry = map[string]Metadata{
 	// ─── On-chain exchanges (dispatcher-path; listed here so the
 	// aggregator has a single lookup table) ──────────────────────
@@ -87,14 +85,13 @@ var Registry = map[string]Metadata{
 	"coinbase":         {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM},
 
 	// ─── Institutional FX feeds ──────────────────────────────────
-	// `massive` is the active fiat-FX feed. There is deliberately NO `polygon-forex` entry: it named
-	// the same upstream with IncludeInVWAP:true and would double-count. The forex worker polls
-	// hourly but writes fx_quotes at one row per ticker per UTC day (Truncate(24 * time.Hour)): the
-	// USD anchor behind per-trade usd_volume, /v1/assets fiat pricing and the /v1/chart fiat series.
-	//
+	// `massive` is the active fiat-FX feed; there is deliberately NO `polygon-forex` entry, since it
+	// named the same upstream with IncludeInVWAP:true and would double-count. The forex worker polls
+	// hourly but writes fx_quotes at one row per ticker per UTC day: the USD anchor behind per-trade
+	// usd_volume, /v1/assets fiat pricing and the /v1/chart fiat series.
 	// `exchangeratesapi` (disabled) is NOT a forex-snap fallback: it emits only OracleUpdates, so
 	// FXQuoteAtOrBefore's `trades` arm finds nothing. The only fallback is the ECB standby
-	// (forex.ECBProvider, fx_quotes source "ecb"). forex.OpenExchangeRatesProvider has no row;
+	// (forex.ECBProvider, fx_quotes source "ecb"); forex.OpenExchangeRatesProvider has no row, and
 	// wiring it must add one or the FX-snap class check refuses it. FX pollers stamp 1e6, not the
 	// CEX 1e8 (AmountDecimals:6, for the USD-volume gate). OracleResolution is a trading day: FX
 	// holds through the ~48h weekend close.
