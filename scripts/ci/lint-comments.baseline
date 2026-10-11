@@ -68,10 +68,7 @@ internal/auth/sep10/redisreplay.go	long-block
 internal/auth/signup_ip_throttle.go	long-block
 internal/auth/signup_ip_throttle.go	long-block
 internal/canonical/amount.go	long-block
-internal/canonical/asset_xdr.go	long-block
-internal/canonical/trade.go	long-block
 internal/dispatcher/census.go	long-block
-internal/dispatcher/panic_guard.go	long-block
 internal/divergence/chainlink_decimals.go	long-block
 internal/nettools/ssrf.go	long-block
 internal/ops/accounts/freeze_unfreeze.go	long-block

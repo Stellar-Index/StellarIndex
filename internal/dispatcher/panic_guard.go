@@ -43,9 +43,8 @@ type panicSite struct {
 // seam stops scanning: the NEXT decoder would inherit a broken decoder's
 // events, a misattribution ADR-0033 cannot see.
 //
-// seenCounted says whether bumpEventsSeen already ran (the panic came out of
-// Decode, not Matches); if not, bump it here so the error-rate denominator
-// stays one attempt per error.
+// seenCounted says whether bumpEventsSeen already ran; if not, bump it here so
+// the error-rate denominator stays one attempt per error.
 func (d *Dispatcher) recordDecoderPanic(name string, seenCounted bool, r any, site panicSite) error {
 	if name == "" {
 		name = "unknown"
