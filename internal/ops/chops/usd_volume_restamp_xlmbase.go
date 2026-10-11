@@ -21,16 +21,11 @@ import (
 // Unlike the exact tier (usd_volume_restamp.go), this re-derives an
 // ESTIMATED tier, so its guards differ:
 //
-//   - the value comes from usdVolumeViaXLMBaseAnchor, the function the live
-//     insert path calls, so a restamped row equals a re-inserted one by
-//     construction;
-//   - a row the anchor cannot price is REPORTED, never guessed: the live
-//     quote-side fall-through is the defect being repaired, and committing it
-//     at a high derive_generation would make it permanent;
-//   - the run is bounded, idempotent and resumable (-from/-to days, -slice
-//     windows, -batch UPDATEs, nothing spans a chunk);
-//   - it refuses a range the live ingest tail has not passed
-//     (checkRestampLiveOverlap): one writer, as projected-rebuild enforces.
+//   - the value comes from usdVolumeViaXLMBaseAnchor, which the live insert calls too;
+//   - a row the anchor cannot price is reported, never guessed, as committing the defective
+//     quote-side fall-through at a high derive_generation would make it permanent;
+//   - the run is bounded, idempotent and resumable, and nothing spans a chunk;
+//   - it refuses a range the live ingest tail has not passed (checkRestampLiveOverlap).
 //
 // `-report` prints the decision block read BEFORE authorising a production
 // run (counts, NULL->value population, move distribution, USD sums,
@@ -48,12 +43,8 @@ type xlmBaseRestampStore interface {
 // xlmBaseRestampRun carries one ESTIMATED tier's invocation: its fixed
 // inputs and its running totals across days (or chunks).
 //
-// It is named for the tier it was built for and carries every
-// estimated tier — xlm-base, xlm-quote and cex-fx all walk a window in
-// -slice steps, plan a row list through the live valuation function,
-// apply it in -batch transactions and report the same dispositions. What
-// varies is the [estimatedTierProfile] below; renaming this type across
-// the tree would bury that in churn.
+// It is named for its first tier but carries every estimated tier (xlm-base, xlm-quote, cex-fx),
+// which differ only in the [estimatedTierProfile] below.
 type xlmBaseRestampRun struct {
 	// tier is the -tier value this run repairs; plan and apply are that
 	// tier's own halves of the walk.
@@ -96,12 +87,8 @@ type xlmBaseRestampRun struct {
 	sampleRNG *rand.Rand
 }
 
-// xlmBaseSampleSeed fixes the report sample's RNG so two runs over the
-// same data print the SAME sample. A report is a decision input that gets
-// pasted into an issue and re-checked later; a sample that reshuffles on
-// every run cannot be re-checked. Reservoir sampling (rather than "the
-// first N rows") is what makes the sample span the whole window instead
-// of only its first slice.
+// xlmBaseSampleSeed fixes the report sample's RNG so two runs over the same data print the same
+// sample, which a re-checked decision input needs. Reservoir sampling spans the whole window.
 const xlmBaseSampleSeed = 0x53544c4c // "STLL"
 
 // runXLMBaseRestamp is the `-tier xlm-base` in-place entry point, called
@@ -260,11 +247,9 @@ func (r *xlmBaseRestampRun) followUp(from, to time.Time) string {
 	return restampCAGGFollowUp(from, to)
 }
 
-// xlmBaseRestampFollowUp renders the operator's post-write follow-up: the
-// ordered CAGG refresh block BOTH tiers print, and the `-min-rel-delta`
-// guidance only the anchor re-derive has. Returned as a string rather
-// than printed so the ordering contract is testable without capturing
-// stdout.
+// xlmBaseRestampFollowUp renders the post-write follow-up: the ordered CAGG refresh block both
+// tiers print plus the anchor re-derive's `-min-rel-delta` guidance. It returns a string so the
+// ordering is testable.
 func xlmBaseRestampFollowUp(from, to time.Time) string {
 	return restampCAGGFollowUp(from, to) + xlmBaseMinRelDeltaGuidance
 }
@@ -282,18 +267,12 @@ const xlmBaseMinRelDeltaGuidance = "\nFLAG GUIDANCE — `-min-rel-delta 0.001` i
 	"of <0.1% each. It never suppresses a NULL fill, which is where the coverage\n" +
 	"recovery lives, so the tool's whole point survives the flag.\n\n"
 
-// restampCAGGFollowUp renders the ordered CAGG refresh block every
-// finished restamp must be followed by, whichever tier ran it: the
-// acceptance check reads `trades` directly, every served volume surface
-// reads a continuous aggregate, and none of them refresh this far back on
-// their own.
+// restampCAGGFollowUp renders the ordered CAGG refresh block every finished restamp needs: served
+// volume reads continuous aggregates, which do not refresh this far back on their own.
 //
-// The window is [from 00:00Z, to+1d 00:00Z), padded per aggregate by
-// [timescale.PadRefreshWindow] so each call clears Timescale's
-// 2-bucket minimum. Padded buckets outside the restamp window
-// re-materialise unchanged, which is cheap; a call that is REJECTED for a
-// too-small window is the expensive outcome, because the operator reads
-// the error, skips that aggregate, and ships a partially-stale surface.
+// The window [from 00:00Z, to+1d 00:00Z) is padded by [timescale.PadRefreshWindow] to clear
+// Timescale's 2-bucket minimum. Padding re-materialises unchanged buckets cheaply; a rejected
+// call is costly, as an operator who skips that aggregate ships a partially stale surface.
 func restampCAGGFollowUp(from, to time.Time) string {
 	lo := from.UTC().Truncate(24 * time.Hour)
 	hi := to.UTC().Truncate(24*time.Hour).AddDate(0, 0, 1)
@@ -367,13 +346,9 @@ const (
 	// -write, applies its plan. The day walk and the inside of a
 	// decompressed chunk.
 	xlmBaseWalkFull xlmBaseWalkMode = iota
-	// xlmBaseWalkProbe is the chunk walk's read-only pre-check: plan slice
-	// by slice, fold nothing into the report itself (the caller folds a
-	// clean probe's count), and stop at the first slice
-	// that would change a row. A chunk whose rows all already hold the
-	// anchor's value is probed to its end and then skipped without ever
-	// being decompressed; a chunk that needs work is found out after its
-	// first dirty slice.
+	// xlmBaseWalkProbe is the chunk walk's read-only pre-check: it plans slice by slice, folds
+	// nothing into the report (the caller folds a clean count) and stops at the first slice that
+	// would change a row, so a clean chunk is skipped undecompressed.
 	xlmBaseWalkProbe
 )
 
@@ -586,12 +561,9 @@ func ratPercent(r *big.Rat) string {
 	return new(big.Rat).Mul(r, big.NewRat(100, 1)).FloatString(4) + "%"
 }
 
-// parseMinRelDelta turns the -min-rel-delta flag (a fraction, e.g. 0.01
-// for 1%) into a *big.Rat. Empty or "0" means "write every row whose
-// value differs at all", which is the default: the anchor's number is a
-// re-derivation of the correct value, and leaving a row 0.5% wrong for
-// tidiness is not a defensible posture on a money column. The knob exists
-// so an operator can bound a first production run to the large moves.
+// parseMinRelDelta turns -min-rel-delta (a fraction, 0.01 for 1%) into a *big.Rat. Empty or "0"
+// writes every differing row, the default, since leaving a money column slightly wrong is not
+// defensible; the knob only bounds a first production run to the large moves.
 func parseMinRelDelta(s string) (*big.Rat, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -614,15 +586,10 @@ func parseMinRelDelta(s string) (*big.Rat, error) {
 // re-stamp, the direct analogue of projected-rebuild's
 // [checkLiveCursorGuard].
 //
-// `trades.usd_volume` has exactly one live writer: the indexer's ingest
-// path at the `ledgerstream` cursor, so a restamp is legitimate only BEHIND
-// that cursor. If the tail is still
-// below the top of the requested window (a resync, a stalled indexer, a
-// cursor rewind), the two writers can land on the same row: the restamp's
-// high derive_generation would win the ON CONFLICT guard, so the ingest
-// path's own value would be silently discarded — or, in the other
-// interleaving, the restamp would rewrite a row the tail is about to
-// overwrite, reporting a correction that did not survive.
+// `trades.usd_volume` has one live writer, the indexer at the `ledgerstream` cursor, so a restamp
+// is legitimate only behind that cursor. If the tail is below the window's top (resync, stall,
+// rewind), the restamp's high derive_generation wins ON CONFLICT and discards the ingest value, or
+// rewrites a row the tail is about to overwrite, reporting a correction that did not survive.
 //
 // haveLive=false (no ledgerstream cursor at all) is a conservative
 // REFUSAL, exactly as it is for projected-rebuild: an indexer that has
@@ -658,12 +625,8 @@ func checkRestampLiveOverlap(haveLive bool, liveLastLedger, windowTopLedger uint
 // resolveWindowTopLedger finds the highest on-chain ledger the restamp
 // window can contain, for [checkRestampLiveOverlap].
 //
-// Ledger sequence is monotonic in `ts`, so the answer lives in the LAST
-// day of the window — one chunk, one bounded aggregate. Days with no
-// on-chain rows (an outage, an off-chain-only day) are walked backwards
-// past, so an empty tail day does not make the guard unusable; a window
-// with no on-chain rows anywhere returns (0, nil), which the guard treats
-// as vacuously safe.
+// Ledger sequence is monotonic in `ts`, so the answer lives in the window's last day. Days with no
+// on-chain rows are walked back past; a window with none returns (0, nil), vacuously safe.
 func resolveWindowTopLedger(ctx context.Context, store *timescale.Store, from, to time.Time) (uint32, error) {
 	for day := to; !day.Before(from); day = day.AddDate(0, 0, -1) {
 		top, ok, err := store.MaxTradeLedgerInRange(ctx, day, day.AddDate(0, 0, 1))

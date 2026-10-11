@@ -25,20 +25,10 @@ import (
 // The TIER-AGNOSTIC driver: it owns the chunks, compression policy, run lock and free-space
 // guard; rows are the tier's business ([chunkRestampTier]).
 //
-// A DML into a compressed chunk decompresses it wholesale (one 2,000-row UPDATE took over 14
-// minutes and committed nothing), so per chunk, oldest first, the walk decompresses, runs the SAME
-// restamp restricted to that chunk in -chunk-batch transactions, re-compresses, and heartbeats.
-// Guards:
-//   - ONE RUN AT A TIME: a -write run holds a session advisory lock.
-//   - THE COMPRESSION POLICY IS PAUSED for a -write run, or it re-compresses the open chunk
-//     between batches and the walk crawls silently. It is re-enabled on every exit path, its SQL
-//     printed first for a SIGKILL; an already-paused policy needs -resume-paused-policy.
-//   - A by-hand compress_chunk STOPS the walk with the RESUME line (checked before every batch).
-//   - PRE-FLIGHT: free space must exceed 2 x the largest chunk's uncompressed size (up to 160 GB),
-//     rechecked before every decompress; a remote DSN needs -min-free-bytes (statfs is local).
-//   - LIVE-ADJACENT chunks are refused without -allow-live-adjacent (uncompressed on purpose).
-//   - A FAILED CHUNK IS RE-COMPRESSED before a non-zero exit, repair printed first (either can
-//     outlive SIGKILL). Resumable via a read-only probe; -generation keeps the span at ONE generation.
+// A DML into a compressed chunk decompresses it wholesale, so per chunk, oldest first, the walk
+// decompresses, restamps in -chunk-batch transactions, re-compresses and heartbeats. Guards: a
+// session advisory lock, the compression policy paused for -write and restored on every exit
+// path, a free-space pre-flight, a refusal of live-adjacent chunks, and re-compression of a failed chunk.
 
 // chunkRestampStore is the DRIVER's seam: the chunk, policy and lock
 // primitives, and nothing that knows a tier. *timescale.Store satisfies
@@ -66,11 +56,9 @@ type chunkRestampTier interface {
 	// header is the run's opening line: the window and every flag that
 	// shaped the population. Printed to stderr before anything is read.
 	header(from, to time.Time, copts chunkRestampOptions) string
-	// probe answers, READ-ONLY, whether [lo, hi) still holds a row this run
-	// would change. A chunk that probes clean is skipped without being
-	// decompressed — what makes a rerun resume at the first unfinished
-	// chunk (at the run's own generation). A clean probe still
-	// counts toward the closing report, which names the whole window.
+	// probe answers, read-only, whether [lo, hi) still holds a row this run would change. A clean
+	// chunk is skipped undecompressed, which makes a rerun resume at the first unfinished chunk, and
+	// still counts toward the closing report.
 	probe(ctx context.Context, lo, hi time.Time) (bool, error)
 	// preview is the dry run's read-only pass over [lo, hi): it folds the
 	// slice into the run's totals and returns the operator-facing
@@ -137,11 +125,8 @@ type chunkRestampOptions struct {
 	// PolicyPoll is the interval between polls of that wait. Zero =
 	// defaultPolicyPoll. A seam for the tests.
 	PolicyPoll time.Duration
-	// ChunkBytesPoll is how often the walk re-reads the chunk's live
-	// on-disk size while it is working inside that chunk, which is what
-	// keeps the job's progress observable through a decompress that
-	// completes no rows. Zero = defaultChunkBytesPoll. A seam for the
-	// tests.
+	// ChunkBytesPoll is how often the walk re-reads the chunk's on-disk size, keeping progress
+	// observable through a decompress that completes no rows. Zero means defaultChunkBytesPoll.
 	ChunkBytesPoll time.Duration
 	// FreeBytes measures free space on the filesystem holding path. nil =
 	// statfs. A seam for the tests.
@@ -157,16 +142,10 @@ type chunkRestampOptions struct {
 	Err io.Writer
 }
 
-// chunkFreeSpaceHeadroom is the pre-flight multiplier: free space must
-// exceed the chunk's uncompressed size times this. It is a GUARD against
-// filling the data volume, not a bound on what a chunk can take. The
-// decompress peaks at about 1 x plus the compressed copy; the UPDATEs then
-// add a new tuple version per changed row (non-HOT after a decompress, so
-// heap AND index growth, up to about 1 x more); and compress_chunk writes
-// the compressed copy beside the bloated heap before truncating it. The
-// worst case is therefore around 2 x plus the WAL all three generate; a
-// run that gets near it should free space or narrow the window rather
-// than lean on this number.
+// chunkFreeSpaceHeadroom is the pre-flight multiplier on a chunk's uncompressed size: a guard
+// against filling the volume, not a bound. Decompress peaks near 1x, non-HOT UPDATEs grow heap and
+// index up to 1x more, and compress_chunk writes its copy beside the bloated heap, so the worst
+// case is about 2x plus WAL; a run near it should free space or narrow the window.
 const chunkFreeSpaceHeadroom = 2.0
 
 // heavyMinDataKBDefault mirrors the run-heavy-job disk watchdog's DATA-POOL
@@ -273,14 +252,10 @@ func runChunkRestamp(ctx context.Context, store chunkRestampStore, cfgPath strin
 	return nil
 }
 
-// checkRestampLiveAdjacent refuses a -chunks window whose right edge
-// reaches the span the compression policy has not compressed yet: the
-// chunks newer than now - compress_after are deliberately uncompressed
-// (the ledgerstream cursor-regression replay upserts into them) and the
-// in-place walk is the right tool there. -allow-live-adjacent walks it
-// anyway; those chunks are then restamped in place and left uncompressed.
-// Returns whether the window IS adjacent, so the caller can warn when the
-// override was used.
+// checkRestampLiveAdjacent refuses a -chunks window reaching the span the policy has not
+// compressed, which is uncompressed on purpose (cursor-regression replay upserts into it) and
+// suits the in-place walk. It returns whether the window is adjacent, so the caller can warn
+// when -allow-live-adjacent overrides it.
 func checkRestampLiveAdjacent(to, now time.Time, compressAfter time.Duration, allow bool) (adjacent bool, err error) {
 	windowEnd := to.AddDate(0, 0, 1)
 	edge := now.UTC().Add(-compressAfter)
@@ -303,14 +278,10 @@ func policyReenableSQL(p timescale.TradesCompressionPolicy) string {
 	return fmt.Sprintf("SELECT alter_job(%d, scheduled => true);", p.JobID)
 }
 
-// pauseTradesCompressionPolicy pauses the policy for a write run and
-// returns the re-enable. The re-enable runs on a context detached from
-// the run's cancellation — the likeliest reason it runs is a SIGTERM,
-// and a cancelled context would fail the very statement that puts the
-// policy back — and folds its own failure into the run's error, naming
-// the by-hand statement. The by-hand statement is printed BEFORE the
-// pause so a SIGKILL, which runs no deferred function, leaves the trace
-// in the job log.
+// pauseTradesCompressionPolicy pauses the policy for a write run and returns the re-enable. That
+// runs on a context detached from cancellation, since SIGTERM is its likeliest trigger, and folds
+// its failure into the run's error. The by-hand statement is printed before the pause so a
+// SIGKILL, which runs no deferred function, still leaves a trace.
 func pauseTradesCompressionPolicy(ctx context.Context, store chunkRestampStore, p timescale.TradesCompressionPolicy, errw io.Writer) (func(error) error, error) {
 	reenable := policyReenableSQL(p)
 	_, _ = fmt.Fprintf(errw, "usd-volume-restamp: compression policy job %d on trades (compress_after %s): PAUSING it for this run so it cannot re-compress the open chunk between batches; it is re-enabled on every exit path.\n",
@@ -332,17 +303,11 @@ func pauseTradesCompressionPolicy(ctx context.Context, store chunkRestampStore, 
 	}, nil
 }
 
-// beginChunkWriteRun is everything a -write run does between the
-// pre-flight and the first decompress, in the order that makes each
-// guard hold: take the run lock; read the policy again UNDER the lock;
-// refuse an already-unscheduled policy unless -resume-paused-policy;
-// pause it; wait out a policy run in flight; list the chunks again now
-// that nothing else compresses them. It returns the post-pause chunk list
-// and the teardown — policy re-enable THEN lock release, each on a context
-// that survives the run's cancellation, each folding its own failure into
-// the run's error. A failure inside undoes what was taken before it
-// returns, so no refusal leaves the lock held or the policy paused by this
-// run.
+// beginChunkWriteRun does what a -write run needs between pre-flight and the first decompress, in
+// the order that makes each guard hold: take the lock, re-read the policy under it, refuse an
+// unscheduled one without -resume-paused-policy, pause it, wait out a run in flight and re-list
+// the chunks. It returns that list and the teardown (re-enable, then unlock); a failure undoes
+// what was taken, so no refusal leaves the lock held or the policy paused.
 func beginChunkWriteRun(ctx context.Context, store chunkRestampStore, from, windowEnd time.Time, planned []timescale.TradeChunk, copts chunkRestampOptions, out, errw io.Writer) (chunks []timescale.TradeChunk, finish func(error) error, err error) {
 	release, err := takeRestampLock(ctx, store, errw)
 	if err != nil {
@@ -412,11 +377,9 @@ func takeRestampLock(ctx context.Context, store chunkRestampStore, errw io.Write
 	return release, nil
 }
 
-// holdInPlaceRestampLock takes the run lock for an in-place (-chunks
-// unset) -write walk, whose UPDATEs would otherwise contend with a second
-// restamp over the same rows; the chunk walks take it in
-// beginChunkWriteRun. The returned finish releases it and folds a release
-// failure into the run's error; a dry run or a chunk run gets a no-op.
+// holdInPlaceRestampLock takes the run lock for an in-place -write walk, whose UPDATEs would
+// contend with a second restamp; chunk walks take it in beginChunkWriteRun. The returned finish
+// releases it and folds a failure into the run's error; a dry run or chunk run gets a no-op.
 func holdInPlaceRestampLock(ctx context.Context, store chunkRestampStore, write, chunks bool, errw io.Writer) (func(error) error, error) {
 	if !write || chunks {
 		return func(runErr error) error { return runErr }, nil
@@ -517,39 +480,28 @@ type chunkRestampWalk struct {
 	errw        io.Writer
 	reenableSQL string
 
-	// moved is the run's cumulative OBSERVED byte movement across every
-	// chunk it has worked inside — the second progress dimension the job
-	// heartbeat publishes. Owned here rather than by the tier so both
-	// tiers report one series with one definition; the tier only forwards
-	// it to its heartbeat.
+	// moved is the run's cumulative observed byte movement, the second heartbeat progress
+	// dimension. It lives here so both tiers report one series; the tier only forwards it.
 	moved uint64
 }
 
 // defaultChunkBytesPoll is how often the walk re-reads the chunk's live
 // on-disk size while it is inside that chunk.
 //
-// 30 s against a phase measured in HOURS: it only has to beat the alert's
-// 30-minute flat window with enough margin that a scrape gap or a slow
-// catalog read cannot manufacture a flat half-hour, and it must be far
-// enough apart that the poll is free next to the work. One row of
-// chunks_detailed_size every 30 s against a 1.5-hour decompress is 180
-// catalog reads for the whole phase.
+// 30 s suits a phase measured in hours: it must beat the alert's 30-minute flat window with margin
+// for a scrape gap or slow catalog read, yet stay cheap (180 reads over a 1.5-hour decompress).
 const defaultChunkBytesPoll = 30 * time.Second
 
 // watchChunkBytes publishes the chunk's live on-disk size as byte progress while the walk is
 // inside that chunk, and returns the stop for the poll.
 //
-// A decompress is the longest step of a run (49+ min on a 17.3 GB chunk, ~1.5 h on the 159.7 GB
-// outlier) and row progress is zero throughout, so stellarindex_ops_job_no_progress would ticket
-// every healthy run. Muting or widening the alert would blind it during the step most likely to
-// wedge. decompress_chunk grows the chunk's OWN relations, which an observer sizes by stat, so the
-// figure climbs while a decompress runs and stays flat when one is wedged.
+// A decompress is the longest step (up to ~1.5 h) with zero row progress, so
+// stellarindex_ops_job_no_progress would ticket every healthy run; muting it would blind it where a
+// wedge is likeliest. decompress_chunk grows the chunk's own relations, so the size climbs while it
+// runs and stays flat when wedged.
 //
-// The re-compress is NOT covered: it builds a new relation invisible to the observer until commit.
-// At the measured 0.52x of the decompress, the outlier's re-compress (~47 min) outlasts the
-// alert's 45 min. That fails SAFE, one extra ticket rather than silence; the runbook says to
-// confirm it with pg_stat_activity. Cluster-wide counters keep moving while this job is wedged, so
-// they would be a mute dressed as progress.
+// The re-compress is not covered, as its new relation is invisible until commit. The largest chunk's
+// outlasts the alert, which fails safe with one extra ticket; confirm with pg_stat_activity.
 //
 // FAIL-SOFT: a failed poll is skipped. A never-succeeding poll leaves the counter flat, which the
 // alert already covers.
@@ -628,13 +580,9 @@ func (w *chunkRestampWalk) chunk(ctx context.Context, idx, n int, c timescale.Tr
 			return fmt.Errorf("usd-volume-restamp: %s: pre-flight refused before the decompress (the chunk is untouched): %w", label, pf.Err)
 		}
 	}
-	// The decompress inside the bracket completes no rows for up to about
-	// 1.5 hours, so from here until the bracket returns the run's
-	// liveness is carried by the chunk's on-disk size instead — see
-	// [chunkRestampWalk.watchChunkBytes]. DEFERRED rather than stopped at
-	// the tail: the bracket lets a panic inside the work propagate (after
-	// putting the chunk back), and the poll goroutine must not outlive
-	// this call on that path either.
+	// The decompress completes no rows for up to ~1.5 h, so liveness is carried by the chunk's
+	// on-disk size ([chunkRestampWalk.watchChunkBytes]). Deferred, not stopped at the tail, so the
+	// poll goroutine also ends when the bracket propagates a panic.
 	defer w.watchChunkBytes(ctx, c)()
 	// Every write inside the chunk goes through the tier's guarded apply,
 	// which reads the chunk's is_compressed ahead of the UPDATE.
@@ -666,13 +614,9 @@ func (w *chunkRestampWalk) chunk(ctx context.Context, idx, n int, c timescale.Tr
 	return nil
 }
 
-// trace prints the by-hand repair BEFORE the statement that may outlive
-// the process: the SIGKILL that follows SIGTERM at the scope's
-// TimeoutStopSec drops the connection, the server aborts whichever of
-// decompress_chunk / compress_chunk was running, and the chunk stays as
-// it was — decompressed, if the re-compress was the one interrupted.
-// Neither LEFT DECOMPRESSED nor the RESUME line is printed in that
-// case; this is.
+// trace prints the by-hand repair before the statement that may outlive the process: SIGKILL
+// after SIGTERM aborts the running decompress or compress and leaves the chunk as it was, possibly
+// decompressed. Neither LEFT DECOMPRESSED nor the RESUME line prints then; this does.
 func (w *chunkRestampWalk) trace(label string, c timescale.TradeChunk, step timescale.ChunkRestampStep) {
 	switch step {
 	case timescale.ChunkRestampDecompress:
@@ -794,11 +738,9 @@ func chunkRestampPreflight(ctx context.Context, store interface {
 	if largest > 0 {
 		p.Required = uint64(float64(largest) * chunkFreeSpaceHeadroom)
 	}
-	// The watchdog kills the run the instant free space drops below its own
-	// floor, with no knowledge of this chunk's headroom math — so the floor
-	// has to survive the chunk's worst-case growth ON TOP of it, not just be
-	// compared against that growth. Saturating add: a chunk large enough to
-	// overflow uint64 already fails every other check first.
+	// The watchdog kills the run when free space drops below its floor, unaware of this chunk's
+	// headroom math, so the floor must survive the worst-case growth on top of it. Saturating add:
+	// a chunk big enough to overflow uint64 fails every other check first.
 	if floor := heavyMinDataFloorBytes(); floor > 0 {
 		sum := p.Required + floor
 		if sum < p.Required {
@@ -842,13 +784,9 @@ func chunkRestampPreflight(ctx context.Context, store interface {
 	return p
 }
 
-// statfsHostMismatchErr turns a freeBytesOnPath failure into the operator
-// message for its errno class: ENOENT/ENOTDIR mean the path doesn't
-// resolve here (wrong host); EACCES/EPERM mean it does, just not for this
-// role; anything else is a transient statfs failure worth retrying. Before
-// this classified, every class printed "this host is not the database
-// host" — wrong for the permission and transient cases, which sent an
-// operator with the right host chasing a host that was never wrong.
+// statfsHostMismatchErr turns a freeBytesOnPath failure into an operator message by errno class:
+// ENOENT/ENOTDIR mean the wrong host, EACCES/EPERM the wrong role, anything else a transient
+// failure worth retrying.
 func statfsHostMismatchErr(path string, measureErr error) error {
 	switch {
 	case errors.Is(measureErr, syscall.ENOENT), errors.Is(measureErr, syscall.ENOTDIR):
@@ -928,11 +866,9 @@ func freeBytesOnPath(path string) (uint64, error) {
 	return st.Bavail * uint64(st.Bsize), nil //nolint:gosec,unconvert // block size is positive; the field's width differs per OS
 }
 
-// validateRestampGeneration checks an explicit -generation. Negative is
-// nonsense; a value in the FUTURE is worse: every default run's
-// -max-generation is its own start time, so rows stamped above that sit
-// beyond the reach of every later run and can never be re-derived again
-// — a typo here is a permanent lock-out on a money column.
+// validateRestampGeneration checks an explicit -generation. A future value is the danger: rows
+// stamped above every later run's start time can never be re-derived, a permanent lock-out on a
+// money column.
 func validateRestampGeneration(gen int64, now time.Time) error {
 	if gen < 0 {
 		return fmt.Errorf("usd-volume-restamp: -generation must be >= 0, got %d", gen)
@@ -944,11 +880,9 @@ func validateRestampGeneration(gen int64, now time.Time) error {
 	return nil
 }
 
-// resolveRestampMaxGeneration turns -max-generation into the scan's read
-// bound: negative means the run's own generation. A bound above the
-// generation is refused — the scan would select rows the UPDATE's
-// `derive_generation <= generation` guard can never write, so every run
-// would re-plan them, write nothing, and report them as a concurrent writer.
+// resolveRestampMaxGeneration turns -max-generation into the scan's read bound (negative means
+// the run's own generation). A bound above it is refused: the scan would select rows the UPDATE's
+// `derive_generation <= generation` guard can never write, and report them as a concurrent writer.
 func resolveRestampMaxGeneration(maxGen, generation int64) (int64, error) {
 	if maxGen < 0 {
 		return generation, nil
