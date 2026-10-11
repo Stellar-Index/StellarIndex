@@ -6,11 +6,6 @@
 // same price in the same millisecond, which is lossless for VWAP (volume is
 // preserved) at ~5-10× lower throughput than the per-fill `@trade` stream.
 //
-// Wire format (verified against
-// https://developers.binance.com/docs/binance-spot-api-docs/web-socket-streams):
-//
-//	wss://stream.binance.com:9443/stream?streams=<sym1>@aggTrade/<sym2>@aggTrade
-//
 // Each frame is {"stream": "xlmusdt@aggTrade", "data": {...}}; data carries
 // s (symbol), p and q (price and base quantity, exact decimal strings),
 // T (trade time, ms: the ledger-close equivalent) and m (buyer was maker,

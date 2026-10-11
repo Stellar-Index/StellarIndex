@@ -7,14 +7,6 @@
 //	GET https://min-api.cryptocompare.com/data/pricemultifull?fsyms=XLM,BTC&tsyms=USD,EUR
 //	Header: Authorization: Apikey <KEY>
 //
-//	{
-//	  "RAW": {
-//	    "XLM": {"USD": {"PRICE": 0.17582, "LASTUPDATE": 1710000000}, "EUR": {...}},
-//	    "BTC": {"USD": {"PRICE": 50000.0, "LASTUPDATE": 1710000000}, "EUR": {...}}
-//	  },
-//	  "DISPLAY": {...}
-//	}
-//
 // /data/pricemultifull rather than /data/pricemulti because only the
 // former carries LASTUPDATE: each row is stamped with the upstream
 // publication time, never our poll time, since the aggregator price

@@ -1,27 +1,21 @@
 // Package blend_emitter decodes on-chain events from the Blend **Emitter**
-// contract — the emissions plumbing that mints and distributes BLND to the
-// backstop pools, separate from internal/sources/blend and
-// internal/sources/blend_backstop.
+// contract: the emissions plumbing that mints and distributes BLND to the backstop pools.
 //
 // Wire shape, verified against every mainnet event in the certified ClickHouse
 // lake (ADR-0034): topic[0] = Symbol("<event_name>") is the only topic; body:
 //
 //   - "distribute": Vec[ Address backstop_id, i128 amount ] → DistributeEvent
-//   - "drop": a one-shot airdrop, Vec[ Vec[ Address recipient, i128 amount ], ... ]
-//     of VARIABLE length → ONE DropEvent with the full Recipients slice; the
-//     storage writer fans it out per recipient (recipient_index discriminator).
-//   - "q_swap" QUEUES a timelocked backstop swap, Map{ new_backstop,
-//     new_backstop_token: Address, unlock_time: u64 } → SwapConfigQueued;
-//     "swap" EXECUTES it after the timelock (same body) → SwapConfigExecuted
+//   - "drop": a one-shot airdrop, Vec[ Vec[ Address recipient, i128 amount ], ... ] of VARIABLE
+//     length → ONE DropEvent with the full Recipients slice (fanned out per recipient on write).
+//   - "q_swap" QUEUES a timelocked backstop swap, Map{ new_backstop, new_backstop_token: Address,
+//     unlock_time: u64 } → SwapConfigQueued; "swap" EXECUTES it after the timelock → SwapConfigExecuted
 //
-// GATING (ADR-0035/0040): blend_backstop ALSO emits a bare `distribute` (body
-// `i128 amount`), so topic bytes alone would misfire. Matches() gates on CONTRACT
-// IDENTITY via the curated registry (the comet.MainnetGatedSet() pattern); the
-// Emitter has one mainnet instance spanning Blend V1→V2 and no factory.
+// GATING (ADR-0035/0040): blend_backstop ALSO emits a bare `distribute` (body `i128 amount`), so
+// topic bytes alone would misfire. Matches() gates on CONTRACT IDENTITY via the curated registry
+// (the comet.MainnetGatedSet() pattern); one mainnet instance, no factory.
 //
-// WASM audit closed (docs/operations/wasm-audits/blend_emitter.md): the sole hash
-// (438a5528cff17ede6fe515f095c43c5f15727af17d006971485e52462e7e7b89) decodes
-// every lifetime event to the shapes above. BackfillSafe is true.
+// WASM audit closed (docs/operations/wasm-audits/blend_emitter.md): the sole hash decodes every
+// lifetime event to the shapes above. BackfillSafe is true.
 package blend_emitter
 
 import (

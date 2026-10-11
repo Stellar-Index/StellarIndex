@@ -1,27 +1,22 @@
 // Package upshift decodes events from the Upshift tokenized yield vaults on
 // Stellar (curated by Gami Labs and Stake Capital Group).
 //
-// A vault is ERC-4626-shaped and the vault contract IS the share token (it emits
-// SEP-41 transfer/approve for its shares). RedStone prices `earnUSDC_FUNDAMENTAL`
-// on that identity ([MainnetVaultEarnUSDC]), deliberately not the underlying's:
-// a yield-bearing claim is a different instrument from USDC.
+// A vault is ERC-4626-shaped and the vault contract IS the share token (SEP-41 transfer/approve).
+// RedStone prices `earnUSDC_FUNDAMENTAL` on that identity ([MainnetVaultEarnUSDC]), not the
+// underlying's: a yield-bearing claim is a different instrument from USDC.
 //
-// Two vaults exist (CCL3WITW… earnUSDC, CC6TRAPQ… earnXLM). Each underlying is
-// proven by the SAC `transfer` one event ahead of a `deposit` for exactly its
-// `assets` amount; ticker names are inferred, CONTRACT IDS are proven. A
-// circulated "vault" address (CC2DNHE5…) has zero lake events and is absent from
-// [MainnetVaults].
+// Two vaults: earnUSDC (CCL3WITW…) and earnXLM (CC6TRAPQ…). Each underlying is proven by the SAC
+// `transfer` one event ahead of a `deposit` for exactly its `assets` amount; ticker names are
+// inferred, CONTRACT IDS are proven.
 //
-// Shapes: `deposit`/`withdraw` carry three Address topics (caller, receiver,
-// owner) and Map{assets, shares}. `transfer` is a bare i128 OR Map{amount,
-// to_muxed_id} (CAP-67). Shares are not at the underlying's scale.
-// Not decoded: custody-side events (they would double-count
-// `deployed_assets_changed`), governance events, `approve`; they decode to zero
-// rows so the ADR-0033 re-derive counts them as expected-zero.
+// Shapes: `deposit`/`withdraw` carry three Address topics and Map{assets, shares}. `transfer` is a
+// bare i128 OR Map{amount, to_muxed_id} (CAP-67). Shares are not at the underlying's scale.
+// Not decoded (zero rows, so the ADR-0033 re-derive counts them expected-zero): custody-side
+// events (they would double-count `deployed_assets_changed`), governance events, `approve`.
 //
-// Gating: the symbols are generic, so ADR-0035 contract-identity gating is
-// essential. With no creation event, the ADR-0040 curated set applies
-// ([MainnetGatedSet] plus the `protocol_contracts` DB warm).
+// Gating: the symbols are generic, so ADR-0035 contract-identity gating is essential. With no
+// creation event, the ADR-0040 curated set applies ([MainnetGatedSet] plus the
+// `protocol_contracts` DB warm).
 package upshift
 
 import (

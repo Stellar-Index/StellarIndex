@@ -262,28 +262,22 @@ func baseAccountAddress(m xdr.MuxedAccount) (string, error) {
 
 // ─── Phase 2: PathPaymentStrictReceive / PathPaymentStrictSend ────
 //
-// ADR-0047 D3 Phase 2: a path payment moves TWO assets, so both op types emit
-// two 'path_payment' legs per op, like the two-asset LP ops (entrychanges.go):
-//   - leg_index 0: the SOURCE leg, FromAddress only: what left the sender
-//     (send asset / source amount);
-//   - leg_index 1: the DESTINATION leg, ToAddress only: what reached the
-//     destination (result.Success.Last).
-// One row per op would put one asset on both participants' rows, booking the
-// sender an outflow in an asset it never held. Neither leg names the other side
-// as counterparty: the send asset went to the offers/pools on the path. Both
-// legs' Attributes carry the whole op so either row describes the payment.
-// Never a row per hop: per-hop ClaimAtoms already live in `trades` (sdex).
+// ADR-0047 D3 Phase 2: a path payment moves TWO assets, so both op types emit two 'path_payment'
+// legs per op, like the two-asset LP ops (entrychanges.go):
+//   - leg_index 0: the SOURCE leg, FromAddress only: what left the sender;
+//   - leg_index 1: the DESTINATION leg, ToAddress only: what reached the destination
+//     (result.Success.Last).
+// One row per op would put one asset on both participants' rows, booking the sender an outflow in
+// an asset it never held. Neither leg names the other side as counterparty. Both legs' Attributes
+// carry the whole op. Never a row per hop: per-hop ClaimAtoms already live in `trades` (sdex).
 //
-// The destination amount is always result.Success.Last.Amount, never a body
-// field: DestAmount/DestMin are exact/floor in the body, while the result's
-// SimplePaymentResult is what actually landed and needs no per-type branching.
+// The destination amount is always result.Success.Last.Amount, never a body field: it is what
+// actually landed and needs no per-type branching.
 //
-// Source-leg amount is the one place the op types differ:
-//   - StrictSend: body.SendAmount is exact by definition.
-//   - StrictReceive: body.SendMax is only a ceiling; the amount consumed is
-//     derived from the result's Offers (pathPaymentStrictReceiveSourceAmount),
-//     verified against real_bytes_test.go's
-//     TestRealBytes_pathPaymentStrictReceive_twoHop.
+// Source-leg amount is the one place the op types differ: StrictSend body.SendAmount is exact;
+// StrictReceive body.SendMax is only a ceiling, so the amount consumed is derived from the
+// result's Offers (pathPaymentStrictReceiveSourceAmount), verified against real_bytes_test.go's
+// TestRealBytes_pathPaymentStrictReceive_twoHop.
 
 // decodePathPaymentStrictReceive reconstructs a 'path_payment'
 // movement for a successful PathPaymentStrictReceive op.

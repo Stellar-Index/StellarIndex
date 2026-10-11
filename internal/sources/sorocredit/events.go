@@ -2,9 +2,6 @@
 // CDP protocol on Stellar (Soroban). The protocol ships no on-chain brand, so
 // everything is keyed off its single main contract.
 //
-//	Main contract: CCG5EWFY2KCWWYYEIUMIRG6WSAQFLDR5QE5FMCWY25N36XA5GYTCPQWR
-//	Creator:       GADI6FHS…   WASM: 84a88013…
-//
 // It runs its OWN USDC credit book (not a wrapper). Opening a position deploys
 // a per-user `Collateral-<uuid>` child contract.
 //
@@ -14,12 +11,10 @@
 // "liquidations"; no downstream surface may report a liquidation risk signal
 // from this source.
 //
-// Gating (ADR-0035): the single trust root is the main contract.
-// NewCollateralContract is honored only from it and announces the child
-// C-address (topic[1]), seeded into a [contractid.Registry] child set; every
-// other event is honored from the trust root OR a registered child. Two OTHER
-// mainnet contracts emit the same symbols, so the identity gate, not the topic,
-// rejects them.
+// Gating (ADR-0035): the single trust root is the main contract. NewCollateralContract is honored
+// only from it and announces the child C-address (topic[1]), seeded into a [contractid.Registry]
+// child set; every other event needs the trust root OR a registered child. Two OTHER mainnet
+// contracts emit the same symbols, so the identity gate, not the topic, rejects them.
 //
 // Per ADR-0013 SCVal is read only through internal/scval.
 package sorocredit

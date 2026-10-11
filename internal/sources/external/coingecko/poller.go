@@ -1,11 +1,6 @@
-// Package coingecko polls CoinGecko's public /simple/price endpoint
-// for cross-check reference prices. First `ClassAggregator` connector
-// in the fleet: excluded from VWAP by registry policy (mixing
-// aggregated prices with raw trades double-counts upstream markets),
-// but consumed by the divergence-detection layer to flag when our
-// computed VWAP drifts from the aggregator consensus.
-//
-// One batched call per poll covers every (asset, quote) combo.
+// Package coingecko polls CoinGecko's public /simple/price endpoint for cross-check reference
+// prices. `ClassAggregator`: excluded from VWAP by registry policy (mixing aggregated prices with
+// raw trades double-counts upstream markets), consumed only by the divergence-detection layer.
 //
 // Wire shape (verified):
 //
@@ -13,11 +8,9 @@
 //
 //	{"stellar": {"usd": 0.17582, "eur": 0.16230, "last_updated_at": 1710000000}, ...}
 //
-// Each row is stamped with the id's upstream last_updated_at, never
-// our poll time: the aggregator price tier, price_as_of and the
-// oracle-stale alert all read OracleUpdate.Timestamp as "when this
-// price was true", so a poll-time stamp presents a frozen upstream
-// cache as fresh.
+// Each row is stamped with the id's upstream last_updated_at, never our poll time: the aggregator
+// price tier, price_as_of and the oracle-stale alert read OracleUpdate.Timestamp as "when this
+// price was true", so a poll-time stamp would present a frozen cache as fresh.
 //
 // CoinGecko uses slug IDs ("stellar", "bitcoin"), not tickers. A small
 // allow-listed ticker→id table covers our pair set; unknown tickers skip

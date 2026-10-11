@@ -11,16 +11,10 @@
 //     (ADR-0003).
 //
 // Wire format reference: https://docs.kraken.com/api/docs/websocket-v2/trade
-// Typical session:
 //
-//	→ {"method":"subscribe","params":{"channel":"trade","symbol":["XLM/USD","XLM/EUR"]}}
-//	← {"channel":"trade","type":"snapshot"|"update","data":[{"symbol":"XLM/USD","qty":100.0,"price":0.17582,"trade_id":1234567,...}]}
-//
-// The snapshot (last ~50 trades) carries real historical timestamps
-// and is emitted like any other trade. A re-delivered snapshot
-// dedupes against earlier live rows on the synthesised tx_hash
-// (symbol + trade_id). Raw-fill backfill (BackfillTrades) derives the
-// same tx_hash; candles key on close time and never match a live row,
+// The snapshot (last ~50 trades) carries real timestamps and is emitted like any trade; a
+// re-delivered snapshot dedupes on the synthesised tx_hash (symbol + trade_id). Raw-fill backfill
+// (BackfillTrades) derives the same tx_hash; candles key on close time and never match a live row,
 // so backfill-external refuses a window that already holds rows.
 package kraken
 
