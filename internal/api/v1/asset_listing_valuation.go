@@ -168,10 +168,10 @@ type assetListingCache struct {
 // assetListingSnapshot returns the cached directory read, refreshing it past
 // [assetListingSnapshotTTL].
 //
-// Fails CLOSED like [Server.rwaCuratedSnapshot]: a failed read yields an unavailable snapshot,
-// cached as such, because carrying the last good one forward would keep publishing dollar figures
-// from an unreadable directory. The read uses a context detached from the request (a disconnect
-// cannot poison the shared cache) with its own deadline (a hung read cannot hold the mutex).
+// Fails CLOSED like [Server.rwaCuratedSnapshot]: a failed read is cached as unavailable, because
+// carrying the last good one forward would keep publishing dollar figures from an unreadable
+// directory. The read uses a context detached from the request (a disconnect cannot poison the
+// shared cache) with its own deadline (a hung read cannot hold the mutex).
 func (s *Server) assetListingSnapshot(ctx context.Context) assetListing {
 	return s.assetListingSnapshotWithin(ctx, assetListingReadBudget)
 }

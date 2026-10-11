@@ -258,8 +258,7 @@ type TokenPairLinked struct {
 //	topics = ["message_sent"]   (single-topic event)
 //	body   = Bytes (raw)
 //
-// The bytes are the serialised cross-chain envelope that destination-chain attestation services
-// consume; we keep them as hex for cross-reference.
+// The bytes are the cross-chain envelope destination-chain attestation services consume; kept as hex.
 type MessageSent struct {
 	Ledger     uint32
 	TxHash     string

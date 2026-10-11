@@ -196,8 +196,7 @@ func NewVWAPUSDFXResolver(store *Store, opts VWAPUSDFXResolverOptions) (*VWAPUSD
 // carry for that peg: each declared peg plus its declared SAC wrapper. The membership rule matches
 // [NewUSDVolumeQuoteSpec]; a peg the exact tier honours but this tier cannot see is a silent
 // coverage hole. A malformed WRAPPER is an error because dropping it would under-count volume.
-// [classicKey] maps "CODE:ISSUER" to the stored "CODE-ISSUER" form; order is deterministic so the
-// bound array and query plan are stable.
+// Order is deterministic so the bound array and query plan are stable.
 func usdPegForms(classicPegs []string, sacWrappers map[string]string) ([]string, error) {
 	forms := make([]string, 0, len(classicPegs))
 	seen := make(map[string]struct{}, len(classicPegs))
@@ -713,9 +712,9 @@ func xlmLegQuery(lowerBound string) string {
 //
 // It cannot use `volume_usd` as the bridge leg does: that sums `usd_volume`, which this resolver
 // itself writes, so a never-priced pair could never clear it (prices_1m coalesces NULL to 0).
-// `vwap * volume_priced` is the sum of quote_amount over trades with both legs > 0, exact to
-// NUMERIC rounding. Not `volume_quote`, which counts zero-base trades and would let a quote-only
-// row carry a dust fill over the floor. Matched quotes are operator pegs, so it is dollars.
+// `vwap * volume_priced` is the sum of quote_amount over trades with both legs > 0. Not
+// `volume_quote`, which counts zero-base trades and would let a quote-only row carry a dust fill
+// over the floor. Matched quotes are operator pegs, so it is dollars.
 const directLegMinQuoteVolume = "0.01"
 
 // pegQuoteScaleDenominator converts a prices_1m `vwap * volume_priced` product from raw stroops to

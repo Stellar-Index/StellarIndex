@@ -1,20 +1,17 @@
-// Package dispatcher routes the ledger-meta values from internal/ledgerstream to the decoders registered by
-// internal/sources/<venue>. It is the SINGLE production ingest codepath
-// (docs/architecture/ingest-pipeline.md):
-// every trade and oracle update in Timescale goes through Dispatcher.ProcessLedger.
+// Package dispatcher routes ledger-meta values from internal/ledgerstream to the decoders registered
+// by internal/sources/<venue>. It is the single production ingest codepath
+// (docs/architecture/ingest-pipeline.md): every trade and oracle update goes through ProcessLedger.
 //
 // Decoders carry all protocol logic; the per-ledger walk hits three seams:
 //
 //   - [Decoder]: Soroban contract events; the first decoder whose Matches() is true owns each event.
-//   - [OpDecoder]: classic operations (SDEX offers, path payments); EVERY matching OpDecoder runs, since
-//     one op can be facts in several domains (a path payment is a trade and a movement).
-//   - [ContractCallDecoder]: event-less Soroban contracts, matched by (contract_id, function_name) and
-//     decoded from the InvokeContract args (Band relay / force_relay).
+//   - [OpDecoder]: classic operations; EVERY matching OpDecoder runs, since one op can be facts in
+//     several domains (a path payment is a trade and a movement).
+//   - [ContractCallDecoder]: event-less Soroban contracts, matched by (contract_id, function_name)
+//     and decoded from the InvokeContract args (Band relay / force_relay).
 //
-// Decode errors are logged and counted, never fatal. A new source registers against the seam matching its
-// wire shape. The event and contract-call seams also sniff for discovery (sighting only, never attribution;
-// docs/architecture/oracle-manipulation-defense.md), so an event-less Band-shaped oracle is flagged before
-// any decoder for it exists.
+// Decode errors are logged and counted, never fatal. The event and contract-call seams also sniff
+// for discovery (sighting only, never attribution; docs/architecture/oracle-manipulation-defense.md).
 package dispatcher
 
 import (
@@ -206,14 +203,13 @@ type LedgerEntryChangeDecoder interface {
 // carry an empty TxHash and OpIndex == -1 to distinguish them from per-op changes.
 
 // EntryWalkVersion identifies the entry-change walk ORDER behind [LedgerEntryChangeContext.IntraLedgerSeq].
-// 1: per-tx walk, failed txs skipped. 2: ledger-wide three-phase walk, failed txs included. 3: each block in
-// entrywalk.Canonical (ledger key) order, since core's export order is hash-map iteration and varies.
+// Each block is walked in entrywalk.Canonical (ledger key) order because core's export order is
+// hash-map iteration and varies.
 //
-// Bump it only when a change RENUMBERS existing positions; appending a phase does not. Positions are
-// persisted and compared across binaries: account_observations and its siblings guard on
-// `(walk_version, intra_ledger_seq) <= EXCLUDED`, so an unbumped renumbering silently drops every correction
-// (repair: reconstruct-final-then-seed, timescale.SeedIntraLedgerSeq). ledger_entries_current_v2 carries no
-// walk version, so there the range must be deleted and reprojected.
+// Bump it only when a change RENUMBERS existing positions. Positions are persisted and compared
+// across binaries: account_observations and siblings guard on `(walk_version, intra_ledger_seq) <=
+// EXCLUDED`, so an unbumped renumbering silently drops every correction. ledger_entries_current_v2
+// carries no walk version, so there the range must be deleted and reprojected.
 // Procedure: docs/operations/runbooks/entry-walk-renumbering.md.
 const EntryWalkVersion = 3
 
@@ -223,11 +219,9 @@ type LedgerEntryChangeContext struct {
 	TxHash   string
 	OpIndex  int
 
-	// IntraLedgerSeq is this change's position in the ledger's canonical walk, in LEDGER-WIDE PHASE
-	// order (all fees, then apply-phase meta, then P23 post-apply fee refunds), as core commits a
-	// ledger. The HIGHEST value for an entry is its final state; a per-tx walk would publish a
-	// fee-phase balance as ledger-final. Balance writers guard their upsert on it so an
-	// out-of-order worker never overwrites a later change. Comparable only within one
+	// IntraLedgerSeq is this change's position in the ledger-wide phased walk, as core commits a
+	// ledger. The HIGHEST value for an entry is its final state. Balance writers guard their upsert
+	// on it so an out-of-order worker never overwrites a later change. Comparable only within one
 	// [EntryWalkVersion].
 	IntraLedgerSeq uint32
 
@@ -575,10 +569,8 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 						continue
 					}
 					// OpArgs provenance gate: top-level args belong to the invoked contract only. For a
-					// sub-invoked contract they are attacker-chosen (a wrapper could call
-					// adapter.write_prices with the real payload while steering redstone's feed_ids
-					// attribution), so an args-requiring decoder refuses (ErrMissingOpArgs, counted).
-					// The lake extractor applies the same rule (clickhouse/extract.go opArgsByIndex).
+					// sub-invoked contract they are attacker-chosen, so an args-requiring decoder
+					// refuses (ErrMissingOpArgs, counted). The lake extractor applies the same rule.
 					if call != nil && call.ContractID == ev.ContractID {
 						ev.OpArgs = call.Args
 					}
@@ -680,20 +672,17 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 }
 
 // walkLedgerEntryChanges dispatches EVERY LedgerEntryChange in the ledger to the entry-decoder
-// chain, in the order stellar-core committed them, and returns the outputs. Two requirements:
+// chain, in the order stellar-core committed them. Two requirements:
 //
 //  1. FAILED TXS ARE INCLUDED: core commits their fee debit. Skipping them over-reports the balance
-//     and diverges from the lake's clickhouse.extractEntryChanges (ADR-0034 re-derive).
-//  2. THE WALK IS LEDGER-WIDE AND PHASED, as the SDK's LedgerChangeReader: a per-tx walk would rank
-//     tx2's fee after tx1's ops on a shared account and publish a fee-phase balance as final;
-//     omitting phase 3 does the same on P23+.
+//     and diverges from the lake's clickhouse.extractEntryChanges.
+//  2. THE WALK IS LEDGER-WIDE AND PHASED: a per-tx walk would rank tx2's fee after tx1's ops on a
+//     shared account and publish a fee-phase balance as final; omitting phase 3 does the same.
 //
-// Phases: 1 every tx's FeeChanges (core charges all fees first); 2 every tx's apply-phase meta;
-// 3 every tx's PostTxApplyFeeChanges (P23 Soroban refunds; LCM V2 only); 4 the ledger's EVICTED
-// keys as synthetic Removed changes ([walkEvictedKeys]). Ledger upgrades are not walked (no TxHash,
-// no consumer; the lake walker agrees); [ProcessLedger] counts and logs them.
+// Phases: 1 every tx's FeeChanges; 2 every tx's apply-phase meta; 3 every tx's
+// PostTxApplyFeeChanges (P23 refunds; LCM V2 only); 4 the ledger's EVICTED keys as synthetic
+// Removed changes ([walkEvictedKeys]). Ledger upgrades are not walked; [ProcessLedger] counts them.
 //
-// IntraLedgerSeq advances for every walked change; positions are scoped to [EntryWalkVersion].
 // Only V3/V4 meta is handled; anything else is COUNTED in the default arm, else entry observation
 // would stop silently.
 func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []ingest.LedgerTransaction, ledgerSeq uint32, closedAt time.Time) []consumer.Event {
@@ -777,14 +766,14 @@ func (d *Dispatcher) noteLedgerUpgrades(ups []xdr.UpgradeEntryMeta, ledgerSeq ui
 	d.log().Info("dispatcher: ledger carries upgrades", "ledger", ledgerSeq, "types", types)
 }
 
-// walkEvictedKeys dispatches one synthetic Removed change per ledger key core EVICTED at close (CAP-62), the
-// missing half of state archival. An expired entry appears in no tx meta; unwalked, an evicted SAC balance
-// would stand forever and served supply drift ABOVE the truth. Removed is absorbing (re-ingest rewrites the
-// same row) and a later Restored reverses it; unwatched key types fall out at Matches.
+// walkEvictedKeys dispatches one synthetic Removed change per ledger key core EVICTED at close
+// (CAP-62). An expired entry appears in no tx meta; unwalked, an evicted SAC balance would stand
+// forever and served supply would drift ABOVE the truth. Removed is absorbing and a later Restored
+// reverses it.
 //
-// The lake walker gives evicted keys the same positions but writes `removed` only for deleted entries
-// (entry_walk_parity_test.go pins them together). Unreadable keys are counted and logged with the ledger
-// number, since each dropped eviction overstates a balance and that ledger needs a replay.
+// The lake walker gives evicted keys the same positions but writes `removed` only for deleted
+// entries (entry_walk_parity_test.go pins them together). Unreadable keys are counted and logged
+// with the ledger number, since each dropped eviction overstates a balance and needs a replay.
 func (d *Dispatcher) walkEvictedKeys(lcm evictedKeysSource, ledgerSeq uint32, dispatch func(int, xdr.LedgerEntryChange) []consumer.Event) []consumer.Event {
 	keys, err := lcm.EvictedLedgerKeys()
 	if err != nil {
@@ -1047,11 +1036,10 @@ func (d *Dispatcher) Route(ev events.Event) ([]consumer.Event, error) {
 	return d.dispatchOne(ev)
 }
 
-// dispatchOne runs one event through the Matches/Decode chain; it errors only when the matching decoder
-// fails, and unclaimed events are counted and dropped. Before decoding, the event goes to [discovery.Sniff]
-// and [discovery.SniffOracleEvent] (disjoint symbol sets; docs/architecture/oracle-manipulation-defense.md
-// §"Event-shaped discovery") and to the [RawEventSink] (ADR-0029), so events a decoder rejects still reach
-// discovered_assets and soroban_events.
+// dispatchOne runs one event through the Matches/Decode chain; it errors only when the matching
+// decoder fails, and unclaimed events are counted and dropped. Before decoding, the event goes to
+// [discovery.Sniff], [discovery.SniffOracleEvent] and the [RawEventSink], so events a decoder
+// rejects still reach discovered_assets and soroban_events.
 func (d *Dispatcher) dispatchOne(ev events.Event) (outs []consumer.Event, err error) {
 	if d.discoverySink != nil {
 		if hit, ok := discovery.Sniff(ev); ok {
@@ -1251,11 +1239,10 @@ func authRootCall(node *xdr.SorobanAuthorizedInvocation) *invokeCall {
 	return buildInvokeCallFromArgs(&ic, nil, nil)
 }
 
-// walkAuthEntries flattens an op's auth entries, classifying EACH independently as the op's top-level call
-// or a nested call to re-root under it. An all-or-nothing re-root breaks a co-signed tx whose entry 0 is the
-// top-level call and entry 1 a deeper call: entries 1..n would export as the ENTRY POINT (call_kind
-// 'top_level' in soroswap_router/decode.go callPosition), so TagTradesRoutedVia's 'sub_invocation' join
-// would under-report the wrapper on /v1/aggregators, and two calls could share the
+// walkAuthEntries flattens an op's auth entries, classifying EACH independently as the op's
+// top-level call or a nested call to re-root under it. An all-or-nothing re-root breaks a co-signed
+// tx whose entry 0 is the top-level call and entry 1 a deeper call: entries 1..n would export as
+// the ENTRY POINT, under-reporting the wrapper on /v1/aggregators, and two calls could share the
 // (TxHash, OpIndex, CallPath) dedup key.
 func walkAuthEntries(auth []xdr.SorobanAuthorizationEntry, top *invokeCall) []*invokeCall {
 	var calls []*invokeCall
@@ -1349,16 +1336,15 @@ func sameInvocation(a, b *invokeCall) bool {
 	return true
 }
 
-// extractInvokeContractCallTrees returns, parallel to ops, every call reachable from each op: the top-level
-// invocation plus every nested call in its auth tree (nil for other ops). It is the ContractCallDecoder
-// routing source (ADR-0052); [extractInvokeContractCalls] is top-level only, for OpArgs. The auth tree holds
-// every call needing authorization (every token transfer in a DEX flow) and mirrors the call tree.
+// extractInvokeContractCallTrees returns, parallel to ops, every call reachable from each op: the
+// top-level invocation plus every nested call in its auth tree (nil for other ops). It is the
+// ContractCallDecoder routing source; [extractInvokeContractCalls] is top-level only, for OpArgs.
 //
-// The top-level call is always emitted with CallPath == []. An auth entry's root is the subtree NEEDING
-// authorization, often a nested call, so when no walked call matches the top level it is prepended and
-// entry j is re-rooted at [j]: the auth-entry ordinal, not the host's sub-call ordinal, but stable across
-// re-derives and not claiming to be the root. Dedup on (contract, function, args) keeps a top-level call that
-// is its own auth root from emitting twice (a duplicate trade row). Cross-entry duplicates are left to
+// The top-level call is always emitted with CallPath == []. An auth entry's root is the subtree
+// NEEDING authorization, often a nested call, so when no walked call matches the top level it is
+// prepended and entry j is re-rooted at [j]: the auth-entry ordinal, stable across re-derives and
+// not claiming to be the root. Dedup on (contract, function, args) keeps a top-level call that is
+// its own auth root from emitting twice (a duplicate trade row). Cross-entry duplicates are left to
 // consumers; AuthOccurrence tells a repeated execution in one entry from a re-listing by another.
 func extractInvokeContractCallTrees(ops []xdr.Operation) [][]*invokeCall { //nolint:gocognit // dispatch-heavy; splitting would reduce linearity
 	if len(ops) == 0 {

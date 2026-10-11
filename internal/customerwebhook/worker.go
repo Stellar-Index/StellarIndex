@@ -59,9 +59,9 @@ type DeliveryStore interface {
 // when the webhook is gone.
 //
 // The auth validator enforces the kill switch inbound; without a status read here a suspended or
-// closed customer would keep RECEIVING data, so the worker re-reads it immediately before signing
-// and POSTing. [New] refuses a store that cannot answer it (asserted at construction, not on
-// [DeliveryStore], because production wiring passes a [platform.WebhookStore] interface value).
+// closed customer would keep RECEIVING data, so the worker re-reads it immediately before
+// signing and POSTing. [New] refuses a store that cannot answer it (asserted at construction
+// because production wiring passes a [platform.WebhookStore] interface value).
 type AccountStatusReader interface {
 	WebhookAccountStatus(ctx context.Context, webhookID uuid.UUID) (platform.AccountStatus, error)
 }
@@ -566,9 +566,8 @@ func isRetryable4xx(status int) bool {
 }
 
 // mark runs a store write that records an attempt's OUTCOME on a context owned by the write, not
-// the attempt. A timed-out POST reaches the mark with a dead context, so attempt_count would never
-// advance and the row would be re-POSTed every lease interval; and the attempt's cancellation is
-// the shutdown signal, so a delivered event must not be resent because the process was stopping.
+// the attempt. A timed-out or shutdown-cancelled POST would reach the mark with a dead context, so
+// attempt_count would never advance and the row would be re-POSTed every lease interval.
 // markWriteTimeout bounds the write so a hung store cannot stall the batch past the claim lease.
 func (w *Worker) mark(ctx context.Context, write func(context.Context) error) error {
 	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), markWriteTimeout)

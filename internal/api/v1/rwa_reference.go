@@ -24,9 +24,9 @@ import (
 // premium against one compares the market with itself. R-D: the market price is observed, not a
 // `price_basis` peg or derivation. A refused row names its rule and never carries a zero.
 //
-// `reference_valuation` is the reference times the float. It rides R-0 through R-C but not R-D, so
-// it is published under its own name and total, never inside `market_cap_usd`. `premium.status`
-// and `reference_valuation.status` come from the same constant so one refusal reads as one event.
+// `reference_valuation` is the reference times the float. It skips R-D, so it is published under
+// its own name and total, never inside `market_cap_usd`. `premium.status` and
+// `reference_valuation.status` share one constant so one refusal reads as one event.
 
 // rwaReferenceTTL bounds reuse of one oracle-stream snapshot. 30s keeps the surface off a
 // per-request hypertable scan; far shorter than [rwaMembershipTTL] because prices move faster.

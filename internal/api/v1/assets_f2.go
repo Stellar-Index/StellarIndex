@@ -55,8 +55,8 @@ type VolumeReader interface {
 // SorobanVolumeReader is OPTIONALLY implemented by the wired [VolumeReader] to give pure-Soroban
 // SEP-41 assets an XLM-anchored 24h USD volume. The plain reader only sees the insert-time
 // usd_volume column (set when the quote is a USD-pegged classic), so a token trading against XLM
-// reports a bogus "0". This variant also values XLM-legged trades through the on-chain XLM/USD
-// VWAP; SEP-41/SEP-41 legs still contribute 0. Same "0"-not-null convention as VolumeReader.
+// reports a bogus "0". This variant values XLM-legged trades through the on-chain XLM/USD VWAP;
+// SEP-41/SEP-41 legs still contribute 0. Same "0"-not-null convention as VolumeReader.
 type SorobanVolumeReader interface {
 	SorobanVolume24hUSDForAsset(ctx context.Context, assetKey string) (usd string, lowerBound bool, err error)
 }
@@ -67,10 +67,9 @@ type SorobanVolumeReader interface {
 func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset canonical.Asset) {
 	key, keyErr := supply.AssetKey(asset)
 
-	// The overlay fans out to up to four independent DB reads (each 50ms-2s) that write disjoint
-	// AssetDetail fields, so they run concurrently instead of a cold /v1/assets/{id} paying the
-	// sum. Each populate* helper is best-effort: a failure logs, leaves its field null and folds
-	// into detail.f2ReadFailed.
+	// The overlay fans out to up to four independent DB reads that write disjoint AssetDetail
+	// fields, so a cold /v1/assets/{id} does not pay the sum. Each populate* helper is
+	// best-effort: a failure logs, leaves its field null and folds into detail.f2ReadFailed.
 	//
 	// IMPORTANT: pass asset.String() to populateVolume24h (the wire form trades.base_asset stores),
 	// NOT supply.AssetKey(asset): for native AssetKey returns "XLM" but trades stores "native", so
@@ -140,11 +139,10 @@ func (s *Server) applyF2Fields(ctx context.Context, detail *AssetDetail, asset c
 	}
 	detail.f2ReadFailed = volFailed || changeFailed || supplyFailed
 
-	// ADR-0011 max_supply precedence, step 2: the SEP-1 declared max. Step 1 (operator override)
-	// already shows as a non-nil snap.MaxSupply; otherwise overlay the issuer's stellar.toml
-	// max_number / fixed_number (DISPLAY units, scaled to raw by detail.Decimals).
-	// max_supply_basis="sep1_declared_max" tells consumers the cap and the FDV derived from it are
-	// issuer-declared, not on-chain enforced.
+	// max_supply precedence step 2: an operator override already shows as a non-nil snap.MaxSupply;
+	// otherwise overlay the issuer's stellar.toml max_number / fixed_number (DISPLAY units, scaled
+	// to raw by detail.Decimals). max_supply_basis="sep1_declared_max" tells consumers the cap and
+	// the FDV derived from it are issuer-declared, not on-chain enforced.
 	if haveSnap && snap.MaxSupply == nil {
 		overlaid, applied, err := supply.Overlay(ctx, snap, asset, sep1DeclaredMaxResolver{detail: detail})
 		if err != nil {
@@ -341,9 +339,8 @@ func (s *Server) thinDetailPricePass(ctx context.Context, detail *AssetDetail, a
 // marketCapRefused is the pre-figure half of the valuation guards shared by the detail cap and
 // the market-cap chart, so they cannot disagree on whether an asset has a valuation. An
 // unverified ticker collision refuses outright (a look-alike of a verified currency must not
-// publish price x supply; see fillRowMarketCap). Single-venue sub-floor trading refuses as low
-// liquidity. The turnover ceiling tests the computed figure, so each caller applies
-// [capExceedsObservedTurnover] itself.
+// publish price x supply). Single-venue sub-floor trading refuses as low liquidity. The turnover
+// ceiling tests the computed figure, so each caller applies [capExceedsObservedTurnover] itself.
 func (s *Server) marketCapRefused(asset canonical.Asset, priceSourceCount int, volume24hUSD *string) (refused, lowLiquidity bool) {
 	if s.VerifiedCurrencies != nil && asset.Type == canonical.AssetClassic {
 		if _, collision := s.VerifiedCurrencies.StellarCollision(asset.Code, asset.Issuer); collision {
@@ -558,8 +555,7 @@ func pctChange(nowStr, thenStr string) (string, error) {
 }
 
 // sep1DeclaredMaxResolver adapts the SEP-1 [[CURRENCIES]] fields already stamped on the
-// AssetDetail into [supply.MetadataResolver], so [supply.Overlay] can apply the ADR-0011 SEP-1
-// max_supply step without a second issuers-table read.
+// AssetDetail into [supply.MetadataResolver], without a second issuers-table read.
 //
 // Precedence: max_number beats fixed_number (a fixed total implies the cap); is_unlimited=true
 // blocks both, since a declared number beside it is contradictory. SEP-1 declares DISPLAY units

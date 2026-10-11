@@ -44,10 +44,10 @@ const (
 // [HistoryGranularity.Validate], its rejection message ([HistoryGranularityList]) and the API's
 // 400 bodies read it, so the accepted set and the enumeration shown to callers cannot drift.
 //
-// A new rung must also be materialised by the backfill:
-// TestCAGGsLiveForeverCoversEveryServedGranularity fails until [CAGGsLiveForever] gains the
-// matching prices_<g> view. Otherwise backfilled ranges keep a permanent hole at the new
-// resolution, since continuous-aggregate policies only roll forward.
+// A new rung must also be materialised by the backfill
+// (TestCAGGsLiveForeverCoversEveryServedGranularity fails until [CAGGsLiveForever] gains the
+// prices_<g> view), since continuous-aggregate policies only roll forward and backfilled ranges
+// would keep a permanent hole at the new resolution.
 var AllHistoryGranularities = []HistoryGranularity{
 	Granularity1m, Granularity15m, Granularity1h, Granularity4h,
 	Granularity1d, Granularity1w, Granularity1mo,
@@ -178,7 +178,7 @@ func formatCombinedVWAP(r *big.Rat) string {
 // A trade-count-weighted mean of {vwap, 1/vwap_flipped} is not a VWAP: it weights a hundred dust
 // trades above one whale. A single unflipped row is returned VERBATIM so served bytes match a
 // single-direction read. Arithmetic is exact (math/big), never float64 or SQL `1.0 / vwap`, which
-// would round the flipped leg before weighting. ok=false means "no data for this bucket".
+// rounds the flipped leg before weighting. ok=false means "no data for this bucket".
 func combineDirVWAP(rows []dirVWAP) (string, bool) {
 	if len(rows) == 1 && !rows[0].flipped {
 		if v, ok := new(big.Rat).SetString(rows[0].vwapText); !ok || v.Sign() <= 0 {
@@ -259,11 +259,10 @@ func flooredDirTWAP(rows []dirTWAP) []dirTWAP {
 //
 //	combined = Σ(oriented_twap · sample_count) / Σ(sample_count)
 //
-// A flipped row is oriented by an EXACT rational 1/twap, never SQL `1.0 / twap`, which would
-// round before weighting; a flipped leg thus contributes the harmonic mean of its minute prices,
-// a second-order gap for 1h/1d. A single unflipped row is returned VERBATIM. Notional-floor
-// fallback rows are dropped first when another direction cleared the floor ([flooredDirTWAP]).
-// ok=false when no row has a parseable, positive twap and sample_count.
+// A flipped row is oriented by an EXACT rational 1/twap, never SQL `1.0 / twap`, which rounds
+// before weighting. A single unflipped row is returned VERBATIM. Notional-floor fallback rows are
+// dropped first when another direction cleared the floor ([flooredDirTWAP]). ok=false when no row
+// has a parseable, positive twap and sample_count.
 func combineDirTWAP(rows []dirTWAP) (string, bool) {
 	rows = flooredDirTWAP(rows)
 	if len(rows) == 1 && !rows[0].flipped {
@@ -592,8 +591,8 @@ func TWAPGranularitySupported(g HistoryGranularity) bool {
 // the TWAP value). Only 1h and 1d have a TWAP CAGG; anything else errors, surfaced as a 400.
 //
 // The SDEX decoder records XLM/USDC and USDC/XLM as separate rows, so both directions are combined
-// into the requested ($1, $2) orientation by [combineDirTWAP]: exact 1/twap inversion, weighted by
-// minute coverage (`sample_count`), not trade count. See canonical.Orient.
+// into the requested ($1, $2) orientation by [combineDirTWAP], weighted by minute coverage
+// (`sample_count`), not trade count. See canonical.Orient.
 //
 // Rows are selected raw and folded per bucket by [scanTWAPPoints], so `limit` is a bucket limit
 // ([bucketRowCap] fetches 2n+1 rows for n buckets). The closed-bucket guard is sargable, so range
@@ -743,8 +742,7 @@ type Vwap1mRow struct {
 // const so the sargability tests in closed_vwap_at_test.go can scan it.
 //
 // Deliberately NOT given the `bucket >=` lower bound or the 14-day existence gate
-// [RecentClosedVWAP1mCombined] carries: both would make a dormant asset's last N closed buckets
-// empty, changing what this public endpoint serves.
+// [RecentClosedVWAP1mCombined] carries: both would empty a dormant asset's last N closed buckets.
 const recentClosedVWAP1mForPairQuery = `
         SELECT * FROM (
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
@@ -788,9 +786,9 @@ func (s *Store) RecentClosedVWAP1mForPair(ctx context.Context, p canonical.Pair,
 // pruning, spelled into both branches because each must prune independently.
 //
 // It selects raw per-direction rows and leaves the combine to [combineDirVWAP] in Go: exact
-// rational money math, not a NUMERIC `1.0 / vwap` that would round the flipped leg before
-// weighting. `LIMIT $3` is a row cap ([bucketRowCap]) that keeps a plain index-ordered scan (no
-// CTE, GROUP BY or source unnest). UNION ALL, not an OR; see [closedVWAP1mAtOrBeforeQuery].
+// rational math, not a NUMERIC `1.0 / vwap` that rounds the flipped leg before weighting.
+// `LIMIT $3` is a row cap ([bucketRowCap]) that keeps a plain index-ordered scan. UNION ALL, not
+// an OR; see [closedVWAP1mAtOrBeforeQuery].
 const recentClosedVWAP1mCombinedTemplate = `
         SELECT * FROM (
             (SELECT bucket, base_asset, vwap::text, COALESCE(volume_priced, 0)::text,
