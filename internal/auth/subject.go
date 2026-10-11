@@ -33,21 +33,22 @@ const (
 // type assertion.
 func (t Tier) String() string { return string(t) }
 
-// Subject is the authenticated identity on a request, set before the rate-limit middleware so per-tier limits work; for anonymous requests Identifier is a RemoteIP + User-Agent hash.
+// Subject is the authenticated identity on a request, set before the rate-limit middleware so
+// per-tier limits work; for anonymous requests Identifier is a RemoteIP + User-Agent hash.
 type Subject struct {
-	// Identifier — for apikey/sep10 the subject's stable identity
-	// (e.g. Stellar G-strkey for SEP-10, the API key's owner-account
-	// reference for APIKey). For anonymous, a per-IP+UA hash —
-	// stable for the duration of one window, not across deploys.
+	// Identifier is the stable identity (G-strkey for SEP-10, owner-account reference for API
+	// keys) or, for anonymous, a per-IP+UA hash that is not stable across deploys.
 	Identifier string
 
 	// Tier — see above. Drives rate-limit budget + feature gating.
 	Tier Tier
 
-	// Scopes is an optional capability list from the platform.KeyScope* vocabulary; EMPTY means full access, non-empty confines the key to the listed route families (enforced via RequiredScope + HasScope).
+	// Scopes is an optional platform.KeyScope* capability list; EMPTY means full access, non-empty
+	// confines the key to the listed route families (enforced via RequiredScope + HasScope).
 	Scopes []string
 
-	// KeyID is the public-safe credential identifier (from APIKeyRecord.KeyID, distinct from the secret hash); empty for anonymous and SEP-10 subjects.
+	// KeyID is the public-safe credential identifier (APIKeyRecord.KeyID, distinct from the secret
+	// hash); empty for anonymous and SEP-10 subjects.
 	KeyID string
 
 	// RateLimitPerMin — per-tier budget the rate-limit middleware
@@ -61,7 +62,8 @@ type Subject struct {
 	// elsewhere.
 	CreatedAt time.Time
 
-	// Label is the customer-supplied credential name shown via /v1/account/me; never consulted by auth or rate-limit logic.
+	// Label is the customer-supplied credential name shown via /v1/account/me; never consulted by
+	// auth or rate-limit logic.
 	Label string
 
 	// KeyPrefix — first 12 chars of the plaintext key (e.g.
@@ -76,30 +78,31 @@ type Subject struct {
 	// the key record.
 	IPAllowlist []netip.Prefix
 
-	// RefererAllowlist: when non-empty, the Referer host must exactly match an entry or the request gets 403; empty disables it.
-	// NOT a theft control: Referer is client-settable, so it only scopes BROWSERS embedding the key. IPAllowlist is the real control (trusted-proxy-resolved address).
+	// RefererAllowlist: when non-empty, the Referer host must exactly match an entry or the request
+	// gets 403; empty disables it. NOT a theft control: Referer is client-settable, so it only
+	// scopes BROWSERS embedding the key. IPAllowlist is the real control (trusted-proxy address).
 	RefererAllowlist []string
 
-	// AllowAllPermissions — if true, the per-endpoint permission
-	// check is skipped. When false, the Allow/Deny lists below
-	// decide. Populated by the validator from the persisted
-	// KeyPermissions.All flag.
+	// AllowAllPermissions skips the per-endpoint permission check; when false the Allow/Deny
+	// lists below decide.
 	AllowAllPermissions bool
 
-	// AllowPermissions — exact (METHOD PATH) or prefix-on-path
-	// rules that grant access. Non-empty with AllowAllPermissions
-	// false enables allow-list mode.
+	// AllowPermissions holds exact (METHOD PATH) or path-prefix grants; non-empty with
+	// AllowAllPermissions false enables allow-list mode.
 	AllowPermissions []SubjectPermissionEntry
 
-	// DenyPermissions — exact / prefix rules that deny access
-	// even when the allow-list would otherwise admit them. Always
-	// consulted (even when AllowAllPermissions is true).
+	// DenyPermissions deny even when the allow-list would admit; always consulted, even when
+	// AllowAllPermissions is true.
 	DenyPermissions []SubjectPermissionEntry
 
-	// MonthlyQuota: when > 0, middleware.MonthlyQuota 429s the Subject once the calendar-month count reaches it; zero disables. Both validators populate it, resolved against the account override.
+	// MonthlyQuota: when > 0, middleware.MonthlyQuota 429s the Subject once the calendar-month
+	// count reaches it; zero disables. Both validators populate it, resolved against the account
+	// override.
 	MonthlyQuota int64
 
-	// EmailVerifiedAt is when the customer proved their signup email (zero = never); RequireEmailVerified answers an unverified `signup-` Subject with 403 signup-verify-required, and the field is informational without that middleware.
+	// EmailVerifiedAt is when the customer proved their signup email (zero = never);
+	// RequireEmailVerified answers an unverified `signup-` Subject with 403
+	// signup-verify-required, and the field is informational without that middleware.
 	EmailVerifiedAt time.Time
 
 	// ExpiresAt — when the presented API key stops authenticating. Zero
@@ -109,8 +112,10 @@ type Subject struct {
 	ExpiresAt time.Time
 }
 
-// SubjectPermissionEntry mirrors platform.KeyPermissionEntry so auth need not import platform: either Endpoint (exact `<METHOD> <PATH>`) or EndpointPrefix, never both.
-// The JSON tags are required: the Redis cache round-trips this type, and dropping them would silently bypass KeyPolicy on cache hits.
+// SubjectPermissionEntry mirrors platform.KeyPermissionEntry so auth need not import platform:
+// either Endpoint (exact `<METHOD> <PATH>`) or EndpointPrefix, never both. The JSON tags are
+// required: the Redis cache round-trips this type, and dropping them would silently bypass
+// KeyPolicy on cache hits.
 type SubjectPermissionEntry struct {
 	Endpoint       string `json:"endpoint,omitempty"`
 	EndpointPrefix string `json:"endpoint_prefix,omitempty"`

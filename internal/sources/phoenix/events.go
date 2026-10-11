@@ -28,69 +28,54 @@ const (
 	FieldReferralFee    = "referral_fee_amount"
 )
 
-// SwapFieldCount is the number of distinct events per swap (Q1).
-// A trade is ready to emit only when all 8 slots of the RawSwap
-// are populated.
+// SwapFieldCount is the number of distinct events per swap (Q1); a trade is ready only when all
+// 8 RawSwap slots are populated.
 const SwapFieldCount = 8
 
-// EventActionSwap — the value of topic[0] for every swap-field
-// event. topic[1] carries the per-field name.
+// EventActionSwap is topic[0] of every swap-field event; topic[1] carries the field name.
 const EventActionSwap = "swap"
 
 // ─── Liquidity actions ──────────────────────────────────────────
 //
-// Pool contracts (volatile and stableswap) emit the same N-event-per-action shape as `swap`:
+// Pool contracts emit the same N-event-per-action shape as `swap`:
 //
-//	provide_liquidity (5 events): sender, token_a, token_a-amount,
-//	                              token_b, token_b-amount
-//	withdraw_liquidity (4 events): sender, shares_amount,
-//	                               return_amount_a, return_amount_b
+//	provide_liquidity (5 events): sender, token_a, token_a-amount, token_b, token_b-amount
+//	withdraw_liquidity (4 events): sender, shares_amount, return_amount_a, return_amount_b
 //
-// withdraw may also emit a 5th ("withdraw_liquidity", "auto unbonded") event with a tuple body
-// (stake_amount, stake_timestamp); it is classified but not required for the correlation to
-// complete. The stake contract emits 3 events per bond / unbond: user, token, amount.
-//
-// Field strings are the literal contract source (including the `-amount` hyphens) and all topics
-// are ScVal::String, not Symbol.
+// withdraw may also emit a 5th ("withdraw_liquidity", "auto unbonded") event with a tuple body;
+// it is classified but not required for the correlation to complete. The stake contract emits 3
+// events per bond / unbond: user, token, amount. Field strings are the literal contract source
+// (including the `-amount` hyphens) and all topics are ScVal::String, not Symbol.
 
 const (
 	EventActionProvideLiquidity  = "provide_liquidity"
 	EventActionWithdrawLiquidity = "withdraw_liquidity"
 	EventActionBond              = "bond"
 	EventActionUnbond            = "unbond"
-	// EventActionAdmin is the topic[0] of every governance/admin rotation event of the XYK pool:
-	//   ("XYK Pool: ", "Admin replacement requested by old admin: ")
-	//   ("XYK Pool: ", "Replace with new admin: ")
-	//   ("XYK Pool: ", "Undo admin change: ")
-	//   ("XYK Pool: ", "Accepted new admin: ")
-	// The trailing space is faithful to the contract source. Classification only; no canonical
-	// Trade is produced.
+	// EventActionAdmin is topic[0] of every XYK pool admin-rotation event (topic[1] phrases:
+	// "Admin replacement requested by old admin: ", "Replace with new admin: ",
+	// "Undo admin change: ", "Accepted new admin: "). The trailing space is faithful to the
+	// contract source. Classification only; no canonical Trade is produced.
 	EventActionAdmin = "XYK Pool: "
-	// EventActionInitialize is the topic[0] of pool-init events:
-	//   ("initialize", "XYK LP token_a")
-	//   ("initialize", "XYK LP token_b")
-	// Emitted once per pool deploy. Same classification-only intent.
+	// EventActionInitialize is topic[0] of pool-init events ("XYK LP token_a" / "XYK LP token_b"),
+	// emitted once per pool deploy. Classification only.
 	EventActionInitialize = "initialize"
 
-	// EventActionCreate / FieldCreateLiquidityPool are the FACTORY's pool announcement:
-	// ("create","liquidity_pool") with a body of one Address, the pool just deployed. Unlike
-	// every other action here it is emitted by the factory, not a pool, and is the decoder's live
-	// admission seam (ADR-0040 mechanism 1). It is the factory's ONLY ("create", ...) publish, so
-	// the pair below is exhaustive for the action.
+	// EventActionCreate / FieldCreateLiquidityPool are the FACTORY's pool announcement,
+	// ("create","liquidity_pool") with a body of one Address, the pool just deployed. Emitted by the
+	// factory, not a pool, it is the decoder's live admission seam (ADR-0040 mechanism 1) and the
+	// factory's ONLY ("create", ...) publish, so the pair is exhaustive for the action.
 	EventActionCreate        = "create"
 	FieldCreateLiquidityPool = "liquidity_pool"
 
-	// AdminAction* are the stored slugs for the four admin-rotation
-	// topic[1] phrases (phoenix_admin_events.admin_action, migration 0132).
+	// AdminAction* are the stored slugs for the four admin-rotation topic[1] phrases.
 	AdminActionReplaceRequested = "replace_requested"
 	AdminActionReplaceSet       = "replace_set"
 	AdminActionUndo             = "undo"
 	AdminActionAccepted         = "accepted"
 )
 
-// Field names for `provide_liquidity` (5 events per call).
-// The `token_a-amount` / `token_b-amount` hyphens come from the
-// contract source — see contracts/pool/src/contract.rs:346-355.
+// Field names for `provide_liquidity` (5 events per call); the hyphens come from the contract source.
 const (
 	FieldPLSender              = "sender"
 	FieldPLTokenA              = "token_a"
@@ -100,8 +85,7 @@ const (
 	ProvideLiquidityFieldCount = 5
 )
 
-// Field names for `withdraw_liquidity` (4 events per call, plus the
-// optional `auto unbonded` 5th — see [FieldWLAutoUnbonded]).
+// Field names for `withdraw_liquidity` (4 events per call, plus the optional [FieldWLAutoUnbonded]).
 const (
 	FieldWLSender               = "sender"
 	FieldWLSharesAmount         = "shares_amount"
@@ -111,9 +95,7 @@ const (
 	WithdrawLiquidityFieldCount = 4
 )
 
-// Field names for `bond` / `unbond` (3 events per call, same shape
-// for both actions — see contracts/stake/src/contract.rs:165-167
-// and 196-198).
+// Field names for `bond` / `unbond` (3 events per call, same shape for both).
 const (
 	FieldStakeUser   = "user"
 	FieldStakeToken  = "token"
@@ -128,12 +110,10 @@ const (
 //	withdraw_rewards   (2 events): user, reward_token
 //	distribute_rewards (1 event):  asset
 //
-// Neither event carries an amount. It surfaces on the reward token's own SEP-41 `transfer` event
-// in the SAME op (event_index+1), which is NOT correlated here (that needs a cross-decoder join
-// against sep41_transfers). The events are stored with a NULL amount rather than a misleading "0".
-//
-// distribute_rewards is a POOL-WIDE announcement with no user field, so it is decoded directly
-// from its single event, not through the correlation buffer.
+// Neither event carries an amount; it surfaces on the reward token's SEP-41 `transfer` in the SAME
+// op (event_index+1), which needs a cross-decoder join and is NOT correlated here. Events are
+// stored with a NULL amount rather than a misleading "0". distribute_rewards is a pool-wide
+// announcement with no user field, so it is decoded from its single event, not the buffer.
 const (
 	EventActionWithdrawRewards   = "withdraw_rewards"
 	EventActionDistributeRewards = "distribute_rewards"
@@ -147,8 +127,8 @@ const (
 
 // ─── Stake-contract lifecycle, factory and blend-pool admin actions ──
 //
-// Every shape below was measured on a gated emitter (fixtures in test/fixtures/phoenix/event-shapes).
-// Each is a two-String-topic event with a single-value body, decoded without a correlation buffer.
+// Every shape below was measured on a gated emitter (test/fixtures/phoenix/event-shapes): a
+// two-String-topic event with a single-value body, decoded without a correlation buffer.
 //
 //	("create_distribution_flow", "asset")                  stake, body Address(asset)
 //	("Stake: Migration: ", "Start of migration for user: ") stake, body Address(user)
@@ -159,8 +139,7 @@ const (
 //	("blend_pool", "set_min_trading_a" | "_b")              pool, body i128
 //	("toggle_trading", "enabled")                           pool, body Bool
 //
-// toggle_trading is recognised but projects no row: serving it needs an
-// admin_action slug the phoenix_admin_events CHECK does not allow yet.
+// toggle_trading is recognised but projects no row: the phoenix_admin_events CHECK has no slug.
 const (
 	EventActionCreateDistributionFlow = "create_distribution_flow"
 	EventActionStakeMigration         = "Stake: Migration: "
@@ -169,14 +148,12 @@ const (
 	EventActionBlendPool              = "blend_pool"
 	EventActionToggleTrading          = "toggle_trading"
 
-	// StakeAction* are the phoenix_stake_events.action slugs for the
-	// stake-contract lifecycle events (migration 0195).
+	// StakeAction* are the phoenix_stake_events.action slugs for stake-contract lifecycle events.
 	StakeActionMigrationStarted   = "migration_started"
 	StakeActionMigrationQueried   = "migration_queried"
 	StakeActionMigrationCompleted = "migration_completed"
 
-	// AdminAction* for the factory and blend-pool configuration events
-	// (phoenix_admin_events.admin_action, migration 0195).
+	// AdminAction* for the factory and blend-pool configuration events.
 	AdminActionFactoryConfigUpdated = "factory_config_updated"
 	AdminActionBlendSetDelegate     = "blend_set_delegate"
 	AdminActionBlendSetMinTradingA  = "blend_set_min_trading_a"
@@ -194,12 +171,11 @@ const (
 	// canonical.Asset.SacContractID()); use aquarius.MainnetXLMSAC or canonical.XLMSacContractID.
 )
 
-// MainnetPools is the curated gated pool set (ADR-0040 mechanism 2, curated-set registry), taken
-// from the factory's `query_pools()` view cross-checked against lake activity. The decoder also
-// self-registers from the factory's ("create","liquidity_pool") events, so this is a cold-start
-// warm root, not the sole trust root; it still covers pools whose creation event is outside the
-// streamed window. A pool missing from BOTH this list and an in-window announcement fail-closes
-// and surfaces as an ADR-0033 recognition gap (visible, never silently mis-attributed).
+// MainnetPools is the curated gated pool set (ADR-0040 mechanism 2), from the factory's
+// `query_pools()` cross-checked against lake activity. The decoder also self-registers from the
+// factory's create events, so this is a cold-start root that covers pools whose creation is outside
+// the streamed window. A pool missing from BOTH fail-closes and surfaces as an ADR-0033
+// recognition gap (visible, never silently mis-attributed).
 var MainnetPools = []string{
 	"CBHCRSVX3ZZ7EGTSYMKPEFGZNWRVCSESQR3UABET4MIW52N4EVU6BIZX",
 	"CBCZGGNOEUZG4CAAE7TGTQQHETZMKUT4OIPFHHPKEUX46U4KXBBZ3GLH",
@@ -212,10 +188,9 @@ var MainnetPools = []string{
 	"CCKOC2LJTPDBKDHTL3M5UO7HFZ2WFIHSOKCELMKQP3TLCIVUBKOQL4HB",
 	"CCUCE5H5CKW3S7JBESGCES6ZGDMWLNRY3HOFET3OH33MXZWKXNJTKSM3",
 	"CDQLKNH3725BUP4HPKQKMM7OO62FDVXVTO7RCYPID527MZHJG2F3QBJW",
-	// An XYK String-schema pool the query_pools() snapshot missed. Genuine: it was deployed in the
-	// factory's pool-create transaction together with its stake contract, and emits the 8-event
-	// swap, provide/withdraw_liquidity and ("initialize","XYK LP token_*") surface. Without it its
-	// served phoenix_liquidity rows would score expected=0 under the gated re-derive.
+	// An XYK String-schema pool the query_pools() snapshot missed; genuine (deployed in the
+	// factory's pool-create transaction with its stake contract). Without it its served
+	// phoenix_liquidity rows would score expected=0 under the gated re-derive.
 	"CAZ6W4WHVGQBGURYTUOLCUOOHW6VQGAAPSPCD72VEDZMBBPY7H43AYEC",
 }
 
@@ -225,16 +200,14 @@ var MainnetPools = []string{
 var MainnetStakeContracts = []string{
 	"CBRGNWGAC25CPLMOAMR7WBPOF5QTFA5RYXQH4DEJ4K65G2QFLTLMW7RO",
 	"CAF3UJ45ZQJP6USFUIMVMGOUETUTXEC35R2247VJYIVQBGKTKBZKNBJ3",
-	// CBBUVHCE… is deliberately absent: a bond-instrument contract whose WASM has none of the
-	// stake literals; it only shares the "bond" topic word. The 13 below are genuine per-pool
-	// stake contracts the activity snapshot missed; several still emit near tip, so omitting them
-	// from the gate drops live events. Evidence of identity:
-	//   - the first 11 each co-occur in their pool's factory create transaction (the factory
-	//     deploys pool + stake together), paired 1:1 with a curated pool above;
+	// CBBUVHCE… is deliberately absent: a bond-instrument contract whose WASM has none of the stake
+	// literals; it only shares the "bond" topic word. The 13 below are genuine per-pool stake
+	// contracts the activity snapshot missed, several still emitting near tip. Evidence of identity:
+	//   - the first 11 co-occur in their pool's factory create transaction (the factory deploys
+	//     pool + stake together), paired 1:1 with a curated pool above;
 	//   - CDOXQONPND... shares 260 transactions with curated pools and is driven by the phoenix
 	//     reward keeper CBZ7M5B3Y4WW..., which also drives the seeded stakes above;
-	//   - CDEQYRWFU... is driven by that same keeper and emits stake v1.1 migration events a
-	//     foreign contract has no reason to replicate.
+	//   - CDEQYRWFU... is driven by that same keeper and emits stake v1.1 migration events.
 	"CABWEFVXUB3XWYPTWFETEGJR2WRGE2ZKYYLZDLV3EBUVFMOU4ENK4DJC", // ↔ pool CBHCRSVX (factory create @51,572,026)
 	"CAIR3UPW2PEP27QZWX4XGMO65W6LJ3XCRA3F5G7Z3D52MNOVF5K5YZ56", // ↔ pool CBCZGGNO (factory create @51,572,030)
 	"CDP6DT2YU75ZMOPTTCQ563H2XZDDWHPWKRQ6N2W5LNVE5HHRSB4MMRNQ", // ↔ pool CAZ6W4WH (factory create @51,572,101)
@@ -250,12 +223,10 @@ var MainnetStakeContracts = []string{
 	"CDEQYRWFU3IHPRR6H6VOQRUU3JFS6DTUYUL4YAQSD3ALB5IPBTEOZUFM", // pre-lake; keeper CBZ7M5B3 + phoenix v1.1 stake-migration events
 }
 
-// MainnetMapPools are Phoenix pools running the NEWER pool WASM whose swap emits a SINGLE
-// ScvSymbol("swap") event with an ScvMap body (all 8 fields as underscore-spelled Symbol keys)
-// instead of the older 8 ScvString-tuple events (Q5). Both schemas are gated and decoded
-// (actionSwap / actionSwapMap). Gating is by contract identity, so a curated pool that upgrades
-// from the String to the Map shape in place is already covered; only the decode dispatch depends
-// on the topic shape, not this list.
+// MainnetMapPools are pools running the NEWER pool WASM whose swap emits a SINGLE ScvSymbol("swap")
+// event with an ScvMap body instead of the older 8 ScvString-tuple events (Q5). Gating is by
+// contract identity, so a pool upgrading from String to Map shape in place is already covered;
+// only the decode dispatch depends on the topic shape.
 var MainnetMapPools = []string{
 	"CBENABXP6C4C7WG6KB7JQOTDS5GIIXF3IX3PIYNZFCDZDWUHITO2HZ4S",
 }
@@ -287,16 +258,14 @@ var (
 	TopicSymbolReferralFee    = scval.MustEncodeString(FieldReferralFee)    //
 )
 
-// TopicSymbolSwapMap is the topic[0] of the NEWER single-event Map-body swap schema: a SINGLE
-// ScvSymbol("swap") topic (disc 0x0F) whose body is an ScvMap of every swap field, distinct from
-// the older 8-event ScvString("swap") schema above (disc 0x0E). Map keys are underscore Symbols
-// ("actual_received_amount"), not the older spaced String. Decoded by decodeSwapMap; see README Q5
-// (Soroban pools upgrade in place and can change event SHAPE, not just fields).
+// TopicSymbolSwapMap is topic[0] of the NEWER Map-body swap schema: a SINGLE ScvSymbol("swap")
+// (disc 0x0F) whose body is an ScvMap, distinct from the older ScvString("swap") (disc 0x0E). Map
+// keys are underscore Symbols ("actual_received_amount"). See README Q5: pools upgrade in place
+// and can change event SHAPE, not just fields.
 var TopicSymbolSwapMap = scval.MustEncodeSymbol(EventActionSwap)
 
-// The Map-schema pool WASM publishes provide_liquidity / withdraw_liquidity
-// the same way: one ScvSymbol topic, ScvMap body. Decoded by
-// decode.go::decodeProvideLiquidityMap / decodeWithdrawLiquidityMap.
+// The Map-schema pool WASM publishes provide/withdraw_liquidity the same way: one ScvSymbol topic,
+// ScvMap body.
 var (
 	TopicSymbolProvideLiquidityMap  = scval.MustEncodeSymbol(EventActionProvideLiquidity)
 	TopicSymbolWithdrawLiquidityMap = scval.MustEncodeSymbol(EventActionWithdrawLiquidity)
@@ -333,37 +302,31 @@ var (
 	TopicSymbolAdmin             = scval.MustEncodeString(EventActionAdmin)             // topic[0] for the 4 admin variants
 	TopicSymbolInitialize        = scval.MustEncodeString(EventActionInitialize)        // topic[0] for the 2 init variants
 
-	// Factory pool announcement, ("create","liquidity_pool"), both ScvString. Because they are
-	// Strings and not Symbols, the lake's convenience column topic_0_sym is EMPTY for these rows,
-	// so a lake walk keyed on it matches nothing; the re-derive prefilter matches topics_xdr
-	// instead (internal/storage/clickhouse/event_reader.go).
+	// Factory pool announcement, ("create","liquidity_pool"), both ScvString. Being Strings, the
+	// lake's topic_0_sym column is EMPTY for these rows, so a walk keyed on it matches nothing;
+	// the re-derive prefilter matches topics_xdr instead (internal/storage/clickhouse/event_reader.go).
 	TopicSymbolCreate        = scval.MustEncodeString(EventActionCreate)        // topic[0]
 	TopicCreateLiquidityPool = scval.MustEncodeString(FieldCreateLiquidityPool) // topic[1]
 
-	// initialize topic[1] variants — the pool announces its two tokens
-	// as ("initialize", "XYK LP token_a" | "XYK LP token_b").
+	// initialize topic[1] variants: the pool announces its two tokens.
 	TopicInitTokenA = scval.MustEncodeString("XYK LP token_a") // topic[1]
 	TopicInitTokenB = scval.MustEncodeString("XYK LP token_b")
 
-	// TopicInitLPShareStaking is the per-pool STAKE contract's initialize topic[1],
-	// ("initialize", "LP Share token staking contract"): a stake contract announcing its own
-	// LP-share token at deploy (body = a single Address). It maps to NO phoenix_initialize row
-	// (that table models the pool's token slots); it is recognized-but-NOT-projected, and the raw
-	// event is preserved in the soroban_events landing zone (ADR-0029). Stake contracts are gated,
-	// so these events pass Matches(); recognising this topic in decodeInitializeEvent stops them
-	// counting as undecodable-but-matched blind spots in the ADR-0033 re-derive (reconcile.go).
+	// TopicInitLPShareStaking is the per-pool STAKE contract's initialize topic[1]: it announces
+	// its LP-share token at deploy (body = one Address). It maps to NO phoenix_initialize row (that
+	// table models the pool's token slots): recognised but NOT projected, raw event kept in the
+	// soroban_events landing zone (ADR-0029). Stake contracts are gated, so these pass Matches();
+	// recognising the topic stops them counting as undecodable-but-matched blind spots in the
+	// ADR-0033 re-derive (reconcile.go).
 	TopicInitLPShareStaking = scval.MustEncodeString("LP Share token staking contract")
 
-	// admin (governance rotation) topic[1] variants — ("XYK Pool: ",
-	// <phrase>). The phrases include a trailing space, faithful to
-	// pool/src/contract.rs:784-836.
+	// admin (governance rotation) topic[1] phrases; the trailing space is faithful to the contract.
 	TopicAdminReplaceRequested = scval.MustEncodeString("Admin replacement requested by old admin: ") // topic[1]
 	TopicAdminReplaceSet       = scval.MustEncodeString("Replace with new admin: ")
 	TopicAdminUndo             = scval.MustEncodeString("Undo admin change: ")
 	TopicAdminAccepted         = scval.MustEncodeString("Accepted new admin: ")
 
-	// adminActionByTopic maps each admin topic[1] blob to its stored
-	// slug (see the AdminAction* constants).
+	// adminActionByTopic maps each admin topic[1] blob to its stored AdminAction* slug.
 	adminActionByTopic = map[string]string{
 		TopicAdminReplaceRequested: AdminActionReplaceRequested,
 		TopicAdminReplaceSet:       AdminActionReplaceSet,
@@ -400,33 +363,26 @@ var (
 
 // Errors returned by the decode path.
 var (
-	// ErrUnknownField — topic[1] didn't match any of the 8 expected
-	// field names. Usually means a non-swap event (e.g. deposit,
-	// withdraw) — classified as "not our problem" and skipped.
+	// ErrUnknownField — topic[1] matched none of the 8 swap field names; usually a non-swap event,
+	// skipped.
 	ErrUnknownField = errors.New("phoenix: unknown swap field")
 
-	// ErrIncompleteSwap — fewer than 8 fields populated when asked
-	// to finalise. Should never bubble up in normal flow; buffer
-	// only returns complete RawSwaps.
+	// ErrIncompleteSwap — fewer than 8 fields populated when finalising. Defence-in-depth: the
+	// buffer only returns complete RawSwaps.
 	ErrIncompleteSwap = errors.New("phoenix: incomplete swap (need 8 fields)")
 
-	// ErrMalformedPayload — field values don't match expected types
-	// or carry a negative amount.
+	// ErrMalformedPayload — field values have the wrong types or a negative amount.
 	ErrMalformedPayload = errors.New("phoenix: malformed swap payload")
 
 	// ErrZeroAmountSwap marks a fully-decoded swap with a ZERO leg: a genuine dust swap, not a
-	// malformed payload. The dispatcher adapter treats it (like a self-pair,
-	// canonical.ErrPairMismatch) as a recognised no-op, so the ADR-0033 re-derive counts
-	// expected=0 instead of failing the verdict closed.
+	// malformed payload. The adapter treats it (like canonical.ErrPairMismatch) as a recognised
+	// no-op so the ADR-0033 re-derive counts expected=0 instead of failing the verdict closed.
 	ErrZeroAmountSwap = errors.New("phoenix: zero-amount swap (recognised no-op)")
 
-	// ErrIncompleteLiquidity — bubbles up if decodeProvideLiquidity /
-	// decodeWithdrawLiquidity is called before every required field
-	// has landed. Defence-in-depth: the buffer only returns completed
-	// records, so callers shouldn't see this in normal flow.
+	// ErrIncompleteLiquidity — a liquidity decode ran before every required field landed.
+	// Defence-in-depth: the buffer only returns completed records.
 	ErrIncompleteLiquidity = errors.New("phoenix: incomplete liquidity event")
 
-	// ErrIncompleteStake — same shape as ErrIncompleteLiquidity, for
-	// the bond / unbond 3-event reassembly.
+	// ErrIncompleteStake is ErrIncompleteLiquidity for the bond / unbond 3-event reassembly.
 	ErrIncompleteStake = errors.New("phoenix: incomplete stake event")
 )

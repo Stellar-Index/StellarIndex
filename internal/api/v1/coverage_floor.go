@@ -18,8 +18,7 @@ import (
 // empty series leaves ambiguous ("the market was quiet" vs "the window predates anything held").
 // Production is timescale.Store: one bounded, index-backed `min(bucket)` over prices_<granularity>.
 // The methods differ only in which stored rows they span; a surface picks the one its own serving
-// read spans, never a wider one, since a floor over rows it cannot serve claims bars that will
-// never arrive.
+// read spans, since a floor over rows it cannot serve claims bars that never arrive.
 //   - EarliestBucket folds both legs' alias families and both stored directions, matching reads
 //     that walk both legs' spellings (chartMergeAliasPairs, lookupPriceAt, the non-fiat
 //     ohlcSeriesWithAliases, tradesInRangeAfterWithAliases).
@@ -67,26 +66,22 @@ func (s coverageProbeSpan) String() string {
 // Coverage-floor probe envelope. Every constant here exists to bound
 // what an ANONYMOUS caller can spend by asking for empty windows.
 const (
-	// coverageFloorGranularity is the CAGG rung the floor is measured on: always the daily rung,
-	// not the grain requested. prices_1d has no retention policy and the fewest rows per pair, so
-	// it is the cheapest to prove empty on a path an anonymous caller can drive. Finer rungs are
-	// materialized_only and refreshed on their own schedule (timescale.CAGGsLiveForever), so they
-	// can hold less history.
+	// coverageFloorGranularity is the CAGG rung the floor is measured on, always the daily rung
+	// regardless of the grain requested: prices_1d has no retention policy and the fewest rows per
+	// pair, so it is cheapest to prove empty on a path an anonymous caller drives. Finer rungs are
+	// materialized_only (timescale.CAGGsLiveForever) and can hold less history.
 	coverageFloorGranularity = "1d"
 
-	// coverageFloorTTL is how long one answer is reused. The floor is close to immutable (it moves
-	// when a pair's first bucket materialises or a backfill lands earlier rows), so the TTL is set
-	// by how quickly a NEW pair should stop being described as uncovered.
+	// coverageFloorTTL is how long one answer is reused. The floor is close to immutable, so the
+	// TTL is set by how quickly a NEW pair should stop being described as uncovered.
 	coverageFloorTTL = 30 * time.Minute
 
-	// coverageFloorFailedTTL is how long a probe error is memoised. Short, because a transient
-	// store error is not a fact about the pair and must not poison the advisory annotation for the
-	// full TTL, yet it still bounds re-issuing the failing read on every empty window.
+	// coverageFloorFailedTTL is how long a probe error is memoised: short, since a transient store
+	// error is not a fact about the pair, yet it still bounds re-issuing the failing read.
 	coverageFloorFailedTTL = 45 * time.Second
 
-	// coverageFloorProbeTimeout caps ALL probes behind one response together. A fiat-quoted pair's
-	// floor spans its whole constituent set (see [coverageSet]) and each memo miss is one read, so
-	// the ceiling is per response. A degraded database costs the response only the signal.
+	// coverageFloorProbeTimeout caps ALL probes behind one response together (a fiat-quoted pair
+	// probes its whole constituent set). A degraded database costs the response only the signal.
 	coverageFloorProbeTimeout = 2 * time.Second
 
 	// coverageFloorCacheMax bounds the entry count, since a caller can mint unlimited distinct
@@ -94,10 +89,8 @@ const (
 	coverageFloorCacheMax = 4096
 )
 
-// coverageFloorEpoch is the lower bound of every probe: the pubnet
-// genesis month. Nothing can be bucketed before it, so binding it as a
-// literal costs no rows and buys plan-time chunk exclusion at the bottom
-// end.
+// coverageFloorEpoch is the lower bound of every probe: the pubnet genesis month. Binding it as a
+// literal buys plan-time chunk exclusion at the bottom end.
 var coverageFloorEpoch = time.Date(2015, 9, 30, 0, 0, 0, 0, time.UTC)
 
 // coverageFloorOutcome is what one probe established about one pair. A floor read and absent can
@@ -195,13 +188,11 @@ func (c *coverageFloorCache) store(key string, e coverageFloorEntry, now time.Ti
 //
 // A fiat quote makes this a SET: nothing on chain quotes in `fiat:USD`, so surfaces answer from
 // USD-pegged constituents (the direct pair, stablecoin backers, declared classic pegs, and on
-// /v1/chart a derivation through XLM). A floor on the literal pair alone is wrong twice over:
+// /v1/chart a derivation through XLM). A floor on the literal pair alone is wrong both ways:
 // earlier constituent buckets make a served-and-empty window look uncovered, and direct buckets no
 // constituent read would find make an uncovered window look quiet. So the floor is measured over
-// exactly the pairs the serving read enumerates, via the same helpers
-// ([Server.usdPeggedConstituents], [Server.chartFiatProxyPairs], [fiatCrossLegsThroughXLM],
-// [Server.priceAtUSDPegPairs]) so the two cannot drift apart. `span` pins how many spellings of
-// each pair a probe covers; see [coverageProbeSpan].
+// exactly the pairs the serving read enumerates, via the same helpers, so the two cannot drift.
+// `span` pins how many spellings of each pair a probe covers; see [coverageProbeSpan].
 type coverageSet struct {
 	// direct pairs. The serving read answers from any one that holds buckets, so the set's floor is
 	// the EARLIEST of their floors.
@@ -220,14 +211,13 @@ type coverageSet struct {
 // exactly its population.
 //
 // A fiat quote is served by [Server.ohlcSeriesFiatCombined], which reads the literal pairs
-// [Server.usdPeggedConstituents] enumerates: every base spelling crossed with the peg expansion,
-// each quote in every canonical form (established, then held-back SAC wrappers). Those are the set
-// and [spanLiteralQuote] the span, because [Store.OHLCSeries] takes the quote spelling it is given.
+// [Server.usdPeggedConstituents] enumerates (every base spelling crossed with the peg expansion,
+// each quote in every canonical form). Those are the set and [spanLiteralQuote] the span, because
+// [Store.OHLCSeries] takes the quote spelling it is given.
 //
-// Held-back spellings belong in the set even though the combine admits their bars only into
-// buckets nothing established answered: the floor is consulted only on an empty answer, meaning
-// every constituent was read, and omitting them would put the probe behind the read. A test pins
-// the probed and requested populations equal.
+// Held-back SAC spellings belong in the set: the floor is consulted only on an empty answer, which
+// means every constituent was read, and omitting them would put the probe behind the read. A test
+// pins the probed and requested populations equal.
 func (s *Server) ohlcCoverageSet(pair canonical.Pair) coverageSet {
 	if pair.Quote.Type != canonical.AssetFiat {
 		return coverageSet{direct: []canonical.Pair{pair}}
@@ -242,12 +232,9 @@ func (s *Server) ohlcCoverageSet(pair canonical.Pair) coverageSet {
 // exists only where both legs do.
 //
 // The set is built from the read's own enumeration helpers so the two cannot drift. A floor is
-// consulted only on an EMPTY answer, which requires every listed pair to have come back empty, so
-// the read must actually read every one (the merge is per bucket for that reason).
-//
-// The default span (both legs' aliases, both directions) is what this chain spans: every entry is
-// read through [Server.chartSeriesPoints], which crosses both base aliases with every canonical
-// form of each declared peg ([Server.chartFiatProxyQuotes]'s established then held-back pass).
+// consulted only on an EMPTY answer, so the read must actually read every listed pair (the merge
+// is per bucket for that reason). The default span fits: every entry is read through
+// [Server.chartSeriesPoints], crossing both base aliases with every canonical form of each peg.
 func (s *Server) chartCoverageSet(pair canonical.Pair) coverageSet {
 	set := coverageSet{direct: s.chartAliasPairs(pair)}
 	if pair.Quote.Type != canonical.AssetFiat {
@@ -269,12 +256,10 @@ func (s *Server) priceAtCoverageSet(pair canonical.Pair) coverageSet {
 }
 
 // historyCoverageSet mirrors [Server.tradesInRangeAfterWithAliases]: the pair itself, since the
-// raw-trade page has no fiat fallback. The default span, because that walk crosses both legs' alias
-// families and reads each form in both stored directions
-// ([Server.tradesInRangeAfterBothDirections]), re-expressing flipped rows into the requested
-// orientation. A market recorded only as USDC/AQUA is thus served under `base=AQUA&quote=USDC`, so
-// its floor must cover those rows: a floor over rows a surface cannot serve over-claims, and one
-// over fewer rows than it serves under-reports.
+// raw-trade page has no fiat fallback. The default span, because that walk reads each alias form
+// in both stored directions, re-expressing flipped rows into the requested orientation. A market
+// recorded only as USDC/AQUA is thus served under `base=AQUA&quote=USDC`, so its floor must cover
+// those rows: a floor over unservable rows over-claims, one over fewer rows under-reports.
 func historyCoverageSet(pair canonical.Pair) coverageSet {
 	return coverageSet{direct: []canonical.Pair{pair}}
 }
@@ -337,13 +322,10 @@ func (s *Server) coverageFloor(ctx context.Context, pair canonical.Pair, span co
 
 // coverageFloorOf returns when the served history for `set` begins, and whether that is known.
 //
-// Called only from an already-empty answer, so the probes add one bounded read per constituent to
-// a request that was empty anyway, and the TTL cache collapses repeats.
-//
-// The fold is strict about what it does not know. A direct constituent read and found empty is
-// skipped, as is a derived series with any leg absent. But one FAILED probe makes the whole floor
-// unknown: that constituent might hold the earliest bucket, and a floor too LATE turns a
-// served-and-quiet window into a false coverage claim. Silence only costs an unannotated window.
+// Called only from an already-empty answer, so probes add one bounded read per constituent and the
+// TTL cache collapses repeats. An absent constituent (or a derived series with any leg absent) is
+// skipped, but one FAILED probe makes the whole floor unknown: that constituent might hold the
+// earliest bucket, and a floor too LATE turns a quiet window into a false coverage claim.
 func (s *Server) coverageFloorOf(ctx context.Context, set coverageSet) (time.Time, bool) {
 	// The memo is required: without it every probe is a read on a path an anonymous caller drives.
 	// A Server assembled without [New] has no cache, and the honest answer there is no signal.
@@ -438,13 +420,11 @@ func historyPageIsAmbiguous(rows int, afterTS time.Time) bool {
 }
 
 // writeChartSeries emits a /v1/chart response with its coverage annotation and interior-gap signal.
-// handleChart's truncation signal comes from points[0] and says nothing about an EMPTY series (so
-// coverage is the only account of that case) nor about a hole in the MIDDLE, which is why
-// [ChartSeries.markDiscontinuity] is stamped here; both ride the write so neither is forgotten.
+// handleChart's truncation signal says nothing about an EMPTY series (coverage is the only account
+// there) nor a hole in the MIDDLE ([ChartSeries.markDiscontinuity]); both ride this write.
 //
-// The window always ends at NOW, so `outside_coverage` never fires here; the floor is the whole
-// answer. An empty series with `coverage_from` says the pair has been quiet; with the field absent,
-// this deployment holds nothing for it. Without the field both render as `points: []`.
+// The window always ends at NOW, so `outside_coverage` never fires; an empty series with
+// `coverage_from` means the pair has been quiet, without it this deployment holds nothing.
 func (s *Server) writeChartSeries(
 	w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair, series ChartSeries, walk chartWalkResult,

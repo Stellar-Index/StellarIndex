@@ -75,21 +75,16 @@ var AnswerUpdatedTopic0 string
 // FeedSpec describes one Chainlink AggregatorV3 contract and how to scale its raw int256. The pair
 // is implicit in the FeedMap key; FeedSpec only carries the per-address fields.
 type FeedSpec struct {
-	// Address is the 0x-prefixed Ethereum contract address of the
-	// AggregatorV3 proxy. Chainlink upgrades the underlying
-	// aggregator via this proxy; the address is stable across
-	// upgrades.
+	// Address is the 0x-prefixed AggregatorV3 proxy address; it is stable across the underlying
+	// aggregator's upgrades.
 	Address string
 
-	// Decimals is the divisor power-of-10 applied to the raw int256
-	// answer to obtain the human-scale price. Defaults to 8
-	// (DefaultDecimals) when zero.
+	// Decimals is the power-of-10 divisor applied to the raw int256 answer. Zero adopts the
+	// feed's on-chain decimals() (see [DefaultDecimals]).
 	Decimals uint8
 
-	// Invert flips price → 1/price after scaling. Useful when the
-	// canonical pair is the reciprocal of the feed's natural quote
-	// (e.g. operator wants USD/EUR but the feed publishes EUR/USD).
-	// Same semantic as divergence/chainlink.go's Invert.
+	// Invert flips price to 1/price after scaling, for a canonical pair that is the reciprocal of
+	// the feed's quote (USD/EUR from an EUR/USD feed). Same semantic as divergence/chainlink.go.
 	Invert bool
 
 	// MaxAge is the live-poll staleness budget: a round whose updatedAt is older is refused, never
@@ -98,12 +93,10 @@ type FeedSpec struct {
 	MaxAge time.Duration
 }
 
-// Round is the decoded shape of one latestRoundData() / getRoundData()
-// return tuple. Used as the dedup key (RoundID) and the source of
-// truth for the OracleUpdate's timestamp + price.
+// Round is one decoded latestRoundData() / getRoundData() tuple: the dedup key (RoundID) and the
+// source of the OracleUpdate's timestamp and price.
 type Round struct {
-	// FeedAddress is the 0x-prefixed contract address this round
-	// came from. Used in dedup keys + log line context.
+	// FeedAddress is the 0x-prefixed contract address this round came from.
 	FeedAddress string
 
 	// RoundID is the FULL uint80 proxy round id, (phaseId<<64)|aggregatorRoundId, held as a
@@ -111,59 +104,45 @@ type Round struct {
 	// unchanged feed emit no duplicate rows. Never nil after decode; treat nil as zero.
 	RoundID *big.Int
 
-	// AnsweredInRound is the round that computed Answer, in the same
-	// phase-encoded uint80 space as RoundID. Less than RoundID means the
-	// answer was carried forward from an earlier round. Nil for rounds
-	// decoded from AnswerUpdated logs, which only fire on a fresh answer.
+	// AnsweredInRound is the round that computed Answer, in RoundID's phase-encoded uint80 space;
+	// less than RoundID means the answer was carried forward. Nil for AnswerUpdated logs, which
+	// only fire on a fresh answer.
 	AnsweredInRound *big.Int
 
-	// Answer is the raw int256 price at the feed's native decimals.
-	// Preserved as-is (no scaling) — canonical.OracleUpdate.Price
-	// stores raw integers per ADR-0003.
+	// Answer is the raw int256 price at the feed's native decimals, unscaled: OracleUpdate.Price
+	// stores raw integers (ADR-0003).
 	Answer string // decimal-string form for cross-package portability
 
-	// UpdatedAt is the timestamp Chainlink stamped into the round's
-	// `updatedAt` field — the authoritative oracle-publication
-	// timestamp. Always UTC.
+	// UpdatedAt is Chainlink's `updatedAt`, the authoritative publication time. Always UTC.
 	UpdatedAt time.Time
 }
 
 // Errors used by the package. Callers classify via errors.Is.
 var (
-	// ErrEmptyResult — the RPC returned `0x` or empty string.
-	// Usually means the contract address is wrong, or the call
-	// reverted server-side. The poller logs + skips; the next tick
-	// retries.
+	// ErrEmptyResult — the RPC returned `0x` or empty: a wrong address or a server-side revert.
+	// The poller logs, skips and retries next tick.
 	ErrEmptyResult = errors.New("chainlink: empty rpc result")
 
-	// ErrMalformedResult — RPC returned data we can't decode as
-	// the expected ABI shape (wrong length, malformed hex, etc).
+	// ErrMalformedResult — the RPC data does not decode as the expected ABI shape.
 	ErrMalformedResult = errors.New("chainlink: malformed rpc result")
 
-	// ErrUnknownFeed — operator asked us to poll a pair that
-	// isn't in our FeedMap. Surfaced at config-load + per-poll
-	// guard.
+	// ErrUnknownFeed — a polled pair is not in the FeedMap.
 	ErrUnknownFeed = errors.New("chainlink: pair not in configured FeedMap")
 
-	// ErrNonPositivePrice — Chainlink can in principle return
-	// negative answers (some legacy feeds did during stress); we
-	// drop those rather than write a row that would fail
-	// `oracle_updates`'s `CHECK (price > 0)`.
+	// ErrNonPositivePrice — some legacy feeds returned negative answers under stress; dropped
+	// rather than written, since oracle_updates has CHECK (price > 0).
 	ErrNonPositivePrice = errors.New("chainlink: non-positive answer")
 
-	// ErrFutureUpdatedAt — the feed reported an updatedAt ahead of the
-	// poller's clock (beyond a small skew allowance). Refused so a
-	// future-dated row can never pin itself as the pair's latest.
+	// ErrFutureUpdatedAt — updatedAt is ahead of the poller's clock beyond a small skew allowance.
+	// Refused so a future-dated row can never pin itself as the pair's latest.
 	ErrFutureUpdatedAt = errors.New("chainlink: updatedAt ahead of poller clock")
 
-	// ErrStaleRound — the feed's latest round is older than the feed's
-	// MaxAge. Refused so a frozen or retired feed is never re-emitted
-	// as a current observation.
+	// ErrStaleRound — the latest round is older than the feed's MaxAge. Refused so a frozen or
+	// retired feed is never re-emitted as a current observation.
 	ErrStaleRound = errors.New("chainlink: round older than the feed's max age")
 
-	// ErrCarriedForwardRound — answeredInRound < roundId: the answer
-	// was computed in an earlier round, so this round is not a new
-	// publication.
+	// ErrCarriedForwardRound — answeredInRound < roundId: the answer was computed earlier, so this
+	// is not a new publication.
 	ErrCarriedForwardRound = errors.New("chainlink: answer carried forward from an earlier round")
 )
 

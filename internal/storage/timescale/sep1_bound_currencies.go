@@ -67,12 +67,9 @@ type Sep1BoundCensus struct {
 	// IssuersWithPayload is the rows this scan read: stellar.toml fetched and parsed at least once.
 	IssuersWithPayload int
 	// IssuersFetchedWithoutPayload counts issuers whose domain a fetch REACHED yet hold no
-	// payload: a live failure streak (sep1_consecutive_failures > 0) and a NULL sep1_payload, the
-	// predicate [Store.IssuerSep1Unreachable] serves per asset.
-	//
-	// Without it, IssuersWithHomeDomain - IssuersWithPayload reads as an unfetched backlog when
-	// nearly all of it is dead, parked or non-SEP-1 domains already tried. The reason a reached
-	// domain served nothing (404, DNS, TLS, undecodable) is not recorded.
+	// payload: a live failure streak and a NULL sep1_payload, the predicate
+	// [Store.IssuerSep1Unreachable] serves per asset. Without it, IssuersWithHomeDomain minus
+	// IssuersWithPayload reads as an unfetched backlog when most of it is domains already tried.
 	IssuersFetchedWithoutPayload int
 	// IssuersPayloadStale counts payloads not fetched within [Sep1AttestationMaxAge], or of unknown
 	// fetch time. They are not read: a long-silent domain no longer attests to its last document.
@@ -159,21 +156,16 @@ type Sep1CurrencyFilter func(Sep1BoundCurrency) bool
 // that pass the provenance rule and the filter, plus the census of everything walked. A payload
 // older than [Sep1AttestationMaxAge] is counted and not read.
 //
-// The census is returned so a caller can report the population it narrowed from; otherwise a
-// filtered read looks like an unfiltered one that found little.
+// The census is returned so a filtered read does not look like an unfiltered one that found little.
 //
-// Two indexed reads: one aggregate over `issuers` and one SELECT over issuers with a payload
-// (~14.6k rows). Intended to run off the request path behind a TTL cache. A corrupt payload is
-// skipped, never fatal, but counted: unreadable and declaring-nothing are different findings.
+// Two reads: one aggregate over `issuers` and one SELECT over issuers with a payload. Run it off
+// the request path behind a TTL cache. A corrupt payload is skipped but counted.
 func (s *Store) BoundSep1Currencies(ctx context.Context, keep Sep1CurrencyFilter) ([]Sep1BoundCurrency, Sep1BoundCensus, error) {
 	var census Sep1BoundCensus
 
-	// The population upstream of this scan; an issuer with no home_domain can serve no toml.
-	//
 	// The second count separates our backlog from a domain that WAS reached and served nothing
 	// storable. It reads the failure streak, not sep1_resolved_at, which an outage unwind leaves
-	// stamped on rows that never failed (see [Store.IssuerSep1Unreachable]). Both counts come off
-	// one aggregate so they describe one moment.
+	// stamped on rows that never failed. One aggregate keeps both counts at one moment.
 	const popQ = `SELECT count(*) FILTER (WHERE home_domain IS NOT NULL AND btrim(home_domain) <> ''),
 	                     count(*) FILTER (WHERE home_domain IS NOT NULL AND btrim(home_domain) <> ''
 	                                        AND COALESCE(sep1_consecutive_failures, 0) > 0
@@ -185,10 +177,8 @@ func (s *Store) BoundSep1Currencies(ctx context.Context, keep Sep1CurrencyFilter
 		return nil, census, fmt.Errorf("timescale: BoundSep1Currencies population: %w", err)
 	}
 
-	// Freshness is judged on sep1_payload_fetched_at, never
-	// sep1_resolved_at: every attempt stamps the latter, so a dead
-	// domain's row looks fresh there while its payload ages. A NULL
-	// fetch time is an age nobody recorded, and reads as stale.
+	// Freshness is judged on sep1_payload_fetched_at, never sep1_resolved_at: every attempt stamps
+	// the latter, so a dead domain looks fresh there while its payload ages. NULL reads as stale.
 	const q = `SELECT g_strkey, COALESCE(home_domain, ''), sep1_payload,
 	                  COALESCE(sep1_payload_fetched_at >= NOW() - $1::interval, false)
 	             FROM issuers
@@ -220,10 +210,8 @@ func (s *Store) BoundSep1Currencies(ctx context.Context, keep Sep1CurrencyFilter
 	return out, census, nil
 }
 
-// boundSep1CurrenciesFromRow judges one payload-bearing issuer row. A
-// stale payload is counted and never decoded, so what a dark domain
-// last said binds nothing. Split out so the age bound is testable
-// without a database.
+// boundSep1CurrenciesFromRow judges one payload-bearing issuer row. A stale payload is counted and
+// never decoded, so what a dark domain last said binds nothing.
 func boundSep1CurrenciesFromRow(
 	gStrkey, homeDomain string, payload sql.NullString, fresh bool,
 	keep Sep1CurrencyFilter,
@@ -234,9 +222,7 @@ func boundSep1CurrenciesFromRow(
 		census.IssuersPayloadStale++
 		return nil, census
 	case !payload.Valid || payload.String == "":
-		// `WHERE sep1_payload IS NOT NULL` already excluded NULL; an
-		// empty string reaching here is a payload that decoded to
-		// nothing, which is an unreadable payload, not an absent row.
+		// NULL is already excluded by the query; an empty string is an unreadable payload.
 		census.IssuersPayloadUnreadable++
 		return nil, census
 	}
@@ -245,10 +231,8 @@ func boundSep1CurrenciesFromRow(
 	return kept, census
 }
 
-// boundSep1CurrenciesFromPayload extracts the entries one issuer is
-// entitled to declare, and censuses every entry it did not return.
-// Split out of [Store.BoundSep1Currencies] so the provenance rule is
-// testable without a database.
+// boundSep1CurrenciesFromPayload extracts the entries one issuer is entitled to declare, and
+// censuses every entry it did not return.
 func boundSep1CurrenciesFromPayload(
 	gStrkey, homeDomain, payload string,
 	keep Sep1CurrencyFilter,
@@ -283,9 +267,7 @@ func boundSep1CurrenciesFromPayload(
 		census.EntriesBound++
 		e := Sep1BoundCurrency{
 			Code: code,
-			// The DATABASE spelling of the account, never the toml's:
-			// the entry has been proven to name this account, and every
-			// downstream join keys on the canonical form.
+			// The DATABASE spelling, never the toml's: downstream joins key on the canonical form.
 			Issuer:          gStrkey,
 			HomeDomain:      homeDomain,
 			OrgName:         parsed.OrgName,
@@ -320,10 +302,8 @@ func Sep1EntryBindsTo(declared, serving string) bool {
 	return d != "" && d == canonicalAccountStrkey(serving)
 }
 
-// canonicalAccountStrkey returns the canonical spelling of a Stellar
-// G-account strkey, or "" when s is not shaped like one. The shape is
-// the same the account_directory CHECK constraint enforces (migration
-// 0136): 56 characters, leading G, RFC 4648 base32 alphabet.
+// canonicalAccountStrkey returns the canonical spelling of a G-account strkey, or "" when s is not
+// shaped like one: 56 characters, leading G, base32 alphabet (the account_directory CHECK).
 func canonicalAccountStrkey(s string) string {
 	s = strings.ToUpper(strings.TrimSpace(s))
 	if len(s) != 56 || s[0] != 'G' {

@@ -18,13 +18,11 @@ import (
 // and storage rows. Stable.
 const SourceName = "blend"
 
-// Event names — topic[0] of every Blend pool / pool-factory event,
-// as a Soroban Symbol on the wire (blend-contracts-v2 c19abee5b9be4f49e0cda9057e87d343e5dcc095).
+// Event names: topic[0] of every Blend pool / pool-factory event, as a Soroban Symbol.
 //
-// All kinds except the three auction ones are also the persisted `event_kind` value in
-// blend_positions / blend_emissions / blend_admin, so they are defined in [domain.BlendEventSupply]
-// and siblings (storage validates against them and cannot import this package); the names below
-// alias those. The auction consts have no storage-side validation switch, so they live only here.
+// Non-auction kinds are also the persisted `event_kind` in the blend_* tables, so they live in
+// [domain.BlendEventSupply] and siblings (storage validates against them and cannot import this
+// package); these alias those. The auction consts have no storage-side switch.
 const (
 	// Auction events (PRIMARY — directional price signals).
 	EventNewAuction    = "new_auction"
@@ -68,9 +66,7 @@ const (
 	EventDeleteLiquidationAuction = domain.BlendEventDeleteLiquidationAuction
 )
 
-// Mainnet V2 contract addresses — verified via stellar.expert and
-// cross-referenced against docs/protocols/blend.md and the
-// Blend Capital blend-contracts-v2 deploy manifest.
+// Mainnet V2 contract addresses (see docs/protocols/blend.md).
 const (
 	// MainnetPoolFactory is the documented Pool Factory V2. Blend was
 	// REDEPLOYED, so this is not the only factory — see MainnetPoolFactories.
@@ -88,27 +84,21 @@ const (
 	MainnetBackstopV1 = "CAO3AGAMZVRMHITL36EJ2VZQWKYRPWMQAPDQD5YEOF3GIF7T44U4JAL3"
 )
 
-// MainnetPoolFactories is the COMPLETE, empirically-verified set of Blend
-// pool factories on mainnet (ADR-0035). Blend was redeployed, so gating `deploy` on a single
-// factory silently drops the other's pools. Derived by decoding every lake `deploy` event whose
-// body is an ScVal::Address and confirming the children cover all 9 known pools; re-run if a third
-// factory appears. Order is irrelevant (set membership).
+// MainnetPoolFactories is the complete set of Blend pool factories on mainnet (ADR-0035).
+// Blend was redeployed, so gating `deploy` on one factory silently drops the other's pools;
+// re-derive from the lake if a third factory appears. Order is irrelevant.
 var MainnetPoolFactories = []string{
 	MainnetPoolFactoryV1,
 	MainnetPoolFactory,
 }
 
-// FactoryGenesisLedger is a lower bound on any Blend pool factory `deploy`:
-// the ledger of Blend's first mainnet contract (the backstop Comet pool), 369 ledgers before the V1
-// factory's first deploy. The pool-registry genesis seed (ADR-0035) walks factory deploys from
-// here, the ADR-0033 reconcile uses it as the blend source genesis, and documented replays start
-// here (doc_parity_test).
+// FactoryGenesisLedger is a lower bound on any Blend factory `deploy` (the backstop Comet pool's
+// ledger, before the V1 factory's first deploy). The pool-registry genesis seed, the ADR-0033
+// reconcile genesis and documented replays all start here (doc_parity_test).
 const FactoryGenesisLedger uint32 = 51_499_546
 
-// Pre-encoded base64 SCVal::Symbol blobs, computed at init via
-// scval.MustEncodeSymbol. Used for byte-equality classification
-// against incoming event topics (cheaper than re-decoding the
-// topic on every event).
+// Pre-encoded base64 SCVal::Symbol blobs for byte-equality topic classification, which avoids
+// re-decoding the topic on every event.
 var (
 	// Auction events.
 	TopicSymbolNewAuction    = scval.MustEncodeSymbol(EventNewAuction)
@@ -161,19 +151,14 @@ const (
 // Errors returned by the decode path. Callers classify via
 // errors.Is.
 var (
-	// ErrNotBlendEvent — topic[0] doesn't match any of the names we
-	// track. Returned by classify(); the dispatcher uses this to
-	// skip cheaply rather than retry.
+	// ErrNotBlendEvent: topic[0] is not a tracked name; the dispatcher skips rather than retries.
 	ErrNotBlendEvent = errors.New("blend: not a tracked Blend event")
 
-	// ErrMalformedPayload — topic arity / body shape / type tags
-	// don't match what blend-contracts-v2 emits. Per-event-fail-loud
-	// rather than silent skip; surfaces decoder vs WASM drift.
+	// ErrMalformedPayload: topic arity / body shape / type tags differ from what the contract
+	// emits. Fails loudly per event so decoder-vs-WASM drift surfaces.
 	ErrMalformedPayload = errors.New("blend: malformed event payload")
 
-	// ErrUnknownAuctionType — auction_type in topic[1] is outside
-	// {0=UserLiquidation, 1=BadDebt, 2=Interest}. Indicates a
-	// contract upgrade introducing a new auction kind we haven't
-	// audited.
+	// ErrUnknownAuctionType: auction_type is outside {0,1,2}, i.e. a contract upgrade added an
+	// auction kind we have not audited.
 	ErrUnknownAuctionType = errors.New("blend: unknown auction type")
 )

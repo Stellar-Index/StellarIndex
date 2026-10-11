@@ -4,9 +4,8 @@
 // /v1/contracts*, /v1/accounts*, /v1/assets/{asset_id}/holders.
 //
 // Handlers read the certified ClickHouse lake through ExplorerReader and otherwise depend only on
-// narrow injected seams (Handler below). They must not reference v1.Server, so this package
-// cannot import internal/api/v1: v1.Server wires a *Handler into its routes, which would cycle.
-// Package v1 keeps type aliases for every exported type here (see explorer.go there).
+// narrow injected seams (Handler below). This package cannot import internal/api/v1, whose
+// v1.Server wires a *Handler into its routes (cycle); v1 keeps aliases for the exported types.
 package explorer
 
 import (
@@ -29,9 +28,9 @@ import (
 )
 
 // explorerReadTimeout is the per-request ceiling on every handler's ClickHouse lake reads. The
-// shared explorer pool has 8 connections, and the server WriteTimeout does not cancel an in-flight
-// query, so a few slow unauthenticated requests would otherwise hold every connection. 8s matches
-// the sibling raw-scan endpoints in package v1 and fires before the 15s request-timeout middleware.
+// explorer pool has 8 connections and the server WriteTimeout does not cancel an in-flight query,
+// so a few slow unauthenticated requests would hold them all. It fires before the 15s
+// request-timeout middleware.
 const explorerReadTimeout = 8 * time.Second
 
 // readTimedOut reports whether a handler-scoped read context hit its deadline. Pass the PER-CALL
@@ -74,14 +73,10 @@ func retryableColdMiss(callCtx context.Context, err error) bool {
 // these, so they mean "dependency down, retry", not a bug in this process.
 //
 // Matching only net.Error with Timeout() true is not enough: a hard-down lake answers instantly
-// with a *net.OpError whose Timeout() is false. Unmatched, a ClickHouse outage would read as a
-// code bug (500) in logs, the 5xx SLA probe and every alert built on them.
-//
-// Same rule as the other storage seams: IsCacheUnavailable (cache_errors.go) for Redis and
-// transientStorageErr (envelope.go) for Postgres. Keep the three in step.
-//
-// *net.DNSError arrives bare, not wrapped in an OpError; the errno arms catch a driver that
-// re-wrapped only the syscall error.
+// with a *net.OpError whose Timeout() is false, and an outage would read as a code bug (500) in
+// the 5xx SLA probe and every alert. Keep in step with IsCacheUnavailable (cache_errors.go) and
+// transientStorageErr (envelope.go). *net.DNSError arrives bare, not in an OpError; the errno arms
+// catch a driver that re-wrapped only the syscall error.
 func lakeUnreachable(err error) bool {
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
@@ -96,12 +91,10 @@ func lakeUnreachable(err error) bool {
 		errors.Is(err, syscall.EPIPE)
 }
 
-// writeReadTimeout writes the standard 503 problem+json, with an endpoint-specific `...-timeout`
-// type URL, for a lake read that blew explorerReadTimeout. A 500 would make a capacity problem
-// indistinguishable from a bug in the logs and the 5xx SLA probe.
-//
-// 503, not 504: the rest of the API uses 503 for a server-side read deadline (see v1's
-// clientAborted) and every explorer route already declares 503 in the OpenAPI spec.
+// writeReadTimeout writes the 503 problem+json, with an endpoint-specific `...-timeout` type URL,
+// for a lake read that blew explorerReadTimeout. A 500 would make a capacity problem look like a
+// bug. 503, not 504: the API uses 503 for a server-side read deadline and every explorer route
+// declares it in the OpenAPI spec.
 func (h *Handler) writeReadTimeout(w http.ResponseWriter, r *http.Request, typeURL, title string) {
 	// Also reached by a driver i/o timeout, which readTimedOut does not see.
 	middleware.MarkReadDeadline(r.Context())
@@ -123,8 +116,8 @@ func (h *Handler) writeRetryable(w http.ResponseWriter, r *http.Request, err err
 		return
 	}
 	// Third cause, same 503: the lake is unreachable. A refused dial answers in microseconds, so
-	// "timed out" would send an operator hunting a slow query that never ran. The error is logged
-	// here because call sites log a fixed "deadline exceeded" line without err.
+	// "timed out" would send an operator hunting a slow query that never ran. Logged here because
+	// call sites log a fixed "deadline exceeded" line without err.
 	if lakeUnreachable(err) {
 		h.Logger.Warn("explorer lake unreachable", "err", err, "path", r.URL.Path)
 		w.Header().Set("Retry-After", retryAfterDependencyDown)
@@ -138,10 +131,9 @@ func (h *Handler) writeRetryable(w http.ResponseWriter, r *http.Request, err err
 	h.writeReadTimeout(w, r, typeURL, title)
 }
 
-// Retry-After hints on the retryable 503s. Without one, clients retry immediately, which is the
-// retry storm a saturated refresh gate or a downed dependency must not receive. Values mirror
-// package v1: 30s for a dependency outage (sized to a Redis/CH fail-over window), a few seconds
-// for in-process busy-ness.
+// Retry-After hints on the retryable 503s; without one clients retry immediately, a retry storm
+// against a saturated gate or downed dependency. Mirrors package v1: 30s for an outage (a Redis/CH
+// fail-over window), a few seconds for in-process busy-ness.
 const (
 	retryAfterBusy           = "5"
 	retryAfterDependencyDown = "30"
@@ -201,13 +193,12 @@ type ExplorerReader interface {
 	AssetHolders(ctx context.Context, asset string, limit int) ([]clickhouse.AssetHolder, int64, error)
 	AccountsByWealth(ctx context.Context, assets, prices []string, limit int) ([]clickhouse.AccountWealth, error)
 	// AccountsByWealthCached serves the ranking from a background-refreshed cache and NEVER runs
-	// the underlying FINAL scan on the caller's deadline. AsOf/AsOfLedger are the ranking's
-	// vintage; an entry past its TTL is still served (the handler flags it degraded) so failed
-	// refreshes degrade to old-but-real data, not 503s.
-	// ok=false means never computed: render a warming state and do not fall back to
+	// the FINAL scan on the caller's deadline. AsOf/AsOfLedger are the ranking's vintage; an entry
+	// past its TTL is still served (flagged degraded) so failed refreshes yield old-but-real data,
+	// not 503s. ok=false means never computed: render a warming state, never fall back to
 	// AccountsByWealth on the request path (the scan needs 11-20s against an 8s deadline).
-	// Basis ("usd" | "native_xlm") is the unit of the cached ranking, so the handler labels the
-	// numbers correctly where no USD price map was available.
+	// Basis ("usd" | "native_xlm") is the unit of the cached ranking, for labelling when no USD
+	// price map was available.
 	AccountsByWealthCached(ctx context.Context, assets, prices []string, limit int) (clickhouse.AccountWealthSnapshot, bool)
 	SoroswapPairReserves(ctx context.Context, pairs []string) (map[string]clickhouse.SoroswapPairState, error)
 	NativeLiquidityPoolReserves(ctx context.Context, poolIDs []string) (map[string]clickhouse.NativeLiquidityPoolState, error)
@@ -353,9 +344,9 @@ type Handler struct {
 	// contractStats is the single-entry snapshot behind GET /v1/contracts/stats.
 	contractStats contractStatsCache
 
-	// contractDetail is the shared bounded-TTL, single-flighted cache in front of the per-contract
-	// events / interactions / code-history reads: inline on the request deadline, a busy contract
-	// would time out on every request and no retry could land warm. See contract_detail_cache.go.
+	// contractDetail is the bounded-TTL, single-flighted cache in front of the per-contract reads;
+	// inline on the request deadline a busy contract would time out every time and no retry could
+	// land warm. See contract_detail_cache.go.
 	contractDetail contractDetailCache
 
 	// sacNames memoises proven SAC resolutions across requests (movements.go).
@@ -370,19 +361,16 @@ type Handler struct {
 	// contracts directory, interactions and detail routes. Zero value ready.
 	attribution contractAttributionCache
 
-	// refreshGate bounds DETACHED cache refreshes globally across keys AND cache kinds. Per-key
-	// single-flight alone leaves the key space attacker-chosen on these unauthenticated routes,
-	// so fabricated keys could queue one unbounded lake scan each. Resolved lazily by
-	// detachedGate(), shared with the lake reader's account-state gate so the whole explorer
-	// surface has ONE bound.
+	// refreshGate bounds DETACHED cache refreshes globally across keys AND cache kinds: per-key
+	// single-flight alone leaves the key space attacker-chosen on these unauthenticated routes.
+	// Resolved lazily by detachedGate(), shared with the lake reader's account-state gate.
 	refreshGateOnce sync.Once
 	refreshGate     *clickhouse.RefreshGate
 }
 
-// detachedGate returns the shared bound for detached refreshes: the lake
-// reader's own gate when it exposes one (production — one global bound
-// across account-state + holders + contracts-dir + contract-detail
-// refreshes), else a handler-local gate with the same limit (test stubs).
+// detachedGate returns the shared bound for detached refreshes: the lake reader's own gate when it
+// exposes one (one global bound across all explorer refreshes), else a handler-local gate with the
+// same limit (test stubs).
 func (h *Handler) detachedGate() *clickhouse.RefreshGate {
 	h.refreshGateOnce.Do(func() {
 		if p, ok := h.Reader.(interface {

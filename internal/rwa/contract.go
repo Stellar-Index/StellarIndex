@@ -62,20 +62,17 @@ const (
 	RejectContractScam     = "contract_scam_flagged"
 	RejectNoContractBasis  = "no_real_world_instrument_basis_for_contract"
 
-	// RejectContractListedNotCurated: listed, no curated binding; arm 2 failing on its second
-	// half. The commonest refusal by design: the listing holds stablecoins, wrapped BTC and the
-	// XLM SAC, none bound to a real-world instrument.
+	// RejectContractListedNotCurated: listed, no curated binding (arm 2's second half). The
+	// commonest refusal by design: the listing holds stablecoins, wrapped BTC and the XLM SAC.
 	RejectContractListedNotCurated = "contract_listed_without_curated_binding"
-	// RejectContractCuratedNotListed: bound here, named by nobody else. Everything needed to
-	// publish is present except independence; publishing would be this surface vouching for itself.
+	// RejectContractCuratedNotListed: bound here, named by nobody else; publishing would be this
+	// surface vouching for itself.
 	RejectContractCuratedNotListed = "contract_curated_binding_without_independent_listing"
 	// RejectContractListingUnavailable: the listing read failed or is past the recognition
-	// bound, so arm 2 is closed. A read that did not answer may not report an absence, and
-	// this reason keeps the fail-closed shrink visible. Names the listing source only.
+	// bound, so arm 2 is closed. A read that did not answer may not report an absence.
 	RejectContractListingUnavailable = "independent_listing_unavailable"
-	// RejectContractCuratedTagsUnavailable: the curated directory's tag read failed, so C3
-	// cannot run and arm 2 is closed. Kept apart from the listing outage because the two are
-	// uncorrelated and send an operator to different syncs.
+	// RejectContractCuratedTagsUnavailable: the tag read failed, so C3 cannot run and arm 2 is
+	// closed. Kept apart from the listing outage: uncorrelated, and fixed by different syncs.
 	RejectContractCuratedTagsUnavailable = "curated_tag_lookup_unavailable"
 )
 
@@ -209,11 +206,9 @@ type contractInstrument struct {
 	Class string
 }
 
-// Spiko's tokenized money-market funds. Chain with no third party: spiko.io → tech.spiko.io
-// → github.com/spiko-tech/stellar-contracts address/production.json; on-chain metadata and
-// a shared creator and wasm hash corroborate. Five lookalike issuers of classic EUTBL/USTBL
-// satisfy R2 but cannot publish at spiko.io. SPKCC/eurSPKCC (crypto basis trade) stay
-// unbound: no class in the vocabulary describes them.
+// Spiko's tokenized money-market funds, addresses from github.com/spiko-tech/stellar-contracts
+// address/production.json (reached from spiko.io), corroborated by on-chain metadata and a shared
+// creator and wasm hash. SPKCC/eurSPKCC (crypto basis trade) stay unbound: no class fits.
 const (
 	spikoEUTBL    = "CBGV2QFQBBGEQRUKUMCPO3SZOHDDYO6SCP5CH6TW7EALKVHCXTMWDDOF"
 	spikoUSTBL    = "CARUUX2FZNPH6DGJOEUFSIUQWYHNL5AVDV7PMVSHWL7OBYIBFC76F4TO"
@@ -242,10 +237,8 @@ const (
 	centrifugeDeJAAA  = "CC64WBDGS6QQP22QTTIACYIXT3WF7BBQEYOQPLTP7GTKYY7PZ74QYGSL"
 )
 
-// contractInstruments is the curated set; see [contractInstrument]. Unminted addresses
-// (chfSAFO on Stellar, eurUSTBL, eurUKTBL) are bound anyway: the evidence is per address,
-// so the day one mints it is already named. Spiko supplies were checked three ways (lake
-// flows, instance TotalSupply, summed balances) at the declared 5 decimals.
+// contractInstruments is the curated set; see [contractInstrument]. Unminted addresses are bound
+// anyway: the evidence is per address, so the day one mints it is already named.
 var contractInstruments = []contractInstrument{
 	{ContractID: spikoEUTBL, Instrument: "Spiko EU T-Bills Money Market Fund (EUTBL)", Class: "bond"},
 	{ContractID: spikoUSTBL, Instrument: "Spiko US T-Bills Money Market Fund (USTBL)", Class: "bond"},

@@ -25,35 +25,31 @@ import (
 //
 // If it fails, `usd_volume` used the wrong scale, leg, peg list or backfill vintage.
 
-// USDVolumeTier names how a trade's `usd_volume` was derived, mirroring the
-// waterfall in [tradeUSDVolume]. Stable strings: they appear in the
-// operator report.
+// USDVolumeTier names how a trade's `usd_volume` was derived, mirroring the waterfall in
+// [tradeUSDVolume]. Stable strings: they appear in the operator report.
 type USDVolumeTier string
 
 const (
-	// TierQuotePegged is tiers 1/2: the QUOTE asset is fiat:USD or a
-	// declared USD peg, so usd_volume = quote_amount / 10^decimals. EXACT.
+	// TierQuotePegged is tiers 1/2: the QUOTE asset is fiat:USD or a declared USD peg, so
+	// usd_volume = quote_amount / 10^decimals. EXACT.
 	TierQuotePegged USDVolumeTier = "quote_pegged"
 
-	// TierBasePegged is tier 2b: the quote leg declined but the BASE asset
-	// is USD-pegged, so usd_volume = base_amount / 10^decimals. EXACT, and
-	// the same "trust the declared peg" assumption as the quote side.
+	// TierBasePegged is tier 2b: the quote leg declined but the BASE asset is USD-pegged, so
+	// usd_volume = base_amount / 10^decimals. EXACT, trusting the declared peg as on the quote side.
 	TierBasePegged USDVolumeTier = "base_pegged"
 
-	// TierEstimated is tiers 3/4: neither leg is pegged, so the value came
-	// from an FX rate or the XLM anchor at trade time. NOT reproducible
-	// from the row alone, and legitimately inexact.
+	// TierEstimated is tiers 3/4: neither leg is pegged, so the value came from an FX rate or the
+	// XLM anchor at trade time. NOT reproducible from the row alone, and legitimately inexact.
 	TierEstimated USDVolumeTier = "estimated"
 
-	// TierUnvaluable is a source whose external class is not
-	// ClassExchange — [tradeUSDVolume] returns nil for these by
-	// construction, so any non-NULL usd_volume on such a row was written
-	// by something other than the current insert path.
+	// TierUnvaluable is a source whose external class is not ClassExchange; [tradeUSDVolume]
+	// returns nil for these, so a non-NULL usd_volume was written by something other than the
+	// current insert path.
 	TierUnvaluable USDVolumeTier = "unvaluable"
 )
 
-// Exact reports whether the tier's identity is a pure rescaling of a stored
-// leg — i.e. whether a mismatch is a defect rather than an estimate's error.
+// Exact reports whether the tier's identity is a pure rescaling of a stored leg, so a mismatch
+// is a defect rather than an estimate's error.
 func (t USDVolumeTier) Exact() bool {
 	return t == TierQuotePegged || t == TierBasePegged
 }
@@ -77,16 +73,15 @@ type TradeValuationGroup struct {
 	SumQuoteAmount string
 }
 
-// TradeValuationByDay returns the per-(source, base, quote) valuation sums
-// for the UTC day containing `day`.
+// TradeValuationByDay returns the per-(source, base, quote) valuation sums for the UTC day
+// containing `day`.
 //
-// Grouped by pair because the tier is a property of the pair and cannot be decided in SQL: the
-// peg set lives in Go (`usd_pegged_classic_assets`, `supply.sac_wrappers`, aggregate.FiatProxy).
-// The caller classifies each group with [ClassifyUSDVolumeTier], the same function the insert
-// path uses, so the check re-derives what the writer should have done.
+// Grouped by pair because the tier cannot be decided in SQL: the peg set lives in Go
+// (`usd_pegged_classic_assets`, `supply.sac_wrappers`, aggregate.FiatProxy). The caller
+// classifies each group with [ClassifyUSDVolumeTier], the insert path's own function.
 //
-// Cardinality is the day's traded pair universe (a few thousand rows), and the scan is one day of
-// the `trades` time dimension, i.e. a single chunk.
+// The scan is one day of the `trades` time dimension (a single chunk), yielding a few thousand
+// groups.
 func (s *Store) TradeValuationByDay(ctx context.Context, day time.Time) ([]TradeValuationGroup, error) {
 	start := day.UTC().Truncate(24 * time.Hour)
 	const q = `
@@ -123,8 +118,7 @@ func (s *Store) TradeValuationByDay(ctx context.Context, day time.Time) ([]Trade
 	return out, nil
 }
 
-// PeggedLegSum picks the leg whose rescaling produced `usd_volume` for an
-// exact tier. Empty string for a non-exact tier.
+// PeggedLegSum picks the leg whose rescaling produced `usd_volume`; empty for a non-exact tier.
 func (g TradeValuationGroup) PeggedLegSum(tier USDVolumeTier) string {
 	switch tier {
 	case TierQuotePegged:
@@ -155,9 +149,8 @@ func USDVolumeRoundingSlack(decimals int, rows int64) *big.Rat {
 	return new(big.Rat).Mul(halfUlp, new(big.Rat).SetInt64(rows))
 }
 
-// usdVolumeRenderDecimals is the fixed-precision scale tradeUSDVolume
-// renders every computed usd_volume at (`FloatString(8)`). Kept next to the
-// slack it determines so the two cannot drift apart.
+// usdVolumeRenderDecimals is the scale tradeUSDVolume renders usd_volume at (`FloatString(8)`),
+// kept beside the slack it determines.
 const usdVolumeRenderDecimals = 8
 
 // ExactTierDelta returns Σusd_volume − Σpegged_leg/10^decimals for an exact tier: the signed

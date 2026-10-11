@@ -30,10 +30,8 @@ func xlmAliasFamilyFor(sac string) []Asset {
 	}
 }
 
-// eurcAliasFamily is Circle's EUROC→EURC rename: the verified catalogue
-// uses `EURC` while RedStone still publishes `EUROC`, so without this
-// family a read keyed on one spelling misses every feed under the other.
-// EURC is first, so it is the canonical form. EUROB is a different token.
+// eurcAliasFamily covers Circle's EUROC to EURC rename: the catalogue uses `EURC` while RedStone
+// publishes `EUROC`, so a read keyed on one spelling would miss the other. EUROB is a different token.
 var eurcAliasFamily = []Asset{
 	{Type: AssetCrypto, Code: "EURC"},
 	{Type: AssetCrypto, Code: "EUROC"},
@@ -68,10 +66,8 @@ type AliasRegistry struct {
 	families map[string][]Asset
 }
 
-// defaultAliasRegistry is the compile-time registry used until a
-// config-derived one is installed via [InstallAliasRegistry]. It is what
-// [AssetAliases] resolves against in unit tests and in binaries that
-// never call InstallAliasRegistry.
+// defaultAliasRegistry is the compile-time registry used until [InstallAliasRegistry] runs, e.g.
+// in unit tests.
 var defaultAliasRegistry = &AliasRegistry{families: baseAliasFamilies}
 
 // activeRegistry holds the process-wide registry [AssetAliases] reads. It is written once at
@@ -183,8 +179,7 @@ func addSACWrapperFamily(families map[string][]Asset, passphrase, sacID, classic
 			sacID, classicKey, derived)
 	}
 	if classic.Type == AssetNative {
-		// The derivation above proved this is the network's XLM SAC;
-		// the baseline owns the XLM family.
+		// Proven the network's XLM SAC above; the baseline owns the XLM family.
 		return nil
 	}
 	if _, ok := families[sacStr]; ok {
@@ -193,19 +188,16 @@ func addSACWrapperFamily(families map[string][]Asset, passphrase, sacID, classic
 	if _, ok := families[classicStr]; ok {
 		return fmt.Errorf("alias registry: sac wrapper %q: asset %q already belongs to another alias family", sacID, classicKey)
 	}
-	// SAC form LAST: money-safety invariant. The read paths take the
-	// FIRST alias that produces a usable answer, so on a classic-keyed
-	// read the deep classic form is tried before the thin SAC pool.
+	// SAC form LAST (money safety): read paths take the FIRST alias that answers, so the deep
+	// classic form is tried before the thin SAC pool.
 	family := []Asset{classic, sac}
 	families[classicStr] = family
 	families[sacStr] = family
 	return nil
 }
 
-// Aliases is the [AssetAliases] contract resolved against this specific
-// registry: the literal input first, then the rest of its equivalence
-// class in canonical priority order (SAC last). A form with no family
-// returns just itself, so callers loop unconditionally.
+// Aliases is [AssetAliases] resolved against this registry: the input first, then its class in
+// priority order (SAC last). A form with no family returns just itself.
 func (r *AliasRegistry) Aliases(asset Asset) []Asset {
 	fams := r.familyMap()
 	family, ok := fams[asset.String()]
@@ -287,10 +279,8 @@ func AssetAliases(asset Asset) []Asset {
 	return activeAliasRegistry().Aliases(asset)
 }
 
-// AssetAliasStrings is the string-set projection of [AssetAliases] —
-// what SQL membership predicates (`= ANY($1)`) bind. Same order, same
-// completeness; separated so callers building a bound array don't
-// re-implement the String() loop.
+// AssetAliasStrings is the string projection of [AssetAliases], what SQL `= ANY($1)` predicates
+// bind. Same order and completeness.
 func AssetAliasStrings(asset Asset) []string {
 	return activeAliasRegistry().AliasStrings(asset)
 }

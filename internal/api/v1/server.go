@@ -81,9 +81,8 @@ type schemaVersionChecker struct {
 	expected uint
 }
 
-// NewSchemaVersionChecker builds the schema-head readiness check.
-// Critical()==true: a binary/schema mismatch must drain the backend, not
-// keep serving stale/partial data behind a green probe.
+// NewSchemaVersionChecker builds the schema-head readiness check. It is critical: a
+// binary/schema mismatch must drain the backend, not serve partial data behind a green probe.
 func NewSchemaVersionChecker(reader SchemaVersionReader) ReadyChecker {
 	return schemaVersionChecker{reader: reader, expected: ExpectedSchemaVersion}
 }
@@ -139,9 +138,8 @@ func (c schemaDirtyChecker) Ping(ctx context.Context) error {
 	return nil
 }
 
-// OpenBucketCAGGReader lists the continuous aggregates that serve their
-// in-progress bucket outside the real-time allowlist.
-// *timescale.Store satisfies it.
+// OpenBucketCAGGReader lists the continuous aggregates that serve their in-progress bucket
+// outside the real-time allowlist; *timescale.Store satisfies it.
 type OpenBucketCAGGReader interface {
 	OpenBucketCAGGs(ctx context.Context) ([]string, error)
 }
@@ -153,9 +151,8 @@ type closedBucketChecker struct {
 	reader OpenBucketCAGGReader
 }
 
-// NewClosedBucketChecker builds the materialized_only readiness check.
-// Critical()==true: two money surfaces disagreeing on the same pair must
-// drain the backend, not serve behind a green probe.
+// NewClosedBucketChecker builds the materialized_only readiness check. It is critical: two
+// money surfaces disagreeing on one pair must drain the backend.
 func NewClosedBucketChecker(reader OpenBucketCAGGReader) ReadyChecker {
 	return closedBucketChecker{reader: reader}
 }
@@ -1090,10 +1087,8 @@ func applyProtocolOptions(s *Server, opts Options) {
 	}
 }
 
-// loadIncidents loads + caches the embedded incident corpus once at
-// startup; the data is small (a few markdown files) and ships with
-// the binary, so re-parsing per-request is wasted work. New incident
-// posts ship with a redeploy. Split from New for funlen.
+// loadIncidents loads the embedded incident corpus once at startup; it ships with the binary,
+// so new posts need a redeploy. Split from New for funlen.
 func loadIncidents(s *Server, logger *slog.Logger) {
 	if loaded, err := incidents.Load(logger); err != nil {
 		logger.Warn("incidents: load failed; /v1/incidents returns empty",
@@ -1110,10 +1105,8 @@ func valueOr(s, fallback string) string {
 	return s
 }
 
-// defaultStatusServices is the pubnet shape of [Options.StatusServices]:
-// the background services a full deployment runs. /v1/status reports a
-// heartbeat for exactly these (plus the in-process "api" entry) and
-// rolls `overall` up from them.
+// defaultStatusServices is the pubnet shape of [Options.StatusServices]; /v1/status reports a
+// heartbeat for exactly these (plus "api") and rolls `overall` up from them.
 var defaultStatusServices = []string{"indexer", "aggregator"}
 
 // statusServicesOr normalises Options.StatusServices: nil/empty falls back to the pubnet
@@ -1137,9 +1130,8 @@ func statusServicesOr(names []string) []string {
 	return out
 }
 
-// requestTimeoutFor resolves the blanket request deadline: 0 (middleware
-// omitted) only when the operator explicitly disabled it, so a zero-value
-// Options keeps the default bound on.
+// requestTimeoutFor resolves the blanket request deadline: 0 (middleware omitted) only when
+// the operator explicitly disabled it, so a zero-value Options keeps the default bound on.
 func requestTimeoutFor(opts Options) time.Duration {
 	if opts.DisableRequestTimeout {
 		return 0
@@ -1165,10 +1157,8 @@ func timeOr(t, fallback time.Time) time.Time {
 	return t
 }
 
-// globalPriceOptsWithDefaults backs `Options.GlobalPriceOpts` with
-// [aggregate.DefaultGlobalPriceOptions] for any zero field so
-// callers can supply just the aggregator source list and get
-// sensible defaults for everything else.
+// globalPriceOptsWithDefaults fills zero fields of `Options.GlobalPriceOpts` from
+// [aggregate.DefaultGlobalPriceOptions], so callers may supply only the source list.
 func globalPriceOptsWithDefaults(o aggregate.GlobalPriceOptions) aggregate.GlobalPriceOptions {
 	defaults := aggregate.DefaultGlobalPriceOptions()
 	if o.VWAPMinTradeCount == 0 {
@@ -1381,9 +1371,8 @@ func (s *Server) middlewareStack() []stackEntry {
 // for debugging / testing.
 func (s *Server) Uptime() time.Duration { return time.Since(s.started) }
 
-// proxyForwardHeaders are the headers a reverse proxy adds when it
-// forwards a request on behalf of a remote client. Their PRESENCE is the
-// signal, not their value — a direct local scrape sets none of them.
+// proxyForwardHeaders are the headers a reverse proxy adds for a remote client. Their PRESENCE
+// is the signal, not their value; a direct local scrape sets none.
 var proxyForwardHeaders = []string{
 	"X-Forwarded-For",
 	"X-Forwarded-Host",
@@ -1433,10 +1422,9 @@ func (s *Server) handlePublic(pattern string, h http.HandlerFunc) {
 	s.publicRoutes.Handle(s.mux, pattern, h)
 }
 
-// handleAdmin mounts an operator-only route. The operator tier and, for
-// writes, the X-Reason header are enforced here at the mount so a new
-// /v1/admin/ handler cannot ship without them; handlers keep their own
-// checks as defence in depth.
+// handleAdmin mounts an operator-only route. The operator tier and, for writes, the X-Reason
+// header are enforced here so a new /v1/admin/ handler cannot ship without them; handlers keep
+// their own checks as defence in depth.
 func (s *Server) handleAdmin(pattern string, h http.HandlerFunc) {
 	_, instance, _ := strings.Cut(pattern, " ")
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
@@ -1899,10 +1887,9 @@ func writeReadyz(w http.ResponseWriter, code int, body []byte) {
 	_, _ = w.Write(body)
 }
 
-// fillReadyz runs one readyz check round and publishes the result,
-// releasing the single-flight gate on every exit including a panic —
-// a flight left set would wedge every later /v1/readyz behind a
-// channel nobody closes.
+// fillReadyz runs one readyz round and publishes the result, releasing the single-flight gate
+// on every exit including a panic; a flight left set would wedge every later /v1/readyz behind
+// a channel nobody closes.
 func (s *Server) fillReadyz(done chan struct{}) {
 	defer close(done)
 	defer func() {
@@ -1924,9 +1911,8 @@ func (s *Server) fillReadyz(done chan struct{}) {
 const ReadinessProbeCadence = 15 * time.Second
 
 // StartReadinessProbe runs a readiness round every `every` until ctx ends, so
-// stellarindex_dependency_up stays current when nothing calls /v1/readyz;
-// request-driven alone, the gauge freezes at its last value and an outage
-// that begins after the last probe never reads 0.
+// stellarindex_dependency_up stays current when nothing calls /v1/readyz; otherwise the gauge
+// freezes and an outage after the last probe never reads 0.
 func (s *Server) StartReadinessProbe(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -1954,9 +1940,8 @@ func (s *Server) probeReadyz() {
 	s.fillReadyz(done)
 }
 
-// computeReadyz runs one full check round and renders the response.
-// Detached from any caller's request context — one impatient caller's
-// disconnect must not cancel the round every queued caller shares.
+// computeReadyz runs one full check round and renders the response. It is detached from any
+// caller's request context: one impatient caller's disconnect must not cancel the shared round.
 func (s *Server) computeReadyz() (int, []byte) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -2036,10 +2021,9 @@ func (s *Server) computeReadyz() (int, []byte) {
 // error names its endpoint (pgx adds user and database). The real error goes to the server log.
 const readyCheckFailedDetail = "ping failed — see the API server log for the underlying error"
 
-// readyzPublicError is a Ping failure whose text was written for the
-// public readyz body: it names a condition of this binary (never an
-// endpoint, credential or driver output). Only this type is echoed;
-// every other error is served as [readyCheckFailedDetail].
+// readyzPublicError is a Ping failure whose text is safe for the public readyz body (never an
+// endpoint, credential or driver output). Only this type is echoed; every other error is
+// served as [readyCheckFailedDetail].
 type readyzPublicError struct{ msg string }
 
 func (e readyzPublicError) Error() string { return e.msg }
@@ -2060,10 +2044,9 @@ func (s *Server) runReadyCheck(ctx context.Context, c ReadyChecker) checkResult 
 	return r
 }
 
-// livezLakeTTL bounds how long one lake-ping round is reused. Same
-// budget as readyz's single-flight cache: at LB probe cadence (~10s)
-// every probe still gets a fresh round, while a burst of anonymous
-// probes costs at most one ClickHouse query per second.
+// livezLakeTTL bounds how long one lake-ping round is reused, like readyz's cache: at LB probe
+// cadence (~10s) each probe gets a fresh round, while a burst of anonymous probes costs at most
+// one ClickHouse query per second.
 const livezLakeTTL = time.Second
 
 // livezLakeUnreadyDetail is the fixed hint served when the lake ping fails. Never the driver
@@ -2122,9 +2105,8 @@ func (s *Server) handleLivezLake(w http.ResponseWriter, r *http.Request) {
 	writeLivezLake(w, code, body)
 }
 
-// fillLivezLake runs one lake-ping round and publishes the result,
-// releasing the single-flight gate on every exit including a panic —
-// mirrors fillReadyz.
+// fillLivezLake runs one lake-ping round and publishes the result, releasing the single-flight
+// gate on every exit including a panic, as fillReadyz does.
 func (s *Server) fillLivezLake(done chan struct{}) {
 	defer close(done)
 	defer func() {
@@ -2141,9 +2123,8 @@ func (s *Server) fillLivezLake(done chan struct{}) {
 	s.livezLakeMu.Unlock()
 }
 
-// writeLivezLake emits an already-rendered probe result. no-store keeps
-// intermediaries from serving a cached liveness verdict — the 1s reuse
-// window is ours to control, not a CDN's.
+// writeLivezLake emits an already-rendered probe result. no-store stops intermediaries caching
+// a liveness verdict; the 1s reuse window is ours to control, not a CDN's.
 func writeLivezLake(w http.ResponseWriter, code int, body []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
@@ -2151,10 +2132,8 @@ func writeLivezLake(w http.ResponseWriter, code int, body []byte) {
 	_, _ = w.Write(body)
 }
 
-// computeLivezLake runs one lake-ping round and renders the response.
-// Detached from any caller's request context — one impatient prober's
-// disconnect must not cancel the round every queued caller shares (same
-// rationale as computeReadyz).
+// computeLivezLake runs one lake-ping round and renders the response, detached from any
+// caller's request context for the same reason as computeReadyz.
 func (s *Server) computeLivezLake() (int, []byte) {
 	render := func(status int, body lakeHealth) (int, []byte) {
 		env := Envelope{Data: body, AsOf: WireTime(time.Now().UTC())}
@@ -2218,10 +2197,8 @@ func (s *Server) handleSecurityTxt(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(body))
 }
 
-// handleRoot welcomes accidental visitors at GET /. Returns a small
-// envelope with the binary version + a pointer at the docs; not part
-// of the public API surface (no OpenAPI entry), strictly a "you've
-// reached the API hostname" affordance.
+// handleRoot welcomes accidental visitors at GET / with the binary version and a docs pointer;
+// not part of the public API surface (no OpenAPI entry).
 func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]string{
 		"name":    "stellar-index",
@@ -2553,9 +2530,9 @@ var knownErrorSlugs = map[string]struct{}{
 	"warming-up":                      {},
 }
 
-// errorDocTmpl is the minimal browser page for an error type. html/template
-// auto-escapes {{.human}} / {{.slug}}, so the reflected path value is safe
-// by construction (and gosec trusts it, unlike a hand-rolled escaper).
+// errorDocTmpl is the minimal browser page for an error type. html/template auto-escapes
+// {{.human}} / {{.slug}}, so the reflected path value is safe by construction (and gosec
+// trusts it, unlike a hand-rolled escaper).
 var errorDocTmpl = htmltemplate.Must(htmltemplate.New("errdoc").Parse(
 	`<!doctype html><html lang="en"><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=device-width,initial-scale=1">` +

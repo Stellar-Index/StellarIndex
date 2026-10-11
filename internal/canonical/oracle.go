@@ -23,10 +23,9 @@ import (
 // [Quote] is the denominator; for single-asset-USD updates it is a synthetic fiat reference
 // (`fiat:USD`, built via [NewFiatAsset]), not a Stellar asset. See ADR-0010.
 type OracleUpdate struct {
-	// Source is the oracle name ("reflector-dex", "reflector-cex", "reflector-fx", "redstone",
-	// "band", "chainlink", "coingecko", "coinmarketcap"). Stable; part of identity. "chainlink"
-	// is the EVM-via-HTTP ingest source, distinct from the in-memory cross-check helper in
-	// internal/divergence/chainlink.go, which writes nothing to oracle_updates.
+	// Source is the stable oracle name ("reflector-dex", "redstone", "band", "chainlink", ...) and
+	// part of identity. "chainlink" is the EVM-via-HTTP ingest source, distinct from the in-memory
+	// helper in internal/divergence/chainlink.go, which writes nothing to oracle_updates.
 	Source string `json:"source"`
 
 	// ContractID is the originating contract address for on-chain
@@ -77,12 +76,10 @@ type OracleUpdate struct {
 	Observer string `json:"observer,omitempty"`
 }
 
-// ID returns the observation's logical identity and the dedup key across
-// regions. Format: `<source>:<ledger>:<tx_hash>:<op_index>`.
+// ID returns the observation's logical identity, `<source>:<ledger>:<tx_hash>:<op_index>`.
 //
-// It is NOT the `oracle_updates` primary key: the hypertable's key also
-// carries `ts` (its partition column), so the table does not enforce this
-// identity — a re-derive that moves `ts` or `op_index` adds a second row.
+// It is NOT the `oracle_updates` primary key, which also carries the partition column `ts`, so
+// a re-derive that moves `ts` or `op_index` adds a second row.
 func (u OracleUpdate) ID() string {
 	return fmt.Sprintf("%s:%d:%s:%d", u.Source, u.Ledger, u.TxHash, u.OpIndex)
 }
@@ -129,9 +126,8 @@ func (u OracleUpdate) Validate() error {
 	if limit := maxOraclePriceRaw(u.Decimals); u.Price.BigInt().Cmp(limit) > 0 {
 		return fmt.Errorf("%w: price %s at %d decimals exceeds 10^%d quote units per base unit", ErrInvalidOracle, u.Price, u.Decimals, maxOraclePriceWholeExp)
 	}
-	// NaN slips past the range comparison (every NaN comparison is
-	// false), so reject it explicitly — a NaN confidence would
-	// propagate into divergence_warning float math downstream.
+	// NaN slips past the range comparison (every NaN comparison is false), and would poison
+	// divergence_warning float math downstream.
 	if math.IsNaN(u.Confidence) || u.Confidence < 0 || u.Confidence > 1 {
 		return fmt.Errorf("%w: confidence %f out of [0,1]", ErrInvalidOracle, u.Confidence)
 	}
@@ -154,16 +150,14 @@ func (u OracleUpdate) validatePublishedPrice() error {
 
 // validateAttribution checks the optional observer and contract id.
 func (u OracleUpdate) validateAttribution() error {
-	// Observer is optional (off-chain sources synthesise it empty).
-	// When present it may be any address a Soroban `Address` argument
-	// decodes to: attribution must never be the reason a price is lost.
+	// Observer may be any address a Soroban `Address` decodes to: attribution must never be the
+	// reason a price is lost.
 	if u.Observer != "" {
 		if err := validateAddress(u.Observer); err != nil {
 			return fmt.Errorf("%w: observer: %w", ErrInvalidOracle, err)
 		}
 	}
-	// ContractID is optional (off-chain sources don't have one).
-	// When present it MUST be a valid C-strkey.
+	// ContractID is optional but MUST be a valid C-strkey when present.
 	if u.ContractID != "" {
 		if err := validateContractID(u.ContractID); err != nil {
 			return fmt.Errorf("%w: contract_id: %w", ErrInvalidOracle, err)
@@ -172,10 +166,9 @@ func (u OracleUpdate) validateAttribution() error {
 	return nil
 }
 
-// maxOraclePriceWholeExp bounds a price at 10^15 quote units per base
-// unit: every feed quotes in USD/EUR/USDC/BTC-class units, where the
-// largest real price is orders of magnitude lower, so anything above is a
-// scale mismatch or an overflow sentinel, never a market value.
+// maxOraclePriceWholeExp bounds a price at 10^15 quote units per base unit; the largest real
+// price in USD/EUR/USDC/BTC-class quotes is far lower, so more is a scale mismatch or overflow
+// sentinel, never a market value.
 const maxOraclePriceWholeExp = 15
 
 // maxOraclePriceRaw is the largest raw Price accepted at decimals scale.

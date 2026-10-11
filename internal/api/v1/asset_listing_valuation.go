@@ -37,26 +37,19 @@ import (
 // address this asset lives at. It is NOT this index's price and not derived from any Stellar
 // market; the asset's own `price_usd` sits beside it unchanged.
 type AssetListingReference struct {
-	// PriceUSD is the platform's published USD price, verbatim as the
-	// decimal string it published (ADR-0003). Never re-rounded and never
-	// parsed through a float at any point on the path from the wire to
-	// here.
+	// PriceUSD is the platform's USD price, verbatim as the decimal string it published (ADR-0003),
+	// never re-rounded or parsed through a float.
 	PriceUSD string `json:"price_usd"`
 	// Source names the listing platform the row came from.
 	Source string `json:"source"`
-	// ListingID is that platform's own opaque coin id, so a reader can
-	// pull the same figure from the same source. It is NOT an ADR-0028
-	// oracle feed id and does not pretend to be one — the meaning of
-	// this block follows `provenance`.
+	// ListingID is that platform's own opaque coin id, so a reader can pull the same figure. It is
+	// NOT an oracle feed id; the meaning of this block follows `provenance`.
 	ListingID string `json:"listing_id"`
-	// Quote is the denominator, always `fiat:USD` on a served row. On
-	// the wire rather than assumed, because a price denominated in a
-	// reserve asset is a ratio and the difference is invisible in the
-	// number alone.
+	// Quote is the denominator, always `fiat:USD` on a served row. It is on the wire because a
+	// price denominated in a reserve asset is a ratio, invisible in the number alone.
 	Quote string `json:"quote"`
-	// Address is the EXACT Stellar address the platform named, which is
-	// the whole of the binding. Published so a reader can check the
-	// join rather than trust it.
+	// Address is the EXACT Stellar address the platform named, the whole of the binding. Published
+	// so a reader can check the join rather than trust it.
 	Address string `json:"address"`
 	// AddressForm is which route matched: [ListingAddressFormClassic] or [ListingAddressFormSAC].
 	// The SAC form is DERIVED: the platform named a contract and this index proved it is the one
@@ -65,8 +58,8 @@ type AssetListingReference struct {
 	// AsOf is the PLATFORM's own publication time, not when this index read it, so a recent sync
 	// cannot launder a price that froze weeks ago.
 	AsOf WireTime `json:"as_of"`
-	// Stale marks a price older than [rwaReferenceStaleAfter] — served,
-	// but labelled. Past [rwaReferenceMaxAge] it is not served at all.
+	// Stale marks a price older than [rwaReferenceStaleAfter]: served but labelled. Past
+	// [rwaReferenceMaxAge] it is not served.
 	Stale bool `json:"stale,omitempty"`
 	// Provenance names WHAT KIND of figure this is and is mandatory, never defaulted. Today only
 	// [RWAReferenceListingPrice]; a consumer meeting a second kind must not mistake it for this one.
@@ -83,81 +76,60 @@ type AssetListingReference struct {
 //
 // The two are never folded or summed into one total without the total saying so.
 type AssetListingValuation struct {
-	// Status is the single authority on why there is or is not a
-	// figure. Always present when the block is.
+	// Status is the single authority on why there is or is not a figure.
 	Status string `json:"status"`
-	// ValueUSD is circulating supply (scaled by the asset's own
-	// decimals) times the listing price, as a 2-dp decimal string —
-	// exact rational arithmetic throughout, never a float (ADR-0003).
-	// Present if and only if Status is [ListingValuationPublished].
+	// ValueUSD is circulating supply (scaled by the asset's decimals) times the listing price, as a
+	// 2-dp decimal string from exact rational arithmetic (ADR-0003). Present iff Status is
+	// [ListingValuationPublished].
 	ValueUSD *string `json:"value_usd,omitempty"`
-	// CirculatingSupply is the raw integer supply, in the asset's smallest unit, that ValueUSD
-	// was computed from; scale it by the row's `decimals`.
-	//
-	// It is published here because it can differ from the row's own `circulating_supply`: against
-	// a trustline floor this arm takes the LARGER of the row's reading and the lake's flow total,
-	// and the detail row often has none. A dollar total with a guessed multiplicand is worse than
-	// no figure.
+	// CirculatingSupply is the raw integer supply, in the smallest unit, that ValueUSD was computed
+	// from. It can differ from the row's own `circulating_supply`: against a trustline floor this
+	// arm takes the LARGER of the row's reading and the lake's flow total. A dollar total with a
+	// guessed multiplicand is worse than no figure.
 	CirculatingSupply string `json:"circulating_supply,omitempty"`
-	// SupplyBasis names where that number came from: [ListingSupplyBasisLakeFlows] (the lake's
-	// mint-burn total over the asset's SAC) or [ListingSupplyBasisServed] (the reading already on
-	// the row).
-	//
-	// The two differ by far more than rounding on exactly the assets this arm serves: USDT0's
-	// trustline sum is 6,469 tokens against 2,581,052 by mint-burn, because most of its float sits
-	// in contracts and claimable balances a trustline query cannot see. The wrong basis gives a
-	// plausible valuation 400x too small.
+	// SupplyBasis names where that number came from: [ListingSupplyBasisLakeFlows] or
+	// [ListingSupplyBasisServed]. The two differ by far more than rounding on the assets this arm
+	// serves, since most of their float sits in contracts and claimable balances a trustline query
+	// cannot see; the wrong basis gives a plausible valuation hundreds of times too small.
 	SupplyBasis string `json:"supply_basis,omitempty"`
 }
 
 // AssetListingReference.AddressForm values.
 const (
-	// ListingAddressFormClassic — the listing named `CODE-GISSUER`
-	// itself. Direct: no derivation stands between the published string
-	// and the asset's identity.
+	// ListingAddressFormClassic: the listing named `CODE-GISSUER` itself, with no derivation.
 	ListingAddressFormClassic = "classic"
-	// ListingAddressFormSAC — the listing named a contract address, and
-	// it is the one canonical.Asset.SacContractID() derives from this
-	// asset's (code, issuer) and the network passphrase. Derived, and
-	// exact: no other issuer's asset derives to it.
+	// ListingAddressFormSAC: the listing named the contract address that
+	// canonical.Asset.SacContractID() derives from this asset's (code, issuer). Exact: no other
+	// issuer's asset derives to it.
 	ListingAddressFormSAC = "sac"
 )
 
 // AssetListingValuation statuses.
 const (
-	// ListingValuationPublished — a listing price and a supply reading
-	// were both available and the product is served.
+	// ListingValuationPublished: a listing price and a supply reading were both available.
 	ListingValuationPublished = "published"
-	// ListingValuationMarketCapPublished — the row carries an observed
-	// `market_cap_usd`. This arm stands down; it exists to fill a hole,
-	// not to offer a second opinion beside a figure the gates approved.
+	// ListingValuationMarketCapPublished: the row carries an observed `market_cap_usd`, so this arm
+	// stands down; it fills a hole, not a second opinion beside a gated figure.
 	ListingValuationMarketCapPublished = "market_cap_published"
 	// ListingValuationMarketPriceObserved — the row has an observed price that cleared every gate
 	// but no cap. The gap is almost always a missing supply reading, and a third party's price
 	// would paper over it.
 	ListingValuationMarketPriceObserved = "market_price_observed"
-	// ListingValuationUnavailable — the listing directory could not be
-	// read, is not wired, or holds no fresh rows. Nothing is published
-	// and no conclusion is drawn about any address: "we did not look"
-	// is not "nobody lists it".
+	// ListingValuationUnavailable: the directory could not be read, is not wired, or holds no fresh
+	// rows. "We did not look" is not "nobody lists it", so no conclusion is drawn.
 	ListingValuationUnavailable = "listing_unavailable"
-	// ListingValuationNotListed — the directory WAS read, and it names
-	// neither this asset's classic id nor its SAC. The ordinary state
-	// of almost every asset on the network, and not an accusation.
+	// ListingValuationNotListed: the directory WAS read and names neither the asset's classic id
+	// nor its SAC. The ordinary state of almost every asset, not an accusation.
 	ListingValuationNotListed = "not_listed"
-	// ListingValuationNoListingPrice — the directory names the address
-	// but published no price for it, or published one whose own
-	// publication time is past the storage layer's price bound.
+	// ListingValuationNoListingPrice: the directory names the address but has no price for it, or
+	// one past the storage layer's price bound.
 	ListingValuationNoListingPrice = "no_listing_price"
-	// ListingValuationPriceNotPositive — the published price is zero,
-	// negative or unparseable, so no valuation can be taken from it.
+	// ListingValuationPriceNotPositive: the price is zero, negative or unparseable.
 	ListingValuationPriceNotPositive = "listing_price_not_positive"
 	// ListingValuationPriceExpired — the publication time is past [rwaReferenceMaxAge]. Re-checked
 	// despite the tighter SQL bound, so the documented bound holds however the row arrived.
 	ListingValuationPriceExpired = "listing_price_expired"
-	// ListingValuationNoSupply — neither the lake's flow total nor the
-	// row's own reading produced a supply to multiply. Refused rather
-	// than published as zero.
+	// ListingValuationNoSupply: no supply to multiply. Refused rather than published as zero.
 	ListingValuationNoSupply = "no_supply"
 )
 
@@ -195,21 +167,16 @@ type AssetListingDirectoryReader interface {
 // in SQL. It is far shorter than both so it never delays a correction.
 const assetListingSnapshotTTL = 60 * time.Second
 
-// assetListingReadBudget bounds one refresh read. The read is detached
-// from the triggering request and runs under the cache mutex every
-// listing-consulting request queues on, so it needs a deadline of its
-// own.
+// assetListingReadBudget bounds one refresh read. It is detached from the triggering request and
+// runs under the cache mutex that every listing request queues on, so it needs its own deadline.
 const assetListingReadBudget = 5 * time.Second
 
-// assetListing is one read of the directory, reduced to what this
-// surface may consult.
+// assetListing is one read of the directory, reduced to what this surface may consult.
 type assetListing struct {
-	// byAddress holds every recognised row, of either address form,
-	// keyed by the exact address as published.
+	// byAddress holds every recognised row, of either address form, keyed by published address.
 	byAddress map[string]timescale.ListingEntry
-	// census is the storage layer's account of its own numbers,
-	// including the rows it refused to serve as stale — the visible
-	// form of the fail-closed guarantee.
+	// census is the storage layer's account of its own numbers, including the rows it refused as
+	// stale: the visible form of the fail-closed guarantee.
 	census timescale.ListingDirectoryCensus
 	// available is false when the read failed, no reader is wired, or no fresh rows exist. Each
 	// means "no binding was established", never "this address is not listed".
@@ -243,8 +210,7 @@ func (s *Server) assetListingSnapshotWithin(ctx context.Context, budget time.Dur
 	}
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
 	defer cancel()
-	// Stamped only once the read has returned, as rwaCuratedSnapshot does:
-	// a read that panics leaves the entry expired for the next caller.
+	// Stamped only after the read returns, so a panicking read leaves the entry expired.
 	snap := s.readAssetListing(rctx)
 	s.assetListings.snap = snap
 	s.assetListings.at = time.Now()
@@ -277,9 +243,8 @@ func (s *Server) readAssetListing(ctx context.Context) assetListing {
 // listingAddressesFor returns the two addresses a listing may name this asset by, classic first.
 // Native XLM yields only the SAC form, since it has no `CODE-GISSUER` id.
 //
-// Errors are dropped: the only way to reach one is an asset type with no SAC, and that answers
-// like an unlisted asset (no address, no valuation). A Soroban token IS its own contract and is
-// served by the RWA contract arm.
+// Errors are dropped: the only way to reach one is an asset type with no SAC, which answers like
+// an unlisted asset. A Soroban token IS its own contract and is served by the RWA contract arm.
 func listingAddressesFor(assetID string) (classic, sac string) {
 	asset, err := canonical.ParseAsset(assetID)
 	if err != nil {
@@ -463,12 +428,11 @@ func listingReferenceOf(entry timescale.ListingEntry, form string, now time.Time
 // publishListingValuation multiplies the row's supply by the reference price already attached to
 // it, or records why it cannot.
 //
-// `lake` is Σmint − Σburn − Σclawback over the asset's SAC. [listingSupplyReading] prefers it
-// when the row's reading is a trustline FLOOR (or absent) and the lake is larger; an observation
-// is kept. Taking the larger is safe because the trustline sum is a provable LOWER BOUND, so a
-// smaller lake total means incomplete flow seeding. The reading is published INSIDE the
-// valuation block and the row's `circulating_supply` is left alone, since a dollar figure needs
-// a visible multiplicand.
+// `lake` is the net mint-burn-clawback total over the asset's SAC. [listingSupplyReading] prefers
+// it when the row's reading is a trustline FLOOR (or absent) and the lake is larger; taking the
+// larger is safe because the trustline sum is a provable LOWER BOUND. The reading is published
+// INSIDE the valuation block and the row's `circulating_supply` is left alone, since a dollar
+// figure needs a visible multiplicand.
 func (s *Server) publishListingValuation(row *AssetDetail, lake string) {
 	circ, reading := listingSupplyReading(row, lake)
 	if circ == "" {
@@ -476,8 +440,8 @@ func (s *Server) publishListingValuation(row *AssetDetail, lake string) {
 		row.ListingReference = nil
 		return
 	}
-	// Taken from the picker, not by comparing the winner to `lake`: that mislabelled a served
-	// figure merely EQUAL to the lake total, giving identical readings two provenances.
+	// Taken from the picker, not by comparing the winner to `lake`, which would mislabel a served
+	// figure merely EQUAL to the lake total.
 	basis := ListingSupplyBasisServed
 	if reading == supply.BasisClassicLakeFlows {
 		basis = ListingSupplyBasisLakeFlows
@@ -521,10 +485,9 @@ func listingSupplyReading(row *AssetDetail, lake string) (string, supply.Basis) 
 // listingValueUSD = (circulating / 10^decimals) x price, as a 2-dp decimal string; empty on any
 // input that is not a valuation.
 //
-// Exact rational arithmetic end to end (ADR-0003, like [rwaReferenceValueUSD]): never a float, and
-// the 2-dp rounding happens once, at the end, so a consumer summing the served strings gets the
-// same total. The scale is the ASSET's own decimals. A negative scale must be guarded because
-// [big.Int.Exp] answers a negative exponent with 1, which would publish the raw count as dollars.
+// Exact rational arithmetic end to end (ADR-0003): never a float, with one 2-dp rounding at the
+// end. The scale is the ASSET's own decimals; a negative scale is guarded because [big.Int.Exp]
+// answers a negative exponent with 1, which would publish the raw count as dollars.
 func listingValueUSD(circRaw string, decimals int, price *big.Rat) string {
 	if price == nil || decimals < 0 {
 		return ""

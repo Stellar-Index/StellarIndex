@@ -19,30 +19,21 @@ import (
 // SourceName is the registry key for this source.
 const SourceName = "cctp"
 
-// GenesisLedger is the ledger of the MessageTransmitter's first
-// on-chain event (an exact genesis derived from the lake) — the lower
-// bound for any re-derive or gap scan. protocols_registry.go's
-// ProtocolMeta.GenesisLedger for "cctp" must equal this.
+// GenesisLedger is the ledger of the MessageTransmitter's first on-chain event, the lower bound for
+// any re-derive or gap scan. ProtocolMeta.GenesisLedger for "cctp" must equal it.
 const GenesisLedger uint32 = 62_146_641
 
-// Mainnet contract addresses — verified against
-// https://developers.circle.com/cctp/references/stellar-contracts
-// + the upstream source repo github.com/circlefin/stellar-cctp.
+// Mainnet contract addresses, per https://developers.circle.com/cctp/references/stellar-contracts.
 const (
 	MainnetTokenMessengerMinter = "CAE2G5Z77UP7GYPYGFOWFGW7C7J6I4YP2AFGSADRKQY62SYUFLPNFTXL"
 	MainnetMessageTransmitter   = "CACMENFFJPJMSDAJQLX4R7K3SFZIW2LJSE3R2UMLGSWHFHS353FVXAZV"
 	MainnetCctpForwarder        = "CBZL2IH7F6BIDAA3WBNXYKIXSATJGMSW7K5P5MJ6STX5RXN47TZJDF5T"
 )
 
-// StellarDomainID is Stellar's CCTP domain identifier
-// (`message_transmitter::get_local_domain()` returns this value).
-// Other notable CCTP domains: Ethereum=0, Avalanche=1, Arbitrum=3,
-// Solana=7. Full list at Circle docs.
+// StellarDomainID is Stellar's CCTP domain identifier, as `get_local_domain()` returns it.
 const StellarDomainID uint32 = 27
 
-// Event names — the symbol_short / Symbol::new strings emitted as
-// topic[0] by each #[contractevent]. Verified against
-// contracts/{token-messenger-minter-v2,message-transmitter-v2}/src/lib.rs.
+// Event names: the strings emitted as topic[0] by each #[contractevent].
 const (
 	EventDepositForBurn  = "deposit_for_burn"  // TokenMessengerMinter
 	EventMintAndWithdraw = "mint_and_withdraw" // TokenMessengerMinter
@@ -78,9 +69,8 @@ const (
 	EventUnDenylisted              = "un_denylisted"                 // TokenMessengerMinter: an account left the denylist
 )
 
-// Topic[0] pre-encoded base64, so Classify() does single string-equal comparisons rather than a
-// full SCVal decode per event. The wire shape is ScSymbol whether the Soroban macro used
-// symbol_short! (up to 9 chars) or Symbol::new; all of these happen to be the long form.
+// Topic[0] pre-encoded base64, so Classify() does string-equal comparisons rather than a full SCVal
+// decode per event. The wire shape is ScSymbol whichever Soroban macro produced it.
 var (
 	TopicSymbolDepositForBurn             = scval.MustEncodeSymbol(EventDepositForBurn)
 	TopicSymbolMintAndWithdraw            = scval.MustEncodeSymbol(EventMintAndWithdraw)
@@ -311,8 +301,8 @@ type MessageReceived struct {
 
 // ─── Lower-signal admin/governance events ───────────────────────────
 //
-// The remaining 16 of the 26 distinct topics the three contracts emit. All are rare; schemas
-// below come from real lake events, as upstream documents almost none of them.
+// The remaining 16 of the 26 distinct topics the three contracts emit. All are rare; the schemas
+// come from real lake events, as upstream documents almost none of them.
 
 // AdminChangeStarted is the canonical projection of one `admin_change_started` event: the 2-step
 // counterpart to `admin_changed`, firing when an admin change is INITIATED (`admin_changed` fires

@@ -40,33 +40,27 @@ type rwaListing struct {
 	// byAddress holds the listing rows inside the recognition bound,
 	// keyed by the exact Stellar contract address.
 	byAddress map[string]timescale.ListingEntry
-	// census is the storage layer's account of its own numbers,
-	// including the rows it refused to serve as stale. That count is
-	// the visible form of the fail-closed guarantee: a set that shrank
-	// because the sync stopped running must say so.
+	// census includes the rows storage refused to serve as stale, the visible form of the
+	// fail-closed guarantee: a set that shrank because the sync stopped must say so.
 	census timescale.ListingDirectoryCensus
-	// available is false when the read failed or the whole snapshot is
-	// past its bound. Either way no naming was established, so none may
-	// be assumed and every candidate needing one is refused.
+	// available is false when the read failed or the snapshot is past its bound: no naming was
+	// established, so every candidate needing one is refused.
 	available bool
 	// wired reports that a listing reader is CONFIGURED, whatever it answered. Unwired means
 	// nobody looked, and an arm of zeros would wrongly assert that no independent party names
 	// these addresses. A wired reader that failed DID look; its failure is a measured shrink
-	// of the set that the funnel must report loudly, since an operator can fix it.
+	// the funnel must report loudly, since an operator can fix it.
 	wired bool
-	// read reports that the directory ANSWERED, which makes `census` a real observation. A
-	// failed read has observed nothing and must not be published as a count of anything,
-	// whereas zero entries observed means the table was never synced.
+	// read reports that the directory ANSWERED, making `census` a real observation. A failed
+	// read observed nothing; zero entries observed means the table was never synced.
 	read bool
-	// observedAt is when the read that produced `census` was taken. Counts can be re-derived;
-	// this moment cannot, and it distinguishes "the directory is empty" from "this set was
-	// built before the directory filled". Zero when nothing was observed.
+	// observedAt is when the read behind `census` was taken. It distinguishes "the directory is
+	// empty" from "this set was built before the directory filled". Zero when unobserved.
 	observedAt time.Time
 }
 
-// names reports whether the listing directory names this exact address,
-// and is false on an unavailable snapshot rather than panicking on a
-// nil map — an unavailable read has no opinion about any address.
+// names reports whether the listing directory names this exact address; an unavailable snapshot
+// has no opinion about any address, so it is false.
 func (l rwaListing) names(contractID string) bool {
 	if !l.available {
 		return false
@@ -94,12 +88,11 @@ func (s *Server) rwaListingSnapshot(ctx context.Context) rwaListing {
 		byAddress: make(map[string]timescale.ListingEntry, len(rows)),
 		census:    census,
 		// Zero fresh rows cannot support "nobody independent names this address": the reader drops
-		// rows past the recognition bound, so a fully stale table looks like a listing naming
-		// nothing. Treated as available, bindings would be refused under
-		// contract_curated_binding_without_independent_listing (a finding about the world) when
-		// our copy merely expired; unavailable, they are refused under
+		// stale rows, so a fully stale table looks like a listing naming nothing. As available,
+		// bindings would be refused under contract_curated_binding_without_independent_listing (a
+		// finding about the world) when our copy merely expired; as unavailable, under
 		// independent_listing_unavailable, an outage an operator can fix. A never-synced table
-		// takes the same branch: zero fresh rows is zero evidence.
+		// takes the same branch.
 		available:  len(rows) > 0,
 		wired:      true,
 		read:       true,
@@ -133,11 +126,9 @@ type rwaListingCandidate struct {
 
 // rwaListingCensus is the second arm's accounting.
 type rwaListingCensus struct {
-	// bindings is every in-repo curated contract binding — the root of
-	// this arm's narrowing, and a constant of the build.
+	// bindings is every in-repo curated contract binding, the root of this arm's narrowing.
 	bindings int
-	// alsoInDirectoryArm counts bindings the first arm already
-	// evaluates. Removed here so no address is evaluated twice.
+	// alsoInDirectoryArm counts bindings the first arm already evaluates, removed here.
 	alsoInDirectoryArm int
 	// listingUnavailable counts bindings refused because the LISTING read did not answer.
 	// A failed curated-tag lookup is counted apart (tagsUnavailable): the two sources fail
@@ -146,8 +137,8 @@ type rwaListingCensus struct {
 	// tagsUnavailable counts bindings refused because the CURATED DIRECTORY's tag read did
 	// not answer, leaving C3 unevaluated.
 	tagsUnavailable int
-	// notListed counts bindings the listing directory does not name.
-	// The refusal that holds independence up.
+	// notListed counts bindings the listing directory does not name: the refusal that holds
+	// independence up.
 	notListed int
 	// evaluated is what reached rwa.QualifyContract.
 	evaluated int
@@ -169,10 +160,8 @@ type rwaListingCensus struct {
 	//
 	// Zero when nothing was observed; observedAt says which.
 	dir timescale.ListingDirectoryCensus
-	// observedAt is when the read behind `dir` was taken. The counts can be re-derived later;
-	// the moment this served set looked cannot, and readers need it to compare observations.
-	// Zero means nothing was observed (no reader wired, or the read failed) and publishes no
-	// timestamp rather than the Unix epoch.
+	// observedAt is when the read behind `dir` was taken, so readers can compare observations.
+	// Zero means nothing was observed and publishes no timestamp rather than the Unix epoch.
 	observedAt time.Time
 }
 
@@ -194,10 +183,8 @@ func (s *Server) rwaListingCandidates(
 	}
 	bindings := rwa.ContractInstrumentBindings()
 	census := rwaListingCensus{bindings: len(bindings), available: true}
-	// Carried only from a read that ANSWERED. A failed read observed
-	// nothing, and a zero census published beside a zero timestamp
-	// would read as a directory holding no rows — which is a finding,
-	// from a query that did not complete.
+	// Carried only from a read that ANSWERED: a zero census from a failed read would read as a
+	// directory holding no rows, a finding from a query that did not complete.
 	if listing.read {
 		census.dir = listing.census
 		census.observedAt = listing.observedAt
@@ -215,9 +202,8 @@ func (s *Server) rwaListingCandidates(
 	}
 	sort.Strings(pending)
 
-	// The terminal census. Counted over the whole listing snapshot
-	// rather than over the pending set, because its subject is the
-	// listing's own contents and not this arm's narrowing.
+	// The terminal census counts the whole listing snapshot, not the pending set: its subject
+	// is the listing's contents, not this arm's narrowing.
 	for addr := range listing.byAddress {
 		if _, ok := bound[addr]; !ok {
 			census.listedWithoutBinding++

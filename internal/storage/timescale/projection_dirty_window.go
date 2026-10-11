@@ -19,18 +19,14 @@ import (
 // evidence the replay just invalidated.
 type ProjectionDirtyWindow struct {
 	Source string
-	// From is the replay's rewind target (inclusive) — the first ledger
-	// whose served rows the projector re-wrote.
+	// From is the rewind target (inclusive), the first ledger whose served rows were re-written.
 	From uint32
-	// To is the projector cursor at rewind time (inclusive), as returned by
-	// [Store.RewindCursor] rather than an earlier read. Ground above
-	// it is new forward projection covered by the normal watermark-forward
-	// reconcile; only the below-cursor range needs the forced re-check.
+	// To is the projector cursor at rewind time (inclusive), as returned by [Store.RewindCursor].
+	// Ground above it is new forward projection the normal watermark reconcile covers.
 	To     uint32
 	Reason string
-	// UpdatedAt is the row's last-write time, carried so a clear can
-	// prove it is deleting the SAME row it read. See
-	// clearProjectionDirtyWindowQuery.
+	// UpdatedAt lets a clear prove it deletes the SAME row it read (see
+	// clearProjectionDirtyWindowQuery).
 	UpdatedAt time.Time
 }
 
@@ -62,16 +58,13 @@ const (
 	reasonBackfillWritePrefix    = "backfill -write "
 )
 
-// ProjectorReplayReason is the Reason `stellarindex-ops projector-replay`
-// stamps on the window it records before rewinding a source's cursor from
-// fromCursor (its pre-rewind position, which becomes the window's To) to
-// toTarget (the rewind target, which becomes its From).
+// ProjectorReplayReason is the Reason `projector-replay` stamps on its window: fromCursor (the
+// pre-rewind position) becomes the window's To, toTarget its From.
 func ProjectorReplayReason(fromCursor, toTarget uint32) string {
 	return fmt.Sprintf("%s%d -> %d", reasonProjectorReplayPrefix, fromCursor, toTarget)
 }
 
-// ProjectedRebuildReason is the Reason `stellarindex-ops projected-rebuild
-// -write` stamps on the window covering the range it is about to rewrite.
+// ProjectedRebuildReason is the Reason `projected-rebuild -write` stamps on its range.
 func ProjectedRebuildReason(from, to uint32) string {
 	return fmt.Sprintf("%s[%d,%d]", reasonProjectedRebuildPrefix, from, to)
 }
@@ -84,14 +77,12 @@ func CHRebuildEmptiedReason(from, to uint32) string {
 	return fmt.Sprintf("%s[%d,%d]", reasonCHRebuildEmptiedPrefix, from, to)
 }
 
-// CHRebuildWriteReason is the Reason `ch-rebuild -write` stamps on the
-// window it is about to rewrite.
+// CHRebuildWriteReason is the Reason `ch-rebuild -write` stamps on its range.
 func CHRebuildWriteReason(from, to uint32) string {
 	return fmt.Sprintf("%s[%d,%d]", reasonCHRebuildWritePrefix, from, to)
 }
 
-// BackfillWriteReason is the Reason `backfill -write`
-// stamps on the window they are about to rewrite.
+// BackfillWriteReason is the Reason `backfill -write` stamps on its range.
 func BackfillWriteReason(from, to uint32) string {
 	return fmt.Sprintf("%s[%d,%d]", reasonBackfillWritePrefix, from, to)
 }
@@ -111,13 +102,12 @@ func (w ProjectionDirtyWindow) IsProjectorReplay() bool {
 	return strings.HasPrefix(w.Reason, reasonProjectorReplayPrefix)
 }
 
-// RecordProjectionDirtyWindow records (or widens) a source's dirty window.
-// Called by projector-replay BEFORE it rewinds the cursor, which is the fail-closed order: a
-// crash between record and rewind leaves a spurious window one clean verify clears, while the
-// opposite order would leave a rewind with no record.
+// RecordProjectionDirtyWindow records (or widens) a source's dirty window. projector-replay calls
+// it BEFORE rewinding: a crash between the two leaves a spurious window one clean verify clears,
+// the opposite order a rewind with no record.
 //
-// The conflict arm WIDENS (LEAST(from), GREATEST(to)) rather than replacing: while a window is
-// pending, a second replay can only grow the un-reverified obligation, never shrink it.
+// The conflict arm WIDENS (LEAST(from), GREATEST(to)): a second replay can only grow the
+// un-reverified obligation while one is pending, never shrink it.
 func (s *Store) RecordProjectionDirtyWindow(ctx context.Context, w ProjectionDirtyWindow) error {
 	const q = `
         INSERT INTO projection_dirty_windows (source, from_ledger, to_ledger, reason)

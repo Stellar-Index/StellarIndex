@@ -20,8 +20,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// SourceName is the canonical string stamped on every event this
-// package emits. Single source — Comet has no versioned variants.
+// SourceName is the canonical string stamped on every event this package emits.
 const SourceName = "comet"
 
 // MainnetBackstopPool is the single known Comet pool on mainnet, Blend's BLND/USDC backstop.
@@ -41,10 +40,8 @@ func MainnetGatedSet() []string { return []string{MainnetBackstopPool} }
 // topics still classifies on its first two; the identity gate in Matches, not arity, is trusted.
 const cometTopicArity = 2
 
-// LiquidityKind discriminates the four liquidity-mutating Comet
-// events. String values are stamped onto LiquidityEvent.Kind and
-// match the comet_liquidity.event_kind CHECK constraint
-// (migration 0042).
+// LiquidityKind discriminates the four liquidity-mutating Comet events; values match the
+// comet_liquidity.event_kind CHECK constraint.
 type LiquidityKind string
 
 // Liquidity kinds map to two directions:
@@ -70,9 +67,7 @@ func (k LiquidityKind) IsValid() bool {
 	return false
 }
 
-// Direction is the add/remove polarity for a liquidity event —
-// `add` for join_pool/deposit (reserves grow), `remove` for
-// exit_pool/withdraw (reserves shrink). Mirrors the
+// Direction is the add/remove polarity of a liquidity event, matching the
 // comet_liquidity.direction CHECK constraint.
 func (k LiquidityKind) Direction() string {
 	switch k {
@@ -84,8 +79,7 @@ func (k LiquidityKind) Direction() string {
 	return ""
 }
 
-// Event-topic constants. Matches against these are byte-equality
-// via the pre-encoded TopicSymbol* blobs below.
+// Event-topic constants, matched by byte equality via the TopicSymbol* blobs below.
 const (
 	EventTopic0   = "POOL"
 	EventSwap     = "swap"
@@ -121,8 +115,7 @@ var (
 	// recognition audit (RecognitionOK=false).
 	ErrNotCometEvent = errors.New("comet: not a recognised Comet POOL event")
 
-	// ErrMalformedPayload — body didn't decode to the expected
-	// Map shape for the matched event kind.
+	// ErrMalformedPayload — body did not decode to the Map shape for the matched kind.
 	ErrMalformedPayload = errors.New("comet: malformed event payload")
 
 	// ErrNonPositiveAmounts - token_amount_in or token_amount_out is zero or negative. A valid

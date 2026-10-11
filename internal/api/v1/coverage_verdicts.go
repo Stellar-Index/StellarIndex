@@ -33,40 +33,33 @@ type CoverageVerdictView struct {
 	// decoupled from the retention-scoped projection reconcile. A source can be
 	// lake_complete=true, complete=false.
 	LakeComplete bool `json:"lake_complete"`
-	// SubstrateOK / RecognitionOK / ProjectionOK are the three ADR-0033
-	// claims, reported separately so a consumer can see WHICH claim
-	// failed when Complete is false.
+	// SubstrateOK / RecognitionOK / ProjectionOK are the three ADR-0033 claims, reported separately
+	// so a consumer can see WHICH one failed when Complete is false.
 	SubstrateOK   bool `json:"substrate_ok"`
 	RecognitionOK bool `json:"recognition_ok"`
 	ProjectionOK  bool `json:"projection_ok"`
-	// GenesisLedger is the first ledger this source could have data at
-	// (WASM-audit sourced); WatermarkLedger is the highest ledger the
-	// verdict covers. TipLedger is the network tip at compute time.
+	// GenesisLedger is the first ledger this source could have data at (WASM-audit sourced);
+	// WatermarkLedger the highest ledger the verdict covers; TipLedger the network tip at compute time.
 	GenesisLedger   uint32 `json:"genesis_ledger"`
 	WatermarkLedger uint32 `json:"watermark_ledger"`
 	TipLedger       uint32 `json:"tip_ledger"`
 	// ProjectionVerifiedFrom is the floor of the range ProjectionOK (and so Complete) claims. It is
 	// GenesisLedger unless the served tier is a declared working-set window, where it is the lowest
 	// served row (pubnet sdex: genesis 2, served from ~61.6M); reading complete/coverage_pct without
-	// it overstates the served claim by that span.
-	//
-	// Omitted when the audit recorded no floor. Absent means UNKNOWN, not "from ledger 0".
+	// it overstates the served claim by that span. Omitted means UNKNOWN, not "from ledger 0".
 	ProjectionVerifiedFrom uint32 `json:"projection_verified_from,omitempty"`
-	// ProjectionReconciledFrom is the lowest ledger the run that produced
-	// this verdict reconciled itself; anything from ProjectionVerifiedFrom
-	// below it was carried from the prior verdict. Omitted when unrecorded.
+	// ProjectionReconciledFrom is the lowest ledger the producing run reconciled itself; the span
+	// from ProjectionVerifiedFrom below it was carried from the prior verdict. Omitted when unrecorded.
 	ProjectionReconciledFrom uint32 `json:"projection_reconciled_from,omitempty"`
-	// ProjectionEvidencedAt is when one run last reconciled the whole served
-	// range cleanly — the age of the oldest evidence behind ProjectionOK.
-	// ComputedAt advances on every run, including one that carried the claim.
-	// null = no evidence on record.
+	// ProjectionEvidencedAt is when one run last reconciled the whole served range cleanly: the age
+	// of the oldest evidence behind ProjectionOK. ComputedAt advances on every run, including one
+	// that only carried the claim. null = no evidence on record.
 	ProjectionEvidencedAt *WireTime `json:"projection_evidenced_at"`
 	// CoveragePct is watermark progress vs tip as a FRACTION in [0,1] (1.0, not 100, means the
 	// verdict reaches the tip at compute time). The name is kept for wire compatibility; the value
 	// is completeness.Watermark's (Ledger-Genesis+1)/(Tip-Genesis+1), clamped.
 	CoveragePct float64 `json:"coverage_pct"`
-	// FirstProblemLedger is the first ledger with a verified problem
-	// (0 when none) and Detail the human-readable problem description.
+	// FirstProblemLedger is the first ledger with a verified problem (0 when none).
 	FirstProblemLedger uint32 `json:"first_problem_ledger,omitempty"`
 	Detail             string `json:"detail,omitempty"`
 	// ComputedAt is when the audit run produced this verdict.
@@ -91,10 +84,8 @@ type NotApplicableSourceView struct {
 // It is not a gap in any published source: a source dropping its OWN events surfaces as
 // `recognition_ok: false` on THAT source's row in Sources, and fails the headline.
 type RecognitionAxisView struct {
-	// AllShapesRecognized is true when every event shape in the audited
-	// lake belongs to a contract some indexed source owns — i.e. the
-	// census is empty. False on any public network with protocols we
-	// have not integrated, which is the expected steady state.
+	// AllShapesRecognized is true when the census is empty. False on any public network with
+	// protocols we have not integrated, which is the expected steady state.
 	AllShapesRecognized bool `json:"all_shapes_recognized"`
 	// UnrecognizedShapes / UnrecognizedContracts are the census: how many distinct (contract, topic)
 	// event shapes are unattributed, across how many distinct contracts.
@@ -104,18 +95,14 @@ type RecognitionAxisView struct {
 	// exists to prevent. Detail is still served verbatim.
 	UnrecognizedShapes    *int `json:"unrecognized_shapes,omitempty"`
 	UnrecognizedContracts *int `json:"unrecognized_contracts,omitempty"`
-	// EarliestLedger is the lowest ledger an unattributed shape was
-	// first seen at (0/omitted when the census is empty);
-	// ScannedFromLedger is the audit's floor — the start of the Soroban
-	// era, since before it no contract events existed at all.
+	// EarliestLedger is the lowest ledger an unattributed shape was first seen at (omitted when the
+	// census is empty); ScannedFromLedger is the audit floor, the start of the Soroban era.
 	EarliestLedger    uint32 `json:"earliest_ledger,omitempty"`
 	ScannedFromLedger uint32 `json:"scanned_from_ledger"`
 	// TipLedger is the network tip the audit ran against.
 	TipLedger uint32 `json:"tip_ledger"`
-	// Meaning is a plain-language statement of what this axis is and is
-	// not, served on the wire rather than only in the OpenAPI spec: a
-	// consumer building a dashboard from this JSON never reads the
-	// spec, and this number is easy to mistake for a data gap.
+	// Meaning is served on the wire, not only in the OpenAPI spec: a dashboard built from this JSON
+	// never reads the spec, and this number is easy to mistake for a data gap.
 	Meaning string `json:"meaning"`
 	// Detail is the audit's own description, verbatim.
 	Detail string `json:"detail,omitempty"`
@@ -136,46 +123,36 @@ const recognitionAxisMeaning = "Event shapes on Soroban contracts that no indexe
 
 // CoverageVerdictsView is the envelope data field of GET /v1/coverage.
 type CoverageVerdictsView struct {
-	// Sources lists every audited SOURCE's verdict, source-sorted.
-	// System audit axes (completeness.IsAuditAxis) are not sources and
-	// are reported in their own fields — see Recognition.
+	// Sources lists every audited SOURCE's verdict, source-sorted. System audit axes
+	// (completeness.IsAuditAxis) are not sources and have their own fields (see Recognition).
 	Sources []CoverageVerdictView `json:"sources"`
-	// Recognition is the ADR-0033 recognition audit axis, or null when
-	// the audit has not produced one on this deployment. The key is
-	// always present so its ABSENCE is visible rather than silent.
+	// Recognition is the ADR-0033 recognition axis, or null when none exists on this deployment.
+	// The key is always present so its ABSENCE is visible rather than silent.
 	Recognition *RecognitionAxisView `json:"recognition"`
-	// UsdVolumePricing is the USD volume pricing axis (valuation coverage over
-	// a fixed 24h window), or null until the first background refresh. Outside
-	// every source count: it can never change Complete or LakeComplete.
+	// UsdVolumePricing is the USD volume pricing axis (valuation coverage over a fixed 24h window),
+	// or null until the first background refresh. Outside every source count: it can never change
+	// Complete or LakeComplete.
 	UsdVolumePricing *UsdVolumePricingAxisView `json:"usd_volume_pricing"`
-	// CompleteSources / TotalSources summarize the headline ("20/20") for
-	// the served/combined axis (Complete). SOURCES ONLY — a system audit
-	// axis is not a source and is neither numerator nor denominator.
+	// CompleteSources / TotalSources are the headline ("20/20") for the served axis (Complete).
+	// SOURCES ONLY: an audit axis is neither numerator nor denominator.
 	// TotalSources is len(Sources) + len(UnverifiedSources).
 	CompleteSources int `json:"complete_sources"`
 	TotalSources    int `json:"total_sources"`
-	// LakeCompleteSources tallies the lake (archive) axis (LakeComplete)
-	// — how many sources' certified ClickHouse archive is proven
-	// genesis-complete, independent of the served tier's retention
-	// window. See CoverageVerdictView.LakeComplete.
+	// LakeCompleteSources tallies the lake axis (LakeComplete), independent of the served tier's
+	// retention window.
 	LakeCompleteSources int `json:"lake_complete_sources"`
 	// Network is the Stellar network this deployment serves (pubnet / testnet / futurenet). Protocol
 	// sources are anchored to pubnet contract identities (ADR-0035), so on a test net they are listed
 	// in NotApplicableSources with a reason and EXCLUDED from Sources and every total, instead of
 	// being counted incomplete by construction.
 	Network string `json:"network"`
-	// NotApplicableSources names the sources that do not exist on this
-	// network. Always empty on pubnet.
+	// NotApplicableSources names the sources that do not exist on this network (empty on pubnet).
 	NotApplicableSources []NotApplicableSourceView `json:"not_applicable_sources"`
-	// UnverifiedSources names the audited sources (completeness.AuditedSources)
-	// applicable on this network that have NO verdict row. They count in
-	// TotalSources, so a source whose first audit failed shrinks the
-	// numerator rather than vanishing from both sides of the headline.
+	// UnverifiedSources names the applicable audited sources with NO verdict row. They count in
+	// TotalSources, so a failed first audit shrinks the numerator rather than vanishing from both sides.
 	UnverifiedSources []UnverifiedSourceView `json:"unverified_sources"`
-	// LaggingSources names the sources whose verdict tip is below the newest
-	// source verdict's tip: the latest audit run wrote no verdict for them, so
-	// the headline sums verdicts from more than one run. Empty when one run
-	// wrote every source's row.
+	// LaggingSources names the sources whose verdict tip is below the newest one: the latest run
+	// wrote no verdict for them, so the headline sums more than one run.
 	LaggingSources []LaggingSourceView `json:"lagging_sources"`
 }
 
@@ -186,9 +163,8 @@ type LaggingSourceView struct {
 	Reason    string `json:"reason"`
 }
 
-// laggingSources lists, in sources' order, every verdict whose tip is below
-// the newest tip among sources. Every source a run evaluates is stamped with
-// that run's one tip, so a lower tip is a row the newest run did not rewrite.
+// laggingSources lists every verdict whose tip is below the newest. A run stamps every source it
+// evaluates with one tip, so a lower tip is a row the newest run did not rewrite.
 func laggingSources(sources []CoverageVerdictView) []LaggingSourceView {
 	var newest uint32
 	for _, v := range sources {
@@ -218,8 +194,7 @@ type UnverifiedSourceView struct {
 const unverifiedSourceReason = "no completeness verdict has ever been computed for this source on this deployment " +
 	"(its audit has not completed, or the row was cleared) — counted in total_sources, not as complete"
 
-// unverifiedSources lists, in audited's order, every audited source applicable
-// on network with no row in snaps.
+// unverifiedSources lists every audited source applicable on network with no row in snaps.
 func unverifiedSources(audited []string, snaps []timescale.CompletenessSnapshot, network string) []UnverifiedSourceView {
 	have := make(map[string]struct{}, len(snaps))
 	for _, sn := range snaps {
@@ -259,10 +234,8 @@ const coverageVerdictStaleAge = 26 * time.Hour
 // own timers (compute-completeness-sdex / -sep41), not by the pass.
 const coverageVerdictEvidenceStaleAge = completeness.MaxProjectionCarryAge + 3*coverageVerdictStaleAge
 
-// coverageIngestStallAge is the ledgerstream cursor age past which ingest
-// counts as stalled — the same 10 minutes after which
-// stellarindex_ingestion_ledger_stalled pages. The cursor is upserted once
-// per ~5 s ledger, so this cannot fire in healthy operation.
+// coverageIngestStallAge is the ledgerstream cursor age past which ingest counts as stalled, matching
+// stellarindex_ingestion_ledger_stalled. The cursor moves every ~5 s ledger, so it cannot fire healthy.
 const coverageIngestStallAge = 10 * time.Minute
 
 // handleCoverageVerdicts serves GET /v1/coverage, every source's latest ADR-0033 completeness
@@ -304,15 +277,12 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 		view.NotApplicableSources = append(view.NotApplicableSources, NotApplicableSourceView{Source: na.Source, Reason: na.Reason})
 	}
 	for _, sn := range snaps {
-		// A stale pubnet-only row (written before the catalogue was
-		// network-scoped) must not count against a test net.
+		// A stale pubnet-only row must not count against a test net.
 		if ok, _ := sourcenet.Applicable(sn.Source, network); !ok {
 			continue
 		}
-		// A system audit axis is not a source: it has no substrate,
-		// projection or retention window, so neither `complete` axis is
-		// defined for it and it belongs in neither total. It is
-		// published in full below, not dropped.
+		// An audit axis has no substrate, projection or retention window, so neither `complete`
+		// axis is defined for it and it belongs in neither total; it is published separately.
 		if completeness.IsAuditAxis(sn.Source) {
 			view.Recognition = recognitionAxisView(sn)
 			continue
@@ -389,8 +359,7 @@ func recognitionAxisView(sn timescale.CompletenessSnapshot) *RecognitionAxisView
 		Detail:              sn.Detail,
 		ComputedAt:          WireTime(sn.ComputedAt),
 	}
-	// Typed counts only when the audit's own format parses; otherwise
-	// omitted, never zeroed (see RecognitionAxisView.UnrecognizedShapes).
+	// Counts only when the audit's format parses; otherwise omitted, never zeroed.
 	if c, ok := completeness.ParseRecognitionDetail(sn.Detail); ok {
 		shapes, contracts := c.Shapes, c.Contracts
 		v.UnrecognizedShapes, v.UnrecognizedContracts = &shapes, &contracts

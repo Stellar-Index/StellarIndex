@@ -28,12 +28,11 @@ import (
 // hard cutoff would blank every weekly-trading asset. GET /v1/assets/{id} uses its own
 // single-asset query, so a listing row can lag its detail page by up to that ceiling.
 
-// assetPriceSnapshotMaxAge is how old an `asset_price_snapshot` row may be and still be served by
-// the listing. It is spliced into the listing's LEFT JOIN (see [listAssetsBaseSelect]) so SQL
-// enforces the bound.
+// assetPriceSnapshotMaxAge is how old an `asset_price_snapshot` row may be and still be served; SQL
+// enforces it in the listing's LEFT JOIN (see [listAssetsBaseSelect]).
 //
-// 15 minutes is 7 missed passes of the 2-minute refresh: wide enough that a restart never blanks
-// the page, narrow enough that a price cannot drift materially before the row stops being served.
+// 15 minutes is 7 missed passes of the 2-minute refresh: a restart never blanks the page, and a
+// price cannot drift materially before the row stops being served.
 const assetPriceSnapshotMaxAge = "15 minutes"
 
 // priceArmPickExpr names the arm that prices an asset: 'native' (XLM itself, from the xlm_usd
@@ -44,9 +43,7 @@ const assetPriceSnapshotMaxAge = "15 minutes"
 // beat an XLM market trading this minute, serving a days-old price as current. A triangulated
 // observation is as old as its XLM-market minute; on a tie the direct arm wins (no triangulation
 // error). An XLM market with no anchor within [xlmUSDAnchorMaxAge] cannot price, so an older direct
-// row still does. Native XLM with no fresh anchor is unpriced rather than read from a possibly
-// week-old direct row: no fresh XLM/USD anywhere is an outage, and every XLM-quoted asset is
-// unpriced with it.
+// row still does. Native XLM with no fresh anchor is unpriced, not read from a week-old direct row.
 const priceArmPickExpr = `CASE
 		      WHEN ca.asset_id = 'native'
 		        THEN CASE WHEN (SELECT vwap FROM xlm_usd) IS NOT NULL THEN 'native' END
@@ -121,16 +118,16 @@ func priceChangePctExpr(lookback string) string {
 // JOIN onto nonstandard_decimals_assets.
 //
 // prices_1m holds raw smallest-unit ratios, so for a token whose decimals() is not 7 every arm is
-// off by the same 10^(7 - decimals); one factor corrects whichever arm answered, as
-// v1.Server.normalizeCatalogueUSD does. Normalising before the listing's ROUND(price_usd, 10) keeps
-// an 18-decimals token's 1e-11 raw ratio from rounding to zero.
+// off by the same 10^(7 - decimals); one factor corrects whichever arm answered. Normalising
+// before the listing's ROUND(price_usd, 10) keeps an 18-decimals token's 1e-11 raw ratio from
+// rounding to zero.
 //
 // A READER OF THIS COLUMN MUST NOT NORMALISE IT AGAIN. The change columns need no factor: the scale
 // cancels in each ratio. A MULTIPLIER MUST USE THE SAME DECIMALS: a market cap divides a
 // smallest-unit supply by the token's real decimals, not 7 (v1.Server.applyConfirmedListingDecimals).
 //
-// The CASE, rather than a COALESCE'd factor of 1, keeps unconfirmed assets' stored value
-// byte-identical; power(numeric, numeric) with an integral exponent is exact (ADR-0003).
+// The CASE, not a COALESCE'd factor of 1, keeps unconfirmed assets' stored value byte-identical;
+// power(numeric, numeric) with an integral exponent is exact (ADR-0003).
 const snapshotNormalizedPriceUSDExpr = `CASE WHEN nda.decimals IS NULL
 		         THEN ` + snapshotPriceUSDExpr + `
 		         ELSE ` + snapshotPriceUSDExpr + `
@@ -264,16 +261,15 @@ const (
 // refreshAssetPriceSnapshotUpsert recomputes every priced asset's headline price, 1h/24h/7d change
 // and backing source count from [assetPriceCTEs] and upserts one row per asset.
 //
-// Spine: the assets that CAN have a price (`direct_usd` union `asset_vs_xlm` union native), not
-// the whole catalogue; an asset without a row in those CTEs within the 7-day lookback is unpriced.
+// The spine is the assets that CAN have a price (`direct_usd` union `asset_vs_xlm` union native),
+// not the whole catalogue; an asset with no row there within the 7-day lookback is unpriced.
 //
-// Money stays NUMERIC end to end (ADR-0003): `price_usd` and the three change columns are stored
-// unrounded and unformatted; the listing applies the wire rendering. The decimals correction for a
-// CONFIRMED non-7-decimals token is applied here, before anything is rounded (see
-// [snapshotNormalizedPriceUSDExpr]).
+// Money stays NUMERIC end to end (ADR-0003): the price and change columns are stored unrounded;
+// the listing applies the wire rendering. The decimals correction for a CONFIRMED non-7-decimals
+// token is applied here, before anything is rounded (see [snapshotNormalizedPriceUSDExpr]).
 //
-// `computed_at` is stamped to the transaction timestamp so the sibling prune can drop assets whose
-// price lapsed this pass, as refreshAssetVolumeUpsert does.
+// `computed_at` is the transaction timestamp so the sibling prune can drop assets whose price
+// lapsed this pass.
 var refreshAssetPriceSnapshotUpsert = `
 INSERT INTO asset_price_snapshot AS s
        (asset_id, price_usd, change_1h_pct, change_24h_pct, change_7d_pct,
@@ -361,10 +357,8 @@ func execRowCount(ctx context.Context, tx *sql.Tx, q string, args ...any) (int64
 //
 // One transaction, on purpose: the two are joined onto the same spine row, so a listing row's
 // volume and price come from the same pass. Upsert + prune take row-level locks only, never the
-// ACCESS EXCLUSIVE that would stall concurrent reads of the listing.
-//
-// Called on the aggregator's asset-rollup cadence (assetvolrollup.DefaultInterval, 2 min) via
-// [Store.RefreshAssetVolume24h].
+// ACCESS EXCLUSIVE that would stall concurrent reads of the listing. Runs every
+// assetvolrollup.DefaultInterval via [Store.RefreshAssetVolume24h].
 func (s *Store) RefreshAssetListingRollups(ctx context.Context) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

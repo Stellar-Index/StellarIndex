@@ -31,30 +31,25 @@ type Store struct {
 	usdVolumeQuoteSpec *USDVolumeQuoteSpec
 
 	// usdVolumeFXResolver, when non-nil, is consulted by [InsertTrade] only after
-	// [usdVolumeQuoteSpec] declined the trade. It prices the QUOTE asset in USD and multiplies
-	// quote_amount; if that also declines (a pure-Soroban SEP-41 quote with no USD market), the
-	// same resolver prices XLM and multiplies base_amount (the XLM-base anchor for pools stored
-	// as base=XLM, quote=TOKEN). See [tradeUSDVolumeViaFX] and [usdVolumeViaXLMBaseAnchor].
-	// Nil leaves only off-chain and operator-allow-listed trades with a non-NULL `usd_volume`.
+	// [usdVolumeQuoteSpec] declined the trade. It prices the QUOTE asset in USD; if that also
+	// declines (a pure-Soroban SEP-41 quote), it prices XLM against base_amount (the XLM-base
+	// anchor). See [tradeUSDVolumeViaFX] and [usdVolumeViaXLMBaseAnchor].
 	usdVolumeFXResolver USDVolumeFXResolver
 
-	// deriveGeneration is stamped into `derive_generation` by the derived-value writers
-	// ([InsertTrade], [BatchInsertTrades], [InsertOracleUpdate], [InsertSupply]). They DO UPDATE
-	// in place on conflict, guarded by `derive_generation <= EXCLUDED.derive_generation`, so a
-	// corrected re-derive lands without a destructive DELETE + re-backfill. 0 is live ingest; a
-	// re-derive entry point sets a POSITIVE value so a later live gen-0 replay can never revert it.
+	// deriveGeneration is stamped into `derive_generation` by the derived-value writers. They
+	// DO UPDATE on conflict, guarded by `derive_generation <= EXCLUDED.derive_generation`, so a
+	// corrected re-derive lands without DELETE + re-backfill. 0 is live ingest; a re-derive sets a
+	// POSITIVE value so a later live gen-0 replay can never revert it.
 	deriveGeneration int64
 
-	// usdVolumeResolutionInstalled records that InstallUSDVolumeResolution was CALLED, even if
-	// it wired no resolvers (a no-pegs deployment). [Store.reDeriveNullVolumeGuard] uses it to
-	// fail trade writes closed when a re-derive entry point forgets resolution mode.
+	// usdVolumeResolutionInstalled records that InstallUSDVolumeResolution was CALLED, even with
+	// no resolvers wired. [Store.reDeriveNullVolumeGuard] uses it to fail re-derive writes closed.
 	usdVolumeResolutionInstalled bool
 
 	// assetRegistryDedupe caches asset_id -> last successful classic_assets upsert time; a repeat
-	// trade inside `assetRegistryDedupeTTL` skips the round-trip so `last_seen_*` and
-	// `observation_count` still advance on later ones. Per-Store, not per-process: asset_id is
-	// only unique within one database, so a shared map would let a second Store over another DB
-	// inherit "already upserted" for rows that DB never received.
+	// trade inside `assetRegistryDedupeTTL` skips the round-trip. Per-Store, not per-process:
+	// asset_id is only unique within one database, so a shared map would let a second Store over
+	// another DB inherit "already upserted" for rows that DB never received.
 	assetRegistryDedupe sync.Map // key: asset_id (string) → time.Time (last upsert)
 
 	// assetRegistryMinLedger is the lowest first ledger upserted per asset
@@ -65,16 +60,14 @@ type Store struct {
 	// table has no `last_seen` column to advance after the first INSERT.
 	issuerRegistryDedupe sync.Map // key: g_strkey (string) → struct{}
 
-	// classicWatermark memoizes the watermark read by [Store.MinClassicComponentLedger]. It belongs
-	// to the four OBSERVERS, not to an asset, so it is identical for every asset in a refresh tick;
-	// recomputing per asset repeats four MAX(ledger) scans across every hypertable chunk. The TTL
-	// ([classicWatermarkTTL]) is far shorter than the 1000-ledger staleness threshold it feeds, so
-	// the cache cannot hide a stall.
+	// classicWatermark memoizes [Store.MinClassicComponentLedger]. It belongs to the four
+	// OBSERVERS, not an asset, so per-asset recomputation would repeat four MAX(ledger) scans
+	// across every chunk. The TTL ([classicWatermarkTTL]) is far shorter than the 1000-ledger
+	// staleness threshold, so the cache cannot hide a stall.
 	classicWatermark classicWatermarkCache
 
-	// sep41Watermark is the [classicWatermark] counterpart for the SEP-41 producer. It is a
-	// separate cache because the producers advance independently; one stalling must not be hidden
-	// behind the other's progress.
+	// sep41Watermark is the SEP-41 counterpart, a separate cache because the producers advance
+	// independently and one stalling must not hide behind the other's progress.
 	sep41Watermark classicWatermarkCache
 }
 
@@ -94,20 +87,18 @@ func (s *Store) SetUSDVolumeFXResolver(r USDVolumeFXResolver) {
 
 // SetDeriveGeneration sets the generation the derived-value writers stamp into `derive_generation`.
 //
-// A re-derive tool passes a POSITIVE value so its rows win the ON CONFLICT guard
-// (`derive_generation <= EXCLUDED.derive_generation`); time.Now().Unix() is positive and monotonic,
-// so a later re-derive supersedes an earlier one. Call once at startup, not concurrently with writers.
+// A re-derive tool passes a POSITIVE value so its rows win the ON CONFLICT guard; time.Now().Unix()
+// is positive and monotonic, so a later re-derive supersedes an earlier one. Call once at startup.
 func (s *Store) SetDeriveGeneration(gen int64) {
 	s.deriveGeneration = gen
 }
 
 // reDeriveNullVolumeGuard fails a trade write CLOSED in re-derive mode (deriveGeneration > 0) when
-// the USD-volume resolvers were never installed. A positive generation wins the ON CONFLICT guard
-// and assigns `usd_volume = EXCLUDED.usd_volume`; with no resolver, tradeUSDVolume returns nil for
-// on-chain DEX / FX-priced trades, overwriting a correct value with NULL that a live gen-0 replay
-// can never restore. It fires only when computed == nil and resolution was never wired: tier 1
-// prices USD-quoted CEX trades without a resolver, and an unpriceable trade in a wired re-derive
-// legitimately writes NULL. Live ingest (generation 0) is unaffected.
+// the USD-volume resolvers were never installed. A positive generation wins the ON CONFLICT guard,
+// so a nil result from an unwired resolver would overwrite a correct value with NULL that a live
+// gen-0 replay can never restore. It fires only when computed == nil and resolution was never
+// wired: an unpriceable trade in a wired re-derive legitimately writes NULL. Live ingest is
+// unaffected.
 func (s *Store) reDeriveNullVolumeGuard(t canonical.Trade, computed *string) error {
 	if s.deriveGeneration > 0 && computed == nil && !s.usdVolumeResolutionInstalled {
 		return fmt.Errorf("timescale: refusing to write trade %s/%s (source=%s ledger=%d) "+
@@ -202,11 +193,11 @@ func sessionConnConfig(dsn string) (*pgx.ConnConfig, error) {
 	return cfg, nil
 }
 
-// dsnParseError renders pgx's rejection of dsn without leaking the password. pgx's own text uses a
-// redactor that stops at the first `/` or `@`, and the error is left unwrapped so no caller can
-// reach ParseConfigError.ConnString. The branch mirrors pgx's URL-prefix test: anything else is
-// keyword/value, whose syntax errors quote a password's tail as a key, so none of pgx's text is
-// kept. A URL's inner reason is kept only when it parses, since only then it is about an option.
+// dsnParseError renders pgx's rejection of dsn without leaking the password. pgx's own redactor
+// stops at the first `/` or `@`, and the error is left unwrapped so no caller can reach
+// ParseConfigError.ConnString. Non-URL DSNs are keyword/value, whose syntax errors quote a
+// password's tail as a key, so none of pgx's text is kept. A URL's inner reason is kept only when
+// the URL parses, since only then it is about an option.
 func dsnParseError(dsn string, err error) error {
 	const prefix = "timescale: pgx.ParseConfig: "
 	if !strings.HasPrefix(dsn, "postgres://") && !strings.HasPrefix(dsn, "postgresql://") {

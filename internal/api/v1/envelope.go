@@ -62,13 +62,12 @@ type Flags struct {
 	// is blind, so a `false` warning must not be read as "prices agree"; a `true` warning is then
 	// the last verdict carried forward.
 	//
-	// Set only on surfaces that consult the verdict: /v1/price, its ?window= variant (only when the
-	// window is the one the verdict was computed over), /v1/price/tip and its stream, each looking
-	// up the exact (base, quote) spelling served, never another alias's market
-	// (lookupDivergenceFlag). Elsewhere false means "not consulted", never "checked and clean".
-	//
-	// The tip stream's lookup has its own short budget ([tipStreamDivergenceBudget]); a slow store
-	// leaves the field false on that event, degrading the flag, never the cadence.
+	// Set only on surfaces that consult the verdict (/v1/price, its ?window= variant when the
+	// window matches the verdict's, /v1/price/tip and its stream), each looking up the exact
+	// (base, quote) spelling served, never another alias's market (lookupDivergenceFlag).
+	// Elsewhere false means "not consulted", never "checked and clean". The tip stream's lookup
+	// has a short budget ([tipStreamDivergenceBudget]); a slow store degrades the flag, never
+	// the cadence.
 	DivergenceChecked bool `json:"divergence_checked"`
 	// OutsideCoverage marks an empty answer whose range ends at or before `coverage_from`. Without
 	// it an empty series and a quiet market are the same bytes. It stays false when the floor
@@ -285,14 +284,12 @@ const (
 )
 
 // requestDeadlineExpired reports whether the blanket middleware.RequestTimeout deadline on
-// r.Context() has already fired. It lets writeProblem upgrade a 500 to a retryable 503 in one
-// place, since many handler error paths have no timeout branch; a deadline is retryable capacity,
-// not an internal fault (the sla-probe books a 500 as a failure). Only 500 is rewritten.
+// r.Context() has already fired, so writeProblem can upgrade a 500 to a retryable 503 in one
+// place; a deadline is capacity, not a fault (the sla-probe books a 500 as a failure).
 //
-// Limit, and why writeProblemErr exists: a handler capping its read with
-// context.WithTimeout(r.Context(), 8s) under a 15s global blows the inner budget while
-// r.Context() is still alive, so this is false; inner budgets are the dominant shape. A genuine
-// fault reported after the deadline is relabelled a timeout; the ERROR log keeps the real error.
+// It cannot see a handler's own shorter context.WithTimeout budget expiring while r.Context() is
+// alive, the dominant shape; that is why writeProblemErr exists. A genuine fault reported after
+// the deadline is relabelled a timeout; the ERROR log keeps the real error.
 func requestDeadlineExpired(r *http.Request) bool {
 	return errors.Is(r.Context().Err(), context.DeadlineExceeded)
 }
@@ -302,11 +299,10 @@ func requestDeadlineExpired(r *http.Request) bool {
 // requestDeadlineExpired cannot see because a handler's own context.WithTimeout budget expires
 // while r.Context() still has budget left.
 //
-// Both 500 and 502 are rewritten: a deadline is a bound this process imposed, neither this
-// server's fault nor the upstream's. A 4xx stays the client's answer; an already-retryable 503
-// keeps its own more specific type. Keyed on errors.Is, so a driver that re-phrases the
-// cancellation (Postgres SQLSTATE 57014) is not caught; sites with a per-call ctx should branch
-// on handlerTimedOut and use this only as the fallback.
+// Both 500 and 502 are rewritten: a deadline is a bound this process imposed. A 4xx stays the
+// client's answer; an already-retryable 503 keeps its own type. Keyed on errors.Is, so a driver
+// that re-phrases the cancellation (SQLSTATE 57014) is missed; sites with a per-call ctx should
+// branch on handlerTimedOut and use this only as the fallback.
 func writeProblemErr(
 	w http.ResponseWriter, r *http.Request, err error,
 	typeURL, title string, status int, detail string,
@@ -323,12 +319,11 @@ func writeProblemErr(
 // request. When true, handlers SHOULD return without writing: the client is gone, and
 // obs.HTTPMetrics labels it 499 rather than the 500 a writeProblem would produce.
 //
-// The request context must be done AND its cause cancellation ([context.Canceled], set when the
-// peer hangs up). A done context with [context.DeadlineExceeded] is a server-side budget expiring
-// with the client still on the wire; treating it as an abort would return silently and net/http
-// would emit a bodyless 200, an authoritative-looking empty result. The 499 relabel cannot cover
-// it: obs.HTTPMetrics sits outside middleware.RequestTimeout, so the recorder's default 200 would
-// count into the latency SLO's success numerator. Deadlines belong on the 503 problem+json path.
+// The cause must be [context.Canceled] (the peer hung up). [context.DeadlineExceeded] is a
+// server-side budget expiring with the client still on the wire; returning silently there would
+// emit a bodyless 200, an authoritative-looking empty result, and obs.HTTPMetrics (outside
+// middleware.RequestTimeout) would count it into the latency SLO's success numerator. Deadlines
+// belong on the 503 problem+json path.
 //
 // Handler order: clientAborted, handlerTimedOut (503), then 500. `err` is unused but kept so call
 // sites stay stable.
@@ -339,12 +334,11 @@ func clientAborted(r *http.Request, _ error) bool {
 // handlerTimedOut reports whether a handler-scoped context (from context.WithTimeout capping one
 // storage call) hit its deadline. Use it on the per-call context, NOT r.Context().
 //
-// Why: the Postgres driver cancels via the v3 cancel-request protocol and returns `canceling
+// The Postgres driver cancels via the v3 cancel-request protocol and returns `canceling
 // statement due to user request` (SQLSTATE 57014), which does NOT unwrap to
-// [context.DeadlineExceeded], so errors.Is alone misses per-call deadlines. The per-call
-// context's Err() is the reliable signal; the OR keeps drivers that do wrap on the same branch.
-// A true verdict is also recorded for usage metering ([middleware.MarkReadDeadline]): a timed-out
-// read is billable.
+// [context.DeadlineExceeded], so the per-call context's Err() is the reliable signal. A true
+// verdict is recorded for usage metering ([middleware.MarkReadDeadline]): a timed-out read is
+// billable.
 func handlerTimedOut(callCtx context.Context, err error) bool {
 	timedOut := errors.Is(err, context.DeadlineExceeded) ||
 		callCtx.Err() == context.DeadlineExceeded
@@ -359,36 +353,29 @@ func handlerTimedOut(callCtx context.Context, err error) bool {
 // sla-probe's availability_pct counts 5xx as failure.
 //
 // It catches SQLSTATE 57014 not carried by a context cancellation (server-side statement_timeout,
-// lock_timeout, idle_in_transaction_session_timeout, which trip neither [clientAborted] nor
-// [handlerTimedOut]), `driver: bad connection`, and EOF / broken pipe to postgres or redis. The
-// SQLSTATE match is string-based to avoid widening the handler layer's dependency on pgconn's
-// typed error; `57014` is stable wire format.
+// lock_timeout, idle_in_transaction_session_timeout), `driver: bad connection`, and EOF / broken
+// pipe to postgres or redis. The SQLSTATE match is string-based so the handler layer does not
+// depend on pgconn's typed error; `57014` is stable wire format.
 //
 // Caller order: clientAborted, handlerTimedOut, transientStorageErr, then 500.
 func transientStorageErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	// Postgres UNREACHABLE, not merely slow. The substring arms below describe a connection that
-	// existed and then misbehaved; none matches pgx's failure to establish one ("failed to connect
-	// to ...: dial error ... connection refused"), which a restarting or failed-over Postgres
-	// produces. Without this arm such an outage would be a 500 indistinguishable from a bug.
+	// Unreachable, not merely slow: the substring arms below describe a connection that existed and
+	// misbehaved, and none matches pgx's failure to establish one, which a restarting or
+	// failed-over Postgres produces. Without this arm such an outage is a 500 that looks like a bug.
 	if unreachableStorageErr(err) {
 		return true
 	}
 	s := err.Error()
-	// SQLSTATE 57014 from postgres-side cancellations (not the
-	// client-side context cancellation flavour, which clientAborted
-	// already handles).
+	// Postgres-side cancellation; client-side cancellation is clientAborted's.
 	if strings.Contains(s, "57014") || strings.Contains(s, "canceling statement") {
 		return true
 	}
-	// pgx stdlib + the standard database/sql driver-bad-connection
-	// surface. Pool retry exhausted by this point.
 	if strings.Contains(s, "driver: bad connection") || strings.Contains(s, "bad connection") {
 		return true
 	}
-	// Network-level transients between the api and postgres / redis.
 	if strings.Contains(s, "broken pipe") || strings.Contains(s, "connection reset") ||
 		strings.Contains(s, "unexpected EOF") || strings.Contains(s, "EOF") {
 		return true
@@ -398,9 +385,8 @@ func transientStorageErr(err error) bool {
 
 // unreachableStorageErr reports whether err is a failure to reach the storage dependency (dial
 // refused, socket died, host stopped resolving). Structural checks come first because they survive
-// rewording: pgx v5 wraps its dial failure in *pgconn.ConnectError, which unwraps to the
-// *net.OpError. The substrings are the fallback for drivers, pool wrappers or multi-errors that
-// render the cause into a string, as the sibling classifiers do (IsCacheUnavailable).
+// rewording (pgx v5 wraps its dial failure in *pgconn.ConnectError, unwrapping to *net.OpError);
+// the substrings cover wrappers that render the cause into a string.
 //
 // Keep in step with the ClickHouse-side lakeUnreachable (explorer/reader.go), which cannot import
 // this package (v1.Server embeds its Handler).
