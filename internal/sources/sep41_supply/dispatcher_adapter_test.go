@@ -423,7 +423,7 @@ func encodeMapNoAmount(t *testing.T) string {
 // which an i128-only decodeAmount rejects with ErrAmountNotI128, dropping the whole row. These
 // are the base64 SCVal blobs (topics + body) verbatim.
 const (
-	// mint @ ledger 59977903 — DROPPED by the old decoder.
+	// mint @ ledger 59977903 — a mint a decoder must not drop.
 	// topics: ["mint", to=GDZS…U44, "ETH:GBFX…SOCC"]
 	// body:   MAP { amount: 1509470554, to_muxed_id: "Auto recharge transaction" }
 	realMintSymB64     = "AAAADwAAAARtaW50"

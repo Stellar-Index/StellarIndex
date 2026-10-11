@@ -70,7 +70,7 @@ func (s *Store) InsertSEP41TransferBatch(ctx context.Context, rows []SEP41Transf
 	// Generation-guarded corrective upsert: a re-derive with a higher-or-
 	// equal generation UPDATEs the decoded value columns (amount, event_kind,
 	// addresses, …) in place; a live gen-0 replay can never revert a
-	// correction. Replaces the old DO NOTHING no-op.
+	// correction.
 	sb.WriteString(`
         INSERT INTO sep41_transfers (
             ledger_close_time, ledger, tx_hash, op_index, event_index,

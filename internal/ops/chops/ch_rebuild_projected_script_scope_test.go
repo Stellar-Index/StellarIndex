@@ -265,7 +265,7 @@ func TestChRebuildProjectedScript_NarrowedRunDoesNotMarkOtherSourcesDone(t *test
 	}
 }
 
-// Not red on the old script — a guard on the migration: state files on r1
+// A migration guard: state files on r1
 // hold bare window starts written by the full-source run, and skipping is
 // the non-destructive reading of them.
 func TestChRebuildProjectedScript_LegacyDoneLineStillSkipsTheWindow(t *testing.T) {

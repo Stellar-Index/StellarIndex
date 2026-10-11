@@ -91,7 +91,7 @@ func TestMarketCapPoints_NonstandardDecimalsSupplyLeg(t *testing.T) {
 	if len(got) != 1 || got[0].P != "5000.00" {
 		t.Fatalf("9dp supply leg: got %+v, want single point 5000.00", got)
 	}
-	// Regression guard: the old hardcoded-7 divisor would 100× it.
+	// Guard: a hardcoded-7 divisor would 100× it.
 	old, _ := marketCapPoints(price, supply, 7)
 	if len(old) != 1 || old[0].P != "500000.00" {
 		t.Fatalf("sanity: 7dp divisor should over-report as 500000.00, got %+v", old)

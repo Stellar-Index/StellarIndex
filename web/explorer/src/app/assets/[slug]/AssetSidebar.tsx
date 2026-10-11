@@ -16,7 +16,7 @@ export interface SidebarCoin {
   // field). Must stay optional: the consumers
   // below dereference it only after a presence check.
   code?: string;
-  // SEP-1 icon URL (served by the API since v0.7.2; https-only,
+  // SEP-1 icon URL (https-only,
   // sanitized server-side). Letter glyph stays the fallback.
   image?: string | null;
   slug: string;

@@ -369,7 +369,7 @@ func TestPlatformPostgresStores(t *testing.T) {
 
 		// Session round-trip.
 		ip := net.ParseIP("203.0.113.42")
-		// W1-auth-passkey-2: the cookie carries a random token; the row
+		// The cookie carries a random token; the row
 		// stores only sha256(token). Simulate mintSession's contract.
 		sessTokenHash := sha256.Sum256([]byte("session-cookie-token-abc"))
 		sess, err := users.CreateSession(ctx, platform.Session{

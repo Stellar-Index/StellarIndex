@@ -311,7 +311,7 @@ func TestOHLC_InvalidSigma400(t *testing.T) {
 }
 
 // TestOHLC_NonstandardDecimals proves BOTH modes normalize now:
-// single-bar mode (raw trades, query-time — normalized since v0.12.0)
+// single-bar mode (raw trades, query-time — normalized)
 // and interval= series mode (prices_<n> CAGG — normalized,
 // not declined with 422).
 func TestOHLC_NonstandardDecimals(t *testing.T) {

@@ -38,8 +38,7 @@ type assetSpec struct {
 }
 
 // asset materialises the spec through the canonical constructors so
-// every code passes the same validation the old Go-literal table
-// got from calling them directly.
+// every code passes the same validation as calling them directly.
 func (a assetSpec) asset() (canonical.Asset, error) {
 	switch a.Class {
 	case "crypto":

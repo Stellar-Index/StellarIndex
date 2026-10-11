@@ -4,13 +4,13 @@
 #
 #   promtool test rules deploy/monitoring/rule-tests/config-assertions_test.yml
 #
-# The alert was structurally unfireable before this wave: it used
+# An age check on timestamp() cannot fire here: it would be
 #   time() - timestamp(stellarindex_config_assertion_ok) > 7200
 # and timestamp() returns the SAMPLE's scrape time. Crucially, when the
 # hourly config-assertions.timer DIES, node_exporter's textfile collector
 # keeps re-exposing the SAME stale config_assertions.prom on every scrape —
 # so config_assertion_ok stays present with a fresh scrape timestamp and
-# time()-timestamp(...) stays ≈0 forever. The fix watches the file's real
+# time()-timestamp(...) stays ≈0 forever. The rule watches the file's real
 # mtime instead: node_textfile_mtime_seconds stops advancing the moment the
 # timer stops rewriting the file.
 #

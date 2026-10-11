@@ -225,7 +225,7 @@ func (e *execRecorder) stagingTables() map[string]bool {
 // landing after the backfill's staging clear but before its INSERT) swaps an EMPTY staging
 // partition into the live table and serves zero census rows for `today`. Every run therefore uses
 // its OWN private staging table. This test drives two runs concurrently and asserts they never
-// touch the same table and neither uses the old SHARED name.
+// touch the same table and neither uses a SHARED name.
 func TestRunCensusDay_PrivateStagingPerRun(t *testing.T) {
 	day := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
 

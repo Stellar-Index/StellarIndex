@@ -36,7 +36,7 @@ func TestRetryableColdMiss_LakeUnreachable(t *testing.T) {
 
 	// Sanity: the fixture really is the non-timeout shape the finding
 	// describes. If a future Go release made a refused dial report
-	// Timeout()==true, the old classifier would have covered it and this
+	// Timeout()==true, a timeout-only classifier would cover it and this
 	// test would be vacuous — so assert the premise explicitly.
 	var ne net.Error
 	if errors.As(dialRefused(), &ne) && ne.Timeout() {

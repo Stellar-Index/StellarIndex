@@ -126,7 +126,7 @@ all:
     # 2026-04-23 trim". run_stellar_core flips to true only when
     # validating Phase-3 validator work.
     run_postgres:        true
-    # Only after pg_wal is on data/postgres/wal (v0.92.1): 05-postgres.yml
+    # Only after pg_wal is on data/postgres/wal: 05-postgres.yml
     # refuses it while pg_wal is on the 49 GB root. 2GB forced 84% of
     # checkpoints (measured on r1); see postgresql.conf.j2.
     postgres_max_wal_size: "16GB"

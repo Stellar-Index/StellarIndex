@@ -533,7 +533,7 @@ func TestSACSeedReducer_DropsKeysTheBytePrefilterLetsThrough(t *testing.T) {
 // TestSACSeedReducer_CorruptKey preserves the pre-windowing error contract: a
 // corrupt key on a LIVE change is lake corruption worth failing the seed for,
 // while a corrupt key on a REMOVED change identifies no holder and held
-// nothing — the old reader returned on change_type before decoding it at all.
+// nothing — the reader returns on change_type before decoding it at all.
 func TestSACSeedReducer_CorruptKey(t *testing.T) {
 	t.Run("live change errors", func(t *testing.T) {
 		r := newSACSeedReducer(seedWatched())

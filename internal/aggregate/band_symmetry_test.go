@@ -96,7 +96,7 @@ func TestFilterOutliersLocal_CrashPrintDroppedOnDispersedWindow(t *testing.T) {
 // TestGuardServedVWAP_CrashPrintRejectedOnVolatileBaseline is the serving-guard half: a volatile baseline must not let every non-negative candidate, 0 included, be served verbatim.
 func TestGuardServedVWAP_CrashPrintRejectedOnVolatileBaseline(t *testing.T) {
 	// Newest-first; median 100, MAD 10 (10 % relative — above the 6.75 %
-	// at which the old additive lower edge went non-positive).
+	// at which an additive lower edge goes non-positive).
 	trailing := ratsFor(t, "120", "110", "100", "90", "80", "120", "110", "100", "90", "80")
 
 	rejected := []string{"0", "0.000001", "20", "33"} // crash prints, below centre/3

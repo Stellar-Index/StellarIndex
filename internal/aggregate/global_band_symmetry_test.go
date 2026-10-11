@@ -69,7 +69,7 @@ func TestRejectAggregatorOutliers_HonestlyDispersedSetFullyKept(t *testing.T) {
 	}
 }
 
-// TestRejectAggregatorOutliers_BetweenOldAndNewEdgeIsDropped pins a source strictly between the old additive lower edge and the new ratio-symmetric one: it must be dropped.
+// TestRejectAggregatorOutliers_BetweenOldAndNewEdgeIsDropped pins a source strictly between an additive lower edge and the ratio-symmetric one: it must be dropped.
 func TestRejectAggregatorOutliers_BetweenOldAndNewEdgeIsDropped(t *testing.T) {
 	rows := []canonical.OracleUpdate{
 		mkAggRow("lo", 66000, 3), mkAggRow("mid", 100000, 3), mkAggRow("hi", 106745, 3),

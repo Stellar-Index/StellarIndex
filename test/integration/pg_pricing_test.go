@@ -2042,7 +2042,7 @@ func TestObservationIntraLedgerSeqGuard(t *testing.T) {
 	})
 }
 
-// Audit finding B11-F1 — dust trades set OHLC chart extremes
+// Dust trades set OHLC chart extremes
 // (docs/operations/finding-dust-trades-set-chart-extremes.md).
 //
 // Without a size filter on the prices_* continuous aggregates' OHLC extremes,

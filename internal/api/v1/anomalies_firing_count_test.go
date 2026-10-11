@@ -23,7 +23,7 @@ type fakeAnomalyReader struct {
 
 func (f *fakeAnomalyReader) ListFreezeEvents(_ context.Context, firingOnly bool, limit int) ([]timescale.FreezeEventRow, error) {
 	// Mirrors the store: newest-first, LIMIT-capped. That cap is exactly
-	// what made the old len()-derived count wrong.
+	// what makes a len()-derived count wrong.
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}

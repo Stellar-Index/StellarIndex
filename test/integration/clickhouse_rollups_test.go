@@ -1066,7 +1066,7 @@ func TestDailySupplyFlowsPerKindSplit(t *testing.T) {
 	}
 }
 
-// TestSupplyObservedAt_StampsLedgerCloseTimeNotWallClock is the M4-callers
+// TestSupplyObservedAt_StampsLedgerCloseTimeNotWallClock is the
 // end-to-end proof against a REAL ClickHouse lake. The bug: the supply-snapshot
 // ledger resolvers (internal/ops/supply/supply.go::resolveSnapshotLedger and
 // cmd/stellarindex-aggregator/main.go::supplyAggregatorLedgers.LatestKnownLedger)
@@ -1322,7 +1322,7 @@ func TestDistinctTopicShapes_NonSymbolTopic0(t *testing.T) {
 	}
 }
 
-// These tests prove the v0.21.4 TTL-liveness path end-to-end against a real
+// These tests prove the TTL-liveness path end-to-end against a real
 // ClickHouse: rows inserted into stellar.ledger_entry_changes flow through the
 // ttl_live_until_mv materialized view (applied from tier1_schema.sql by the
 // harness) into the slim stellar.ttl_live_until projection, and

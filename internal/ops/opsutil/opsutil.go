@@ -88,7 +88,7 @@ func (g *WriteGate) Enabled() bool { return *g.write }
 // ErrWriteModeUnstated is returned by RequireStatedMode when a run passed neither -write nor -dry-run.
 var ErrWriteModeUnstated = errors.New("state the mode: pass -write to apply, or -dry-run to preview")
 
-// RequireStatedMode refuses a run with neither -write nor -dry-run, so scripted callers written for the old default-write contract fail loudly instead of silently previewing.
+// RequireStatedMode refuses a run with neither -write nor -dry-run, so scripted callers assuming default-write fail loudly instead of silently previewing.
 func (g *WriteGate) RequireStatedMode() error {
 	if *g.write || *g.dryRun {
 		return nil

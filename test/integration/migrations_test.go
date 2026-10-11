@@ -1331,7 +1331,7 @@ func rowsDigest(t *testing.T, ctx context.Context, db *sql.DB, table string, col
 }
 
 // TestCompressedAlterControl0174 is the positive control for the instrument
-// above: the v0.92.0 body of 0174, a bare ADD CONSTRAINT over compressed
+// above: the original body of 0174, a bare ADD CONSTRAINT over compressed
 // sep41_transfers chunks, crashes TimescaleDB (SQLSTATE 57P03, "in recovery
 // mode"). If this ALTER succeeds the harness cannot see that failure.
 func TestCompressedAlterControl0174(t *testing.T) {

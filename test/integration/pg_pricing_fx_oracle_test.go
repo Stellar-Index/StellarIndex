@@ -422,7 +422,7 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 
 	// NOTE: every subtest above exercises the LEGACY trades fallback —
 	// fx_quotes is empty in this test's database, so the fx_quotes-first
-	// read (BACKLOG #42) misses and the connector-path trades rows win.
+	// read misses and the connector-path trades rows win.
 	// That IS the compatibility contract: a re-enabled exchangeratesapi
 	// connector keeps working when the massive feed has no rows. The
 	// fx_quotes-first behaviour is proven in
@@ -431,7 +431,7 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 	t.Run("FXSources is deterministic and lex-ordered", func(t *testing.T) {
 		got := external.FXSources()
 		// massive (the forex worker's fx_quotes feed) was bridged into the
-		// registry as a SubclassFX source (P0-7). The exact list is the
+		// registry as a SubclassFX source. The exact list is the
 		// contract: the registry carries one identity per FX upstream; a
 		// second entry for the same upstream with IncludeInVWAP:true would
 		// double-count its rates. ecb is the forex worker's standby, a
@@ -449,8 +449,8 @@ func TestFXQuoteAtOrBefore(t *testing.T) {
 	})
 }
 
-// TestFXQuoteAtOrBeforeFXQuotesFirst proves the unified FX read path
-// (BACKLOG #42): when the active feed (`massive` → fx_quotes) has a row
+// TestFXQuoteAtOrBeforeFXQuotesFirst proves the unified FX read path:
+// when the active feed (`massive` → fx_quotes) has a row
 // in the lookback, it wins over connector-path trades rows; when its
 // newest row is older than the lookback, the snap falls back to the
 // legacy trades path; and the fx_quotes rate converts to an EXACT
@@ -518,8 +518,8 @@ func TestFXQuoteAtOrBeforeFXQuotesFirst(t *testing.T) {
 		// USD/EUR = EUR per USD = quote-per-base = rate_usd(EUR)/rate_usd(USD)
 		// = 0.92/1 = 0.92 = 23/25, the SAME quote-per-base orientation the
 		// trades fallback returns (subtest below: quote_amount/base_amount).
-		// (M3: the old fxSnapFromRows returned base/quote — inverted — so a real
-		// 0.92 feed served 1/0.92 = 1.085, the wrong-way-up fiat price.)
+		// (Base/quote inverted would serve 1/0.92 = 1.085, the wrong-way-up fiat
+		// price for a real 0.92 feed.)
 		want := new(big.Rat).SetFrac(big.NewInt(23), big.NewInt(25))
 		if price.Cmp(want) != 0 {
 			t.Errorf("price = %s, want exactly %s", price.RatString(), want.RatString())

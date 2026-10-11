@@ -1556,8 +1556,8 @@ func (r apiHistoryAdapter) HistoryPointsInRange(ctx context.Context, pair c.Pair
 	return out, nil
 }
 
-// TWAPPointsInRange is required by v1.HistoryReader (BACKLOG #37
-// twap CAGG). Adapts [timescale.Store.TWAPPointsInRange]; only 1h/1d
+// TWAPPointsInRange is required by v1.HistoryReader (twap
+// CAGG). Adapts [timescale.Store.TWAPPointsInRange]; only 1h/1d
 // are backed by a TWAP CAGG (migration 0081).
 func (r apiHistoryAdapter) TWAPPointsInRange(ctx context.Context, pair c.Pair, granularity string, from, to time.Time, limit int) ([]v1.HistoryPoint, error) {
 	g := timescale.HistoryGranularity(granularity)
