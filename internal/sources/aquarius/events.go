@@ -223,27 +223,20 @@ var (
 const EventAddPool = "add_pool"
 
 // MainnetPools is the curated gated pool set (ADR-0040).
-// Derivation, verified against the r1 lake AND the protocol's own
-// registry API:
-//
-//   - the 332 distinct pool addresses announced by MainnetRouter's
-//     add_pool events in the lake (338 events, ledgers
-//     52,728,530 → 63,308,393), and
-//   - the 332 pools served by https://amm-api.aqua.network/pools/
-//
-// are byte-for-byte IDENTICAL sets — the router is the protocol's
+// The 332 distinct pool addresses announced by MainnetRouter's add_pool
+// events in the lake (338 events, ledgers 52,728,530 → 63,308,393) are
+// byte-for-byte IDENTICAL to the 332 pools served by
+// https://amm-api.aqua.network/pools/ — the router is the protocol's
 // own trust root. Pools added after this snapshot self-register
-// live via the add_pool path in Decode (blend-style fan-out), so
-// unlike phoenix this seed is a warm-start, not the sole trust
-// root. An unlisted/unannounced pool fail-closes into an ADR-0033
-// recognition gap (visible, never silently attributed).
+// live via the add_pool path in Decode, so this seed is a warm-start, not
+// the sole trust root. An unlisted/unannounced pool fail-closes into an
+// ADR-0033 recognition gap (visible, never silently attributed).
 //
 // Deliberately EXCLUDED (docs/protocols/aquarius.md, flagged): the
 // 72 pools announced by the parallel router deployment CA7RQDMM…
-// (same router WASM, NOT in the protocol's registry API; 1,302
-// trades), the 7 pools of the short-lived look-alike CCPHUHQY…
-// (foreign pool WASM; 187 trades), and 8 pre-genesis rehearsal
-// pools (35 trades, all before ledger 52,717,662).
+// (same router WASM, NOT in the protocol's registry API), the 7 pools of
+// the look-alike CCPHUHQY… (foreign pool WASM), and 8 pre-genesis
+// rehearsal pools (all before ledger 52,717,662).
 var MainnetPools = []string{
 	"CA22XCXSINOJTOQGKTLTEUXNKE7Z4IEBO5XNHPX7MRAEPOD3OAJMHY5R",
 	"CA242XKXANKC46P53M355OPYWMHWPPTKQM5T5DNMOBWJMHOWDLNPJTN4",

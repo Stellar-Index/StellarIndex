@@ -458,23 +458,19 @@ func curatedRWAMonthEnd(s string) (time.Time, bool) {
 // plainly, and with the decimal point shifted out when the curator
 // printed an exponent.
 //
-// Exponent forms must not be refused outright, even though the
-// store carries the literal and "4.0e9" is not a figure a reader can
-// compare by eye. That is a good reason to normalise the STORED form
-// and a bad one to refuse the row: a query engine renders a large
-// numeric in exponent form whenever it feels like it, and a refusal
+// Exponent forms must not be refused outright: a query engine renders a
+// large numeric in exponent form whenever it feels like it, and a refusal
 // would make a whole month of the curator's headline series unreadable to
 // this run — which, were the parse not fatal below, would mean the
 // month was dropped and the series published dated to an older one.
 //
 // Shifting the point is exact: it moves the digits the curator printed
 // and invents none, so the stored value is still the curator's own
-// figure (ADR-0003) — no float ever holds it — and is also a figure
-// a reader can compare by eye. The sibling tolerance off-chain sources
-// use, scale.SciDecimalStringToScaledInt, is deliberately not reached
-// for here: it normalises through float64 and lands on a scaled
-// integer, and this column stores the curator's literal in a numeric of
-// its own precision.
+// figure (ADR-0003) — no float ever holds it. The sibling tolerance
+// off-chain sources use, scale.SciDecimalStringToScaledInt, is
+// deliberately not reached for here: it normalises through float64 and
+// lands on a scaled integer, and this column stores the curator's literal
+// in a numeric of its own precision.
 func curatedRWADecimal(n json.Number) (string, bool) {
 	s := strings.TrimSpace(n.String())
 	sign, intPart, fracPart, exp, ok := splitCuratedRWADecimal(s)

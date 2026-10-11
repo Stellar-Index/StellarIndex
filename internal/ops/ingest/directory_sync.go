@@ -28,11 +28,7 @@ import (
 // github.com/stellar-expert/public-directory account labels into the
 // `account_directory` table (migration 0136): one HTTPS GET of the
 // repo tarball, parse accounts/*.json, upsert the full set, prune
-// rows upstream removed (~18.5k entries when last measured).
-//
-// Run from a daily timer:
-//
-//	stellarindex-ops directory-sync -config /etc/stellarindex.toml
+// rows upstream removed. Run from a daily timer.
 //
 // The labels carry third-party attribution and are NOT display-only: a
 // scam-class tag withholds the issuer's price (pricingguard.ScamGate)
@@ -41,11 +37,10 @@ import (
 // `directory-override`, whose rows this sync never touches.
 // A truncated, corrupt or oversized tarball fails the run
 // (parseDirectoryTarball), `ReplaceDirectory` refuses an empty parse
-// (a broken fetch must not prune the table), and per-file JSON errors
-// are counted + reported, failing the run only if EVERYTHING failed.
-// `-sha256` with a commit-pinned `-url` refuses any tarball but the
-// reviewed one, and a committed run's prune / flag / un-flag counts
-// are exported as stellarindex_directory_sync_rows_changed{kind}.
+// (a broken fetch must not prune the table), and `-sha256` with a
+// commit-pinned `-url` refuses any tarball but the reviewed one. A
+// committed run's prune / flag / un-flag counts are exported as
+// stellarindex_directory_sync_rows_changed{kind}.
 const (
 	directorySource     = "stellar-expert"
 	directoryDefaultURL = "https://github.com/stellar-expert/public-directory/archive/refs/heads/master.tar.gz"

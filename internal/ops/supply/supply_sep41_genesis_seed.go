@@ -27,14 +27,13 @@ import (
 //
 // Provenance (ADR-0033): those supply_flows rows are replay-derived and
 // core-version-dependent; genesis_baseline_ledger + genesis_seeded_at record the
-// boundary and capture time so a re-seed is auditable. If that history is
-// re-derived, re-run this seed.
+// boundary and capture time. If that history is re-derived, re-run this seed.
 //
 // Idempotent: the baseline is SET (not added), and the rollup fold beneath it is
 // rebuilt under the new floor in the same transaction
 // ([timescale.Store.UpsertSEP41GenesisBaseline]), which also repairs a fold that
 // swept the pre-boundary band in before the first seed. A Soroban-only contract
-// is seeded with a zero baseline, leaving its total unchanged. -genesis-ledger
+// is seeded with a zero baseline. -genesis-ledger
 // defaults to clickhouse.SorobanGenesisLedger. Without -write it is a dry run.
 func supplySeedSEP41Genesis(args []string) error {
 	fs := flag.NewFlagSet("supply seed-sep41-genesis", flag.ContinueOnError)

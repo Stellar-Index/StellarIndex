@@ -75,8 +75,7 @@ func openSeedStore(ctx context.Context, dryRun bool, dsn string) (*timescale.Sto
 // reserve-balance reader stays on the static map. One pass reads each account's
 // latest AccountEntry from stellar.ledger_entries_current and inserts it at the
 // account's true last-modified ledger; the insert is idempotent (`ON CONFLICT DO
-// NOTHING` on (account_id, ledger)) and the live observer supersedes it on the
-// next change.
+// NOTHING` on (account_id, ledger)).
 //
 // Accounts with no lake row (dormant since before the entry-change capture
 // window) are reported, not fabricated: run `stellarindex-ops state-snapshot`
@@ -84,11 +83,8 @@ func openSeedStore(ctx context.Context, dryRun bool, dsn string) (*timescale.Sto
 // checkpoint.
 //
 // A pass that reaches the end of its watchlist upserts
-// account_observation_seed_provenance (migration 0189): watched-and-missing
-// accounts (so a `missing` count traces to a specific G-strkey even after the
-// watchlist changes), seeded/missing/removed counts, and the seeded ledger
-// range. -dry-run never writes it and an error mid-pass returns before it.
-// Without -write it is a dry run.
+// account_observation_seed_provenance (migration 0189); -dry-run never writes
+// it and an error mid-pass returns before it. Without -write it is a dry run.
 func supplySeedObservations(args []string) error {
 	flags, err := parseSeedFlags(args)
 	if err != nil {

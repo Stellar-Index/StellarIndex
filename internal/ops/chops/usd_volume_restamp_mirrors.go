@@ -26,8 +26,7 @@ import (
 //	-tier cex-fx: off-chain CEX trades quoted in a non-USD fiat.
 //	  usd_volume = quote_amount/10^<source scale> x <fiat>/USD at ts, read
 //	  from `fx_quotes` because prices_1m holds no fiat pair. The as-of rule
-//	  is on [timescale.Store.PlanCEXFiatUSDVolumeRestamp];
-//	  `-fx-max-staleness` narrows it.
+//	  is on [timescale.Store.PlanCEXFiatUSDVolumeRestamp].
 //
 // Both keep the xlm-base money rules: an unpriceable row is REPORTED and left
 // as it is (NULL stays NULL, a value is never blanked or replaced by a

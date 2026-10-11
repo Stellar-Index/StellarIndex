@@ -31,12 +31,11 @@ import (
 // (configs/ansible/roles/archival-node/defaults/main.yml). `voidAccount` is
 // the burn address, subtracted from total supply, so it is excluded.
 //
-// Parsing JavaScript is fragile, so the parser fails CLOSED into "skipped"
-// (served_value_skipped=1, no verdict): a missing or malformed accounts
-// block, any row outside the `key: "G…"` grammar, a missing upgrade-reserve
-// constant, or retiring more than maxPlausibleReserveRetirements accounts at
-// once. stellarindex_served_value_persistently_skipped fires after two dark
-// runs.
+// The parser fails CLOSED into "skipped" (served_value_skipped=1, no verdict):
+// a missing or malformed accounts block, any row outside the `key: "G…"`
+// grammar, a missing upgrade-reserve constant, or retiring more than
+// maxPlausibleReserveRetirements accounts at once.
+// stellarindex_served_value_persistently_skipped fires after two dark runs.
 
 // sdfReserveListURL is the reserve list SDF publishes: the source of
 // dashboard.stellar.org's circulatingSupply computation.
