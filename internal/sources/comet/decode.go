@@ -48,14 +48,10 @@ func classifySwap(e *events.Event) bool {
 }
 
 // decodeSwap converts one (POOL, swap) Comet event into a
-// canonical.Trade. Unlike Soroswap (where token identities come from
-// a factory's new_pair event), Comet's SwapEvent carries token_in
-// and token_out as Addresses in the body itself — the decoder needs
-// no pool registry.
+// canonical.Trade. Comet's SwapEvent carries token_in and token_out as
+// Addresses in the body itself, so the decoder needs no pool registry.
 //
-// SwapEvent body (verified against
-// comet-contracts-v1/contracts/src/c_pool/event.rs:6-13 +
-// call_logic/pool.rs:184-191):
+// SwapEvent body (comet-contracts-v1/contracts/src/c_pool/event.rs:6-13):
 //
 //	Map {
 //	  "caller":           Address,
@@ -66,9 +62,7 @@ func classifySwap(e *events.Event) bool {
 //	}
 //
 // Trade direction: the trader sold token_in (into the pool) and
-// bought token_out (out of the pool). So base = token_in, quote =
-// token_out — mirrors the Aquarius convention where the "sold"
-// side is the base.
+// bought token_out, so base = token_in, quote = token_out.
 func decodeSwap(e *events.Event, closedAt time.Time) (canonical.Trade, error) {
 	if !classifySwap(e) {
 		return canonical.Trade{}, ErrNotCometSwap

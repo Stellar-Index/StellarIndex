@@ -4,12 +4,10 @@
 // `webhook_deliveries` (finished outbound attempts, each carrying the
 // event payload). The sibling token tables already have dedicated
 // reapers (internal/logincodereaper, internal/magiclinkreaper,
-// internal/signupreaper); these two grew with every sign-in and every
-// delivered event.
+// internal/signupreaper).
 //
-// Each Reaper wraps one store sweep: delete terminal rows older than
-// Retention, immediately and then every Interval, in the API binary,
-// bounded to the process root context. Liveness publishes on the
+// Each Reaper deletes terminal rows older than Retention, immediately and
+// then every Interval, in the API binary. Liveness publishes on the
 // shared auth-reaper gauges so `stellarindex_auth_reaper_stalled`
 // covers these sweeps too.
 //

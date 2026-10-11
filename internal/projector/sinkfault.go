@@ -36,11 +36,11 @@ const QuarantineAfterCyclesNoProgress = 720
 
 // PermanentSkipPerCycle is the most rows ONE cycle may shed on a
 // [dispositionSkip] verdict — a SQLSTATE class 22/23 rejection or a canonical
-// value-shape rejection raised before the statement ran. A shed row needs no
-// retry budget, but it does need a RATE limit. IsPermanentDataError is true for ANY class 22/23 error, and those are not
-// always row-local — a migration adding a NOT NULL or CHECK the live rows
-// violate makes every row "poison" at once. Shedding them all on the first
-// cycle would turn a global, fixable fault into unbounded silent loss.
+// value-shape rejection raised before the statement ran. IsPermanentDataError
+// is true for ANY class 22/23 error, and those are not always row-local — a
+// migration adding a NOT NULL or CHECK the live rows violate makes every row
+// "poison" at once. Shedding them all on the first cycle would turn a global,
+// fixable fault into unbounded silent loss.
 //
 // So the skip arm borrows BOTH halves of the quarantine arm's rail:
 //
@@ -52,10 +52,9 @@ const QuarantineAfterCyclesNoProgress = 720
 //     returned by a cycle that committed nothing else waits out
 //     [QuarantineAfterCyclesNoProgress] first.
 //
-// A scattered poison row sits beside healthy rows, so the proof is there. A
-// global fault has none by construction: it becomes a visible stall (lag
-// climbing, runs_total{outcome="sink_retry"}) and only then bleeds at 1 row per
-// [Interval], one loud ERROR per row.
+// A global fault has no such proof: it becomes a visible stall (lag
+// climbing, runs_total{outcome="sink_retry"}) and only then bleeds at 1 row
+// per [Interval], one loud ERROR per row.
 const PermanentSkipPerCycle = 1
 
 // heldRowLogEvery throttles the per-row "holding cursor" warning to the

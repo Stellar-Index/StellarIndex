@@ -17,10 +17,7 @@ import (
 
 // sep1RefreshCmd resolves the SEP-1 stellar.toml for every issuer with a
 // home_domain and writes the parsed payload to `issuers.sep1_payload`, bumping
-// `sep1_resolved_at`. Run hourly from sep1-refresh.timer:
-//
-//	stellarindex-ops sep1-refresh -config /etc/stellarindex/api.toml \
-//	    -limit 750 -older-than 24h -timeout 25m
+// `sep1_resolved_at`. Run hourly from sep1-refresh.timer.
 //
 // Per-issuer failures are logged and counted, not fatal. The resolver's 10s request
 // timeout and SSRF guard, the parser's structural-depth limit and the per-issuer

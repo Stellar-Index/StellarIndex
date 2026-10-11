@@ -19,21 +19,17 @@ const ObservationKind = "accounts.observation"
 // ADR-0021 the observer does not infer "what changed"; readers diff
 // successive observations.
 //
-// One Observation per (account, ledger). When an account is touched
-// several times in a ledger the observer emits one per change and the
-// writer dedupes via the (account_id, ledger) primary key
-// (last-writer-wins is safe: the final post-state is deterministic).
+// One Observation per (account, ledger); the writer dedupes via the
+// (account_id, ledger) primary key (last-writer-wins is safe: the final
+// post-state is deterministic).
 //
-// Removed accounts emit Balance=0 plus a flag, see
-// [Observation.IsRemoval]: "account no longer exists at this ledger."
+// Removed accounts emit Balance=0 plus a flag, see [Observation.IsRemoval].
 //
 // Field-for-field identical to [domain.AccountObservation], the
 // persisted-shape definition (internal/storage/timescale reads/writes it
-// and must not import upward). Observation is its OWN named type, not a
-// `= domain.AccountObservation` alias, because it carries the
-// EventKind()/Source() methods (consumer.go) that satisfy
-// consumer.Event, and methods cannot be declared on an alias to a
-// foreign type. Call sites crossing the storage boundary
+// and must not import upward). It is its OWN named type, not an alias,
+// because it carries the EventKind()/Source() methods (consumer.go) that
+// satisfy consumer.Event. Call sites crossing the storage boundary
 // (internal/pipeline/sink.go, cmd/stellarindex-ops/supply_seed.go)
 // convert explicitly via domain.AccountObservation(o).
 type Observation domain.AccountObservation

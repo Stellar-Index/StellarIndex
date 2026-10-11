@@ -4,15 +4,8 @@
 // Band's Stellar contract **emits zero events**, so a conventional
 // dispatcher.Decoder would never fire. This package plugs into
 // dispatcher.ContractCallDecoder instead: it observes the InvokeContract op
-// and decodes the relayer's call args as the authoritative payload.
-//
-//	relay(from: Address, symbol_rates: Vec<(Symbol, u64)>,
-//	      resolve_time: u64, request_id: u64)
-//	force_relay(symbol_rates: Vec<(Symbol, u64)>,
-//	            resolve_time: u64, request_id: u64)
-//
-// `force_relay` drops `from` (admin-only, not relayer-gated); both yield one
-// (Symbol, rate) pair per ref_data entry written.
+// and decodes the relayer's call args (relay / force_relay, carrying
+// symbol_rates: Vec<(Symbol, u64)>, resolve_time, request_id) as the payload.
 //
 // Rates are u64 at E9 scale, USD-denominated per symbol (`get_ref_data(XYZ)`
 // prices XYZ in USD). Pair rates (`get_reference_data`) are computed on read

@@ -60,8 +60,7 @@ func DefaultMaxAge(pair string) time.Duration {
 // BuildFeedSet parses operator-supplied feed-map entries (pair
 // string → FeedSpec) into a runtime feed map and the canonical pair
 // list the framework's runner expects. Empty input → fall back to
-// [DefaultFeedMap] so a `enabled = true` config without a
-// feed_map still does useful work.
+// [DefaultFeedMap].
 //
 // Returns an error on a pair string that fails canonical parsing —
 // silent skips would hide misconfiguration.
@@ -75,10 +74,6 @@ func DefaultMaxAge(pair string) time.Duration {
 // adopting its real scale.
 //
 // MaxAge 0 resolves to [DefaultMaxAge]; a negative one is an error.
-//
-// Used by both the indexer (live poller) and stellarindex-ops
-// (backfill subcommand) so the same operator TOML drives both
-// paths.
 func BuildFeedSet(operatorMap map[string]FeedSpec) (map[string]FeedSpec, []canonical.Pair, error) {
 	source := operatorMap
 	if len(source) == 0 {

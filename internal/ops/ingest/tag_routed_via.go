@@ -22,19 +22,15 @@ import (
 // contract's registry name when registered (migrations 0101/0103); otherwise it
 // falls back to routed_via='soroswap-router'.
 //
-// SQL-only: no Galexie walk, no decoders. Each window is one UPDATE bounded by the
-// window's router-swap close-time span so TimescaleDB prunes trades chunks; windows
-// over compressed chunks decompress segments, hence windowed rather than one
-// statement over all history.
+// SQL-only. Each window is one UPDATE bounded by the window's router-swap
+// close-time span so TimescaleDB prunes trades chunks; windows over compressed
+// chunks decompress segments, hence windowed rather than one statement.
 //
 // Idempotent and resumable: tagged rows never match (routed_via IS NULL), and
 // progress checkpoints into ingestion_cursors as (source='tag-routed-via',
-// sub_source='<from>-<to>') after each window. Re-running the same resolved
-// -from/-to (-resume defaults to true) resumes; a different range or -resume=false
-// sweeps from its start (harmless, slower).
+// sub_source='<from>-<to>') after each window (-resume defaults to true).
 //
-// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN that reports the
-// windows it WOULD tag, writing neither tags nor a checkpoint. -write applies.
+// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN; -write applies.
 func tagRoutedVia(args []string) error { //nolint:funlen,gocognit,gocyclo // linear windowed pass: flags → bounds → per-window UPDATE + checkpoint
 	fs, gate := opsutil.NewMutatingFlagSet("tag-routed-via")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

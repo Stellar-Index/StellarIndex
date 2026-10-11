@@ -26,15 +26,11 @@ import (
 //  2. Boundary links: a 2-row lookup at every seam; an absent predecessor is a
 //     break too, tagged apart from a mismatch (boundaryTag).
 //
-// A gap is reported as a break by both checks, since both compare against the
-// nearest present predecessor. Run verify-contiguity first to tell "missing
-// ledger" from "present but wrong hash"; this tool does not correlate them.
+// A gap is reported as a break by both checks. Run verify-contiguity first to
+// tell "missing ledger" from "present but wrong hash"; this tool does not correlate them.
 //
 // Exit code = in-window + boundary broken links, capped at 255, so
-// cron/Healthchecks.io can consume it directly.
-//
-// Usage: verify-hashchain [-config PATH] [-ch-addr H:P] [-from N] [-to N].
-// Read-only; ClickHouse only.
+// cron/Healthchecks.io can consume it directly. Read-only; ClickHouse only.
 func verifyHashChain(args []string) error {
 	fs := flag.NewFlagSet("verify-hashchain", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml — used only to resolve the default -ch-addr (this tool reads ClickHouse only, never Postgres); a missing/unreadable file is tolerated when -ch-addr is passed explicitly")
