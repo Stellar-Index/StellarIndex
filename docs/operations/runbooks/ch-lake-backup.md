@@ -64,11 +64,15 @@ clickhouse-client --port 9300 -q "SELECT name, type FROM system.disks"   # si_la
   `clickhouse-disks -C /etc/clickhouse-server/config.xml --disk si_lake_backup --query "remove -r stellar/<chain>"`.
   Exit 2 with `SWEEP SKIPPED` or `ORPHAN REMOVAL FAILED` is the orphan
   sweep: a failed full leaves its partial upload under `stellar/<stamp>/`
-  and never reaches the chain record, so after each confirmed full (and on
-  the first success with no `swept` file in the state dir) the script
-  deletes every older chain directory not on record. It deletes nothing
-  when the listing lacks the chain just written, the running-backup check
-  fails, or a backup is in flight; the next successful run retries.
+  and never reaches the chain record. Each full writes its id to `started`
+  in the state dir before the BACKUP and drops it once it is on record, so
+  after each confirmed full (and on the first success with no `swept` file)
+  the script deletes every older started id not on record. It never lists
+  `stellar/` itself: on the plain-metadata B2 disk that listing is empty.
+  It deletes nothing when the chain just written is not visible, the
+  running-backup check fails, or a backup is in flight; the next successful
+  run retries. Partial uploads from before the `started` record are not
+  swept; find them in the B2 bucket's `r1/` listing.
   `stellarindex_ch_lake_backup_orphans_removed` counts what a sweep removed.
 
 ## Restore
@@ -116,3 +120,4 @@ server's reason.
 
 - 2026-09-23 — created with the backup job.
 - 2026-10-05 — orphan sweep for failed fulls; the alert also watches the full's age.
+- 2026-10-11 — the sweep reads its candidates from the `started` record; the `stellar/` listing is empty on B2.
