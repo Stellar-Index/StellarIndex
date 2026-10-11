@@ -28,54 +28,34 @@ type panicSite struct {
 // recordDecoderPanic converts a recovered decoder panic into the decode
 // error every dispatch seam already skips on.
 //
-// The problem it removes: a decoder's Matches/Decode is arbitrary source
-// code running on adversary-influenced ledger data, and an unrecovered
-// index-out-of-range in one of them would unwind through ProcessLedger,
-// get caught at LEDGER granularity in pipeline.ProcessLedger, and be
-// returned as "dispatcher panic for ledger N". That would discard the
-// outputs of EVERY source for that ledger, refuse the cursor advance, and
-// return an error the indexer's realMain turns into a process exit — so
-// systemd restarts, the same ledger is re-read from the same cursor, the
-// same decoder panics on the same event, and after StartLimitBurst
-// restarts the unit parks in `failed`. One decoder's bug would be a total
-// ingest outage, indefinitely.
+// A decoder's Matches/Decode runs on adversary-influenced ledger data. An
+// unrecovered panic would be caught at LEDGER granularity in
+// pipeline.ProcessLedger, discarding every source's output for that ledger and
+// refusing the cursor advance; the indexer then exits, restarts at the same
+// cursor, panics on the same event, and parks in `failed` after
+// StartLimitBurst: one decoder bug as a total ingest outage. Treating a panic
+// like any other decode error (count it, skip that ONE input) shrinks the
+// blast radius to one input, one decoder.
 //
-// The dispatch seams already have a policy for "this decoder cannot
-// handle this input": count it and skip that ONE input, leaving every
-// other decoder and the rest of the ledger untouched (see the
-// `if err != nil { continue }` arms in ProcessLedger). A panic is the
-// same fact stated more loudly, so it gets the same handling — the
-// blast radius shrinks from "all sources, forever" to "one input, one
-// decoder".
-//
-// That trade is only defensible because the skip is DURABLY RECORDED,
-// three ways, and none of them depends on this process surviving:
-//
-//   - The raw event is already in the ClickHouse lake. dispatchOne
-//     pushes to rawEventSink BEFORE the decoder pass, and the lake
-//     extractor (clickhouse.ExtractLedger) is decoder-independent — so
-//     the substrate keeps its genesis-to-tip claim and re-derivation
-//     after a decoder change is `projector-replay` / `ch-rebuild`, per
-//     invariant 8.
+// That is defensible only because the skip is DURABLY RECORDED:
+//   - The raw event is already in the ClickHouse lake (dispatchOne pushes to
+//     rawEventSink BEFORE the decoder pass; clickhouse.ExtractLedger is
+//     decoder-independent), so re-derivation is `projector-replay` /
+//     `ch-rebuild` (invariant 8).
 //   - The decode-error delta reaches decoder_stats via statsflush, and
 //     ADR-0033's re-derive marks the ledger a blind spot
-//     (completeness.safeDecode → BlindSpots → projection_ok=false →
-//     /v1/coverage complete=false), so the coverage VERDICT tells the
-//     truth about the gap rather than papering over it.
-//   - DecoderPanicsTotal pages immediately (stellarindex_decoder_panicked).
+//     (completeness.safeDecode → BlindSpots → /v1/coverage complete=false).
+//   - DecoderPanicsTotal pages (stellarindex_decoder_panicked).
 //
-// A panicking Matches is treated exactly like a panicking Decode: the
-// input is that decoder's error, and a first-match seam stops scanning.
-// Offering the input to the NEXT decoder instead would let a broken
-// decoder silently hand its events to a different source — a
-// misattribution, which ADR-0033 cannot see, whereas the gap this
-// produces it can. The op seam is the exception by design: it already
-// offers every op to every decoder, so continuing re-attributes nothing.
+// A panicking Matches is treated like a panicking Decode, and a first-match
+// seam stops scanning: offering the input to the NEXT decoder would let a
+// broken decoder hand its events to another source, a misattribution ADR-0033
+// cannot see. The op seam is the exception: it offers every op to every
+// decoder, so continuing re-attributes nothing.
 //
-// seenCounted says whether bumpEventsSeen already ran for this input
-// (i.e. the panic came out of Decode, not Matches). When it did not, we
-// bump it here so the denominator of "decoder error rate" keeps
-// counting one input attempted per error — the invariant
+// seenCounted says whether bumpEventsSeen already ran (the panic came out of
+// Decode, not Matches); if not, we bump it here so the decoder error-rate
+// denominator keeps one input attempted per error, as
 // SourceMatchedEventsTotal's godoc states.
 func (d *Dispatcher) recordDecoderPanic(name string, seenCounted bool, r any, site panicSite) error {
 	if name == "" {

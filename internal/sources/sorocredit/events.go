@@ -1,21 +1,19 @@
-// Package sorocredit decodes events from an unbranded consumer-USDC
-// credit / CDP protocol on Stellar (Soroban). It is neutral-named
-// ("Soroban credit"): the protocol ships no on-chain brand, so we key
-// everything off its single main contract.
+// Package sorocredit decodes events from an unbranded consumer-USDC credit /
+// CDP protocol on Stellar (Soroban). The protocol ships no on-chain brand, so
+// everything is keyed off its single main contract.
 //
 //	Main contract: CCG5EWFY2KCWWYYEIUMIRG6WSAQFLDR5QE5FMCWY25N36XA5GYTCPQWR
 //	Creator:       GADI6FHS…   WASM: 84a88013…
 //
-// The protocol runs its OWN USDC credit book (verified independent — not
-// a wrapper). A user opens a position, which deploys a per-user
-// `Collateral-<uuid>` child contract; the protocol then publishes
+// It runs its OWN USDC credit book (not a wrapper). Opening a position deploys
+// a per-user `Collateral-<uuid>` child contract; the protocol then publishes
 // periodic per-position statements and settles them.
 //
 // # Event surface (8 topic[0] symbols, all emitted BY the main contract)
 //
 //	NewCollateralContract   position opened → deploys a child Collateral-<uuid>
 //	StatementPublished      a periodic per-position charge/settlement statement
-//	Liquidation             a SCHEDULED settlement (see the semantic note below)
+//	Liquidation             a SCHEDULED settlement (see below)
 //	Withdrawal              a position withdrawal (USDC out to a recipient)
 //	BeaconUpdated           config: price-beacon (oracle) reference changed
 //	SupportedAssetAdded     config: a collateral/debt asset admitted
@@ -23,35 +21,27 @@
 //	TreasuryUpdated         config: the protocol treasury pointer rotated
 //	                        (body = Vec[Address old, Address new])
 //
-// # CRITICAL SEMANTIC — `Liquidation` is a SCHEDULED SETTLEMENT, not distress
+// # CRITICAL SEMANTIC: `Liquidation` is a SCHEDULED SETTLEMENT, not distress
 //
-// The on-wire topic is the symbol "Liquidation", but these events are
-// NOT distressed liquidations. A single keeper account
-// (GA3PWX3H…) executes ALL of them, ~1:1 with StatementPublished
-// (lake: 187,926 statements vs 187,718 "Liquidation"s over the
-// contract's life) and ~14/user/month uniformly — i.e. they are recurring
-// scheduled settlements of published statements, not risk events. We
-// therefore surface them as `settlement` (EventType [TypeSettlement],
-// table `credit_settlements`) — NEVER as "liquidations". Do NOT let any
-// downstream surface report a "221k liquidations" risk signal from this
-// source.
+// The on-wire topic is "Liquidation" but these are NOT distressed
+// liquidations: one keeper account executes ALL of them, ~1:1 with
+// StatementPublished and ~14/user/month uniformly. They surface as
+// `settlement` (EventType [TypeSettlement], table `credit_settlements`),
+// NEVER as "liquidations"; no downstream surface may report a liquidation
+// risk signal from this source.
 //
 // # Gating (ADR-0035)
 //
-// Single trust root: the main contract. NewCollateralContract is honored
-// only when emitted by the trust root, and it announces the child
-// `Collateral-<uuid>` C-address (topic[1]) which the decoder seeds into a
-// [contractid.Registry] child set (a childgate, like blend). Every other
-// event is honored from the trust root OR a registered child. The topics
-// are distinctive, but two OTHER mainnet contracts emit the same symbols
-// (~159 events total in the lake) — the identity gate rejects them.
-// In practice ALL 8 event types are emitted by the main contract and the
-// child contracts emit nothing (verified), so the childgate is
-// forward-compat defense-in-depth; the trust root does the real gating.
+// Single trust root: the main contract. NewCollateralContract is honored only
+// from the trust root and announces the child `Collateral-<uuid>` C-address
+// (topic[1]), which the decoder seeds into a [contractid.Registry] child set.
+// Every other event is honored from the trust root OR a registered child. Two
+// OTHER mainnet contracts emit the same symbols (~159 events), so the identity
+// gate, not the topic, is what rejects them. The children emit nothing today,
+// so the childgate is forward-compat defense in depth.
 //
-// Per ADR-0013 this decoder reads SCVal exclusively through
-// internal/scval — it never imports go-stellar-sdk/xdr directly
-// (enforced by scripts/ci/lint-imports.sh).
+// Per ADR-0013 SCVal is read only through internal/scval (enforced by
+// scripts/ci/lint-imports.sh).
 package sorocredit
 
 import (

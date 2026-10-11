@@ -1,24 +1,15 @@
-// Package hashdb is a tiny on-disk record of (ledger_seq → sha256
-// of LCM bytes) tuples, used as a drift detector against retroactive
-// rewrites of upstream galexie objects.
+// Package hashdb is a tiny on-disk record of (ledger_seq → sha256 of LCM
+// bytes), a drift detector against retroactive rewrites of upstream galexie
+// objects.
 //
-// Motivation. A region that reads galexie data from a non-local
-// bucket rather than its own full mirror is exposed to a failure mode
-// a full-mirror region isn't: upstream may rewrite a previously-fetched
-// ledger's bytes. The bytes can still be internally consistent
-// (chain-link hash holds) and can still match SDF's signed history
-// (Tier B holds), yet differ from what the region first observed.
-// In other words: a Tier A + Tier D pass can succeed against rewritten
-// bytes; only a fingerprint of what we *originally* saw catches it.
+// A region reading from a non-local bucket is exposed to upstream rewriting a
+// previously-fetched ledger's bytes. The bytes can stay chain-link consistent
+// and match SDF's signed history yet differ from what the region first saw, so
+// Tier A + Tier D can pass; only a fingerprint of what we originally saw
+// catches it. The indexer appends sha256 per LCM; a periodic verifier
+// recomputes from the bucket and alerts on mismatch.
 //
-// hashdb is that fingerprint. As the indexer reads each LCM, it
-// computes sha256 over the canonical XDR bytes and appends a record.
-// A periodic verifier later re-reads the same bucket, recomputes
-// sha256, and compares against the recorded value — drift triggers
-// alert.
-//
-// Format. Header (16 bytes) followed by a packed array of fixed-size
-// records:
+// Format: a 16-byte header followed by dense fixed-size records.
 //
 //	magic       [8]byte    // "rxhashdb"
 //	version     uint32     // file format version (1)
@@ -27,28 +18,19 @@
 //	then N records of:
 //	  hash      [32]byte   // sha256 of the LCM XDR bytes
 //
-// The ledger sequence is implicit from the record offset:
-// `seq = startLedger + index`. Records are dense — no gaps allowed —
-// because galexie buckets cover contiguous ranges. A record of all
-// zero bytes is sentinel for "not yet written" and Verify() rejects
-// it as ErrMissing rather than treating it as a hash. (sha256(empty)
-// is a real value but not realistic for an LCM, so we accept the
-// false-zero edge case.)
+// The sequence is implicit: `seq = startLedger + index`. No gaps (galexie
+// buckets are contiguous). An all-zero record means "not yet written" and
+// Verify() rejects it as ErrMissing; sha256 of an empty LCM is not realistic,
+// so the false-zero edge case is accepted. A full pubnet hashdb is ~2 GB,
+// kept on disk with O(1) seeks.
 //
-// At ~32 bytes/ledger and ~62 M ledgers on pubnet, a full hashdb is
-// ~2 GB — small enough to live alongside the postgres dataset, large
-// enough that we don't keep it in process memory. All reads/writes
-// are O(1) seeks into the mmap-able file.
-//
-// Concurrency. A *DB owns the underlying *os.File; concurrent calls
-// must be serialised by the caller. The intended usage is one writer
-// (the indexer) and one reader (the verify cron) — never both at the
-// same time. The dense-array layout has no inter-record metadata to
-// corrupt, but a record write is NOT atomic everywhere: with the 16-byte
-// header, 1 record in 128 straddles a 4 KiB page, and a torn record reads
-// as non-zero (permanent false drift). Writes are atomic on copy-on-write
-// filesystems (ZFS, which r1 runs); on ext4/xfs a torn record surfaces as
-// drift, see the hashdb runbook.
+// Concurrency: a *DB owns its *os.File; callers must serialise calls, with
+// one writer (the indexer) and one reader (the verify cron), never both at
+// once. A record write is NOT atomic everywhere: with the 16-byte header, 1
+// record in 128 straddles a 4 KiB page, and a torn record reads as non-zero
+// (permanent false drift). Writes are atomic on copy-on-write filesystems
+// (ZFS, which r1 runs); on ext4/xfs a torn record surfaces as drift, see the
+// hashdb runbook.
 package hashdb
 
 import (

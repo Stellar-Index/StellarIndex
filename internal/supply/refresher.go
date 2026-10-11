@@ -74,33 +74,20 @@ const (
 // observer before the supply table accrues misleading rows.
 const DefaultStaleComponentLedgers uint32 = 1000
 
-// DefaultMaxDormantComponentLedgers bounds how long the
-// dormancy carve-out will keep re-stamping an unchanged component
-// observation as the current supply: 17280 ledgers (~24 h at 5s
-// ledger close cadence). Operators tune via
+// DefaultMaxDormantComponentLedgers bounds how long the dormancy carve-out
+// re-stamps an unchanged component observation as the current supply: 17280
+// ledgers (~24 h at 5s). Operators tune via
 // [WithMaxDormantComponentLedgers].
 //
-// "MinComponentLedger unchanged
-// tick-over-tick" does NOT actually separate a dormant asset from a
-// STALLED component observer — a producer that dies stops advancing
-// its observation ledger too, and looks dormant forever. Unbounded,
-// the carve-out therefore republishes a frozen circulating supply at
-// the ever-advancing chain tip for as long as the observer stays
-// dead, under the benign `dormant` outcome the supply-refresh alert
-// deliberately excludes. The gap is that a dormant asset and a dead
-// observer are genuinely indistinguishable from this signal alone,
-// so we bound the benefit of the doubt in time instead of guessing:
-// inside the horizon a quiet asset keeps publishing; past it we can
-// no longer defend "the last observation IS the current supply", so the snapshot is refused and surfaced as
-// stale_component (ADR-0011: we don't fabricate — and re-stamping an
-// unverified figure at the current ledger fabricates freshness on
-// the market-cap/FDV surface).
+// An unchanged MinComponentLedger does NOT separate a dormant asset from a
+// STALLED observer: a dead producer looks dormant forever, and unbounded the
+// carve-out would republish a frozen supply at the advancing tip under the
+// benign `dormant` outcome the supply-refresh alert excludes. The two are
+// indistinguishable from this signal, so the benefit of the doubt is bounded
+// in time; past it the snapshot is refused as stale_component (ADR-0011: do
+// not fabricate freshness on the market-cap/FDV surface).
 //
-// 24 h is deliberately generous: the longest dormant run measured on
-// pubnet is ~4 h (~2,900 ledgers), so quiet assets are unaffected. An
-// operator watching an asset dormant for longer than a day either
-// raises this bound (or its per-asset stale threshold) deliberately,
-// or accepts a supply gap rather than a fresh-looking stale number.
+// 24 h is generous: the longest dormant run measured on pubnet is ~4 h.
 const DefaultMaxDormantComponentLedgers uint32 = 17_280
 
 // WriteBandFactor bounds the tick-over-tick total_supply move the
@@ -341,31 +328,23 @@ func (r *Refresher) Tick(ctx context.Context) Outcome {
 	return Outcome{Kind: OutcomeKindOK, Snapshot: snap, BandBreach: breach}
 }
 
-// applyStaleComponentGate runs the stale-component freshness gate for a computed snapshot. It returns
-// (outcome, true) when the gate decides the tick's result — either a
-// stale-component REJECTION or a dormant-asset ACCEPT (which inserts
-// here) — and (zero, false) when the snapshot passed the gate and the
-// caller should proceed to its normal insert.
+// applyStaleComponentGate runs the stale-component freshness gate for a
+// computed snapshot. It returns (outcome, true) when the gate decides the
+// tick (stale-component REJECTION, or dormant-asset ACCEPT which inserts
+// here) and (zero, false) when the caller should proceed to its normal insert.
 //
-// Per-asset overrides via staleComponentByAsset win over the global
-// threshold; a zero per-asset value disables the gate for that asset.
-// The gap is the always-advancing chain tip minus the change-driven
-// MinComponentLedger, so a DORMANT asset (no balance change →
-// MinComponentLedger frozen) would otherwise be rejected forever and
-// its supply row would silently go permanently stale. Past the
-// threshold the gate decides on the watermark alone:
-//   - MinComponentLedger CHANGED since the last tick (or first-ever tick
-//     already lagging): reject, OutcomeKindStaleComponent.
-//   - MinComponentLedger UNCHANGED tick-over-tick: re-stamp the last
-//     observation as current (accept, OutcomeKindDormant) while the
-//     frozen gap is within the dormancy horizon; reject past it.
+// Per-asset staleComponentByAsset overrides win over the global threshold;
+// zero disables the gate for that asset. The gap is the advancing tip minus
+// the change-driven MinComponentLedger, so a dormant asset would otherwise
+// be rejected forever. Past the threshold the decision uses the watermark:
+//   - CHANGED since the last tick (or first tick already lagging): reject,
+//     OutcomeKindStaleComponent.
+//   - UNCHANGED: re-stamp as current (OutcomeKindDormant) while the frozen
+//     gap is within the dormancy horizon; reject past it.
 //
-// MinComponentLedger is change-driven, so "no balance change" and "no
-// observer" are the same signal: a producer that dies after a healthy
-// window is accepted as dormant until [DefaultMaxDormantComponentLedgers]
-// is crossed. The horizon, not the unchanged/changed split, is what
-// bounds a dead producer. Operators who want a quiet asset to stay
-// strict raise its per-asset threshold so the gap never trips.
+// "No balance change" and "no observer" are the same signal, so a producer
+// that dies is accepted as dormant until [DefaultMaxDormantComponentLedgers]
+// is crossed; the horizon is what bounds a dead producer.
 func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (Outcome, bool) {
 	threshold := r.staleComponentLedger
 	thresholdSource := "default"

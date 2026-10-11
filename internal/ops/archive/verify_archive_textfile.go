@@ -18,35 +18,30 @@ import (
 
 // Textfile export of the verify-archive mismatch counter.
 //
-// WHY THIS EXISTS. The P1 `stellarindex_stellar_archive_divergence` page
-// selects `stellarindex_verify_archive_mismatches_total`, but the only other
-// export path is the opt-in `-metrics-listen` endpoint, which neither the
-// tier-a nor tier-b unit passes and prometheus.r1.yml does not scrape.
-// Without this file the counter has no producer and a real divergence would
-// surface only as the ticket-severity `stellarindex_verify_archive_unit_failed`.
+// The P1 `stellarindex_stellar_archive_divergence` page selects
+// `stellarindex_verify_archive_mismatches_total`, whose only other export is
+// the opt-in `-metrics-listen` endpoint that neither the tier-a nor tier-b
+// unit passes and prometheus.r1.yml does not scrape. A short-lived batch job
+// cannot be scraped reliably, so this uses the node_exporter textfile
+// pattern of the other batch emitters (sla-probe, supply-snapshot,
+// archive-completeness, timescale-jobs-probe).
 //
-// A short-lived batch job cannot be scraped reliably, so this uses the
-// node_exporter textfile-collector pattern of the other batch emitters
-// (sla-probe, supply-snapshot, archive-completeness, timescale-jobs-probe).
+// Three properties keep the counter usable by `increase()`:
 //
-// Three properties make the counter usable by `increase()`:
+//  1. CUMULATIVE: each run adds to the total the previous run left on disk; a
+//     per-run rewrite would break `increase()` on every clean run.
+//  2. ZERO-SEEDED: all three `reason` values are emitted even at 0, since a
+//     series that first APPEARS at 1 yields `increase() == 0` and the page
+//     would miss the first divergence (see obs.seedBoundedLabelSeries,
+//     archivecompleteness.writeLastSuccess).
+//  3. AGGREGATED OVER chunk_idx, a per-run worker index: a mismatch on a
+//     never-seen chunk_idx would create a new series, defeating property 2.
+//     Per-chunk detail stays in journald and the state file.
 //
-//  1. CUMULATIVE. The file holds a running host total; each run adds to what
-//     the previous run left on disk. A per-run rewrite would break
-//     `increase()` on every clean run.
-//  2. ZERO-SEEDED. All three `reason` values are emitted on every run even at
-//     0. A series that first APPEARS at 1 and stays flat yields
-//     `increase() == 0`, so the page would miss the first divergence (compare
-//     obs.seedBoundedLabelSeries, archivecompleteness.writeLastSuccess).
-//  3. AGGREGATED OVER chunk_idx. chunk_idx is a per-run worker index with no
-//     cross-run meaning, and a mismatch on a never-seen chunk_idx would
-//     create a new series, defeating property 2. Per-chunk detail stays in
-//     journald and the state file.
-//
-// The `tier` label (the run's `-tier`) stops the tier-a and tier-b units'
-// `.prom` files exposing the same label set through one node_exporter, which
-// the textfile collector rejects as a duplicate and which would make the two
-// race on each other's carry-forward.
+// The `tier` label keeps the tier-a and tier-b `.prom` files from exposing
+// the same label set through one node_exporter, which the textfile collector
+// rejects as a duplicate and which would make them race on each other's
+// carry-forward.
 
 const (
 	// verifyArchiveMismatchMetric is the counter the P1

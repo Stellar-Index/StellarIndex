@@ -13,56 +13,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// ─── ADR-0027 cold-tier datastore construction ───────────────────
+// ADR-0027 cold-tier datastore construction.
 //
-// Why this exists instead of datastore.NewDataStore (through the SDK
-// constructor, the cold tier can never authenticate):
+// This exists instead of datastore.NewDataStore because, through the SDK
+// constructor, the cold tier can never authenticate: the SDK builds EVERY S3
+// datastore via the AWS default credential chain and falls back to anonymous
+// ONLY when the ambient chain is completely empty. We have two S3 backends
+// with DIFFERENT credentials: HOT is local MinIO, whose root credentials r1
+// exports in the standard AWS form (AWS_ACCESS_KEY_ID etc.); COLD is the
+// public aws-public-blockchain bucket, which wants none. So on r1 the chain
+// SUCCEEDS, the anonymous fallback never fires, and an SDK-built cold client
+// presents MinIO's key to real AWS (InvalidAccessKeyId). ledgerstream's
+// cold-init failure is non-fatal by design (WARN, degrade to hot-only), so
+// the broken tier looks like a quiet log line.
 //
-// The vendored SDK builds EVERY S3 datastore through the AWS
-// default credential chain —
-// go-stellar-sdk@v0.6.0/support/datastore/s3.go:
-//
-//	cfg, err := config.LoadDefaultConfig(ctx)
-//	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
-//	    ...
-//	    _, err := cfg.Credentials.Retrieve(ctx)
-//	    if err != nil { o.Credentials = aws.AnonymousCredentials{} }
-//	    ...
-//	})
-//
-// — i.e. it degrades to anonymous ONLY when the ambient chain is
-// completely empty. That is fine for a process with one S3 backend
-// and fatal for ours, which has two with DIFFERENT credentials:
-//
-//   - HOT is local MinIO. r1's /etc/default/stellarindex exports
-//     MinIO's root credentials in the standard AWS form
-//     (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_REGION /
-//     AWS_ENDPOINT_URL) because the hot datastore authenticates
-//     through exactly that default chain.
-//   - COLD is aws-public-blockchain, a public AWS Open Data bucket
-//     that wants NO credentials.
-//
-// So on r1 cfg.Credentials.Retrieve() SUCCEEDS (it hands back
-// MinIO's keys), the anonymous fallback never fires, and an
-// SDK-built cold client presents MinIO's access key to real AWS.
-// Every cold read then fails with:
-//
-//	InvalidAccessKeyId: The AWS Access Key Id you provided does not
-//	exist in our records
-//
-// That failure is easy to miss: ledgerstream's cold-init failure is
-// non-fatal by design (WARN + degrade to hot-only), so a
-// permanently-broken tier looks like a quiet log line.
-//
-// datastore.FromS3Client is exported, so the correct approach is to
-// build the cold *s3.Client ourselves and hand it over, which is
-// what NewColdDataStore does. Note we deliberately do NOT call
-// config.LoadDefaultConfig at all: it resolves AWS_ENDPOINT_URL
-// into cfg.BaseEndpoint too, so a cold tier configured without an
-// explicit endpoint would silently inherit r1's MinIO endpoint —
-// the same disease one layer down. A cold client must inherit
-// NOTHING from the ambient environment; every knob comes from the
-// storage.s3_cold_* config block.
+// datastore.FromS3Client is exported, so NewColdDataStore builds the cold
+// *s3.Client itself. It deliberately does NOT call config.LoadDefaultConfig:
+// that also resolves AWS_ENDPOINT_URL into cfg.BaseEndpoint, so a cold tier
+// without an explicit endpoint would inherit r1's MinIO endpoint. A cold
+// client must inherit NOTHING from the ambient environment; every knob comes
+// from the storage.s3_cold_* config block.
 
 // NewColdDataStore builds the ADR-0027 cold-tier DataStore
 // (read-only historical LCM upstream) from the storage.s3_cold_*
