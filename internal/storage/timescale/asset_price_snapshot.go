@@ -15,27 +15,23 @@ import (
 // asset_price_snapshot: the per-asset headline-price rollup behind the
 // GET /v1/assets listing.
 //
-// Deriving the price column per request meant twelve `DISTINCT ON … FROM
-// prices_1m` CTEs for every asset on every uncached variant (2.4 s average,
-// 10 s max, 51 MB disk sort on r1). So [assetPriceCTEs] runs here, off the
-// request path, on the volume rollup's cadence, and the listing LEFT JOINs
-// the result (the pattern of migrations 0087 and 0149).
+// Deriving the price column per request costs twelve `DISTINCT ON … FROM
+// prices_1m` CTEs per asset per uncached variant. So [assetPriceCTEs] runs
+// here, off the request path, on the volume rollup's cadence, and the
+// listing LEFT JOINs the result.
 //
 // Not a continuous aggregate: the substrate is a `DISTINCT ON` over a UNION
 // of quote forms, XLM identities and both directions, which no `GROUP BY`
 // expresses. Not a materialised view: REFRESH takes ACCESS EXCLUSIVE and
-// would stall the listing; the upsert+prune here takes row locks only, as
-// [Store.RefreshAssetVolume24h] does.
+// would stall the listing; the upsert+prune here takes row locks only.
 //
-// Rollup age (~5.5 min worst case) is capped by [assetPriceSnapshotMaxAge]
-// in the listing's join, so a dead aggregator renders assets unpriced rather
-// than serving old prices. Observation age is not capped: the price is the
-// newest traded minute across arms ([priceArmPickExpr]) and can be up to the
-// 7-day lookback old, since a hard cutoff would blank every weekly-trading
-// asset.
-//
-// GET /v1/assets/{id} stays on its own single-asset query, so a listing row
-// can lag its detail page by up to the ceiling above.
+// Rollup age is capped by [assetPriceSnapshotMaxAge] in the listing's join,
+// so a dead aggregator renders assets unpriced rather than serving old
+// prices. Observation age is not capped: the price is the newest traded
+// minute across arms ([priceArmPickExpr]) within the 7-day lookback, since
+// a hard cutoff would blank every weekly-trading asset. GET
+// /v1/assets/{id} uses its own single-asset query, so a listing row can lag
+// its detail page by up to that ceiling.
 
 // assetPriceSnapshotMaxAge is how old an `asset_price_snapshot` row may
 // be and still be served by the listing. Spliced into the listing's
@@ -139,23 +135,19 @@ func priceChangePctExpr(lookback string) string {
 // snapshotNormalizedPriceUSDExpr is [snapshotPriceUSDExpr] with the
 // dex-nonstandard-decimals forward normalisation applied; it is the value the
 // rollup STORES. `nda` is the refresh's LEFT JOIN onto
-// nonstandard_decimals_assets (migration 0093).
+// nonstandard_decimals_assets.
 //
 // prices_1m holds raw smallest-unit ratios, so for a token whose decimals()
 // is not 7 every arm is off by the same 10^(7 - decimals); one factor
 // corrects whichever arm answered, as v1.Server.normalizeCatalogueUSD does.
-// It normalises at write because the table is overwritten each pass, every
-// listing reader and the RWA market cap read this one column, and correcting
-// before the listing's ROUND(price_usd, 10) keeps an 18-decimals token's
-// 1e-11 raw ratio from rounding to zero.
+// Normalising before the listing's ROUND(price_usd, 10) keeps an
+// 18-decimals token's 1e-11 raw ratio from rounding to zero.
 //
 // A READER OF THIS COLUMN MUST NOT NORMALISE IT AGAIN. The change columns
-// need no factor: the scale cancels in each ratio.
-//
-// A MULTIPLIER OF THIS COLUMN MUST USE THE SAME DECIMALS: a market cap
-// divides a smallest-unit supply by the token's real decimals, not 7
-// (v1.Server.applyConfirmedListingDecimals,
-// v1.Server.contractPriceScaleDisagrees).
+// need no factor: the scale cancels in each ratio. A MULTIPLIER OF THIS
+// COLUMN MUST USE THE SAME DECIMALS: a market cap divides a smallest-unit
+// supply by the token's real decimals, not 7
+// (v1.Server.applyConfirmedListingDecimals).
 //
 // The CASE, rather than a COALESCE'd factor of 1, keeps unconfirmed assets'
 // stored value byte-identical; power(numeric, numeric) with an integral
@@ -191,18 +183,17 @@ const (
 // direction; the VWAP of the union of that bucket's rows; and the distinct
 // venues behind them.
 //
-// prices_1m keeps a market in whichever direction its source wrote it
-// (Soroban AMMs: base = token_in; SDEX: the inverse) and `vwap` is always
-// base priced in quote. So each row is re-expressed as two legs in the arm's
-// (asset, quote) orientation and the leg sums re-divided, the SQL form of
-// [combineDirVWAP]:
+// prices_1m keeps a market in whichever direction its source wrote it and
+// `vwap` is always base priced in quote. So each row is re-expressed as two
+// legs in the arm's (asset, quote) orientation and the leg sums re-divided,
+// the SQL form of [combineDirVWAP]:
 //
 //	(asset, q) row: asset leg = volume_priced,         q leg = vwap × volume_priced
 //	(q, asset) row: asset leg = vwap × volume_priced,  q leg = volume_priced
 //
-// volume_priced, not volume: vwap covers only trades with both legs > 0
-// (migration 0187), so its weight must too. Preferring one direction prices
-// an asset from a side of its book that may be days stale.
+// volume_priced, not volume: vwap covers only trades with both legs > 0, so
+// its weight must too. Preferring one direction prices an asset from a side
+// of its book that may be days stale.
 //
 // asset is "" for every asset (the rollup) or a scalar SQL expression that
 // pins the arm to one asset (the detail query).
@@ -306,11 +297,9 @@ const (
 // asset_price_snapshot.
 //
 // Spine: the assets that CAN have a price — `direct_usd ∪ asset_vs_xlm
-// ∪ {native}` — not the 198k-row catalogue. An asset is priced only if
-// it has a row in one of those two CTEs within the 7-day lookback (the
-// 1h/24h/7d lookbacks feed the CHANGE columns, never the price), so this
-// spine is exactly the set that can produce a non-NULL price and nothing
-// is lost by not scanning the catalogue.
+// ∪ {native}` — not the whole catalogue. An asset is priced only if it has
+// a row in one of those two CTEs within the 7-day lookback, so nothing is
+// lost by not scanning the catalogue.
 //
 // Money stays NUMERIC end to end (ADR-0003): `price_usd` and the three
 // change columns are stored unrounded and unformatted, and the listing
@@ -429,26 +418,18 @@ func (s *Store) RefreshAssetListingRollups(ctx context.Context) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Bound this transaction's footprint, in the spirit of the sibling
-	// character rollup (asset_volume_character_rollup.go): it now does
-	// roughly 10x the work it did before the price half joined it, on a
-	// connection that shares the primary with the customer-facing API.
+	// Bound this transaction's footprint: it shares the primary with the
+	// customer-facing API.
 	//
 	// work_mem — the 7-day asset_vs_xlm DISTINCT ON sorts ~48k rows and
-	// does not fit r1's 32 MB session default: measured on r1 it
-	// spilled `external merge Disk: 51,072 kB` EVERY pass, which at a
-	// 2-minute cadence is ~37 GB/day of temp write+read. 96 MB removes
-	// the spill (64 MB does not) and takes the refresh from 1,765-2,021
-	// ms to 1,316-1,432 ms. It is a per-sort-NODE ceiling, not an
-	// allocation; observed peak across the whole plan is ~67 MB on one
-	// background connection every 2 minutes.
+	// spills to disk at a 32 MB session default; 96 MB removes the spill
+	// (64 MB does not). It is a per-sort-NODE ceiling, not an allocation.
 	//
-	// statement_timeout — a wedge guard, not a budget. The pass measures
-	// ~1.6 s end to end (150 ms volume + ~1.4 s price), so 10 minutes is
-	// ~375x headroom and can only fire on something pathological; when it
-	// does, the transaction aborts, BOTH rollups keep their last good
-	// contents, and the worker retries on its next tick — strictly better
-	// than holding row locks on two rollups the listing reads.
+	// statement_timeout — a wedge guard, not a budget: the pass takes
+	// seconds, so 10 minutes can only fire on something pathological; then
+	// the transaction aborts, BOTH rollups keep their last good contents,
+	// and the worker retries on its next tick rather than holding row locks
+	// on two rollups the listing reads.
 	//
 	// SET LOCAL, so both revert on COMMIT/ROLLBACK and cannot leak onto
 	// the pooled connection.

@@ -11,28 +11,20 @@ import (
 
 // Cursor is a per-source ingestion marker. Sub is an optional
 // differentiator for sources that track multiple positions
-// independently (e.g. Soroswap tracks factory events + per-pair
-// events separately; Soroswap's consumer.go sets Sub to the pair's
+// independently (e.g. Soroswap's consumer.go sets Sub to the pair's
 // contract ID for pair cursors, "" for the factory cursor).
 //
 // FirstLedger is the earliest ledger this cursor's range covers.
 // For backfill cursors it is the `from` end of the assigned range
 // (also embedded in Sub as "<from>-<to>:<decoders>"). For the live
 // ledgerstream cursor it is the first ledger the live indexer
-// ingested in this region — populated on the first INSERT via
-// UpsertCursor and COALESCE-populated on the first UPDATE if a
-// pre-migration-0046 NULL row exists. Preserved by ON CONFLICT
-// DO UPDATE on every subsequent advance so the live cursor's
-// [FirstLedger, LastLedger] coverage span only grows forward.
-// Zero when the column is NULL on disk AND no UPDATE has yet
-// flipped it (the seconds between deploy and the first live
-// tick on a freshly-migrated cluster). The density-coverage
-// projection declines to credit any live span in that transient
-// window — honest about "we don't yet know how far back this
-// cursor reaches" — rather than falling back to
-// sourceGenesisLedger, which would silently inflate density to
-// 100% for sources whose live cursor stayed NULL. See migration 0046
-// + UpsertCursor.
+// ingested in this region: set on INSERT by UpsertCursor, filled by
+// the first UPDATE if NULL, and preserved after that, so the live
+// [FirstLedger, LastLedger] span only grows forward.
+//
+// Zero while the column is still NULL. The density-coverage projection
+// then credits no live span rather than falling back to
+// sourceGenesisLedger, which would silently inflate density to 100%.
 type Cursor struct {
 	Source      string
 	Sub         string
@@ -134,21 +126,15 @@ func (s *Store) ListCursors(ctx context.Context) ([]Cursor, error) {
 // two indexers briefly racing during a misconfigured deploy. Inserts of new
 // (source, sub) rows still succeed; the WHERE only gates the UPDATE path.
 //
-// first_ledger semantics (migration 0046):
+// first_ledger:
 //
 //   - INSERT: first_ledger = lastLedger, the cursor's lower-bound coverage
-//     anchor. For the live cursor (source='ledgerstream', empty sub-source)
-//     the diagnostic density calc credits [first_ledger, last_ledger] as
-//     covered.
+//     anchor; the density calc credits [first_ledger, last_ledger].
 //   - UPDATE: first_ledger is INTENTIONALLY PRESERVED via
 //     `COALESCE(ingestion_cursors.first_ledger, EXCLUDED.first_ledger)`, so
-//     restarts/resumes never move the anchor; it only moves backwards by an
-//     explicit operator action (DELETE + re-insert). A NULL first_ledger
-//     (pre-0046 row) is populated by the first UPDATE, so the coverage span
-//     honestly starts at "we started tracking from here". The density
-//     projection needs no NULL fallback: falling back to sourceGenesisLedger
-//     would silently inflate density to 100% for sources with NULL live
-//     cursors.
+//     restarts never move the anchor; only an explicit DELETE + re-insert
+//     does. A NULL first_ledger is filled by the first UPDATE, so the
+//     coverage span honestly starts at "we started tracking from here".
 func (s *Store) UpsertCursor(ctx context.Context, source, sub string, lastLedger uint32) error {
 	const q = `
         INSERT INTO ingestion_cursors (source, sub_source, first_ledger, last_ledger, last_updated)
@@ -181,17 +167,14 @@ type CursorRead struct {
 // reports whether the advance was applied; false with a nil error means "the
 // cursor moved under you, abandon this commit and re-read".
 //
-// [Store.UpsertCursor]'s guard is monotonic-FORWARD against whatever the row
-// holds NOW, wrong for the projector: its cycle reads the cursor, spends up
-// to PerSourceTimeout scanning and sinking, then writes a position derived
-// from that stale read. A `projector-replay` [Store.RewindCursor] landing in
-// the gap writes a LOWER value, so the in-flight forward write would pass
-// the guard and put the cursor back at tip: the replay prints success, its
-// dirty window stays open, and nothing is re-projected.
-//
-// Comparing against the value READ makes the rewind win however they
-// interleave: under READ COMMITTED an advance parked behind the rewind's row
-// lock re-evaluates `last_ledger = $3` once unblocked.
+// [Store.UpsertCursor]'s forward-only guard is wrong for the projector: it
+// writes a position derived from a read up to PerSourceTimeout old. A
+// `projector-replay` [Store.RewindCursor] landing in the gap writes a LOWER
+// value, the stale forward write passes the guard and puts the cursor back
+// at tip, and nothing is re-projected. Comparing against the value READ
+// makes the rewind win however they interleave: under READ COMMITTED an
+// advance parked behind the rewind's row lock re-evaluates
+// `last_ledger = $3` once unblocked.
 //
 // expected.Exists=false is the first-cycle seed: INSERT … ON CONFLICT DO
 // NOTHING. first_ledger keeps UpsertCursor's semantics. newLast must be
@@ -237,12 +220,8 @@ func (s *Store) AdvanceCursorFrom(ctx context.Context, source, sub string, expec
 // (WHERE EXCLUDED.last_ledger > last_ledger) intentionally
 // refuses. `projector-replay` is the only production caller: rewinding
 // the projector's per-source cursor is how historical re-projection
-// works (ADR-0032 Phase 5).
-//
-// Without this method projector-replay would silently NO-OP: UpsertCursor
-// with a lower ledger matches zero rows under the guard, the command
-// prints success, and the projector stays at tip — a TRUNCATE + replay
-// would write nothing.
+// works (ADR-0032 Phase 5). Through UpsertCursor a rewind would match
+// zero rows and the replay would silently write nothing.
 //
 // Errors if the cursor row doesn't exist — a rewind of a source that
 // has never run is operator error, not a seed path (use UpsertCursor /
@@ -288,19 +267,14 @@ func (s *Store) RewindCursor(ctx context.Context, source, sub string, lastLedger
 // `protected` is a parameter rather than read from [liveCursorSources] so
 // the SQL guard is testable against a list the test controls; the caller's
 // Go-side planner applies the same exclusion, and the two agreeing is the
-// point of the second guard.
+// point of the second guard. Sharded one-shot jobs mint a row per shard
+// that nothing removes and nothing reads, so reaping changes no ingest
+// decision.
 //
-// The table needs reaping because every sharded one-shot job mints a row per
-// shard that nothing removes. They record past work, not state anything
-// reads (the live pipeline looks up its own (source, sub) key), so deleting
-// one changes no ingest decision, only what every consumer that LISTS
-// cursors sees.
-//
-// A cutoff-predicated DELETE (rather than one statement per previewed key)
-// is exact because last_updated only moves FORWARD: UpsertCursor stamps
-// now(), so no row can enter the `< cutoff` set between preview and apply. A
-// row can only leave it, by being written to, which is the row an operator
-// would want spared.
+// A cutoff-predicated DELETE is exact because last_updated only moves
+// FORWARD: no row can enter the `< cutoff` set between preview and apply.
+// A row can only leave it, by being written to, which is the row an
+// operator would want spared.
 func (s *Store) ReapCursors(ctx context.Context, cutoff time.Time, source string, protected []string) (int64, error) {
 	const q = `
         DELETE FROM ingestion_cursors
