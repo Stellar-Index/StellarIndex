@@ -89,9 +89,7 @@ func DecimalsAdjustment(baseDecimals, quoteDecimals int) *big.Rat {
 // finished ratio (or, for VWAP/TWAP, the finished weighted-average ratio —
 // linear operations commute with a constant scalar) is exactly equivalent
 // to normalizing every trade before summing, without the risk of touching
-// the summation itself. See docs/operations/runbooks/dex.md
-// for the full rationale (why this replaces the deferred "rewrite the CAGGs"
-// plan) and AGENTS.md's ADR-0003 note.
+// the summation itself. Rationale: docs/operations/runbooks/dex.md.
 //
 // Returns nil unchanged (nothing to scale). baseDecimals == quoteDecimals
 // returns raw itself (not a copy) — callers that need to avoid aliasing
