@@ -226,27 +226,20 @@ func (s *Store) InsertSEP41Transfer(ctx context.Context, r SEP41TransferRow) err
 // read. Each rung is a `ledger_close_time >= now-D` floor; the first rung
 // that fills the caller's page wins.
 //
-// Why a ladder: no index yields one contract's rows in ledger_close_time
-// DESC order (sep41_transfers_contract_{from,to}_idx put the address before
-// the time, and the primary key leads with time), so an unbounded read
-// materialises and sorts every row a busy contract owns before the LIMIT.
-// For the USDC SAC that is a Seq Scan + Sort over ~17M rows and blows the
-// handler budget.
+// No index yields one contract's rows in ledger_close_time DESC order
+// (sep41_transfers_contract_{from,to}_idx put the address before the time,
+// the primary key leads with time), so an unbounded read sorts every row a
+// busy contract owns before the LIMIT (Seq Scan + Sort over ~17M rows for the
+// USDC SAC). A floor inside the recent data gives an Incremental Sort over
+// the time index so the LIMIT stops early. Rungs must stay narrow enough for
+// chunk exclusion to leave only the newest chunks: 7d is the widest measured
+// to keep the index plan; 90d falls back to per-chunk Seq Scan + Sort.
 //
-// A floor inside the recent data turns the plan into an Incremental Sort
-// over the time index, so the LIMIT stops early. The rungs must stay narrow
-// enough for chunk exclusion to leave only the newest chunks: 7d is the
-// widest window measured to keep the index plan, and 90d falls back to the
-// per-chunk Seq Scan + Sort.
-//
-// The short-circuit is safe because the read is time-ordered: every row a
-// rung's floor excludes is strictly older than every row it keeps, so a rung
-// that returns a full page returned exactly the newest page.
-//
-// A rung that cannot fill its page walks its whole window of the time index
-// (on r1: 36ms at 1h, 2.2s at 24h, past a 9s timeout at 7d), so the ladder
-// is bounded by [SEP41TransferLadderBudget]; see
-// [Store.walkSEP41TransferLadder].
+// Short-circuiting is safe because every row a rung's floor excludes is
+// strictly older than every row it keeps, so a full page is the newest page.
+// A rung that cannot fill its page walks its whole window (on r1: 36ms at
+// 1h, 2.2s at 24h, past a 9s timeout at 7d), so the ladder is bounded by
+// [SEP41TransferLadderBudget]; see [Store.walkSEP41TransferLadder].
 var sep41TransferLookbackLadder = []time.Duration{
 	time.Hour,
 	24 * time.Hour,
@@ -509,31 +502,27 @@ func cursorIndex16(v uint32) int16 {
 // ListSEP41TransfersByAddress returns one address's SEP-41 'transfer'
 // history, both sides (from_addr = address OR to_addr = address), newest
 // first, keyset-paged by the composite (ledger, tx_hash, op_index,
-// event_index) cursor. ADR-0048 D5: this is the Postgres "recent tail" half
-// of the unified GET /v1/accounts/{g}/movements feed;
-// internal/api/v1/explorer/movements.go merges it with ClickHouse's
+// event_index) cursor. ADR-0048 D5: the Postgres "recent tail" half of the
+// unified GET /v1/accounts/{g}/movements feed, merged in
+// internal/api/v1/explorer/movements.go with ClickHouse's
 // stellar.account_movements (the pre-P23 archive). SEP41MovementsFloorLedger's
 // doc comment has the non-overlap argument.
 //
-// Scope, deliberately narrower than ListSEP41Transfers:
-//   - event_kind = 'transfer' only: approve/set_admin/set_authorized don't
-//     move an asset amount.
-//   - ledger >= SEP41MovementsFloorLedger. Below the P23 boundary a transfer
-//     of a CLASSIC asset already has a stellar.account_movements row
-//     (ADR-0047); a pure Soroban-native SEP-41 transfer below it is a
-//     documented gap (see the OpenAPI description for GET
-//     /accounts/{g_strkey}/movements), not a bug.
+// Scope, narrower than ListSEP41Transfers: event_kind = 'transfer' only
+// (approve/set_admin/set_authorized move no amount), and ledger >=
+// SEP41MovementsFloorLedger. Below the P23 boundary a classic-asset transfer
+// already has a stellar.account_movements row (ADR-0047); a pure Soroban-
+// native SEP-41 transfer below it is a documented gap (see the OpenAPI
+// description for GET /accounts/{g_strkey}/movements).
 //
 // direction, when non-empty, must be "sent"/"received"/"self" (mirroring
-// clickhouse.AccountMovementDirection, which this package can't import; see
-// SEP41MovementsFloorLedger's doc comment) and is evaluated against
-// `address`: "sent" = from_addr=address (and to_addr != address), "received"
-// = the reverse, "self" = both.
+// clickhouse.AccountMovementDirection, which this package can't import) and
+// is evaluated against `address`: "sent" = from_addr=address (and to_addr !=
+// address), "received" = the reverse, "self" = both.
 //
 // contractID, when non-empty, restricts every arm to that token contract
 // BEFORE the LIMIT, so an ?asset= page is filled from matching rows rather
 // than from the address's newest `limit` transfers of any token.
-//
 
 // sep41TransfersByAddressQuery assembles the UNION arm set for one
 // direction filter (see ListSEP41TransfersByAddress's shape comment).

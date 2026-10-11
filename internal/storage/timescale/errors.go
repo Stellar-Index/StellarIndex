@@ -113,38 +113,25 @@ func IsInfraError(err error) bool {
 var ErrMalformedRow = errors.New("timescale: malformed row")
 
 // IsPermanentDataError reports whether err from a write path is a
-// DETERMINISTIC data fault that can NEVER succeed on retry — a CHECK /
-// integrity-constraint violation (SQLSTATE class 23, e.g. the
-// `amount > 0` CHECK of migration 0096, not-null, foreign-key, unique)
-// or a data exception (class 22, e.g. numeric_value_out_of_range,
-// invalid_text_representation). Retrying such a row is futile, so a
-// caller that gates progress on durability (the ADR-0032 projector's
-// cursor) is safe to SKIP past it rather than stall forever on a poison
-// row.
+// DETERMINISTIC data fault that can NEVER succeed on retry: an integrity-
+// constraint violation (SQLSTATE class 23, e.g. the `amount > 0` CHECK of
+// migration 0096, not-null, foreign-key, unique) or a data exception (class
+// 22, e.g. numeric_value_out_of_range). A caller that gates progress on
+// durability (the ADR-0032 projector's cursor) may SKIP past such a row
+// rather than stall forever on a poison row.
 //
-// It is deliberately the CONSERVATIVE complement of retry, NOT the exact
-// negation of [IsInfraError]:
+// It is the CONSERVATIVE complement of retry, NOT the exact negation of
+// [IsInfraError]. False (hold and retry) for: infra faults (class 08,
+// shutdown, capacity); transient lock contention (40P01, 40001, 55P03);
+// query cancellation / statement_timeout (57014); context cancellation or
+// deadline; and anything UNRECOGNISED, including non-pg errors and a
+// validation error that does not wrap the sentinel. True for class 22 / 23
+// and a store validation reject wrapping [ErrMalformedRow].
 //
-//   - infra faults (class 08, admin/crash shutdown, capacity) → false
-//     (transient — the DB will come back; retry).
-//   - transient row-lock contention: deadlock_detected (40P01),
-//     serialization_failure (40001), lock_not_available (55P03) → false
-//     (a retry can win; do NOT skip).
-//   - query cancellation / statement_timeout (57014) → false (transient;
-//     the next cycle's smaller window can land).
-//   - context cancellation / deadline → false (shutdown / cycle timeout;
-//     retry next cycle).
-//   - a store validation reject wrapping [ErrMalformedRow] → true.
-//   - anything UNRECOGNISED (including a validation error that does not
-//     wrap the sentinel, and any non-pg error) → false.
-//
-// The false-default is the SAFE side for a data-integrity caller: an
-// unknown error is treated as transient (hold the cursor, retry) so we
-// never SKIP-and-silently-drop a row we merely failed to classify. A row
-// that is genuinely stuck then surfaces as rising projector lag + a
-// repeated failure-outcome metric (an alert), not a silent stall. Only a
-// POSITIVELY-identified permanent data fault (class 22 / 23, or
-// ErrMalformedRow) returns true and is skipped.
+// The false-default is the safe side: an unknown error must never be
+// skipped and silently dropped. A genuinely stuck row then surfaces as
+// rising projector lag + a repeated failure-outcome metric, not a silent
+// stall.
 func IsPermanentDataError(err error) bool {
 	if err == nil {
 		return false

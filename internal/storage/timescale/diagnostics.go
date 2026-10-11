@@ -273,37 +273,27 @@ func PadRefreshWindow(from, to time.Time, minWindow time.Duration) (time.Time, t
 	return from.Add(-pad), to.Add(pad)
 }
 
-// RefreshContinuousAggregate force-materialises a continuous
-// aggregate over the given time window. Calls Timescale's
-// `refresh_continuous_aggregate(view, from, to)` procedure, which
-// blocks until the materialisation completes.
+// RefreshContinuousAggregate force-materialises a continuous aggregate over
+// the given time window via `refresh_continuous_aggregate(view, from, to)`,
+// which blocks until done.
 //
-// Required after backfill runs because the policy refresher only
-// rolls FORWARD: a policy materialises buckets inside its own
-// look-back window, and the widest of the seven price views
-// (prices_1mo) looks back three months, so a historical insert older
-// than that is never materialised on its own cadence however long you
-// wait. The backfill tool calls this at the end of each chunk to make
-// CAGG materialisation atomic with the trade insert.
+// Required after backfill because the policy refresher only rolls FORWARD:
+// it materialises buckets inside its own look-back window (the widest price
+// view, prices_1mo, looks back three months), so a historical insert older
+// than that is never materialised however long you wait. Raw trades are
+// never pruned (migration 0031), so repairing a backfilled range needs just a
+// bounded refresh, no re-decode (docs/operations/backfill-procedure.md).
 //
-// The roll-forward policy is the WHOLE reason: raw trades are never
-// pruned (migration 0031). The rows stay; only the
-// materialisation is missing. That is why repairing an
-// already-backfilled range needs no re-decode and no archive read,
-// just a bounded refresh (docs/operations/backfill-procedure.md).
+// Idempotent. Fail-loud on unknown view name (defends against injection
+// through the view-name string format).
 //
-// Idempotent: refreshing an already-materialised range is a no-op.
-// Fail-loud on unknown view name (defends against typo-driven
-// SQL injection through the view-name string format).
-//
-// Every CALL is bounded: a statement_timeout derived from the
-// window's length by [CAGGRefreshTimeout] is applied on the pinned
-// connection that runs it, so a wedged refresh fails THIS call with a
-// [*CAGGRefreshTimeoutError] instead of holding the ops backfill pool
-// — and its `-parallel` siblings behind ingest.caggRefreshMu — until
-// SIGINT. See cagg_refresh_timeout.go for the sizing and the
-// connection hygiene. A caller with a reason to bound differently
-// uses [Store.RefreshContinuousAggregateWithTimeout].
+// Every CALL is bounded: a statement_timeout derived from the window's length
+// by [CAGGRefreshTimeout] is applied on the pinned connection, so a wedged
+// refresh fails THIS call with a [*CAGGRefreshTimeoutError] instead of
+// holding the ops backfill pool, and its `-parallel` siblings behind
+// ingest.caggRefreshMu, until SIGINT. See cagg_refresh_timeout.go. A caller
+// with a reason to bound differently uses
+// [Store.RefreshContinuousAggregateWithTimeout].
 func (s *Store) RefreshContinuousAggregate(ctx context.Context, viewName string, from, to time.Time) error {
 	return s.RefreshContinuousAggregateWithTimeout(ctx, viewName, from, to, CAGGRefreshTimeout(to.Sub(from)))
 }

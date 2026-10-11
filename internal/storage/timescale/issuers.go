@@ -711,22 +711,18 @@ const (
 // write) and advances the retry ladder. Returns the issuer's new
 // consecutive-failure count.
 //
-// Two separate jobs, easy to conflate:
+// Two jobs, easy to conflate:
+//   - sep1_resolved_at = NOW() is QUEUE HYGIENE: IssuersNeedingSep1Refresh
+//     orders `sep1_resolved_at ASC NULLS FIRST`, so an unstamped row stays
+//     the first candidate and the ~43k issuers with dead home_domains would
+//     fill the queue front. Every failure path must stamp it.
+//   - sep1_consecutive_failures / sep1_next_attempt_after are the BUDGET:
+//     the ladder stops a domain that has 404'd two hundred times getting as
+//     many attempts as one that answers.
 //
-//   - sep1_resolved_at = NOW() is QUEUE HYGIENE, independent of the ladder.
-//     IssuersNeedingSep1Refresh orders `sep1_resolved_at ASC NULLS FIRST`,
-//     so an unstamped row stays the first candidate every run and the ~43k
-//     issuers with dead home_domains would fill the front of the queue.
-//     Every failure path must stamp it.
-//   - sep1_consecutive_failures / sep1_next_attempt_after are the BUDGET.
-//     Stamping alone only reorders the queue; the ladder stops a domain that
-//     has 404'd two hundred times getting as many attempts as one that
-//     answers.
-//
-// One statement, so the count and the deferral cannot disagree. The SET
-// expressions read the PRE-UPDATE sep1_consecutive_failures (Postgres
-// semantics): the deferral uses `prior failures` and the count `prior + 1`,
-// so a first failure yields count 1 and a one-day deferral.
+// One statement, so count and deferral cannot disagree. The SET expressions
+// read the PRE-UPDATE failure count (Postgres semantics): a first failure
+// yields count 1 and a one-day deferral.
 //
 // Both interval parameters carry an explicit ::interval cast: an untyped
 // bind parameter beside an interval operator raises 42883 at runtime on
@@ -888,28 +884,22 @@ type IssuerAuthFlagsOnRecord struct {
 // oldest-first by primary key, with the values currently on record.
 //
 // `limit` <= 0 returns every candidate, the intended setting: the caller
-// writes back only rows the chain disagrees with, so re-offering the whole
-// filled set costs one bulk lake read per batch and, in steady state,
-// nothing in Postgres.
+// writes back only rows the chain disagrees with.
 //
-// # WHY A THIRD QUEUE
+// Why a third queue: [Store.IssuerGStrkeysNeedingFlags] is
+// `auth_required IS NULL`, so a row leaves it once filled, and
+// [Store.IssuerGStrkeysNeedingRecheck] covers only
+// `last_known_before_removal` rows. A filled, live-sourced row would never be
+// read again, yet `issuers.home_domain` rides on it: `issuer-enrich` (which
+// syncs it) is a manual one-shot, so an anchor that moves domain would keep
+// the old one (see [Store.SyncIssuerHomeDomain]).
 //
-// [Store.IssuerGStrkeysNeedingFlags] is `auth_required IS NULL`, so a row
-// leaves it once filled, and [Store.IssuerGStrkeysNeedingRecheck] covers
-// only `last_known_before_removal` rows. A FILLED, live-sourced row is never
-// read again, yet `issuers.home_domain` rides on exactly those rows:
-// `issuer-enrich` (the job that syncs it) is a manual one-shot, `issuer-flags`
-// the nightly one. An anchor that moves domain and lets the old name lapse
-// would keep it on this row (see [Store.SyncIssuerHomeDomain]).
-//
-// `last_known_before_removal` rows are EXCLUDED because the queue above
-// carries them under a rule this one must not apply: their removal ledger is
-// fixed, so re-writing a still-merged one is a no-op UPDATE and only a LIVE
-// hit (account re-created at the same address) changes anything. The two
-// queues PARTITION the filled rows rather than overlapping on ~10k nightly.
-// The exception is a merged row that still holds a home_domain stored while
-// live: re-writing it is NOT a no-op, because the persist clears a merged
-// account's identity, so it is offered here until that write lands.
+// `last_known_before_removal` rows are EXCLUDED because their removal ledger
+// is fixed, so re-writing a still-merged one is a no-op and only a LIVE hit
+// changes anything; the two queues partition the filled rows. The exception
+// is a merged row still holding a home_domain stored while live: re-writing
+// it is NOT a no-op (the persist clears a merged account's identity), so it
+// is offered here until that write lands.
 func (s *Store) IssuersNeedingChainRecheck(ctx context.Context, limit int) ([]IssuerAuthFlagsOnRecord, error) {
 	q := `
         SELECT g_strkey,

@@ -563,18 +563,14 @@ func listingRankTierExpr(order AssetsOrder) string {
 // asset_volume_24h, migration 0087; price/change/source_count from
 // asset_price_snapshot, migration 0154), so a listing page costs the spine
 // plus three small hash joins whatever the limit / cursor / filter.
-// Materialising twelve `DISTINCT ON … FROM prices_1m` CTEs per call costs
-// seconds and hundreds of thousands of buffers. If you are adding a
-// prices_1m read here, add a column to a rollup instead.
+// Materialising `DISTINCT ON … FROM prices_1m` CTEs per call costs seconds
+// and hundreds of thousands of buffers: to add a prices_1m read here, add a
+// column to a rollup instead.
 //
 // Volume: prices_1m.volume_usd summed over the trailing 24h where the asset
-// is base OR quote, computed by internal/aggregate/assetvolrollup. Most
-// classic assets have no direct fiat:USD pair, which the refresh's
-// CTE-with-UNION handles.
-//
-// Price + 1h/24h/7d change come from refreshAssetPriceSnapshotUpsert
-// (asset_price_snapshot.go), which also documents the staleness contract
-// this query's join enforces.
+// is base OR quote (internal/aggregate/assetvolrollup). Price + 1h/24h/7d
+// change come from refreshAssetPriceSnapshotUpsert (asset_price_snapshot.go),
+// which documents the staleness contract this query's join enforces.
 //
 // market_cap_usd + circulating_supply remain NULL: asset_supply_history
 // doesn't cover the long tail of classic assets, and fabricating values
@@ -1077,24 +1073,20 @@ type AssetPricePoint struct {
 // text from RAW prices_1m ratios: the per-asset row's price_usd
 // ([getAssetBySlugSQL]) and the four price-history series.
 //
-// These reads stay RAW: the API corrects them for a confirmed non-7-decimals
-// token (v1.Server.normalizeCatalogueUSD), and correcting here too would
-// apply the factor twice. The ROUNDING belongs here because it runs before
-// that correction: a flat ROUND(raw, 10) on an 18-decimals token (correction
-// 10^11) would turn a 1 USD price, raw 1e-11, into zero.
-//
-// Rounding the raw ratio to 10 + k places, where the correction is 10^k, IS
-// rounding the corrected price to 10 places:
+// These reads stay RAW: the API corrects a confirmed non-7-decimals token
+// (v1.Server.normalizeCatalogueUSD), and correcting here too would apply the
+// factor twice. The ROUNDING belongs here because it runs before that
+// correction: a flat ROUND(raw, 10) on an 18-decimals token (correction
+// 10^11) would turn a 1 USD price, raw 1e-11, into zero. Rounding the raw
+// ratio to 10 + k places, where the correction is 10^k, IS rounding the
+// corrected price to 10 places:
 //
 //	ROUND(raw, 10 + k) * 10^k  ==  ROUND(raw * 10^k, 10)
 //
-// k comes from nonstandard_decimals_assets, floored at zero: a token with
-// FEWER than 7 decimals scales DOWN, which only shrinks the rounding error.
-// An asset with no confirmed row resolves to exactly 10, the same bytes as
-// ROUND(…, 10).
-//
-// The API tells the two apart by the text itself (ROUND(x, n)::text has
-// exactly n fraction places).
+// k comes from nonstandard_decimals_assets, floored at zero (fewer than 7
+// decimals only shrinks the rounding error); an asset with no confirmed row
+// resolves to exactly 10. The API tells the two apart by the text itself
+// (ROUND(x, n)::text has exactly n fraction places).
 //
 // Three spellings of one expression, differing only in how the asset is
 // named at each site. MAX because the alias-array form may match more than

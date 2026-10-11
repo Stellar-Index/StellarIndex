@@ -300,29 +300,24 @@ func flooredDirTWAP(rows []dirTWAP) []dirTWAP {
 // into the requested (base, quote) orientation, as a NUMERIC-shaped
 // decimal string.
 //
-// twap_1h / twap_1d (migration 0081) are avg(prices_1m.twap): one equal
-// observation per elapsed MINUTE, deliberately not per trade. The only
-// correct direction weight is therefore each direction's minute COVERAGE,
-// migration 0126's `sample_count` (not recoverable from
-// twap/trade_count/volume). Trade-count weighting is wrong by an unbounded
-// factor; equal weighting regresses the well-covered case.
+// twap_1h / twap_1d are avg(prices_1m.twap): one equal observation per
+// elapsed MINUTE, not per trade. The only correct direction weight is each
+// direction's minute COVERAGE, migration 0126's `sample_count`; trade-count
+// weighting is wrong by an unbounded factor.
 //
 //	combined = Σ(oriented_twap · sample_count) / Σ(sample_count)
 //
 // A flipped row is oriented by an EXACT rational 1/twap, never SQL
-// `1.0 / twap`, which would round before weighting (ADR-0003).
+// `1.0 / twap`, which would round before weighting (ADR-0003). It inverts the
+// stored window average, so a flipped leg contributes the harmonic mean of
+// its minute prices; the Jensen gap is second-order for 1h/1d.
 //
-// The inversion acts on the stored window average, so a flipped leg
-// contributes the harmonic mean of its minute prices, not avg(1/q). The
-// Jensen gap is second-order for 1h/1d; the exact form would need the CAGGs
-// to store avg(1/twap), which the bound does not justify.
+// A single unflipped row is returned VERBATIM. Rows that fell back past the
+// notional floor are dropped first whenever another direction cleared it
+// ([flooredDirTWAP]).
 //
-// A single unflipped row is returned VERBATIM (stored NUMERIC text).
-// Rows that fell back past the notional floor are dropped first whenever
-// another direction cleared it ([flooredDirTWAP]).
-//
-// ok=false when no row carries a usable (parseable, positive) twap with a
-// positive sample_count; callers treat that as "no data for this bucket".
+// ok=false when no row carries a parseable, positive twap with a positive
+// sample_count; callers treat that as "no data for this bucket".
 func combineDirTWAP(rows []dirTWAP) (string, bool) {
 	rows = flooredDirTWAP(rows)
 	if len(rows) == 1 && !rows[0].flipped {
@@ -1449,30 +1444,26 @@ func (s *Store) closedVWAPAtOrBeforeRes(
 // fall back to the latest-trade path.
 func (s *Store) LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair) (Vwap1mRow, error) {
 	// Combine BOTH stored directions: the SDEX decoder records XLM/USDC and
-	// USDC/XLM, so one direction halves the liquidity and misses a minute
-	// that traded only the flipped way. Flipped rows are inverted (1/vwap)
-	// and weighted within the latest closed bucket (ADR-0015).
+	// USDC/XLM, so one direction halves the liquidity. Flipped rows are inverted
+	// (1/vwap) and weighted within the latest closed bucket (ADR-0015).
 	//
 	// PERF (both layers required):
-	//
 	//  1. The closed-bucket predicate MUST be `bucket <= now() - 1min`, not
 	//     `bucket + 1min <= now()`; a function on the indexed column makes
-	//     max() scan every chunk (446ms → 26ms).
+	//     max() scan every chunk (446ms -> 26ms).
 	//  2. `now()` is only known at run time, so the planner still enumerates
-	//     all ~374 chunks (~280ms planning). A LITERAL lower bound computed in
-	//     Go excludes old chunks at plan time (~2ms); it is our own UTC
-	//     timestamp, no injection surface.
+	//     all ~374 chunks (~280ms). A LITERAL lower bound computed in Go
+	//     excludes old chunks at plan time (~2ms); it is our own UTC timestamp.
 	//
 	// No unbounded fallback: the handler probes native/fiat:USD on every XLM
-	// query, and that synthetic pair has zero rows, so a fallback would make
-	// every miss an all-chunk scan. ErrNoRows sends the handler to its
-	// triangulation / last-trade chain instead.
+	// query and that synthetic pair has zero rows, so a fallback would make every
+	// miss an all-chunk scan. ErrNoRows sends the handler to its triangulation /
+	// last-trade chain instead.
 	//
-	// Proving a pair EMPTY still touches every chunk in the ~400-day window
-	// (minutes COLD), so a cheap existence probe over latestVWAPGateWindow
-	// (~2 weeks of hot chunks) runs first. No closed bucket in a fortnight is
-	// not "currently priced". On a gate hit the value walk returns the same
-	// bucket it would without the gate.
+	// Proving a pair EMPTY touches every chunk in the ~400-day window (minutes
+	// COLD), so a cheap existence probe over latestVWAPGateWindow (~2 weeks of
+	// hot chunks) runs first; on a gate hit the walk returns the same bucket it
+	// would without the gate.
 	gateSince := time.Now().UTC().Add(-latestVWAPGateWindow)
 	exists, err := s.recentClosedVWAP1mExists(ctx, p, gateSince)
 	if err != nil {
@@ -2406,29 +2397,22 @@ func (s *Store) PairMarketSubstance(ctx context.Context, bases, quotes []canonic
 
 // PairMarketSubstanceAt measures [MarketSubstance] for the pair over the
 // `window` ENDING AT `asOf`, the point-in-time twin of
-// [Store.PairMarketSubstance] (whose window always ends now).
-//
-// A trailing-from-now measurement says nothing about a historical instant:
-// /v1/price/at and /v1/price/changes serve the bucket at-or-before `ts`,
-// and whether THAT bucket came from a market of substance depends on the
-// hours before `ts` (a pair thick today may have been attacker-seeded dust
-// then).
+// [Store.PairMarketSubstance] (whose window always ends now). A trailing-
+// from-now measurement says nothing about a historical instant: a pair thick
+// today may have been attacker-seeded dust at `ts`.
 //
 // `g` is the grain the legs are counted at; only two are accepted:
-//
-//   - [Granularity1m] - the live gate's grain. Its reach back is a
-//     deployment setting (see [Store.DailyMarketDays], "Why prices_1h"), so
-//     use it only for instants recent enough that every retention setting
-//     still holds the whole window.
-//   - [Granularity1h] - indefinite by design (migration 0002), the grain a
+//   - [Granularity1m]: the live gate's grain. Its reach back is a deployment
+//     setting (see [Store.DailyMarketDays], "Why prices_1h"), so use it only
+//     for instants recent enough that retention still holds the window.
+//   - [Granularity1h]: indefinite by design (migration 0002), the grain a
 //     historical instant is held to.
 //
 // The window is the buckets already CLOSED at asOf (ADR-0015):
 // `bucket <= asOf - g` (sargable) and `bucket >= asOf - window`. Both bounds
-// are LITERAL timestamptz values computed in Go (plan-time chunk pruning, no
-// injection surface; the [Store.ClosedVWAPAtOrBefore] discipline); the
-// `now()` guard stays so an asOf at or past the present can never admit the
-// in-progress bucket.
+// are LITERAL timestamptz values computed in Go for plan-time chunk pruning
+// (the [Store.ClosedVWAPAtOrBefore] discipline); the `now()` guard stays so
+// an asOf at or past the present never admits the in-progress bucket.
 //
 // An empty window returns {VolumeUSD: "0", Buckets: 0, SpanSeconds: 0} with
 // a nil error: absence of market is a measurement, not an error.
