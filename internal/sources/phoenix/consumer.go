@@ -17,11 +17,9 @@ type TradeEvent struct {
 // EventKind implements [consumer.Event].
 func (TradeEvent) EventKind() string { return "phoenix.trade" }
 
-// EventLedger reports the trade's own ledger — the correlation group's
-// first-field ledger. For a 7-field-era sweep rescue this differs from
-// the stream event that TRIGGERED the eviction, so the completeness
-// re-derive must count the trade here, not at the trigger (the
-// completeness.eventLedgerCarrier optional interface).
+// EventLedger reports the trade's own ledger, the correlation group's first-field ledger. For a
+// sweep rescue this differs from the event that TRIGGERED the eviction, so the completeness
+// re-derive must count the trade here (completeness.eventLedgerCarrier).
 func (e TradeEvent) EventLedger() uint32 { return e.Trade.Ledger }
 
 // Source implements [consumer.Event].
@@ -34,17 +32,12 @@ var _ consumer.Event = TradeEvent{}
 // provide_liquidity (5-event) or withdraw_liquidity (4-event) reassembly.
 // Mirrors the phoenix_liquidity row (migration 0044).
 //
-// Fields:
-//   - Action: EventActionProvideLiquidity or EventActionWithdrawLiquidity.
-//   - Pool: the emitting contract's C-strkey. Sender: the LP's G/C-strkey.
-//   - TokenA / TokenB: withdraw events carry no token addresses (only
-//     return_amount_a / return_amount_b), so these stay empty on withdraw rows;
-//     join to a recent provide row for the same pool.
-//   - AmountA / AmountB: on provide, the `actual received` deposit (after
-//     slippage truncation); on withdraw, return_amount_a / return_amount_b.
-//   - SharesAmount: LP shares burned, withdraw rows only. The pool does not
-//     emit provide-side minting; it appears as a SEP-41 mint on the share-token
-//     contract, handled by the sep41_supply observer.
+// Withdraw events carry no token addresses (only return_amount_a / return_amount_b), so
+// TokenA / TokenB stay empty on withdraw rows; join to a recent provide row for the same pool.
+// AmountA / AmountB are the `actual received` deposit (after slippage truncation) on provide and
+// return_amount_a / return_amount_b on withdraw. SharesAmount is LP shares burned, withdraw rows
+// only: provide-side minting appears as a SEP-41 mint on the share-token contract, handled by
+// the sep41_supply observer.
 type LiquidityChange struct {
 	Action  string
 	Pool    string
@@ -89,13 +82,10 @@ var _ consumer.Event = LiquidityEvent{}
 // bond / unbond event (3-event reassembly each). Mirrors the
 // phoenix_stake_events row shape (migration 0044).
 //
-// Phoenix's stake contract is per-pool — there is one stake contract
-// per liquidity pool, and it accepts only the pool's LP-share token
-// as the staked asset. `Contract` is the stake contract's C-strkey
-// (the event emitter), `LPToken` is the share-token contract the
-// user is bonding / unbonding, and `Amount` is the share-token
-// amount (positive on both bond and unbond — the `Action` discrim
-// distinguishes the direction).
+// Each pool has its own stake contract, which accepts only that pool's LP-share token. `Contract`
+// is the stake contract's C-strkey (the emitter), `LPToken` the share-token contract being
+// bonded / unbonded, and `Amount` the share-token amount, positive for both directions (`Action`
+// carries the direction).
 type StakeChange struct {
 	Action   string
 	Contract string
@@ -140,11 +130,10 @@ var (
 	_ interface{ EventLedger() uint32 } = StakeEvent{}
 )
 
-// InitializeEvent is a pool-deploy token announcement — one of the two
-// ("initialize", "XYK LP token_a"/"token_b") events a Phoenix pool
-// emits at deploy, each carrying one token contract address. The sink
-// lands it in phoenix_initialize (migration 0131). Self-contained (no
-// correlation buffer): one event → one row.
+// InitializeEvent is a pool-deploy token announcement: one of the two ("initialize", "XYK LP
+// token_a"/"token_b") events a pool emits at deploy, each carrying one token contract address.
+// The sink lands it in phoenix_initialize. Self-contained (no correlation buffer): one event, one
+// row.
 type InitializeEvent struct {
 	Pool       string // emitting pool contract C-strkey
 	Ledger     uint32
@@ -191,11 +180,9 @@ func (AdminEvent) Source() string { return SourceName }
 var _ consumer.Event = AdminEvent{}
 
 // ─── 8-field correlation buffer ─────────────────────────────────
-// Phoenix emits one swap as 8 separate events (one per field).
-// An entry sits in the buffer until all 8 slots are populated —
-// a missing field (pagination race, faulty contract, malformed pool)
-// otherwise leaves it hanging forever. Age-based eviction bounds
-// memory usage.
+// Phoenix emits one swap as 8 separate events (one per field). An entry waits until all 8 slots
+// are populated; a missing field (pagination race, faulty or malformed pool) would otherwise leave
+// it forever, so age-based eviction bounds memory.
 
 // defaultOrphanMaxAge caps how long an incomplete entry waits for
 // missing fields. 5 minutes is generous — all 8 events should land
@@ -246,11 +233,9 @@ func newRawSwap(e *events.Event, closedAt time.Time) *RawSwap {
 	}
 }
 
-// absorb stores one field-event in the appropriate RawSwap slot.
-// Returns:
-//   - completed: non-nil *RawSwap when all 8 slots are populated.
-//   - evicted:   entries whose ClosedAt is older than maxAge.
-//   - err:       ErrUnknownField / decode errors for the current event.
+// absorb stores one field-event in the appropriate RawSwap slot. It returns the completed swap
+// (non-nil once all 8 slots are populated), entries evicted for being older than maxAge, and
+// ErrUnknownField / decode errors for the current event.
 func (b *buffer) absorb(e *events.Event, fieldTopic string, closedAt time.Time) (completed *RawSwap, evicted []RawSwap, err error) {
 	// Reference time for orphan eviction is the incoming event's
 	// ClosedAt, not wall-clock — so backfill of historical events
@@ -266,19 +251,14 @@ func (b *buffer) absorb(e *events.Event, fieldTopic string, closedAt time.Time) 
 		r = newRawSwap(e, closedAt)
 		b.m[k] = r
 	} else if prior := r.slot(fieldTopic); prior != nil && prior.EventIndex != e.EventIndex {
-		// A field arriving into an already-populated slot with a DIFFERENT
-		// EventIndex is the first field of a SECOND swap that routed through
-		// the SAME pool in the SAME op (a router multi-hop / cyclic
-		// arbitrage). The pre-upgrade 7-field era never Complete()s, so
-		// absorb never emit-and-clears mid-op; without this guard the second
-		// swap's field-events overwrite the first's slots in place and the
-		// first trade is lost with no orphan count.
-		// Rotate the current (incomplete) group out as a rescue candidate —
-		// the caller decodes Decodable evictions — and start a fresh
-		// generation keyed on THIS event's index so the two trades fan to
-		// distinct op_index (FanoutOpIndex). Same EventIndex = a lake
-		// redelivery of one field-event (idempotent): fall through to assign,
-		// which harmlessly rewrites the identical value.
+		// A different EventIndex landing in an already-populated slot is the first field of a SECOND
+		// swap through the SAME pool in the SAME op (router multi-hop or cyclic arbitrage). The
+		// 7-field era never Complete()s, so absorb never emit-and-clears mid-op; without this guard
+		// the second swap overwrites the first's slots and that trade is lost with no orphan count.
+		// Rotate the incomplete group out as a rescue candidate (the caller decodes Decodable
+		// evictions) and start a fresh generation keyed on THIS event's index, so the two trades fan
+		// to distinct op_index (FanoutOpIndex). The same EventIndex is a lake redelivery and falls
+		// through to rewrite the identical value idempotently.
 		evicted = append(evicted, *r)
 		r = newRawSwap(e, closedAt)
 		b.m[k] = r
@@ -338,11 +318,10 @@ func (b *buffer) drain() (swaps []RawSwap, otherOrphans int) {
 	return swaps, otherOrphans
 }
 
-// rotateOpen drops the open group at k when e would land in an already
-// filled slot as a DIFFERENT event: the first field of a second action
-// through the same contract in the same op. Overwriting in place would
-// splice the two actions into one row. The same EventIndex is a redelivery
-// and is left to overwrite idempotently. Returns the number dropped.
+// rotateOpen drops the open group at k when e would land in an already filled slot as a DIFFERENT
+// event (the first field of a second action through the same contract in the same op), since
+// overwriting would splice two actions into one row. The same EventIndex is a redelivery and
+// overwrites idempotently. Returns the number dropped.
 func rotateOpen[R interface{ slot(string) *events.Event }](m map[groupKey]R, k groupKey, e *events.Event, fieldTopic string) int {
 	r, ok := m[k]
 	if !ok {
@@ -360,19 +339,15 @@ func (b *buffer) size() int { return len(b.m) }
 
 // ─── provide_liquidity / withdraw_liquidity / bond / unbond absorb ──
 //
-// Same shape as the swap absorb path: groupKey by (ledger, tx, op, contract);
-// stage the field events into the per-action map; return a completed
-// record when the action's required field count is met; sweep stale
-// peer entries from EVERY buffer using the current event's ClosedAt
-// as the reference (so an old swap left over from a different
-// contract still ages out when a new liquidity event arrives).
+// Same shape as the swap absorb path: group by (ledger, tx, op, contract), stage field events per
+// action, and return a completed record once the action's field count is met. Stale peers are
+// swept from EVERY buffer using the current event's ClosedAt, so an old swap from another
+// contract still ages out when a liquidity event arrives.
 //
-// The orphan-eviction counters are advisory: each per-action map has
-// its own sweep return so the dispatcher's evictedOrphans tally can
-// add them up. We chose per-action maps over a single sum-type buffer
-// because the field sets are heterogeneous (5 / 4 / 3 fields) and a
-// single map would either store an interface or a fat union — neither
-// scales when we add the 8th, 9th… action.
+// The orphan-eviction counters are advisory: each per-action map returns its own sweep count for
+// the dispatcher's evictedOrphans tally. Per-action maps beat one sum-type buffer because the
+// field sets are heterogeneous (5 / 4 / 3 fields) and a single map would need an interface or a
+// fat union.
 
 func (b *buffer) absorbProvideLiquidity(e *events.Event, fieldTopic string, closedAt time.Time) (*RawProvideLiquidity, int, error) {
 	evicted := b.sweepStaleAll(closedAt)

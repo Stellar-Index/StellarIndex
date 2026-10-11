@@ -108,12 +108,9 @@ func main() {
 	}
 }
 
-// formatDivergencePrice renders a divergence comparator price as the
-// decimal-as-string DivergenceFiringWebhookPayload documents. These
-// values originate as float64 (divergence.CachedResult mirrors the
-// comparator's own external-reference arithmetic, not a stored
-// canonical.Amount), so strconv preserves exactly what was computed
-// rather than inventing false fixed-point precision.
+// formatDivergencePrice renders a divergence comparator price as a decimal string. The values are
+// float64 external-reference arithmetic (not a stored canonical.Amount), so strconv preserves
+// exactly what was computed instead of inventing fixed-point precision.
 func formatDivergencePrice(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
 }
@@ -131,11 +128,8 @@ func divergenceSourceNames(sources map[string]float64) []string {
 	return names
 }
 
-// anomalyFreezeWebhookPayload is the JSON body POSTed to a customer's
-// webhook on an `anomaly.freeze` delivery. Documented in the OpenAPI
-// spec as AnomalyFreezeWebhookPayload (openapi/stellar-index.v1.yaml);
-// spec_contract_test.go's TestAnomalyFreezeWebhookPayloadMatchesSpec
-// keeps the two in lockstep.
+// anomalyFreezeWebhookPayload is the JSON body of an `anomaly.freeze` webhook delivery;
+// TestAnomalyFreezeWebhookPayloadMatchesSpec keeps it in lockstep with the OpenAPI spec.
 type anomalyFreezeWebhookPayload struct {
 	Event       string `json:"event"`
 	Asset       string `json:"asset"`
@@ -145,12 +139,8 @@ type anomalyFreezeWebhookPayload struct {
 	At          string `json:"at"`
 }
 
-// divergenceFiringWebhookPayload is the JSON body POSTed to a
-// customer's webhook on a `divergence.firing` delivery. Documented in
-// the OpenAPI spec as DivergenceFiringWebhookPayload
-// (openapi/stellar-index.v1.yaml); spec_contract_test.go's
-// TestDivergenceFiringWebhookPayloadMatchesSpec keeps the two in
-// lockstep.
+// divergenceFiringWebhookPayload is the JSON body of a `divergence.firing` webhook delivery;
+// TestDivergenceFiringWebhookPayloadMatchesSpec keeps it in lockstep with the OpenAPI spec.
 type divergenceFiringWebhookPayload struct {
 	Event         string   `json:"event"`
 	Pair          string   `json:"pair"`
@@ -169,11 +159,9 @@ func run(cfgPath string, dryRun bool) error {
 		return err
 	}
 
-	// Publish the process-wide asset alias registry BEFORE any tier
-	// walk runs. tryVWAPTier and the other alias-looping paths
-	// resolve classic↔SAC pairs from [supply].sac_wrappers through it,
-	// SAC form LAST. Fail-closed on a malformed wrapper — silently
-	// dropped, it becomes under-counted volume.
+	// Publish the process-wide asset alias registry BEFORE any tier walk: the alias-looping paths
+	// (tryVWAPTier etc.) resolve classic<->SAC pairs through it, SAC form LAST. Fail-closed on a
+	// malformed wrapper, since a silently dropped one becomes under-counted volume.
 	if err := canonical.InstallNetwork(cfg.Stellar.Passphrase(), cfg.Supply.SACWrappers); err != nil {
 		return err
 	}
@@ -216,23 +204,17 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Redis ───────────────────────────────────────────────────
-	// Required for the aggregator — no useful pre-compute without
-	// a cache to write to. redisclient.Build picks Sentinel mode
-	// (production, ADR-0024) when redis_sentinel_addrs is set,
-	// single-node otherwise. Dry-run pings explicitly so config
-	// drift surfaces at startup rather than at first tick.
+	// Required: there is nothing to pre-compute without a cache to write to. redisclient.Build
+	// picks Sentinel mode (ADR-0024) when redis_sentinel_addrs is set. Dry-run pings explicitly so
+	// config drift surfaces at startup rather than at first tick.
 	rdb := redisclient.Build(cfg.Storage)
 	if rdb == nil {
 		cancel() // store.Close deferred above will still run; release the signal ctx
 		return errors.New("storage.redis_addr or storage.redis_sentinel_addrs is required — aggregator writes VWAP to Redis")
 	}
 	defer func() { _ = rdb.Close() }()
-	// Register cancel LAST so LIFO runs it FIRST on shutdown — the
-	// orchestrator + worker goroutines see context cancellation and
-	// unwind BEFORE rdb.Close() / store.Close() pull the resources they
-	// query out from under them. Registered before the store / redis
-	// defers, cancel would run after those handles closed, while the
-	// goroutines were still mid-flight.
+	// Register cancel LAST so LIFO runs it FIRST on shutdown: the orchestrator and worker
+	// goroutines must unwind BEFORE rdb.Close() / store.Close() pull the resources they query.
 	defer cancel()
 	mode := redisclient.Mode(cfg.Storage)
 	if dryRun {
@@ -271,22 +253,21 @@ func run(cfgPath string, dryRun bool) error {
 		logger.Info("aggregator windows: operator override", "count", len(windows))
 	}
 
-	// ─── Anomaly checker + freeze writer (ADR-0019) ───────────── The Phase 1 checker is wired only
-	// when the operator has flipped anomaly.enabled in TOML — nil means the orchestrator skips the
-	// Phase 1 evaluate-and-maybe-freeze step.
+	// ─── Anomaly checker + freeze writer (ADR-0019) ─────────────
+	// The Phase 1 checker is wired only when anomaly.enabled is set; nil makes the orchestrator
+	// skip Phase 1 evaluate-and-maybe-freeze.
 	//
 	// The freeze WRITER is deliberately NOT gated on the checker: the Phase 2 confidence lifecycle
-	// (stepPhase2Freeze) runs on every scored bucket regardless of cfg.Anomaly, and it REFUSES
-	// publication when its 3-signal AND fires. Gated on the checker, a Phase-1-off / Phase-2-tuned
-	// deployment would engage real freezes that write NO Redis marker — the frozen windows would serve
-	// their last value with flags.frozen absent, i.e. a stale price presented as fresh, the precise
-	// state the marker exists to prevent (orchestrator.Config.FreezeWriter calls it
-	// "loud-but-not-actionable"). rdb is always non-nil here (fatal at startup above), so the writer
-	// is built unconditionally. ─── Price withholding ([pricing_guard]) ──────────────────── The same
-	// pair decision /v1/price serves under, built once and consulted by every customer-facing price
-	// this binary pushes: the price-alert, anomaly.freeze and divergence.firing webhooks. A
-	// directory-scam-flagged issuer or a thin market must not reach a signed delivery the API itself
-	// would refuse to publish.
+	// (stepPhase2Freeze) runs on every scored bucket and REFUSES publication when its 3-signal AND
+	// fires. Gated on the checker, a Phase-1-off deployment would engage real freezes that write NO
+	// Redis marker, so frozen windows would serve their last value with flags.frozen absent: a stale
+	// price presented as fresh. rdb is always non-nil here, so the writer is built unconditionally.
+	//
+	// ─── Price withholding ([pricing_guard]) ─────────────────────
+	// The same pair decision /v1/price serves under, built once and consulted by every
+	// customer-facing price this binary pushes (price-alert, anomaly.freeze and divergence.firing
+	// webhooks). A scam-flagged issuer or a thin market must not reach a signed delivery the API
+	// itself would refuse to publish.
 	withholding := pricingguard.Gate{
 		Substance: buildAggregatorSubstanceGate(cfg.PricingGuard, store, logger),
 		Scam: pricingguard.NewScamGate(store, pricingguard.ScamGateOptions{
@@ -301,23 +282,15 @@ func run(cfgPath string, dryRun bool) error {
 	var freezeWriter orchestrator.FreezeMarker
 	var freezeRecovery *freeze.Recovery
 	if rdb != nil {
-		// Optional durable mirror: every freeze decision lands in the
-		// freeze_events hypertable so the explorer /anomalies timeline
-		// has queryable history. Idempotent on the currently-firing
-		// row, so refreshing the Redis TTL doesn't create duplicates.
-		// See migrations/0018_create_freeze_events.up.sql and
-		// docs/architecture/explorer-data-inventory.md §11.3.
+		// Durable mirror of every freeze decision in the freeze_events hypertable, for the
+		// /anomalies timeline. Idempotent on the currently-firing row, so a Redis TTL refresh
+		// creates no duplicates.
 		sinkOpts := []timescale.FreezeEventSinkOption{
 			timescale.WithFreezeLedgerProvider(divergenceLedgerAdapter{cursors: store}),
 		}
-		// Customer-webhook fan-out for `anomaly.freeze`. The
-		// aggregator owns the freeze signal; the API binary owns the
-		// delivery worker. Both
-		// share the same Postgres so the fan-out producer here just
-		// inserts pending rows that the API-side worker drains.
-		// Wired only when the platform v1 schema is available
-		// (migration 0027 applied); skipped silently in dev/no-
-		// platform deployments.
+		// Customer-webhook fan-out for `anomaly.freeze`. The aggregator owns the freeze signal and
+		// only inserts pending rows into the shared Postgres; the API binary's delivery worker
+		// drains them. Skipped silently when the platform v1 schema is absent (dev).
 		webhookStore := postgresstore.NewWebhookStore(postgresstore.New(store.DB()))
 		fanout := customerwebhook.NewFanout(webhookStore, logger.With("component", "webhook-fanout"))
 		if fanout != nil {
@@ -327,14 +300,10 @@ func run(cfgPath string, dryRun bool) error {
 		sink := timescale.NewFreezeEventSink(store, sinkOpts...)
 		opts := []freeze.WriterOption{
 			freeze.WithEventSink(sink),
-			// Durable ADR-0019 ladder (migration 0119). Without it the
-			// extension count and the ESCALATED flag live only in this
-			// process's memory and in the Redis marker's JSON, and the
-			// orchestrator reads a missing marker as the operator
-			// force-unfreeze — so a Redis flush released every held pair,
-			// including ones that had spent the full 2-hour ladder and
-			// already paged a human. Same sink object: the ladder columns
-			// hang off the freeze_events row RecordFreeze opens.
+			// Durable ADR-0019 ladder. Without it the extension count and ESCALATED flag live only
+			// in process memory and the Redis marker, and the orchestrator reads a missing marker
+			// as an operator force-unfreeze, so a Redis flush would release every held pair. Same
+			// sink object: the ladder columns hang off the freeze_events row RecordFreeze opens.
 			freeze.WithLadderStore(sink, 0), // 0 → freeze.DefaultLadderGrace
 		}
 		w, err := freeze.NewWriter(rdb, 0, opts...) // 0 → cachekeys.FreezeTTL default
@@ -342,22 +311,15 @@ func run(cfgPath string, dryRun bool) error {
 			return fmt.Errorf("freeze writer: %w", err)
 		}
 		freezeWriter = w
-		// Recovery worker: closes durable freeze rows after the Redis
-		// marker TTL elapses (the orchestrator stops refreshing the
-		// marker once the underlying anomaly clears). Without this the
-		// freeze_events table accumulates open rows forever and the
-		// explorer /anomalies timeline shows resolved freezes as
-		// permanently firing.
+		// Recovery worker: closes durable freeze rows once the Redis marker TTL elapses (the
+		// orchestrator stops refreshing the marker when the anomaly clears). Without it
+		// freeze_events accumulates open rows and /anomalies shows resolved freezes as firing.
 		freezeRecovery = freeze.NewRecovery(rdb, sink, sink, freeze.RecoveryOptions{
 			Logger: logger,
-			// Migration 0119: without this the sweep is the THIRD
-			// marker-miss consumer and the one that does damage — it stamps
-			// recovered_at, which is the exact predicate LoadLadder tests,
-			// so it deletes the rehydrate's evidence AND records on
-			// /v1/anomalies that the freeze recovered normally. On a restart
-			// after a Redis flush its immediate first tick beats the
-			// orchestrator's (which computes VWAPs before evaluating any
-			// freeze), so it wins that race essentially always.
+			// Without the ladder, the sweep is a marker-miss consumer that stamps recovered_at,
+			// the exact predicate LoadLadder tests, so it destroys the rehydrate's evidence and
+			// records a normal recovery. After a Redis flush its immediate first tick beats the
+			// orchestrator's (which computes VWAPs before evaluating freezes), so it wins that race.
 			Ladder: sink,
 		})
 		logger.Info("anomaly + freeze: wired",
@@ -393,30 +355,19 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Divergence service ────────────────────────────────────
-	// Builds the CoinGecko + Chainlink HTTP reference clients plus
-	// the on-chain oracle references (reflector-dex/cex/fx,
-	// redstone, band — read from our own served oracle_updates
-	// rows) from `[divergence]` config; the orchestrator's Tick
-	// refreshes the `div:<asset>` cache once per pair per tick.
-	// Empty reference list (every reference disabled) leaves the
-	// producer nil so the cache stays empty and the API's
-	// `flags.divergence_warning` stays false — pre-Phase behaviour
-	// preserved.
+	// Builds the CoinGecko + Chainlink HTTP reference clients plus the on-chain oracle references
+	// (read from our own served oracle_updates rows) from `[divergence]` config; Tick refreshes the
+	// `div:<asset>` cache once per pair per tick. An empty reference list leaves the producer nil,
+	// so the cache stays empty and the API's `flags.divergence_warning` stays false.
 	var divRefresher orchestrator.DivergenceRefresher
 	divRefs := buildDivergenceReferences(cfg.Divergence, cfg.External.CoinGecko, store, logger)
 	if len(divRefs) > 0 {
-		// Durable per-reference mirror — every (pair, reference) tick
-		// lands in the divergence_observations hypertable so the
-		// explorer /divergences page can plot deltas over time and
-		// post-mortems can verify against ground truth. See
-		// migrations/0019.
-		// The divergence half of the customer-webhook fan-out,
-		// edge-triggered. Builds its own Fanout over a new WebhookStore
-		// on the same Postgres handle; the freeze sink's fanout above is
-		// local to the freeze block.
-		// `OnWarningFired` fires only on `below-threshold → above-
-		// threshold` transitions so subscribers don't get
-		// per-tick re-spam while a divergence stays elevated.
+		// Every (pair, reference) tick is mirrored into the divergence_observations hypertable for
+		// the /divergences page and post-mortems.
+		// The divergence half of the customer-webhook fan-out builds its own Fanout; the freeze
+		// sink's fanout is local to the freeze block. `OnWarningFired` fires only on
+		// below-threshold to above-threshold transitions, so subscribers get no per-tick re-spam
+		// while a divergence stays elevated.
 		divFanout := customerwebhook.NewFanout(
 			postgresstore.NewWebhookStore(postgresstore.New(store.DB())),
 			logger.With("component", "webhook-fanout"))
@@ -453,13 +404,10 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Closed-bucket stream publisher ────────────────────────
-	// Fan out each successful (pair, window) VWAP cache write to
-	// API-side `/v1/price/stream` subscribers via Redis pub/sub.
-	// Always wired here — there's no operator gate on WHETHER to
-	// publish, only on WHICH channel (RedisClosedBucketChannel, empty
-	// falls back to DefaultChannel); PUBLISH on a no-subscriber
-	// channel is a Redis no-op. The matching subscriber is
-	// redispub.NewSubscriber in cmd/stellarindex-api.
+	// Fans each successful (pair, window) VWAP cache write out to API `/v1/price/stream`
+	// subscribers via Redis pub/sub. Always wired: the operator picks only WHICH channel
+	// (RedisClosedBucketChannel; empty falls back to DefaultChannel), and PUBLISH on a channel with
+	// no subscribers is a Redis no-op. The subscriber is redispub.NewSubscriber in the API binary.
 	streamPub, err := redispub.NewPublisher(rdb, cfg.Storage.RedisClosedBucketChannel)
 	if err != nil {
 		return fmt.Errorf("redispub.NewPublisher: %w", err)
@@ -467,22 +415,17 @@ func run(cfgPath string, dryRun bool) error {
 	logger.Info("closed-bucket stream publisher wired",
 		"channel", streamPub.Channel(), "producer_id", streamPub.ProducerID())
 
-	// ─── Decimals-normalization lookup (dex-nonstandard-decimals) ── Mirrors
-	// `nonstandard_decimals_assets` (migration 0093) in-process so the orchestrator can scale a
-	// window's raw VWAP by the correct 10^(base_decimals-quote_decimals) factor before publishing —
-	// see aggregate.AdjustPrice and docs/operations/runbooks/ dex.md. One blocking refresh here so the
-	// very first Tick (fired synchronously by orchestrator.Run, before this cache's own background
-	// loop gets a chance to run) isn't working from an empty snapshot.
+	// ─── Decimals-normalization lookup (dex-nonstandard-decimals) ──
+	// Mirrors `nonstandard_decimals_assets` in-process so the orchestrator can scale a window's raw
+	// VWAP by 10^(base_decimals-quote_decimals) before publishing (aggregate.AdjustPrice). One
+	// blocking refresh here so the first Tick, which runs synchronously before the cache's own
+	// background loop, does not work from an empty snapshot.
 	//
-	// FATAL on failure. The cache is fail-open by design, and that is right for a REFRESH: a blip
-	// leaves the last-good snapshot in place and one new offender's normalization phases in late. It
-	// is wrong at BOOT, where there is no last-good snapshot — an empty map makes Lookup answer
-	// "nothing is flagged" for EVERY confirmed offender, so the aggregator publishes each of their
-	// windows unnormalized, wrong by 10^(7-decimals), to prices_1m and onward to every price surface.
-	// A wrong published price is not a degraded service; it is a false statement about the market, and
-	// it propagates into continuous aggregates that outlive the outage. Refusing to start is
-	// recoverable and loud: systemd restarts, and the aggregator needs this same store for everything
-	// else anyway.
+	// FATAL on failure. The cache is fail-open for a REFRESH (the last-good snapshot stays), but at
+	// BOOT there is none: an empty map answers "nothing is flagged" for EVERY confirmed offender, so
+	// their windows would publish unnormalized (wrong by 10^(7-decimals)) into prices_1m and every
+	// continuous aggregate that outlives the outage. A wrong price is a false statement about the
+	// market, not a degraded service; refusing to start is recoverable and loud.
 	decimalsLookup := newDecimalsCache(store, logger.With("component", "decimals-cache"))
 	if err := decimalsLookup.Refresh(rootCtx); err != nil {
 		return fmt.Errorf("decimals-cache initial refresh (refusing to publish unnormalized VWAP): %w", err)
@@ -506,13 +449,9 @@ func run(cfgPath string, dryRun bool) error {
 			ConfidenceMaxFreeze:  cfg.Anomaly.Phase2.ConfidenceMaxFreeze,
 			ZScoreMinFreeze:      cfg.Anomaly.Phase2.ZScoreMinFreeze,
 			SourceCountMaxFreeze: cfg.Anomaly.Phase2.SourceCountMaxFreeze,
-			// Freeze lifecycle knobs (ADR-0019). Zero values fall
-			// through to the package defaults inside
-			// Policy.withDefaults, so an unset TOML
-			// block behaves identically to the default constants —
-			// but a SET knob must take effect, which is exactly why
-			// this mapping cannot be deferred (a config key that
-			// parses and does nothing is a dormant knob).
+			// Freeze lifecycle knobs (ADR-0019). Zero values fall through to the package defaults in
+			// Policy.withDefaults; a SET knob must take effect, since a config key that parses and
+			// does nothing is a dormant knob.
 			Lifecycle: freeze.Policy{
 				InitialHold:               time.Duration(cfg.Anomaly.Phase2.InitialHoldMinutes) * time.Minute,
 				UncorroboratedInitialHold: time.Duration(cfg.Anomaly.Phase2.UncorroboratedInitialHoldMinutes) * time.Minute,
@@ -544,11 +483,9 @@ func run(cfgPath string, dryRun bool) error {
 	})
 
 	// ─── Fallible startup constructors ───────────────────────────
-	// Built here, before the dry-run early-return, so a config that
-	// opens every connection above but can't construct one of these
-	// fails -dry-run instead of only surfacing at a real start:
-	// changesummary.New, the ClickHouse close-time reader, and the
-	// supply / cross-check refresher builders.
+	// Built before the dry-run early-return so a config that opens every connection above but
+	// cannot construct one of these (change-summary, close-time reader, supply / cross-check
+	// refreshers) fails -dry-run instead of surfacing only at a real start.
 	changeSummaryWorker, err := changesummary.New(
 		changeSummaryPriceSource{store: store},
 		changeSummarySink{store: store},
@@ -563,12 +500,10 @@ func run(cfgPath string, dryRun bool) error {
 	var supplyRefresherBindings []supplyRefresherBinding
 	var ccRefresher *supply.CrossCheckRefresher
 	if cfg.Supply.AggregatorRefreshEnabled {
-		// Close-time source for the snapshot ObservedAt: each refresh
-		// stamps the snapshot ledger's REAL close_time from the
-		// ClickHouse lake, never the wall-clock write-time. Required for the
-		// aggregator supply-refresh path — without an authoritative close-time
-		// source a re-derive would corrupt point-in-time supply queries, so we
-		// fail closed rather than silently fall back to time.Now().
+		// Each refresh stamps the snapshot's ObservedAt with the ledger's REAL close_time from the
+		// ClickHouse lake, never wall-clock write time. Without an authoritative close-time source
+		// a re-derive would corrupt point-in-time supply queries, so fail closed rather than fall
+		// back to time.Now().
 		if cfg.Storage.ClickHouseAddr == "" {
 			return errors.New("supply aggregator refresh requires storage.clickhouse_addr (source of the ledger close time stamped as snapshot ObservedAt) — set it or disable [supply] aggregator_refresh_enabled")
 		}
@@ -585,13 +520,9 @@ func run(cfgPath string, dryRun bool) error {
 			defer func() { _ = supplyCloseTimes.Close() }()
 			closeTimes = supplyCloseTimes
 		} else {
-			// Dial in the background: inline, a single ClickHouse blip
-			// would abort the whole aggregator's boot, and the outage
-			// this guards against is the same cold-boot race
-			// dialDecimalsResolver retries for — clickhouse-server
-			// loading metadata for minutes after a reboot. The
-			// supply-refresh tick that needs the reader waits for it;
-			// nothing else does.
+			// Dial in the background: inline, one ClickHouse blip would abort the aggregator's boot
+			// (the cold-boot race dialDecimalsResolver also retries, clickhouse-server loading
+			// metadata for minutes after a reboot). Only the supply-refresh tick waits for it.
 			lazy := newLazyCloseTimeReader(rootCtx, cfg.Storage.ClickHouseAddr, logger.With("component", "supply-refresh"), clickhouse.NewExplorerReader)
 			defer lazy.Close()
 			closeTimes = lazy
@@ -602,13 +533,9 @@ func run(cfgPath string, dryRun bool) error {
 			return fmt.Errorf("supply refresher init: %w", err)
 		}
 
-		// Cross-check refresher reads the snapshots the per-asset
-		// refreshers above produce and emits the
-		// supply_cross_check_divergence_stroops gauge so the
-		// supply.yml alert can fire on real divergence per
-		// ADR-0011. No-op when the ∩ of [supply].sac_wrappers and
-		// the watched-sets is empty (operator hasn't declared any
-		// classic ↔ SAC pairs).
+		// The cross-check refresher reads the per-asset snapshots above and emits the
+		// supply_cross_check_divergence_stroops gauge (ADR-0011). No-op when no classic <-> SAC
+		// pairs are declared in [supply].sac_wrappers and the watched sets.
 		ccRefresher, err = buildCrossCheckRefresher(cfg, store, logger.With("component", "supply-cross-check"))
 		if err != nil {
 			return fmt.Errorf("supply cross-check refresher init: %w", err)
@@ -621,25 +548,15 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Metrics HTTP endpoint ──────────────────────────────────
-	// Mirrors the indexer's pattern (cmd/stellarindex-indexer/
-	// main.go::startMetricsServer). Aggregator counters
-	// (stellarindex_aggregator_ticks_total, _vwap_writes_total,
-	// _empty_windows_total, _dropped_trades_total,
-	// _triangulations_total) register into internal/obs at package
-	// init; without a listener they were unreachable. Now Prometheus
-	// can scrape them and the aggregator-silent / outlier-storm /
-	// class-drop-spike alerts in deploy/monitoring/rules/aggregator.yml
-	// can actually fire.
+	// Aggregator counters register into internal/obs at package init and are unreachable without a
+	// listener; Prometheus must scrape them for the aggregator-silent / outlier-storm /
+	// class-drop-spike alerts in deploy/monitoring/rules/aggregator.yml to fire.
 	metricsSrv := startMetricsServer(cfg.Obs, store, logger)
 
 	// ─── Baseline refresh worker (ADR-0019 Phase 2) ─────────────
-	// Slow-cadence loop alongside the orchestrator: hourly pulls
-	// each pair's 30-day VWAP window from prices_1m, computes
-	// Median + MAD via internal/aggregate/baseline, and UPSERTs the
-	// row into volatility_baseline_1m. Outcomes go to Prometheus.
-	//
-	// Runs in its own goroutine so a slow refresh cycle never holds
-	// up orch.Run's tick.
+	// Hourly: pulls each pair's 30-day VWAP window from prices_1m, computes Median + MAD
+	// (internal/aggregate/baseline) and UPSERTs volatility_baseline_1m. Runs in its own goroutine so
+	// a slow refresh never holds up orch.Run's tick.
 	refresher := baseline.NewRefresher(
 		baselineSourceAdapter{store: store},
 		baselineSinkAdapter{store: store},
@@ -664,25 +581,18 @@ func run(cfgPath string, dryRun bool) error {
 	go func() {
 		defer worker.Recover(logger, "change-summary")
 		defer refresherWG.Done()
-		// Surface the exit reason like every sibling rollup worker
-		// below. Discarded, a change-summary worker that gave up — its
-		// own Run returns on a non-retryable error — would leave the
-		// explorer's delta strips frozen at their last values with
-		// nothing in the journal saying why. The rollup package
-		// carries no metrics of its own yet, so this log line is the
-		// only signal until one is added.
+		// Log the exit reason: a change-summary worker that gave up on a non-retryable error would
+		// leave the explorer's delta strips frozen with nothing in the journal saying why, and the
+		// rollup package has no metrics of its own.
 		if err := changeSummaryWorker.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("change-summary worker exited with error", "err", err)
 		}
 	}()
 
 	// ─── Protocol-events rollup worker ────────────────────
-	// Folds the trailing-24h per-source event census into the
-	// protocol_events_24h table (migration 0086) every couple of
-	// minutes so /v1/protocols' events_24h column reads a keyed-on-PK
-	// lookup instead of a ~17-table UNION count, which measured slow
-	// when cold. Always on (backs a core API
-	// read), like the change-summary + gap-detector workers.
+	// Folds the trailing-24h per-source event census into protocol_events_24h every couple of
+	// minutes, so /v1/protocols' events_24h is a keyed-on-PK lookup instead of a slow cold
+	// ~17-table UNION count. Always on (backs a core API read).
 	protoEventsRollup := protoeventsrollup.New(store, protoeventsrollup.Options{
 		Interval: protoeventsrollup.DefaultInterval,
 		Logger:   logger.With("component", "protocol-events-rollup"),
@@ -697,11 +607,9 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 
 	// ─── Asset-volume rollup worker ───────────────────────
-	// Folds the trailing-24h per-asset USD-volume SUM over prices_1m
-	// into the asset_volume_24h table (migration 0087) every couple of
-	// minutes so the /v1/assets listing reads a keyed-on-PK lookup
-	// instead of a per-request scan measured at ~256k rows. Always on
-	// (backs a core API read).
+	// Folds the trailing-24h per-asset USD-volume SUM over prices_1m into asset_volume_24h every
+	// couple of minutes, so /v1/assets is a keyed-on-PK lookup instead of a per-request scan of
+	// ~256k rows. Always on (backs a core API read).
 	assetVolRollup := assetvolrollup.New(store, assetvolrollup.Options{
 		Interval: assetvolrollup.DefaultInterval,
 		Logger:   logger.With("component", "asset-volume-rollup"),
@@ -716,15 +624,11 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 
 	// ─── Asset volume-character rollup worker (§2) ──────────────
-	// Folds the trailing-window all-asset account-structure roll over
-	// `trades` (each trade counted on BOTH sides, folded onto canonical
-	// assets) into asset_volume_character (migration 0149) so
-	// /v1/assets{,/{id}} read a keyed-on-PK lookup instead of the ~4s
-	// per-request trades roll (which tripped the 4s per-request timeout →
-	// null on busy assets). Always on (backs a core API
-	// read). Gated on store non-nil like its sibling rollups. Runs after
-	// the alias registry is installed (above), so its canonical fold
-	// matches the per-asset read.
+	// Folds the trailing-window account-structure roll over `trades` (each trade counted on BOTH
+	// sides, folded onto canonical assets) into asset_volume_character, so /v1/assets{,/{id}} read
+	// a keyed-on-PK lookup instead of a ~4s per-request roll that tripped the request timeout and
+	// returned null on busy assets. Always on. Runs after the alias registry is installed, so its
+	// canonical fold matches the per-asset read.
 	assetCharRollup := assetcharacterrollup.New(store, assetcharacterrollup.Options{
 		Interval:     assetcharacterrollup.DefaultInterval,
 		StartupDelay: assetcharacterrollup.DefaultStartupDelay,
@@ -740,18 +644,14 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 
 	// ─── Supply-snapshot refresh worker (ADR-0011) ────
-	// Operator-opted-in via cfg.Supply.AggregatorRefreshEnabled.
-	// When false (the default), the systemd-timer-driven path
-	// (deploy/systemd/supply-snapshot.timer) remains the
-	// operator's mechanism. When true, the goroutine path takes
-	// over and the systemd timer should be disabled.
+	// Opt-in via cfg.Supply.AggregatorRefreshEnabled. When false (the default) the systemd timer
+	// (deploy/systemd/supply-snapshot.timer) drives refresh; when true this goroutine path takes
+	// over and the timer should be disabled.
 	if cfg.Supply.AggregatorRefreshEnabled {
-		// SEP-41 supply rollup worker (migration 0085). Advances the
-		// per-contract mint/burn/clawback checkpoint the SEP41KindTotalsAtOrBefore fast path reads, so
-		// the per-asset SEP-41 refreshers below never re-sum a watched
-		// contract's full sep41_supply_events history each tick. Started
-		// first so its immediate fold warms the checkpoint. No-op when
-		// no SEP-41 contract is watched.
+		// SEP-41 supply rollup worker. Advances the per-contract mint/burn/clawback checkpoint the
+		// SEP41KindTotalsAtOrBefore fast path reads, so refreshers never re-sum a contract's full
+		// sep41_supply_events history each tick. Started first so its immediate fold warms the
+		// checkpoint. No-op when no SEP-41 contract is watched.
 		if len(cfg.Supply.WatchedSEP41Contracts) > 0 {
 			refresherWG.Add(1)
 			go func() {
@@ -785,16 +685,12 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Supply-divergence cross-check worker ───────────────────
-	// Compares OUR served circulating_supply against an external
-	// authoritative reference (Stellar Network Dashboard for XLM;
-	// CoinGecko when a Pro key is set) and emits
-	// stellarindex_supply_divergence_ratio + _total{outcome}. This
-	// automates the manual "is our supply right?" check — catching a
-	// stale SDF-reserve exclusion list — while degrading gracefully to
-	// `no_reference` (not a false alarm) when a reference is dark.
-	// Gated on [divergence.supply].enabled; reads whatever snapshots
-	// the supply pipeline (goroutine OR systemd-timer path) has
-	// written, so it lives OUTSIDE the aggregator_refresh_enabled gate.
+	// Compares OUR served circulating_supply against an external reference (Stellar Network
+	// Dashboard for XLM; CoinGecko when a Pro key is set) and emits
+	// stellarindex_supply_divergence_ratio + _total{outcome}, catching e.g. a stale SDF-reserve
+	// exclusion list. A dark reference degrades to `no_reference`, not a false alarm. Gated on
+	// [divergence.supply].enabled; it reads snapshots from either refresh path, so it lives OUTSIDE
+	// the aggregator_refresh_enabled gate.
 	supplyDivSvc, err := buildSupplyDivergenceService(cfg.Divergence.Supply, store,
 		logger.With("component", "supply-divergence"))
 	if err != nil {
@@ -824,13 +720,9 @@ func run(cfgPath string, dryRun bool) error {
 		}()
 	}
 
-	// Data-derived gap detector — scans soroban_events for
-	// contiguous ledger-coverage gaps >= 1000 ledgers every 5 min
-	// and emits the gauges that feed
-	// `stellarindex_ingest_gap_ledgers_significant` alert. Without
-	// it, a halted Soroban-events writer is discoverable only by
-	// checking the cursor inventory with manual SQL; with it, the
-	// halt pages.
+	// Data-derived gap detector: every 5 min scans soroban_events for ledger-coverage gaps of
+	// >= 1000 ledgers and emits the gauges behind `stellarindex_ingest_gap_ledgers_significant`, so
+	// a halted Soroban-events writer pages instead of needing manual SQL on the cursors.
 	refresherWG.Add(1)
 	go func() {
 		defer worker.Recover(logger, "gap-detector")
@@ -846,14 +738,11 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 
 	// ─── MEV detection worker (§7.20) ───────────────────────────
-	// Scans the recent served-row window every 5 min for MEV
-	// patterns — atomic arbitrage + wash trading from trades alone,
-	// liquidation cascades from blend_auctions × oracle_updates, and
-	// (when the lake is reachable) sandwich / oracle-sandwich, which
-	// need the intra-ledger tx application order that only the
-	// ClickHouse lake carries (stellar.tx_hash_index). Writes new
-	// events to mev_events for the explorer's /mev feed. Idempotent
-	// via the dedup key, so overlapping windows are safe.
+	// Every 5 min scans the recent served-row window for MEV patterns: arbitrage and wash trading
+	// from trades, liquidation cascades from blend_auctions x oracle_updates, and (when the lake is
+	// reachable) sandwich / oracle-sandwich, which need the intra-ledger tx order only the
+	// ClickHouse lake carries (stellar.tx_hash_index). Idempotent via the dedup key, so
+	// overlapping windows are safe.
 	mevCfg := mev.WorkerConfig{
 		Logger:   logger.With("component", "mev"),
 		Observer: mevObserver{},
@@ -862,12 +751,9 @@ func run(cfgPath string, dryRun bool) error {
 	}
 	mevWorker := mev.NewWorker(store, store, mevCfg)
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
-		// Inline and one-shot, a single tx-order dial failure would
-		// disable the sandwich/oracle_sandwich detectors for the process
-		// lifetime: the same cold-boot race dialDecimalsResolver handles
-		// for the decimals guard. Retry in the background instead and
-		// arm the detectors the moment the lake answers; everything else
-		// the worker does starts immediately, unaffected.
+		// A one-shot inline dial failure would disable the sandwich detectors for the process
+		// lifetime (the cold-boot race dialDecimalsResolver also handles). Retry in the background
+		// and arm them when the lake answers; the rest of the worker starts immediately.
 		refresherWG.Add(1)
 		go func() {
 			defer worker.Recover(logger, "mev-order-dial")
@@ -893,13 +779,9 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 
 	// ─── Decimals-normalization cache background refresh ───────────
-	// Keeps decimalsLookup (wired into orchestrator.Config.DecimalsLookup
-	// above) current with `nonstandard_decimals_assets` so a newly-
-	// confirmed offender's VWAP normalization phases in within one
-	// interval, and so a token's row being removed (should normalization
-	// ever need a manual correction) stops being applied just as
-	// promptly. Independent of — and does not gate — the decimals-guard
-	// detection sweep below.
+	// Keeps decimalsLookup current with `nonstandard_decimals_assets`, so a new offender's
+	// normalization phases in, and a removed row stops applying, within one interval. Independent
+	// of the decimals-guard detection sweep below.
 	refresherWG.Add(1)
 	go func() {
 		defer worker.Recover(logger, "decimals-cache")
@@ -908,23 +790,20 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 
 	// ─── Decimals-assumption guard ─
-	// The served price is Σ(quote)/Σ(base) on raw smallest-unit integers; per-asset
-	// decimals cancel only when base and quote share a scale. A non-7-decimal
-	// SEP-41 token with DEX liquidity silently skews every price on its pairs by
-	// 10^(7-decimals). This sweep resolves each recently traded Soroban token's
-	// decimals() from the lake and raises
-	// stellarindex_dex_trade_nonstandard_decimals_total when one is != 7. The sweep
-	// only detects; Writer persists into nonstandard_decimals_assets, which
-	// decimalsLookup (orchestrator.Config.DecimalsLookup) uses to normalize.
+	// The served price is Sum(quote)/Sum(base) on raw smallest-unit integers, so per-asset decimals
+	// cancel only when base and quote share a scale. A non-7-decimal SEP-41 token with DEX
+	// liquidity skews every price on its pairs by 10^(7-decimals). This sweep resolves each
+	// recently traded Soroban token's decimals() from the lake and raises
+	// stellarindex_dex_trade_nonstandard_decimals_total when one is != 7. It only detects; Writer
+	// persists into nonstandard_decimals_assets, which decimalsLookup uses to normalize.
 	//
-	// The lake dial must retry with backoff inside the guard's own goroutine, never
-	// a single inline dial at startup: after a reboot clickhouse-server spends
-	// minutes loading metadata and this unit's After= does not name it, so one
-	// failed dial would leave the aggregator unguarded until someone restarts it.
+	// The lake dial retries with backoff inside the guard's own goroutine, never one inline dial:
+	// after a reboot clickhouse-server spends minutes loading metadata and this unit's After= does
+	// not name it, so one failed dial would leave the aggregator unguarded until a restart.
 	//
 	// MarkEnabled seeds the sweep heartbeat before the dial and Backfill, so
-	// stellarindex_decimals_guard_sweep_stale measures a cold boot from now and a
-	// lake-less aggregator reads "disabled", not "stale".
+	// stellarindex_decimals_guard_sweep_stale measures a cold boot from now and a lake-less
+	// aggregator reads "disabled", not "stale".
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		decimalsguard.MarkEnabled(time.Now())
 		refresherWG.Add(1)
@@ -946,13 +825,9 @@ func run(cfgPath string, dryRun bool) error {
 				// turns detection into an actual stop-serving lever.
 				Writer: store,
 			})
-			// One-time startup self-seed: catches a non-7-decimal
-			// token that traded and then went DORMANT before the
-			// periodic sweep's short (20m) window ever saw it, which
-			// otherwise stays unseeded until an operator hand-inserts
-			// the row. Runs before Run's
-			// periodic loop starts; a failure here is logged and
-			// does not block the periodic sweep from starting.
+			// One-time startup self-seed: catches a non-7-decimal token that traded and went
+			// DORMANT before the periodic sweep's short (20m) window saw it. A failure is
+			// logged and does not block the periodic sweep.
 			if err := guard.Backfill(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Error("decimals-guard: startup backfill failed — a dormant nonstandard-decimals token may remain unseeded until the operator hand-seeds it per the runbook", "err", err)
 			}
@@ -965,15 +840,10 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Price-alert evaluator ─────────────────────────────────
-	// Off by default. When [price_alerts] enabled=true, sweeps the
-	// enabled price_alerts rows against the latest closed 1m VWAP each
-	// tick and enqueues ACCOUNT-scoped `price.alert` webhook deliveries
-	// (via ListWebhooksForAccount, not the global fan-out). Placed in
-	// this binary because price data is freshest here (it writes
-	// prices_1m) and the other webhook-fan-out producers (anomaly.freeze
-	// / divergence.firing) already live here. Delivery (HMAC-sign + POST)
-	// is the orthogonal internal/customerwebhook worker in the API
-	// binary — no change needed there.
+	// Off by default. When [price_alerts] enabled=true, each tick sweeps the enabled alert rows
+	// against the latest closed 1m VWAP and enqueues ACCOUNT-scoped `price.alert` deliveries (via
+	// ListWebhooksForAccount, not the global fan-out). Lives here because this binary writes
+	// prices_1m; delivery is the separate internal/customerwebhook worker in the API binary.
 	if cfg.PriceAlerts.Enabled {
 		paStore := postgresstore.New(store.DB())
 		paWorker := pricealerts.New(
@@ -1007,13 +877,10 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Priceless-popular coverage tripwire ────
-	// Sweeps the catalogue for assets that are popular by MARKET-CHARACTER
-	// volume (single-account-pair wash excluded) yet have NO served price
-	// and NO recorded withheld verdict — an unexplained pricing-coverage
-	// gap. Publishes stellarindex_assets_popular_priceless; the alert +
-	// runbook turn "an operator eventually notices USDC-quoted assets
-	// showing priceless on /assets" into a page. Always on (no config
-	// gate): a coverage regression must not depend on an opt-in flag.
+	// Sweeps for assets popular by MARKET-CHARACTER volume (single-account-pair wash excluded) that
+	// have NO served price and NO recorded withheld verdict, an unexplained coverage gap, and
+	// publishes stellarindex_assets_popular_priceless so it pages. Always on: a coverage
+	// regression must not depend on an opt-in flag.
 	pricelessOpts := pricelesscoverage.Options{
 		Interval: pricelesscoverage.DefaultInterval,
 		Logger:   logger.With("component", "priceless-coverage"),
@@ -1029,12 +896,9 @@ func run(cfgPath string, dryRun bool) error {
 	// is served under its classic asset. Resolve the one to the other from
 	// the lake so a wrapped classic asset is not ticketed as priceless.
 	//
-	// Inline and one-shot, a single dial failure would leave SAC
-	// candidates read as given for the process lifetime: the same
-	// cold-boot race dialDecimalsResolver handles for the decimals
-	// guard. Retry in the background instead and arm the alias
-	// resolution the moment the lake answers; the sweep itself starts
-	// immediately, unaffected.
+	// A one-shot inline dial failure would leave SAC candidates read as given for the process
+	// lifetime (the cold-boot race dialDecimalsResolver also handles). Retry in the background and
+	// arm alias resolution when the lake answers; the sweep itself starts immediately.
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		refresherWG.Add(1)
 		go func() {
@@ -1104,30 +968,16 @@ func releaseInstanceLock(l *timescale.InstanceLock, logger *slog.Logger) {
 	}
 }
 
-// supplyRefresherBinding pairs a [supply.Refresher] with the
-// asset_key that labels its outcome metrics. Per-asset binding
-// lets `stellarindex_aggregator_supply_refresh_total{asset_key,outcome}`
-// surface which watched asset is failing without operators
-// having to grep logs.
+// supplyRefresherBinding pairs a [supply.Refresher] with the asset_key labelling its outcome
+// metrics, so stellarindex_aggregator_supply_refresh_total shows which watched asset is failing.
 type supplyRefresherBinding struct {
 	refresher *supply.Refresher
 	assetKey  string
 }
 
-// buildSupplyRefreshers composes one [supply.Refresher] per
-// watched asset across all three algorithms:
-//
-//   - One XLMComputer-backed refresher (Algorithm 1, native XLM).
-//   - One ClassicComputer-backed refresher per entry in
-//     [supply] watched_classic_assets (Algorithm 2, classic
-//     credits), each bound via [supply.NewAssetBoundClassicComputer].
-//   - One SEP41Computer-backed refresher per entry in
-//     [supply] watched_sep41_contracts (Algorithm 3, SEP-41
-//     Soroban tokens), each bound via
-//     [supply.NewAssetBoundSEP41Computer].
-//
-// Returns an error on operator-config inconsistencies (per
-// [config.SupplyConfig.Validate] + per-asset parse errors).
+// buildSupplyRefreshers composes one [supply.Refresher] per watched asset: native XLM
+// (Algorithm 1), each watched_classic_assets entry (Algorithm 2) and each watched_sep41_contracts
+// entry (Algorithm 3). It errors on operator-config inconsistencies.
 func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, closeTimes ledgerCloseTimeReader, logger *slog.Logger) ([]supplyRefresherBinding, error) {
 	out := make([]supplyRefresherBinding, 0, 1+len(cfg.Supply.WatchedClassicAssets)+len(cfg.Supply.WatchedSEP41Contracts))
 
@@ -1152,24 +1002,15 @@ func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, closeTimes
 	return out, nil
 }
 
-// buildSupplyPolicy resolves the operator-configured
-// [config.SupplyConfig] per-asset locked-set / max-supply overrides
-// into a [supply.Policy] for the classic (Algorithm 2) and SEP-41
-// (Algorithm 3) computers; internal/supply.Policy implements the
-// overrides end to end, including its own Validate(). Runs
-// policy.Validate() so a malformed override
-// fails the aggregator at startup rather than mid-snapshot.
+// buildSupplyPolicy resolves the per-asset locked-set / max-supply overrides into a
+// [supply.Policy] for the classic and SEP-41 computers, and validates it so a malformed override
+// fails startup rather than mid-snapshot.
 //
-// Deliberately does NOT populate Policy.SDFReserveAccounts: that
-// field only feeds Algorithm 1 (native XLM), which buildXLMRefresher
-// wires independently via supply.NewXLMComputerForNetwork(
-// cfg.Stellar.Passphrase(), cfg.Supply.SDFReserveAccounts, …) — ClassicComputer/SEP41Computer never read
-// it (see internal/supply/classic.go, sep41.go), so setting it here
-// would be dead weight that misleads a future reader.
+// It deliberately leaves Policy.SDFReserveAccounts unset: only Algorithm 1 (native XLM) reads it,
+// and buildXLMRefresher wires that separately.
 //
-// Both maps are re-keyed onto supply.AssetKey form: the computers look
-// entries up by exact match, so the dash spelling watched_classic_assets
-// uses would otherwise load cleanly and never apply.
+// Both maps are re-keyed onto supply.AssetKey form: the computers match keys exactly, so the dash
+// spelling watched_classic_assets uses would otherwise load cleanly and never apply.
 func buildSupplyPolicy(cfg config.SupplyConfig) (supply.Policy, error) {
 	maxSupply, err := supply.CanonicalizePolicyKeys(cfg.MaxSupplyOverrides)
 	if err != nil {
@@ -1323,11 +1164,9 @@ func buildXLMRefresher(cfg config.Config, store *timescale.Store, closeTimes led
 	if err != nil {
 		return nil, "", fmt.Errorf("xlm computer: %w", err)
 	}
-	// assetKey must match supply.AssetKey's "XLM" form — the shape
-	// StaleComponentLedgersByAsset overrides and refresher snapshot
-	// lookups are keyed on — not the "native" AssetType literal. Returned
-	// to the caller so the metric-label binding and the internal
-	// registration can never drift apart.
+	// assetKey must be supply.AssetKey's "XLM" form (what StaleComponentLedgersByAsset overrides
+	// and snapshot lookups key on), not the "native" AssetType literal. It is returned so the
+	// metric label and the internal registration cannot drift apart.
 	assetKey, err := supply.AssetKey(canonical.NativeAsset())
 	if err != nil {
 		return nil, "", fmt.Errorf("derive asset_key for native XLM: %w", err)
@@ -1345,22 +1184,10 @@ func buildXLMRefresher(cfg config.Config, store *timescale.Store, closeTimes led
 	), assetKey, nil
 }
 
-// runSupplyRefresh ticks the supply refresher on `cadence`,
-// emitting per-(asset_key, outcome) Prometheus counters for each
-// cycle. Returns on ctx cancellation.
-//
-// Initial cycle runs immediately on startup so a fresh deployment
-// gets at least one snapshot in `asset_supply_history` before the
-// first cadence interval elapses.
-//
-// Per-tick logging happens inside [supply.Refresher.Tick]; the
-// goroutine just drives the loop and emits the outcome metric
-// labeled with the bound asset_key so operators can chart
-// per-asset bootstrap progress + isolate failure modes per asset.
-// sep41RollupAdvancer is the narrow seam runSEP41SupplyRollup drives —
-// *timescale.Store in production, a fake in the worker test. One method:
-// fold a contract's newly-settled supply events into its rollup
-// checkpoint.
+// runSupplyRefresh ticks the supply refresher on `cadence`, counting per-(asset_key, outcome).
+// The first cycle runs at startup so a fresh deployment has a snapshot before one interval elapses.
+// sep41RollupAdvancer is the narrow seam runSEP41SupplyRollup drives: *timescale.Store in
+// production, a fake in the worker test.
 type sep41RollupAdvancer interface {
 	AdvanceSEP41SupplyRollup(ctx context.Context, contractID string) (timescale.SEP41RollupAdvance, error)
 }
@@ -1384,18 +1211,13 @@ func sep41RollupOutcome(res timescale.SEP41RollupAdvance, err error) string {
 	return "ok"
 }
 
-// runSEP41SupplyRollup periodically folds each watched SEP-41 contract's
-// newly-settled mint/burn/clawback events into its rollup checkpoint
-// (migration 0085). Advancing the rollup is what
-// keeps the per-tick SEP-41 supply refresh cheap: the reader adds a
-// bounded live delta to the checkpoint instead of re-summing the
-// contract's whole `sep41_supply_events` history each refresh.
+// runSEP41SupplyRollup periodically folds each watched SEP-41 contract's newly-settled
+// mint/burn/clawback events into its rollup checkpoint, so the reader adds a bounded live delta
+// instead of re-summing the whole `sep41_supply_events` history each refresh.
 //
-// Contracts are advanced SEQUENTIALLY within a pass. This is
-// deliberate: a cold contract's first fold is a one-off full-history
-// sum, and running them one-at-a-time keeps those cold folds from
-// fanning out into concurrent full-table scans, which saturate
-// Postgres and blow up API p95/p99.
+// Contracts advance SEQUENTIALLY: a cold contract's first fold is a one-off full-history sum, and
+// fanning those out would run concurrent full-table scans that saturate Postgres and blow up API
+// p95/p99.
 func runSEP41SupplyRollup(ctx context.Context, advancer sep41RollupAdvancer, contracts []string, cadence time.Duration, logger *slog.Logger) {
 	// Contracts currently pinned by an absent projector cursor; WARN once on
 	// entering that state, not every cadence.
@@ -1442,11 +1264,8 @@ func runSEP41SupplyRollup(ctx context.Context, advancer sep41RollupAdvancer, con
 
 func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Duration, assetKey string) {
 	tick := func() {
-		// Time the full Tick — Postgres reads (ledger lookup +
-		// per-component freshness queries) + Postgres write
-		// (snapshot insert). Histogram is labelled by outcome
-		// only (not asset_key) to keep cardinality bounded
-		// across operator deployments that watch many assets.
+		// Times the full Tick (ledger lookup, freshness reads, snapshot insert). The histogram is
+		// labelled by outcome only, not asset_key, to bound cardinality when many assets are watched.
 		start := time.Now()
 		out := r.Tick(ctx)
 		obs.AggregatorSupplyRefreshTotal.WithLabelValues(assetKey, string(out.Kind)).Inc()
@@ -1474,54 +1293,34 @@ func runSupplyRefresh(ctx context.Context, r *supply.Refresher, cadence time.Dur
 	}
 }
 
-// ledgerCloseTimeReader resolves the lake's landed tip at or before a
-// requested ledger, and that tip's real on-chain close time. Satisfied
-// by *clickhouse.ExplorerReader.LatestLedgerAtOrBefore; the
-// authoritative every-ledger source is ClickHouse stellar.ledgers.
-// Interface (not the concrete type) so the refresher wiring stays
-// testable without a live lake. found=false means the lake holds no
-// row in the lookup's bounded window — the requested ledger and the
-// [maxSupplyLakeClampLedgers] below it, which is every position this
-// resolver would accept a snapshot at anyway.
+// ledgerCloseTimeReader resolves the lake's landed tip at or before a requested ledger and its
+// real on-chain close time (ClickHouse stellar.ledgers); an interface so wiring is testable
+// without a live lake. found=false means no row in the bounded window (the ledger and the
+// [maxSupplyLakeClampLedgers] below it), which covers every position the resolver would accept.
 type ledgerCloseTimeReader interface {
 	LatestLedgerAtOrBefore(ctx context.Context, maxSeq uint32) (uint32, time.Time, bool, error)
 }
 
-// supplyCursorLister is the ingestion-cursor half of
-// [supplyAggregatorLedgers], kept as an interface for the same reason
-// [ledgerCloseTimeReader] is: so ledger resolution is unit-testable
-// without Postgres. Satisfied by *timescale.Store. Mirrors
-// internal/ops/supply/supply.go::cursorReader.
+// supplyCursorLister is the ingestion-cursor half of [supplyAggregatorLedgers], an interface so
+// ledger resolution is unit-testable without Postgres. *timescale.Store satisfies it.
 type supplyCursorLister interface {
 	ListCursors(ctx context.Context) ([]timescale.Cursor, error)
 }
 
-// supplyChainCursorSource is the ingestion_cursors row that records how
-// far the LIVE indexer has walked the chain — cmd/stellarindex-indexer's
-// `cursorSource` constant. It is the one cursor whose value means "the
-// chain position the supply components were derived from"; every other
-// row in that table belongs to an ops job (backfill/<range>,
-// projector/<source>, census-backfill, projected-rebuild, gap-detector
-// high-water) and describes that job's own progress. Mirrors
-// internal/ops/supply/supply.go::chainCursorSource.
+// supplyChainCursorSource is the ingestion_cursors row recording how far the LIVE indexer has
+// walked the chain (the indexer's `cursorSource`). It alone means "the chain position the supply
+// components were derived from"; every other row describes an ops job's own progress.
 const supplyChainCursorSource = "ledgerstream"
 
-// maxSupplyLakeClampLedgers bounds how far the snapshot-ledger clamp may
-// walk back from the chain cursor to the lake's landed tip. The gap the
-// clamp exists to absorb is the dual-sink landing race — seconds, single
-// -digit ledgers. A gap beyond this bound is not a race, it is a stalled
-// lake (archivist down, CH sink wedged), and stamping a snapshot far
-// behind the chain would hide that stall — so resolution fails closed
-// exactly as it did before the clamp existed. 512 ledgers ≈ 45 min at
-// mainnet's ~5.3 s cadence: far above any landing race, far below a day.
-// Same value and rationale as
-// internal/ops/supply/supply.go::maxAutoSnapshotClampLedgers.
+// maxSupplyLakeClampLedgers bounds how far the snapshot-ledger clamp may walk back from the chain
+// cursor to the lake's landed tip. The clamp absorbs the dual-sink landing race (seconds, a
+// single-digit number of ledgers); a larger gap is a stalled lake, and stamping a snapshot far
+// behind the chain would hide it, so resolution fails closed. 512 ledgers is about 45 min at
+// mainnet cadence: far above any race, far below a day.
 //
-// It IS the lookup's own scan window, not a second copy of the number:
-// [clickhouse.ExplorerReader.LatestLedgerAtOrBefore] reads
-// [clickhouse.LatestLedgerLookbackLedgers] below the cursor and no further,
-// because a row this bound refuses is a row worth no ClickHouse read. The
-// two cannot drift, and widening one widens the other.
+// It IS the lookup's own scan window, not a second copy: [clickhouse.ExplorerReader] reads
+// [clickhouse.LatestLedgerLookbackLedgers] below the cursor and no further, since a row this
+// bound refuses is not worth a ClickHouse read. Widening one widens the other.
 const maxSupplyLakeClampLedgers = clickhouse.LatestLedgerLookbackLedgers
 
 // supplyAggregatorLedgers adapts the ingestion cursors + the lake to supply.LedgerLookup (same
@@ -1565,29 +1364,23 @@ func (a supplyAggregatorLedgers) LatestKnownLedger(ctx context.Context) (uint32,
 		return 0, time.Time{}, fmt.Errorf("stellar.ledgers has no row within %d ledgers below the %q cursor ledger %d — lake empty, gapped below the chain position, or a sink stalled further back than the clamp would accept; refusing to stamp the snapshot with wall-clock time", maxSupplyLakeClampLedgers, source, cursorLedger)
 	}
 	gap := cursorLedger - lakeLedger
-	// Publish the clamp before deciding on it, so the series carries
-	// the gap that produced a refusal as well as the ordinary lead. It
-	// reports gaps inside the lookup's window; a lake that falls out of
-	// the window entirely stops updating the gauge and refuses above
-	// instead, which is the same alerting condition one step later.
+	// Publish the gap before deciding on it, so the series carries the gap behind a refusal as
+	// well as the ordinary lead. A lake outside the lookup window stops updating the gauge and
+	// refuses above, the same alerting condition one step later.
 	obs.AggregatorSupplyLakeClampLedgers.Set(float64(gap))
-	// The production reader cannot return a row beyond the bound — it is
-	// the same constant as its scan window — so this is the resolver's own
-	// invariant over whatever [ledgerCloseTimeReader] it was handed, kept
-	// because stamping an unchecked row is the failure being prevented.
+	// The production reader cannot return a row beyond the bound (same constant as its scan
+	// window); this guards whatever [ledgerCloseTimeReader] it was handed, because stamping an
+	// unchecked row is the failure being prevented.
 	if gap > maxSupplyLakeClampLedgers {
 		return 0, time.Time{}, fmt.Errorf("lake tip %d trails the %q cursor %d by %d ledgers (> %d) — that is a stalled lake, not a landing race; refusing to stamp a snapshot that far behind the chain", lakeLedger, source, cursorLedger, gap, maxSupplyLakeClampLedgers)
 	}
 	return lakeLedger, closeTime, nil
 }
 
-// supplyChainCursorLedger picks the chain position a supply snapshot is
-// bounded by, and names the cursor it came from. Pure — unit-testable
-// without Postgres. Mirrors
-// internal/ops/supply/supply.go::autoSnapshotLedger; see step 1 on
-// [supplyAggregatorLedgers] for why the named cursor wins over
-// MAX(last_ledger). The MAX fallback names itself so the resolution
-// error an operator reads states that a job cursor supplied the bound.
+// supplyChainCursorLedger picks the chain position a snapshot is bounded by and names its cursor.
+// Pure, so unit-testable without Postgres. See step 1 on [supplyAggregatorLedgers] for why the
+// named cursor beats MAX(last_ledger); the MAX fallback names itself so an operator reading the
+// resolution error sees that a job cursor supplied the bound.
 func supplyChainCursorLedger(cursors []timescale.Cursor) (ledger uint32, source string) {
 	for _, c := range cursors {
 		if c.Source == supplyChainCursorSource {
@@ -1641,12 +1434,9 @@ func (a supplyAggregatorInserter) InsertSupply(ctx context.Context, snap supply.
 	return a.s.InsertSupply(ctx, snap)
 }
 
-// supplyAggregatorSEP41Store adapts *timescale.Store to
-// supply.SEP41SupplyStore by projecting the timescale
-// SEP41KindTotals row into the supply-package's identical-shape
-// type. Required because the supply package defines its own
-// type (avoiding a cyclic import — timescale already imports
-// supply for InsertSupply).
+// supplyAggregatorSEP41Store adapts *timescale.Store to supply.SEP41SupplyStore, projecting
+// SEP41KindTotals into the supply package's identical-shape type to avoid a cyclic import
+// (timescale already imports supply for InsertSupply).
 type supplyAggregatorSEP41Store struct{ s *timescale.Store }
 
 func (a supplyAggregatorSEP41Store) SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string, asOfLedger uint32) (supply.SEP41KindTotals, error) {
@@ -1677,15 +1467,9 @@ func (a supplyAggregatorSEP41Store) SEP41GenesisBaselineSeeded(ctx context.Conte
 	return a.s.SEP41GenesisBaselineSeeded(ctx, contractID)
 }
 
-// runBaselineRefresh ticks the baseline refresher on
-// [baselineRefreshCadence], emitting per-outcome Prometheus counters
-// for each cycle. Returns on rootCtx cancellation.
-//
-// Initial cycle runs immediately on startup so the
-// volatility_baseline_1m table is populated as fast as possible —
-// without this, a fresh deployment waits a full cadence interval
-// before the API can rely on baseline lookups for the confidence
-// score.
+// runBaselineRefresh ticks the baseline refresher on [baselineRefreshCadence], counting per-outcome.
+// The first cycle runs at startup so a fresh deployment does not wait a full interval before the
+// API can use baseline lookups for the confidence score.
 func runBaselineRefresh(ctx context.Context, r *baseline.Refresher, pairs []canonical.Pair, logger *slog.Logger) {
 	tick := func() {
 		started := time.Now()
@@ -1721,13 +1505,9 @@ func runBaselineRefresh(ctx context.Context, r *baseline.Refresher, pairs []cano
 	}
 }
 
-// baselineLookupAdapter wraps *timescale.Store to satisfy
-// orchestrator.BaselineSource — returns the cached MultiBaseline
-// for a pair plus its computed_at timestamp. Used by the per-tick
-// confidence-score step to read the baseline for z-score lookup.
-//
-// Returns the bare zero-value triple when the pair has no row;
-// the orchestrator's confidence step treats that as bootstrap.
+// baselineLookupAdapter wraps *timescale.Store to satisfy orchestrator.BaselineSource, returning a
+// pair's cached MultiBaseline and computed_at for the confidence z-score. A pair with no row yields
+// the zero-value triple, which the confidence step treats as bootstrap.
 type baselineLookupAdapter struct{ store *timescale.Store }
 
 func (a baselineLookupAdapter) LatestBaseline(ctx context.Context, pair canonical.Pair) (baseline.MultiBaseline, time.Time, error) {
@@ -1779,16 +1559,10 @@ type cursorGetter interface {
 // divergence observation insert.
 const divergenceLedgerTimeout = 2 * time.Second
 
-// divergenceLedgerAdapter satisfies timescale.LedgerProvider by
-// reading the live-ingest cursor (the same `ledgerstream` row
-// supplyChainCursorSource resolves from) so divergence_observations
-// rows carry a real observed_at_ledger; without a ledger provider,
-// NewDivergenceSink writes observed_at_ledger 0 on every row.
-//
-// Fails open to ledger 0 on any read error (timeout, cold-start
-// ErrNotFound) — the same "unknown" sentinel NewDivergenceSink's own
-// nil-provider default uses, so a transient cursor-read failure
-// degrades an insert rather than blocking it.
+// divergenceLedgerAdapter satisfies timescale.LedgerProvider from the live-ingest `ledgerstream`
+// cursor, so divergence_observations rows carry a real observed_at_ledger (without a provider the
+// sink writes 0). It fails open to 0, the sink's own "unknown" sentinel, on any read error, so a
+// transient cursor failure degrades an insert rather than blocking it.
 type divergenceLedgerAdapter struct{ cursors cursorGetter }
 
 func (a divergenceLedgerAdapter) LatestLedger() uint32 {
@@ -1801,25 +1575,13 @@ func (a divergenceLedgerAdapter) LatestLedger() uint32 {
 	return c.LastLedger
 }
 
-// resolveUSDPeggedSorobanAssets derives the Soroban SAC-wrapper
-// contracts that inherit a USD peg transitively from
-// `[trades].usd_pegged_classic_assets` via `[supply].sac_wrappers`
-// (SAC contract id → "CODE:ISSUER" or "CODE-ISSUER" asset key —
-// same two operator-declared inputs
-// internal/storage/timescale.NewUSDVolumeQuoteSpec already combines
-// to recognise a SAC-wrapped peg for trades.usd_volume at insert
-// time). No new operator-facing TOML knob: an operator who has
-// already declared a classic USD peg AND registered its SAC wrapper
-// (both already required for the supply cross-check + the ingest-time
-// usd_volume pipeline) gets the aggregator's min_usd_volume floor
-// applied to that SAC-quoted pair for free.
+// resolveUSDPeggedSorobanAssets derives the SAC-wrapper contracts that inherit a USD peg from
+// `[trades].usd_pegged_classic_assets` via `[supply].sac_wrappers` (SAC id -> classic asset key),
+// the same inputs NewUSDVolumeQuoteSpec combines at insert time, so the min_usd_volume floor applies
+// to SAC-quoted pairs with no extra knob.
 //
-// Soft-fails like config.TradesConfig.USDPeggedClassics: a
-// malformed classic-peg entry or a sac_wrappers value that doesn't
-// parse as a classic asset_key is skipped rather than aborting
-// startup — TradesConfig.validate() / SupplyConfig.Validate() at
-// config load already reject those shapes, so on a well-formed
-// config neither skip path fires.
+// It soft-fails like config.TradesConfig.USDPeggedClassics: malformed entries are skipped, not
+// fatal, since config validation already rejects those shapes.
 func resolveUSDPeggedSorobanAssets(classicPegRaws []string, sacWrappers map[string]string, logger *slog.Logger) []canonical.Asset {
 	if len(classicPegRaws) == 0 || len(sacWrappers) == 0 {
 		return nil
@@ -1865,18 +1627,11 @@ func defaultPairs() []canonical.Pair {
 		if err == nil {
 			bases = append(bases, ca)
 		}
-		// XLM has two on-the-wire identities: the abstract `crypto:XLM`
-		// ticker (off-chain CEX/FX trades report this form) and the
-		// Stellar-protocol `native` form (every on-chain DEX / SDEX
-		// trade is stored as native/<quote>). The aggregator publishes
-		// one VWAP per (base, quote) cache key; the API resolves the
-		// caller's asset literally, so a customer querying
-		// `?asset=native` won't see a `crypto:XLM` VWAP and vice versa.
-		// Including both ensures whichever form the customer uses lands
-		// on a populated cache key as long as ANY source publishes
-		// trades under that form. On r1 today only the native side has
-		// data (no CEX connectors enabled); a future deployment with
-		// Binance/Coinbase running will populate the abstract side too.
+		// XLM has two identities: the abstract `crypto:XLM` (off-chain CEX/FX trades) and `native`
+		// (every on-chain DEX / SDEX trade). One VWAP is published per (base, quote) cache key and
+		// the API resolves the caller's asset literally, so `?asset=native` would not see a
+		// `crypto:XLM` VWAP. Emit both so either form hits a populated key whenever any source
+		// publishes under it.
 		if c == "XLM" {
 			bases = append(bases, canonical.NativeAsset())
 		}
@@ -1897,24 +1652,14 @@ func defaultPairs() []canonical.Pair {
 	return out
 }
 
-// startMetricsServer mounts a /metrics + /healthz listener at
-// cfg.MetricsListen and returns the *http.Server so the caller can
-// orchestrate graceful shutdown. Empty MetricsListen disables the
-// listener and logs a warning — aggregator alert rules in
-// deploy/monitoring/rules/aggregator.yml expect these counters to
-// be scrapable, so a quiet aggregator with no listener is a
-// configuration mistake worth flagging.
+// startMetricsServer mounts a /metrics + /healthz listener at cfg.MetricsListen and returns the
+// server for graceful shutdown. An empty MetricsListen disables it with a warning, since the alert
+// rules in deploy/monitoring/rules/aggregator.yml need these counters scrapable.
 //
-// Single-host coexistence: the indexer also reads obs.metrics_listen
-// (default "127.0.0.1:9464"). If the operator hasn't set this field
-// in their config file at all — config.ObsConfig.MetricsListenSet is
-// false — we shift to "127.0.0.1:9465" automatically so a default single-host
-// deploy doesn't have one binary silently lose its metrics listener
-// to "address already in use." An operator who explicitly configures
-// obs.metrics_listen for the aggregator is honoured verbatim, even if
-// they pin it to the same address the indexer defaults to: the shift
-// applies only when the field was unset and still holds the indexer's
-// default.
+// Single-host coexistence: the indexer also defaults obs.metrics_listen to 127.0.0.1:9464. When the
+// field was never set (config.ObsConfig.MetricsListenSet false) and still holds that default, shift
+// to :9465 so one binary does not silently lose its listener to "address already in use". An
+// explicitly configured value is honoured verbatim, even if it equals the indexer's default.
 func startMetricsServer(cfg config.ObsConfig, schema v1.SchemaVersionReader, logger *slog.Logger) *http.Server {
 	if cfg.MetricsListen == "" {
 		logger.Warn("obs.metrics_listen is empty — /metrics endpoint disabled; aggregator-silent / outlier-storm / class-drop-spike alerts will not fire")
@@ -1988,17 +1733,10 @@ func divergenceRefreshCadence(a config.AggregateConfig) time.Duration {
 	return time.Duration(a.DivergenceMinIntervalSeconds)*time.Second + tick
 }
 
-// buildAnomalyChecker constructs an anomaly.Checker from
-// AnomalyConfig. Returns (nil, nil) when anomaly.enabled is false
-// — the orchestrator treats nil as "feature off" and publishes
-// every bucket without evaluation.
-//
-// Per-class threshold overrides merge over anomaly.DefaultThresholds
-// — an operator who only specifies the stablecoin row inherits
-// crypto/treasury/governance/default values from the package.
-//
-// Per-asset classifications are applied via Classifier overrides;
-// anything not in the map falls through to ClassDefault.
+// buildAnomalyChecker constructs an anomaly.Checker from AnomalyConfig, or (nil, nil) when disabled
+// (the orchestrator then publishes every bucket unevaluated). Per-class thresholds merge over
+// anomaly.DefaultThresholds, so specifying one class keeps the rest; assets absent from the
+// classification overrides fall through to ClassDefault.
 func buildAnomalyChecker(cfg config.AnomalyConfig) (*anomaly.Checker, error) {
 	if !cfg.Enabled {
 		return nil, nil
@@ -2025,20 +1763,13 @@ func buildAnomalyChecker(cfg config.AnomalyConfig) (*anomaly.Checker, error) {
 	return anomaly.NewChecker(thresholds, classifier)
 }
 
-// buildTriangulations resolves the operator-supplied triangulation
-// rows into orchestrator.TriangulationChain values, validating each
-// chain's structure (chainable legs, endpoints match target). An
-// invalid chain fails-loud at startup rather than silently emitting
-// missing-leg metrics in production.
+// buildTriangulations resolves the configured rows into validated orchestrator.TriangulationChain
+// values (chainable legs, endpoints match target); an invalid chain fails startup rather than
+// emitting missing-leg metrics in production.
 //
-// The aggregate.triangulation_enabled master switch is honoured here:
-// when false, return a nil slice so the orchestrator's
-// `len(cfg.Triangulations) == 0` short-circuit skips the triangulation
-// tick entirely regardless of how many rows the operator left in the
-// aggregate.triangulations table. Validation still runs first (so a
-// malformed row is caught even when the switch is off — operators
-// who fix the typo and flip the switch on shouldn't get a delayed
-// surprise).
+// When aggregate.triangulation_enabled is false it returns nil so the orchestrator skips the
+// triangulation tick. Validation still runs first, so a malformed row is caught even with the
+// switch off instead of surprising the operator when it is flipped on.
 func buildTriangulations(cfg config.AggregateConfig) ([]orchestrator.TriangulationChain, error) {
 	resolved, err := cfg.AggregatorTriangulations()
 	if err != nil {
@@ -2078,15 +1809,9 @@ func buildCompositeReference(cfg config.AggregateConfig) (orchestrator.Composite
 	}, nil
 }
 
-// buildCrossCheckRefresher composes the periodic supply-cross-check
-// emitter from the operator's `[supply]` config: pairs come from
-// [crossCheckPairs], snapshots from timescale's LatestSupply, and
-// gauges/counters from obs.
-//
-// Returns (nil, nil) when no pair survives the watched-set
-// intersection, so an operator who hasn't configured both sides of a
-// wrapper gets no startup error — but every skipped classic wrapper is
-// logged at Warn by [crossCheckPairs], never dropped silently.
+// buildCrossCheckRefresher composes the periodic supply-cross-check emitter from `[supply]`. It
+// returns (nil, nil) when no pair survives the watched-set intersection; every skipped classic
+// wrapper is logged at Warn by [crossCheckPairs], never dropped silently.
 func buildCrossCheckRefresher(cfg config.Config, store *timescale.Store, logger *slog.Logger) (*supply.CrossCheckRefresher, error) {
 	pairs, err := crossCheckPairs(cfg.Supply, cfg.Stellar.Passphrase(), logger)
 	if err != nil || len(pairs) == 0 {
@@ -2110,19 +1835,13 @@ func buildCrossCheckRefresher(cfg config.Config, store *timescale.Store, logger 
 // crossCheckPairs derives one [supply.CrossCheckPair] per `sac_wrappers` entry whose classic asset
 // is in `watched_classic_assets` AND whose contract is in `watched_sep41_contracts`.
 //
-//   - Both sides of the watched-classic lookup go through the same
-//     [crossCheckClassicKey] normaliser, so a "CODE-ISSUER" wrapper
-//     value matches the "CODE:ISSUER" snapshot key instead of silently
-//     disabling the check (the failure
-//     [supply.CanonicalizeWatchedClassic] documents).
-//   - The contract id must be the classic asset's derived SAC on the
-//     configured network. That discharges [supply.CrossCheck]'s
-//     same-asset precondition, and a SAC always carries its classic
-//     asset's 7 decimals — which is what makes the absolute 1-stroop
-//     [supply.CrossCheckTolerance] meaningful. A mismatch is a startup
-//     error: the comparison would be between unrelated tokens.
-//   - WrapClass is [supply.WrapClassFull] for `fully_wrapped_sacs`,
-//     else the safe default [supply.WrapClassPartial].
+//   - Both watched-classic lookups use [crossCheckClassicKey], so a "CODE-ISSUER" wrapper value
+//     matches the "CODE:ISSUER" snapshot key instead of silently disabling the check.
+//   - The contract id must be the classic asset's derived SAC on the configured network. That
+//     discharges [supply.CrossCheck]'s same-asset precondition, and a SAC always carries 7
+//     decimals, which makes the absolute 1-stroop [supply.CrossCheckTolerance] meaningful. A
+//     mismatch is a startup error: the comparison would be between unrelated tokens.
+//   - WrapClass is [supply.WrapClassFull] for `fully_wrapped_sacs`, else [supply.WrapClassPartial].
 //
 // Pure SEP-41 self-maps (contract → contract) have no classic side and are skipped. Output is
 // ordered by SAC id so the logs are stable.
@@ -2167,11 +1886,9 @@ func crossCheckPairs(sc config.SupplyConfig, passphrase string, logger *slog.Log
 	return pairs, nil
 }
 
-// crossCheckPairFor derives sacID's [supply.CrossCheckPair] from its
-// sac_wrappers value raw, or skip=true for the reasons [crossCheckPairs]
-// continues past an entry instead of returning it: a pure SEP-41 self-map
-// (no classic side), or an entry missing from one of the watched sets
-// (logged at Warn so it isn't silently disabled).
+// crossCheckPairFor derives sacID's [supply.CrossCheckPair] from its sac_wrappers value, or
+// skip=true for a pure SEP-41 self-map (no classic side) or an entry missing from a watched set
+// (logged at Warn so it is not silently disabled).
 func crossCheckPairFor(sacID, raw string, watchedClassic, watchedSEP41, fullyWrapped map[string]struct{}, passphrase string, logger *slog.Logger) (pair supply.CrossCheckPair, skip bool, err error) {
 	classicKey, asset, err := crossCheckClassicKey(raw)
 	if errors.Is(err, errNoClassicSide) {
@@ -2226,11 +1943,9 @@ func crossCheckClassicKey(raw string) (string, canonical.Asset, error) {
 	return k, a, nil
 }
 
-// runCrossCheckRefresh ticks the cross-check refresher on `cadence`,
-// returning on ctx cancellation. Initial cycle runs immediately so a
-// fresh deployment surfaces the per-pair `outcome=missing_snapshot`
-// metric on first scrape (operators see "the cross-checker is
-// running but has nothing to compare yet" rather than silence).
+// runCrossCheckRefresh ticks the cross-check refresher on `cadence`. The first cycle runs at
+// startup so a fresh deployment shows `outcome=missing_snapshot` on first scrape instead of
+// silence.
 func runCrossCheckRefresh(ctx context.Context, r *supply.CrossCheckRefresher, cadence time.Duration) {
 	tick := func() { _ = r.Tick(ctx) }
 	tick()
@@ -2340,10 +2055,8 @@ func buildSupplyDivergenceReferences(cfg config.DivergenceSupplyConfig) []diverg
 // moves slowly, so a slow cadence keeps external-quota pressure minimal.
 const supplyDivergenceRefreshInterval = 15 * time.Minute
 
-// runSupplyDivergenceRefresh ticks the supply cross-check on interval,
-// returning on ctx cancellation. The first cycle runs immediately so a
-// fresh deployment surfaces the outcome metric on the first scrape
-// (operators see "the checker is running" rather than silence).
+// runSupplyDivergenceRefresh ticks the supply cross-check on interval. The first cycle runs at
+// startup so the outcome metric appears on the first scrape instead of silence.
 func runSupplyDivergenceRefresh(ctx context.Context, svc *divergence.SupplyService, interval time.Duration) {
 	svc.Tick(ctx)
 	ticker := time.NewTicker(interval)
@@ -2358,11 +2071,9 @@ func runSupplyDivergenceRefresh(ctx context.Context, svc *divergence.SupplyServi
 	}
 }
 
-// divergenceServedSupplyReader adapts *timescale.Store to
-// divergence.ServedSupplyReader, mapping timescale's ErrNotFound onto
-// divergence.ErrNoServedSupply so the service reads the bootstrap state
-// (no snapshot yet) as `refresh_error`, distinct from a real read
-// failure.
+// divergenceServedSupplyReader adapts *timescale.Store to divergence.ServedSupplyReader, mapping
+// ErrNotFound onto divergence.ErrNoServedSupply so the bootstrap state (no snapshot yet) is
+// distinct from a real read failure.
 type divergenceServedSupplyReader struct{ s *timescale.Store }
 
 func (a divergenceServedSupplyReader) LatestCirculatingSupply(ctx context.Context, assetKey string) (divergence.ServedSupply, error) {
@@ -2398,15 +2109,11 @@ func (obsSupplyDivergenceEmitter) Duration(kind divergence.SupplyOutcomeKind, se
 	obs.SupplyDivergenceDurationSeconds.WithLabelValues(string(kind)).Observe(seconds)
 }
 
-// buildDivergenceReferences is the sole divergence reference builder:
-// the CoinGecko + Chainlink HTTP clients plus the on-chain oracle
-// references (Reflector/Redstone/Band, reading our own served
-// oracle_updates rows) the `divergence.Service` runs on each tick. The
-// API binary builds a cache-reading Service with no References.
-//
-// cgKeys are the external CoinGecko poller's keys; the price reference
-// authenticates with them. oracles may be nil (no Postgres) — the on-chain
-// references are skipped with a warning when any is enabled.
+// buildDivergenceReferences is the sole divergence reference builder: the CoinGecko and Chainlink
+// clients plus the on-chain oracle references (reading our own served oracle_updates rows). The API
+// binary builds a cache-reading Service with no References. cgKeys are the CoinGecko poller's keys,
+// which the price reference authenticates with. oracles may be nil (no Postgres), in which case the
+// on-chain references are skipped with a warning.
 func buildDivergenceReferences(cfg config.DivergenceConfig, cgKeys config.CoinGeckoVenueConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
 	var refs []divergence.Reference
 
@@ -2445,19 +2152,14 @@ func buildDivergenceReferences(cfg config.DivergenceConfig, cgKeys config.CoinGe
 	return appendSyntheticCrossReference(refs, logger)
 }
 
-// appendSyntheticCrossReference derives the USD-cross reference from
-// the ALREADY-GATED reference set — no config conditional of its own
-// (a new gate is a new way for a feature to silently not exist). It
-// exists whenever its ingredients do: at least one USD-quoted oracle leg (reflector-cex / chainlink /
-// redstone / band — deliberately NOT CoinGecko, which is the one
-// existing DIRECT reference for non-USD-fiat pairs; using it as a leg
-// would correlate the synthetic with the only source it is meant to
-// corroborate) and the reflector-fx fiat leg.
+// appendSyntheticCrossReference derives the USD-cross reference from the ALREADY-GATED reference
+// set, with no config gate of its own (a new gate is a new way for a feature to silently not
+// exist). It exists whenever its ingredients do: a USD-quoted oracle leg (reflector-cex, chainlink,
+// redstone, band; deliberately NOT CoinGecko, the one existing DIRECT reference for non-USD-fiat
+// pairs, which would correlate the synthetic with the source it corroborates) and a fiat leg.
 //
-// Purpose: gives EUR/GBP-quoted pairs a second reference
-// so SuccessCount reaches the divergence trust floor and the
-// corroborated-release gate can auto-release genuine repricings
-// unattended instead of paging an operator per freeze.
+// It gives EUR/GBP-quoted pairs a second reference so SuccessCount reaches the divergence trust
+// floor and the corroborated-release gate can auto-release genuine repricings unattended.
 func appendSyntheticCrossReference(refs []divergence.Reference, logger *slog.Logger) []divergence.Reference {
 	byName := make(map[string]divergence.Reference, len(refs))
 	for _, r := range refs {
@@ -2472,16 +2174,11 @@ func appendSyntheticCrossReference(refs []divergence.Reference, logger *slog.Log
 		}
 		return out
 	}
-	// Chainlink serves BOTH legs: its FeedMap carries crypto/USD feeds
-	// (base leg) and direct fiat/USD feeds (r1 configures
-	// fiat:EUR/fiat:USD + fiat:GBP/fiat:USD) — the reference routes by
-	// pair, answering only what its FeedMap lists, so membership in both
-	// leg sets cannot double-answer one leg. In the FX legs it is the
-	// FALLBACK after reflector-fx (on-chain rows we already index; no
-	// extra RPC) and the only proven GBP/USD source — reflector-fx's
-	// mainnet GBP coverage is unconfirmed, so without chainlink here
-	// XLM/GBP would stay single-reference, the case behind two of the
-	// three freezes that motivated this feature.
+	// Chainlink serves BOTH legs: its FeedMap carries crypto/USD feeds (base leg) and direct
+	// fiat/USD feeds. It routes by pair and answers only what its FeedMap lists, so membership in
+	// both leg sets cannot double-answer one leg. In the FX legs it is the FALLBACK after
+	// reflector-fx (on-chain rows we already index, no extra RPC) and the only proven GBP/USD
+	// source; without it XLM/GBP would stay single-reference.
 	usdLegs := pick(
 		divergence.OracleSourceReflectorCEX,
 		divergence.ChainlinkSourceName,
@@ -2506,10 +2203,8 @@ func appendSyntheticCrossReference(refs []divergence.Reference, logger *slog.Log
 	return append(refs, syn)
 }
 
-// buildOracleDivergenceReferences constructs the on-chain oracle
-// reference set (reflector-dex/cex/fx + redstone + band) per the
-// `[divergence.{reflector,redstone,band}]` gates. Split from
-// buildDivergenceReferences to stay under the funlen ceiling.
+// buildOracleDivergenceReferences constructs the on-chain oracle reference set (reflector
+// dex/cex/fx, redstone, band) per the `[divergence.*]` gates. Split out to stay under funlen.
 func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
 	anyEnabled := cfg.Reflector.Enabled || cfg.Redstone.Enabled || cfg.Band.Enabled
 	if oracles == nil {
@@ -2544,34 +2239,26 @@ func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles diverg
 	return refs
 }
 
-// mevObserver adapts the MEV worker's per-run outcomes to the
-// Prometheus metrics (paired counter + duration histogram, plus the
-// new-events counter), matching the divergence_refresh /
-// supply_refresh observability shape.
-// priceAlertVWAPStore is the storage seam priceAlertVWAPReader needs:
-// the latest closed bucket plus the guard's trailing baseline.
-// *timescale.Store satisfies it; the interface keeps the reader
-// unit-testable without a database.
+// mevObserver adapts the MEV worker's per-run outcomes to Prometheus (counter, duration histogram
+// and new-events counter).
+// priceAlertVWAPStore is the storage seam priceAlertVWAPReader needs (latest closed bucket plus the
+// guard's trailing baseline), kept an interface so the reader is unit-testable without a database.
 type priceAlertVWAPStore interface {
 	LatestClosedVWAP1mForPair(ctx context.Context, p canonical.Pair) (timescale.Vwap1mRow, error)
 	RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair, limit int) ([]timescale.Vwap1mRow, error)
 }
 
-// priceAlertVWAPReader adapts the timescale store to
-// pricealerts.PriceReader. LatestClosedVWAP1mForPair combines both
-// stored pair orientations; sql.ErrNoRows (no closed bucket in scope)
-// maps to ok=false, nil — a benign no-op the evaluator skips rather than
-// a failure. The Vwap1mRow.Bucket is the START of the 1-minute window;
-// the close time reported to the payload is +1 minute.
+// priceAlertVWAPReader adapts the timescale store to pricealerts.PriceReader. The latest-bucket
+// query combines both stored pair orientations; sql.ErrNoRows maps to ok=false, a benign no-op
+// rather than a failure. Vwap1mRow.Bucket is the START of the 1-minute window, so the reported
+// close time is +1 minute.
 type priceAlertVWAPReader struct {
 	store  priceAlertVWAPStore
 	logger *slog.Logger
 	gate   pricingguard.Gate // zero → withholds nothing
-	// decimals resolves a confirmed non-7dp scale the same way /v1/price
-	// does ([aggregate.ResolveDecimals]) so an alert threshold — set from
-	// the corrected price — is compared against a correspondingly
-	// corrected observation. nil → every leg is StandardDecimals (7),
-	// the overwhelming common case and the zero value existing tests use.
+	// decimals resolves a confirmed non-7dp scale as /v1/price does ([aggregate.ResolveDecimals]),
+	// so a threshold set from the corrected price is compared against a corrected observation.
+	// nil means every leg is StandardDecimals (7).
 	decimals aggregate.DecimalsLookup
 }
 
@@ -2579,12 +2266,11 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 	if _, err := canonical.NewPair(base, quote); err != nil {
 		return "", time.Time{}, false, err
 	}
-	// Walk every spelling of both legs, literal pair first and SAC forms
-	// last (canonical.AssetAliases owns the order), as /v1/price does:
-	// `native`/fiat:USD has no rows of its own because its market is
-	// recorded under crypto:XLM, so a literal-only read never fires. The
-	// first spelling with a closed bucket answers; a read error ends the
-	// walk rather than falling through to a thinner spelling.
+	// Walk every spelling of both legs, literal pair first and SAC forms last
+	// (canonical.AssetAliases owns the order), as /v1/price does: `native`/fiat:USD has no rows of
+	// its own because its market is recorded under crypto:XLM, so a literal-only read never fires.
+	// The first spelling with a closed bucket answers; a read error ends the walk rather than
+	// falling through to a thinner spelling.
 	for _, b := range canonical.AssetAliases(base) {
 		for _, q := range canonical.AssetAliases(quote) {
 			pair, err := canonical.NewPair(b, q)
@@ -2598,26 +2284,18 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 			if err != nil {
 				return "", time.Time{}, false, err
 			}
-			// Price-withholding chokepoint ([pricing_guard]), the same
-			// expression the API binary serves under: an alert must never
-			// fire off a thin market or a directory-scam-flagged issuer
-			// on EITHER leg. Withheld → ok=false, the benign no-op, and
-			// sticky: no other spelling is tried. The gate is
-			// alias-invariant (the scam gate canonicalises each leg, the
-			// substance gate reads every alias), so the requested pair's
-			// verdict is every spelling's.
+			// Price-withholding chokepoint ([pricing_guard]), the expression the API serves under: an
+			// alert must never fire off a thin market or a scam-flagged issuer on EITHER leg.
+			// Withheld means ok=false and sticky (no other spelling is tried); the gate is
+			// alias-invariant, so the requested pair's verdict is every spelling's.
 			if r.gate.PriceWithheld(ctx, base, quote, "price_alert") {
 				return "", time.Time{}, false, nil
 			}
-			// Same serving-sanity guard as the API raw-bucket paths: the
-			// bare closed bucket bypasses the orchestrator's σ-outlier /
-			// min-volume / freeze filters, so a fat-finger print would
-			// fire a SPURIOUS alert. The guard serves last-known-good off
-			// the trailing baseline of the pair actually read and is
-			// byte-identical on a healthy bucket. An unvalidated bucket (no
-			// trailing baseline) is the guard's fail-open case; an alert
-			// has no stale flag to carry that doubt, so it does not fire,
-			// sticky like the withholding gate above.
+			// Same serving-sanity guard as the API raw-bucket paths: a bare closed bucket bypasses the
+			// orchestrator's outlier / min-volume / freeze filters, so a fat-finger print would fire a
+			// SPURIOUS alert. The guard serves last-known-good off the pair's trailing baseline and is
+			// byte-identical on a healthy bucket. An unvalidated bucket is the guard's fail-open case;
+			// an alert has no stale flag to carry that doubt, so it does not fire (sticky).
 			served, lowConfidence, _ := pricingguard.GuardServedVWAP1mConfidence(ctx, r.store, r.logger, pair, row)
 			if lowConfidence {
 				return "", time.Time{}, false, nil
@@ -2630,11 +2308,9 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 
 // adjustServed applies the /v1/price decimals correction to a guarded bucket.
 func (r priceAlertVWAPReader) adjustServed(b, q canonical.Asset, served timescale.Vwap1mRow) (string, time.Time, bool, error) {
-	// The guard's VWAP is the raw quote/base CAGG ratio, exactly
-	// as /v1/price's normalizeRawPriceSnapshot reads it before
-	// AdjustPrice. Apply the same correction here: the customer's
-	// threshold was set from the corrected /v1/price value, so an
-	// uncorrected comparison is wrong by the pair's decimals skew.
+	// The guard's VWAP is the raw quote/base CAGG ratio, as /v1/price reads it before AdjustPrice.
+	// Apply the same correction: the threshold was set from the corrected value, so an uncorrected
+	// comparison is wrong by the pair's decimals skew.
 	baseDec := aggregate.ResolveDecimals(r.decimals, b)
 	quoteDec := aggregate.ResolveDecimals(r.decimals, q)
 	adjusted, err := adjustDecimalString(served.VWAP, baseDec, quoteDec)
@@ -2644,14 +2320,11 @@ func (r priceAlertVWAPReader) adjustServed(b, q canonical.Asset, served timescal
 	return adjusted, served.Bucket.Add(time.Minute), true, nil
 }
 
-// adjustDecimalString scales a raw decimal-string quote/base ratio by the
-// decimals correction factor and renders the result as an exact decimal
-// string. The factor ([aggregate.DecimalsAdjustment]) is always an exact
-// power of ten, so scaling a finite decimal by it only shifts the decimal
-// point — it can never lose or invent a digit, unlike a fixed-width
-// FloatString(10) render, which truncates any corrected price below
-// 1e-10 to "0" (a positive price must never reach the alert comparator,
-// or a customer, as zero).
+// adjustDecimalString scales a raw decimal-string quote/base ratio by the decimals correction
+// factor and renders an exact decimal string. The factor ([aggregate.DecimalsAdjustment]) is an
+// exact power of ten, so scaling only shifts the decimal point and never loses a digit, unlike a
+// fixed-width FloatString(10), which truncates a corrected price below 1e-10 to "0" (a positive
+// price must never reach the alert comparator as zero).
 func adjustDecimalString(raw string, baseDecimals, quoteDecimals int) (string, error) {
 	if baseDecimals == quoteDecimals {
 		return raw, nil
@@ -2679,12 +2352,10 @@ func decimalFractionDigits(s string) int {
 	return len(s) - i - 1
 }
 
-// buildAggregatorSubstanceGate maps [pricing_guard] onto the shared
-// pricingguard substance policy for this binary's customer webhooks
-// (price alerts, anomaly.freeze, divergence.firing). Mirrors cmd/stellarindex-api's buildSubstanceGate (the
-// conversion itself is shared via SubstancePolicyFromValues so the two
-// can't drift). Returns nil — a valid allow-everything gate — when the
-// operator disabled it.
+// buildAggregatorSubstanceGate maps [pricing_guard] onto the shared substance policy for this
+// binary's customer webhooks (price alerts, anomaly.freeze, divergence.firing), mirroring the API's
+// gate via SubstancePolicyFromValues so the two cannot drift. It returns nil, a valid
+// allow-everything gate, when the operator disabled it.
 func buildAggregatorSubstanceGate(cfg config.PricingGuardConfig, store *timescale.Store, logger *slog.Logger) *pricingguard.SubstanceGate {
 	if cfg.DisableSubstanceGate {
 		logger.Warn("pricing_guard: substance gate DISABLED by config — customer webhooks publish every pair regardless of trailing market substance")
@@ -2727,15 +2398,11 @@ func canonicalSACName(name string) (string, bool) {
 	return asset.String(), true
 }
 
-// Decimals-resolver dial backoff. Overridden by the tests that exercise
-// [dialDecimalsResolver]; production takes these.
+// Decimals-resolver dial backoff, overridden by the [dialDecimalsResolver] tests.
 //
-// The floor is short because the failure this exists for is a COLD
-// ClickHouse loading metadata after a reboot — minutes, not hours — and
-// arming the guard promptly is the whole point. The ceiling keeps a
-// genuinely down lake from becoming a dial loop: at five minutes a retry
-// costs nothing and still re-arms the guard well inside one sweep
-// interval of the lake coming back.
+// The floor is short because the failure is a COLD ClickHouse loading metadata after a reboot
+// (minutes), and arming the guard promptly is the point. The ceiling keeps a genuinely down lake
+// from becoming a dial loop while still re-arming well inside one sweep interval of recovery.
 var (
 	decimalsResolverRetryMin = 15 * time.Second
 	decimalsResolverRetryMax = 5 * time.Minute
@@ -2744,19 +2411,16 @@ var (
 // dialDecimalsResolver opens the lake reader the decimals-assumption guard needs, retrying with
 // exponential backoff until it succeeds or ctx is done. ok is false only on shutdown.
 //
-// Retrying rather than giving up is the correctness property. The guard is what turns a
-// newly-listed non-7-decimal SEP-41 token into a nonstandard_decimals_assets row, and without that
-// row aggregate.AdjustPrice applies no correction: every served price on that token's pairs is
-// skewed by 10^(7-decimals), with no other alarm and no way to tell "the guard found nothing" from
-// "the guard never ran". A dial that fails once at boot — the EXPECTED outcome of a reboot, since
-// clickhouse-server spends minutes loading metadata for the 150B-row lake while this unit's
-// ordering does not wait for it — must therefore delay the guard, not retire it for the process
-// lifetime.
+// Retrying rather than giving up is the correctness property. The guard turns a newly-listed
+// non-7-decimal SEP-41 token into a nonstandard_decimals_assets row; without it
+// aggregate.AdjustPrice applies no correction and every served price on that token's pairs is
+// skewed by 10^(7-decimals), with no way to tell "found nothing" from "never ran". A dial that
+// fails once at boot (expected after a reboot, since clickhouse-server spends minutes loading
+// metadata and this unit's ordering does not wait) must delay the guard, not retire it.
 //
-// Failures are logged at Warn on the FIRST attempt and thereafter only once the backoff has reached
-// its ceiling, so a persistent outage costs one line per [decimalsResolverRetryMax] rather than a
-// flood, while a transient one is still visible at the moment it happens. Arming after a retry logs
-// too — an operator reading the log must be able to see the guard come up, not just see it fail.
+// Failures log at Warn on the FIRST attempt and then only once backoff reaches its ceiling, so an
+// outage costs one line per [decimalsResolverRetryMax]. Arming after a retry logs too, so an
+// operator can see the guard come up.
 func dialDecimalsResolver(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -2768,14 +2432,11 @@ func dialDecimalsResolver(
 		"decimals-guard: ClickHouse decimals resolver reached — non-7-decimal DEX-token detection armed")
 }
 
-// dialLakeReaderWithRetry is the backoff loop behind every best-effort
-// ClickHouse-lake reader: the decimals resolver above, the MEV tx-order
-// resolver, the priceless-coverage SAC resolver and the supply close-time
-// reader ([lazyCloseTimeReader]). The cold-boot race — clickhouse-server
-// spending minutes loading metadata for the 150B-row lake while the unit's After= ordering does not wait for it —
-// applies equally to every reader dialled against the same ClickHouse, so
-// "retry until it answers or shutdown" is the shared correctness property,
-// not something specific to the decimals guard.
+// dialLakeReaderWithRetry is the backoff loop behind every best-effort ClickHouse-lake reader
+// (decimals resolver, MEV tx-order resolver, priceless-coverage SAC resolver, supply close-time
+// reader). The cold-boot race (clickhouse-server loading metadata for minutes while the unit's
+// After= ordering does not wait) hits every such reader, so "retry until it answers or shutdown"
+// is the shared correctness property.
 func dialLakeReaderWithRetry[T any](
 	ctx context.Context,
 	logger *slog.Logger,
@@ -2814,13 +2475,10 @@ func dialLakeReaderWithRetry[T any](
 	}
 }
 
-// lazyCloseTimeReader implements [ledgerCloseTimeReader] by dialing the
-// ClickHouse lake in its own goroutine with [dialLakeReaderWithRetry]
-// so a transient outage at boot delays the supply refresher's
-// snapshot-ObservedAt stamping instead of aborting the aggregator, mirroring
-// how [dialDecimalsResolver] arms the decimals guard. A refresh tick that
-// runs before the dial succeeds blocks on [ready] rather than reading a nil
-// reader or a stale one-shot failure.
+// lazyCloseTimeReader implements [ledgerCloseTimeReader] by dialing the lake in its own goroutine
+// with [dialLakeReaderWithRetry], so a boot-time outage delays snapshot-ObservedAt stamping instead
+// of aborting the aggregator. A refresh tick that runs before the dial succeeds blocks on [ready]
+// rather than reading a nil reader or a stale one-shot failure.
 type lazyCloseTimeReader struct {
 	ready  chan struct{}
 	reader *clickhouse.ExplorerReader
@@ -2859,12 +2517,9 @@ func (r *lazyCloseTimeReader) LatestLedgerAtOrBefore(ctx context.Context, maxSeq
 	return r.reader.LatestLedgerAtOrBefore(ctx, maxSeq)
 }
 
-// Close releases the reader if the dial had already settled. It does NOT
-// block waiting for an in-flight dial: run()'s other deferred calls include
-// the rootCtx cancel that stops the retry loop, and defer order is LIFO, so
-// blocking here on a dial that only rootCtx's (not-yet-run) cancel can end
-// would deadlock a non-signal error return. A dial still in flight is
-// reclaimed with the exiting process.
+// Close releases the reader if the dial had already settled. It must not wait for an in-flight
+// dial: defers run LIFO, so the rootCtx cancel that stops the retry loop may not have run yet, and
+// blocking here would deadlock a non-signal error return. An in-flight dial dies with the process.
 func (r *lazyCloseTimeReader) Close() {
 	select {
 	case <-r.ready:

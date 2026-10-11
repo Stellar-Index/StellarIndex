@@ -4,13 +4,12 @@
 //	              → per-source decoders → canonical.Trade /
 //	                canonical.OracleUpdate → TimescaleDB
 //
-// This is the single production code path (docs/architecture/ingest-pipeline.md):
-// no stellar-rpc client, no per-source goroutines. One goroutine drives
-// ledgerstream + dispatcher; a second drains the resulting consumer.Events
-// to Timescale. That second goroutine is deliberately unguarded: a recover()
-// would be cosmetic (persistWorker panics end the process anyway) and would
-// leave /healthz answering with a frozen cursor. Crashing lets systemd
-// restart from the last cursor.
+// This is the single production code path (docs/architecture/ingest-pipeline.md): no stellar-rpc
+// client, no per-source goroutines. One goroutine drives ledgerstream + dispatcher; a second
+// drains the resulting consumer.Events to Timescale. That second goroutine is deliberately
+// unguarded: a recover() would be cosmetic (persistWorker panics end the process anyway) and
+// would leave /healthz answering with a frozen cursor; crashing lets systemd restart from the
+// last cursor.
 //
 // Flags: -config PATH (required), -dry-run (load config, open connections,
 // validate, exit), -verify-hashdb-from N / -verify-hashdb-to N (one hashdb
@@ -74,11 +73,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// errLedgerstreamPanic marks a fatal error that began life as a panic in
-// the ledgerstream producer goroutine. It exists so the exit is
-// distinguishable in the journal from an ordinary stream error — the
-// remediation differs (a panic needs a code fix; a stream error usually
-// needs MinIO back).
+// errLedgerstreamPanic marks a fatal error that began as a panic in the ledgerstream producer
+// goroutine, so the journal distinguishes it from an ordinary stream error: a panic needs a code
+// fix, a stream error usually needs MinIO back.
 var errLedgerstreamPanic = errors.New("ledgerstream producer panicked")
 
 // cursorSource is the single `source` label stored in the
@@ -96,19 +93,14 @@ func main() {
 }
 
 func realMain() int {
-	// Wrap fd 2 with a line-filter BEFORE any aws-sdk-go-v2 code
-	// captures os.Stderr (config.LoadDefaultConfig binds the
-	// default logger at that point). Drops the per-S3-GET
-	// "Response has no supported checksum" WARN that floods
-	// journald when MinIO is the backend — every GetObjectInput
-	// in go-stellar-sdk's datastore/s3.go hardcodes ChecksumMode:
-	// Enabled, so an env-var opt-out would be a no-op for
-	// our use. Fail-soft: any pipe/dup2 error logs to the original
-	// stderr and startup continues with unfiltered output.
+	// Wrap fd 2 with a line-filter BEFORE any aws-sdk-go-v2 code captures os.Stderr
+	// (config.LoadDefaultConfig binds the default logger then). It drops the per-S3-GET "Response
+	// has no supported checksum" WARN that floods journald on MinIO; the SDK hardcodes
+	// ChecksumMode: Enabled, so an env-var opt-out would be a no-op. Fail-soft: a pipe/dup2 error
+	// logs to the original stderr and startup continues unfiltered.
 	//
-	// The flush MUST run before the process exits or short-lived
-	// runs (e.g. -version, -dry-run failure path) lose buffered
-	// output — see SilenceSDKChecksumWarnings.
+	// The flush MUST run before exit or short-lived runs (-version, -dry-run failure) lose
+	// buffered output; see SilenceSDKChecksumWarnings.
 	flush := pipeline.SilenceSDKChecksumWarnings()
 	defer flush()
 
@@ -154,16 +146,12 @@ func realMain() int {
 	return 0
 }
 
-// verifyHashDBRangeFlags holds the -verify-hashdb-from/-to flag pair. The
-// zero value means "not requested" (the ordinary ingest path runs
-// unchanged).
+// verifyHashDBRangeFlags holds the -verify-hashdb-from/-to flag pair; the zero value means "not
+// requested" and ordinary ingest runs unchanged.
 //
-// hashDBVerifySweep's window is a strict trailing window off the indexer's
-// own live tip, recomputed every tick by startHashDBVerifier's ticker, so it
-// cannot verify or bootstrap an older range that has already scrolled out
-// of it short of deleting the hashdb file and losing the tamper-evidence
-// baseline. This flag pair, plus runVerifyHashDBRange and hashDBVerifyPass,
-// is the entry point for such a range.
+// hashDBVerifySweep only covers a trailing window off the live tip, so it cannot verify or
+// bootstrap an older range that has scrolled out of it without deleting the hashdb file and
+// losing the tamper-evidence baseline. This flag pair is the entry point for such a range.
 type verifyHashDBRangeFlags struct {
 	from, to uint
 }
@@ -184,11 +172,9 @@ func (f verifyHashDBRangeFlags) validate() (from, to uint32, requested bool, err
 	return uint32(f.from), uint32(f.to), true, nil
 }
 
-// runVerifyHashDBRange loads cfgPath and runs one bounded hashdb verify
-// pass over the operator-supplied [from, to] range against the archive
-// bucket (pipeline.LedgerstreamConfig's historical-reads config — the same
-// one the ordinary catch-up path uses for ledger < the live seam), then
-// returns. It does not start ingestion.
+// runVerifyHashDBRange loads cfgPath and runs one bounded hashdb verify pass over the
+// operator-supplied [from, to] range against the archive bucket (the historical-reads config the
+// catch-up path uses below the live seam), then returns. It does not start ingestion.
 func runVerifyHashDBRange(ctx context.Context, cfgPath string, from, to uint32) error {
 	cfg, err := config.LoadWithEnv(cfgPath)
 	if err != nil {
@@ -273,17 +259,12 @@ func run(cfgPath string, dryRun bool) error {
 	defer cancel()
 	logger.Info("storage connected")
 
-	// USD-volume quote spec — wires on-chain DEX trades into
-	// usd_volume population.
-	// Operator declares which classic credits they trust as
-	// USD-pegged in `[trades].usd_pegged_classic_assets`; SAC
-	// wrappers come transitively via `[supply.sac_wrappers]`. Empty
-	// list → spec stays nil → off-chain-only behaviour preserved.
+	// USD-volume quote spec: wires on-chain DEX trades into usd_volume. The operator declares
+	// which classic credits count as USD-pegged in `[trades].usd_pegged_classic_assets`; SAC
+	// wrappers come transitively via `[supply.sac_wrappers]`. An empty list leaves the spec nil.
 	//
-	// Both tiers install together via [timescale.InstallUSDVolumeResolution]
-	// — see its docstring for why this is one call and not two (the
-	// separate-call form can drift, and a store missing the resolvers does
-	// not merely skip usd_volume, it can overwrite good values with NULL).
+	// Both tiers install together via [timescale.InstallUSDVolumeResolution]: a store missing the
+	// resolvers does not merely skip usd_volume, it can overwrite good values with NULL.
 	if err := timescale.InstallUSDVolumeResolution(
 		store,
 		cfg.Trades.USDPeggedClassicAssets,
@@ -299,21 +280,19 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Dispatcher + decoders ─────────────────────────────────
-	// Soroswap pair registry: load from postgres so the decoder
-	// boots with every previously-seen pair, and arm a live-upsert
-	// hook so factory new_pair events persist as they stream. Empty
-	// registry on a fresh deployment is fine — operators run
-	// `stellarindex-ops seed-soroswap-pairs` once to bootstrap.
+	// Soroswap pair registry: load from postgres so the decoder boots with every previously-seen
+	// pair, and arm a live-upsert hook so factory new_pair events persist as they stream. An
+	// empty registry on a fresh deployment is fine; `stellarindex-ops seed-soroswap-pairs`
+	// bootstraps it.
 	soroswapOpts, err := pipeline.SoroswapPersistenceOptions(rootCtx, store, logger, rootCtx)
 	if err != nil {
 		return fmt.Errorf("soroswap registry: %w", err)
 	}
-	// Factory-anchored gated decoders (blend, …): warm each one's
-	// contractid.Registry from protocol_contracts and arm a live-upsert
-	// hook so factory creation events persist as they stream (ADR-0035).
-	// Empty registry on a fresh deployment is fine — operators run
-	// `stellarindex-ops seed-protocol-contracts -source <name>` once to
-	// bootstrap. withHook=true: this is the writer path.
+	// Factory-anchored gated decoders (blend, ...): warm each contractid.Registry from
+	// protocol_contracts and arm a live-upsert hook so factory creation events persist as they
+	// stream (ADR-0035). An empty registry on a fresh deployment is fine;
+	// `stellarindex-ops seed-protocol-contracts -source <name>` bootstraps it. withHook=true:
+	// this is the writer path.
 	gatedOpts, err := pipeline.GatedRegistryOptions(rootCtx, store, logger, rootCtx, true)
 	if err != nil {
 		return fmt.Errorf("gated registries: %w", err)
@@ -329,12 +308,9 @@ func run(cfgPath string, dryRun bool) error {
 	disp.SetLogger(logger)
 
 	// ─── Supply observers (opt-in via [supply] watched-sets) ──────
-	// Wires accounts (Algorithm 1, XLM),
-	// trustlines / claimable / liquidity_pools / sac_balances
-	// (Algorithm 2 LCM-based components), and sep41_supply
-	// (Algorithm 3 event-stream). Empty watched-set per observer
-	// leaves it unregistered → no behaviour change for deployments
-	// that haven't opted in.
+	// Wires accounts (Algorithm 1, XLM), trustlines / claimable / liquidity_pools / sac_balances
+	// (Algorithm 2, LCM-based) and sep41_supply (Algorithm 3, event stream). An empty watched-set
+	// leaves that observer unregistered.
 	supplyObservers, err := pipeline.RegisterSupplyEntryDecoders(disp, cfg.Supply, cfg.Metadata)
 	if err != nil {
 		return fmt.Errorf("supply observers (entry): %w", err)
@@ -353,23 +329,18 @@ func run(cfgPath string, dryRun bool) error {
 			"sac_wrappers", len(cfg.Supply.SACWrappers),
 			"watched_sep41_contracts", len(cfg.Supply.WatchedSEP41Contracts))
 	} else {
-		// A silently absent supply pipeline is easy to miss. When every
-		// [supply] watched-set is empty no observer registers, the
-		// supply-derived fields on /v1/assets/{id} stay null forever,
-		// asset_supply_history stays empty, and the only signal is "the table has
-		// zero rows when someone finally checks." Surface it loudly
-		// at boot so an operator who forgot to populate the watched-
-		// sets sees it the next time they tail the indexer log.
+		// An absent supply pipeline is silent: with every [supply] watched-set empty no observer
+		// registers, supply fields on /v1/assets/{id} stay null and asset_supply_history stays
+		// empty. Warn at boot so an operator who forgot the watched-sets sees it in the log.
 		logger.Warn("supply pipeline is OFF — no [supply] watched-sets configured",
 			"hint", "set sdf_reserve_accounts (Algorithm 1 XLM), watched_classic_assets (Algorithm 2), and/or watched_sep41_contracts (Algorithm 3) in your TOML to enable; see ADR-0011/0021/0022/0023",
 			"effect", "asset_supply_history will not populate; F2 fields (market_cap_usd, fdv_usd, circulating_supply, total_supply, max_supply) on /v1/assets/{id} will be null for every asset")
 	}
 
-	// The account observer is registered iff its watch set is non-empty —
-	// the exact condition pipeline.RegisterSupplyEntryDecoders gates on.
-	// When it's live, the per-ledger loop advances the account observer's
-	// freshness watermark; when it isn't, we
-	// must NOT advance a watermark for an observer that isn't running.
+	// The account observer is registered iff its watch set is non-empty, the exact condition
+	// pipeline.RegisterSupplyEntryDecoders gates on. The per-ledger loop advances its freshness
+	// watermark only when it is live: a watermark must NOT advance for an observer that isn't
+	// running.
 	accountObserverActive := len(pipeline.AccountObserverWatchSet(cfg.Supply, cfg.Metadata)) > 0
 
 	// ─── Starting ledger + dry-run exit ────────────────────────
@@ -387,31 +358,23 @@ func run(cfgPath string, dryRun bool) error {
 		return nil
 	}
 
-	// Resilience-ping goroutine. Probes the *sql.DB pool every
-	// 60 s and emits `stellarindex_postgres_ping_total` +
-	// `stellarindex_postgres_ping_failure_streak`. This is the
-	// observability signal for dead conns lingering in the pool
-	// after Postgres recovers; the actual reconnect path is the pool's
-	// `PoolConnMaxLifetime` safety-net, which forces a re-dial
-	// every 30 min regardless of liveness. The two together
-	// cap a cascade-gap at the lifetime interval AND surface it
-	// to alerting in minutes.
+	// Resilience-ping goroutine: probes the *sql.DB pool every 60 s and emits
+	// `stellarindex_postgres_ping_total` + `stellarindex_postgres_ping_failure_streak`. It is the
+	// signal for dead conns lingering after Postgres recovers; the reconnect itself is the pool's
+	// `PoolConnMaxLifetime` safety net (re-dial every 30 min). Together they cap a cascade gap at
+	// the lifetime interval and surface it to alerting in minutes.
 	postgresPingStop, postgresPingDone := watchPostgresPing(rootCtx, store, logger.With("component", "postgres-ping"))
 	defer func() {
 		postgresPingStop()
 		<-postgresPingDone
 	}()
 
-	// ─── Router attribution sweeper (migration 0025 Phase B) ────
-	// Periodically tags recent same-tx soroswap `trades` rows with
-	// routed_via='soroswap-router' by joining against
-	// soroswap_router_swaps. A trailing-window sweep (not an inline
-	// UPDATE at router-persist time) because the pair-level trades
-	// are written by the projector, which races the dispatcher's
-	// router-call persist — see internal/pipeline/routedvia.go.
-	// Gated on the router source being enabled: without its decoder
-	// no new soroswap_router_swaps rows appear, so there is nothing
-	// to sweep.
+	// ─── Router attribution sweeper ────
+	// Periodically tags recent same-tx soroswap `trades` rows with routed_via='soroswap-router' by
+	// joining soroswap_router_swaps. It is a trailing-window sweep, not an inline UPDATE at
+	// router-persist time, because the projector writes the pair-level trades and races the
+	// dispatcher's router-call persist (internal/pipeline/routedvia.go). Gated on the router
+	// source being enabled; without its decoder there is nothing to sweep.
 	if routerEnabled(cfg.Ingestion.EnabledSources) {
 		routedViaStop, routedViaDone := startRoutedViaTagger(rootCtx, store, logger.With("component", "routed-via-tagger"))
 		defer func() {
@@ -452,11 +415,9 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── Decoder-stats periodic flush ────────────────────────────
-	// Snapshots dispatcher.Stats() every 5 min and writes per-source
-	// deltas to the decoder_stats_5m hypertable. Powers
-	// /v1/diagnostics/decoders + the explorer /diagnostics page.
-	// See migrations/0020 + Phase 2 of the explorer implementation
-	// plan.
+	// Snapshots dispatcher.Stats() every 5 min and writes per-source deltas to the
+	// decoder_stats_5m hypertable, which powers /v1/diagnostics/decoders and the explorer
+	// /diagnostics page.
 	decoderStatsFlusher := statsflush.New(disp, store,
 		logger.With("component", "decoder-stats-flush"),
 		statsflush.Options{Interval: 5 * time.Minute})
@@ -464,14 +425,11 @@ func run(cfgPath string, dryRun bool) error {
 	decoderStatsDone := make(chan struct{})
 	go func() {
 		defer close(decoderStatsDone)
-		// RECOVER. This flusher writes decoder_stats_5m, a
-		// diagnostics rollup no ingest path reads; the dispatcher keeps
-		// its counters in memory either way, so a missed flush costs a
-		// 5-minute row and nothing else. Letting its panic kill the
-		// process would trade every source's ingest for a stats table.
-		// Without the guard the death is also invisible: the deferred
-		// close(decoderStatsDone) still fires, so main's shutdown wait
-		// reads a panicked flusher as a cleanly-finished one.
+		// RECOVER. This flusher writes decoder_stats_5m, a diagnostics rollup no ingest path
+		// reads, and the dispatcher keeps its counters in memory either way, so a missed flush
+		// costs one 5-minute row. A panic must not kill every source's ingest for a stats table,
+		// and unguarded it would be invisible: the deferred close(decoderStatsDone) still fires,
+		// so shutdown reads a panicked flusher as cleanly finished.
 		defer worker.Recover(logger, "decoder-stats-flush")
 		_ = decoderStatsFlusher.Run(decoderStatsCtx)
 	}()
@@ -481,15 +439,11 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 
 	// ─── SEP-41 auto-discovery sink ──────────────────────────────
-	// Buffers Hits to a channel; a worker goroutine drains them to
-	// timescale.Store.RecordDiscovered. The dispatcher's Push call
-	// is non-blocking — repeated (contract_id, event_type) pairs are
-	// deduplicated in-process before enqueue (the recorder upserts on
-	// the same key, so re-enqueue is wasted work). If the buffer
-	// still fills (Postgres outage, cold-start burst), Hits drop and
-	// increment DroppedCount; the seen-mark rolls back so a later
-	// Push for the same key retries. Operators alert on a sustained
-	// drop climb. See internal/canonical/discovery/sink.go.
+	// Buffers Hits to a channel drained by a worker into timescale.Store.RecordDiscovered. The
+	// dispatcher's Push is non-blocking, and repeated (contract_id, event_type) pairs are
+	// deduplicated before enqueue (the recorder upserts on the same key). If the buffer still
+	// fills (Postgres outage, cold-start burst), Hits drop and increment DroppedCount; the
+	// seen-mark rolls back so a later Push for the same key retries. Alert on a sustained climb.
 	discoverySink := discovery.NewAsyncSink(discoveryRecorderAdapter{s: store}, discovery.AsyncSinkOptions{
 		BufferSize:    1024,
 		RecordTimeout: 2 * time.Second,
@@ -513,14 +467,9 @@ func run(cfgPath string, dryRun bool) error {
 	logger.Info("discovery sink wired", "buffer_size", 1024)
 
 	// ─── Soroban-events raw-event landing zone (ADR-0029) ────────
-	// Every Soroban contract event the dispatcher routes is also
-	// captured to the `soroban_events` hypertable. Additive — does
-	// not replace per-source decoders (trades, oracle_updates,
-	// blend_auctions, cctp_events, rozo_events, sep41_supply_events,
-	// ...). Unblocks future per-source decoder backfills: they
-	// become SQL `INSERT ... SELECT FROM soroban_events` queries
-	// rather than hours of MinIO re-walking. See
-	// internal/sources/sorobanevents + migration 0041.
+	// Every Soroban contract event the dispatcher routes is also captured to the `soroban_events`
+	// hypertable. It is additive and does not replace per-source decoders; it lets per-source
+	// backfills run as SQL `INSERT ... SELECT FROM soroban_events` instead of re-walking MinIO.
 	rawEventSink := sorobanevents.NewAsyncSink(store, sorobanevents.AsyncSinkOptions{
 		IsPermanentFault: timescale.IsPermanentDataError,
 		BufferSize:       4096,
@@ -536,22 +485,15 @@ func run(cfgPath string, dryRun bool) error {
 		rawEventMetricsStop()
 		<-rawEventMetricsDone
 	}()
-	// Ctx-cancel safety net (see backfill.go for rationale):
-	// PushEvent blocks under back-pressure, but the dispatcher hot
-	// path has no ctx awareness, so an unbounded postgres stall
-	// could pin the streaming loop past SIGTERM. Watch rootCtx and
-	// Stop the sink early so blocked producers unblock and the
-	// dispatcher can honour cancellation. The deferred Stop below
-	// is idempotent and will still run for the success path.
+	// Ctx-cancel safety net: PushEvent blocks under back-pressure but the dispatcher hot path has
+	// no ctx awareness, so an unbounded postgres stall could pin the streaming loop past SIGTERM.
+	// Watch rootCtx and Stop the sink early so blocked producers unblock. The deferred Stop below
+	// is idempotent and still runs on the success path.
 	go func() {
-		// RECOVER. This goroutine only unblocks producers early
-		// at shutdown; the deferred Stop below repeats the same call on
-		// every path and AsyncSink.Stop is sync.Once-guarded, so losing
-		// this one costs nothing the defer does not redo. Crashing here
-		// would be actively worse than useless: a panic in a non-main
-		// goroutine terminates the process WITHOUT running main's
-		// defers, so the sink drain this goroutine exists to enable
-		// would not happen at all.
+		// RECOVER. This goroutine only unblocks producers early; the deferred Stop repeats the
+		// call on every path (AsyncSink.Stop is sync.Once-guarded), so losing it costs nothing.
+		// A panic in a non-main goroutine would terminate the process WITHOUT running main's
+		// defers, so the sink drain would not happen at all.
 		defer worker.Recover(logger, "soroban-events-stop-watch")
 		<-rootCtx.Done()
 		rawEventSink.Stop()
@@ -578,19 +520,11 @@ func run(cfgPath string, dryRun bool) error {
 		"buffer_size", 4096, "batch_size", 1000)
 
 	// ─── ClickHouse real-time dual-sink (ADR-0041) ─────────
-	// When enabled, each ledger's structural extract is pushed to ClickHouse
-	// inline (non-blocking), keeping the Tier-1 lake within ~seconds of the
-	// chain for the real-time block explorer — vs the ~10-min ch-live-catchup
-	// timer (which stays as the completeness backstop for anything this sink
-	// drops under CH pressure). ON since ADR-0041. The sink itself never
-	// blocks ingest — including its own dial: a ClickHouse that is not
-	// answering YET at boot (the expected shape of a cold reboot — the same
-	// race startSignerTagger's docstring describes) must delay the sink, not
-	// take the whole indexer down over an inline mirror that already has a
-	// completeness backstop. Dialling inline here would turn a single
-	// failure into a fatal boot error, so a host whose ClickHouse was still
-	// loading metadata after a shared reboot could not ingest a single
-	// ledger until an operator noticed and restarted it.
+	// Each ledger's structural extract is pushed to ClickHouse inline (non-blocking), keeping the
+	// lake within seconds of the chain; the ~10-min ch-live-catchup timer stays as the
+	// completeness backstop for anything this sink drops under CH pressure. The sink never blocks
+	// ingest, including its own dial: a ClickHouse not answering YET after a cold reboot must
+	// delay the sink, not make the indexer fail boot over a mirror that already has a backstop.
 	// chLiveSink.Load() is nil until the dial succeeds.
 	var chLiveSink atomic.Pointer[clickhouse.LiveSink]
 	if cfg.Storage.ClickHouseLiveSink {
@@ -615,17 +549,13 @@ func run(cfgPath string, dryRun bool) error {
 	metricsSrv := startMetricsServer(cfg.Obs, store, logger)
 
 	// ─── Sink goroutine ────────────────────────────────────────
-	// Sink mode depends on the projector config (ADR-0032). See
-	// pipeline.SinkModeForProjector for the full truth table:
-	//   - projector disabled → SinkModeAll: events-goroutine writes
-	//     everything (only writer).
-	//   - projector enabled, persist_per_source=true → SinkModeSkipSoleWriter:
-	//     Phase-3 parallel for un-promoted sources, but the projector
-	//     owns the SoleWriter specs (pipeline/source_spec.go) outright.
-	//   - projector enabled, persist_per_source=false → SinkModeSkipProjected:
-	//     Phase-4, projector is sole writer for all projected sources.
-	// Non-Soroban events (sdex, external, band, supply observers)
-	// always ride this path regardless of mode.
+	// Sink mode depends on the projector config (ADR-0032); see pipeline.SinkModeForProjector:
+	//   - projector disabled -> SinkModeAll: this goroutine is the only writer.
+	//   - projector enabled, persist_per_source=true -> SinkModeSkipSoleWriter: parallel for
+	//     un-promoted sources, but the projector owns the SoleWriter specs outright.
+	//   - projector enabled, persist_per_source=false -> SinkModeSkipProjected: the projector is
+	//     sole writer for all projected sources.
+	// Non-Soroban events (sdex, external, band, supply observers) always ride this path.
 	sinkMode := pipeline.SinkModeForProjector(cfg.Ingestion.Projector.Enabled, cfg.Ingestion.Projector.PersistPerSource)
 	if err := pipeline.VerifySoleWriterCAGGCoverage(rootCtx, store, sinkMode); err != nil {
 		return fmt.Errorf("refusing to start: %w", err)
@@ -651,34 +581,24 @@ func run(cfgPath string, dryRun bool) error {
 	sinkDone := make(chan struct{})
 	var sinkLoss pipeline.ShutdownLoss // read only after <-sinkDone
 	go func() {
-		// CRASH — deliberately unguarded. Two independent
-		// reasons, either one sufficient:
+		// CRASH, deliberately unguarded, for two independent reasons:
 		//
-		//  1. A guard here would be cosmetic. The writes happen in the
-		//     eight persistWorker goroutines PersistEvents fans out
-		//     (internal/pipeline/sink.go); recover() only reaches the
-		//     stack that deferred it, so those panics end the process
-		//     whatever this frame does. A defer here would advertise a
-		//     protection that does not exist — see worker.Recover's own
-		//     docstring on caller-side guards.
-		//  2. If this frame did unwind, close(sinkDone) fires and nothing
-		//     reads `events` again. The producer fills the 256-slot
-		//     buffer, blocks mid-ledger, and the process goes on
-		//     answering /metrics and /healthz with a frozen cursor while
-		//     persisting nothing — the failure that looks healthy.
-		//     Exiting instead loses nothing durable: the cursor is
-		//     upserted per ledger and the ClickHouse lake is written on a
-		//     separate path, so systemd's restart re-reads from the last
-		//     cursor.
+		//  1. A guard would be cosmetic. Writes happen in the eight persistWorker goroutines
+		//     PersistEvents fans out, and recover() only reaches the stack that deferred it, so
+		//     those panics end the process whatever this frame does.
+		//  2. If this frame did unwind, close(sinkDone) fires and nothing reads `events` again.
+		//     The producer fills the 256-slot buffer and blocks mid-ledger while the process keeps
+		//     answering /metrics and /healthz with a frozen cursor: a failure that looks healthy.
+		//     Exiting loses nothing durable: the cursor is upserted per ledger and the lake is
+		//     written on a separate path, so systemd's restart re-reads from the last cursor.
 		defer close(sinkDone)
 		sinkLoss = pipeline.PersistEvents(rootCtx, logger, store, events, sinkMode, lateTrades)
 	}()
 
 	// ─── Projector (ADR-0032) ──────────────────────────────────
-	// Phase 3 (parallel mode, persist_per_source=true): projector
-	// + dispatcher both write Soroban-derived events; PK
-	// duplicates resolved by ON CONFLICT DO NOTHING. Phase 4
-	// (persist_per_source=false): projector is sole writer.
+	// Phase 3 (persist_per_source=true): projector and dispatcher both write Soroban-derived
+	// events, with PK duplicates resolved by ON CONFLICT DO NOTHING. Phase 4
+	// (persist_per_source=false): the projector is sole writer.
 	var projectorDone chan struct{}
 	if cfg.Ingestion.Projector.Enabled {
 		registry, perr := projector.BuildRegistry(cfg.Ingestion.EnabledSources, cfg.Oracle, cfg.Supply.WatchedSEP41Contracts, gatedOpts, soroswapOpts...)
@@ -710,24 +630,16 @@ func run(cfgPath string, dryRun bool) error {
 		projectorDone = make(chan struct{})
 		go func() {
 			defer close(projectorDone)
-			// RECOVER, even though the projector is the sole
-			// writer for the Soroban-derived domains in Phase 4. Its
-			// output is re-derivable by construction: it reads the
-			// ClickHouse lake, keeps a durable per-source cursor, and its
-			// catch-up is `stellarindex-ops projector-replay -source <s>
-			// -from <ledger>`. A stopped projector therefore delays rows;
-			// a crashed process stops the substrate capture (lake
-			// dual-sink, hashdb append, cursor) that is NOT re-derivable
-			// once galexie's live-bucket retention passes. It is also the
-			// policy the next three lines already state: a projector that
-			// RETURNS an error is non-fatal here, so a panic — the same
-			// fault arriving by a different route — must not be more
-			// fatal than an error. ADR-0033's projection reconcile turns
-			// the resulting gap into /v1/coverage complete=false for the
-			// window, and worker_panics_total{worker="projector"} pages.
-			// This guard covers Run's own frame only; the goroutines Run
-			// fans out defer their own (worker="projector-source-<name>",
-			// "projector-replay-windows").
+			// RECOVER, even though the projector is sole writer for the Soroban-derived domains
+			// in Phase 4. Its output is re-derivable by construction (it reads the ClickHouse
+			// lake with a durable per-source cursor; catch-up is `stellarindex-ops
+			// projector-replay`), so a stopped projector only delays rows, whereas a crashed
+			// process stops the substrate capture (lake dual-sink, hashdb append, cursor) that is
+			// NOT re-derivable once galexie's live-bucket retention passes. A returned error is
+			// already non-fatal here, so a panic must not be more fatal. ADR-0033's reconcile
+			// turns the gap into /v1/coverage complete=false for the window, and
+			// worker_panics_total{worker="projector"} pages. This guard covers Run's own frame
+			// only; the goroutines Run fans out defer their own.
 			defer worker.Recover(logger, "projector")
 			if err := proj.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Warn("projector exited with error", "err", err)
@@ -767,25 +679,15 @@ func run(cfgPath string, dryRun bool) error {
 	archiveCfg := pipeline.LedgerstreamConfig(cfg, cfg.Storage.S3BucketArchive)
 	liveCfg := pipeline.LedgerstreamConfig(cfg, cfg.Storage.S3BucketLive)
 
-	// Detectability: ledgerstream's SDK
-	// BufferedStorageBackend buffer metrics (buffer_fetch_latency_seconds
-	// etc., via the SDK's WithMetrics/ApplyLedgerMetadata) only register
-	// when Config.Registry != nil. LedgerstreamConfig leaves it nil ON
-	// PURPOSE (the archive→live→catch-up path calls Stream repeatedly and
-	// the SDK's registration is not idempotent — a second identical
-	// registration panics), so in production those SDK buffer metrics are
-	// absent. Export a 0/1 gauge so that state is observable + alertable
-	// (metrics-registry.yml) instead of silently absent, and log it once at
-	// boot. If a future change wires a Registry safely (idempotent
-	// registration), this flips to 1 with no other edit.
+	// The SDK BufferedStorageBackend buffer metrics only register when Config.Registry != nil.
+	// LedgerstreamConfig leaves it nil ON PURPOSE (the archive->live->catch-up path calls Stream
+	// repeatedly and the SDK's registration is not idempotent: a second one panics), so those
+	// metrics are absent in production. Export a 0/1 gauge so that state is observable and
+	// alertable instead of silently absent, and log it once at boot.
 	//
-	// NOTE: the TieredDataStore's OWN tier_read_total +
-	// cold_read_duration_seconds metrics are NOT gated on this. They
-	// are obs package-level metrics (obs.LedgerstreamTierReadTotal /
-	// obs.LedgerstreamColdReadDurationSeconds) registered unconditionally at
-	// boot, so the ledgerstream-tier `both_missing` page is LIVE regardless
-	// of this gauge's value. This gauge tracks ONLY the SDK
-	// buffer-metric coverage.
+	// The TieredDataStore's OWN tier_read_total / cold_read_duration_seconds metrics are NOT gated
+	// on this: they are obs package-level metrics registered unconditionally, so the
+	// `both_missing` page is live regardless. This gauge tracks ONLY the SDK buffer metrics.
 	if liveCfg.Registry != nil {
 		obs.MetricsRegistryPresent.WithLabelValues("ledgerstream").Set(1)
 	} else {
@@ -800,15 +702,11 @@ func run(cfgPath string, dryRun bool) error {
 	}
 
 	// ─── HashDB drift detector ───────────────────────
-	// Off by default (opt-in). Two
-	// independent *hashdb.DB handles on the SAME file: hashdbAppendDB
-	// is written synchronously from the live LCM read loop below;
-	// hashdbVerifyDB is read from the periodic sweep goroutine.
-	// hashdb.DB is documented "not safe for concurrent use" (its
-	// *os.File isn't guarded by a mutex) — two separate handles on
-	// the same path sidesteps that entirely rather than leaning on
-	// WriteAt/ReadAt's underlying pread/pwrite positional safety,
-	// which the package doesn't promise as part of its contract.
+	// Off by default (opt-in). Two independent *hashdb.DB handles on the SAME file:
+	// hashdbAppendDB is written synchronously from the live LCM read loop, hashdbVerifyDB is
+	// read from the periodic sweep goroutine. hashdb.DB is documented "not safe for concurrent
+	// use", so separate handles avoid relying on pread/pwrite positional safety the package does
+	// not promise.
 	var (
 		hashdbAppendDB     *hashdb.DB
 		hashdbLastAppended atomic.Uint32
@@ -852,24 +750,18 @@ func run(cfgPath string, dryRun bool) error {
 
 	streamErr := make(chan error, 1)
 	go func() {
-		// CRASH — but drain on the way out.
-		// This goroutine IS the ingest pipeline: ledgerstream invokes the
-		// closure below synchronously, so a panic anywhere in the walk
-		// (hashdb append, ClickHouse extract, the cursor write) arrives
-		// here. Recovering it in place is the worst option: nothing would
-		// ever send on streamErr, main would sit in its select until
-		// SIGTERM, and the process would keep answering /metrics and
-		// /healthz with the cursor frozen at the poison ledger. So the
-		// fault stays FATAL: the process exits non-zero and systemd
-		// restarts it from the last durable cursor.
+		// CRASH, but drain on the way out. This goroutine IS the ingest pipeline: ledgerstream
+		// invokes the closure below synchronously, so any panic in the walk arrives here.
+		// Recovering in place is the worst option: nothing would send on streamErr, main would
+		// wait until SIGTERM, and the process would keep answering /healthz with the cursor
+		// frozen at the poison ledger. So the fault stays FATAL and systemd restarts from the
+		// last durable cursor.
 		//
-		// It must not skip the drain. A panic in a non-main goroutine
-		// tears the process down without running main's defers,
-		// discarding the buffered events for ledgers the cursor has
-		// passed. So the panic is converted once into the same fatal
-		// error: counted on stellarindex_worker_panics_total, logged with
-		// its stack by worker.Report, and handed to main, which drains
-		// the sink and returns it.
+		// It must not skip the drain: a panic in a non-main goroutine tears the process down
+		// without main's defers, discarding buffered events for ledgers the cursor has passed. So
+		// the panic is converted once into the same fatal error (counted on
+		// stellarindex_worker_panics_total, logged with its stack by worker.Report) and handed to
+		// main, which drains the sink and returns it.
 		var err error
 		defer func() {
 			if r := recover(); r != nil {
@@ -898,20 +790,16 @@ func run(cfgPath string, dryRun bool) error {
 				if sink := chLiveSink.Load(); sink != nil {
 					ext, eerr := clickhouse.ExtractLedger(lcm, cfg.Stellar.Passphrase())
 					if eerr != nil {
-						// Do NOT silently swallow the extract error — a
-						// persistent failure means the lake's live edge is silently
-						// stalling. Count it (errored outcome) and emit a sampled
-						// WARN so a meta-version break (which would fail EVERY
-						// ledger) is loud without flooding the log.
+						// Do NOT swallow the extract error: a persistent failure means the lake's live
+						// edge is stalling. Count it (errored outcome) and emit a sampled WARN so a
+						// meta-version break (failing EVERY ledger) is loud without flooding the log.
 						obs.ChLiveSinkLedgersTotal.WithLabelValues("errored").Inc()
 						logCHExtractErrSampled(logger, lcm.LedgerSequence(), eerr)
 					} else {
-						// Surface a tx-read undercount. A non-zero
-						// value means this ledger's contract_events are incomplete
-						// (a bad tx, or a future TransactionMeta version breaking
-						// GetTransactionEvents for every tx in lock-step) — a climb
-						// would otherwise masquerade as clean empty ledgers and be
-						// visible only by grepping logs.
+						// Surface a tx-read undercount. Non-zero means this ledger's contract_events
+						// are incomplete (a bad tx, or a TransactionMeta version breaking
+						// GetTransactionEvents for every tx); otherwise it would masquerade as clean
+						// empty ledgers.
 						recordCHLiveSinkUndercount(ext, logger)
 						sink.PushLedger(ext)
 					}
@@ -922,19 +810,14 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 
 	// ─── Shutdown ──────────────────────────────────────────────
-	// streamExited records whether the ledgerstream producer goroutine
-	// has already returned (it sends exactly once on streamErr when it
-	// does). We MUST NOT close(events) while that goroutine might still
-	// send on it — see the producer wait below.
+	// streamExited records whether the ledgerstream producer has returned (it sends exactly once
+	// on streamErr). We MUST NOT close(events) while it might still send; see the wait below.
 	streamExited := false
-	// fatalErr is returned AFTER the drain below, never instead of it.
-	// Returning here would skip externalWait, close(events) and the
-	// sinkDone wait outright, discarding up to one channel buffer of
-	// events (256) on the way out. Those events are already counted
-	// against the cursor, so the next start would resume past them and
-	// they would simply be gone: a silent hole, on the exact path a
-	// decoder fault takes (pipeline.ProcessLedger recovers a decoder
-	// panic INTO a ledger error, which arrives here).
+	// fatalErr is returned AFTER the drain below, never instead of it. Returning here would skip
+	// externalWait, close(events) and the sinkDone wait, discarding up to one channel buffer (256)
+	// of events already counted against the cursor, so the next start would resume past them: a
+	// silent hole, on the exact path a decoder fault takes (ProcessLedger turns a decoder panic
+	// into a ledger error that arrives here).
 	var fatalErr error
 	select {
 	case <-rootCtx.Done():
@@ -947,31 +830,21 @@ func run(cfgPath string, dryRun bool) error {
 		}
 	}
 
-	// Cancel rootCtx BEFORE draining. On the signal path it is already
-	// cancelled; on the producer-error path it is NOT, because `cancel` is
-	// only deferred and fires after run() returns.
-	//
-	// Without this cancel, the producer-error path would defeat the drain:
-	// externalWait() is a WaitGroup over the external connectors, and those
-	// are bound to rootCtx, as is the sink. With rootCtx still live, nothing
-	// would tell them to stop, so the bounded wait below would spend the whole
-	// shutdown budget, leave events open, and drop the buffer the drain exists
-	// to persist.
-	//
-	// Cancelling here makes both paths identical: connectors unwind, the
-	// sink drains via its ctx.Done() arm, and no events are lost.
+	// Cancel rootCtx BEFORE draining. The signal path has already cancelled it, but the
+	// producer-error path has not (`cancel` is only deferred). Without it the external
+	// connectors and the sink, both bound to rootCtx, would never be told to stop, so the bounded
+	// wait below would burn the whole shutdown budget, leave events open and drop the buffer the
+	// drain exists to persist. Cancelling here makes both paths identical: connectors unwind and
+	// the sink drains via its ctx.Done() arm.
 	cancel()
 
 	shutdownCtx, stopDrain := context.WithTimeout(context.Background(), pipeline.ShutdownDeadline)
 	defer stopDrain()
 
-	// When we entered shutdown via rootCtx.Done() (not via the
-	// producer's own exit), the ledgerstream producer goroutine may
-	// still be mid-`events <- ev`. Closing `events` underneath it is a
-	// send-on-closed-channel panic. Wait for it to return (it sends on
-	// streamErr on exit; rootCtx is already canceled so it unwinds
-	// promptly) before close(events), bounded by shutdownCtx so a stuck
-	// producer can't hang the binary forever.
+	// When shutdown began via rootCtx.Done() rather than the producer's own exit, the producer
+	// may still be mid-`events <- ev`, and closing `events` under it is a send-on-closed-channel
+	// panic. Wait for it to return (rootCtx is canceled, so it unwinds promptly) before
+	// close(events), bounded by shutdownCtx so a stuck producer can't hang the binary.
 	safeToClose := true
 	if !streamExited {
 		select {
@@ -979,28 +852,22 @@ func run(cfgPath string, dryRun bool) error {
 			streamExited = true
 			logger.Info("ledgerstream producer exited")
 		case <-shutdownCtx.Done():
-			// Producer still running at the deadline. Leaving `events`
-			// UNCLOSED is the safe choice: a still-running producer would
-			// panic on send to a closed channel. rootCtx is already
-			// canceled, so the sink workers unwind via their ctx.Done()
-			// arm (which runs the shutdown drain) rather than the
-			// channel-closed arm — no events are lost either way.
+			// Producer still running at the deadline. Leaving `events` UNCLOSED is safe, since a
+			// live producer would panic sending on a closed channel. rootCtx is canceled, so the
+			// sink workers unwind via their ctx.Done() arm (which runs the shutdown drain)
+			// instead of the channel-closed arm; no events are lost either way.
 			safeToClose = false
 			logger.Warn("ledgerstream producer did not exit before drain deadline — leaving events channel open to avoid send-on-closed panic")
 		}
 	}
 
-	// Wait for external connectors to finish draining before
-	// closing the shared events channel — otherwise an in-flight
-	// trade write on a closed channel panics the runner goroutine.
+	// Wait for external connectors to finish draining before closing the shared events channel,
+	// or an in-flight trade write on a closed channel panics the runner goroutine.
 	//
-	// Bounded by the same shutdown budget as every step around it. An
-	// unbounded externalWait() between two deadline-bounded waits would
-	// let one wedged CEX/FX connector — a websocket read with no deadline,
-	// a vendor HTTP call that never returns — hold the whole binary until
-	// systemd escalated to SIGKILL, which is the one shutdown that skips
-	// the sink drain entirely. On timeout we must NOT close(events): a connector still
-	// running is a live sender, and a send on a closed channel panics.
+	// Bounded by the same shutdown budget as the steps around it: an unbounded externalWait()
+	// would let one wedged connector (a websocket read with no deadline, a vendor call that never
+	// returns) hold the binary until systemd's SIGKILL, the one shutdown that skips the sink
+	// drain. On timeout we must NOT close(events): a running connector is a live sender.
 	if !waitBounded(shutdownCtx, logger, "external-connectors-drain", externalWait) {
 		safeToClose = false
 		logger.Warn("external connectors did not drain before deadline — leaving events channel open to avoid send-on-closed panic")
@@ -1039,11 +906,10 @@ func run(cfgPath string, dryRun bool) error {
 			logger.Warn("projector drain timeout — hard exit")
 		}
 	}
-	// Run stopped on rootCtx; flush the late trades the writers' shutdown
-	// drain landed. After a drain timeout a writer may still be running;
-	// its durable window is kept for the next start. Fresh
-	// ctx for the same reason as the rewind above; ~70s of systemd's 120s
-	// TimeoutStopSec is the worst case to here.
+	// Run stopped on rootCtx; flush the late trades the writers' shutdown drain landed. After a
+	// drain timeout a writer may still be running, and its durable window is kept for the next
+	// start. A fresh ctx is used as for the rewind above; ~70s of systemd's 120s TimeoutStopSec
+	// is the worst case to here.
 	if !writersStopped {
 		logger.Warn("late-trade cagg flush runs before every trade writer stopped (drain timeout); " +
 			"late trades written after it are refreshed by the next start")
@@ -1052,11 +918,9 @@ func run(cfgPath string, dryRun bool) error {
 	lateTrades.FlushOnShutdown(lctx) //nolint:contextcheck // deliberate fresh ctx, see above
 	lcancel()
 
-	// Shut the metrics server down last, after the drain sequence above
-	// has run to completion (or timed out). Doing this earlier — right
-	// after cancel() — would make /metrics unscrapable for the entire drain
-	// window that follows, which is exactly when an operator most needs
-	// to see in-flight drain progress.
+	// Shut the metrics server down last, after the drain completes or times out: stopping it
+	// earlier would make /metrics unscrapable for the whole drain, exactly when an operator needs
+	// to see drain progress.
 	if metricsSrv != nil {
 		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
 			logger.Warn("metrics server shutdown", "err", err)
@@ -1092,15 +956,11 @@ func releaseInstanceLock(l *timescale.InstanceLock, logger *slog.Logger) {
 func waitBounded(ctx context.Context, logger *slog.Logger, name string, wait func()) bool {
 	res := make(chan bool, 1)
 	go func() {
-		// RECOVER, reporting NOT-drained. A panic inside a
-		// connector's WaitGroup teardown leaves us unable to say whether
-		// its senders have stopped, and the caller uses this answer to
-		// decide whether closing the shared events channel is safe. So
-		// the honest reply to a fault is false — the conservative
-		// direction, which skips the close and lets the sink drain via
-		// context cancellation instead. Crashing here would skip the
-		// drain entirely, which is the outcome this whole shutdown path
-		// exists to avoid.
+		// RECOVER, reporting NOT-drained. A panic in a connector's WaitGroup teardown leaves us
+		// unable to say whether its senders have stopped, and the caller uses this answer to
+		// decide whether closing the shared events channel is safe. False is the conservative
+		// reply: it skips the close and lets the sink drain via context cancellation. Crashing
+		// would skip the drain entirely, which this shutdown path exists to avoid.
 		defer func() {
 			if r := recover(); r != nil {
 				worker.Report(logger, name, r)
@@ -1143,11 +1003,9 @@ func newTiingoPoller(cfg config.TiingoVenueConfig) (*externaltiingo.Poller, erro
 	return p, nil
 }
 
-// startExternalConnectors builds the enabled off-chain connectors
-// from config and hands them to external.Run. Returns the wait
-// function the shutdown path calls to drain cleanly. A nil-op wait
-// is returned when no external sources are enabled — keeps the
-// shutdown sequence unconditional.
+// startExternalConnectors builds the enabled off-chain connectors from config and hands them to
+// external.Run. It returns the wait function the shutdown path calls to drain; a no-op wait when
+// none are enabled keeps the shutdown sequence unconditional.
 func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitting would reduce linearity
 	ctx context.Context,
 	cfg config.ExternalConfig,
@@ -1263,19 +1121,13 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		enabled = append(enabled, externalexchangerates.SourceName)
 	}
 
-	// Aggregator pollers: cross-check only, class=aggregator →
-	// emitted OracleUpdates excluded from VWAP. Pair list is the
-	// union of fiat-quoted crypto pairs across enabled streamers;
-	// aggregator pollers follow wherever the exchanges are
-	// targeting.
+	// Aggregator pollers: cross-check only, class=aggregator, so their OracleUpdates are excluded
+	// from VWAP. The pair list follows the fiat-quoted crypto pairs of the enabled streamers.
 	//
-	// Derive the set from the verified-currency
-	// catalogue so adding USDT / EURC / a new global crypto to the
-	// seed yaml automatically expands aggregator coverage. The
-	// hardcoded list (`defaultAggregatorPairs`) is unioned in, not
-	// replaced — a catalogue yielding even one pair must not drop
-	// coverage for a hardcoded ticker the catalogue hasn't (yet)
-	// picked up a coingecko_id for.
+	// The set is derived from the verified-currency catalogue so a new seed entry expands
+	// coverage automatically. The hardcoded `defaultAggregatorPairs` is unioned in, not replaced:
+	// a catalogue yielding even one pair must not drop a hardcoded ticker that has no
+	// coingecko_id yet.
 	aggregatorPairs := mergeAggregatorPairs(aggregatorPairsFromCatalogue(catalogue, logger), defaultAggregatorPairs())
 
 	if cfg.CoinGecko.Enabled {
@@ -1456,24 +1308,19 @@ func startRoutedViaTagger(parent context.Context, store *timescale.Store, logger
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// RECOVER. This is a trailing-window UPDATE that
-		// back-tags routed_via on rows the projector has already
-		// written; every sweep re-covers the previous sweep's window, so
-		// a missed pass self-heals on the next one and the worst case is
-		// a NULL attribution column. Nothing reads it on the ingest
-		// path. Killing the indexer over an attribution sweep would cost
-		// ledgers to save a label.
+		// RECOVER. This trailing-window UPDATE back-tags routed_via on rows the projector already
+		// wrote; each sweep re-covers the previous window, so a missed pass self-heals and the
+		// worst case is a NULL attribution column. Killing the indexer over it would cost ledgers
+		// to save a label.
 		defer worker.Recover(logger, "routed-via-tagger")
 		pipeline.RunRoutedViaTagger(ctx, logger, store, 0, 0)
 	}()
 	return cancel, done
 }
 
-// ammSignerEnabled reports whether any AMM/Soroban swap source (whose taker
-// is the on-chain caller, so the tx signer is worth back-tagging) is in the
-// operator's enabled-source list — the gate for the signer attribution
-// sweeper. Reads the SAME timescale.AMMSignerSources the tagger filters on, so
-// the gate and the UPDATE can never drift.
+// ammSignerEnabled reports whether any AMM/Soroban swap source (whose taker is the on-chain
+// caller, so the tx signer is worth back-tagging) is enabled: the gate for the signer sweeper. It
+// reads the SAME timescale.AMMSignerSources the tagger filters on, so gate and UPDATE cannot drift.
 func ammSignerEnabled(enabledSources []string) bool {
 	for _, s := range enabledSources {
 		folded := strings.ToLower(strings.TrimSpace(s))
@@ -1486,31 +1333,23 @@ func ammSignerEnabled(enabledSources []string) bool {
 	return false
 }
 
-// startSignerTagger runs pipeline.RunSignerTagger in its own goroutine,
-// back-tagging trades.signer from the ClickHouse lake (migration 0150).
-// NON-FATAL: a ClickHouse that is down at boot must not stop ingest, so the
-// dial is retried inside the goroutine rather than deciding the sweeper's
-// fate once. Follows the (cancel, done) shape so main's shutdown sequence
-// stays uniform.
+// startSignerTagger runs pipeline.RunSignerTagger in its own goroutine, back-tagging
+// trades.signer from the ClickHouse lake. NON-FATAL: a ClickHouse that is down at boot must not
+// stop ingest, so the dial is retried inside the goroutine. Follows the (cancel, done) shape so
+// main's shutdown sequence stays uniform.
 //
-// Dialling HERE, on the caller's goroutine, would let a single failure
-// disable AMM signer attribution permanently — until someone restarted
-// the indexer. ClickHouse restarts for upgrades and for the
-// ch-live-catchup timer's heavy jobs; the indexer does not, so signer
-// would stay NULL for days whenever CH was busy during a deploy. Retrying
+// Dialling on the caller's goroutine would let one failure disable signer attribution until the
+// indexer restarted, leaving signer NULL for days whenever CH was busy during a deploy. Retrying
 // makes the outage as long as ClickHouse's, not as long as the indexer's uptime.
 func startSignerTagger(parent context.Context, chAddr, chUser, chPass string, store *timescale.Store, logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// RECOVER. Back-tagging trades.signer is a
-		// re-derivable overlay: the authority is the ClickHouse lake and
-		// the sweep re-covers its trailing window every pass, so a
-		// stopped tagger leaves a NULL column that a later run fills.
-		// The dial retry below already treats this whole subsystem as
-		// optional; a panic must not be the one failure mode that takes
-		// ingest with it.
+		// RECOVER. Back-tagging trades.signer is a re-derivable overlay: the authority is the
+		// ClickHouse lake and each sweep re-covers its trailing window, so a stopped tagger
+		// leaves a NULL column a later run fills. The dial retry already treats this subsystem as
+		// optional; a panic must not be the one failure mode that takes ingest with it.
 		defer worker.Recover(logger, "signer-tagger")
 		var lake *clickhouse.ExplorerReader
 		ok := retryUntil(ctx, logger, "signer tagger: ClickHouse reader unavailable",
@@ -1579,15 +1418,12 @@ const (
 	chLiveSinkDialMaxBackoff = time.Minute
 )
 
-// startCHLiveSink dials the ClickHouse real-time dual-sink (ADR-0041)
-// in its own goroutine, retrying with backoff until it succeeds or ctx
-// ends, and only then starts it and its metrics watcher — see the
-// comment at the call site for why the dial must not be able to fail the
-// boot. sink.Load() is nil until the dial succeeds; the ledgerstream
-// callback treats that as "skip this ledger's push" while the sink is still dialling.
+// startCHLiveSink dials the ClickHouse real-time dual-sink (ADR-0041) in its own goroutine,
+// retrying with backoff until it succeeds or ctx ends, and only then starts it and its metrics
+// watcher (the dial must not be able to fail the boot). sink.Load() is nil until the dial
+// succeeds, and the ledgerstream callback skips that ledger's push meanwhile.
 //
-// Follows the (cancel, done) shape so main's shutdown sequence stays
-// uniform; the caller MUST call cancel() and wait on done before
+// Follows the (cancel, done) shape; the caller MUST call cancel() and wait on done before
 // returning, since the shutdown drain runs inside this goroutine.
 func startCHLiveSink(parent context.Context, chAddr string, sink *atomic.Pointer[clickhouse.LiveSink], logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
 	ctx, cancel := context.WithCancel(parent)
@@ -1627,12 +1463,9 @@ func startCHLiveSink(parent context.Context, chAddr string, sink *atomic.Pointer
 		// surfaces in Prometheus, not just the shutdown log line.
 		metricsStop, metricsDone := watchCHLiveSink(live, logger) //nolint:contextcheck // watchCHLiveSink deliberately uses context.Background(), not parent — see its doc: the last flush must survive the same SIGTERM that cancels ctx
 		<-ctx.Done()
-		// Order matters: drain the sink FIRST, then stop the watcher.
-		// The watcher's exit path runs one final flush, so stopping it
-		// last is what carries the drain's written/dropped/errored
-		// deltas into Prometheus. The reverse order would stop the
-		// watcher before Stop() had moved a single counter, leaving
-		// those deltas in the log line below and nowhere else.
+		// Order matters: drain the sink FIRST, then stop the watcher. The watcher's exit runs one
+		// final flush, so stopping it last carries the drain's written/dropped/errored deltas into
+		// Prometheus; the reverse order would leave them only in the log line below.
 		live.Stop() //nolint:contextcheck // lifecycle call: Stop takes no ctx by design and must drain/flush even though ctx is already cancelled
 		metricsStop()
 		<-metricsDone
@@ -1645,14 +1478,10 @@ func startCHLiveSink(parent context.Context, chAddr string, sink *atomic.Pointer
 	return cancel, done
 }
 
-// retryUntil calls attempt until it succeeds or ctx ends, backing off
-// from minBackoff to maxBackoff (doubling). It reports whether attempt
-// ultimately succeeded; false means ctx ended first, so the caller must
-// abandon the work rather than proceed with a half-built dependency.
-//
-// Each failure is logged at Warn with the delay before the next try, so
-// a dependency that is down for hours leaves a bounded, readable trail
-// rather than one line per second.
+// retryUntil calls attempt until it succeeds or ctx ends, doubling the backoff from minBackoff to
+// maxBackoff. False means ctx ended first, so the caller must abandon the work rather than use a
+// half-built dependency. Each failure logs at Warn with the next delay, so an hours-long outage
+// leaves a bounded trail rather than a line per second.
 func retryUntil(ctx context.Context, logger *slog.Logger, what string, minBackoff, maxBackoff time.Duration, attempt func(context.Context) error) bool {
 	backoff := minBackoff
 	for {
@@ -1695,12 +1524,10 @@ func watchDiscoveryDrops(sink *discovery.AsyncSink, logger *slog.Logger) (contex
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// RECOVER. A metrics bridge: it reads three counters
-		// off the discovery sink and emits the deltas. It touches no
-		// data and holds no lock the pipeline needs, so its death costs
-		// visibility into dropped discovery hits — which is exactly what
-		// worker_panics_total then reports — while a crash would stop
-		// ingest to preserve a gauge.
+		// RECOVER. A metrics bridge over three discovery-sink counters: it touches no data and
+		// holds no lock the pipeline needs, so its death costs only visibility into dropped hits
+		// (which worker_panics_total then reports), whereas a crash would stop ingest to keep a
+		// gauge.
 		defer worker.Recover(logger, "discovery-drop-watch")
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
@@ -1740,11 +1567,10 @@ func emitDiscoveryDropMetricDelta(prev, current uint64, logger *slog.Logger) uin
 	return current
 }
 
-// emitDiscoveryRecordFailMetricDelta bridges the discovery sink's
-// FailedCount() into obs.DiscoveryRecordFailuresTotal, mirroring
-// emitDiscoveryDropMetricDelta. Without the counter (and its
-// ingestion.yml alert) a record-write failure would be log-only, so a
-// recorder outage would silently stop discovered_assets from growing.
+// emitDiscoveryRecordFailMetricDelta bridges the discovery sink's FailedCount() into
+// obs.DiscoveryRecordFailuresTotal, mirroring emitDiscoveryDropMetricDelta. Without the counter
+// and its alert a record-write failure would be log-only, and a recorder outage would silently
+// stop discovered_assets from growing.
 func emitDiscoveryRecordFailMetricDelta(prev, current uint64, logger *slog.Logger) uint64 {
 	if current <= prev {
 		return current
@@ -1760,14 +1586,11 @@ func emitDiscoveryRecordFailMetricDelta(prev, current uint64, logger *slog.Logge
 	return current
 }
 
-// watchSorobanEventsSink bridges the raw-event sink's LostCount — rows
-// abandoned on a positively-classified permanent data fault or an
-// expired shutdown drain — onto
-// source_insert_errors_total{source="soroban-events",kind="dropped"},
-// the series the existing dropped-rows alert already watches per source.
-// Same (cancel, done) shape and background context as
-// [watchDiscoveryDrops]: the final flush after Stop is the one that
-// matters and must outlive the root context.
+// watchSorobanEventsSink bridges the raw-event sink's LostCount (rows abandoned on a permanent
+// data fault or an expired shutdown drain) onto
+// source_insert_errors_total{source="soroban-events",kind="dropped"}, the series the dropped-rows
+// alert already watches. It uses a background context like [watchDiscoveryDrops]: the final
+// flush after Stop is the one that matters and must outlive the root context.
 func watchSorobanEventsSink(sink *sorobanevents.AsyncSink, logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -1859,33 +1682,23 @@ func recordCHLiveSinkUndercount(ext clickhouse.LedgerExtract, logger *slog.Logge
 		"entry_changes_unencodable", ext.EntryChangesUnencodable)
 }
 
-// watchCHLiveSink samples the ClickHouse dual-sink's monotonic counters every
-// 15 s and emits the per-tick delta on stellarindex_ch_live_sink_ledgers_total.
-// Follows the [watchDiscoveryDrops] (cancel, done) shape so main's
-// shutdown sequence stays uniform. Note: the indexer's own fan-out closure
-// already increments the `errored` outcome directly for ExtractLedger failures
-// (which never reach the LiveSink), so this watcher only mirrors the LiveSink's
-// internal written/buffered/dropped/errored, keeping the two error sources
-// additive on the same series.
+// watchCHLiveSink samples the ClickHouse dual-sink's monotonic counters every 15 s and emits the
+// per-tick delta on stellarindex_ch_live_sink_ledgers_total. The indexer's fan-out closure
+// already increments `errored` directly for ExtractLedger failures (which never reach the
+// LiveSink), so this watcher only mirrors the LiveSink's own counters and the two error sources
+// stay additive on the same series.
 //
-// Its context is context.Background(), NOT the root context, for the same
-// reason watchDiscoveryDrops uses one: the LAST flush is the interesting
-// one. The shutdown drain is where a stalled ClickHouse turns buffered
-// ledgers into dropped ones, and a watcher cancelled by the same SIGTERM
-// that starts the drain returns before the drain writes those counters —
-// so the final deltas would reach only the shutdown log line and never
-// Prometheus. main stops this watcher explicitly, after
-// LiveSink.Stop() has finished draining.
+// Its context is context.Background(), NOT the root context: the LAST flush matters most. The
+// shutdown drain is where a stalled ClickHouse turns buffered ledgers into dropped ones, and a
+// watcher cancelled by the same SIGTERM would return before those counters are written, so the
+// final deltas would never reach Prometheus. main stops it explicitly after LiveSink.Stop().
 func watchCHLiveSink(sink *clickhouse.LiveSink, logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// RECOVER. A counter-sampling loop: it reads four
-		// monotonic counters off the sink and emits deltas. It cannot
-		// lose a ledger — the sink owns those — so its death costs the
-		// lake's write-rate visibility, which is precisely what
-		// worker_panics_total then reports.
+		// RECOVER. A counter-sampling loop that cannot lose a ledger (the sink owns those), so its
+		// death costs only the lake's write-rate visibility, which worker_panics_total reports.
 		defer worker.Recover(logger, "ch-live-sink-watch")
 		ticker := time.NewTicker(15 * time.Second)
 		defer ticker.Stop()
@@ -1923,35 +1736,22 @@ func watchCHLiveSink(sink *clickhouse.LiveSink, logger *slog.Logger) (context.Ca
 	return cancel, done
 }
 
-// watchPostgresPing fires a [timescale.Store.PingContext] every
-// 60 s and emits the pool resilience metrics. The actual
-// reconnect path lives in database/sql via
-// [timescale.PoolConnMaxLifetime]; this goroutine is the
-// OBSERVABILITY hook so a stuck pool surfaces in minutes via the
-// `stellarindex_postgres_ping_failing` alert instead of hours of
-// silent drift.
-//
-// Logs a structured warning when the consecutive-failure streak
-// crosses 3 (≈3 min). At that point the pool is almost certainly
-// wedged; the lifetime safety-net will refresh the next conn the
-// pool hands out, but the live signal is in this log line and the
-// metric.
-//
-// Returns (cancel, done) following the [watchDiscoveryDrops]
-// shape so main's shutdown sequence is uniform.
+// watchPostgresPing fires a [timescale.Store.PingContext] every 60 s and emits the pool resilience
+// metrics. The reconnect itself lives in database/sql via [timescale.PoolConnMaxLifetime]; this is
+// the OBSERVABILITY hook so a stuck pool surfaces in minutes via the
+// `stellarindex_postgres_ping_failing` alert instead of hours of silent drift. It logs a
+// structured warning when the consecutive-failure streak crosses 3 (about 3 min), when the pool
+// is almost certainly wedged.
 func watchPostgresPing(parent context.Context, store *timescale.Store, logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// RECOVER. This is the OBSERVABILITY hook for a wedged
-		// pool, not the repair: the reconnect is database/sql's
-		// PoolConnMaxLifetime, which keeps working whether or not this
-		// loop runs. Crashing ingest because the prober faulted would be
-		// the alarm burning the building down. A stopped prober freezes
-		// stellarindex_postgres_ping_* at its last value — the stale-gauge
-		// trap — so the panic counter is the signal that the freeze is a
-		// dead worker rather than a healthy pool.
+		// RECOVER. This is the observability hook, not the repair: the reconnect is database/sql's
+		// PoolConnMaxLifetime and works whether or not this loop runs, so crashing ingest over a
+		// faulted prober would be the alarm burning the building down. A stopped prober freezes
+		// stellarindex_postgres_ping_* at its last value (the stale-gauge trap), so the panic
+		// counter is the signal that the freeze is a dead worker, not a healthy pool.
 		defer worker.Recover(logger, "postgres-ping")
 		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
@@ -2023,16 +1823,10 @@ func emitDiscoverySkipMetricDelta(prev, current uint64) uint64 {
 	return current
 }
 
-// aggregatorPairsFromCatalogue builds the aggregator pair set from
-// the verified-currency catalogue. Includes every catalogue ticker
-// that has a `coingecko_id` set — CMC and CryptoCompare key off the
-// ticker symbol directly, so a missing CG slug is the conservative
-// "skip" signal (no upstream coverage worth polling).
-//
-// Cross with the operator's fiat list (currently fixed at USD / EUR
-// / GBP — the divergence layer's coverage). Operators who want
-// narrower polling can add a per-poller Symbols override in a
-// future config field; for now the catalogue is the single knob.
+// aggregatorPairsFromCatalogue builds the aggregator pair set from the verified-currency
+// catalogue: every ticker with a `coingecko_id` set (CMC and CryptoCompare key off the ticker
+// symbol, so a missing CG slug is the conservative "skip" signal), crossed with the fixed fiat
+// list USD / EUR / GBP, the divergence layer's coverage.
 func aggregatorPairsFromCatalogue(cat *currency.Catalogue, logger *slog.Logger) []canonical.Pair {
 	if cat == nil {
 		return nil
@@ -2084,12 +1878,9 @@ func reportSkippedAggregatorTickers(skipped []string, logger *slog.Logger) {
 		"tickers", skipped, "count", len(skipped))
 }
 
-// mergeAggregatorPairs unions the catalogue-derived aggregator pairs
-// with the hardcoded fallback set, deduplicated by wire form
-// (Pair.String()). The catalogue supplements defaultAggregatorPairs
-// rather than replacing it: a catalogue that yields pairs for some
-// tickers must not silently drop coverage for a hardcoded ticker the
-// catalogue hasn't (yet) picked up a coingecko_id for.
+// mergeAggregatorPairs unions the catalogue-derived pairs with defaultAggregatorPairs,
+// deduplicated by wire form (Pair.String()). The catalogue supplements the fallback rather than
+// replacing it, so a hardcoded ticker without a coingecko_id yet keeps its coverage.
 func mergeAggregatorPairs(catalogue, defaults []canonical.Pair) []canonical.Pair {
 	out := make([]canonical.Pair, 0, len(catalogue)+len(defaults))
 	seen := make(map[string]struct{}, len(catalogue)+len(defaults))
@@ -2106,12 +1897,9 @@ func mergeAggregatorPairs(catalogue, defaults []canonical.Pair) []canonical.Pair
 	return out
 }
 
-// defaultAggregatorPairs is the pre-catalogue hardcoded pair set
-// aggregators (CoinGecko / CMC / CryptoCompare) query for
-// cross-check. Retained as a fallback when the verified-currency
-// catalogue isn't wired (test fixtures, future config overrides).
-// New entries should be added to `internal/currency/data/seed.yaml`
-// instead — that list is the canonical source.
+// defaultAggregatorPairs is the hardcoded pair set aggregators (CoinGecko / CMC / CryptoCompare)
+// query for cross-check, kept as a fallback when the catalogue isn't wired. Add new entries to
+// `internal/currency/data/seed.yaml`, the canonical source.
 func defaultAggregatorPairs() []canonical.Pair {
 	// Anchors + top-cap globals. XLM first per its product-special
 	// status; the rest in alphabetical order to keep diffs minimal.
@@ -2150,16 +1938,10 @@ func defaultFXPairs(base string) []canonical.Pair {
 	return external.DefaultFXPairs(base)
 }
 
-// chainlinkFeedSetFromConfig is the tiny adapter that bridges the
-// operator-facing config schema (config.ChainlinkFeedSetting) and
-// the chainlink package's runtime FeedSpec. Kept in the cmd dir
-// because the chainlink package can't import config (would create
-// a cycle: config has no dep on chainlink today, and we want to
-// keep it that way).
-//
-// The actual default-fallback + parse logic lives in
-// chainlink.BuildFeedSet so both the indexer (live poll) and
-// stellarindex-ops (backfill subcommand) hit the same code path.
+// chainlinkFeedSetFromConfig bridges config.ChainlinkFeedSetting and the chainlink package's
+// runtime FeedSpec. It lives in the cmd dir because chainlink must not import config (config has
+// no dep on chainlink and should keep it that way). Default-fallback and parsing live in
+// chainlink.BuildFeedSet so the live poll and the ops backfill share one code path.
 func chainlinkFeedSetFromConfig(in map[string]config.ChainlinkFeedSetting) (map[string]externalchainlink.FeedSpec, []canonical.Pair, error) {
 	adapted := make(map[string]externalchainlink.FeedSpec, len(in))
 	for k, v := range in {
@@ -2175,13 +1957,9 @@ func chainlinkFeedSetFromConfig(in map[string]config.ChainlinkFeedSetting) (map[
 
 // ─── Dispatcher wiring ──────────────────────────────────────────
 // ─── Ledger processing ─────────────────────────────────────────
-// cursorReader is the single method [resolveStartLedger] needs from
-// [timescale.Store]. Taking the narrow interface rather than the
-// concrete store states the dependency exactly — this function reads one
-// cursor row and writes nothing — and lets the precedence rules below be
-// exercised without a database.
-//
-// *timescale.Store satisfies it; the production call site is unchanged.
+// cursorReader is the single method [resolveStartLedger] needs from [timescale.Store]. The narrow
+// interface states that it reads one cursor row and writes nothing, and lets the precedence rules
+// below be tested without a database.
 type cursorReader interface {
 	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
 }
@@ -2189,9 +1967,8 @@ type cursorReader interface {
 // resolveStartLedger chooses where to begin ingesting on startup:
 //  1. A persisted cursor wins — resume from one ledger past it.
 //  2. Otherwise, cfg.Ingestion.BackfillFromLedger.
-//  3. Otherwise, an error — we refuse to pick a default ledger
-//     silently because that's how operators end up re-ingesting
-//     genesis by accident.
+//  3. Otherwise, an error: a silent default ledger is how operators
+//     end up re-ingesting genesis by accident.
 func resolveStartLedger(ctx context.Context, store cursorReader, backfillFrom uint32) (uint32, error) {
 	c, err := store.GetCursor(ctx, cursorSource, "")
 	switch {
@@ -2263,12 +2040,9 @@ func rewindCursorForSinkLoss(ctx context.Context, store cursorRewinder, loss pip
 	return true
 }
 
-// processAndPersistCursor wraps pipeline.ProcessLedger with the
-// indexer-specific cursor upsert + cursor metric. The cursor lets a
-// restart resume from cursor+1 instead of replaying from the seam
-// every boot. Backfill (`stellarindex-ops backfill`) does NOT call
-// this — it has explicit -from/-to and shares no cursor row with
-// the indexer.
+// processAndPersistCursor wraps pipeline.ProcessLedger with the indexer's cursor upsert and
+// metric, so a restart resumes from cursor+1 instead of replaying from the seam. Backfill does
+// NOT call it: it has explicit -from/-to and shares no cursor row with the indexer.
 func processAndPersistCursor(
 	ctx context.Context,
 	disp *dispatcher.Dispatcher,
@@ -2282,16 +2056,11 @@ func processAndPersistCursor(
 	if err := pipeline.ProcessLedger(ctx, disp, events, logger, lcm, networkPassphrase); err != nil {
 		return err
 	}
-	// ADR-0033 Phase 2: write the substrate-continuity record once the
-	// ledger's events have been ENQUEUED to the sink channel (which is
-	// what ProcessLedger returning nil guarantees — the sink goroutine
-	// drains + persists asynchronously, so this is NOT a "rows are in
-	// postgres" marker). ledger_ingest_log records that the dispatcher
-	// fully walked + emitted this ledger; reconciliation against the
-	// served tier (ADR-0033 projection reconcile) is what proves the
-	// rows actually landed. Best-effort: a write failure here must not
-	// stall ingest (the gap surfaces in the substrate continuity
-	// check, which is the whole point).
+	// ADR-0033: write the substrate-continuity record once the ledger's events are ENQUEUED to
+	// the sink channel. ProcessLedger returning nil guarantees only that, since the sink
+	// persists asynchronously, so this is NOT a "rows are in postgres" marker; projection
+	// reconcile is what proves the rows landed. Best-effort: a write failure must not stall
+	// ingest, because the gap surfaces in the substrate continuity check.
 	recordLedgerIngest(ctx, store, logger, lcm, networkPassphrase)
 	if err := store.UpsertCursor(ctx, cursorSource, "", lcm.LedgerSequence()); err != nil {
 		// Do NOT advance the cursor gauge on a persist failure. The
@@ -2305,14 +2074,11 @@ func processAndPersistCursor(
 	} else {
 		recordCursorMetric(lcm.LedgerSequence())
 	}
-	// Advance the account observer's TRUE
-	// processed-ledger watermark, but ONLY when the observer is registered
-	// (SDF reserve accounts configured). This runs every live ledger the
-	// observer was driven over — regardless of whether any watched account
-	// changed — so the XLM supply freshness anchor tracks the observer's
-	// liveness (Store.MaxAccountObservationLedger reads it). Best-effort like
-	// the cursor above: a write failure must never stall ingest; the anchor
-	// simply lags a tick and the monotonic guard catches it up next ledger.
+	// Advance the account observer's TRUE processed-ledger watermark, only when the observer is
+	// registered (SDF reserve accounts configured). It runs for every live ledger the observer
+	// saw, whether or not a watched account changed, so the XLM supply freshness anchor tracks
+	// observer liveness. Best-effort: a failed write lags the anchor a tick and the monotonic
+	// guard catches it up next ledger.
 	if accountObserverActive {
 		if err := store.UpsertAccountObserverWatermark(ctx, lcm.LedgerSequence()); err != nil {
 			logger.Warn("account observer watermark upsert",
@@ -2324,12 +2090,9 @@ func processAndPersistCursor(
 	return nil
 }
 
-// recordLedgerIngest computes the decoder-independent LCM census and
-// writes the ledger_ingest_log substrate record (ADR-0033 Phase 2).
-// The census is a SECOND, independent walk of the LCM (not the decode
-// walk) on purpose: a bug in the dispatch walk cannot then hide itself
-// in the census it's reconciled against. Cost is a cheap structural
-// re-parse (no body decode); DB writes dominate the per-ledger budget.
+// recordLedgerIngest computes the decoder-independent LCM census and writes the ledger_ingest_log
+// substrate record (ADR-0033). The census is a SECOND, independent walk of the LCM on purpose, so
+// a bug in the dispatch walk cannot hide itself in the census it is reconciled against.
 func recordLedgerIngest(
 	ctx context.Context,
 	store *timescale.Store,
@@ -2343,15 +2106,11 @@ func recordLedgerIngest(
 		return
 	}
 	if census.TxReadErrors > 0 || census.TxEventReadErrors > 0 {
-		// A ledger we could not fully read — a malformed tx (TxReadErrors)
-		// OR a tx whose GetTransactionEvents failed (TxEventReadErrors,
-		// e.g. an unsupported future TransactionMeta version, the P23/P27
-		// meta-break class) — undercounts this ledger's primitives: its
-		// SorobanEventCount drops to zero in lock-step with the live
-		// sink, so a projection reconcile against it would falsely
-		// pass. Don't write an authoritative substrate row we can't stand
-		// behind — leave the ledger as a substrate gap so a later re-run on
-		// a fixed reader rewrites the real row. Mirrors the offline
+		// A ledger we could not fully read (a malformed tx, or a tx whose GetTransactionEvents
+		// failed, e.g. an unsupported future TransactionMeta version) undercounts its primitives:
+		// SorobanEventCount drops to zero in lock-step with the live sink, so a projection
+		// reconcile would falsely pass. Don't write an authoritative row we can't stand behind;
+		// leave a substrate gap so a re-run on a fixed reader rewrites it. Mirrors the offline
 		// census-backfill path (internal/ops/ingest/census_backfill.go).
 		recordLedgerIngestCensusSkip(census)
 		logger.Warn("ledger census read errors; skipping substrate record",
@@ -2396,24 +2155,16 @@ const (
 	hashDBVerifyInterval = 60 * time.Minute
 	hashDBVerifyWindow   = uint32(20000)
 
-	// hashDBVerifySafetyMargin trails the verify window's upper bound
-	// behind the indexer's own last-appended ledger. Not strictly
-	// required for correctness — recordHashdb stores lastAppended
-	// synchronously AFTER hashdb.Append returns, in the same
-	// goroutine, so Load() can never observe a ledger hashdb hasn't
-	// durably recorded yet — but a small margin is cheap defense in
-	// depth against that invariant ever changing, and keeps the sweep
-	// away from the bucket's bleeding edge (galexie's own object
-	// upload can lag the indexer's read by a few ledgers on a
-	// restart/catch-up race).
+	// hashDBVerifySafetyMargin trails the verify window's upper bound behind the indexer's
+	// last-appended ledger. recordHashdb stores lastAppended synchronously after hashdb.Append
+	// returns, so Load() never sees an unrecorded ledger; the margin is cheap defense in depth
+	// against that changing, and keeps the sweep off the bucket's bleeding edge (galexie's upload
+	// can lag the indexer's read by a few ledgers on a restart/catch-up race).
 	hashDBVerifySafetyMargin = uint32(16)
 )
 
-// openOrCreateHashDB opens the hashdb file at path, creating it
-// (starting at startLedger) if it doesn't exist yet. First-ever-run
-// convenience — an operator flipping cfg.HashDB.Enabled=true on a
-// region shouldn't need a separate bootstrap step before the indexer
-// will start.
+// openOrCreateHashDB opens the hashdb file at path, creating it (starting at startLedger) if
+// missing, so enabling cfg.HashDB.Enabled needs no separate bootstrap step.
 func openOrCreateHashDB(path string, startLedger uint32) (*hashdb.DB, error) {
 	db, err := hashdb.Open(path)
 	if err == nil {
@@ -2423,15 +2174,11 @@ func openOrCreateHashDB(path string, startLedger uint32) (*hashdb.DB, error) {
 	case errors.Is(err, fs.ErrNotExist):
 		// Fresh region: fall through to Create.
 	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
-		// A file shorter than the 16-byte header can only be the
-		// residue of a Create whose header never reached disk (e.g.
-		// power loss inside the writeback window) — no record was ever
-		// stored, so recreating loses nothing. Without this arm, a
-		// 0-byte file crash-loops the whole ingest daemon until an
-		// operator manually deletes it. Anything else (bad magic, bad
-		// version, permissions) stays fail-closed: auto-recreating a
-		// file that HAS content would silently discard the
-		// tamper-evidence baseline this detector exists to keep.
+		// A file shorter than the 16-byte header is the residue of a Create whose header never
+		// reached disk (e.g. power loss), so no record was stored and recreating loses nothing.
+		// Without this arm a 0-byte file crash-loops the daemon. Anything else (bad magic, bad
+		// version, permissions) stays fail-closed: recreating a file that HAS content would
+		// discard the tamper-evidence baseline this detector exists to keep.
 		if rmErr := os.Remove(path); rmErr != nil {
 			return nil, fmt.Errorf("hashdb: remove truncated file %s: %w", path, rmErr)
 		}
@@ -2441,25 +2188,18 @@ func openOrCreateHashDB(path string, startLedger uint32) (*hashdb.DB, error) {
 	return hashdb.Create(path, startLedger)
 }
 
-// marshalLedgerCloseMeta is indirected purely so
-// TestRecordHashdb_DurationExcludesMarshal can inject a controlled,
-// artificially slow marshal without needing an implausibly large LCM
-// (and a wall-clock-ratio comparison that would flake under load).
-// Production always takes the default.
+// marshalLedgerCloseMeta is indirected so TestRecordHashdb_DurationExcludesMarshal can inject a
+// slow marshal without an implausibly large LCM or a flaky wall-clock ratio. Production always
+// takes the default.
 var marshalLedgerCloseMeta = func(lcm sdkxdr.LedgerCloseMeta) ([]byte, error) {
 	return lcm.MarshalBinary()
 }
 
-// recordHashdb appends the ledger's sha256(LCM) into hdb, once per ledger from
-// the live LCM read loop.
-//
-// It runs synchronously, unlike the ClickHouse live-sink fan-out: hashdb.Append
-// is one positional 32-byte WriteAt (no seek, fsync or network), so a channel
-// and drop policy would be pure risk for no throughput gain.
-//
-// Errors log a WARN and bump HashdbAppendTotal{"error"} but never propagate: a
-// diagnostics side channel must not stall or fail the pipeline that serves
-// customer data.
+// recordHashdb appends the ledger's sha256(LCM) into hdb, once per ledger from the live read loop.
+// It runs synchronously, unlike the ClickHouse fan-out: Append is one positional 32-byte WriteAt,
+// so a channel and drop policy would be risk for no gain. Errors log a WARN and bump
+// HashdbAppendTotal{"error"} but never propagate: a diagnostics side channel must not stall the
+// pipeline that serves customer data.
 func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logger, lastAppended *atomic.Uint32) {
 	seq := lcm.LedgerSequence()
 
@@ -2471,11 +2211,9 @@ func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logge
 	start := time.Now()
 	if err == nil {
 		h := hashdb.Hash(raw)
-		// Verify-then-Append-on-ErrMissing (hashdb.Verify's own
-		// docstring): a re-ingested ledger (restart, cursor rewind)
-		// must never blindly overwrite an already-recorded hash —
-		// that would erase the drift-detector's baseline for the one
-		// case (a rewritten upstream object) it exists to catch.
+		// Verify-then-Append-on-ErrMissing: a re-ingested ledger (restart, cursor rewind) must not
+		// overwrite a recorded hash, which would erase the drift baseline for the one case (a
+		// rewritten upstream object) the detector exists to catch.
 		verr := hdb.Verify(seq, h)
 		switch {
 		case verr == nil:
@@ -2503,21 +2241,15 @@ func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logge
 	lastAppended.Store(seq)
 }
 
-// startHashDBVerifier runs the periodic half of the hashdb drift detector:
-// every cfg.VerifyIntervalMinutes it re-reads a trailing window of
-// cfg.VerifyWindowLedgers ledgers from the same bucket the append side reads
-// (lsCfg) and compares each fresh hash against verifyDB via
-// archivecompleteness.HashDBWindowVerifier.
+// startHashDBVerifier runs the periodic half of the hashdb drift detector: every
+// cfg.VerifyIntervalMinutes it re-reads a trailing window of cfg.VerifyWindowLedgers ledgers from
+// the bucket the append side reads (lsCfg) and compares each fresh hash against verifyDB via
+// archivecompleteness.HashDBWindowVerifier. It is an in-process ticker, not a systemd timer, so
+// it shares the indexer's /metrics endpoint and bucket config and trails its lastAppended edge.
 //
-// It is an in-process ticker rather than a systemd timer so it shares the
-// indexer's /metrics endpoint and bucket config and trails the indexer's own
-// lastAppended edge.
-//
-// Known limitation: the window is read from the live bucket
-// (cfg.Storage.S3BucketLive) only. During a large historical catch-up
-// lastAppended can name ledgers the live bucket doesn't hold yet; the sweep
-// then reports outcome="error" (object not found) and self-heals once the
-// indexer crosses the archive/live seam.
+// Known limitation: the window is read from the live bucket only. During a large historical
+// catch-up lastAppended can name ledgers that bucket doesn't hold yet; the sweep reports
+// outcome="error" and self-heals once the indexer crosses the archive/live seam.
 func startHashDBVerifier(
 	parent context.Context,
 	verifyDB *hashdb.DB,
@@ -2528,26 +2260,19 @@ func startHashDBVerifier(
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan struct{})
 
-	// Consecutive sweep ticks re-read an overlapping trailing
-	// window by construction (see the ticker comment below), so a
-	// still-drifted ledger is observed — and would otherwise be
-	// counted — on every tick it falls inside, not once. seenDrifted
-	// is this single goroutine's record of ledger sequences already
-	// tallied into HashdbDriftTotal, so the counter reflects distinct
-	// drifted ledgers rather than drift observations.
+	// Consecutive ticks re-read an overlapping trailing window, so a still-drifted ledger is
+	// observed on every tick it falls inside. seenDrifted is this goroutine's record of sequences
+	// already tallied into HashdbDriftTotal, so the counter counts distinct drifted ledgers, not
+	// observations.
 	seenDrifted := make(map[uint32]struct{})
 
 	go func() {
 		defer close(done)
-		// RECOVER. The sweep re-marshals arbitrary archived
-		// LedgerCloseMeta, so it is the goroutine in this binary most
-		// likely to meet a malformed object — and its whole job is to
-		// notice tampering, so it must not become a way to stop the
-		// node. A recovered sweep leaves the ledger it was checking
-		// unverified; the next tick re-reads a window that overlaps it,
-		// so detection is delayed, not lost. Silence is the danger for a
-		// detector, which is why the panic counter (and not merely this
-		// return) is the point: a stopped verifier otherwise looks
+		// RECOVER. The sweep re-marshals arbitrary archived LedgerCloseMeta, so it is the goroutine
+		// most likely to meet a malformed object, and a tamper detector must not become a way to
+		// stop the node. A recovered sweep leaves its ledger unverified, but the next tick's
+		// overlapping window re-reads it, so detection is delayed, not lost. Silence is the danger
+		// for a detector: the panic counter is the point, since a stopped verifier otherwise looks
 		// exactly like a clean chain.
 		defer worker.Recover(logger, "hashdb-verify")
 		ticker := time.NewTicker(hashDBVerifyInterval)
@@ -2564,27 +2289,20 @@ func startHashDBVerifier(
 	return cancel, done
 }
 
-// hashDBSweepComplete reports whether a verify pass actually checked
-// the window it was asked to: every ledger in [from, to] accounted
-// for (Verified+Drifted+Missing+OutOfRange == the window size) AND at
-// least one ledger was actually compared against a recorded baseline
-// (Verified > 0). A window where every ledger came back
-// Missing/OutOfRange (a hashdb append gap, or a window that landed
-// entirely before any baseline was recorded) never compared a single
-// hash — that is "we don't know", not "clean", even though the
-// stream itself reached the end without erroring.
+// hashDBSweepComplete reports whether a verify pass actually checked its window: every ledger in
+// [from, to] accounted for (Verified+Drifted+Missing+OutOfRange == window size) AND at least one
+// compared against a recorded baseline (Verified > 0). A window of all Missing/OutOfRange (an
+// append gap, or a window before any baseline) compared no hash, which is "we don't know", not
+// "clean", even though the stream reached the end without error.
 func hashDBSweepComplete(res archivecompleteness.HashDBVerifyResult, observed int, from, to uint32) bool {
 	return observed == int(to-from)+1 && res.Verified > 0
 }
 
-// countNewDrift returns how many of res's drifted ledgers have not
-// already been counted into HashdbDriftTotal, marking the new ones
-// seen in the process. seen is nil for a one-off, non-repeating pass
-// (runVerifyHashDBRange's CLI mode) — there every drifted ledger is
-// new by definition, so the raw count is returned unchanged. For the
-// periodic sweep, consecutive ticks re-read an overlapping
-// trailing window, so without dedup a still-drifted ledger inflates
-// the counter on every tick it remains inside the window.
+// countNewDrift returns how many of res's drifted ledgers are not yet counted into
+// HashdbDriftTotal, marking the new ones seen. seen is nil for a one-off pass (the CLI range
+// mode), where every drifted ledger is new and the raw count is returned. The periodic sweep
+// re-reads an overlapping window, so without dedup a still-drifted ledger would inflate the
+// counter on every tick.
 func countNewDrift(res archivecompleteness.HashDBVerifyResult, seen map[uint32]struct{}) int {
 	if seen == nil {
 		return res.Drifted
@@ -2605,12 +2323,10 @@ func countNewDrift(res archivecompleteness.HashDBVerifyResult, seen map[uint32]s
 	return newly
 }
 
-// hashDBVerifyPass (window: the runs-counter label) runs one bounded hashdb verify pass over an explicit
-// [from, to] ledger range and records/logs its outcome. It is separate
-// from hashDBVerifySweep so the same pass can run either off the live
-// tip's trailing window (hashDBVerifySweep's job) OR over an
-// operator-supplied older range that has already scrolled out of that
-// window — see runVerifyHashDBRange, the -verify-hashdb-from/-to CLI mode.
+// hashDBVerifyPass runs one bounded hashdb verify pass over an explicit [from, to] range and
+// records its outcome; window is the runs-counter label. It is separate from hashDBVerifySweep so
+// the same pass serves the live tip's trailing window and an operator-supplied older range (see
+// runVerifyHashDBRange).
 func hashDBVerifyPass(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -2620,15 +2336,11 @@ func hashDBVerifyPass(
 	seenDrifted map[uint32]struct{},
 	window string,
 ) hashDBVerifySweepOutcome {
-	// Stream STRICT: the shared live-tail config tolerates
-	// trailing-missing objects (a live reader racing galexie's upload
-	// edge needs that), but this sweep's window trails ledgers the
-	// indexer itself already read successfully — every object in
-	// [from, to] existed once, so "object missing" here is exactly the
-	// deleted-history tamper class hashdb exists to catch, not a
-	// race. With tolerance on, a deleted object silently ended the
-	// sweep early and the run recorded outcome="ok" — a vacuously
-	// green detector.
+	// Stream STRICT: the shared live-tail config tolerates trailing-missing objects (a live reader
+	// racing galexie's upload edge), but this window trails ledgers the indexer already read, so
+	// "object missing" here is the deleted-history tamper class hashdb exists to catch, not a
+	// race. With tolerance on, a deleted object silently ended the sweep early with outcome="ok",
+	// a vacuously green detector.
 	lsCfg.TolerateTrailingMissing = false
 
 	start := time.Now()
@@ -2708,11 +2420,9 @@ const (
 	sweepOutcomeOK
 )
 
-// classifyHashDBVerifySweep turns one sweep's verifier result and
-// stream error into the outcome hashDBVerifySweep records. Drift is
-// checked BEFORE the shutdown-cancel case: drift tallied before a
-// context.Canceled stream error is still drift and must not be
-// discarded as if the sweep found nothing.
+// classifyHashDBVerifySweep turns one sweep's verifier result and stream error into the recorded
+// outcome. Drift is checked BEFORE the shutdown-cancel case: drift tallied before a
+// context.Canceled error is still drift, not "found nothing".
 func classifyHashDBVerifySweep(res archivecompleteness.HashDBVerifyResult, streamErr error, from, to uint32) hashDBVerifySweepOutcome {
 	if res.AnyDrift() {
 		return sweepOutcomeDrift
@@ -2756,16 +2466,11 @@ func startMetricsServer(obsCfg config.ObsConfig, schema v1.SchemaVersionReader, 
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
-		// CRASH — deliberately unguarded, the same exemption
-		// the API and aggregator binaries make for their listeners.
-		// net/http already isolates per-request handler panics, so a
-		// panic that reaches this frame is a fault in the accept loop
-		// itself, not in a scrape. Recovering it would leave the process
-		// running with nothing listening on /metrics — and the guard's
-		// only output is a COUNTER, which is read over exactly the
-		// endpoint that just died. A recover here would silence itself.
-		// Exiting hands the decision to Prometheus's `up == 0` and to
-		// systemd, both of which act.
+		// CRASH, deliberately unguarded, as the API and aggregator listeners are. net/http already
+		// isolates per-request handler panics, so a panic here is a fault in the accept loop. A
+		// recover would leave the process running with nothing on /metrics, and the guard's only
+		// output is a counter read over that very endpoint, so it would silence itself. Exiting
+		// hands the decision to Prometheus's `up == 0` and systemd, both of which act.
 		logger.Info("metrics endpoint listening", "addr", obsCfg.MetricsListen)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("metrics server exited", "err", err)
@@ -2778,12 +2483,9 @@ func mkLogger(cfg config.ObsConfig) *slog.Logger {
 	return obs.NewLogger(cfg, "stellarindex-indexer")
 }
 
-// discoveryRecorderAdapter wraps *timescale.Store to satisfy
-// discovery.Recorder. The Store methods are named RecordDiscovered /
-// IsKnownDiscovered (suffixed with the table they touch); the
-// interface uses Record / IsKnown — this thin adapter bridges the
-// two without renaming the storage-layer methods (which would
-// collide with future RecordX / IsKnownX domains added to Store).
+// discoveryRecorderAdapter wraps *timescale.Store to satisfy discovery.Recorder, bridging the
+// table-suffixed Store names (RecordDiscovered / IsKnownDiscovered) to Record / IsKnown without
+// renaming storage methods that would collide with future RecordX / IsKnownX domains.
 type discoveryRecorderAdapter struct {
 	s *timescale.Store
 }

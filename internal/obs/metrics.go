@@ -10,12 +10,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// Registry holds every metric the binary emits. Binaries expose
-// it at /metrics via [Handler].
-//
-// We use a non-default registry (not prometheus.DefaultRegisterer)
-// so tests can spin up isolated registries without state leakage +
-// the default process/go collectors are opt-in here.
+// Registry holds every metric the binary emits; binaries expose it at /metrics via [Handler].
+// It is a non-default registry so tests get isolated registries without state leakage, and the
+// default process/go collectors are opt-in.
 var Registry = prometheus.NewRegistry()
 
 func init() {
@@ -157,12 +154,9 @@ func registerPricingMetrics() {
 	)
 }
 
-// registerProjectorMetrics registers the ADR-0032 projector family — lag,
-// cycle outcomes, decoded events, cycle latency, and the two operator-facing
-// flags (wedge + replay window). Peeled off [registerAppMetrics] for the same
-// reason [registerFreezeLifecycleMetrics] was: the set only grows, and the
-// funlen ceiling is what forces the split rather than a silently ever-longer
-// function.
+// registerProjectorMetrics registers the ADR-0032 projector family: lag, cycle outcomes, decoded
+// events, cycle latency, and the wedge and replay-window flags. Split out of [registerAppMetrics]
+// to stay under the funlen ceiling.
 func registerProjectorMetrics() {
 	Registry.MustRegister(
 		ProjectorLagLedgers,
@@ -174,12 +168,9 @@ func registerProjectorMetrics() {
 	)
 }
 
-// registerAPIServingMetrics registers the API serving-path family — the
-// read-path caches, the per-row sparkline result counter, the stream
-// subscription counter, and the CORS decision counter. Peeled off
-// [registerAppMetrics] for the same reason as the freeze-lifecycle group:
-// the set only grows, and the funlen ceiling is what forces the split
-// rather than a silently ever-longer function.
+// registerAPIServingMetrics registers the API serving-path family: the read-path caches, the
+// per-row sparkline result counter, the stream subscription counter, and the CORS decision
+// counter. Split out of [registerAppMetrics] to stay under the funlen ceiling.
 func registerAPIServingMetrics() {
 	Registry.MustRegister(
 		PricingGuardDegradedTotal,
@@ -206,12 +197,9 @@ func registerAPIServingMetrics() {
 	}
 }
 
-// registerFreezeLifecycleMetrics registers the ADR-0019 freeze-lifecycle
-// family — fire / extend / escalate / release, the live-freeze gauge, and
-// the recovery worker's own counters. A self-contained group, peeled off
-// [registerAppMetrics] for the same reason that function was peeled off
-// init(): the set only grows, and the funlen ceiling is what forces the
-// split rather than a silently ever-longer function.
+// registerFreezeLifecycleMetrics registers the ADR-0019 freeze-lifecycle family (fire, extend,
+// escalate, release, the live-freeze gauge, the recovery worker's counters). Split out of
+// [registerAppMetrics] to stay under the funlen ceiling.
 func registerFreezeLifecycleMetrics() {
 	Registry.MustRegister(
 		AnomalyFreezeEngagedTotal,
@@ -290,11 +278,8 @@ func registerAppMetricsTail() {
 		// SourceUnrepresentableSymbolsTotal above.
 		AggregatorCatalogueTickersSkipped,
 
-		// Chainlink decimals()-verify fail-open counter,
-		// registered here rather than beside its
-		// ChainlinkFeedDecimalsMismatchTotal neighbour in
-		// [registerAppMetrics] for the same funlen reason as
-		// SourceUnrepresentableSymbolsTotal above.
+		// Chainlink decimals()-verify fail-open counter, registered here rather than beside
+		// ChainlinkFeedDecimalsMismatchTotal for the funlen ceiling.
 		ChainlinkFeedDecimalsVerifyFailedTotal,
 		ChainlinkFeedPollsTotal,
 		ChainlinkFeedLastSuccessUnix,
@@ -460,11 +445,8 @@ func registerAuthReaperMetrics() {
 	}
 }
 
-// seedBoundedLabelSeries pre-registers the zero-valued label combinations
-// alert rules select on. Split out of [registerAppMetrics] for the same
-// reason that function was split out of init(): the set only grows, and the
-// funlen ceiling is what forces the split rather than a silently
-// ever-longer function.
+// seedBoundedLabelSeries pre-registers the zero-valued label combinations alert rules select on.
+// Split out of [registerAppMetrics] to stay under the funlen ceiling.
 func seedBoundedLabelSeries() {
 	// Pre-seed zero series for bounded-label counters alerted via rate()/increase(): a CounterVec child
 	// does not exist until its first Inc, so the alert reads "no data", indistinguishable from a dead
@@ -472,11 +454,9 @@ func seedBoundedLabelSeries() {
 	for _, outcome := range []string{"ok", "missing_leg", "parse_error", "redis_error", "frozen_leg", "frozen_leg_direct_served", "low_confidence", "proxy_pivot"} {
 		AggregatorTriangulationsTotal.WithLabelValues(outcome)
 	}
-	// The self-pair exploit detector is EXPECTED to sit at zero indefinitely
-	// (comet emitted none before the Blend/Comet exploit), so without seeding an
-	// operator could not tell "armed but quiet" from "dead metric / never
-	// deployed" — the exact ambiguity above. Its `source` label is bounded to
-	// the single known producer (comet).
+	// The self-pair exploit detector is expected to sit at zero indefinitely; seeding lets an
+	// operator tell "armed but quiet" from "dead metric". Its `source` label is bounded to the
+	// single known producer (comet).
 	AMMSelfPairSwapTotal.WithLabelValues("comet")
 	// Same dead-metric ambiguity as AMMSelfPairSwapTotal above, same fix.
 	AMMNonPositiveSwapTotal.WithLabelValues("comet")
@@ -487,11 +467,8 @@ func seedBoundedLabelSeries() {
 	for _, outcome := range []string{"written", "buffered", "dropped", "errored"} {
 		ChLiveSinkLedgersTotal.WithLabelValues(outcome)
 	}
-	// The shutdown-loss counter is EXPECTED to sit at zero across every
-	// clean deploy, so without the seed an operator could not tell "no
-	// row has ever been abandoned" from "the counter was never wired".
-	// Unrolled rather than looped: the loop tipped this function over the
-	// gocognit ceiling, and two literal kinds read no worse.
+	// The shutdown-loss counter sits at zero on clean deploys; seeding lets an operator tell "no
+	// row abandoned" from "counter never wired". Unrolled because a loop tips gocognit.
 	SinkUndrainedRowsTotal.WithLabelValues(SinkPersistEvents, "trade")
 	SinkUndrainedRowsTotal.WithLabelValues(SinkPersistEvents, "event")
 	for _, outcome := range []string{"ok", "scan_error", "write_error"} {
@@ -514,11 +491,8 @@ func seedBoundedLabelSeries() {
 	for _, outcome := range []string{"ok", "error"} {
 		SignupReaperRunsTotal.WithLabelValues(outcome)
 	}
-	// The durable login-code lockout's three fail-soft paths.
-	// Seeded because all three are silent at the HTTP layer — a
-	// fail-open control with an ABSENT series is indistinguishable from
-	// one that has never failed, which is the exact ambiguity that let
-	// this class of defect through before.
+	// The durable login-code lockout's three fail-soft paths. All are silent at the HTTP layer,
+	// and a fail-open control with an absent series looks the same as one that never failed.
 	for _, op := range []string{
 		LoginCodeLockoutOpStatusCheck, LoginCodeLockoutOpRegister, LoginCodeLockoutOpSweep,
 	} {
@@ -548,11 +522,8 @@ func seedBoundedLabelSeries() {
 	// hashdb outcomes seeded so alerts read zero, not "no data".
 	seedHashdbSeries()
 	seedLedgerstreamTierSeries()
-	// ADR-0019 freeze-lifecycle release modes. Bounded set of two;
-	// `operator` in particular is the one an on-call reads as "the
-	// calibration is producing freezes humans keep undoing", and until
-	// the first manual unfreeze it would otherwise be absent from
-	// scrape output — indistinguishable from a dead metric.
+	// ADR-0019 freeze-lifecycle release modes. `operator` signals the calibration is producing
+	// freezes humans keep undoing; unseeded it is absent until the first manual unfreeze.
 	for _, mode := range []string{"auto", "operator", "lapsed"} {
 		AnomalyFreezeReleasedTotal.WithLabelValues(mode)
 	}
@@ -562,12 +533,9 @@ func seedBoundedLabelSeries() {
 	for _, op := range []string{"mark_hold", "clear"} {
 		AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues(op)
 	}
-	// Privileged-mutation surfaces whose audit row can fail to
-	// land. Bounded and enumerated at the six call sites; seeded so the
-	// alert's increase() reads a real zero instead of "no data" on a
-	// freshly-deployed API — the state that is otherwise
-	// indistinguishable from "this metric is dead", which is exactly the
-	// gap that let the audit-write failure go unobserved in the first place.
+	// Privileged-mutation surfaces whose audit row can fail to land, enumerated at the six call
+	// sites. Seeded so the alert's increase() reads a real zero instead of "no data" on a fresh
+	// API, which looks the same as a dead metric.
 	for _, surface := range []string{
 		"account_override", "key_mint", "key_revoke",
 		"status_notice",
@@ -600,13 +568,10 @@ func seedBoundedLabelSeries() {
 	// over the gocognit ceiling, and two literal routes read no worse.
 	MintScopeClampRefusedTotal.WithLabelValues("/v1/admin/keys")
 	MintScopeClampRefusedTotal.WithLabelValues("/v1/account/keys")
-	// Producer-side webhook fan-out losses. The event-type set
-	// is platform.WebhookEventType's closed enum (kept as literals here
-	// so internal/obs stays free of an internal/platform import); the
-	// reason set is the three FanoutFailure* constants above. Seeded
-	// because a lost fan-out leaves NO delivery row to count later —
-	// "this series has never fired" and "nothing publishes this metric"
-	// would otherwise be the same scrape.
+	// Producer-side webhook fan-out losses. Event types are platform.WebhookEventType's closed
+	// enum, kept as literals so internal/obs avoids importing internal/platform; reasons are the
+	// FanoutFailure* constants above. Seeded because a lost fan-out leaves no delivery row to
+	// count later, so "never fired" and "nothing publishes" would be the same scrape.
 	for _, eventType := range []string{
 		"incident.sev1", "incident.resolved", "anomaly.freeze",
 		"divergence.firing", "price.alert",
@@ -659,11 +624,9 @@ func seedBoundedLabelSeriesTail() {
 	} {
 		CustomerWebhookDeliveryAttemptsTotal.WithLabelValues(outcome)
 	}
-	// Background cache workers. Seeded so the DEX-TVL /
-	// order-book failure-rate queries read a real zero (not "no data")
-	// from process start; the load_* pair matters most — a process
-	// whose initial book load never even attempted looks identical to
-	// a healthy one without the zero series.
+	// Background cache workers. Seeded so the DEX-TVL / order-book failure-rate queries read a
+	// real zero from process start; the load_* pair matters most, since a process whose initial
+	// book load never attempted looks healthy without the zero series.
 	for _, outcome := range []string{"ok", "error"} {
 		DEXTVLRefreshTotal.WithLabelValues(outcome)
 	}
@@ -744,13 +707,11 @@ func Handler() http.Handler {
 
 // ─── HTTP-layer metrics ──────────────────────────────────────────
 
-// HTTPRequestsTotal — count of HTTP requests served, by method,
-// route pattern (not raw URL — avoids cardinality blow-up on IDs),
-// and status class.
+// HTTPRequestsTotal — count of HTTP requests served, by method, route pattern (not raw URL, to
+// avoid cardinality blow-up on IDs), and status class.
 //
-// Alert rules reference this via `http_requests_total{status=~"5..", job=~"stellarindex[-_]api"}`.
-// (Scrape jobs use `stellarindex_api` on HA
-// multi-host and `stellarindex-api` on R1; rules match both via regex.)
+// Alert rules match `http_requests_total{status=~"5..", job=~"stellarindex[-_]api"}`; scrape jobs
+// are `stellarindex_api` on HA multi-host and `stellarindex-api` on R1, so rules use a regex.
 var HTTPRequestsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "http_requests_total",
@@ -759,11 +720,8 @@ var HTTPRequestsTotal = prometheus.NewCounterVec(
 	[]string{"method", "route", "status"},
 )
 
-// HTTPRequestDuration — histogram of request latency in seconds,
-// from first byte in to last byte out.
-//
-// Buckets cover 1 ms → 10 s so the p95 ≤ 200 ms SLA target lands
-// inside a bucket boundary (0.2) for accurate p95/p99 readouts.
+// HTTPRequestDuration — histogram of request latency in seconds, first byte in to last byte out.
+// Buckets cover 1 ms to 10 s so the p95 <= 200 ms SLA target lands on a bucket boundary (0.2).
 var HTTPRequestDuration = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name: "http_request_duration_seconds",
@@ -775,13 +733,10 @@ var HTTPRequestDuration = prometheus.NewHistogramVec(
 	[]string{"method", "route"},
 )
 
-// DependencyUp reports each /v1/readyz readiness check as an alertable gauge:
-// 1 when the dependency answered, 0 when it did not. It exists because
-// ClickHouse, the raw lake the ADR-0033 completeness claim rests on, had no
-// exporter and so no health signal; exposing the existing check covers every
-// dependency with no new scrape target, and measures whether the API can
-// reach it. Alert on `== 0`, never on `absent()` alone: a renamed check
-// would read as an outage.
+// DependencyUp reports each /v1/readyz readiness check as an alertable gauge: 1 when the
+// dependency answered, 0 when not. It gives ClickHouse, the raw lake the ADR-0033 completeness
+// claim rests on, a health signal with no new scrape target, measured from the API's side. Alert
+// on `== 0`, never on `absent()` alone: a renamed check would read as an outage.
 var DependencyUp = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_dependency_up",
@@ -791,12 +746,10 @@ var DependencyUp = prometheus.NewGaugeVec(
 )
 
 // IngestGapLedgers is the data-derived ingest-gap signal: total missing
-// ledgers in contiguous gaps >= the worker's threshold, per source and
-// table, set by [internal/storage/timescale.GapDetector] each cycle and
-// reset to 0 when none remain. With IngestGapCount and IngestGapMaxSize it
-// feeds the gap alert, which would have caught a 92,737-ledger writer halt
-// in one detector cycle instead of an audit pass. SDEX reports under
-// {source="sdex", table="trades"}.
+// ledgers in contiguous gaps >= the worker's threshold, per source and table, set by
+// [internal/storage/timescale.GapDetector] each cycle and reset to 0 when none remain. With
+// IngestGapCount and IngestGapMaxSize it feeds the gap alert, so a writer halt is caught in one
+// detector cycle. SDEX reports under {source="sdex", table="trades"}.
 var IngestGapLedgers = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_ingest_gap_ledgers",
@@ -805,13 +758,9 @@ var IngestGapLedgers = prometheus.NewGaugeVec(
 	[]string{"source", "table"},
 )
 
-// IngestGapCount counts the number of contiguous gaps per source
-// at the same detector cycle that updates IngestGapLedgers. A
-// single 100K-ledger gap and 100 ten-ledger gaps both report 1000
-// missing ledgers in IngestGapLedgers but very different shapes;
-// operators chart this gauge to distinguish "one big halt"
-// (typical cascade signature) from "many small drops" (typical
-// flaky-write pattern).
+// IngestGapCount counts contiguous gaps per source, updated in the same detector cycle as
+// IngestGapLedgers. One big gap and many small ones can report the same missing-ledger total, so
+// this distinguishes a single halt (cascade signature) from many small drops (flaky writes).
 var IngestGapCount = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_ingest_gap_count",
@@ -820,12 +769,8 @@ var IngestGapCount = prometheus.NewGaugeVec(
 	[]string{"source", "table"},
 )
 
-// IngestGapMaxSize reports the size of the largest contiguous gap
-// per source. Useful when the operator wants to know "how big is
-// the biggest hole" without parsing the gap list. Always equals
-// max(IngestGapLedgers / IngestGapCount) under the cycle's
-// invariant, but exposed directly so a single PromQL query can
-// alert on it.
+// IngestGapMaxSize reports the size of the largest contiguous gap per source, exposed directly so
+// a single PromQL query can alert on the biggest hole without parsing the gap list.
 var IngestGapMaxSize = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_ingest_gap_max_size_ledgers",
@@ -834,12 +779,9 @@ var IngestGapMaxSize = prometheus.NewGaugeVec(
 	[]string{"source", "table"},
 )
 
-// IngestGapDetectorRunsTotal counts detector cycle attempts +
-// outcomes. Operators read its rate to confirm the detector is
-// alive even when IngestGapLedgers is steady at zero (which is the
-// healthy state). Outcome ∈ {ok, error} — the latter increments
-// when the underlying SQL fails (typically a transient Postgres
-// connection blip).
+// IngestGapDetectorRunsTotal counts detector cycle attempts by outcome. Its rate confirms the
+// detector is alive while IngestGapLedgers sits at zero. Outcome is ok or error; error means the
+// underlying SQL failed, typically a transient Postgres connection blip.
 var IngestGapDetectorRunsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ingest_gap_detector_runs_total",
@@ -917,12 +859,10 @@ var ProjectorRunsTotal = prometheus.NewCounterVec(
 	[]string{"source", "outcome"},
 )
 
-// ProjectorEventsDecoded counts events the projector emitted
-// through the sink (or that failed decode). `outcome` ∈ {ok,
-// decode_error, reconstruct_error (a landing-zone row too malformed to
-// rebuild into an event), sink_*}. Operators chart `rate(ok[5m])` against the
-// equivalent dispatcher counter during Phase 3 parallel mode to
-// verify the projector keeps pace with live ingest.
+// ProjectorEventsDecoded counts events the projector emitted through the sink or that failed
+// decode. `outcome` is ok, decode_error, reconstruct_error (a landing-zone row too malformed to
+// rebuild into an event) or sink_*. Chart `rate(ok[5m])` against the dispatcher counter in
+// parallel mode to verify the projector keeps pace with live ingest.
 var ProjectorEventsDecoded = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_projector_events_decoded_total",
@@ -1065,13 +1005,10 @@ var DecoderPanicsTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
-// SourceAmountDegradedTotal — per-source, per-field counter of decoded
-// events whose money-bearing field failed to parse into its expected
-// shape (e.g. sorocredit's Liquidation settled_amount, when data[2]
-// isn't a non-empty Vec[i128]). The decode still returns a nil error
-// by design: the row is written with the field NULL rather than the event
-// being dropped, so without this counter a zeroed leg in a served SUM
-// is invisible — no error, no failed decode, just a quiet undercount.
+// SourceAmountDegradedTotal — per-source, per-field counter of decoded events whose money-bearing
+// field failed to parse (e.g. sorocredit's Liquidation settled_amount when data[2] is not a
+// non-empty Vec[i128]). Decode returns nil by design and writes the field NULL rather than
+// dropping the event, so without this counter a zeroed leg in a served SUM is a silent undercount.
 var SourceAmountDegradedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_amount_degraded_total",
@@ -1081,10 +1018,8 @@ var SourceAmountDegradedTotal = prometheus.NewCounterVec(
 )
 
 // DispatcherTxReadErrorsTotal — process-wide counter of malformed
-// transactions skipped during ProcessLedger (dispatcher.Stats.TxReadErrors).
-// Mirrors the WARN log statsflush emits on every flush window with a
-// nonzero delta. The log alone gives no alert rule or dashboard
-// anything to key off a sustained climb.
+// transactions skipped during ProcessLedger (dispatcher.Stats.TxReadErrors). Mirrors the statsflush
+// WARN log, which alone gives alert rules nothing to key off a sustained climb.
 var DispatcherTxReadErrorsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_dispatcher_tx_read_errors_total",
@@ -1092,11 +1027,10 @@ var DispatcherTxReadErrorsTotal = prometheus.NewCounter(
 	},
 )
 
-// DispatcherTxEventReadErrorsTotal — process-wide counter of transactions
-// whose GetTransactionEvents() failed (dispatcher.Stats.TxEventReadErrors),
-// e.g. an unsupported future TransactionMeta version. Non-zero means
-// Soroban event ingestion is broken even if the completeness reconcile
-// still reads "complete" (G15-06). Sibling of [DispatcherTxReadErrorsTotal].
+// DispatcherTxEventReadErrorsTotal — transactions whose GetTransactionEvents() failed
+// (dispatcher.Stats.TxEventReadErrors), e.g. an unsupported future TransactionMeta version.
+// Non-zero means Soroban event ingestion is broken even if the completeness reconcile reads
+// "complete". Sibling of [DispatcherTxReadErrorsTotal].
 var DispatcherTxEventReadErrorsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_dispatcher_tx_event_read_errors_total",
@@ -1106,10 +1040,8 @@ var DispatcherTxEventReadErrorsTotal = prometheus.NewCounter(
 
 // DispatcherEntryMetaUnsupportedTotal — process-wide counter of
 // transactions whose apply-phase entry-change walk was skipped for an
-// unhandled TransactionMeta version (dispatcher.Stats.EntryMetaUnsupported).
-// A sustained climb means the LedgerEntry supply observers are blind while
-// every component table simply stops advancing. Sibling of
-// [DispatcherTxReadErrorsTotal].
+// unhandled TransactionMeta version (dispatcher.Stats.EntryMetaUnsupported). A sustained climb
+// means the LedgerEntry supply observers are blind while component tables just stop advancing.
 var DispatcherEntryMetaUnsupportedTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_dispatcher_entry_meta_unsupported_total",
@@ -1140,10 +1072,9 @@ var DispatcherLedgerUpgradeEntriesTotal = prometheus.NewCounter(
 
 // SourceUncorroboratedCallsTotal — per-source counter of oracle-class
 // ContractCall invocations dropped before Decode because they were only
-// DECLARED in the auth tree, never executed
-// (dispatcher.Stats.UncorroboratedCalls). Non-zero on an oracle source means
-// either a rejected price-forgery attempt or a routing-shape change; this counter is the
-// only signal for either.
+// DECLARED in the auth tree, never executed (dispatcher.Stats.UncorroboratedCalls). Non-zero on an
+// oracle source means a rejected price-forgery attempt or a routing-shape change; this counter is
+// the only signal for either.
 var SourceUncorroboratedCallsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_uncorroborated_calls_total",
@@ -1177,11 +1108,9 @@ var ExternalPollerPollsTotal = prometheus.NewCounterVec(
 )
 
 // ExternalDustDroppedTotal — per-source counter of streamed CEX trades
-// dropped at ingest as dust (quote leg below ~$0.001). CEX feeds emit
-// sub-microcent fills whose tiny integer amounts make quote/base a
-// meaningless round fraction (1/8, 1/10, …); kept, they polluted the
-// unweighted OHLC high/low (max/min of quote/base) on the served API
-// while contributing ~zero real volume. See the runner's dust guard.
+// dropped at ingest as dust (quote leg below ~$0.001). Sub-microcent fills make quote/base a
+// meaningless round fraction that would pollute the unweighted OHLC high/low while adding ~zero
+// volume. See the runner's dust guard.
 var ExternalDustDroppedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_external_dust_dropped_total",
@@ -1237,10 +1166,9 @@ var AMMNonPositiveSwapTotal = prometheus.NewCounterVec(
 )
 
 // AMMSwapReceivedDivergenceTotal counts decoded swaps whose pool-received
-// sell amount differs from the taker's offer (a fee-on-transfer sell token).
-// The stored base leg stays the offer — the pool prices the swap off it —
-// so this is the only signal. Counts decodes, not unique swaps: a replay or
-// completeness sweep re-counts. Detection only.
+// sell amount differs from the taker's offer (a fee-on-transfer sell token). The stored base leg
+// stays the offer, which the pool prices off, so this is the only signal. Counts decodes, not
+// unique swaps: a replay or completeness sweep re-counts. Detection only.
 var AMMSwapReceivedDivergenceTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_amm_swap_received_divergence_total",
@@ -1261,13 +1189,10 @@ var CEXStreamDisconnectTotal = prometheus.NewCounterVec(
 	[]string{"source", "reason"},
 )
 
-// CEXStreamDisconnectReasons is the full label set CEXStreamDisconnectTotal's
-// "reason" label takes, across every venue: wsclient.ClassifyDisconnect's
-// wire-level reasons plus the venue-specific ones (coinbase's
-// "subscription_rejected", bitstamp's "server_requested"). Single source
-// of truth for the metric's Help text so the two cannot drift apart
-// (a reason added in code but not in the Help/README enum). metrics_test.go checks
-// it against what wsclient + the venue classifiers actually emit.
+// CEXStreamDisconnectReasons is the full "reason" label set of CEXStreamDisconnectTotal across
+// every venue: wsclient.ClassifyDisconnect's wire-level reasons plus venue-specific ones. It is
+// the single source of truth for the metric's Help text so code and docs cannot drift;
+// metrics_test.go checks it against what wsclient and the venue classifiers emit.
 var CEXStreamDisconnectReasons = []string{
 	"stall", "reset", "broken_pipe", "timeout", "dial",
 	"server_requested", "subscription_rejected", "other",
@@ -1315,13 +1240,9 @@ var CEXStreamSubscriptionRejected = prometheus.NewGaugeVec(
 	[]string{"source", "symbol"},
 )
 
-// ExternalPollerLastSuccessUnix — per-source UNIX-seconds timestamp
-// of the most recent successful PollOnce. Zero / unset when the
-// poller has never succeeded since process start.
-//
-// Companion to ExternalPollerPollsTotal: a gauge makes "data is
-// stale by N minutes" expressible as `time() - <gauge>` rather than
-// requiring multi-window rate math, which is much easier to alert on.
+// ExternalPollerLastSuccessUnix — per-source UNIX-seconds timestamp of the most recent successful
+// PollOnce; zero until the first success. Companion to ExternalPollerPollsTotal: staleness is
+// `time() - <gauge>`, easier to alert on than multi-window rate math.
 var ExternalPollerLastSuccessUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_external_poller_last_success_unix",
@@ -1352,13 +1273,10 @@ var ChainlinkFeedDecimalsVerifyFailedTotal = prometheus.NewCounterVec(
 	[]string{"consumer", "pair"},
 )
 
-// ChainlinkFeedPollsTotal — per-feed outcome of each Chainlink ingest
-// poll. The framework's per-source outcome only turns "error" when EVERY
-// feed fails, so one dark feed among healthy siblings is visible here
-// and nowhere else. Outcomes: emitted (new round written), unchanged
-// (fresh round already emitted), stale (older than the feed's MaxAge),
-// carried_forward (answeredInRound < roundId), error (RPC, decode,
-// decimals or projection failure). Pair is bounded by the feed map.
+// ChainlinkFeedPollsTotal — per-feed outcome of each Chainlink ingest poll. The per-source outcome
+// only turns "error" when EVERY feed fails, so one dark feed among healthy siblings shows only
+// here. Outcomes: emitted (new round written), unchanged, stale (older than the feed's MaxAge),
+// carried_forward (answeredInRound < roundId), error. Pair is bounded by the feed map.
 var ChainlinkFeedPollsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_chainlink_feed_polls_total",
@@ -1402,11 +1320,9 @@ var ExternalFXRateRejectedTotal = prometheus.NewCounterVec(
 	[]string{"source", "reason"},
 )
 
-// ExternalFXBaselineHealedTotal — the forex worker re-pointed a ticker's
-// sanity-band baseline at the median of an agreeing trailing-7d history
-// majority that refuted it (the Massive UZS poisoned-bootstrap
-// incident). Rare by design; each increment is one wrong baseline
-// corrected without operator action. The ticker is in the WARN log line.
+// ExternalFXBaselineHealedTotal — the forex worker re-pointed a ticker's sanity-band baseline at
+// the median of an agreeing trailing-7d history majority that refuted it. Rare by design; each
+// increment is one wrong baseline corrected without operator action. The ticker is in the WARN log.
 var ExternalFXBaselineHealedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_external_fx_baseline_healed_total",
@@ -1472,13 +1388,10 @@ var SourceOrphanEventsTotal = prometheus.NewCounterVec(
 	[]string{"source"},
 )
 
-// SourceNonDirectionalSwapsTotal — per-source counter of completed swap+sync
-// pairs that decoded cleanly but moved value within one token side only (a
-// direct pair.swap() invocation, not a trade). Recognized non-trade class
-// (ADR-0033 counts it expected-zero, not undecodable), so distinct from
-// SourceDecodeErrorsTotal: purely informational, tracking Decoder.
-// SkippedNonDirectional (soroswap, sushiswap_v3), whose only production
-// reader is this counter.
+// SourceNonDirectionalSwapsTotal — per-source counter of completed swap+sync pairs that decoded
+// cleanly but moved value within one token side only (a direct pair.swap() call, not a trade). A
+// recognized non-trade class (ADR-0033 counts it expected-zero), so distinct from
+// SourceDecodeErrorsTotal. Informational; it is the only reader of Decoder.SkippedNonDirectional.
 var SourceNonDirectionalSwapsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_non_directional_swaps_total",
@@ -1559,11 +1472,9 @@ var LedgerstreamStreamPathTotal = prometheus.NewCounterVec(
 	[]string{"path"},
 )
 
-// LedgerstreamColdReadDurationSeconds — latency of cold-tier (AWS public
-// bucket) reads. `outcome` is `ok` (cold hit) / `miss` (cold not-found,
-// i.e. a both_missing read) / `error` (cold transient failure). The
-// paired-histogram sibling of [LedgerstreamTierReadTotal]; same
-// package-level, always-registered rationale.
+// LedgerstreamColdReadDurationSeconds — latency of cold-tier (AWS public bucket) reads. `outcome`
+// is `ok` (cold hit), `miss` (cold not-found, a both_missing read) or `error` (transient failure).
+// Histogram sibling of [LedgerstreamTierReadTotal], also package-level and always registered.
 var LedgerstreamColdReadDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name: "stellarindex_ledgerstream_cold_read_duration_seconds",
@@ -1597,12 +1508,9 @@ var LedgerstreamTrailingMissingToleratedTotal = prometheus.NewCounter(
 	},
 )
 
-// RateLimitFailOpenTotal — counter of requests that skipped the
-// rate-limit check because of a backing-store (Redis) error. The
-// middleware fails-open on error so a Redis outage doesn't take
-// the whole API down, but operators need a quantitative signal of
-// how often it's happening. A spike here usually correlates with
-// the redis readyz probe turning red.
+// RateLimitFailOpenTotal — requests that skipped the rate-limit check because of a Redis error.
+// The middleware fails open so a Redis outage does not take the API down; this gives the rate. A
+// spike usually correlates with the redis readyz probe turning red.
 var RateLimitFailOpenTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ratelimit_fail_open_total",
@@ -1913,11 +1821,9 @@ var PriceAlertEvalTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// PriceAlertEvaluatedTotal — one increment per alert per sweep, labelled
-// by that alert's outcome (pricealerts.AlertOutcomes): fired, not_crossed,
-// already_fired, no_price, stale, cooling_down, no_subscriber, claim_lost, error, timeout.
-// PriceAlertEvalTotal's `partial_error` is one sample per sweep whether
-// one alert or all of them failed; this counter separates the two.
+// PriceAlertEvaluatedTotal — one increment per alert per sweep, labelled by that alert's outcome
+// (pricealerts.AlertOutcomes). PriceAlertEvalTotal's `partial_error` is one sample per sweep
+// whether one alert or all failed; this counter separates the two.
 var PriceAlertEvaluatedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_alert_evaluated_total",
@@ -1971,11 +1877,9 @@ var PricelessCoverageCheckRunsTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// PricelessCoverageCheckLastSuccessUnix — wall-clock unix seconds of the
-// most recent successful tripwire sweep. `time() - this` powers the
-// staleness alert: a wedged worker stops updating the gauge, so a fresh
-// coverage gap would go unseen; the staleness guard catches the silent
-// worker even when the count gauge itself sits at a stale 0.
+// PricelessCoverageCheckLastSuccessUnix — unix seconds of the most recent successful tripwire
+// sweep. `time() - this` powers the staleness alert: a wedged worker leaves the count gauge at a
+// stale 0, so a fresh coverage gap would go unseen without it.
 var PricelessCoverageCheckLastSuccessUnix = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_priceless_coverage_check_last_success_unix",
@@ -2018,11 +1922,9 @@ var SignupReaperRunsTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// SignupReaperRunDurationSeconds — latency histogram for one reaper
-// sweep (a single bounded DELETE), labelled by outcome (matches the
-// counter). Buckets 5 ms → 30 s: the DELETE touches a tiny, indexed
-// set (suspended signup-race orphans) so a healthy sweep is a few ms;
-// the wide tail catches a degraded / lock-contended Postgres.
+// SignupReaperRunDurationSeconds — latency of one reaper sweep (a single bounded DELETE), by
+// outcome. Buckets 5 ms to 30 s: the DELETE touches a tiny indexed set so a healthy sweep takes a
+// few ms; the wide tail catches a degraded or lock-contended Postgres.
 var SignupReaperRunDurationSeconds = prometheus.NewHistogramVec(
 	prometheus.HistogramOpts{
 		Name:    "stellarindex_signup_reaper_run_duration_seconds",
@@ -2032,11 +1934,9 @@ var SignupReaperRunDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// SignupReaperRowsDeletedTotal — cumulative count of orphan accounts
-// the reaper has deleted. Unlabelled: a monotonically-climbing counter
-// operators chart as a rate to see the signup-race orphan production
-// rate (steady non-zero = a race is firing regularly; investigate the
-// /v1/auth/callback provisioning path).
+// SignupReaperRowsDeletedTotal — cumulative orphan accounts the reaper deleted. Its rate is the
+// signup-race orphan production rate; steady non-zero means a race fires regularly, so
+// investigate the /v1/auth/callback provisioning path.
 var SignupReaperRowsDeletedTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_signup_reaper_rows_deleted_total",
@@ -2094,12 +1994,9 @@ var LoginCodeLockoutRows = prometheus.NewGauge(
 	},
 )
 
-// LoginCodeLockoutRowsDeletedTotal — cumulative settled lockout rows
-// removed by the retention sweep. Charted as a rate it is the
-// production rate of failed-verify addresses; read next to
-// [LoginCodeLockoutRows] it distinguishes "the table is small because
-// nothing is happening" from "the table is small because the sweep is
-// keeping up with a flood".
+// LoginCodeLockoutRowsDeletedTotal — cumulative settled lockout rows removed by the retention
+// sweep; its rate is the production rate of failed-verify addresses. Read next to
+// [LoginCodeLockoutRows] it separates a quiet table from a sweep keeping up with a flood.
 var LoginCodeLockoutRowsDeletedTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_login_code_lockout_rows_deleted_total",
@@ -2140,12 +2037,9 @@ var MagicLinkTokenRows = prometheus.NewGauge(
 	},
 )
 
-// MagicLinkTokenRowsDeletedTotal — cumulative expired magic-link rows
-// removed by the retention sweep. Charted as a rate it is the
-// production rate of expired mints; read next to [MagicLinkTokenRows]
-// it distinguishes "the table is small because nothing is happening"
-// from "the table is small because the sweep is keeping up with a
-// flood".
+// MagicLinkTokenRowsDeletedTotal — cumulative expired magic-link rows removed by the retention
+// sweep; its rate is the production rate of expired mints. Read next to [MagicLinkTokenRows] it
+// separates a quiet table from a sweep keeping up with a flood.
 var MagicLinkTokenRowsDeletedTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_magic_link_token_rows_deleted_total",
@@ -2153,12 +2047,9 @@ var MagicLinkTokenRowsDeletedTotal = prometheus.NewCounter(
 	},
 )
 
-// MagicLinkTokenErrorsTotal — failures of the magic-link retention
-// sweep (PRV-2), labelled by `op`. The sweep is a background janitor
-// and a failed pass is silent at the HTTP layer, so — like the
-// login-code lockout reaper it mirrors — an ABSENT series and a
-// never-failed series must be different scrapes. Pre-seeded across the
-// bounded op set.
+// MagicLinkTokenErrorsTotal — failures of the magic-link retention sweep, by `op`. A failed pass
+// is silent at the HTTP layer, so an absent series must differ from a never-failed one; it is
+// pre-seeded across the bounded op set.
 var MagicLinkTokenErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_magic_link_token_errors_total",
@@ -2386,11 +2277,10 @@ var OracleLastUpdateUnix = prometheus.NewGaugeVec(
 	[]string{"source", "asset"},
 )
 
-// OracleResolutionSeconds — per-source gauge of the oracle's
-// declared resolution interval. The publication cadence genuinely IS
-// a property of the source (one contract, one relayer, one schedule),
-// so this stays per-source; the per-asset number the oracle-stale
-// alert reads is OracleStalenessBudgetSeconds, which this gauge seeds.
+// OracleResolutionSeconds — per-source gauge of the oracle's declared resolution interval.
+// Publication cadence is a property of the source (one contract, relayer and schedule), so it
+// stays per-source; the per-asset number the oracle-stale alert reads is
+// OracleStalenessBudgetSeconds, which this gauge seeds.
 var OracleResolutionSeconds = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_oracle_resolution_seconds",
@@ -2412,11 +2302,8 @@ var OracleStalenessBudgetSeconds = prometheus.NewGaugeVec(
 
 // ─── Aggregator orchestrator metrics ─────────────────────────────
 
-// AggregatorTicksTotal — count of orchestrator ticks completed,
-// labelled by outcome ("ok" when the tick ran without surfacing an
-// error, "error" when at least one (pair, window) refresh failed).
-// Per-pair errors are still recorded as soft warnings; this counter
-// is the tick-level rollup.
+// AggregatorTicksTotal — orchestrator ticks completed, by outcome ("ok", or "error" when at least
+// one (pair, window) refresh failed). Per-pair errors stay soft warnings; this is the tick rollup.
 var AggregatorTicksTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_ticks_total",
@@ -2519,11 +2406,9 @@ var APITipProducersRefusedTotal = prometheus.NewCounterVec(
 	[]string{"reason"},
 )
 
-// APIStreamSubscriberDropsTotal — SSE subscribers the streaming Hub
-// disconnected because their queue was full when an event was
-// published (a slow consumer). The client reconnects with its
-// Last-Event-ID; a sustained rate means events are lost to consumers
-// the host cannot keep up with.
+// APIStreamSubscriberDropsTotal — SSE subscribers the Hub disconnected because their queue was
+// full on publish (a slow consumer). The client reconnects with its Last-Event-ID; a sustained
+// rate means consumers cannot keep up and events are lost to them.
 var APIStreamSubscriberDropsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 	Name: "stellarindex_api_stream_subscriber_drops_total",
 	Help: "SSE subscribers disconnected by the streaming Hub because their queue was full (slow consumer).",
@@ -2984,11 +2869,9 @@ var APIFreezeLookupFailuresTotal = prometheus.NewCounter(
 	},
 )
 
-// AnomalyFreezeRecoverySweepsTotal — counter of recovery-worker
-// poll cycles, labelled by outcome (ok / partial / error). Sustained
-// `error` indicates the lister or Redis transport is broken; sustained
-// `partial` means MarkRecovered is failing for one or more rows
-// (postgres write path issue).
+// AnomalyFreezeRecoverySweepsTotal — recovery-worker poll cycles by outcome (ok / partial /
+// error). Sustained `error` means the lister or Redis transport is broken; sustained `partial`
+// means MarkRecovered is failing for some rows (Postgres write path).
 var AnomalyFreezeRecoverySweepsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_recovery_sweeps_total",
@@ -3009,12 +2892,9 @@ var AnomalyFreezeRecoverySweepDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// AggregatorTriangulationsTotal — counter of triangulation
-// computations per outcome. The aggregator runs one row per
-// (chain, window) per tick; steady state is mostly `ok` with
-// periodic `missing_leg` entries when a leg's window was empty
-// this tick. Sustained `parse_error` or `redis_error` rates >
-// baseline indicate upstream regression worth investigating.
+// AggregatorTriangulationsTotal — triangulation computations per outcome, one row per (chain,
+// window) per tick. Steady state is mostly `ok` with periodic `missing_leg` when a leg's window
+// was empty; sustained `parse_error` or `redis_error` above baseline means an upstream regression.
 var AggregatorTriangulationsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_triangulations_total",
@@ -3044,12 +2924,10 @@ var AggregatorRouteCorroborationCount = prometheus.NewGaugeVec(
 	[]string{"pair", "window"},
 )
 
-// AggregatorCompositeReferenceLegSources — distinct venue / provider
-// count behind each leg of the composite reference on the last
-// evaluated bucket (label `leg` = canonical leg pair, e.g.
-// "crypto:XLM/fiat:USD"). Shows how STRONG a corroboration was: the
-// crypto/USD leg must reach composite_reference.min_leg_sources for the
-// composite to count at all, and the FX leg reads 1 (one provider).
+// AggregatorCompositeReferenceLegSources — distinct venue / provider count behind each composite
+// reference leg on the last evaluated bucket (`leg` = canonical pair, e.g. "crypto:XLM/fiat:USD").
+// It shows corroboration strength: the crypto/USD leg must reach
+// composite_reference.min_leg_sources to count, and the FX leg reads 1 (one provider).
 var AggregatorCompositeReferenceLegSources = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_composite_reference_leg_sources",
@@ -3058,12 +2936,10 @@ var AggregatorCompositeReferenceLegSources = prometheus.NewGaugeVec(
 	[]string{"pair", "window", "leg"},
 )
 
-// AggregatorCompositeReferenceLegDispersionBps — max |venue VWAP − leg
-// VWAP| / leg VWAP in basis points across the venues on a priced
-// composite-reference leg, last evaluated bucket. Above
-// composite_reference.leg_dispersion_bps the leg cannot corroborate
-// (`composite_unavailable: leg_dispersion=…`): two venues only count
-// as two when they agree.
+// AggregatorCompositeReferenceLegDispersionBps — max |venue VWAP - leg VWAP| / leg VWAP in basis
+// points across a priced composite-reference leg's venues, last evaluated bucket. Above
+// composite_reference.leg_dispersion_bps the leg cannot corroborate: two venues only count as two
+// when they agree.
 var AggregatorCompositeReferenceLegDispersionBps = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_aggregator_composite_reference_leg_dispersion_bps",
@@ -3235,11 +3111,9 @@ var VerifyArchiveLedgersVerified = prometheus.NewCounterVec(
 	[]string{"chunk_idx"},
 )
 
-// VerifyArchiveCurrentLedger — gauge of the most-recent ledger
-// position per chunk. Together with the chunk's [from,to] range
-// (operator-known) gives a percent-complete view; together across
-// chunks gives a ledger-distance-fan picture of which chunks are
-// leading vs trailing.
+// VerifyArchiveCurrentLedger — gauge of the most recent ledger position per chunk. With the
+// chunk's known [from,to] range it gives percent-complete, and across chunks shows which lead
+// and which trail.
 var VerifyArchiveCurrentLedger = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_verify_archive_current_ledger",
@@ -3259,11 +3133,9 @@ var VerifyArchiveCheckpointsTotal = prometheus.NewCounterVec(
 	[]string{"chunk_idx", "outcome"},
 )
 
-// VerifyArchiveMismatchesTotal — counter of chain-break /
-// checkpoint-mismatch / sequence-gap incidents. Any non-zero
-// reading is a hard failure; the counter exists so dashboards can
-// distinguish "mismatch fired and the run aborted at second X"
-// from "chunk aborted for an unrelated reason (canceled context)".
+// VerifyArchiveMismatchesTotal — chain-break / checkpoint-mismatch / sequence-gap incidents. Any
+// non-zero reading is a hard failure; the counter lets dashboards tell a mismatch abort from a
+// chunk aborted for an unrelated reason such as a canceled context.
 var VerifyArchiveMismatchesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_verify_archive_mismatches_total",
@@ -3303,12 +3175,10 @@ var TLSCertNotAfterUnix = prometheus.NewGaugeVec(
 	[]string{"host"},
 )
 
-// TLSCertProbeTotal — per-(host, outcome) probe outcome counter.
-// outcome ∈ {ok, dial_error, no_cert, timeout, cert_invalid, cert_expired}. A growing `ok`
-// rate while [TLSCertNotAfterUnix] stays flat is the success
-// signal; an `error` outcome alongside a stale gauge means the
-// probe is failing and the operator should investigate before
-// the gauge ages out via the alert rule's `14 day` threshold.
+// TLSCertProbeTotal — per-(host, outcome) probe counter; outcome is ok, dial_error, no_cert,
+// timeout, cert_invalid or cert_expired. A growing `ok` rate with a flat [TLSCertNotAfterUnix]
+// is healthy; an error outcome beside a stale gauge means the probe is failing, to investigate
+// before the gauge ages past the alert rule's 14 day threshold.
 var TLSCertProbeTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_tls_cert_probe_total",
@@ -3329,10 +3199,9 @@ var AdminAuditWriteFailuresTotal = prometheus.NewCounterVec(
 	[]string{"surface"},
 )
 
-// PasskeyLoginRefusalsTotal counts passkey sign-ins refused AFTER the
-// assertion signature verified, by reason. `clone_warning` is a
-// sign-counter regression — WebAuthn's one signal that a private key
-// exists in two places — and tickets via stellarindex_passkey_clone_warning;
+// PasskeyLoginRefusalsTotal counts passkey sign-ins refused AFTER the assertion signature
+// verified, by reason. `clone_warning` is a sign-counter regression, WebAuthn's one signal that a
+// private key exists in two places (ticketed via stellarindex_passkey_clone_warning);
 // `ceremony_replay` is a finish-login request presented a second time.
 var PasskeyLoginRefusalsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
@@ -3366,11 +3235,9 @@ const (
 	PasskeyRefusalCeremonyReplay = "ceremony_replay"
 )
 
-// FailedAuthTotal counts caller credential rejections seen by the API's
-// Auth middleware, by outcome. The failed-auth throttle caps each client
-// IP and each API-key prefix, so guessing spread thinly across both
-// never fills a bucket; this fleet-wide total is what
-// stellarindex_failed_auth_rate_high watches.
+// FailedAuthTotal counts credential rejections by the API's Auth middleware, by outcome. The
+// throttle caps each client IP and API-key prefix, so guessing spread thinly across both never
+// fills a bucket; this fleet-wide total is what stellarindex_failed_auth_rate_high watches.
 var FailedAuthTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_failed_auth_total",
@@ -3419,12 +3286,10 @@ var ChLiveSinkLedgersTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// ChLiveSinkReadUndercountTotal counts transactions the indexer's per-ledger
-// read paths could not fully decode, by kind: the lake extract
-// (tx_read_errors, tx_event_read_errors, entry_meta_unsupported,
-// soroban_fee_meta_unsupported) and the
-// ledger_ingest_log census (the *_census kinds). Each add is the per-ledger
-// transaction count, not a per-ledger flag.
+// ChLiveSinkReadUndercountTotal counts transactions the indexer's per-ledger read paths could not
+// fully decode, by kind: the lake extract (tx_read_errors, tx_event_read_errors,
+// entry_meta_unsupported, soroban_fee_meta_unsupported) and the ledger_ingest_log census (the
+// *_census kinds). Each add is a per-ledger transaction count, not a flag.
 var ChLiveSinkReadUndercountTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_ch_live_sink_read_undercount_total",
@@ -3439,12 +3304,12 @@ var ChLiveSinkReadUndercountTotal = prometheus.NewCounterVec(
 // seedBoundedLabelSeries and the emitter cannot drift apart.
 const SinkPersistEvents = "persist_events"
 
-// SinkUndrainedRowsTotal counts rows a sink's shutdown drain could not land within its budget, by sink and
-// kind: the Postgres twin of ChLiveSinkLedgersTotal{outcome="dropped"}. The cursor advances before the sink
-// writes, so each is a served-tier gap the cursor never revisits. trade: re-derive from the lake via
-// `stellarindex-ops ch-rebuild -sdex-gaps` (the ERROR line names the range); event: the source's gap
-// detector. Counted only where a row has nowhere left to go; pre-seeded. The increment lands just before
-// exit and a scrape can miss it, so the ERROR log line stays authoritative.
+// SinkUndrainedRowsTotal counts rows a sink's shutdown drain could not land within its budget, by
+// sink and kind: the Postgres twin of ChLiveSinkLedgersTotal{outcome="dropped"}. The cursor
+// advances before the sink writes, so each is a served-tier gap the cursor never revisits. trade:
+// re-derive from the lake via `stellarindex-ops ch-rebuild -sdex-gaps` (the ERROR line names the
+// range); event: the source's gap detector. Pre-seeded. The increment lands just before exit and
+// a scrape can miss it, so the ERROR log line stays authoritative.
 var SinkUndrainedRowsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_sink_undrained_rows_total",
@@ -3463,10 +3328,10 @@ var MarketsSkippedRowsTotal = prometheus.NewCounter(
 	},
 )
 
-// DEXTradeNonstandardDecimalsTotal flags, once per (source, asset), a DEX trade in a Soroban token whose
-// on-chain decimals() != 7 (internal/decimalsguard). Served prices are Σquote/Σbase on raw integers, which
-// cancel decimals only when both legs share a scale, so such a token silently skews every pair price by
-// 10^(7−decimals). Not pre-seeded: offenders should be zero, so a series exists only on detection and the
+// DEXTradeNonstandardDecimalsTotal flags, once per (source, asset), a DEX trade in a Soroban token
+// whose on-chain decimals() != 7 (internal/decimalsguard). Served prices are sum(quote)/sum(base)
+// on raw integers, which cancel decimals only when both legs share a scale, so such a token skews
+// every pair price by 10^(7-decimals). Not pre-seeded: a series exists only on detection and the
 // alert is a bare `> 0`; the decimals value is in the ERROR log, not a label.
 var DEXTradeNonstandardDecimalsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
@@ -3519,10 +3384,11 @@ var NonstandardDecimalsPartialAliasFamilyTotal = prometheus.NewCounter(
 )
 
 // NonstandardDecimalsLockstepMismatchTotal counts disagreements between lake decimals()
-// (clickhouse.TokenDecimals, the truth) and the nonstandard_decimals_assets projection; invariant: a row exists
-// iff lake decimals != 7, and then they match. guard_reconcile (asset-labelled, bounded) counts a repaired row;
-// request sites (asset "", to bound cardinality) REFUSED a market cap or USD figure rather than mix scales.
-// Sustained at a request site means the guard is not converging (stellarindex_nonstandard_decimals_correction_failing).
+// (clickhouse.TokenDecimals, the truth) and the nonstandard_decimals_assets projection; invariant:
+// a row exists iff lake decimals != 7, and then they match. guard_reconcile (asset-labelled,
+// bounded) counts a repaired row; request sites (asset "", to bound cardinality) REFUSED a market
+// cap or USD figure rather than mix scales. Sustained at a request site means the guard is not
+// converging (stellarindex_nonstandard_decimals_correction_failing).
 var NonstandardDecimalsLockstepMismatchTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_nonstandard_decimals_lockstep_mismatch_total",
@@ -3622,10 +3488,10 @@ var DEXTVLReconcileTotal = prometheus.NewCounterVec(
 	[]string{"outcome"},
 )
 
-// SDEXOrderBookMaintainTotal counts /v1/sdex/orderbook book maintenance by outcome. load_* is the startup
-// FINAL load (repeated load_error = stuck on its 503 warming); advance_* is the 60s incremental apply
-// (advance_error = served book drifting, honestly timestamped; advance_held = a clean tick with zero cursor
-// progress, the same staleness without an error, alerted by stellarindex_sdex_orderbook_advance_held);
+// SDEXOrderBookMaintainTotal counts /v1/sdex/orderbook book maintenance by outcome. load_* is the
+// startup FINAL load (repeated load_error = stuck on its 503 warming); advance_* is the 60s
+// incremental apply (advance_error = served book drifting, honestly timestamped; advance_held = a
+// clean tick with zero cursor progress, alerted by stellarindex_sdex_orderbook_advance_held);
 // verify_* drains the quarantine (repeated verify_error = book thinner than chain state).
 var SDEXOrderBookMaintainTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
@@ -3688,11 +3554,11 @@ var WorkerPanicsTotal = prometheus.NewCounterVec(
 	[]string{"worker"},
 )
 
-// Auth-reaper liveness: the reapers bounding attacker-fillable and PII auth tables report what they did but
-// not that they ran, so a dead one leaves every signal frozen at a healthy value. last_sweep_unix{reaper} is
-// set after every sweep, failed ones included (only ctx-cancel skips it); interval_seconds{reaper} is the
-// configured cadence. Alert: stellarindex_auth_reaper_stalled (time() - last_sweep > 3 × interval, 15m).
-// A disabled reaper publishes no series, so never alerts.
+// Auth-reaper liveness: the reapers bounding attacker-fillable and PII auth tables report what
+// they did but not that they ran, so a dead one leaves every signal frozen at a healthy value.
+// last_sweep_unix{reaper} is set after every sweep, failed ones included (only ctx-cancel skips
+// it); interval_seconds{reaper} is the cadence. Alert: stellarindex_auth_reaper_stalled
+// (time() - last_sweep > 3 x interval, 15m). A disabled reaper publishes no series.
 const (
 	AuthReaperLoginCode = "login_code"
 	AuthReaperMagicLink = "magic_link"
@@ -3787,12 +3653,10 @@ var ExplorerSWRRefreshDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"cache", "outcome"},
 )
 
-// CHSchemaProbePresent — the lake's last ANSWER to each explorer schema
-// probe (clickhouse.ExplorerReader): 1 = the object is usable, 0 = absent
-// or empty, i.e. the explorer serves that surface from its slow fallback.
-// A schema-absent answer on a process that never saw the object latches
-// until restart, so an API started before the lake DDL stays degraded with
-// no other signal. Unset until the probe first gets an answer.
+// CHSchemaProbePresent — the lake's last answer to each explorer schema probe
+// (clickhouse.ExplorerReader): 1 = usable, 0 = absent or empty, so the explorer serves that
+// surface from its slow fallback. A schema-absent answer latches until restart, so an API started
+// before the lake DDL stays degraded with no other signal. Unset until the first answer.
 var CHSchemaProbePresent = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_ch_schema_probe_present",
@@ -3837,11 +3701,9 @@ var ProtocolDetailRefreshDurationSeconds = prometheus.NewHistogramVec(
 	[]string{"outcome"},
 )
 
-// ObserveExplorerSWRRefresh records one detached stale-while-revalidate
-// refresh attempt against the paired [ExplorerSWRRefreshTotal] /
-// [ExplorerSWRRefreshDurationSeconds] metrics. Shared helper because
-// the five refreshers live across three packages (api/v1/explorer,
-// storage/clickhouse) and the outcome-derivation must stay identical.
+// ObserveExplorerSWRRefresh records one detached stale-while-revalidate refresh attempt against
+// [ExplorerSWRRefreshTotal] / [ExplorerSWRRefreshDurationSeconds]. Shared because the five
+// refreshers span api/v1/explorer and storage/clickhouse and outcome derivation must stay identical.
 func ObserveExplorerSWRRefresh(cache string, start time.Time, err error) {
 	outcome := "ok"
 	if err != nil {
@@ -3853,9 +3715,8 @@ func ObserveExplorerSWRRefresh(cache string, start time.Time, err error) {
 
 // Alert idea: `rate(stellarindex_api_sparkline7d_rows_total{result=
 // "empty"}[15m]) / rate(stellarindex_api_sparkline7d_rows_total[15m])
-// > 0.5` sustained 30 min means half the priced rows on the directory
-// render an empty chart — a lookup-key or pricing-pipeline regression,
-// not a quiet market.
+// > 0.5` sustained 30 min means half the priced directory rows render an empty chart: a
+// lookup-key or pricing-pipeline regression, not a quiet market.
 var APISparkline7dRowsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_sparkline7d_rows_total",

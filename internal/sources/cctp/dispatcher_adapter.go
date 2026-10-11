@@ -9,32 +9,22 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing view of Circle CCTP v2. It is a
-// stateless topic Decoder — unlike Soroswap there is no swap/sync
-// correlation: each CCTP event (transfer-flow or governance/admin)
-// decodes independently into one cctp_events row. The
-// deposit_for_burn ↔ message_sent pairing the architecture doc
-// describes is a downstream concern, correlatable later by (ledger,
-// tx_hash); the decoder does not buffer.
+// Decoder is the dispatcher-facing view of Circle CCTP v2. It is stateless: each event decodes
+// independently into one cctp_events row, with no buffering. The deposit_for_burn and
+// message_sent pairing is correlated downstream by (ledger, tx_hash).
 //
-// Matching is by topic[0] symbol AND contract id. docs/architecture/domain-traps.md (ADR-0035;
-// Comet's shared topic) warns that another contract could emit the
-// same symbol bytes, so Matches also gates on the event coming from
-// one of the three known CCTP contracts.
+// Matching is by topic[0] symbol AND contract id (ADR-0035): another contract could emit the same
+// symbol bytes, so Matches also requires one of the three known CCTP contracts.
 type Decoder struct{}
 
 // NewDecoder constructs a CCTP Decoder. Stateless — the returned
 // value is safe to share.
 func NewDecoder() *Decoder { return &Decoder{} }
 
-// withIndex stamps the intra-op event index onto the projected Event and
-// wraps it as the decoder's single-event output. EventIndex (the position
-// of this event within its operation's contract-event list) is the
-// cctp_events PK discriminator (migration 0112) that keeps two events of
-// the SAME event_type emitted by ONE operation from collapsing to a single
-// row. idx comes from the source events.Event.EventIndex, which
-// the production dispatcher populates from the LCM and the re-derive path
-// reads back from the lake's event_index column.
+// withIndex stamps the intra-op event index onto the projected Event and wraps it as the
+// decoder's single-event output. EventIndex is the cctp_events PK discriminator that keeps two
+// events of the same event_type from one operation from collapsing into a single row; the
+// dispatcher and the lake re-derive path both supply it.
 func withIndex(idx int, e Event) []consumer.Event {
 	e.EventIndex = uint32(idx) //nolint:gosec // EventIndex is non-negative by Soroban spec.
 	return []consumer.Event{e}
@@ -43,23 +33,17 @@ func withIndex(idx int, e Event) []consumer.Event {
 // Compile-time check that *Decoder satisfies dispatcher.Decoder.
 var _ dispatcher.Decoder = (*Decoder)(nil)
 
-// cctpContracts is the set of contract C-strkeys whose events this
-// decoder claims. Live ingest only ever sees the current mainnet
-// deployment; the set is small and a redeploy is an operator-visible
-// event, so a hard-coded set is the right shape (matching the
-// arch doc's Option A — contract-id filtering downstream of the
-// topic match).
+// cctpContracts is the set of contract C-strkeys whose events this decoder claims. It is small
+// and a redeploy is operator-visible, so a hard-coded set suffices.
 var cctpContracts = map[string]struct{}{
 	MainnetTokenMessengerMinter: {},
 	MainnetMessageTransmitter:   {},
 	MainnetCctpForwarder:        {},
 }
 
-// MainnetContracts returns the known Circle CCTP v2 contract set —
-// the recognition-attribution pin for the ADR-0033 catalogue
-// (without contract pinning, an unhandled cctp topic falls
-// into the system-wide recognition bucket instead of capping this
-// source).
+// MainnetContracts returns the known Circle CCTP v2 contract set, the recognition-attribution
+// pin for the ADR-0033 catalogue. Without it an unhandled cctp topic lands in the system-wide
+// recognition bucket instead of capping this source.
 func MainnetContracts() []string {
 	out := make([]string, 0, len(cctpContracts))
 	for id := range cctpContracts {
@@ -86,11 +70,9 @@ func (*Decoder) Matches(ev events.Event) bool {
 	return IsCCTPContract(ev.ContractID) && Classify(&ev) != ""
 }
 
-// Decode implements [dispatcher.Decoder]. Emits exactly one
-// [Event] per recognised CCTP event, or nothing for an event that
-// doesn't match (the dispatcher already filtered via Matches, but
-// Decode re-checks so a direct caller is safe). A decode error is
-// non-fatal per the dispatcher contract — counted and skipped.
+// Decode implements [dispatcher.Decoder]. Emits one [Event] per recognised CCTP event, or nothing
+// otherwise (it re-checks Matches so a direct caller is safe). A decode error is non-fatal per
+// the dispatcher contract: counted and skipped.
 func (*Decoder) Decode(ev events.Event) ([]consumer.Event, error) { //nolint:gocognit,gocyclo,cyclop,funlen // one case per CCTP event kind; the flat dispatch table stays auditable against the upstream contract's event list (same exemption as blend's decodeByKind)
 	kind := Classify(&ev)
 	if kind == "" || !IsCCTPContract(ev.ContractID) {
@@ -260,11 +242,7 @@ func (*Decoder) Decode(ev events.Event) ([]consumer.Event, error) { //nolint:goc
 		}
 		return withIndex(ev.EventIndex, eventFromTokenDecimalConfigAdded(t, observedAt)), nil
 	}
-	// Unreachable while Classify and this switch stay in lockstep —
-	// Classify already returned non-empty above, and every kind it
-	// can return has a case. Returning the sentinel makes the
-	// defensive guard real: if a future Classify case lands without a
-	// matching switch arm, the dispatcher counts it as a decode error
-	// rather than silently dropping the event.
+	// Unreachable while Classify and this switch stay in lockstep. The sentinel makes a Classify
+	// case without a switch arm a counted decode error rather than a silent drop.
 	return nil, fmt.Errorf("%w: %s", ErrUnknownEvent, kind)
 }

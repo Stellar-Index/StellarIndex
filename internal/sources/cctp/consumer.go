@@ -6,30 +6,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// Event is the [consumer.Event] the CCTP Decoder emits — one per
-// decoded contract event. It carries the cctp_events row shape
-// (migration 0038): the universal identity fields, the promoted
-// typed columns (Amount / Fee / Token / CounterpartyDomain), and the
-// event-type-specific remainder in Attributes.
-//
-// Amount / Fee / Token are decimal-or-strkey strings; an empty value
-// means "this event type carries no such field" and the sink writes
-// SQL NULL. CounterpartyDomain is a *uint32 for the same reason —
-// message_sent and mint_and_withdraw carry no domain.
-//
-// The indexer's event sink type-switches on this at its output
-// channel (internal/pipeline/sink.go) and writes via
-// Store.InsertCCTPEvent.
+// Event is the [consumer.Event] the CCTP Decoder emits, one per decoded contract event, in the
+// cctp_events row shape. Amount / Fee / Token are decimal-or-strkey strings, and an empty value
+// means the event type carries no such field (the sink writes SQL NULL); CounterpartyDomain is a
+// *uint32 for the same reason. The sink type-switches on this in internal/pipeline/sink.go.
 type Event struct {
 	ContractID string
 	Ledger     uint32
 	TxHash     string
 	OpIndex    int
-	// EventIndex is the position of this event within its operation's
-	// contract-event list (internal/events.Event.EventIndex). It is the
-	// cctp_events PK discriminator (migration 0112) that keeps two same-type
-	// events emitted by ONE operation from collapsing to a single row.
-	// Stamped by the Decoder from the source events.Event.
+	// EventIndex is the event's position within its operation's contract-event list. It is the
+	// cctp_events PK discriminator that keeps two same-type events from ONE operation from
+	// collapsing to a single row.
 	EventIndex         uint32
 	ObservedAt         time.Time
 	EventType          string // one of the Event* constants
@@ -187,11 +175,9 @@ func eventFromOwnershipTransferCompleted(o OwnershipTransferCompleted, observedA
 	}
 }
 
-// eventFromAdminChanged projects a decoded AdminChanged. Governance
-// event: no promoted columns. old_admin may be "" (bootstrap — see
-// [DecodeAdminChanged]); the sink still writes it as an empty jsonb
-// string rather than omitting the key, so a query can distinguish
-// "field present but empty" from "field never decoded".
+// eventFromAdminChanged projects a decoded AdminChanged (no promoted columns). old_admin may be
+// "" at bootstrap; it is kept as an empty jsonb string so queries can tell "present but empty"
+// from "never decoded".
 func eventFromAdminChanged(a AdminChanged, observedAt time.Time) Event {
 	return Event{
 		ContractID: a.ContractID,
@@ -207,11 +193,9 @@ func eventFromAdminChanged(a AdminChanged, observedAt time.Time) Event {
 	}
 }
 
-// eventFromRemoteTokenMessengerAdded projects a decoded
-// RemoteTokenMessengerAdded. `domain` promotes to CounterpartyDomain
-// (same semantic as deposit_for_burn's destination_domain — the CCTP
-// domain ID of the OTHER chain); token_messenger has no strkey form
-// (it's a raw remote-chain identity) so it stays in Attributes as hex.
+// eventFromRemoteTokenMessengerAdded projects a decoded RemoteTokenMessengerAdded. `domain`
+// promotes to CounterpartyDomain (the CCTP domain of the OTHER chain); token_messenger has no
+// strkey form, so it stays in Attributes as hex.
 func eventFromRemoteTokenMessengerAdded(r RemoteTokenMessengerAdded, observedAt time.Time) Event {
 	domain := r.Domain
 	return Event{
@@ -228,10 +212,8 @@ func eventFromRemoteTokenMessengerAdded(r RemoteTokenMessengerAdded, observedAt 
 	}
 }
 
-// eventFromTokenPairLinked projects a decoded TokenPairLinked.
-// `local_token` promotes to Token (a genuine Stellar Address strkey,
-// same convention as burn_token/mint_token) and `remote_domain`
-// promotes to CounterpartyDomain; remote_token has no strkey form so
+// eventFromTokenPairLinked projects a decoded TokenPairLinked. `local_token` promotes to Token (a
+// Stellar strkey) and `remote_domain` to CounterpartyDomain; remote_token has no strkey form, so
 // it stays in Attributes as hex.
 func eventFromTokenPairLinked(l TokenPairLinked, observedAt time.Time) Event {
 	domain := l.RemoteDomain
@@ -252,15 +234,9 @@ func eventFromTokenPairLinked(l TokenPairLinked, observedAt time.Time) Event {
 
 // ─── Lower-signal admin/governance events ───────────────────────────
 //
-// All 16 are governance/config events: no promoted Amount/Fee, and no
-// CounterpartyDomain (none of them carry a cross-chain domain field).
-// Token promotes only where the field is a genuine local Stellar SAC
-// address (set_burn_limit_per_message / swap_minter_config_set /
-// token_decimal_config_added — matching token_pair_linked's
-// local_token convention); every other address-shaped field (actor
-// roles: admin, owner, pauser, rescuer, controller, denylister,
-// attester manager, denylist target) stays in Attributes, matching
-// ownership_transfer / admin_changed's precedent.
+// All 16 are governance/config events: no promoted Amount/Fee or CounterpartyDomain. Token
+// promotes only where the field is a genuine local Stellar SAC address; every other
+// address-shaped field (actor roles such as admin, owner, pauser) stays in Attributes.
 
 func eventFromAdminChangeStarted(a AdminChangeStarted, observedAt time.Time) Event {
 	return Event{
@@ -448,12 +424,9 @@ func eventFromSignatureThresholdUpdated(s SignatureThresholdUpdated, observedAt 
 	}
 }
 
-// eventFromSetBurnLimitPerMessage projects a decoded
-// SetBurnLimitPerMessage. `token` promotes to Token (genuine Stellar
-// SAC address); `burn_limit_per_message` is a POLICY CEILING, not a
-// transfer amount, so it stays in Attributes rather than promoting to
-// Event.Amount (Amount is reserved for movement amounts per the
-// DepositForBurn/MintAndWithdraw convention).
+// eventFromSetBurnLimitPerMessage projects a decoded SetBurnLimitPerMessage. `token` promotes to
+// Token; `burn_limit_per_message` is a POLICY CEILING, not a transfer amount, so it stays in
+// Attributes (Event.Amount is reserved for movement amounts).
 func eventFromSetBurnLimitPerMessage(s SetBurnLimitPerMessage, observedAt time.Time) Event {
 	return Event{
 		ContractID: s.ContractID,

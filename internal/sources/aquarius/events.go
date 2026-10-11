@@ -1,8 +1,7 @@
 // Package aquarius ingests trade events from Aquarius's Soroban AMM
 // (volatile + stableswap + concentrated pool types).
 //
-// Design reference: internal/sources/aquarius/README.md. Read its
-// Quirks section before modifying the decoder.
+// Read the Quirks section of internal/sources/aquarius/README.md before modifying the decoder.
 package aquarius
 
 import (
@@ -16,42 +15,26 @@ import (
 // Stable.
 const SourceName = "aquarius"
 
-// Event names — topic[0] of every Aquarius event, as a Symbol SCVal.
-//
-// Verified against
-// aquarius-amm/liquidity_pool_events/src/lib.rs — every
-// `e.events().publish(...)` call uses a tuple whose first element
-// is a `Symbol::new(e, "<name>")`, which serializes as ScvSymbol
-// on-wire.
+// Event names: topic[0] of every Aquarius event, as a Symbol SCVal (per
+// aquarius-amm/liquidity_pool_events/src/lib.rs, serialized on-wire as ScvSymbol).
 const (
 	EventTrade             = "trade"
 	EventDepositLiquidity  = "deposit_liquidity"
 	EventWithdrawLiquidity = "withdraw_liquidity"
 	EventUpdateReserves    = "update_reserves"
-	// ReservesSync is emitted in addition to update_reserves on every
-	// state-changing path. Body is a `Vec<i128>` of PER-TOKEN-POSITION
-	// values — the SAME wire shape as update_reserves — NOT an
-	// (old_reserve, new_reserve) pair for a single asset. Verified
-	// against the r1 lake (pool CCRULRY3…, ledger 61,572,402:
-	// reserves_sync = [11,126,447,651, 11,177,552,170], two distinct
-	// token positions with a magnitude unrelated to the same-tx
-	// update_reserves[0]=3,684,217). The decoder reuses decodeReserves
-	// and fans one row per position (migration 0128). The exact
-	// contract semantics of the vector are undetermined (a distinct
-	// reserve-sync signal, likely the StableSwap D-invariant / virtual
-	// reserves); we capture it faithfully per position without
-	// over-interpreting the token_index labeling.
+	// ReservesSync is emitted alongside update_reserves on every state-changing path. Its body is
+	// a Vec<i128> of PER-TOKEN-POSITION values (the same wire shape as update_reserves), NOT an
+	// (old, new) pair for one asset, so the decoder reuses decodeReserves and fans out one row per
+	// position. The vector's exact contract semantics are undetermined (likely StableSwap
+	// D-invariant / virtual reserves), so it is captured per position without interpreting the
+	// token_index labeling.
 	EventReservesSync = "reserves_sync"
-	// SetProtocolFee / ClaimProtocolFee are governance/treasury events
-	// — fee schedule changes + claim destinations. No trade impact;
+	// SetProtocolFee / ClaimProtocolFee are governance/treasury events with no trade impact,
 	// decoded into FeeEvent rows in aquarius_protocol_fee.
 	EventSetProtocolFee   = "set_protocol_fee"
 	EventClaimProtocolFee = "claim_protocol_fee"
-	// kill_* / unkill_* are pool-circuit-breaker events. We don't act
-	// on them in the indexer today; if a pool is killed we'll see
-	// trades simply stop. Classifying keeps the audit invariant
-	// honest and leaves a path for a future "exclude killed pools
-	// from VWAP" feature.
+	// kill_* / unkill_* are pool circuit-breaker events. They are classified (so the audit
+	// invariant holds) but not acted on; a killed pool's trades simply stop.
 	EventKillDeposit       = "kill_deposit"
 	EventUnkillDeposit     = "unkill_deposit"
 	EventKillSwap          = "kill_swap"
@@ -63,13 +46,9 @@ const (
 
 	// ─── Rewards-gauge subsystem ───
 	//
-	// A per-pool liquidity-mining layer on top of the swap/liquidity
-	// surface above. Verified against real r1 lake bytes (ClickHouse
-	// stellar.contract_events) — every one of these
-	// topics was observed emitted by a REGISTERED Aquarius pool
-	// contract (the same 332-pool gated set the trade/liquidity/
-	// reserves events use), not a separate gauge-factory contract.
-	// See decode_rewards.go for the per-kind wire shape citations.
+	// A per-pool liquidity-mining layer on top of the swap/liquidity surface. These topics are
+	// emitted by REGISTERED Aquarius pool contracts (the same gated pool set as trades), not a
+	// separate gauge-factory contract. Per-kind wire shapes are in decode_rewards.go.
 	EventPoolState                  = "pool_state"
 	EventClaimReward                = "claim_reward"
 	EventSetRewardsConfig           = "set_rewards_config"
@@ -84,11 +63,9 @@ const (
 
 	// ─── Governance / upgrade admin surface ───
 	//
-	// Router + pool lifecycle actions. pool_gauge_switch_token is
-	// emitted only by the ROUTER (MainnetRouter); the other seven are
-	// emitted by the router and by registered pools — see
-	// decode_admin.go for the per-kind emitter census against real
-	// lake bytes.
+	// Router + pool lifecycle actions. pool_gauge_switch_token is emitted only by the ROUTER
+	// (MainnetRouter); the other seven come from the router and registered pools (see
+	// decode_admin.go).
 	EventApplyUpgrade            = "apply_upgrade"
 	EventCommitUpgrade           = "commit_upgrade"
 	EventSetPrivilegedAddrs      = "set_privileged_addrs"
@@ -98,11 +75,9 @@ const (
 	EventDisableEmergencyMode    = "disable_emergency_mode"
 	EventPoolGaugeSwitchToken    = "pool_gauge_switch_token"
 
-	// EventConfigRewards is the ROUTER-side companion to the pool-side
-	// EventSetRewardsConfig — same reward round (verified against real
-	// lake bytes: identical amount + expires_at values in the same tx).
-	// It is the 12th rewards-family kind and decodes through
-	// decodeRewardsEvent.
+	// EventConfigRewards is the ROUTER-side companion to the pool-side EventSetRewardsConfig (same
+	// reward round, same amount and expires_at in one tx). It is the 12th rewards-family kind and
+	// decodes through decodeRewardsEvent.
 	EventConfigRewards = "config_rewards"
 )
 
@@ -115,13 +90,9 @@ const (
 	MainnetXLMSAC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
 )
 
-// PoolType classifies the Aquarius pool emitting an event. Currently
-// only used by operators inspecting pool metadata — the trade
-// decoder itself doesn't branch on pool type because the `trade`
-// event already carries the sold/bought token addresses in its
-// topics, so every trade decodes the same way regardless of whether
-// the pool is 2-token volatile, 3-token stableswap, or 4-token
-// stableswap. See discovery doc for the matrix of pool types.
+// PoolType classifies the Aquarius pool emitting an event. It is only for operator inspection:
+// the trade decoder never branches on it, because the `trade` event carries the sold/bought
+// token addresses in its topics for every pool shape.
 type PoolType uint8
 
 const (
@@ -144,13 +115,9 @@ func (p PoolType) String() string {
 	}
 }
 
-// Pre-encoded base64 SCVal::Symbol blobs, computed at init via
-// scval.MustEncodeSymbol. Used for byte-equality classification
-// and for the server-side EventFilter.Topics subscription.
-//
-// Uniqueness holds because each maps from a distinct EventTrade/
-// EventDepositLiquidity/... string constant above; a duplicated
-// SCVal would trace back to a duplicated source string.
+// Pre-encoded base64 SCVal::Symbol blobs (scval.MustEncodeSymbol) used for byte-equality
+// classification and the server-side EventFilter.Topics subscription. Each maps from a distinct
+// Event* constant, so a duplicate blob would mean a duplicated source string.
 var (
 	TopicSymbolTrade             = scval.MustEncodeSymbol(EventTrade)
 	TopicSymbolDepositLiquidity  = scval.MustEncodeSymbol(EventDepositLiquidity)
@@ -201,42 +168,27 @@ var (
 var (
 	ErrUnknownEvent     = errors.New("aquarius: unknown event topic")
 	ErrMalformedPayload = errors.New("aquarius: malformed event payload")
-	// ErrZeroAmountTrade marks a well-formed `trade` event whose sold or
-	// bought amount is ZERO — a genuine on-chain dust swap (the pool
-	// accepted a tiny input and produced zero output, or vice versa;
-	// r1-lake ground truth: ledger 53,626,410). NOT a malformed payload:
-	// Decode treats it as a recognized no-op (nil, nil) because
-	// canonical.Trade.Validate forbids non-positive amounts — such an
-	// event can never form a served trade row, and refusing it as an
-	// error only blinds the ADR-0033 projection reconcile
-	// (undecodable-but-matched). Exposed so callers/tests can assert the
-	// classification; the dispatcher adapter consumes it internally.
+	// ErrZeroAmountTrade marks a well-formed `trade` event with a ZERO sold or bought amount, a
+	// genuine on-chain dust swap. It is NOT malformed: Decode treats it as a recognized no-op
+	// (nil, nil) because canonical.Trade.Validate forbids non-positive amounts, and erroring would
+	// only blind the ADR-0033 projection reconcile (undecodable-but-matched). Exposed so tests can
+	// assert the classification.
 	ErrZeroAmountTrade = errors.New("aquarius: zero-amount trade (recognized no-op)")
 )
 
-// EventAddPool is the ROUTER's pool-registration event (topic[0]
-// Symbol "add_pool"; emitted by MainnetRouter, not by pools). Its
-// body is a Vec whose first element is the Address of the newly
-// registered pool — the fan-out seam the contract-identity gate
-// anchors on (ADR-0035 / ADR-0040 §1 mechanism 1+2 hybrid; see the
-// verification section of docs/protocols/aquarius.md).
+// EventAddPool is the ROUTER's pool-registration event (emitted by MainnetRouter, not by pools).
+// Its body is a Vec whose first element is the new pool's Address, the seam the contract-identity
+// gate anchors on (ADR-0035, ADR-0040; docs/protocols/aquarius.md).
 const EventAddPool = "add_pool"
 
-// MainnetPools is the curated gated pool set (ADR-0040).
-// The 332 distinct pool addresses announced by MainnetRouter's add_pool
-// events in the lake (338 events, ledgers 52,728,530 → 63,308,393) are
-// byte-for-byte IDENTICAL to the 332 pools served by
-// https://amm-api.aqua.network/pools/ — the router is the protocol's
-// own trust root. Pools added after this snapshot self-register
-// live via the add_pool path in Decode, so this seed is a warm-start, not
-// the sole trust root. An unlisted/unannounced pool fail-closes into an
-// ADR-0033 recognition gap (visible, never silently attributed).
+// MainnetPools is the curated gated pool set (ADR-0040): the pools announced by MainnetRouter's
+// add_pool events, which match the protocol's own registry API, so the router is the trust root.
+// Pools added later self-register via the add_pool path in Decode, so this is a warm-start. An
+// unlisted pool fail-closes into an ADR-0033 recognition gap (visible, never silently attributed).
 //
-// Deliberately EXCLUDED (docs/protocols/aquarius.md, flagged): the
-// 72 pools announced by the parallel router deployment CA7RQDMM…
-// (same router WASM, NOT in the protocol's registry API), the 7 pools of
-// the look-alike CCPHUHQY… (foreign pool WASM), and 8 pre-genesis
-// rehearsal pools (all before ledger 52,717,662).
+// Deliberately EXCLUDED (docs/protocols/aquarius.md): pools of the parallel router deployment
+// CA7RQDMM... (same WASM, not in the registry API), the look-alike CCPHUHQY... (foreign pool
+// WASM), and pre-genesis rehearsal pools.
 var MainnetPools = []string{
 	"CA22XCXSINOJTOQGKTLTEUXNKE7Z4IEBO5XNHPX7MRAEPOD3OAJMHY5R",
 	"CA242XKXANKC46P53M355OPYWMHWPPTKQM5T5DNMOBWJMHOWDLNPJTN4",

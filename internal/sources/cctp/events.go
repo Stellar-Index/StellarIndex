@@ -2,21 +2,14 @@
 // from three contracts: TokenMessengerMinter, MessageTransmitter and
 // CctpForwarder (addresses in the Mainnet* constants below).
 //
-// Transfer flow: deposit_for_burn and mint_and_withdraw (TokenMessengerMinter),
-// message_sent and message_received (MessageTransmitter), mint_and_forward
-// (CctpForwarder). The governance/admin events (ownership, admin, pauser,
-// attester, denylist, fee and limit config) were each verified against real
-// mainnet events; the list lives in decode.go and the cctp_events CHECK
-// constraint (migration 0094).
+// Transfer events: deposit_for_burn and mint_and_withdraw (TokenMessengerMinter), message_sent and
+// message_received (MessageTransmitter), mint_and_forward (CctpForwarder). The governance/admin
+// event list lives in decode.go and the cctp_events CHECK constraint (migration 0094).
 //
-// One outbound deposit_for_burn emits both a DepositForBurn and a MessageSent in
-// the same transaction; inbound pairs MessageReceived with MintAndWithdraw.
-// Correlate by (ledger, tx_hash).
+// One outbound deposit_for_burn emits both a DepositForBurn and a MessageSent in the same
+// transaction; inbound pairs MessageReceived with MintAndWithdraw. Correlate by (ledger, tx_hash).
 //
-// Per-event schemas from the contracts' Rust source: docs/protocols/cctp.md.
-// Wiring: decode.go decodes, consumer.go projects into the canonical cctp.Event,
-// dispatcher_adapter.go is the dispatcher Decoder, and the sink persists via
-// Store.InsertCCTPEvent (README.md §Wiring).
+// Per-event schemas: docs/protocols/cctp.md. Wiring: README.md section Wiring.
 package cctp
 
 import (
@@ -57,24 +50,16 @@ const (
 	EventMessageReceived = "message_received"  // MessageTransmitter
 	EventMintAndForward  = "mint_and_forward"  // CctpForwarder — mint relayed onward to the recipient
 
-	// Governance/admin events — verified against real mainnet lake
-	// events by a topic-match pass across all three CCTP contracts.
-	// Every contract implements the same Ownable2Step + admin-role
-	// pattern, so a single Go type per event kind covers all three
-	// emitters (matching mint_and_forward's precedent of one struct
-	// regardless of which contract fires it).
+	// Governance/admin events. Every contract implements the same Ownable2Step + admin-role
+	// pattern, so one Go type per event kind covers all three emitters.
 	EventOwnershipTransfer          = "ownership_transfer"           // 2-step ownership transfer initiated
 	EventOwnershipTransferCompleted = "ownership_transfer_completed" // 2-step ownership transfer accepted
 	EventAdminChanged               = "admin_changed"                // admin role reassigned (old_admin may be void — bootstrap)
 	EventRemoteTokenMessengerAdded  = "remote_token_messenger_added" // TokenMessengerMinter: a remote-domain TokenMessenger registered
 	EventTokenPairLinked            = "token_pair_linked"            // TokenMessengerMinter: local token linked to a remote-domain token
 
-	// Lower-signal admin/governance events — verified against real
-	// mainnet lake events by a full topic census (every topic_0_sym the
-	// three CCTP contracts had EVER emitted, cross-checked against
-	// topics_xdr for the empty-topic_0_sym trap — none found; all CCTP
-	// topics are Symbols). These are the census topics outside the
-	// transfer and governance sets above.
+	// Lower-signal admin/governance events: the remaining topics of a full census of what the three
+	// contracts have emitted. All CCTP topics are Symbols, so topic_0_sym is never empty.
 	EventAdminChangeStarted        = "admin_change_started"          // 2-step admin change initiated (old_admin may be void — bootstrap)
 	EventAttesterEnabled           = "attester_enabled"              // MessageTransmitter: an attester public key was enabled
 	EventAttesterManagerUpdated    = "attester_manager_updated"      // MessageTransmitter: attester-manager role reassigned (old may be void — bootstrap)
@@ -93,14 +78,9 @@ const (
 	EventUnDenylisted              = "un_denylisted"                 // TokenMessengerMinter: an account left the denylist
 )
 
-// Topic[0] pre-encoded base64 — package-init constants so
-// Classify() does single string-equal comparisons rather than
-// full SCVal decodes per event. All 26 are >= 10 chars
-// (`denylisted` is the shortest; `deposit_for_burn` is 16) so the
-// Soroban macro emits them as long-form ScSymbol via
-// `Symbol::new(env, …)`, not the 9-char-capped `symbol_short!`.
-// The wire shape is still ScSymbol in both cases; the macro picks
-// the constructor by length.
+// Topic[0] pre-encoded base64, so Classify() does single string-equal comparisons rather than a
+// full SCVal decode per event. The wire shape is ScSymbol whether the Soroban macro used
+// symbol_short! (up to 9 chars) or Symbol::new; all of these happen to be the long form.
 var (
 	TopicSymbolDepositForBurn             = scval.MustEncodeSymbol(EventDepositForBurn)
 	TopicSymbolMintAndWithdraw            = scval.MustEncodeSymbol(EventMintAndWithdraw)
@@ -134,15 +114,13 @@ var (
 // DepositForBurn is the canonical projection of one `deposit_for_burn` event
 // from TokenMessengerMinter (v2); schema in docs/protocols/cctp.md.
 //
-// Wire: topics = ["deposit_for_burn", burn_token, depositor,
-// min_finality_threshold]; body = ScMap { amount, mint_recipient,
-// destination_domain, destination_token_messenger, destination_caller, max_fee,
-// hook_data }.
+// Wire: topics = ["deposit_for_burn", burn_token, depositor, min_finality_threshold]; body = ScMap
+// { amount, mint_recipient, destination_domain, destination_token_messenger, destination_caller,
+// max_fee, hook_data }.
 //
-// mint_recipient, destination_token_messenger and destination_caller are 32-byte
-// buffers (for EVM destinations: 12 zero-pad bytes, then the 20-byte address).
-// They are surfaced as raw lowercase hex without 0x; downstream re-formats per
-// destination chain.
+// mint_recipient, destination_token_messenger and destination_caller are 32-byte buffers (EVM
+// destinations: 12 zero-pad bytes, then the 20-byte address). They are kept as raw lowercase hex
+// without 0x; downstream re-formats per destination chain.
 type DepositForBurn struct {
 	Ledger     uint32
 	TxHash     string
@@ -165,19 +143,8 @@ type DepositForBurn struct {
 	HookData                  string // hex; opaque post-mint payload
 }
 
-// MintAndWithdraw is the canonical projection of one
-// `MintAndWithdraw` event from TokenMessengerMinter (v2).
-//
-// Source schema:
-//
-//	pub struct MintAndWithdraw {
-//	    #[topic] pub mint_recipient: Address,
-//	    pub amount: i128,
-//	    #[topic] pub mint_token: Address,
-//	    pub fee_collected: i128,
-//	}
-//
-// Wire shape:
+// MintAndWithdraw is the canonical projection of one `mint_and_withdraw` event from
+// TokenMessengerMinter (v2).
 //
 //	topics = ["mint_and_withdraw", mint_recipient, mint_token]
 //	body   = ScMap { amount, fee_collected }
@@ -195,11 +162,9 @@ type MintAndWithdraw struct {
 	FeeCollected string // i128
 }
 
-// MintAndForward is the canonical projection of one
-// `mint_and_forward` event — the CctpForwarder minting and relaying
-// onward to the final recipient. The schema was reverse-engineered
-// from real mainnet events (single Symbol topic; body map
-// {amount: i128, forward_recipient: Address, token: Address}).
+// MintAndForward is the canonical projection of one `mint_and_forward` event: the CctpForwarder
+// minting and relaying onward to the final recipient. Single Symbol topic; body map
+// {amount: i128, forward_recipient: Address, token: Address}.
 type MintAndForward struct {
 	Ledger     uint32
 	TxHash     string
@@ -212,21 +177,12 @@ type MintAndForward struct {
 	Amount           string // i128
 }
 
-// OwnershipTransfer is the canonical projection of one
-// `ownership_transfer` event. All three CCTP contracts implement an
-// OpenZeppelin-style Ownable2Step admin pattern: this event fires
-// when the CURRENT owner initiates a transfer; the new owner must
-// separately accept before `ownership_transfer_completed` fires.
+// OwnershipTransfer is the canonical projection of one `ownership_transfer` event. The contracts
+// use an Ownable2Step pattern: this fires when the CURRENT owner initiates a transfer; the new
+// owner must accept before `ownership_transfer_completed` fires.
 //
-// Verified against real mainnet events: ledgers 62211157
-// (TokenMessengerMinter), 62211185 (MessageTransmitter), 62211209
-// (CctpForwarder) — one per contract, `old_owner` populated in all
-// three observed instances. No genesis-time void case has been seen on
-// mainnet, but the decoder still type-tests `old_owner`
-// (contract-schema-evolution stance, AGENTS.md "Type-test before
-// MustI128") in case a future upgrade emits it from an unset state.
-//
-// Wire shape (single-topic event; body ScMap):
+// Every observed mainnet instance has `old_owner` populated, but the decoder still type-tests it
+// in case a future upgrade emits it from an unset state.
 //
 //	topics = ["ownership_transfer"]
 //	body   = { live_until_ledger: u32, new_owner: Address, old_owner: Address }
@@ -242,17 +198,9 @@ type OwnershipTransfer struct {
 	OldOwner        string // Stellar Address strkey; "" if void
 }
 
-// OwnershipTransferCompleted is the canonical projection of one
-// `ownership_transfer_completed` event — the new owner accepted a
-// pending [OwnershipTransfer].
-//
-// Verified against real mainnet events: ledgers 62146641
-// (MessageTransmitter), 62146653 (TokenMessengerMinter), 62146669
-// (CctpForwarder) carry the bootstrap acceptance; ledgers
-// 62225090/62225171/62225185 carry the later real transfer's
-// acceptance. `new_owner` is the only field in both cases.
-//
-// Wire shape:
+// OwnershipTransferCompleted is the canonical projection of one `ownership_transfer_completed`
+// event: the new owner accepted a pending [OwnershipTransfer]. `new_owner` is the only field,
+// for both bootstrap and later transfers.
 //
 //	topics = ["ownership_transfer_completed"]
 //	body   = { new_owner: Address }
@@ -266,18 +214,11 @@ type OwnershipTransferCompleted struct {
 	NewOwner string // Stellar Address strkey
 }
 
-// AdminChanged is the canonical projection of one `admin_changed`
-// event — the contract's operational admin role (distinct from
-// `owner`) was reassigned.
+// AdminChanged is the canonical projection of one `admin_changed` event: the contract's
+// operational admin role (distinct from `owner`) was reassigned.
 //
-// Verified against real mainnet events: each contract emits this
-// TWICE — once at bootstrap (`old_admin` is `ScValTypeScvVoid`, e.g.
-// ledger 62146641/62146653/62146669) and once for the later real
-// reassignment (`old_admin` populated, e.g. ledger
-// 62225106/62225178/62225207). The decoder type-tests `old_admin`
-// rather than assuming it's always an Address.
-//
-// Wire shape:
+// At bootstrap `old_admin` is ScvVoid, later reassignments populate it, so the decoder type-tests
+// `old_admin` rather than assuming an Address.
 //
 //	topics = ["admin_changed"]
 //	body   = { new_admin: Address, old_admin: Address | Void }
@@ -292,14 +233,9 @@ type AdminChanged struct {
 	OldAdmin string // Stellar Address strkey; "" if void (bootstrap — no previous admin)
 }
 
-// RemoteTokenMessengerAdded is the canonical projection of one
-// `remote_token_messenger_added` event — TokenMessengerMinter
-// registering the counterpart TokenMessenger contract on another
-// CCTP domain. Only ever observed from TokenMessengerMinter (26
-// occurrences counted on mainnet, one per supported remote domain,
-// ledgers 62146653-63149586).
-//
-// Wire shape:
+// RemoteTokenMessengerAdded is the canonical projection of one `remote_token_messenger_added`
+// event: TokenMessengerMinter registering the counterpart TokenMessenger on another CCTP domain
+// (one per supported remote domain).
 //
 //	topics = ["remote_token_messenger_added"]
 //	body   = { domain: u32, token_messenger: BytesN<32> }
@@ -314,14 +250,9 @@ type RemoteTokenMessengerAdded struct {
 	TokenMessenger string // hex; BytesN<32> — the remote TokenMessenger's identity on that domain
 }
 
-// TokenPairLinked is the canonical projection of one
-// `token_pair_linked` event — TokenMessengerMinter registering which
-// remote-domain token a local Stellar token burns/mints against.
-// Only ever observed from TokenMessengerMinter (26 occurrences counted
-// on mainnet, paired 1:1 with [RemoteTokenMessengerAdded] by domain,
-// ledgers 62146739-63149585).
-//
-// Wire shape:
+// TokenPairLinked is the canonical projection of one `token_pair_linked` event:
+// TokenMessengerMinter registering which remote-domain token a local Stellar token burns/mints
+// against. Pairs 1:1 with [RemoteTokenMessengerAdded] by domain.
 //
 //	topics = ["token_pair_linked"]
 //	body   = { local_token: Address, remote_domain: u32, remote_token: BytesN<32> }
@@ -337,24 +268,14 @@ type TokenPairLinked struct {
 	RemoteToken  string // hex; BytesN<32> — the remote chain's token identity
 }
 
-// MessageSent is the canonical projection of one `MessageSent`
-// event from MessageTransmitter (v2). Emitted alongside
-// `DepositForBurn` for every outbound transfer.
-//
-// Source schema:
-//
-//	pub struct MessageSent {
-//	    pub message: Bytes,
-//	}
-//
-// Wire shape:
+// MessageSent is the canonical projection of one `message_sent` event from MessageTransmitter
+// (v2), emitted alongside `deposit_for_burn` for every outbound transfer.
 //
 //	topics = ["message_sent"]   (single-topic event)
 //	body   = Bytes (raw)
 //
-// The `message` bytes are the serialised cross-chain envelope —
-// destination chain attestation services consume this; we
-// preserve it as hex for cross-reference.
+// The bytes are the serialised cross-chain envelope that destination-chain attestation services
+// consume; we keep them as hex for cross-reference.
 type MessageSent struct {
 	Ledger     uint32
 	TxHash     string
@@ -365,22 +286,8 @@ type MessageSent struct {
 	Message string // hex of the serialised envelope
 }
 
-// MessageReceived is the canonical projection of one
-// `MessageReceived` event from MessageTransmitter (v2). Emitted
-// alongside `MintAndWithdraw` for every inbound transfer.
-//
-// Source schema:
-//
-//	pub struct MessageReceived {
-//	    #[topic] pub caller: Address,
-//	    pub source_domain: u32,
-//	    #[topic] pub nonce: BytesN<32>,
-//	    pub sender: BytesN<32>,
-//	    #[topic] pub finality_threshold_executed: u32,
-//	    pub message_body: Bytes,
-//	}
-//
-// Wire shape:
+// MessageReceived is the canonical projection of one `message_received` event from
+// MessageTransmitter (v2), emitted alongside `mint_and_withdraw` for every inbound transfer.
 //
 //	topics = ["message_received", caller, nonce, finality_threshold_executed]
 //	body   = ScMap { source_domain, sender, message_body }
@@ -404,24 +311,13 @@ type MessageReceived struct {
 
 // ─── Lower-signal admin/governance events ───────────────────────────
 //
-// The remaining 16 topics found by the full-topic census (every
-// topic_0_sym the three CCTP contracts had EVER emitted on mainnet —
-// 26 distinct topics, 9496 total events, exactly reconciled). All had
-// single-digit-to-low-double-digit occurrence counts; schemas below
-// were reverse-engineered directly from the real lake events (no
-// upstream doc for most of these — `max_message_body_size_updated` is
-// the one exception).
+// The remaining 16 of the 26 distinct topics the three contracts emit. All are rare; schemas
+// below come from real lake events, as upstream documents almost none of them.
 
-// AdminChangeStarted is the canonical projection of one
-// `admin_change_started` event — the 2-step counterpart to
-// `admin_changed`: this fires when an admin change is INITIATED,
-// `admin_changed` fires when it takes effect. Single-topic event; body
-// ScMap. Verified against real mainnet events: ledgers 62211158
-// (TokenMessengerMinter), 62211186 (MessageTransmitter), 62211210
-// (CctpForwarder) — `old_admin` populated in all three observed
-// instances, but type-tested via [scval.AsAddressOrVoid] anyway (same
-// field as `admin_changed`'s `old_admin`, which IS void at bootstrap —
-// AGENTS.md "Type-test before MustI128").
+// AdminChangeStarted is the canonical projection of one `admin_change_started` event: the 2-step
+// counterpart to `admin_changed`, firing when an admin change is INITIATED (`admin_changed` fires
+// when it takes effect). Single-topic event; body ScMap. `old_admin` is type-tested via
+// [scval.AsAddressOrVoid] because the same field is void in `admin_changed` at bootstrap.
 //
 // Body: { new_admin: Address, old_admin: Address | Void }.
 type AdminChangeStarted struct {
@@ -435,13 +331,9 @@ type AdminChangeStarted struct {
 	OldAdmin string // Stellar Address strkey; "" if void
 }
 
-// AttesterEnabled is the canonical projection of one `attester_enabled`
-// event — MessageTransmitter enabling one attester's signing key.
-// Only ever observed from MessageTransmitter. Verified against real
-// mainnet events: ledger 62146641 (two occurrences in the same tx, one
-// per attester enabled).
-//
-// Wire shape (2-topic event; body is an empty map):
+// AttesterEnabled is the canonical projection of one `attester_enabled` event: MessageTransmitter
+// enabling one attester's signing key. One event per attester, so several can share a tx.
+// Two topics; body is an empty map.
 //
 //	topics = ["attester_enabled", attester]
 //	body   = {}
@@ -455,16 +347,10 @@ type AttesterEnabled struct {
 	Attester string // hex; BytesN<20> — secp256k1-recovered attester address
 }
 
-// AttesterManagerUpdated is the canonical projection of one
-// `attester_manager_updated` event — the attester-manager role was
-// reassigned. Only ever observed from MessageTransmitter. Verified
-// against real mainnet events: ledger 62146641 — `old_attester_manager`
-// is `ScValTypeScvVoid` (bootstrap; no prior manager), type-tested via
-// [scval.AsAddressOrVoid] rather than assumed Address (same
-// schema-evolution stance as `admin_changed`'s `old_admin` — the trap
-// here is in a TOPIC field, not the body).
-//
-// Wire shape (3-topic event; body is an empty map):
+// AttesterManagerUpdated is the canonical projection of one `attester_manager_updated` event: the
+// attester-manager role was reassigned. `old_attester_manager` is ScvVoid at bootstrap, so it is
+// type-tested via [scval.AsAddressOrVoid]; note the void is in a TOPIC field, not the body.
+// Three topics; body is an empty map.
 //
 //	topics = ["attester_manager_updated", old_attester_manager, new_attester_manager]
 //	body   = {}
@@ -479,12 +365,8 @@ type AttesterManagerUpdated struct {
 	NewAttesterManager string // Stellar Address strkey
 }
 
-// Denylisted is the canonical projection of one `denylisted` event —
-// an account was added to TokenMessengerMinter's denylist. Only ever
-// observed from TokenMessengerMinter. Verified against real mainnet
-// events: ledger 62226112.
-//
-// Wire shape (2-topic event; body is an empty map):
+// Denylisted is the canonical projection of one `denylisted` event: an account was added to
+// TokenMessengerMinter's denylist. Two topics; body is an empty map.
 //
 //	topics = ["denylisted", account]
 //	body   = {}
@@ -498,13 +380,9 @@ type Denylisted struct {
 	Account string // Stellar Address strkey
 }
 
-// UnDenylisted is the canonical projection of one `un_denylisted`
-// event — an account was removed from TokenMessengerMinter's
-// denylist. Only ever observed from TokenMessengerMinter. Verified
-// against real mainnet events: ledger 62226574 — same account as the
-// [Denylisted] fixture, a denylist/un-denylist pair.
-//
-// Wire shape (2-topic event; body is an empty map):
+// UnDenylisted is the canonical projection of one `un_denylisted` event: an account was removed
+// from TokenMessengerMinter's denylist (the inverse of [Denylisted]). Two topics; body is an
+// empty map.
 //
 //	topics = ["un_denylisted", account]
 //	body   = {}
@@ -518,14 +396,9 @@ type UnDenylisted struct {
 	Account string // Stellar Address strkey
 }
 
-// DenylisterChanged is the canonical projection of one
-// `denylister_changed` event — the denylister role was reassigned.
-// Only ever observed from TokenMessengerMinter. Verified against real
-// mainnet events: ledger 62146653 — `old_denylister` is `ScValTypeScvVoid`
-// (bootstrap), type-tested via [scval.AsAddressOrVoid] (same trap as
-// [AttesterManagerUpdated]'s topic field).
-//
-// Wire shape (3-topic event; body is an empty map):
+// DenylisterChanged is the canonical projection of one `denylister_changed` event: the denylister
+// role was reassigned. `old_denylister` is ScvVoid at bootstrap and type-tested via
+// [scval.AsAddressOrVoid], as in [AttesterManagerUpdated]. Three topics; body is an empty map.
 //
 //	topics = ["denylister_changed", old_denylister, new_denylister]
 //	body   = {}
@@ -540,12 +413,8 @@ type DenylisterChanged struct {
 	NewDenylister string // Stellar Address strkey
 }
 
-// FeeRecipientSet is the canonical projection of one
-// `fee_recipient_set` event — the address that receives collected
-// fees changed. Only ever observed from TokenMessengerMinter. Verified
-// against real mainnet events: ledger 62146653.
-//
-// Wire shape (single-topic event; body ScMap):
+// FeeRecipientSet is the canonical projection of one `fee_recipient_set` event: the address that
+// receives collected fees changed. Single topic; body ScMap.
 //
 //	topics = ["fee_recipient_set"]
 //	body   = { fee_recipient: Address }
@@ -559,12 +428,8 @@ type FeeRecipientSet struct {
 	FeeRecipient string // Stellar Address strkey
 }
 
-// MaxMessageBodySizeUpdated is the canonical projection of one
-// `max_message_body_size_updated` event — MessageTransmitter's message
-// size ceiling changed. Only ever observed from MessageTransmitter.
-// Verified against a real mainnet event: ledger 62146641 (new value 8192 bytes).
-//
-// Wire shape (single-topic event; body ScMap):
+// MaxMessageBodySizeUpdated is the canonical projection of one `max_message_body_size_updated`
+// event: MessageTransmitter's message size ceiling changed. Single topic; body ScMap.
 //
 //	topics = ["max_message_body_size_updated"]
 //	body   = { new_max_message_body_size: u32 }
@@ -578,12 +443,8 @@ type MaxMessageBodySizeUpdated struct {
 	NewMaxMessageBodySize uint32
 }
 
-// MinFeeControllerSet is the canonical projection of one
-// `min_fee_controller_set` event — the min-fee-controller role was
-// reassigned. Only ever observed from TokenMessengerMinter. Verified
-// against real mainnet events: ledger 62146653.
-//
-// Wire shape (2-topic event; body is an empty map):
+// MinFeeControllerSet is the canonical projection of one `min_fee_controller_set` event: the
+// min-fee-controller role was reassigned. Two topics; body is an empty map.
 //
 //	topics = ["min_fee_controller_set", min_fee_controller]
 //	body   = {}
@@ -597,15 +458,9 @@ type MinFeeControllerSet struct {
 	MinFeeController string // Stellar Address strkey
 }
 
-// PauserChanged is the canonical projection of one `pauser_changed`
-// event — the pause-role address was reassigned. Observed from all
-// three contracts. Verified against real mainnet events: ledgers
-// 62146641 (MessageTransmitter), 62146653 (TokenMessengerMinter),
-// 62146669 (CctpForwarder). NOTE: the body field is named
-// `new_address`, not `new_pauser` — confirmed against the real event,
-// not assumed from the topic name.
-//
-// Wire shape (single-topic event; body ScMap):
+// PauserChanged is the canonical projection of one `pauser_changed` event: the pause-role address
+// was reassigned. Emitted by all three contracts. The body field is named `new_address`, not
+// `new_pauser`. Single topic; body ScMap.
 //
 //	topics = ["pauser_changed"]
 //	body   = { new_address: Address }
@@ -619,13 +474,8 @@ type PauserChanged struct {
 	NewAddress string // Stellar Address strkey
 }
 
-// RescuerChanged is the canonical projection of one `rescuer_changed`
-// event — the rescue-role address was reassigned. Observed from all
-// three contracts. Verified against real mainnet events: ledgers
-// 62146641 (MessageTransmitter), 62146653 (TokenMessengerMinter),
-// 62146669 (CctpForwarder).
-//
-// Wire shape (single-topic event; body ScMap):
+// RescuerChanged is the canonical projection of one `rescuer_changed` event: the rescue-role
+// address was reassigned. Emitted by all three contracts. Single topic; body ScMap.
 //
 //	topics = ["rescuer_changed"]
 //	body   = { new_rescuer: Address }
@@ -639,12 +489,8 @@ type RescuerChanged struct {
 	NewRescuer string // Stellar Address strkey
 }
 
-// SetTokenController is the canonical projection of one
-// `set_token_controller` event — the token-controller role was
-// reassigned. Only ever observed from TokenMessengerMinter. Verified
-// against real mainnet events: ledgers 62146653, 62211021.
-//
-// Wire shape (single-topic event; body ScMap):
+// SetTokenController is the canonical projection of one `set_token_controller` event: the
+// token-controller role was reassigned. Single topic; body ScMap.
 //
 //	topics = ["set_token_controller"]
 //	body   = { token_controller: Address }
@@ -658,13 +504,9 @@ type SetTokenController struct {
 	TokenController string // Stellar Address strkey
 }
 
-// SignatureThresholdUpdated is the canonical projection of one
-// `signature_threshold_updated` event — MessageTransmitter's required
-// attestation signature count changed. Only ever observed from
-// MessageTransmitter. Verified against real mainnet events: ledger
-// 62146641 (0 → 2).
-//
-// Wire shape (single-topic event; body ScMap):
+// SignatureThresholdUpdated is the canonical projection of one `signature_threshold_updated`
+// event: MessageTransmitter's required attestation signature count changed. Single topic; body
+// ScMap.
 //
 //	topics = ["signature_threshold_updated"]
 //	body   = { new_signature_threshold: u32, old_signature_threshold: u32 }
@@ -679,18 +521,10 @@ type SignatureThresholdUpdated struct {
 	OldSignatureThreshold uint32
 }
 
-// SetBurnLimitPerMessage is the canonical projection of one
-// `set_burn_limit_per_message` event — the per-message burn ceiling
-// for one local token was set. Only ever observed from
-// TokenMessengerMinter. Verified against real mainnet events: ledgers
-// 62146712, 62226618, 62630052, 62630067 — always the same local token
-// (Stellar USDC SAC, CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75,
-// matching [TokenPairLinked]'s `local_token`), with the limit value
-// changed across the 4 calls. `token` is a genuine Stellar Address
-// strkey, so it promotes to [Event.Token] in consumer.go (same
-// convention as `token_pair_linked`'s `local_token`).
-//
-// Wire shape (2-topic event; body ScMap):
+// SetBurnLimitPerMessage is the canonical projection of one `set_burn_limit_per_message` event:
+// the per-message burn ceiling for one local token was set. `token` is a genuine Stellar Address
+// strkey (the same SAC as [TokenPairLinked]'s `local_token`), so it promotes to [Event.Token] in
+// consumer.go. Two topics; body ScMap.
 //
 //	topics = ["set_burn_limit_per_message", token]
 //	body   = { burn_limit_per_message: i128 }
@@ -705,13 +539,9 @@ type SetBurnLimitPerMessage struct {
 	BurnLimitPerMessage string // i128 canonical-decimals — a POLICY CEILING, not a movement amount; kept out of Event.Amount (see eventFromSetBurnLimitPerMessage)
 }
 
-// SwapMinterConfigSet is the canonical projection of one
-// `swap_minter_config_set` event — a swap-minter configuration was set
-// for one local token. Only ever observed from TokenMessengerMinter.
-// Verified against real mainnet events: ledger 62146806. The body's
-// `swap_minter_config` field is a NESTED map — flattened here into two fields.
-//
-// Wire shape (2-topic event; body ScMap):
+// SwapMinterConfigSet is the canonical projection of one `swap_minter_config_set` event: a
+// swap-minter configuration was set for one local token. The body's `swap_minter_config` is a
+// NESTED map, flattened here into two fields. Two topics; body ScMap.
 //
 //	topics = ["swap_minter_config_set", token]
 //	body   = { swap_minter_config: { allow_asset: Address, swap_minter: Address } }
@@ -727,16 +557,10 @@ type SwapMinterConfigSet struct {
 	SwapMinter string // Stellar Address strkey
 }
 
-// TokenDecimalConfigAdded is the canonical projection of one
-// `token_decimal_config_added` event — a canonical/local decimal
-// mapping was registered for one local token (CCTP's canonical
-// decimals for USDC-family assets don't always match a given chain's
-// local decimals; this event records the conversion). Only ever
-// observed from TokenMessengerMinter. Verified against real mainnet
-// events: ledger 62146699 (canonical=6, local=7). The body's
-// `token_decimal_config` field is a NESTED map — flattened here into two fields.
-//
-// Wire shape (2-topic event; body ScMap):
+// TokenDecimalConfigAdded is the canonical projection of one `token_decimal_config_added` event:
+// a canonical/local decimal mapping was registered for one local token (CCTP canonical decimals
+// need not match the chain's local decimals, e.g. canonical 6 vs local 7). The body's
+// `token_decimal_config` is a NESTED map, flattened here into two fields. Two topics; body ScMap.
 //
 //	topics = ["token_decimal_config_added", token]
 //	body   = { token_decimal_config: { canonical_decimals: u32, local_decimals: u32 } }

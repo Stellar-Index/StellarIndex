@@ -19,12 +19,9 @@ type RawSwap struct {
 	Ledger  uint32
 	TxHash  string
 	OpIndex uint32
-	// EventIndex is the in-op index of the FIRST field event of this
-	// swap. A router multi-hop emits several 8-field swaps in one op;
-	// the buffer emits-and-clears each before the next, so each swap's
-	// first-field index is distinct and fans out the trade
-	// op_index so the multiple trades don't collide on the trades PK
-	// (ADR-0033, same as aquarius/comet/soroswap).
+	// EventIndex is the in-op index of the FIRST field event of this swap. A router multi-hop
+	// emits several 8-field swaps in one op; each swap's distinct first-field index fans out the
+	// trade op_index so the trades do not collide on the trades PK (ADR-0033).
 	EventIndex int
 	Pool       string // event.ContractID of the first arriving event
 	ClosedAt   time.Time
@@ -55,23 +52,15 @@ func (r *RawSwap) Complete() bool {
 		r.ReferralFee != nil
 }
 
-// Decodable reports whether the slots decodeSwap actually CONSUMES are
-// populated: Sender, SellToken, OfferAmount, BuyToken, ReturnAmount.
-// ActualReceived / SpreadAmount / ReferralFee are deliberately unread
-// (see decodeSwap's doc: ActualReceived is the pool's INPUT echo and
-// using it corrupted prices, Q3).
+// Decodable reports whether the slots decodeSwap actually CONSUMES are populated: Sender,
+// SellToken, OfferAmount, BuyToken, ReturnAmount. ActualReceived / SpreadAmount / ReferralFee are
+// deliberately unread (ActualReceived is the pool's INPUT echo and corrupts prices, Q3).
 //
-// This is the sweep-time emission gate: the PRE-UPGRADE pool WASM
-// (ledgers 51,019,036 → 53,134,167) emitted 7 field-events per swap —
-// no "actual received amount" — so those groups can never Complete().
-// Gating sweep on Complete() drops ALL 5,161 pre-upgrade swaps as
-// orphans (measured on r1: the earliest phoenix trades row sat at
-// ledger 53,134,242).
-// Emitting decodable groups AT SWEEP (never eagerly) keeps the current
-// era's accounting unchanged: an in-flight 8-field group still waits
-// for its full set, and only a group that aged out — meaning its era
-// genuinely never sends the missing fields — is decoded from what the
-// decoder needs rather than thrown away.
+// This is the sweep-time emission gate. The pre-upgrade pool WASM emitted 7 field-events per swap
+// (no "actual received amount"), so those groups can never Complete(); gating on Complete() would
+// drop every pre-upgrade swap as an orphan. Emitting only at sweep, never eagerly, keeps an
+// in-flight 8-field group waiting for its full set; only a group that aged out is decoded from
+// what the decoder needs.
 func (r *RawSwap) Decodable() bool {
 	return r.Sender != nil &&
 		r.SellToken != nil &&
@@ -122,11 +111,9 @@ func (r *RawSwap) assign(e *events.Event, fieldTopic string) error {
 	return nil
 }
 
-// slot returns the event currently stored in the slot identified by
-// fieldTopic, or nil if that slot is empty (or fieldTopic isn't a swap
-// field). Read-only companion to assign — absorb uses it to detect a
-// SECOND swap re-using the same (ledger, tx, op, pool) groupKey before
-// it silently overwrites the first swap's slots.
+// slot returns the event stored in the slot for fieldTopic, or nil if empty or not a swap field.
+// absorb uses it to detect a second swap re-using the same groupKey before it overwrites the
+// first swap's slots.
 func (r *RawSwap) slot(fieldTopic string) *events.Event {
 	switch fieldTopic {
 	case TopicSymbolSender:
@@ -149,22 +136,12 @@ func (r *RawSwap) slot(fieldTopic string) *events.Event {
 	return nil
 }
 
-// groupKey is the (ledger, tx_hash, op_index, contract_id) tuple. The
-// 8 field events of one swap all come from ONE pool contract, so they
-// share this key — grouping for a normal single-pool swap is unchanged
-// by the ContractID term. ContractID is load-bearing for a router
-// multihop: it emits several swaps within ONE op, and when different
-// POOLS' swaps land under the same (ledger, tx, op) they MUST NOT share
-// a buffer entry. Without the ContractID discriminator, an incomplete
-// leg from pool A (a lost event, or an upgraded WASM emitting <8 fields)
-// is silently hijacked in-place by pool B's field-events — B's data gets
-// stamped with A's frozen first-field event_index (wrong FanoutOpIndex)
-// and A's leg is lost. Keying on ContractID isolates each pool's
-// reassembly; each completes on its OWN first-field event_index (see
-// RawSwap.EventIndex) so they don't collide downstream. (Mirrors
-// soroswap's groupKey.Pair discriminator.) NOTE: EventIndex is
-// deliberately NOT in the key — each of the 8 field-events has a
-// distinct EventIndex, which would shatter the grouping.
+// groupKey is the (ledger, tx_hash, op_index, contract_id) tuple; the 8 field events of one swap
+// all come from one pool contract. ContractID is load-bearing for a router multihop, where
+// different pools' swaps share (ledger, tx, op): without it an incomplete leg from pool A would be
+// hijacked by pool B's field-events, stamped with A's first-field event_index (wrong
+// FanoutOpIndex) and A's leg lost. EventIndex is deliberately NOT in the key: each of the 8
+// field-events has a distinct one, which would shatter the grouping.
 type groupKey struct {
 	Ledger     uint32
 	TxHash     string
@@ -226,11 +203,9 @@ const (
 	// into StakeChange / phoenix_stake_events same as bond/unbond.
 	actionWithdrawRewards
 	actionDistributeRewards
-	// actionCreatePool is the FACTORY's ("create","liquidity_pool")
-	// pool announcement — the only action in this enum emitted by the
-	// factory rather than a pool or stake contract. It projects no row;
-	// its whole job is to admit the announced pool into the identity
-	// gate (dispatcher_adapter.go, ADR-0040 §1 mechanism 1).
+	// actionCreatePool is the FACTORY's ("create","liquidity_pool") pool announcement, the only
+	// action emitted by the factory. It projects no row; it only admits the announced pool into
+	// the identity gate (ADR-0040 section 1).
 	actionCreatePool
 	// Single-event shapes, each fully specified by its topic pair (or
 	// single Symbol topic); see events.go EventActionCreateDistributionFlow.
@@ -258,19 +233,12 @@ var topicPairActions = map[topicPair]action{
 	{TopicToggleTrading, TopicToggleTradingEnabled}:   actionToggleTrading,
 }
 
-// classifyAny is the union of classify + liquidity / stake topic
-// matching. Returns (action, topic[1] blob) for any recognised action
-// ("" topic[1] for single-topic Map shapes); (actionUnknown, "") otherwise.
-//
-// Keeping the existing two-return classify() alongside this helper
-// preserves the existing call-sites (swap tests and the original
-// dispatcher path) while letting new code reach for the broader
-// classifier — same byte-equality match work, one routing fan-out.
+// classifyAny is the union of classify + liquidity / stake topic matching. It returns (action,
+// topic[1] blob) for any recognised action ("" topic[1] for single-topic Map shapes), else
+// (actionUnknown, "").
 func classifyAny(e *events.Event) (action, string) {
-	// NEWER Map-body swap: a SINGLE ScvSymbol("swap") topic whose body
-	// is an ScvMap of all fields (pools on the newer WASM, e.g.
-	// CBENABXP…). Checked before the two-topic String schema below —
-	// this event has only one topic. See README Q5 and
+	// Newer Map-body swap: a single ScvSymbol("swap") topic with an ScvMap body of all fields.
+	// Checked before the two-topic String schema below. See README Q5 and
 	// docs/architecture/ingest-pipeline.md#contract-schema-evolution.
 	if len(e.Topic) == 1 {
 		switch e.Topic[0] {
@@ -312,13 +280,10 @@ func classifyAny(e *events.Event) (action, string) {
 	case TopicSymbolInitialize:
 		return actionInitialize, e.Topic[1]
 	case TopicSymbolCreate:
-		// Narrowest trigger that carries the hazard: ONLY the factory's
-		// single documented announcement pair classifies. Upstream has no
-		// other ("create", …) publish, so a ("create", something-else)
-		// is a shape nobody has audited — it stays actionUnknown and
-		// fail-closes into a visible ADR-0033 recognition gap rather than
-		// reaching the admission path. The emitter is checked separately
-		// (Matches → reg.IsFactory): topics alone are forgeable.
+		// Only the factory's single documented announcement pair classifies. Any other
+		// ("create", ...) shape is unaudited: it stays actionUnknown and fail-closes into a
+		// visible ADR-0033 recognition gap instead of reaching admission. The emitter is
+		// checked separately (Matches, reg.IsFactory) because topics alone are forgeable.
 		if e.Topic[1] != TopicCreateLiquidityPool {
 			return actionUnknown, ""
 		}
@@ -330,19 +295,13 @@ func classifyAny(e *events.Event) (action, string) {
 	return actionUnknown, ""
 }
 
-// decodeAnnouncedPool extracts the pool address the FACTORY's
-// ("create","liquidity_pool") event announces — the ADR-0035/0040
-// fan-out seam, mirroring aquarius's add_pool decode.
+// decodeAnnouncedPool extracts the pool address the FACTORY's ("create","liquidity_pool") event
+// announces (the ADR-0035/0040 fan-out seam).
 //
-// The body is a single ScvAddress (verified on every real capture under
-// test/fixtures/phoenix/factory-create, 2024 and 2026 alike). Upstream it
-// is the RETURN VALUE of
-// `env.deployer().with_current_contract(salt).deploy_v2(<lp wasm hash
-// from factory config>, …)` — create_liquidity_pool takes no pool-address
-// parameter, so the announced address cannot be caller-supplied (this is
-// what made defindex's self-registration unsafe and makes phoenix's safe;
-// see docs/operations/wasm-audits/phoenix.md). The announced address must
-// be a contract (C-strkey); anything else is malformed.
+// The body is a single ScvAddress. Upstream it is the return value of the factory's deploy_v2 call
+// and create_liquidity_pool takes no pool-address parameter, so the address cannot be
+// caller-supplied; that is what makes this self-registration safe (see
+// docs/operations/wasm-audits/phoenix.md). It must be a contract (C-strkey), else malformed.
 func decodeAnnouncedPool(e *events.Event) (string, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -362,19 +321,13 @@ func decodeAnnouncedPool(e *events.Event) (string, error) {
 // Field mapping (per Q3):
 //   - Trade.Pair.Base    = asset parsed from SellToken event body
 //   - Trade.Pair.Quote   = asset parsed from BuyToken event body
-//   - Trade.BaseAmount   = OfferAmount (base sold by the taker). The
-//     pool's do_swap prices compute_swap off offer_amount BEFORE the
-//     transfer, so return/offer is the executed price even when a
-//     fee-on-transfer sell token makes ActualReceived smaller; that
-//     divergence is surfaced, not stored (noteReceivedDivergence).
-//   - Trade.QuoteAmount  = ReturnAmount — the buy_token amount the
-//     taker actually receives. Verified against the pool contract's
-//     do_swap: `return_amount` is `compute_swap.return_amount`, already
-//     net of protocol commission + referral fee, and is exactly the
-//     amount transferred to the sender. NOT ActualReceived: the pool
-//     emits "actual received amount" as the INPUT it received of
-//     sell_token (== OfferAmount for a fee-less token), so using it made every Phoenix trade
-//     base==quote and corrupted all Phoenix prices (Q3).
+//   - Trade.BaseAmount   = OfferAmount (base sold by the taker). The pool prices off
+//     offer_amount before the transfer, so return/offer is the executed price even for a
+//     fee-on-transfer sell token; that divergence is surfaced, not stored
+//     (noteReceivedDivergence).
+//   - Trade.QuoteAmount  = ReturnAmount, the buy_token amount the taker receives (net of
+//     commission and referral fee). NOT ActualReceived: the pool emits it as the INPUT it
+//     received of sell_token, so using it made every trade base==quote and corrupted prices (Q3).
 //   - Trade.Taker        = sender address
 func decodeSwap(r *RawSwap) (canonical.Trade, error) {
 	// Decodable, not Complete: the guard's job is "can this function
@@ -402,11 +355,8 @@ func decodeSwap(r *RawSwap) (canonical.Trade, error) {
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("offer_amount: %w", err)
 	}
-	// QuoteAmount is the OUTPUT the taker received of buy_token =
-	// return_amount (net of fees; see the doc comment above). The
-	// "actual received amount" field is the INPUT the pool received of
-	// sell_token (== offer_amount for a fee-less token) — using it made
-	// base==quote.
+	// QuoteAmount is the OUTPUT the taker received of buy_token (return_amount, net of fees).
+	// "actual received amount" is the INPUT the pool received; using it made base==quote.
 	returned, err := decodeI128(r.ReturnAmount.Value)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("return_amount: %w", err)
@@ -473,18 +423,13 @@ func noteReceivedDivergence(pool, txHash string, ledger uint32, offer, received 
 		"offer_amount", offer.String(), "actual_received", received.String())
 }
 
-// decodeSwapMap decodes the NEWER single-event Phoenix swap schema
-// (Q5): one ScvSymbol("swap") event whose body is an ScvMap keyed by
-// underscore-spelled Symbols. Unlike decodeSwap this needs NO
-// correlation buffer — the whole trade is in one event.
+// decodeSwapMap decodes the newer single-event Phoenix swap schema (Q5): one ScvSymbol("swap")
+// event whose body is an ScvMap keyed by Symbols. Unlike decodeSwap it needs no correlation
+// buffer.
 //
-// Field mapping is IDENTICAL to decodeSwap: BaseAmount = offer_amount
-// (base sold), QuoteAmount = return_amount (buy_token the taker
-// received, net of fees — NOT actual_received_amount, which the pool
-// emits as the INPUT it received of sell_token; a divergence from
-// offer_amount is surfaced by noteReceivedDivergence, not stored).
-// Decode is by Map-field name (ingest-pipeline.md#contract-schema-evolution), so extra
-// / reordered fields don't break us.
+// Field mapping is identical to decodeSwap: BaseAmount = offer_amount, QuoteAmount =
+// return_amount, never actual_received_amount (the pool's INPUT echo). Decode is by Map-field
+// name (ingest-pipeline.md#contract-schema-evolution), so extra or reordered fields are safe.
 func decodeSwapMap(ev *events.Event, closedAt time.Time) (canonical.Trade, error) {
 	addr, amount, err := mapBodyReaders(ev.Value)
 	if err != nil {
@@ -680,13 +625,8 @@ func decodeWithdrawLiquidityMap(ev *events.Event, closedAt time.Time) (Liquidity
 // ─── Real SCVal decoders ────────────────────────────────────────
 // Tests swap these via the package-level vars.
 //
-// Each Phoenix swap event's body is a **raw single-value SCVal** —
-// NOT wrapped in a Vec (like Aquarius's 3-tuple body) or a Map
-// (like Reflector/Soroswap). That's because the pool contract
-// calls `publish(topics, single_value)` with a scalar, and
-// soroban-sdk serializes scalar bodies as the raw ScVal directly.
-// Verified against the v1 mainnet capture under
-// test/fixtures/phoenix/.
+// Each Phoenix swap event's body is a raw single-value SCVal, not wrapped in a Vec or Map: the
+// pool publishes a scalar and soroban-sdk serializes it directly (see test/fixtures/phoenix/).
 
 var (
 	decodeAddress = sdkDecodeAddress // SCVal::Address → "G..." / "C..."
@@ -727,11 +667,9 @@ func sdkDecodeI128(valueB64 string) (canonical.Amount, error) {
 
 // ─── provide_liquidity / withdraw_liquidity reassembly ──────────
 //
-// Both follow the same N-event-per-action pattern as swap. Each
-// per-field event's body is a bare single-value SCVal (Address for
-// the asset/account fields, I128 for the amount fields). The
-// dispatcher's serial-call assumption means buffer access is
-// single-threaded; the Decoder's mutex is belt-and-braces.
+// Both follow the same N-event-per-action pattern as swap, with bare single-value SCVal bodies
+// (Address for asset/account fields, I128 for amounts). The dispatcher calls serially, so buffer
+// access is single-threaded; the Decoder's mutex is belt-and-braces.
 
 // RawProvideLiquidity is the partial set of 5 fields observed for
 // a single provide_liquidity call. Slots populate by topic[1]; the
@@ -740,12 +678,9 @@ type RawProvideLiquidity struct {
 	Ledger  uint32
 	TxHash  string
 	OpIndex uint32
-	// EventIndex is the in-op index of the FIRST field-event of this
-	// provide_liquidity. The buffer emits-and-clears each completed
-	// action before the next, so each action's first-field index is
-	// distinct — the per-event discriminator added to the
-	// phoenix_liquidity PK by migration 0060 so two provides
-	// in one op don't collide.
+	// EventIndex is the in-op index of the FIRST field-event of this provide_liquidity. It is
+	// distinct per action and is the phoenix_liquidity PK discriminator, so two provides in one
+	// op do not collide.
 	EventIndex int
 	Pool       string
 	ClosedAt   time.Time
@@ -810,11 +745,9 @@ func (r *RawProvideLiquidity) assign(e *events.Event, fieldTopic string) error {
 	return nil
 }
 
-// RawWithdrawLiquidity is the partial set of 4 required fields
-// observed for a single withdraw_liquidity call. The optional
-// `auto unbonded` 5th event is dropped at classify time — it
-// duplicates information the stake-contract `unbond` decoder
-// already captures, and not every withdraw emits it.
+// RawWithdrawLiquidity is the partial set of 4 required fields for one withdraw_liquidity call.
+// The optional `auto unbonded` 5th event is dropped at classify time: the stake-contract `unbond`
+// decoder already captures it, and not every withdraw emits it.
 type RawWithdrawLiquidity struct {
 	Ledger  uint32
 	TxHash  string
@@ -945,12 +878,9 @@ func (r *RawStake) assign(e *events.Event, fieldTopic string) error {
 	return nil
 }
 
-// RawWithdrawRewards is the partial set of 2 fields observed for one
-// withdraw_rewards call from the stake contract. Real-lake bytes
-// (ledgers 53588319 / 53589647, stake contracts
-// CBRGNWGAC25… / CAF3UJ45ZQJ…) confirm exactly two fields — user +
-// reward_token — no amount field on this event (see events.go's
-// package doc for where the amount actually surfaces).
+// RawWithdrawRewards is the partial set of 2 fields (user, reward_token) for one withdraw_rewards
+// call from the stake contract. The event has no amount field (see events.go's package doc for
+// where the amount surfaces).
 type RawWithdrawRewards struct {
 	Ledger  uint32
 	TxHash  string
@@ -1049,11 +979,9 @@ func decodeProvideLiquidity(r *RawProvideLiquidity) (LiquidityChange, error) {
 }
 
 // decodeWithdrawLiquidity turns a complete RawWithdrawLiquidity
-// into the canonical LiquidityChange. Shares amount lives on the
-// dedicated field; per-token return amounts go in AmountA / AmountB.
-// TokenA / TokenB stay empty — the withdraw event does not carry
-// the pool's asset addresses (only the share-token); downstream can
-// join against the provide_liquidity rows that established the pool.
+// into the canonical LiquidityChange. Shares live on the dedicated field; per-token return amounts
+// go in AmountA / AmountB. TokenA / TokenB stay empty because the event carries only the
+// share-token; downstream joins against the provide_liquidity rows that established the pool.
 func decodeWithdrawLiquidity(r *RawWithdrawLiquidity) (LiquidityChange, error) {
 	if !r.Complete() {
 		return LiquidityChange{}, fmt.Errorf("%w: withdraw_liquidity have %d/%d fields",
@@ -1129,11 +1057,8 @@ func decodeStake(r *RawStake) (StakeChange, error) {
 }
 
 // decodeWithdrawRewards turns a complete RawWithdrawRewards into a
-// StakeChange. Reuses the StakeChange/phoenix_stake_events shape:
-// LPToken holds the reward-token address (not an LP share token —
-// see events.go doc). Amount is left at its zero value; the sink
-// (internal/pipeline/sink.go::persistPhoenixStake) writes NULL rather
-// than the zero-value "0" string for reward actions.
+// StakeChange. LPToken holds the reward-token address (not an LP share token). Amount is left
+// zero; the sink (persistPhoenixStake) writes NULL rather than "0" for reward actions.
 func decodeWithdrawRewards(r *RawWithdrawRewards) (StakeChange, error) {
 	if !r.Complete() {
 		return StakeChange{}, fmt.Errorf("%w: withdraw_rewards have %d/%d fields",

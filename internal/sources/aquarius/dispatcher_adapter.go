@@ -11,13 +11,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing view of the Aquarius AMM. Every
-// Aquarius swap carries its asset identities in the event topics
-// (see internal/sources/aquarius/decode.go + the contract-source
-// citation there), so trade decoding needs no per-source state. The
-// one piece of state the Decoder does carry is the contract-identity
-// gate (ADR-0035/0040): the registry of Aquarius pools, anchored on
-// the router.
+// Decoder is the dispatcher-facing view of the Aquarius AMM. Swaps carry their asset identities in
+// the event topics, so trade decoding needs no per-source state; the only state is the
+// contract-identity gate (ADR-0035/0040), the registry of Aquarius pools anchored on the router.
 type Decoder struct {
 	// reg gates Matches() on contract identity (ADR-0035/0040).
 	// Trust root = MainnetRouter (the protocol's own registry: its
@@ -26,15 +22,11 @@ type Decoder struct {
 	reg *contractid.Registry
 }
 
-// NewDecoder constructs an Aquarius Decoder. Contract-identity gating
-// (ADR-0035/0040): the curated mainnet pool set (MainnetPools —
-// lake-derived AND byte-identical to the protocol's registry API) is
-// ALWAYS seeded, and the router trust root is always installed, so a
-// bare NewDecoder() carries the full verified registry (the
-// reconciliation catalogue and sub-range re-derives rely on this).
-// Caller opts layer the protocol_contracts DB warm + live-upsert
-// hook on top; live router `add_pool` events self-register pools
-// created after this snapshot (blend-style fan-out).
+// NewDecoder constructs an Aquarius Decoder. Contract-identity gating (ADR-0035/0040): the curated
+// MainnetPools set is always seeded and the router trust root always installed, so a bare
+// NewDecoder() carries the full verified registry (reconciliation and sub-range re-derives rely
+// on this). Caller opts layer the protocol_contracts DB warm and live-upsert hook on top; live
+// router `add_pool` events self-register pools created after the snapshot.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{
 		contractid.WithFactories([]string{MainnetRouter}),
@@ -46,46 +38,35 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// GatedContractSet returns the decoder's current gate — the router trust
-// root ∪ every registered pool (curated seed + router-announced). It is the
-// contract-id prefilter the -ch completeness re-derive scopes its lake read
-// to: Matches() accepts events ONLY from these contracts, so streaming just
-// them yields byte-identical counts to a whole-lake stream, far faster
-// (contract-indexed vs a full firehose walk). Reflects whatever Decode has
-// registered so far, so callers that need the in-window pools must seed the
-// registry (preseed / self-seed) before reading it.
+// GatedContractSet returns the decoder's current gate: the router trust root plus every registered
+// pool (curated seed and router-announced). It is the contract-id prefilter the completeness
+// re-derive scopes its lake read to; Matches() accepts events only from these contracts, so
+// streaming just them yields the same counts as a whole-lake stream, far faster. It reflects only
+// what Decode has registered so far, so callers needing in-window pools must seed the registry
+// before reading it.
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
-// Matches implements [dispatcher.Decoder]. Gates on CONTRACT
-// IDENTITY, not topic bytes (ADR-0035/0040):
+// Matches implements [dispatcher.Decoder]. It gates on contract identity, not topic bytes
+// (ADR-0035/0040):
 //
-//   - a pool `trade` matches ONLY when emitted by a REGISTERED
-//     Aquarius pool (curated seed + router-announced). The bare
-//     Symbol("trade") topic is forgeable — the lake shows both a
-//     parallel non-registry router deployment and a look-alike fork
-//     emitting the identical shape (docs/protocols/aquarius.md).
-//   - the router's `add_pool` matches ONLY when emitted by the
-//     canonical router (the trust root) — Decode registers the
-//     announced pool so its subsequent trades pass the gate.
+//   - a pool `trade` matches only when emitted by a registered Aquarius pool (curated seed or
+//     router-announced). The bare Symbol("trade") topic is forgeable: the lake shows a parallel
+//     non-registry router and a look-alike fork emitting the identical shape.
+//   - the router's `add_pool` matches only when emitted by the canonical router (the trust root);
+//     Decode registers the announced pool so its later trades pass the gate.
 //
-// COVERAGE NOTE (ADR-0035): an un-registered real pool fail-closes
-// into an ADR-0033 recognition gap — visible, never silently
-// mis-attributed. Registry completeness is guaranteed by the
-// router's add_pool events living in the lake (every API-registry
-// pool is announced by one) plus the curated seed for history.
+// An unregistered real pool fails closed into an ADR-0033 recognition gap, visible and never
+// silently mis-attributed. Registry completeness comes from the router's add_pool events in the
+// lake plus the curated seed for history.
 func (d *Decoder) Matches(ev events.Event) bool {
 	switch classify(&ev) {
 	case EventTrade, EventUpdateReserves, EventReservesSync, EventDepositLiquidity, EventWithdrawLiquidity,
 		EventPoolState, EventClaimReward, EventSetRewardsConfig, EventPositionUpdate,
 		EventGaugeDeposit, EventClaimFees, EventRewardsGaugeClaim, EventGaugeClaim,
 		EventRewardsGaugeScheduleReward, EventSetRewardsState, EventRewardsGaugeAdd:
-		// Pool flow events (trade + liquidity/reserves + the
-		// rewards-gauge surface) are gated IDENTICALLY on contract
-		// identity: they match ONLY when emitted by a REGISTERED
-		// Aquarius pool. The bare topic symbols are forgeable — a
-		// look-alike must not be able to inject fabricated
-		// reserves/liquidity/rewards any more than it could inject
-		// fabricated trades.
+		// Pool flow events (trade, liquidity/reserves, rewards-gauge) are all gated on contract
+		// identity: only a registered pool matches. The bare topic symbols are forgeable, so a
+		// look-alike must not inject fabricated reserves, liquidity or rewards any more than trades.
 		return d.reg.Has(ev.ContractID)
 	case EventApplyUpgrade, EventCommitUpgrade, EventSetPrivilegedAddrs,
 		EventApplyTransferOwnership, EventCommitTransferOwnership,
@@ -93,36 +74,18 @@ func (d *Decoder) Matches(ev events.Event) bool {
 		EventSetProtocolFee, EventClaimProtocolFee,
 		EventKillDeposit, EventUnkillDeposit, EventKillSwap, EventUnkillSwap,
 		EventKillClaim, EventUnkillClaim, EventKillGaugesClaim, EventUnkillGaugesClaim:
-		// The protocol-fee and kill-switch kinds share this gate: the
-		// router's lake census lists its own `set_protocol_fee`, which a
-		// pool-only gate would silently refuse.
-		//
-		// Pool-EMITTABLE governance/upgrade surface: gated on the SAME
-		// protocol trust boundary as the pool-flow kinds (reg.Has) PLUS
-		// the router trust root (reg.IsFactory). The registered Aquarius
-		// pools legitimately emit these — a protocol-wide staged WASM
-		// upgrade upgraded 320/337 pools, and pools also fire
-		// ownership/privileged-address changes and emergency-mode
-		// toggles (full-history r1 census: ~1,679 pool-emitted events
-		// across these seven kinds, earliest ledger 55,363,632). Gating
-		// on reg.IsFactory alone (the router) would fail-close every
-		// pool-emitted occurrence into an ADR-0033 recognition gap AND
-		// drop it from Decode, silently losing real governance history
-		// (wasm-upgrade lineage, ownership transfers, trade-availability
-		// emergency toggles). An emitter in NEITHER set (the FLAGGED
-		// parallel router CA7RQDMM and the unidentified sibling family)
-		// fails closed exactly like its trade events do: a visible gap,
-		// never a silent mis-attribution.
+		// Pool-emittable governance/upgrade surface (protocol-fee and kill-switch kinds included;
+		// the router also emits set_protocol_fee): gated on the pool registry (reg.Has) plus the
+		// router trust root (reg.IsFactory). Registered pools legitimately emit these (WASM
+		// upgrades, ownership and privileged-address changes, emergency toggles), so gating on
+		// the router alone would fail-close them into recognition gaps and drop real governance
+		// history from Decode. An emitter in neither set fails closed like its trades: a visible
+		// gap, never a silent mis-attribution.
 		return d.reg.Has(ev.ContractID) || d.reg.IsFactory(ev.ContractID)
 	case EventConfigRewards, EventPoolGaugeSwitchToken:
-		// Router-SCOPED governance surface: gated on the canonical
-		// router trust root ONLY. Unlike the governance kinds above,
-		// config_rewards and pool_gauge_switch_token are 100%
-		// router-emitted — a full-history r1 census finds ZERO
-		// pool-emitted occurrences of either — so the gate is
-		// reg.IsFactory. A pool or foreign contract emitting these fails
-		// closed, a visible ADR-0033 recognition gap, not a silent
-		// mis-attribution.
+		// Router-scoped governance surface: config_rewards and pool_gauge_switch_token are only
+		// ever router-emitted, so the gate is the router trust root alone. A pool or foreign
+		// contract emitting these fails closed into a visible recognition gap.
 		return d.reg.IsFactory(ev.ContractID)
 	}
 	return isAddPool(&ev) && d.reg.IsFactory(ev.ContractID)
@@ -143,12 +106,10 @@ func isNotATrade(err error) bool {
 	return errors.Is(err, ErrZeroAmountTrade) || errors.Is(err, canonical.ErrPairMismatch)
 }
 
-// Decode implements [dispatcher.Decoder]. Returns one TradeEvent
-// per successful pool-trade decode (Aquarius trades are always
-// single-pair). A router `add_pool` announcement registers the new
-// pool in the gate registry and emits nothing ((nil, nil) is the
-// dispatcher's "match, nothing to emit" shape) — Seed fires the
-// persistence hook so the mapping survives restarts.
+// Decode implements [dispatcher.Decoder]. It returns one TradeEvent per successful pool-trade
+// decode (Aquarius trades are single-pair). A router `add_pool` announcement registers the new
+// pool in the gate and emits nothing ((nil, nil) is the dispatcher's "match, nothing to emit");
+// Seed fires the persistence hook so the mapping survives restarts.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if isAddPool(&ev) {
 		pool, err := decodeAnnouncedPool(&ev)
@@ -217,12 +178,9 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		}
 		return []consumer.Event{TradeEvent{Trade: trade}}, nil
 	default:
-		// Every kind Matches() gates in is handled explicitly above. A
-		// kind that reaches here matched the identity gate but has no
-		// decode arm — fail closed (ADR-0035) instead of forcing
-		// it through decodeTrade: a trade-shaped topic on an unhandled
-		// kind would otherwise be silently misattributed as a real
-		// trade rather than surfacing as a visible gap.
+		// A kind that passed the identity gate but has no decode arm fails closed (ADR-0035)
+		// instead of going through decodeTrade, which would misattribute a trade-shaped topic as
+		// a real trade rather than surfacing a visible gap.
 		return nil, fmt.Errorf("%w: unhandled event kind %q", ErrMalformedPayload, kind)
 	}
 }
@@ -238,13 +196,9 @@ func emitFee(ev *events.Event, closedAt time.Time, kind string) ([]consumer.Even
 	return []consumer.Event{fe}, nil
 }
 
-// emitKill builds a KillEvent for a pool circuit-breaker toggle. These
-// events carry NO body (SCV_VOID) and a single topic — validated via
-// requireVoidBody, the same shape check decode_admin.go's emergency-mode
-// pair uses — so the action (the classify() result) and the event
-// identity are the whole signal once the shape is confirmed. Extracted
-// from Decode to keep its cognitive complexity under the gocognit
-// ceiling.
+// emitKill builds a KillEvent for a pool circuit-breaker toggle. These events carry no body
+// (SCV_VOID) and a single topic, validated via requireVoidBody, so the classify() action and the
+// event identity are the whole signal once the shape is confirmed.
 func emitKill(ev *events.Event, closedAt time.Time, kind string) ([]consumer.Event, error) {
 	if err := requireVoidBody(ev, kind); err != nil {
 		return nil, err

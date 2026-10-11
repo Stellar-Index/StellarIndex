@@ -14,28 +14,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Decoder is the dispatcher-facing view of Phoenix. Unlike
-// Reflector or Aquarius, Phoenix is stateful: one swap produces 8
-// separate events that must be correlated by (ledger, tx_hash,
-// op_index) before a canonical.Trade can be emitted. The Decoder
-// owns the correlation buffer.
+// Decoder is the dispatcher-facing view of Phoenix. It is stateful: one swap is 8 separate events
+// that must be correlated by (ledger, tx_hash, op_index) before a canonical.Trade can be emitted,
+// and the Decoder owns that correlation buffer.
 //
-// Serial-call assumption: per docs/architecture/ingest-pipeline.md
-// the dispatcher processes events in order. Decode is not
-// re-entrant. The mutex below is belt-and-braces for the rare case
-// an operator runs parallel ledger replay (not a current feature
-// but cheap insurance).
+// The dispatcher feeds events in order, so Decode is not re-entrant; the mutex is cheap insurance
+// against parallel ledger replay.
 type Decoder struct {
 	mu  sync.Mutex
 	buf *buffer
 
-	// evictedOrphans is incremented every time the buffer drops an
-	// incomplete RawSwap (aged past defaultOrphanMaxAge). The
-	// dispatcher reads this via the optional `EvictedOrphans() int`
-	// interface (see internal/dispatcher/dispatcher.go::Stats) and
-	// the indexer reports the running counts as
-	// obs.SourceOrphanEventsTotal in the per-ledger stats path
-	// (internal/pipeline/processor.go).
+	// evictedOrphans counts incomplete RawSwaps the buffer dropped (aged past defaultOrphanMaxAge).
+	// The dispatcher reads it via the optional EvictedOrphans() int interface and the indexer
+	// reports it as obs.SourceOrphanEventsTotal.
 	evictedOrphans int
 	// carried holds rescued trades from a Decode call that failed on its
 	// own event; the next successful Decode emits them.
@@ -46,23 +37,17 @@ type Decoder struct {
 
 // NewDecoder constructs a phoenix Decoder with a fresh buffer.
 //
-// Contract-identity gating (ADR-0035/0040), factory-anchored: the curated
-// mainnet set (pools + stake contracts, docs/protocols/phoenix.md) is always
-// seeded as the cold-start warm root, and the factory's
-// ("create","liquidity_pool") events (lake from ledger 51,572,026) self-register
-// the pools they announce.
+// Contract-identity gating (ADR-0035/0040), factory-anchored: the curated mainnet set (pools and
+// stake contracts) is always seeded as the cold-start root, and the factory's
+// ("create","liquidity_pool") events self-register the pools they announce.
 //
-// Trust: admission is on contract identity (create_liquidity_pool needs the
-// sender's auth and membership in whitelisted_accounts). But the factory is
-// admin-upgradeable, so an admitted pool ultimately trusts the factory admin.
-// Tokens are creator-chosen, so this is not price trust; the downstream pricing
-// guards are (docs/operations/wasm-audits/phoenix.md, "Factory create event").
+// Trust: admission is on contract identity, but the factory is admin-upgradeable, so an admitted
+// pool ultimately trusts the factory admin. Tokens are creator-chosen, so admission is not price
+// trust; the downstream pricing guards are (docs/operations/wasm-audits/phoenix.md).
 //
-// STAKE contracts are not announced by the factory, so only the curated seed or
-// the protocol_contracts warm admits them; see MainnetStakeContracts.
-//
-// Caller opts layer the protocol_contracts DB warm and live-upsert hook on top;
-// the warm is the operator seam for admitting a contract without a redeploy.
+// Stake contracts are not announced by the factory, so only the curated seed or the
+// protocol_contracts warm admits them. Caller opts layer that DB warm and the live-upsert hook on
+// top, which lets an operator admit a contract without a redeploy.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{
 		contractid.WithFactories([]string{MainnetFactory}),
@@ -74,30 +59,21 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// GatedContractSet returns the decoder's gate — the factory trust root ∪
-// every registered pool/stake contract (the curated seed, any
-// protocol_contracts warm, and every pool self-registered from a factory
-// create event seen so far — see NewDecoder, so the set GROWS in-stream).
-// It is the contract-id prefilter the -ch completeness
-// re-derive scopes its lake read to: Matches() gates purely on contract
-// identity (reg.Has), so streaming just these contracts yields byte-identical
-// counts to a whole-lake stream. The intra-tx correlation buffer only ever
-// groups events from a SINGLE pool, so a contract-id prefilter never splits a
-// correlation group (contrast a cross-contract correlation, which it would
-// break — see the completeness catalogue's exclusion of defindex).
+// GatedContractSet returns the decoder's gate: the factory trust root plus every registered
+// pool/stake contract. The set grows in-stream as factory create events self-register pools.
+// It is the contract-id prefilter the completeness re-derive scopes its lake read to. Matches()
+// gates purely on contract identity, so streaming just these contracts yields the same counts as
+// a whole-lake stream; the correlation buffer only groups events from a single pool, so the
+// prefilter never splits a group (a cross-contract correlation would break, cf. defindex).
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
-// Matches implements [dispatcher.Decoder]. Phoenix emits its
-// per-action events with topic[0] = String(<action>). The second
-// topic slot carries the field name; the buffer routes it
-// internally. The claimed actions:
+// Matches implements [dispatcher.Decoder]. Phoenix events carry topic[0] = String(<action>) and
+// the field name in the second slot, which the buffer routes internally. Claimed actions:
 //
-//   - swap — TWO on-wire shapes: the older 8-event ScvString schema
-//     (actionSwap) and the newer single-event ScvSymbol("swap") +
-//     ScvMap body schema (actionSwapMap, Q5). classifyAny picks the
-//     shape from the topic; both reconstruct into the same TradeEvent.
-//   - provide_liquidity / withdraw_liquidity — String schema (buffered)
-//     and Map schema (single event, like actionSwapMap)
+//   - swap: two on-wire shapes, the older 8-event ScvString schema (actionSwap) and the newer
+//     single-event ScvSymbol("swap") + ScvMap schema (actionSwapMap); classifyAny picks the
+//     shape from the topic and both reconstruct into the same TradeEvent.
+//   - provide_liquidity / withdraw_liquidity: String schema (buffered) and Map schema (single event)
 //   - bond / unbond and the other stake-contract events
 //   - the factory's create and config-update events, gated on IsFactory
 //
@@ -108,27 +84,20 @@ func (d *Decoder) Matches(ev events.Event) bool {
 		return false
 	}
 	if a == actionCreatePool || a == actionFactoryConfig {
-		// The factory's events are gated on the FACTORY trust root, never
-		// on reg.Has: only a genuine factory may admit a
-		// child. A curated pool republishing the identical topics — the
-		// strongest forger available, since it already passes reg.Has —
-		// must not be able to inject one (aquarius add_pool, same shape).
+		// Gate on the FACTORY trust root, never reg.Has: a curated pool already passes reg.Has,
+		// so it could otherwise republish these topics and inject a child pool.
 		return d.reg.IsFactory(ev.ContractID)
 	}
-	// ADR-0035/0040: topic shape alone is forgeable — any
-	// pubnet contract can publish ("swap","sender") string tuples.
-	// Only the registered phoenix set (pools + stake contracts) is
-	// attributed; a foreign emitter of the same shape is left for
-	// the recognition audit to surface.
+	// ADR-0035/0040: topic shape alone is forgeable, any pubnet contract can publish
+	// ("swap","sender") tuples. Only the registered set is attributed; a foreign emitter is left
+	// for the recognition audit to surface.
 	return d.reg.Has(ev.ContractID)
 }
 
-// Decode implements [dispatcher.Decoder]. Routes to the per-action
-// reassembly buffer. Returns one consumer.Event when an action's
-// required field count is met; (nil, nil) for the per-field events
-// still buffering. For withdraw_liquidity the optional 5th
-// `auto unbonded` event is recognised but discarded (the bond
-// contract emits its own unbond which carries the same data).
+// Decode implements [dispatcher.Decoder]. It routes to the per-action reassembly buffer and
+// returns an event once an action's required field count is met, (nil, nil) while still buffering.
+// withdraw_liquidity's optional 5th `auto unbonded` event is discarded because the bond contract
+// emits its own unbond carrying the same data.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	a, fieldTopic := classifyAny(&ev)
 	if a == actionUnknown {
@@ -214,15 +183,12 @@ func (d *Decoder) decodeAction(a action, ev *events.Event, fieldTopic string, cl
 	return nil, nil
 }
 
-// seedAnnouncedPool admits the pool the factory's
-// ("create","liquidity_pool") event announces into the identity gate
-// and fires the durable live-upsert hook, so the mapping survives a
-// restart (ADR-0040 §1 mechanism 1). Emits no consumer.Event: the
-// announcement projects no row, it only moves the gate.
+// seedAnnouncedPool admits the pool a factory ("create","liquidity_pool") event announces into the
+// identity gate and fires the live-upsert hook so the mapping survives a restart. It emits no
+// consumer.Event: the announcement only moves the gate.
 //
-// Matches() has already established that ev.ContractID is a factory
-// trust root, so the announced address is a genuine phoenix pool;
-// ev.ContractID is recorded as its provenance.
+// Matches() already established ev.ContractID is a factory trust root, so the announced address
+// is a genuine pool; ev.ContractID is recorded as its provenance.
 func (d *Decoder) seedAnnouncedPool(ev *events.Event) error {
 	pool, err := decodeAnnouncedPool(ev)
 	if err != nil {
@@ -240,11 +206,9 @@ func (d *Decoder) decodeSwapMapEvent(ev *events.Event, closedAt time.Time) ([]co
 	return tradeOrNoOp(decodeSwapMap(ev, closedAt))
 }
 
-// isNotATrade reports a swap that decoded FULLY but maps to zero rows:
-// a zero leg or a self-pair. Returning it as an error would count it
-// undecodable and fail the source's ADR-0033 verdict closed forever
-// (comet's dispatcher_adapter.go states the rule).
-// Indeterminate parse failures keep the error path.
+// isNotATrade reports a swap that decoded fully but maps to zero rows (a zero leg or a self-pair).
+// Returning it as an error would count it undecodable and fail the source's ADR-0033 verdict
+// closed forever; indeterminate parse failures keep the error path.
 func isNotATrade(err error) bool {
 	return errors.Is(err, ErrZeroAmountSwap) || errors.Is(err, canonical.ErrPairMismatch)
 }
@@ -262,11 +226,8 @@ func tradeOrNoOp(trade canonical.Trade, err error) ([]consumer.Event, error) {
 	return []consumer.Event{TradeEvent{Trade: trade}}, nil
 }
 
-// decodeSwapEvent / decodeProvideLiquidityEvent /
-// decodeWithdrawLiquidityEvent / decodeStakeEvent are the per-action
-// helpers extracted from Decode to keep the switch's cognitive
-// complexity under the gocognit ceiling. All assume d.mu is held by
-// the caller — Decode owns the lock for the duration of one event.
+// decodeSwapEvent / decodeProvideLiquidityEvent / decodeWithdrawLiquidityEvent / decodeStakeEvent
+// are the per-action helpers behind Decode. All assume the caller holds d.mu for the one event.
 
 func (d *Decoder) decodeSwapEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {
 	completed, evicted, err := d.buf.absorb(ev, fieldTopic, closedAt)
@@ -287,13 +248,11 @@ func (d *Decoder) decodeSwapEvent(ev *events.Event, fieldTopic string, closedAt 
 	return out, nil
 }
 
-// rescueEvicted decodes the swap groups the buffer aged or rotated out:
-// a group whose
-// decode-consumed slots are all present is a pre-upgrade 7-event swap
-// (that era never sends ActualReceived / SpreadAmount / ReferralFee) or
-// the first of two same-pool swaps in one op, not an orphan. Only
-// under-filled or undecodable groups count as orphans; a recognised
-// no-op is neither a trade nor an orphan.
+// rescueEvicted decodes the swap groups the buffer aged or rotated out. A group whose
+// decode-consumed slots are all present is a pre-upgrade 7-event swap (that era never sends
+// ActualReceived / SpreadAmount / ReferralFee) or the first of two same-pool swaps in one op, not
+// an orphan. Only under-filled or undecodable groups count as orphans; a recognised no-op is
+// neither a trade nor an orphan.
 func (d *Decoder) rescueEvicted(evicted []RawSwap) []consumer.Event {
 	var out []consumer.Event
 	for i := range evicted {
@@ -429,14 +388,10 @@ func decodeInitializeEvent(ev *events.Event, fieldTopic string, closedAt time.Ti
 	case TopicInitTokenB:
 		slot = "b"
 	case TopicInitLPShareStaking:
-		// The per-pool STAKE contract's self-announcement at deploy
-		// ("initialize","LP Share token staking contract") — NOT a pool
-		// token_a/token_b slot, so it maps to no phoenix_initialize row.
-		// Recognised (EVERY-event policy; the raw event lives in the
-		// soroban_events landing zone, ADR-0029) but not projected: emit
-		// nothing rather than ErrMalformedPayload, which would leave 20
-		// undecodable-but-matched blind ledgers in the projection re-derive
-		// (first=51,572,026, r1 lake). See events.go TopicInitLPShareStaking.
+		// The per-pool STAKE contract's deploy-time self-announcement is not a pool token_a/token_b
+		// slot, so it maps to no phoenix_initialize row. It is recognised but not projected: emit
+		// nothing rather than ErrMalformedPayload, which would leave undecodable-but-matched blind
+		// ledgers in the projection re-derive. See events.go TopicInitLPShareStaking.
 		return nil, nil
 	default:
 		return nil, fmt.Errorf("%w: initialize unrecognised token-slot topic", ErrMalformedPayload)
@@ -461,12 +416,10 @@ func decodeInitializeEvent(ev *events.Event, fieldTopic string, closedAt time.Ti
 	}}, nil
 }
 
-// decodeAdminEvent decodes a pool admin-rotation event into an
-// AdminEvent. The action slug comes from topic[1]; the admin address is
-// the event body when it carries one. DEFENSIVE — 0 occurrences on
-// mainnet, no lake sample confirms the exact body shape, so a
-// non-Address / absent body yields an empty Admin rather than an error
-// (the action + identity are still worth recording).
+// decodeAdminEvent decodes a pool admin-rotation event into an AdminEvent. The action slug comes
+// from topic[1]; the admin address is the body when it carries one. Defensive: no mainnet sample
+// confirms the body shape, so a non-Address or absent body yields an empty Admin rather than an
+// error, since the action and identity are still worth recording.
 func decodeAdminEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {
 	slug, ok := adminActionByTopic[fieldTopic]
 	if !ok {
