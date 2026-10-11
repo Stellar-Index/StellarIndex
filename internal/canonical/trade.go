@@ -100,18 +100,12 @@ type Trade struct {
 // Sources whose op emits at most one trade — or that already space
 // op_index themselves (SDEX's *1024 stride) — need not use this. Sources
 // that emit one trade per Soroban contract-event within an op (aquarius,
-// comet) MUST: the op index alone is not unique per trade. Found by the
-// ADR-0033 projection reconciliation (aquarius was dropping the 2nd+
-// trade of every multi-pool op). Requires events.Event.EventIndex
-// (threaded in ADR-0033 Phase 1).
+// comet) MUST: the op index alone is not unique per trade. Requires
+// events.Event.EventIndex.
 //
-// Panics (Must-style) if either input is negative or exceeds 0xFFFF.
-// This is the PK-collision primitive: silently masking an out-of-range
-// eventIndex (a `& 0xFFFF` mask) or letting an out-of-range opIndex
-// shift into the event half would manufacture exactly the trade-ID
-// collisions this function exists to prevent — and a real ledger that
-// ever overflows 16 bits is a decoder bug we want surfaced loudly, not
-// a row silently dropped by ON CONFLICT.
+// Panics (Must-style) if either input is negative or exceeds 0xFFFF: masking
+// or shifting an out-of-range value would manufacture the trade-ID collisions
+// this exists to prevent, and overflow is a decoder bug to surface loudly.
 func FanoutOpIndex(opIndex, eventIndex int) uint32 {
 	if opIndex < 0 || opIndex > 0xFFFF {
 		panic(fmt.Sprintf("canonical: FanoutOpIndex opIndex %d out of range [0, 65535]", opIndex))

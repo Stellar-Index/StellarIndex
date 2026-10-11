@@ -8,19 +8,15 @@ import (
 
 // cacheKey is the typed builder for the in-process read caches' (CachedMarketsReader,
 // CachedIssuersReader and sibling listing caches) map keys. It exists to kill the
-// "prewarm-vs-handler key drift" bug class: the prewarm goroutine and the handler
-// stringified the same Order / Sources / Limit dimensions into subtly different raw
-// keys, so the warmed entry never matched the user request.
+// "prewarm-vs-handler key drift" bug class, where a warmed entry never matched
+// the user request.
 //
 // Two structural guarantees remove that class:
 //
 //  1. Every dimension that changes the result set is appended through an explicit
-//     typed method (str / int / order / strSet), with its grammar defined once, so
-//     prewarm and handler paths calling the same wrapped reader method cannot
-//     produce different key formats.
+//     typed method (str / int / order / strSet), with its grammar defined once.
 //  2. Set-valued dimensions (the Sources filter, an asset_id batch) go through
-//     [cacheKey.strSet], which ORDER-NORMALISES the slice, so the same set in a
-//     different order cannot land on different slots.
+//     [cacheKey.strSet], which ORDER-NORMALISES the slice.
 //
 // Grammar: each field is length-prefixed, `<len>:<bytes>`, and fields are
 // concatenated (netstring-style). Two different field sequences can never

@@ -1524,9 +1524,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	//  - PrewarmNativeLiquidityPools: only the ENTRY must exist for the request
 	//    path to stop blocking; freshness comes from the request-kicked refresh
 	//    at its 60s TTL, so this is a never-cold/repair guarantee.
-	//  - PrewarmSep1Images (logo map over every issuer's cached stellar.toml,
-	//    448 MB of JSON across 35,829 issuers on r1; rebuilt inline it costs a
-	//    request 10-13 s; 10-minute TTL).
+	//  - PrewarmSep1Images (logo map over every issuer's cached stellar.toml;
+	//    rebuilt inline it costs a request 10+ s; 10-minute TTL).
 	//  - PrewarmContractProtocolIndex (cohort view's contract-to-protocol map;
 	//    a request that had spent its budget would cache a statics-only map for
 	//    everyone; 10-minute TTL, an incomplete build retries within 30 s).

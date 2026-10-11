@@ -12,8 +12,7 @@ import (
 // This file parses the RedStone signed payload (write_prices' third argument) far enough to recover
 // per-feed signer values and timestamps, for SUBSET-FILTERED batches whose updated_feeds is shorter than
 // feed_ids. The adapter stores each accepted feed's signer MEDIAN, so a surviving price must equal a
-// unique candidate's median at its package_timestamp (byte-exact on ledger 59258375); anything ambiguous
-// refuses the event.
+// unique candidate's median at its package_timestamp; anything ambiguous refuses the event.
 //
 // Wire layout (big-endian, parsed from the END):
 //
@@ -27,15 +26,13 @@ import (
 //
 // each dataPoint: [feedID 32B zero-right-padded] [value valueByteSize B]
 //
-// Signatures are NOT verified: the event proves the adapter accepted the payload.
-//
-// ACCEPTED RESIDUAL RISK: without redstone-core's signer filtering every package is aggregated, so
-// medians can disagree with the adapter's; usually that refuses.
+// Signatures are NOT verified: the event proves the adapter accepted the payload. Without redstone-core's
+// signer filtering every package is aggregated, so medians can disagree with the adapter's (usually a refusal).
 //
 // F1 CAVEAT: it misattributes only when (1) signer-filter divergence hits a surviving feed, (2) a dropped
 // feed's median equals that price (the BENJI twins in decode_test.go), and (3) the dropped feed sits
 // between survivors so the bijection is unique. Fallback path only; corroborateFallback refuses it when
-// state writes name the op's feeds. Closing it fully needs redstone-core's secp256k1 recovery and roster.
+// state writes name the op's feeds.
 var redstoneMarker = []byte{0x00, 0x00, 0x02, 0xed, 0x57, 0x01, 0x1e, 0x00, 0x00}
 
 const (

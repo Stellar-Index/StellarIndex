@@ -16,10 +16,8 @@ import (
 // # The population this arm exists to reach
 //
 // Candidates drawn only from the curated directory's issuing-tagged contracts
-// skip every address it has never heard of. Measured on production: the
-// curated directory names 387 contract addresses, the listing directory 17,
-// FOUR in both; the in-repo curated binding set names five and the directory
-// none of them.
+// skip every address it has never heard of: the two directories barely
+// overlap, and the in-repo curated binding set names none of the directory's.
 //
 // So the population is the UNION of the directory's addresses and every address
 // the in-repo binding set names (a hand-reviewed table, so it cannot grow

@@ -7,12 +7,10 @@ import "github.com/Stellar-Index/StellarIndex/internal/events"
 // Matches() predicates the live dispatch walk uses, but with NO decode
 // and NO side effects (it does not touch eventsSeen / unmatchedHits).
 //
-// This is the oracle for ADR-0033 Claim 2a (recognition): feed it the
-// distinct (contract_id, topic) shapes actually present in
-// soroban_events and any shape it returns false for is an on-chain
-// event the system would silently drop — a recognition gap. Because it
-// uses the real Matches() logic rather than a hand-maintained topic
-// list, it cannot drift from what the decoders actually handle.
+// This is the oracle for ADR-0033 Claim 2a (recognition): any
+// (contract_id, topic) shape in soroban_events it returns false for is an
+// on-chain event the system would silently drop. It uses the real Matches()
+// logic, so it cannot drift from what the decoders handle.
 //
 // ContractCallDecoders are intentionally excluded: they bind to
 // InvokeContract op args, emit no Soroban events, and so never produce

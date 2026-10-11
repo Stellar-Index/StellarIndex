@@ -106,14 +106,10 @@ func NewFanout(store FanoutStore, logger *slog.Logger) *Fanout {
 // gate lands in [PublishResult.Suppressed] and is NOT an error — the
 // event was withheld deliberately, not lost.
 //
-// The error never obliges the caller to fail its own work — the
-// triggering event is durable in its own table — but it MUST be
-// acted on: the aggregator's hot paths log it at ERROR with
-// the event type + counts, and `stellarindex-ops emit-incident`
-// surfaces it to the operator's shell. Every loss is also counted on
-// [obs.CustomerWebhookFanoutFailuresTotal] so a fan-out that is
-// silently dropping one customer's events is alertable rather than
-// merely greppable.
+// The error need not fail the caller's own work (the triggering event is
+// durable in its own table) but MUST be acted on: callers log it at ERROR
+// with the event type + counts. Every loss is also counted on
+// [obs.CustomerWebhookFanoutFailuresTotal] so it is alertable.
 func (f *Fanout) Publish(
 	ctx context.Context, eventType platform.WebhookEventType, payload []byte,
 ) (PublishResult, error) {
