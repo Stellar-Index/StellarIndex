@@ -75,10 +75,6 @@ internal/storage/timescale/account_observations.go	long-block
 internal/storage/timescale/account_trades.go	long-block
 internal/storage/timescale/account_trades.go	long-block
 internal/storage/timescale/aquarius_liquidity.go	long-block
-internal/storage/timescale/asset_catalogue.go	long-block
-internal/storage/timescale/asset_catalogue.go	long-block
-internal/storage/timescale/asset_catalogue.go	long-block
-internal/storage/timescale/asset_catalogue.go	long-block
 internal/storage/timescale/asset_listing_directory.go	long-block
 internal/storage/timescale/asset_listing_directory.go	long-block
 internal/storage/timescale/asset_price_snapshot.go	long-block
@@ -132,10 +128,6 @@ internal/storage/timescale/rwa_curated_directory.go	long-block
 internal/storage/timescale/rwa_curated_published.go	long-block
 internal/storage/timescale/sep1_bound_currencies.go	long-block
 internal/storage/timescale/sep1_bound_currencies.go	long-block
-internal/storage/timescale/sep41_supply_events.go	long-block
-internal/storage/timescale/sep41_supply_events.go	long-block
-internal/storage/timescale/sep41_supply_events.go	long-block
-internal/storage/timescale/sep41_supply_events.go	long-block
 internal/storage/timescale/sep41_transfers.go	long-block
 internal/storage/timescale/sep41_transfers.go	long-block
 internal/storage/timescale/serving.go	long-block

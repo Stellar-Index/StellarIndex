@@ -559,18 +559,16 @@ func listingRankTierExpr(order AssetsOrder) string {
 // the funlen threshold).
 //
 // It reads NO hypertable and NO continuous aggregate. Both money columns
-// come from worker-maintained rollups keyed on asset_id (volume from
-// asset_volume_24h, migration 0087; price/change/source_count from
-// asset_price_snapshot, migration 0154), so a listing page costs the spine
-// plus three small hash joins whatever the limit / cursor / filter.
-// Materialising `DISTINCT ON … FROM prices_1m` CTEs per call costs seconds
-// and hundreds of thousands of buffers: to add a prices_1m read here, add a
-// column to a rollup instead.
+// come from worker-maintained rollups keyed on asset_id (asset_volume_24h;
+// asset_price_snapshot), so a listing page costs the spine plus three small
+// hash joins whatever the limit / cursor / filter. Materialising
+// `DISTINCT ON … FROM prices_1m` CTEs per call costs seconds: to add a
+// prices_1m read here, add a column to a rollup instead.
 //
 // Volume: prices_1m.volume_usd summed over the trailing 24h where the asset
-// is base OR quote (internal/aggregate/assetvolrollup). Price + 1h/24h/7d
-// change come from refreshAssetPriceSnapshotUpsert (asset_price_snapshot.go),
-// which documents the staleness contract this query's join enforces.
+// is base OR quote (internal/aggregate/assetvolrollup). Price + change come
+// from refreshAssetPriceSnapshotUpsert, which documents the staleness
+// contract this query's join enforces.
 //
 // market_cap_usd + circulating_supply remain NULL: asset_supply_history
 // doesn't cover the long tail of classic assets, and fabricating values
@@ -1076,17 +1074,15 @@ type AssetPricePoint struct {
 // These reads stay RAW: the API corrects a confirmed non-7-decimals token
 // (v1.Server.normalizeCatalogueUSD), and correcting here too would apply the
 // factor twice. The ROUNDING belongs here because it runs before that
-// correction: a flat ROUND(raw, 10) on an 18-decimals token (correction
-// 10^11) would turn a 1 USD price, raw 1e-11, into zero. Rounding the raw
-// ratio to 10 + k places, where the correction is 10^k, IS rounding the
-// corrected price to 10 places:
+// correction: a flat ROUND(raw, 10) on an 18-decimals token would turn a
+// 1 USD price, raw 1e-11, into zero. Rounding the raw ratio to 10 + k
+// places, where the correction is 10^k, IS rounding the corrected price:
 //
 //	ROUND(raw, 10 + k) * 10^k  ==  ROUND(raw * 10^k, 10)
 //
-// k comes from nonstandard_decimals_assets, floored at zero (fewer than 7
-// decimals only shrinks the rounding error); an asset with no confirmed row
-// resolves to exactly 10. The API tells the two apart by the text itself
-// (ROUND(x, n)::text has exactly n fraction places).
+// k comes from nonstandard_decimals_assets, floored at zero; an asset with
+// no confirmed row resolves to exactly 10. The API tells the two apart by
+// the text itself (ROUND(x, n)::text has exactly n fraction places).
 //
 // Three spellings of one expression, differing only in how the asset is
 // named at each site. MAX because the alias-array form may match more than
@@ -1368,16 +1364,12 @@ var getAssetPriceHistory7dSQL = `
 // fabricate an ATH.
 //
 // The metric is "highest day-VWAP", not "highest single tick": the
-// volume-weighted bucket rejects sub-stroop dust prints. A `max(quote/base)`
-// definition put XLM's ATH at $1.03 because one 1-stroop SDEX dust trade
-// pegged the day's max.
+// volume-weighted bucket rejects sub-stroop dust prints.
 //
 // The `USDT-GCQTGZQQ…` issuer is EXCLUDED from every USD allowlist: there
-// is no Tether on Stellar, and that asset trades unpegged, which fabricated
-// an XLM "ATH" on thin days (volume_usd=0 dust). USD proxies are
-// [usdProxyQuotes]: the verified USDC issuer, its SAC (where the Soroban
-// XLM/USD book trades) and fiat:USD; new proxies require a verified-catalogue
-// entry.
+// is no Tether on Stellar, and that asset trades unpegged. USD proxies are
+// [usdProxyQuotes]: the verified USDC issuer, its SAC and fiat:USD; new
+// proxies require a verified-catalogue entry.
 //
 // A day-bucket only counts if its pair cleared [athMinDayVolumeUSD] and
 // [athMinDayTrades], so a lone print on an empty book cannot set the high.
@@ -1783,18 +1775,15 @@ func (s *Store) GetAssetByAssetID(ctx context.Context, assetID string) (AssetRow
 // issued token has code "XLM" win the disambiguation tiebreak (a scam token).
 //
 // Population:
-//   - Slug / Code: hardcoded "XLM"
-//   - AssetID: "native" (the canonical pair-side identifier)
-//   - IssuerGStrkey: "" (native has no issuer)
+//   - Slug / Code "XLM"; AssetID "native"; IssuerGStrkey ""
 //   - First/Last seen ledger: 0 (unset; see ledger_bounds)
-//   - ObservationCount: 0 with ObservationCountUnmeasured set; no registry
-//     row counts native's trades, and no cheap read does
-//   - PriceUSD + Change*Pct: same xlm_usd / xlm_usd_{1h,24h,7d}
-//     stablecoin-proxy chain as GetAssetBySlug and the listing query
+//   - ObservationCount: 0 with ObservationCountUnmeasured set; nothing
+//     cheap counts native's trades
+//   - PriceUSD + Change*Pct: the same xlm_usd stablecoin-proxy chain as
+//     GetAssetBySlug and the listing query
 //   - Volume24hUSD: SUM(volume_usd) where the asset is base or quote in the
 //     trailing 24h
-//   - MarketCapUSD / CirculatingSupply: NULL; the supply pipeline emits no
-//     row for native
+//   - MarketCapUSD / CirculatingSupply: NULL; no supply row for native
 //
 // Always returns a populated row (no sql.ErrNoRows path): the underlying
 // CTEs LEFT JOIN out to NULL when there's no data.
