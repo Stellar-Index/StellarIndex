@@ -160,27 +160,22 @@ type SEP41KindTotals struct {
 // SEP41KindTotalsAtOrBefore returns the per-kind sums for `contractID`
 // at-or-before `asOfLedger`.
 //
-// Fast path (migration 0085): the per-contract checkpoint in
-// `sep41_supply_rollup` plus the live tail above it,
+// Fast path: the per-contract checkpoint in `sep41_supply_rollup` plus the
+// live tail above it, a disjoint union:
 //
 //	rollup(ledger ≤ last_ledger)  ⊕  Σ(last_ledger < ledger ≤ asOfLedger)
 //
-// a disjoint union. The full aggregate prunes no chunk (chunked by
-// `observed_at`, the query bounds only contract_id + ledger) and takes
-// minutes at scale. Fallback: no rollup row yet, or asOfLedger predates the
-// checkpoint, computes the full aggregate; both paths return identical totals.
+// The full aggregate prunes no chunk and takes minutes at scale; it is the
+// fallback when no rollup row exists or asOfLedger predates the checkpoint.
+// Both paths return identical totals.
 //
-// Genesis baseline (migration 0088): when the contract has a seeded
-// pre-Soroban baseline and asOfLedger is at-or-above that boundary, the
-// pre-Soroban totals are ADDED so the result is LIFETIME supply (those mints
-// live only in the ClickHouse lake below [clickhouse.SorobanGenesisLedger];
-// seeded by `stellarindex-ops supply seed-sep41-genesis`). The two slices
-// must partition the ledgers, so Soroban-side queries are floored at the
-// boundary ([sep41SorobanFloor]). A read strictly below the boundary does NOT
-// add genesis.
-//
-// Each component is non-nil; zero is valid for a contract with no events of
-// that kind.
+// Genesis baseline: when the contract has a seeded pre-Soroban baseline and
+// asOfLedger is at-or-above that boundary, the pre-Soroban totals are ADDED
+// so the result is LIFETIME supply. The two slices must partition the
+// ledgers, so Soroban-side queries are floored at the boundary
+// ([sep41SorobanFloor]). A read strictly below the boundary does NOT add
+// genesis. Each component is non-nil; zero is valid for a contract with
+// no events of that kind.
 func (s *Store) SEP41KindTotalsAtOrBefore(ctx context.Context, contractID string, asOfLedger uint32) (SEP41KindTotals, error) {
 	cp, ok, err := s.sep41RollupCheckpoint(ctx, contractID)
 	if err != nil {
@@ -389,14 +384,10 @@ func validateSEP41GenesisBaseline(contractID string, genesis SEP41KindTotals) er
 // START at that boundary or the overlapping band is summed twice into
 // lifetime supply.
 //
-// Nothing else enforces that partition: not migration 0015's CHECK, not the
-// seed command (which validates only the -genesis-ledger argument).
-// sep41_supply_events does hold rows below the boundary, because the
-// projector's cursor starts at ledger 1000 and CAP-67 replays classic
-// movements into contract events. Unfloored, genesis-seeded contracts served
-// double-counted lifetime supply (up to 2.14x), and double-counted burns
-// can push mint-burn-clawback below zero into the paging compute_error
-// outcome.
+// Nothing else enforces that partition, and sep41_supply_events does hold
+// rows below the boundary (CAP-67 replays classic movements into contract
+// events). Unfloored, lifetime supply double-counts, and double-counted
+// burns can push mint-burn-clawback below zero into compute_error.
 //
 // The verifier cannot catch it unless it shares the floor:
 // SEP41SupplyEventKindResum is bounded here too, or verify-rollup would
@@ -485,14 +476,9 @@ func parseSEP41Totals(mintRaw, burnRaw, clawbackRaw string) (SEP41KindTotals, er
 // It is NOT `MAX(ledger) WHERE contract_id = $1`: that is activity, not
 // freshness. A token whose supply hasn't changed is not stale, but a gate
 // reading it as a stalled producer would refuse every snapshot and freeze
-// served supply.
-//
-// [Store.MinClassicComponentLedger] guards the same trap, and it bites
-// HARDER here: most watched assets are C-address SEP-41 tokens that never
-// touch the classic component tables, so a per-contract anchor froze the
-// majority. Under a per-contract anchor a contract with NO events returns 0
-// and skips the gate (keeps publishing) while one that merely went quiet
-// freezes, penalising exactly the contracts we have data for.
+// served supply. [Store.MinClassicComponentLedger] guards the same trap,
+// which bites harder here: most watched assets are SEP-41 tokens that never
+// touch the classic component tables.
 //
 // A genuinely stalled projector is still caught: a dead producer stops
 // advancing the watermark for every contract at once.
@@ -881,25 +867,19 @@ func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (
 //
 // The lock must not be acquired inside the folding statement. Under READ
 // COMMITTED a statement's snapshot is fixed when it starts, but `SELECT …
-// FOR UPDATE` returns the LATEST committed version of the row it locks (it
-// follows the update chain, or re-checks after a wait). A fold that locked
-// inside itself could therefore read last_ledger = 0 from a reset that
-// committed after its snapshot while still summing sep41_supply_events as
-// they stood BEFORE that snapshot — i.e. without the below-checkpoint rows
-// the reset was issued for (`ch-rebuild -sep41 -write` and
-// `projector-replay` both write first and reset second). It would then
-// re-fold "from zero" over the old set and move last_ledger back above the
-// missing rows: the stranding the reset exists to prevent, reported as a
-// clean advance. Locking first means the fold's snapshot postdates the
-// acquisition, so every reset it can see — and every event write that
-// committed before that reset — is in its view; any later reset waits for
-// this transaction and re-folds next cadence.
+// FOR UPDATE` returns the LATEST committed version of the row it locks. A
+// fold that locked inside itself could read last_ledger = 0 from a reset
+// that committed after its snapshot while summing events as they stood
+// BEFORE it, without the below-checkpoint rows the reset was issued for
+// (`ch-rebuild -sep41 -write` and `projector-replay` write first and reset
+// second), and move last_ledger back above the missing rows. Locking first
+// means the fold's snapshot sees every reset and every event write that
+// committed before it; any later reset waits and re-folds next cadence.
 //
 // The INSERT's column DEFAULTs give a fresh contract an empty fold (0 / 0).
-// ON CONFLICT DO NOTHING takes no row lock of its own and does not wait on
-// a locker-only holder, but it DOES wait out an in-progress UPDATE of the
-// conflicting row (a reset or genesis re-seed mid-flight); that wait is
-// harmless — it happens before the fold's snapshot, like the lock below.
+// ON CONFLICT DO NOTHING takes no row lock of its own but DOES wait out an
+// in-progress UPDATE of the conflicting row; that wait is harmless — it
+// happens before the fold's snapshot, like the lock below.
 func lockSEP41RollupRow(ctx context.Context, tx *sql.Tx, contractID string) error {
 	const ensure = `
         INSERT INTO sep41_supply_rollup (contract_id)
