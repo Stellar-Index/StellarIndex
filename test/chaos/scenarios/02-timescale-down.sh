@@ -1,31 +1,19 @@
 #!/usr/bin/env bash
-# Scenario 02 — Timescale is killed; assert the API fails LOUDLY
-# (no silent stale data) and recovers cleanly when storage returns.
-#
-# Storage is the source-of-truth — when it's gone, /v1/price MUST
-# either:
-#   a) Serve a still-fresh cached value (Redis hit + recent write)
-#      with no claim of authority, OR
-#   b) Return 5xx with a structured envelope.
-#
-# A silent fall-through to "0.000" or empty data would be the
-# nightmare scenario. This scenario verifies that doesn't happen.
+# Scenario 02 — Timescale is killed; the API must fail LOUDLY (never silent
+# stale or empty data: no "0.000") and recover when storage returns. It may
+# serve a still-fresh cached value or return 5xx with a structured envelope.
 #
 # Pass criteria:
-#   1. While Timescale is down, /v1/healthz returns 200 OR 503 (the
-#      latter is correct when readyz checks DB connectivity).
-#   2. While Timescale is down, a /v1/markets variant that no cache
-#      holds (?limit=97) returns 5xx — the handler cannot answer it
-#      without Postgres, so a 200 there is a silent fall-through.
-#   3. While Timescale is down, the default /v1/markets returns either
-#      a 200 (cache hit) or 5xx — and a 200 with empty data fails
-#      unless the pre-outage answer was empty too (a stack with no
-#      trades legitimately caches `data: []`).
-#   4. After Timescale restart, /v1/healthz returns 200 within 60s.
+#   1. While down, /v1/healthz returns 200 or 503.
+#   2. While down, an uncached /v1/markets variant (?limit=97) returns 5xx; a
+#      200 there is a silent fall-through.
+#   3. While down, default /v1/markets returns 200 (cache hit) or 5xx; a 200
+#      with empty data fails unless the pre-outage answer was empty too (a
+#      stack with no trades legitimately caches `data: []`).
+#   4. After restart, /v1/healthz returns 200 within 60s.
 #
-# Runbook: docs/operations/runbooks/postgres.md
-# (covers production HA case; this scenario verifies the dev stack's
-# behaviour without HA — fail-loud is the contract).
+# Runbook: docs/operations/runbooks/postgres.md (production HA; this checks the
+# dev stack without HA, where fail-loud is the contract).
 
 set -euo pipefail
 
@@ -51,11 +39,9 @@ chaos_setup
 cleanup() {
     if container_exists "$TIMESCALE_CONTAINER"; then
         log "cleanup: ensuring $TIMESCALE_CONTAINER is up"
-        # Best-effort: this runs from the EXIT trap and must not itself
-        # abort (that would mask the scenario's real pass/fail exit
-        # code) — but a failed restart leaves Timescale down for the
-        # next scenario/dev session, so warn loudly instead of
-        # swallowing it.
+        # Best-effort from the EXIT trap (aborting would mask the scenario's
+        # exit code), but a failed restart leaves Timescale down for the next
+        # scenario, so warn.
         if ! docker start "$TIMESCALE_CONTAINER" >/dev/null 2>&1; then
             warn "cleanup: failed to restart $TIMESCALE_CONTAINER — it may still be down; check manually (docker start $TIMESCALE_CONTAINER)"
         fi
@@ -76,14 +62,11 @@ fi
 # 2. Stop Timescale.
 stop_container "$TIMESCALE_CONTAINER"
 
-# 3. Wait for the API's connection-pool conn-max-idle to expire so
-#    the next request actually hits the dead DB. Conservative window.
+# 3. Let the API's pool conn-max-idle expire so the next request hits the dead DB.
 log "waiting 8s for API conn pool idle expiry"
 sleep 8
 
-# 4. While Timescale is down, healthz should be 200 (process alive)
-#    and readyz should return 503. Markets endpoint should not return
-#    a fake-empty payload.
+# 4. While down: healthz 200 (process alive) or 503; markets must not return fake-empty data.
 got_health="$(http_status "$HEALTH_URL")"
 case "$got_health" in
     200|503)
@@ -94,8 +77,7 @@ case "$got_health" in
         ;;
 esac
 
-# Hit a path that we KNOW reaches the DB. /v1/markets (per
-# internal/api/v1/markets.go) does a DistinctPairs query.
+# /v1/markets reaches the DB (DistinctPairs query, internal/api/v1/markets.go).
 uncached_status="$(http_status "$MARKETS_UNCACHED_URL" 15)"
 case "$uncached_status" in
     5*)
@@ -130,9 +112,7 @@ esac
 # 5. Restart Timescale.
 start_container "$TIMESCALE_CONTAINER"
 
-# 6. Verify recovery (longer deadline — Postgres takes ~10-30s to
-#    accept connections after start, especially with the migration
-#    extension load).
+# 6. Postgres takes ~10-30s to accept connections after start, hence the long deadline.
 assert_recovers_within "$HEALTH_URL" "200" 60
 
 chaos_teardown_pass "API failed loudly while DB was down; recovered within 60s of restart"

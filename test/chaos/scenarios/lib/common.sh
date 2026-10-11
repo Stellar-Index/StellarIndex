@@ -1,37 +1,21 @@
 #!/usr/bin/env bash
-# Shared helpers for chaos scenarios.
-#
-# Sourced by every scenarios/NN-*.sh. Provides:
-#   - log + warn + die output helpers (timestamped, scenario-tagged)
-#   - assert_*           — pass/fail predicates that bail with a
-#                          named failure
-#   - http_status        — fetch HTTP status code with timeout
-#   - wait_for_status    — poll a URL until status code matches
-#                          (or timeout)
-#   - chaos_target_check — refuse to run against any target whose
-#                          host looks production
-#   - report_* helpers   — append structured rows to the run's
-#                          markdown report under reports/
+# Shared helpers for chaos scenarios, sourced by every scenarios/NN-*.sh:
+# log/warn/die, assert_*, http_status, wait_for_status, chaos_target_check
+# (refuses production-looking targets) and report_* (rows in reports/).
 
 set -euo pipefail
 
 # ─── Config / env ──────────────────────────────────────────────────
 
-# CHAOS_TARGET is the API base URL the scenario hits to verify
-# behaviour. Defaults to the local docker-compose dev stack — the
-# only safe surface for chaos by default. Port 3000 matches the
-# API's listen_addr default (configs/example.toml); the dev
-# compose publishes the API on the same port.
+# API base URL the scenario probes. Defaults to the local dev compose stack,
+# the only safe surface; port 3000 is the API's listen_addr default.
 CHAOS_TARGET="${CHAOS_TARGET:-http://localhost:3000}"
 
-# CHAOS_REPORT_DIR is where each scenario appends its row to a
-# shared run report.  Defaulted to a deterministic path so a CI run
-# can `cat` it after the scenario(s) finish.
+# Shared run report; the default path is deterministic so CI can `cat` it.
 CHAOS_REPORT_DIR="${CHAOS_REPORT_DIR:-test/chaos/reports}"
 CHAOS_REPORT_FILE="${CHAOS_REPORT_FILE:-${CHAOS_REPORT_DIR}/chaos-run-$(date -u +%Y%m%d-%H%M%S).md}"
 
-# CHAOS_DOCKER_PROJECT is the docker-compose project name used by
-# `make dev`. Matches `name:` in deploy/docker-compose/dev.yaml.
+# Compose project name used by `make dev` (`name:` in deploy/docker-compose/dev.yaml).
 CHAOS_DOCKER_PROJECT="${CHAOS_DOCKER_PROJECT:-stellarindex-dev}"
 
 # Scenario name; each script sets this before sourcing common.sh
@@ -100,15 +84,9 @@ scenario_end() {
 
 # ─── HTTP helpers ──────────────────────────────────────────────────
 
-# http_status URL [TIMEOUT_SEC] → echoes 3-digit HTTP status. 000 on
-# connect/timeout failure (curl's convention).
-#
-# curl's --write-out '%{http_code}' already emits "000" to stdout on
-# a connect/timeout failure, so a trailing `|| echo "000"` would
-# DOUBLE it to "000000" (then every status comparison against "000"
-# fails and the scenario misreads a down API as some other state).
-# Swallow curl's non-zero exit with `|| true` instead — the "000"
-# it already printed is the signal.
+# http_status URL [TIMEOUT_SEC] → 3-digit HTTP status; 000 on connect/timeout.
+# curl already prints "000" on failure, so `|| echo "000"` would double it to
+# "000000" and break every comparison; `|| true` swallows the exit instead.
 http_status() {
     local url="$1"
     local timeout="${2:-3}"
@@ -117,10 +95,7 @@ http_status() {
 }
 
 # wait_for_status URL EXPECT_CODE [DEADLINE_SEC] [POLL_SEC]
-#
-# Polls until the URL returns EXPECT_CODE or the deadline expires.
-# Returns 0 on match, 1 on timeout. Useful for "API is back up" or
-# "API is now down" assertions.
+# Polls until URL returns EXPECT_CODE; 0 on match, 1 on timeout.
 wait_for_status() {
     local url="$1"
     local expect="$2"
@@ -168,7 +143,9 @@ docker_running() {
 }
 
 container_exists() {
-    docker ps --filter "name=$1" --format '{{.Names}}' | grep -q "^$1$"
+    local names
+    names=$(docker ps --filter "name=$1" --format '{{.Names}}')
+    grep -q "^$1$" <<<"$names"
 }
 
 stop_container() {
@@ -187,9 +164,8 @@ start_container() {
     docker start "$name" >/dev/null
 }
 
-# Block ALL traffic to the named container by attaching a netem chaos
-# sidecar via pumba. Falls back to docker network disconnect when
-# pumba isn't available.
+# Block all traffic to the container via pumba; falls back to
+# docker network disconnect when pumba is absent.
 partition_container() {
     local name="$1"
     if command -v pumba >/dev/null 2>&1; then
@@ -213,20 +189,16 @@ heal_partition() {
     if [ -f "/tmp/chaos-pumba-$name.pid" ]; then
         local pid
         pid="$(cat "/tmp/chaos-pumba-$name.pid")"
-        # A non-zero kill here almost always just means pumba's own
-        # --duration already expired and the process is gone — the
-        # common, expected case, not a cleanup failure worth flagging.
+        # Non-zero kill just means pumba's --duration already expired.
         kill "$pid" 2>/dev/null || true
         rm -f "/tmp/chaos-pumba-$name.pid"
         log "pumba pause cleared for $name"
         return
     fi
     if [ -f "/tmp/chaos-disconnected-$name.nets" ]; then
-        # Unlike the pumba-kill path above, a failed reconnect here is
-        # NOT benign: the container stays cut off from that network
-        # for every later scenario in the run. Track failures instead
-        # of blanket `|| true`-ing them, and don't claim "reconnected"
-        # unless every network actually came back.
+        # Unlike the pumba kill, a failed reconnect is NOT benign: the container
+        # stays cut off for every later scenario. Track failures; claim
+        # "reconnected" only if every network came back.
         local reconnect_failed=0
         while read -r net; do
             if ! docker network connect "$net" "$name" >/dev/null 2>&1; then
@@ -245,8 +217,7 @@ heal_partition() {
 
 # ─── Setup hooks per scenario ──────────────────────────────────────
 
-# Standard prologue scenarios run; each scenario can override
-# CHAOS_TARGET / SCENARIO before sourcing this file.
+# Standard scenario prologue; scenarios may override CHAOS_TARGET / SCENARIO before sourcing.
 chaos_setup() {
     chaos_target_check
     docker_running

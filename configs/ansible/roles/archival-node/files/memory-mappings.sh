@@ -1,102 +1,60 @@
 #!/usr/bin/env bash
-# memory-mappings — per-process virtual-memory-mapping headroom.
+# memory-mappings: per-process virtual-memory-mapping headroom.
 #
-# WHY THIS EXISTS (r1). ClickHouse exhausted the
-# kernel's per-process mapping limit and said so itself:
+# WHY (r1): ClickHouse hit the kernel's per-process mapping limit, logged
+# "Cannot malloc ... errno: 12 ... near the limit on number of virtual memory mappings"
+# (1048578 of vm.max_map_count 1048576), then crashed in a std::bad_alloc storm. The limit
+# is already raised (/etc/sysctl.d/10-map-count.conf) but nothing observed it: the crash was
+# the first signal. Steady state is ~47-50k mappings (~4.5 % of the limit); the driver of the
+# excursion is NOT established, so this probe only makes the number watchable.
+# node_exporter has no per-process mapping count, hence a textfile producer like its siblings.
 #
-#   Allocator: Cannot malloc 63.33 MiB: , errno: 12, strerror: Cannot allocate memory
-#   It looks like that the process is near the limit on number of virtual memory mappings.
-#   Current number of mappings (/proc/self/maps): 1048578.
-#   Limit on number of mappings (/proc/sys/vm/max_map_count): 1048576.
+# Process selection is by EXECUTABLE: `pgrep -f clickhouse` self-matches this probe's own
+# command line, so the walk resolves /proc/<pid>/exe and compares the basename (the exe link
+# is what the kernel ran; a command line is operator-influenced text).
 #
-# It then went into a std::bad_alloc storm and crashed; systemd restarted
-# it, and holders-rollup.service failed as collateral — its first failure
-# against 24 successful cycles in the preceding 48h.
+# r1 runs two processes off the clickhouse binary: a watchdog parent (~97 mappings) and the
+# server (~47,000). Report the HIGHEST count among matches: max_map_count is enforced per mm,
+# so the process that can hit the wall is the one with the most mappings. This needs no ppid,
+# argv or ordering and survives topology changes. RSS was rejected (many small mappings are
+# cheap in bytes, costly in count); the FIRST match would pick the watchdog ~half the time and
+# leave the gauge falsely green. `..._procs` publishes the match count so a topology change
+# is visible.
 #
-# The limit is already raised far above the 65530 default and is codified
-# (/etc/sysctl.d/10-map-count.conf, vm.max_map_count=1048576 = 2^20). What
-# was missing is any signal at all: no metric, no rule, nothing anywhere in
-# the tree referenced max_map_count. A SERVER CRASH WAS THE FIRST AND ONLY
-# SIGNAL. Steady state measured right after the restart was ~47,000-50,000
-# mappings — about 4.5 % of the limit — so the excursion was roughly 20x,
-# and its driver is NOT established. This probe does not claim one; it
-# makes the number observable so the next excursion is watched on the way
-# up instead of reconstructed from a core dump.
+# Self-test: scripts/ci/memory-mappings-test.sh (drives these bytes against a fake /proc).
 #
-# node_exporter publishes no per-process mapping count (procfs collector
-# covers the whole system, not a named process), so this is a
-# textfile-collector producer in the shape of its siblings.
-#
-# WHICH PROCESS, AND WHY BY EXECUTABLE. `pgrep -f clickhouse` matches this
-# probe's OWN command line — the self-match class that has bitten this
-# project repeatedly — so the walk below resolves /proc/<pid>/exe and
-# compares the resolved basename. A command line is attacker- and
-# operator-influenced text; the exe link is what the kernel executed.
-#
-# WHICH OF THE TWO. r1 runs TWO processes off the clickhouse binary: a
-# watchdog parent (~97 mappings) and the real server (~47,000). This
-# reports the HIGHEST mapping count among the matches, because
-# max_map_count is enforced per mm — the process that can hit the wall is
-# by definition the one with the most mappings. That selector is correct
-# without knowing which pid is the watchdog: it needs no ppid, no argv, no
-# ordering assumption, and stays correct if the process topology changes
-# (an extra child, a renamed unit). Picking by RSS was rejected as an
-# indirect proxy that can invert — many small mappings are cheap in
-# resident bytes and expensive in mapping count, which is exactly the
-# failure mode being watched. Taking the FIRST match would have selected
-# the watchdog roughly half the time and left the gauge permanently green
-# at ~0.01 % of the limit. `..._procs` publishes how many matched, so a
-# topology change is visible rather than silently narrowing what is
-# watched.
-#
-# Self-test: scripts/ci/memory-mappings-test.sh (drives these shipped
-# bytes against a fake /proc; CI has no host and macOS has no /proc).
-#
-# Runtime: one readlink per pid plus one maps read per match. At steady
-# state that is ~47k lines (~3.5 MB); during the incident state it is
-# ~1M lines. There is no cheaper interface — the kernel exposes no
-# mapping COUNT, only the map itself — so the cost is accepted and the
-# timer is spaced at 5 minutes. systemd will not start a second run while
+# Runtime: one readlink per pid plus one maps read per match (~47k lines steady, ~1M in the
+# incident). The kernel exposes only the map, not a count, so the cost is accepted and the
+# timer is spaced at 5 minutes; systemd will not start a second run while one is in flight.
 # one is in flight.
 
 set -euo pipefail
 
-# Numeric formatting must not follow the host locale. Under a
-# comma-decimal LC_NUMERIC, awk's %.6f renders the ratio as "0,044823",
-# which is not a Prometheus value: the validator at the end would
-# correctly refuse to publish, and this probe would go dark on a host
-# where nothing is actually wrong. Pin it rather than discover it.
+# Numeric formatting must not follow the host locale: under a comma-decimal LC_NUMERIC awk's
+# %.6f renders "0,044823", the validator refuses it, and the probe goes dark on a healthy host.
 export LC_ALL=C
 
-# Every input is overridable so the self-test can drive the SHIPPED bytes
-# hermetically. Same idiom as ch-schema-drift.sh / galexie-archive-tip-lag.sh.
+# Every input is overridable so the self-test can drive the SHIPPED bytes hermetically
+# (same idiom as ch-schema-drift.sh / galexie-archive-tip-lag.sh).
 PROC_ROOT="${PROC_ROOT:-/proc}"
 MAX_MAP_COUNT_FILE="${MAX_MAP_COUNT_FILE:-$PROC_ROOT/sys/vm/max_map_count}"
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 OUT="$TEXTFILE_DIR/memory_mappings.prom"
 
-# Watched executables, comma-separated basenames. The `process` label
-# carries the basename verbatim, so adding a second process here needs no
-# metric rename and no rule change — the existing alerts apply to it the
-# moment it appears. (Candidates if this recurs elsewhere: postgres,
-# stellarindex-indexer.)
+# Watched executables, comma-separated basenames. The `process` label carries the basename
+# verbatim, so adding one needs no metric rename or rule change.
 WATCH_EXES="${MEMORY_MAPPINGS_WATCH:-clickhouse}"
 
-# The scratch file is created BESIDE the destination, never in /tmp. The
-# unit runs with PrivateTmp=true, so /tmp is on a different filesystem
-# and `mv` across it degrades to copy-then-unlink — node_exporter would
-# be free to scrape a half-written file, which is the whole-file rejection
-# this producer is careful to avoid. Same-directory mktemp keeps the swap
-# a rename(2). node_exporter's collector globs *.prom, so the `.XXXXXX`
-# suffix keeps the scratch file out of the scrape.
+# The scratch file is created BESIDE the destination, never in /tmp: the unit runs with
+# PrivateTmp=true, so a cross-filesystem `mv` degrades to copy-then-unlink and node_exporter
+# could scrape a half-written file. Same-directory mktemp keeps the swap a rename(2); the
+# `.XXXXXX` suffix keeps the scratch file out of the *.prom glob.
 mkdir -p "$TEXTFILE_DIR"
 TMP="$(mktemp "${OUT}.XXXXXX")"
 trap 'rm -f "$TMP"' EXIT
 
 # ── The limit ────────────────────────────────────────────────────────
-# Read once. It is a kernel-wide sysctl, not a per-process property, so
-# it carries no `process` label — the per-process quantity is the count,
-# and the ratio joins the two.
+# Read once. A kernel-wide sysctl, so no `process` label; the ratio joins it to the count.
 LIMIT=""
 if [ -r "$MAX_MAP_COUNT_FILE" ]; then
   LIMIT="$(tr -dc '0-9' < "$MAX_MAP_COUNT_FILE" || true)"
@@ -105,12 +63,10 @@ case "$LIMIT" in
   '' | *[!0-9]* | 0) LIMIT="" ;;
 esac
 
-# mapping_count_of PID — print the number of VMAs, or nothing when the
-# map is unreadable. Reading another process's map needs privilege
-# (root, or same-uid with ptrace access); the unit runs as root for this
-# reason, and a read that fails must NOT be reported as zero mappings —
-# zero is the value that reads as "maximum headroom" and would make this
-# probe permanently, falsely green.
+# mapping_count_of PID: print the number of VMAs, or nothing when the map is unreadable.
+# Reading another process's map needs privilege (the unit runs as root). A failed read must
+# NOT be reported as zero: zero reads as "maximum headroom" and would make the probe
+# permanently, falsely green.
 mapping_count_of() {
   local n
   n="$(wc -l < "$PROC_ROOT/$1/maps" 2>/dev/null)" || return 1
@@ -121,17 +77,12 @@ mapping_count_of() {
   printf '%s\n' "$n"
 }
 
-# exe_basename PID — the basename of the executable the kernel ran, or
-# nothing.
+# exe_basename PID: basename of the executable the kernel ran, or nothing.
 #
-# `readlink -f` first (canonical path through any symlinked install), the
-# bare form as fallback: some readlink implementations FAIL on a dangling
-# link, and /proc/<pid>/exe is dangling precisely when the binary has
-# been replaced under a running process — an in-place package upgrade,
-# which is the state a long-lived server is most likely to be found in.
-# The kernel then spells the link "<path> (deleted)", so that suffix is
-# stripped before the basename is taken; leaving it on would silently
-# stop matching the very process most worth watching.
+# `readlink -f` first (canonical path), bare form as fallback: some readlinks FAIL on a
+# dangling link, and /proc/<pid>/exe dangles when the binary was replaced under a running
+# process (in-place package upgrade). The kernel then spells it "<path> (deleted)"; strip
+# that suffix or the long-lived server we most want to watch would stop matching.
 exe_basename() {
   local p
   p="$(readlink -f "$PROC_ROOT/$1/exe" 2>/dev/null)" || p=""
@@ -158,19 +109,15 @@ exe_basename() {
   echo '# TYPE stellarindex_process_memory_mappings_updated_unix gauge'
 } > "$TMP"
 
-# One pass per watched executable. /proc is a directory listing plus one
-# readlink per pid, so re-walking it per name is cheaper than carrying an
-# associative array (which bash 3.2 does not have).
+# One pass per watched executable: re-walking /proc per name is cheaper than an associative
+# array (bash 3.2 has none).
 IFS=',' read -r -a WATCHED <<< "$WATCH_EXES"
 for want in "${WATCHED[@]}"; do
   [ -n "$want" ] || continue
 
-  # The watch list is operator-supplied (Environment= in the unit) and
-  # lands verbatim in a LABEL VALUE. A quote or backslash in it would
-  # render an unparseable sample and cost every family in this file its
-  # scrape — and the byte-level validator below deliberately mirrors
-  # data-freshness.sh's grammar, which does not inspect label quoting.
-  # So the value is constrained where it enters, not where it leaves.
+  # The watch list is operator-supplied and lands verbatim in a LABEL VALUE. A quote or
+  # backslash would render an unparseable sample and cost every family its scrape, and the
+  # validator below does not inspect label quoting, so constrain the value where it enters.
   case "$want" in
     *[!A-Za-z0-9._-]*)
       echo "memory-mappings: ignoring watch entry '$want' — an executable name may only contain A-Za-z0-9._- (it becomes a Prometheus label value)" >&2
@@ -201,8 +148,8 @@ for want in "${WATCHED[@]}"; do
     fi
   done
 
-  # An unreadable limit means no ratio can be computed for anything that
-  # matched — the same fail-closed verdict as an unreadable map.
+  # An unreadable limit means no ratio can be computed: same fail-closed verdict as an
+  # unreadable map.
   if [ -n "$best" ] && [ -z "$LIMIT" ]; then
     unreadable=1
   fi
@@ -214,8 +161,7 @@ for want in "${WATCHED[@]}"; do
     printf 'stellarindex_process_memory_mappings{process="%s"} %s\n' "$want" "$best" >> "$TMP"
   fi
   if [ -n "$best" ] && [ -n "$LIMIT" ]; then
-    # awk, not bash arithmetic: the ratio is fractional and bash has only
-    # integers. %.6f over a 2^20 limit resolves single mappings.
+    # awk, not bash arithmetic: the ratio is fractional. %.6f over a 2^20 limit resolves single mappings.
     ratio="$(awk -v c="$best" -v l="$LIMIT" 'BEGIN { printf "%.6f", c / l }')"
     printf 'stellarindex_process_memory_mappings_ratio{process="%s"} %s\n' "$want" "$ratio" >> "$TMP"
   fi
@@ -226,31 +172,20 @@ if [ -n "$LIMIT" ]; then
 fi
 printf 'stellarindex_process_memory_mappings_updated_unix %s\n' "$(date +%s)" >> "$TMP"
 
-# ── Validate the rendered bytes before publishing ────────────────────
+# ── Validate the rendered bytes before publishing ──
 #
-# node_exporter does not skip an unparseable line, it rejects the WHOLE
-# file — one bad value here takes every family above down together, and
-# that same shape once cost 127 unrelated timescale series ~20
-# minutes of darkness. Every value this producer writes is already
-# guarded numerically at its source (digits-only from wc -l and from the
-# sysctl, %.6f from awk, date +%s), so this is a last line of defence
-# rather than the primary one; it is here because "publish what parses"
-# is a property the file should hold whatever a future edit does to it.
+# node_exporter rejects the WHOLE file on one unparseable line. Every value here is already
+# guarded at its source (digits-only wc -l and sysctl, %.6f, date +%s), so this is a last
+# line of defence: "publish what parses" should hold whatever a future edit does.
 #
-# Same grammar and the same position in the sequence as
-# data-freshness.sh's validator. The VERDICT differs, deliberately.
-# data-freshness.sh publishes and withholds only the offending lines,
-# because it emits no last-run gauge: a file it declined to publish
-# would be re-served verbatim forever with NOTHING going absent, so its
-# only meta-alert could never fire. This producer does emit
-# ..._updated_unix, and stellarindex_process_mappings_probe_degraded
-# alerts on its age — so refusing to publish AGES into a ticket, which
-# is the louder and safer outcome. Refusing also keeps the last KNOWN-
-# GOOD headroom reading in place rather than replacing it with a partial
-# file whose missing families read as absence.
+# Same grammar and position as data-freshness.sh's validator, but the VERDICT differs on
+# purpose. That script has no last-run gauge, so it publishes and withholds bad lines (an
+# unpublished file would be re-served forever with nothing going absent). This producer emits
+# ..._updated_unix and stellarindex_process_mappings_probe_degraded alerts on its age, so
+# refusing to publish AGES into a ticket and keeps the last KNOWN-GOOD reading rather than a
+# partial file whose missing families read as absence.
 #
-# Run as an `if` condition so a validator that cannot run is handled
-# rather than killing the script under `set -e`.
+# Run as an `if` condition so a validator that cannot run is handled, not fatal under `set -e`.
 if ! BAD="$(awk '
   /^[ \t]*$/ || /^#/ { next }
   {
@@ -279,9 +214,8 @@ if [ "$BAD" -gt 0 ]; then
   exit 1
 fi
 
-# node_exporter runs unprivileged and mktemp defaults to 0600, so the
-# file has to be world-readable before the atomic swap or the collector
-# skips it.
+# node_exporter runs unprivileged and mktemp defaults to 0600: make the file world-readable
+# before the atomic swap or the collector skips it.
 chmod 0644 "$TMP"
 mv "$TMP" "$OUT"
 trap - EXIT

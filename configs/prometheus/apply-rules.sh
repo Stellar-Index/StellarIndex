@@ -1,65 +1,41 @@
 #!/usr/bin/env bash
-# Apply configs/prometheus/rules.r1/ to R1 — and PROVE the rules loaded.
+# Apply configs/prometheus/rules.r1/ to R1 and PROVE the rules loaded.
 #
-# A binary deploy swaps binaries only; Prometheus rule files are a
-# separate config surface. That gap has bitten before:
-#
-#   - A new alert merged, released and deployed, yet watched nothing,
-#     because the rule file never reached the host.
-#   - A removed alert kept FIRING on r1 for hours afterwards, from a
-#     rule file the repo no longer contained.
-#   - A deploy that had in fact fired was read as not-fired from a
-#     single `gh run list` sampled inside the propagation window, and a
-#     duplicate was launched.
-#
-# The first two are the same defect: "merged" and "live" are different
-# states with nothing reconciling them. The third is why the check at
-# the end of this script POLLS instead of sampling once.
+# A binary deploy swaps binaries only; rule files are a separate config
+# surface. "Merged" and "live" are different states with nothing reconciling
+# them: a new alert can deploy yet watch nothing (file never reached the host),
+# and a removed alert can keep FIRING from a file the repo no longer has. The
+# final check POLLS rather than sampling once, because a single sample inside
+# the propagation window misreads a fired deploy as not-fired.
 #
 # Usage:
 #   apply-rules.sh --check-only [SRC_DIR]   validate only; no install
-#   apply-rules.sh --live-check [SRC_DIR]   validate + diff SRC_DIR against
-#                                            the alerts $PROM_URL has loaded
-#                                            RIGHT NOW; no install. For a
-#                                            scheduled reconciliation run on
-#                                            the host itself: apply,
-#                                            ci.yml's --check-only and this
-#                                            script's own verify step (below)
-#                                            only ever run AT deploy time —
-#                                            nothing periodically re-checks
-#                                            that the live rule set still
-#                                            matches the repo between
-#                                            deploys, so an out-of-band host
-#                                            edit or a restart that fails to
-#                                            reload goes undetected until the
-#                                            next deploy happens to run.
+#   apply-rules.sh --live-check [SRC_DIR]   validate + diff SRC_DIR against the
+#                                            alerts $PROM_URL has loaded RIGHT
+#                                            NOW; no install. For a scheduled
+#                                            reconciliation on the host: apply,
+#                                            ci.yml's --check-only and the verify
+#                                            step below only run AT deploy time,
+#                                            so an out-of-band host edit or a
+#                                            restart that fails to reload goes
+#                                            undetected until the next deploy.
 #   apply-rules.sh [SRC_DIR]                validate, install, reload, verify
 #
 # SRC_DIR defaults to the directory this script lives in, /rules.r1.
 #
-# Scope is deliberately Prometheus RULE FILES and nothing else. Every
-# other config surface — ansible-managed host config, prometheus.yml
-# itself, migrations — stays with ansible and its `--check --diff`
-# review, and the deploy's config-apply gate must keep failing for
-# those. Rule files are the narrow case that is safe to automate: pure
-# declarations, validatable before install, and revertible by restoring
-# one file.
+# Scope is Prometheus RULE FILES only: pure declarations, validatable before
+# install, revertible by restoring one file. Everything else (host config,
+# prometheus.yml, migrations) stays with ansible's `--check --diff` review.
 #
-# Why this is not just the ansible prometheus role: that role asserts an
-# inventory group `prometheus_pair` of exactly 2 hosts (the future HA
-# pair, ha-plan §7). R1's inventory defines only `archival_nodes`, so
-# the role REFUSES to run against it — deliberately, and its own
-# preflight says so, naming configs/prometheus/rules.r1 as R1's
-# out-of-band surface. This script is that out-of-band surface, made
-# reconciling and verified. When R1 joins a prometheus_pair the role
-# takes over and this script retires.
-#
-# Its two safety properties are borrowed from that role on purpose, so
-# the single-host and HA paths cannot drift in behaviour:
+# Why not the ansible prometheus role: it asserts an inventory group
+# `prometheus_pair` of exactly 2 hosts (the future HA pair, ha-plan §7), and
+# R1 only defines `archival_nodes`, so the role refuses it by design and names
+# configs/prometheus/rules.r1 as R1's out-of-band surface. This script is that
+# surface; it retires when R1 joins a prometheus_pair. It borrows the role's two
+# safety properties so the paths cannot drift:
 #   - stale-file cleanup, because copying never deletes;
-#   - the empty-source guard: an empty source directory must ABORT, never be
-#     read as "delete every rule". A path typo would otherwise reload
-#     Prometheus with zero alerts and look like a clean run.
+#   - the empty-source guard: an empty source dir must ABORT, never mean "delete
+#     every rule" (a path typo would reload Prometheus with zero alerts).
 
 set -euo pipefail
 
@@ -82,11 +58,9 @@ SRC="${1:-$SCRIPT_DIR/rules.r1}"
 DEST="${RULES_DEST:-/etc/prometheus/rules.r1}"
 PROM_URL="${PROM_URL:-http://localhost:9090}"
 
-# How long to wait for a reloaded Prometheus to publish the new rule
-# set. Prometheus re-reads on SIGHUP asynchronously, so the rules API
-# briefly still answers with the OLD set — sampling once inside that
-# window reports a successful apply as a failure. 60s is far beyond the
-# observed reload time and costs nothing when the apply worked.
+# How long to wait for a reloaded Prometheus to publish the new rule set. Reload
+# is async, so the rules API briefly answers with the OLD set. 60s is far beyond
+# the observed reload time and free when the apply worked.
 VERIFY_TIMEOUT_S="${VERIFY_TIMEOUT_S:-60}"
 
 die() { echo "apply-rules: $*" >&2; exit 1; }
@@ -95,12 +69,9 @@ die() { echo "apply-rules: $*" >&2; exit 1; }
 
 command -v promtool >/dev/null 2>&1 || die "promtool not on PATH"
 
-# Checked UP FRONT, not discovered during verification. Without curl or
-# python3 the poll below reads an empty rule list, waits out its full
-# timeout, then restores the backup and reports "these alerts never
-# loaded" — blaming the rules for a missing interpreter. Fail here with
-# the real reason instead. (--check-only needs neither, so this runs
-# after the early exit would have been possible but before any install.)
+# Checked UP FRONT: without curl or python3 the poll reads an empty rule list,
+# waits out its timeout, restores the backup and blames the rules for a missing
+# interpreter. (--check-only needs neither.)
 if [ "$CHECK_ONLY" != "1" ]; then
   for t in curl python3; do
     command -v "$t" >/dev/null 2>&1 \
@@ -108,10 +79,8 @@ if [ "$CHECK_ONLY" != "1" ]; then
   done
 fi
 
-# Parses a Prometheus /api/v1/rules JSON body on stdin into one loaded
-# alert/recording-rule name per line. Shared by --live-check and the
-# post-install verify poll below so the two can never disagree on what
-# "loaded" means.
+# Parses a /api/v1/rules JSON body on stdin into one loaded rule name per line.
+# Shared by --live-check and the verify poll so they agree on "loaded".
 parse_loaded_rule_names() {
   python3 -c 'import sys,json
 try: d=json.load(sys.stdin)
@@ -122,13 +91,10 @@ for g in d.get("data",{}).get("groups",[]):
         if n: print(n)' 2>/dev/null | sort -u
 }
 
-# Parses the same JSON body, printing "name: health" for every rule whose
-# health equals $1 ("err" or "unknown"). A rule that loads and then never
-# leaves "unknown" is exactly as broken as one that never loaded — it is
-# not evaluating — so the caller polls this for "unknown" the same way it
-# polls parse_loaded_rule_names for the name, instead of accepting
-# "unknown" as healthy on a single immediate sample. An optional $2 skips
-# groups whose interval exceeds it: they cannot evaluate inside the window.
+# Prints "name: health" for every rule whose health equals $1 ("err" or
+# "unknown"). A rule stuck at "unknown" is not evaluating, so the caller polls it
+# like name-presence rather than trusting one sample. Optional $2 skips groups
+# whose interval exceeds it: they cannot evaluate inside the window.
 rules_with_health() {
   python3 -c 'import sys,json
 want=sys.argv[1]
@@ -142,11 +108,9 @@ for g in d.get("data",{}).get("groups",[]):
             print(r.get("name")+": "+str(r.get("health")))' "$@" 2>/dev/null | sort -u
 }
 
-# ─── 1. Validate BEFORE touching anything ─────────────────────────
-#
-# On the host, not only in CI. CI validates the repo's copy; this
-# validates what is about to be installed, which is the thing that can
-# differ (a partial scp, a wrong SRC_DIR, a local edit).
+# ─── 1. Validate BEFORE touching anything ───
+# On the host, not only CI: this checks what is about to be installed, which can
+# differ from the repo copy (partial scp, wrong SRC_DIR, local edit).
 echo "apply-rules: validating $SRC"
 shopt -s nullglob
 src_files=("$SRC"/*.yml)
@@ -164,12 +128,9 @@ expected_count="$(printf '%s\n' "$expected_alerts" | grep -c . || true)"
 [ "$expected_count" -gt 0 ] || die "the incoming rule set declares no alerts — refusing (an empty set would look like a successful apply while disabling everything)"
 echo "apply-rules: expecting $expected_count alert(s) to load"
 
-# Recording rule names the incoming set declares. /api/v1/rules reports
-# these under the same "name" field as alerts, so a --live-check that
-# only knows about expected_alerts reads every codified recording rule
-# as permanent host drift (stellarindex:api_error_ratio:*
-# and :api_slow_request_*/_count:* were already committed and correctly
-# deployed, and still showed up as "loaded but NOT in the repo").
+# Recording rule names the incoming set declares. /api/v1/rules reports them under
+# the same "name" field as alerts, so --live-check must know them or it reads
+# every recording rule as drift ("loaded but NOT in the repo").
 expected_records="$(grep -hoE '^[[:space:]]*-[[:space:]]*record:[[:space:]]*[^[:space:]]+' "${src_files[@]}" \
   | sed -E 's/^[[:space:]]*-[[:space:]]*record:[[:space:]]*//' | sort -u)"
 
@@ -201,7 +162,7 @@ fi
 
 [ -d "$DEST" ] || die "destination not found: $DEST"
 
-# ─── 2. Atomic install, with a backup we can restore ──────────────
+# ─── 2. Atomic install, with a backup we can restore ───
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP="${DEST}.bak-${STAMP}"
 cp -a "$DEST" "$BACKUP"
@@ -212,9 +173,8 @@ for f in "${src_files[@]}"; do
 done
 chown -R prometheus:prometheus "$DEST" 2>/dev/null || true
 
-# Rule files DELETED from the repo must disappear from the host too.
-# Otherwise a removed rule keeps firing:
-# removing it from git removes it from nowhere else.
+# Rule files deleted from the repo must disappear from the host too, or a
+# removed rule keeps firing.
 for existing in "$DEST"/*.yml; do
   base="$(basename "$existing")"
   [ -f "$SRC/$base" ] || { echo "apply-rules: removing $base (no longer in the repo)"; rm -f "$existing"; }
@@ -227,11 +187,9 @@ restore() {
   reload_prometheus || true
 }
 
-# ─── 3. Reload ────────────────────────────────────────────────────
-#
-# The HTTP lifecycle API is DISABLED on r1 (--web.enable-lifecycle is
-# not set), so POST /-/reload returns "Lifecycle API is not enabled"
-# and changes nothing. Discovered the hard way; use a signal.
+# ─── 3. Reload ───
+# The HTTP lifecycle API is DISABLED on r1 (--web.enable-lifecycle unset), so
+# POST /-/reload changes nothing; use a signal.
 reload_prometheus() {
   systemctl reload prometheus 2>/dev/null && return 0
   local pid
@@ -241,19 +199,11 @@ reload_prometheus() {
 reload_prometheus || { restore; die "could not reload prometheus"; }
 echo "apply-rules: reloaded"
 
-# ─── 4. Verify the rules actually loaded AND are healthy — POLLING ─
-#
-# Without this the script automates "copied a file", not "the alert is
-# watching production". With a single sample it would ALSO report a
-# working apply as broken, because the reload is asynchronous.
-#
-# A rule that loads but errors is a failed apply too — a bad expression
-# loads fine and then evaluates to errors, so name-presence alone is not
-# proof it works. "unknown" is the transient state before the FIRST
-# evaluation after a reload, so it is not failed YET, but it is not proof
-# of health either: it gets the same poll-until-it-settles treatment as
-# name-presence, not a pass on a single immediate sample. "err" never
-# gets better on its own and fails fast instead of waiting out the clock.
+# ─── 4. Verify the rules loaded AND are healthy, by POLLING ───
+# Reload is async, so one sample would report a working apply as broken. A bad
+# expression loads fine then evaluates to errors, so name-presence is not proof.
+# "unknown" is the transient state before the first evaluation: poll until it
+# settles. "err" never improves and fails fast.
 deadline=$(( $(date +%s) + VERIFY_TIMEOUT_S ))
 while :; do
   rules_json="$(curl -sf --max-time 10 "$PROM_URL/api/v1/rules" 2>/dev/null || true)"
@@ -283,12 +233,10 @@ while :; do
   sleep 3
 done
 
-# ─── 5. Prune old backups ─────────────────────────────────────────
-#
-# One backup per apply, and this runs on every deploy — unpruned they
-# accumulate on the box whose disk pressure is the top cause of the
-# ClickHouse outage this script's first alert exists to catch. Keep 5,
-# matching the deploy workflow's retention for binary backups.
+# ─── 5. Prune old backups ───
+# One backup per apply, every deploy; unpruned they fill the disk whose pressure
+# is the top cause of the ClickHouse outage this script's first alert catches.
+# Keep 5, matching the deploy workflow's binary-backup retention.
 find "$(dirname "$DEST")" -maxdepth 1 -name "$(basename "$DEST").bak-*" -printf '%T@ %p\n' 2>/dev/null \
   | sort -rn | tail -n +6 | cut -d' ' -f2- | while read -r old; do
   rm -rf "$old"

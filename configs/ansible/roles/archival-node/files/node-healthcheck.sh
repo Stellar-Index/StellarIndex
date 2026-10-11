@@ -1,29 +1,22 @@
 #!/bin/bash
 #
-# node-healthcheck.sh — periodic health probe for archival-node
-# services + network state. Pings a Healthchecks.io-compatible URL
-# on success and (with diagnostic body) on failure.
+# node-healthcheck.sh: periodic health probe for archival-node services and
+# network state. Pings a Healthchecks.io-compatible URL on success and, with a
+# diagnostic body, on failure.
 #
-# Checks (all must pass for SUCCESS):
-#   1. All 9 systemd services are `active`
-#   1b. stellarindex-api's /v1/healthz returns 200
-#   4.5. galexie's most recent MinIO upload isn't stale
-#      (proves we're tracking network head, not stuck on an old one)
-#   5. ZFS data pool state == ONLINE
-#   6. galexie/stellar-rpc captive-core dirs have < 90% disk used
+# Checks (all must pass):
+#   1.   All 9 systemd services are `active`
+#   1b.  stellarindex-api's /v1/healthz returns 200
+#   4.5. galexie's most recent MinIO upload isn't stale (we track network head)
+#   5.   ZFS data pool state == ONLINE
+#   6.   galexie/stellar-rpc captive-core dirs are < 90% full
 #
-# stellar-core's /info and stellar-rpc's getHealth were removed
-# along with those services themselves; see Check 1's
-# comment block below.
+# HEALTHCHECK_PING_URL comes from /etc/default/node-healthcheck, rendered by
+# Ansible from a vault variable: the URL is a shared secret (anyone with it can
+# forge 'healthy' pings) and must not sit in git in cleartext.
 #
-# Ping URL lives in /etc/default/node-healthcheck as
-# HEALTHCHECK_PING_URL. That file is rendered by Ansible from a
-# vault-encrypted variable so the URL (which is effectively a
-# shared secret — anyone with it can forge 'healthy' pings) stays
-# off-disk in cleartext form in git.
-#
-# Exit 0 always — we don't want systemd to mark the timer failed;
-# the script itself reports failures to healthchecks.io.
+# Exit 0 always, so systemd never marks the timer failed; failures are reported
+# to healthchecks.io by the script itself.
 
 set -uo pipefail
 
@@ -39,8 +32,8 @@ PING_URL="${HEALTHCHECK_PING_URL:-}"
 MAX_LEDGER_AGE_SEC="${MAX_LEDGER_AGE_SEC:-90}"
 POOL_NAME="${POOL_NAME:-data}"
 
-# If no ping URL is configured, exit 0 silently — lets the unit
-# install be idempotent before the secret has been populated.
+# No ping URL: exit 0 silently so unit install is idempotent before the secret
+# is populated.
 if [ -z "$PING_URL" ]; then
   echo "node-healthcheck: HEALTHCHECK_PING_URL unset — skipping" >&2
   exit 0
@@ -50,43 +43,31 @@ fi
 FAILS=()
 add_fail() { FAILS+=("$1"); }
 
-# --- Check 1: systemd service liveness -------------------------
-# Storage + ingestion plumbing first, then the three application
-# services. Deliberately absent: primary stellar-core (see
-# r1-deployment-state pitfall #1/#7), stellar-core-prometheus-
-# exporter (scraped primary), and stellar-rpc (redundant — our
-# indexer consumes galexie's MinIO output directly via Ingest SDK).
-# Application services are watched so a crashed indexer pings failure.
+# --- Check 1: systemd service liveness ---
+# Storage and ingestion plumbing, then the application services (watched so a
+# crashed indexer pings failure). Deliberately absent: primary stellar-core,
+# stellar-core-prometheus-exporter (scraped primary), and stellar-rpc (redundant;
+# the indexer consumes galexie's MinIO output directly).
 #
-# Some services may be absent on a non-application-tier node
-# (a future read-only mirror, for example). Skip with a notice
-# rather than fail when systemctl reports `inactive` for a unit
-# that doesn't exist; only `failed` is a real fault.
+# A unit may be absent on a non-application-tier node (e.g. a read-only mirror):
+# skip it when `inactive` and no unit file exists; only `failed` is a real fault.
 SERVICES=(
   postgresql@15-main
   redis-server
   galexie
   minio
-  # prometheus-node-exporter, NOT node_exporter. The #33 cutover moved
-  # metrics to the packaged unit and DELIBERATELY leaves the hand-rolled
-  # /etc/systemd/system/node_exporter.service and its binary in place as
-  # a documented rollback path (10-observability.yml stops and disables
-  # it, nothing removes it). That collides with the `systemctl cat` guard
-  # below, whose rule is "a unit file exists, so this host is meant to run
-  # it" — true for an absent unit, false for one kept on purpose in a
-  # stopped state. So on r1 this check faulted on EVERY run, pinging
-  # healthchecks.io /fail every 5 minutes while metrics were served fine
-  # by the packaged unit on :9100. The test nets never showed it, because
-  # they were built after the cutover and have no leftover file to find.
-  # Name the unit that actually serves the metrics.
+  # prometheus-node-exporter, NOT node_exporter: the cutover to the packaged unit
+  # deliberately leaves the old hand-rolled node_exporter.service in place, stopped,
+  # as a rollback path. That defeats the `systemctl cat` guard below ("unit file
+  # exists, so this host should run it"), so checking the old name faulted on
+  # every run and pinged /fail every 5 minutes while metrics were fine on :9100.
   prometheus-node-exporter
   stellarindex-indexer
   stellarindex-aggregator
   stellarindex-api
-  # cap67-movements: the account-movements FOLLOW DAEMON (5.3). As an
-  # always-on writer of the money trail, a dead/crash-looped (StartLimit →
-  # failed) daemon must page — the timer+oneshot it replaced was self-healing
-  # on the next fire; a wedged daemon is not.
+  # cap67-movements: the account-movements FOLLOW DAEMON. An always-on writer of
+  # the money trail must page when dead or crash-looped (StartLimit -> failed); a
+  # wedged daemon does not self-heal like the timer+oneshot it replaced.
   cap67-movements
 )
 for s in "${SERVICES[@]}"; do
@@ -95,11 +76,9 @@ for s in "${SERVICES[@]}"; do
     active)
       ;;
     inactive)
-      # Only fault for inactive when the unit file actually exists.
-      # `systemctl is-active` returns 'inactive' for both
-      # 'definitely-stopped' and 'unit not loaded' — disambiguate
-      # via list-unit-files so a node that doesn't run a particular
-      # service doesn't false-positive.
+      # Fault for inactive only when the unit file exists: `systemctl is-active`
+      # says 'inactive' both for stopped and for not loaded, so a node that doesn't
+      # run a service must not false-positive.
       if systemctl cat "$s" >/dev/null 2>&1; then
         add_fail "service $s is inactive (expected active)"
       fi
@@ -110,15 +89,10 @@ for s in "${SERVICES[@]}"; do
   esac
 done
 
-# --- Check 1b: API /v1/healthz returning 200 -------------------
-# A running stellarindex-api process means systemd thinks it's alive,
-# but the HTTP listener may be wedged behind a deadlock or a
-# blocked goroutine. /v1/healthz is the canonical liveness signal
-# for the API; its absence is a real fault, its 200 is the only
-# wire-honest "API is serving" signal.
-#
-# Skip if the api unit isn't installed on this node (mirrors the
-# Check 1 logic above).
+# --- Check 1b: API /v1/healthz returning 200 ---
+# A running process only means systemd thinks it's alive; the listener may be
+# wedged on a deadlock. /v1/healthz is the wire-honest "API is serving" signal.
+# Skipped if the api unit isn't installed (as in Check 1).
 if systemctl cat stellarindex-api >/dev/null 2>&1; then
   api_status=$(curl -sS -o /dev/null -w '%{http_code}' -m 5 http://127.0.0.1:3000/v1/healthz 2>&1 || echo CURL_FAILED)
   if [ "$api_status" != "200" ]; then
@@ -126,33 +100,20 @@ if systemctl cat stellarindex-api >/dev/null 2>&1; then
   fi
 fi
 
-# Primary stellar-core /info probe and stellar-rpc getHealth probe
-# were both removed when we trimmed the stack. The
-# "is the network being followed?" signal is now exclusively the
-# galexie upload-freshness check below (Check 4.5).
-#
-# If stellar-rpc is ever re-added, restore a getHealth probe here
-# with the latency-grace logic that was in git ref f7527f7.
+# No stellar-core /info or stellar-rpc getHealth probe: "is the network being
+# followed?" is exclusively Check 4.5 below.
 
-# --- Check 4.5: galexie upload freshness -----------------------
-# Galexie's metrics endpoint (admin_port 6061) has been observed
-# to HANG for minutes when captive-core is stuck — so we can't
-# use it as a liveness signal. The true signal is: is the
-# galexie-live MinIO bucket growing?
+# --- Check 4.5: galexie upload freshness ---
+# Galexie's metrics endpoint (admin_port 6061) can HANG for minutes when
+# captive-core is stuck, so it is no liveness signal. Instead check the mtime of
+# the newest object in the galexie-live bucket (a new one lands ~every 5s, one
+# per closed ledger): fail if > GALEXIE_MAX_LAG_SEC old and galexie has run >
+# GALEXIE_WARMUP_SEC.
 #
-# We check the mtime of the most-recent object in the bucket
-# against wall clock. In steady state a new object lands every
-# ~5 sec (one per closed ledger). If the most recent is > 10 min
-# old AND galexie has been running > GALEXIE_WARMUP_SEC, fail.
-#
-# The unit runs DynamicUser+ProtectHome=true, so it can never see a
-# persisted `mc alias set` under /root/.mc — that path is namespace-hidden
-# regardless of uid. Auth comes instead from MC_HOST_local, an env var
-# (set in /etc/default/node-healthcheck, root:root 0600, no_log) that mc
-# reads with no config file at all. If mc still fails (unset/wrong
-# credentials, MinIO down and not just slow) we must flag it ourselves:
-# an empty last_iso can mean either "mc broken" or "bucket genuinely
-# empty" and we can't tell those apart from the listing alone, so we
+# The unit runs DynamicUser+ProtectHome=true, so a persisted `mc alias set` under
+# /root/.mc is namespace-hidden. Auth comes from the MC_HOST_local env var (set in
+# /etc/default/node-healthcheck, root:root 0600, no_log). An empty last_iso means
+# either "mc broken" or "bucket empty", indistinguishable from the listing, so we
 # track mc's own exit code.
 GALEXIE_MAX_LAG_SEC="${GALEXIE_MAX_LAG_SEC:-600}"
 GALEXIE_WARMUP_SEC="${GALEXIE_WARMUP_SEC:-1800}"
@@ -160,13 +121,10 @@ g_enter_iso=$(systemctl show -p ActiveEnterTimestamp --value galexie 2>/dev/null
 g_enter_epoch=$(date -d "$g_enter_iso" +%s 2>/dev/null || echo 0)
 g_age=$(( $(date +%s) - g_enter_epoch ))
 if [ "$g_age" -gt "$GALEXIE_WARMUP_SEC" ]; then
-  # mc --json gives a machine-readable listing; sort by lastModified.
-  # `sort` writes to a file and `head` reads it back: with
-  # pipefail set, `sort -r | head -1` makes `sort` die on EPIPE once the
-  # listing exceeds the pipe buffer (which a live bucket always does),
-  # logging "write failed: 'standard output': Broken pipe" on every
-  # healthcheck. Harmless here only because this script omits `set -e`,
-  # and pipefail still lets us read mc's own exit code below.
+  # mc --json gives a machine-readable listing; sort by lastModified. `sort` writes
+  # to a file and `head` reads it back: with pipefail, `sort -r | head -1` makes
+  # sort die on EPIPE once the listing exceeds the pipe buffer, logging "Broken
+  # pipe" every run. pipefail still lets us read mc's exit code below.
   mc ls --json --recursive local/galexie-live/ 2>/dev/null \
     | jq -r 'select(.key | test("\\.xdr\\.zst$")) | .lastModified' 2>/dev/null \
     | sort -r > /tmp/galexie-live-mtimes.txt
@@ -181,8 +139,8 @@ if [ "$g_age" -gt "$GALEXIE_WARMUP_SEC" ]; then
   elif [ "$mc_rc" -ne 0 ]; then
     add_fail "mc ls local/galexie-live/ failed (rc=$mc_rc) — cannot verify galexie upload freshness"
   fi
-  # last_iso empty AND mc_rc == 0: bucket genuinely has no matching
-  # objects yet. Leave to check 1 (minio service) + manual inspection.
+  # last_iso empty AND mc_rc == 0: bucket has no matching objects yet; left to
+  # check 1 (minio service) and manual inspection.
 fi
 
 # --- Check 5: ZFS pool state -----------------------------------
@@ -192,8 +150,7 @@ if [ "$pool_state" != "ONLINE" ]; then
 fi
 
 # --- Check 6: disk free on the captive-core bucket dirs --------
-# Check galexie's captive-core first (it's the primary producer).
-# stellar-rpc's captive is secondary.
+# galexie's captive-core is the primary producer; stellar-rpc's is secondary.
 for d in /var/lib/galexie /var/lib/stellar-rpc; do
   [ -d "$d" ] || continue
   disk_pct_used=$(df --output=pcent "$d" | tail -1 | tr -d ' %')

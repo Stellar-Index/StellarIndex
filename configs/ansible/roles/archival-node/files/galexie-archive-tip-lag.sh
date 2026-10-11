@@ -1,43 +1,30 @@
 #!/bin/bash
-# galexie-archive-tip-lag — defense-in-depth alert source for the 23-day archive stall.
+# galexie-archive-tip-lag - alert source for a silently stalled galexie-archive
+# (the ADR-0016 R1 durable full-mirror).
 #
-# WHY: there was a 23-day silent stall of galexie-archive (the
-# ADR-0016 R1 durable full-mirror). The recurrence fix is the
-# hourly galexie-archive-fill.timer; this script is the
-# defense-in-depth — if that timer itself silently breaks (mc
-# alias rotated, aws-public IAM change, MinIO mtime-poison
-# deadlock per "mc mirror gotcha"), we want to PAGE within hours,
-# not weeks. The metric is the lag in ledgers between the newest
-# object in galexie-live and the newest in galexie-archive; the
-# Prometheus alert sits on top.
+# WHY: the hourly galexie-archive-fill.timer does the catch-up; this is the
+# defense-in-depth for that timer itself breaking silently (mc alias rotated,
+# aws-public IAM change, MinIO mtime-poison deadlock), so we page within hours,
+# not weeks. The metric is the ledger lag between the newest object in
+# galexie-live and in galexie-archive; the Prometheus alert sits on top.
 #
 # Mechanics:
-#   - List the newest partition in each bucket (mc ls default sort
-#     surfaces it first — partition names are reverse-hex prefixed,
-#     so lexically largest = oldest ledgers; lexically smallest =
-#     newest ledger range. The first row of `mc ls bucket/` is the
-#     newest partition.)
-#   - List the newest object inside that partition; object names
-#     are `<reverse-hex>--<ledger>.xdr.zst` (ledgers_per_file=1) or
-#     `<reverse-hex>--<start>-<end>.xdr.zst` (ledgers_per_file>1),
-#     so again the first row is the newest ledger / ledger range. A
-#     range object contributes its <end> ledger.
+#   - Newest partition per bucket is the first row of `mc ls bucket/`: partition
+#     names are reverse-hex prefixed, so lexically smallest = newest ledgers.
+#   - Newest object in that partition is again the first row. Names are
+#     `<reverse-hex>--<ledger>.xdr.zst` (ledgers_per_file=1) or
+#     `<reverse-hex>--<start>-<end>.xdr.zst` (>1); a range contributes its <end>.
+#   - lag = live_tip - archive_tip (ledgers); the .prom is written atomically.
 #
-# WHY both name forms: matching
-# only the single-ledger name fails. Testnet is moving to
-# ledgers_per_file=64, under which EVERY object is a range name —
-# a single-ledger-only regex would match nothing, report archive=0, and latch the
-# tip-lag alert forever (a permanently-firing alert is as blind as
-# no alert). The galexie SDK schema also spells the suffix
-# `.xdr.zstd`, so both `.zst` and `.zstd` are accepted.
+# WHY both name forms: testnet is moving to ledgers_per_file=64, where EVERY
+# object is a range name; a single-ledger-only regex would match nothing, report
+# archive=0 and latch the alert forever (a permanently firing alert is as blind
+# as none). The galexie SDK also spells the suffix `.xdr.zstd`, so `.zst` and
+# `.zstd` are both accepted.
 #
-# Self-test (no mc alias needed):
-#   galexie-archive-tip-lag.sh --self-test
-#   - Compute lag = live_tip - archive_tip (ledgers).
-#   - Write the textfile-collector .prom atomically.
+# Self-test (no mc alias needed): galexie-archive-tip-lag.sh --self-test
 #
-# Runtime: ~2-3 seconds (two `mc ls bucket/` + two `mc ls
-# bucket/partition/` calls — small listings, not the whole bucket).
+# Runtime: ~2-3s (two bucket listings + two partition listings, all small).
 
 set -euo pipefail
 
@@ -64,30 +51,24 @@ ledger_from_object_name() {
 }
 
 newest_ledger() {
-  # $1 = bucket name (e.g. local/galexie-live). Prints the newest
-  # ledger and returns 0, or prints nothing and returns 1 when it
-  # measured nothing: a failed listing, no partition, or no parseable
-  # object. Both buckets are non-empty on a working node, so "nothing
-  # found" is a failed measurement, never ledger 0 — a 0 here made an
-  # unreadable bucket render as "archive exactly at the live tip".
+  # $1 = bucket name (e.g. local/galexie-live). Prints the newest ledger and
+  # returns 0, or prints nothing and returns 1 when nothing was measured (failed
+  # listing, no partition, no parseable object). Both buckets are non-empty on a
+  # working node, so "nothing found" is a failed measurement, never ledger 0:
+  # a 0 would render an unreadable bucket as "archive exactly at the live tip".
   #
-  # Implementation note: buffer `mc ls` into a variable BEFORE
-  # parsing. Streaming `mc ls | awk '...; exit'` causes awk to
-  # close the pipe on its first match; mc ls gets SIGPIPE (status
-  # 141) and under `set -o pipefail` the whole script aborts. The
-  # listings here are tiny (one bucket's partition list, or one
-  # partition's first page of objects), so buffering is free.
+  # Buffer `mc ls` into a variable BEFORE parsing: streaming into `awk ...; exit`
+  # SIGPIPEs mc (141) and aborts the script under pipefail. Listings are tiny.
   # mc's stderr is left to the journal: it is the diagnosis.
   local bucket="$1" parts_raw objs_raw part name ledger
   parts_raw=$(mc ls "$bucket/") || return 1
-  # Read from the variable, not through a pipe: `awk ... exit` stops
-  # reading and `printf` would take EPIPE on a bucket whose partition
-  # listing outsizes the 64 KiB pipe buffer.
+  # Read from the variable, not a pipe: `awk ... exit` stops reading and `printf`
+  # would take EPIPE on a listing larger than the 64 KiB pipe buffer.
   part=$(awk '/\/$/{print $NF; exit}' <<<"$parts_raw" | sed 's:/$::') || return 1
   [ -n "$part" ] || return 1
   objs_raw=$(mc ls "$bucket/$part/") || return 1
-  # First row whose last column parses as an object name wins (mc ls
-  # sorts newest-first here, same as before).
+  # First row whose last column parses as an object name wins (mc ls sorts
+  # newest-first here).
   while read -r name; do
     ledger=$(ledger_from_object_name "$name")
     if [ -n "$ledger" ]; then
@@ -162,7 +143,7 @@ if ! live=$(newest_ledger local/galexie-live) || ! archive=$(newest_ledger local
   } > "$TMP"
   chmod 644 "$TMP"
   mv "$TMP" "$OUT"
-  # Published, now loud: a failed oneshot is what systemctl status shows.
+  # A failed oneshot is what systemctl status shows.
   exit 1
 fi
 

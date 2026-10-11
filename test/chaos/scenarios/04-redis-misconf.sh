@@ -1,54 +1,30 @@
 #!/usr/bin/env bash
-# Scenario 04 — Force Redis into MISCONF (stop-writes-on-bgsave-error)
-# and assert the rate limiter's dwell-time policy end to end.
+# Scenario 04 - force Redis into MISCONF (stop-writes-on-bgsave-error) and
+# assert the rate limiter's dwell-time policy end to end.
 #
-# What MISCONF reaches
-# ────────────────────
-# Redis keeps serving reads under MISCONF and refuses every write. The
-# anonymous GET data routes only READ Redis on the request path; their
-# read-through cache writes are best-effort (a refused SET is logged and
-# the handler answers from the database). The one Redis write every
-# request makes is the rate-limit take (an INCRBY script), and the
-# rate-limit middleware wraps every route except the health/metrics
-# probes. So the limiter's failure policy decides what clients see —
-# internal/ratelimit/doc.go, "Failure mode — dwell-time fail-open
-# inversion":
+# Under MISCONF Redis serves reads and refuses writes. GET data routes only read
+# Redis (cache writes are best-effort), but every rate-limited route makes one
+# write, the rate-limit take, so the limiter's failure policy decides what
+# clients see (internal/ratelimit/doc.go, "Failure mode — dwell-time fail-open
+# inversion"):
+#   (a) within the dwell window (api.rate_limit_dwell, default 30s) counted from
+#       the FIRST failed take: fail OPEN, routes answer as before, never 500.
+#   (b) past it: fail CLOSED, every rate-limited route (POST /v1/signup
+#       included) answers 503 errors/throttle-unavailable + Retry-After.
+# Then heals Redis and verifies every GET route returns to baseline.
 #
-#   (a) Inside the dwell window (api.rate_limit_dwell, default 30s,
-#       ratelimit.DefaultDwellTime), counted from the FIRST failed take,
-#       the limiter fails OPEN: every route answers exactly as it did
-#       before MISCONF, and never 500.
-#   (b) Once the failures outlast the dwell window it fails CLOSED:
-#       every rate-limited route, POST /v1/signup included, answers 503
-#       errors/throttle-unavailable + Retry-After before its handler runs.
+# Why: a write-refusing Redis must surface as 503 + Retry-After (infra, back off),
+# not 500 (code bug), and a sustained outage must not fail open indefinitely.
 #
-# Then heals Redis and verifies every GET route returns to its baseline.
+# The dwell clock is per bucket and stays armed until a full window of unbroken
+# successes, so this relies on earlier scenarios probing only limiter-exempt
+# health routes.
 #
-# Why this scenario exists
-# ────────────────────────
-# A write-refusing Redis must surface as a 503 with a Retry-After hint
-# (infra, back off) rather than a 500 (code bug), and a sustained outage
-# must not leave the limiter failing open indefinitely. This scenario is
-# the CI-side guard that neither regresses.
-#
-# The dwell clock is per limiter bucket and stays armed until a full
-# dwell window of unbroken successes, so this scenario relies on the
-# earlier scenarios only probing the limiter-exempt health routes.
-#
-# Reproduction technique
-# ──────────────────────
-# Redis enters MISCONF when `stop-writes-on-bgsave-error yes` is set
-# (it is by default in our dev compose, mirroring r1) AND a BGSAVE
-# call subsequently fails. The cheapest way to provoke a BGSAVE
-# failure without filling the disk is to make the snapshot `dir`
-# unwritable (chmod 000 via `docker exec`, which runs as root while
-# redis-server runs as the `redis` user) and trigger BGSAVE — Redis
-# returns `MISCONF Redis is configured to save RDB snapshots, but it's
-# currently unable to persist to disk` on every subsequent write until
-# BGSAVE succeeds again. `CONFIG SET dir` is not usable: Redis 7 refuses
-# it as a protected config. Recovery is symmetric: restore the mode +
-# BGSAVE. The already-open AOF file keeps accepting appends; only new
-# file creation (the RDB temp file) fails.
+# Technique: MISCONF needs `stop-writes-on-bgsave-error yes` (dev compose default,
+# mirrors r1) plus a failing BGSAVE. Make the snapshot dir unwritable (chmod 000
+# via `docker exec`, root vs the `redis` user) and trigger BGSAVE. `CONFIG SET
+# dir` is unusable: Redis 7 protects it. Recovery: restore the mode + BGSAVE.
+# The open AOF keeps accepting appends; only new file creation (RDB temp) fails.
 
 set -euo pipefail
 
@@ -87,11 +63,9 @@ cleanup() {
     rm -f "$PROBE_BODY"
     if container_exists "$REDIS_CONTAINER"; then
         log "cleanup: restoring Redis writeable state"
-        # Best-effort: this runs from the EXIT trap and must not itself
-        # abort (that would skip later steps and mask the scenario's
-        # real pass/fail exit code) — but a failure here leaves the dev
-        # Redis stuck in MISCONF (read-only) for every later scenario
-        # in the run, so warn loudly per-step instead of swallowing it.
+        # Best-effort: runs from the EXIT trap and must not abort (it would mask
+        # the scenario's exit code), but a failure leaves Redis in MISCONF for later
+        # scenarios, so warn per step instead of swallowing it.
         local heal_failed=0
         if [ -n "$REDIS_DIR_MODE" ]; then
             docker exec "$REDIS_CONTAINER" chmod "$REDIS_DIR_MODE" "$REDIS_DIR" >/dev/null 2>&1 \
@@ -183,14 +157,12 @@ force_redis_misconf() {
         || die "could not stat Redis snapshot dir $dir"
     REDIS_DIR="$dir"
     log "forcing Redis MISCONF: chmod 000 $REDIS_DIR (was $REDIS_DIR_MODE) + BGSAVE"
-    # Ensure the safety net is active. Dev compose already has this on,
-    # but pin it explicitly so the scenario is portable.
+    # Pin explicitly (dev compose already has it) so the scenario is portable.
     redis_config_set stop-writes-on-bgsave-error yes \
         || die "could not enable stop-writes-on-bgsave-error"
     docker exec "$REDIS_CONTAINER" chmod 000 "$REDIS_DIR" \
         || die "could not chmod 000 $REDIS_DIR in $REDIS_CONTAINER"
-    # BGSAVE is async; Redis only flips into "writes blocked" mode
-    # AFTER the background save fails.
+    # BGSAVE is async; writes block only after the background save fails.
     if wait_for_bgsave_status err; then
         log "MISCONF active (rdb_last_bgsave_status:err)"
         return 0
@@ -202,8 +174,7 @@ heal_redis_misconf() {
     log "healing Redis: chmod $REDIS_DIR_MODE $REDIS_DIR + BGSAVE + stop-writes=no"
     docker exec "$REDIS_CONTAINER" chmod "$REDIS_DIR_MODE" "$REDIS_DIR" \
         || die "could not restore mode $REDIS_DIR_MODE on $REDIS_DIR"
-    # Wait for BGSAVE to actually succeed before declaring the heal
-    # complete; INFO persistence is the authoritative source.
+    # INFO persistence is authoritative for whether the heal completed.
     if wait_for_bgsave_status ok; then
         log "Redis writes restored (rdb_last_bgsave_status:ok)"
     else
@@ -261,8 +232,8 @@ done
 assert_throttle_unavailable "POST /v1/signup" POST "$SIGNUP_URL" '{"email":"chaos-04@example.test"}'
 
 # ─── 5. heal + verify nominal ──────────────────────────────────────
-# The first successful take lets requests through again; the dwell
-# clock itself only disarms after a full window of unbroken successes.
+# The first successful take lets requests through; the dwell clock disarms only
+# after a full window of unbroken successes.
 heal_redis_misconf
 for i in "${!GET_ROUTES[@]}"; do
     name="${GET_ROUTES[$i]%%|*}"

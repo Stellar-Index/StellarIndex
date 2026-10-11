@@ -1,51 +1,38 @@
 #!/usr/bin/env bash
 #
-# hc-ping.sh — deliver one Healthchecks.io ping and make the delivery
-# itself observable. Sourced by heartbeat.sh, smoke.sh and sla-probe.sh;
-# not executable on its own.
+# hc-ping.sh - deliver one Healthchecks.io ping and make the delivery itself
+# observable. Sourced by heartbeat.sh, smoke.sh and sla-probe.sh; not executable.
 #
-# Pings in this directory end in `|| true`. That is the
-# right exit-code contract — a monitoring wrapper must never fail the
-# unit it monitors — but it also throws away the one fact an operator
-# needs when Healthchecks.io reports a check down on a host that was
-# healthy throughout: the ping never left the box.
+# Pings here end in `|| true`: a monitoring wrapper must never fail the unit it
+# monitors. But that discards the one fact an operator needs when Healthchecks.io
+# reports a healthy host down: the ping never left the box. A dropped ping and a
+# dead service produce the SAME "down" email, and without evidence the alert
+# reads as noise.
 #
-# A dropped ping and a dead service produce the SAME "down" email.
-# Healthchecks.io cannot tell them apart — it only ever sees silence —
-# and until now neither could the host, because curl's failure went to
-# /dev/null along with its output. That is the shape of an alert that
-# reads as noise: it fires on a healthy service, no evidence survives,
-# and the next one gets trusted a little less.
-#
-# hc_ping keeps the exit-code contract and records what happened in two
-# places that outlive the run:
-#
+# hc_ping keeps the exit-code contract and records what happened where it
+# outlives the run:
 #   - the journal, at WARN, naming the check and curl's exit code;
-#   - node_exporter's textfile collector, as a per-check failure counter
-#     and a last-success timestamp, which
-#     `stellarindex_healthcheck_ping_undelivered` evaluates.
+#   - node_exporter's textfile collector, as a per-check failure counter and a
+#     last-success timestamp, which `stellarindex_healthcheck_ping_undelivered`
+#     evaluates. When the counter moves, the next email is about our egress,
+#     not the service.
 #
-# The metric is what makes the distinction actionable: when the counter
-# moves, the next Healthchecks.io email is about our egress, not about
-# the service under the check.
-#
-# hc_ping_verdict debounces the /fail ping: an explicit /fail bypasses
-# the check's grace period, so a single failed probe during a routine
-# restart cost a down + up email pair. It sends /fail only after
-# <fail-after> consecutive failures, tracked in the same textfile.
+# hc_ping_verdict debounces /fail: an explicit /fail bypasses the check's grace
+# period, so one failed probe during a routine restart cost a down + up email
+# pair. It sends /fail only after <fail-after> consecutive failures, tracked in
+# the same textfile.
 
-# TEXTFILE_DIR is shared with smoke.sh's emit_metric. Callers may set it
-# to /dev/null to opt out (the test harness does); a caller that cannot
-# write there still pings, and still logs.
+# TEXTFILE_DIR is shared with smoke.sh's emit_metric. Callers may set it to
+# /dev/null to opt out (the test harness does); an unwritable dir still pings
+# and logs.
 HC_PING_TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 
 # hc_ping_counter_read <file> <metric>
 #
-# Reads a counter back out of a textfile we wrote on an earlier run.
-# A counter has to survive the process that emits it, and the textfile
-# collector is the only state these oneshot units have. An unreadable or
-# absent file reads 0 — a restarted counter is visible to `increase()`
-# as a reset, which is correct, where inventing a number would not be.
+# Reads a counter back from a textfile written on an earlier run; the textfile
+# collector is the only state these oneshot units have. An unreadable or absent
+# file reads 0: a restarted counter shows as a reset to `increase()`, where an
+# invented number would not.
 hc_ping_counter_read() {
   local file="$1" metric="$2"
   [ -r "$file" ] || { echo 0; return 0; }
@@ -55,17 +42,16 @@ hc_ping_counter_read() {
 
 # hc_ping_emit <check> <failures-total> <last-success-unix> <consecutive-failures>
 #
-# Returns non-zero when nothing was written, so a caller relying on the
-# file as state knows that state did not persist.
+# Returns non-zero when nothing was written, so a caller using the file as state
+# knows it did not persist.
 hc_ping_emit() {
   local check="$1" failures="$2" last_ok="$3" streak="$4" out tmp
   [ "$HC_PING_TEXTFILE_DIR" != "/dev/null" ] || return 1
   out="$HC_PING_TEXTFILE_DIR/hc_ping_${check}.prom"
   mkdir -p "$HC_PING_TEXTFILE_DIR" 2>/dev/null || return 1
   tmp="$(mktemp "$out.tmp.XXXXXX" 2>/dev/null)" || return 1
-  # Written whole to a sibling temp file and renamed, so node_exporter
-  # never reads a half-written exposition. Any failure along the way
-  # leaves the previous file in place and takes the temp with it.
+  # Written to a sibling temp file and renamed so node_exporter never reads a
+  # half-written exposition; any failure keeps the previous file and drops the temp.
   if {
     echo "# HELP stellarindex_healthcheck_ping_failures_total Pings to Healthchecks.io this host could not deliver."
     echo "# TYPE stellarindex_healthcheck_ping_failures_total counter"
@@ -86,14 +72,12 @@ hc_ping_emit() {
 
 # hc_ping <check> <url> [curl-arg...]
 #
-# <check> names the Healthchecks.io check for the metric label and the
-# journal line — "api", "smoke", "sla-probe". <url> is the full ping
-# endpoint, /fail suffix included where the caller wants a failure
-# recorded. Remaining arguments are passed to curl (typically --data-binary).
+# <check> names the check for the metric label and journal line ("api", "smoke",
+# "sla-probe"). <url> is the full ping endpoint, /fail included where a failure
+# should be recorded. Remaining arguments go to curl (typically --data-binary).
 #
-# An empty URL is not an error: the units install before the operator
-# has pasted the Healthchecks.io URLs in, and the textfile leg is the
-# one that is never optional.
+# An empty URL is not an error: units install before the operator pastes the
+# URLs in, and the textfile leg is never optional.
 hc_ping() {
   local check="$1" url="$2"
   shift 2 || true
@@ -111,8 +95,7 @@ hc_ping() {
     last_ok="$(date +%s)"
   else
     failures=$((failures + 1))
-    # The URL carries the check's secret, so the journal gets the check
-    # name and curl's exit code and nothing else.
+    # The URL carries the check's secret: log only the check name and curl's exit code.
     echo "hc-ping: WARN $check ping NOT DELIVERED (curl rc=$rc) — a Healthchecks.io 'down' notice for this check may be about egress, not the service" >&2
   fi
   hc_ping_emit "$check" "$failures" "$last_ok" "$streak"
@@ -136,8 +119,8 @@ hc_ping_verdict() {
   if [ "$probe_rc" -ne 0 ]; then
     streak=$(($(hc_ping_counter_read "$file" stellarindex_healthcheck_consecutive_failures) + 1))
   fi
-  # A streak that cannot persist would restart at 1 every run and hold
-  # /fail back forever; without the file, report every failure at once.
+  # A streak that cannot persist restarts at 1 every run and holds /fail back
+  # forever; without the file, report every failure at once.
   hc_ping_emit "$check" \
     "$(hc_ping_counter_read "$file" stellarindex_healthcheck_ping_failures_total)" \
     "$(hc_ping_counter_read "$file" stellarindex_healthcheck_ping_last_success_unix)" \
