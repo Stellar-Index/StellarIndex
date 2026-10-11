@@ -31,35 +31,24 @@ const (
 	observationsStreamProducerQueueDepth = 4
 )
 
-// handleObservationsStream serves GET /v1/observations/stream — the
-// SSE counterpart to /v1/observations per ADR-0018 §"SSE wires onto
-// the tip surface".
+// handleObservationsStream serves GET /v1/observations/stream, the SSE counterpart to
+// /v1/observations (ADR-0018).
 //
 // Wire shape per connection:
 //
-//   - Initial event: on connect, the current per-source observations (or
-//     `[]` when the pair has no trades yet, mirroring /v1/observations).
-//   - Recurring events: every interval_seconds (default 5, clamp 1–60) a
-//     fresh LatestTradePerSource scan (bypassing the SWR history cache,
-//     since each event is stamped as_of=now) runs and an
-//     `observations_update` event fires UNCONDITIONALLY (no dedupe).
-//   - Heartbeats: every streaming.DefaultHeartbeatInterval (15 s) when
-//     no real event has flowed.
+//   - Initial event: the current per-source observations (`[]` when the pair has no trades yet).
+//   - Recurring events: every interval_seconds (default 5, clamp 1-60) a fresh
+//     LatestTradePerSource scan runs, bypassing the SWR history cache because each event is
+//     stamped as_of=now, and an `observations_update` fires UNCONDITIONALLY (no dedupe).
+//   - Heartbeats: every streaming.DefaultHeartbeatInterval when no real event has flowed.
 //
-// ?granularity= and ?window_seconds= return 400, as on /v1/observations.
-// `interval_seconds` is named differently from `window_seconds` because
-// the raw-observations surface has no aggregation window.
+// ?granularity= and ?window_seconds= return 400, as on /v1/observations; `interval_seconds` is
+// named differently because the raw surface has no aggregation window.
 func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request) {
-	// Admit against the concurrency caps FIRST, before the
-	// synchronous pre-flight compute below (computeObservations) runs.
-	// Otherwise a client already at its stream cap would still pay for
-	// the full pre-flight DB scan before being rejected — the caps
-	// would bound connection COUNT but not the compute a rejected
-	// client could still trigger. release is idempotent and deferred here so
-	// every return path (validation errors, a failed pre-flight
-	// compute, or the eventual stream teardown) releases exactly once;
-	// the stream is handed off via StreamFromChannelPreAdmitted below
-	// so it doesn't also try to acquire a second slot.
+	// Admit against the concurrency caps FIRST, before the pre-flight computeObservations scan;
+	// otherwise a client at its cap would still trigger the full DB scan before rejection. release
+	// is idempotent and deferred so every return path releases exactly once, and the stream is
+	// handed to StreamFromChannelPreAdmitted so it does not acquire a second slot.
 	release, ok := streaming.TryAcquireStreamSlot(w, r)
 	if !ok {
 		return
@@ -143,26 +132,18 @@ func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request
 	streaming.StreamFromChannelPreAdmitted(w, r, ch, s.streamOptions())
 }
 
-// computeObservations is the shared core of [Server.handleObservations]
-// and [Server.handleObservationsStream]. Returns the post-aggregate
-// trade slice ready for wire encoding.
+// computeObservations is the shared core of [Server.handleObservations] and
+// [Server.handleObservationsStream]; it returns the post-aggregate trades ready for encoding.
 //
-// Alias fan-in: trades are stored under whichever canonical spelling
-// the decoder stamped — SDEX XLM legs under `native`, CEX feeds under
-// `crypto:XLM` — so a literal single-pair lookup would make
-// `?asset=native` silently blind to the CEX observations (and vice
-// versa). Every alias spelling of the pair is scanned and the results
-// merge keeping the newest trade per source, mirroring the assetAliases
-// loop the price read paths run.
-// Non-XLM pairs have exactly one spelling, so they still do one scan.
+// Alias fan-in: trades are stored under whichever spelling the decoder stamped (SDEX XLM legs
+// under `native`, CEX feeds under `crypto:XLM`), so a literal lookup would leave `?asset=native`
+// blind to CEX observations. Every alias spelling of the pair is scanned and the newest trade per
+// source kept, as the price read paths do. Non-XLM pairs have one spelling and one scan.
 func (s *Server) computeObservations(
 	ctx context.Context, pair canonical.Pair, source, aggregate string,
 ) ([]canonical.Trade, error) {
-	// Bound the trades scan even on the stream path (the request handler
-	// wraps its own 8s ceiling; the stream prelude + ticks have no
-	// ceiling of their own, so without this a cold-cache lookup could
-	// hold the connection open unboundedly per tick). One ceiling spans ALL alias scans:
-	// the alias loop must not multiply the endpoint's worst-case hold.
+	// Bound the scan even on the stream path, whose prelude and ticks have no ceiling of their
+	// own. One ceiling spans ALL alias scans so the loop cannot multiply the worst-case hold.
 	scanCtx, cancel := context.WithTimeout(ctx, observationsScanTimeout)
 	defer cancel()
 
@@ -248,14 +229,10 @@ func mergeNewestPerSource(merged []canonical.Trade, bySource map[string]int, tra
 // matching the request handler's 8s ceiling in observations.go.
 const observationsScanTimeout = 8 * time.Second
 
-// runObservationsStreamProducer is the per-connection compute + push
-// loop. Emits the pre-computed initial event, then ticks every
-// `intervalSeconds` recomputing and emitting unconditionally.
-//
-// Per-tick failures are logged + skipped (heartbeats keep the
-// connection alive). The function returns when ctx cancels and
-// closes ch on the way out so [streaming.StreamFromChannel] returns
-// cleanly.
+// runObservationsStreamProducer is the per-connection compute + push loop: it emits the
+// pre-computed initial event, then recomputes and emits every `intervalSeconds` unconditionally.
+// Per-tick failures are logged and skipped (heartbeats keep the connection alive). It returns
+// when ctx cancels, closing ch so [streaming.StreamFromChannel] returns cleanly.
 func (s *Server) runObservationsStreamProducer(
 	ctx context.Context,
 	ch chan<- streaming.Event,
@@ -265,14 +242,11 @@ func (s *Server) runObservationsStreamProducer(
 	intervalSeconds int,
 	first []canonical.Trade,
 ) {
-	// This producer runs in its OWN goroutine, so an
-	// unrecovered panic in the compute path below terminates the WHOLE process —
-	// middleware.Recoverer only wraps the handler goroutine, not this one, and the
-	// stream is reachable unauthenticated. Recover here so a panic tears down only
-	// this connection. Registered BEFORE `defer close(ch)` so that close runs FIRST
-	// (defers are LIFO): the SSE writer sees the channel close and ends the response
-	// cleanly, then this logs. Never swallow it silently — a crash turning into an
-	// invisible dropped connection is its own bug.
+	// This producer runs in its OWN goroutine, which middleware.Recoverer does not wrap, and the
+	// stream is reachable unauthenticated, so an unrecovered panic would kill the whole process.
+	// Recover so only this connection dies. Registered BEFORE `defer close(ch)` so the close runs
+	// FIRST (LIFO) and the SSE writer ends the response cleanly, then this logs; never swallow
+	// the panic silently.
 	defer s.recoverStreamProducer("observations")
 	defer close(ch)
 
@@ -313,21 +287,15 @@ func (s *Server) runObservationsStreamProducer(
 	}
 }
 
-// observationsStreamEvent builds one SSE event payload from a slice
-// of trades. Returns (_, false) on JSON-marshal failure.
+// observationsStreamEvent builds one SSE event payload from trades, returning (_, false) on
+// JSON-marshal failure. The envelope mirrors the request endpoint, including the single-source
+// flag.
 //
-// Wire shape mirrors the request endpoint: an envelope with `data`
-// as an array of TradeRow, `as_of`, `sources`, and `flags`. Single-
-// source flag mirrors the request handler (true when exactly one
-// source contributed).
-//
-// stale, frozen and divergence_checked are structurally false on every
-// tick, BY DESIGN and for the same reason as the request handler: this
-// is the raw per-source surface, so there is no aggregation contract to
-// fall short of and no aggregated value for the base-level
-// cross-reference verdict to vouch for. s.Divergence is never consulted
-// here. See the FRESHNESS CONTRACT block in handleObservations; pinned
-// by TestObservationsStream_DivergenceCheckedStructurallyFalse.
+// stale, frozen and divergence_checked are structurally false on every tick, BY DESIGN: this is
+// the raw per-source surface, with no aggregation contract to fall short of and no aggregated
+// value for a cross-reference verdict to vouch for, so s.Divergence is never consulted. See the
+// FRESHNESS CONTRACT block in handleObservations; pinned by
+// TestObservationsStream_DivergenceCheckedStructurallyFalse.
 func (s *Server) observationsStreamEvent(gen *streaming.Generator, pair canonical.Pair, trades []canonical.Trade) (streaming.Event, bool) {
 	rows := make([]TradeRow, len(trades))
 	srcSet := make(map[string]struct{}, len(trades))

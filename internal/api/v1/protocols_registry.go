@@ -14,17 +14,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// ProtocolMeta is the hand-curated static identity of one indexed
-// protocol — everything about a protocol that is true regardless of
-// what the database currently holds. The dynamic halves (contract
-// registry, 24h event counts, completeness verdict) are joined onto
-// this at request time by the /v1/protocols handlers.
+// ProtocolMeta is the hand-curated static identity of one indexed protocol, true regardless of
+// database contents. The dynamic halves (contract registry, 24h event counts, completeness
+// verdict) are joined on at request time.
 //
-// Deliberately boring: a flat struct in a package-level slice. Genesis
-// ledgers mirror internal/ops/chops/reconciliation_catalogue.go (the
-// WASM-audit-sourced first-possible-data ledgers); factory sets come
-// from the per-source packages so a factory amendment there (e.g. a
-// Blend factory redeploy) propagates here without a second edit.
+// Genesis ledgers mirror internal/ops/chops/reconciliation_catalogue.go (WASM-audit-sourced
+// first-possible-data ledgers); factory sets come from the per-source packages so an amendment
+// there propagates here without a second edit.
 type ProtocolMeta struct {
 	// Name is the canonical source name — the same identifier used by
 	// completeness_snapshots, protocol_contracts and /v1/coverage.
@@ -48,21 +44,14 @@ type ProtocolMeta struct {
 	// Derived from Name by withVerificationPages below — never set in a
 	// row literal, which is why it carries no value in this file.
 	VerificationPage string
-	// ExtraContracts folds a sub-module source's own contracts into
-	// this protocol's roster + analytics scope — for a source that is
-	// logically part of this protocol but emits on its own contract
-	// address(es) and lands in its own table (e.g. the Blend Backstop
-	// insurance module: distinct contracts + a separate blend_backstop
-	// source, but part of the Blend protocol page). Tagged Kind="module"
-	// in the roster; included in the lake-analytics contract-id scope so
-	// their events show in the breakdown/activity. Empty for the common
-	// case (a protocol that owns every contract it reports).
+	// ExtraContracts folds a sub-module source's own contracts into this protocol's roster and
+	// analytics scope, for a source that is part of the protocol but emits on its own contracts
+	// and table (e.g. the Blend Backstop). Tagged Kind="module" in the roster and included in the
+	// lake-analytics contract-id scope. Empty when the protocol owns every contract it reports.
 	ExtraContracts []string
-	// ExtraEventSources lists additional logical source names whose
-	// trailing-24h event count is summed into this protocol's events_24h
-	// — the count-side companion to ExtraContracts (the Backstop's
-	// blend_backstop_events land under the 'blend_backstop' census key,
-	// which folds into 'blend' here). Empty for a self-contained source.
+	// ExtraEventSources lists additional source names whose trailing-24h event count is summed
+	// into events_24h, the count-side companion to ExtraContracts. Empty for a self-contained
+	// source.
 	ExtraEventSources []string
 }
 
@@ -132,11 +121,9 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 			// q_swap/swap vocabulary, but logically part of Blend.
 			"blend_emitter.distribute", "blend_emitter.drop", "blend_emitter.swap_config",
 		},
-		// The two mainnet Backstop deployments plus the single Emitter
-		// deployment — separate event surfaces (own contracts, own event
-		// vocabularies) but part of the Blend protocol. Folding them here
-		// surfaces both on /v1/protocols/blend (roster + lake analytics +
-		// event count) instead of being invisible.
+		// The two mainnet Backstop deployments and the Emitter are separate event surfaces that
+		// are part of Blend; folding them in shows them on /v1/protocols/blend (roster, analytics,
+		// event count).
 		ExtraContracts:    []string{blend_backstop.MainnetBackstopV1, blend_backstop.MainnetBackstopV2, blend_emitter.MainnetEmitter},
 		ExtraEventSources: []string{blend_backstop.SourceName, blend_emitter.SourceName},
 	},
@@ -163,11 +150,9 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 			"and Stake Capital Group. Each vault takes one underlying asset and mints proportional " +
 			"shares, so the vault contract is also the share token.",
 		GenesisLedger: upshift.GenesisLedger,
-		// No Factories: neither vault has a creation event anywhere in
-		// the lake (each one's first event is its own `admin_set`), so
-		// the ADR-0035 trust root is the curated set the decoder seeds
-		// rather than a factory. The roster comes from protocol_contracts
-		// at request time.
+		// No Factories: neither vault has a creation event in the lake (the first is its own
+		// `admin_set`), so the ADR-0035 trust root is the curated set the decoder seeds. The
+		// roster comes from protocol_contracts at request time.
 		EventKinds: []string{upshift.EventKind},
 	},
 	{
@@ -177,11 +162,8 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 		GenesisLedger: defindex.GenesisLedger,
 		EventKinds: []string{
 			"defindex.strategy.deposit", "defindex.strategy.withdraw",
-			// strategy.harvest — strategy yield realised into the vault
-			// (direction=harvest, migration 0138). The decoder emits it
-			// and the sink persists it to defindex_flows, so it is part
-			// of this source's decoded
-			// vocabulary and must be listed here for the API to report it.
+			// strategy.harvest is yield realised into the vault. The decoder emits it and the sink
+			// persists it, so it must be listed here for the API to report it.
 			"defindex.strategy.harvest",
 			"defindex.vault.deposit", "defindex.vault.withdraw",
 			// vault.dfees — per-asset protocol-fee distributions
@@ -255,12 +237,10 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 	},
 })
 
-// verificationPageDocs names the protocols whose write-up does not live
-// at docs/protocols/<name>.md: the three Reflector feeds are three
-// source names sharing one page, and the router is a view of Soroswap's
-// swaps, documented on the Soroswap page. A name mapped to "" declares a
-// protocol that has no page yet — the API serves no link for it and
-// TestProtocolVerificationPages stops requiring one.
+// verificationPageDocs names the protocols whose write-up is not at docs/protocols/<name>.md: the
+// three Reflector feeds share one page, and the router is documented on the Soroswap page. A name
+// mapped to "" has no page yet: the API serves no link and TestProtocolVerificationPages stops
+// requiring one.
 var verificationPageDocs = map[string]string{
 	"reflector-dex":   "reflector",
 	"reflector-cex":   "reflector",
@@ -269,12 +249,8 @@ var verificationPageDocs = map[string]string{
 }
 
 // withVerificationPages stamps each entry's verification-page path from
-// its name, so writing docs/protocols/<name>.md is all it takes to link
-// a protocol's write-up. Deriving it removes a second, silent edit site:
-// per-row literals here were written for only six protocols, so the
-// pages for ten more — sdex, comet, cctp, rozo, band, redstone, the three
-// Reflector feeds and the router — sat in the tree while /v1/protocols
-// reported verification_page: null.
+// its name, so writing docs/protocols/<name>.md is all it takes to link a write-up. Deriving it
+// removes a second, silent edit site that left existing pages reported as verification_page: null.
 func withVerificationPages(reg []ProtocolMeta) []ProtocolMeta {
 	for i := range reg {
 		doc, ok := verificationPageDocs[reg[i].Name]

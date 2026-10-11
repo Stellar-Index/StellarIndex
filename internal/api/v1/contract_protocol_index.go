@@ -13,18 +13,14 @@ import (
 // minutes late on a label is fine, a registry read per contract is not.
 const contractProtocolIndexTTL = 10 * time.Minute
 
-// contractProtocolIndexRetryTTL is how long an INCOMPLETE map (a build in
-// which at least one roster read failed) is served before the next call
-// rebuilds it. Short enough that a registry blip does not leave every
-// cohort unlabelled for ten minutes; long enough that a registry outage
-// does not turn every request into seventeen failing reads.
+// contractProtocolIndexRetryTTL is how long an INCOMPLETE map (a roster read failed) is served
+// before rebuilding: short enough that a registry blip does not leave cohorts unlabelled for
+// the full TTL, long enough that an outage does not make every request a failing read storm.
 const contractProtocolIndexRetryTTL = 30 * time.Second
 
-// contractProtocolIndexBuildTimeout bounds one build. A request never
-// waits on it: a request-triggered build runs on its own goroutine,
-// detached from the request that noticed the map was due, so a request
-// whose budget is spent can neither stall on the build nor cut it short
-// into a statics-only map served to everyone else.
+// contractProtocolIndexBuildTimeout bounds one build. A request-triggered build runs detached
+// from the request that noticed the map was due, so a spent request budget can neither stall
+// on it nor cut it short into a statics-only map served to everyone.
 const contractProtocolIndexBuildTimeout = 5 * time.Second
 
 type contractProtocolIndex struct {
@@ -38,27 +34,20 @@ type contractProtocolIndex struct {
 	inFlight bool
 }
 
-// contractProtocol names the protocol a C… contract belongs to: the
-// registry's own statics (factories, extra contracts), every instance the
-// roster knows for each registered protocol (the same read
-// /v1/protocols/{name}/contracts serves — PG registry, projection
-// fallback, soroswap's pair registry), cached for
-// contractProtocolIndexTTL. A miss is a contract no protocol claims.
-//
-// Serves the cohort view's contract labels; a nil-safe seam so a
-// deployment with no protocol readers simply labels nothing.
+// contractProtocol names the protocol a C... contract belongs to: the registry's statics plus
+// every roster instance (the same read /v1/protocols/{name}/contracts serves), cached for
+// contractProtocolIndexTTL. A miss is a contract no protocol claims. Nil-safe: a deployment
+// with no protocol readers labels nothing.
 func (s *Server) contractProtocol(ctx context.Context, contractID string) (string, bool) {
 	idx := s.contractProtocolIndexFor(ctx)
 	name, ok := idx[contractID]
 	return name, ok
 }
 
-// PrewarmContractProtocolIndex builds the contract → protocol map before
-// any request needs it. Called from the API's 5-minute prewarm loop
-// (cmd/stellarindex-api/main.go) — under contractProtocolIndexTTL, so a
-// complete map is always refreshed before it expires and no request
-// triggers it. Builds inline on ctx, so shutdown cancels it. A no-op
-// while the map is fresh or another build is running.
+// PrewarmContractProtocolIndex builds the contract -> protocol map before any request needs
+// it. The 5-minute prewarm loop is under contractProtocolIndexTTL, so no request triggers a
+// build. It builds inline on ctx (shutdown cancels it) and no-ops while the map is fresh or
+// another build is running.
 func (s *Server) PrewarmContractProtocolIndex(ctx context.Context) {
 	if ctx.Err() != nil || !s.claimContractProtocolIndexBuild() {
 		return
@@ -125,13 +114,10 @@ func (s *Server) rebuildContractProtocolIndex(ctx context.Context) {
 	s.contractIndex.complete = complete
 }
 
-// carryForwardFailedProtocols keeps the previous map's labels for every
-// protocol whose roster read failed in this build, so a transient
-// registry error on a rebuild cannot unlabel contracts a complete map
-// already knew. A protocol that answered is taken as it answered (a
-// contract it no longer lists is dropped), and on a conflict the fresh
-// build wins. built is still private to the caller and is extended in
-// place; prev is published and is never written.
+// carryForwardFailedProtocols keeps the previous map's labels for protocols whose roster read
+// failed, so a transient registry error cannot unlabel known contracts. A protocol that
+// answered is taken as it answered, and on a conflict the fresh build wins. built is private
+// to the caller and extended in place; prev is published and never written.
 func carryForwardFailedProtocols(prev, built map[string]string, failed []string) map[string]string {
 	if len(failed) == 0 || len(prev) == 0 {
 		return built
@@ -151,12 +137,9 @@ func carryForwardFailedProtocols(prev, built map[string]string, failed []string)
 	return built
 }
 
-// buildContractProtocolIndex walks the registry. Statics first, then the
-// roster, so a contract both name is labelled by the roster (the more
-// specific source: a factory is "blend", its pool is also "blend").
-// complete is false, and failed names the sources, when any roster read
-// errored: the map is still worth serving (the statics and every source
-// that did answer label), but it is not worth caching for long.
+// buildContractProtocolIndex walks the registry, statics first then the roster, so the roster
+// (the more specific source) wins a contract both name. complete is false, and failed names
+// the sources, when any roster read errored: the map is still served but not cached for long.
 func (s *Server) buildContractProtocolIndex(ctx context.Context) (byID map[string]string, complete bool, failed []string) {
 	out := make(map[string]string, 1024)
 	for _, meta := range protocolRegistry {

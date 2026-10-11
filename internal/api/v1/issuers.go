@@ -30,12 +30,9 @@ type issuersAtReader interface {
 }
 
 // IssuerListEntry is the wire shape of one row in /v1/issuers.
-// Compact summary suitable for the issuer-directory page.
 //
-// OrgName is the issuer's organisation name from SEP-1
-// (`[DOCUMENTATION].ORG_NAME` in stellar.toml). Populated by
-// the `stellarindex-ops sep1-refresh` job; empty when never
-// resolved or when the issuer has no documentation block.
+// OrgName is the SEP-1 `[DOCUMENTATION].ORG_NAME`, filled by `stellarindex-ops sep1-refresh`;
+// empty when never resolved or the issuer has no documentation block.
 type IssuerListEntry struct {
 	GStrkey    string `json:"g_strkey"`
 	HomeDomain string `json:"home_domain,omitempty"`
@@ -61,11 +58,9 @@ type Issuer struct {
 	// listing endpoint surfaces; populated by the
 	// `stellarindex-ops sep1-refresh` job.
 	OrgName string `json:"org_name,omitempty"`
-	// OrgVerified is true only when the issuer's SEP-1 toml lists it back
-	// (bidirectional proof — one-way is spoofable). When false, OrgName is
-	// issuer-self-declared; clients MUST NOT render it as authoritative,
-	// or it becomes an impersonation vector. Always present so the
-	// absence of the field can't be mistaken for "verified".
+	// OrgVerified is true only when the issuer's SEP-1 toml lists it back (one-way is spoofable).
+	// When false, OrgName is self-declared and clients MUST NOT render it as authoritative. Always
+	// present so absence can't be mistaken for "verified".
 	OrgVerified bool `json:"org_verified"`
 	// ScamReason is non-empty when the issuer is flagged as scam /
 	// malicious by the curated `known_scams.go` map (sourced from
@@ -75,15 +70,10 @@ type Issuer struct {
 	AuthRevocable *bool  `json:"auth_revocable,omitempty"`
 	AuthImmutable *bool  `json:"auth_immutable,omitempty"`
 	AuthClawback  *bool  `json:"auth_clawback,omitempty"`
-	// AuthFlagsSource says how the four auth_* flags above were obtained.
-	// `live` — decoded from the account's CURRENT on-chain
-	// AccountEntry. `last_known_before_removal` — the issuer has MERGED ITS
-	// ACCOUNT AWAY and these are its flags as of `auth_flags_as_of_ledger`;
-	// they are a historical record, NOT the issuer's current authorisation
-	// policy, and must not be rendered as one. ~10.2k of ~59.2k known
-	// issuers are in that state. Omitted when the provenance is unknown
-	// (flags not resolved, or persisted before migration 0153 and not yet
-	// re-drained) — absence means "unknown", never "current".
+	// AuthFlagsSource says how the auth_* flags were obtained. `live` is decoded from the CURRENT
+	// AccountEntry. `last_known_before_removal` means the issuer MERGED ITS ACCOUNT AWAY and these
+	// are its flags as of `auth_flags_as_of_ledger`: a historical record, NOT current policy.
+	// Omitted when provenance is unknown; absence means "unknown", never "current".
 	AuthFlagsSource string `json:"auth_flags_source,omitempty"`
 	// AuthFlagsAsOfLedger is the ledger the flags are true as of. Omitted
 	// when unknown.
@@ -92,11 +82,9 @@ type Issuer struct {
 	SEP1Payload         json.RawMessage `json:"sep1_payload,omitempty"`
 	CreationLedger      *uint32         `json:"creation_ledger,omitempty"`
 	Assets              []IssuedAsset   `json:"assets,omitempty"`
-	// CoverageNote is an honest-degrade signal (mirrors ProtocolsView /
-	// AccountMovements): non-empty when ListIssuerAssets failed (including
-	// a deadline) and Assets was omitted rather than fabricated as a
-	// genuine zero-asset issuer. Absent = Assets is complete (or the issuer
-	// genuinely issues nothing).
+	// CoverageNote is an honest-degrade signal: non-empty when ListIssuerAssets failed (including a
+	// deadline) and Assets was omitted rather than fabricated as a zero-asset issuer. Absent means
+	// Assets is complete.
 	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
@@ -121,10 +109,8 @@ const IssuersListMaxLimit = 500
 
 // handleIssuersList serves GET /v1/issuers.
 //
-// Returns the issuer directory ordered by total observation count
-// across the issuer's classic assets — the proxy-for-activity
-// ranking the explorer /issuers page exposes. Returns 503 when
-// no IssuersReader is wired and 400 on out-of-range limit.
+// Returns the issuer directory ordered by total observation count across the issuer's classic
+// assets (an activity proxy). 503 when no IssuersReader is wired, 400 on out-of-range limit.
 func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	if s.Issuers == nil {
 		writeProblem(w, r,
@@ -161,15 +147,9 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if clientAborted(r, err) {
-			// Client went away mid-query — e.g. concurrent callers
-			// (the sla-probe, a browser navigating away) that cancel
-			// in-flight requests. The driver surfaces the resulting
-			// context cancellation as `canceling statement due to
-			// user request` (SQLSTATE 57014); that is NOT a server
-			// fault. Return quietly: no ERROR log, no 500 (which
-			// otherwise pollutes the 5xx rate + SLA availability).
-			// Same canonical ordering as handleObservations
-			// (envelope.go clientAborted doc).
+			// Client went away mid-query. The driver surfaces the cancellation as SQLSTATE 57014,
+			// which is NOT a server fault: return quietly, with no ERROR log and no 500 polluting
+			// the 5xx rate and SLA availability. Same ordering as handleObservations.
 			return
 		}
 		if handlerTimedOut(listCtx, err) {
@@ -181,13 +161,9 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if transientStorageErr(err) {
-			// Postgres-side cancellation (57014 from statement_timeout
-			// / lock_timeout / idle_in_transaction reset), bad-connection
-			// after pool retries exhausted, or a network EOF. These
-			// are infrastructure transients that a retry would succeed
-			// on — surface 503 so sla-probe doesn't book it as a
-			// permanent availability failure. Same clientAborted
-			// residual as the client-abort branch above.
+			// Postgres-side cancellation (statement/lock timeout), exhausted bad-connection retries
+			// or a network EOF are transients a retry would clear: surface 503 so sla-probe doesn't
+			// book a permanent availability failure.
 			s.logger.Warn("issuers list: transient storage error", "err", err)
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/issuers-transient",
@@ -206,14 +182,9 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 	for i, r := range rows {
 		homeDomain, orgName := enrichIssuer(r.GStrkey, r.HomeDomain, r.OrgName)
 		reason := scamReason(r.GStrkey)
-		// Identity suppression: a flagged,
-		// UNVERIFIED issuer's org_name/home_domain are self-declared
-		// on-chain values — for counterfeiters that is the
-		// impersonation itself (a "SCAM Counterfeiter" declaring
-		// lobstr.co rendered as "LOBSTR — SCAM", indicting the
-		// victim brand). Serving the stolen identity as if it were
-		// the row's name is disinformation; the G-key + reason are
-		// the honest identity for these rows.
+		// Identity suppression: a flagged, UNVERIFIED issuer's org_name/home_domain are self-declared
+		// on-chain values, which for counterfeiters is the impersonation itself (and indicts the
+		// victim brand). The G-key + reason are the honest identity for these rows.
 		if reason != "" && !r.OrgVerified {
 			homeDomain, orgName = "", ""
 		}
@@ -232,9 +203,8 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 
 // handleIssuer serves GET /v1/issuers/{g_strkey}.
 //
-// Returns 404 (problem+json) when the issuer has never been observed.
-// Always includes the assets array so the explorer issuer card has
-// the per-issuer drill-down data without a second request.
+// Returns 404 (problem+json) when the issuer has never been observed. Always includes the assets
+// array so the issuer card needs no second request.
 func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 	if s.Issuers == nil {
 		writeProblem(w, r,
@@ -252,13 +222,8 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 			"g_strkey path segment is required")
 		return
 	}
-	// Stellar G-strkeys are uppercase base32 by SEP-23 convention;
-	// the storage layer keys off the canonical uppercase form.
-	// URL clients (chat clients, search tools, manual typing)
-	// regularly lowercase, which would otherwise 404. Normalise
-	// at input — base32 alphabet is case-insensitive in Stellar
-	// SDK validation, so the underlying ed25519 public key is the
-	// same. No risk of merging two distinct accounts.
+	// Storage keys off the canonical uppercase G-strkey (SEP-23), but URL clients often lowercase
+	// it and would 404. Base32 is case-insensitive, so normalising cannot merge distinct accounts.
 	gStrkey = strings.ToUpper(gStrkey)
 
 	// 8s ceiling spans both calls — GetIssuer is fast but the
@@ -312,16 +277,12 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 	// stale entry cannot beat the account's own signed home_domain.
 	s.enrichIssuerFromAccountState(iCtx, gStrkey, &out)
 	out.HomeDomain, out.OrgName = enrichIssuer(row.GStrkey, out.HomeDomain, out.OrgName)
-	// Identity suppression runs LAST: a flagged, unverified issuer's
-	// self-declared identity is the impersonation. Run any earlier, the
-	// account-state enrich would refill the cleared home_domain straight
-	// from the scammer's own on-chain field. Auth flags stay — they
-	// are objective account state, not identity claims.
+	// Identity suppression runs LAST: earlier, the account-state enrich would refill the cleared
+	// home_domain from the scammer's own on-chain field. Auth flags stay; they are objective
+	// account state, not identity claims.
 	//
-	// SEP1Payload is suppressed alongside HomeDomain/OrgName: it is the
-	// raw stellar.toml JSONB those two fields are extracted FROM, so
-	// leaving it populated re-served the same impersonated org_name/
-	// home_domain the two assignments above were clearing.
+	// SEP1Payload is suppressed too: it is the raw stellar.toml JSONB those two fields come FROM,
+	// so leaving it would re-serve the impersonated identity.
 	if detailReason != "" && !out.OrgVerified {
 		out.HomeDomain, out.OrgName = "", ""
 		out.SEP1Payload = nil
@@ -387,19 +348,15 @@ type IssuerAuthFlagsReader interface {
 	BulkAccountAuthFlags(ctx context.Context, gStrkeys []string) (map[string]clickhouse.AccountAuthFlags, error)
 }
 
-// enrichIssuerFromAccountState overlays the issuer's live on-chain AccountEntry
-// (auth flags, home_domain, as-of ledger) onto the persisted row. Stellar
-// AccountEntry flags: AUTH_REQUIRED=1, AUTH_REVOCABLE=2, AUTH_IMMUTABLE=4,
-// AUTH_CLAWBACK=8. No-op when no live entry resolves.
+// enrichIssuerFromAccountState overlays the issuer's live AccountEntry (auth flags, home_domain,
+// as-of ledger) onto the persisted row. Flags: AUTH_REQUIRED=1, AUTH_REVOCABLE=2,
+// AUTH_IMMUTABLE=4, AUTH_CLAWBACK=8.
 //
-// A live AccountEntry is the authority on its own account, so it is consulted
-// for every row, filled or not: the persisted columns are an older reading of
-// the same entry and a filled row is exactly the shape that can hold a domain
-// the account has since moved away from. When no live entry resolves, the
-// persisted reading stands untouched: absence from the current-state
-// projection is what a merged account AND a lake-coverage gap both look like,
-// so only the drain, which reads an actual `removed` row, may write
-// `last_known_before_removal`.
+// The live entry is the authority on its own account, so it is consulted for every row, filled or
+// not: persisted columns are an older reading and may hold a domain the account has moved away
+// from. With no live entry the persisted reading stands: absence from the current-state projection
+// looks the same for a merged account and a lake-coverage gap, so only the drain, which reads an
+// actual `removed` row, may write `last_known_before_removal`.
 func (s *Server) enrichIssuerFromAccountState(ctx context.Context, gStrkey string, out *Issuer) {
 	live, ok := s.liveIssuerAccount(ctx, gStrkey)
 	if !ok {

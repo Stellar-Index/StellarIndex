@@ -10,24 +10,15 @@ import (
 )
 
 // CachedIssuersReader wraps an [IssuersReader] with a per-process TTL cache
-// and single-flight refetch. Uncached, `/v1/issuers` measured p95 ~404ms
-// against a 200ms SLO.
+// and single-flight refetch.
 //
-// The SQL is a full GROUP BY over issuers JOIN classic_assets with
-// sum(observation_count): two seq scans plus a HashAggregate no index can
-// avoid (~196ms for the query alone). The catalogue moves on a
-// minutes-to-hours timescale, so the 24h+ observation ranking is not
-// materially stale at the TTL; same rationale as CachedSourcesStatsReader /
-// CachedMarketsReader.
+// The list SQL is a full GROUP BY over issuers JOIN classic_assets that no index can avoid,
+// and the catalogue moves on a minutes-to-hours timescale, so a TTL-stale ranking is fine.
+// GetIssuer + ListIssuerAssets are pass-through: one G-strkey, already index-backed.
 //
-// GetIssuer + ListIssuerAssets are pass-through: keyed on one G-strkey and
-// already index-backed (`issuers_pkey`, `classic_assets_issuer_idx`), so
-// caching adds bookkeeping for no win.
-//
-// Single-flight follows CachedMarketsReader's write-on-success /
-// delete-on-error / waiter-err-pointer pattern: a waiter holds its own pointer
-// to the entry, so it reads the leader's error even after the leader removed
-// the entry from the map.
+// Single-flight follows CachedMarketsReader's write-on-success / delete-on-error pattern: a
+// waiter holds its own pointer to the entry, so it reads the leader's error even after the
+// leader removed the entry from the map.
 type CachedIssuersReader struct {
 	upstream IssuersReader
 	ttl      time.Duration
@@ -42,21 +33,14 @@ type issuersCacheEntry struct {
 
 	list []timescale.IssuerSummary
 
-	// err is set by the leader before close(flight) on a failing
-	// upstream call. Waiters hold a pointer to the SAME entry they
-	// joined the flight on — so even if the leader removes the
-	// entry from the map (we don't TTL-cache errors), waiters can
-	// still read entry.err here and return it instead of nil-
-	// derefing the missing entry. Same as CachedMarketsReader.
+	// err is set by the leader before close(flight) on a failing upstream call. Waiters hold
+	// the SAME entry, so they still read it after the leader deletes the entry (errors are
+	// not TTL-cached).
 	err error
 }
 
-// NewCachedIssuersReader wraps `upstream` with a TTL cache. ttl=0
-// disables caching (every call passes through). 5 min is the
-// production default, set by the caller (cmd/stellarindex-api) — the
-// verified-issuer catalogue's top-N ranking is stable on the
-// timescale of new SDEX activity. There is no config knob for this;
-// a deployment needing a different TTL passes one at the call site.
+// NewCachedIssuersReader wraps `upstream` with a TTL cache. ttl=0 disables caching (every
+// call passes through). The caller (cmd/stellarindex-api) picks the TTL.
 func NewCachedIssuersReader(upstream IssuersReader, ttl time.Duration) *CachedIssuersReader {
 	return &CachedIssuersReader{
 		upstream: upstream,
@@ -65,21 +49,15 @@ func NewCachedIssuersReader(upstream IssuersReader, ttl time.Duration) *CachedIs
 	}
 }
 
-// GetIssuer — pass-through. Single-row PK lookup on `issuers_pkey`
-// is sub-ms; caching by g_strkey would scatter the working set
-// across thousands of LRU slots with no shared-callers win.
+// GetIssuer is a pass-through: a sub-ms PK lookup, and per-strkey caching would scatter the
+// working set with no shared-callers win.
 func (c *CachedIssuersReader) GetIssuer(ctx context.Context, gStrkey string) (timescale.IssuerRow, error) {
 	return c.upstream.GetIssuer(ctx, gStrkey)
 }
 
-// ListIssuerAssets — pass-through. Indexed scan via
-// `classic_assets_issuer_idx`, bounded by timescale.issuerAssetsHardCap
-// (500 rows).
-//
-// The per-issuer asset count alone is not a bound: migration 0158 admits
-// every classic asset with a trustline, and minting many codes and
-// airdropping trustlines is a spam pattern, so the store applies an
-// explicit cap.
+// ListIssuerAssets is a pass-through: an indexed scan bounded by timescale.issuerAssetsHardCap.
+// The cap is needed because spammers mint many codes and airdrop trustlines, so the
+// per-issuer asset count is not a bound by itself.
 func (c *CachedIssuersReader) ListIssuerAssets(ctx context.Context, gStrkey string) ([]timescale.IssuerAsset, error) {
 	return c.upstream.ListIssuerAssets(ctx, gStrkey)
 }
@@ -111,13 +89,8 @@ func (c *CachedIssuersReader) ListIssuersAt(ctx context.Context, limit int) ([]t
 	return list[:limit:limit], at, nil
 }
 
-// fetchList is the TTL + single-flight loop. Mirrors
-// CachedMarketsReader.fetchPairs (delete-on-error,
-// waiter-err-pointer panic safety). No SWR — the underlying query
-// is ~200ms not multi-second, so an expired entry waits on a fresh
-// fill rather than serving stale. (If r1 measurements show
-// post-cache p95 still spiking on miss, the swr[T] helper from
-// asset_catalogue_cache.go drops in.)
+// fetchList is the TTL + single-flight loop, mirroring CachedMarketsReader.fetchPairs. No
+// SWR: the query is ~200ms, so an expired entry waits on a fresh fill rather than serving stale.
 func (c *CachedIssuersReader) fetchList(
 	ctx context.Context,
 	key string,
@@ -134,12 +107,10 @@ func (c *CachedIssuersReader) fetchList(
 		return out, at, nil
 	}
 
-	// (B)/(C) No fresh value: join the running fill, or take the slot
-	// and start one. Either way this caller only WAITS, on the fill or its
-	// own ctx: the fill runs detached (runDetachedFill), so one caller's abort
-	// cannot fail the others. The entry pointer is captured so the
-	// result/err is read off the SAME struct we joined, surviving the
-	// fill's delete-on-error.
+	// (B)/(C) No fresh value: join the running fill, or take the slot and start one. This
+	// caller only waits, on the fill or its own ctx; the fill runs detached (runDetachedFill),
+	// so one caller's abort cannot fail the others. The entry pointer is captured so
+	// result/err survive the fill's delete-on-error.
 	entry, leader := e, false
 	if !ok || e.flight == nil {
 		entry, leader = &issuersCacheEntry{flight: make(chan struct{})}, true

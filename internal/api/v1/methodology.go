@@ -8,22 +8,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// Methodology is the wire shape of /v1/methodology — a
-// machine-readable summary of the active aggregation policy.
-//
-// Designed for transparency consumers (compliance, auditors, AI
-// agents, integrators verifying "open methodology" claims)
-// who want to verify what the deployment is doing without parsing
-// the explorer's HTML at /methodology or chasing ADR cross-refs.
-//
-// Every field maps back to either a constant in this package, a
-// row in `internal/sources/external.Registry`, or an operator
-// config value plumbed through the [Options] struct. Nothing here
-// is fabricated for display.
-//
-// Stability: pkg/client mirrors this shape. Adding new optional
-// fields is backwards-compatible; removing or renaming requires a
-// SemVer minor bump on the SDK and a CHANGELOG note.
+// Methodology is the wire shape of /v1/methodology, a machine-readable summary of the active
+// aggregation policy. Every field maps to a constant in this package, a row in
+// `internal/sources/external.Registry`, or an operator config value; nothing is fabricated for
+// display. pkg/client mirrors this shape: adding optional fields is compatible, removing or
+// renaming needs an SDK minor bump.
 type Methodology struct {
 	// Version is the on-disk shape version of the response. Bump
 	// on any breaking change.
@@ -35,22 +24,13 @@ type Methodology struct {
 	// authoritative narratives.
 	Aggregation MethodologyAggregation `json:"aggregation"`
 
-	// SourceClasses enumerates EVERY class bucket a row in Sources
-	// can carry, and which of them contributes to the VWAP. Mirrors
-	// `internal/sources/external`. Subdivides ClassExchange into
-	// dex/cex/fx subclasses.
-	//
-	// "Every" is load-bearing: a class missing here leaves the
-	// sources that carry it stamped with a class the same document
-	// never defines.
-	// TestMethodology_EveryServedSourceClassIsDescribed holds it.
+	// SourceClasses enumerates EVERY class a row in Sources can carry, and which contribute to the
+	// VWAP. "Every" is load-bearing: a missing class leaves sources stamped with a class this
+	// document never defines (TestMethodology_EveryServedSourceClassIsDescribed).
 	SourceClasses []MethodologySourceClass `json:"source_classes"`
 
-	// Sources is the flat list of registered venues with their
-	// class, subclass, default weight, and contribution flag.
-	// Same data as `/v1/sources` (without the live trade-count
-	// stats); included here so a transparency consumer can verify
-	// the policy in a single round trip.
+	// Sources is the flat list of registered venues, the same rows as `/v1/sources` without live
+	// trade-count stats, so the policy can be verified in one round trip.
 	Sources []MethodologySource `json:"sources"`
 
 	// References point at the long-form ADRs that govern each
@@ -70,11 +50,9 @@ type MethodologyAggregation struct {
 	// on this surface"; the field is per-endpoint.
 	OutlierFilter MethodologyOutlierFilter `json:"outlier_filter"`
 
-	// StablecoinFiatProxy is the operator's allow-list of classic
-	// USD-pegged tokens that the aggregator (and the read-time
-	// fallback chain on /v1/price + /v1/ohlc + /v1/chart) treats
-	// as proxies for `fiat:USD`. Empty when the operator hasn't
-	// declared any pegs (deployment serves only direct quotes).
+	// StablecoinFiatProxy is the operator's allow-list of classic USD-pegged tokens that the
+	// aggregator and the read-time fallback chain treat as proxies for `fiat:USD`. Empty when no
+	// pegs are declared (only direct quotes are served).
 	StablecoinFiatProxy []MethodologyStablecoinPeg `json:"stablecoin_fiat_proxy"`
 
 	// ClosedBucketWindowSeconds is the boundary granularity that
@@ -145,15 +123,9 @@ type MethodologyReference struct {
 // (new optional fields) keep the version stable.
 const methodologyVersion = "1.0"
 
-// handleMethodology serves GET /v1/methodology.
-//
-// Static response derived from compile-time constants + the
-// in-memory `external.Registry` + the operator's
-// [Options.USDPeggedClassics]. No DB call, sub-millisecond.
-//
-// Cache-Control is set by the cachecontrol middleware; the
-// content only changes on binary deploy or operator config
-// reload, so it's safe to cache aggressively.
+// handleMethodology serves GET /v1/methodology from constants, the in-memory registry and
+// [Options.USDPeggedClassics]; no DB call. Content changes only on deploy or config reload, so it
+// is safe to cache aggressively.
 func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 	pegs := make([]MethodologyStablecoinPeg, 0, len(s.USDPeggedClassics))
 	for _, peg := range s.USDPeggedClassics {
@@ -163,16 +135,10 @@ func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// One entry per class the registry can stamp on a source —
-	// including the three that carry no price signal at all. They
-	// belong here because `sources` below is the WHOLE registry (the
-	// same rows /v1/sources serves), so a consumer that reads
-	// `class: "router"` off a row needs somewhere in this document
-	// to look that word up.
-	//
-	// The three non-price classes restate the class godoc in
-	// internal/sources/external/framework.go, which is the
-	// authoritative narrative for why each is excluded.
+	// One entry per class the registry can stamp on a source, including those with no price
+	// signal: `sources` below is the WHOLE registry, so a consumer reading `class: "router"` must
+	// be able to look it up here. The class godoc in internal/sources/external/framework.go is
+	// authoritative for why each is excluded.
 	classes := []MethodologySourceClass{
 		{Name: string(external.ClassExchange), ContributesToVWAP: true, Description: "Real trading venues — DEXes (Soroswap, Phoenix, Aquarius, Comet, sdex), CEXes (Coinbase, Binance, Kraken, Bitstamp), FX vendors. The only sources that contribute to the VWAP."},
 		{Name: string(external.ClassAggregator), ContributesToVWAP: false, Description: "Third-party aggregators (CoinGecko, CoinMarketCap) that already aggregate the same upstream venues. Including them in our VWAP would double-count; surfaced separately for divergence checks."},
@@ -212,14 +178,9 @@ func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 			OutlierFilter: MethodologyOutlierFilter{
 				Endpoint:     "/v1/ohlc",
 				DefaultSigma: ohlcDefaultOutlierSigma,
-				// Volume-weighting and arithmetic-mean do not dampen
-				// outliers in the case that matters, so neither justifies
-				// an unfiltered default: VWAP is Σquote/Σbase, so an
-				// attacker who supplies the QUOTE asset dominates the numerator for
-				// free, and TWAP has no volume term at all — one print
-				// alone in its hour carries that hour entirely. Measured
-				// on one production window: /v1/twap 5,449,858 vs
-				// /v1/vwap 2,452,242 vs /v1/ohlc (sigma 4) 1–2.
+				// Neither volume- nor time-weighting dampens outliers: VWAP is Σquote/Σbase, so an
+				// attacker supplying the QUOTE asset dominates the numerator for free, and TWAP
+				// has no volume term, so one print alone in its hour carries that hour.
 				Note: "OHLC's High/Low have no statistical robustness; a single dust trade can pin them. The same default sigma applies to /v1/twap, whose time weight is unrelated to trade size. /v1/vwap defaults to 0, i.e. UNFILTERED. Neither volume-weighting nor time-weighting is an outlier defence: on a sparse window a single print can carry the whole result, and on VWAP an attacker supplying the quote asset dominates the sum. Pass outlier_sigma explicitly on /v1/vwap if you need filtering; pass outlier_sigma=0 on /v1/ohlc or /v1/twap to disable it.",
 			},
 			StablecoinFiatProxy:       pegs,
@@ -227,11 +188,8 @@ func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 		},
 		SourceClasses: classes,
 		Sources:       sources,
-		// Titles are the referenced ADRs' OWN titles, verbatim, and
-		// TestMethodology_ReferenceTitlesMatchTheADRs holds them to it.
-		// A paraphrase can name a document that does not exist, and a
-		// reader who follows the reference then gets something other
-		// than what it promised.
+		// Titles are the ADRs' own titles verbatim (TestMethodology_ReferenceTitlesMatchTheADRs): a
+		// paraphrase can name a document that does not exist.
 		References: []MethodologyReference{
 			{ID: "ADR-0007", Title: "Redis as hot-path cache + rate-limit + ephemeral state", URL: "/research/adr/0007"},
 			{ID: "ADR-0015", Title: "API rates served from last-closed bucket, never in-progress", URL: "/research/adr/0015"},

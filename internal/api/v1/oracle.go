@@ -14,19 +14,12 @@ import (
 // OracleReader is the storage-side interface for /v1/oracle/latest
 // lookups.
 type OracleReader interface {
-	// LatestOracleUpdatesForAsset returns the most-recent observation
-	// per source for asset. sourceFilter="" returns every source;
-	// a non-empty value restricts to that single source.
-	//
-	// Empty slice + nil error means "no observations" — that's
-	// distinct from an error.
+	// LatestOracleUpdatesForAsset returns the most-recent observation per source for asset;
+	// sourceFilter="" returns every source. Empty slice + nil error means "no observations".
 	LatestOracleUpdatesForAsset(ctx context.Context, asset canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error)
 
-	// LatestOracleUpdatesForAssets is the multi-key variant —
-	// returns the most-recent observation per source across the
-	// union of the supplied asset keys. Used by the handler to
-	// expand user-facing asset identifiers (e.g. `native`) into
-	// the per-oracle internal forms (e.g. `crypto:XLM`).
+	// LatestOracleUpdatesForAssets is the multi-key variant: the most-recent observation per source
+	// across the union of keys, so user-facing ids (`native`) reach per-oracle forms (`crypto:XLM`).
 	LatestOracleUpdatesForAssets(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error)
 
 	// LatestOracleStreams returns one row per (source, asset, quote)
@@ -43,26 +36,19 @@ type oracleAtReader interface {
 	LatestOracleStreamsAt(ctx context.Context) ([]canonical.OracleUpdate, time.Time, error)
 }
 
-// oracleAssetCandidates expands the user-facing asset identifier into every key
-// form the oracle layer might have stored under.
+// oracleAssetCandidates expands the user-facing asset identifier into every key form the oracle
+// layer might have stored under (Reflector keys by global ticker such as `crypto:XLM`, not the
+// canonical asset_id).
 //
-// Reflector keys observations by the global crypto ticker (`crypto:XLM`, ...)
-// rather than the canonical asset_id; without this expansion
-// `/v1/oracle/latest?asset=native` returns empty.
+// The `crypto:<TICKER>` translation is IDENTITY-GATED. Firing on the CODE alone would answer any
+// classic asset whose code spells a global ticker with the REAL issuer's oracle rows
+// (attacker-authored pricing): identity is (code, issuer), never code alone. Only an asset the
+// verified-currency catalogue itself issues under that ticker may claim its readings.
 //
-// The `crypto:<TICKER>` translation is IDENTITY-GATED. Firing on the CODE alone
-// would answer any classic asset whose code spells a global ticker with the REAL
-// issuer's oracle rows (attacker-authored pricing): identity is (code, issuer),
-// never code alone. Only an asset the verified-currency catalogue itself issues
-// under that ticker (internal/currency) may claim the ticker's readings.
-//
-// A Soroban contract id resolves FIRST through the deterministic SAC derivation
-// (internal/xdrjson, ADR-0013): a contract that IS native XLM's or a verified
-// asset's SAC inherits the classic key and then faces the same gate.
-//
-// Every form is first expanded through [canonical.AssetAliases]. The result
-// always starts with the original asset; later entries are best-effort
-// translations for the storage layer's `WHERE asset = ANY($1)` filter.
+// A Soroban contract id resolves FIRST through the deterministic SAC derivation (ADR-0013): a
+// contract that IS native XLM's or a verified asset's SAC inherits the classic key, then faces the
+// same gate. Every form is expanded through [canonical.AssetAliases]; the result always starts with
+// the original asset, and later entries are best-effort for the `WHERE asset = ANY($1)` filter.
 func (s *Server) oracleAssetCandidates(a canonical.Asset) []canonical.Asset {
 	candidates := canonical.AssetAliases(a)
 
@@ -76,12 +62,9 @@ func (s *Server) oracleAssetCandidates(a canonical.Asset) []canonical.Asset {
 		a = wrapped
 	}
 
-	// Verified classic credit asset → also try `crypto:<TICKER>` so the
-	// global stablecoin tickers (USDC, PYUSD, EURC) match Reflector's
-	// per-ticker rows. Harmless on verified assets Reflector doesn't
-	// track (the ANY($1) filter just yields zero rows for that key).
-	// The granted ticker is expanded through its own family too: a feed may
-	// publish under a renamed spelling (crypto:EUROC for crypto:EURC).
+	// Verified classic credit asset: also try `crypto:<TICKER>` so global stablecoin tickers match
+	// Reflector's per-ticker rows (an untracked key just yields zero rows). The granted ticker is
+	// expanded through its own family too, since a feed may use a renamed spelling (crypto:EUROC).
 	if ticker, ok := s.verifiedTickerFor(a); ok {
 		if x, err := canonical.ParseAsset("crypto:" + ticker); err == nil {
 			candidates = appendAssetsUnique(candidates, canonical.AssetAliases(x)...)
@@ -107,22 +90,13 @@ func appendAssetsUnique(dst []canonical.Asset, add ...canonical.Asset) []canonic
 	return dst
 }
 
-// verifiedTickerFor returns the global crypto ticker a CLASSIC asset is
-// entitled to be answered under: non-empty only when this exact
-// (code, issuer) is the verified-currency catalogue's own Stellar
-// issuance for that ticker.
+// verifiedTickerFor returns the global crypto ticker a CLASSIC asset is entitled to be answered
+// under: non-empty only when this exact (code, issuer) is the verified-currency catalogue's own
+// Stellar issuance for that ticker.
 //
-// Nil catalogue and unverified issuer both fail CLOSED. A deployment
-// that wires no catalogue has no basis on which to grant any asset a
-// global ticker, and granting one to everybody is the defect this gate
-// exists to remove.
-//
-// A ticker the catalogue holds with NO Stellar issuance (`reference_only`
-// entries — USDT, BTC, …) is never granted either, which is the
-// catalogue's own doctrine (see currency.indexTickerOnlyEntry): no
-// legitimate classic asset can bear a ticker verified as belonging to
-// an off-Stellar asset, so every classic `USDT-G…` is by construction
-// an impersonator.
+// A nil catalogue and an unverified issuer both fail CLOSED; granting a ticker to everybody is the
+// defect this gate removes. A ticker held with NO Stellar issuance (`reference_only` entries such
+// as USDT, BTC) is never granted: any classic `USDT-G...` is by construction an impersonator.
 func (s *Server) verifiedTickerFor(a canonical.Asset) (string, bool) {
 	if a.Type != canonical.AssetClassic || a.Code == "" || a.Issuer == "" {
 		return "", false
@@ -134,16 +108,13 @@ func (s *Server) verifiedTickerFor(a canonical.Asset) (string, bool) {
 	return vc.Ticker, true
 }
 
-// verifiedSACAsset maps a Soroban contract id back to the native or
-// verified-catalogue classic asset whose Stellar Asset Contract it is.
+// verifiedSACAsset maps a Soroban contract id back to the native or verified-catalogue classic
+// asset whose Stellar Asset Contract it is.
 //
-// Trust anchor is DERIVATION, not metadata: the map is built by
-// deriving each candidate asset's deterministic SAC id through the same
-// internal/xdrjson call [Server.buildKnownSACs] uses (the v1 layer must
-// not import go-stellar-sdk/xdr directly — ADR-0013), so a contract can
-// only claim an identity whose derivation lands on it. Built once,
-// cached. Empty when no network passphrase is configured — fail-closed:
-// no derivation, no translation.
+// The trust anchor is DERIVATION, not metadata: each candidate's deterministic SAC id is derived
+// through the same internal/xdrjson call [Server.buildKnownSACs] uses (the v1 layer must not
+// import the SDK xdr package, ADR-0013), so a contract can only claim an identity whose derivation
+// lands on it. Built once and cached; empty without a network passphrase (fail-closed).
 func (s *Server) verifiedSACAsset(contractID string) (canonical.Asset, bool) {
 	s.verifiedSACsOnce.Do(func() { s.verifiedSACs = s.buildVerifiedSACs() })
 	a, ok := s.verifiedSACs[contractID]
@@ -177,9 +148,8 @@ func (s *Server) buildVerifiedSACs() map[string]canonical.Asset {
 
 // OracleReading is the wire shape for /v1/oracle/latest entries.
 //
-// Price is rendered as a decimal string scaled by Decimals. We
-// report both the normalised decimal AND the raw integer + decimals
-// scale so sophisticated clients can verify the rendering.
+// Price is a decimal string scaled by Decimals; the raw integer and scale are reported too so
+// clients can verify the rendering.
 type OracleReading struct {
 	Source     string   `json:"source"`
 	ContractID string   `json:"contract_id,omitempty"`
@@ -213,29 +183,20 @@ type OracleReading struct {
 	// published the update. Empty when unknown.
 	Observer string `json:"observer,omitempty"`
 
-	// Mapped is false when Asset is a `raw:<symbol>` row — an
-	// oracle-published symbol recorded verbatim because it maps to
-	// no canonical asset (oracle capture-totality design). Such rows
-	// are reference-only: orientation-unknown, never compared or
-	// aggregated. /v1/oracle/streams omits them unless
-	// include_unmapped=true; /v1/oracle/latest returns one only when
-	// asked for it by its exact `raw:` key.
+	// Mapped is false for a `raw:<symbol>` row: an oracle symbol recorded verbatim because it maps
+	// to no canonical asset. Such rows are reference-only (orientation-unknown, never compared or
+	// aggregated). /v1/oracle/streams omits them unless include_unmapped=true; /v1/oracle/latest
+	// returns one only for its exact `raw:` key.
 	Mapped bool `json:"mapped"`
 }
 
 // handleOracleLatest serves GET /v1/oracle/latest?asset=<id>&source=<name>&quote=<id>.
 //
-// With no source or quote filter: returns an array of OracleReading,
-// one per (source, quote) that has observed the asset — MORE than one
-// per source when that source publishes the asset against more than
-// one live quote (e.g. Redstone's EUROC/EUR and EUROC/USD). With a
-// source filter and no quote filter: one row per quote that source
-// publishes. With both filters: an array of at most one element. The
-// source filter accepts on-chain sources only (sourceFilterOK).
-//
-// 200 with empty array when no observations exist — callers treat
-// this as "nothing to report," not an error. That matches the
-// behaviour of /v1/history.
+// With no filter it returns one OracleReading per (source, quote) that has observed the asset,
+// so MORE than one per source when a source publishes several live quotes (Redstone EUROC/EUR and
+// EUROC/USD). A source filter yields one row per quote; both filters yield at most one. The source
+// filter accepts on-chain sources only (sourceFilterOK). No observations is a 200 with an empty
+// array, as on /v1/history, not an error.
 func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 	reader := s.Oracle
 	if reader == nil {
@@ -336,30 +297,20 @@ func (s *Server) handleOracleLatest(w http.ResponseWriter, r *http.Request) {
 
 // handleOracleStreams serves GET /v1/oracle/streams[?include_unmapped=true].
 //
-// Returns one row per (source, asset, quote) triple — the latest
-// observation each oracle has published in the trailing 7d. The
-// catalogue is small enough (~100s of rows at peak) that a full
-// dump is the simplest contract.
+// Returns one row per (source, asset, quote): the latest observation each oracle published in the
+// trailing 7d. The set is small (~100s of rows), so a full dump is the simplest contract.
 //
-// include_unmapped (default false) adds the `raw:<symbol>` rows the
-// record layer keeps for oracle symbols that map to no canonical
-// asset (mapped:false on the wire). The default keeps the public
-// row set unchanged for existing API consumers; the explorer's
-// /oracles page is the intended opt-in (it shows totality with an
-// "unmapped" badge — see docs/design/oracle-capture-totality-design.md
-// §5). The storage read is unfiltered either way — a raw row must
-// never be silently dropped between the table and this boundary.
+// include_unmapped (default false) adds the `raw:<symbol>` rows (mapped:false) for symbols with no
+// canonical asset; the default keeps the public row set stable. The storage read is unfiltered
+// either way, so a raw row is never silently dropped between the table and this boundary.
 func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 	reader := s.Oracle
 	if reader == nil {
 		writeJSON(w, []OracleReading{}, Flags{})
 		return
 	}
-	// 8s ceiling on the oracle_updates hypertable scan, matching
-	// the fail-fast-on-slow-upstream timeout used by the other
-	// hypertable-scanning endpoints (/v1/pools, /v1/history).
-	// Steady-state ~600ms measured on prod, but
-	// cold-cache scans of 7d × 80 oracle streams can take 5-10s.
+	// 8s ceiling on the oracle_updates hypertable scan, matching the other hypertable-scanning
+	// endpoints. Steady state is well under 1s, but a cold-cache 7d scan can take 5-10s.
 	osCtx, osCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer osCancel()
 	var vintage dataVintage
@@ -396,12 +347,9 @@ func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	// Filter to only sources classed as ClassOracle. CoinGecko (an
-	// aggregator) and ECB (an authority-sanity feed) write into the
-	// same oracle_updates hypertable for divergence-comparison
-	// purposes, but they're not oracles and shouldn't appear on the
-	// /oracles page. The class is a registry fact, not a per-row
-	// flag in the table — filter at the wire boundary.
+	// Keep only ClassOracle sources: CoinGecko (aggregator) and ECB (sanity feed) share the
+	// oracle_updates hypertable for divergence comparison but are not oracles. The class is a
+	// registry fact, not a per-row flag, so filter at the wire boundary.
 	includeUnmapped := r.URL.Query().Get("include_unmapped") == "true"
 	rows := make([]OracleReading, 0, len(updates))
 	for _, u := range updates {

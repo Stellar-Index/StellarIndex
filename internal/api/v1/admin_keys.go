@@ -24,19 +24,15 @@ import (
 )
 
 // AuditSink is the narrow subset of [platform.AuditStore] the admin
-// handlers need. Appends are best-effort: a sink failure is logged, never blocks
-// the admin action, and the action is ALWAYS also structured-logged
-// (the handlers_admin.go "record who did what" pattern), so an
-// unwired sink still leaves an operator-greppable trail.
+// handlers need. Appends are best-effort: a failure is logged and never blocks the admin action,
+// which is always also structured-logged so an unwired sink still leaves a greppable trail.
 type AuditSink interface {
 	Append(ctx context.Context, e platform.AuditEntry) error
 }
 
 // adminCreateKeyRequest is the POST /v1/admin/keys body. Unlike the
 // self-service /v1/account/keys, the operator names the TARGET
-// identifier and may pin tier / rate limit / scopes explicitly —
-// this is the "separate admin path" the self-service handler's doc
-// has always pointed at.
+// identifier and may pin tier, rate limit and scopes explicitly.
 type adminCreateKeyRequest struct {
 	// Identifier is the owner reference the new key authenticates
 	// as (e.g. "acct:<slug>" or a signup email identifier).
@@ -62,19 +58,13 @@ type adminCreateKeyRequest struct {
 }
 
 // handleAdminKeysCreate serves POST /v1/admin/keys — the operator
-// key-mint path. Only TierOperator subjects may call it (the tier
-// exists only on staff-issued credentials seeded via
-// stellarindex-ops; it is never granted to public callers).
+// key-mint path. Only TierOperator subjects (staff-issued, never public) may call it.
 //
-// Requires an `X-Reason` header, the same contract
-// as PATCH /v1/admin/accounts and DELETE /v1/admin/keys/{keyID}. Minting
-// a privileged credential is at least as consequential as setting a
-// per-account override or killing a key.
+// Requires an `X-Reason` header, as PATCH /v1/admin/accounts and DELETE /v1/admin/keys/{keyID}
+// do, since minting a privileged credential is equally consequential.
 //
-// Every successful mint is audit-logged: a structured log line
-// unconditionally, plus a persisted audit_log row ("key.mint",
-// ActorStaff) when the deployment wired an [AuditSink] —
-// best-effort, never blocking the mint.
+// Every successful mint is structured-logged, plus a best-effort audit_log row ("key.mint",
+// ActorStaff) when an [AuditSink] is wired.
 func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -111,21 +101,10 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delegation clamp — the SAME chokepoint the self-service path
-	// runs (handleAccountKeysCreate). The tier check above is not the
-	// whole authority question: this very handler mints `tier:
-	// operator` keys with an explicit `scopes` list, so a
-	// scope-narrowed operator credential exists by construction, and
-	// an empty scope list means EVERY capability (auth.Subject.HasScope
-	// / checkScopes short-circuit on len(Scopes)==0). Without the clamp
-	// a staff key minted as `tier: operator, scopes: ["admin"]` —
-	// deliberately unable to read customer data — could POST
-	// `scopes: []` here and mint itself a full-access operator key,
-	// with the audit row as the only signal. ClampMintScopes' own doc
-	// calls itself "the single chokepoint every mint path funnels
-	// through"; this call is what makes that true for the admin path.
-	// The same clamp bounds rate_limit_per_min, so a scope-narrowed
-	// operator cannot mint 100k/min keys.
+	// Delegation clamp: the same chokepoint as the self-service path. The tier check is not
+	// enough, because scope-narrowed operator keys exist and an empty scope list means EVERY
+	// capability; unclamped, a narrowed key could POST `scopes: []` and mint itself full access.
+	// The clamp also bounds rate_limit_per_min.
 	scopes, ok := s.clampMintToCaller(w, r, subject, req.Scopes, req.RateLimitPerMin)
 	if !ok {
 		return
@@ -133,12 +112,8 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	// Persist, audit-log and echo the CLAMPED set, never the request's:
 	// the audit trail has to record what was actually issued.
 	req.Scopes = scopes
-	// A request that leaves rate_limit_per_min unset (0) never reaches
-	// ClampToMinter's own-ceiling check (it only fires for
-	// rateLimitPerMin > 0), so an unset request would otherwise persist
-	// as 0 — the deployment/tier default, which can exceed a
-	// rate-limited caller's own ceiling. Inherit the caller's ceiling
-	// explicitly, mirroring ChildKeyRequest's unconditional copy.
+	// An unset (0) rate_limit_per_min skips ClampToMinter's ceiling check and would persist as the
+	// tier default, which can exceed a rate-limited caller's own ceiling; inherit the caller's.
 	if req.RateLimitPerMin == 0 && subject.RateLimitPerMin > 0 {
 		req.RateLimitPerMin = subject.RateLimitPerMin
 	}
@@ -194,10 +169,8 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // clampMintToCaller applies [auth.ClampToMinter] ahead of the store's own
-// re-check so a refused escalation is a 403 naming the reason, logged at
-// WARN with the actor and counted in [obs.MintScopeClampRefusedTotal]
-// — otherwise a repeated escalation probe leaves no telemetry
-// an alert could fire on.
+// re-check so a refused escalation is a 403 naming the reason, logged at WARN with the actor and
+// counted in [obs.MintScopeClampRefusedTotal]; otherwise repeated probing leaves no alertable signal.
 func (s *Server) clampMintToCaller(
 	w http.ResponseWriter, r *http.Request, caller auth.Subject, scopes []string, rateLimitPerMin int,
 ) ([]string, bool) {
@@ -217,18 +190,14 @@ func (s *Server) clampMintToCaller(
 }
 
 // revokeKeyEverywhere revokes a credential in every store that might
-// hold a live record for it. Redis is the working
-// credential under the default auth_backend=redis; Postgres's
-// api_keys row is the durable management record that
-// mintRegisterKey ALSO writes for the same KeyID. Revoking only
-// Redis stops authentication but leaves api_keys.revoked_at NULL —
-// the row keeps counting toward the active-key ceiling and lists as
-// live to every Postgres reader. Both legs are scoped to identifier
-// and treat "no such key" and "another owner's key" identically, so
-// neither can be used to enumerate or revoke another account's keys.
+// hold a live record for it. Redis is the working credential under auth_backend=redis, and the
+// Postgres api_keys row is the durable record mint also writes; revoking only Redis would leave
+// revoked_at NULL, so the row keeps counting toward the active-key ceiling. Both legs are scoped
+// to identifier and treat "no such key" and "another owner's key" identically, so neither
+// enumerates or revokes another account's keys.
 //
-// Returns [auth.ErrKeyNotFound] when NEITHER leg revoked anything, so
-// a caller never reports a typo'd identifier or key id as a revoke.
+// Returns [auth.ErrKeyNotFound] when NEITHER leg revoked anything, so a typo is never reported
+// as a revoke.
 func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, reason string) error {
 	err := s.Accounts.RevokeKeyByID(ctx, identifier, keyID)
 	revoked := err == nil
@@ -253,12 +222,10 @@ func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, rea
 }
 
 // revokeOwnedPlatformKey revokes keyID's Postgres api_keys row only
-// when that row's account is the one identifier names. The store's
-// Revoke is scoped by account UUID, but the operator names the owner by
-// identifier, so resolving one to the other has to happen here. A missing row, a
-// row owned by another account, an already-revoked row, or no store to
-// prove ownership all return [platform.ErrNotFound] without revoking
-// (fail closed, no enumeration oracle); nil means a row was revoked.
+// when that row's account is the one identifier names. The store's Revoke is scoped by account
+// UUID while the operator names the owner by identifier, so the resolution happens here. A
+// missing, foreign or already-revoked row, or no store to prove ownership, returns
+// [platform.ErrNotFound] without revoking (fail closed, no enumeration oracle).
 func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, reason string) error {
 	keys := s.APIKeyBudgets.Platform
 	if keys == nil {
@@ -285,23 +252,17 @@ func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, 
 
 // handleAdminKeysRevoke serves DELETE
 // /v1/admin/keys/{keyID}?identifier=<owner> — the operator kill switch for
-// a leaked or abused credential.
+// a leaked or abused credential. Self-service revoke is scoped to the caller's OWN identifier and
+// would need the compromised customer's credential, so this is staff's only way to kill an
+// arbitrary key.
 //
-// It is the only way for staff to kill an arbitrary key: self-service
-// revoke (DELETE /v1/account/keys/{keyID}) is scoped to the caller's OWN
-// identifier, so it requires the compromised customer's credential, and the
-// dashboard staff surface is read-only.
+// `identifier` is required rather than inferred: the key store is indexed by (identifier,
+// key_id), and scoping to a named owner stops a mistyped key id reaching another customer's
+// account.
 //
-// `identifier` is required rather than inferred: the key store is indexed
-// by (identifier, key_id), and scoping the delete to a named owner stops a
-// mistyped key id reaching into a different customer's account. Operators
-// read both off GET /v1/account/keys or the audit row for the mint.
-//
-// Operator-tier only; requires an `X-Reason` header (same contract as PATCH
-// /v1/admin/accounts). 204 only when a key was actually revoked; 404, with
-// no audit row, when no key matches (identifier, keyID), so a typo'd
-// identifier reads as a failure, never a contained leak. "No such key" and
-// "another owner's key" share the 404: no cross-account enumeration oracle.
+// Operator-tier only; requires an `X-Reason` header. 204 only when a key was actually revoked;
+// 404, with no audit row, when none matches, so a typo reads as a failure, never a contained
+// leak. "No such key" and "another owner's key" share the 404 (no enumeration oracle).
 func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 	subject, ok := s.requireOperator(w, r, "/v1/admin/keys/{keyID}")
 	if !ok {

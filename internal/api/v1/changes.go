@@ -25,19 +25,12 @@ type ChangeSummaryReader interface {
 // ChangeSummaryResponse is the wire shape returned by
 // GET /v1/changes/{entity_type}/{id}.
 //
-// Mirrors the change_summary_5m hypertable but with JSON-friendly
-// types: pointers stay pointers (omitempty + null on the wire),
-// timestamps are RFC 3339, and the entity-keying tuple is echoed
-// in the response so a single payload is self-describing.
+// Mirrors the change_summary_5m hypertable: pointers stay pointers (null on the wire), timestamps
+// are RFC 3339, and the entity-keying tuple is echoed so a payload is self-describing.
 //
-// Powers every multi-window delta strip on the explorer per
-// data-inventory §6.1.
-// The *_value fields are MONEY (a price / market-cap snapshot)
-// and cross the wire as JSON STRINGS, matching every other money field the
-// API serves (e.g. /v1/price's `price`), and carry the exact decimal string
-// the changesummary rollup stored — no float64 round-trip. The
-// *_delta_pct fields are percentages, not money, and stay JSON numbers,
-// display-grade by design; streak_days stays an int.
+// The *_value fields are MONEY and cross the wire as JSON STRINGS carrying the exact decimal the
+// rollup stored, with no float64 round-trip. The *_delta_pct fields are display-grade percentages
+// and stay JSON numbers; streak_days stays an int.
 type ChangeSummaryResponse struct {
 	EntityType   string `json:"entity_type"`
 	EntityID     string `json:"entity_id"`
@@ -63,34 +56,23 @@ type ChangeSummaryResponse struct {
 	Acceleration    string `json:"acceleration,omitempty"`
 }
 
-// allowedChangeSummaryEntityTypes pins the set of entity_type values
-// the API accepts: the families a change-summary worker actually
-// writes. Both are computed off one aggregator pair's 1-minute VWAP
-// (see buildChangeSummaryEntities in cmd/stellarindex-aggregator).
+// allowedChangeSummaryEntityTypes pins the entity_type values the API accepts: the families a
+// change-summary worker actually writes, both computed off one aggregator pair's 1-minute VWAP.
 //
-// The change_summary_5m CHECK is wider — it reserves 'protocol' and
-// 'source' as well — but no worker computes those, so accepting them
-// here bought only a 404 saying "the worker hasn't computed a row
-// yet" for entities no worker will ever compute. The API advertises
-// what it can serve; re-opening a family means landing its worker,
+// The table CHECK also reserves 'protocol' and 'source', but no worker computes them, so
+// accepting them would only yield a misleading 404. Re-opening a family means landing its worker,
 // this set, and the OpenAPI enum together.
 var allowedChangeSummaryEntityTypes = map[string]struct{}{
 	"coin": {},
 	"pair": {},
 }
 
-// changeSummaryCoinCandidates returns the entity_id forms to try
-// for a coin lookup. The worker writes rows under the canonical
-// asset_id (`native`, `crypto:XLM`, `USDC-GA5Z…`), but consumers
-// reasonably reach for the friendly slug (`XLM`, `USDC`); without
-// expansion `/v1/changes/coin/XLM` 404s even when XLM data is
-// populated under `native` and `crypto:XLM`.
+// changeSummaryCoinCandidates returns the entity_id forms to try for a coin lookup. The worker
+// writes rows under the canonical asset_id (`native`, `crypto:XLM`, `USDC-GA5Z...`) but consumers
+// use the slug (`XLM`), which would 404 without expansion.
 //
-// First entry is always the literal user input so an exact match
-// short-circuits; subsequent entries are best-effort translations.
-//
-// For non-coin entity_types, returns just the literal input — the
-// pair form is documented as an exact `base/quote` string.
+// The first entry is always the literal input so an exact match short-circuits. Non-coin types
+// return just the literal input, since the pair form is an exact `base/quote` string.
 func changeSummaryCoinCandidates(entityType, entityID string) []string {
 	if entityType != "coin" {
 		return []string{entityID}
@@ -111,15 +93,9 @@ func changeSummaryCoinCandidates(entityType, entityID string) []string {
 		add("native")
 		add("crypto:XLM")
 	}
-	// Bare classic-asset code (e.g. "USDC", "EURC") → also try the
-	// global crypto ticker form, which the aggregator publishes for
-	// CEX/FX-quoted trades. The full `<CODE>-G…` strkey form is
-	// already the literal entityID when callers provide it.
-	//
-	// A Stellar classic asset code is at most 12 characters
-	// (SEP-11 alphanum12); the length bound keeps a 56-char strkey —
-	// e.g. an XLM SAC C-address — from being manufactured into a
-	// bogus `crypto:CAS3J7…` ticker that matches nothing.
+	// A bare classic-asset code ("USDC") also tries the global crypto ticker form the aggregator
+	// publishes for CEX/FX-quoted trades. A classic code is at most 12 characters (alphanum12);
+	// the bound keeps a 56-char strkey such as an XLM SAC C-address from becoming a bogus ticker.
 	if upper != "" && upper != "NATIVE" && len(upper) <= 12 &&
 		!strings.Contains(entityID, "-") && !strings.Contains(entityID, ":") {
 		add("crypto:" + upper)
@@ -134,15 +110,11 @@ func changeSummaryCoinCandidates(entityType, entityID string) []string {
 	if a, err := canonical.ParseAsset(entityID); err == nil {
 		add(a.String())
 	}
-	// Fold in the FULL canonical alias family for
-	// every form gathered so far, so the XLM SAC C-address (and any
-	// configured classic↔SAC pair) is a candidate too — the change-
-	// summary worker writes a Soroban-sourced XLM rollup under the SAC
-	// form, which the native/crypto:XLM branches above omit. AssetAliasStrings
-	// orders the SAC form LAST, so it is only ever tried after the deep
-	// classic/CEX forms miss (money-safety: thin Soroban never shadows
-	// the established forms). Ranging over a snapshot keeps the append
-	// from feeding itself.
+	// Fold in the FULL canonical alias family of every form gathered so far, so the XLM SAC
+	// C-address (and any classic<->SAC pair) is a candidate: the worker writes a Soroban-sourced
+	// XLM rollup under the SAC form. AssetAliasStrings orders the SAC form LAST so thin Soroban
+	// data never shadows the established forms. Ranging over a snapshot stops the append feeding
+	// itself.
 	for _, id := range append([]string(nil), out...) {
 		if a, err := canonical.ParseAsset(id); err == nil {
 			for _, form := range canonical.AssetAliasStrings(a) {
@@ -155,14 +127,9 @@ func changeSummaryCoinCandidates(entityType, entityID string) []string {
 
 // handleChangeSummary serves GET /v1/changes/{entity_type}/{id}.
 //
-// Returns 503 when no ChangeSummary reader is wired (operator
-// hasn't run the rollup worker yet). Returns 400 for bad
-// entity_type. Returns 404 (problem+json) when the entity has no
-// row yet — the worker's first refresh hasn't run, or the entity
-// was added since the last refresh.
-//
-// Cache header: short-lived, since the worker refreshes on a
-// 5-minute cadence.
+// Returns 503 when no ChangeSummary reader is wired, 400 for a bad entity_type, and 404
+// (problem+json) when the entity has no row yet (not refreshed since it was added). The cache
+// header is short-lived because the worker refreshes every 5 minutes.
 func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	if s.ChangeSummary == nil {
 		writeProblem(w, r,
@@ -189,20 +156,13 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For coin entities, the worker writes one row per canonical
-	// asset_id form (`native`, `crypto:XLM`, `USDC-GA5Z…`, …). A
-	// caller passing the friendly slug "XLM" or just "USDC" without
-	// the issuer suffix would 404 against the strict-equality lookup
-	// even when the underlying data exists. Expand into candidate
-	// forms, then try each in order; first hit wins.
+	// For coin entities the worker writes one row per canonical asset_id form, so a bare slug
+	// would 404 on strict equality. Expand into candidates and take the first hit.
 	//
-	// Deliberately NOT the same set as `oracleAssetCandidates`: that
-	// helper's ticker translation is gated on the verified-currency
-	// catalogue, because it answers a per-ISSUER identity with
-	// global-ticker rows. This one only ever
-	// promotes a BARE code the caller typed — an id carrying `-` or `:`
-	// is left alone (see changeSummaryCoinCandidates), so no
-	// (code, issuer) pair is ever widened to a ticker here.
+	// Deliberately NOT the set `oracleAssetCandidates` builds: that ticker translation is gated on
+	// the verified-currency catalogue because it answers a per-ISSUER identity with global-ticker
+	// rows. This only promotes a BARE code; an id carrying `-` or `:` is left alone, so no
+	// (code, issuer) pair is ever widened to a ticker.
 	candidates := changeSummaryCoinCandidates(entityType, entityID)
 
 	var (
@@ -253,20 +213,14 @@ const changeSummaryStaleAfter = 10 * time.Minute
 // changeSummaryGateSurface labels this surface on the withholding metrics.
 const changeSummaryGateSurface = "change_summary"
 
-// changeSummaryWithheld applies /v1/price's withholding verdict to a stored
-// row and writes the withheld problem when it fires. Every value on the row
-// is an aggregated price claim for the row's market — current_value, the
-// window values and the ATH/ATL — so a market /v1/price refuses to price
-// must not be priced here either. Decided at read time, like the decimals
-// scale: a verdict (a newly flagged issuer, a market gone thin) must take
-// effect on rows the worker wrote before it.
+// changeSummaryWithheld applies /v1/price's withholding verdict to a stored row and writes the
+// withheld problem when it fires. Every value on the row is an aggregated price claim for its
+// market, so a market /v1/price refuses to price must not be priced here. Decided at read time so
+// a new verdict (a flagged issuer, a thinned market) covers rows written before it.
 //
-// A "pair" row names its market exactly. A "coin" row names only the base
-// (the worker does not record which configured pair it read), so the
-// substance side asks the listing's single-asset question — does ANY
-// plausible backing market clear the floor — and the scam side asks about
-// the base. An id that does not parse names no market that can be vetted,
-// and is withheld rather than served unvetted.
+// A "pair" row names its market exactly. A "coin" row names only the base, so the substance side
+// asks whether ANY plausible backing market clears the floor and the scam side asks about the
+// base. An id that does not parse is withheld rather than served unvetted.
 func (s *Server) changeSummaryWithheld(w http.ResponseWriter, r *http.Request, row timescale.ChangeSummaryRow) bool {
 	base, quote, ok := changeSummaryLegs(row.EntityType, row.EntityID)
 	if !ok {
@@ -296,16 +250,12 @@ func (s *Server) changeSummaryWithheld(w http.ResponseWriter, r *http.Request, r
 	return true
 }
 
-// changeSummaryLegs returns the market a stored row's absolute values are
-// priced in, read from the STORED entity id — what the worker keyed the row
-// on, never what the caller typed:
+// changeSummaryLegs returns the market a stored row's absolute values are priced in, read from the
+// STORED entity id (what the worker keyed the row on), never what the caller typed:
 //
 //   - "pair": the id IS the source pair (`base/quote`).
-//   - "coin": the id is the base asset only. The worker computes a coin row
-//     off the first configured aggregator pair for that base and does not
-//     record which, so the quote leg is taken as [defaultPriceQuote].
-//     Recording the source pair on the row would remove the assumption and
-//     needs a schema change.
+//   - "coin": the id is the base only. The worker does not record which aggregator pair it used,
+//     so the quote leg is assumed to be [defaultPriceQuote]; removing that needs a schema change.
 func changeSummaryLegs(entityType, entityID string) (base, quote canonical.Asset, ok bool) {
 	switch entityType {
 	case "pair":
@@ -327,22 +277,15 @@ func changeSummaryLegs(entityType, entityID string) (base, quote canonical.Asset
 // changeSummaryResponse projects a stored row onto the wire shape,
 // decimals-normalising every absolute value on the way out.
 //
-// change_summary_5m holds RAW prices_1m ratios: the rollup worker copies
-// the CAGG's vwap through untouched (internal/aggregate/changesummary).
-// The *_delta_pct fields survive that — both legs of each percentage come
-// from the same raw series, so the factor cancels — and so do the streak
-// and acceleration labels. The absolute figures do not: current_value,
-// the four window values and the ATH/ATL were published unscaled for a
-// confirmed non-7-decimals token while /v1/price normalised the same
-// bucket.
+// change_summary_5m holds RAW prices_1m ratios. The *_delta_pct fields, streak and acceleration
+// labels survive that because both legs share one raw series and the factor cancels; the absolute
+// figures (current_value, window values, ATH/ATL) do not, so they are scaled here for a confirmed
+// non-7-decimals token, matching /v1/price.
 //
-// WHY AT READ TIME, not in the worker. The upsert RATCHETS ath_value /
-// atl_value (GREATEST / LEAST against the stored row), and a token is
-// flagged only after it has already been trading. Normalising at write
-// would switch a row's scale mid-life and leave the ratchet pinned to an
-// extreme from the other scale for good. Keeping the table raw and
-// scaling here keeps one scale per row for ever and follows the table the
-// moment a row is confirmed or corrected; the CAGGs stay raw everywhere.
+// WHY AT READ TIME, not in the worker: the upsert RATCHETS ath_value / atl_value (GREATEST /
+// LEAST), and a token is flagged only after it has been trading. Normalising at write would switch
+// a row's scale mid-life and pin the ratchet to an extreme from the other scale. Keeping the table
+// raw keeps one scale per row and follows the confirmed-decimals table the moment it changes.
 func (s *Server) changeSummaryResponse(row timescale.ChangeSummaryRow) ChangeSummaryResponse {
 	scale := s.changeSummaryValueScale(row.EntityType, row.EntityID)
 	resp := ChangeSummaryResponse{
@@ -373,17 +316,13 @@ func (s *Server) changeSummaryResponse(row timescale.ChangeSummaryRow) ChangeSum
 	return resp
 }
 
-// changeSummaryValueScale returns the exact dex-nonstandard-decimals
-// factor for a stored row's absolute values, or nil when there is nothing
-// to scale (the overwhelmingly common case — callers then format the
-// stored float exactly as before).
+// changeSummaryValueScale returns the exact non-standard-decimals factor for a stored row's
+// absolute values, or nil when there is nothing to scale (the common case).
 //
-// The legs are [changeSummaryLegs]'. For a "coin" row the assumed quote is
-// the standard scale, which is exact for every quote a coin row is
-// realistically computed against (XLM, a classic or SAC-wrapped
-// stablecoin, a fiat or global ticker — none of which can be non-7dp).
-// An id that does not parse names nothing the confirmed table could hold,
-// so it scales by nothing.
+// The legs are [changeSummaryLegs]'. For a "coin" row the assumed quote is the standard scale,
+// exact for every quote a coin row is realistically computed against (XLM, stablecoins, fiat or
+// global tickers). An id that does not parse names nothing the confirmed table could hold, so it
+// scales by nothing.
 func (s *Server) changeSummaryValueScale(entityType, entityID string) *big.Rat {
 	base, quote, ok := changeSummaryLegs(entityType, entityID)
 	if !ok {
@@ -397,14 +336,10 @@ func (s *Server) changeSummaryValueScale(entityType, entityID string) *big.Rat {
 	return aggregate.DecimalsAdjustment(baseDec, quoteDec)
 }
 
-// scaledMoneyStr applies the decimals factor to a stored decimal string. A
-// nil scale returns v unchanged.
-//
-// v is already the exact decimal the rollup stored — no float64
-// round-trip here or in the multiply. big.Rat carries the multiply exactly,
-// and ratDecimalString renders it back to decimal exactly: the scale is
-// always a power of ten (see [aggregate.DecimalsAdjustment]), so the
-// product's denominator only ever picks up factors of 2 and 5.
+// scaledMoneyStr applies the decimals factor to a stored decimal string; a nil scale returns v
+// unchanged. There is no float64 round-trip: big.Rat multiplies exactly, and ratDecimalString
+// renders it back exactly because the scale is a power of ten (see [aggregate.DecimalsAdjustment]),
+// so the denominator only picks up factors of 2 and 5.
 func scaledMoneyStr(v string, scale *big.Rat) string {
 	if scale == nil {
 		return v

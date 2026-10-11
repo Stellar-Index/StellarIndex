@@ -29,15 +29,12 @@ const rwaCuratorDune = "dune:stellar"
 // uploaded price is whatever the curator typed.
 const RWAReferenceCuratorPrice = "curator_uploaded_price"
 
-// RWACuratedDirectoryReader is the seam the curated arm reads through.
-// *timescale.Store satisfies it. Optional: a deployment without it
-// serves no curated arm and says so.
+// RWACuratedDirectoryReader is the seam the curated arm reads through; *timescale.Store satisfies
+// it. Optional: without it no curated arm is served and the response says so.
 //
-// Two reads, one seam. The per-asset directory is what the arm was
-// built on; the first curator's per-asset list and prices turned out to
-// be PRIVATE uploads (see internal/ops/ingest/curated_rwa_sync.go), so
-// in practice it is the curator's PUBLISHED totals that answer, and the
-// directory stays empty until a curator whose list is readable exists.
+// Two reads, one seam. The first curator's per-asset list is private (see
+// internal/ops/ingest/curated_rwa_sync.go), so its PUBLISHED totals are what answers and the
+// directory stays empty until a curator with a readable list exists.
 type RWACuratedDirectoryReader interface {
 	CuratedRWADirectoryByAddress(ctx context.Context, curator string) (
 		map[string]timescale.CuratedRWAEntry, timescale.CuratedRWACensus, error)
@@ -75,15 +72,12 @@ type rwaCuratedCache struct {
 	at   time.Time
 }
 
-// rwaCuratedSnapshot fails CLOSED like every other snapshot on this
-// surface: a failed read yields an unavailable snapshot and is cached as
-// such, never the last good one.
+// rwaCuratedSnapshot fails CLOSED like every snapshot on this surface: a failed read is cached as
+// unavailable, never replaced by the last good one.
 //
-// The read runs on a context DETACHED from the caller's request, so the
-// request that triggers a refresh cannot poison the shared cache by
-// disconnecting mid-read, and under its own deadline, so a hung read
-// cannot hold the mutex indefinitely. The TTL is stamped only once the
-// read has returned.
+// The read runs on a context detached from the request, so a disconnecting caller cannot poison
+// the shared cache, under its own deadline so a hung read cannot hold the mutex indefinitely. The
+// TTL is stamped only once the read has returned.
 func (s *Server) rwaCuratedSnapshot(ctx context.Context) rwaCurated {
 	return s.rwaCuratedSnapshotWithin(ctx, rwaCuratedReadBudget)
 }
@@ -187,12 +181,9 @@ const rwaCuratedPublishedStaleAfter = 48 * time.Hour
 // directory table's curatedRWAPriceMaxAge.
 const rwaCuratedPublishedMaxAge = 7 * 24 * time.Hour
 
-// RWACuratedPublished is what the curator PUBLISHES: the headline
-// monthly RWA market-cap total its public dashboard queries last
-// computed, that month's split by the curator's own subclass labels,
-// and the full monthly series. The curator's arithmetic over the
-// curator's private inputs — no per-asset breakdown reaches this index
-// — served verbatim so the gap to the verified total is one number.
+// RWACuratedPublished is what the curator PUBLISHES: its headline monthly RWA market-cap total,
+// that month's split by its own subclass labels, and the monthly series. It is the curator's
+// arithmetic over private inputs, served verbatim so the gap to the verified total is one number.
 type RWACuratedPublished struct {
 	// TotalUSD is the latest month's total, 2dp.
 	TotalUSD string `json:"total_usd"`
@@ -225,14 +216,10 @@ type RWACuratedPublished struct {
 // verified summary and is never folded into it.
 type RWACuratedSummary struct {
 	Curator string `json:"curator"`
-	// Status is "served" (the curator's per-asset rows are below),
-	// "published_totals" (no per-asset row is readable, and the
-	// curator's published totals are in Published), "unavailable"
-	// (neither answered inside its bound, INCLUDING a failed
-	// contract-catalogue read after a successful curated-snapshot read —
-	// that failure must not report as "served" with zero assets, which
-	// reads identically to a curator with nothing curated) or "unwired"
-	// (no reader configured).
+	// Status is "served" (per-asset rows below), "published_totals" (no per-asset row readable; see
+	// Published), "unavailable" (neither answered inside its bound) or "unwired" (no reader).
+	// A failed contract-catalogue read after a good snapshot read is "unavailable": "served" with
+	// zero assets would read like a curator with nothing curated.
 	Status string `json:"status"`
 	// Assets counts curated rows served; AlsoVerified counts the subset
 	// the verified set already carries.
@@ -243,11 +230,8 @@ type RWACuratedSummary struct {
 	// verified set does NOT carry — what the curator counts that this
 	// index cannot verify.
 	AdditionalValueUSD *string `json:"additional_value_usd,omitempty"`
-	// CombinedValueUSD is the verified reference total plus
-	// AdditionalValueUSD: the figure a reader gets by counting the way
-	// the curator counts. Published so the comparison is one number on
-	// one page, and labelled so it cannot be mistaken for the verified
-	// total beside it.
+	// CombinedValueUSD is the verified reference total plus AdditionalValueUSD, i.e. counting the
+	// way the curator counts. It is labelled so it cannot be mistaken for the verified total.
 	CombinedValueUSD *string `json:"combined_value_usd,omitempty"`
 	// VerifiedValueUSD repeats summary.reference_valuation.value_usd so
 	// the three figures read together.
@@ -283,11 +267,9 @@ type rwaCuratedMember struct {
 	alsoVerified bool
 }
 
-// rwaCuratedMembership selects the curator's rows and marks which of them
-// the verified set already carries. A classic verified member is matched
-// by the Stellar Asset Contract its (code, issuer) derives — a pure
-// function of the pair and the network, so an impersonator's SAC never
-// collides with the genuine one.
+// rwaCuratedMembership selects the curator's rows and marks which the verified set already
+// carries. A classic verified member is matched by the SAC its (code, issuer) derives, a pure
+// function of the pair and network, so an impersonator's SAC never collides with the genuine one.
 func rwaCuratedMembership(snap rwaCurated, verified []RWAAsset) []rwaCuratedMember {
 	if !snap.available {
 		return nil
@@ -451,12 +433,9 @@ func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, degraded bool, verifi
 	return out
 }
 
-// rwaCuratedTally counts the served rows into the summary — how many the
-// verified set also carries, how many carry a value — and sums the value
-// of the rows the verified set does NOT carry, which is the only part
-// that adds to the verified total. The bool says whether any such row
-// carried a value at all, so an all-verified set serves no "additional"
-// figure rather than a zero.
+// rwaCuratedTally counts the served rows into the summary and sums the value of rows the verified
+// set does NOT carry, the only part that adds to the verified total. The bool reports whether any
+// such row carried a value, so an all-verified set serves no "additional" figure rather than zero.
 func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (*big.Rat, bool) {
 	additional := new(big.Rat)
 	anyAdditional := false
@@ -480,17 +459,13 @@ func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (*big.Rat, bool) {
 	return additional, anyAdditional
 }
 
-// rwaCuratedPublishedBlock renders what the curator last published, with
-// the signed gap to the verified reference total. Every figure is the
-// stored decimal re-rendered at 2dp through big.Rat, never a float; the
-// series and the split are served in the order the reader returned them
-// (oldest month first; largest subclass first).
+// rwaCuratedPublishedBlock renders what the curator last published, with the signed gap to the
+// verified reference total. Figures are the stored decimals re-rendered at 2dp through big.Rat,
+// never a float; series and split keep the reader's order (oldest month, largest subclass first).
 //
-// A total whose ExecutedAt is past [rwaCuratedPublishedMaxAge] is not
-// served at all — the curator's own clock, not this index's sync
-// health, has gone stale for too long. Between that and
-// [rwaCuratedPublishedStaleAfter] it is served labelled `stale: true`.
-// The split is its own query execution and is held to the same cutoff
+// A total whose ExecutedAt is past [rwaCuratedPublishedMaxAge] is not served: the curator's own
+// clock has gone stale, not this index's sync. Between that and [rwaCuratedPublishedStaleAfter]
+// it is served as `stale: true`. The split is a separate query execution held to the same cutoff
 // on its own clock (see [rwaCuratedPublishedSplit]).
 func rwaCuratedPublishedBlock(p *timescale.CuratedRWAPublished, verifiedRef *string, now time.Time) *RWACuratedPublished {
 	if p == nil {
@@ -550,11 +525,9 @@ func rwaCuratedPublishedSplit(p *timescale.CuratedRWAPublished, now time.Time) (
 
 // ─── handler hook ───────────────────────────────────────────────────
 
-// attachRWACurated runs the curated arm after the verified view is
-// complete and attaches its rows and total to the view, apart. The rows
-// are valued on valuationCtx, the request's contract valuation budget
-// (the snapshot read detaches from it); degraded reports that their read
-// failed or was cut short.
+// attachRWACurated runs the curated arm after the verified view is complete and attaches its rows
+// and total apart from it. Rows are valued on valuationCtx, the request's contract valuation
+// budget (the snapshot read detaches from it); degraded reports a failed or cut-short read.
 func (s *Server) attachRWACurated(
 	valuationCtx context.Context, view *RWAAssetsView, now time.Time,
 ) (degraded bool) {

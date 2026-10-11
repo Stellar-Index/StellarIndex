@@ -8,34 +8,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// This file puts a prewarmed, stale-while-revalidate layer under the
-// contract_count served on GET /v1/protocols — the same shape the bespoke
-// and network-throughput blocks use, applied to the roster read.
+// This file puts a prewarmed, stale-while-revalidate layer under the contract_count served on
+// GET /v1/protocols.
 //
-// Why: handleProtocolsList must not call protocolRoster PER protocol on
-// every origin miss, with no server-side cache — only Cache-Control:
-// max-age=60. For a registry-empty source that roster is a
-// `SELECT DISTINCT … LIMIT 5000` full served-tier scan, so the loop was
-// N such scans on an UNAUTHENTICATED, edge-cache-maskable route: a request
-// that skips the edge cache (or an attacker cache-busting the query string)
-// drives one served-tier scan per protocol. Measured 0.54–0.77s live,
-// masked only by the CDN.
+// Without it handleProtocolsList would call protocolRoster PER protocol on every origin miss; for
+// a registry-empty source that is a `SELECT DISTINCT ... LIMIT 5000` full served-tier scan, on an
+// UNAUTHENTICATED route where a cache-busting query string skips the edge cache.
 //
-// The count changes slowly (contracts are registered rarely), so a
-// per-source last-good count served stale-while-revalidate is exact enough
-// and collapses the request path to a map read. One background refresh runs
-// per source per protocolRosterTTL regardless of request rate, and the
-// prewarm sweep keeps every entry warm so cold first loads are the
-// exception, not the rule.
+// The count changes slowly, so a per-source last-good count is exact enough and collapses the
+// request path to a map read. One background refresh runs per source per protocolRosterTTL
+// regardless of request rate, and the prewarm sweep keeps entries warm.
 
-// protocolRosterTTL is the freshness horizon of a cached roster count.
-// Past it the entry is NOT dropped — it is served while ONE detached
-// refresh runs (a directory count is immaterially stale for minutes). 20
-// minutes pairs with the protocol prewarm sweep (cmd/stellarindex-api
-// re-sweeps ~13–16 min apart), so a healthy deployment refreshes every
-// entry via prewarm and the request path essentially never triggers a
-// refresh of its own. It matches protocolDetailTTL deliberately: the roster
-// feeds the same directory the detail cache warms.
+// protocolRosterTTL is the freshness horizon of a cached roster count. Past it the entry is NOT
+// dropped but served while ONE detached refresh runs. 20 minutes exceeds the protocol prewarm
+// sweep interval (~13-16 min), so prewarm refreshes every entry and requests rarely refresh. It
+// matches protocolDetailTTL because the roster feeds the directory the detail cache warms.
 const protocolRosterTTL = 20 * time.Minute
 
 // protocolRosterRefreshTimeout bounds one detached roster refresh. The
@@ -70,22 +57,17 @@ func (c *rosterCache) initLocked() {
 	}
 }
 
-// cachedRosterCount returns meta's contract_count with stale-while-
-// revalidate semantics:
+// cachedRosterCount returns meta's contract_count with stale-while-revalidate semantics:
 //
-//   - fresh entry → served as-is.
-//   - entry past protocolRosterTTL → served immediately while ONE detached
-//     refresh runs on its own budget.
-//   - never built → wait for the detached single-flight refresh up to the
-//     caller's deadline. The refresh itself runs detached (background ctx +
-//     protocolRosterRefreshTimeout), so a request that times out still lets
-//     the fill complete and the next request lands warm.
+//   - fresh entry: served as-is.
+//   - entry past protocolRosterTTL: served immediately while ONE detached refresh runs.
+//   - never built: wait for the detached single-flight refresh up to the caller's deadline. The
+//     refresh uses a background ctx + protocolRosterRefreshTimeout, so a request that times out
+//     still lets the fill complete and the next request lands warm.
 //
-// ok=false only when the caller's context is cancelled OR the first-ever
-// roster read for this source FAILED (store error). A nil reader is not a
-// failure — it yields a genuine (possibly zero) count with ok=true. The
-// caller omits an ok=false source from the directory rather than publishing
-// a fabricated contract_count: 0.
+// ok=false only when the caller's context is cancelled OR the first-ever read for this source
+// FAILED. A nil reader is not a failure: it yields a genuine (possibly zero) count with ok=true.
+// The caller omits an ok=false source rather than publishing a fabricated contract_count: 0.
 func (s *Server) cachedRosterCount(ctx context.Context, meta ProtocolMeta) (count int, ok bool) {
 	key := meta.Name
 	c := &s.protocolRosterCache
@@ -111,15 +93,12 @@ func (s *Server) cachedRosterCount(ctx context.Context, meta ProtocolMeta) (coun
 	}
 }
 
-// refreshRosterLocked kicks ONE detached roster refresh for key (returning
-// the live flight when one is already up). Caller holds mu. The refresh runs
-// on a background context + protocolRosterRefreshTimeout — never a request
-// deadline — and only DISPLACES the cached entry on success: a failed read
-// keeps the last-good count (old-but-real beats a fabricated zero), and a
-// first-ever failure leaves the key absent so the caller omits the source.
-// endRosterFlight deregisters fl and releases its waiters. Deferred by
-// the refresh goroutine so it runs on EVERY exit including a panic —
-// a flight left in the map is never retried and never closes.
+// refreshRosterLocked kicks ONE detached roster refresh for key (returning the live flight if
+// one is up). Caller holds mu. It runs on a background context, never a request deadline, and
+// only DISPLACES the cached entry on success: a failed read keeps the last-good count (old-but-
+// real beats a fabricated zero), and a first-ever failure leaves the key absent.
+// endRosterFlight deregisters fl and releases its waiters. It is deferred so it runs on EVERY
+// exit including a panic: a flight left in the map is never retried and never closes.
 func (s *Server) endRosterFlight(key string, fl *rosterFlight) {
 	s.protocolRosterCache.mu.Lock()
 	delete(s.protocolRosterCache.flights, key)
@@ -134,12 +113,9 @@ func (s *Server) refreshRosterLocked(key string, meta ProtocolMeta) *rosterFligh
 	fl := &rosterFlight{done: make(chan struct{})}
 	s.protocolRosterCache.flights[key] = fl
 	go func() {
-		// Deregistering the flight and closing fl.done are the terminal
-		// bookkeeping, and they run from a DEFER so a panic in rosterErr
-		// cannot skip them. Left undone, the flight stays in the map
-		// forever and never closes: refreshRosterLocked keeps handing
-		// the dead flight to every later request, each of which then
-		// waits on a channel that will never fire.
+		// Deregistering the flight and closing fl.done run from a DEFER so a panic in rosterErr
+		// cannot skip them; otherwise refreshRosterLocked keeps handing the dead flight to every
+		// later request, each waiting on a channel that never fires.
 		defer func() {
 			if rec := recover(); rec != nil {
 				worker.Report(s.logger, "api-protocol-roster-refresh", rec)
@@ -166,13 +142,10 @@ func (s *Server) refreshRosterLocked(key string, meta ProtocolMeta) *rosterFligh
 	return fl
 }
 
-// PrewarmProtocolRosters refreshes EVERY source's roster-count cache entry
-// one read at a time, so /v1/protocols serves warm counts before anyone asks
-// and no user request pays for a cold roster scan. Driven by
-// cmd/stellarindex-api's protocol prewarm goroutine (alongside
-// PrewarmProtocolDetails). Refreshes unconditionally (the single flight
-// collapses duplicates) so entries are refreshed at exactly the sweep
-// cadence — the same reasoning as PrewarmProtocolDetails.
+// PrewarmProtocolRosters refreshes EVERY source's roster-count entry one read at a time, so no
+// user request pays for a cold roster scan. It refreshes unconditionally (the single flight
+// collapses duplicates), keeping entries at exactly the sweep cadence, like
+// PrewarmProtocolDetails.
 func (s *Server) PrewarmProtocolRosters(ctx context.Context) {
 	for _, meta := range protocolRegistry {
 		if ctx.Err() != nil {

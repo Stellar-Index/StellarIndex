@@ -25,22 +25,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/signupreaper"
 )
 
-// RegisterAccountCreator is the narrow platform-account boundary
-// POST /v1/register needs: create-only. Backed in production by
-// postgresstore.AccountStore (the same concrete store that serves
-// [PlatformAccountStore]); narrowed here so the register path can't
-// grow admin affordances by accident, mirroring how
-// PlatformAccountStore stays Get/Update-only.
+// RegisterAccountCreator is the narrow create-only account boundary POST /v1/register needs,
+// backed by postgresstore.AccountStore; narrowed so the register path cannot grow admin
+// affordances by accident.
 type RegisterAccountCreator interface {
 	Create(ctx context.Context, a platform.Account) (platform.Account, error)
-	// Suspend quarantines an account behind a machine-matchable
-	// suspended_reason. The register path uses it to mark an orphan —
-	// an account whose first credential never reached the validator
-	// store — as a `signup-race:` suspension so the existing
-	// signupreaper (suspended + signup-race: reason + no child
-	// users/api_keys) reclaims it, instead of leaving a permanent active
-	// account that can never authenticate. Backed by the same
-	// postgresstore.AccountStore.Suspend the admin path uses.
+	// Suspend quarantines an account behind a machine-matchable suspended_reason. Register marks an
+	// orphan (first credential never reached the validator store) as a `signup-race:` suspension
+	// so the signupreaper reclaims it instead of leaving an active account that can never
+	// authenticate.
 	Suspend(ctx context.Context, id uuid.UUID, reason string) error
 }
 
@@ -81,26 +74,21 @@ type RegisterResult struct {
 // /v1/signup — name + email + JSON wrapper fits in a fraction of it.
 const registerBodyMaxBytes = 4 * 1024
 
-// handleRegister serves POST /v1/register: public, anonymous-tier, the
-// canonical AGENT onboarding path (one curl, no body needed) —
+// handleRegister serves POST /v1/register: public, anonymous-tier, the canonical agent onboarding
+// path (one curl, no body needed) --
 //
 //	curl -X POST https://api.stellarindex.io/v1/register \
 //	    -H 'Content-Type: application/json'
 //
-// — creates a free-tier platform account and mints its first API key. Name
-// and email are optional (contact-only). Unlike the older email-keyed
-// /v1/signup, which mints a bare Redis credential, this creates a real
-// accounts row (promotable via PATCH /v1/admin/accounts/{id}) plus a
-// Postgres-backed key.
+// -- creating a free-tier platform account and minting its first API key. Name and email are
+// optional. Unlike email-keyed /v1/signup (a bare Redis credential), this creates a real accounts
+// row, promotable via PATCH /v1/admin/accounts/{id}, plus a Postgres-backed key.
 //
-// Abuse posture:
-//   - Per-IP volume: the SAME [SignupIPThrottle] /v1/signup uses
-//     (default 5/hour/IP), one budget across both.
-//   - CSRF/browser relay: Content-Type: application/json is REQUIRED
-//     (requireJSONContentType): a header-less POST is a CORS simple request
-//     no preflight would catch. A body-less POST is fine.
-//   - Retention: an account whose key is never used is erased once its
-//     validator record expires ([accounterasure.AbandonedRegistrationRetention]).
+// Abuse posture: per-IP volume shares the [SignupIPThrottle] budget with /v1/signup; Content-Type
+// application/json is REQUIRED (requireJSONContentType) because a header-less POST is a CORS
+// simple request no preflight catches, though a body-less POST is fine; an account whose key is
+// never used is erased once its validator record expires
+// ([accounterasure.AbandonedRegistrationRetention]).
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	req, ok := s.parseAndValidateRegister(w, r)
 	if !ok {
@@ -118,14 +106,10 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	plaintext, rec, err := s.mintRegisterKey(r.Context(), acct)
 	if err != nil {
-		// The account row exists but its first credential never reached
-		// the validator store — an orphan. Quarantine it as a
-		// suspended `signup-race:` orphan so the signupreaper reclaims it
-		// (suspended + reason + no child users/api_keys), instead of
-		// leaving a permanent active account that can never authenticate.
-		// This runs for EVERY mint failure, including a client disconnect:
-		// the account row is already durable, so a canceled request
-		// context must not skip cleanup of state that outlives it.
+		// The account row exists but its first credential never reached the validator store, so
+		// quarantine the orphan as `signup-race:` for the signupreaper to reclaim. This runs for
+		// EVERY mint failure, including a client disconnect: the row is already durable, so a
+		// canceled request context must not skip cleanup of state that outlives it.
 		s.logger.Error("register: key mint failed after account create (orphan account)",
 			"err", err, "account_id", acct.ID)
 		s.suspendRegisterOrphan(r.Context(), acct.ID, err)
@@ -195,12 +179,9 @@ func (s *Server) createRegisteredAccount(
 	return platform.Account{}, false
 }
 
-// mintRegisterKey mints the account's first API key at the free-tier
-// budgets: rate limit at the tier ceiling, monthly quota persisted
-// EXPLICITLY at the tier ceiling (not the 0 inherit sentinel) so the
-// key is metered from birth — the same posture the dashboard mint
-// path takes since "a key minted with no monthly_quota meters at the
-// tier ceiling" (clampMonthlyQuotaToAccount).
+// mintRegisterKey mints the account's first API key at the free-tier budgets. The monthly quota is
+// persisted EXPLICITLY at the tier ceiling, not the 0 inherit sentinel, so the key is metered from
+// birth, as in the dashboard mint path (clampMonthlyQuotaToAccount).
 func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (string, platform.APIKey, error) {
 	var buf [32]byte
 	if _, err := rand.Read(buf[:]); err != nil {
@@ -228,20 +209,15 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 		MonthlyQuota:    tier.MaxMonthlyQuota(),
 		Permissions:     platform.KeyPermissions{All: true},
 	}
-	// Mirror the credential into the Redis validator store FIRST — before
-	// the durable Postgres management row. r1 runs the REDIS
-	// validator (`backend=redis` at startup), so the mirror IS the working
-	// credential; the Postgres api_keys row is the MANAGEMENT record
-	// (listing, tier-clamp fan-out, revocation). A Postgres-only key 401s
-	// the instant the caller uses it.
+	// Mirror the credential into the Redis validator store FIRST, before the durable Postgres row.
+	// r1 runs the Redis validator, so the mirror IS the working credential and the Postgres
+	// api_keys row is only the management record (listing, tier clamp, revocation); a Postgres-only
+	// key 401s on first use.
 	//
-	// Ordering matters for orphan reaping: writing the mirror first means a
-	// mirror failure leaves NO durable api_keys row — only the account row,
-	// which handleRegister then suspends for the signupreaper to reclaim —
-	// instead of a permanent active account + api_keys pair that can never
-	// authenticate and no reaper matches. The mirror is keyed by the SAME
-	// plaintext so one secret validates on either backend, and carries an
-	// idle TTL that re-warms on use (CreateWithSecret) so it cannot grow the
+	// Mirror-first matters for orphan reaping: a mirror failure leaves no api_keys row, only the
+	// account row that handleRegister suspends for the signupreaper, rather than a permanent pair
+	// no reaper matches. The mirror uses the same plaintext so one secret validates on either
+	// backend, and its idle TTL re-warms on use (CreateWithSecret) so it cannot grow the
 	// allkeys-lru keyspace without bound.
 	if s.APIKeyBudgets.RedisMirror != nil {
 		mirrored, err := auth.APIKeyRecordFromPlatform(rec, auth.AccountIdentifier(acct.Slug))
@@ -260,19 +236,14 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 
 	out, err := s.APIKeyBudgets.Platform.Create(ctx, rec, tier.MaxActiveKeys())
 	if err != nil {
-		// The credential is already live in the validator store but its
-		// durable management row failed to commit — a credential with no
-		// owner record. Roll the mirror back so we never emit an
-		// unlistable/unrevokable key (the mirror-first inversion). Best-
-		// effort: the account is suspended + reaped and the mirror carries
-		// an idle TTL, so even a failed rollback self-heals rather than
-		// persisting a working orphan credential.
+		// The credential is live in the validator store but its management row failed to commit.
+		// Roll the mirror back so we never emit an unlistable, unrevokable key. Best-effort: the
+		// account is suspended and reaped and the mirror has an idle TTL, so a failed rollback
+		// self-heals.
 		//
-		// Detached from ctx: a canceled/deadline-exceeded request context
-		// is the common trigger for this rollback (the Create call above
-		// just failed on it), so rolling back on the SAME dead context
-		// guarantees the rollback also fails, leaving a live credential
-		// for the mirror's full idle TTL.
+		// Detached from ctx: a canceled or expired request context is the common trigger (the
+		// Create above just failed on it), so rolling back on the same dead context would also
+		// fail and leave a live credential for the mirror's full idle TTL.
 		if s.APIKeyBudgets.RedisMirror != nil {
 			rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			if rbErr := s.APIKeyBudgets.RedisMirror.RevokeKeyByID(rbCtx, auth.AccountIdentifier(acct.Slug), rec.ID); rbErr != nil && !errors.Is(rbErr, auth.ErrKeyNotFound) {
@@ -286,21 +257,15 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 	return plaintext, out, nil
 }
 
-// suspendRegisterOrphan quarantines the account left behind when key
-// minting failed after the account row committed. It stamps a
-// `signup-race:` suspended_reason — the exact prefix
-// signupreaper.ReapSuspendedOrphans matches — so the existing reaper
-// (suspended + signup-race: reason + no child users/api_keys, older than
-// its MinAge) reclaims the row on its normal sweep. A register orphan has
-// no child user and, because the mirror is written before the durable key
-// row, no api_keys child either, so it satisfies the reaper's conservative
-// predicate exactly.
+// suspendRegisterOrphan quarantines the account left behind when key minting failed after the
+// account row committed. The `signup-race:` suspended_reason is the exact prefix
+// signupreaper.ReapSuspendedOrphans matches. A register orphan has no child user and, because the
+// mirror is written first, no api_keys child, so it satisfies the reaper's conservative predicate.
 //
-// Best-effort: the caller has already logged the orphan and is about to
-// 500, so a failed suspend only means the row waits for the next attempt
-// or an operator; it never changes the response. Runs on a detached,
-// short-deadline context so a request whose own deadline was consumed by
-// the failing mirror/key write can still quarantine the row.
+// Best-effort: the caller has logged the orphan and is about to 500, so a failed suspend only
+// leaves the row for an operator and never changes the response. It runs on a detached,
+// short-deadline context so a request whose deadline the failing write consumed can still
+// quarantine the row.
 func (s *Server) suspendRegisterOrphan(ctx context.Context, accountID uuid.UUID, cause error) {
 	if s.RegisterAccounts == nil {
 		return
@@ -351,12 +316,9 @@ func (s *Server) parseAndValidateRegister(w http.ResponseWriter, r *http.Request
 		return registerRequest{}, false
 	}
 
-	// CSRF gate, same reasoning as /v1/signup: application/json is not
-	// a CORS "simple request" type, so any cross-site browser POST
-	// carrying it must be preflighted (and refused). The header is
-	// REQUIRED, not merely validated-when-present; see
-	// requireJSONContentType, the helper shared with /v1/signup so the
-	// two anon durable-write gates cannot drift apart.
+	// CSRF gate, as in /v1/signup: application/json is not a CORS simple-request type, so a
+	// cross-site POST carrying it must be preflighted and refused. The header is REQUIRED;
+	// requireJSONContentType is shared so the two anonymous write gates cannot drift apart.
 	if !requireJSONContentType(w, r, "/v1/register") {
 		return registerRequest{}, false
 	}

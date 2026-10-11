@@ -15,22 +15,19 @@ import (
 
 // VWAPResult is the wire shape for /v1/vwap responses.
 //
-// Price is the volume-weighted mean as a decimal string (10-digit precision, consistent with
-// /v1/history + /v1/ohlc). Volumes are raw smallest-unit integer strings at the per-SOURCE scale of
-// the venues in the window (7 on-chain, 8 CEX, 6 FX), lifted to one common scale when the window
-// mixes venues; BaseVolumeDecimals / QuoteVolumeDecimals state that scale, as [OHLCBar] does.
+// Price is the volume-weighted mean as a decimal string (10-digit precision, as /v1/history and
+// /v1/ohlc). Volumes are raw smallest-unit integer strings at the per-SOURCE scale of the venues
+// (7 on-chain, 8 CEX, 6 FX), lifted to one common scale when the window mixes venues;
+// BaseVolumeDecimals / QuoteVolumeDecimals state that scale, as [OHLCBar] does.
 //
-// OutliersFiltered is how many trades the sigma filter removed before the VWAP computation; zero
-// when outlier_sigma=0 or there were too few samples.
+// OutliersFiltered is how many trades the sigma filter removed; zero when outlier_sigma=0 or
+// there were too few samples.
 //
-// Truncated is true when the window hit the server's max-trades cap (10000): Price is then only
-// over the chronologically-LAST 10000 trades and is NOT the true window VWAP. Clients should
-// narrow the window. For cross-region-consistent VWAPs, `/v1/price` serves the closed-bucket
-// aggregator output (ADR-0015).
-//
-// LAST, not first: the reader orders `ts DESC` under the LIMIT and reverses, so truncation drops
-// the OLDEST rows. An `ORDER BY ts ASC LIMIT` would compute a busy 24h VWAP from a slice that
-// never reaches the present. This is also stated in the OpenAPI description.
+// Truncated is true when the window hit the max-trades cap (10000): Price is then over the
+// chronologically-LAST 10000 trades only and is NOT the true window VWAP. The reader orders
+// `ts DESC` under the LIMIT and reverses, so truncation drops the OLDEST rows; ASC would compute a
+// busy 24h VWAP from a slice that never reaches the present. Also stated in the OpenAPI
+// description. `/v1/price` serves the closed-bucket aggregator output (ADR-0015).
 type VWAPResult struct {
 	From        WireTime `json:"from"`
 	To          WireTime `json:"to"`
@@ -58,9 +55,8 @@ type VWAPResult struct {
 
 // handleVWAP serves GET /v1/vwap?base=...&quote=...&from=...&to=...&outlier_sigma=...
 //
-// Defaults match /v1/history (1-hour window ending now). outlier_sigma
-// defaults to 0 (no filtering) — the aggregator's config-default of
-// 4σ is a different layer's decision.
+// Defaults match /v1/history (1-hour window ending now). outlier_sigma defaults to 0 (no
+// filtering); the aggregator's own 4-sigma default is a different layer's decision.
 func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	reader := s.History
 	if reader == nil {
@@ -83,17 +79,13 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Scam-issuer gate on BOTH legs: keyed on the base alone,
-	// `?base=native&quote=<FLAGGED>` would republish a withheld market's
-	// price as its reciprocal. The fold lives in pricingguard.
+	// Scam-issuer gate on BOTH legs: keyed on the base alone, `?base=native&quote=<FLAGGED>` would
+	// republish a withheld market's price as its reciprocal.
 	//
-	// Scam only, not the substance gate: that would newly 404 every thin
-	// pair on a surface ADR-0015 positions as "compute it yourself", which
-	// is an owner decision.
-	//
-	// In the handler, not tradesInRangeWithStablecoinFallback: that helper
-	// also backs the single-bar /v1/ohlc, which the withheld problem's
-	// guidance promises stays visible.
+	// Scam only, not the substance gate, which would 404 every thin pair on a surface ADR-0015
+	// positions as "compute it yourself". Kept in the handler, not
+	// tradesInRangeWithStablecoinFallback, because that helper also backs /v1/ohlc, which the
+	// withheld problem's guidance promises stays visible.
 	if s.writeIfScamWithheld(w, r, base, quote, "vwap") {
 		return
 	}
@@ -116,20 +108,12 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// maxTrades caps each single-shot aggregation. Hitting the cap
-	// means the computed VWAP is only over the NEWEST N trades in
-	// the window (the reader drops the oldest rows — see
-	// VWAPResult.Truncated) and we flag the response
-	// truncated=true. /v1/vwap takes arbitrary
-	// time windows, so it always scans trades on-query — the
-	// aggregator binary's pre-computed rollups feed `/v1/price`'s
-	// closed-bucket surface (ADR-0015), not this endpoint.
-	// Per-request DB ceiling: /v1/vwap
-	// scans raw `trades` on every query (no CAGG), so without a
-	// bounded context a slow scan holds its pool connection until the
-	// client gives up. 8s matches the sibling raw-scan endpoints
-	// (liquidity_pools.go, markets.go) and fires before the blanket
-	// request-timeout middleware.
+	// maxTrades caps each single-shot aggregation; hitting it means the VWAP covers only the NEWEST
+	// N trades and the response is flagged truncated=true (see VWAPResult.Truncated).
+	//
+	// Per-request DB ceiling: arbitrary windows scan raw `trades` on every query (no CAGG), so
+	// without a bounded context a slow scan holds its pool connection until the client gives up.
+	// 8s matches the sibling raw-scan endpoints and fires before the blanket request timeout.
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
@@ -219,10 +203,9 @@ func (s *Server) writeVWAPError(w http.ResponseWriter, r *http.Request, err erro
 }
 
 // thinMarketEvidence is the live substance measurement behind
-// flags.thin_market on /v1/vwap and /v1/twap, or nil when the pair clears
-// the floor (or no gate is wired). These raw-trade surfaces serve a thin
-// market (ADR-0018), so the verdict is admitted rather than withheld; the
-// scam half already ran, hence the nil scam gate.
+// flags.thin_market on /v1/vwap and /v1/twap, or nil when the pair clears the floor (or no gate is
+// wired). These raw-trade surfaces serve a thin market (ADR-0018), so the verdict is admitted
+// rather than withheld; the scam half already ran, hence the nil scam gate.
 func (s *Server) thinMarketEvidence(ctx context.Context, base, quote canonical.Asset, surface string) *SubstanceEvidence {
 	if s.Substance == nil {
 		return nil
@@ -265,12 +248,9 @@ func parseVWAPOutlierSigma(w http.ResponseWriter, r *http.Request) (float64, boo
 	return v, true
 }
 
-// fetchVWAPTrades is the trade-fetch + error-dispatch wrapper extracted
-// from handleVWAP. Returns (trades, triangulated, ok); ok=false means a
-// problem+json has already been written (client-abort, cache-unavailable,
-// or generic internal error) and the caller must return immediately.
-// Pulled out to keep handleVWAP under the funlen budget while preserving
-// the cache-unavailable branch.
+// fetchVWAPTrades is the trade-fetch and error-dispatch wrapper for handleVWAP. Returns
+// (trades, triangulated, ok); ok=false means a problem+json has already been written
+// (client-abort, cache-unavailable or internal error) and the caller must return immediately.
 func (s *Server) fetchVWAPTrades(
 	ctx context.Context, w http.ResponseWriter, r *http.Request,
 	pair canonical.Pair, from, to time.Time, maxTrades int,
@@ -300,34 +280,27 @@ func (s *Server) fetchVWAPTrades(
 // tradesInRangeWithStablecoinFallback is the single raw-trade fetch behind every single-shot
 // ("point") rate endpoint: /v1/vwap, /v1/twap and the single-bar /v1/ohlc. Returns (window,
 // triangulated, err), trades sorted by close time ascending as [aggregate.ComputeOHLC] /
-// [aggregate.TWAP] require and lifted to one amount scale on both branches (a uniform window comes
-// back byte-identical, a mixed one weighted by real volume rather than smallest-unit magnitude).
+// [aggregate.TWAP] require and lifted to one amount scale (a mixed window is weighted by real
+// volume, not smallest-unit magnitude).
 //
-// A fiat-denominated quote has almost no trade stream of its own; the depth sits under the fiat's
-// pegged stablecoin pairs, so it is served by COMBINING every constituent of
-// [Server.usdPeggedConstituents], as the /v1/ohlc series path and the live aggregator do. Taking
-// the FIRST non-empty peg would answer `?quote=fiat:USD` differently for a point than for a
-// series; see [Server.fiatCombinedTrades].
+// A fiat quote has almost no trade stream of its own; its depth sits under the pegged stablecoin
+// pairs, so every constituent of [Server.usdPeggedConstituents] is COMBINED, as the series path
+// and live aggregator do. Taking the first non-empty peg would answer differently for a point than
+// a series; see [Server.fiatCombinedTrades].
 //
-// A non-fiat quote walks the XLM dual-form alias pairs and takes the FIRST form with trades, the
-// gate [Server.ohlcSeriesWithAliases] applies on the series side, so point and series resolve an
-// aliased input (?base=crypto:XLM&quote=USDC, whose SDEX depth is keyed under native/USDC)
-// identically instead of 404ing here.
+// A non-fiat quote walks the XLM alias pairs and takes the FIRST form with trades, as
+// [Server.ohlcSeriesWithAliases] does, so point and series resolve an aliased input
+// (?base=crypto:XLM&quote=USDC, keyed under native/USDC) identically instead of 404ing.
 func (s *Server) tradesInRangeWithStablecoinFallback(
 	ctx context.Context, pair canonical.Pair, from, to time.Time, maxTrades int,
 ) (aggregate.ScaledWindow, bool, error) {
 	if pair.Quote.Type == canonical.AssetFiat {
 		return s.fiatCombinedTrades(ctx, pair, from, to, maxTrades)
 	}
-	// Non-fiat quote: walk the XLM dual-form alias pairs the same way
-	// [Server.ohlcSeriesWithAliases] does on the series side and take the
-	// FIRST form that has trades. A literal-only read here silently omits
-	// every venue publishing XLM under the other id (native vs crypto:XLM
-	// vs the SAC), 404ing a valid-but-aliased input. First-hit — NOT a
-	// cross-form merge — is the point-rate-correct choice: blending prices
-	// across alias forms would fabricate a rate no single venue set
-	// produced (the SAC form is ordered last so a thin Soroban pool only
-	// answers when both established forms miss).
+	// Non-fiat quote: first alias form with trades wins. A literal-only read would omit venues
+	// publishing XLM under another id (native, crypto:XLM, SAC). First-hit, NOT a cross-form
+	// merge, because blending would fabricate a rate no single venue set produced; the SAC form is
+	// ordered last so a thin Soroban pool answers only when both established forms miss.
 	for _, b := range assetAliases(pair.Base) {
 		for _, q := range assetAliases(pair.Quote) {
 			ap, perr := canonical.NewPair(b, q)

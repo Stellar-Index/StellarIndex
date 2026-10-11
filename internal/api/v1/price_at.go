@@ -12,28 +12,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// PriceAtReader returns the closed VWAP bucket at-or-before a
-// historical instant for a pair. Production wiring is a thin adapter
-// around timescale.Store.ClosedVWAPAtOrBefore, which picks the finest
-// CAGG resolution (prices_1m for recent instants, coarser bars for
-// older ones — prices_1d spans to 2015) whose nearest at-or-before
-// bucket is within the honesty cap, and reports which it used.
+// PriceAtReader returns the closed VWAP bucket at-or-before a historical instant for a pair. It
+// picks the finest CAGG resolution whose nearest bucket is within the honesty cap and reports
+// which it used.
 //
-// The same reader backs GET /v1/price/changes: each horizon's
-// reference price is a PriceAt call at ts=now-horizon, which is why
-// the staleness tolerance is a parameter rather than a fixed cap
-// (/v1/price/at passes [priceAtMaxLookback]; the changes endpoint
-// passes a per-horizon tolerance).
+// GET /v1/price/changes shares it (one PriceAt per horizon), which is why the staleness tolerance
+// is a parameter: /v1/price/at passes [priceAtMaxLookback], changes passes a per-horizon value.
 type PriceAtReader interface {
-	// PriceAt returns (vwap decimal string, the bucket's CLOSE time,
-	// the resolution of the CAGG that served it in seconds, error).
-	// resolutionSeconds tells the caller the true window the answer
-	// spans (60 for a 1-minute bar, 86400 for a daily bar) so it
-	// labels window_seconds honestly. maxStaleness caps how far before
-	// ts the nearest bucket may close before the answer is refused —
-	// past it the reader returns ErrPriceAtUnavailable rather than
-	// fabricating continuity across a dead-market gap. A bucket that
-	// exists but is refused returns ErrPriceWithheld or ErrPriceAtGuarded.
+	// PriceAt returns (vwap decimal string, the bucket's CLOSE time, the serving CAGG resolution in
+	// seconds, error); the resolution lets the caller label window_seconds honestly. Past
+	// maxStaleness the reader returns ErrPriceAtUnavailable rather than fabricating continuity
+	// across a dead-market gap; an existing but refused bucket returns ErrPriceWithheld or
+	// ErrPriceAtGuarded.
 	PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration) (value string, observedAt time.Time, resolutionSeconds int, err error)
 }
 
@@ -43,32 +33,20 @@ type PriceAtReader interface {
 // dead-market gap). It never means a bucket exists and was refused.
 var ErrPriceAtUnavailable = errors.New("api: no closed bucket at or before requested timestamp")
 
-// ErrPriceAtGuarded is the sentinel a PriceAtReader returns when a
-// closed bucket exists but the serving-sanity guard refused it (a gross
-// outlier with no clean bucket inside maxStaleness, or no prior bucket to
-// validate it against). It matches errors.Is(err, ErrPriceWithheld), so
-// every withheld branch treats it as withheld, and carries
-// [PriceWithheldManipulationGuard] for the problem wording.
+// ErrPriceAtGuarded is returned when a closed bucket exists but the serving-sanity guard refused it
+// (a gross outlier with no clean bucket in range). It matches errors.Is(err, ErrPriceWithheld) and
+// carries [PriceWithheldManipulationGuard] for the problem wording.
 var ErrPriceAtGuarded = newPriceWithheld(PriceWithheldManipulationGuard)
 
-// priceAtMaxLookback caps the gap the endpoint tolerates between the
-// requested instant and the bucket actually found. Without a cap, a
-// ts inside a pair's multi-week quiet gap would silently serve a
-// weeks-old price as if it were "the price at ts". One day covers
-// every real market-data gap (CEX outages, sparse historical candles
-// synthesised at 1h) while refusing to fabricate continuity across
-// dead markets — the RFP's transparency intent applied backwards in
-// time.
+// priceAtMaxLookback caps the gap tolerated between the requested instant and the bucket found.
+// Without it a ts inside a multi-week quiet gap would serve a weeks-old price as "the price at
+// ts". One day covers real data gaps while refusing to fabricate continuity across dead markets.
 const priceAtMaxLookback = 24 * time.Hour
 
-// handlePriceAt serves GET /v1/price/at?asset=&quote=&ts=RFC3339 —
-// the point-in-time price for portfolio cost-basis / PnL / tax
-// tooling. The answer is the closed VWAP bucket at-or-before ts from the finest CAGG
-// resolution that covers it (prices_1m for recent instants, coarser
-// bars back to prices_1d for older ones); observed_at is the BUCKET's
-// close time, never ts, and window_seconds reports the resolution
-// used — so callers see exactly how far the nearest observation was
-// and at what granularity.
+// handlePriceAt serves GET /v1/price/at?asset=&quote=&ts=RFC3339, the point-in-time price for
+// cost-basis / PnL tooling. The answer is the closed VWAP bucket at-or-before ts from the finest
+// CAGG that covers it; observed_at is the BUCKET's close time, never ts, and window_seconds is the
+// resolution used, so callers see how far and how coarse the nearest observation was.
 func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 	if s.PriceAt == nil {
 		writeProblem(w, r,
@@ -104,13 +82,9 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-request DB ceiling: the alias walk tries up to 4
-	// combinations directly, then every configured USD peg on the
-	// stablecoin-fallback path, each a ClosedVWAPAtOrBefore CAGG
-	// lookup. Without a bounded context a slow run holds its pool
-	// connection until the client gives up. 8s matches the sibling
-	// single-shot read endpoints (oracle.go, vwap.go, ohlc.go) and
-	// fires before the blanket request-timeout middleware.
+	// Per-request DB ceiling: up to 4 alias combinations plus every USD peg on the fallback path,
+	// each a CAGG lookup; unbounded, a slow run holds its pool connection. 8s matches the sibling
+	// read endpoints and fires before the blanket request-timeout middleware.
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
@@ -141,24 +115,16 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if withheld != nil {
-		// At least one orientation HAS a closed bucket at-or-before ts
-		// and a serving gate refused to publish it — the distinct 404
-		// type so integrators can branch, same contract as /v1/price and
-		// /v1/price/changes (see ErrPriceWithheld), worded for the gate
-		// that fired.
+		// An orientation has a closed bucket at-or-before ts but a serving gate refused it: a
+		// distinct 404 type integrators can branch on (see ErrPriceWithheld), worded for the gate.
 		reason := priceWithheldReason(withheld)
 		writePriceWithheldProblemEvidence(w, r, asset, quote, reason, thinEvidenceFor(off, reason))
 		return
 	}
-	// The 404 below carries the same ambiguity the series surfaces have
-	// in their empty arrays: "no bucket within the lookback" is what a
-	// dead market and an instant predating the held history both look
-	// like. `ts` is the exclusive end of a point request — the daily
-	// bucket that STARTS at the floor has not closed at that instant, so
-	// an instant exactly at the floor is still outside coverage. The
-	// floor is measured over the pair AND the pegs the fallback above
-	// retried ([Server.priceAtCoverageSet]), since those are the buckets
-	// this lookup can answer from.
+	// "No bucket within the lookback" looks the same for a dead market and an instant predating
+	// held history. `ts` is the exclusive end of a point request: the daily bucket that STARTS at
+	// the floor has not closed yet, so an instant exactly at the floor is outside coverage. The
+	// floor spans the pair AND the pegs the fallback retried ([Server.priceAtCoverageSet]).
 	var (
 		coverageFrom *time.Time
 		outside      bool
@@ -193,15 +159,10 @@ func (s *Server) resolvePriceAt(
 	return PriceSnapshot{}, Flags{}, false, withheld, nil
 }
 
-// lookupPriceAt walks the alias combinations (same as every
-// other price surface) and returns the first in-lookback bucket.
-// withheld is the first ErrPriceWithheld-class error any orientation
-// returned (a substance/scam gate or the serving-sanity guard refused an
-// existing bucket), nil when none did — the caller needs it to choose the
-// correct 404 type and wording once every orientation (and, via
-// lookupPriceAtStablecoinFallback, every peg) is exhausted. err is a
-// reader failure ([isPriceAtMiss] false): it ends the walk, because a
-// later orientation's hit would stand in for an unknown answer.
+// lookupPriceAt walks the alias combinations and returns the first in-lookback bucket. withheld is
+// the first ErrPriceWithheld-class error seen, so the caller can choose the right 404 once every
+// orientation and peg is exhausted. err is a reader failure ([isPriceAtMiss] false); it ends the
+// walk because a later orientation's hit would stand in for an unknown answer.
 func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset, ts time.Time) (PriceSnapshot, bool, error, error) {
 	var withheld error
 	for _, a := range assetAliases(asset) {
@@ -225,13 +186,9 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 				// cap — refusing beats fabricating continuity.
 				continue
 			}
-			// dex-nonstandard-decimals forward normalization (M2): PriceAt
-			// returns the RAW prices_<n> ratio for the ACTUAL traded pair
-			// (a/q — which, after the lookupPriceAtStablecoinFallback retry,
-			// can be asset/<peg>). Resolve decimals against those legs, not the
-			// requested asset/quote. This is the sub-chokepoint for /v1/price/at
-			// (the fallback also routes through here). Byte-identical no-op for
-			// a pair with no confirmed non-7-decimals leg.
+			// PriceAt returns the RAW ratio for the ACTUAL traded pair (a/q, which after the
+			// stablecoin fallback can be asset/<peg>), so resolve decimals against those legs,
+			// not the requested asset/quote. The fallback also routes through here.
 			value = s.normalizeRawRatioString(value, pair.Base, pair.Quote)
 			return PriceSnapshot{
 				AssetID:       asset.String(),
@@ -246,20 +203,12 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 	return PriceSnapshot{}, false, withheld, nil
 }
 
-// lookupPriceAtStablecoinFallback is the CAGG sibling of the
-// raw-trades stablecoin fallback (vwap.go's
-// tradesInRangeWithStablecoinFallback / chart.go's
-// chartStablecoinFallback).
-// The 1m VWAP CAGG keys buckets by the REAL stored quote asset, so a
-// historical X/fiat:USD lookup misses unless something traded
-// directly in fiat:USD at that instant. When the literal + alias
-// walk found nothing and the quote is fiat:USD, retry each
-// operator-declared USD-pegged classic in priority order; the first
-// in-lookback bucket wins. The snapshot echoes the REQUESTED quote —
-// flags.triangulated (stamped by the caller) marks the proxy, same
-// contract as tryStablecoinFiatProxy on /v1/price. withheld carries
-// [Server.lookupPriceAt]'s withheld signal up across every peg tried;
-// a reader failure on any peg ends the walk as err.
+// lookupPriceAtStablecoinFallback is the CAGG sibling of the raw-trades stablecoin fallback.
+// CAGG buckets key on the REAL stored quote asset, so a historical X/fiat:USD lookup misses unless
+// something traded in fiat:USD then. When the alias walk found nothing for a fiat:USD quote, it
+// retries each USD-pegged classic in priority order; the first in-lookback bucket wins. The
+// snapshot echoes the REQUESTED quote and flags.triangulated (set by the caller) marks the proxy.
+// withheld carries the withheld signal across every peg; a reader failure on any peg ends the walk.
 func (s *Server) lookupPriceAtStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, ts time.Time,
 ) (PriceSnapshot, bool, error, error) {
@@ -323,13 +272,10 @@ func (s *Server) writePriceAtReadFailure(callCtx context.Context, w http.Respons
 		"Internal error", http.StatusInternalServerError, "")
 }
 
-// priceAtUSDPegPairs is the ordered proxy list
-// [Server.lookupPriceAtStablecoinFallback] walks: for a `fiat:USD`
-// quote, the asset against each operator-declared USD-pegged classic
-// in priority order, skipping a peg that is the asset itself; empty for
-// any other quote. It is a separate function so the coverage floor
-// ([Server.priceAtCoverageSet]) enumerates the SAME pairs the lookup
-// retries, from one definition.
+// priceAtUSDPegPairs is the ordered proxy list [Server.lookupPriceAtStablecoinFallback] walks: for
+// a `fiat:USD` quote, the asset against each USD-pegged classic (skipping the asset itself); empty
+// for any other quote. Kept separate so the coverage floor enumerates the SAME pairs the lookup
+// retries.
 func (s *Server) priceAtUSDPegPairs(asset, quote canonical.Asset) []canonical.Pair {
 	if quote.Type != canonical.AssetFiat || quote.Code != "USD" {
 		return nil
