@@ -26,27 +26,20 @@
 -- Working tables (account_cohort_members, account_cohort_parts_staging)
 -- are truncated and refilled every cycle and never read by the API.
 --
--- account_cohort_* — what the accounts this address CREATED or SPONSORED
--- went on to hold and do. The sponsor and creator boards rank an
--- address by how many accounts it stood behind; these tables answer the
--- question that ranking invites — what value did that cohort bring to
--- the network — from the cohort's own ledger footprint: current
--- holdings, monthly flows in and out, the contracts it moved value
--- through, how recently it was active, and its open DeFi positions.
+-- account_cohort_* — what the accounts an address CREATED or SPONSORED went
+-- on to hold and do: current holdings, monthly flows, contracts moved value
+-- through, recency, and open DeFi positions.
 --
--- One cycle (stellarindex-ops ch-cohort-rollup) rebuilds every table
--- into its _staging twin and swaps atomically, so a reader never sees a
--- half-built cohort. Membership is the edge tables above: an account
--- belongs to the cohort of every root it has an edge from, so the same
--- account can count under its creator AND each of its sponsors — the
--- two relations are never summed.
+-- One cycle (stellarindex-ops ch-cohort-rollup) rebuilds every table into its
+-- _staging twin and swaps atomically, so a reader never sees a half-built
+-- cohort. An account belongs to the cohort of every root it has an edge from,
+-- so it can count under its creator AND each sponsor — the two relations are
+-- never summed.
 --
 -- COVERED ROOTS. Every sponsor, and every creator with at least
--- account_cohort_min_created accounts to its name (the rollup constant in
--- internal/storage/clickhouse/account_cohort_rollup.go). Below that a
--- cohort is a handful of accounts and the per-account explorer pages are
--- the better read; the API says so rather than serving an empty cohort
--- as "holds nothing".
+-- account_cohort_min_created accounts (internal/storage/clickhouse/
+-- account_cohort_rollup.go). Below that the per-account pages are the better
+-- read; the API says so rather than serving an empty cohort as "holds nothing".
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_roots
 (
     rel             LowCardinality(String),   -- 'created' | 'sponsored'
@@ -62,8 +55,7 @@ ORDER BY (rel, root);
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_roots_staging
 AS stellar.account_cohort_roots;
 
--- Working table: the cohort membership the cycle aggregates against,
--- keyed by member so every source table joins on its account column.
+-- Working table: cohort membership keyed by member so every source joins on its account column.
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_members
 (
     rel    LowCardinality(String),
@@ -73,10 +65,9 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_members
 ENGINE = MergeTree
 ORDER BY (member, rel, root);
 
--- Current holdings of the cohort, per asset. `asset` is the canonical id
--- ledger_entries_current carries: 'native', 'CODE-ISSUER', or
--- 'pool:<hex>' for a classic liquidity-pool share (a DeFi position on
--- the classic side). Balances are stroops.
+-- `asset` is the canonical id ledger_entries_current carries: 'native',
+-- 'CODE-ISSUER', or 'pool:<hex>' for a classic liquidity-pool share.
+-- Balances are stroops.
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_holdings
 (
     rel     LowCardinality(String),
@@ -91,11 +82,10 @@ ORDER BY (rel, root, asset);
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_holdings_staging
 AS stellar.account_cohort_holdings;
 
--- Working table: one row per (cohort, month, asset, contract) per ledger
--- window of the movements walk. A month spans windows, so the walk
--- writes partial rows with a mergeable distinct-account state and the
--- cycle folds them into flows and contracts afterwards. `contract` is
--- the C… counterparty of a movement, '' for everything else.
+-- Working table: a month spans ledger windows of the movements walk, so the
+-- walk writes partial rows with a mergeable distinct-account state and the
+-- cycle folds them into flows and contracts. `contract` is the C… counterparty
+-- of a movement, '' otherwise.
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_parts_staging
 (
     rel       LowCardinality(String),
@@ -113,11 +103,9 @@ CREATE TABLE IF NOT EXISTS stellar.account_cohort_parts_staging
 ENGINE = MergeTree
 ORDER BY (rel, root, month, asset, contract);
 
--- Monthly value moved into and out of the cohort, per asset, in the
--- asset's smallest unit (stroops for classic assets; a Soroban token's
--- own scale when `asset` is a C… id). `movements` counts legs,
--- `active_accounts` distinct members that moved something that month
--- (uniqCombined — a close estimate, not an exact count).
+-- Monthly value moved in and out of the cohort, in the asset's smallest unit
+-- (stroops for classic; a Soroban token's own scale for a C… id).
+-- `active_accounts` is uniqCombined — a close estimate, not exact.
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_flows
 (
     rel             LowCardinality(String),
@@ -135,10 +123,8 @@ ORDER BY (rel, root, month, asset);
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_flows_staging
 AS stellar.account_cohort_flows;
 
--- Contracts the cohort moved value through: every C… counterparty of a
--- cohort movement, with how much of the cohort touched it and when.
--- This is the value-moving subset of "interacted with" — a call that
--- moved no balance leaves no movement and is not counted here.
+-- Contracts the cohort moved value through. Value-moving subset of
+-- "interacted with": a call that moved no balance is not counted.
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_contracts
 (
     rel             LowCardinality(String),
@@ -155,9 +141,7 @@ ORDER BY (rel, root, contract_id);
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_contracts_staging
 AS stellar.account_cohort_contracts;
 
--- How recently the cohort was active, from account_activity's last-seen
--- watermark per account: members seen in the last 30 / 90 / 365 days
--- as of the cycle.
+-- Members seen in the last 30 / 90 / 365 days, from account_activity's last-seen watermark.
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_activity
 (
     rel         LowCardinality(String),
@@ -172,13 +156,10 @@ ORDER BY (rel, root);
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_activity_staging
 AS stellar.account_cohort_activity;
 
--- A snapshot of every open Soroban DeFi position the served tier's
--- per-protocol folds know (blend, blend backstop, phoenix stake,
--- defindex vaults, sorocredit, aquarius gauges — the same six behind
--- /v1/accounts/{g}/positions), copied from Postgres each cycle so the
--- cohort join happens here, keyed by the position's owner. `amount` is
--- the fold's own decimal string in the fold's own unit; `asset` is ''
--- when the position is denominated in venue shares.
+-- Snapshot of every open Soroban DeFi position the served tier's folds know
+-- (the six behind /v1/accounts/{g}/positions), copied from Postgres each cycle
+-- so the cohort join happens here. `amount` is the fold's own decimal string
+-- in the fold's own unit; `asset` is '' when denominated in venue shares.
 CREATE TABLE IF NOT EXISTS stellar.defi_position_holders
 (
     protocol      LowCardinality(String),
@@ -197,14 +178,11 @@ CREATE TABLE IF NOT EXISTS stellar.defi_position_holders_staging
 AS stellar.defi_position_holders;
 
 -- One USD price per (canonical asset, calendar month): the served tier's
--- monthly VWAP over its own USD-quoted markets (prices_1mo, every alias
--- spelling of the base folded together — timescale.Store.MonthlyUSDVWAPs),
--- copied from Postgres each cohort cycle. The flows read LEFT JOINs it on
--- (asset, month) to value a month's movement at THAT month's price
--- beside the live-price figure; a month with no USD-quoted market has no
--- row and is served unpriced, never at zero. `vwap_usd` is the exact
--- decimal string; `volume_usd` the month's USD volume behind it. XLM's
--- own row is here under 'native'.
+-- monthly VWAP over its USD-quoted markets (prices_1mo, every alias spelling
+-- folded — timescale.Store.MonthlyUSDVWAPs), copied from Postgres each cycle.
+-- Flows LEFT JOIN it on (asset, month); a month with no USD-quoted market has
+-- no row and is served unpriced, never at zero. `vwap_usd` is the exact
+-- decimal string. XLM is under 'native'.
 CREATE TABLE IF NOT EXISTS stellar.asset_month_usd_prices
 (
     asset      String,
@@ -238,10 +216,10 @@ ORDER BY (rel, root, protocol, venue, asset, position_kind);
 CREATE TABLE IF NOT EXISTS stellar.account_cohort_positions_staging
 AS stellar.account_cohort_positions;
 
--- A deployment created before the retype keeps `amount Float64` under IF
--- NOT EXISTS, and its staging twin copies it, so retype both halves of
--- the EXCHANGE pair (a no-op once applied). Apply before rolling a binary
--- whose reader scans Int256; the next cycle rewrites every row exactly.
+-- A deployment created with `amount Float64` keeps it under IF NOT EXISTS,
+-- and its staging twin copies it, so retype both halves of the EXCHANGE pair
+-- (a no-op once applied). Apply before rolling a binary whose reader scans
+-- Int256; the next cycle rewrites every row exactly.
 ALTER TABLE stellar.account_cohort_positions
     MODIFY COLUMN amount Int256;
 ALTER TABLE stellar.account_cohort_positions_staging

@@ -10,16 +10,11 @@
 -- schema drift forever. si-cutover-object is what exempts them from the
 -- lint's "every operator-created object is also declared fresh-host" rule.
 --
--- TEST NETS — an earlier archival-node role applied every
--- deploy/clickhouse/*.sql it could glob wherever clickhouse_apply_schema is
--- true (testnet.yml, futurenet.yml), so the paragraph below did not hold on
--- those hosts and each test-net provision built the v2 pair as an exact duplicate of
--- stellar.ledger_entries_current: same column list and order, same
--- ReplacingMergeTree(version), same ORDER BY and indexes, an MV reading the
--- same stellar.ledger_entry_changes with the same SELECT into a second
--- target. (The Step-0 ALTER was already a no-op there — tier1 declares
--- intra_ledger_seq.) The live test nets still carry them; the drop is an
--- operator step, not something this file or the role does.
+-- TEST NETS: an earlier archival-node role applied every deploy/clickhouse/*.sql
+-- wherever clickhouse_apply_schema is true (testnet.yml, futurenet.yml), so those
+-- hosts may carry the v2 pair as an exact duplicate of
+-- stellar.ledger_entries_current. Dropping them is an operator step, not
+-- something this file or the role does.
 --
 -- Scope markers are enforced by scripts/ci/lint-ch-apply-scope.sh; the
 -- fresh-host apply set is declared in
@@ -31,20 +26,14 @@
 -- radius: deploy/clickhouse/tier1_schema.sql (the ledger_entries_current DDL
 -- header) and internal/storage/clickhouse/extract_entry_changes.go.
 --
--- This file is NOT auto-applied by any bootstrap and is NOT idempotent re-run
--- tooling — it is the operator-run migration artifact for an EXISTING
--- deployment (r1) whose stellar.ledger_entries_current already exists in the
--- old ReplacingMergeTree(ledger_seq) shape (`CREATE TABLE IF NOT EXISTS` in
--- tier1_schema.sql is a no-op against it). A FRESH deployment does NOT need
--- this file — tier1_schema.sql's canonical DDL already uses the composite
--- version. It is the direct sibling of deploy/clickhouse/contract_events_daily_v2.sql
--- (that one changed an AggregateFunction state format; this one changes the
--- ReplacingMergeTree version column). ***OPERATOR-GATED: this is the codified
--- migration, run as a separate, deliberately scheduled step — never as part
--- of a provision, a deploy, or a release. Check the freeze status of the day
--- before running it.*** (A dated ops fact goes stale in place and then reads
--- as current, so only the durable property is stated here; the freeze
--- calendar lives with the operator, not in this file.)
+-- Operator-run migration for an EXISTING deployment (r1) whose
+-- stellar.ledger_entries_current is still ReplacingMergeTree(ledger_seq)
+-- (`CREATE TABLE IF NOT EXISTS` in tier1_schema.sql is a no-op against it). A
+-- FRESH deployment does not need it: tier1_schema.sql already uses the composite
+-- version. Sibling of deploy/clickhouse/contract_events_daily_v2.sql.
+-- ***OPERATOR-GATED: run as a separate, deliberately scheduled step, never as
+-- part of a provision, a deploy or a release. Check the freeze status of the day
+-- before running it.***
 --
 -- The defect: ledger_seq alone is not unique per key within a ledger — a single
 -- ledger can hold several changes to one storage key (update-then-remove,
@@ -72,13 +61,11 @@
 -- doctrine) — never in one statement.
 
 -- ── Step 0: add intra_ledger_seq to the source append-log ────────────────────
--- Additive, DEFAULT 0 → old-binary-safe (the currently-deployed indexer's 12-col
--- INSERT keeps working; the new 13-col INSERT populates it). Metadata-only
--- for existing parts — no rewrite. MUST precede Step 1: the v2 MV selects this
--- column. Existing rows read back 0 (as before the column existed; same-ledger ties among
--- them stay unbroken until a full re-derive of ledger_entry_changes repopulates
--- intra_ledger_seq — a separate, even heavier op, tracked but NOT required for
--- the tie-break to be effective on all NEW ingest immediately).
+-- Additive, DEFAULT 0 → old-binary-safe (the deployed indexer's 12-col INSERT
+-- keeps working; the new 13-col INSERT populates it). Metadata-only for existing
+-- parts. MUST precede Step 1: the v2 MV selects this column. Existing rows read
+-- back 0, so same-ledger ties among them stay unbroken until ledger_entry_changes
+-- is fully re-derived; the tie-break works on all NEW ingest immediately.
 ALTER TABLE stellar.ledger_entry_changes
     ADD COLUMN IF NOT EXISTS intra_ledger_seq UInt32 DEFAULT 0 AFTER balance;
 
@@ -135,23 +122,18 @@ FROM stellar.ledger_entry_changes;
 -- match v1 for keys whose last change is unambiguous, and must CORRECT v1 for
 -- keys with a same-ledger update-then-remove: v2 shows change_type='removed',
 -- v1 may show the resurrected before-image):
--- *** REHEARSAL (scratch CH 24.8) — READ THIS. The reproject is a
--- SHAPE change; it makes the tie-break deterministic ONLY where intra_ledger_seq
--- is populated (new ingest + a re-derived ledger_entry_changes range). A LEGACY
--- same-ledger tie whose two source rows are BOTH intra_ledger_seq=0 STILL
--- resolves ARBITRARILY, and this verify query will FALSELY report it as
--- "corrected" (v1 updated -> v2 removed) identically to a genuine fix. THE ONLY
--- TELL: v2 intra_ledger_seq (v2_ils below) = 0  ⇒  UNRESOLVED, not corrected.
--- To actually fix HISTORICAL resurrections you must first re-derive
--- ledger_entry_changes (idempotent-corrective under this RMT — no truncate):
+-- *** REHEARSAL (scratch CH 24.8) — READ THIS. The reproject only makes the
+-- tie-break deterministic where intra_ledger_seq is populated (new ingest + a
+-- re-derived ledger_entry_changes range). A LEGACY same-ledger tie whose source
+-- rows are BOTH intra_ledger_seq=0 STILL resolves ARBITRARILY, and this verify
+-- query will FALSELY report it as "corrected" (v1 updated -> v2 removed).
+-- THE ONLY TELL: v2 intra_ledger_seq (v2_ils below) = 0  ⇒  UNRESOLVED, not corrected.
+-- To fix HISTORICAL resurrections, first re-derive ledger_entry_changes
+-- (idempotent-corrective under this RMT — no truncate):
 --   stellarindex-ops ch-backfill -from 2 -to <tip>   (new binary, windowed, genesis->tip)
--- The re-derive runs GENESIS->tip (comprehensive, one-time) —
--- it also fills the entry-change edge gap [2->287404] (0 rows today). But the TIE
--- range is PROVEN narrower: [287404->38M] has ZERO same-ledger ties (full scan);
--- they begin in (38M,40M]. So THIS current-state reproject's Step-2 windows only
--- need [38M->tip]. Run the re-derive BEFORE the windows. The DDL itself ran
--- clean end-to-end (cutover + both rollbacks verified). See the retired
--- post-phase0-deploy-sequence runbook (git history) Step 3a. ***
+-- Same-ledger ties begin in (38M,40M] ([287404->38M] has none), so this
+-- reproject's Step-2 windows only need [38M->tip]. Run the re-derive BEFORE the
+-- windows. ***
 --
 --   SELECT key_xdr,
 --          v1.change_type AS v1_ct, v1.ledger_seq AS v1_ledger,

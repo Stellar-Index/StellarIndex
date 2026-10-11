@@ -11,16 +11,14 @@
 -- only for the duration of this migration, which ends by renaming v2 onto
 -- the canonical name and dropping the old table.
 --
--- THE DEFECT: change_index is a per-TRANSACTION counter
--- (internal/storage/clickhouse/extract_entry_changes.go), so two
--- transactions in one ledger writing the same contract's instance entry
--- collide on (contract_hash, ledger_seq, change_index) and the
--- ReplacingMergeTree keeps ONE of the two writes. A same-ledger upgrade
--- could vanish from /v1/contracts/{id}/code-history, and the survivor was
--- whichever insert came last, not the ledger-final executable. The new key
--- (contract_hash, ledger_seq, tx_hash, change_index) is the change's
--- identity; intra_ledger_seq is carried for the READ order. Full rationale
--- in the table's header in contract_instance_changes.sql.
+-- WHY: change_index is a per-TRANSACTION counter
+-- (internal/storage/clickhouse/extract_entry_changes.go), so two transactions
+-- in one ledger writing the same contract's instance entry collide on
+-- (contract_hash, ledger_seq, change_index) and the ReplacingMergeTree keeps
+-- ONE write; a same-ledger upgrade could vanish from /v1/contracts/{id}/code-
+-- history. The new key (contract_hash, ledger_seq, tx_hash, change_index) is
+-- the change's identity; intra_ledger_seq is carried for the READ order. Full
+-- rationale in the table's header in contract_instance_changes.sql.
 --
 -- WHY A SIDE TABLE: ClickHouse cannot re-key a MergeTree in place (MODIFY
 -- ORDER BY only appends columns added by the same ALTER), and the rows the
@@ -161,9 +159,9 @@ WHERE entry_type = 'contract_data'
 --     FROM stellar.entry_history_watermark
 --     WHERE name = 'contract_instance_changes_v2' HAVING max(thru_ledger) > 0;
 --
--- Restart stellarindex-api: its key-shape probe latches the old-shape
--- verdict for the process lifetime, and until restarted it keeps reading in
--- the change_index order (no worse than before, but not the fix).
+-- Restart stellarindex-api: its key-shape probe latches the old-shape verdict
+-- for the process lifetime, so until restarted it keeps reading in the
+-- change_index order.
 
 -- ── Step 5: after a settling period, DROP TABLE
 -- stellar.contract_instance_changes_old SYNC.

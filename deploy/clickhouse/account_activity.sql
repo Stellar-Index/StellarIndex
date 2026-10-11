@@ -9,25 +9,20 @@
 -- fresh-host apply set is declared in
 -- configs/ansible/roles/archival-node/tasks/08-clickhouse.yml.
 --
--- account_activity: per-account activity watermark — (account → the
--- max ledger the account was EVER named in, across every role the
--- account-history readers serve), MV-maintained from stellar.operations,
--- stellar.transactions and stellar.operation_participants.
+-- account_activity: per-account activity watermark — (account → the max ledger
+-- the account was EVER named in, across every role the account-history readers
+-- serve), MV-maintained from stellar.operations, stellar.transactions and
+-- stellar.operation_participants.
 --
--- Why this table exists: GET /v1/accounts/{g}/operations resolves each of its
--- two keyset arms with a reverse primary-key read over stellar.operations
--- (10.6B rows, ORDER BY (ledger_seq, tx_index, op_index)) — `ORDER BY pk DESC
--- LIMIT n` streams granules backwards FROM THE TIP until it accumulates the
--- account's rows. For a long-idle account that walk covers every granule
--- between the tip and the account's last activity: MEASURED ~4s live
--- (r1) for a 46d-idle account
--- (GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4), worse under
--- load — the scan that ate the 8s request budget (the tx-outcome starvation
--- SYMPTOM is handled separately by a detached budget; this fixes the
--- scan itself). With the watermark, the reader first does a point lookup here
--- (primary-key read over ~53M single-column-keyed rows, ms) and adds
--- `ledger_seq <= last_ledger` to each arm's resolve — partition + primary-key
--- pruning then starts the reverse read AT the account's real last activity.
+-- Why: GET /v1/accounts/{g}/operations resolves each keyset arm with a reverse
+-- primary-key read over stellar.operations (ORDER BY (ledger_seq, tx_index,
+-- op_index)); `ORDER BY pk DESC LIMIT n` streams granules backwards FROM THE TIP
+-- until it accumulates the account's rows, so a long-idle account walks every
+-- granule between the tip and its last activity (seconds, and worse under load,
+-- against an 8s request budget). With the watermark the reader does a point
+-- lookup here and adds `ledger_seq <= last_ledger` to each arm's resolve, so
+-- partition + primary-key pruning starts the reverse read AT the account's real
+-- last activity.
 --
 -- ╔════════════════════════════════════════════════════════════════════════╗
 -- ║ CORRECTNESS INVARIANT — DATA-HIDING (do not weaken):                  ║
@@ -54,9 +49,8 @@
 -- min-aggregate — if "first active" is ever wanted, that is a separate
 -- min-semantics table, not a column here.
 --
--- Bonus the shape gives for free: max(last_ledger)/argMax(last_seen,
--- last_ledger) is the account's "last active" fact for directory surfaces
--- (not yet wired into the account payload — API/OpenAPI follow-up).
+-- max(last_ledger)/argMax(last_seen, last_ledger) also gives the account's
+-- "last active" fact for directory surfaces.
 --
 -- Operator sequence (deploy order matters — see the hazard note in Step 2):
 --   Step 1 (table + MVs, instant) → Step 2 (windowed backfill, heavy)

@@ -10,15 +10,11 @@
 -- schema drift forever. si-cutover-object is what exempts them from the
 -- lint's "every operator-created object is also declared fresh-host" rule.
 --
--- TEST NETS — an earlier archival-node role applied every
--- deploy/clickhouse/*.sql it could glob wherever clickhouse_apply_schema is
--- true (testnet.yml, futurenet.yml), so the paragraph below did not hold on
--- those hosts and each test-net provision built the v2 pair as an exact duplicate of
--- stellar.contract_events_daily: same column list and order, same
--- AggregatingMergeTree, same ORDER BY, an MV reading the same
--- stellar.contract_events with the same SELECT into a second target. The
--- live test nets still carry them; the drop is an operator step, not
--- something this file or the role does.
+-- TEST NETS: hosts provisioned while the archival-node role globbed every
+-- deploy/clickhouse/*.sql wherever clickhouse_apply_schema is true
+-- (testnet.yml, futurenet.yml) carry the v2 pair as an exact duplicate of
+-- stellar.contract_events_daily (same columns, engine, ORDER BY, MV SELECT).
+-- Dropping them is an operator step, not something this file or the role does.
 --
 -- Scope markers are enforced by scripts/ci/lint-ch-apply-scope.sh; the
 -- fresh-host apply set is declared in
@@ -88,8 +84,7 @@ GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 -- read it back from stellar.contract_events before step 1) — no need to
 -- re-cover ledgers the v2 MV already captured live, though doing so is
 -- SAFE (uniqCombinedMerge is a set-union merge: re-inserting an
--- overlapping/duplicate window does not inflate the estimate — verified
--- against a live container while writing this runbook). Example window:
+-- overlapping/duplicate window does not inflate the estimate). Example window:
 --
 --   INSERT INTO stellar.contract_events_daily_v2
 --   SELECT toDate(close_time) AS day, contract_id, event_type,
@@ -140,10 +135,8 @@ GROUP BY day, contract_id, event_type, topic_0_sym, t1_xdr, t0_xdr;
 -- before step 5, re-run the drop/rename/create in reverse (_old is
 -- untouched data, so this is lossless).
 --
--- ── Step 5: DROP TABLE stellar.contract_events_daily_old SYNC — and only
--- now is it safe to consider the incident's `max_bytes_to_merge_at_max_-
--- space_in_pool=1` merge-park (applied to the OLD table only) moot: it
--- goes away with the table. The new canonical table was never parked
--- (a fresh CREATE TABLE has default merge settings) — merges resume
--- automatically; watch `system.parts` part-count trend down over the
+-- Step 5: DROP TABLE stellar.contract_events_daily_old SYNC. A merge-park
+-- (max_bytes_to_merge_at_max_space_in_pool=1) applied to the OLD table goes
+-- away with it; the new canonical table has default merge settings, so merges
+-- resume automatically. Watch `system.parts` part-count trend down over the
 -- following merge cycles to confirm.
