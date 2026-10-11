@@ -371,7 +371,7 @@ func (stallReader) LatestPrice(ctx context.Context, _, _ canonical.Asset) (v1.Pr
 	return v1.PriceSnapshot{}, nil, false, ctx.Err()
 }
 
-// TestPublisher_PollTimeoutIsNotShutdown proves CA2-A33-correct-0: a
+// TestPublisher_PollTimeoutIsNotShutdown: a
 // reader that outlives the poll interval must be logged and counted
 // as a stall, not treated as if the parent ctx were cancelled. Before
 // the fix, tickOnce's error branch matched context.DeadlineExceeded

@@ -98,7 +98,7 @@ expect "test/harness/** triggers integration (INT_TEST_PKGS member)" 0
 
 # Precision on the widened prefixes: scripts/ OUTSIDE ops/ must stay out of
 # the class — widening to the parent would pay the Docker round-trip for
-# every CI-script edit. internal/ is matched as a whole (CA2-A38): the
+# every CI-script edit. internal/ is matched as a whole: the
 # integration suite's transitive dependency closure covers 40+ of the ~53
 # top-level internal/ packages, and enumerating a hand-picked subset is what
 # let internal/projector and internal/dispatcher drift out of this

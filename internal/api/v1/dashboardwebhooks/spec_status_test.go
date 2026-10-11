@@ -13,7 +13,7 @@ import (
 // parseAndAuthorise, which answers 400 for a malformed id and 404 for an
 // absent or cross-account one. DELETE once promised "204 on absent" and
 // declared neither, so a generated client read a retried delete's 404 as
-// an undeclared error (CA2-A03-correct-2).
+// an undeclared error.
 func TestSpecDeclaresParseAndAuthoriseStatuses(t *testing.T) {
 	raw, err := os.ReadFile("../../../../openapi/stellar-index.v1.yaml")
 	if err != nil {

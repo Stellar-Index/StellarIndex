@@ -12,7 +12,7 @@ import (
 )
 
 // TestRecordSubscriptionAck_RejectionSetsGaugeAndLogs is the
-// CA2-A18-harden-3 guard: a rejected bts:error subscription must flip
+// Guard: a rejected bts:error subscription must flip
 // obs.CEXStreamSubscriptionRejected and log, not vanish silently the
 // way "swallow and continue" would leave it.
 func TestRecordSubscriptionAck_RejectionSetsGaugeAndLogs(t *testing.T) {

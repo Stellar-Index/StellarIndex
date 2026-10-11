@@ -126,7 +126,7 @@ func (a *offPageSpine) GetAssetByAssetID(ctx context.Context, assetID string) (t
 	return a.armFilteringAssets.GetAssetByAssetID(ctx, assetID)
 }
 
-// TestAssetsUnifiedFoldsContractArmWhateverItsPage pins CA2-A01-correct-4.
+// TestAssetsUnifiedFoldsContractArmWhateverItsPage.
 // A Soroban-heavy wrapper outranks its own classic row on the
 // volume-desc spine, so the two land out of order on one page or on
 // different pages. Either way the classic row must publish the classic +

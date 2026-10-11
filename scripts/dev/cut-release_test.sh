@@ -2,7 +2,7 @@
 # cut-release_test.sh — regression tests for cut-release.sh.
 #
 # Two independent pins:
-#  1. CA2-A38-harden-2: cut-release.sh must tag the commit `make prepush`
+#  1. cut-release.sh must tag the commit `make prepush`
 #     actually verified, not whatever `main` resolves to after the
 #     ~20-minute gate returns. Simulates a concurrent session committing
 #     directly to `main` WHILE the gate runs (this repo routinely runs
@@ -11,7 +11,7 @@
 #     success. Before the fix, `git tag "$TAG"` was bare and tagged
 #     whatever HEAD was at that point, so the tag landed on a commit
 #     `make prepush` never verified.
-#  2. CA2-A38-correct-5: cut-release.sh's `mktemp -t` invocation must carry
+#  2. cut-release.sh's `mktemp -t` invocation must carry
 #     a portable XXXXXX template. `mktemp -t <prefix>` with no XXXXXX
 #     suffix is accepted by BSD/macOS mktemp (which synthesizes its own
 #     template) but rejected by GNU coreutils mktemp on Linux with "too
@@ -27,7 +27,7 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SCRIPT="$REPO_ROOT/scripts/dev/cut-release.sh"
 
-# test_tags_verified_commit pins CA2-A38-harden-2.
+# test_tags_verified_commit.
 test_tags_verified_commit() {
   local TMP FAKEBIN REPO ORIGIN verified_sha post_sha tagged_sha status fail
 
@@ -145,7 +145,7 @@ EOF
   return "$fail"
 }
 
-# test_mktemp_template_is_portable pins CA2-A38-correct-5.
+# test_mktemp_template_is_portable.
 test_mktemp_template_is_portable() {
   local mktemp_matches mktemp_line fakebin
 

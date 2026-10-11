@@ -11,7 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestMarketDayFamilies_BindsSACSpellingOntoMember pins CA2-A07-correct-2's
+// TestMarketDayFamilies_BindsSACSpellingOntoMember pins the
 // key half: the SAC spelling of a requested classic asset is bound and
 // folds onto that classic member, and a requested spelling always keeps
 // itself even when it is also an alias of an earlier request.

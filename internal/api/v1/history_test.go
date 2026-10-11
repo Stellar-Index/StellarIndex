@@ -640,7 +640,7 @@ func TestHistory_NativeReadsCryptoXLMAlias(t *testing.T) {
 }
 
 // TestHistory_PaginationUnionsInterleavedAliasForms pins
-// CA2-A04-harden-7: with two alias forms of the SAME asset both
+// With two alias forms of the SAME asset both
 // populated and their rows genuinely interleaved in time, a first-hit
 // gate (whichever alias form's page came back non-empty on THAT
 // request) serves the leading form until it drains, then falls through

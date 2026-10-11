@@ -188,7 +188,7 @@ func TestAccountsList_NativeBasis(t *testing.T) {
 	}
 }
 
-// TestAccountsList_NativeBasisIsExactPastFloat53 pins CA2-A03-correct-5: a
+// TestAccountsList_NativeBasisIsExactPastFloat53: a
 // native_xlm value above 2^53 stroops (~900.7M XLM — the test-net root and
 // friendbot accounts that top the board) is served to the stroop, not
 // through the float ranking key, which cannot carry the 7th decimal there.

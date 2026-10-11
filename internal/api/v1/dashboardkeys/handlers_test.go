@@ -786,7 +786,7 @@ func TestParseCreateRequest_AcceptsValidAllowlistForms(t *testing.T) {
 // An IPv4-mapped entry must be stored as the IPv4 prefix it names. Left
 // 16-byte, "::ffff:1.2.3.4" became a /32 over the IPv6 space (::/32, host
 // bits set, which Postgres cidr rejects) that never contains the plain
-// IPv4 client (CA2-A02-harden-4).
+// IPv4 client.
 func TestParsePrefixes_4in6Unmapped(t *testing.T) {
 	for raw, want := range map[string]string{
 		"::ffff:1.2.3.4":          "1.2.3.4/32",

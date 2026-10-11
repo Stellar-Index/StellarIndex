@@ -103,8 +103,8 @@ func TestParseFrame_SubscriptionSucceededIgnored(t *testing.T) {
 	_ = trade
 }
 
-// TestParseFrame_SubscriptionErrorSurfacesRejection is the CA2-A18-
-// harden-3 guard: a bts:error rejecting a subscribe request must
+// TestParseFrame_SubscriptionErrorSurfacesRejection is a
+// guard: a bts:error rejecting a subscribe request must
 // surface as ErrSubscriptionRejected, not be swallowed as (nil, nil).
 // Swallowing it left a rejected/delisted pair with no error, log or
 // metric — the venue's other, still-accepted pairs kept the shared

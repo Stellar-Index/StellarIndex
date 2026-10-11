@@ -1864,7 +1864,7 @@ func TestSeedWalk_VerifyLakeRefusesAHole(t *testing.T) {
 }
 
 // TestTrustlineAssetsAfter_PoolPrefixExcludesOnlyRealPoolShares is the
-// executing proof of CA2-A14-correct-5: TrustlineAssetsAfter's pool-share
+// executing proof that TrustlineAssetsAfter's pool-share
 // exclusion must match only the two spellings TrustLineAssetID emits
 // ("pool:<hex>" and the bare "pool"), never a real credit-asset string that
 // merely starts with the substring "pool" — asset codes are case-sensitive

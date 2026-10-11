@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestRWASummarise_EveryCapMakesALowerBound pins CA2-A06-correct-3: each
+// TestRWASummarise_EveryCapMakesALowerBound: each
 // rebuild cap, not only the issuer cap, makes a fully-valued served set's
 // total a lower bound, and the basis names the cap instead of calling the
 // set complete.

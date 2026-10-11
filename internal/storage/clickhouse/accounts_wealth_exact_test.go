@@ -40,8 +40,8 @@ func (wealthExactFakeConn) Query(context.Context, string, ...any) (driver.Rows, 
 	return &wealthExactFakeRows{}, nil
 }
 
-// TestAccountsByWealth_CarriesExactNativeStroops pins CA2-A03-correct-5 at
-// the reader: the native balance reaches the caller as an integer stroop
+// TestAccountsByWealth_CarriesExactNativeStroops pins at
+// the reader that the native balance reaches the caller as an integer stroop
 // count, not only as the float ranking key.
 func TestAccountsByWealth_CarriesExactNativeStroops(t *testing.T) {
 	t.Parallel()

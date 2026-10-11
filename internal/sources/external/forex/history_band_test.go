@@ -146,7 +146,7 @@ func TestAcceptHistoryRate_StuckStreakToleratesJitter(t *testing.T) {
 }
 
 // TestGuardSnapshot_CachedTodayHistoryBarNeverOverwritesCurrentRow pins
-// CA2-A18-correct-1. The history window includes the publication date and
+// The history window includes the publication date and
 // that bar is cached from the day's first fetch until the date rolls.
 // Appended after the current row, the per-row upsert let the frozen bar
 // replace every later refresh's current rate, so fx_quotes(EUR, today)

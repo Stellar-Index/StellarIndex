@@ -104,7 +104,7 @@ if (cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$prev" "$sc
   exit 1
 fi
 
-# internal/ops OUTSIDE archive/ is still internal/ (CA2-A38): internal/* is
+# internal/ops OUTSIDE archive/ is still internal/: internal/* is
 # matched as a whole, since the integration suite's transitive dependency
 # closure covers 40+ of the ~53 top-level internal/ packages and an
 # enumerated subset is exactly what let internal/projector and

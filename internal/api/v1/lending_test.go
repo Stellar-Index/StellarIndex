@@ -655,7 +655,7 @@ func TestLendingPools_CacheUnavailable503(t *testing.T) {
 	assertCacheUnavailable(t, resp)
 }
 
-// TestLendingPoolReserves_NoConfigNeverInventsDecimals pins CA2-A14-harden-3:
+// TestLendingPoolReserves_NoConfigNeverInventsDecimals:
 // a reserve whose rate config is missing must not be USD-valued with the
 // placeholder exponent 7. Every reserve is priced at $2 per whole token.
 //

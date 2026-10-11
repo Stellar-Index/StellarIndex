@@ -835,7 +835,7 @@ func TestSweepEndedSessions_BoundedPerCall(t *testing.T) {
 	}
 }
 
-// CA2-A33-harden-1 — SweepLoginCodeLockouts reports whether it stopped
+// SweepLoginCodeLockouts reports whether it stopped
 // at the per-call cap. The reaper re-sweeps promptly on that signal
 // instead of waiting a full Interval, so the signal must be true exactly
 // when every batch came back full, and false once the backlog is gone.

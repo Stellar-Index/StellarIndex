@@ -443,7 +443,7 @@ else
   skip ch_drop_guard_live
 fi
 
-# ── galexie-archive-trim delete identity (CA2-A37-harden-6) ──────────
+# ── galexie-archive-trim delete identity ──────────
 # Without this, trim ran as stellarindex-reader (read-only) and every
 # DeleteObject came back AccessDenied — "deleted 0/N" on every run,
 # silently, since the unit's own exit code covers list/enumerate

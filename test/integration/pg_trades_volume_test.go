@@ -1419,7 +1419,7 @@ func TestStoreDailyMarketDays_ReadsWholeLastDay(t *testing.T) {
 	}
 }
 
-// TestStoreDailyMarketDays_FoldsSACSpellingOfBase pins CA2-A07-correct-2:
+// TestStoreDailyMarketDays_FoldsSACSpellingOfBase:
 // a token with a configured SAC wrapper trades under both spellings, and
 // the live substance gate counts both. The historical reader must fold
 // the SAC-form rows onto the requested classic asset, and measure hours

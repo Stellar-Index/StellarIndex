@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ansible-zfs-import-guard-test.sh — pins the 03-zfs.yml disaster-recovery
-# guard (CA2-A37-harden-0).
+# guard.
 #
 # WHAT WENT WRONG. The only thing stopping `zpool create -f` from
 # re-creating the `data` pool was `zpool list -H data` exiting 0 — which

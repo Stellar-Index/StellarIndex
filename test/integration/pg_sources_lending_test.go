@@ -624,8 +624,8 @@ func TestBlendAdminRoundTrip(t *testing.T) {
 }
 
 // TestBlendReserveConfigs_AppliedCancelledPending pins the
-// queue/apply/cancel lifecycle BlendReserveConfigs must resolve
-// (CA2-A10-correct-2): a queue_set_reserve alone is a proposal, not
+// queue/apply/cancel lifecycle BlendReserveConfigs must resolve:
+// a queue_set_reserve alone is a proposal, not
 // the live rate model. Four reserves exercise the four outcomes:
 //   - applied:   queue then set_reserve -> the queued config, live.
 //   - cancelled: queue then cancel_set_reserve -> no config at all.
@@ -1038,8 +1038,8 @@ func assertKPI(t *testing.T, kpis map[string]string, label, want string) {
 	}
 }
 
-// TestUpshiftVaultShareSupplies_DeployedTiebreakWithinLedger pins the
-// fix for CA2-A13-harden-6: when a single ledger carries two
+// TestUpshiftVaultShareSupplies_DeployedTiebreakWithinLedger pins that
+// when a single ledger carries two
 // deployed_assets_changed events for the same vault (a rebalance that
 // spans multiple ops/events in one transaction), the DISTINCT ON must
 // resolve deterministically to the highest (op_index, event_index) —

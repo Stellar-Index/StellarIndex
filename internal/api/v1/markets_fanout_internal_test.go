@@ -64,8 +64,8 @@ func (r *perAssetStaleReader) AssetMarketsAt(_ context.Context, asset string, _ 
 	return r.rows[asset], "", time.Now(), false, nil
 }
 
-// TestFanOutAssetMarketsSurfacesPartialFailure is the CA2-A04-correct-6
-// regression: when one leg of an asset_id fan-out errors and another
+// TestFanOutAssetMarketsSurfacesPartialFailure is a
+// regression test: when one leg of an asset_id fan-out errors and another
 // succeeds, the merged response must say so via `stale`, not silently
 // report a partial view as fresh and complete.
 func TestFanOutAssetMarketsSurfacesPartialFailure(t *testing.T) {
@@ -95,7 +95,7 @@ func TestFanOutAssetMarketsSurfacesPartialFailure(t *testing.T) {
 }
 
 // TestFanOutAssetMarketsSortsByRequestedOrder is the order_by half of
-// CA2-A04-correct-6: the fan-out merge must sort by the caller's
+// The fan-out merge must sort by the caller's
 // order_by, not a hardcoded trade-count comparator.
 func TestFanOutAssetMarketsSortsByRequestedOrder(t *testing.T) {
 	hiVol := "500.00"

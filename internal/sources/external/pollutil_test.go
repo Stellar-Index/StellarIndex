@@ -78,7 +78,7 @@ func TestFiatCodesFromPairs(t *testing.T) {
 // DefaultFXPairs("EUR") must include a USD/EUR pair — ecb is wired
 // with base EUR in production (cmd/stellarindex-indexer) and its
 // USD cube row must not be silently dropped by FiatCodesFromPairs'
-// derived interest set (CA2-A26).
+// derived interest set.
 func TestDefaultFXPairs_EURBaseIncludesUSD(t *testing.T) {
 	pairs := DefaultFXPairs("EUR")
 	wanted := FiatCodesFromPairs(pairs, "EUR")

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify-lane-errexit-test.sh — regression test for CA2-A38-correct-0.
+# verify-lane-errexit-test.sh — regression test.
 #
 # In lane_mode=1 (the default whenever the machine/VM has less than
 # VERIFY_LANE_MEM_FLOOR_MB — every container `make prepush`, since the Docker

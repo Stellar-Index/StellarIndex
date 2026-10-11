@@ -255,7 +255,7 @@ func TestLoop_DialTimeoutDoesNotLimitConnection(t *testing.T) {
 	<-done
 }
 
-// TestLoop_ReadsFrameLargerThanDefaultLimit pins CA2-A18: coder/websocket's
+// TestLoop_ReadsFrameLargerThanDefaultLimit: coder/websocket's
 // undocumented-to-callers 32 KiB default message limit must not survive
 // Dial. Kraken's v2 trade channel batches every fill of one match into a
 // single `update` frame array; a liquidity sweep of ~175+ fills alone
