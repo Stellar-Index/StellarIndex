@@ -832,3 +832,57 @@
         cmd: systemctl reset-failed pgbackrest-backup.service
       changed_when: false
       failed_when: false
+
+# ─── Config / secrets backup (off-site-backup-plan.md §3) ───────────
+- name: Install age for the config backup
+  ansible.builtin.apt:
+    name: age
+    state: present
+  when: config_backup_enabled | default(true) | bool
+  tags: [config-backup]
+
+- name: Install config-backup script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../scripts/ops/config-backup.sh"
+    dest: /usr/local/bin/config-backup.sh
+    owner: root
+    group: root
+    mode: "0755"
+  when: config_backup_enabled | default(true) | bool
+  tags: [config-backup]
+
+- name: Ensure the config-backup directory exists
+  ansible.builtin.file:
+    path: "{{ config_backup_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: config_backup_enabled | default(true) | bool
+  tags: [config-backup]
+
+- name: Install config-backup systemd units
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - config-backup.service
+    - config-backup.timer
+  register: config_backup_units
+  when: config_backup_enabled | default(true) | bool
+  tags: [config-backup]
+
+- name: Enable + start the config-backup timer
+  ansible.builtin.systemd:
+    name: config-backup.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ config_backup_units is changed }}"
+  when:
+    - config_backup_enabled | default(true) | bool
+    # check-mode guard — see the pgBackRest timer note above.
+    - not (ansible_check_mode and config_backup_units is changed)
+  tags: [config-backup]

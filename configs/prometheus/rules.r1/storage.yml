@@ -811,6 +811,66 @@ groups:
             configured but pushing — check the `mc` alias/credentials
             and the remote's quota.
 
+      # Config/secrets backup (scripts/ops/config-backup.sh, off-site-backup-plan
+      # §3). Every run writes offsite_configured; last_success only on a clean
+      # run. The second arm is per host: hosts whose timer ran minus those with a
+      # backup inside the window. The third catches a timer that never runs.
+      - alert: stellarindex_config_backup_stale
+        expr: |
+          (time() - stellarindex_config_backup_last_success_unix) > 36 * 3600
+          or
+          (
+            stellarindex_config_backup_offsite_configured
+            unless on (instance)
+            max_over_time(stellarindex_config_backup_last_success_unix[36h])
+          )
+          or
+          absent_over_time(stellarindex_config_backup_offsite_configured[36h])
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/off-site-backup-plan.md
+          summary: "Encrypted config/secrets backup has not succeeded in > 36 h (daily timer)"
+          description: |
+            config-backup.timer (daily, 03:55 UTC) has not written an
+            age-encrypted backup of the host's config and secrets in
+            over 36 h, or has never run. These files cannot be
+            re-derived: losing the host without a copy means
+            rebuilding every credential and the pgBackRest cipher
+            pass by hand. Check `systemctl status config-backup.service`
+            and run `/usr/local/bin/config-backup.sh` by hand; it
+            refuses to run without AGE_RECIPIENT or `age`.
+
+      # Same shape as the schema snapshot's offsite alert: ungated on
+      # offsite_configured, per host.
+      - alert: stellarindex_config_backup_offsite_stale
+        expr: |
+          (time() - stellarindex_config_backup_offsite_last_success_unix) > 72 * 3600
+          or
+          (
+            stellarindex_config_backup_last_success_unix
+            unless on (instance)
+            max_over_time(stellarindex_config_backup_offsite_last_success_unix[72h])
+          )
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/off-site-backup-plan.md
+          summary: "Encrypted config/secrets backup has not reached offsite storage in > 72 h"
+          description: |
+            The config backup exists only on the host it protects: the
+            push has failed for 3+ days, or no off-site target is
+            configured. `stellarindex_config_backup_offsite_configured`
+            tells the two apart: 0 = set config_backup_mc_target (or
+            ch_schema_snapshot_mc_target) and re-apply the role, 1 =
+            check the `mc` alias, credentials and remote quota.
+
       # Lake data backup (scripts/ops/ch-lake-backup.sh, ADR-0043 §2.4). The
       # stamp is written only on success, so never-configured / never-succeeded
       # / failing are absent series the `time() - x` arm cannot fire on. The

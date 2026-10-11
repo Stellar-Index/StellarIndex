@@ -944,3 +944,146 @@ tests:
       - eval_time: 90h
         alertname: stellarindex_galexie_archive_mirror_stale
         exp_alerts: []
+
+  # ═══════════════════════════════════════════════════════════════════
+  # config-backup.sh — encrypted config/secrets backup
+  # ═══════════════════════════════════════════════════════════════════
+  - interval: 1h
+    name: config backup healthy and pushed — silent
+    input_series:
+      - series: 'stellarindex_config_backup_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x100'
+      - series: 'stellarindex_config_backup_offsite_configured{job="node_exporter", instance="r1:9100"}'
+        values: '1x100'
+      - series: 'stellarindex_config_backup_offsite_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x100'
+    alert_rule_test:
+      - eval_time: 90h
+        alertname: stellarindex_config_backup_stale
+        exp_alerts: []
+      - eval_time: 90h
+        alertname: stellarindex_config_backup_offsite_stale
+        exp_alerts: []
+
+  # (RED without the per-host arm) every run fails from the first: configured
+  # is written, last_success never is, so it fires without waiting 36 h.
+  - interval: 1h
+    name: config backup never succeeded — fires
+    input_series:
+      - series: 'stellarindex_config_backup_offsite_configured{job="node_exporter", instance="r1:9100"}'
+        values: '1x100'
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_config_backup_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              job: node_exporter
+              instance: r1:9100
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/off-site-backup-plan.md
+              summary: "Encrypted config/secrets backup has not succeeded in > 36 h (daily timer)"
+              description: |
+                config-backup.timer (daily, 03:55 UTC) has not written an
+                age-encrypted backup of the host's config and secrets in
+                over 36 h, or has never run. These files cannot be
+                re-derived: losing the host without a copy means
+                rebuilding every credential and the pgBackRest cipher
+                pass by hand. Check `systemctl status config-backup.service`
+                and run `/usr/local/bin/config-backup.sh` by hand; it
+                refuses to run without AGE_RECIPIENT or `age`.
+
+  # Timer never ran on any host: only the absent arm sees it.
+  - interval: 1h
+    name: config backup timer never ran — fires
+    input_series:
+      - series: 'stellarindex_config_backup_bytes{job="node_exporter", instance="r1:9100"}'
+        values: '_x100'
+    alert_rule_test:
+      - eval_time: 45h
+        alertname: stellarindex_config_backup_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/off-site-backup-plan.md
+              summary: "Encrypted config/secrets backup has not succeeded in > 36 h (daily timer)"
+              description: |
+                config-backup.timer (daily, 03:55 UTC) has not written an
+                age-encrypted backup of the host's config and secrets in
+                over 36 h, or has never run. These files cannot be
+                re-derived: losing the host without a copy means
+                rebuilding every credential and the pgBackRest cipher
+                pass by hand. Check `systemctl status config-backup.service`
+                and run `/usr/local/bin/config-backup.sh` by hand; it
+                refuses to run without AGE_RECIPIENT or `age`.
+
+  # Local backups succeed, nothing ever pushed off-site.
+  - interval: 1h
+    name: config backup never pushed off-site — fires
+    input_series:
+      - series: 'stellarindex_config_backup_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x100'
+      - series: 'stellarindex_config_backup_offsite_configured{job="node_exporter", instance="r1:9100"}'
+        values: '0x100'
+    alert_rule_test:
+      - eval_time: 20h
+        alertname: stellarindex_config_backup_offsite_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              job: node_exporter
+              instance: r1:9100
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/off-site-backup-plan.md
+              summary: "Encrypted config/secrets backup has not reached offsite storage in > 72 h"
+              description: |
+                The config backup exists only on the host it protects: the
+                push has failed for 3+ days, or no off-site target is
+                configured. `stellarindex_config_backup_offsite_configured`
+                tells the two apart: 0 = set config_backup_mc_target (or
+                ch_schema_snapshot_mc_target) and re-apply the role, 1 =
+                check the `mc` alias, credentials and remote quota.
+      - eval_time: 45h
+        alertname: stellarindex_config_backup_stale
+        exp_alerts: []
+
+  # Push worked once, then stopped.
+  - interval: 1h
+    name: config backup push stopped — fires after 72h
+    input_series:
+      - series: 'stellarindex_config_backup_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_config_backup_offsite_configured{job="node_exporter", instance="r1:9100"}'
+        values: '1x200'
+      - series: 'stellarindex_config_backup_offsite_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x5 _x200'
+    alert_rule_test:
+      - eval_time: 50h
+        alertname: stellarindex_config_backup_offsite_stale
+        exp_alerts: []
+      - eval_time: 90h
+        alertname: stellarindex_config_backup_offsite_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: storage
+              job: node_exporter
+              instance: r1:9100
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/off-site-backup-plan.md
+              summary: "Encrypted config/secrets backup has not reached offsite storage in > 72 h"
+              description: |
+                The config backup exists only on the host it protects: the
+                push has failed for 3+ days, or no off-site target is
+                configured. `stellarindex_config_backup_offsite_configured`
+                tells the two apart: 0 = set config_backup_mc_target (or
+                ch_schema_snapshot_mc_target) and re-apply the role, 1 =
+                check the `mc` alias, credentials and remote quota.

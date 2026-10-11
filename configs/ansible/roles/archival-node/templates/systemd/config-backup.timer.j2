@@ -1,0 +1,16 @@
+# systemd timer: daily encrypted config / secrets backup.
+# 03:55 UTC + up to 10 min jitter, between ch-schema-snapshot (03:40) and
+# ch-lake-backup (04:10).
+
+[Unit]
+Description=Daily encrypted config and secrets backup
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/off-site-backup-plan.md
+
+[Timer]
+OnCalendar=*-*-* 03:55:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+Unit=config-backup.service
+
+[Install]
+WantedBy=timers.target

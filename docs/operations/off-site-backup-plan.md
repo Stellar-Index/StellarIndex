@@ -78,7 +78,9 @@ Repo2 should let us prune repo1's local diffs (the deferred Phase A step). **Not
 
 ### 3. Config / vault / secrets → encrypted tarball (high)
 
-Small, high-value, non-re-derivable. **No such job exists yet.** A daily job tars `/etc/stellarindex*`, `/etc/pgbackrest*`, systemd units, the ansible vault, and CH/PG DDL snapshots; `age`/`gpg`-encrypts; uploads off-site. Codify as a systemd timer in the archival-node role.
+Small, high-value, non-re-derivable. `config-backup.timer` (archival-node role, daily 03:55 UTC) runs `scripts/ops/config-backup.sh`: it tars `/etc/stellarindex*`, `/etc/pgbackrest*`, PostgreSQL, ClickHouse, MinIO, Galexie, Caddy and systemd config plus a `pg_dump --schema-only`, streams the tarball straight into `age` (no plaintext on disk), keeps `config_backup_retain_days` (30) locally, and pushes to `config_backup_mc_target` (default: `<ch_schema_snapshot_mc_target>/config-backup`), verifying the remote size. The recipient is `config_backup_age_recipient`; its identity is held offline, never on a host. The ansible vault lives in git and is not in the tarball. Alerts: `stellarindex_config_backup_stale` (36 h), `_offsite_stale` (72 h).
+
+Restore: `mc cp <target>/config-<stamp>.tar.gz.age .`, then `age -d -i <identity> config-<stamp>.tar.gz.age | tar -xzf - -C <dir>`; copy files into place by hand rather than extracting over `/`.
 
 > **hashdb (`/var/lib/stellarindex/hashdb.bin`, ADR-0016) is deliberately out of every stream and out of `zfs_snapshot_datasets`.** It is a disposable append-log the indexer regenerates; losing it costs a re-append of the trailing verify window (20000 ledgers, ~1 day at 5s/ledger) on next start. Per-region switch: `stellarindex_hashdb_enabled` in `stellarindex.toml.j2`.
 
@@ -98,7 +100,7 @@ Small, high-value, non-re-derivable. **No such job exists yet.** A daily job tar
 - **Restore drill must include CH from backup:** a periodic native `RESTORE` ([`runbooks/ch-lake-backup.md`](runbooks/ch-lake-backup.md#restore)) of a sampled table into a scratch instance + `verify-contiguity`, so the restore RTO is proven, not assumed. Still open.
 - **Monitoring:** one staleness alert per stream — `stellarindex_backup_offsite_stale` (repo2), `stellarindex_ch_lake_backup_stale`, `stellarindex_ch_schema_snapshot_offsite_stale`.
 - **Encryption keys:** passphrases live in the vault (and the vault in stream 3); keep a copy of the vault passphrase off r1 (a password manager), else an r1 loss loses the key to its own backups.
-- **Sequencing:** Postgres to B2 (2), then retire the AWS repo2 after a B2 restore test passes. Then the lake full (4), after the recompress and `tx_hash_index` dedupe (≈ 11.8 TiB, not 14.6). Then config (3). Then the local repo1 prune, once repo2 is proven.
+- **Sequencing:** Postgres to B2 (2), then retire the AWS repo2 after a B2 restore test passes. Then the lake full (4), after the recompress and `tx_hash_index` dedupe (≈ 11.8 TiB, not 14.6). Config (3) runs from the first role apply. Then the local repo1 prune, once repo2 is proven.
 
 ## ADR-0043 §2.3 tail insurance amendment
 
