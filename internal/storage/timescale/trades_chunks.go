@@ -15,26 +15,18 @@ import (
 
 // ─── `trades` chunk primitives for the chunk-wise usd_volume restamp ───
 //
-// An UPDATE into a COMPRESSED Timescale chunk is serviced by decompressing it
-// inside the transaction, and none of the restamp's join clauses can become a
-// scan key on a `segmentby` / `orderby` column, so the WHOLE chunk is
-// decompressed. Measured on r1: with all 90 `trades` chunks in the window
-// compressed (compress_after 7 days), one 2,000-row batch took over 14
-// minutes (~1,574 rows/min against a 28.6M-row write set, a 12-day job). The
-// dry run is read-only and never showed it.
+// An UPDATE into a COMPRESSED Timescale chunk decompresses it inside the
+// transaction, and none of the restamp's join clauses can become a scan key
+// on a `segmentby` / `orderby` column, so the WHOLE chunk is decompressed per
+// batch (on r1, ~1,574 rows/min: a 12-day job). The dry run never shows it.
 //
-// Escaping that needs BOTH halves. This file is one; the other is the
-// statement's own `ts` bound, without which the UPDATE names the hypertable
-// and every compressed chunk is a result relation whatever this file
-// decompressed. See [Store.applyXLMBaseRestampBatch] and the "Chunk mode"
-// section of the usd-volume-rederive runbook in docs/operations/.
-//
-// The remedy is to invert the order: decompress the chunk ONCE, run the same
-// restamp inside it (a plain heap UPDATE), and compress it again. The
-// primitives here are deliberately thin (one statement each) so the
-// scripted-driver tests can pin the exact SQL; the one non-trivial piece,
-// [Store.RestampTradesChunk], is only the ORDER of those statements plus the
-// rule that a chunk is never left decompressed on a failure.
+// The remedy needs BOTH halves: this file, which decompresses the chunk ONCE,
+// runs the restamp inside it as a plain heap UPDATE and compresses it again;
+// and the statement's own `ts` bound ([Store.applyXLMBaseRestampBatch]),
+// without which every compressed chunk is a result relation anyway.
+// The primitives are one statement each so the scripted-driver tests can pin
+// the exact SQL; [Store.RestampTradesChunk] owns their ORDER and the rule
+// that a chunk is never left decompressed on a failure.
 
 // TradeChunk is one `trades` hypertable chunk as the chunk-wise restamp
 // sees it: its identity, its time range and its two sizes.
@@ -143,26 +135,20 @@ func (s *Store) compressTradesChunk(ctx, live context.Context, c TradeChunk) err
 // ─── the lock convoy: why every WAIT is bounded and the WORK is not ──────
 //
 // A pending AccessExclusiveLock request queues every LATER request for the
-// object behind it, however compatible. On r1 a restamp's decompress_chunk
-// queued behind an aggregator read holding AccessShareLock on `trades` for
-// 18+ minutes, and postgres_exporter's scrapes queued behind it: alerting went
-// blind and /v1/status went `degraded`.
+// object behind it, however compatible: a queued decompress_chunk once
+// blinded alerting and degraded /v1/status for 18+ minutes.
 //
-// `SET LOCAL lock_timeout` (5 s) bounds EVERY lock request in the attempt,
-// including the late AccessExclusiveLock on the chunk that compress and
-// decompress take after their work, because the API's request timeout is
-// 15 s. It does not touch a statement that holds its locks and is working;
-// no `statement_timeout` is used, so a long decompress runs.
+// `SET LOCAL lock_timeout` (5 s, under the API's 15 s request timeout) bounds
+// EVERY lock request in the attempt, including the late AccessExclusiveLock
+// compress and decompress take after their work. No `statement_timeout` is
+// used, so a long decompress that holds its locks still runs.
 //
-// A refused late request throws that work away, so two things keep it rare:
-// a lock holder older than [longLockHolderAge] is waited out with no request
-// of ours pending, and each attempt first takes the functions' opening locks
-// with `LOCK TABLE`, so a refusal there is cheap.
-//
-// Each attempt is one transaction, so a refusal rolls back atomically. The
-// budget charges only waiting, never work, and a retry after costly work
-// starts only if the last attempt fits the remaining wall-clock budget, so a
-// SIGTERM stop window is not overrun. A convoy headed by someone else's
+// A refused late request throws that work away, so: a lock holder older than
+// [longLockHolderAge] is waited out with no request of ours pending, and each
+// attempt first takes the opening locks with `LOCK TABLE`, where a refusal is
+// cheap. Each attempt is one transaction. The budget charges only waiting,
+// and a retry starts only if the last attempt fits the remaining wall-clock,
+// so a SIGTERM stop window is not overrun. A convoy headed by someone else's
 // exclusive request is not covered (stellarindex_pg_lock_convoy alert).
 
 // lockWaitPolicy is how hard one statement may ask for its locks: `wait`
@@ -637,23 +623,16 @@ const (
 //	compressed at listing:    size → decompress_chunk → size → work → compress_chunk → size
 //	uncompressed at listing:  size → work → size
 //
-// Once a compressed chunk has been decompressed, EVERY exit path compresses
-// it again before returning, including a failed `work` and a cancelled
-// context. The compress runs on a context detached from the caller's
-// cancellation, because the likeliest mid-chunk failure under
-// run-heavy-job.sh is a SIGTERM, and a cancelled context would fail the very
-// statement that puts a 160 GB chunk back. Only when the re-compress itself
-// fails is the chunk left decompressed, and the error says so by name.
-//
-// A chunk NOT compressed at listing is left that way: chunks newer than the
-// compression policy's lag are deliberately uncompressed (the ledgerstream
-// cursor-regression replay upserts into them), and a chunk an earlier killed
-// run left open is the policy's to compress once re-enabled.
+// Once decompressed, EVERY exit path compresses the chunk again, including a
+// failed `work` and a cancelled context: the compress runs on a context
+// detached from the caller's, because a SIGTERM under run-heavy-job.sh is the
+// likeliest failure. Only a failed re-compress leaves it decompressed, and
+// the error says so by name. A chunk NOT compressed at listing stays that way
+// (newer chunks are deliberately open for cursor-regression upserts).
 //
 // `before`, when not nil, is called with the step about to be issued, so the
 // caller can print the by-hand repair before a statement that may outlive
-// the process. A failed decompress runs nothing: the chunk is still
-// compressed and untouched.
+// the process. A failed decompress runs nothing.
 func (s *Store) RestampTradesChunk(ctx context.Context, c TradeChunk, work func(context.Context) error, before func(ChunkRestampStep)) (res TradeChunkRestampResult, err error) {
 	res = TradeChunkRestampResult{Chunk: c}
 	start := time.Now()

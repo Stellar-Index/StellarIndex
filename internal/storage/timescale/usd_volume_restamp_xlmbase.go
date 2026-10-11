@@ -23,16 +23,13 @@ import (
 //
 // Why the arithmetic is not done in SQL:
 //
-//  1. THE VALUE COMES FROM THE LIVE FUNCTION: each row is rebuilt into its
-//     [canonical.Trade] and passed to [usdVolumeViaXLMBaseAnchor] with the
-//     store's [VWAPUSDFXResolver] and [USDVolumeQuoteSpec], so there is no
-//     second waterfall to drift.
-//  2. ONLY THE ANCHOR: where it declines a row, the row is REPORTED, never
-//     valued via [tradeUSDVolumeViaFX], the route that wrote the defect. A wrong
-//     value at a high `derive_generation` cannot be clawed back; an unpriced
-//     row can.
-//  3. NEVER WRITE NULL OVER A VALUE: a declined row that carries a number is
-//     left as is and counted in [XLMBaseRestampStats.AnchorDeclinedStored].
+//  1. Each row is rebuilt into its [canonical.Trade] and valued by the live
+//     [usdVolumeViaXLMBaseAnchor], so there is no second waterfall to drift.
+//  2. A row the anchor declines is REPORTED, never valued via
+//     [tradeUSDVolumeViaFX], the route that wrote the defect: a wrong value
+//     at a high `derive_generation` cannot be clawed back; an unpriced one can.
+//  3. A declined row that carries a number is never overwritten with NULL; it
+//     is counted in [XLMBaseRestampStats.AnchorDeclinedStored].
 //
 // Scope is decided in Go from the insert path's own primitives (DEX source, XLM
 // base, non-pegged quote); pegged quotes belong to `-tier exact`.
@@ -436,21 +433,16 @@ const xlmBaseRestampArgsPerRow = 10
 //
 // Discipline, matching [Store.RestampExactTierUSDVolume]:
 //
-//   - the write set is the PLAN — the same slice the dry run printed. No
-//     second predicate is evaluated against the table, so a row cannot be
-//     written that the preview did not name.
-//   - each row is written only while its amounts, usd_volume and
-//     derive_generation still equal what the plan read: a row another
-//     writer moved after the plan is skipped, and surfaces as
-//     planned-vs-changed, rather than overwritten from its old state.
-//   - each row is written only while
-//     `trades.derive_generation <= generation`, and is stamped with it, so
-//     a later live gen-0 replay cannot claw the correction back and a
-//     NEWER re-derive cannot be overwritten by this one.
-//   - one bounded transaction per batch, each lifting the Timescale
-//     decompression cap with `SET LOCAL` — POSTGRES unwinds that at
-//     COMMIT/ROLLBACK, so the lifted cap can never escape onto a pooled
-//     connection.
+//   - the write set is the PLAN the dry run printed; no second predicate is
+//     evaluated, so no row is written that the preview did not name.
+//   - a row is written only while its amounts, usd_volume and
+//     derive_generation still equal what the plan read; one moved since is
+//     skipped and surfaces as planned-vs-changed.
+//   - a row is written only while `trades.derive_generation <= generation`,
+//     and is stamped with it, so neither a live gen-0 replay nor this run can
+//     overwrite a newer derivation.
+//   - one bounded transaction per batch, each lifting the decompression cap
+//     with `SET LOCAL`, which COMMIT/ROLLBACK unwinds off the pooled connection.
 //   - `batch <= 0` uses [xlmBaseRestampApplyBatch].
 func (s *Store) ApplyXLMBaseUSDVolumeRestamp(ctx context.Context, plan *XLMBaseRestampPlan, generation int64, batch int) (int64, error) {
 	return s.ApplyUSDVolumeRestampPlan(ctx, plan, generation, batch)
@@ -492,27 +484,20 @@ func (s *Store) applyXLMBaseRestampBatches(ctx context.Context, plan *XLMBaseRes
 
 // Why the batch UPDATE carries a redundant `ts` range.
 //
-// `trades` is a hypertable of mostly compressed chunks. An UPDATE that
-// constrains `ts` only through a join clause (`t.ts = v.ts`) cannot be pruned at
-// planning time: every chunk becomes a result relation and TimescaleDB
-// decompresses them wholesale. Measured on production, a 23-row UPDATE ran 60
-// minutes, wrote ~270 GB of WAL and changed nothing.
+// `trades` is mostly compressed chunks. An UPDATE that constrains `ts` only
+// through a join clause (`t.ts = v.ts`) cannot be pruned at planning time:
+// every chunk becomes a result relation and is decompressed wholesale (a
+// 23-row UPDATE once ran 60 minutes and wrote ~270 GB of WAL).
 //
-// `t.ts = v.ts` already forces every matched row's `ts` into the batch's own
-// values, so bounding `t.ts` by the batch's min and max cannot exclude a row
-// the join would match. The planner can prune on it: one result relation over
-// an index-driven nested loop / merge join.
+// The join already forces every matched `ts` into the batch's values, so
+// bounding `t.ts` by their min and max excludes no row, and the planner can
+// prune on it to one result relation.
 //
-// Two smaller shapes hang off the same statement:
-//
-//   - `tx_hash` is `char(64)`. Binding it as `text` makes the comparison
-//     `(t.tx_hash)::text = v.tx_hash`, which no index can serve; binding it as
-//     `bpchar` lets the join ride `trades_pkey` on all five key columns.
-//   - Pruning only happens in a CUSTOM plan. Equal-length batches share one
-//     prepared statement that Postgres may promote to a generic plan, which
-//     cannot know the bounds and would restore the all-chunk plan.
-//     `SET LOCAL plan_cache_mode = force_custom_plan` pins it; LOCAL keeps it
-//     off the pooled connection.
+//   - `tx_hash` is `char(64)`: bound as `text` the comparison becomes
+//     `(t.tx_hash)::text = v.tx_hash`, which no index serves; bound as
+//     `bpchar` the join rides `trades_pkey` on all five key columns.
+//   - Pruning needs a CUSTOM plan; a promoted generic plan cannot know the
+//     bounds. `SET LOCAL plan_cache_mode = force_custom_plan` pins it.
 
 // xlmBaseRestampTSBounds returns the inclusive `ts` span of one batch.
 // The planner scan orders by `ts`, so a batch is normally contiguous and

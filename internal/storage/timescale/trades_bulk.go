@@ -24,24 +24,17 @@ import (
 // [Store.BulkBackfillTrades] is the BACKFILL-ONLY twin of
 // [Store.BatchInsertTrades]; only the latter is on the live ingest path.
 //
-// Measured against the real `trades` hypertable (test/integration/
-// pg_trades_test.go): landing into a COMPRESSED chunk is ~2.4x slower (~3.3x
-// for COPY) because TimescaleDB enforces the trade PK against compressed
-// data, and `trades` compresses at 7 days (migration 0001). `usd_volume`
-// resolution costs more than the write: one [tradeUSDVolume] per row, and on
-// a cache miss one to four serial `prices_1m` round trips
-// ([VWAPUSDFXResolver]); on an empty historical range ~74 % of wall clock is
-// that FX latency (6.7k vs 26k rows/s without resolvers).
-//
-// So the win is concurrency over a latency-bound workload: resolve
-// `usd_volume` through a bounded worker pool, then land rows through
+// Landing into a COMPRESSED chunk is ~2.4x slower (PK enforced against
+// compressed data), and `usd_volume` resolution costs more than the write:
+// on a cache miss one to four serial `prices_1m` round trips per row
+// ([VWAPUSDFXResolver]), ~74 % of wall clock on an empty range. So the win is
+// concurrency: resolve through a bounded worker pool, then land rows through
 // parallel binary COPY streams over DISJOINT conflict-key partitions.
 //
-// The live writer is untouched: [Store.BatchInsertTrades] handles genuinely
-// conflicting streams (replays, dual-sink retries, CEX WS redelivery) and its
-// ON CONFLICT ... DO UPDATE is load-bearing. COPY has no conflict handling (a
-// duplicate PK aborts the stream), so it is only safe on a range PROVEN
-// empty, and this writer FALLS BACK to the live path otherwise.
+// COPY has no conflict handling (a duplicate PK aborts the stream), so it is
+// only safe on a range PROVEN empty; otherwise this FALLS BACK to the live
+// writer, whose ON CONFLICT ... DO UPDATE is load-bearing for replays,
+// dual-sink retries and CEX WS redelivery.
 
 // tradeBulkColumns is the COPY column list. It is EXACTLY the column list
 // [Store.BatchInsertTrades] and [Store.InsertTrade] write, in the same order,
@@ -134,27 +127,20 @@ type BulkBackfillResult struct {
 // BulkBackfillTrades writes a large buffer of historical trades, using the
 // fast COPY path when, and only when, the target range is PROVABLY empty.
 //
-// The precondition is checked here, never assumed from the caller: per source,
-// probe `trades` for any row with that source, a ledger inside the buffer's
-// ledger extent and a `ts` inside its ts extent. Any row a COPY'd row could collide with on the PK (source, ledger, tx_hash,
-// op_index, ts) satisfies that predicate, so empty is a proof. The ledger
-// bound is the no-unbounded-trade-scan rule; the ts bound lets TimescaleDB
-// prune to the backfilled chunks. Any hit falls back to the ORIGINAL buffer via
-// [Store.BatchInsertTrades] ([BulkBackfillPathUpsert]).
+// Per source it probes `trades` for any row inside the buffer's ledger and
+// ts extents. Every possible PK collision (source, ledger, tx_hash, op_index,
+// ts) satisfies that predicate, so empty is a proof; the ledger bound obeys
+// the no-unbounded-trade-scan rule and the ts bound prunes chunks. Any hit
+// falls back to [Store.BatchInsertTrades] ([BulkBackfillPathUpsert]).
 //
-// Rows written and side effects (`source_entry_counts` tally, registry hook,
-// outcome metrics) match [Store.BatchInsertTrades]: same
-// [Store.filterStorableTrades] gate, [sortTradesByConflictKey] +
-// [dedupeSortedTradesByConflictKey] collapse and [tradeUSDVolume] behind
-// [Store.reDeriveNullVolumeGuard]. Parallel resolution is safe: the resolver
-// reads static historical state.
+// Rows and side effects match [Store.BatchInsertTrades]: same
+// [Store.filterStorableTrades] gate, conflict-key sort + dedupe, and
+// [tradeUSDVolume] behind [Store.reDeriveNullVolumeGuard].
 //
-// The probe and the COPY are not one transaction. A conflicting writer in
-// between fails a COPY stream with a unique violation; that is caught,
-// committed partitions are accounted for, and the whole buffer is replayed
-// through [Store.BatchInsertTrades], whose upsert is idempotent against those
-// rows. Only the ATTEMPT counters (obs.TradeInsertsTotal,
-// obs.SourceInsertErrorsTotal) count recovered rows twice.
+// Probe and COPY are not one transaction: a writer in between fails a stream
+// with a unique violation, which is caught and the whole buffer replayed
+// through the idempotent upsert. Only the ATTEMPT counters
+// (obs.TradeInsertsTotal, obs.SourceInsertErrorsTotal) count those rows twice.
 func (s *Store) BulkBackfillTrades(ctx context.Context, trades []canonical.Trade, opts BulkBackfillOptions) (BulkBackfillResult, error) {
 	if len(trades) == 0 {
 		return BulkBackfillResult{Path: BulkBackfillPathCopy}, nil

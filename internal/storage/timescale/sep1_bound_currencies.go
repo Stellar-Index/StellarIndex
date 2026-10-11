@@ -17,27 +17,21 @@ import (
 // a dead domain settles at has not renewed the claim.
 const Sep1AttestationMaxAge = 30 * 24 * time.Hour
 
-// Issuer-bound SEP-1 [[CURRENCIES]] entries — the raw material for any
-// surface that must act on what an issuer DECLARED about one of its own
-// assets, rather than on what some account declared about someone else.
+// Issuer-bound SEP-1 [[CURRENCIES]] entries: what an issuer DECLARED about
+// one of its own assets, not what some account declared about someone else.
 //
-// The provenance rule is the whole point, and it is the same one
-// [Store.AllSep1Images] enforces: an entry counts only when its declared
-// Issuer names the G-address whose stellar.toml carried it. Without that
-// check any account could publish
+// The provenance rule, as in [Store.AllSep1Images]: an entry counts only when
+// its declared Issuer names the G-address whose stellar.toml carried it.
+// Otherwise any account could publish
 //
 //	[[CURRENCIES]] code = "USTRY" issuer = "<Etherfuse G-key>"
 //	               anchor_asset_type = "bond"
 //
-// and have its claim read as that of the account it named. The toml a
-// domain serves may describe only the issuer that served it.
+// and have its claim read as that of the account it named.
 //
-// Every entry the scan does NOT keep is COUNTED, in the bucket that
-// names why (see [Sep1BoundCensus]). A scan that reported only what
-// survived is indistinguishable from one that found almost nothing,
-// and that is exactly how a funnel narrowing tens of thousands of
-// attestations down to single digits went unnoticed: the caller could
-// see the survivors and had no way to ask what happened to the rest.
+// Every entry NOT kept is COUNTED in a bucket naming why ([Sep1BoundCensus]):
+// a scan reporting only survivors cannot be told apart from one that found
+// almost nothing.
 
 // Sep1BoundCurrency is one [[CURRENCIES]] entry that passed the
 // provenance rule, carried alongside the issuer-account context a
@@ -67,17 +61,11 @@ type Sep1BoundCurrency struct {
 	AnchorAssetType string
 }
 
-// Sep1BoundCensus accounts for every issuer row and every
-// [[CURRENCIES]] entry one scan walked: the population it started from,
-// and a named bucket for each way an entry stopped short of the result.
-//
-// It exists because returning only the survivors makes two questions
-// unanswerable from outside the scan: how large was the population, and which
-// stage removed it. Both stages that swallow silently are represented
-// ([Sep1BoundCensus.IssuersPayloadUnreadable] and
-// [Sep1BoundCensus.IssuersDeclaringNothing]); without them, a scan that
-// dropped a whole population would look identical to a network where nothing
-// qualified.
+// Sep1BoundCensus accounts for every issuer row and every [[CURRENCIES]]
+// entry one scan walked: the starting population and a named bucket for each
+// way an entry stopped short, including the two silent stages
+// ([Sep1BoundCensus.IssuersPayloadUnreadable],
+// [Sep1BoundCensus.IssuersDeclaringNothing]).
 //
 // The arithmetic closes, and [Sep1BoundCensus.Check] proves it:
 //

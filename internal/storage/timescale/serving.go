@@ -10,53 +10,34 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
-// OpenServing is [Open] with a session-level `statement_timeout` applied to every
-// connection in the pool, so a runaway request-path query is bounded SQL-side even
-// if Go-side context cancellation races. It is the backstop UNDER the app-layer
-// per-request deadline, which is the primary bound.
+// OpenServing is [Open] with a session-level `statement_timeout` on every
+// pooled connection, the SQL-side backstop under the app-layer per-request
+// deadline. Heavy scans override it with `SET LOCAL statement_timeout`.
+// statementTimeout <= 0 falls back to plain [Open] (no timeout, no
+// plan-mode override).
 //
-// The indexer/aggregator pools get their own backstop via [OpenBackground]; the
-// one-shot ops/migrate/backfill pools stay unbounded on plain [Open]. Heavy batch
-// scans in a bounded pool set their own longer `SET LOCAL statement_timeout`
-// inside a transaction, which overrides the session default.
-//
-// statementTimeout <= 0 falls back to plain [Open] (no timeout, no plan-mode
-// override; both ride the same post-connect mechanism).
-//
-// The serving pool ADDITIONALLY runs `SET plan_cache_mode = force_custom_plan`
-// for the /v1/price p95 tail: the raw-trades fallback (TradesInRange) is a
-// parameterised query that Postgres flips to a GENERIC plan after five
-// executions, and planning that across every hypertable chunk takes hundreds of
+// The serving pool also runs `SET plan_cache_mode = force_custom_plan`: the
+// raw-trades fallback (TradesInRange) flips to a GENERIC plan after five
+// executions, and planning that across every chunk costs hundreds of
 // milliseconds each time the plan cache invalidates (about once a minute).
-// Custom plans bind in milliseconds and prune chunks better. Other pools keep the
-// default: their long-lived batch statements are where generic plans pay off.
+// Custom plans bind in milliseconds and prune better; batch pools keep the
+// default, where generic plans pay off.
 //
-// Both settings are applied via a post-connect SET on every new pooled connection
-// (a wrapping driver.Connector), not by editing the operator DSN, so URL and
-// keyword-form DSNs behave alike.
+// Both settings are a post-connect SET (a wrapping driver.Connector), not a
+// DSN edit, so URL and keyword-form DSNs behave alike.
 func OpenServing(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {
 	return openWithSessionSetup(ctx, dsn, statementTimeout, true)
 }
 
-// OpenBackground is [Open] with a session-level `statement_timeout` applied
-// to every connection in the pool, for the long-running INDEXER and
-// AGGREGATOR binaries. It is the SQL-side runaway backstop: without it,
-// only the serving pool self-bounds (OpenServing), so a genuinely stuck
-// indexer/aggregator query would keep running server-side even after the
-// Go-side ctx was cancelled.
+// OpenBackground is [Open] with a session-level `statement_timeout` on every
+// pooled connection, for the long-running INDEXER and AGGREGATOR binaries,
+// so a stuck query stops server-side even after its Go ctx is cancelled.
 //
-// The bound is deliberately GENEROUS (see StorageConfig.BackgroundStatementTimeout)
-// so it only ever kills a true runaway. The heavy batch scans
-// (per_source_gaps, source_coverage, row_counts, sep41_supply_events, …)
-// open a transaction and `SET LOCAL statement_timeout` to their own longer
-// value, which OVERRIDES this session default for exactly those statements —
-// so this backstop never clips legitimate heavy work.
-//
-// It shares OpenServing's post-connect SET mechanism but is a distinct
-// constructor so the two call-sites read their own intent (DoS backstop vs
-// runaway backstop) and draw their timeout from their own config field. The
-// one-shot ops/migrate/heavy-backfill paths keep using plain [Open]
-// (unbounded); a global timeout there is deliberately not applied.
+// The bound is deliberately GENEROUS (StorageConfig.BackgroundStatementTimeout)
+// so it only kills a true runaway; heavy batch scans set a longer
+// `SET LOCAL statement_timeout` in their own transaction. It is distinct
+// from OpenServing so each call site reads its intent and config field;
+// one-shot ops/migrate/backfill paths stay on unbounded [Open].
 //
 // statementTimeout <= 0 falls back to plain [Open] (no session timeout).
 func OpenBackground(ctx context.Context, dsn string, statementTimeout time.Duration) (*Store, error) {
