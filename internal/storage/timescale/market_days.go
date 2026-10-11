@@ -63,35 +63,30 @@ type MarketDay struct {
 	Trades int64
 }
 
-// DailyMarketDays returns one [MarketDay] per (asset, UTC day) for each
-// of `assets` over the inclusive day range [from, to], folding EVERY
-// dollar spelling in `quotes` into a single day figure.
+// DailyMarketDays returns one [MarketDay] per (asset, UTC day) over the
+// inclusive range [from, to], folding EVERY dollar spelling in `quotes`.
 //
 // The dollar spellings (classic USDC, its SAC, `fiat:USD`) carry disjoint
 // venue populations, so the market is their sum, the same union
 // [pricingguard.SubstanceGate] and [Store.GetAssetATH] use. Each asset's
-// [canonical.AssetAliases] forms are likewise bound and mapped back to it
-// in SQL, so `hours` counts distinct hours across spellings once. A
-// spelling shared by two requested assets is credited to the first only.
+// [canonical.AssetAliases] forms are likewise mapped back to it in SQL, so
+// `hours` counts distinct hours once. A spelling shared by two requested
+// assets is credited to the first only.
 //
 // It reads prices_1h: prices_1d has no intra-day timing, and prices_1m can
 // carry an armable 90-day retention (migration 0156) that would silently
-// truncate the series. prices_1h has never had retention and is
-// re-materialised by backfill ([CAGGsLiveForever]). Its depth is not
-// promised: migrations 0115/0147 left re-materialisation to the operator,
-// so an unmaterialised span reads as "did not trade" and callers counting
-// silent days must bound the count to the span this reader covers.
+// truncate the series. prices_1h has no retention ([CAGGsLiveForever]) but
+// its depth is not promised (migrations 0115/0147 left re-materialisation to
+// the operator): an unmaterialised span reads as "did not trade", so callers
+// counting silent days must bound the count to the span this reader covers.
 //
 // Only rows with the asset as base are read; a dollar-first book reads as
 // no market (a false absence, never a wrong price). Empty `assets` or
-// `quotes` returns (nil, nil). Closed buckets only (ADR-0015). Both bounds
-// are floored to their UTC day, and `to` reads through the end of its day.
+// `quotes` returns (nil, nil). Closed buckets only (ADR-0015). Bounds floor
+// to their UTC day; `to` reads through the end of its day.
 //
-// dailyMarketDaysQuery is hoisted to package level (rather than an
-// in-function `const q`) so its sargability can be pinned by a
-// query-shape test the way [closedVWAPAtOrBeforeQueryTemplate] and
-// [recentClosedVWAP1mForPairQuery] already are — an in-function query
-// is invisible to those guards however careful the author.
+// dailyMarketDaysQuery is package-level so a query-shape test can pin its
+// sargability, as for [closedVWAPAtOrBeforeQueryTemplate].
 const dailyMarketDaysQuery = `
         WITH family AS (
             SELECT spelling, member

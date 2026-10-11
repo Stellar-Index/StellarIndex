@@ -19,16 +19,14 @@ import (
 //
 // WHAT A ROW MEANS, precisely. "Curator X states that this address is a
 // real-world asset issued by company Y, of subclass Z, and values one
-// token at P dollars." That is a curation — an editorial table the
-// curator publishes and maintains — and it is the entire content of the
-// claim. No signature, no proof of control, no attestation, no market.
+// token at P dollars." That is an editorial table the curator publishes and
+// maintains, and it is the entire content of the claim. No signature, no
+// proof of control, no attestation, no market.
 //
-// The first curator is the Stellar team's public Dune uploads. Its
-// figures are what the "RWAs on Stellar" dashboard publishes, and the
-// whole reason this table exists is that a reader comparing that
-// dashboard with this index could not see line by line why they differ.
-// Rows admitted on this table are served under their own basis and their
-// own total, beside the verified set and never inside it.
+// The first curator is the Stellar team's public Dune uploads, whose figures
+// the "RWAs on Stellar" dashboard publishes. Rows admitted here are served
+// under their own basis and their own total, beside the verified set and
+// never inside it.
 //
 // TWO CLOCKS, TWO BOUNDS, the same shape as asset_listing_directory:
 //

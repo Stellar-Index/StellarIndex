@@ -209,30 +209,24 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 // SaveLadder persists the ADR-0019 lifecycle state onto the currently-firing
 // `freeze_events` row for (asset, quote). Implements freeze.LadderStore.
 //
-// Migration 0119. Held only in the aggregator's memory and in the Redis
-// marker's JSON, the ladder — hold_until / extensions_used / escalated /
-// corroborated — would let a Redis flush take an ESCALATED freeze (one
-// ADR-0019 holds "until manual unfreeze") down with it. This is the durable
-// copy, written on every lifecycle transition by freeze.Writer.MarkHold.
+// Migration 0119. Held only in memory and the Redis marker's JSON, the ladder
+// (hold_until / extensions_used / escalated / corroborated) would let a Redis
+// flush take an ESCALATED freeze (held "until manual unfreeze") down with it.
+// This is the durable copy, written on every transition by freeze.Writer.MarkHold.
 //
 // Deliberately an UPDATE of the OPEN row and nothing else:
 //
-//   - No INSERT. RecordFreeze owns row creation and is the only path that
-//     may open a row; a SaveLadder that could insert would race it and open
-//     a second firing row for one pair — the duplicate-open-row race
-//     RecordFreeze's advisory lock serialises against.
-//   - No row → [ErrNotFound], NOT a silent nil. The freeze fired before
-//     0119, RecordFreeze's insert failed (best-effort by contract), the
-//     operator just closed the row out from under a tick — or, the case
-//     that actually bites, migration 0119 has not been applied while the
-//     new binary is already running, in which case EVERY ladder write
-//     matches nothing and the durable ladder simply is not there when a
-//     flush needs it. The caller cannot act on any of these (the write is
-//     best-effort), but it must be able to COUNT them; returning nil would
-//     make the whole failure mode invisible.
+//   - No INSERT. RecordFreeze owns row creation; a SaveLadder that could
+//     insert would race it and open a second firing row for one pair — the
+//     race RecordFreeze's advisory lock serialises against.
+//   - No row → [ErrNotFound], NOT a silent nil. Causes: RecordFreeze's insert
+//     failed (best-effort by contract), the operator closed the row under a
+//     tick, or migration 0119 is not applied while the new binary runs, in
+//     which case EVERY ladder write matches nothing. The caller cannot act
+//     (the write is best-effort) but must be able to COUNT them.
 //
-// Idempotent and monotonic in practice: every write is the whole current
-// state, so a lost write is corrected by the next tick's write.
+// Idempotent: every write is the whole current state, so a lost write is
+// corrected by the next tick's write.
 func (s *FreezeEventSink) SaveLadder(ctx context.Context, asset, quote canonical.Asset, state freeze.State) error {
 	var holdUntil any
 	if !state.HoldUntil.IsZero() {

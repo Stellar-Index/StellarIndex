@@ -43,28 +43,24 @@ type ProjectionDirtyWindow struct {
 //   - `projector-replay` RE-WINDS the live projector cursor, so the lag its
 //     window covers is an INTENDED lag.
 //   - `projected-rebuild -write` never touches the live cursor, and its
-//     recorded range may legally sit AT it (`-to` defaults to the live
-//     cursor) or ABOVE it (`-allow-live-overlap` bypasses the one-writer
-//     guard entirely).
+//     range may legally sit AT it (`-to` defaults to the live cursor) or
+//     ABOVE it (`-allow-live-overlap` bypasses the one-writer guard).
 //   - `ch-rebuild -record-dirty-window`, driven by
 //     scripts/ops/ch-rebuild-projected.sh when a clean-slate window was
-//     DELETEd and its re-derive did not complete: the range is not merely
-//     rewritten, it is EMPTY until the recovery run finishes.
+//     DELETEd and its re-derive did not complete: the range is EMPTY until
+//     the recovery run finishes.
 //   - `ch-rebuild -write` rewrites the range from the lake, recorded before
-//     its first write. Like projected-rebuild it never touches the cursor.
-//   - `backfill -write` rewrites NON-projected served
-//     rows (sdex, band, soroswap-router), recorded before their first write.
-//     They have no projector cursor at all. `backfill -source soroban-events`
-//     also stamps the full range on every PROJECTED source with a cursor: the
-//     landed raw rows may sit behind it, so those served rows are not
-//     rewritten but stale until a projector-replay re-projects them.
+//     its first write; it never touches the cursor.
+//   - `backfill -write` rewrites NON-projected served rows (sdex, band,
+//     soroswap-router), recorded before their first write; they have no
+//     projector cursor. `backfill -source soroban-events` also stamps the
+//     full range on every PROJECTED source with a cursor: those served rows
+//     are not rewritten but stale until a projector-replay re-projects them.
 //
 // The constructors and the predicate below are the ONE place the format
-// lives, so a reader can tell them apart without matching a free-form
-// string in three packages. The prefixes reproduce byte-for-byte what the
-// released binaries have written since migration 0125, so rows ALREADY in
-// the table classify correctly (pinned by
-// TestProjectionDirtyWindowReasonIsStableAcrossReleases).
+// lives. The prefixes reproduce byte-for-byte what released binaries have
+// written since migration 0125, so existing rows classify correctly (pinned
+// by TestProjectionDirtyWindowReasonIsStableAcrossReleases).
 const (
 	reasonProjectorReplayPrefix  = "projector-replay rewind "
 	reasonProjectedRebuildPrefix = "projected-rebuild -write "

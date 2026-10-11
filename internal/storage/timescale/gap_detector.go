@@ -206,32 +206,26 @@ func persistGapScanSeed(ctx context.Context, store *Store, logger *slog.Logger, 
 	}
 }
 
-// RunGapDetector blocks until ctx is cancelled, periodically
-// scanning every target in [DefaultGapDetectorTargets] that exists on
-// `network` (see [ApplicableGapDetectorTargets] — pubnet is all of
-// them) for contiguous ledger-coverage gaps, emitting per-(source,
-// table) gauges + meta-metrics.
+// RunGapDetector blocks until ctx is cancelled, periodically scanning every
+// target in [DefaultGapDetectorTargets] that exists on `network` (see
+// [ApplicableGapDetectorTargets]) for contiguous ledger-coverage gaps,
+// emitting per-(source, table) gauges + meta-metrics.
 //
 // Data-derived complement to the cursor-derived density projection in
 // /v1/diagnostics/ingestion. Cursor coverage measures process state ("did we
-// walk this ledger") and can read 100% while data is missing. This worker
-// scans every per-source data table directly and surfaces the honest signal as
-// Prometheus gauges that operators (and an alert rule) can act on.
+// walk this ledger") and can read 100% while data is missing; this worker
+// scans every per-source data table directly.
 //
-// Failure semantics: a transient Postgres error on one target's
-// scan does NOT clear its gauges and does NOT halt the remaining
-// targets in the cycle — the last-known value stays put and the
-// loop continues. Operators rely on the paired
-// `stellarindex_ingest_gap_detector_runs_total{outcome=error}`
-// counter to detect a sustained per-target detector outage.
+// Failure semantics: a transient Postgres error on one target's scan does NOT
+// clear its gauges and does NOT halt the remaining targets — the last-known
+// value stays and the loop continues. Operators rely on the paired
+// `stellarindex_ingest_gap_detector_runs_total{outcome=error}` counter to
+// detect a sustained per-target outage.
 //
-// The first cycle runs immediately on goroutine start so the gauges
-// are populated before the first interval tick — a process that's
-// just come up has a non-empty signal within seconds rather than
-// ~37 min (= interval + first scan duration). Targets whose cadence
-// has NOT elapsed since their last persisted scan are skipped by that
-// first cycle (see [seedGapDetectorState]); their gauges are re-emitted
-// from persisted state instead.
+// The first cycle runs immediately so the gauges are populated before the
+// first interval tick. Targets whose cadence has NOT elapsed since their last
+// persisted scan are skipped by that cycle (see [seedGapDetectorState]); their
+// gauges are re-emitted from persisted state instead.
 func RunGapDetector(ctx context.Context, store *Store, logger *slog.Logger, network string) error {
 	if store == nil {
 		return nil

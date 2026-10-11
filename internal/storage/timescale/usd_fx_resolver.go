@@ -515,9 +515,8 @@ const fiatUSDRateScale = 18
 //
 // A fiat asset can NEVER resolve through [VWAPUSDFXResolver.queryDB]:
 // prices_1m holds crypto markets only. Without this branch every CEX pair
-// quoted in a non-USD currency (BTC/EUR, ETH/GBP, ...) would fall through
-// all tiers of [tradeUSDVolume] and insert with `usd_volume` NULL, silently
-// deflating every aggregate built on it. See
+// quoted in a non-USD currency (BTC/EUR, ETH/GBP, ...) would insert with
+// `usd_volume` NULL, silently deflating every aggregate built on it. See
 // docs/operations/usd-volume-coverage-plan.md.
 //
 // The rate is an exact *big.Rat from [fxSnapFromRows]
@@ -532,8 +531,7 @@ const fiatUSDRateScale = 18
 //     the longest routine weekend/holiday gap) is the bound instead.
 //   - **The cache key floors to the UTC day, not the minute.** Buckets sit
 //     at exactly UTC midnight, one per (date, ticker); a minute key would
-//     multiply misses by 1440 and grow the cache by one entry per traded
-//     minute per currency during a backfill.
+//     multiply misses by 1440 during a backfill.
 func (r *VWAPUSDFXResolver) usdPriceForFiat(ctx context.Context, asset canonical.Asset, at time.Time) (string, bool, error) {
 	// USD is the anchor rate_usd is expressed against — exactly 1 by
 	// definition, and fx_quotes holds no USD row to look up.

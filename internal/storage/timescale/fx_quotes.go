@@ -34,31 +34,26 @@ type FXQuote struct {
 	Source         string
 }
 
-// InsertFXQuoteBatch upserts a slice of fx quotes. Idempotent on
-// the (ticker, bucket) primary key — re-running with the same
-// (ticker, date) updates `rate_usd` + `inverse_usd` + `source`,
-// preserving the original `observed_at` only by virtue of the
-// DEFAULT not firing on UPDATE. (We deliberately don't refresh
-// observed_at because it's diagnostic: the row's first observation
-// date is more useful than its most-recent.)
+// InsertFXQuoteBatch upserts a slice of fx quotes. Idempotent on the
+// (ticker, bucket) primary key — re-running with the same (ticker, date)
+// updates `rate_usd` + `inverse_usd` + `source`, keeping the original
+// `observed_at` (the DEFAULT does not fire on UPDATE; the first observation
+// date is the more useful diagnostic).
 //
 // Generation-guarded corrective upsert (migration 0141): rate_usd is the
-// denominator of every fiat-quoted usd_volume, so the DO UPDATE is
-// guarded by `derive_generation <= EXCLUDED.derive_generation`. The live
-// forex worker writes at generation 0; the operator fx-history-backfill
-// tool stamps a POSITIVE generation ([SetDeriveGeneration]) so its
-// corrected rate wins the conflict AND survives — a later live gen-0
-// worker refresh cannot silently revert an operator correction (a
-// last-writer-wins hole). A gen-0-over-gen-0 write (worker idempotency)
+// denominator of every fiat-quoted usd_volume, so the DO UPDATE is guarded by
+// `derive_generation <= EXCLUDED.derive_generation`. The live forex worker
+// writes at generation 0; the operator fx-history-backfill tool stamps a
+// POSITIVE generation ([SetDeriveGeneration]) so its corrected rate wins the
+// conflict AND survives a later live gen-0 refresh. A gen-0-over-gen-0 write
 // re-writes the same row.
 //
-// The per-source `entries` tally (source_entry_counts, migration 0035)
-// is bumped INLINE, the way the trades / oracle_updates inserts do it:
-// `xmax = 0` marks a genuinely new row, and the HAVING clause makes the
-// counter upsert produce nothing on a duplicate, an update or a
-// generation-guard skip — so a re-run over already-stored dates never
-// inflates the tally, and [Store.SeedSourceEntryCounts]'s fx_quotes
-// fold reconciles to the same number.
+// The per-source `entries` tally (source_entry_counts, migration 0035) is
+// bumped INLINE, as the trades / oracle_updates inserts do: `xmax = 0` marks
+// a genuinely new row, and the HAVING clause makes the counter upsert produce
+// nothing on a duplicate, an update or a generation-guard skip, so a re-run
+// never inflates the tally and [Store.SeedSourceEntryCounts]'s fx_quotes fold
+// reconciles to the same number.
 //
 // Empty slice is a no-op.
 func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error {

@@ -190,19 +190,13 @@ type CursorRead struct {
 // dirty window stays open, and nothing is re-projected.
 //
 // Comparing against the value READ makes the rewind win however they
-// interleave: if the rewind commits first, the advance matches zero rows; if
-// the advance holds the row lock first, the rewind then rewinds the advanced
-// value. Under READ COMMITTED an advance parked behind the rewind's row lock
-// re-evaluates `last_ledger = $3` against the committed row once unblocked,
-// so both cannot succeed against the same read.
+// interleave: under READ COMMITTED an advance parked behind the rewind's row
+// lock re-evaluates `last_ledger = $3` once unblocked.
 //
 // expected.Exists=false is the first-cycle seed: INSERT … ON CONFLICT DO
-// NOTHING, so a row that appeared since the read is likewise left alone.
-// first_ledger keeps UpsertCursor's semantics (set on insert, COALESCE
-// preserved on update).
-//
-// newLast must be strictly above expected.LastLedger: this is an ADVANCE.
-// Moving backward is [Store.RewindCursor]'s job, deliberately separate.
+// NOTHING. first_ledger keeps UpsertCursor's semantics. newLast must be
+// strictly above expected.LastLedger; moving backward is
+// [Store.RewindCursor]'s job.
 func (s *Store) AdvanceCursorFrom(ctx context.Context, source, sub string, expected CursorRead, newLast uint32) (bool, error) {
 	var (
 		res sql.Result

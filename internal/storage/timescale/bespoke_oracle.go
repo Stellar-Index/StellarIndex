@@ -10,27 +10,22 @@ package timescale
 // Everything here is COUNTS + TIMESTAMPS over oracle_updates scoped by source
 // = the protocol page's name. No price averaging, rescaling, or aggregation
 // happens on this page: aggregated pricing is the aggregator's domain
-// (ADR-0006 / docs/methodology), and oracle sources never feed VWAP anyway
-// (external.Registry class policy). The one place a price appears — the
-// "Latest feed prices" table — shows the raw observed integer verbatim with
-// its declared decimals column.
+// (ADR-0006 / docs/methodology), and oracle sources never feed VWAP
+// (external.Registry class policy). The one price shown, in "Latest feed
+// prices", is the raw observed integer verbatim with its declared decimals.
 //
-// Batch semantics: some sources (redstone in particular — one "REDSTONE"
-// event per batch push containing every updated feed) land one ROW PER
-// FEED per publication, so update counts weight feeds, not transactions.
-// The median publish interval is therefore measured between DISTINCT
-// publication timestamps, not rows — row-to-row gaps within one batch are
-// zero and would report a dishonest "0s cadence".
+// Batch semantics: some sources (redstone: one "REDSTONE" event per batch
+// push) land one ROW PER FEED per publication, so update counts weight feeds,
+// not transactions. The median publish interval is therefore measured between
+// DISTINCT publication timestamps, not rows — row-to-row gaps within one
+// batch are zero and would report a dishonest "0s cadence".
 //
-// History note: oracle_updates carries NO retention (migration 0040 drops the
-// 90-day policy), so "all-time" figures cover every retained observation —
-// history begins at each source's first ingested observation, NOT at protocol
-// genesis.
+// oracle_updates carries NO retention (migration 0040), so "all-time" figures
+// start at each source's first ingested observation, NOT at protocol genesis.
 //
-// Every windowed query is bounded by ts > now() - $N::interval (1-day
-// hypertable chunks make this a cheap chunk-excluded scan); the two
-// all-time reads are narrow index counts. The whole block builds under
-// the window-keyed protocol-detail TTL cache.
+// Every windowed query is bounded by ts > now() - $N::interval (1-day chunks
+// make this a chunk-excluded scan); the two all-time reads are narrow index
+// counts. The block builds under the window-keyed protocol-detail TTL cache.
 
 import (
 	"context"
