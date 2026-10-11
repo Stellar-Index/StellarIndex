@@ -2,21 +2,13 @@
 # apply-rules-health-test.sh — regression test for the post-install health
 # check in configs/prometheus/apply-rules.sh.
 #
-# The unhealthy-rule check shelled out to a python f-string with a
-# backslash inside the {} expression part (`f"{r.get(\"name\")}: ..."`),
-# which is a SyntaxError on the python3 this repo targets. stderr was
-# `2>/dev/null` and the pipeline ended `|| true`, so the crash was silent
-# and $unhealthy was always empty — the check never fired.
+# The unhealthy-rule check must really run (a python f-string with a backslash in
+# {} is a SyntaxError that `2>/dev/null` + `|| true` would hide), and a rule whose
+# health stays "unknown" must be reported: unknown is transient after a reload,
+# but a rule that never leaves it is as broken as one that never loaded.
 #
-# Even once the syntax is fixed, the check accepted a rule's health
-# staying "unknown" forever as healthy. "unknown" is the transient state
-# right after a reload before the first evaluation; a rule that NEVER
-# leaves it is exactly as broken as one that never loaded.
-#
-# This test extracts rules_with_health() straight from the script (so it
-# can never silently drift from what ships) and drives it directly against
-# a fixture — proving the syntax executes and that "err" and "unknown" are
-# reported, not swallowed.
+# rules_with_health() is extracted straight from the script so the test cannot
+# drift from what ships, and driven against a fixture.
 #
 # Run: bash configs/prometheus/apply-rules-health-test.sh
 set -uo pipefail

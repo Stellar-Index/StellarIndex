@@ -16,8 +16,8 @@ set -uo pipefail
 # Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
 # values are unquoted (that is what systemd wants), so the shell would
 # expand `$`, split on `;`/`&`/`|`/whitespace and eat quotes inside a
-# secret: the services keep working while this path gets a mangled DSN
-# (deploy-ansible-secrets-5). Same reader as run-heavy-job.sh.
+# secret: the services keep working while this path gets a mangled DSN.
+# Same reader as run-heavy-job.sh.
 # usage: load_env_file FILE [export]
 load_env_file() {
   local line
@@ -37,7 +37,7 @@ load_env_file /etc/default/stellarindex-ops export
 # Optional ops-user credentials (STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD,
 # from /etc/default/stellarindex-ops). Handed to clickhouse-client via its
 # CLICKHOUSE_USER/CLICKHOUSE_PASSWORD env — never argv, which ps and the journal
-# would show. Unset ⇒ nothing exported; the default user exactly as before.
+# would show. Unset ⇒ nothing exported; the default user.
 if [ -n "${STELLARINDEX_CLICKHOUSE_OPS_USER:-}" ]; then
   export CLICKHOUSE_USER="$STELLARINDEX_CLICKHOUSE_OPS_USER"
   export CLICKHOUSE_PASSWORD="${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD:-}"

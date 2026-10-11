@@ -2,11 +2,9 @@
 # apply-rules-test.sh — fixture tests for configs/prometheus/apply-rules.sh's
 # --live-check mode.
 #
-# Nothing between deploys re-checks that the LIVE rule set still
-# matches the repo — --check-only only validates repo content, and the
-# post-install verify poll only runs during an install. --live-check closes
-# that gap for a scheduled reconciliation run. These tests prove it against
-# a loopback mock of Prometheus's /api/v1/rules, never a live host.
+# Nothing between deploys re-checks that the LIVE rule set matches the repo;
+# --live-check does that for a scheduled reconciliation run. Tests use a
+# loopback mock of /api/v1/rules, never a live host.
 #
 # Run: bash configs/prometheus/apply-rules-test.sh
 set -uo pipefail
@@ -86,10 +84,8 @@ expect() {
   pass=$((pass + 1))
 }
 
-# Live set matches the repo exactly, including the recording rule:
-# live-check OK. Regression proof for a recording-rule bug — a
-# codified `record:` was permanently read as "loaded but NOT in the
-# repo" because the comparison set only ever held alert names.
+# Live set matches the repo exactly, including the recording rule: live-check OK.
+# A codified `record:` must not read as "loaded but NOT in the repo".
 cat >"$TMP/matching.json" <<'EOF'
 {"status":"success","data":{"groups":[{"name":"fixture","rules":[
   {"name":"FixtureAlertA","health":"ok"},
@@ -107,10 +103,7 @@ else
   echo "ok: codified recording rule not reported as drift"; pass=$((pass + 1))
 fi
 
-# Live set is missing an alert the repo declares (the scenario: repo
-# has moved on, the host has not). This is the regression proof — on the
-# unfixed script there is no --live-check flag at all, so this fails loud
-# with "unbound variable"/usage error rather than detecting the drift.
+# Live set is missing an alert the repo declares (repo moved on, host did not).
 cat >"$TMP/missing.json" <<'EOF'
 {"status":"success","data":{"groups":[{"name":"fixture","rules":[
   {"name":"FixtureAlertA","health":"ok"},

@@ -72,9 +72,6 @@ for scenario in "${selected[@]}"; do
         rc="$?"
         echo "scenario $name failed (exit=$rc)"
         failed_names+=("$name")
-        # Continue to next scenario rather than stopping; the harness
-        # is more useful as a "run all and tell me everything that's
-        # broken" tool than a "stop at first fail" tool.
     fi
     echo ""
 done

@@ -152,10 +152,9 @@ else
 fi
 
 # ─── 4. offsite gauge: configured vs not, independent of push success ──
-# backup-restore-2: the offsite staleness alert's absent-series branch is
-# gated on offsite_configured, so it MUST be emitted every run (1 iff a
-# target is set) — a push that never succeeded fires; an acked
-# local-only host stays silent.
+# The offsite staleness alert's absent-series branch is gated on
+# offsite_configured, so it MUST be emitted every run (1 iff a target is set):
+# a push that never succeeded fires; an acked local-only host stays silent.
 if grep -q '^stellarindex_ch_schema_snapshot_offsite_configured 0$' <<<"$(prom full)"; then
   ok "no offsite target → offsite_configured 0 (acked local-only stays silent)"
 else

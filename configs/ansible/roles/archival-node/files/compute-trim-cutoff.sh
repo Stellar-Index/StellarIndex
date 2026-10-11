@@ -34,8 +34,8 @@ ARCHIVE_HOT_FLOOR_FILE=/var/lib/galexie-archive/hot-floor
 # Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
 # values are unquoted (that is what systemd wants), so the shell would
 # expand `$`, split on `;`/`&`/`|`/whitespace and eat quotes inside a
-# secret: the services keep working while this path gets a mangled DSN
-# (deploy-ansible-secrets-5). Same reader as run-heavy-job.sh.
+# secret: the services keep working while this path gets a mangled DSN.
+# Same reader as run-heavy-job.sh.
 # usage: load_env_file FILE [export]
 load_env_file() {
   local line

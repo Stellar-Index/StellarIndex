@@ -2,18 +2,13 @@
 # check-verify-image-pins.sh — the verifier image's converter pin must equal
 # the script's.
 #
-# scripts/dev/docs-postman.sh names the openapi-to-postmanv2 release it
-# regenerates examples/postman with (CONVERTER_VERSION) and takes a
-# pre-installed `openapi2postmanv2` only when its --version prints that
-# exact string. docker/verify/Dockerfile installs the converter globally
-# from ARG OPENAPI_TO_POSTMAN_VERSION. scripts/dev/verify-container.sh
-# threads the script's value through --build-arg, so a container run always
-# matches; the ARG default is what a bare `docker build docker/verify` gets,
-# and nothing else ties it to the script. Two unlinked constants drift, and
-# when they do the image carries a converter the script refuses: every run
-# falls back to a network npx resolve and the pre-installed copy is dead
-# weight. This gate fails when the two values differ, and fails when it
-# cannot read either one — a missing constant must not pass as "no drift".
+# scripts/dev/docs-postman.sh uses a pre-installed `openapi2postmanv2` only when its
+# --version equals CONVERTER_VERSION; docker/verify/Dockerfile installs it from ARG
+# OPENAPI_TO_POSTMAN_VERSION. verify-container.sh passes the script's value via
+# --build-arg, but a bare `docker build` uses the ARG default, and nothing else ties
+# the two. On drift the image's converter is refused and every run falls back to a
+# network npx resolve. Fails when the values differ or either cannot be read (a
+# missing constant must not pass as "no drift").
 #
 # Env overrides (used by the self-test): DOCKERFILE, DOCS_POSTMAN_SH.
 set -euo pipefail

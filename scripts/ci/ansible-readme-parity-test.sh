@@ -2,7 +2,7 @@
 # ansible-readme-parity-test.sh — pins configs/ansible/README.md to the
 # archival-node role it documents.
 #
-# Q252: the README's first-run bootstrap prescribed a --tags subset that
+# The README's first-run bootstrap prescribed a --tags subset that
 # skipped `users` (the account the galexie tasks chown to), redis,
 # clickhouse, minio, the binaries, hardening and caddy, and it documented
 # a `run_stellar_rpc` switch whose tasks had been deleted. Prose drifts
