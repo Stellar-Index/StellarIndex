@@ -3,34 +3,24 @@
 //
 // Per ADR-0035, a decoder must only accept events from contracts that
 // belong to its protocol: the protocol's factory (a hard-coded trust
-// root) plus every child contract the factory creates — fanning out
-// recursively. Topic symbols (`swap`, `supply`, `deploy`, …) are NOT
-// unique across protocols, so matching on the topic alone mis-attributes
-// foreign contracts' events. The factory check is decoder-specific (the
-// decoder knows which classify() result is its creation event); this
-// package owns the second half: the set of factory-descended child
-// contract IDs, plus the live-upsert persistence hook.
+// root) plus every child contract the factory creates, recursively.
+// Topic symbols (`swap`, `deploy`, ...) are NOT unique across
+// protocols, so topic alone mis-attributes foreign contracts' events.
+// The factory check is decoder-specific; this package owns the set of
+// factory-descended child IDs plus the live-upsert persistence hook.
 //
-// A Registry is a small piece of state every gated decoder embeds. It is
-// seeded three ways, all rooted at the factory and all funneling through
-// [Registry.Seed]:
+// A Registry is seeded three ways, all through [Registry.Seed]:
 //
-//   - Live: the decoder calls Seed(childID, factoryID, firstLedger) when it decodes a
-//     factory creation event (e.g. Blend `deploy`, Soroswap-style
-//     `new_pair`). Seed fires the persistence hook so the mapping is
-//     durably recorded.
-//   - DB warm: at process start the pipeline loads the persisted child
-//     set (the `protocol_contracts` table) and constructs the decoder
-//     with WithSeed — so a restart resumes with a complete registry even
-//     though the projector cursor has advanced past the creation events.
-//   - Genesis / reconcile: an operator command (or the ADR-0033 reconcile
-//     pre-seed) walks the lake for the factory's creation events from the
-//     factory's deploy ledger and Seeds each child.
+//   - Live: the decoder calls Seed(childID, factoryID, firstLedger) on
+//     a factory creation event (Blend `deploy`, Soroswap-style
+//     `new_pair`); Seed fires the persistence hook.
+//   - DB warm: at start the pipeline loads the `protocol_contracts`
+//     table and builds the decoder with WithSeed, so a restart resumes
+//     complete although the projector cursor is past the creation events.
+//   - Genesis / reconcile: operator tooling walks the lake and Seeds
+//     each child.
 //
-// Concurrency: the dispatcher and projector are serial per source, but
-// Seed may be called from operator tooling concurrently with reads, so
-// the set is mutex-guarded (belt-and-braces, matching soroswap's
-// Decoder).
+// Seed may run concurrently with reads, so the set is mutex-guarded.
 package contractid
 
 import "sync"

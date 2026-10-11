@@ -543,44 +543,30 @@ func (c *WebhookStore) WebhookAccountStatus(ctx context.Context, webhookID uuid.
 // rows per poll instead of a whole batch.
 const maxClaimPerWebhook = 5
 
-// ListPendingDeliveries atomically claims up to `limit` due
-// deliveries, fair-shared across endpoints (see below). The claim happens
-// in the same statement as the read via UPDATE…RETURNING +
-// `FOR UPDATE SKIP LOCKED`, so two workers running concurrently
-// (horizontal scale or blue/green overlap during deploy) never
-// hand the same row to two HTTP-POST paths.
+// ListPendingDeliveries atomically claims up to `limit` due deliveries,
+// fair-shared across endpoints. The claim is one UPDATE...RETURNING with
+// `FOR UPDATE SKIP LOCKED`, so concurrent workers (scale-out or
+// blue/green overlap) never hand the same row to two HTTP-POST paths.
 //
-// The lease is implemented by pushing `next_attempt_at` 5 minutes
-// into the future as part of the claim. Any worker that subsequently
-// runs the same query won't see the row (its next_attempt_at is now
-// `now() + 5m`). On successful delivery [MarkDelivered] sets
-// `delivered_at`; on failure [MarkAttemptFailed] writes the
-// genuine backoff back into next_attempt_at. If a worker crashes
-// after claiming but before either update, the lease expires after
-// 5 minutes and another worker can pick the row up — that's
-// idempotent because the receiver dedupes on X-StellarIndex-Delivery-Id
-// (the row id, so the re-POST repeats it), authenticated by
-// X-StellarIndex-Signature-V2; and customer-side metrics treat
-// duplicate-post-after-worker-crash as the same class as 5xx-retry.
+// The lease pushes `next_attempt_at` 5 minutes out as part of the claim.
+// [MarkDelivered] sets `delivered_at`; [MarkAttemptFailed] writes the
+// real backoff. If a worker crashes after claiming, the lease expires
+// and another worker re-POSTs; that is idempotent because the receiver
+// dedupes on X-StellarIndex-Delivery-Id (the row id, so the re-POST
+// repeats it), authenticated by X-StellarIndex-Signature-V2.
 //
-// Fair share: the claim ranks each endpoint's due rows FIFO and
-// takes every endpoint's first row before any endpoint's second, and at
-// most maxClaimPerWebhook rows per endpoint per claim. One endpoint's
-// backlog — say a black-holing host with hundreds of queued events —
-// therefore cannot fill a batch and push every other customer's events
-// behind it; the worker delivers each endpoint's rows serially, so this
-// cap also bounds how long that endpoint's lane holds a poll. Within an
-// endpoint, order stays FIFO by next_attempt_at.
+// Fair share: each endpoint's due rows are ranked FIFO and every
+// endpoint's first row is taken before any second, capped at
+// maxClaimPerWebhook per endpoint per claim. One black-holing endpoint's
+// backlog therefore cannot fill a batch and starve other customers, and
+// the cap bounds how long its serial lane holds a poll.
 //
-// The claim also skips any delivery whose owning
-// account is not ACTIVE. Rows queued before a suspension are therefore
-// PARKED, not destroyed — suspension is reversible (AccountStore has
-// Unsuspend), so the conservation-correct behaviour is to withhold the
-// POST and let the backlog resume if the account is reinstated. The
-// EXISTS deliberately does not join `accounts` into the FROM list: a
-// join would put the `FOR UPDATE … SKIP LOCKED` row lock on the accounts
-// and customer_webhooks rows too, so an admin PATCH holding an account
-// row would make the worker silently skip that customer's queue.
+// The claim skips deliveries whose owning account is not ACTIVE. Rows
+// queued before a suspension are PARKED, not destroyed (AccountStore has
+// Unsuspend). The EXISTS deliberately does not join `accounts` into the
+// FROM list: a join would extend the `FOR UPDATE ... SKIP LOCKED` row
+// lock to accounts and customer_webhooks, so an admin PATCH holding an
+// account row would make the worker silently skip that customer.
 func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int) ([]platform.WebhookDelivery, error) {
 	if limit <= 0 {
 		limit = 100

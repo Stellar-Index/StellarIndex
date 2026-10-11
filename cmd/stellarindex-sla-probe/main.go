@@ -1,8 +1,7 @@
-// Binary stellarindex-sla-probe is the executable SLA-evidence
-// suite. It drives load against a deployed Stellar Index API and
-// reports p50 / p95 / p99 latency per endpoint, freshness against
-// the currently-observed ledger, and a pass/fail verdict against
-// the stated SLA targets:
+// Binary stellarindex-sla-probe is the executable SLA-evidence suite.
+// It drives load against a deployed Stellar Index API and reports
+// per-endpoint p50 / p95 / p99 latency, freshness against the observed
+// ledger, and a pass/fail verdict against the SLA targets:
 //
 //	p95 ≤ 200 ms
 //	p99 ≤ 500 ms
@@ -13,25 +12,14 @@
 //	                    defaultClosedBucketFreshTarget)
 //	availability ≥ 99.9 %  (sampled per-tick error rate)
 //
-// It provides the executable evidence for the SLAs above; operational
-// SLAs such as HA posture and SEV detection time need a production
-// deployment to measure, not a CLI.
-//
 // Usage:
 //
-//	stellarindex-sla-probe \
-//	    -base-url https://api.stellarindex.io/v1 \
-//	    -duration 60s \
-//	    -concurrency 4 \
-//	    -pair native,fiat:USD \
-//	    -pair USDC:GA5...,fiat:USD \
+//	stellarindex-sla-probe -base-url https://api.stellarindex.io/v1 \
+//	    -duration 60s -concurrency 4 \
+//	    -pair native,fiat:USD -pair USDC:GA5...,fiat:USD \
 //	    -report-format json
 //
-// Output: a JSON report with per-endpoint statistics and overall
-// pass/fail verdict. Exit code 0 = pass, 1 = at least one SLA
-// violated. Designed for CI / scheduled-job integration so the
-// SLA results trend over time rather than living in a one-off
-// notebook.
+// Output: a JSON report. Exit 0 = pass, 1 = at least one SLA violated.
 package main
 
 import (

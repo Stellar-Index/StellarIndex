@@ -27,38 +27,28 @@ type MetadataResolver interface {
 
 // Overlay applies the SEP-1 max_supply precedence rule on top of a
 // computed [Supply]. Wired into the /v1/assets/{id} serving path
-// (internal/api/v1/assets_f2.go); the resolver
-// there adapts the SEP-1 fields the applySep1Overlay step already
-// stamped on the AssetDetail, scaled from display units to raw
-// units. Per ADR-0011 the max_supply precedence chain is:
+// (internal/api/v1/assets_f2.go); its resolver adapts the SEP-1 fields
+// already stamped on the AssetDetail, scaled from display to raw units.
+// Per ADR-0011 the max_supply precedence is:
 //
-//  1. Operator override (Policy.MaxSupplyOverrides) — applied by
-//     the per-algorithm Computer; surfaces here as snap.MaxSupply
-//     already non-nil.
-//  2. SEP-1 [[CURRENCIES]].max_supply declaration — applied by this
-//     function when the operator override didn't fire.
-//  3. nil — preserved.
+//  1. Operator override (Policy.MaxSupplyOverrides), applied by the
+//     per-algorithm Computer; surfaces here as snap.MaxSupply non-nil.
+//  2. SEP-1 [[CURRENCIES]].max_supply, applied here when no override
+//     fired.
+//  3. nil, preserved.
 //
-// XLM (Algorithm 1) is hard-capped at total; its MaxSupply is
-// always populated by the Computer and Overlay never modifies it.
-// Returns applied=false in that case.
+// XLM (Algorithm 1) is hard-capped at total; the Computer always sets
+// its MaxSupply and Overlay returns applied=false.
 //
-// When the resolver returns junk (negative value, unparseable
-// string, etc.), Overlay does NOT apply — the SEP-1 declaration is
-// respected as a *display value*, not a *source of truth*, and a
-// junk declaration falling through silently is preferable to 5xx-ing
-// the API for the affected asset. Operators surface stellar.toml
-// junk through their own monitoring (separate alert path).
+// When the resolver returns junk (negative, unparseable), Overlay does
+// NOT apply: the SEP-1 declaration is a *display value*, not a *source
+// of truth*, and ignoring junk beats 5xx-ing the API for that asset.
 //
-// Returns:
-//   - the (possibly-modified) Supply; when applied, MaxSupply and
-//     MaxSupplyBasis (= BasisSEP1DeclaredMax) change and Basis does not
-//   - applied=true iff the SEP-1 overlay set MaxSupply
-//   - error only on resolver returns that are unambiguous bugs (e.g.
-//     a non-nil error from SEP1MaxSupply with ok=true — contract
-//     violation). Resolver-side errors propagate as
-//     (snap-unchanged, applied=false, err) so the caller can decide
-//     whether to log + continue or surface.
+// Returns the (possibly-modified) Supply (when applied, MaxSupply and
+// MaxSupplyBasis = BasisSEP1DeclaredMax change, Basis does not);
+// applied=true iff the overlay set MaxSupply; an error only on
+// unambiguous resolver bugs (non-nil error from SEP1MaxSupply with
+// ok=true), propagated as (snap-unchanged, applied=false, err).
 func Overlay(ctx context.Context, snap Supply, asset canonical.Asset, resolver MetadataResolver) (Supply, bool, error) {
 	// XLM and assets with operator-override max already set —
 	// nothing to do.

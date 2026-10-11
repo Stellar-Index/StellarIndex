@@ -115,47 +115,30 @@ func parseIncidentEvent(event string) (platform.WebhookEventType, error) {
 	}
 }
 
-// Emit fans out an `incident.sev1` or `incident.resolved`
-// webhook to every subscribed dashboard hook for the given slug.
+// Emit fans out an `incident.sev1` or `incident.resolved` webhook to
+// every subscribed dashboard hook for the given slug.
 //
-// Status-page content (the source of truth for incidents) lives
-// in `internal/incidents/data/*.md` and is embedded at build-time,
-// so there is no in-process "state transition" to hook from.
-// Instead we expose an operator-triggered emit step that's part
-// of the documented SEV runbook:
+// Incident content is embedded from `internal/incidents/data/*.md`, so
+// there is no in-process state transition; Emit is an operator step of
+// the SEV runbook:
 //
-//  1. Operator drafts `internal/incidents/data/<slug>.md`
-//     (status=investigating, severity=SEV-1, no resolved_at).
-//  2. Operator merges + redeploys the API/aggregator binaries.
-//  3. Operator runs `stellarindex-ops emit-incident -slug <slug>
-//     -event sev1`.
-//  4. When the SEV closes, operator updates the .md to
-//     status=resolved with a `resolved_at` stamp.
-//  5. Operator redeploys + runs `stellarindex-ops emit-incident
-//     -slug <slug> -event resolved`.
+//  1. Draft `internal/incidents/data/<slug>.md` (status=investigating,
+//     severity=SEV-1), merge and redeploy.
+//  2. Run `stellarindex-ops emit-incident -slug <slug> -event sev1`.
+//  3. On close, set status=resolved, redeploy, run `-event resolved`.
 //
-// The command returns non-zero on hard input errors (bad slug, no
-// Postgres, missing config) AND when the fan-out itself lost a
-// delivery: a subscribed customer was not told about the incident
-// and no retry row exists, which the operator has to know before
-// they close the loop. A zero-subscriber fan-out is a successful
-// no-op — informational stderr line only.
+// It returns non-zero on hard input errors AND when the fan-out lost a
+// delivery: a subscribed customer was not told and no retry row exists.
+// A zero-subscriber fan-out is a successful no-op.
 //
 // Usage:
 //
-//	stellarindex-ops emit-incident \
-//	  -config /etc/stellarindex.toml \
-//	  -slug YYYY-MM-DD-redis-blip \
-//	  -event sev1 \
-//	  -write
+//	stellarindex-ops emit-incident -config /etc/stellarindex.toml \
+//	  -slug YYYY-MM-DD-redis-blip -event sev1 -write
 //
-// -dry-run instead counts the subscribers and enqueues nothing. A run that
-// passes neither is refused, so a runbook line written before -write existed
-// fails instead of silently telling no one.
-//
-// `-event` accepts `sev1` and `resolved` as ergonomic aliases for
-// the wire-level event names `incident.sev1` and
-// `incident.resolved`.
+// -dry-run counts the subscribers and enqueues nothing. A run with
+// neither flag is refused, so a stale runbook line fails instead of
+// silently telling no one. `-event` also accepts `sev1`/`resolved`.
 func Emit(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("emit-incident")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
