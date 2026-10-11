@@ -640,26 +640,18 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}()
 	wg.Wait()
 
-	// Background-service heartbeats — the services this deployment
-	// declares it runs (s.statusServices).
-	// A nil map here means "we could not look", and the wire cannot say so:
-	// heartbeatServices renders every declared service "unknown" either way,
-	// and rollupOverall turns that into "degraded". Backend-unreachable and
-	// backend-answered-with-nothing are therefore INDISTINGUISHABLE to a
-	// reader, who sees `degraded` and reasonably concludes the indexer is
-	// sick.
+	// Background-service heartbeats — the services this deployment declares it runs.
+	// A nil map here means "we could not look", and the wire cannot say so: heartbeatServices renders
+	// every declared service "unknown" either way, and rollupOverall turns that into "degraded".
+	// Backend-unreachable and backend-answered-with-nothing are INDISTINGUISHABLE to a reader.
 	//
-	// A deployment whose Prometheus is unreachable (`:9090` down or not
-	// installed) takes this path on every request: Heartbeats errors, and
-	// the page reports `overall: degraded` while every unit is active.
+	// A deployment whose Prometheus is unreachable takes this path on every request and reports
+	// `overall: degraded` while every unit is active.
 	//
-	// The conservatism is deliberate and correct — refusing to claim "ok"
-	// when nothing is known beats a false all-clear. What the wire lacks is
-	// the REASON. `incidents_status` is the precedent for saying it; an
-	// equivalent `services_status` ("ok" / "unavailable") would let such a
-	// deployment report honestly instead of looking sick. That is an
-	// additive wire change on a public surface, so it is a decision rather
-	// than a cleanup.
+	// The conservatism is deliberate — refusing to claim "ok" when nothing is known beats a false
+	// all-clear. What the wire lacks is the REASON: an additive `services_status` ("ok" /
+	// "unavailable"), like `incidents_status`, would let such a deployment report honestly. That is a
+	// wire change on a public surface, so it is a decision rather than a cleanup.
 	if hbErr != nil {
 		hb = nil
 	}
@@ -747,30 +739,25 @@ func heartbeatServices(names []string, hb map[string]time.Time) []StatusService 
 // may be before /v1/status calls it down.
 const statusHeartbeatStaleAfter = 60 * time.Second
 
-// rollupOverall computes the customer-facing `overall` field from the per-service
-// rollup plus the two cross-cutting signals (metrics-backend unreachable;
-// page-severity alert firing).
+// rollupOverall computes the customer-facing `overall` field from the per-service rollup plus the
+// two cross-cutting signals (metrics-backend unreachable; page-severity alert firing).
 //
 // Precedence (worst wins):
 //
 //   - "down": any service is down.
-//   - "degraded": any service is degraded, OR backendErr, OR a page-severity
-//     alert is firing, OR a latency SLO is breached, OR services are in a mixed
-//     known state (one ok + one unknown: partial visibility is honest
-//     degradation, not "ok").
-//   - "unknown": every service is unknown (or has a zero LastSeen). Distinct from
-//     "down": no signal at all. Without it a full metrics-backend outage would
-//     read overall=ok.
+//   - "degraded": any service is degraded, OR backendErr, OR a page-severity alert is firing, OR a
+//     latency SLO is breached, OR services are in a mixed known state (one ok + one unknown:
+//     partial visibility is honest degradation, not "ok").
+//   - "unknown": every service is unknown (or has a zero LastSeen). Distinct from "down": no
+//     signal at all. Without it a full metrics-backend outage would read overall=ok.
 //   - "ok": every service is ok and no canary signal trips.
 //
-// TICKET incidents are deliberately NOT an input: `page` means customers are
-// affected, `ticket` means look during working hours. Changing that changes what
-// "ok" PROMISES on a public surface and belongs in a decision, not a patch.
+// TICKET incidents are deliberately NOT an input: `page` means customers are affected, `ticket`
+// means look during working hours. Changing that changes what "ok" PROMISES on a public surface.
 //
-// An active-source SHORTFALL (freshness.active_sources < total_sources) is
-// likewise not an input: the count is over a 7-day window, so it describes ingest
-// coverage, not whether customers are served now. It surfaces as freshness_status
-// "degraded" only. A failed freshness QUERY does degrade, via backendErr.
+// An active-source SHORTFALL (freshness.active_sources < total_sources) is likewise not an input:
+// the count is over a 7-day window, so it describes ingest coverage, not whether customers are
+// served now. It surfaces only as freshness_status "degraded"; a failed query degrades via backendErr.
 func rollupOverall(services []StatusService, backendErr, pageFiring, latencyBreached bool) string {
 	var anyDown, anyDegraded, anyOK, anyUnknown bool
 	for _, svc := range services {

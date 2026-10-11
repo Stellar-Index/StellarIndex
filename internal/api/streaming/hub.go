@@ -51,26 +51,22 @@ const maxSplitReplayTopics = 8
 // leaves, without waiting out this TTL.
 const DefaultTopicIdleTTL = 15 * time.Minute
 
-// DefaultMaxTopics is the topic-map ceiling per Hub. Over it the reaper
-// evicts SUBSCRIBER-LESS topics oldest-first; a topic with a live
-// subscriber is never evicted, because dropping it would silently detach
-// an open stream from its fanout. When every topic is subscribed,
-// [Hub.Subscribe] refuses to mint another with [ErrTopicCapacity], so
-// client-supplied keys can never grow the map past the ceiling. Only
-// Publish may briefly exceed it, with subscriber-less topics the next
-// sweep reclaims.
+// DefaultMaxTopics is the topic-map ceiling per Hub. Over it the reaper evicts SUBSCRIBER-LESS
+// topics oldest-first; a topic with a live subscriber is never evicted, because dropping it would
+// silently detach an open stream from its fanout. When every topic is subscribed, [Hub.Subscribe]
+// refuses to mint another with [ErrTopicCapacity], so client-supplied keys can never grow the map
+// past the ceiling. Only Publish may briefly exceed it, with subscriber-less topics the next sweep
+// reclaims.
 //
-// The expensive part of a topic is its replay ring (an
-// empty 256-event ring reserves ~20 KiB), and that is allocated only on
-// a topic's first PUBLISH — see [topicState.buffer]. Rings therefore
-// scale with topics that actually carry events, which the reaper does
-// bound at roughly this threshold (~80 MiB), while a subscriber-only
-// topic — the shape a client mints by naming an arbitrary pair, window
-// or alias spelling — costs a map entry rather than a ring.
-// [Hub.BufferedTopicCount] reports the count that carries the memory.
+// The expensive part of a topic is its replay ring (an empty 256-event ring reserves ~20 KiB),
+// allocated only on a topic's first PUBLISH — see [topicState.buffer]. Rings therefore scale with
+// topics that actually carry events, which the reaper bounds at roughly this threshold (~80 MiB),
+// while a subscriber-only topic — the shape a client mints by naming an arbitrary pair, window or
+// alias spelling — costs a map entry rather than a ring. [Hub.BufferedTopicCount] reports the
+// count that carries the memory.
 //
-// Real deployments key topics by traded pair — hundreds, not thousands
-// — so 4096 leaves generous headroom for the reaper to work in.
+// Real deployments key topics by traded pair — hundreds, not thousands — so 4096 leaves generous
+// headroom for the reaper to work in.
 const DefaultMaxTopics = 4096
 
 // ErrTopicCapacity is returned by [Hub.Subscribe] when a topic it would
@@ -132,29 +128,20 @@ type Hub struct {
 // topics publish concurrently.
 type topicState struct {
 	mu sync.Mutex
-	// buffer is the replay ring, allocated LAZILY on the topic's first
-	// publish and nil until then.
+	// buffer is the replay ring, allocated LAZILY on the topic's first publish and nil until then.
 	//
-	// It is nil-until-published because the ring is by far the
-	// expensive part of a topic (an empty 256-event ring pre-allocates
-	// ~20 KiB) while the topic KEY is client-supplied and the map may
-	// hold up to [Hub.maxTopics] subscribed-but-silent topics. Eager
-	// allocation would make resident memory scale with
-	// concurrent-streams × alias fan-out: /v1/price/stream subscribes
-	// one connection to assetAliases(base) × assetAliases(quote) — up
-	// to 9 topics — of which the aggregator publishes to at most a few,
-	// so at the default 8192-stream cap the never-published remainder
-	// alone would reserve well over a gigabyte of rings that could never
-	// hold an event.
+	// The ring is by far the expensive part of a topic (an empty 256-event ring pre-allocates ~20 KiB)
+	// while the topic KEY is client-supplied and the map may hold up to [Hub.maxTopics]
+	// subscribed-but-silent topics. Eager allocation would make resident memory scale with
+	// concurrent-streams × alias fan-out: /v1/price/stream subscribes one connection to
+	// assetAliases(base) × assetAliases(quote) — up to 9 topics — of which the aggregator publishes to
+	// at most a few, so at the default 8192-stream cap the never-published remainder alone would
+	// reserve well over a gigabyte of rings that could never hold an event. Lazy allocation makes ring
+	// memory scale with topics that actually CARRY data, which the reaper bounds: a published topic
+	// that loses its subscribers is evicted on idleTTL.
 	//
-	// A topic with no publisher has nothing to replay, so the ring is
-	// pure cost until the first push. Allocating it there instead makes
-	// ring memory scale with topics that actually CARRY data — which
-	// the reaper does bound, since a published topic that loses its
-	// subscribers is evicted on idleTTL.
-	//
-	// Every read goes through [topicState.replayAfter] /
-	// [topicState.bufferEmpty]; only Hub.Publish allocates it.
+	// Every read goes through [topicState.replayAfter] / [topicState.bufferEmpty]; only Hub.Publish
+	// allocates it.
 	buffer *ring
 	subs   map[*subscription]struct{}
 

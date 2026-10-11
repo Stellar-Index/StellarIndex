@@ -245,28 +245,18 @@ func (s *Server) handleOHLCSeries(
 
 	bars = capOHLCSeriesNewest(bars, limit)
 
-	// dex-nonstandard-decimals forward normalization: the SAME per-pair
-	// scalar factor that
-	// corrects a single-bar OHLC's open/high/low/close corrects every bar
-	// here too — K = 10^(baseDec-quoteDec) is a constant for the whole
-	// requested pair, so applying it once to the FINISHED series (rather
-	// than to each underlying prices_<n> CAGG row before this point) is
-	// exact, including across ohlcSeriesFiatCombined's combined bars
-	// (every constituent shares the same base token and a 7dp quote
-	// peg, so K is identical for each — see AdjustPrice's doc comment).
-	// No-op (bars returned untouched, byte-identical) for a pair without
-	// a confirmed non-7-decimals leg.
+	// dex-nonstandard-decimals forward normalization: the SAME per-pair scalar factor that corrects
+	// a single-bar OHLC's open/high/low/close corrects every bar here too — K = 10^(baseDec-quoteDec)
+	// is constant for the requested pair, so applying it once to the FINISHED series (rather than to
+	// each underlying prices_<n> CAGG row) is exact, including across ohlcSeriesFiatCombined's
+	// combined bars (every constituent shares the same base token and a 7dp quote peg, so K is
+	// identical for each). No-op (bars returned untouched) for a pair without a confirmed
+	// non-7-decimals leg.
 	//
-	// v_base/v_quote are NOT touched, and K is not what they are missing:
-	// they are raw smallest-unit sums at the per-SOURCE scale — 7dp
-	// on-chain, 8 CEX, 6 FX — which [barScaleDecimals] reads off the
-	// CAGG's own `sources` column. The single-bar path states that scale
-	// on the wire ([OHLCBar.QuoteVolumeDecimals]); a series
-	// bar states it too ([OHLCSeriesBar.VBaseDecimals] /
-	// [OHLCSeriesBar.VQuoteDecimals]) — [annotateOHLCSeriesBarScale] for
-	// the non-combined path here, [ohlcBucketAcc.finalize]'s own
-	// commonScale for [Server.ohlcSeriesFiatCombined] — so a consumer
-	// must not divide v_quote by a fixed 1e7 either way.
+	// v_base/v_quote are NOT touched: they are raw smallest-unit sums at the per-SOURCE scale — 7dp
+	// on-chain, 8 CEX, 6 FX — which [barScaleDecimals] reads off the CAGG's own `sources` column. A
+	// series bar states that scale on the wire ([OHLCSeriesBar.VBaseDecimals] /
+	// [OHLCSeriesBar.VQuoteDecimals]), so a consumer must not divide v_quote by a fixed 1e7.
 	baseDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Base)
 	quoteDec := aggregate.ResolveDecimals(s.NonstandardDecimals, pair.Quote)
 	bars = adjustOHLCSeriesBars(bars, baseDec, quoteDec)
@@ -306,27 +296,22 @@ func (s *Server) handleOHLCSeries(
 	writeJSONCoverage(w, resp, flags, coverageFrom)
 }
 
-// capOHLCSeriesNewest trims an ascending series read with a `limit+1`
-// probe down to the NEWEST `limit` bars, and marks every surviving bar
-// `truncated` when — and only when — the probe row came back, i.e. the
-// window really held a bucket the response does not carry.
+// capOHLCSeriesNewest trims an ascending series read with a `limit+1` probe down to the NEWEST
+// `limit` bars, and marks every surviving bar `truncated` when — and only when — the probe row
+// came back, i.e. the window really held a bucket the response does not carry.
 //
-// The probe is what makes the flag exact. `len(bars) == limit` is not
-// evidence of a cut: a request with no `from` is sized to exactly
-// `limit` intervals by [parseOHLCSeriesFromTo], so on any liquid pair
-// the default request returns `limit` bars with nothing dropped, and an
-// equality test flagged every one of those charts as cut. Nor is the
-// window's width: a wide window over a sparse market can hold exactly
-// `limit` populated buckets.
+// The probe is what makes the flag exact. `len(bars) == limit` is not evidence of a cut: a request
+// with no `from` is sized to exactly `limit` intervals by [parseOHLCSeriesFromTo], so on any
+// liquid pair the default request returns `limit` bars with nothing dropped. Nor is the window's
+// width: a wide window over a sparse market can hold exactly `limit` populated buckets.
 //
-// Newest, because both capped readers keep the newest rows
-// ([timescale.Store.OHLCSeries] orders DESC-then-reverses, and
-// [Server.ohlcSeriesFiatCombined] keeps the newest of its merge), so the
-// row past the cap is the OLDEST one and is the one dropped. A caller
-// pages further back by re-asking with `to` = the first bar's `t`.
+// Newest, because both capped readers keep the newest rows ([timescale.Store.OHLCSeries] orders
+// DESC-then-reverses, and [Server.ohlcSeriesFiatCombined] keeps the newest of its merge), so the
+// row past the cap is the OLDEST one and is the one dropped. A caller pages further back by
+// re-asking with `to` = the first bar's `t`.
 //
-// The truncated result is a fresh slice: a reader may hand out bars it
-// still owns, and the flag is this response's, not the reader's.
+// The truncated result is a fresh slice: a reader may hand out bars it still owns, and the flag is
+// this response's, not the reader's.
 func capOHLCSeriesNewest(bars []OHLCSeriesBar, limit int) []OHLCSeriesBar {
 	if limit <= 0 || len(bars) <= limit {
 		return bars

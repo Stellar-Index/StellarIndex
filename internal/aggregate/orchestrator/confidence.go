@@ -355,27 +355,20 @@ func distinctSourceClassCount(trades []canonicalTrade) int {
 	return len(seen)
 }
 
-// approxUSDVolume returns an approximation of bucket USD volume.
-// Best when the pair quotes in fiat:USD or a USD-pegged stablecoin;
-// sums each trade's QuoteAmount scaled by ITS SOURCE's decimals.
+// approxUSDVolume returns an approximation of bucket USD volume. Best when the pair quotes in
+// fiat:USD or a USD-pegged stablecoin; sums each trade's QuoteAmount scaled by ITS SOURCE's
+// decimals.
 //
-// For non-USD-quoted pairs it returns [confidence.LiquidityUnmeasured],
-// NOT 0. Zero is a measurement ("no dollars traded"), and a zero
-// LiquidityFactor drives the geometric mean to zero, which pinned the
-// Phase 2 freeze's confidence leg true for every pair we cannot value in
-// USD. The sentinel routes to the neutral factor, so the score reflects
-// the factors we DID measure.
+// For non-USD-quoted pairs it returns [confidence.LiquidityUnmeasured], NOT 0. Zero is a
+// measurement ("no dollars traded"), and a zero LiquidityFactor drives the geometric mean to zero.
+// The sentinel routes to the neutral factor, so the score reflects the factors we DID measure.
 //
-// The quote amount's scale is a per-SOURCE property: off-chain CEX /
-// aggregator quotes use 1e8 (see each poller's externalAmountDecimals), FX
-// pollers 1e6, on-chain legs 1e7. A fixed 1e7 divisor would overstate every
-// 8dp CEX quote by 10×, and every pair valued here is the off-chain 8dp
-// convention. LiquidityFactor is log-linear across its band, so a one-decade
-// error shifts it by ln(10)/ln(ceiling/floor) (a third of [0,1] on the
-// [1e3, 1e6] band). Resolve the scale as the contribution-sink USD
-// valuation does: external.Metadata.AmountScaleDecimals.
-//
-// Refines once L2.2 (`usd_volume` column populated per trade) ships.
+// The quote amount's scale is a per-SOURCE property: off-chain CEX / aggregator quotes use 1e8 (see
+// each poller's externalAmountDecimals), FX pollers 1e6, on-chain legs 1e7. A fixed 1e7 divisor
+// would overstate every 8dp CEX quote by 10×. LiquidityFactor is log-linear across its band, so a
+// one-decade error shifts it by ln(10)/ln(ceiling/floor) (a third of [0,1] on the [1e3, 1e6]
+// band). Resolve the scale as the contribution-sink USD valuation does:
+// external.Metadata.AmountScaleDecimals.
 func approxUSDVolume(trades []canonicalTrade, pair canonical.Pair) float64 {
 	if !isUSDQuoted(pair) {
 		return confidence.LiquidityUnmeasured
@@ -410,28 +403,21 @@ func isUSDQuoted(pair canonical.Pair) bool {
 	return false
 }
 
-// baselineAgeDays returns how much real history backs the 30d
-// baseline, in DAYS-EQUIVALENT of 1-minute buckets: the number of 1m
-// buckets that fed the median/MAD divided by 1440. Returns -1 (the
-// [confidence.BaselineQualityFactor] sentinel) when the 30d window is in
-// bootstrap.
+// baselineAgeDays returns how much real history backs the 30d baseline, in DAYS-EQUIVALENT of
+// 1-minute buckets: the number of 1m buckets that fed the median/MAD divided by 1440. Returns -1
+// (the [confidence.BaselineQualityFactor] sentinel) when the 30d window is in bootstrap.
 //
-// The bucket count is Day30.N+1, not Day30.N: N counts bucket-to-bucket
-// RETURNS, and N returns span N+1 buckets. Dividing N would make this
-// unable to reach 30 (a fully-traded window yields 43,199 returns and
-// reads 29.99931, under every [confidence] threshold), leaving the
-// bootstrap cap engaged forever. A completely-observed window reads
-// exactly 30.0, and none can read higher.
+// The bucket count is Day30.N+1, not Day30.N: N counts bucket-to-bucket RETURNS, and N returns
+// span N+1 buckets. Dividing N would make this unable to reach 30 (a fully-traded window yields
+// 43,199 returns and reads 29.99931, under every [confidence] threshold), leaving the bootstrap cap
+// engaged forever. A completely-observed window reads exactly 30.0, and none can read higher.
 //
-// This is sample DENSITY, not calendar age, despite the name. It takes no
-// wall-clock input: LatestBaseline's computedAt says when the refresher
-// last WROTE the row, and nothing available here carries the asset's
-// first-observation time. Density is also the better signal: a
-// calendar-mature but sparsely-traded pair has a genuinely thin baseline,
-// and un-capping by calendar age would raise confidence on thin baselines,
-// the less-safe direction for a money-adjacent signal. A calendar maturity
-// signal must be ADDITIVE (never replace density) and plumbed from
-// storage's first-observation time. See [confidence.Inputs.BaselineAgeDays].
+// This is sample DENSITY, not calendar age, despite the name. It takes no wall-clock input:
+// nothing available here carries the asset's first-observation time. Density is also the better
+// signal: un-capping a calendar-mature but sparsely-traded pair by age would raise confidence on a
+// thin baseline, the less-safe direction for a money-adjacent signal. A calendar maturity signal
+// must be ADDITIVE (never replace density) and plumbed from storage's first-observation time. See
+// [confidence.Inputs.BaselineAgeDays].
 func baselineAgeDays(multi baseline.MultiBaseline) float64 {
 	if multi.Day30 == nil {
 		return -1
