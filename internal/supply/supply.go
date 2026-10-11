@@ -122,26 +122,22 @@ const (
 	// and it floors the TOTAL, not an issuer/locked-excluded circulating.
 	BasisClassicTrustlineSum Basis = "classic_trustline_sum"
 
-	// BasisContractStorageBalances — a Soroban token's supply summed from the
-	// per-holder BALANCE LEDGER ENTRIES in its contract storage
-	// (`Balance(Address) → i128`), not its event log. Produced by
-	// internal/storage/clickhouse.ContractStorageSupply.
+	// BasisContractStorageBalances — a Soroban token's supply summed from the per-holder BALANCE
+	// LEDGER ENTRIES in its contract storage (`Balance(Address) → i128`), not its event log. Produced
+	// by internal/storage/clickhouse.ContractStorageSupply.
 	//
-	// A DIFFERENT BASIS, not a better reading of the same one: every other basis
-	// accumulates ISSUANCE, this one measures DISTRIBUTION. Where the event log
-	// is complete they agree exactly (measured on pubnet for EUTBL, USTBL,
-	// deJTRSY vs [BasisSEP41LakeFlows]). It exists for tokens that emit NO
-	// SEP-41 events: they are ABSENT from stellar.supply_flows, which sums to a
-	// confident zero rather than a visible gap.
+	// A DIFFERENT BASIS, not a better reading of the same one: every other basis accumulates ISSUANCE,
+	// this one measures DISTRIBUTION. Where the event log is complete they agree exactly (measured on
+	// pubnet for EUTBL, USTBL, deJTRSY vs [BasisSEP41LakeFlows]). It exists for tokens that emit NO
+	// SEP-41 events: they are ABSENT from stellar.supply_flows, which sums to a confident zero rather
+	// than a visible gap.
 	//
-	// The two readings are NEVER SUMMED (double-count); where a token has both,
-	// this basis supersedes the event reading, since a level cannot be made wrong
-	// by missing history.
+	// The two readings are NEVER SUMMED (double-count); where a token has both, this basis supersedes
+	// the event reading, since a level cannot be made wrong by missing history.
 	//
-	// A figure on this basis is a LOWER BOUND and carries the
-	// circulating_supply_lower_bound flag: it misses entries outside the lake's
-	// current-state projection. Archived (TTL-lapsed) balances are still summed,
-	// since the lake never records an eviction.
+	// A figure on this basis is a LOWER BOUND and carries the circulating_supply_lower_bound flag: it
+	// misses entries outside the lake's current-state projection. Archived (TTL-lapsed) balances are
+	// still summed, since the lake never records an eviction.
 	BasisContractStorageBalances Basis = "contract_storage_balances"
 
 	// BasisNoMetadata — we don't have a defensible value for
@@ -154,27 +150,23 @@ const (
 // labels. Equivalent to a direct cast; provided for fluency.
 func (b Basis) String() string { return string(b) }
 
-// LowerBound reports whether a figure carrying this basis is a provable
-// FLOOR rather than a complete reading of what exists.
+// LowerBound reports whether a figure carrying this basis is a provable FLOOR rather than a
+// complete reading of what exists.
 //
-// Two bases are floors, and they are blind in different ways.
-// [BasisClassicTrustlineSum] misses holding DOMAINS: the lake's
-// current-state projection stamps its asset column for trustlines alone,
-// so claimable balances, liquidity-pool reserves and SAC-held contract
-// balances are absent by construction. Measured across the served set,
-// the omitted share was 89.5% of EURMTL, 73.3% of PYUSD, 64.5% of SHX
-// and 15.4% of USDC. [BasisContractStorageBalances] misses balance entries the
-// lake's current-state projection never captured, such as one dormant since
-// before its coverage began.
+// Two bases are floors, and they are blind in different ways. [BasisClassicTrustlineSum] misses
+// holding DOMAINS: the lake's current-state projection stamps its asset column for trustlines
+// alone, so claimable balances, liquidity-pool reserves and SAC-held contract balances are absent
+// by construction. Measured across the served set, the omitted share was 89.5% of EURMTL, 73.3% of
+// PYUSD, 64.5% of SHX and 15.4% of USDC. [BasisContractStorageBalances] misses balance entries the
+// lake's current-state projection never captured, such as one dormant since before its coverage
+// began.
 //
-// Every other basis in this vocabulary either covers all four holding
-// domains at once (the flow sums, which do not know where a token came to
-// rest) or is an observer's own certified reading, and marking those as
-// floors would carry exactly as much information as marking none of them.
+// Every other basis in this vocabulary either covers all four holding domains at once (the flow
+// sums, which do not know where a token came to rest) or is an observer's own certified reading,
+// and marking those as floors would carry exactly as much information as marking none of them.
 //
-// The wire flag is DERIVED from the basis rather than stored beside it,
-// so a row can never publish a basis that says one thing and a marker
-// that says another.
+// The wire flag is DERIVED from the basis rather than stored beside it, so a row can never publish
+// a basis that says one thing and a marker that says another.
 func (b Basis) LowerBound() bool {
 	switch b {
 	case BasisClassicTrustlineSum, BasisContractStorageBalances:
@@ -184,17 +176,12 @@ func (b Basis) LowerBound() bool {
 	}
 }
 
-// Supply is the wire-shape result of a supply derivation. Every
-// per-algorithm computer in this package returns one of these.
-//
-// Field semantics:
-//
+// Supply is the wire-shape result of a supply derivation. Every per-algorithm computer in this package returns one of
+// these. Field semantics:
 //   - AssetKey is "XLM" for native, "CODE:G..." for classic, or the
 //     bare contract id ("C...") for SEP-41 Soroban tokens. Matches
 //     the asset_supply_history primary-key column.
-//   - TotalSupply / CirculatingSupply are never nil; the algorithms
-//     always have a defensible value (zero is a valid answer for an
-//     asset that has been fully burned).
+//   - TotalSupply / CirculatingSupply are never nil (zero is valid for a fully burned asset).
 //   - MaxSupply is nil when no defensible value exists — uncapped
 //     classic issuers with no SEP-1 declaration and no operator
 //     override produce nil here. Per ADR-0011 we don't fabricate;
@@ -206,8 +193,7 @@ func (b Basis) LowerBound() bool {
 //   - MaxSupplyBasis is set only when MaxSupply came from somewhere
 //     other than the policy Basis names — today the SEP-1 overlay.
 //     Empty means MaxSupply (if any) is covered by Basis.
-//   - LedgerSequence + ObservedAt mark the ledger this snapshot
-//     reflects. UTC; ledger close time, not write time.
+//   - LedgerSequence + ObservedAt: the ledger this snapshot reflects (UTC close time).
 type Supply struct {
 	AssetKey          string
 	TotalSupply       *big.Int
@@ -233,29 +219,22 @@ type Supply struct {
 	// storage-backed readers.
 	MinComponentLedger uint32
 
-	// SACWrappedStroops is Algorithm 2's SACWrapped component —
-	// [ClassicSupplyComponents.SACWrapped], the amount of this classic
-	// asset currently escrowed inside its Stellar-Asset-Contract
-	// wrapper — broken out of TotalSupply (which still includes it as
-	// one of its four addends) and persisted alongside it
-	// (asset_supply_history.sac_wrapped_stroops, migration 0117).
+	// SACWrappedStroops is Algorithm 2's SACWrapped component — [ClassicSupplyComponents.SACWrapped],
+	// the amount of this classic asset currently escrowed inside its Stellar-Asset-Contract wrapper —
+	// broken out of TotalSupply (which still includes it as one of its four addends) and persisted
+	// alongside it (asset_supply_history.sac_wrapped_stroops, migration 0117).
 	//
-	// It exists so [CrossCheckSubsetBound] can run the REAL subset
-	// compare: this component and the SAC's own Algorithm-3 total
-	// measure the SAME quantity via independent data paths — a ledger-entry
-	// snapshot sum here versus an event-flow sum there — so
-	// SACWrapped > sac_total is impossible under correct accounting.
-	// Comparing the folded TotalSupply against sac_total can only
+	// It exists so [CrossCheckSubsetBound] can run the REAL subset compare: this component and the
+	// SAC's own Algorithm-3 total measure the SAME quantity via independent data paths — a
+	// ledger-entry snapshot sum here versus an event-flow sum there — so SACWrapped > sac_total is
+	// impossible under correct accounting. Comparing the folded TotalSupply against sac_total can only
 	// catch the opposite direction.
 	//
-	// nil = "this snapshot recorded no SACWrapped component", the
-	// unchecked state. Only [ClassicComputer.Compute] populates
-	// it; Algorithm 1 (XLM), Algorithm 3 (SEP-41) and the static
-	// text-file computer have no such component and leave it nil, as do
-	// rows written before migration 0117. Consumers MUST NOT read nil
-	// as zero — zero is a meaningful value (an asset with no SAC
-	// deployment genuinely wraps nothing) and the subset bound
-	// 0 <= sac_total holds vacuously, so treating nil as zero would
-	// report a green check that verified nothing.
+	// nil = "this snapshot recorded no SACWrapped component", the unchecked state. Only
+	// [ClassicComputer.Compute] populates it; Algorithm 1 (XLM), Algorithm 3 (SEP-41) and the static
+	// text-file computer have no such component and leave it nil, as do rows written before migration
+	// 0117. Consumers MUST NOT read nil as zero — zero is a meaningful value (an asset with no SAC
+	// deployment genuinely wraps nothing) and the subset bound 0 <= sac_total holds vacuously, so
+	// treating nil as zero would report a green check that verified nothing.
 	SACWrappedStroops *big.Int
 }
