@@ -1,14 +1,9 @@
 ---
-# Aggregator alerts — matches docs/operations/alerts-catalog.md
-# "Aggregator alerts" section. Every alert here has a runbook
-# under docs/operations/runbooks/.
-#
-# These rules consume the orchestrator-level metrics added in
-# internal/obs/metrics.go (see docs/reference/metrics/README.md
-# § "Aggregator orchestrator metrics"). For alert thresholds we
-# weight false-positive risk highest — operators can tune the
-# durations/values once we have several weeks of pubnet runtime
-# data on the new metric series.
+# Aggregator alerts; each has a runbook under docs/operations/runbooks/
+# (catalog: docs/operations/alerts-catalog.md). Metrics:
+# docs/reference/metrics/README.md.
+# Thresholds weight false-positive risk highest; tune against pubnet runtime
+# data.
 
 groups:
   - name: stellarindex.aggregator
@@ -38,25 +33,18 @@ groups:
             scans raw trades on-query).
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_silent
 
-      # Venue dispersion, not a dropped-trades counter. A counter rule
-      # (sum by (pair) rate(dropped_trades_total{reason="outlier"}[10m]) > 10)
-      # fires for HOURS on crypto:XLM/fiat:USD and /GBP while binance /
-      # coinbase / kraken agree within 0.9% and the served prices are
-      # right: it counts how many prints a whole-window median+MAD band
-      # trims, re-counted every 30 s tick per window, and that band trims
-      # an AGREED regime shift (a genuine +2% Kraken step on XLM/GBP) until
-      # the shift becomes the window majority — a filter artifact, not venue
-      # disagreement. The filter is time-local
-      # (internal/aggregate/outliers_local.go) and this alert measures what
-      # "persistent price dispersion" actually means: the spread between
-      # the highest and lowest per-VENUE VWAP of the pre-filter 5m set, from
-      # stellarindex_aggregator_venue_vwap (set every refresh; a venue that
-      # leaves the window has its series deleted). ≥2 venues required — a
-      # single venue cannot disagree with itself; SDEX-only pairs are
-      # covered by outlier_trim_fraction below. 1% ≈ 3× the observed
-      # agreed-venue spread; `for: 15m` clears a one-tick print. Covered by
-      # rule-tests/aggregator_test.yml (agreed drift silent; one venue +3%
-      # fires; single venue never fires).
+      # Venue dispersion, not a dropped-trades counter: the whole-window
+      # median+MAD band trims an AGREED regime shift (e.g. a genuine +2%
+      # Kraken step) until it becomes the window majority, so a counter rule
+      # fires for hours while venues agree and served prices are right. This
+      # measures the spread between the highest and lowest per-VENUE VWAP of
+      # the pre-filter 5m set (stellarindex_aggregator_venue_vwap; a venue
+      # leaving the window has its series deleted).
+      #
+      # At least 2 venues required; SDEX-only pairs are covered by
+      # outlier_trim_fraction below. 1% is about 3x the observed agreed-venue
+      # spread; `for: 15m` clears a one-tick print. Covered by
+      # rule-tests/aggregator_test.yml.
       - alert: stellarindex_aggregator_outlier_storm
         expr: |
           (
@@ -91,24 +79,18 @@ groups:
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_storm
 
       # Covers what venue disagreement cannot see: a SINGLE-venue pair
-      # (SDEX-only token, the token-farm shape) whose prints the outlier filter
-      # is rejecting wholesale. stellarindex_aggregator_window_trades is
-      # a per-refresh gauge (stage=class is the filter's input, stage=
-      # outlier its survivors), so the fraction is the CURRENT window's
-      # trim share — no per-tick re-counting. With the time-local filter
-      # an agreed move is never trimmed, so a sustained >20% trim share is
-      # genuine dispersion inside the window (spam / wash / dust prints),
-      # not a regime shift. 24h window: a spam wave lasts hours and the
-      # 5m share flaps as the wave breathes. Same runbook as outlier_storm.
-      # PROVEN ON THE TOKEN-FARM SHAPE: internal/aggregate/
-      # outliers_spam_test.go (TestFilterOutliersLocal_TokenFarmWaveTrim
-      # ShareMatchesLegacy) runs the token-farm fixture — 720 honest
-      # prints over 24h + a 2h wave of 480 dust self-trades gapping
-      # 25–37 % print-to-print — through the ANCHORED time-local filter:
-      # 480 of 480 wave prints dropped (identical to the whole-window
-      # filter), 0 honest prints dropped, so window_trades{stage=class}
-      # = 1200 and {stage=outlier} = 720, a 40 % trim share. The promtool
-      # case below uses exactly those two values.
+      # (SDEX-only token, the token-farm shape) whose prints the outlier
+      # filter rejects wholesale. window_trades is a per-refresh gauge
+      # (stage=class is the filter input, stage=outlier its survivors), so the
+      # fraction is the current window's trim share. The time-local filter
+      # never trims an agreed move, so a sustained >20% share is real
+      # dispersion (spam / wash / dust prints). 24h window: a spam wave lasts
+      # hours and the 5m share flaps. Same runbook as outlier_storm.
+      #
+      # Proven on the token-farm fixture in
+      # internal/aggregate/outliers_spam_test.go (1200 class prints, 720
+      # survivors, a 40 % trim share); the promtool case below uses those two
+      # values.
       - alert: stellarindex_aggregator_outlier_trim_fraction
         expr: |
           (
@@ -143,15 +125,12 @@ groups:
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_outlier_trim_fraction
 
       # The count share above cannot see WHICH prints were trimmed: the
-      # outlier centre is a per-print median, so a few wash prints can
-      # outvote one honest block. The filter withholds a window whose trim
-      # would discard the volume majority (keepIfVolumeMajority), which
-      # turns that attack into a silent withhold on the short windows the
-      # 24h count rule skips. This rule reads base VOLUME per stage on
-      # EVERY window: > 20% of the traded money trimmed for 15m, and 100%
-      # when the window is being withheld as contested. Covered by
-      # rule-tests/aggregator_test.yml (the dust-over-block worked example
-      # fires on 5m; a fat-finger trim stays silent).
+      # outlier centre is a per-print median, so a few wash prints can outvote
+      # one honest block and the filter withholds the window
+      # (keepIfVolumeMajority), silently, on the short windows the 24h count
+      # rule skips. This rule reads base VOLUME per stage on EVERY window:
+      # >20% of traded money trimmed for 15m, 100% when withheld as contested.
+      # Covered by rule-tests/aggregator_test.yml.
       - alert: stellarindex_aggregator_outlier_volume_trim_fraction
         expr: |
           (
@@ -209,37 +188,23 @@ groups:
             FX rows.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_fx_snap_fallback_dominant
 
-      # ─── Triangulation chains configured but their legs are dry ──────
-      # Residual risk of e9803e69 (the four default triangulation chains:
-      # XLM/EUR, XLM/GBP, ETH/GBP, BTC/GBP, each = the deep USD pair ×
-      # the fiat cross). The fiat/fiat leg resolves through the X2.5
-      # forex-snap path (fx_quotes, daily buckets, 7-day lookback,
-      # written by the massive worker in the API binary). If that feed
-      # goes dry — no EUR/GBP row inside the lookback — EVERY chain
-      # degrades to `missing_leg` and the composite corroboration factor
-      # silently stops contributing. Direct prices keep serving, so
-      # nothing customer-visible breaks; the seventh confidence factor
-      # just quietly weighs nothing and the thin-pair manipulation
-      # signal the chains exist to provide is gone.
+      # ── Triangulation chains configured but their legs are dry ──
       #
-      # Why the existing fx_snap_fallback_dominant alert does NOT cover
-      # this: its numerator is the FALLBACK counter, which only
-      # increments when the snap path misses AND the cached-VWAP path is
-      # tried. With four chains at one tick each per 15m the fallback
-      # rate sits around 0.4/s — under its own >0.5 ratio floor — and its
-      # denominator is clamp_min(ok_rate, 1), so with ok pinned at ZERO
-      # the ratio can never reach 0.5. A total leg drought is exactly the
-      # state that alert cannot see.
+      # The default chains (XLM/EUR, XLM/GBP, ETH/GBP, BTC/GBP) need the
+      # fiat/fiat leg from the forex-snap path (fx_quotes, daily buckets,
+      # 7-day lookback). If that feed goes dry every chain degrades to
+      # `missing_leg` and the corroboration confidence factor silently weighs
+      # nothing; direct prices keep serving.
       #
-      # Shape: missing_leg is being counted (so the chains ARE configured
-      # and running) while ok is a hard zero for 30m. All five outcomes
-      # are pre-seeded at zero in internal/obs, so `== 0` here is a real
-      # zero rather than a "no data" gap. If the aggregator is down
-      # entirely both series go absent, the `and` yields nothing, and
-      # this stays quiet — stellarindex_aggregator_silent owns that case.
-      # If no chains are configured at all, missing_leg never increments
-      # and this also stays quiet, which is correct: an unconfigured
-      # chain set is a deployment choice, not a fault.
+      # fx_snap_fallback_dominant cannot see this: its ratio is over
+      # clamp_min(ok_rate, 1), so with ok pinned at zero it never reaches 0.5.
+      #
+      # Shape: missing_leg is being counted (chains are configured and
+      # running) while ok is a hard zero for 30m. All five outcomes are
+      # pre-seeded at zero in internal/obs, so `== 0` is a real zero, not a
+      # gap. Aggregator down: both series absent, stays quiet
+      # (stellarindex_aggregator_silent owns it). No chains configured:
+      # missing_leg never increments, also quiet, correctly.
       - alert: stellarindex_aggregator_triangulation_chains_dry
         expr: |
           sum(rate(stellarindex_aggregator_triangulations_total{outcome="missing_leg"}[15m])) > 0
@@ -279,11 +244,11 @@ groups:
 
       # A released pair re-caps only once its 30-day bucket density falls
       # under the ADR-0019 hysteresis edge (27 days-equivalent). Several
-      # re-capping inside the same hour share a cause: a gap in ingestion,
-      # the aggregator, or prices_1m materialisation, and they stay at 0.5
-      # until the gap is repaired or rolls out of the window. last_over_time
-      # reaches back over an outage (up to 2d) to the pair's pre-gap state,
-      # which is the restart case. Covered by rule-tests/aggregator_test.yml.
+      # re-capping within the same hour share a cause (gap in ingestion, the
+      # aggregator, or prices_1m materialisation) and stay at 0.5 until
+      # repaired or rolled out of the window. last_over_time reaches back up
+      # to 2d over an outage to the pair's pre-gap state (the restart case).
+      # Covered by rule-tests/aggregator_test.yml.
       - alert: stellarindex_aggregator_bootstrap_cap_reengaged
         expr: |
           count(
@@ -334,18 +299,12 @@ groups:
             increased volume.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_class_drop_spike
 
-      # Explicit alert on aggregator cache-write-error rate. A Redis that
-      # cannot write (measured: root-FS full → Redis BGSAVE blocked → every
-      # Set returned MISCONF for ~9h) surfaces only as customer 404s on
-      # rewritten pairs, because `flags.stale` is not flipped (the
-      # aggregator is running, just unable to publish). The incident write-up
-      # `internal/incidents/data/2026-05-10-redis-writes-blocked-disk-full.md`
-      # recommends "alert on aggregator WARN rate (not just service-up
-      # status)" — this is the metric realisation:
-      # stellarindex_aggregator_vwap_cache_write_errors_total
-      # (internal/obs/metrics.go) increments on every cache Set failure,
-      # and any sustained non-zero rate is an operator-page-worthy signal
-      # because it means the customer surface is silently degraded.
+      # Aggregator cache-write-error rate. A Redis that cannot write (e.g.
+      # root FS full blocking BGSAVE, every Set returning MISCONF) surfaces
+      # only as customer 404s on rewritten pairs, because `flags.stale` is not
+      # flipped: the aggregator is running, just unable to publish. Any
+      # sustained non-zero rate means the customer surface is silently
+      # degraded.
       - alert: stellarindex_aggregator_cache_write_errors
         expr: |
           sum(rate(stellarindex_aggregator_vwap_cache_write_errors_total[5m])) > 0
@@ -366,12 +325,12 @@ groups:
             class). Recovery: free disk → BGSAVE → cache rebuilds.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_aggregator_cache_write_errors
 
-      # ─── 78dff337b: protocol-events rollup worker ────────────────────
-      # The aggregator's protoeventsrollup worker folds the
-      # trailing-24h per-source event census into protocol_events_24h
-      # so /v1/protocols' events_24h reads a keyed-on-PK lookup. A
-      # sustained refresh-error rate means that column stops advancing
-      # (goes stale, not blank) — informational: no pricing impact.
+      # ── Protocol-events rollup worker ──
+      #
+      # protoeventsrollup folds the trailing-24h per-source event census into
+      # protocol_events_24h. A sustained refresh-error rate leaves
+      # /v1/protocols' events_24h stale, not blank; informational, no pricing
+      # impact.
       - alert: stellarindex_protocol_events_rollup_failing
         expr: |
           sum(rate(stellarindex_protocol_events_rollup_sweeps_total{outcome="refresh_error"}[15m])) > 0
@@ -391,12 +350,11 @@ groups:
             not zeros). Customer pricing surface is unaffected. Fix the
             failing Postgres backend and the next sweep catches up.
 
-      # ─── e0fbbbc3b: asset-volume rollup worker ───────────────────────
-      # The aggregator's assetvolrollup worker folds the trailing-24h
-      # per-asset USD-volume SUM over prices_1m into asset_volume_24h
-      # so the /v1/assets listing reads a keyed-on-PK lookup. A
-      # sustained refresh-error rate means the listing's volume_24h_usd
-      # stops advancing (goes stale, not blank) — informational: no
+      # ── Asset-volume rollup worker ──
+      #
+      # assetvolrollup folds the trailing-24h per-asset USD volume over
+      # prices_1m into asset_volume_24h. A sustained refresh-error rate leaves
+      # the /v1/assets volume_24h_usd stale, not blank; informational, no
       # pricing impact.
       - alert: stellarindex_asset_volume_rollup_failing
         expr: |
@@ -417,12 +375,13 @@ groups:
             persist, not zeros). Customer pricing surface is unaffected.
             Fix the failing Postgres backend and the next sweep catches up.
 
-      # ─── asset-volume-character rollup worker ────────────────────────
+      # ── asset-volume-character rollup worker ──
+      #
       # The worker sweeps every 6h (the roll scans the full 14-day trades
-      # window), so the 15m/for-30m shape of the sibling rollup alerts
-      # could never fire: one error leaves a ~15m rate blip. Fire instead
-      # on a refresh_error in the last 13h with no ok sweep in that window,
-      # i.e. two consecutive sweeps failed. Analytics only.
+      # window), so the sibling alerts' 15m/for-30m shape could never fire:
+      # one error leaves a ~15m rate blip. Fires instead on a refresh_error in
+      # the last 13h with no ok sweep, i.e. two consecutive sweeps failed.
+      # Analytics only.
       - alert: stellarindex_asset_character_rollup_failing
         expr: |
           sum(increase(stellarindex_asset_character_rollup_sweeps_total{outcome="refresh_error"}[13h])) > 0
@@ -445,43 +404,30 @@ groups:
             volume_24h_usd are unaffected. Fix the failing Postgres
             backend; the next sweep catches up.
 
-      # ─── Decimals-assumption landmine ───────────────────────────────
+      # ── Decimals-assumption landmine ──
+      #
       # The served price is Σ(quote_amount)/Σ(base_amount) on RAW
-      # smallest-unit integers (prices_* CAGGs + aggregate.VWAP); the
-      # per-asset decimals cancel ONLY when base and quote share a scale
-      # — true when every DEX-traded token is 7-decimal. The
-      # decimals-guard sweep (internal/decimalsguard, in the aggregator)
-      # raises this counter the first time a DEX trade is observed for a
-      # Soroban token whose on-chain decimals() != 7. EVERY serving path
-      # auto-normalizes via the
-      # nonstandard_decimals_assets correction table
-      # (aggregate.AdjustPrice / aggregate.ResolveDecimals), so a
-      # detected non-7-decimal token is EXPECTED and HANDLED — this is
-      # an awareness signal, not an action item. The genuine risk
-      # isn't "a non-7-decimal token exists", it's "the correction
-      # isn't being applied" — see
-      # stellarindex_nonstandard_decimals_correction_failing below for
-      # that action-item alert.
+      # smallest-unit integers; decimals cancel ONLY when base and quote share
+      # a scale (true while every DEX-traded token is 7-decimal). The
+      # decimals-guard sweep (internal/decimalsguard) raises this counter the
+      # first time a DEX trade is seen for a Soroban token whose decimals() !=
+      # 7. Serving paths auto-normalize via the nonstandard_decimals_assets
+      # table (aggregate.AdjustPrice / ResolveDecimals), so detection is an
+      # awareness signal, not an action item; the real risk is the correction
+      # not being applied
+      # (stellarindex_nonstandard_decimals_correction_failing below).
       #
-      # There is deliberately no "nonstandard decimals detected" alert:
-      # comparing the all-time counter to zero fires FOREVER once any
-      # nonstandard token trades (three already-confirmed,
-      # actively-normalized aquarius tokens would hold it permanently
-      # active). The awareness signal lives on the dashboard metric; the
-      # actionable failure mode is correction_failing below.
+      # There is deliberately no "detected" alert: an all-time counter above
+      # zero would fire forever once any nonstandard token trades.
       #
-      # The `unless ... offset 15m` arms exist because increase() cannot
-      # see a counter's FIRST increment: a series whose first sample in
-      # the range is already 1 has a flat range and reads 0. That is the
-      # reachable shape for both counters here — the refresh counter's
-      # startup failure lands while the metrics endpoint is still coming
-      # up, and the declined counter is an unseeded CounterVec whose
-      # `{asset}` children are born on first use. Same blindness
-      # ingestion.yml's stellarindex_decoder_panicked compares the raw
-      # value to escape, and the same born-inside-the-window idiom
-      # backup-offsite.yml uses; it ages out with the window, so a
-      # one-off blip still resolves instead of latching the way an
-      # all-time-counter detector would.
+      # The `unless ... offset 15m` arms exist because increase() cannot see a
+      # counter's FIRST increment (a series whose first sample is already 1
+      # reads 0). That is the reachable shape for both counters here: the
+      # refresh counter's startup failure lands before the metrics endpoint is
+      # up, and the declined counter is an unseeded CounterVec whose `{asset}`
+      # children are born on first use. Same idiom as backup-offsite.yml; it
+      # ages out with the window, so a one-off blip resolves instead of
+      # latching.
       - alert: stellarindex_nonstandard_decimals_correction_failing
         expr: |
           increase(stellarindex_nonstandard_decimals_cache_refresh_failures_total[15m]) > 0
@@ -533,36 +479,23 @@ groups:
             nonstandard_decimals_assets table directly.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_nonstandard_decimals_correction_failing
 
-      # ─── Decimals-guard sweep heartbeat ───────────────────────────
-      # The offender counters above (correction_failing and its inputs)
-      # cannot tell "the guard swept and found nothing" apart from "the
-      # guard never armed" — both read as a healthy-looking zero. A
-      # ClickHouse still loading metadata for the 150B-row lake at
-      # aggregator boot can keep the guard from arming (its lake dial
-      # retries with backoff — see cmd/stellarindex-aggregator/main.go —
-      # and this alert is the backstop for a wedge the retry itself
-      # doesn't cover, e.g. the
-      # goroutine panicking past worker.Recover or the process losing
-      # its lake for good). internal/decimalsguard.Guard.Sweep stamps
-      # stellarindex_decimals_guard_sweep_last_success_unix on every
-      # completed pass, whether or not it finds an offender, and the
-      # aggregator seeds it with its start time (decimalsguard.MarkEnabled)
-      # before the lake dial and the startup Backfill — so a cold boot is
-      # measured from process start, and "never armed" (dial still
-      # retrying, Backfill still running) fires on the same 60m budget
-      # as a wedge instead of 15m after every restart. A gauge still at 0
-      # on the aggregator means the guard is DISABLED (lake-less config,
-      # logged at startup as `decimals-guard: disabled`), not stale; the
-      # `> 0` arm keeps that deliberate configuration from holding a
-      # permanent ticket. Threshold
-      # is three sweep intervals (decimalsguard.DefaultInterval = 15m,
-      # so 45m) plus a 15m for-duration, and the query is scoped to
-      # job="stellarindex_aggregator" so the indexer/api binaries
-      # importing the same obs package — which register every gauge at
-      # its Go zero-value even though they never call Sweep — cannot
-      # hold the series at a permanent 0 and page a false positive (the
-      # same trap stellarindex_priceless_coverage_check_stale guards
-      # against in pricing-coverage.yml).
+      # ── Decimals-guard sweep heartbeat ──
+      #
+      # The offender counters above cannot tell "swept, found nothing" from
+      # "guard never armed"; both read as a healthy zero. This is the backstop
+      # for a wedge the lake-dial retry does not cover (goroutine panicking
+      # past worker.Recover, lake lost for good;
+      # cmd/stellarindex-aggregator/main.go). Sweep stamps
+      # stellarindex_decimals_guard_sweep_last_success_unix on every pass and
+      # the aggregator seeds it at start (decimalsguard.MarkEnabled), so a
+      # cold boot is measured from process start and "never armed" fires on
+      # the same budget as a wedge. A gauge at 0 means the guard is DISABLED
+      # (lake-less config), not stale; the `> 0` arm avoids a permanent
+      # ticket. Threshold is three sweep intervals (DefaultInterval = 15m, so
+      # 45m) plus `for: 15m`. Scoped to job="stellarindex_aggregator" because
+      # the indexer/api binaries register every gauge at its Go zero-value and
+      # would hold the series at 0 and false-page (same trap as
+      # stellarindex_priceless_coverage_check_stale in pricing-coverage.yml).
       - alert: stellarindex_decimals_guard_sweep_stale
         expr: |
           (time() - stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex_aggregator"}) > 2700
@@ -593,20 +526,17 @@ groups:
             exited with error` log lines and ClickHouse reachability,
             then the runbook.
 
-      # ─── Customer-webhook FAN-OUT losing events ───
-      # Distinct from the two delivery alerts in api.yml, which only
-      # start counting once a `webhook_deliveries` row exists. This one
-      # fires EARLIER in the chain: the freeze / divergence / incident
-      # event fired, the customer was subscribed, and no delivery row
-      # was ever written for them. There is nothing to retry and
-      # nothing to drain — the customer's event is permanently gone,
-      # which is why a single occurrence is worth a ticket rather than
-      # a sustained rate.
+      # ── Customer-webhook FAN-OUT losing events ──
       #
-      # Producer is the AGGREGATOR binary (freeze + divergence hot
-      # paths). `stellarindex-ops emit-incident` increments the same
-      # counter but is short-lived and unscraped; that call site exits
-      # non-zero instead, so an operator sees the loss in their shell.
+      # Fires earlier than the two api.yml delivery alerts, which only count
+      # once a `webhook_deliveries` row exists. Here the event fired and the
+      # customer was subscribed but no delivery row was written, so nothing
+      # can be retried and the event is permanently gone; hence a ticket on a
+      # single occurrence.
+      #
+      # Producer is the AGGREGATOR (freeze + divergence paths);
+      # `stellarindex-ops emit-incident` increments the same counter but is
+      # unscraped and exits non-zero instead.
       - alert: stellarindex_customer_webhook_fanout_failing
         expr: |
           sum by (event_type, reason) (increase(stellarindex_customer_webhook_fanout_failures_total[1h])) > 0
@@ -639,11 +569,11 @@ groups:
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator.md#stellarindex_customer_webhook_fanout_failing
 
       # The explorer delta-strip worker (internal/aggregate/changesummary)
-      # has stopped upserting change_summary_5m: every list view and detail
-      # page serves frozen deltas with no error. The gauge is seeded at
-      # worker start and advances on any pass that upserts at least one
-      # entity, so a worker that never succeeds goes stale too; the `> 0`
-      # arm keeps a process that never ran the worker silent. Scoped to
+      # stopped upserting change_summary_5m, so every list and detail page
+      # serves frozen deltas with no error. The gauge is seeded at worker
+      # start and advances on any pass upserting an entity, so a
+      # never-succeeding worker goes stale too; the `> 0` arm keeps a process
+      # that never ran the worker silent. Scoped to
       # job="stellarindex_aggregator" because other binaries register the
       # gauge at 0.
       - alert: stellarindex_change_summary_stale
