@@ -615,9 +615,8 @@ func parseMinRelDelta(s string) (*big.Rat, error) {
 // [checkLiveCursorGuard].
 //
 // `trades.usd_volume` has exactly one live writer: the indexer's ingest
-// path, walking forward at the `ledgerstream` cursor. A restamp is only
-// ever legitimate BEHIND that cursor — over history the live tail has
-// already passed and will never walk into again. If the tail is still
+// path at the `ledgerstream` cursor, so a restamp is legitimate only BEHIND
+// that cursor. If the tail is still
 // below the top of the requested window (a resync, a stalled indexer, a
 // cursor rewind), the two writers can land on the same row: the restamp's
 // high derive_generation would win the ON CONFLICT guard, so the ingest

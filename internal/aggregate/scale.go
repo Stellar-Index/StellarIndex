@@ -44,9 +44,8 @@ func (w ScaledWindow) FilterOutliers(sigma float64) ScaledWindow {
 // Unlike [AdjustPrice] (one constant per pair, applicable post hoc), the
 // factor varies per trade, so it must be applied before the weighted sum.
 //
-// decimalsFor resolves a trade's scale from its Source (production:
-// external.Lookup(source).AmountScaleDecimals()). It is a parameter because
-// internal/sources/external imports aggregate.
+// decimalsFor resolves a trade's scale from its Source; it is a parameter
+// because internal/sources/external imports aggregate.
 //
 // Rescaling is an exact integer multiply by 10^(max−scale), so there is no
 // precision loss (ADR-0003) and both legs keep their ratio. Uniform-scale
