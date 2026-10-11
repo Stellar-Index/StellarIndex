@@ -11,25 +11,16 @@ import (
 )
 
 // This file extends the stale-while-revalidate layer (hot_reads.go) to the
-// per-contract detail reads: recent events (the /v1/contracts/{id} first
-// page), interactions, and code-history.
+// per-contract detail reads: recent events, interactions, and code-history.
 //
-// Why: run INLINE on the request's 8s budget, all three are lake scans
-// whose cost is set by the contract's activity, so a busy contract (a
-// Phoenix SAC among them) timed out on EVERY request — and because the
-// scan died WITH the request, no retry could ever land warm. That is the
-// failure shape assetHoldersCached handles for the holders board; this is
-// the same mechanism generalised over a
-// (kind, contract, params) string key holding an `any` payload, so three
-// differently-typed reads share one bounded cache + flight table instead of
-// three copies of it.
+// Inline on the request budget these lake scans, whose cost scales with contract activity, time
+// out for busy contracts, and a scan that dies with the request can never land warm. One
+// (kind, contract, params) string key holding an `any` payload lets the differently-typed reads
+// share one bounded cache and flight table.
 
-// contractDetailTTL bounds how stale a served detail payload may be. Five
-// minutes on a per-contract activity/interaction/code view is materially
-// indistinguishable from live (code upgrades are rare events; the events
-// first page moves per ledger but tolerates minutes exactly like the
-// opTypeStats panel it shadows), while each recompute is a bloom-probed
-// scan over the multi-billion-row contract_events table.
+// contractDetailTTL bounds how stale a served detail payload may be. Five minutes is close enough
+// to live for these views, while each recompute is a bloom-probed scan over the
+// multi-billion-row contract_events table.
 const contractDetailTTL = 5 * time.Minute
 
 // contractDetailCacheMax bounds resident entries across ALL kinds. Detail
@@ -76,15 +67,10 @@ func (c *contractDetailCache) tableLocked(key string) map[string]contractDetailE
 	return c.entries
 }
 
-// contractCodeHistoryTTL is the "ch:" key class's freshness window.
-// A contract's executable
-// timeline is append-only and changes on the order of MONTHS (an
-// in-place upgrade), while its backing read is the heaviest per-request
-// scan in the explorer (the key_xdr probe over ledger_entry_changes,
-// 8s class) — recomputing it every 5 minutes per visited contract would be
-// pure background burn. 24h keeps at most one recompute per contract
-// per day; a brand-new upgrade appears within a day, which matches the
-// page's actual freshness need.
+// contractCodeHistoryTTL is the "ch:" key class's freshness window. The executable timeline is
+// append-only and changes on the order of months, while its read (the key_xdr probe over
+// ledger_entry_changes) is the heaviest per-request scan in the explorer, so 24h allows at most
+// one recompute per contract per day.
 const contractCodeHistoryTTL = 24 * time.Hour
 
 // positionsCacheKey is the key PREFIX (and therefore the TTL + refresh
@@ -93,16 +79,11 @@ const contractCodeHistoryTTL = 24 * time.Hour
 // below, and the tests that seed an entry.
 const positionsCacheKey = "pos:"
 
-// accountPositionsTTL is the "pos:" key class's freshness window.
-// Deliberately SHORTER than contractDetailTTL: a DeFi
-// positions list is a statement about what an address holds RIGHT NOW, and
-// a user who just deposited should not be told for five minutes that they
-// have not. One minute still collapses a page's repeat loads and every
-// concurrent visitor onto a single six-fold fan-out, which is the measured
-// cost (1.15–1.25 s per uncached hit on r1), and past it the entry is
-// served stale-but-labelled rather than recomputed inline — so the ceiling
-// on how old a served list can be is bounded by the refresh succeeding,
-// not by this constant alone.
+// accountPositionsTTL is the "pos:" key class's freshness window. Deliberately shorter than
+// contractDetailTTL: positions describe what an address holds right now, and a fresh deposit
+// should not be hidden for five minutes. One minute still collapses repeat loads and concurrent
+// visitors onto a single six-fold fan-out. Past it the entry is served stale-but-labelled, so
+// its age is bounded by the refresh succeeding, not by this constant alone.
 const accountPositionsTTL = time.Minute
 
 // detailTTLForKey maps a cache key to its freshness window — 5 minutes
@@ -148,17 +129,11 @@ func (c *contractDetailCache) put(key string, v any) {
 // falling back to the map's global-oldest cachedAt only when nothing has
 // expired yet.
 //
-// Pure global-oldest eviction starves the "ch:" (code-history) class: its
-// 24h TTL means an entry's cachedAt is only ever touched once a day, so
-// next to "ev:"/"ix:" (5 min) and "pos:" (1 min) entries — which
-// keep resetting cachedAt as ordinary traffic revisits them — a heavily
-// viewed contract's code-history entry is ALWAYS the chronologically
-// oldest in the map and gets evicted first, however hot it is. Attacker-
-// mintable "pos:" keys (any checksum-valid strkey is a new cold
-// key) make this churn trivial to trigger. Preferring an expired entry
-// means the class actually generating eviction pressure (the short-TTL
-// classes, which exhaust their TTL long before ch: ever could) absorbs
-// it instead. Caller holds c.mu.
+// Pure global-oldest eviction starves the "ch:" (code-history) class: with a 24h TTL its cachedAt
+// is touched once a day while "ev:"/"ix:"/"pos:" entries keep resetting theirs, so a hot
+// code-history entry is always the oldest and evicted first. Attacker-mintable "pos:" keys (any
+// checksum-valid strkey is a new cold key) make that churn trivial. Preferring an expired entry
+// makes the short-TTL classes that cause the pressure absorb it. Caller holds c.mu.
 func evictOneLocked(entries map[string]contractDetailEntry) {
 	now := time.Now()
 	var oldestExpiredKey, oldestKey string
@@ -184,19 +159,11 @@ func evictOneLocked(entries map[string]contractDetailEntry) {
 // detachedClassForKey maps a cache key to its refresh-gate CLASS, using
 // the key's kind prefix ("ev:", "ix:", "ch:", "act:", "inst:").
 //
-// The per-class cap exists to stop one class starving the OTHERS — but
-// one class "contract_detail" (capped at half the global limit) shared by
-// all four panels makes a contract page starve ITSELF: a page fires
-// detail + interactions + code-history concurrently, so on a cold
-// contract three-to-four refreshes contend for two class slots and the
-// losers 503. Measured with that one shared class: 20 of 20 cold random
-// contract pages served at least one failed panel, and it was NOT crawl
-// pressure — the same rate held with seconds of think time between
-// pages.
-//
-// Keying the class per panel restores the cap's actual intent: one
-// panel's burst still cannot monopolise the gate, and a single page's
-// own fan-out does not compete with itself for one panel's budget.
+// The per-class cap stops one class starving the others, but a single shared class (capped at
+// half the global limit) makes a contract page starve itself: it fires detail, interactions and
+// code-history concurrently, so three or four refreshes contend for two slots and the losers 503.
+// Keying per panel keeps one panel's burst from monopolising the gate without a page's own
+// fan-out competing with itself.
 func detachedClassForKey(key string) string {
 	prefix, _, ok := strings.Cut(key, ":")
 	if !ok || prefix == "" {
@@ -225,11 +192,9 @@ func (h *Handler) refreshContractDetail(key string, compute func(context.Context
 	}
 	go func() {
 		defer gate.ReleaseClass(class)
-		// The flight is ENDED from this defer on EVERY path, panic
-		// included. An unended flight wedges the key permanently:
-		// begin() keeps handing the dead flight to later requests, so
-		// the key can never be recomputed, and end() cannot be called
-		// twice because it closes fl.done.
+		// End the flight from this defer on every path, panic included: an unended flight wedges
+		// the key permanently (begin() keeps handing out the dead flight), and end() cannot be
+		// called twice because it closes fl.done.
 		var err error
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -253,12 +218,9 @@ func (h *Handler) refreshContractDetail(key string, compute func(context.Context
 	return fl
 }
 
-// contractDetailCached serves key from the cache: fresh entry as-is; STALE
-// entry served (degraded=true, with its real asOf) while a detached
-// single-flight recompute runs; a never-computed key waits for the
-// detached compute up to the REQUEST deadline only (the compute itself
-// outlives it, so a heavy contract 503s this one request and the retry
-// lands warm).
+// contractDetailCached serves key from the cache: a stale entry is served (degraded=true, real
+// asOf) while a detached single-flight recompute runs; a never-computed key waits only to the
+// request deadline, and the compute outlives it so the retry lands warm.
 func (h *Handler) contractDetailCached(ctx context.Context, key string, compute func(context.Context) (any, error)) (v any, asOf time.Time, degraded bool, err error) {
 	if e, ok, fresh := h.contractDetail.get(key); ok {
 		if !fresh {

@@ -19,12 +19,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// From P23 on, the cap67 archive carries transfer movements through its
-// watermark and mint, burn and clawback over its recorded supply range only,
-// the Postgres tail above it `transfer` only, and no epoch carries fees or
-// order-book fills. The coverage note
-// must say so rather than let a partial feed — or a ?kind= filter that
-// silently stops at P23 — read as complete.
+// From P23 on, the cap67 archive carries transfers through its watermark and mint, burn and
+// clawback over its recorded supply range only, the Postgres tail above it `transfer` only, and
+// no epoch carries fees or order-book fills. The coverage note must say so rather than let a
+// partial feed, or a ?kind= filter that silently stops at P23, read as complete.
 
 // TestAccountMovements_CoverageNoteDisclosesKindGap: an unfiltered feed's
 // note must name the kinds that are absent, at both archive states.
@@ -307,11 +305,9 @@ func TestAccountMovements_ValidPinStillHonoured(t *testing.T) {
 	}
 }
 
-// TestAccountMovements_ServesPerAssetDecimals: the recent tail spans every
-// SEP-41 contract, so each row must carry its own asset's scale. An
-// 18-decimal token's 1.0 is 10^18 base units; rendered at a feed-wide 7 it
-// reads as 100,000,000,000. A failed decimals read must omit the scale
-// rather than publish a guessed 7.
+// TestAccountMovements_ServesPerAssetDecimals: the recent tail spans every SEP-41 contract, so
+// each row must carry its own asset's scale (an 18-decimal token's 1.0 would read as
+// 100,000,000,000 at a feed-wide 7). A failed decimals read must omit the scale, not guess 7.
 func TestAccountMovements_ServesPerAssetDecimals(t *testing.T) {
 	usdc, err := canonical.NewClassicAsset("USDC", validTestAccount)
 	if err != nil {
@@ -367,11 +363,9 @@ func TestAccountMovements_ServesPerAssetDecimals(t *testing.T) {
 	}
 }
 
-// TestAccountMovements_AssetFilterScopesPostgresTailBeforeLimit: the
-// account's newest Postgres transfers are all a non-matching token and its
-// USDC transfers sit below them. ?asset=USDC must return a full page of USDC
-// with a cursor that reaches the rest; a filter applied after the LIMIT
-// returned an empty page, no cursor, and stranded every USDC row.
+// TestAccountMovements_AssetFilterScopesPostgresTailBeforeLimit: the account's newest transfers
+// are a non-matching token with USDC below them. ?asset=USDC must return a full page with a
+// cursor reaching the rest; a filter applied after the LIMIT strands every USDC row.
 func TestAccountMovements_AssetFilterScopesPostgresTailBeforeLimit(t *testing.T) {
 	usdc, err := canonical.NewClassicAsset("USDC", validTestAccount)
 	if err != nil {
@@ -427,12 +421,10 @@ func TestAccountMovements_AssetFilterScopesPostgresTailBeforeLimit(t *testing.T)
 	}
 }
 
-// TestAccountMovements_WatermarkReadError_DoesNotDoubleServe pins
-// that on a cap67 watermark read error with a POPULATED archive,
-// the CH arm must be clamped to the static P23 boundary so its post-P23
-// cap67_derived rows are NOT served alongside the Postgres tail's identical
-// watched-token rows. Against the un-fixed code (wm=0 disables the CH trim)
-// the same transfer is emitted twice.
+// TestAccountMovements_WatermarkReadError_DoesNotDoubleServe pins that on a cap67 watermark read
+// error with a populated archive, the CH arm is clamped to the static P23 boundary so its
+// post-P23 cap67_derived rows are not served alongside the Postgres tail's identical rows
+// (wm=0 would disable the CH trim and emit the same transfer twice).
 func TestAccountMovements_WatermarkReadError_DoesNotDoubleServe(t *testing.T) {
 	floor := timescale.SEP41MovementsFloorLedger
 	postP23 := floor + 100 // a real cap67_derived movement above the P23 boundary
@@ -482,11 +474,9 @@ func TestAccountMovements_WatermarkReadError_DoesNotDoubleServe(t *testing.T) {
 	}
 }
 
-// TestAccountMovements_PaginationPinsWatermark pins the behaviour: a
-// continuation page must reuse the watermark pinned into the cursor by
-// page 1, NOT the live (advanced) watermark. Against the un-fixed code the
-// handler re-reads the live watermark, moving the CH ceiling up and making
-// the coverage note claim completeness through the higher boundary.
+// TestAccountMovements_PaginationPinsWatermark pins that a continuation page reuses the
+// watermark pinned into the cursor by page 1, not the live advanced one; re-reading it would
+// move the CH ceiling up and make the coverage note claim completeness past the first page.
 func TestAccountMovements_PaginationPinsWatermark(t *testing.T) {
 	base := timescale.SEP41MovementsFloorLedger
 	pinnedWM := base + 1000     // the watermark page 1 committed to
@@ -594,15 +584,11 @@ func TestAccountMovements_CeilingIsAppliedBeforeTheLimit(t *testing.T) {
 	}
 }
 
-// TestAccountMovements_GenesisFloorFailsClosed pins the ceiling's
-// set-signal: a deployment that installs the movements floor at genesis
-// (testnet/futurenet, timescale.InstallMovementsFloor(1)) computes a
-// ceiling of floor-1 == 0 whenever the cap67 watermark is absent or
-// unreadable, and must then serve NOTHING from the ClickHouse arm — the
-// Postgres tail covers the whole net. Carrying the clamp on a
-// `MaxLedger > 0` sentinel instead of an explicit HasMaxLedger drops the
-// predicate at exactly that ceiling and double-lists every transfer the
-// tail already serves.
+// TestAccountMovements_GenesisFloorFailsClosed pins the ceiling's set-signal: a genesis floor
+// (testnet/futurenet, timescale.InstallMovementsFloor(1)) gives a ceiling of 0 when the cap67
+// watermark is absent or unreadable, and must then serve nothing from the ClickHouse arm since
+// the Postgres tail covers the whole net. A `MaxLedger > 0` sentinel instead of an explicit
+// HasMaxLedger drops the predicate at exactly that ceiling and double-lists every transfer.
 func TestAccountMovements_GenesisFloorFailsClosed(t *testing.T) {
 	timescale.InstallMovementsFloor(1)
 	t.Cleanup(func() { timescale.InstallMovementsFloor(0) })

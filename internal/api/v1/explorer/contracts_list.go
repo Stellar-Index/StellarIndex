@@ -53,10 +53,9 @@ type ContractsDirectoryView struct {
 // each tagged with its owning protocol where known. `?days=` sets the window
 // (default 30, max 365); `?limit=` the row count (default 100, max 500).
 //
-// `days` is rounded UP onto [contractsWindowLadder] and the result served
-// from a bounded TTL cache — the endpoint is unauthenticated and each
-// distinct window is a multi-day GROUP BY over contract_events. The
-// response's `window_days` reports the window actually aggregated.
+// `days` is rounded UP onto [contractsWindowLadder] and served from a bounded TTL cache, because
+// the endpoint is unauthenticated and each distinct window is a multi-day GROUP BY over
+// contract_events. `window_days` reports the window actually aggregated.
 func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -77,22 +76,15 @@ func (h *Handler) ContractsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Quantise the window onto the supported ladder before it reaches the
-	// lake. Rounds UP, so the served window is
-	// never smaller than the one asked for; `window_days` below echoes what
-	// was actually aggregated. See contractsWindowLadder in hot_reads.go
-	// for why an unauthenticated endpoint cannot offer 365 distinct
-	// multi-day GROUP BYs.
+	// Quantise onto the ladder before the lake (see contractsWindowLadder in hot_reads.go). Rounds
+	// UP so the served window is never smaller than asked; `window_days` echoes what was used.
 	window := contractsWindow(days)
 
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	// Snapshot-served: a stale rung comes back
-	// degraded=true and is served as 200 + flags.stale + its real as_of
-	// while the detached re-aggregation runs; only a never-computed rung
-	// can still time out here (and its detached compute keeps running, so
-	// a retry lands warm). See hot_reads.go.
+	// Snapshot-served: a stale rung is a 200 with flags.stale and its real as_of while a detached
+	// re-aggregation runs; only a never-computed rung can time out, and a retry lands warm.
 	rows, types, since, asOf, degraded, err := h.recentContractsCached(ctx, window, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
@@ -145,11 +137,9 @@ type ContractInteractionsView struct {
 	Interactions []ContractEdge `json:"interactions"`
 }
 
-// ContractInteractions serves GET /v1/contracts/{contract_id}/interactions
-// — the contract interaction map: other contracts that emitted events in the
-// same transactions as this one (a proxy for cross-contract calls, since
-// Soroban sub-invocations nest within one tx), ranked by shared-tx count and
-// tagged with their owning protocol where known.
+// ContractInteractions serves GET /v1/contracts/{contract_id}/interactions: other contracts that
+// emitted events in the same transactions (a proxy for cross-contract calls), ranked by shared-tx
+// count and tagged with their owning protocol where known.
 func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -181,26 +171,19 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Quantise the window onto the supported ladder before it becomes a
-	// cache key (mirrors ContractsList above).
-	// Keying on the raw `?days=` bounds a repeat caller but not an
-	// adversary, who walks ?days=1..365 to mint 365 distinct cold keys —
-	// each a full-price two-phase scan that pollutes and LRU-evicts the
-	// shared contract-detail cache. Rounding UP keeps the served window a
-	// superset of the one asked for; `window_days` below echoes what was
-	// actually aggregated. The same `window` feeds the cache key, the
-	// window floor, and the echo so two raw days on one rung stay
-	// coherent under single-flight.
+	// Quantise onto the ladder before it becomes a cache key: keying on raw `?days=` lets an
+	// adversary mint 365 cold keys, each a full two-phase scan that LRU-evicts the shared
+	// contract-detail cache. Rounding UP keeps the served window a superset of the one asked for.
+	// The same `window` feeds the cache key, window floor and echo so one rung stays coherent
+	// under single-flight.
 	window := contractsWindow(days)
 
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	// Served via the shared contract-detail SWR cache: run inline, the
-	// two-phase interactions scan timed out on every request for busy
-	// contracts. Computed at the max page size
-	// and sliced; the window floor is captured WITH the edges so the
-	// served since_ledger describes the data actually served.
+	// Served via the shared contract-detail SWR cache because the two-phase scan times out inline
+	// for busy contracts. Computed at the max page size and sliced; the window floor is captured
+	// WITH the edges so since_ledger describes the data actually served.
 	type interactionsPayload struct {
 		edges []clickhouse.ContractEdgeRow
 		since uint32
@@ -276,11 +259,9 @@ type ContractCodeHistoryView struct {
 	Versions   []ContractCodeVersionV `json:"versions"`
 }
 
-// ContractCodeHistory serves GET /v1/contracts/{contract_id}/code-history
-// — the contract's WASM-hash timeline ("change over time"): each distinct
-// executable the contract instance has pointed at, chronologically, so an
-// in-place upgrade shows as a new version. 200 with empty versions when the
-// contract has no WASM instance write.
+// ContractCodeHistory serves GET /v1/contracts/{contract_id}/code-history: each distinct WASM
+// executable the instance has pointed at, chronologically, so an in-place upgrade shows as a new
+// version. 200 with empty versions when the contract has no WASM instance write.
 func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -334,23 +315,15 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 // windowFloorLedger returns the ledger sequence closest to `days` days
-// before the tip's close_time, or 0 when the tip is genuinely unknown (no
-// ledgers captured yet) / the window reaches past genesis. A FAILED tip
-// read is returned as an error rather than folded into the 0 floor: 0 means
-// "scan from genesis", and silently substituting it for "the tip read
-// failed" would turn a transient ClickHouse error into an unbounded
-// genesis-wide GROUP BY on every caller. Callers must
-// refuse the window on error rather than serve one computed from ledger 0.
+// before the tip's close_time, or 0 when the tip is unknown or the window reaches past genesis. A
+// FAILED tip read is returned as an error, never folded into the 0 floor: 0 means "scan from
+// genesis", so substituting it would turn a transient ClickHouse error into an unbounded
+// genesis-wide GROUP BY. Callers must refuse the window on error.
 //
-// The boundary is the tip's close_time, not a ledger-count multiple of the
-// theoretical 5.0s/17,280-per-day cadence: pubnet's observed cadence is
-// ~14,950-15,300 ledgers/day, so a ledger-count window overshoots the
-// requested number of days by ~13-15% — which is why NetworkThroughput
-// uses a ledger count only as a partition-pruning hint (see
-// ledgersPerDayPruningEstimate in internal/storage/clickhouse). The floor
-// is the lowest captured ledger closed at or after the
-// boundary, found by a close_time binary search that a lake gap cannot
-// mislead; a boundary before the lake's first ledger yields that ledger.
+// The boundary is the tip's close_time, not a ledger-count multiple of the nominal cadence:
+// pubnet's observed cadence overshoots a ledger-count window by ~13-15% (so NetworkThroughput
+// uses a count only as a partition-pruning hint). The floor is the lowest captured ledger closed
+// at or after the boundary, found by a close_time binary search a lake gap cannot mislead.
 func (h *Handler) windowFloorLedger(ctx context.Context, days int) (uint32, error) {
 	tip, err := h.Reader.RecentLedgers(ctx, 1, 0)
 	if err != nil {

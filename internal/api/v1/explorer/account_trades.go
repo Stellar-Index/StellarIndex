@@ -31,21 +31,16 @@ const (
 	accountTradesMaxLimit     = 200
 )
 
-// accountTradesScopeNote is the static honesty note every response
-// carries: it states exactly which trades CAN appear here, so an empty
-// page is never mistaken for "this address never traded anywhere".
-// The `trades` table attributes accounts via its taker/maker columns —
-// see timescale/account_trades.go's file header for the evidence.
+// accountTradesScopeNote states which trades CAN appear here, so an empty page is never read as
+// "this address never traded anywhere". Accounts are attributed via the taker/maker columns.
 const accountTradesScopeNote = "On-chain trades where this address is recorded as the acting account " +
 	"(taker) or the resting sdex offer owner (maker). Coverage: sdex, soroswap, aquarius, phoenix, comet " +
 	"(soroswap records the taker for trades from 2026-07-30 onward; earlier soroswap rows carry none). " +
 	"Off-chain CEX/FX trades carry no Stellar account, so they cannot appear here."
 
-// AccountTradeEntry is one row in the wire response. Amounts and
-// usd_volume are decimal strings (ADR-0003); usd_volume is absent when
-// the stored value is NULL (unknown), never "0". There is deliberately
-// NO price field: `trades` stores no price column and deriving one
-// needs per-asset decimals — serving quote/base raw would be a wrong
+// AccountTradeEntry is one row in the wire response. Amounts and usd_volume are decimal strings;
+// usd_volume is absent when unknown, never "0". There is deliberately no price field: `trades`
+// stores none and deriving one needs per-asset decimals, so raw quote/base would be a wrong
 // number with a right-looking name.
 type AccountTradeEntry struct {
 	Ts          string `json:"ts"`
@@ -81,12 +76,10 @@ type AccountTradesView struct {
 	Note       string              `json:"note"`
 }
 
-// accountTradesGate caps concurrent ListAccountTrades reads. Four of the
-// 25-connection serving pool: enough that a handful of genuine callers
-// proceed in parallel, small enough that this route cannot starve every
-// other Postgres-backed endpoint. See the rationale at the acquire site.
-// accountTradesCallers holds each caller to one of those slots, so a
-// single caller issuing parallel slow scans cannot shed everyone else.
+// accountTradesGate caps concurrent ListAccountTrades reads at four of the 25-connection serving
+// pool: enough for a few genuine callers, too few to starve other Postgres-backed endpoints.
+// accountTradesCallers holds each caller to one slot so one caller's parallel slow scans cannot
+// shed everyone else.
 var (
 	accountTradesGate    = make(chan struct{}, 4)
 	accountTradesCallers = callerSlots{held: map[string]struct{}{}}
@@ -118,11 +111,8 @@ func (c *callerSlots) release(key string) {
 	c.mu.Unlock()
 }
 
-// encodeAccountTradesCursor renders the keyset position of the last
-// served row as the opaque `?cursor=` value:
-// "<ts unixnano>.<ledger>.<tx_hash>.<op_index>" — dotted with the
-// tx_hash segment third (safe: tx_hash is fixed 64-char hex, never
-// contains '.'), mirroring the movements cursor convention.
+// encodeAccountTradesCursor renders the last served row's keyset position as the opaque cursor
+// "<ts unixnano>.<ledger>.<tx_hash>.<op_index>". Dots are safe because tx_hash is 64-char hex.
 func encodeAccountTradesCursor(r timescale.AccountTradeRow) string {
 	return strconv.FormatInt(r.Ts.UTC().UnixNano(), 10) + "." +
 		strconv.FormatUint(uint64(r.Ledger), 10) + "." +
@@ -179,11 +169,8 @@ func (h *Handler) tradesUnavailable(w http.ResponseWriter, r *http.Request) {
 		"This deployment hasn't wired the Postgres trades reader.")
 }
 
-// tradesBusy writes the retryable 503 shed when the account-trades
-// concurrency gate is full: the scan was never started, so this is an
-// instant "busy, retry" — NOT a timeout (mirrors writeRetryable's honest
-// split by cause). Same 503 + type-URL contract as the timeout path; only
-// the detail tells the truth about which condition occurred.
+// tradesBusy writes the retryable 503 shed when the account-trades gate is full. The scan never
+// started, so this is "busy, retry", not a timeout; same 503 and type URL, only the detail differs.
 func (h *Handler) tradesBusy(w http.ResponseWriter, r *http.Request) {
 	h.WriteProblem(w, r,
 		"https://api.stellarindex.io/errors/account-trades-timeout",
@@ -213,12 +200,9 @@ func (h *Handler) AccountTrades(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Bound concurrent per-account trades scans. The read is 9.5-11.1s on
-	// cold chunks (taker/maker are not compression segmentby keys), so a
-	// handful of unbounded callers would pin the whole 25-connection serving
-	// pool below the rate limiter's floor and starve every other
-	// Postgres-backed endpoint. Acquire a gate slot or shed a retryable 503 —
-	// shed, don't queue past the read budget. See accountTradesGate above.
+	// Bound concurrent scans: the read takes ~10s on cold chunks (taker/maker are not compression
+	// segmentby keys), so unbounded callers would pin the serving pool and starve other endpoints.
+	// Acquire a slot or shed a retryable 503; never queue past the read budget.
 	caller := middleware.RateLimitCallerKey(r)
 	if !accountTradesCallers.acquire(caller) {
 		h.tradesBusy(w, r)
@@ -255,11 +239,8 @@ func (h *Handler) AccountTrades(w http.ResponseWriter, r *http.Request) {
 
 	note := accountTradesScopeNote
 	if !horizon.IsZero() && horizon.Year() > 1971 {
-		// Compression-horizon floor: trades older
-		// than the oldest uncompressed chunk aren't index-searchable per
-		// account yet — say so instead of serving a silently-partial
-		// "all time" list. The deep-history serving path is tracked as
-		// the account-archive ClickHouse work.
+		// Compression-horizon floor: trades older than the oldest uncompressed chunk are not
+		// searchable per account, so say so rather than serve a silently partial "all time" list.
 		note += " Showing trades since " + horizon.UTC().Format("2006-01-02") +
 			"; older trade history is not yet searchable per-account and is being rebuilt."
 	}

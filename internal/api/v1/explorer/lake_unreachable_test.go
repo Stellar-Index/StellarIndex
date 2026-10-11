@@ -14,11 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// dialRefused is the exact error shape a hard-down ClickHouse produces when
-// the driver tries to open a connection: a *net.OpError whose Op is "dial"
-// and whose Timeout() is FALSE (a refused connection answers instantly — it
-// does not time out). This is a value that must not be classified
-// non-retryable and rendered as `errors/internal` 500.
+// dialRefused is the error a hard-down ClickHouse produces on connect: a *net.OpError with Op
+// "dial" and Timeout() FALSE (a refused connection answers instantly). It must not be classified
+// non-retryable and rendered as an `errors/internal` 500.
 func dialRefused() error {
 	return &net.OpError{
 		Op:     "dial",
@@ -76,13 +74,10 @@ func TestRetryableColdMiss_LakeUnreachable(t *testing.T) {
 	}
 }
 
-// TestAccountState_LakeUnreachableMapsTo503 is the wire-level half of the above
-// case: with ClickHouse hard-down, GET /v1/accounts/{g} must answer 503 with a
-// Retry-After and a detail that says the DEPENDENCY is unreachable — not the
-// 500 "Internal error" a misclassified error would serve, and not the read-budget "timed out"
-// prose either (a refused dial answered in microseconds; sending an operator
-// to look for a slow query that never ran is the same class of lie the
-// saturation split already exists to prevent).
+// TestAccountState_LakeUnreachableMapsTo503 is the wire-level half of the above: with ClickHouse
+// hard-down, GET /v1/accounts/{g} answers 503 with Retry-After and a detail naming the
+// DEPENDENCY as unreachable, not a 500 and not the read-budget "timed out" prose (a refused dial
+// answers in microseconds, so blaming a slow query would misdirect the operator).
 //
 // Red without the fix: if the handler's retryableColdMiss returned false
 // for a refused dial, it would fall through to WriteProblem(…, 500) and this
@@ -124,12 +119,9 @@ func TestAccountState_LakeUnreachableMapsTo503(t *testing.T) {
 	}
 }
 
-// TestAccountState_GateSaturationMapsTo503 pins recon-R3: when the lake
-// reader's detached-refresh gate is SATURATED it returns
-// clickhouse.ErrRefreshSaturated — a transient, retryable backpressure
-// condition the GET /v1/accounts/{g} handler MUST surface as a 503 (retry),
-// NOT the 500 `errors/internal` a genuine bug gets. A real internal error
-// still maps to 500 so alerts and the 5xx SLA probe stay meaningful.
+// TestAccountState_GateSaturationMapsTo503 pins that clickhouse.ErrRefreshSaturated (a transient
+// backpressure signal) surfaces as a retryable 503, while a real internal error still maps to 500
+// so alerts and the 5xx SLA probe stay meaningful.
 //
 // Red without the fix: if the handler only special-cased a read deadline
 // (readTimedOut), clickhouse.ErrRefreshSaturated would fall through to the 500

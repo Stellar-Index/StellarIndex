@@ -31,14 +31,9 @@ type TxDetailView struct {
 	TxSummaryView
 	Operations []OpView      `json:"operations"`
 	Events     []TxEventView `json:"events,omitempty"`
-	// CoverageNote is an honest-degrade signal (mirrors AccountMovements'
-	// coverage_note): non-empty when a NON-FATAL sub-read failed while
-	// assembling this response, so a degraded answer — operations without
-	// their per-op result codes, or a tx served without its contract events —
-	// is distinguishable on the wire from a transaction that genuinely
-	// produced none. Both `events` and each op's `result_code` are omitempty,
-	// so absent this note a FAILED read is byte-identical to a real empty.
-	// Absent = every sub-read succeeded and empty arrays/absent codes are real.
+	// CoverageNote is non-empty when a NON-FATAL sub-read failed (per-op result codes or contract
+	// events). `events` and each op's `result_code` are omitempty, so without this note a failed
+	// read is byte-identical to a real empty. Absent = every sub-read succeeded.
 	CoverageNote string `json:"coverage_note,omitempty"`
 }
 
@@ -139,18 +134,11 @@ func txNotFoundDetail(tip uint32, stale, tipOK bool) string {
 	}
 }
 
-// txCoverageNote is the tx-detail feed's honest-degrade statement (mirrors
-// movementsCoverageNote / AccountMovements' coverage_note): non-empty when a
-// non-fatal sub-read failed, so a degraded response is distinguishable on the
-// wire from a genuinely-empty one. Empty = every sub-read succeeded.
-// txReadFailed handles the two outcomes every read in TxDetail shares: a
-// client hangup writes nothing, and a blown budget answers retryable. The
-// budget belongs to the whole request, so once one read has exceeded it
-// every remaining sub-read is already doomed — a "partial" transaction
-// assembled out of failures is a 200 the caller would read as fact, which
-// is why a deadline is never treated as the disclosable-partial class the
-// callers fall through to. Returns true when the response has been
-// written.
+// txReadFailed handles the two outcomes every TxDetail read shares: a client hangup writes
+// nothing, and a blown budget answers retryable. The budget belongs to the whole request, so
+// later sub-reads are doomed too, and a "partial" transaction assembled from failures would be a
+// 200 read as fact; a deadline is therefore never the disclosable-partial class. Returns true
+// when the response has been written.
 func (h *Handler) txReadFailed(w http.ResponseWriter, r *http.Request, ctx context.Context, err error, read, hash string) bool {
 	if h.ClientAborted(r, err) {
 		return true
@@ -179,11 +167,9 @@ func txCoverageNote(resultsFailed, eventsFailed bool) string {
 	return ""
 }
 
-// buildTxOpViews decodes a transaction's operations, stamps each with its
-// parent transaction's success (so a failed tx's operations are unambiguously
-// marked, not masquerading as applied), and attaches each op's result code +
-// human slug (when known), plus the op-type-specific inner slug of an op_inner
-// operation.
+// buildTxOpViews decodes a transaction's operations, stamps each with its parent transaction's
+// success (so a failed tx's operations are not mistaken for applied), and attaches each op's
+// result code and slug, plus the inner slug of an op_inner operation.
 func buildTxOpViews(ops []clickhouse.OpRow, results map[uint32]clickhouse.OpResult, txSuccessful bool, txResultCode int32) []OpView {
 	out := make([]OpView, len(ops))
 	// One immutable bool shared by every op — they all belong to this tx and

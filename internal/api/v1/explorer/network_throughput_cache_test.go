@@ -16,12 +16,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// These tests pin the contract for
-// GET /v1/network/throughput: the year-window FINAL scan never runs on a
-// request deadline again — a warm entry is sliced, a stale one is SERVED
-// (flags.stale + its real as_of) while ONE detached refresh runs, a
-// saturated gate degrades to stale rather than erroring, and prewarm
-// warms the exact entry the handler reads.
+// These tests pin the GET /v1/network/throughput contract: the year-window FINAL scan never runs
+// on a request deadline. A warm entry is sliced, a stale one is SERVED (flags.stale + its real
+// as_of) while ONE detached refresh runs, a saturated gate degrades to stale rather than erroring,
+// and prewarm warms the exact entry the handler reads.
 
 // throughputReader is a capReader whose NetworkThroughput is countable,
 // controllable, and records the window argument each caller passed (the
@@ -298,15 +296,10 @@ func TestPrewarmNetworkThroughput_WarmsTheEntryTheHandlerReads(t *testing.T) {
 	h.PrewarmNetworkThroughput(cancelled)
 }
 
-// TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock pins the behaviour:
-// `partial` must be the value ExplorerReader.NetworkThroughput already
-// derived from the query's own max(close_time), passed through verbatim —
-// never recomputed against the handler's wall clock. A wall-clock recompute
-// reintroduces exactly the multi-region/stale-cache disagreement the
-// data-derived flag exists to prevent: a bucket whose day has rolled past
-// per the SERVER's clock is not necessarily a complete day — a cache entry
-// served past its TTL, or a peer region whose clock has already ticked
-// over, would silently clear a bucket that is still genuinely incomplete.
+// TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock pins that `partial` is passed
+// through verbatim from the query's own max(close_time), never recomputed against the handler's
+// wall clock. A stale cache entry or a region whose clock has ticked over would otherwise clear
+// a bucket that is still genuinely incomplete.
 func TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock(t *testing.T) {
 	h, _ := newThroughputHandler()
 	h.ParseWindowDays = func(_ http.ResponseWriter, _ *http.Request, def int) (int, bool) { return def, true }
@@ -320,11 +313,8 @@ func TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock(t *testing.T) 
 		w.WriteHeader(http.StatusOK)
 	}
 
-	// A stale cache entry whose newest bucket is two days old by the
-	// SERVER's wall clock but was genuinely still accumulating when the
-	// query produced it (Partial: true, data-derived). Under a wall-clock
-	// recompute this gets silently cleared to false because the bucket's
-	// day is "before today"; the bucket's own flag must survive untouched.
+	// A stale entry whose newest bucket is two days old by the server clock but was still
+	// accumulating when queried (Partial: true). The bucket's own flag must survive untouched.
 	twoDaysAgo := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -2)
 	h.throughput.put([]clickhouse.ThroughputBucket{
 		{Day: twoDaysAgo.AddDate(0, 0, -1), Ledgers: 1, Partial: false},

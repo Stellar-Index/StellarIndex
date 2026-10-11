@@ -77,11 +77,8 @@ func TestOpRowTxKeys(t *testing.T) {
 		{Seq: 500, TxHash: "h4"}, // dup ledger, new hash
 	}
 	ledgers, hashes := opRowTxKeys(rows)
-	// The exact SET of ledgers touched — NOT [min,max]. A span would have
-	// been [300,700], i.e. 401 ledgers for a 4-ledger page, and it is that
-	// widening that made the outcome read scale with an account's idleness
-	// (>1.6B rows on a real 50-op page) instead of with the page. See
-	// clickhouse.TxOutcomesByHash.
+	// The exact SET of ledgers touched, not [min,max]: a span widens the read with the account's
+	// idleness instead of the page size. See clickhouse.TxOutcomesByHash.
 	want := map[uint32]bool{300: true, 400: true, 500: true, 700: true}
 	if len(ledgers) != len(want) {
 		t.Errorf("distinct ledgers = %d (%v), want %d", len(ledgers), ledgers, len(want))
@@ -104,13 +101,10 @@ func TestOpRowTxKeys(t *testing.T) {
 	}
 }
 
-// lakeOutcomeReader is a faithful model of what ClickHouse does with
-// `WHERE ledger_seq IN (?) AND tx_hash IN (?)`: it answers a stored row only
-// when BOTH the row's ledger and its hash were asked for. That is the whole
-// point — it is not a yes-man mock. Hand it the page's exact ledger set and it
-// finds every transaction; hand it a [lo,hi] SPAN flattened into two values
-// (the shape a span-flattening key builder would produce) and it finds only the two endpoint
-// ledgers, which is the shape of the production bug.
+// lakeOutcomeReader models `WHERE ledger_seq IN (?) AND tx_hash IN (?)`: a stored row is answered
+// only when BOTH its ledger and its hash were asked for. Given the page's exact ledger set it
+// finds every transaction; given a [lo,hi] span flattened to two values it finds only the
+// endpoint ledgers, which is the shape of the production bug.
 type lakeOutcomeReader struct {
 	*capReader
 	rows map[uint32]map[string]clickhouse.TxOutcome
@@ -132,14 +126,10 @@ func (r *lakeOutcomeReader) TxOutcomesByHash(_ context.Context, ledgers []uint32
 	return out, nil
 }
 
-// TestStampTxOutcomes_IdleAccountPageIsFullyStamped is a regression test:
-// at the explorer's own PAGE_SIZE=50, an IDLE account's page straddles millions
-// of ledgers, and keying the parent-transaction read on that SPAN instead of on
-// the page's exact ledgers made the read scale with the account's idleness
-// (>1.6 BILLION rows / 122-147 GiB, >60s on r1). It blew stampTxOutcomes'
-// budget every time, so 0 of 50 operations carried transaction_successful and
-// the entire public account history rendered with an UNKNOWN outcome behind the
-// coverage note — D-PART-FAILEDTX degraded to its fallback on the DEFAULT path.
+// TestStampTxOutcomes_IdleAccountPageIsFullyStamped: an IDLE account's page straddles millions of
+// ledgers, so keying the parent-transaction read on that span instead of the page's exact ledgers
+// makes the read scale with idleness, blows stampTxOutcomes' budget, and leaves every operation
+// with an UNKNOWN outcome behind the coverage note.
 func TestStampTxOutcomes_IdleAccountPageIsFullyStamped(t *testing.T) {
 	// 50 ops, one per ledger, ~50k ledgers apart — a real idle-account page
 	// shape (spans of 2.5M-42M ledgers are ordinary on r1).
@@ -186,13 +176,9 @@ func TestStampTxOutcomes_IdleAccountPageIsFullyStamped(t *testing.T) {
 	}
 }
 
-// TestTxOutcomeStitchBudget_IsSizedToTheMeasuredRead pins the budget to the
-// read it now bounds. 3s was sized around a read that could not fit ANY budget
-// (>60s, timed out every time on an idle account) and so bought nothing but 3s
-// of added latency before the honest-degrade note. Keyed on the exact ledger
-// set the read measures 32-61ms cold on r1, so the budget is ~16x the observed
-// worst case: enough for a cold cache, small enough to cap what this stitch can
-// add to an unauthenticated request.
+// TestTxOutcomeStitchBudget_IsSizedToTheMeasuredRead pins the budget to the read it bounds: about
+// 16x the cold-cache worst case of the exact-ledger-set read, small enough to cap the latency
+// this stitch can add to an unauthenticated request.
 func TestTxOutcomeStitchBudget_IsSizedToTheMeasuredRead(t *testing.T) {
 	if txOutcomeStitchBudget > time.Second {
 		t.Errorf("txOutcomeStitchBudget = %v; the read it bounds is 32-61ms cold on r1, so a "+

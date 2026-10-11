@@ -16,16 +16,13 @@ import (
 // counts (ClickHouse lake), attributed-trade total, per-(protocol,
 // action) DeFi event counts, and bridge-transfer counts (Postgres).
 //
-// Every segment is a WHOLE-HISTORY aggregate (the op-type arms probe the
-// multi-billion-row operations table; the trade count walks the
-// address's full trades history), so the payload is served through the
-// shared contract-detail stale-while-revalidate cache
-// (contract_detail_cache.go) under an "act:"+g key — the compute runs
-// DETACHED on the refresh budget, never on the request deadline, and an
-// expired entry is served stale (flags.stale + its real as_of) while one
-// single-flighted refresh runs. Same mechanism, same
-// obs.ObserveExplorerSWRRefresh("contract_detail", …) metric label (a
-// bounded enum — do NOT mint a new label per key kind).
+// Every segment is a WHOLE-HISTORY aggregate (the op-type arms probe the multi-billion-row
+// operations table; the trade count walks the address's full trades), so the payload is served
+// through the shared contract-detail SWR cache (contract_detail_cache.go) under an "act:"+g key.
+// The compute runs DETACHED on the refresh budget, and an expired entry is served stale
+// (flags.stale + its real as_of) while one single-flighted refresh runs. Reuse the
+// obs.ObserveExplorerSWRRefresh("contract_detail", ...) label: it is a bounded enum, so do not
+// mint one per key kind.
 
 // ActivityReader is the narrow Postgres read seam this endpoint needs.
 // *timescale.Store satisfies it. Nil disables the endpoint (503).
@@ -102,12 +99,10 @@ var errActivityAllSegmentsFailed = errors.New("account activity: every segment r
 
 // AccountActivity serves GET /v1/accounts/{g_strkey}/activity.
 //
-// SWR contract: a fresh cached payload serves as-is; an expired one
-// serves immediately with flags.stale=true and its real as_of while a
-// detached single-flight recompute runs; a never-computed account waits
-// for the detached compute up to the request deadline only (a heavy
-// account 503s the first request and the retry lands warm) — the same
-// contract ContractDetail documents.
+// SWR contract, same as ContractDetail: a fresh payload serves as-is; an expired one serves
+// immediately with flags.stale=true and its real as_of while a detached single-flight recompute
+// runs; a never-computed account waits for that compute up to the request deadline only (a heavy
+// account 503s the first request and the retry lands warm).
 func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 	if h.Activity == nil && h.Reader == nil {
 		h.activityUnavailable(w, r)
@@ -149,13 +144,10 @@ func (h *Handler) AccountActivity(w http.ResponseWriter, r *http.Request) {
 	h.writeJSONAt(w, out, degraded, degraded || out.CoverageNote != "", asOf)
 }
 
-// computeAccountActivity runs the four segment reads. Each segment
-// degrades independently (absent + named in coverage_note — the
-// positions endpoint's posture: a partial answer must never be
-// mistakable for "this address did nothing"); only the all-segments-
-// failed case returns an error, so a transient single-store outage
-// can't poison the cache with an empty shell NOR throw away the other
-// stores' real answers.
+// computeAccountActivity runs the four segment reads. Each segment degrades independently
+// (absent and named in coverage_note, so a partial answer is never mistaken for "this address did
+// nothing"); only all segments failing returns an error, so a single-store outage neither poisons
+// the cache with an empty shell nor discards the other stores' real answers.
 func (h *Handler) computeAccountActivity(ctx context.Context, g string) (AccountActivityView, error) {
 	out := AccountActivityView{Account: g}
 
