@@ -42,16 +42,12 @@ func (a LiquidityAction) IsValid() bool {
 }
 
 // ReservesEvent is the [consumer.Event] Aquarius's Decoder emits on a
-// successful `update_reserves` decode. It carries the pool's full
-// POST-STATE reserve vector (one i128 per pool token, in the pool's
-// canonical token order — 2 for a volatile pool, N for stableswap).
-// The sink fans it out to one aquarius_reserves row per token
-// position. It is the Aquarius TVL / liquidity-depth signal.
+// successful `update_reserves` decode. It carries the pool's full post-state reserve vector (one
+// i128 per token, in canonical token order) and is the Aquarius TVL signal; the sink fans it out
+// to one aquarius_reserves row per token position.
 //
-// update_reserves carries NO token address in its topics (topic[0] is
-// the only topic); the reserve is identified only by position, which
-// matches the pool's canonical token order (the order the pool's
-// deposit/withdraw/trade topics list the tokens).
+// update_reserves has no token address in its topics, so a reserve is identified only by position
+// in the pool's canonical token order (the order its deposit/withdraw/trade topics list tokens).
 type ReservesEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -90,11 +86,9 @@ func (e ReservesEvent) EventKind() string {
 func (ReservesEvent) Source() string { return SourceName }
 
 // LiquidityEvent is the [consumer.Event] Aquarius's Decoder emits on a
-// successful `deposit_liquidity` / `withdraw_liquidity` decode. One
-// event carries the per-token amounts plus the LP shares minted
-// (deposit) or burned (withdraw); the sink fans it out to one
-// aquarius_liquidity row per token position, landing Shares on the
-// token_index = 0 row only.
+// successful `deposit_liquidity` / `withdraw_liquidity` decode. It carries per-token amounts plus
+// the LP shares minted or burned; the sink fans it out to one aquarius_liquidity row per token
+// position, landing Shares on the token_index = 0 row only.
 type LiquidityEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -144,12 +138,9 @@ const (
 )
 
 // RewardsEvent is the [consumer.Event] Aquarius's Decoder emits on a
-// successful decode of any of the twelve rewards-gauge event kinds.
-// UserAddress / Amount are universal promoted fields, empty/nil when
-// the kind doesn't carry them (see decode_rewards.go per-kind doc);
-// Attributes carries the kind-specific remainder — i128/u128/u256
-// values inside it are decimal strings (ADR-0003: NUMERIC-inside-jsonb
-// is lossy, a decimal string round-trips exactly).
+// successful decode of any of the twelve rewards-gauge event kinds. UserAddress / Amount are
+// promoted fields, empty/nil when the kind lacks them; Attributes carries the kind-specific
+// remainder, with i128/u128/u256 values as decimal strings (ADR-0003: jsonb numbers are lossy).
 type RewardsEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -158,18 +149,12 @@ type RewardsEvent struct {
 	EventIndex uint32
 	ObservedAt time.Time
 	Kind       RewardsAction
-	// UserAddress is the acting/addressed account topic slot when the
-	// event carries one (may be an end-user LP or a pool admin/manager
-	// for config-toggle kinds like set_rewards_state — see the per-kind
-	// doc comment in decode_rewards.go). Empty when the kind carries
-	// none (e.g. rewards_gauge_add, pool_state).
+	// UserAddress is the acting/addressed account topic slot: an end-user LP, or a pool
+	// admin/manager for config-toggle kinds. Empty when the kind carries none.
 	UserAddress string
-	// Amount is the single dominant, always-non-negative i128/u128
-	// amount for kinds that have exactly one (claim_reward,
-	// rewards_gauge_claim, claim, set_rewards_config, config_rewards).
-	// Nil for kinds with zero, two, or signed amounts — those land
-	// in Attributes instead (e.g. position_update's delta CAN be
-	// negative, so it never populates this field).
+	// Amount is the single always-non-negative i128/u128 amount for kinds with exactly one. Nil
+	// for kinds with zero, two or signed amounts, which land in Attributes (position_update's
+	// delta can be negative, so it never populates this field).
 	Amount     *canonical.Amount
 	Attributes map[string]any
 }
@@ -200,10 +185,8 @@ const (
 )
 
 // AdminEvent is the [consumer.Event] Aquarius's Decoder emits on a
-// successful decode of any of the eight governance/upgrade event
-// kinds. Admin / Target are universal promoted fields, empty when the
-// kind doesn't carry them; Attributes carries the kind-specific
-// remainder.
+// successful decode of any of the eight governance/upgrade event kinds. Admin / Target are
+// promoted fields, empty when the kind lacks them; Attributes carries the remainder.
 type AdminEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -212,18 +195,13 @@ type AdminEvent struct {
 	EventIndex uint32
 	ObservedAt time.Time
 	Kind       AdminAction
-	// Admin is the initiating-actor topic slot when the event carries
-	// one. Empty for every kind observed so far (none of the eight
-	// carry a distinct "admin" topic separate from the addressed
-	// entity — see decode_admin.go); kept for schema symmetry with
-	// aquarius_admin.admin / blend_admin's pattern and any future kind
-	// that does carry one.
+	// Admin is the initiating-actor topic slot. Empty for every observed kind (none carries an
+	// admin topic distinct from the addressed entity); kept for schema symmetry with
+	// aquarius_admin.admin.
 	Admin string
-	// Target is the "addressed entity" of the event — the new Wasm
-	// hash (hex) for *_upgrade, the new admin address for
-	// *_transfer_ownership, the new reward token for
-	// pool_gauge_switch_token. Empty for kinds with no single target
-	// (set_privileged_addrs; enable/disable_emergency_mode).
+	// Target is the addressed entity: the new Wasm hash (hex) for *_upgrade, the new admin for
+	// *_transfer_ownership, the new reward token for pool_gauge_switch_token. Empty when a kind
+	// has no single target.
 	Target     string
 	Attributes map[string]any
 }
@@ -234,12 +212,10 @@ func (AdminEvent) EventKind() string { return "aquarius.admin" }
 // Source implements [consumer.Event].
 func (AdminEvent) Source() string { return SourceName }
 
-// FeeEvent is a protocol-fee treasury event — set_protocol_fee (the
-// per-token old→new fee transition) or claim_protocol_fee (an accrued
-// fee swept to a recipient). One consumer type discriminated by Kind;
-// the sink lands it in aquarius_protocol_fee (migration 0129). Fields
-// are populated per Kind: the four Fee* on set_protocol_fee, Recipient
-// + Amount on claim_protocol_fee.
+// FeeEvent is a protocol-fee treasury event: set_protocol_fee (per-token old to new fee) or
+// claim_protocol_fee (accrued fee swept to a recipient), discriminated by Kind. The sink lands it
+// in aquarius_protocol_fee. The four Fee* fields are set on set_protocol_fee, Recipient + Amount
+// on claim_protocol_fee.
 type FeeEvent struct {
 	ContractID string
 	Ledger     uint32
@@ -248,24 +224,17 @@ type FeeEvent struct {
 	EventIndex uint32
 	ObservedAt time.Time
 	Kind       string // EventSetProtocolFee | EventClaimProtocolFee
-	// set_protocol_fee — per-token old→new protocol fee (u32). Two real
-	// wire shapes (see decodeSetProtocolFee): the Map form carries all
-	// four values (HasOldFee = true); the Vec form carries a single
-	// pool-wide new fraction (Fee0New == Fee1New, no old value on the
-	// wire — HasOldFee = false, so the sink lands the *_old columns NULL
-	// rather than a fabricated 0).
+	// set_protocol_fee: per-token old to new protocol fee (u32). The Map wire form carries all
+	// four values (HasOldFee = true); the Vec form carries one pool-wide new fraction and no old
+	// value (HasOldFee = false), so the sink lands the *_old columns NULL, not a fabricated 0.
 	Fee0New   uint32
 	Fee0Old   uint32
 	Fee1New   uint32
 	Fee1Old   uint32
 	HasOldFee bool
-	// claim_protocol_fee — the fee-sweep destination + swept amount
-	// (i128, per ADR-0003). One event per token claimed. Token is the
-	// claimed token's contract address, carried in topic[1] (the body
-	// Vec has no token; every sampled event has an ScvAddress at
-	// topic[1], and two same-tx claims of
-	// DIFFERENT tokens prove per-pool amounts are meaningless without
-	// it — summing them adds USDC-scale and XLM-scale integers).
+	// claim_protocol_fee: the sweep destination and amount (i128, ADR-0003), one event per token.
+	// Token is the claimed token's contract address from topic[1]; the body has none. Amounts
+	// are meaningless without it, since same-tx claims of different tokens differ in scale.
 	Recipient string
 	Token     string
 	Amount    canonical.Amount
@@ -277,11 +246,9 @@ func (FeeEvent) EventKind() string { return "aquarius.fee" }
 // Source implements [consumer.Event].
 func (FeeEvent) Source() string { return SourceName }
 
-// KillEvent is a pool circuit-breaker toggle — one of the eight
-// kill_/unkill_ actions an admin fires to pause / unpause a pool
-// operation. The event carries NO body (SCV_VOID) and a single topic;
-// it is fully identified by (contract, action, event identity). The
-// sink lands it in aquarius_kill_switches (migration 0130).
+// KillEvent is a pool circuit-breaker toggle: one of the eight kill_/unkill_ admin actions. It has
+// no body and a single topic, so (contract, action, event identity) fully identifies it. The sink
+// lands it in aquarius_kill_switches.
 type KillEvent struct {
 	ContractID string
 	Ledger     uint32

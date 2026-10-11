@@ -9,26 +9,20 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// decode_admin.go decodes the eight governance/upgrade admin event kinds found by the
-// lake topic census. AquaToken's soroban-amm source is not public, so every function
-// is reverse-engineered from real r1 lake bytes: wire types/arity/positions are exact,
-// business-meaning names beyond that are BEST-EFFORT where noted.
+// decode_admin.go decodes the eight governance/upgrade admin event kinds. The AquaToken source
+// is not public, so wire types, arity and positions are exact (from lake bytes) while
+// business-meaning names are BEST-EFFORT where noted.
 //
-// GATING NOTE: SEVEN kinds (apply_upgrade, commit_upgrade, set_privileged_addrs,
-// apply_transfer_ownership, commit_transfer_ownership, enable_emergency_mode,
-// disable_emergency_mode) are emitted by REGISTERED Aquarius POOLS as well as the
-// router, so dispatcher_adapter.go gates them on `reg.Has || reg.IsFactory`. A
-// router-only gate would fail-close ~1,679 real pool-emitted events (e.g. a staged
-// WASM upgrade across 320/337 pools) into an ADR-0033 recognition gap and drop them
-// from Decode. config_rewards and pool_gauge_switch_token are router-only: the census
-// finds no pool-emitted occurrences.
+// GATING NOTE: SEVEN kinds (all but config_rewards and pool_gauge_switch_token) are emitted by
+// REGISTERED Aquarius POOLS as well as the router, so dispatcher_adapter.go gates them on
+// `reg.Has || reg.IsFactory`; a router-only gate would fail-close real pool events into an
+// ADR-0033 recognition gap. config_rewards and pool_gauge_switch_token are router-only.
 //
-// The FLAGGED parallel router CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ
-// and the neither-pool-nor-router family (docs/protocols/aquarius.md "Flagged —
-// excluded from the gate") stay OUTSIDE the trust boundary and fail closed per
-// ADR-0035: a visible recognition gap, never silent mis-attribution.
-// decode_admin_test.go exercises the decoders on bytes from both registered and
-// flagged contracts; decode correctness and gate membership are independent concerns.
+// The FLAGGED parallel router CA7RQDMMV6E53P5EDZA5GPWBZ33AMW2ZNO42XLI2RGRIAP4QXIARUOJQ and the
+// neither-pool-nor-router family (docs/protocols/aquarius.md) stay OUTSIDE the trust boundary and
+// fail closed per ADR-0035: a visible recognition gap, never silent mis-attribution.
+// decode_admin_test.go decodes bytes from both registered and flagged contracts, because decode
+// correctness and gate membership are independent concerns.
 
 // decodeAdminEvent dispatches on the already-classified event kind
 // and returns the decoded AdminEvent. Called from Decode() after
@@ -70,22 +64,15 @@ func adminEnvelope(e *events.Event, kind AdminAction, closedAt time.Time) AdminE
 }
 
 // decodeUpgradeHashBody is shared by apply_upgrade / commit_upgrade.
-// Both carry a Vec[Bytes] body of 32-byte Wasm hashes whose ARITY
-// varies by emitter and wire generation (real r1 lake bytes, full
-// history):
 //
 //	topics: [Symbol(kind)]  (topic_count=1)
 //	body:   Vec[Bytes]  (length >= 1, each a 32-byte Wasm hash)
 //
-// Observed arities: the canonical / flagged router emits a SINGLE hash
-// (1); the registered POOLS emit 2 (apply_upgrade) or 2–3
-// (commit_upgrade) across the protocol-wide staged WASM upgrade. Pinning
-// `len(elts) != 1` would reject every pool body: 1,372 of the ~1,679
-// pool-governance events (apply_upgrade x686 + commit_upgrade x686).
-// So decode BY ARITY: element[0] is the PRIMARY (new/applied/proposed)
-// hash; the caller lands it in Target and carries any trailing staged
-// hashes in Attributes. Returns every hash in wire order (>= 1); an
-// empty body fails closed.
+// Arity varies by emitter: the router emits a SINGLE hash, registered POOLS emit 2 (apply) or 2-3
+// (commit), so pinning `len(elts) != 1` would reject every pool body. Decode BY ARITY: element[0]
+// is the PRIMARY (new/applied/proposed) hash, which the caller lands in Target, with trailing
+// staged hashes carried in Attributes. Returns every hash in wire order; an empty body fails
+// closed.
 func decodeUpgradeHashBody(e *events.Event, kindName string) ([]string, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -109,12 +96,9 @@ func decodeUpgradeHashBody(e *events.Event, kindName string) ([]string, error) {
 	return hashes, nil
 }
 
-// setUpgradeHashes lands the decoded Wasm hashes onto av: element[0]
-// in Target (the primary new/applied/proposed hash), each trailing
-// staged hash in Attributes["wasm_hash_N"] (1-indexed) — MIRRORS the
-// addr_3 pattern decodeSetPrivilegedAddrs uses for its v2 trailing
-// element. A single-hash (router) body lands ONLY Target, leaving
-// Attributes empty.
+// setUpgradeHashes lands element[0] in Target and each trailing staged hash in
+// Attributes["wasm_hash_N"] (1-indexed), like the addr_3 pattern in decodeSetPrivilegedAddrs. A
+// single-hash (router) body lands ONLY Target.
 func setUpgradeHashes(av *AdminEvent, hashes []string) {
 	av.Target = hashes[0]
 	for i, h := range hashes[1:] {
@@ -135,11 +119,9 @@ func decodeApplyUpgrade(e *events.Event, closedAt time.Time) (AdminEvent, error)
 	return av, nil
 }
 
-// decodeCommitUpgrade decodes `commit_upgrade` — see
-// decodeUpgradeHashBody. Fires BEFORE the matching apply_upgrade
-// (staged/two-phase upgrade). Target is the proposed Wasm hash (hex);
-// pool bodies carry the further staged hashes in
-// Attributes["wasm_hash_1"] / Attributes["wasm_hash_2"].
+// decodeCommitUpgrade decodes `commit_upgrade` (see decodeUpgradeHashBody). It fires BEFORE the
+// matching apply_upgrade (two-phase upgrade). Target is the proposed Wasm hash (hex); pool bodies
+// carry further staged hashes in Attributes["wasm_hash_1"] / ["wasm_hash_2"].
 func decodeCommitUpgrade(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	hashes, err := decodeUpgradeHashBody(e, EventCommitUpgrade)
 	if err != nil {
@@ -150,23 +132,16 @@ func decodeCommitUpgrade(e *events.Event, closedAt time.Time) (AdminEvent, error
 	return av, nil
 }
 
-// decodeSetPrivilegedAddrs decodes `set_privileged_addrs` — BOTH wire
-// generations (contract-schema-evolution: pools/router upgrade in
-// place, and the body grew an element across a WASM upgrade):
+// decodeSetPrivilegedAddrs decodes `set_privileged_addrs` in BOTH wire generations (contracts
+// upgrade in place and the body grew an element across a WASM upgrade, so backfill sees both):
 //
 //	topics: [Symbol("set_privileged_addrs")]  (topic_count=1)
 //	body v1: Vec[Address, Address, Address, Vec[Address]]           (length 4)
 //	body v2: Vec[Address, Address, Address, Vec[Address], Address]  (length 5)
 //
-// Lake census (full history): every event at ledgers ≤ 57,604,772 is
-// the 4-element form; every event from 57,697,794 onward is the
-// 5-element form — same first four elements, plus ONE trailing plain
-// Address. Pinning arity==4 leaves the canonical router's single
-// 5-element event (ledger 57,711,797) undecodable; it was one of the 41
-// blind events on aquarius's first full-range completeness reconcile.
-// BEST-EFFORT semantics: a multi-role privileged-address set; the v2
-// trailing address lands in Attributes["addr_3"]. Any other arity
-// fails closed.
+// v2 adds ONE trailing plain Address after ledger 57,697,794; pinning arity==4 leaves those events
+// undecodable. Semantics are BEST-EFFORT (a multi-role privileged-address set); the v2 trailing
+// address lands in Attributes["addr_3"]. Any other arity fails closed.
 func decodeSetPrivilegedAddrs(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -221,10 +196,8 @@ func decodeSetPrivilegedAddrs(e *events.Event, closedAt time.Time) (AdminEvent, 
 //	topics: [Symbol(kind), Symbol(role)]  (topic_count=2)
 //	body:   Vec[Address]  (length 1: the new address for that role)
 //
-// Verified against r1 lake bytes: topic[1] is a Symbol
-// naming the role being transferred (observed value: "EmergencyAdmin"
-// — a role-name enum on the wire, not a G/C address), so there can be
-// more than one role kind even though only one was sampled.
+// topic[1] is a Symbol naming the role being transferred (observed "EmergencyAdmin"; a role-name
+// enum, not a G/C address), so more than one role kind may exist.
 func decodeTransferOwnershipBody(e *events.Event, kindName string) (role, newAddr string, err error) {
 	if len(e.Topic) != 2 {
 		return "", "", fmt.Errorf("%w: %s expected 2 topics, got %d", ErrMalformedPayload, kindName, len(e.Topic))
@@ -283,8 +256,7 @@ func decodeCommitTransferOwnership(e *events.Event, closedAt time.Time) (AdminEv
 	return av, nil
 }
 
-// decodeEnableEmergencyMode decodes `enable_emergency_mode` — a bare
-// marker event with no payload.
+// decodeEnableEmergencyMode decodes `enable_emergency_mode`, a bare marker with no payload.
 //
 //	topics: [Symbol("enable_emergency_mode")]  (topic_count=1)
 //	body:   Void
@@ -309,10 +281,8 @@ func decodeDisableEmergencyMode(e *events.Event, closedAt time.Time) (AdminEvent
 //	topics: [Symbol("pool_gauge_switch_token"), Address(new_reward_token)]  (topic_count=2)
 //	body:   Vec[Bool]  (length 1)
 //
-// Verified against r1 lake bytes: 100% router-scoped (all
-// 31 lifetime events are on the canonical router — confirmed via a
-// full-history, router-scoped count); every sampled body value is
-// `true`. Target is the pool's new gauge reward-token address.
+// Router-scoped only; every observed body value is `true`. Target is the pool's new gauge
+// reward-token address.
 func decodePoolGaugeSwitchToken(e *events.Event, closedAt time.Time) (AdminEvent, error) {
 	if len(e.Topic) != 2 {
 		return AdminEvent{}, fmt.Errorf("%w: pool_gauge_switch_token expected 2 topics, got %d", ErrMalformedPayload, len(e.Topic))

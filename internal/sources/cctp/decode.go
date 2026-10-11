@@ -9,19 +9,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// ErrUnknownEvent flags an event whose topic[0] symbol isn't one
-// of CCTP's 26 (see events.go). Per AGENTS.md ("Comet uses a
-// shared topic") the dispatcher matches by topic bytes; another
-// protocol could in theory emit the same symbol. ContractID
-// filtering is applied by IsCCTPContract (dispatcher_adapter.go),
-// in this same package, before Classify is trusted.
+// ErrUnknownEvent flags an event whose topic[0] symbol isn't one of CCTP's 26 (see events.go).
+// The dispatcher matches by topic bytes, which another protocol could share, so IsCCTPContract
+// (dispatcher_adapter.go) must filter by ContractID before Classify is trusted.
 var ErrUnknownEvent = errors.New("cctp: unknown event topic")
 
-// ErrMalformedBody surfaces a schema drift — body Map missing a
-// field the contract source declares, or a field with the wrong
-// SCVal kind. Per AGENTS.md ("Soroban DeFi contracts upgrade in
-// place"), a contract upgrade could change field shapes; this
-// error is the canary.
+// ErrMalformedBody surfaces schema drift: a body Map missing a declared field, or a field of the
+// wrong SCVal kind. Contracts upgrade in place, so this error is the canary for changed shapes.
 var ErrMalformedBody = errors.New("cctp: malformed event body")
 
 // ErrMalformedTopic flags a topic slice shorter than the event
@@ -109,8 +103,7 @@ func Classify(e *events.Event) string { //nolint:gocyclo,gocognit,cyclop // one 
 //	  destination_domain: u32, destination_token_messenger: BytesN<32>,
 //	  hook_data: Bytes, max_fee: i128, mint_recipient: BytesN<32> }
 //
-// Per ADR-0013 we use scval helpers; the inferred-type entries
-// slice keeps xdr out of this file's import list.
+// Uses scval helpers (ADR-0013) so xdr stays out of this file's imports.
 func DecodeDepositForBurn(e *events.Event) (DepositForBurn, error) { //nolint:gocognit,funlen,gocyclo // straight-line field decode; splitting fans the per-field error context across helpers
 	if len(e.Topic) < 4 {
 		return DepositForBurn{}, fmt.Errorf("%w: deposit_for_burn needs 4 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -313,8 +306,7 @@ func DecodeMintAndWithdraw(e *events.Event) (MintAndWithdraw, error) {
 // Wire shape:
 //
 //	topic[0] = Symbol("message_sent")
-//	value    = ScMap { message: Bytes }   (or raw ScBytes if the
-//	                                       macro layout shifts)
+//	value    = ScMap { message: Bytes }   (or raw ScBytes if the macro layout shifts)
 func DecodeMessageSent(e *events.Event) (MessageSent, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -452,9 +444,9 @@ func DecodeMessageReceived(e *events.Event) (MessageReceived, error) {
 // DecodeMintAndForward turns one mint_and_forward event into the
 // canonical struct.
 //
-// Topic layout (verified against mainnet ledger 63098002):
+// Topic layout:
 //
-//	topic[0] = Symbol("mint_and_forward")   — the ONLY topic
+//	topic[0] = Symbol("mint_and_forward")   (the ONLY topic)
 //
 // Body: { amount: i128, forward_recipient: Address, token: Address }.
 func DecodeMintAndForward(e *events.Event) (MintAndForward, error) {
@@ -602,10 +594,8 @@ func DecodeOwnershipTransferCompleted(e *events.Event) (OwnershipTransferComplet
 // DecodeAdminChanged turns one `admin_changed` event into the
 // canonical struct. Single-topic event; body ScMap.
 //
-// Body: { new_admin: Address, old_admin: Address | Void }. Verified
-// against real mainnet events: the bootstrap instance of this event
-// carries `old_admin = Void` — type-tested via [scval.AsAddressOrVoid]
-// rather than assumed to always be an Address.
+// Body: { new_admin: Address, old_admin: Address | Void }. The bootstrap event carries
+// `old_admin = Void`, so it is type-tested via [scval.AsAddressOrVoid], not assumed an Address.
 func DecodeAdminChanged(e *events.Event) (AdminChanged, error) {
 	if len(e.Topic) < 1 {
 		return AdminChanged{}, fmt.Errorf("%w: admin_changed needs 1 topic, got %d", ErrMalformedTopic, len(e.Topic))
@@ -839,8 +829,8 @@ func DecodeAttesterEnabled(e *events.Event) (AttesterEnabled, error) {
 //	topic[1] = Address(old_attester_manager) | Void
 //	topic[2] = Address(new_attester_manager)
 //
-// old_attester_manager is type-tested via [scval.AsAddressOrVoid] — the
-// real mainnet bootstrap instance (ledger 62146641) carries it Void.
+// old_attester_manager is type-tested via [scval.AsAddressOrVoid]; the bootstrap event carries it
+// Void.
 func DecodeAttesterManagerUpdated(e *events.Event) (AttesterManagerUpdated, error) {
 	if len(e.Topic) < 3 {
 		return AttesterManagerUpdated{}, fmt.Errorf("%w: attester_manager_updated needs 3 topics, got %d", ErrMalformedTopic, len(e.Topic))
@@ -1070,9 +1060,8 @@ func DecodeMinFeeControllerSet(e *events.Event) (MinFeeControllerSet, error) {
 }
 
 // DecodePauserChanged turns one `pauser_changed` event into the
-// canonical struct. Single-topic event; body ScMap. NOTE: the body
-// field is named `new_address`, not `new_pauser` — confirmed against
-// the real mainnet event, not assumed from the topic name.
+// canonical struct. Single-topic event; body ScMap. NOTE: the body field is `new_address`, not
+// `new_pauser`.
 //
 // Body: { new_address: Address }.
 func DecodePauserChanged(e *events.Event) (PauserChanged, error) {
