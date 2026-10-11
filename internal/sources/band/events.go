@@ -46,8 +46,7 @@ var (
 	// the decoder only owns these two functions.
 	ErrNotBandCall = errors.New("band: not a StandardReference relay/force_relay call")
 
-	// ErrMalformedArgs — the op args don't decode to the expected
-	// shape for the claimed function. Either a contract upgrade
+	// ErrMalformedArgs — the op args don't decode to the expected shape: a contract upgrade
 	// shifted the signature, or the envelope is broken.
 	ErrMalformedArgs = errors.New("band: malformed InvokeContract args")
 

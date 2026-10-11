@@ -38,24 +38,16 @@ const (
 
 // Sentinel errors.
 var (
-	// ErrOutOfRange is returned when a (Get/Verify/Append) addresses
-	// a ledger sequence below the file's startLedger. We refuse
-	// rather than silently treat it as record 0.
+	// ErrOutOfRange: a ledger below startLedger is refused, never treated as record 0.
 	ErrOutOfRange = errors.New("hashdb: ledger sequence outside file range")
-	// ErrMissing is returned when a ledger has no record yet (the
-	// file is sparse beyond the last Append, or the slot is unwritten
-	// zeros).
+	// ErrMissing: no record yet (past the last Append, or an unwritten zero slot).
 	ErrMissing = errors.New("hashdb: no record for ledger")
-	// ErrDrift is returned by Verify when the supplied hash differs
-	// from the stored hash. The caller should escalate to ops; this
-	// is the alert condition the package exists to detect.
+	// ErrDrift: Verify saw a hash differing from the stored one. Escalate to ops; this is the
+	// condition the package exists to detect.
 	ErrDrift = errors.New("hashdb: hash drift — recorded != observed")
-	// ErrBadMagic is returned when the file header's magic bytes
-	// don't match — the file was probably written by something else,
-	// or it's truncated.
+	// ErrBadMagic: the header magic does not match (foreign or truncated file).
 	ErrBadMagic = errors.New("hashdb: bad magic — not a hashdb file")
-	// ErrBadVersion is returned when the file format version is
-	// unknown to this build.
+	// ErrBadVersion: the file format version is unknown to this build.
 	ErrBadVersion = errors.New("hashdb: unsupported file format version")
 )
 
@@ -69,9 +61,8 @@ type DB struct {
 // [startLedger, +∞). Fails if the file already exists. Creates
 // header bytes; no records.
 func Create(path string, startLedger uint32) (*DB, error) {
-	// #nosec G304 — `path` is operator-supplied (CLI flag /
-	// ops-config), not request-derived. Path-traversal protection
-	// belongs at the caller's input-validation layer, not here.
+	// #nosec G304 — `path` is operator-supplied, not request-derived; traversal protection belongs
+	// to the caller.
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("hashdb: create %s: %w", path, err)
@@ -85,11 +76,8 @@ func Create(path string, startLedger uint32) (*DB, error) {
 		_ = os.Remove(path)
 		return nil, fmt.Errorf("hashdb: write header: %w", err)
 	}
-	// Sync the header to disk before handing the DB out. Without this,
-	// a power-loss-class crash in the writeback window after first-ever
-	// Create can persist the inode with 0 bytes — and a 0-byte file
-	// fails Open on the next boot. Records themselves are deliberately
-	// not synced (see recordHashdb's rationale in the indexer); the
+	// Sync the header before handing the DB out: a crash in the writeback window can persist a
+	// 0-byte file that fails Open on the next boot. Records are deliberately not synced; the
 	// header is a once-per-file cost.
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
@@ -154,10 +142,8 @@ func (db *DB) recordOffset(seq uint32) (int64, error) {
 	return int64(headerSize) + int64(seq-db.startLedger)*int64(recordSize), nil
 }
 
-// Append writes the hash for ledger seq. The file is extended (with
-// zero-padding for any skipped slots) when seq is past the current
-// EOF — but that's an antipattern: callers should write contiguously.
-// If you must skip, the gap reads back as ErrMissing.
+// Append writes the hash for ledger seq. Callers should write contiguously: a skipped slot is
+// zero-padded and reads back as ErrMissing.
 func (db *DB) Append(seq uint32, h [recordSize]byte) error {
 	off, err := db.recordOffset(seq)
 	if err != nil {

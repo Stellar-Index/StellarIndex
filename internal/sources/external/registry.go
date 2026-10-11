@@ -14,7 +14,7 @@ var Registry = map[string]Metadata{
 	// aggregator has a single lookup table) ──────────────────────
 	"soroswap": {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; see docs/operations/wasm-audits/soroswap.md */},
 	"aquarius": {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; 313 pools, 3 unique WASMs, shared-emitter topology. See docs/operations/wasm-audits/aquarius.md */},
-	"phoenix":  {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; 11 pools, 2 unique WASM hashes, both contain 8 expected swap-field strings. Byte presence isn't runtime uniformity: the pre-upgrade pool WASM only actually emitted 7 of the 8 fields (no ActualReceived) for ledgers 51,019,036-53,134,167 — see phoenix/decode.go's RawSwap.Decodable doc for the reduced-field recovery path. See docs/operations/wasm-audits/phoenix.md */},
+	"phoenix":  {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; the pre-upgrade pool WASM emitted only 7 of 8 swap fields (see phoenix/decode.go RawSwap.Decodable). See docs/operations/wasm-audits/phoenix.md */},
 	"comet":    {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; only known mainnet pool is Blend backstop CAS3FL6T..., WASM 8abc2891... verified. See docs/operations/wasm-audits/comet.md */},
 	"sdex":     {Class: ClassExchange, Subclass: SubclassDEX, AmountDecimals: 7, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM},
 	// SushiSwap V3 pools were upgraded twice by their factory; the per-WASM gate admits a range
@@ -42,26 +42,26 @@ var Registry = map[string]Metadata{
 	// ─── On-chain lending protocols ─────────────────────────────
 	// Auction events surface stress prices during liquidations; they are reported as a secondary
 	// validation surface and DO NOT contribute to VWAP.
-	"blend": {Class: ClassLending, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; 11 contracts (9 pools + backstop + factory), 3 unique WASMs, no mid-life upgrades observed in 5h4m walk over [50457424, 62249727]. See docs/operations/wasm-audits/blend.md §"Phase 2 results". */},
+	"blend": {Class: ClassLending, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; 11 contracts, 3 unique WASMs, no mid-life upgrades observed. See docs/operations/wasm-audits/blend.md §"Phase 2 results". */},
 	// blend_emitter is BLND emissions plumbing: no price, never VWAP. Audited against the lake
 	// (docs/operations/wasm-audits/blend_emitter.md).
 	"blend_emitter": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; see docs/operations/wasm-audits/blend_emitter.md */},
 	// sorocredit is a consumer-USDC credit protocol with no published price, never VWAP. Its
 	// "Liquidation" events are scheduled settlements, not distress.
-	"sorocredit": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited lake-direct (ADR-0034): single instance WASM 84a88013…810ea set at deploy (ledger 61,620,824), zero executable changes in the dense-coverage window [62.0M→tip]; all 7 event types have one invariant on-wire schema across the contract's whole life (NewCollateralContract structurally identical 61,624,053→63,363,505, spanning the sparse early window). Safe from genesis 61,620,822. See docs/operations/wasm-audits/sorocredit.md */},
+	"sorocredit": {Class: ClassLending, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited lake-direct: one instance WASM since deploy, all 7 event types keep one on-wire schema; safe from genesis 61,620,822. See docs/operations/wasm-audits/sorocredit.md */},
 
 	// ─── On-chain routers + aggregator vaults ────────────────────
 	// Excluded from VWAP: they invoke contracts that trade. Captured for per-tx attribution and
 	// intent (docs/architecture/explorer-data-inventory.md §9.9); vault exposure is not persisted.
-	"soroswap-router": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; r1 wasm-history walk: single hash 4c3db3eb...07 over the contract's entire life [50746272→tip], zero mid-life upgrades; both swap_exact_tokens_for_tokens + swap_tokens_for_exact_tokens exports verified present; ContractCallDecoder (router emits no events). See docs/operations/wasm-audits/soroswap-router.md */},
-	"defindex":        {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; decoder re-derived to the real on-chain schema ("BlendStrategy",deposit|withdraw){from,amount}, topic-dispatched across all emitters (the tag-1.0.0 "DeFindexVault" schema was fiction; deployed WASM 11329c24...988 is Blend strategy code). Live-verified after deploy: indexer emitted `defindex strategy flow` log lines against real traffic (9 in 90min sample). wasm2wat data-section scan of the deployed bytes confirmed all required symbols present (BlendStrategy/deposit/withdraw/from/amount). See docs/operations/wasm-audits/defindex.md */},
+	"soroswap-router": {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; single WASM hash for the contract's whole life; decoded by ContractCallDecoder because the router emits no events. See docs/operations/wasm-audits/soroswap-router.md */},
+	"defindex":        {Class: ClassRouter, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; decoder follows the real on-chain schema ("BlendStrategy",deposit|withdraw){from,amount}, topic-dispatched across all emitters. See docs/operations/wasm-audits/defindex.md */},
 
 	// ─── Cross-chain bridges (flow coverage; excluded from VWAP) ─
 	// Bridges publish no prices and emit no trades. CCTP burns and mints are USDC supply exits
 	// and entries beyond the classic trustline channel (docs/operations/wasm-audits/cctp.md).
-	"cctp": {Class: ClassBridge, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited via wasm-history walk [60M, 62.64M] across all 3 mainnet contracts (TokenMessengerMinter, MessageTransmitter, CctpForwarder): zero WASM upgrades observed, ranges=null. Single deploy confirmed via stellar.expert. See docs/operations/wasm-audits/cctp.md. */},
+	"cctp": {Class: ClassBridge, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited across all 3 mainnet contracts; no WASM upgrades observed. See docs/operations/wasm-audits/cctp.md. */},
 	// Rozo v1 intent-bridge: same bridge semantics, audited alongside CCTP.
-	"rozo": {Class: ClassBridge, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited via wasm-history walk [60M, 62.64M] across the original 3 mainnet payment contracts: zero WASM upgrades observed, ranges=null. Single WASM hash b56aedeaf80c3d4b... shared across all three contracts per stellar.expert. A 4th contract (internal/sources/rozo.MainnetPaymentContracts) carries the SAME wasm hash per direct lake lookup, so it's covered by this finding without a separate walk. See docs/operations/wasm-audits/rozo.md. */},
+	"rozo": {Class: ClassBridge, DefaultWeight: 0, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, Backfill: BackfillPerWASM /* audited; no WASM upgrades, one hash shared by every payment contract in rozo.MainnetPaymentContracts. See docs/operations/wasm-audits/rozo.md. */},
 
 	// ─── Off-chain centralised exchanges (this package's scope) ─
 	"binance":  {Class: ClassExchange, Subclass: SubclassCEX, DefaultWeight: 100, IncludeInVWAP: true, Paid: false, BackfillAvailable: true, Backfill: BackfillNoWASM},
@@ -74,13 +74,12 @@ var Registry = map[string]Metadata{
 
 	// ─── Institutional FX feeds ──────────────────────────────────
 	// `massive` is the active fiat-FX feed; there is deliberately NO `polygon-forex` entry, since
-	// it named the same upstream with IncludeInVWAP:true and would double-count. fx_quotes holds
-	// one row per ticker per UTC day: the USD anchor behind usd_volume and fiat pricing.
-	// `exchangeratesapi` (disabled) is NOT a forex-snap fallback: it emits only OracleUpdates, so
-	// FXQuoteAtOrBefore's `trades` arm finds nothing. The only fallback is the ECB standby
-	// (fx_quotes source "ecb"); wiring forex.OpenExchangeRatesProvider must add a row here or
-	// the FX-snap class check refuses it. FX pollers stamp 1e6, not the CEX 1e8. OracleResolution
-	// is a trading day: FX holds through the ~48h weekend close.
+	// it names the same upstream and would double-count in VWAP. fx_quotes holds one row per
+	// ticker per UTC day: the USD anchor behind usd_volume and fiat pricing.
+	// `exchangeratesapi` (disabled) emits only OracleUpdates, so it is not a forex-snap fallback;
+	// the only fallback is the ECB standby, and any new FX provider needs a row here or the
+	// FX-snap class check refuses it. FX pollers stamp 1e6, not the CEX 1e8. OracleResolution is
+	// a trading day because FX holds through the ~48h weekend close.
 	"massive":          {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6},
 	"exchangeratesapi": {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, Backfill: BackfillNoWASM, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 

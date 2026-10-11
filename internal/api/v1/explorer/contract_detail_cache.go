@@ -23,14 +23,12 @@ import (
 // multi-billion-row contract_events table.
 const contractDetailTTL = 5 * time.Minute
 
-// contractDetailCacheMax bounds resident entries across ALL kinds. Detail
-// traffic is long-tail like holders boards; 1024 holds the hot set at
-// three entries per actively-viewed contract.
+// contractDetailCacheMax bounds resident entries across ALL kinds; 1024 holds the hot set at three
+// entries per actively-viewed contract.
 const contractDetailCacheMax = 1024
 
-// contractDetailRefreshTimeout bounds one detached recompute. Matches the
-// contracts-directory budget: same table, same scan class, and the
-// measured worst case there (55.7 s with spill) leaves ample headroom.
+// contractDetailRefreshTimeout bounds one detached recompute; it matches the contracts-directory
+// budget because the table and scan class are the same.
 const contractDetailRefreshTimeout = 3 * time.Minute
 
 type contractDetailEntry struct {
@@ -43,9 +41,8 @@ type contractDetailEntry struct {
 type contractDetailCache struct {
 	mu      sync.Mutex
 	entries map[string]contractDetailEntry
-	// activity holds the "act:" keys apart, each map bounded on its own:
-	// a random account's activity computes in milliseconds, so sharing one
-	// bound let cheap account misses evict expensive contract entries.
+	// activity holds the "act:" keys apart, each map bounded on its own: account activity
+	// computes in milliseconds, so a shared bound let cheap misses evict expensive contract entries.
 	activity map[string]contractDetailEntry
 	flight   perKeyFlight
 }
@@ -73,10 +70,8 @@ func (c *contractDetailCache) tableLocked(key string) map[string]contractDetailE
 // one recompute per contract per day.
 const contractCodeHistoryTTL = 24 * time.Hour
 
-// positionsCacheKey is the key PREFIX (and therefore the TTL + refresh
-// class) for GET /v1/accounts/{g}/positions. Named rather than inlined
-// because three files have to agree on it: the handler, detailTTLForKey
-// below, and the tests that seed an entry.
+// positionsCacheKey is the key PREFIX (so the TTL and refresh class) for GET
+// /v1/accounts/{g}/positions; the handler, detailTTLForKey and the tests must agree on it.
 const positionsCacheKey = "pos:"
 
 // accountPositionsTTL is the "pos:" key class's freshness window. Deliberately shorter than
@@ -86,10 +81,7 @@ const positionsCacheKey = "pos:"
 // its age is bounded by the refresh succeeding, not by this constant alone.
 const accountPositionsTTL = time.Minute
 
-// detailTTLForKey maps a cache key to its freshness window — 5 minutes
-// for the live-ish classes (detail events, interactions, activity), 1
-// minute for account positions, 24h for the near-immutable code-history
-// timeline.
+// detailTTLForKey maps a cache key to its freshness window by key-class prefix.
 func detailTTLForKey(key string) time.Duration {
 	switch {
 	case strings.HasPrefix(key, "ch:"):
@@ -101,9 +93,8 @@ func detailTTLForKey(key string) time.Duration {
 	}
 }
 
-// get returns the entry for key whenever one exists — INCLUDING past the
-// TTL (fresh=false); staleness is the caller's judgment, so a run of
-// failed refreshes degrades to old-but-real data instead of 503s.
+// get returns the entry for key even past the TTL (fresh=false), so a run of failed refreshes
+// degrades to old-but-real data instead of 503s.
 func (c *contractDetailCache) get(key string) (e contractDetailEntry, ok, fresh bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -124,16 +115,13 @@ func (c *contractDetailCache) put(key string, v any) {
 	m[key] = contractDetailEntry{v: v, cachedAt: time.Now()}
 }
 
-// evictOneLocked drops one entry to make room for a new key. It prefers
-// the oldest entry that has ALREADY EXPIRED under its own key-class TTL,
-// falling back to the map's global-oldest cachedAt only when nothing has
-// expired yet.
+// evictOneLocked drops the oldest entry already EXPIRED under its own key-class TTL, falling back
+// to the global-oldest only when none has expired.
 //
-// Pure global-oldest eviction starves the "ch:" (code-history) class: with a 24h TTL its cachedAt
-// is touched once a day while "ev:"/"ix:"/"pos:" entries keep resetting theirs, so a hot
-// code-history entry is always the oldest and evicted first. Attacker-mintable "pos:" keys (any
-// checksum-valid strkey is a new cold key) make that churn trivial. Preferring an expired entry
-// makes the short-TTL classes that cause the pressure absorb it. Caller holds c.mu.
+// Pure global-oldest eviction starves the 24h "ch:" class: its cachedAt moves once a day while
+// short-TTL entries keep resetting theirs, so a hot code-history entry is always evicted first,
+// and attacker-mintable "pos:" keys make that churn trivial. Preferring an expired entry makes the
+// short-TTL classes that cause the pressure absorb it. Caller holds c.mu.
 func evictOneLocked(entries map[string]contractDetailEntry) {
 	now := time.Now()
 	var oldestExpiredKey, oldestKey string
@@ -156,14 +144,11 @@ func evictOneLocked(entries map[string]contractDetailEntry) {
 	delete(entries, oldestKey)
 }
 
-// detachedClassForKey maps a cache key to its refresh-gate CLASS, using
-// the key's kind prefix ("ev:", "ix:", "ch:", "act:", "inst:").
+// detachedClassForKey maps a cache key to its refresh-gate CLASS by kind prefix.
 //
-// The per-class cap stops one class starving the others, but a single shared class (capped at
-// half the global limit) makes a contract page starve itself: it fires detail, interactions and
-// code-history concurrently, so three or four refreshes contend for two slots and the losers 503.
-// Keying per panel keeps one panel's burst from monopolising the gate without a page's own
-// fan-out competing with itself.
+// One shared class (capped at half the global limit) would make a contract page starve itself: it
+// fires detail, interactions and code-history concurrently, so three or four refreshes contend for
+// two slots and the losers 503. Keying per panel stops one panel's burst monopolising the gate.
 func detachedClassForKey(key string) string {
 	prefix, _, ok := strings.Cut(key, ":")
 	if !ok || prefix == "" {
@@ -172,18 +157,16 @@ func detachedClassForKey(key string) string {
 	return "contract_detail_" + prefix
 }
 
-// refreshContractDetail kicks ONE detached compute for key (no-op while a
-// flight is up) and returns the flight to optionally wait on. Detached for
-// the same reason as every sibling: bound to a request deadline, the scan
-// for a busy contract never completed and the cache never filled.
+// refreshContractDetail kicks ONE detached compute for key (no-op while a flight is up) and
+// returns the flight to wait on. Detached because a scan bound to a request deadline never
+// completes for a busy contract, so the cache would never fill.
 func (h *Handler) refreshContractDetail(key string, compute func(context.Context) (any, error)) *keyFlight {
 	fl, owner := h.contractDetail.flight.begin(key)
 	if !owner {
 		return fl
 	}
-	// Bounded globally across keys — contract ids are attacker-mintable
-	// (any shape-valid C-address is a distinct cold key); on saturation
-	// skip, don't queue (see detachedGate).
+	// Bounded globally across keys because any shape-valid C-address is a distinct cold key; on
+	// saturation skip, don't queue (see detachedGate).
 	gate := h.detachedGate()
 	class := detachedClassForKey(key)
 	if !gate.TryAcquireClass(class) {

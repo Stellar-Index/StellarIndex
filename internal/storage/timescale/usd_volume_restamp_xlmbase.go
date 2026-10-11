@@ -15,11 +15,11 @@ import (
 )
 
 // The XLM-BASE usd_volume re-derive: the estimated-tier counterpart of [usd_volume_restamp.go]
-// (`usd_volume = base_amount/1e7 x XLM/USD at ts`, [usdVolumeViaXLMBaseAnchor]). Most of the
-// population is coverage (`-fill-null`), not correction; prices_1m/prices_1d coalesce NULL to 0,
-// so a CAGG ratio misreads holes as valuation errors.
+// (`usd_volume = base_amount/1e7 x XLM/USD at ts`). Most of the population is coverage
+// (`-fill-null`), not correction; prices_1m/prices_1d coalesce NULL to 0, so a CAGG ratio
+// misreads holes as valuation errors.
 //
-// Why the arithmetic is not done in SQL:
+// The arithmetic stays in Go, not SQL, for three reasons:
 //
 //  1. Each row is rebuilt into its [canonical.Trade] and valued by the live
 //     [usdVolumeViaXLMBaseAnchor], so there is no second waterfall to drift.
@@ -28,33 +28,25 @@ import (
 //  3. A declined row that carries a number is never overwritten with NULL; it is counted in
 //     [XLMBaseRestampStats.AnchorDeclinedStored].
 //
-// Scope is decided in Go from the insert path's own primitives (DEX source, XLM base, non-pegged
-// quote); pegged quotes belong to `-tier exact`.
-
-// The candidate scan for one bounded window is the shared one
-// ([restampScanSelect], usd_volume_restamp_legs.go) with this tier's leg:
-// `base_asset = ANY(<the two XLM wire forms>)`.
+// Pegged quotes belong to `-tier exact`. The candidate scan is the shared [restampScanSelect]
+// with this tier's leg: `base_asset = ANY(<the two XLM wire forms>)`.
 
 // XLMBaseRestampParams scopes one window of the XLM-base re-derive.
 type XLMBaseRestampParams struct {
-	// [From, To) bounds the rows by ts. Callers slice a day into bounded
-	// windows so neither the candidate scan nor any single UPDATE has to
-	// decompress a whole chunk in one transaction.
+	// [From, To) bounds the rows by ts. Callers slice a day into bounded windows so no scan or
+	// UPDATE decompresses a whole chunk in one transaction.
 	From, To time.Time
 
-	// Sources, when non-empty, restricts the scan to these source names.
-	// Names outside the DEX registry are dropped — the anchor declines
-	// them anyway, and scanning them would only widen the read.
+	// Sources, when non-empty, restricts the scan to these names. Names outside the DEX registry
+	// are dropped: the anchor declines them and scanning them only widens the read.
 	Sources map[string]bool
 
 	// FillNull admits rows whose stored usd_volume is NULL. Off by default: filling an unpriced
-	// row is a COVERAGE change the operator opts into. The planner counts the NULL population
-	// either way, so a dry run shows what -fill-null would add.
+	// row is a COVERAGE change the operator opts into. A dry run counts the NULL population anyway.
 	FillNull bool
 
-	// MaxGeneration is the derive_generation read guard: rows already stamped by a LATER re-derive
-	// are not candidates. Callers pass the run's own generation (the value the UPDATE writes), or
-	// a lower one to target a vintage, e.g. 0 for never-re-derived rows.
+	// MaxGeneration is the derive_generation read guard: rows stamped by a LATER re-derive are not
+	// candidates. Pass the run's own generation, or a lower one to target a vintage.
 	MaxGeneration int64
 
 	// MinRelDelta, when non-nil and positive, drops rows whose relative move |new-old|/|old| is
@@ -103,14 +95,13 @@ type XLMBaseRestampStats struct {
 	Scanned int64
 	// QuotePegged rows have a USD-pegged quote leg: exact tier, owned by `-tier exact`.
 	QuotePegged int64
-	// NotDEX rows came from a non-DEX source or a non-XLM base leg. Should be zero given the
-	// scan's filters; counted so a registry re-class shows up instead of shrinking the population.
+	// NotDEX rows came from a non-DEX source or a non-XLM base leg. Expected zero; counted so a
+	// registry re-class shows up instead of shrinking the population.
 	NotDEX int64
 	// Unparseable rows carry an amount or stored usd_volume that is not a positive decimal.
 	Unparseable int64
-	// AnchorDeclinedNull / AnchorDeclinedStored are the rows the XLM anchor cannot price, split by
-	// what they hold today. The first is coverage the re-derive cannot recover; the second stays
-	// WRONG after a clean run and decides whether a second remedy is needed.
+	// AnchorDeclinedNull / AnchorDeclinedStored are rows the anchor cannot price, split by what
+	// they hold. The first is unrecoverable coverage; the second stays WRONG after a clean run.
 	AnchorDeclinedNull   int64
 	AnchorDeclinedStored int64
 	// Unchanged rows already hold exactly the anchor's value.
@@ -123,10 +114,9 @@ type XLMBaseRestampStats struct {
 	NullCandidates int64
 	// BelowMinRelDelta counts rows suppressed from the write set by MinRelDelta.
 	BelowMinRelDelta int64
-	// FXDeclinedStale counts rows the cex-fx tier refused because the nearest fx_quote at or before
-	// the trade is outside the as-of tolerance (see [Store.PlanCEXFiatUSDVolumeRestamp]). A
-	// CROSS-CUT of AnchorDeclinedNull/Stored (WHY, not where filed), so
-	// [XLMBaseRestampStats.Residual] ignores it, as it does NullCandidates.
+	// FXDeclinedStale counts rows the cex-fx tier refused because the nearest earlier fx_quote
+	// is outside the as-of tolerance. A CROSS-CUT of AnchorDeclinedNull/Stored, so
+	// [XLMBaseRestampStats.Residual] ignores it.
 	FXDeclinedStale int64
 
 	// SumStored / SumWant are the USD sums over the CHANGED rows, so the operator can read the
@@ -137,9 +127,8 @@ type XLMBaseRestampStats struct {
 }
 
 // XLMBaseRelBuckets are the relative-move magnitudes the report counts changed rows into. A
-// DISTRIBUTION is reported rather than one "materially changed" number because that count depends
-// entirely on the threshold, and a guessed threshold on a money surface is the mistake
-// verify-usd-volume's footer warns about. The operator reads the split and picks.
+// distribution is reported because any single "materially changed" count depends entirely on a
+// guessed threshold, which is a mistake on a money surface.
 var XLMBaseRelBuckets = []struct {
 	Label string
 	Min   *big.Rat
@@ -217,8 +206,8 @@ const (
 // xlmBaseRestampDecide judges ONE scanned row for the xlm-base tier: the shared decision skeleton
 // ([restampDecide]) with this tier's gate.
 //
-// `anchor` is injected so the rules are testable without a live prices_1m; production passes a
-// closure over [usdVolumeViaXLMBaseAnchor], so the stored number matches the live insert path.
+// `anchor` is injected so the rules are testable without a live prices_1m; production passes
+// [usdVolumeViaXLMBaseAnchor], so the stored number matches the live insert path.
 func xlmBaseRestampDecide(
 	row xlmBaseRestampScan,
 	spec *USDVolumeQuoteSpec,
@@ -237,9 +226,8 @@ func xlmBaseRestampDecide(
 // would rewrite, plus the disposition of every row it would not.
 //
 // READ-ONLY: it is the whole dry run; [Store.ApplyXLMBaseUSDVolumeRestamp] consumes the plan
-// verbatim. It requires the store's USD-volume resolution ([InstallUSDVolumeResolution]): without a
-// resolver the anchor declines every row, a configuration error dressed as a finding, so it is
-// refused up front like [Store.reDeriveNullVolumeGuard].
+// verbatim. It requires [InstallUSDVolumeResolution]: without a resolver the anchor declines every
+// row, a configuration error dressed as a finding, so it is refused up front.
 func (s *Store) PlanXLMBaseUSDVolumeRestamp(ctx context.Context, p XLMBaseRestampParams) (*XLMBaseRestampPlan, error) {
 	return s.planRestampTier(ctx, p, restampTierScan{
 		Tier:    "xlm-base",
@@ -342,10 +330,9 @@ func (s *XLMBaseRestampStats) Merge(o XLMBaseRestampStats) {
 	}
 }
 
-// Residual is scanned minus every disposition. Non-zero means a row was scanned and filed nowhere,
-// which would quietly understate a population, so the tool prints it rather than trusting it.
-// NullCandidates is excluded: it is a CROSS-CUT (double-counts NULL rows also in
-// Changed/NullFilled), not a disposition.
+// Residual is scanned minus every disposition; non-zero means a row was filed nowhere, which would
+// quietly understate a population. NullCandidates is a CROSS-CUT (it double-counts NULL rows also
+// in Changed/NullFilled), not a disposition.
 func (s XLMBaseRestampStats) Residual() int64 {
 	filed := s.QuotePegged + s.NotDEX + s.Unparseable +
 		s.AnchorDeclinedNull + s.AnchorDeclinedStored +
@@ -354,16 +341,14 @@ func (s XLMBaseRestampStats) Residual() int64 {
 	return s.Scanned - filed
 }
 
-// xlmBaseRestampApplyBatch is the default rows per UPDATE transaction. History lives in COMPRESSED
-// chunks, so touched rows are decompressed in the transaction; a bounded batch bounds the
-// decompression, lock and rollback cost, and an interrupted run loses only the in-flight batch
-// (the tool is idempotent).
+// xlmBaseRestampApplyBatch is the default rows per UPDATE transaction. Touched rows in COMPRESSED
+// chunks are decompressed in the transaction, so a bounded batch bounds decompression, lock and
+// rollback cost; an interrupted run loses only the in-flight batch (the tool is idempotent).
 const xlmBaseRestampApplyBatch = 2000
 
 // xlmBaseRestampMaxBatch caps the rows per UPDATE transaction, whatever the operator asked for.
-// The statement binds [xlmBaseRestampArgsPerRow] placeholders per row plus 3 fixed ones, and the
-// extended protocol carries at most 65,535 parameters: above that pgx refuses the Exec mid-run.
-// The cap turns an over-large batch into one more transaction instead of an abort.
+// The extended protocol carries at most 65,535 parameters ([xlmBaseRestampArgsPerRow] per row plus
+// 3 fixed); above that pgx refuses the Exec mid-run, so the cap yields one more transaction instead.
 const xlmBaseRestampMaxBatch = (65535 - 3) / xlmBaseRestampArgsPerRow
 
 // xlmBaseRestampArgsPerRow is the placeholders one row binds: primary key, new value and the
@@ -418,19 +403,14 @@ func (s *Store) applyXLMBaseRestampBatches(ctx context.Context, plan *XLMBaseRes
 	return total, nil
 }
 
-// Why the batch UPDATE carries a redundant `ts` range.
-//
-// `trades` is mostly compressed chunks. An UPDATE that constrains `ts` only through a join clause
-// (`t.ts = v.ts`) cannot be pruned at planning time: every chunk becomes a result relation and is
-// decompressed wholesale, producing enormous WAL for a handful of rows.
-//
-// The join already forces every matched `ts` into the batch's values, so bounding `t.ts` by their
-// min and max excludes no row, and the planner can prune to one result relation.
+// The batch UPDATE carries a redundant `ts` range because `trades` is mostly compressed chunks: a
+// `ts` constrained only through the join (`t.ts = v.ts`) cannot be pruned at planning time, so
+// every chunk is decompressed wholesale, producing enormous WAL for a handful of rows. The join
+// already forces matched `ts` into the batch, so bounding by their min and max excludes no row.
 //
 //   - `tx_hash` is `char(64)`: bound as `text` the comparison becomes `(t.tx_hash)::text =
-//     v.tx_hash`, which no index serves; bound as `bpchar` the join rides `trades_pkey` on all
-//     five key columns.
-//   - Pruning needs a CUSTOM plan; a promoted generic plan cannot know the bounds.
+//     v.tx_hash`, which no index serves; bound as `bpchar` the join rides `trades_pkey`.
+//   - Pruning needs a CUSTOM plan; a promoted generic plan cannot know the bounds, so
 //     `SET LOCAL plan_cache_mode = force_custom_plan` pins it.
 
 // xlmBaseRestampTSBounds returns the inclusive `ts` span of one batch. It is computed rather than
@@ -500,9 +480,8 @@ func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRest
 // [from, to), and ok=false when the range holds no on-chain rows.
 //
 // It serves the live-overlap guard: a restamp may only rewrite history the live ingest tail has
-// passed, and the tail's position is a LEDGER (the `ledgerstream` cursor), not a timestamp.
-// Off-chain rows carry `ledger = 0` and are excluded. Callers scope this to ONE day so the scan
-// stays inside a single chunk.
+// passed, and that tail is a LEDGER cursor, not a timestamp. Off-chain rows (`ledger = 0`) are
+// excluded. Callers scope this to ONE day so the scan stays inside a single chunk.
 func (s *Store) MaxTradeLedgerInRange(ctx context.Context, from, to time.Time) (uint32, bool, error) {
 	const q = `SELECT max(ledger) FROM trades WHERE ts >= $1 AND ts < $2 AND ledger > 0`
 	var maxLedger sql.NullInt64

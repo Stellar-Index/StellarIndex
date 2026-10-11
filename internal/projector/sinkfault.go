@@ -47,8 +47,7 @@ const heldRowLogEvery = 20
 //
 // It is three-valued, not a boolean: a boolean would fold "known transient" and "unclassified"
 // into one retry-forever bucket, so a deterministic failure the classifier missed would hold the
-// per-source cursor forever. A sole-writer domain such as sep41 would halt silently, visible only
-// as growing lag.
+// per-source cursor forever and halt a sole-writer domain such as sep41, visible only as lag.
 type sinkDisposition int
 
 const (
@@ -141,9 +140,8 @@ func classifySinkFault(err error) sinkDisposition {
 // must fit in 128 bits did not.
 //
 // It is skipped like the other [valueShapeSentinels], but it is NOT a verdict about an on-chain
-// value: any production ErrI128Overflow means an int64 snuck onto an amount path and truncates
-// every value it touches (ADR-0003). So the drop is counted under its own `outcome`, giving the
-// alert (stellarindex_projector_i128_overflow) a rule to hang on.
+// value: any production ErrI128Overflow means an int64 snuck onto an amount path (ADR-0003), so
+// the drop is counted under its own `outcome` for the stellarindex_projector_i128_overflow alert.
 func isI128Overflow(err error) bool {
 	return errors.Is(err, canonical.ErrI128Overflow)
 }

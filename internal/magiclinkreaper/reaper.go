@@ -47,9 +47,8 @@ const (
 // declared here so the delete surface stays off platform.TokenStore, which every token fake would
 // otherwise have to implement.
 type MagicLinkStore interface {
-	// SweepExpiredMagicLinkTokens deletes rows whose expires_at is
-	// before olderThan, returning the number removed. Never deletes a
-	// row that is still live (unexpired).
+	// SweepExpiredMagicLinkTokens deletes rows expired before olderThan and returns the count.
+	// It never deletes a live row.
 	SweepExpiredMagicLinkTokens(ctx context.Context, olderThan time.Time) (int64, error)
 	// CountMagicLinkTokens returns the current row count.
 	CountMagicLinkTokens(ctx context.Context) (int64, error)
@@ -106,9 +105,8 @@ func New(store MagicLinkStore, opts Options) *Reaper {
 	return r
 }
 
-// Run drives the sweep loop until ctx is cancelled. Sweeps once
-// immediately — a process that has just started may be inheriting a
-// table that grew while it was down — then every Interval.
+// Run drives the sweep loop until ctx is cancelled. It sweeps once immediately, since the table may
+// have grown while the process was down, then every Interval.
 func (r *Reaper) Run(ctx context.Context) error {
 	tick := time.NewTicker(r.interval)
 	defer tick.Stop()
@@ -143,14 +141,12 @@ func (r *Reaper) Sweep(ctx context.Context) {
 		r.logger.Info("magic-link-token reaper: deleted expired rows", "deleted", deleted)
 	}
 	r.refreshGauge(ctx)
-	// Liveness: the sweep COMPLETED — including the failure arm
-	// above; only the cancelled early return skips this.
+	// Liveness: the sweep completed, including the failure arm; only cancellation skips this.
 	obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperMagicLink).Set(float64(r.now().Unix()))
 }
 
-// refreshGauge publishes the current row count. A count failure is
-// counted under the same `sweep` op — from an operator's point of view
-// the janitor pass failed either way.
+// refreshGauge publishes the current row count. A count failure is counted under the same `sweep`
+// op, since the janitor pass failed either way.
 func (r *Reaper) refreshGauge(ctx context.Context) {
 	n, err := r.store.CountMagicLinkTokens(ctx)
 	if err != nil {

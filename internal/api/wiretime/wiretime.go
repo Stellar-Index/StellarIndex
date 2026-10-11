@@ -11,19 +11,13 @@ import (
 	"time"
 )
 
-// Time is the canonical JSON rendering of an instant on a client-facing
-// wire: RFC 3339, always in UTC, always with a literal `Z` offset.
+// Time is the canonical JSON rendering of an instant on a client-facing wire: RFC 3339, always
+// UTC, always a literal `Z` offset.
 //
-// It exists because a plain [time.Time] field marshals in whatever
-// location the value carries, and values reaching a response struct do NOT
-// reliably carry UTC: rows read back from Postgres decode `timestamptz` into
-// the PROCESS's local zone, so the server's local offset (which moves with
-// DST) leaks onto the wire — same instant, rendered differently.
-//
-// Use it for every json-tagged timestamp field a client reads. The rule
-// is enforced over all of internal/api by v1's
-// TestWireTime_NoRawTimeOnTheWire, which fails if a new response struct
-// reaches for a raw [time.Time] instead.
+// A plain [time.Time] marshals in whatever location it carries, and Postgres rows decode
+// `timestamptz` into the PROCESS's local zone, so the server's DST-dependent offset would leak
+// onto the wire. Use it for every json-tagged timestamp a client reads;
+// TestWireTime_NoRawTimeOnTheWire enforces that over internal/api.
 type Time time.Time
 
 // layout is [time.RFC3339Nano] pinned to a `Z` offset — the
@@ -31,13 +25,8 @@ type Time time.Time
 // escape hatch that lets a local offset through.
 const layout = "2006-01-02T15:04:05.999999999Z"
 
-// MarshalJSON renders the instant as an RFC 3339 UTC string.
-//
-// [time.Time.MarshalJSON] errors on years outside [0,9999] because
-// they cannot be written as RFC 3339. A timestamp that far out of
-// range is a corrupt read rather than a real observation, so rather
-// than fail the entire response this renders JSON null — what an
-// absent optional timestamp already renders as.
+// MarshalJSON renders the instant as an RFC 3339 UTC string. Years outside [0,9999] are a corrupt
+// read, not an observation, so it renders null rather than failing the whole response.
 func (t Time) MarshalJSON() ([]byte, error) {
 	u := time.Time(t).UTC()
 	if y := u.Year(); y < 0 || y > 9999 {
@@ -83,13 +72,9 @@ func (t Time) Time() time.Time { return time.Time(t) }
 // wants, since encoding/json never omits a struct-typed field.
 func (t Time) IsZero() bool { return time.Time(t).IsZero() }
 
-// Before and After compare two wire timestamps. They exist because
-// Time is a DEFINED type over time.Time — it deliberately does not
-// inherit time.Time's method set, so that a raw time.Time cannot be
-// assigned onto a wire field by accident, which is the whole point of
-// the type. Ordering, though, is something callers legitimately need and
-// gains nothing from being awkward: without these, every comparison
-// becomes a pair of .Time() conversions that read as noise.
+// Before compares two wire timestamps. Time deliberately does not inherit time.Time's method set
+// (so a raw time.Time cannot be assigned onto a wire field by accident), which leaves ordering
+// to be provided here.
 func (t Time) Before(u Time) bool { return time.Time(t).Before(time.Time(u)) }
 
 // After is Before's mirror; see its comment.

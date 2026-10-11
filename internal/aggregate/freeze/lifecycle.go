@@ -9,7 +9,7 @@ import (
 // ADR-0019 freeze lifecycle: a HOLD with an extension ladder (30 min, up to 4 x 30 min, then P1
 // and manual unfreeze only), released when confidence > 0.30 AND z < 3.0 for two consecutive
 // buckets, never on one bucket's negated fire condition. The initial hold is a MINIMUM and
-// release needs POSITIVE evidence (an unscorable bucket resets the streak); the machine is pure,
+// release needs POSITIVE evidence (an unscorable bucket resets the streak). The machine is pure;
 // the orchestrator owns persistence.
 
 // Freeze-lifecycle defaults per ADR-0019; operators tune via `[anomaly.phase2]`, and unset

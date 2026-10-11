@@ -96,9 +96,8 @@ func (s *Store) SetDeriveGeneration(gen int64) {
 // reDeriveNullVolumeGuard fails a trade write CLOSED in re-derive mode (deriveGeneration > 0) when
 // the USD-volume resolvers were never installed. A positive generation wins the ON CONFLICT guard,
 // so a nil result from an unwired resolver would overwrite a correct value with NULL that a live
-// gen-0 replay can never restore. It fires only when computed == nil and resolution was never
-// wired: an unpriceable trade in a wired re-derive legitimately writes NULL. Live ingest is
-// unaffected.
+// gen-0 replay can never restore. It fires only when resolution was never wired: an unpriceable
+// trade in a wired re-derive legitimately writes NULL.
 func (s *Store) reDeriveNullVolumeGuard(t canonical.Trade, computed *string) error {
 	if s.deriveGeneration > 0 && computed == nil && !s.usdVolumeResolutionInstalled {
 		return fmt.Errorf("timescale: refusing to write trade %s/%s (source=%s ledger=%d) "+

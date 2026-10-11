@@ -108,9 +108,7 @@ func (u OracleUpdate) Validate() error {
 	if err := u.Quote.Validate(); err != nil {
 		return fmt.Errorf("%w: quote: %w", ErrInvalidOracle, err)
 	}
-	// A self-priced update (Asset == Quote, e.g. USD priced in USD) is
-	// degenerate — the price is a tautological 1 and nothing downstream
-	// should ingest a self-referential quote. Compare canonical identity.
+	// A self-priced update (Asset == Quote) is a tautological 1; compare canonical identity.
 	if u.Asset.Equal(u.Quote) {
 		return fmt.Errorf("%w: asset and quote are the same asset %s (self-priced update)", ErrInvalidOracle, u.Asset.String())
 	}
@@ -190,10 +188,8 @@ func (u OracleUpdate) PriceFloat() *big.Float {
 	return new(big.Float).Quo(f, scale)
 }
 
-// Equal compares by identity only (Source + Ledger + TxHash +
-// OpIndex). Confidence + Observer are observational; two records of
-// the same underlying publication from different observers should
-// still be Equal.
+// Equal compares by identity only (Source, Ledger, TxHash, OpIndex); Confidence and Observer are
+// observational, so the same publication seen by different observers is Equal.
 func (u OracleUpdate) Equal(o OracleUpdate) bool {
 	return u.Source == o.Source &&
 		u.Ledger == o.Ledger &&

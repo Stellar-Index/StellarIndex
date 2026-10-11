@@ -10,19 +10,17 @@ import (
 // The contract arm: how a Soroban-issued token qualifies with no (code, issuer) pair to
 // bind a declaration to (docs/methodology/rwa-definition.md, "The contract arm").
 //
-// R2 is impossible for a contract and was never the guard (19 BENJI impersonators served
-// valid, bound tomls; R3 kept them out). So C2 requires an independent party to name THIS
-// EXACT ADDRESS, either:
+// R2 is impossible for a contract and was never the guard (R3 kept impersonators out), so C2
+// requires an independent party to name this exact address, either:
 //
-//  1. the curated directory, with an issuing-class tag: a review-gated identity system
-//     with a scam vocabulary, so it ATTESTS and admits alone; or
-//  2. an independent listing directory AND an in-repo curated binding: a listing exists
-//     for price aggregation and only CORROBORATES, and this repo vouching for itself is
-//     never independence. The two sets overlap ~1%, so one is not the other re-published.
+//  1. the curated directory, with an issuing-class tag: a review-gated identity system with a
+//     scam vocabulary, so it attests and admits alone; or
+//  2. an independent listing directory AND an in-repo curated binding: a listing exists for price
+//     aggregation and only corroborates, and this repo vouching for itself is never independence.
 //
-// C4 then decides whether the token is a real-world instrument, never on the contract's
-// own unaided word. Deployer provenance, SEP-41 metadata as admission, and issuer SEP-1
-// naming the contract were rejected (no deployer edge; free to forge; not parsed yet).
+// C4 then decides whether the token is a real-world instrument, never on the contract's own
+// word. Deployer provenance, SEP-41 metadata as admission, and issuer SEP-1 naming the contract
+// were rejected (no deployer edge; free to forge; not parsed).
 
 // Contract-arm bases name WHY a contract token is an instrument (C4), served beside the
 // classic bases so a consumer can filter on evidence strength.
@@ -52,9 +50,8 @@ func ContractRecognitionSources() []string {
 	return []string{RecognitionCuratedDirectory, RecognitionListingCorroborated}
 }
 
-// Contract-arm refusals are distinct from the classic ones because the action differs (a
-// curated entry, not an issuer file), and C2's two arms get one reason per missing half so
-// the refusal says who can act.
+// Contract-arm refusals differ from the classic ones because the action differs (a curated
+// entry, not an issuer file); C2's two arms get one reason per missing half so it says who can act.
 const (
 	RejectNotContract      = "not_a_contract_address"
 	RejectContractNotNamed = "contract_not_named_in_directory"
@@ -192,11 +189,10 @@ func contractRecognitionOf(c ContractCandidate) (recognition, reject string) {
 	}
 }
 
-// contractInstrument is one ADR-0040 curated binding. An entry needs, recorded beside it:
-// the address from a primary source (issuer docs or a signed statement, not an explorer
-// or memory), a falsifiable instrument name, and an [anchorClasses] class. It never admits
-// alone: it is arm 2's second half, so a bound address nobody else names is refused under
-// [RejectContractCuratedNotListed] and still appears with its reason.
+// contractInstrument is one ADR-0040 curated binding: an address from a primary source (issuer
+// docs or a signed statement, not an explorer), a falsifiable instrument name, and an
+// [anchorClasses] class. It never admits alone (arm 2's second half), so a bound address nobody
+// else names is refused under [RejectContractCuratedNotListed].
 type contractInstrument struct {
 	// ContractID is matched exactly: a strkey is CRC-checked and case-significant.
 	ContractID string

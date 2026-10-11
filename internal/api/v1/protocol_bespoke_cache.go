@@ -18,16 +18,14 @@ import (
 //
 // The bespoke block is built LAST in buildProtocolDetail, so it inherits whatever remains of
 // the rebuild's 90-second budget; under load that reaches zero and enrichBespoke drops the
-// block. With no healthy entry yet (cold process) the bespoke-less view would be cached and
-// stamped fresh, rendering the suite as ABSENT.
+// block, and on a cold process the bespoke-less view would be cached and stamped fresh,
+// rendering the suite as ABSENT.
 //
 // The block therefore has its own TTL-less cache with a detached, single-flighted, GATED
 // refresh. A build serves the previous block instantly; only a TRUE first-ever miss waits,
 // bounded by the build's context (the compute survives that deadline, so the next build lands
-// warm). A failed or starved refresh keeps the last good block.
-//
-// Every build kicks a refresh UNCONDITIONALLY (single flight collapses duplicates); a
-// freshness-gated kick would sawtooth, as PrewarmProtocolDetails also avoids.
+// warm). A failed or starved refresh keeps the last good block. Every build kicks a refresh
+// UNCONDITIONALLY (single flight collapses duplicates); a freshness-gated kick would sawtooth.
 
 // bespokeStaleAfter is the age past which a SERVED bespoke block is reported stale
 // (analytics.status drops ok to stale); it is NOT a refresh trigger. Three sweeps' worth: a
@@ -44,10 +42,9 @@ const bespokeRefreshTimeout = time.Minute
 // closed (registry x four whitelisted windows, ~80 keys), but a cold-start burst could launch
 // one Postgres battery per key at once. 8 (class cap 4, since TryAcquireClass allows a
 // server-keyed class half the global limit) is a third of timescale.PoolMaxOpenConns, so the
-// detached tier cannot crowd out request-path served-tier reads.
-//
-// Deliberately SEPARATE from the explorer's lake gate: these queries hit the served tier
-// (Postgres), and sharing the ClickHouse bound would couple two pools that share no resource.
+// detached tier cannot crowd out request-path served-tier reads. Deliberately SEPARATE from the
+// explorer's lake gate: these queries hit Postgres, and sharing the ClickHouse bound would
+// couple two pools that share no resource.
 const bespokeGateLimit = 8
 
 // bespokeGateClass is this cache's refresh class. Its own name so a burst

@@ -17,23 +17,17 @@ var seedYAML []byte
 type AssetClass string
 
 const (
-	// ClassCrypto — non-pegged cryptocurrencies (BTC, ETH, XLM, AQUA, …).
-	// Default for catalogue entries without an explicit class.
+	// ClassCrypto — non-pegged cryptocurrencies (BTC, ETH, XLM, AQUA, …); the default class.
 	ClassCrypto AssetClass = "crypto"
-	// ClassStablecoin — fiat-pegged crypto (USDC, USDT, EURC, PYUSD, …).
-	// Distinct from `fiat` so the explorer can render the peg
-	// relationship + depeg-risk surface differently from a pure fiat rate.
+	// ClassStablecoin — fiat-pegged crypto (USDC, USDT, EURC, …), distinct from fiat so the
+	// explorer can render the peg and depeg risk.
 	ClassStablecoin AssetClass = "stablecoin"
-	// ClassFiat — sovereign currencies (USD, EUR, GBP, JPY, CNY, …).
-	// Circulating supply (M2; see seed.yaml comment) lets the
-	// explorer surface a fiat market cap (M2 × FX rate).
+	// ClassFiat — sovereign currencies (USD, EUR, GBP, …); M2 supply gives a fiat market cap.
 	ClassFiat AssetClass = "fiat"
 )
 
-// IsKnownClass returns true when c is one of the values defined
-// above. Used by the loader's validation step to fail loudly on a
-// typo'd class rather than silently treating an unknown class as
-// "crypto".
+// IsKnownClass reports whether c is a defined class, so the loader fails loudly on a typo rather
+// than treating it as "crypto".
 func IsKnownClass(c AssetClass) bool {
 	switch c {
 	case ClassCrypto, ClassStablecoin, ClassFiat:
@@ -43,10 +37,8 @@ func IsKnownClass(c AssetClass) bool {
 	}
 }
 
-// VerifiedCurrency is one entry in the verified-currency catalogue.
-// Pointer-shared across every index in the *Catalogue so callers can
-// rely on value-equality (the *VerifiedCurrency returned from
-// LookupBySlug is the same instance returned by LookupByTicker).
+// VerifiedCurrency is one entry in the verified-currency catalogue, pointer-shared across every
+// index so LookupBySlug and LookupByTicker return the same instance.
 type VerifiedCurrency struct {
 	Ticker              string
 	Slug                string
@@ -55,50 +47,34 @@ type VerifiedCurrency struct {
 	CoinGeckoID         string
 	CoinMarketCapID     string
 	VerifiedIssuerLabel string
-	// Class places this currency in one of the asset-class buckets
-	// (crypto / stablecoin / fiat). Drives explorer rendering and
-	// the asset-listing taxonomy. Defaults to ClassCrypto when the
-	// seed entry omits it.
+	// Class is the asset-class bucket; defaults to ClassCrypto when the seed entry omits it.
 	Class AssetClass
-	// CirculatingSupply is the total in circulation as a decimal string in the smallest
-	// integer unit, scaled per SupplyDecimals. Operator-curated and approximate:
-	//   - Crypto / stablecoin: on-chain circulating supply (usually unset; the
-	//     per-Stellar-asset supply fields supersede it).
-	//   - Fiat: M2 broad money supply per central-bank reporting; refresh quarterly.
-	// Empty string means "no supply data available".
+	// CirculatingSupply is a decimal string in the smallest integer unit, scaled per
+	// SupplyDecimals; operator-curated and approximate. Crypto is usually unset (per-asset supply
+	// supersedes it); fiat is M2 broad money. Empty means no supply data.
 	CirculatingSupply string
-	// SupplyDecimals is the divisor exponent that maps
-	// CirculatingSupply (smallest integer unit) to display value.
-	// 7 for XLM (stroops → XLM); 0 for fiat (raw dollars / yen /
-	// yuan). Zero default works for fiat.
+	// SupplyDecimals is the exponent mapping CirculatingSupply to display value: 7 for XLM, 0 for fiat.
 	SupplyDecimals int
 	// Issuance holds this currency's Stellar issuance identity: at most one `stellar` entry
 	// (code / issuer / asset_id; native XLM uses asset_id "native"). Fiat and reference_only
 	// entries carry none. Iterated to map an asset_id to its verified currency.
 	Issuance []IssuanceEntry
-	// ReferenceOnly marks a non-Stellar entry that exists solely as a pricing cross-check
-	// reference. It is excluded from the browse listings and /v1/assets/verified, but kept in
-	// CoinGeckoIDs() / CoinMarketCapIDs() so the reference-price pipeline still sees it.
-	// Set via `reference_only: true` in seed.yaml.
+	// ReferenceOnly marks a non-Stellar entry that exists solely as a pricing cross-check. It is
+	// excluded from browse listings and /v1/assets/verified, but kept in CoinGeckoIDs() /
+	// CoinMarketCapIDs() so the reference-price pipeline still sees it.
 	ReferenceOnly bool
-	// KnownAnchorIssuers is an operator-curated list of Stellar account ids recognised as
-	// issuing a SEP-1 anchor deposit token for this fiat denomination. Meaningful only on a
-	// ClassFiat entry with no Stellar issuance; empty means "none curated yet", not "no
-	// legitimate anchor exists". Consulted by FiatCodeAnchor, never by StellarCollision.
-	// Set via `known_anchors:` in seed.yaml.
+	// KnownAnchorIssuers lists Stellar accounts recognised as SEP-1 anchors for this fiat
+	// denomination (ClassFiat with no Stellar issuance only); empty means none curated yet, not
+	// that no legitimate anchor exists. Consulted by FiatCodeAnchor, never by StellarCollision.
 	KnownAnchorIssuers []string
 }
 
-// IssuanceEntry is the Stellar issuance identity for a verified
-// currency. After the Stellar-focus refactor `Network` is always
-// "stellar" for any populated entry.
+// IssuanceEntry is the Stellar issuance identity for a verified currency; Network is always
+// "stellar" for a populated entry.
 type IssuanceEntry struct {
-	// Network identifier — short, lowercase, stable across versions.
-	// Always "stellar" for browseable entries.
+	// Network is short, lowercase and stable.
 	Network string
-	// Stellar issuance fields. Populated when Network == "stellar"
-	// for classic assets. For native XLM, AssetID == "native" and
-	// Code / Issuer are empty.
+	// For native XLM, AssetID is "native" and Code / Issuer are empty.
 	Code    string
 	Issuer  string
 	AssetID string
@@ -108,24 +84,19 @@ type IssuanceEntry struct {
 	ExternalLink string
 }
 
-// Catalogue indexes a loaded set of verified currencies for the
-// per-handler lookups the API needs. All lookups are read-only and
-// safe for concurrent use — the catalogue is constructed once at
-// binary startup and never mutated.
+// Catalogue indexes the verified currencies for API lookups; it is built once at startup and
+// never mutated, so lookups are safe for concurrent use.
 type Catalogue struct {
 	entries          []*VerifiedCurrency
 	bySlug           map[string]*VerifiedCurrency // lowercase
 	byTicker         map[string]*VerifiedCurrency // uppercase
 	byStellarAssetID map[string]*VerifiedCurrency // exact-match
-	// byStellarCode maps an uppercase classic code to the verified
-	// currency that holds that code on Stellar. Used by
-	// StellarCollision — given a (code, issuer) pair we look up by
-	// code and check whether the issuer matches the verified entry.
+	// byStellarCode maps an uppercase classic code to its verified currency; StellarCollision
+	// looks up by code and compares the issuer.
 	byStellarCode map[string]*VerifiedCurrency
-	// byFiatCode maps an uppercase ISO-4217 code to the sovereign currency entry that
-	// denominates it. Disjoint from byStellarCode (see indexTickerOnlyEntry): a fiat ticker
-	// names a unit of account nobody issues, so a classic asset carrying it is denominating,
-	// not impersonating, and must not go through StellarCollision. Read by FiatDenomination.
+	// byFiatCode maps an uppercase ISO-4217 code to its sovereign currency entry. Disjoint from
+	// byStellarCode (see indexTickerOnlyEntry): a classic asset carrying a fiat ticker is
+	// denominating, not impersonating, and must not go through StellarCollision.
 	byFiatCode map[string]*VerifiedCurrency
 }
 
@@ -192,10 +163,7 @@ func LoadFromBytes(b []byte) (*Catalogue, error) {
 	return cat, nil
 }
 
-// append validates a single raw entry, builds the typed
-// *VerifiedCurrency, and threads it through the Catalogue's indexes.
-// Pulled out of LoadFromBytes to keep the per-entry control flow
-// linear-readable.
+// append validates one raw entry, builds the typed *VerifiedCurrency and indexes it.
 func (cat *Catalogue) append(i int, rc rawCurrency) error {
 	if err := validateRawEntry(i, rc); err != nil {
 		return err
@@ -234,9 +202,7 @@ func validateRawEntry(i int, rc rawCurrency) error {
 	case rc.Name == "":
 		return fmt.Errorf("currency: entry %d (%s): name is required", i, rc.Ticker)
 	case len(rc.Issuance) == 0 && rc.Class != string(ClassFiat) && !rc.ReferenceOnly:
-		// Fiat entries and reference_only coins (BTC/ETH/…) have no Stellar issuance, so zero
-		// networks is allowed. Every other class is a browseable Stellar asset and MUST carry
-		// its Stellar network entry.
+		// Fiat and reference_only entries have no Stellar issuance; every other class MUST carry one.
 		return fmt.Errorf("currency: entry %d (%s): a Stellar network entry is required (non-fiat, non-reference_only)", i, rc.Ticker)
 	case len(rc.KnownAnchors) > 0 && (rc.Class != string(ClassFiat) || len(rc.Issuance) > 0):
 		// Only FiatCodeAnchor reads known_anchors; anywhere else it would look
@@ -288,10 +254,8 @@ func buildVerifiedCurrency(rc rawCurrency) (*VerifiedCurrency, error) {
 	return vc, nil
 }
 
-// nativeAssetID is the canonical asset_id of XLM's native form, and the
-// discriminator for "this verified currency has a Stellar identity but
-// no classic issuer". Kept local so internal/currency stays free of an
-// import cycle with internal/canonical.
+// nativeAssetID is XLM's canonical asset_id. It is kept local to avoid an import cycle with
+// internal/canonical.
 const nativeAssetID = "native"
 
 // indexStellarEntries threads every Stellar network entry into the
@@ -308,16 +272,11 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 			}
 			cat.byStellarAssetID[n.AssetID] = vc
 		}
-		// The collision key for a currency issued as a classic asset is
-		// its classic code.
 		codeKey := strings.ToUpper(n.Code)
 		if n.Code == "" && n.AssetID == nativeAssetID {
-			// A currency whose Stellar identity IS the native asset has no classic issuer, so
-			// it would never enter this index. No legitimate classic asset can bear XLM's
-			// ticker, so every classic "XLM-G…" is an impersonator; without an entry it would
-			// be served unwarned and, since the listing falls back to the code as slug, wear
-			// the "Verified currency" badge. Index the TICKER so StellarCollision reports a
-			// collision for every issuer.
+			// Native XLM has no classic issuer, so it would never enter this index, yet every
+			// classic "XLM-G…" is an impersonator and would wear the "Verified currency" badge
+			// unwarned. Index the TICKER so StellarCollision flags every issuer.
 			codeKey = strings.ToUpper(vc.Ticker)
 		}
 		if codeKey != "" {
@@ -336,30 +295,25 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 	return nil
 }
 
-// indexTickerOnlyEntry indexes a catalogue entry that has no classic
-// Stellar code (no Stellar issuance, or a Soroban-only one), keyed on its
-// ticker.
-//
-// Such an entry never enters indexStellarEntries' issuance loop, so without this
-// StellarCollision could not speak about `reference_only` entries (USDT, BTC, XRP, ...).
-// No legitimate classic asset can bear a ticker verified as an off-Stellar asset, so every
-// classic `USDT-G…` is an impersonator.
+// indexTickerOnlyEntry indexes, by ticker, an entry with no classic Stellar code (no issuance, or
+// a Soroban-only one), so StellarCollision can speak about `reference_only` entries (USDT, BTC).
+// No legitimate classic asset can bear a ticker verified as off-Stellar, so every classic
+// `USDT-G…` is an impersonator.
 //
 // A legitimately-anchored wrapper gets no ticker allowlist, which would reopen this vector
-// (see docs/architecture/domain-traps.md). Add its issuance as a `network: stellar` entry on
-// the SAME seed.yaml entry instead, so indexStellarEntries indexes it and this is not reached.
+// (see docs/architecture/domain-traps.md); add its issuance as a `network: stellar` entry on the
+// SAME seed.yaml entry instead.
 //
-// A SOVEREIGN CURRENCY is the exception, so ClassFiat lands in byFiatCode: `USD` names a unit
-// of account nobody issues, and SEP-1 tells an anchor to denominate a deposit token by its ISO
-// code, so a regulated `USD-G…` is not impersonating the dollar. The code stays answerable
-// through FiatDenomination; a fiat entry with a verified Stellar issuance collides like any other.
+// A SOVEREIGN CURRENCY is the exception, so ClassFiat lands in byFiatCode: SEP-1 tells an anchor
+// to denominate a deposit token by its ISO code, so a regulated `USD-G…` is not impersonating the
+// dollar. A fiat entry with a verified Stellar issuance collides like any other.
 func (cat *Catalogue) indexTickerOnlyEntry(vc *VerifiedCurrency) error {
 	codeKey := strings.ToUpper(vc.Ticker)
 	if codeKey == "" {
 		return nil
 	}
-	// Also reached for a code-less (Soroban-only) Stellar issuance; that is
-	// a Stellar identity, so only an issuance-free fiat entry is a denomination.
+	// A code-less (Soroban-only) issuance is a Stellar identity; only an issuance-free fiat entry
+	// is a denomination.
 	if vc.Class == ClassFiat && vc.StellarEntry() == nil {
 		if existing, dup := cat.byFiatCode[codeKey]; dup {
 			return fmt.Errorf(
@@ -501,10 +455,9 @@ func (c *Catalogue) StellarCollision(code, issuer string) (*VerifiedCurrency, bo
 // FiatDenomination returns the sovereign-currency entry a classic code denominates in, for a
 // code held as fiat with no Stellar issuance ("USD" → the US Dollar entry). Case-insensitive.
 //
-// StellarCollision deliberately does not answer for such a code: the pair is a DENOMINATION
-// statement, not an identity claim, so it carries no impersonation verdict and must not gate a
-// valuation. A fiat entry is in exactly one of the two indexes, never neither, which
-// TestStellarCollision_CoversEveryCatalogueTicker pins.
+// StellarCollision deliberately does not answer for such a code: a denomination is not an identity
+// claim, so it carries no impersonation verdict and must not gate a valuation. A fiat entry is in
+// exactly one of the two indexes, which TestStellarCollision_CoversEveryCatalogueTicker pins.
 //
 // Returns (nil, false) for an unknown code, and for a fiat entry with a verified Stellar
 // issuance, which StellarCollision owns.
@@ -587,10 +540,8 @@ func (c *Catalogue) CoinMarketCapIDs() map[string]string {
 	return out
 }
 
-// Tickers returns every catalogue ticker, upper-cased, in seed
-// order. Used by the indexer to build the aggregator pair set
-// (a pair-set targeting every verified ticker × the operator's
-// fiat list).
+// Tickers returns every catalogue ticker, upper-cased, in seed order; the indexer builds the
+// aggregator pair set from it.
 func (c *Catalogue) Tickers() []string {
 	if c == nil {
 		return nil

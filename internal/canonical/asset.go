@@ -215,10 +215,8 @@ func (a Asset) Validate() error { //nolint:gocognit,gocyclo // dispatch-heavy; o
 	}
 }
 
-// Equal reports whether a and b name the same asset. Note a classic
-// asset and its SAC-wrapped Soroban form are NOT equal under this
-// function — they are different canonical representations. Bridging
-// the two is the job of the SAC registry (future).
+// Equal reports whether a and b name the same asset. A classic asset and its SAC-wrapped Soroban
+// form are NOT equal: they are different canonical representations, bridged by the SAC registry.
 func (a Asset) Equal(b Asset) bool {
 	return a.Type == b.Type &&
 		a.Code == b.Code &&
@@ -245,10 +243,8 @@ func ParseAsset(s string) (Asset, error) {
 		return NativeAsset(), nil
 	}
 
-	// Fiat (ADR-0010), crypto (ADR-0014) and RWA (ADR-0028) prefix
-	// dispatch. A G-strkey rest is never on those allow-lists, so it is the
-	// classic `<code>:<issuer>` alias of a token whose code is the prefix
-	// word, and falls through to the classic split below.
+	// Fiat/crypto/RWA prefix dispatch. A G-strkey rest is never on those allow-lists, so it is the
+	// classic `<code>:<issuer>` alias and falls through to the classic split below.
 	for _, p := range []struct {
 		prefix string
 		ctor   func(string) (Asset, error)
@@ -283,17 +279,14 @@ func ParseAsset(s string) (Asset, error) {
 
 // ─── JSON ──────────────────────────────────────────────────────────
 
-// MarshalJSON emits the **canonical string form**, not the struct.
-// This matches the API wire contract: asset identifiers are flat
-// strings, not JSON objects. Callers who need the structured form
-// access the fields directly.
+// MarshalJSON emits the canonical string form, not the struct: the API wire contract uses flat
+// asset strings.
 func (a Asset) MarshalJSON() ([]byte, error) {
 	return json.Marshal(a.String())
 }
 
-// UnmarshalJSON accepts the canonical string form or the structured
-// object form. String is preferred; object form is used by storage
-// layers that keep the fields split.
+// UnmarshalJSON accepts the canonical string form or the structured object form that storage
+// layers keeping the fields split use.
 func (a *Asset) UnmarshalJSON(b []byte) error {
 	// Try string first
 	var s string
@@ -318,8 +311,7 @@ func (a *Asset) UnmarshalJSON(b []byte) error {
 
 // ─── database/sql ──────────────────────────────────────────────────
 
-// Value implements driver.Valuer — emits the canonical string form.
-// Suitable for a TEXT or VARCHAR column keyed as the asset identifier.
+// Value implements driver.Valuer, emitting the canonical string form.
 func (a Asset) Value() (driver.Value, error) {
 	if err := a.Validate(); err != nil {
 		return nil, err
@@ -329,13 +321,9 @@ func (a Asset) Value() (driver.Value, error) {
 
 // Scan implements sql.Scanner.
 //
-// A SQL NULL is an ERROR, not a zero Asset. [Value] refuses anything failing [Validate], so a
-// NULL never came from this type; it is a schema/query defect (a missed LEFT JOIN). A zero
-// Asset with Type == "" would survive every Equal comparison and only fail if Validate is
-// called, the invalid-data-reads-as-valid shape this codebase fails closed on.
-//
-// A legitimately nullable column must scan through *string / sql.NullString and convert with
-// [ParseAsset] on the non-NULL branch, so the caller states what absent means.
+// A SQL NULL is an ERROR, not a zero Asset: [Value] refuses anything failing [Validate], so a NULL
+// is a schema/query defect (a missed LEFT JOIN), and a zero Asset would survive every Equal
+// comparison. A legitimately nullable column must scan through sql.NullString and [ParseAsset].
 func (a *Asset) Scan(src any) error {
 	if src == nil {
 		return fmt.Errorf("%w: cannot scan SQL NULL into an Asset "+

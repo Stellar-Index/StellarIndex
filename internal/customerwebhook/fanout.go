@@ -75,13 +75,11 @@ func NewFanout(store FanoutStore, logger *slog.Logger) *Fanout {
 // JSON small enough for a Postgres jsonb column.
 //
 // It returns the counts plus a non-nil error whenever a subscribed customer LOST the event; a lost
-// enqueue is permanent because no retry row exists. Zero subscribers is a successful no-op.
-//
-// A suspended or closed account is not a subscriber: the kill switch is enforced in
+// enqueue is permanent because no retry row exists. Zero subscribers is a successful no-op. A
+// suspended or closed account is not a subscriber: the kill switch is enforced in
 // ListWebhooksSubscribedTo and again in EnqueueDelivery, and a refusal from the second gate lands
-// in [PublishResult.Suppressed], not an error.
-//
-// Callers MUST log the error at ERROR with the event type + counts.
+// in [PublishResult.Suppressed], not an error. Callers MUST log the error at ERROR with the
+// event type + counts.
 func (f *Fanout) Publish(
 	ctx context.Context, eventType platform.WebhookEventType, payload []byte,
 ) (PublishResult, error) {

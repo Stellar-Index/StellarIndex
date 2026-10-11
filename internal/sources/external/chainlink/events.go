@@ -35,25 +35,20 @@ const DefaultPollInterval = 30 * time.Second
 
 // DefaultDecimals is the standard for crypto/USD and fiat/USD feeds and the value every built-in
 // DefaultFeedMap entry asserts. It is NOT substituted for an omitted value: FeedSpec.Decimals == 0
-// means "adopt the feed's on-chain decimals()" (decimals.go), and an asserted value is verified
-// against the chain before any row is projected.
+// means "adopt the feed's on-chain decimals()", and an asserted value is verified against the chain
+// before any row is projected.
 const DefaultDecimals uint8 = 8
 
 // DefaultEndpoint is the Cloudflare public Ethereum JSON-RPC endpoint (free, per-IP rate-limited).
-// Fine for cross-checks, but production ingest of hundreds of feeds will be throttled; operators
-// should override it with their own provider endpoint.
+// Production ingest of hundreds of feeds will be throttled; operators should override it.
 const DefaultEndpoint = "https://cloudflare-eth.com"
 
-// Function selectors — keccak256(signature)[:4], precomputed.
-//
-// AggregatorV3Interface — see
-// https://docs.chain.link/data-feeds/api-reference#aggregatorv3interface.
+// AggregatorV3Interface function selectors, keccak256(signature)[:4], precomputed.
 const (
 	// SelLatestRoundData = keccak256("latestRoundData()")[:4]
 	SelLatestRoundData = "0xfeaf968c"
 
-	// SelLatestAnswer = keccak256("latestAnswer()")[:4]
-	// Older AggregatorV2 selector — kept for legacy feed compat.
+	// SelLatestAnswer = keccak256("latestAnswer()")[:4]; the older AggregatorV2 selector.
 	SelLatestAnswer = "0x50d25bcd"
 
 	// SelDecimals = keccak256("decimals()")[:4]
@@ -147,9 +142,8 @@ var (
 )
 
 // roundCache is the per-feed dedup memory: last roundId emitted per lowercased feed address.
-//
-// Correctness across restarts rests on the oracle_updates PK (source, ledger=0, tx_hash, op_index,
-// ts): a re-emitted round hits ON CONFLICT, so the cache only saves the round-trip.
+// Correctness across restarts rests on the oracle_updates PK: a re-emitted round hits ON CONFLICT,
+// so the cache only saves the round-trip.
 type roundCache struct {
 	mu   sync.Mutex
 	last map[string]*big.Int // feed address (lowercase) → last roundId emitted
@@ -160,12 +154,12 @@ func newRoundCache() *roundCache {
 }
 
 // shouldEmit reports whether this (feed, roundId) is strictly greater than the last seen, and if
-// so records it. It combines wouldEmit + commitEmit (poller.go); the production poll path splits
-// them so a failure between check and round build cannot strand the round.
+// so records it. The production poll path splits wouldEmit and commitEmit so a failure between
+// check and round build cannot strand the round.
 //
-// roundID is the FULL uint80 proxy round id (see decodeRoundID). Comparing the wide value keeps
-// emission alive across a proxy phase upgrade (aggregatorRoundId resets to ~1 but phaseId
-// increments); a low-64-bit key would wedge the feed until restart. A nil roundID is zero.
+// roundID is the FULL uint80 proxy round id. Comparing the wide value keeps emission alive across a
+// proxy phase upgrade (aggregatorRoundId resets to ~1 but phaseId increments); a low-64-bit key
+// would wedge the feed until restart. A nil roundID is zero.
 func (c *roundCache) shouldEmit(feedAddr string, roundID *big.Int) bool {
 	if !c.wouldEmit(feedAddr, roundID) {
 		return false

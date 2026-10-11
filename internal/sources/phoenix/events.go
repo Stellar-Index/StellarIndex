@@ -44,7 +44,7 @@ const EventActionSwap = "swap"
 //
 // withdraw may also emit a 5th ("withdraw_liquidity", "auto unbonded") event with a tuple body;
 // it is classified but not required for the correlation to complete. The stake contract emits 3
-// events per bond / unbond: user, token, amount. Field strings are the literal contract source
+// events per bond / unbond: user, token, amount. Field strings are literal contract source
 // (including the `-amount` hyphens) and all topics are ScVal::String, not Symbol.
 
 const (
@@ -111,9 +111,9 @@ const (
 //	distribute_rewards (1 event):  asset
 //
 // Neither event carries an amount; it surfaces on the reward token's SEP-41 `transfer` in the SAME
-// op (event_index+1), which needs a cross-decoder join and is NOT correlated here. Events are
-// stored with a NULL amount rather than a misleading "0". distribute_rewards is a pool-wide
-// announcement with no user field, so it is decoded from its single event, not the buffer.
+// op (event_index+1), which needs a cross-decoder join and is NOT correlated here, so the amount
+// is stored NULL rather than a misleading "0". distribute_rewards is a pool-wide announcement
+// with no user field, so it is decoded from its single event, not the buffer.
 const (
 	EventActionWithdrawRewards   = "withdraw_rewards"
 	EventActionDistributeRewards = "distribute_rewards"
@@ -173,9 +173,9 @@ const (
 
 // MainnetPools is the curated gated pool set (ADR-0040 mechanism 2), from the factory's
 // `query_pools()` cross-checked against lake activity. The decoder also self-registers from the
-// factory's create events, so this is a cold-start root that covers pools whose creation is outside
-// the streamed window. A pool missing from BOTH fail-closes and surfaces as an ADR-0033
-// recognition gap (visible, never silently mis-attributed).
+// factory's create events, so this is a cold-start root for pools created outside the streamed
+// window. A pool missing from BOTH fail-closes and surfaces as an ADR-0033 recognition gap,
+// never silently mis-attributed.
 var MainnetPools = []string{
 	"CBHCRSVX3ZZ7EGTSYMKPEFGZNWRVCSESQR3UABET4MIW52N4EVU6BIZX",
 	"CBCZGGNOEUZG4CAAE7TGTQQHETZMKUT4OIPFHHPKEUX46U4KXBBZ3GLH",
@@ -202,12 +202,11 @@ var MainnetStakeContracts = []string{
 	"CAF3UJ45ZQJP6USFUIMVMGOUETUTXEC35R2247VJYIVQBGKTKBZKNBJ3",
 	// CBBUVHCE… is deliberately absent: a bond-instrument contract whose WASM has none of the stake
 	// literals; it only shares the "bond" topic word. The 13 below are genuine per-pool stake
-	// contracts the activity snapshot missed, several still emitting near tip. Evidence of identity:
+	// contracts the activity snapshot missed. Evidence of identity:
 	//   - the first 11 co-occur in their pool's factory create transaction (the factory deploys
 	//     pool + stake together), paired 1:1 with a curated pool above;
-	//   - CDOXQONPND... shares 260 transactions with curated pools and is driven by the phoenix
-	//     reward keeper CBZ7M5B3Y4WW..., which also drives the seeded stakes above;
-	//   - CDEQYRWFU... is driven by that same keeper and emits stake v1.1 migration events.
+	//   - CDOXQONPND... and CDEQYRWFU... are driven by the phoenix reward keeper CBZ7M5B3Y4WW...,
+	//     which also drives the seeded stakes above.
 	"CABWEFVXUB3XWYPTWFETEGJR2WRGE2ZKYYLZDLV3EBUVFMOU4ENK4DJC", // ↔ pool CBHCRSVX (factory create @51,572,026)
 	"CAIR3UPW2PEP27QZWX4XGMO65W6LJ3XCRA3F5G7Z3D52MNOVF5K5YZ56", // ↔ pool CBCZGGNO (factory create @51,572,030)
 	"CDP6DT2YU75ZMOPTTCQ563H2XZDDWHPWKRQ6N2W5LNVE5HHRSB4MMRNQ", // ↔ pool CAZ6W4WH (factory create @51,572,101)
@@ -315,9 +314,9 @@ var (
 	// TopicInitLPShareStaking is the per-pool STAKE contract's initialize topic[1]: it announces
 	// its LP-share token at deploy (body = one Address). It maps to NO phoenix_initialize row (that
 	// table models the pool's token slots): recognised but NOT projected, raw event kept in the
-	// soroban_events landing zone (ADR-0029). Stake contracts are gated, so these pass Matches();
-	// recognising the topic stops them counting as undecodable-but-matched blind spots in the
-	// ADR-0033 re-derive (reconcile.go).
+	// soroban_events landing zone. Stake contracts are gated, so these pass Matches(); recognising
+	// the topic keeps them from counting as undecodable-but-matched blind spots in the ADR-0033
+	// re-derive (reconcile.go).
 	TopicInitLPShareStaking = scval.MustEncodeString("LP Share token staking contract")
 
 	// admin (governance rotation) topic[1] phrases; the trailing space is faithful to the contract.

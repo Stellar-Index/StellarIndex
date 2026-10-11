@@ -1,13 +1,9 @@
-// Package cctp decodes Circle's CCTP v2 contract events on Stellar (Soroban)
-// from three contracts: TokenMessengerMinter, MessageTransmitter and
-// CctpForwarder (addresses in the Mainnet* constants below).
+// Package cctp decodes Circle's CCTP v2 contract events on Stellar (Soroban) from
+// TokenMessengerMinter, MessageTransmitter and CctpForwarder (Mainnet* constants below).
 //
-// Transfer events: deposit_for_burn and mint_and_withdraw (TokenMessengerMinter), message_sent and
-// message_received (MessageTransmitter), mint_and_forward (CctpForwarder). The governance/admin
-// event list lives in decode.go and the cctp_events CHECK constraint (migration 0094).
-//
-// One outbound deposit_for_burn emits both a DepositForBurn and a MessageSent in the same
-// transaction; inbound pairs MessageReceived with MintAndWithdraw. Correlate by (ledger, tx_hash).
+// An outbound deposit_for_burn emits both a DepositForBurn and a MessageSent in one transaction;
+// inbound pairs MessageReceived with MintAndWithdraw. Correlate by (ledger, tx_hash). The
+// governance/admin event list lives in decode.go and the cctp_events CHECK constraint.
 //
 // Per-event schemas: docs/protocols/cctp.md. Wiring: README.md section Wiring.
 package cctp
@@ -49,8 +45,8 @@ const (
 	EventRemoteTokenMessengerAdded  = "remote_token_messenger_added" // TokenMessengerMinter: a remote-domain TokenMessenger registered
 	EventTokenPairLinked            = "token_pair_linked"            // TokenMessengerMinter: local token linked to a remote-domain token
 
-	// Lower-signal admin/governance events: the remaining topics of a full census of what the three
-	// contracts have emitted. All CCTP topics are Symbols, so topic_0_sym is never empty.
+	// Lower-signal admin/governance events. All CCTP topics are Symbols, so topic_0_sym is never
+	// empty.
 	EventAdminChangeStarted        = "admin_change_started"          // 2-step admin change initiated (old_admin may be void — bootstrap)
 	EventAttesterEnabled           = "attester_enabled"              // MessageTransmitter: an attester public key was enabled
 	EventAttesterManagerUpdated    = "attester_manager_updated"      // MessageTransmitter: attester-manager role reassigned (old may be void — bootstrap)
@@ -167,12 +163,10 @@ type MintAndForward struct {
 	Amount           string // i128
 }
 
-// OwnershipTransfer is the canonical projection of one `ownership_transfer` event. The contracts
-// use an Ownable2Step pattern: this fires when the CURRENT owner initiates a transfer; the new
-// owner must accept before `ownership_transfer_completed` fires.
-//
-// Every observed mainnet instance has `old_owner` populated, but the decoder still type-tests it
-// in case a future upgrade emits it from an unset state.
+// OwnershipTransfer is the canonical projection of one `ownership_transfer` event. Ownable2Step:
+// this fires when the current owner initiates a transfer; the new owner must accept before
+// `ownership_transfer_completed` fires. `old_owner` is type-tested in case an upgrade emits it
+// unset.
 //
 //	topics = ["ownership_transfer"]
 //	body   = { live_until_ledger: u32, new_owner: Address, old_owner: Address }
@@ -301,13 +295,11 @@ type MessageReceived struct {
 
 // ─── Lower-signal admin/governance events ───────────────────────────
 //
-// The remaining 16 of the 26 distinct topics the three contracts emit. All are rare; the schemas
-// come from real lake events, as upstream documents almost none of them.
+// All are rare; the schemas come from real lake events, as upstream documents almost none of them.
 
-// AdminChangeStarted is the canonical projection of one `admin_change_started` event: the 2-step
-// counterpart to `admin_changed`, firing when an admin change is INITIATED (`admin_changed` fires
-// when it takes effect). Single-topic event; body ScMap. `old_admin` is type-tested via
-// [scval.AsAddressOrVoid] because the same field is void in `admin_changed` at bootstrap.
+// AdminChangeStarted is the canonical projection of one `admin_change_started` event: fires when
+// an admin change is initiated (`admin_changed` fires when it takes effect). `old_admin` is
+// type-tested via [scval.AsAddressOrVoid] because it is void at bootstrap.
 //
 // Body: { new_admin: Address, old_admin: Address | Void }.
 type AdminChangeStarted struct {
@@ -513,8 +505,7 @@ type SignatureThresholdUpdated struct {
 
 // SetBurnLimitPerMessage is the canonical projection of one `set_burn_limit_per_message` event:
 // the per-message burn ceiling for one local token was set. `token` is a genuine Stellar Address
-// strkey (the same SAC as [TokenPairLinked]'s `local_token`), so it promotes to [Event.Token] in
-// consumer.go. Two topics; body ScMap.
+// strkey (the SAC of [TokenPairLinked]'s `local_token`), so it promotes to [Event.Token].
 //
 //	topics = ["set_burn_limit_per_message", token]
 //	body   = { burn_limit_per_message: i128 }
@@ -526,7 +517,7 @@ type SetBurnLimitPerMessage struct {
 	ContractID string
 
 	Token               string // Stellar Address strkey (contract) — the local SAC
-	BurnLimitPerMessage string // i128 canonical-decimals — a POLICY CEILING, not a movement amount; kept out of Event.Amount (see eventFromSetBurnLimitPerMessage)
+	BurnLimitPerMessage string // i128 canonical-decimals; a policy ceiling, kept out of Event.Amount
 }
 
 // SwapMinterConfigSet is the canonical projection of one `swap_minter_config_set` event: a
@@ -550,7 +541,7 @@ type SwapMinterConfigSet struct {
 // TokenDecimalConfigAdded is the canonical projection of one `token_decimal_config_added` event:
 // a canonical/local decimal mapping was registered for one local token (CCTP canonical decimals
 // need not match the chain's local decimals, e.g. canonical 6 vs local 7). The body's
-// `token_decimal_config` is a NESTED map, flattened here into two fields. Two topics; body ScMap.
+// `token_decimal_config` is a nested map, flattened here into two fields.
 //
 //	topics = ["token_decimal_config_added", token]
 //	body   = { token_decimal_config: { canonical_decimals: u32, local_decimals: u32 } }

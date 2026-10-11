@@ -26,11 +26,9 @@ import (
 // while a refresh runs, or on a stone-cold key waits up to its own deadline and then 503s while
 // the compute continues, so the retry lands warm. A failed refresh keeps the previous entry.
 
-// perKeyFlight collapses concurrent work for the same key. Derived from the
-// clickhouse-package helper of the same name (this package cannot import an
-// unexported type); this copy additionally carries the flight's ERROR so a
-// cold-path waiter can serve the compute's real failure (a deadline maps to
-// the 503 timeout contract) instead of a shapeless sentinel.
+// perKeyFlight collapses concurrent work for the same key. Unlike the clickhouse-package helper
+// it copies, it carries the flight's ERROR, so a cold-path waiter serves the compute's real
+// failure (a deadline maps to the 503 timeout contract) instead of a shapeless sentinel.
 type perKeyFlight struct {
 	mu      sync.Mutex
 	inGoing map[string]*keyFlight
@@ -75,10 +73,8 @@ func (f *perKeyFlight) end(key string, fl *keyFlight, err error) {
 // changes more slowly.
 const assetHoldersTTL = 60 * time.Second
 
-// assetHoldersCacheMax bounds resident entries. Holder boards are
-// long-tail — a handful of hot assets (USDC, yXLM, the big issuers) plus
-// a churn of one-off lookups — so a modest cap holds the hot set while
-// capping memory. On overflow the oldest entry is evicted.
+// assetHoldersCacheMax bounds resident entries: boards are long-tail (a few hot assets plus
+// one-off lookups), so a modest cap holds the hot set. On overflow the oldest entry is evicted.
 const assetHoldersCacheMax = 512
 
 // assetHoldersMaxLimit is the page size every cached entry holds. It
@@ -86,9 +82,8 @@ const assetHoldersCacheMax = 512
 // serve any accepted `?limit=` by slicing.
 const assetHoldersMaxLimit = 500
 
-// assetHoldersRefreshTimeout bounds one detached holders scan. Well above
-// the observed cost for even the largest asset's two FINAL scans, bounded
-// so a wedged query can't pin the single-flight forever.
+// assetHoldersRefreshTimeout bounds one detached holders scan: well above the largest asset's two
+// FINAL scans, but finite so a wedged query cannot pin the single-flight forever.
 const assetHoldersRefreshTimeout = 90 * time.Second
 
 type assetHoldersEntry struct {
@@ -98,17 +93,15 @@ type assetHoldersEntry struct {
 	asOfLedger uint32
 }
 
-// snapshotVintage is when a cached snapshot was computed and the lake ledger
-// read just before its scan. A handler stamps as_of and as_of_ledger from ONE
-// of these, so the two cannot come from different reads.
+// snapshotVintage is when a cached snapshot was computed and the lake ledger read just before its
+// scan; a handler stamps as_of and as_of_ledger from ONE of these so they cannot disagree.
 type snapshotVintage struct {
 	at     time.Time
 	ledger uint32
 }
 
-// vintageLedger reads the lake watermark for a snapshot about to be computed.
-// Read BEFORE the scan, it never names a ledger later than the data scanned;
-// 0 (as_of_ledger omitted) when no watermark is available.
+// vintageLedger reads the lake watermark BEFORE the scan, so it never names a ledger later than
+// the data scanned; 0 (as_of_ledger omitted) when no watermark is available.
 func (h *Handler) vintageLedger(ctx context.Context) uint32 {
 	if h.LakeWatermark == nil {
 		return 0
@@ -129,10 +122,8 @@ type assetHoldersCache struct {
 	flight  perKeyFlight
 }
 
-// get returns the entry for asset whenever one exists — INCLUDING past the
-// TTL (fresh=false); staleness is the caller's judgment, so a run of failed
-// refreshes degrades to old-but-real data instead of 503s. ok=false only
-// when the asset was never computed.
+// get returns the entry for asset even past the TTL (fresh=false), so a run of failed refreshes
+// degrades to old-but-real data instead of 503s. ok=false only when never computed.
 func (c *assetHoldersCache) get(asset string) (e assetHoldersEntry, ok, fresh bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -150,8 +141,7 @@ func (c *assetHoldersCache) put(asset string, e assetHoldersEntry) {
 		c.entries = make(map[string]assetHoldersEntry)
 	}
 	if len(c.entries) >= assetHoldersCacheMax {
-		// Evict the oldest entry (approximate LRU — cheap: one pass, and
-		// only when at capacity). Mirrors accountStateCache.put.
+		// Evict the oldest entry: an approximate LRU in one pass, only at capacity.
 		var oldestKey string
 		var oldestAt time.Time
 		for k, v := range c.entries {
@@ -164,15 +154,13 @@ func (c *assetHoldersCache) put(asset string, e assetHoldersEntry) {
 	c.entries[asset] = e
 }
 
-// errRefreshFailed is the sentinel a stale-while-revalidate wait path
-// returns when the detached compute finished without producing a cacheable
-// entry (the underlying error was already logged by the refresh goroutine).
+// errRefreshFailed is returned by a wait path when the detached compute finished without a
+// cacheable entry; the refresh goroutine already logged the cause.
 var errRefreshFailed = errors.New("explorer: detached cache refresh produced no entry")
 
-// errRefreshSaturated is returned to a COLD-path waiter when the shared
-// detached-refresh gate is saturated and the refresh was skipped rather
-// than queued (see clickhouse.RefreshGate). Handlers map it to the same
-// retryable 503 as a read timeout — it is a capacity condition, not a bug.
+// errRefreshSaturated is returned to a COLD-path waiter when the shared detached-refresh gate is
+// full and the refresh was skipped, not queued (see clickhouse.RefreshGate). Handlers map it to
+// the same retryable 503 as a read timeout: a capacity condition, not a bug.
 var errRefreshSaturated = errors.New("explorer: detached refresh capacity saturated; retry shortly")
 
 // errRefreshPanicked is what a COLD-path waiter receives when the detached refresh it joined
@@ -189,9 +177,8 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 	if !owner {
 		return fl
 	}
-	// Bounded globally across keys — the asset space is attacker-mintable
-	// (any CODE-ISSUER combination parses); on saturation skip, don't
-	// queue (see detachedGate).
+	// Bounded globally across keys because the asset space is attacker-mintable (any
+	// CODE-ISSUER parses); on saturation skip, don't queue (see detachedGate).
 	gate := h.detachedGate()
 	if !gate.TryAcquireClass("asset_holders") {
 		h.assetHolders.flight.end(asset, fl, errRefreshSaturated)
@@ -199,8 +186,7 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 	}
 	go func() {
 		defer gate.ReleaseClass("asset_holders")
-		// End the flight from a defer so a panic cannot wedge this
-		// asset's board forever — see perKeyFlight.end.
+		// End the flight from a defer so a panic cannot wedge this board forever.
 		var err error
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -290,10 +276,8 @@ func contractsWindow(days int) int {
 // accepted `?limit=`.
 const contractsDirMaxLimit = 500
 
-// contractsDirRefreshTimeout bounds one detached directory aggregation.
-// The 365d rung is a GROUP BY over a year of contract_events — minutes-
-// class under load; generous so a refresh that would have succeeded isn't
-// abandoned, bounded so a wedged one can't pin the single-flight forever.
+// contractsDirRefreshTimeout bounds one detached aggregation. The 365d rung is a GROUP BY over a
+// year of contract_events (minutes under load), so it is generous but finite.
 const contractsDirRefreshTimeout = 3 * time.Minute
 
 type contractsDirEntry struct {
@@ -344,10 +328,8 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 	if !owner {
 		return fl
 	}
-	// Same global bound as the sibling refreshers. The window ladder caps
-	// this cache's own key space at 5, but its scans still contend on the
-	// shared pool with the attacker-keyed caches, so it draws from the
-	// same gate; the prewarm loop re-kicks within one TTL if skipped.
+	// Same global gate as the sibling refreshers: the ladder caps this key space at 5, but the
+	// scans still contend on the shared pool. The prewarm loop re-kicks within one TTL if skipped.
 	gate := h.detachedGate()
 	if !gate.TryAcquireClass("contracts_dir") {
 		h.contractsDir.flight.end(key, fl, errRefreshSaturated)
@@ -355,8 +337,7 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 	}
 	go func() {
 		defer gate.ReleaseClass("contracts_dir")
-		// End the flight from a defer so a panic cannot wedge this
-		// window forever — see perKeyFlight.end.
+		// End the flight from a defer so a panic cannot wedge this window forever.
 		var err error
 		defer func() {
 			if rec := recover(); rec != nil {

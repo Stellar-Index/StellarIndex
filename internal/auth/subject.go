@@ -6,31 +6,25 @@ import (
 	"time"
 )
 
-// Tier identifies the rate-limit + feature-access bucket a caller
-// belongs to. Stable string values — appear in metrics labels and
-// in the rate-limit middleware key, so changing them is a wire
-// break.
+// Tier identifies the rate-limit + feature-access bucket a caller belongs to. The string values
+// appear in metrics labels and the rate-limit key, so changing them is a wire break.
 type Tier string
 
 const (
-	// TierAnonymous — no credential presented (or auth_mode=none).
-	// Lowest rate-limit budget. Default.
+	// TierAnonymous: no credential presented (or auth_mode=none). Lowest budget; the default.
 	TierAnonymous Tier = "anonymous"
 
-	// TierAPIKey — caller presented a valid API key.
+	// TierAPIKey: caller presented a valid API key.
 	TierAPIKey Tier = "apikey"
 
-	// TierSEP10 — caller presented a valid SEP-10 JWT.
+	// TierSEP10: caller presented a valid SEP-10 JWT.
 	TierSEP10 Tier = "sep10"
 
-	// TierOperator — internal operator credential. Reserved for
-	// admin endpoints (`/v1/account/*` self-service + future
-	// /v1/admin/*); never granted to public callers.
+	// TierOperator: internal operator credential for admin endpoints; never granted to public callers.
 	TierOperator Tier = "operator"
 )
 
-// String makes Tier usable as a Prometheus label value without a
-// type assertion.
+// String makes Tier usable as a Prometheus label value.
 func (t Tier) String() string { return string(t) }
 
 // Subject is the authenticated identity on a request, set before the rate-limit middleware so
@@ -40,7 +34,7 @@ type Subject struct {
 	// keys) or, for anonymous, a per-IP+UA hash that is not stable across deploys.
 	Identifier string
 
-	// Tier — see above. Drives rate-limit budget + feature gating.
+	// Tier drives rate-limit budget and feature gating.
 	Tier Tier
 
 	// Scopes is an optional platform.KeyScope* capability list; EMPTY means full access, non-empty
@@ -51,31 +45,22 @@ type Subject struct {
 	// hash); empty for anonymous and SEP-10 subjects.
 	KeyID string
 
-	// RateLimitPerMin — per-tier budget the rate-limit middleware
-	// applies. Zero means "use the deployment default for this
-	// tier"; a non-zero value overrides at the per-key level
-	// (paid customers on a custom plan).
+	// RateLimitPerMin: zero means the deployment default for the tier; non-zero overrides per key.
 	RateLimitPerMin int
 
-	// CreatedAt — when the credential was issued. Zero for
-	// anonymous. Surfaced via /v1/account/me; not load-bearing
-	// elsewhere.
+	// CreatedAt is when the credential was issued; zero for anonymous.
 	CreatedAt time.Time
 
 	// Label is the customer-supplied credential name shown via /v1/account/me; never consulted by
 	// auth or rate-limit logic.
 	Label string
 
-	// KeyPrefix — first 12 chars of the plaintext key (e.g.
-	// `sip_4f9c1d8b`). Empty on records minted without a prefix and
-	// on anonymous subjects. Customers see this in dashboard listings to
-	// identify which key matches a row in their secret manager.
+	// KeyPrefix is the first 12 chars of the plaintext key (e.g. `sip_4f9c1d8b`), shown in dashboard
+	// listings to identify a key. Empty on records minted without one and on anonymous subjects.
 	KeyPrefix string
 
-	// IPAllowlist — when non-empty, the request's resolved client
-	// IP must fall in at least one prefix or the request is
-	// rejected with 403. Populated by both API-key validators from
-	// the key record.
+	// IPAllowlist: when non-empty, the resolved client IP must fall in at least one prefix or the
+	// request is rejected with 403.
 	IPAllowlist []netip.Prefix
 
 	// RefererAllowlist: when non-empty, the Referer host must exactly match an entry or the request
@@ -105,10 +90,9 @@ type Subject struct {
 	// signup-verify-required, and the field is informational without that middleware.
 	EmailVerifiedAt time.Time
 
-	// ExpiresAt — when the presented API key stops authenticating. Zero
-	// means the credential never expires (and for anonymous / SEP-10
-	// subjects, which have no key record). [ChildKeyRequest] copies it so
-	// a time-boxed key cannot mint itself a permanent successor.
+	// ExpiresAt is when the presented API key stops authenticating; zero means never (also for
+	// anonymous and SEP-10 subjects). [ChildKeyRequest] copies it so a time-boxed key cannot mint
+	// itself a permanent successor.
 	ExpiresAt time.Time
 }
 
@@ -121,34 +105,26 @@ type SubjectPermissionEntry struct {
 	EndpointPrefix string `json:"endpoint_prefix,omitempty"`
 }
 
-// Anonymous returns the subject the middleware attaches when no
-// credential is presented (or auth_mode=none). The identifier is
-// caller-supplied so the rate-limit middleware can key on it
-// (typically RemoteIP + UA hash).
+// Anonymous returns the subject attached when no credential is presented (or auth_mode=none); the
+// identifier is typically a RemoteIP + UA hash, which the rate limiter keys on.
 func Anonymous(identifier string) Subject {
 	return Subject{Identifier: identifier, Tier: TierAnonymous}
 }
 
 // ─── Context helpers ──────────────────────────────────────────────
 
-// subjectKeyType is unexported so callers can't accidentally read
-// or write a Subject under the wrong key type.
+// subjectKeyType is unexported so callers cannot read or write a Subject under the wrong key.
 type subjectKeyType struct{}
 
 var subjectKey subjectKeyType
 
-// WithSubject returns a new context carrying the Subject. The auth
-// middleware calls this on every authenticated request; downstream
-// handlers + middleware (rate-limit, request logger) read it back
-// via [SubjectFrom].
+// WithSubject returns a context carrying the Subject; read it back via [SubjectFrom].
 func WithSubject(ctx context.Context, s Subject) context.Context {
 	return context.WithValue(ctx, subjectKey, s)
 }
 
-// SubjectFrom extracts the Subject from ctx. The boolean is `true`
-// when a subject was attached (always the case after the auth
-// middleware runs). Tests that bypass middleware should expect
-// `false` and treat that as anonymous-with-empty-id.
+// SubjectFrom extracts the Subject from ctx; false means none was attached (always attached after
+// the auth middleware), to be treated as anonymous-with-empty-id.
 func SubjectFrom(ctx context.Context) (Subject, bool) {
 	v := ctx.Value(subjectKey)
 	if v == nil {
