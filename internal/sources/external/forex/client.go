@@ -8,19 +8,14 @@
 // to the day, so per-window figures on /v1/currencies are derived from
 // daily rows (see internal/sources/external/registry.go).
 //
-// The package exposes provider-agnostic Snapshot / History7d / Currency /
-// HistoryPoint types, so swapping providers is a one-package change.
-//
-// Relationship to the other FX packages under internal/sources/external/:
-// this package and its sibling [frankfurter] sit outside the
-// [external.Connector] framework and keep their own bespoke worker /
-// FXQuoteWriter seam. forex ("massive" in [external.Registry]) is the
-// ACTIVE feed, run as a goroutine in the API binary (not the indexer); see
+// This package and its sibling [frankfurter] sit outside the
+// [external.Connector] framework with their own worker / FXQuoteWriter seam.
+// forex ("massive" in [external.Registry]) is the ACTIVE feed, run in the API
+// binary (not the indexer); see
 // docs/operations/runbooks/external-pollers.md#stellarindex_external_fx_feed_stale.
-// [ecb] and [exchangeratesapi] ARE Connector-framework pollers, wired into
-// the indexer and disabled by default. ecb is ECB-backed like [frankfurter],
-// so both read the same upstream through two independent code paths: a
-// known, accepted duplication (unifying them would be a behavior change).
+// [ecb] and [exchangeratesapi] ARE Connector-framework pollers, disabled by
+// default. ecb and [frankfurter] read the same upstream through two code paths:
+// a known, accepted duplication.
 package forex
 
 import (

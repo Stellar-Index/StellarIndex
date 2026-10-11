@@ -16,11 +16,6 @@
 //     reconnect picks up.
 //
 // Wire format reference: https://www.bitstamp.net/websocket/v2/
-// Typical session:
-//
-//	→ {"event":"bts:subscribe","data":{"channel":"live_trades_xlmusd"}}
-//	← {"event":"trade","channel":"live_trades_xlmusd","data":{"id":...,"price_str":"0.17582","amount_str":"100.5","microtimestamp":"1745000000123456","type":0,...}}
-//	← {"event":"bts:request_reconnect","channel":"","data":{}}  # ~hourly
 package bitstamp
 
 import (

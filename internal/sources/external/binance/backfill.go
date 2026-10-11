@@ -37,24 +37,17 @@ const klineMaxLimit = 1000
 // per candle bucket, stamped with the bucket's close-time, base +
 // quote volume preserved from the kline's fields 5 and 7.
 //
-// Granularity must match one of Binance's supported intervals; see
-// granularityToInterval for the map. Unsupported intervals return
-// an error before any HTTP call.
+// Granularity must match one of Binance's supported intervals (see
+// granularityToInterval); unsupported intervals error before any HTTP call.
 //
-// Pagination: Binance caps 1000 candles per request. We issue
-// successive requests moving startTime forward, serially (no parallel
-// fan-out) to respect the venue's rate-limit weight. For 1 year
-// of hourly data the total is ~9 requests.
+// Pagination: Binance caps 1000 candles per request. Requests move startTime
+// forward serially to respect the venue's rate-limit weight (klines weigh 2
+// against a 6000/min budget).
 //
-// Rate limits: klines carries weight 2 under Binance's per-minute
-// 6000-weight budget, so 3000 calls/min is the ceiling — well above
-// anything realistic backfill would attempt.
-//
-// The returned trades are NOT deduplicated against existing storage
-// — caller (stellarindex-ops) is responsible for the idempotent
-// insert path. canonical.Trade.TxHash is deterministic from (symbol,
-// close_time_ms) so repeated backfill runs land on the same primary
-// key.
+// The returned trades are NOT deduplicated against existing storage — caller
+// (stellarindex-ops) owns the idempotent insert path. canonical.Trade.TxHash is
+// deterministic from (symbol, close_time_ms) so repeated runs land on the same
+// primary key.
 func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to time.Time, granularity time.Duration) ([]canonical.Trade, error) {
 	if !from.Before(to) {
 		return nil, fmt.Errorf("binance.Backfill: from %v must be before to %v", from, to)

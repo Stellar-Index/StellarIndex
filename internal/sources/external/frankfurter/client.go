@@ -4,23 +4,13 @@
 // requiring a paid Massive API key.
 //
 // Frankfurter publishes ECB reference rates back to 1999-01-04 for
-// ~32 currencies. Daily granularity only — sufficient for long-term
-// fiat history charting per ctx-proposal retention policy (1h+
-// granularity is indefinite; sub-hourly is compacted).
+// ~32 currencies, daily granularity only. The range endpoint returns one
+// JSON document for every date in [from, to], so a 25-year backfill is one
+// HTTP request. No API key.
 //
-// Range endpoint quirk: Frankfurter returns one large JSON document
-// containing every date in [from, to] for every requested currency,
-// so a 25-year backfill is one HTTP request. No API key, no rate
-// limit on reasonable use.
-//
-// Folded from internal/sources/frankfurter/ into
-// internal/sources/external/frankfurter/ alongside its sibling
-// internal/sources/external/forex/ — see the package doc on forex
-// for the fuller reconciliation note against external/ecb
-// (also ECB-backed, but a Connector-framework poller wired into the
-// indexer, not a one-shot historical-backfill client run from
-// scripts/ops/fx-history-backfill). This is a location move only;
-// frankfurter still doesn't implement external.Connector.
+// See the package doc on forex for the reconciliation against external/ecb
+// (a Connector-framework poller wired into the indexer). frankfurter doesn't
+// implement external.Connector.
 package frankfurter
 
 import (

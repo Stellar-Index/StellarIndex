@@ -18,25 +18,22 @@ import (
 //
 // FeedSpec.Decimals from config (or the built-in 8), stamped onto every
 // oracle_updates row without asking the AggregatorV3 proxy what scale it
-// actually publishes at, would store every reading 10^(configured-actual)
-// off, silently, if wrong or drifted. The poller reads `decimals()`
-// (SelDecimals) over the same Client it uses for latestRoundData(), on the first poll of
-// each feed and again every decimalsRefreshInterval, and:
+// publishes at, would store every reading 10^(configured-actual) off, silently,
+// if wrong or drifted. The poller reads `decimals()` (SelDecimals) on the first
+// poll of each feed and again every decimalsRefreshInterval, and:
 //
 //   - configured value ABSENT (0) → adopts the on-chain value;
 //   - both present and EQUAL → readings flow;
-//   - both present and DIFFERENT → logs at ERROR with both values,
-//     counts obs.ChainlinkFeedDecimalsMismatchTotal on every refused
-//     reading, and REFUSES the feed (ErrDecimalsMismatch) until they
-//     agree — fail closed, a mis-scaled oracle row is worse than none;
-//   - decimals() RPC failure → keeps the last known value (configured,
-//     or the previously verified on-chain value) with a WARN and
-//     retries after decimalsRetryInterval; a feed with no configured
-//     value and no successful read yet is refused (ErrDecimalsUnresolved),
-//     never projected at a guessed scale.
+//   - both present and DIFFERENT → logs ERROR, counts
+//     obs.ChainlinkFeedDecimalsMismatchTotal on every refused reading, and
+//     REFUSES the feed (ErrDecimalsMismatch): a mis-scaled oracle row is worse
+//     than none;
+//   - decimals() RPC failure → keeps the last known value with a WARN and
+//     retries after decimalsRetryInterval; a feed with no configured value and
+//     no successful read yet is refused (ErrDecimalsUnresolved), never
+//     projected at a guessed scale.
 //
-// Backfill goes through the same resolver, so a historical walk of a
-// mis-scaled feed is refused too.
+// Backfill goes through the same resolver.
 const (
 	// decimalsRefreshInterval is how long a verified decimals() read
 	// stays trusted before it is re-read. A proxy's decimals is

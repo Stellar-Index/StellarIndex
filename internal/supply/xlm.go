@@ -108,21 +108,16 @@ func readReserveTotal(ctx context.Context, r ReserveBalanceReader, accounts []st
 // [ReserveBalanceReader] that reports a freshness anchor for the
 // configured SDF reserve accounts at or before the snapshot ledger.
 //
-// It is the XLM leg of the supply-snapshot freshness gate, alongside the
-// classic and SEP41 legs. Without it the Refresher's stale-component gate stays
-// permissive on every native-XLM snapshot, so an observer drifting hours behind
-// tip would still produce snapshots stamped at the fresh ledger.
+// It is the XLM leg of the supply-snapshot freshness gate. Without it the
+// stale-component gate stays permissive on every native-XLM snapshot.
 //
-// Implementations:
 //   - [LCMReserveBalanceReader] checks that every account is observed and
 //     returns the account observer's watermark.
-//   - [ConfigReserveBalanceReader] DELIBERATELY does NOT implement this — the
-//     static config has no per-ledger freshness concept, so that snapshot has
-//     no anchor and strict mode refuses it.
+//   - [ConfigReserveBalanceReader] DELIBERATELY does NOT implement this: static
+//     config has no per-ledger freshness, so strict mode refuses it.
 //
 // The XLM computer probes via a type assertion; if not satisfied,
-// MinComponentLedger stays 0 and the gate stays permissive, as for
-// classic/SEP41.
+// MinComponentLedger stays 0 and the gate stays permissive.
 //
 // Zero return means "no observation found for at least one account at-or-before
 // `asOfLedger`" (the permissive bypass signal). Non-zero is the MIN across

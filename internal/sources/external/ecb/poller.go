@@ -9,18 +9,10 @@
 // rate with a fresh Observer timestamp; the stable tx_hash makes that
 // insert idempotent.
 //
-// Wire shape (verified against
-// https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml): a
-// gesmes:Envelope holding <Cube><Cube time="YYYY-MM-DD"> with one
-// <Cube currency="USD" rate="1.0825"/> per currency.
-//
-// Each `rate` is "1 EUR = X currency". To fit our canonical "price of
-// Asset in Quote" we invert: Asset = <currency>, Quote = EUR,
-// Price = 1 / rate (USD at 1.0825 gives 0.9238).
-//
-// Sibling package frankfurter also reads an ECB-backed feed, as a one-shot
-// historical client for scripts/ops/fx-history-backfill rather than a live
-// poller.
+// Wire shape: a gesmes:Envelope holding <Cube><Cube time="YYYY-MM-DD"> with
+// one <Cube currency="USD" rate="1.0825"/> per currency. Each `rate` is
+// "1 EUR = X currency"; to fit our canonical "price of Asset in Quote" we
+// invert: Asset = <currency>, Quote = EUR, Price = 1 / rate.
 package ecb
 
 import (

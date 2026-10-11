@@ -388,25 +388,18 @@ var aggregatorMADFactor = big.NewRat(5, 1)
 // single bad print cannot drag the plain-mean headline price.
 //
 // It computes the EXACT median of the sources' prices (projected onto
-// [aggregatorCommonDecimals]) and drops any source whose deviation from
-// it exceeds aggregatorMADFactor*(1.4826*MAD). When a strict majority
-// agree exactly (MAD == 0), [robustCentreScale] substitutes
-// [zeroScaleRelFloor]*|centre| for the scale so the band is not a single
-// point (about +-2.5% at the shipped defaults). All comparison
-// arithmetic is exact *big.Rat (ADR-0003).
+// [aggregatorCommonDecimals]) and drops any source whose deviation exceeds
+// aggregatorMADFactor*(1.4826*MAD). When MAD == 0, [robustCentreScale]
+// substitutes [zeroScaleRelFloor]*|centre| (about +-2.5% at the defaults).
+// All comparison arithmetic is exact *big.Rat (ADR-0003).
 //
-// The deviation is measured in RATIO space ([symmetricDev]), not
-// additively. The additive band `|p - centre| > K*scale` is blind
-// downward: once K*scale reaches the centre (relative MAD of 13.5%,
-// routine for thin RWA) the lower edge goes non-positive and NO
-// downward print can be rejected, so one decimal-shifted or zero quote
-// would halve the headline. The ratio band
-// [centre^2/(centre + K*scale), centre + K*scale] matches the additive
-// one above the centre and is never lower below it.
+// The deviation is measured in RATIO space ([symmetricDev]): the additive band
+// `|p - centre| > K*scale` goes non-positive at the lower edge once K*scale
+// reaches the centre (routine for thin RWA), so no downward print, such as a
+// decimal-shifted or zero quote, could be rejected.
 //
 // It NEVER fails closed: with fewer than [aggregatorMinForOutlierReject]
-// usable sources it returns the input unchanged, and the median source
-// always survives when it does filter.
+// usable sources it returns the input unchanged.
 func rejectAggregatorOutliers(rows []canonical.OracleUpdate) []canonical.OracleUpdate {
 	if len(rows) < aggregatorMinForOutlierReject {
 		return rows

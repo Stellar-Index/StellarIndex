@@ -49,24 +49,20 @@ type Decoder struct {
 // Contract-identity gating (ADR-0035/0040), factory-anchored: the curated
 // mainnet set (pools + stake contracts, docs/protocols/phoenix.md) is always
 // seeded as the cold-start warm root, and the factory's
-// ("create","liquidity_pool") events (lake from ledger 51,572,026; captures in
-// test/fixtures/phoenix/factory-create) self-register the pools they announce.
+// ("create","liquidity_pool") events (lake from ledger 51,572,026) self-register
+// the pools they announce.
 //
-// Trust: admission is on contract identity (upstream, create_liquidity_pool
-// needs the sender's auth and membership in whitelisted_accounts, and publishes
-// the address the factory deployed). But the factory is admin-upgradeable, so an
-// admitted pool ultimately trusts the factory admin, as the curated seed does by
-// hand. Tokens are creator-chosen, so this is not price trust; the downstream
-// pricing guards are (docs/operations/wasm-audits/phoenix.md, "Factory create
-// event").
+// Trust: admission is on contract identity (create_liquidity_pool needs the
+// sender's auth and membership in whitelisted_accounts). But the factory is
+// admin-upgradeable, so an admitted pool ultimately trusts the factory admin.
+// Tokens are creator-chosen, so this is not price trust; the downstream pricing
+// guards are (docs/operations/wasm-audits/phoenix.md, "Factory create event").
 //
-// STAKE contracts are not announced by the factory (the pool deploys them), so
-// only the curated seed or the protocol_contracts warm admits them; see
-// MainnetStakeContracts.
+// STAKE contracts are not announced by the factory, so only the curated seed or
+// the protocol_contracts warm admits them; see MainnetStakeContracts.
 //
 // Caller opts layer the protocol_contracts DB warm and live-upsert hook on top;
-// the warm is the operator seam for admitting a contract without a redeploy and
-// stays the override.
+// the warm is the operator seam for admitting a contract without a redeploy.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{
 		contractid.WithFactories([]string{MainnetFactory}),

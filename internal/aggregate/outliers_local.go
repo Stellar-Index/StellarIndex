@@ -10,28 +10,22 @@ import (
 
 // Time-local outlier trimming for the published-VWAP path.
 //
-// The whole-window [FilterOutliers] scores every print against one centre and
-// scale, so an AGREED move larger than ~1% is trimmed wholesale until it becomes
-// the majority. A step is not an outlier; only a print that disagrees with the
-// prints AROUND it is.
+// The whole-window [FilterOutliers] trims an AGREED move larger than ~1%
+// wholesale until it becomes the majority. A step is not an outlier; only a
+// print that disagrees with the prints AROUND it is.
 //
 // A print is kept if it sits inside the band of ANY of: the whole-window
-// centre/scale (nothing the legacy filter accepted is newly rejected); its own
-// time bucket (default 1 m) holding at least [DefaultOutlierMinBucket] prices;
-// the nearest qualifying bucket either side; or, when its own is too thin, the
-// nearest [DefaultOutlierNeighbours] prints.
+// centre/scale; its own time bucket (default 1 m) holding at least
+// [DefaultOutlierMinBucket] prices; the nearest qualifying bucket either side;
+// or, when its own is too thin, the nearest [DefaultOutlierNeighbours] prints.
 //
-// The local references are ANCHORED, otherwise a wash burst that is the majority
-// of its own bucket would validate itself: the local scale is CLAMPED to
-// [localScaleRelFloor, localScaleRelCeiling]·centre, and a local reference is
-// TRUSTED only when its centre lies within sigma·max(window scale,
+// Local references are ANCHORED so a wash burst cannot validate itself: the local
+// scale is CLAMPED to [localScaleRelFloor, localScaleRelCeiling]·centre, and a
+// reference is TRUSTED only when its centre lies within sigma·max(window scale,
 // ceiling·centre) of the window median OR the previous trusted reference.
 //
-// A burst holding the COUNT majority moves the median and can trim honest prints;
-// unless it also holds the base-volume majority, the window is withheld
-// ([keepIfVolumeMajority]). One holding both majorities is indistinguishable
-// from a real move; the unregistered-venue filter, outlier_trim_fraction and
-// outlier_storm cover it. Exact *big.Rat on the value path (ADR-0003).
+// A burst holding the COUNT majority but not the base-volume majority withholds
+// the window ([keepIfVolumeMajority]). Exact *big.Rat on the value path (ADR-0003).
 
 // Default local-reference geometry. Held as package constants rather
 // than config knobs: the bucket matches the closed-bucket serving
