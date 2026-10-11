@@ -20,26 +20,20 @@ import (
 	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 )
 
-// ChainlinkReference is a [Reference] backed by Chainlink Data
-// Feeds via off-chain Ethereum JSON-RPC reads.
+// ChainlinkReference is a [Reference] backed by Chainlink Data Feeds via off-chain Ethereum
+// JSON-RPC reads.
 //
-// Design rationale: the reference reads Chainlink's Ethereum
-// deployment, not Soroban — we call the AggregatorV3 contract's
-// `latestRoundData()` view function via eth_call on a public
-// Ethereum RPC endpoint.
+// Design rationale: the reference reads Chainlink's Ethereum deployment, not Soroban — we call the
+// AggregatorV3 contract's `latestRoundData()` view function via eth_call on a public Ethereum RPC
+// endpoint.
 //
-// Role: divergence cross-check ONLY. Chainlink does not contribute
-// to VWAP/TWAP — we compare its reported price against our
-// aggregated price for major pairs (BTC/USD, ETH/USD, EUR/USD,
-// GBP/USD, etc.) and surface `flags.divergence_warning` on /v1/price
-// when the spread exceeds threshold.
+// Role: divergence cross-check ONLY. Chainlink does not contribute to VWAP/TWAP — we compare its
+// reported price against our aggregated price for major pairs (BTC/USD, ETH/USD, EUR/USD, GBP/USD,
+// etc.) and surface `flags.divergence_warning` on /v1/price when the spread exceeds threshold.
 //
-// The built-in feed map has no XLM/USD or USDC/USD feed, so this
-// reference covers fiat reference
-// rates + major crypto pairs that we use as anchors via FX or
-// stablecoin proxy. Adding more feed coverage is operator
-// configuration only — the FeedMap maps canonical pair → AggregatorV3
-// contract address.
+// The built-in feed map has no XLM/USD or USDC/USD feed, so this reference covers fiat reference
+// rates + major crypto pairs used as anchors via FX or stablecoin proxy. Adding feed coverage is
+// operator configuration only — the FeedMap maps canonical pair → AggregatorV3 contract address.
 type ChainlinkReference struct {
 	httpClient *http.Client
 	rpcURL     string
@@ -161,26 +155,18 @@ const defaultChainlinkMaxAgeFX = externalchainlink.DefaultMaxAgeFX
 
 // NewChainlinkReference constructs a Chainlink-backed reference.
 //
-// When opts.FeedMap is empty, the reference falls back to a built-in
-// default covering the major crypto and fiat AggregatorV3 contracts
-// on Ethereum mainnet (BTC/USD, ETH/USD, LINK/USD, EUR/USD, GBP/USD,
-// JPY/USD) — same shape as the CoinGecko default-IDMap fallback.
-// Unlike CoinGecko's, this fallback is currently unreachable
-// from the aggregator binary: its wiring (cmd/stellarindex-aggregator
-// buildDivergenceReferences) skips constructing the reference at all
-// when Enabled=true but FeedMap is empty, logging a WARN instead. The
-// fallback still applies to any direct caller (tests, or a future
-// wiring path) that constructs a [ChainlinkReference] with no FeedMap.
+// When opts.FeedMap is empty, the reference falls back to a built-in default covering the major
+// crypto and fiat AggregatorV3 contracts on Ethereum mainnet (BTC/USD, ETH/USD, LINK/USD, EUR/USD,
+// GBP/USD, JPY/USD). This fallback is currently unreachable from the aggregator binary: its wiring
+// (cmd/stellarindex-aggregator buildDivergenceReferences) skips constructing the reference when
+// Enabled=true but FeedMap is empty, logging a WARN instead. It still applies to any direct caller.
 //
-// Operator-supplied entries merge OVER the defaults (operator wins):
-// an entry can be overridden or a new one added, but a default entry
-// cannot be removed by omission — the merge only adds/overrides keys.
+// Operator-supplied entries merge OVER the defaults (operator wins): an entry can be overridden or
+// a new one added, but a default entry cannot be removed by omission.
 //
-// Pinned to Ethereum mainnet AggregatorV3 contract addresses; these
-// are immutable proxies in practice — Chainlink upgrades the
-// underlying aggregator while keeping the proxy address stable. If
-// a feed is ever migrated to a new proxy, operators override via
-// the FeedMap.
+// Pinned to Ethereum mainnet AggregatorV3 contract addresses; these are immutable proxies in
+// practice — Chainlink upgrades the underlying aggregator while keeping the proxy address stable.
+// If a feed is ever migrated to a new proxy, operators override via the FeedMap.
 func NewChainlinkReference(opts ChainlinkOptions) *ChainlinkReference {
 	httpClient := opts.HTTPClient
 	if httpClient == nil {

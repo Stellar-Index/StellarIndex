@@ -16,30 +16,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// GET /v1/rwa/premium: the token's price against the instrument's net asset
-// value, as a daily series of /v1/rwa/assets' point-in-time `premium.pct`. It
-// needs an observed market price and an oracle NAV on the same clock; a chain
-// query has neither.
+// GET /v1/rwa/premium: the token's price against the instrument's net asset value, as a daily
+// series of /v1/rwa/assets' point-in-time `premium.pct`. It needs an observed market price and an
+// oracle NAV on the same clock; a chain query has neither.
 //
-// Neither leg is carried across a silent day. /v1/rwa/history may carry supply
-// because an append-only log makes a silent day an unchanged level; both legs here
-// are sampled. A held-to-maturity token can sit untraded for weeks while its NAV
-// moves, so carrying the market leg draws a discount nobody traded, and carrying
-// the NAV leg draws a premium against a value nobody published. A point exists
-// only on a day both legs were observed; per-day measurable counts let a reader
-// tell a quiet market from a quiet sector.
+// Neither leg is carried across a silent day, unlike /v1/rwa/history's supply: both legs are
+// sampled. A held-to-maturity token can sit untraded for weeks while its NAV moves, so carrying
+// the market leg draws a discount nobody traded, and carrying the NAV leg a premium against a value
+// nobody published. A point exists only on a day both legs were observed; per-day measurable
+// counts let a reader tell a quiet market from a quiet sector.
 //
 // The market leg is held to a floor of the live thin-market gate's shape
-// ([Server.rwaPremiumDayFloorFor]); a raw daily VWAP would publish, for past days,
-// the attacker-seeded dust rate the live surface refuses. A failing day is
-// withheld and counted. The live gate's trailing 24h at minute grain has no
-// past-day analogue and minute history depends on deployment retention
-// ([timescale.Store.DailyMarketDays]), so the floor uses hourly data. An asset can
-// therefore carry a premium on a past day and none today.
+// ([Server.rwaPremiumDayFloorFor]); a raw daily VWAP would publish, for past days, the
+// attacker-seeded dust rate the live surface refuses. A failing day is withheld and counted. The
+// floor uses hourly data because minute history depends on deployment retention
+// ([timescale.Store.DailyMarketDays]), so an asset can carry a premium on a past day and none today.
 //
-// Coverage is small: the curated binding (internal/rwa/oracle_reference.go)
-// admits only some `rwa:` feeds, and only those trading against a dollar can
-// carry a premium. `excluded[]` names every member left out and who can move it.
+// Coverage is small: only `rwa:` feeds in the curated binding (internal/rwa/oracle_reference.go)
+// that trade against a dollar can carry a premium. `excluded[]` names every member left out.
 
 // rwaPremiumHistoryTTL bounds the reuse of one assembled series. It
 // matches [rwaHistoryTTL] for the same reason: a daily grain cannot
@@ -64,26 +58,22 @@ const rwaPremiumHistoryMaxPoints = 4096
 // spellings only.
 var rwaPremiumHistoryQuote = canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}
 
-// rwaPremiumDayFloorFor derives the per-day market-substance floor from the SAME
-// operator-configured policy /v1/price serves against (s.RWAPremiumSubstance,
-// wired from the live [pricingguard.SubstanceGate] in main.go) rather than the
-// pricingguard defaults: an operator who moves the live floor must move this one,
-// or the premium history silently measures against a floor /v1/price does not
-// enforce.
+// rwaPremiumDayFloorFor derives the per-day market-substance floor from the SAME operator-configured
+// policy /v1/price serves against (s.RWAPremiumSubstance, wired from the live
+// [pricingguard.SubstanceGate] in main.go) rather than the pricingguard defaults: an operator who
+// moves the live floor must move this one, or the premium history silently measures against a floor
+// /v1/price does not enforce.
 //
-// It is [pricingguard.SubstancePolicy], the same three legs evaluated by the same
-// pure decision ([pricingguard.SubstanceOK]):
+// It is [pricingguard.SubstancePolicy], the same three legs evaluated by the same pure decision
+// ([pricingguard.SubstanceOK]):
 //
 //   - MinVolumeUSD is the serving value, UNCHANGED (both windows are 24 hours).
-//   - MinSpan is the serving value, UNCHANGED (grain-independent: "a market must
-//     have existed at more than one point in time").
-//   - MinBuckets is NOT the serving value and must not be. The serving gate counts
-//     distinct MINUTE buckets (1440/day); this counts distinct HOUR buckets
-//     (24/day), the coarsest-reaching grain that still says WHEN inside a past day
-//     trading happened (see [timescale.Store.DailyMarketDays]). Inheriting the
-//     serving value would blank every series. Two hours is the weakest form of
-//     the property the span leg already carries, kept explicit so the policy has
-//     all three legs.
+//   - MinSpan is the serving value, UNCHANGED (grain-independent).
+//   - MinBuckets is NOT the serving value and must not be. The serving gate counts distinct MINUTE
+//     buckets (1440/day); this counts distinct HOUR buckets (24/day), the coarsest grain that still
+//     says WHEN inside a past day trading happened (see [timescale.Store.DailyMarketDays]).
+//     Inheriting the serving value would blank every series. Two hours is the weakest form of the
+//     property the span leg already carries, kept explicit so the policy has all three legs.
 func (s *Server) rwaPremiumDayFloorFor() pricingguard.SubstancePolicy {
 	minVolumeUSD := s.RWAPremiumSubstance.MinVolumeUSD
 	if minVolumeUSD == nil {

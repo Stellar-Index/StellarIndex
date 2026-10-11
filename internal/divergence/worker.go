@@ -50,30 +50,22 @@ type CachedResult struct {
 	Median        float64 `json:"median"`
 	DivergencePct float64 `json:"divergence_pct"`
 
-	// WarningFired is evaluated by the worker and cached so API
-	// readers don't need to know the threshold values. It fires when
-	// SuccessCount >= MinSourcesForWarning AND EITHER
+	// WarningFired is evaluated by the worker and cached so API readers need not know the thresholds.
+	// It fires when SuccessCount >= MinSourcesForWarning AND EITHER
 	//
-	//   - DivergencePct > Threshold — the median of the references
-	//     disagrees with our price; or
-	//   - AgreementCount == 0 — NO responding reference corroborates
-	//     our price within Threshold.
+	//   - DivergencePct > Threshold — the median of the references disagrees with our price; or
+	//   - AgreementCount == 0 — NO responding reference corroborates our price within Threshold.
 	//
-	// The second leg exists because the median gate alone is blind to
-	// symmetric disagreement: references straddling our price (one
-	// +8%, one −8%) give a median equal to our price and DivergencePct ~0.
-	// See [Service.RefreshPair] for why the leg is "nobody agrees"
-	// rather than "somebody disagrees".
+	// The second leg exists because the median gate alone is blind to symmetric disagreement:
+	// references straddling our price (one +8%, one −8%) give a median equal to our price. See
+	// [Service.RefreshPair] for why the leg is "nobody agrees" rather than "somebody disagrees".
 	//
-	// The raw condition must also have PERSISTED for at least
-	// ServiceOptions.WarningPersistence (default 5m) before this flips true.
-	// OurPrice is a shortest-window VWAP while the references are
-	// instantaneous spot quotes, so on a fast move the VWAP legitimately
-	// lags and the raw condition trips for up to one window; a genuine
-	// divergence persists past it. See [Service.warningPersists].
+	// The raw condition must also have PERSISTED for ServiceOptions.WarningPersistence (default 5m):
+	// OurPrice is a shortest-window VWAP and the references are spot quotes, so on a fast move the
+	// VWAP lags and the raw condition trips for up to one window. See [Service.warningPersists].
 	//
-	// A below-quorum refresh reaches no verdict: it carries the last
-	// value forward; SuccessCount below quorum marks the entry unchecked.
+	// A below-quorum refresh reaches no verdict: it carries the last value forward; SuccessCount
+	// below quorum marks the entry unchecked.
 	WarningFired bool `json:"warning_fired"`
 
 	// FiringSince is the comparison time the current uninterrupted raw
@@ -293,26 +285,20 @@ type Service struct {
 	// the explorer's /divergences page surfaces a gap.
 	logger *slog.Logger
 
-	// onWarning + warningState power the edge-triggered fan-out
-	// hook. `warningState` maps
-	// pair.String() → the WarningFired of the most recent EVALUATED
-	// refresh; the hook fires only on `false → true` transitions, and a
-	// below-quorum refresh carries this value forward untouched.
+	// onWarning + warningState power the edge-triggered fan-out hook. `warningState` maps
+	// pair.String() → the WarningFired of the most recent EVALUATED refresh; the hook fires only on
+	// `false → true` transitions, and a below-quorum refresh carries this value forward untouched.
 	//
-	// firingSince maps pair.String() → the current
-	// uninterrupted raw-firing streak (its first and latest firing
-	// comparison times), and powers the WarningPersistence debounce in
-	// [Service.warningPersists]. It is cleared the moment a refresh
-	// finds the raw condition clear.
+	// firingSince maps pair.String() → the current uninterrupted raw-firing streak (its first and
+	// latest firing comparison times) and powers the WarningPersistence debounce in
+	// [Service.warningPersists]. It is cleared the moment a refresh finds the raw condition clear.
 	//
-	// notified records the pairs whose current firing episode has been
-	// delivered to onWarning. It is separate from warningState because
-	// warningState is the published verdict and must stay true while a
-	// failed delivery is retried.
+	// notified records the pairs whose current firing episode has been delivered to onWarning. It is
+	// separate from warningState because warningState is the published verdict and must stay true
+	// while a failed delivery is retried.
 	//
-	// restored records the pairs whose maps were seeded from the previous
-	// process's cached result ([Service.restoreWarningState]). warningMu
-	// guards all four maps.
+	// restored records the pairs whose maps were seeded from the previous process's cached result
+	// ([Service.restoreWarningState]). warningMu guards all four maps.
 	onWarning    WarningHook
 	warningMu    sync.Mutex
 	warningState map[string]bool

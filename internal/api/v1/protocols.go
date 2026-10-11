@@ -50,26 +50,20 @@ func (s *Server) protoDetailInitLocked() {
 	}
 }
 
-// cachedProtocolDetail returns the detail view for `key` with
-// stale-while-revalidate semantics:
+// cachedProtocolDetail returns the detail view for `key` with stale-while-revalidate semantics:
 //
 //   - fresh entry → served as-is (stale=false).
-//   - entry past protocolDetailTTL → served immediately (stale=true)
-//     while ONE detached rebuild runs on its own budget — a
-//     built page is never blanked by a slow/failing rebuild.
-//   - never built → wait for the detached single-flight build up to the
-//     caller's deadline. The build itself is NOT bound to that deadline
-//     (measured under replay load, builds bound to request contexts
-//     died and the cache never filled), so a request that
-//     times out 503s but the build completes and the retry lands warm.
+//   - entry past protocolDetailTTL → served immediately (stale=true) while ONE detached rebuild
+//     runs on its own budget — a built page is never blanked by a slow/failing rebuild.
+//   - never built → wait for the detached single-flight build up to the caller's deadline. The
+//     build is NOT bound to that deadline (builds bound to request contexts died under replay
+//     load and the cache never filled), so a request that times out 503s but the retry lands warm.
 //
-// The key is the full request-shape key from protocolDetailCacheKey —
-// protocol name AND bespoke window — NOT the bare name: the bespoke
-// block's content varies with ?days=, so a name-only key would serve one
-// window's numbers to another window's request. Per-server (the maps
-// live on Server, lazy-init'd) so it never leaks across test instances.
-// ok=false only when the caller's context is cancelled (or the build
-// produced no cacheable entry) on the cold path.
+// The key is the full request-shape key from protocolDetailCacheKey — protocol name AND bespoke
+// window — NOT the bare name: the bespoke block varies with ?days=, so a name-only key would serve
+// one window's numbers to another window's request. Per-server so it never leaks across test
+// instances. ok=false only when the caller's context is cancelled (or the build produced no
+// cacheable entry) on the cold path.
 func (s *Server) cachedProtocolDetail(ctx context.Context, key string, build func(context.Context) ProtocolDetailView) (view ProtocolDetailView, at time.Time, stale, ok bool) {
 	s.protoDetailMu.Lock()
 	s.protoDetailInitLocked()
@@ -1191,30 +1185,18 @@ func protocolContractIDs(contracts []ProtocolContractView, factories []string) [
 	return ids
 }
 
-// fillProtocolSeriesAndBreakdown fills BOTH the daily ActivitySeries
-// (+EventsTotal) and the event-type breakdown from the SAME source —
-// fast or raw — for this build. Each degrades independently on its own
-// error (an ok flag per field, same contract as every other fill here);
-// what it does NOT allow is one succeeding on the fast pre-aggregation
-// while the other succeeds on the raw ledger-window scan, because those
-// two windows differ (day-grain vs ledger-window) and the wire's
-// sum(EventBreakdown)==EventsTotal invariant assumes one shared window.
+// fillProtocolSeriesAndBreakdown fills BOTH the daily ActivitySeries (+EventsTotal) and the
+// event-type breakdown from the SAME source — fast or raw — for this build. Each degrades
+// independently on its own error (an ok flag per field); what it does NOT allow is one succeeding
+// on the fast pre-aggregation while the other uses the raw ledger-window scan, because the windows
+// differ (day-grain vs ledger-window) and the wire's sum(EventBreakdown)==EventsTotal invariant
+// assumes one shared window. So EITHER fast query erroring forces BOTH onto raw together.
 //
-// EITHER fast query erroring forces BOTH onto raw together. If
-// protocolBreakdown and protocolSeries each fell back independently, a
-// fast breakdown timeout with a succeeding fast series would leave the
-// breakdown on the ~104-day raw window while the series stayed on the
-// ~90-day fast window, so the typed breakdown sum could exceed
-// EventsTotal without either fill reporting a failure.
-//
-// The breakdown groups by topic[0]'s denormalized symbol (topic_0_sym),
-// which the lake only populates when topic[0] is a plain Symbol SCVal.
-// Many Soroban DEX events carry a non-Symbol topic[0] — Soroswap's
-// swap/sync events are the dominant case (190k+ over a 90d window with an
-// empty topic_0_sym) — so the typed breakdown alone under-counts the true
-// event total by a wide margin. To keep it reconciled with EventsTotal,
-// reconcileProtocolBreakdown appends a synthetic "untyped" bucket after
-// both fields here are set.
+// The breakdown groups by topic[0]'s denormalized symbol (topic_0_sym), which the lake only
+// populates when topic[0] is a plain Symbol SCVal. Many Soroban DEX events (Soroswap swap/sync is
+// the dominant case) carry a non-Symbol topic[0], so the typed breakdown alone under-counts the
+// event total. To keep it reconciled with EventsTotal, reconcileProtocolBreakdown appends a
+// synthetic "untyped" bucket after both fields here are set.
 func (s *Server) fillProtocolSeriesAndBreakdown(ctx context.Context, name string, ids []string, plan protocolActivityPlan, view *ProtocolDetailView) (seriesOK, breakdownOK bool) {
 	if plan.fast != nil {
 		series, sErr := plan.fast.ProtocolDailyActivityFast(ctx, ids, plan.sinceDay)

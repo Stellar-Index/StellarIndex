@@ -1052,29 +1052,22 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		sinkI128Overflows  int
 		sinkQuarantined    int
 	)
-	// process runs the per-event decode + route, identical regardless of the
-	// read source (soroban_events or CH contract_events). Decode failures
-	// soft-fail (cursor still advances; the row is deterministically broken so
-	// a retry would re-fail) and are counted for visibility. A SINK failure is
-	// classified ([classifySinkFault]): permanent → count + skip; transient or
-	// unclassified → hold the cursor below ev.Ledger for retry, counting the
-	// consecutive failing cycles for this exact row.
-	// Adjacent-duplicate guard:
-	// the lake is an append log and the projector reads it WITHOUT FINAL
-	// (see the feed-switch comment below), so re-ingested duplicate rows
-	// reach this callback — one copy each, CONSECUTIVELY, because the
-	// query's ORDER BY is the table's sort key. Stateless decoders +
-	// keyed ON CONFLICT sinks absorb that; BUFFERED decoders (phoenix's
-	// multi-event correlation) do NOT: a duplicate field-event re-opens
-	// a just-completed group as a partial (orphan noise) and, worse,
-	// interleaved with a genuine second leg it cross-assigns fields
-	// between legs (the 616 bond/unbond corruption class). Skip exact
-	// re-deliveries of the previous identity here — the ONE place every
-	// event enters decode — mirroring reconcile.go's identical guard.
-	// This also stops events_emitted over-counting duplicates (which
-	// made the projector's emit counts structurally disagree with the
-	// deduping completeness reconcile); rows_scanned deliberately still
-	// counts raw rows — it is a scan metric.
+	// process runs the per-event decode + route, identical regardless of the read source
+	// (soroban_events or CH contract_events). Decode failures soft-fail (cursor still advances; the
+	// row is deterministically broken so a retry would re-fail) and are counted for visibility. A
+	// SINK failure is classified ([classifySinkFault]): permanent → count + skip; transient or
+	// unclassified → hold the cursor below ev.Ledger for retry, counting the consecutive failing
+	// cycles for this exact row.
+	//
+	// Adjacent-duplicate guard: the lake is an append log and the projector reads it WITHOUT FINAL
+	// (see the feed-switch comment below), so re-ingested duplicate rows reach this callback, one copy
+	// each, CONSECUTIVELY (the query's ORDER BY is the table's sort key). Stateless decoders + keyed
+	// ON CONFLICT sinks absorb that; BUFFERED decoders (phoenix's multi-event correlation) do NOT: a
+	// duplicate field-event re-opens a completed group as a partial and, interleaved with a genuine
+	// second leg, cross-assigns fields between legs. Skip exact re-deliveries of the previous identity
+	// here — the ONE place every event enters decode — mirroring reconcile.go's identical guard. This
+	// also stops events_emitted over-counting duplicates; rows_scanned deliberately still counts raw
+	// rows — it is a scan metric.
 	var (
 		lastID     rowIdentity
 		haveLastID bool
@@ -1601,10 +1594,9 @@ func (p *Projector) holdForWidenedGate(source string, from, to uint32, added []s
 		"source", source, "from", from, "to", to, "added", len(added), "first_added", added[0])
 }
 
-// resolveTip returns the upper scan bound for one cycle. The base bound is
-// the live ledgerstream cursor's last_ledger (as gap_detector.go::
-// resolveGapDetectorTip), so the projector never gets ahead of
-// durably-ingested ledgers.
+// resolveTip returns the upper scan bound for one cycle: the live ledgerstream cursor's last_ledger
+// (as gap_detector.go::resolveGapDetectorTip), so the projector never gets ahead of durably-ingested
+// ledgers.
 //
 // In CH feed-switch mode (lakeEvents set) the bound is also clamped to the
 // lake's contiguous-completeness watermark for [from, …]: the live dual-sink
@@ -1617,10 +1609,9 @@ func (p *Projector) holdForWidenedGate(source string, from, to uint32, added []s
 // ([Projector.SetRawEventBarrier]) has seen every earlier row commit; a
 // barrier that cannot settle fails the cycle.
 //
-// scanLimit bounds the CH watermark query to one batch window past from.
-// durableTip is the unclamped ledgerstream tip: lag is measured against it so
-// a stalled watermark shows as rising lag, and a watermark error still
-// returns it so the failed cycle can publish lag.
+// scanLimit bounds the CH watermark query to one batch window past from. durableTip is the unclamped
+// ledgerstream tip: lag is measured against it so a stalled watermark shows as rising lag, and a
+// watermark error still returns it so the failed cycle can publish lag.
 func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from, scanLimit uint32) (scanTip, durableTip uint32, err error) {
 	c, err := p.store.GetCursor(ctx, "ledgerstream", "")
 	if err != nil {

@@ -15,25 +15,22 @@ import (
 
 // VWAPResult is the wire shape for /v1/vwap responses.
 //
-// Price is the volume-weighted mean as a decimal string (10-digit precision,
-// consistent with /v1/history + /v1/ohlc). Volumes are raw smallest-unit integer
-// strings at the per-SOURCE scale of the venues in the window (7 on-chain, 8 CEX,
-// 6 FX), lifted to one common scale when the window mixes venues;
-// BaseVolumeDecimals / QuoteVolumeDecimals state that scale, as [OHLCBar] does.
+// Price is the volume-weighted mean as a decimal string (10-digit precision, consistent with
+// /v1/history + /v1/ohlc). Volumes are raw smallest-unit integer strings at the per-SOURCE scale of
+// the venues in the window (7 on-chain, 8 CEX, 6 FX), lifted to one common scale when the window
+// mixes venues; BaseVolumeDecimals / QuoteVolumeDecimals state that scale, as [OHLCBar] does.
 //
-// OutliersFiltered is how many trades the sigma filter removed before the VWAP
-// computation; zero when outlier_sigma=0 or there were too few samples.
+// OutliersFiltered is how many trades the sigma filter removed before the VWAP computation; zero
+// when outlier_sigma=0 or there were too few samples.
 //
-// Truncated is true when the window hit the server's max-trades cap (10000): Price
-// is then only over the chronologically-LAST 10000 trades and is NOT the true
-// window VWAP. Clients should narrow the window. For cross-region-consistent
-// VWAPs, `/v1/price` serves the closed-bucket aggregator output (ADR-0015).
+// Truncated is true when the window hit the server's max-trades cap (10000): Price is then only
+// over the chronologically-LAST 10000 trades and is NOT the true window VWAP. Clients should
+// narrow the window. For cross-region-consistent VWAPs, `/v1/price` serves the closed-bucket
+// aggregator output (ADR-0015).
 //
-// LAST, not first: the reader orders `ts DESC` under the LIMIT and reverses, so
-// truncation drops the OLDEST rows. An `ORDER BY ts ASC LIMIT` would compute a
-// busy 24h VWAP from a slice that never reaches the present. Which end survives is
-// what a client needs to interpret a truncated price, so it is stated here and in
-// the OpenAPI description.
+// LAST, not first: the reader orders `ts DESC` under the LIMIT and reverses, so truncation drops
+// the OLDEST rows. An `ORDER BY ts ASC LIMIT` would compute a busy 24h VWAP from a slice that
+// never reaches the present. This is also stated in the OpenAPI description.
 type VWAPResult struct {
 	From        WireTime `json:"from"`
 	To          WireTime `json:"to"`
@@ -300,28 +297,22 @@ func (s *Server) fetchVWAPTrades(
 	return aggregate.ScaledWindow{}, false, false
 }
 
-// tradesInRangeWithStablecoinFallback is the single raw-trade fetch behind every
-// single-shot ("point") rate endpoint: /v1/vwap, /v1/twap and the single-bar
-// /v1/ohlc. Returns (window, triangulated, err), trades sorted by close time
-// ascending as [aggregate.ComputeOHLC] / [aggregate.TWAP] require and lifted to
-// one amount scale on both branches (a uniform window comes back byte-identical, a
-// mixed one weighted by real volume rather than smallest-unit magnitude).
+// tradesInRangeWithStablecoinFallback is the single raw-trade fetch behind every single-shot
+// ("point") rate endpoint: /v1/vwap, /v1/twap and the single-bar /v1/ohlc. Returns (window,
+// triangulated, err), trades sorted by close time ascending as [aggregate.ComputeOHLC] /
+// [aggregate.TWAP] require and lifted to one amount scale on both branches (a uniform window comes
+// back byte-identical, a mixed one weighted by real volume rather than smallest-unit magnitude).
 //
-// A fiat-denominated quote has almost no trade stream of its own; the depth sits
-// under the fiat's pegged stablecoin pairs, so it is served by COMBINING every
-// constituent of [Server.usdPeggedConstituents], the set the /v1/ohlc series path
-// combines and the live aggregator computes its VWAP over. Taking the FIRST
-// non-empty peg would answer `?quote=fiat:USD` differently for a point than for a
+// A fiat-denominated quote has almost no trade stream of its own; the depth sits under the fiat's
+// pegged stablecoin pairs, so it is served by COMBINING every constituent of
+// [Server.usdPeggedConstituents], as the /v1/ohlc series path and the live aggregator do. Taking
+// the FIRST non-empty peg would answer `?quote=fiat:USD` differently for a point than for a
 // series; see [Server.fiatCombinedTrades].
 //
-// A non-fiat quote walks the XLM dual-form alias pairs and takes the FIRST form
-// with trades, the gate [Server.ohlcSeriesWithAliases] applies on the series side,
-// so point and series resolve an aliased input (?base=crypto:XLM&quote=USDC, whose
-// SDEX depth is keyed under native/USDC) identically instead of 404ing here.
-//
-// CAGG-reading siblings: ohlc_fiat_combine.go's ohlcSeriesFiatCombined (OHLC
-// series) and price_at.go's lookupPriceAtStablecoinFallback (closed-1m-VWAP-CAGG
-// point lookup).
+// A non-fiat quote walks the XLM dual-form alias pairs and takes the FIRST form with trades, the
+// gate [Server.ohlcSeriesWithAliases] applies on the series side, so point and series resolve an
+// aliased input (?base=crypto:XLM&quote=USDC, whose SDEX depth is keyed under native/USDC)
+// identically instead of 404ing here.
 func (s *Server) tradesInRangeWithStablecoinFallback(
 	ctx context.Context, pair canonical.Pair, from, to time.Time, maxTrades int,
 ) (aggregate.ScaledWindow, bool, error) {

@@ -21,28 +21,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ch-cap67-movements derives post-P23 account movements for EVERY asset
-// (native XLM included) from the lake's CAP-67 transfer, mint, burn and
-// clawback events into stellar.account_movements, provenance 'cap67_derived'.
+// ch-cap67-movements derives post-P23 account movements for EVERY asset (native XLM included) from
+// the lake's CAP-67 transfer, mint, burn and clawback events into stellar.account_movements,
+// provenance 'cap67_derived'.
 //
-// WHY: the Postgres sep41_transfers tail projects only WATCHED contracts, and
-// native XLM's SAC is deliberately unwatched (volume), so without this job a
-// classic-payment account's /movements feed stops at the P23 boundary.
+// WHY: the Postgres sep41_transfers tail projects only WATCHED contracts, and native XLM's SAC is
+// deliberately unwatched (volume), so without this job a classic-payment account's /movements feed
+// stops at the P23 boundary.
 //
 // SHAPE: windowed and resumable via stellar.cap67_movements_watermark
-// (deploy/clickhouse/cap67_movements.sql). `-follow` is the real-time daemon:
-// catch up from the watermark (or the P23 boundary) to the CONTIGUOUS lake
-// tip, sleep -follow-interval, repeat. Without it, a one-shot catch-up for
-// manual -from/-to backfills. Idempotent: account_movements is a
-// ReplacingMergeTree keyed (address, ledger, tx_hash, op_index, leg_index,
-// direction). From P23 CAP-67 reports a payment from an asset's issuer as
-// `mint` and one to it as `burn`, so those kinds and `clawback` are derived
-// too or an issuer's payments vanish; their range is tracked separately
-// (see cap67SupplyFill).
+// (deploy/clickhouse/cap67_movements.sql). `-follow` is the real-time daemon: catch up from the
+// watermark (or the P23 boundary) to the CONTIGUOUS lake tip, sleep -follow-interval, repeat.
+// Without it, a one-shot catch-up. Idempotent: account_movements is a ReplacingMergeTree keyed
+// (address, ledger, tx_hash, op_index, leg_index, direction). From P23 CAP-67 reports a payment
+// from an asset's issuer as `mint` and one to it as `burn`, so those and `clawback` are derived too
+// or an issuer's payments vanish (range tracked separately, see cap67SupplyFill).
 //
-// The API's movements handler floors its Postgres arm at this job's
-// watermark, so the two arms are gap-free and double-count-free at any
-// backfill progress.
+// The API's movements handler floors its Postgres arm at this job's watermark, so the two arms are
+// gap-free and double-count-free at any backfill progress.
 func chCap67Movements(args []string) error {
 	fs := flag.NewFlagSet("ch-cap67-movements", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
@@ -446,26 +442,20 @@ func resolveDeriveRange(ctx context.Context, chAddr, verb string, from, to, floo
 		}
 		start = resolveStart(wm, floorLedger, lakeMin)
 	}
-	// CONTIGUITY GATE (money-display correctness): the LiveSink drops
-	// whole ledgers under buffer pressure, so the lake can have holes
-	// near the tip. Reading to the raw max would derive PAST a hole and
-	// advance the watermark past it — and since we resume from
-	// watermark+1 with no trailing re-derive, that ledger's classic/native
-	// movements would be LOST PERMANENTLY (the raw lake self-heals via
-	// ch-live-catchup, but account_movements never revisits it). Clamp the
-	// upper bound to the contiguous watermark from `start` — the same
-	// guard the real-time projector uses (projector.resolveTip) — so the
-	// derive STALLS at a hole (delayed, not lost) until catch-up heals it.
-	// Keyed off stellar.ledgers, the per-ledger commit marker flushed LAST:
-	// present-in-ledgers ⟹ that ledger's contract_events are durable.
-	// Returns start-1 when start is itself a hole / the lake hasn't reached
-	// it, which the caller's `last < start` guard treats as "nothing to do".
+	// CONTIGUITY GATE (money-display correctness): the LiveSink drops whole ledgers under buffer
+	// pressure, so the lake can have holes near the tip. Reading to the raw max would derive PAST a
+	// hole and advance the watermark past it — and since we resume from watermark+1 with no trailing
+	// re-derive, that ledger's classic/native movements would be LOST PERMANENTLY (the raw lake
+	// self-heals via ch-live-catchup, but account_movements never revisits it). Clamp the upper bound
+	// to the contiguous watermark from `start` — the same guard the real-time projector uses
+	// (projector.resolveTip) — so the derive STALLS at a hole (delayed, not lost) until catch-up heals
+	// it. Keyed off stellar.ledgers, the per-ledger commit marker flushed LAST: present-in-ledgers ⟹
+	// that ledger's contract_events are durable. Returns start-1 when start is itself a hole / the lake
+	// hasn't reached it, which the caller's `last < start` guard treats as "nothing to do".
 	//
-	// The clamp is UNCONDITIONAL: an operator-supplied -to is min()'d against
-	// the tip rather than trusted. With the gate only in the to == 0 branch,
-	// `-to N` would walk straight past a hole below N and stamp the
-	// watermark at every window top on the way — the loss above, on the one
-	// invocation shape an operator reaches for after an incident.
+	// The clamp is UNCONDITIONAL: an operator-supplied -to is min()'d against the tip rather than
+	// trusted. With the gate only in the to == 0 branch, `-to N` would walk straight past a hole below
+	// N and stamp the watermark at every window top on the way — the loss above.
 	tip, err := clickhouse.ContiguousWatermark(ctx, chAddr, start)
 	if err != nil {
 		return 0, 0, fmt.Errorf("resolve contiguous lake tip: %w", err)

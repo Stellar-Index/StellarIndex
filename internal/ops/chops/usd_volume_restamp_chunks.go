@@ -22,28 +22,23 @@ import (
 )
 
 // ─── `usd-volume-restamp -chunks`: the chunk-by-chunk walk ─────────────
-// The TIER-AGNOSTIC driver: it owns the chunks, compression policy, run lock
-// and free-space guard; rows are the tier's business ([chunkRestampTier]).
+// The TIER-AGNOSTIC driver: it owns the chunks, compression policy, run lock and free-space
+// guard; rows are the tier's business ([chunkRestampTier]).
 //
-// A DML into a compressed chunk decompresses it wholesale (one 2,000-row
-// UPDATE took over 14 minutes and committed nothing), so per chunk, oldest
-// first, the walk decompresses, runs the SAME restamp restricted to that chunk
-// in -chunk-batch transactions, re-compresses, and heartbeats. Guards:
+// A DML into a compressed chunk decompresses it wholesale (one 2,000-row UPDATE took over 14
+// minutes and committed nothing), so per chunk, oldest first, the walk decompresses, runs the SAME
+// restamp restricted to that chunk in -chunk-batch transactions, re-compresses, and heartbeats.
+// Guards:
 //   - ONE RUN AT A TIME: a -write run holds a session advisory lock.
-//   - THE COMPRESSION POLICY IS PAUSED for a -write run, or it re-compresses
-//     the open chunk between batches and the walk crawls silently. It is
-//     re-enabled on every exit path, its SQL printed first for a SIGKILL;
-//     an already-paused policy needs -resume-paused-policy.
-//   - A by-hand compress_chunk STOPS the walk with the RESUME line (the chunk
-//     is checked before every batch) instead of crawling.
-//   - PRE-FLIGHT: free space must exceed 2 x the largest chunk's uncompressed
-//     size (up to 160 GB), rechecked before every decompress; a remote DSN
-//     needs -min-free-bytes (statfs is local).
-//   - LIVE-ADJACENT chunks are refused without -allow-live-adjacent (they are
-//     uncompressed on purpose; use the in-place walk).
-//   - A FAILED CHUNK IS RE-COMPRESSED before a non-zero exit, repair printed
-//     first (either can outlive SIGKILL). Resumable via a read-only probe;
-//     -generation keeps the span at ONE generation.
+//   - THE COMPRESSION POLICY IS PAUSED for a -write run, or it re-compresses the open chunk
+//     between batches and the walk crawls silently. It is re-enabled on every exit path, its SQL
+//     printed first for a SIGKILL; an already-paused policy needs -resume-paused-policy.
+//   - A by-hand compress_chunk STOPS the walk with the RESUME line (checked before every batch).
+//   - PRE-FLIGHT: free space must exceed 2 x the largest chunk's uncompressed size (up to 160 GB),
+//     rechecked before every decompress; a remote DSN needs -min-free-bytes (statfs is local).
+//   - LIVE-ADJACENT chunks are refused without -allow-live-adjacent (uncompressed on purpose).
+//   - A FAILED CHUNK IS RE-COMPRESSED before a non-zero exit, repair printed first (either can
+//     outlive SIGKILL). Resumable via a read-only probe; -generation keeps the span at ONE generation.
 
 // chunkRestampStore is the DRIVER's seam: the chunk, policy and lock
 // primitives, and nothing that knows a tier. *timescale.Store satisfies
@@ -541,26 +536,23 @@ type chunkRestampWalk struct {
 // catalog reads for the whole phase.
 const defaultChunkBytesPoll = 30 * time.Second
 
-// watchChunkBytes publishes the chunk's live on-disk size as byte progress
-// while the walk is inside that chunk, and returns the stop for the poll.
+// watchChunkBytes publishes the chunk's live on-disk size as byte progress while the walk is
+// inside that chunk, and returns the stop for the poll.
 //
-// A decompress is the longest step of a run (49+ min on a 17.3 GB chunk,
-// ~1.5 h on the 159.7 GB outlier) and row progress is zero throughout, so
-// stellarindex_ops_job_no_progress would ticket every healthy run. Muting or
-// widening the alert would blind it during the step most likely to wedge.
-// decompress_chunk grows the chunk's OWN relations, which an observer sizes
-// by stat, so the figure climbs while a decompress runs and stays flat when
-// one is wedged (measured: every sample moved over a 44.1 s decompress).
+// A decompress is the longest step of a run (49+ min on a 17.3 GB chunk, ~1.5 h on the 159.7 GB
+// outlier) and row progress is zero throughout, so stellarindex_ops_job_no_progress would ticket
+// every healthy run. Muting or widening the alert would blind it during the step most likely to
+// wedge. decompress_chunk grows the chunk's OWN relations, which an observer sizes by stat, so the
+// figure climbs while a decompress runs and stays flat when one is wedged.
 //
-// The re-compress is NOT covered: it builds a new relation invisible to the
-// observer until commit. At the measured 0.52x of the decompress, the
-// outlier's re-compress (~47 min) outlasts the alert's 45 min. That fails
-// SAFE, one extra ticket rather than silence; the runbook says to confirm it
-// with pg_stat_activity. Cluster-wide counters keep moving while this job is
-// wedged, so they would be a mute dressed as progress.
+// The re-compress is NOT covered: it builds a new relation invisible to the observer until commit.
+// At the measured 0.52x of the decompress, the outlier's re-compress (~47 min) outlasts the
+// alert's 45 min. That fails SAFE, one extra ticket rather than silence; the runbook says to
+// confirm it with pg_stat_activity. Cluster-wide counters keep moving while this job is wedged, so
+// they would be a mute dressed as progress.
 //
-// FAIL-SOFT: a failed poll is skipped. A never-succeeding poll leaves the
-// counter flat, which the alert already covers.
+// FAIL-SOFT: a failed poll is skipped. A never-succeeding poll leaves the counter flat, which the
+// alert already covers.
 func (w *chunkRestampWalk) watchChunkBytes(ctx context.Context, c timescale.TradeChunk) (stop func()) {
 	poll := w.copts.ChunkBytesPoll
 	if poll <= 0 {

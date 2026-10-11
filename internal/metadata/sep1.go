@@ -241,51 +241,40 @@ var ErrTOMLTooLarge = errors.New("sep1: TOML body exceeds 100 KiB limit")
 // StellarTomlMaxSize) enforces the same 100 * 1024.
 const maxBodyBytes = 100 << 10
 
-// ErrTOMLTooDeep is returned when a stellar.toml nests structural
-// brackets, or tables through dotted keys and headers, deeper than
-// [maxTOMLNestingDepth].
+// ErrTOMLTooDeep is returned when a stellar.toml nests structural brackets, or tables through
+// dotted keys and headers, deeper than [maxTOMLNestingDepth].
 //
 // # Why a byte cap is not enough
 //
-// [maxBodyBytes] bounds the INPUT; it does not bound the WORK the
-// decoder does on that input, and the decoder's cost is superlinear in
-// nesting depth. Measured against the pinned decoder on this host:
-// 250 nested inline tables (1,005 bytes) allocate 8 MiB, 1,000 (4 KB)
-// allocate 117 MiB, 4,000 (16 KB) allocate 1.81 GiB in 0.72s — roughly
-// quadratic, and a 100 KiB body admits ~26,000 levels. The refresh unit
-// runs under MemoryMax=2G, so a 16 KB document any 1-XLM account can
-// publish from its home_domain is enough to have the whole worker
-// SIGKILLed by the cgroup. Depth is the one dimension that does this:
-// the same measurement over nested ARRAYS and over 10,000 sibling
-// [[CURRENCIES]] tables is linear (0.6 MiB in 55ms).
+// [maxBodyBytes] bounds the INPUT, not the WORK the decoder does, and the decoder's cost is
+// superlinear in nesting depth. Measured against the pinned decoder: 250 nested inline tables
+// (1,005 bytes) allocate 8 MiB, 1,000 (4 KB) allocate 117 MiB, 4,000 (16 KB) allocate 1.81 GiB in
+// 0.72s, and a 100 KiB body admits ~26,000 levels. The refresh unit runs under MemoryMax=2G, so a
+// 16 KB document any 1-XLM account can publish from its home_domain is enough to have the whole
+// worker SIGKILLed by the cgroup. Depth is the one dimension that does this: nested ARRAYS and
+// 10,000 sibling [[CURRENCIES]] tables are linear (0.6 MiB in 55ms).
 //
-// So the depth is bounded BEFORE the body reaches the decoder, and a
-// document over the bound is refused the way any other unparseable
-// document is — the issuer is marked failed and the run moves on.
+// So the depth is bounded BEFORE the body reaches the decoder, and a document over the bound is
+// refused like any other unparseable document — the issuer is marked failed and the run moves on.
 var ErrTOMLTooDeep = errors.New("sep1: TOML nests tables deeper than the parse budget allows")
 
 // Nesting bounds enforced by [checkTOMLNesting].
 //
-// maxTOMLNestingDepth is the real limit, measured by a scan that knows where
-// strings and comments are. 32 is far past SEP-1's deepest construct (an inline
-// table inside an array of tables, two levels) and bounds decoder allocation on
-// a full-size body to a few hundred KB.
+// maxTOMLNestingDepth is the real limit, measured by a scan that knows where strings and comments
+// are. 32 is far past SEP-1's deepest construct (an inline table inside an array of tables, two
+// levels) and bounds decoder allocation on a full-size body to a few hundred KB.
 //
-// maxRawTOMLNestingDepth is a context-free backstop for a string-aware scan that
-// loses track of a string. It is not a guarantee: a closing bracket in data
-// lowers the count. The guarantee is the string-aware scans ending every string
-// and comment where the decoder's lexer does (TestSkipTOMLStringMatchesDecoder).
-// At the raw bound the decoder allocates ~8 MiB. Because it cannot tell data
-// from structure, 256 unclosed brackets or dots inside one string refuse the
-// document; accepted, since resetting at string edges would blind it to the one
-// case it exists for.
+// maxRawTOMLNestingDepth is a context-free backstop for a string-aware scan that loses track of a
+// string. It is not a guarantee: a closing bracket in data lowers the count. The guarantee is the
+// string-aware scans ending every string and comment where the decoder's lexer does
+// (TestSkipTOMLStringMatchesDecoder). At the raw bound the decoder allocates ~8 MiB. Because it
+// cannot tell data from structure, 256 unclosed brackets or dots inside one string refuse the
+// document; accepted, since resetting at string edges would blind it to the one case it exists for.
 //
-// Both bounds also cover dotted table nesting (`a.b.c = 1`, `[a.b.c]`), which
-// creates a table per segment at cost quadratic in key-path length. The full
-// path a key reaches is held to maxTOMLNestingDepth: 32-segment paths across a
-// full body cost ~110 MiB transient, one 16,000-segment key cost 4.75 GiB. The
-// raw bound is looser for dots: 251-segment keys, which only it stops, allocate
-// ~1 GiB.
+// Both bounds also cover dotted table nesting (`a.b.c = 1`, `[a.b.c]`), which creates a table per
+// segment at cost quadratic in key-path length. The full path a key reaches is held to
+// maxTOMLNestingDepth: 32-segment paths across a full body cost ~110 MiB transient, one
+// 16,000-segment key cost 4.75 GiB.
 const (
 	maxTOMLNestingDepth    = 32
 	maxRawTOMLNestingDepth = 256

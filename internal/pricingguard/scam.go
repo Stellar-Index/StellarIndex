@@ -1,27 +1,21 @@
-// Scam-pricing gate: the serving-side "issuer is flagged" floor.
+// Scam-pricing gate: the serving-side "issuer is flagged" floor. The substance gate is blind to a
+// liquid market run by a flagged fraud; for an asset whose ISSUER carries a scam-class directory
+// tag, this gate withholds the AGGREGATED price claim (raw trade surfaces stay visible). It
+// DELIBERATELY overturns the directory's "tags never gate pricing" invariant.
 //
-// The substance gate is blind to a liquid market run by a flagged fraud. For an
-// asset whose ISSUER carries a scam-class directory tag, this gate withholds the
-// AGGREGATED price claim; raw trade surfaces stay visible. It DELIBERATELY
-// overturns the directory's "tags never gate pricing" invariant.
-//
-// There is no single seam: /v1/twap and /v1/vwap compute from raw trades and
-// never touch the price reader. Consumers: the price-reader chokepoint
-// (priceWithheld, via [Gate]), alert and webhook paths, /v1/price/tip, the
-// price stream (connect AND every bucket), and the vwap, twap, chart and
+// Consumers: the price-reader chokepoint (priceWithheld, via [Gate]), alert and webhook paths,
+// /v1/price/tip, the price stream (connect AND every bucket), and the vwap, twap, chart and
 // since-inception handlers. A new price-claim surface must add its own call.
 //
-// BOTH LEGS, always: withholding is a property of the MARKET, else
-// `?base=native&quote=<FLAGGED>` would republish the reciprocal of the refused
-// price. [ScamGate.WithheldPair] folds both legs.
+// BOTH LEGS, always: withholding is a property of the MARKET, else `?base=native&quote=<FLAGGED>`
+// would republish the reciprocal of the refused price ([ScamGate.WithheldPair] folds both legs).
 //
 // Fail-OPEN, like substance.go: a directory-reader error does not withhold
 // (counted in obs.ScamGateLookupFailuresTotal); failing closed blanks every price.
 //
-// OPERATOR OVERRIDE of a false positive: no allow-list here, since it would
-// disagree with the /v1/assets rank tier and the explorer flag pill.
-// `stellarindex-ops directory-override -clear-scam-flag` drops only the
-// scam-class tags; the gate follows within scamCacheTTL.
+// OPERATOR OVERRIDE of a false positive: `stellarindex-ops directory-override -clear-scam-flag`
+// drops only the scam-class tags; the gate follows within scamCacheTTL. No allow-list here: it
+// would disagree with the /v1/assets rank tier and the explorer flag pill.
 package pricingguard
 
 import (
@@ -312,19 +306,16 @@ func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface s
 	return g.withheldLeg(ctx, base, surface)
 }
 
-// withheldLeg is the single-asset predicate both exported forms fold over:
-// "is THIS asset's issuer directory-scam-flagged?". Nil-receiver safe. Fail-open
-// on directory error.
+// withheldLeg is the single-asset predicate both exported forms fold over: "is THIS asset's
+// issuer directory-scam-flagged?". Nil-receiver safe; fail-open on directory error.
 //
 // A CLASSIC asset is judged on its issuer G-address and a contract token on its
 // own C-address. Native / fiat / crypto-CEX assets have no address to flag.
 //
-// The asset is first resolved to its CANONICAL family form
-// (canonical.CanonicalAsset): a SAC wrapper has no G-address of its own, so
-// without resolution a flagged issuer's price would stay servable via the
-// wrapper's C-address, on every surface and the quote leg too. Resolution is
-// one-way and classic-first; XLM's SAC canonicalises to `native`, which has no
-// issuer and returns false.
+// The asset is first resolved to its CANONICAL family form (canonical.CanonicalAsset): a SAC
+// wrapper has no G-address of its own, so without resolution a flagged issuer's price would stay
+// servable via the wrapper's C-address. Resolution is one-way and classic-first; XLM's SAC
+// canonicalises to `native`, which has no issuer and returns false.
 //
 // A SAC with no `[supply].sac_wrappers` entry resolves to itself (a C-address
 // cannot be inverted without that table), so a contract leg is matched against
