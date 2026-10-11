@@ -23,26 +23,22 @@ import (
 // time, on the reference basis.
 //
 // It is the reference valuation of /v1/rwa/assets over time, not its
-// market cap: most of the set is held to maturity and never trades, so a
-// market series would chart a small overlap under a sector headline.
+// market cap: most of the set is held to maturity and never trades.
 // Per-asset market-cap history is /v1/chart?price_type=market_cap.
 //
 // A member's daily value is circulating supply × the day's closing oracle
 // value. Supply is cumulated from the lake's append-only mint/burn/
-// clawback log (`stellar.supply_flows`, keyed on the SAC address); the
-// log records every level change, so carrying it across a silent day is
-// arithmetic. Price comes from `oracle_prices_1d` (`rwa:<CODE>` /
-// `fiat:USD`) and is never carried: a silent oracle day drops that member
-// and shows in `assets_valued`. A day with no valued member has no point,
-// because a zero cannot say whether it means worthless or unseen.
+// clawback log (`stellar.supply_flows`, keyed on the SAC address). Price
+// comes from `oracle_prices_1d` (`rwa:<CODE>` / `fiat:USD`) and is never
+// carried: a silent oracle day drops that member and shows in
+// `assets_valued`. A day with no valued member has no point, because a
+// zero cannot say whether it means worthless or unseen.
 //
-// Supply is not read from `supply_1d`: it rolls up only the operator's
-// `watched_classic_assets`, which holds no RWA issuer, so it would chart
-// an empty sector.
+// Supply is not read from `supply_1d`: it rolls up only
+// `watched_classic_assets`, which holds no RWA issuer.
 //
 // Membership is today's SEP-1 attestations and curated directory, applied
-// to the whole window, and says so in `membership_as_of` and `basis`; a
-// per-day membership would need an attestation history we do not keep.
+// to the whole window (see `membership_as_of` and `basis`).
 
 // rwaHistoryTTL bounds the reuse of one assembled history.
 //

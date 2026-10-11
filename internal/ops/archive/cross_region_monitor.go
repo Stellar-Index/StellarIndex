@@ -25,23 +25,11 @@ import (
 // per-region fetch + per-bucket analysis code path as the one-shot
 // check; only the outer loop and the output sink differ.
 //
-// The intended deployment is a sidecar systemd service on the
-// observability host:
-//
-//   stellarindex-ops cross-region-monitor \
-//     -regions r1=https://r1.api...,r2=https://r2.api...,r3=https://r3.api... \
-//     -pairs native/fiat:USD \
-//     -metric vwap \
-//     -interval 60s \
-//     -listen :9479
-//
-// Then a Grafana panel scrapes :9479/metrics. Alertmanager fires on:
+// Intended as a sidecar systemd service on the observability host; a
+// Grafana panel scrapes :9479/metrics. Alertmanager fires on:
 //
 //   rate(stellarindex_cross_region_divergences_total[10m]) > 0
 //   rate(stellarindex_cross_region_fetch_errors_total[5m])  > 0.1
-//
-// (Concrete alerts land with docs/operations/runbooks/ when the
-// observability box is provisioned.)
 
 func crossRegionMonitor(args []string) error { //nolint:funlen,gocognit,gocyclo // single-purpose long-running loop
 	fs := flag.NewFlagSet("cross-region-monitor", flag.ContinueOnError)

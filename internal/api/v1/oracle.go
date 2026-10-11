@@ -55,18 +55,15 @@ type oracleAtReader interface {
 // would answer any classic asset whose code spells a global ticker with the REAL
 // issuer's oracle rows (attacker-authored pricing): identity is (code, issuer),
 // never code alone. Only an asset the verified-currency catalogue itself issues
-// under that ticker (internal/currency) may claim the ticker's readings; an
-// impersonator gets its own key and, correctly, no rows.
+// under that ticker (internal/currency) may claim the ticker's readings.
 //
 // A Soroban contract id resolves FIRST through the deterministic SAC derivation
 // (internal/xdrjson, ADR-0013): a contract that IS native XLM's or a verified
-// asset's SAC inherits the classic key and then faces the same gate. A C-address
-// in neither set keeps only its own key.
+// asset's SAC inherits the classic key and then faces the same gate.
 //
-// Every form is first expanded through [canonical.AssetAliases]; the verified-
-// ticker grant is layered on top for this serving path only. The result always
-// starts with the original asset; later entries are best-effort translations for
-// the storage layer's `WHERE asset = ANY($1)` filter.
+// Every form is first expanded through [canonical.AssetAliases]. The result
+// always starts with the original asset; later entries are best-effort
+// translations for the storage layer's `WHERE asset = ANY($1)` filter.
 func (s *Server) oracleAssetCandidates(a canonical.Asset) []canonical.Asset {
 	candidates := canonical.AssetAliases(a)
 

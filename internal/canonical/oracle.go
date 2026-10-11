@@ -19,12 +19,7 @@ import (
 // rates; Redstone: U256 at 8 decimals for most feeds). Rather than normalise at
 // ingest (which loses precision or forces a float), the raw integer is kept in
 // [Price] with the source-declared [Decimals], and the aggregation layer scales
-// on read:
-//
-//	decimalValue := new(big.Float).Quo(
-//	    new(big.Float).SetInt(update.Price.BigInt()),
-//	    new(big.Float).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(update.Decimals)), nil)),
-//	)
+// on read.
 //
 // # Pair vs single-asset
 //

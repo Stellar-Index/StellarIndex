@@ -26,13 +26,9 @@ import (
 //   - aggregate=latest (optional): collapse to the single most-recent trade across
 //     all sources; the array wire shape is preserved.
 //
-// flags.stale is always false here (no aggregation contract to fall short of,
-// ADR-0018). Freeze + divergence flags are intentionally NOT consulted: adding
-// them would imply an aggregation layer we did not build.
-//
-// ?granularity= and ?window_seconds= return 400 (ADR-0018 URL discipline):
-// accepting closed-bucket and tip concepts here would let a stray query param
-// select between consistency tiers.
+// flags.stale is always false here (ADR-0018); freeze + divergence flags are
+// intentionally NOT consulted. ?granularity= and ?window_seconds= return 400
+// (ADR-0018 URL discipline).
 func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	if s.History == nil {
 		writeProblem(w, r,

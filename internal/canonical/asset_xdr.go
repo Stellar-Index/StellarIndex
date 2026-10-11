@@ -14,26 +14,23 @@ import (
 // ONE definition of "which on-chain assets this system can represent",
 // and therefore of which SDEX fills become trade rows.
 //
-// Handles the three classic asset variants: native, credit alphanum4,
-// credit alphanum12. A Soroban SAC-wrapped classic asset arrives here as
-// classic — the SAC address is metadata, not canonical identity (see the
-// [Asset] docstring and [Asset.SacContractID]).
+// Handles native, credit alphanum4 and credit alphanum12. A Soroban
+// SAC-wrapped classic asset arrives as classic — the SAC address is
+// metadata, not canonical identity (see [Asset.SacContractID]).
 //
-// It returns an ERROR — never a partial or best-effort asset — for every
-// input the model cannot represent exactly:
+// It returns an ERROR — never a partial asset — for every input the model
+// cannot represent exactly:
 //
 //   - an unsupported/future xdr.AssetType;
 //   - an issuer whose ed25519 bytes don't strkey-encode;
-//   - a code that fails [validateClassicAssetCode] (empty after
-//     null-trim, over 12 bytes, or carrying a non-ASCII-alphanumeric
-//     byte — stellar-core does not enforce the character rule, so
-//     control-byte and emoji codes DO occur on pubnet).
+//   - a code that fails [validateClassicAssetCode] (stellar-core does not
+//     enforce the character rule, so control-byte and emoji codes DO occur
+//     on pubnet).
 //
-// It lives in this leaf package, not in internal/sources/sdex, because the
-// dispatcher census and the lake extractor count "real trades" from the same
-// ClaimAtom slices as the decoder; without the shared rule a rejected fill
-// would be counted by the oracles yet dropped by the writer. It also lets
-// internal/sdexclaim apply the rule (it cannot import sdex: import cycle).
+// It lives in this leaf package so the dispatcher census, the lake
+// extractor and internal/sdexclaim (which cannot import sdex: import
+// cycle) all apply one rule; otherwise a rejected fill would be counted
+// by the oracles yet dropped by the writer.
 func AssetFromXDR(a xdr.Asset) (Asset, error) {
 	switch a.Type {
 	case xdr.AssetTypeAssetTypeNative:

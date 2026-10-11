@@ -46,17 +46,13 @@ const (
 // proxy, else r.RemoteAddr stripped of the port; never the first hop, which the
 // caller writes).
 //
-// 429 is skipped: one misconfigured client can produce thousands per second on a
-// public origin and flood journald, dropping other services' messages. Visibility
-// is kept by the `stellarindex_http_requests_total{status="429"}` counter
-// (`internal/obs/http_middleware.go`).
+// 429 is skipped: one misconfigured client can produce thousands per second and
+// flood journald. Visibility is kept by the
+// `stellarindex_http_requests_total{status="429"}` counter.
 //
-// Synthetic traffic goes to DEBUG, the same judgement the SLO uses
-// ([obs.IsSyntheticRequest]); the SLA probe would otherwise dominate the journal.
-// Only SUCCESSFUL synthetic requests are demoted; a 4xx or 5xx stays at
-// WARN/ERROR, and counts stay exact.
-//
-// Does NOT log query parameters or request bodies: they may carry API keys or PII.
+// Synthetic traffic uses the same judgement as the SLO ([obs.IsSyntheticRequest]);
+// only SUCCESSFUL synthetic requests are demoted. Does NOT log query parameters
+// or request bodies: they may carry API keys or PII.
 func Logger(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()

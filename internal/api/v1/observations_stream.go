@@ -33,28 +33,22 @@ const (
 
 // handleObservationsStream serves GET /v1/observations/stream — the
 // SSE counterpart to /v1/observations per ADR-0018 §"SSE wires onto
-// the tip surface" (the same wire model applies to the observations
-// surface).
+// the tip surface".
 //
 // Wire shape per connection:
 //
-//   - Initial event: emitted on connect with the current per-source
-//     observations (or `[]` when the pair has no trades yet —
-//     observations returns empty arrays not 404s, and the stream
-//     mirrors that).
-//   - Recurring events: every interval_seconds (default 5, clamp 1–60)
-//     a fresh LatestTradePerSource scan (bypassing the SWR history cache,
-//     since each event is stamped as_of=now) runs and an `observations_update`
-//     event fires UNCONDITIONALLY (no client-side dedupe). Customers
-//     who want change-detection diff against the previous payload.
+//   - Initial event: on connect, the current per-source observations (or
+//     `[]` when the pair has no trades yet, mirroring /v1/observations).
+//   - Recurring events: every interval_seconds (default 5, clamp 1–60) a
+//     fresh LatestTradePerSource scan (bypassing the SWR history cache,
+//     since each event is stamped as_of=now) runs and an
+//     `observations_update` event fires UNCONDITIONALLY (no dedupe).
 //   - Heartbeats: every streaming.DefaultHeartbeatInterval (15 s) when
 //     no real event has flowed.
 //
-// Same URL-discipline rules as /v1/observations: ?granularity= and
-// ?window_seconds= return 400 (closed-bucket and tip concepts; not
-// valid here). The `interval_seconds` knob is observations-specific
-// — its name deliberately differs from `window_seconds` because the
-// raw-observations surface has no aggregation window.
+// ?granularity= and ?window_seconds= return 400, as on /v1/observations.
+// `interval_seconds` is named differently from `window_seconds` because
+// the raw-observations surface has no aggregation window.
 func (s *Server) handleObservationsStream(w http.ResponseWriter, r *http.Request) {
 	// Admit against the concurrency caps FIRST, before the
 	// synchronous pre-flight compute below (computeObservations) runs.
