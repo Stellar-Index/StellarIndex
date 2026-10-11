@@ -11,12 +11,10 @@ import (
 	"time"
 )
 
-// TestHandleDiagnosticsIngestion_StaleSnapshotFallsBackToInlineBuild pins
-// the fix for a background refresher that has stopped: a frozen
-// ingestionSnapshot must not be served forever. Once its computedAt is
-// older than ingestionSnapshotMaxAge, the handler falls back to the
-// inline build (the same path used before the refresher's first fire)
-// rather than serving the dead snapshot's frozen ledger data.
+// TestHandleDiagnosticsIngestion_StaleSnapshotFallsBackToInlineBuild pins that a stopped
+// background refresher cannot freeze the endpoint: once the snapshot's computedAt is older than
+// ingestionSnapshotMaxAge, the handler falls back to the inline build rather than serving the
+// dead snapshot's frozen ledger data.
 func TestHandleDiagnosticsIngestion_StaleSnapshotFallsBackToInlineBuild(t *testing.T) {
 	srv := New(Options{})
 

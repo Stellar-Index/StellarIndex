@@ -9,11 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// wiringPayloadOnlySep1Cache is the shape a future caching wrapper could
-// take: it answers GetIssuerSep1Cached but was never given
-// IssuerSep1Unreachable, so it does not satisfy the optional
-// Sep1FetchStateReader seam consulted via type assertion in
-// sep1StatusForNoPayload.
+// wiringPayloadOnlySep1Cache answers GetIssuerSep1Cached but lacks IssuerSep1Unreachable, so
+// it does not satisfy the optional Sep1FetchStateReader seam that sep1StatusForNoPayload
+// consults via type assertion.
 type wiringPayloadOnlySep1Cache struct{}
 
 func (wiringPayloadOnlySep1Cache) GetIssuerSep1Cached(context.Context, string) (*timescale.IssuerSep1Cached, error) {
@@ -32,13 +30,10 @@ func (wiringFetchStateSep1Cache) IssuerSep1Unreachable(context.Context, string) 
 	return false, nil
 }
 
-// TestNewWarnsWhenSep1CacheLacksFetchState is the regression for RDTM-F4.
-// The compile-time guard at assets.go:57 only proves the bare
-// *timescale.Store still satisfies Sep1FetchStateReader; it says nothing
-// about whatever value a future caching wrapper actually wires as
-// Options.Sep1Cache. Without a boot-time check, wiring a value that lacks
-// the fetch-state method silently reverts every issuer's sep1_status to
-// "not_fetched" with nothing red anywhere.
+// TestNewWarnsWhenSep1CacheLacksFetchState: the compile-time guard in assets.go only proves
+// the bare *timescale.Store satisfies Sep1FetchStateReader, not the value actually wired as
+// Options.Sep1Cache. Without a boot-time check, a cache lacking the fetch-state method
+// silently reverts every issuer's sep1_status to "not_fetched".
 func TestNewWarnsWhenSep1CacheLacksFetchState(t *testing.T) {
 	logger, buf := captureLogger()
 

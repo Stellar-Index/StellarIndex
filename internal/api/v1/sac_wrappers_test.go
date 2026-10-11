@@ -8,12 +8,9 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 )
 
-// TestSACWrappers_EmptyMapWhenUnconfigured pins the
-// "deployment without [supply.sac_wrappers]" path: handler
-// returns `data: {}` not `data: null`. The explorer reads this
-// at AssetLabel resolve-time; a null payload would JS-error
-// the table render. The handler degrades to an empty map
-// when opts.SACWrappers is nil.
+// TestSACWrappers_EmptyMapWhenUnconfigured pins the deployment without [supply.sac_wrappers]: the
+// handler returns `data: {}` (an empty map when opts.SACWrappers is nil), not `data: null`, which
+// would throw in the explorer's AssetLabel resolution and break the table render.
 func TestSACWrappers_EmptyMapWhenUnconfigured(t *testing.T) {
 	srv := v1.New(v1.Options{})
 	ts := startHTTPTest(t, srv.Handler())

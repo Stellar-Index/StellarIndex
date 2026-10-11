@@ -76,15 +76,13 @@ func TestRegistration_SinkProjectsTheVaultEvent(t *testing.T) {
 	}
 }
 
-// TestRegistration_GatedRegistryCarriesTheCuratedSet — the ADR-0035/0040
-// warm. A missing entry means the identity gate never resumes from
-// protocol_contracts across a restart, so a vault an operator admitted
-// without a redeploy has its events silently dropped.
+// TestRegistration_GatedRegistryCarriesTheCuratedSet covers the ADR-0035/0040 warm. A missing
+// entry means the identity gate never resumes from protocol_contracts across a restart, so
+// events of a vault admitted without a redeploy are silently dropped.
 //
-// Factories and CreationSym must stay EMPTY: neither vault has a creation
-// event in the lake, so declaring a factory here would send the
-// genesis-seed walk hunting for events that do not exist and report an
-// empty registry as if it were a complete one.
+// Factories and CreationSym must stay EMPTY: neither vault has a creation event in the lake,
+// so a factory would send the genesis-seed walk after events that do not exist and report an
+// empty registry as complete.
 func TestRegistration_GatedRegistryCarriesTheCuratedSet(t *testing.T) {
 	meta, ok := pipeline.GatedMetaFor(source)
 	if !ok {
@@ -128,13 +126,11 @@ func TestRegistration_NetworkApplicability(t *testing.T) {
 	}
 }
 
-// TestRegistration_SourceMetadata — omission here makes the source
-// invisible to /v1/sources and to the aggregator's class lookup.
+// TestRegistration_SourceMetadata: omission makes the source invisible to /v1/sources and to
+// the aggregator's class lookup.
 //
-// The vaults must NOT be in VWAP: an aggregator vault's events are
-// derivative actions taken on top of other protocols' prices, not new
-// price observations. (RedStone publishes a price FOR the earnUSDC share;
-// that arrives through the oracle path, not this one.)
+// The vaults must NOT be in VWAP: their events are derivative actions on other protocols'
+// prices, not price observations. (RedStone's earnUSDC share price arrives via the oracle path.)
 func TestRegistration_SourceMetadata(t *testing.T) {
 	meta := external.Lookup(source)
 	if meta.Class != external.ClassRouter {
@@ -194,12 +190,9 @@ func TestRegistration_GapDetectorTarget(t *testing.T) {
 	}
 }
 
-// TestRegistration_NotAnAMMSignerSource is the deliberate NEGATIVE of
-// sushiswap's AMMSignerSources check. That sweeper backfills a taker
-// identity onto AMM rows in the `trades` table; this source writes no
-// trades at all, and every one of its rows already carries the acting
-// address in `caller`. Listing it would have the sweeper hunting a table
-// it never writes.
+// TestRegistration_NotAnAMMSignerSource is the deliberate NEGATIVE of sushiswap's
+// AMMSignerSources check. That sweeper backfills a taker identity onto AMM rows in `trades`;
+// this source writes no trades and its rows already carry the actor in `caller`.
 func TestRegistration_NotAnAMMSignerSource(t *testing.T) {
 	if slices.Contains(timescale.AMMSignerSources, source) {
 		t.Errorf("%s is in AMMSignerSources but writes no trades rows", source)

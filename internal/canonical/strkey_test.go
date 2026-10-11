@@ -5,12 +5,9 @@ import (
 	"testing"
 )
 
-// Real CRC-valid strkeys for canonical pubnet entities. Picked
-// because they're well-known and stable: USDC issuer (Circle),
-// XLM SAC contract on pubnet, and the testnet root account.
-//
-// We don't need many — the goal is to prove the CRC check fires
-// + admits the round-trip cases the test cases expect.
+// Real CRC-valid strkeys for well-known, stable entities: the USDC issuer, the pubnet XLM SAC
+// contract and the testnet root account. Few are needed; they prove the CRC check fires and
+// admits the round-trip cases.
 const (
 	validAccountG  = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN" // USDC issuer
 	validContractC = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" // XLM SAC

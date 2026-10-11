@@ -8,13 +8,10 @@ import (
 	"testing"
 )
 
-// The history reads must be PRIMARY-KEY range reads off the outbound
-// orderings, exactly like the graph's outbound arms. Reading them off the
-// reverse orderings — account_creator_edges_by_created /
-// account_sponsor_edges_by_sponsored — returns the same rows, so no test
-// of the payload can see the mistake; it just turns a per-account read
-// into a full scan of a 21-million-row table on a served route. Same
-// silent failure the sibling graph test pins.
+// The history reads must be PRIMARY-KEY range reads off the outbound orderings, like the
+// graph's outbound arms. The reverse orderings (account_creator_edges_by_created /
+// account_sponsor_edges_by_sponsored) return the same rows, so no payload test sees the
+// mistake; it silently turns a per-account read into a full table scan on a served route.
 func TestAccountGraphHistoryReadsTheOutboundOrderings(t *testing.T) {
 	for _, tc := range []struct {
 		name, query, wantTable, wantKey, forbidTable string
@@ -81,11 +78,9 @@ func TestAccountGraphHistoryReadsAreAccountKeyed(t *testing.T) {
 	}
 }
 
-// The working tables hold a PARTIAL archive for the length of a rollup
-// cycle (they are truncated and refilled across 65 walked windows), which
-// is the whole reason the edge tables are staged and EXCHANGEd. A history
-// read that reached into one would serve a half-built series mid-cycle
-// and call it history.
+// The working tables hold a PARTIAL archive for the length of a rollup cycle (truncated and
+// refilled across many windows), which is why the edge tables are staged and EXCHANGEd. A
+// history read that reached into one would serve a half-built series mid-cycle.
 func TestAccountGraphHistoryNeverReadsAWorkingTable(t *testing.T) {
 	for _, working := range []string{
 		"stellar.account_creators_ops",
@@ -119,11 +114,9 @@ func TestAccountGraphHistoryUnplacedSubtractsInSignedArithmetic(t *testing.T) {
 	}
 }
 
-// The placement identity — events == placed + unplaced — is what makes
-// the series honest rather than approximate, and the clamp is what keeps
-// a hypothetical bad row from serving 2^64 placed events instead of
-// failing. Exercised through the same assignment the reader's scan loop
-// performs.
+// The placement identity (events == placed + unplaced) makes the series exact rather than
+// approximate, and the clamp stops a bad row from serving 2^64 placed events instead of
+// failing. Exercised through the same assignment the reader's scan loop performs.
 func TestAccountGraphHistoryPlacementIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name                     string

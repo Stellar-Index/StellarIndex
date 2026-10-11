@@ -38,12 +38,10 @@ func TestRecognitionDetail_roundTrip(t *testing.T) {
 	}
 }
 
-// WIRE CONTRACT: the deployed data-freshness exporter derives
-// stellarindex_recognition_unattributed_shapes with
-// `substring(detail FROM '^[0-9]+')`
-// (configs/ansible/roles/archival-node/files/data-freshness.sh). A
-// non-numeric prefix silently reports 0 shapes — the under-reporting
-// direction. This pins the same regex against the Go producer.
+// WIRE CONTRACT: the data-freshness exporter derives stellarindex_recognition_unattributed_shapes
+// with `substring(detail FROM '^[0-9]+')`
+// (configs/ansible/roles/archival-node/files/data-freshness.sh). A non-numeric prefix silently
+// reports 0 shapes (under-reporting). This pins the same regex against the Go producer.
 func TestFormatRecognitionDetail_leadsWithTheShapeCount(t *testing.T) {
 	re := regexp.MustCompile(`^[0-9]+`)
 	for _, c := range []completeness.RecognitionCensus{

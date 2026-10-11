@@ -101,13 +101,10 @@ func TestExplorer_AccountPositions_LabelReadFailureMarksDegraded(t *testing.T) {
 	}
 }
 
-// TestExplorer_AccountPositions_Fold pins the per-protocol fold ->
-// wire-shape mapping: one blend supply leg, one blend borrow leg (same
-// pool/asset — independent positions), one backstop position, one
-// phoenix stake, one defindex vault, one open + one closed sorocredit
-// position, and one aquarius gauge (negative net delta, the "unwound"
-// case) — net-zero / closed positions excluded by default, included
-// with ?include_closed=true.
+// TestExplorer_AccountPositions_Fold pins the per-protocol fold -> wire-shape mapping across
+// blend supply and borrow legs (same pool/asset, independent positions), backstop, phoenix,
+// defindex, sorocredit and an aquarius gauge with negative net delta ("unwound"). Net-zero
+// and closed positions are excluded by default and included with ?include_closed=true.
 func TestExplorer_AccountPositions_Fold(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
 	opened := now.Add(-72 * time.Hour)
@@ -279,11 +276,9 @@ func TestExplorer_AccountPositions_ValidationAndUnavailable(t *testing.T) {
 	}
 }
 
-// TestExplorer_AccountPositions_EmptyIsHonest pins the empty-state
-// contract: an address with no folds anywhere returns 200 with an
-// empty positions array (never a 404 / never an error), and the
-// valuation/accrual note is always present even when there's nothing
-// to annotate.
+// TestExplorer_AccountPositions_EmptyIsHonest pins the empty-state contract: an address with no
+// folds returns 200 with an empty positions array (never a 404 or error), and the
+// valuation/accrual note is always present.
 func TestExplorer_AccountPositions_EmptyIsHonest(t *testing.T) {
 	srv := v1.New(v1.Options{Positions: &stubPositionsReader{}})
 	base := httpTestServer(t, srv).URL
@@ -304,11 +299,10 @@ func TestExplorer_AccountPositions_EmptyIsHonest(t *testing.T) {
 	}
 }
 
-// TestExplorer_AccountPositions_AuctionSupersededBlendLeg pins how a Blend
-// leg a liquidation auction moved is served: never its pre-liquidation
-// underlying net. A partly seized leg (and a filler's leg only a received
-// lot created, whose own net is "0") is open with amount ""; a leg whose
-// b/d-token balance is exactly zero is a closed "0"; an untouched leg
+// TestExplorer_AccountPositions_AuctionSupersededBlendLeg pins how a Blend leg moved by a
+// liquidation auction is served: never its pre-liquidation underlying net. A partly seized leg
+// (and a filler's leg created only by a received lot, whose own net is "0") is open with
+// amount ""; a leg whose b/d-token balance is exactly zero is a closed "0"; an untouched leg
 // keeps its net.
 func TestExplorer_AccountPositions_AuctionSupersededBlendLeg(t *testing.T) {
 	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)

@@ -10,20 +10,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The two queries behind /v1/status `freshness.active_sources` and
-// `freshness.total_sources` are evaluated by Prometheus, not by this
-// package, so no Go test can run them. What CAN be pinned here is that
-// the promtool fixture which does run them —
-// deploy/monitoring/rule-tests/status-source-counts_test.yml — runs
-// THESE expressions, and models the case it exists for: a source hosted
-// by the API binary (`massive`, the fiat-FX worker) publishing its own
-// stellarindex_source_enabled series. Until the worker published that
-// gauge the feed was invisible to both counts, so the status page
-// counted a switched-on, emitting source on neither side of
-// "Active sources N / M". The fixture proves that both counts rise by
-// one once the series exists; this test keeps the fixture honest about
-// which queries it proves that against, and that it still demonstrates
-// the delta.
+// The queries behind /v1/status `freshness.active_sources` and `freshness.total_sources` are
+// evaluated by Prometheus, so no Go test can run them. This pins that the promtool fixture
+// that does (deploy/monitoring/rule-tests/status-source-counts_test.yml) runs THESE
+// expressions and models its case: a source hosted by the API binary (`massive`, the fiat-FX
+// worker) publishing its own stellarindex_source_enabled series. Without that gauge the feed
+// is invisible to both counts. The fixture proves both counts rise by one once the series
+// exists; this test keeps it honest about which queries and that it still shows the delta.
 
 const statusSourceCountsFixture = "deploy/monitoring/rule-tests/status-source-counts_test.yml"
 

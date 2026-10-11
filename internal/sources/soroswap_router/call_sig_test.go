@@ -8,12 +8,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestCallSig is the regression guard for the migration-0056 PK discriminator.
-// CallSig must: (1) be deterministic, (2) IGNORE deadline (so auth-tree dups of
-// the same call dedup even if a sentinel deadline varies), and (3) DIFFER for
-// any economically-distinct swap (recipient / path / amount) — the 106 router
-// swaps that the coarse PK was collapsing. A regression in any of these silently
-// re-introduces sub-op data loss or double-counts dedupable dups.
+// TestCallSig guards the PK discriminator. CallSig must (1) be deterministic, (2) IGNORE
+// deadline so auth-tree dups of the same call dedup even if a sentinel deadline varies, and
+// (3) DIFFER for any economically-distinct swap (recipient / path / amount). A regression
+// silently loses sub-op swaps or double-counts dups.
 func TestCallSig(t *testing.T) {
 	t.Parallel()
 	base := RouterSwap{

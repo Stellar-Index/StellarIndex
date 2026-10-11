@@ -5,12 +5,10 @@ import (
 	"testing"
 )
 
-// TestStringsScan feeds the exact Postgres TEXT-array representation that the
-// pgx stdlib driver hands to database/sql for a text[]/varchar[] column and
-// asserts the decoded []string. This is the behaviour that a plain *[]string
-// scan destination CANNOT provide under pgx (it fails with "unsupported Scan,
-// storing driver.Value type string into type *[]string") — the whole reason
-// this adapter exists.
+// TestStringsScan feeds the exact TEXT-array representation the pgx stdlib driver hands to
+// database/sql for a text[]/varchar[] column and asserts the decoded []string. A plain *[]string
+// scan destination cannot do this under pgx ("unsupported Scan, storing driver.Value type string
+// into type *[]string"), which is why this adapter exists.
 func TestStringsScan(t *testing.T) {
 	cases := []struct {
 		name string

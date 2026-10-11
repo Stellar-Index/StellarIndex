@@ -18,16 +18,12 @@ import (
 	"testing"
 )
 
-// A Healthchecks.io ping that never leaves the host and a service that
-// is genuinely down produce the same thing at the other end: silence,
-// then a "down" email. Until hc-ping.sh, this host could not tell the
-// two apart either — every ping ended in `|| true` with curl's output
-// on /dev/null, so a dropped ping left no journal line, no metric, and
-// no way to answer "was the service actually down?" after the fact.
+// A Healthchecks.io ping that never leaves the host and a service that is genuinely down look the
+// same at the other end: silence, then a "down" email. The wrapper must therefore record a dropped
+// ping instead of discarding curl's output, so "was the service actually down?" stays answerable.
 //
-// These tests drive the real wrapper scripts against a ping endpoint
-// that fails, and assert the failure is recorded in both places an
-// operator can still read an hour later.
+// These tests drive the real wrapper scripts against a failing ping endpoint and assert the
+// failure is recorded in both places an operator can still read an hour later.
 
 // startPingServer serves the metrics endpoint heartbeat.sh probes and a
 // ping endpoint whose status the test controls.

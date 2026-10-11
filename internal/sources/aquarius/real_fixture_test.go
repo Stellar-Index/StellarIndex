@@ -12,13 +12,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Replay real Aquarius trade fixtures captured from mainnet
-// into decodeTrade. This is the end-to-end harness that proves the
-// real SCVal decoder path works against production wire format.
+// Replay real Aquarius trade fixtures captured from mainnet into decodeTrade, proving the
+// SCVal decoder path against the production wire format.
 //
-// Fixtures live at test/fixtures/aquarius/<wasm_hash>/trade_*.json,
-// one file per captured event. Each fixture's topics + value are
-// untouched base64 SCVals as stellar-rpc returned them.
+// Fixtures live at test/fixtures/aquarius/<wasm_hash>/trade_*.json, one file per event, with
+// topics and value as untouched base64 SCVals.
 
 type aquariusFixture struct {
 	ContractID     string   `json:"contract_id"`

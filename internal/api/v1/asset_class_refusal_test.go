@@ -7,19 +7,13 @@ import (
 	"testing"
 )
 
-// TestAssetClassRefusesWhatItCannotFilter is the regression. An unrecognised
-// asset_class fell through to the default listing and returned 200, so the
-// filter silently did not apply.
+// TestAssetClassRefusesWhatItCannotFilter: an unrecognised asset_class must be refused, not fall
+// through to the default listing with 200, or the filter silently does not apply and a consumer
+// asking for real-world assets gets unrelated tokens with nothing to reveal it.
 //
-// Measured on the live surface: `asset_class=rwa` returned USDC, yXLM, AQUA,
-// SHX and VELO — byte-identical to `asset_class=bogus` and to no asset_class
-// at all. A consumer asking for real-world assets got a governance token and
-// a wrapped lumen, with nothing in the response to reveal it.
-//
-// `rwa` is in the table deliberately: it is the value someone reaches for
-// first, there is no such class by design, and the refusal has to name where
-// that set actually lives. `%20rwa%20` is there because the normaliser trims
-// before the guard sees the value, so a padded spelling must refuse too
+// `rwa` is in the table deliberately: it is the value someone reaches for first, there is no
+// such class by design, and the refusal has to name where that set actually lives. `%20rwa%20`
+// is there because the normaliser trims before the guard, so a padded spelling must refuse too
 // rather than slip through as the empty default.
 func TestAssetClassRefusesWhatItCannotFilter(t *testing.T) {
 	for _, class := range []string{"rwa", "real_world_asset", "tokenized", "bogus", "RWA", "%20rwa%20"} {

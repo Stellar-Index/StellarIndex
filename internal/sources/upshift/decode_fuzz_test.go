@@ -88,12 +88,10 @@ func decodeOneFuzz(t *testing.T, d *Decoder, ev events.Event) Event {
 	return out[0].(Event)
 }
 
-// FuzzTransferBodyShapes is the SEP-41 two-shape rule (AGENTS.md: "ALWAYS
-// type-test a SEP-41 transfer body before MustI128()") over the whole
-// i128 domain: a bare i128 and a CAP-67 Map{amount, to_muxed_id} —
-// with the Map's fields in either order — must decode to the SAME exact
-// share amount, and the same 128 bits wrapped as u128 (bare, or as the
-// Map's amount) must be refused rather than read as a magnitude.
+// FuzzTransferBodyShapes is the SEP-41 two-shape rule (AGENTS.md: "ALWAYS type-test a SEP-41
+// transfer body before MustI128()") over the whole i128 domain: a bare i128 and a CAP-67
+// Map{amount, to_muxed_id} (fields in either order) must decode to the SAME exact amount, and
+// the same bits wrapped as u128 must be refused rather than read as a magnitude.
 //
 // Generative run:
 // go test -run=^$ -fuzz=^FuzzTransferBodyShapes$ -fuzztime=60s -parallel=2 ./internal/sources/upshift/
@@ -151,11 +149,9 @@ func FuzzTransferBodyShapes(f *testing.F) {
 	})
 }
 
-// FuzzFlowAndDeployedAmountsByName asserts deposit/withdraw {assets,
-// shares} and deployed_assets_changed {old_amount, new_amount} decode by
-// field NAME at full i128 width: whatever order the Map carries them in
-// (deployed_assets_changed puts new_amount FIRST on the wire), each
-// output column is the exact value of its own named field.
+// FuzzFlowAndDeployedAmountsByName asserts deposit/withdraw {assets, shares} and
+// deployed_assets_changed {old_amount, new_amount} decode by field NAME at full i128 width,
+// whatever order the Map carries them in (new_amount comes FIRST on the wire).
 //
 // Generative run:
 // go test -run=^$ -fuzz=^FuzzFlowAndDeployedAmountsByName$ -fuzztime=60s -parallel=2 ./internal/sources/upshift/

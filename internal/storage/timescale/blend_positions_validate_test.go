@@ -28,16 +28,13 @@ func validBlendPositionEvent() domain.BlendPositionEvent {
 	}
 }
 
-// TestInsertBlendPositionEvent_RejectsBadAmount is the BLEND-1
-// regression: token_amount / b_or_d_amount had no SQL-boundary
-// magnitude validator, so a nil amount was silently coerced to "0"
-// (bigIntToNumericString) and a negative one written verbatim. The
-// guard must reject both BEFORE touching the DB.
+// TestInsertBlendPositionEvent_RejectsBadAmount: token_amount / b_or_d_amount need a
+// SQL-boundary magnitude validator, otherwise a nil amount is silently coerced to "0"
+// (bigIntToNumericString) and a negative one written verbatim. The guard must reject both
+// BEFORE touching the DB.
 //
-// s.db is nil here, so any code path that reaches the ExecContext
-// call panics — reaching (and returning from) the guard first is what
-// proves the ordering. Without the fix these cases fall through to the
-// nil-db Exec and the test fails.
+// s.db is nil here, so reaching ExecContext panics; returning from the guard first proves the
+// ordering.
 func TestInsertBlendPositionEvent_RejectsBadAmount(t *testing.T) {
 	s := &Store{}
 	ctx := context.Background()

@@ -6,16 +6,12 @@ import (
 	"time"
 )
 
-// TestTipStreamDivergenceBudgetHoldsItsTwoReferences pins the two
-// relationships the constant's value is argued from, so a later change
-// to either reference cannot leave the rationale describing a budget
-// that no longer follows from it.
+// TestTipStreamDivergenceBudgetHoldsItsTwoReferences pins the two relationships the budget
+// constant is argued from, so a change to either reference cannot leave a stale rationale.
 //
-//   - Strictly under the tick budget: an auxiliary read that could
-//     consume the whole tick is the defect this constant exists to
-//     remove.
-//   - No wider than a fifth of the DEFAULT window: a stalled store may
-//     shift an emission within its period, never replace it.
+//   - Strictly under the tick budget: an auxiliary read must never consume the whole tick.
+//   - No wider than a fifth of the DEFAULT window: a stalled store may shift an emission
+//     within its period, never replace it.
 func TestTipStreamDivergenceBudgetHoldsItsTwoReferences(t *testing.T) {
 	if tipStreamDivergenceBudget >= tipStreamTickTimeout {
 		t.Errorf("tipStreamDivergenceBudget = %v, tipStreamTickTimeout = %v — the auxiliary lookup must be bounded strictly tighter than the computation it rides beside",
@@ -28,16 +24,10 @@ func TestTipStreamDivergenceBudgetHoldsItsTwoReferences(t *testing.T) {
 	}
 }
 
-// TestTipDivergenceStallLogRateLimits — under a sustained stall the
-// warning fires once per interval for the whole process, and each line
-// it does emit carries the count it swallowed, so the volume is visible
-// rather than hidden. Without the bound this is one line per tick per
-// stream: at the 512-producer ceiling with a one-second window, tens of
-// thousands of lines a minute at exactly the moment an operator is
-// reading the log.
-//
-// Driven by an injected clock, so it pins the policy rather than the
-// wall clock.
+// TestTipDivergenceStallLogRateLimits — under a sustained stall the warning fires once per
+// interval process-wide, and each emitted line carries the count it swallowed so the volume
+// stays visible. Unbounded, it would be one line per tick per stream (tens of thousands a
+// minute at the 512-producer ceiling). An injected clock pins the policy, not wall time.
 func TestTipDivergenceStallLogRateLimits(t *testing.T) {
 	var l tipDivergenceStallLog
 	base := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
@@ -66,14 +56,10 @@ func TestTipDivergenceStallLogRateLimits(t *testing.T) {
 	}
 }
 
-// TestTipDivergenceStallLogCountIntegrity — every stall must be
-// accounted for: lines emitted, plus counts those lines reported, plus
-// the residue still held, must equal the calls made. A rate limiter that
-// loses stalls under contention is worse than none, because the number
-// it prints is then quietly wrong.
-//
-// Driven at the stated ceiling of 512 concurrent producers, all inside
-// one interval so the age-out cannot fire and conservation is exact.
+// TestTipDivergenceStallLogCountIntegrity — lines emitted, plus counts those lines reported,
+// plus the residue still held, must equal the calls made: a limiter that loses stalls under
+// contention prints a quietly wrong number. Runs 512 concurrent producers inside one interval
+// so the age-out cannot fire and conservation is exact.
 func TestTipDivergenceStallLogCountIntegrity(t *testing.T) {
 	const (
 		producers   = 512
@@ -122,12 +108,9 @@ func TestTipDivergenceStallLogCountIntegrity(t *testing.T) {
 	}
 }
 
-// TestTipDivergenceStallLogAgesOutAStaleResidue — a residue belongs to
-// the incident that produced it. After a long quiet period the next
-// stall is a NEW incident: it must be reported promptly, and it must not
-// be stamped with a count swallowed an hour earlier. Attributing an old
-// number to a new incident is worse than reporting none, because an
-// operator reads it as this incident's volume.
+// TestTipDivergenceStallLogAgesOutAStaleResidue — after a long quiet period the next stall is
+// a NEW incident: it must be reported promptly and not stamped with a count swallowed
+// earlier, which an operator would read as this incident's volume.
 func TestTipDivergenceStallLogAgesOutAStaleResidue(t *testing.T) {
 	var l tipDivergenceStallLog
 	base := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)

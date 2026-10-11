@@ -5,13 +5,10 @@ import (
 	"time"
 )
 
-// TestPgTimestamptzRepresentable guards the clamp that keeps a garbage router
-// `deadline` from rejecting an otherwise-valid swap. A u64 deadline sentinel
-// (~3e18 s) renders a year-99-billion time, and a deadline above max-int64
-// overflows int64(deadline) to a negative (BC) time; both are outside
-// Postgres's timestamptz range and error the whole INSERT (SQLSTATE 22008).
-// Before this clamp, ~24% of historical soroswap-router swaps were silently
-// dropped by both the live indexer and every backfill.
+// TestPgTimestamptzRepresentable guards the clamp that keeps a garbage router `deadline` from
+// rejecting an otherwise-valid swap. A u64 sentinel deadline (~3e18 s) renders a year-99-billion
+// time, and one above max-int64 overflows int64(deadline) to a negative (BC) time; both fall
+// outside Postgres's timestamptz range and fail the whole INSERT (SQLSTATE 22008).
 func TestPgTimestamptzRepresentable(t *testing.T) {
 	cases := []struct {
 		name string

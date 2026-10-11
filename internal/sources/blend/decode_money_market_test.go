@@ -15,11 +15,8 @@ import (
 
 // ─── Local fixture helpers ─────────────────────────────────────
 //
-// The auction-side test file (decode_test.go) defines
-// contractStrkeyFromSeed / accountStrkeyFromSeed / addressScVal /
-// i128ScVal / u32ScVal / symbolScVal / vecScVal / encodeScVal —
-// we reuse those here. The helpers below cover the money-market
-// shapes that don't show up in the auction tests.
+// decode_test.go defines the base ScVal helpers (addressScVal, i128ScVal, encodeScVal, ...);
+// the helpers below cover the money-market shapes the auction tests do not use.
 
 // u64ScVal wraps a uint64.
 func u64ScVal(n uint64) xdr.ScVal {
@@ -33,14 +30,9 @@ func boolScVal(b bool) xdr.ScVal {
 	return xdr.ScVal{Type: xdr.ScValTypeScvBool, B: &v}
 }
 
-// reserveConfigScVal builds a full ReserveConfig ScMap with
-// sorted-by-symbol keys. soroban-sdk emits #[contracttype] structs
-// as ScMap; the soroban-sdk sorts the entries by key at encode time
-// but the decoder reads by name (resilient to reordering).
-//
-// Field ordering chosen to match what the contract emits. The
-// decoder reads by MapField so the order doesn't matter for
-// correctness; we sort here to mirror chain output.
+// reserveConfigScVal builds a full ReserveConfig ScMap with keys sorted by symbol, mirroring
+// the chain output (soroban-sdk emits #[contracttype] structs as key-sorted ScMaps). The
+// decoder reads by MapField, so order does not matter for correctness.
 func reserveConfigScVal(t *testing.T) xdr.ScVal {
 	t.Helper()
 	// Alphabetical-by-symbol-name to mirror soroban-sdk's encode
@@ -686,11 +678,9 @@ func TestDecodeDeploy(t *testing.T) {
 // ─── Decoder.Decode end-to-end (one per event type) ────────────
 
 func TestDecoderDecode_AllEventKinds(t *testing.T) {
-	// Quick sanity that the dispatcher_adapter.Decode dispatch
-	// table routes each topic to the right decoder and emits the
-	// right consumer.Event implementor. Body shapes are minimal
-	// happy-path shapes — the per-decoder tests above cover field-
-	// level correctness.
+	// Sanity that the dispatcher_adapter.Decode table routes each topic to the right decoder
+	// and consumer.Event type. Bodies are minimal happy-path shapes; the per-decoder tests
+	// above cover field-level correctness.
 	d := NewDecoder()
 	pool := contractStrkeyFromSeed(t, 0x70)
 	asset := contractStrkeyFromSeed(t, 0x71)

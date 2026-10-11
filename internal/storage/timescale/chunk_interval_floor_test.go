@@ -10,12 +10,9 @@ import (
 	"time"
 )
 
-// A hypertable with 1-day chunks accrues thousands of them, and every
-// ON CONFLICT insert walks all of them for the unique check: trades hit
-// 3445 chunks and max_locks_per_transaction 4096 on r1 before 0062
-// widened it. 0062 fixed five tables and missed nine; 0171 fixed those.
-// The migration set is what a fresh node applies, so it is the thing
-// held to the floor here.
+// A hypertable with 1-day chunks accrues thousands of them, and every ON CONFLICT insert
+// walks all of them for the unique check, exhausting max_locks_per_transaction. The migration
+// set is what a fresh node applies, so it is what is held to the floor here.
 const chunkIntervalFloor = 7 * 24 * time.Hour
 
 var (

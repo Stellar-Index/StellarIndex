@@ -6,11 +6,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Real mainnet reserves_sync body captured from the ClickHouse lake
-// (pool CCRULRY3…, ledger 61,572,402, tx fbc6b2a0…). Body is a
-// Vec<i128> — the SAME shape as update_reserves, so decodeReserves is
-// reused with the EventReservesSync kind. Verified distinct from
-// update_reserves on the same tx (see migration 0128 header).
+// Real mainnet reserves_sync body captured from the ClickHouse lake. Body is a Vec<i128>, the
+// SAME shape as update_reserves, so decodeReserves is reused with the EventReservesSync kind.
 const (
 	realReservesSyncTopic0 = "AAAADwAAAA1yZXNlcnZlc19zeW5jAAAA" // Symbol("reserves_sync")
 	realReservesSyncBody   = "AAAAEAAAAAEAAAACAAAACgAAAAAAAAAAAAAAApcwHiMAAAAKAAAAAAAAAAAAAAACmjvpKg=="
@@ -70,12 +67,9 @@ func TestMatches_reservesSyncPoolGated(t *testing.T) {
 	}
 }
 
-// TestReservesEvent_EventKindDistinguishesSync pins the by-Kind split:
-// update_reserves and reserves_sync must carry distinct EventKind()
-// values. Before this, both returned the single coarse "aquarius.reserves"
-// even though they persist to two different tables — structurally
-// blocking a by-EventKind reconcile from ever attributing a count to one
-// table vs the other.
+// TestReservesEvent_EventKindDistinguishesSync pins the by-Kind split: update_reserves and
+// reserves_sync persist to two different tables, so they must carry distinct EventKind() values
+// or a by-EventKind reconcile cannot attribute a count to one table.
 func TestReservesEvent_EventKindDistinguishesSync(t *testing.T) {
 	update := ReservesEvent{}
 	sync := ReservesEvent{Kind: EventReservesSync}

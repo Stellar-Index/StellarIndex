@@ -8,40 +8,23 @@ import (
 	"testing"
 )
 
-// A URL is the least private thing an HTTP request has. It is written
-// to our edge's access log, to every proxy and CDN in front of it, to
-// the operator's browser history, and it leaves on the Referer header
-// of whatever the page loads next. Only the first of those is ours to
-// redact.
+// A URL is the least private thing an HTTP request has: it reaches our edge access log, every
+// proxy and CDN in front of it, the browser history and the Referer header of the next page load.
+// Only the first of those is ours to redact, so an address must never travel in a query string.
 //
-// THE DEFECT THESE PIN. `GET /v1/account/admin/lookup?email=<customer>`
-// put a real customer's address in all four, and the app layer had
-// deliberately kept that same address OUT of the audit row — the URL
-// defeated the care taken one layer down. The remediation moved the
-// term into a POST body, and the edge grew a redaction filter.
-//
-// Neither of those is what stops it happening AGAIN, which is what
-// these two tests are for. The edge filter is a field enumeration: it
-// masks the query keys someone thought of, so the next route to put an
-// address in a URL is unfiltered by construction — the same way the
-// original filter covered `token` and was already blind to `email` when
-// the look-up shipped. The tests below are the schema-driven half:
-// nothing may DECLARE an address-bearing query parameter, and no
-// handler may READ one, whether or not anybody remembered to extend a
-// list at the edge.
+// The edge redaction filter is a field enumeration: it masks only the query keys someone thought
+// of, so the next route to put an address in a URL is unfiltered by construction. These two tests
+// are the schema-driven half: nothing may DECLARE an address-bearing query parameter and no
+// handler may READ one, whether or not the edge list was extended.
 
-// personalParamPattern names the query keys that carry a person rather
-// than a thing. Substring matching, not equality, because the leak
-// arrives as `billing_email` or `user_email` at least as readily as
-// `email` — the enumeration that missed the first one is the failure
-// mode being closed here.
+// personalParamPattern names the query keys that carry a person rather than a thing. It matches
+// substrings, not equality, because the leak arrives as `billing_email` or `user_email` as readily
+// as `email`.
 var personalParamPattern = regexp.MustCompile(`(?i)(e[-_]?mail|phone|passport|national_id)`)
 
-// TestOpenAPIDeclaresNoPersonalQueryParameter walks the published
-// contract. A parameter that reaches the spec has reached the SDK, the
-// Postman collection, the generated explorer client and the docs
-// site — so the spec is the earliest place the whole class is visible
-// in one file.
+// TestOpenAPIDeclaresNoPersonalQueryParameter walks the published contract. A parameter in the
+// spec reaches the SDK, Postman collection, explorer client and docs, so the spec is the earliest
+// single place to see the whole class.
 func TestOpenAPIDeclaresNoPersonalQueryParameter(t *testing.T) {
 	spec := loadOpenAPISpec(t)
 	if len(spec.Paths) == 0 {
@@ -86,11 +69,9 @@ func TestOpenAPIDeclaresNoPersonalQueryParameter(t *testing.T) {
 // queryReadPattern finds a handler reading a named query key.
 var queryReadPattern = regexp.MustCompile(`Query\(\)(?:\.Get\(|\[)"([^"]+)"`)
 
-// TestHandlersReadNoPersonalQueryParameter is the half the spec cannot
-// cover. The look-up that leaked was a staff route: it existed in the
-// server before it existed in the contract, so a spec-only check would
-// have gone green while the address was already in the access log. This
-// reads the handlers themselves.
+// TestHandlersReadNoPersonalQueryParameter is the half the spec cannot cover: a staff route can
+// exist in the server before it is in the contract, so a spec-only check stays green while the
+// address is already in the access log. This reads the handlers themselves.
 func TestHandlersReadNoPersonalQueryParameter(t *testing.T) {
 	root := repoRoot(t)
 	scanned := 0

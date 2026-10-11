@@ -140,13 +140,12 @@ func graphSnapshot() clickhouse.AccountGraph {
 	}
 }
 
-// graphEdges builds n synthetic outbound edges, ascending by account id
-// so a keyset walk over them is deterministic.
+// graphEdges builds n synthetic outbound edges, ascending by account id so a keyset walk is
+// deterministic.
 //
-// The ids are REAL G-strkeys (CRC-checked base32), not strkey-shaped
-// strings: the handler validates a cursor as an account id, so a fixture
-// built from fakes would exercise the 400 path on page two and never
-// reach the pagination this file exists to pin.
+// The ids are REAL G-strkeys (CRC-checked), not strkey-shaped strings: the handler validates a
+// cursor as an account id, so fakes would hit the 400 path on page two and never reach the
+// pagination this file pins.
 func graphEdges(t *testing.T, n int) []clickhouse.AccountGraphEdge {
 	t.Helper()
 	ids := make([]string, 0, n)
@@ -234,12 +233,10 @@ func TestExplorer_AccountGraph_InboundIsBidirectionalAndPlural(t *testing.T) {
 	}
 }
 
-// The high-cardinality direction MUST be paged. The busiest sponsor on
-// the network covers 785,543 distinct accounts, so an endpoint that
-// returned "accounts sponsored by X" whole is not a feature — this pins
-// that the default response carries NO outbound edge list at all, that
-// asking for one is bounded by ?limit=, that a full page hands back a
-// cursor, and that walking the cursor terminates.
+// The high-cardinality direction MUST be paged: one sponsor can cover hundreds of thousands of
+// accounts. This pins that the default response carries NO outbound edge list, that asking
+// for one is bounded by ?limit=, that a full page hands back a cursor, and that walking the
+// cursor terminates.
 func TestExplorer_AccountGraph_PaginatesTheHighCardinalityDirection(t *testing.T) {
 	reader := &stubExplorerReader{
 		accountGraph:        graphSnapshot(),
@@ -333,11 +330,9 @@ func TestExplorer_AccountGraph_PaginatesTheHighCardinalityDirection(t *testing.T
 	_ = resp.Body.Close()
 }
 
-// A revoked sponsorship is representable in exactly ONE way here, and
-// this pins it: revocations are an ACCOUNT-level count, never an edge
-// attribute, because RevokeSponsorship names its target inside body_xdr
-// the rollup does not decode. Any per-edge "current"/"revoked"/"active"
-// field would be a claim the data cannot support.
+// Revocations are an ACCOUNT-level count, never an edge attribute: RevokeSponsorship names its
+// target inside body_xdr, which the rollup does not decode. A per-edge "current"/"revoked"/
+// "active" field would be a claim the data cannot support.
 func TestExplorer_AccountGraph_RevocationsAreAccountLevelNotPerEdge(t *testing.T) {
 	base := explorerTestServer(t, &stubExplorerReader{
 		accountGraph:        graphSnapshot(),

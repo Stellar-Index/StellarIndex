@@ -126,12 +126,10 @@ func FuzzAssetKeyFromTrustLineAsset(f *testing.F) {
 	})
 }
 
-// FuzzObserverDecode drives arbitrary LedgerEntryChange XDR through the
-// observer. Properties: Matches fires exactly for a watched classic
-// credit trustline in any change variant (same code under another issuer
-// never matches); a matched change always decodes to one Observation
-// with the holder, the watched key and the entry's int64 balance
-// verbatim, and a removal carries a zero balance with IsRemoval set.
+// FuzzObserverDecode drives arbitrary LedgerEntryChange XDR through the observer. Matches
+// fires exactly for a watched classic credit trustline in any change variant (same code under
+// another issuer never matches); a match decodes to one Observation carrying the holder, the
+// watched key and the int64 balance verbatim, and a removal has a zero balance with IsRemoval.
 func FuzzObserverDecode(f *testing.F) {
 	issuer, impostor := fuzzAccountID(0x10), fuzzAccountID(0x11)
 	holder := fuzzAccountID(0x20)

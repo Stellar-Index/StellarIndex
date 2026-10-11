@@ -62,11 +62,9 @@ func TestConstantProductOutput(t *testing.T) {
 	}
 }
 
-// TestDepthSlippageBoundary re-derives the average-execution-price
-// slippage of the computed max input with big.Rat (an independent
-// formulation) and asserts the boundary property: slippage(Δx) ≤ s
-// and slippage(Δx+1) > s. This guards the closed-form solve against
-// sign/rounding drift without trusting the same algebra twice.
+// TestDepthSlippageBoundary re-derives the slippage of the computed max input with big.Rat, an
+// independent formulation, and asserts slippage(Δx) ≤ s and slippage(Δx+1) > s. This guards the
+// closed-form solve against sign/rounding drift without trusting the same algebra twice.
 func TestDepthSlippageBoundary(t *testing.T) {
 	x := big.NewInt(1_000_000_000)
 	y := big.NewInt(2_000_000_000)

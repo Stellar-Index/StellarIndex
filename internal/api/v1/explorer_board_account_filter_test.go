@@ -5,13 +5,10 @@ import (
 	"testing"
 )
 
-// The league tables are top-N pages over an aggregation of 955,023
-// creators and 2,427 sponsors, and `rank` is a property of that whole
-// aggregation. Without a keyed lookup a caller wanting one address's
-// standing has to pull the cap and hope the address is inside it — and
-// an address past the cap is indistinguishable from one that never
-// appears at all. Those are different answers and a UI must not conflate
-// them. `?account=` is the keyed arm; these tests pin its four cases.
+// The league tables are top-N pages over a large aggregation, and `rank` is a property of the
+// whole aggregation. An address past the cap is indistinguishable from one that never appears,
+// which are different answers a UI must not conflate. `?account=` is the keyed lookup; these
+// tests pin its four cases.
 
 const (
 	// On the creator board fixture.

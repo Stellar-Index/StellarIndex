@@ -6,12 +6,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestRestampCAGGsAreRefreshable pins the restamp follow-up list to the
-// refresh allow-list. The follow-up names every aggregate rooted on
-// `trades`; a name RefreshContinuousAggregate rejects is one an operator
-// can only re-materialise by hand, and the hand-copied list drifted to
-// five of those (dex_volume_by_pair_1d, source_volume_1h,
-// pools_per_source_1h, twap_1h, twap_1d).
+// TestRestampCAGGsAreRefreshable pins the restamp follow-up list to the refresh allow-list. The
+// follow-up names every aggregate rooted on `trades`; a name RefreshContinuousAggregate rejects
+// can only be re-materialised by hand, and a hand-copied list drifts.
 func TestRestampCAGGsAreRefreshable(t *testing.T) {
 	if len(xlmBaseRestampCAGGs) == 0 {
 		t.Fatal("xlmBaseRestampCAGGs is empty")

@@ -12,12 +12,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestDeliveryFailingAlertBelowSingleLaneCeiling: one endpoint's rows are
-// delivered serially, each bounded by defaultHTTPTimeout, so a black-holing
-// endpoint produces at most 1/defaultHTTPTimeout network_errors per second.
-// A delivery_failing threshold at or above that can never fire for the
-// sustained-down endpoint the alert describes; require it to fire once one
-// lane is half saturated with timeouts, in both rule trees.
+// TestDeliveryFailingAlertBelowSingleLaneCeiling: one endpoint's rows are delivered serially,
+// each bounded by defaultHTTPTimeout, so a black-holing endpoint produces at most
+// 1/defaultHTTPTimeout network_errors per second. A delivery_failing threshold at or above that
+// can never fire for the sustained-down endpoint; require it to fire once one lane is half
+// saturated with timeouts, in both rule trees.
 func TestDeliveryFailingAlertBelowSingleLaneCeiling(t *testing.T) {
 	ceiling := 1 / defaultHTTPTimeout.Seconds()
 	for _, path := range []string{

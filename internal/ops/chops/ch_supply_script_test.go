@@ -3,15 +3,12 @@
 
 package chops
 
-// run-ch-supply.sh is the daily supply_flows gap-fill around `ch-supply
-// -seed-flows`. Its exit status is the only signal the
-// stellarindex_ch_supply_gapfill_failed alert sees, so a ClickHouse probe
-// that fails must fail the unit, not read an error body as a watermark and
-// report "seed complete". These tests EXECUTE the shipped script's body
-// (everything from its CH() helper on; the lines above it only resolve
-// host paths) against stubs for curl, psql, sleep and the ops binary. The
-// curl stub behaves like real curl on an HTTP error: the body on stdout and
-// exit 0 without -f, nothing and exit 22 with it.
+// run-ch-supply.sh is the daily supply_flows gap-fill around `ch-supply -seed-flows`. Its exit
+// status is the only signal the stellarindex_ch_supply_gapfill_failed alert sees, so a failed
+// ClickHouse probe must fail the unit, not be read as a watermark and report "seed complete".
+// These tests EXECUTE the script body (from its CH() helper on) against stubs for curl, psql,
+// sleep and the ops binary. The curl stub mimics real curl on an HTTP error: body on stdout
+// and exit 0 without -f, nothing and exit 22 with it.
 
 import (
 	"context"

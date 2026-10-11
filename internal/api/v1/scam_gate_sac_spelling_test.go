@@ -15,26 +15,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The scam gate is keyed on the issuer G-address that only a CLASSIC
-// asset carries, and every serving path hands it the RAW requested base.
-// A Stellar Asset Contract wrapper is the same asset as the classic
-// issuance it wraps but spells that asset as a C-address, so the gate's
-// classic check rejected it as "nothing to flag" and the flagged
-// issuer's aggregated price stayed servable to anyone who asked for the
-// contract id instead of CODE-ISSUER — on /v1/price, /v1/vwap, /v1/twap,
-// /v1/price/tip and /v1/chart alike (R8).
+// The scam gate is keyed on the issuer G-address that only a CLASSIC asset carries, and every
+// serving path hands it the RAW requested base. A SAC wrapper is the same asset as the classic
+// issuance but spells it as a C-address, so the gate must resolve it to the classic identity or
+// a flagged issuer's price stays servable under the contract id on /v1/price, /v1/vwap,
+// /v1/twap, /v1/price/tip and /v1/chart.
 //
-// These cases drive the REAL pricingguard.ScamGate, not a stub: the
-// resolution being pinned lives inside it, so a stub gate keyed on the
-// asset id would pass either way. The registry is process-global, so
-// none of these run parallel (the convention
-// TestTVLValuer_GateSeesTheCanonicalIdentity follows).
+// These cases drive the REAL pricingguard.ScamGate, since the resolution lives inside it and a
+// stub keyed on the asset id would pass either way. The alias registry is process-global, so
+// none of these run parallel (as TestTVLValuer_GateSeesTheCanonicalIdentity does).
 
-// sacScamDirectory is the curated-directory seam
-// pricingguard.ScamGate reads, flagging exactly the listed G-addresses
-// and recording which addresses it was asked about — so a test can
-// assert the gate resolved the SAC to its issuer rather than merely
-// that a 404 appeared.
+// sacScamDirectory is the curated-directory seam pricingguard.ScamGate reads. It flags exactly
+// the listed G-addresses and records which addresses it was asked about, so a test can assert
+// the gate resolved the SAC to its issuer rather than merely that a 404 appeared.
 type sacScamDirectory struct {
 	flagged map[string]bool
 	asked   []string
@@ -48,11 +41,9 @@ func (d *sacScamDirectory) DirectoryEntryByAddress(_ context.Context, address st
 	return timescale.DirectoryEntry{}, false, nil
 }
 
-// sacSpellingFixture is one flagged classic issuance, its declared SAC
-// wrapper, and a directory that flags the issuer. Installing the alias
-// registry is what makes the two spellings one asset; without the
-// operator's [supply].sac_wrappers entry there is no classic twin to
-// resolve to and the gate is unchanged.
+// sacSpellingFixture is one flagged classic issuance, its declared SAC wrapper, and a directory
+// that flags the issuer. Installing the alias registry makes the two spellings one asset;
+// without the operator's [supply].sac_wrappers entry there is no classic twin to resolve to.
 type sacSpellingFixture struct {
 	classic canonical.Asset
 	sac     canonical.Asset
@@ -64,11 +55,9 @@ const (
 	sacSpellingFlaggedIssuer = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
 )
 
-// newSACSpellingFixture installs the wrapper registry for the test's
-// lifetime and returns the two spellings of the one flagged asset.
-// flagged=false builds the same shape with a CLEAN directory, which is
-// the blast-radius control: resolution must not withhold anything the
-// directory has not flagged.
+// newSACSpellingFixture installs the wrapper registry for the test's lifetime and returns the
+// two spellings of the one flagged asset. flagged=false builds the same shape with a CLEAN
+// directory, the blast-radius control: resolution must not withhold anything unflagged.
 func newSACSpellingFixture(t *testing.T, flagged bool) sacSpellingFixture {
 	t.Helper()
 	classic, err := canonical.NewClassicAsset(sacSpellingFlaggedCode, sacSpellingFlaggedIssuer)
@@ -103,13 +92,11 @@ func (f sacSpellingFixture) gate() *pricingguard.ScamGate {
 	return pricingguard.NewScamGate(f.dir, pricingguard.ScamGateOptions{})
 }
 
-// sacSpellingHistory serves trades for every spelling of the flagged
-// asset against native, so an UNGATED path answers 200 with a real
-// price and the withheld assertions cannot pass vacuously. Two
-// timestamps because the surfaces read different windows: /v1/price/tip
-// needs one inside its rolling seconds-wide window, /v1/twap and
-// /v1/vwap read a closed-bucket hour that a two-second-old trade sits
-// outside of.
+// sacSpellingHistory serves trades for every spelling of the flagged asset against native, so an
+// UNGATED path answers 200 with a real price and the withheld assertions cannot pass vacuously.
+// Two timestamps because the surfaces read different windows: /v1/price/tip needs one inside its
+// rolling seconds-wide window, while /v1/twap and /v1/vwap read a closed-bucket hour that a
+// two-second-old trade sits outside of.
 func sacSpellingHistory(t *testing.T, f sacSpellingFixture) *pairAwareHistoryReader {
 	t.Helper()
 	native, err := canonical.ParseAsset("native")
@@ -139,11 +126,10 @@ func sacSpellingHistory(t *testing.T, f sacSpellingFixture) *pairAwareHistoryRea
 	return &pairAwareHistoryReader{tradesByPair: byPair}
 }
 
-// sacSpellingSurfaces are the five price-claim surfaces the raw base
-// reaches the gate on. /v1/price is pinned at its chokepoint in
-// cmd/stellarindex-api (TestPriceWithheldChokepointResolvesSACSpelling)
-// because its gate call lives in the store-backed reader; the other
-// four gate in this package's handlers and are exercised over HTTP.
+// sacSpellingSurfaces are the five price-claim surfaces the raw base reaches the gate on.
+// /v1/price is pinned at its chokepoint in cmd/stellarindex-api
+// (TestPriceWithheldChokepointResolvesSACSpelling) because its gate call lives in the
+// store-backed reader; the other four gate in this package's handlers and are exercised over HTTP.
 func sacSpellingSurfaces(f sacSpellingFixture) []struct {
 	name string
 	path string
@@ -246,11 +232,9 @@ func TestScamGateClassicSpellingUnchanged(t *testing.T) {
 	}
 }
 
-// TestScamGateUnflaggedSACSpellingStillServes is the blast-radius
-// guard. Resolution must change WHICH identity the directory is asked
-// about and nothing else: an asset the directory has not flagged keeps
-// serving under both spellings, or the fix has taken four public
-// endpoints dark for every wrapped asset on the network.
+// TestScamGateUnflaggedSACSpellingStillServes is the blast-radius guard. Resolution must change
+// WHICH identity the directory is asked about and nothing else: an unflagged asset keeps
+// serving under both spellings, or four public endpoints go dark for every wrapped asset.
 func TestScamGateUnflaggedSACSpellingStillServes(t *testing.T) {
 	f := newSACSpellingFixture(t, false)
 	for _, s := range sacSpellingSurfaces(f) {

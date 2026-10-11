@@ -79,12 +79,10 @@ func helpResult(t *testing.T, verbs []string) (string, error) {
 	return buf.String(), herr
 }
 
-// TestUsageBodyNamesWriteForEveryWriteGatedCommand pins the write gate's
-// help contract: dry run is the default and -dry-run is a no-op alias, so a
-// --help synopsis for a write-gated command that shows [-dry-run] and never
-// -write documents an invocation that cannot write. Write-gated commands are
-// found mechanically — the ones whose -h output carries the gate's own -write
-// help text — so a new gated command is covered without editing this test.
+// TestUsageBodyNamesWriteForEveryWriteGatedCommand pins the write gate's help contract: dry
+// run is the default and -dry-run is a no-op alias, so a synopsis showing [-dry-run] and never
+// -write documents an invocation that cannot write. Gated commands are found mechanically (-h
+// output carries the gate's -write help text), so new ones are covered without editing this.
 func TestUsageBodyNamesWriteForEveryWriteGatedCommand(t *testing.T) {
 	var missing []string
 	gated := 0

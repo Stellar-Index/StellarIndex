@@ -2,11 +2,9 @@ package v1
 
 // Unit tests for the pure arithmetic behind GET /v1/rwa/history.
 //
-// The endpoint's whole claim is that it never invents a number, so the
-// tests that matter are the ones that pin the ABSENCES: a day the oracle
-// was silent, a flow log that cannot be trusted, a token that did not
-// exist yet. Each of those has to produce nothing rather than something
-// plausible.
+// The endpoint never invents a number, so the key tests pin the ABSENCES: a day the oracle was
+// silent, an untrustworthy flow log, a token that did not exist yet. Each must produce nothing
+// rather than something plausible.
 
 import (
 	"math/big"
@@ -257,12 +255,10 @@ func TestRWAReduceFeedSeries_TieBreaksOnSourceName(t *testing.T) {
 
 // TestRWAHistoryCandidates_ScamFlagOutranksTheBinding.
 //
-// Requirement 3 already refuses a scam-flagged issuer at membership
-// time, so this gate is defence in depth against the ONE way a flagged
-// issuer reaches a valuation path: it acquires the tag after the set was
-// built. The suppression has to run BEFORE the binding lookup, because a
-// bound member is exactly the case where a real instrument's net asset
-// value is available to be published against an impersonator.
+// Membership already refuses a scam-flagged issuer, so this gate covers the one remaining
+// path: an issuer that acquires the tag after the set was built. Suppression must run BEFORE
+// the binding lookup, because a bound member is exactly where a real instrument's net asset
+// value could be published against an impersonator.
 func TestRWAHistoryCandidates_ScamFlagOutranksTheBinding(t *testing.T) {
 	const etherfuse = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
 	excluded := map[string]int{}

@@ -5,13 +5,10 @@ import (
 	"testing"
 )
 
-// TestSeedSourceEntryCountsFoldsEveryPerSourceHypertable keeps
-// SeedSourceEntryCounts in lockstep with the per-source hypertables the
-// gap detector already registers. The sink bumps a source's `entries`
-// tally once per decoded event and the seed SET-resets it from the
-// countable tables, so a bumped table the seed does not fold is a tally
-// every re-seed silently truncates — aquarius kept only its swap count,
-// blend_emitter / sorocredit / upshift were zeroed outright.
+// TestSeedSourceEntryCountsFoldsEveryPerSourceHypertable keeps SeedSourceEntryCounts in lockstep
+// with the per-source hypertables the gap detector registers. The sink bumps a source's `entries`
+// tally per decoded event and the seed SET-resets it from the countable tables, so a table the
+// seed does not fold is a tally every re-seed silently truncates.
 func TestSeedSourceEntryCountsFoldsEveryPerSourceHypertable(t *testing.T) {
 	// Watched by the gap detector but never bumped: no seed fold is owed.
 	notBumped := map[string]string{

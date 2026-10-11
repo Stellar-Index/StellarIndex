@@ -37,15 +37,12 @@ func TestMustBig(t *testing.T) {
 	}
 }
 
-// TestAssembleTokenSupply_NegativeMarkedIncomplete pins the source-of-truth
-// guard: a lake-flows net total below zero (Σ(burn+clawback) > Σmint) is
-// physically impossible for a real token — the flows are incompletely seeded
-// (e.g. pre-Soroban SAC-wrapper mints not yet CAP-67-replayed) — so
-// assembleTokenSupply flags Incomplete. Both serving consumers
-// (/v1/assets/{id} F2 fallback and /v1/assets/{id}/supply) refuse an
-// Incomplete supply rather than publish a negative (ADR-0003; migration 0005
-// enforces total_supply/circulating_supply >= 0). Mirrors
-// SEP41Computer.Compute refusing ErrNegativeTotalSupply.
+// TestAssembleTokenSupply_NegativeMarkedIncomplete pins the source-of-truth guard: a lake-flows
+// net total below zero (Σ(burn+clawback) > Σmint) is impossible for a real token, so the flows
+// are incompletely seeded and assembleTokenSupply flags Incomplete. Both serving consumers
+// (/v1/assets/{id} fallback and /v1/assets/{id}/supply) refuse an Incomplete supply rather
+// than publish a negative (ADR-0003). Mirrors SEP41Computer.Compute refusing
+// ErrNegativeTotalSupply.
 func TestAssembleTokenSupply_NegativeMarkedIncomplete(t *testing.T) {
 	// burn alone exceeds mint → negative net total.
 	if ts := assembleTokenSupply("C_BURN", "100", "150", "0", 3); ts.Total.String() != "-50" || !ts.Incomplete {

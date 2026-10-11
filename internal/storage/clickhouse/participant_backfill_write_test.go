@@ -36,13 +36,10 @@ func (b *stubBatch) Send() error {
 	return b.sendErr
 }
 
-// batchConn is a write-capable connection double: it records every
-// PrepareBatch statement and hands back a stubBatch per call, so a test can
-// count FLUSHES (one batch per flush) as well as rows.
-//
-// It composes with stubConn for the read half — backfillParticipantWindow
-// takes its read and write connections separately, which is exactly what makes
-// the write side testable without a server.
+// batchConn is a write-capable connection double: it records every PrepareBatch statement and
+// hands back a stubBatch per call, so a test can count FLUSHES (one batch per flush) as well as
+// rows. It composes with stubConn for the read half, since backfillParticipantWindow takes its
+// read and write connections separately.
 type batchConn struct {
 	driver.Conn
 	statements []string
@@ -89,16 +86,14 @@ func participantRows(n int) []OperationParticipantRow {
 
 // ── participantWriter ───────────────────────────────────────────────────────
 
-// TestParticipantWriter_FlushesOnBothPaths is the writer-flush contract, and
-// it has TWO halves that fail independently:
+// TestParticipantWriter_FlushesOnBothPaths is the writer-flush contract, with two halves that
+// fail independently:
 //
-//   - the FULL-BATCH path: crossing participantInsertBatch sends mid-stream, so
-//     a dense window never materialises in the heap (the whole reason the
-//     threshold exists);
-//   - the END-OF-STREAM path: whatever is left in the buffer when the window
-//     ends is sent too. A writer that only flushed on the threshold would drop
-//     the final partial batch of EVERY window — up to 49,999 participant rows
-//     each — while the job reported the full would-write count.
+//   - the FULL-BATCH path: crossing participantInsertBatch sends mid-stream, so a dense window
+//     never materialises in the heap;
+//   - the END-OF-STREAM path: whatever is left in the buffer when the window ends is sent too.
+//     A writer that only flushed on the threshold would drop the final partial batch of EVERY
+//     window while the job reported the full would-write count.
 func TestParticipantWriter_FlushesOnBothPaths(t *testing.T) {
 	ctx := t.Context()
 	conn := &batchConn{}
@@ -224,11 +219,9 @@ func TestParticipantWriter_SendFailurePropagates(t *testing.T) {
 	}
 }
 
-// TestInsertParticipantBatch_MatchesLiveSinkColumnOrder — the backfill and the
-// live extractor write the SAME table, and Append is POSITIONAL. If the two
-// column lists ever diverge, the backfill silently writes ledger_seq into
-// tx_index (and so on) for the whole of history, with no error anywhere. The
-// live statement is Sink.flushParticipants'.
+// TestInsertParticipantBatch_MatchesLiveSinkColumnOrder: the backfill and the live extractor
+// (Sink.flushParticipants) write the SAME table, and Append is POSITIONAL. If the column lists
+// diverge, the backfill silently writes ledger_seq into tx_index for all of history.
 func TestInsertParticipantBatch_MatchesLiveSinkColumnOrder(t *testing.T) {
 	const liveStatement = "INSERT INTO stellar.operation_participants (account, ledger_seq, close_time, tx_hash, tx_index, op_index)"
 
@@ -403,11 +396,9 @@ func TestBackfillParticipantWindow_DryRunCountsWithoutWriting(t *testing.T) {
 	}
 }
 
-// TestBackfillParticipantWindow_TruncatedStreamIsAnError — a window whose read
-// dies part-way must fail, so the caller's error names it and the operator
-// re-runs it. Reporting success would leave a permanent hole in
-// operation_participants that nothing later detects: the job is idempotent and
-// resumable precisely so a failed window can be redone.
+// TestBackfillParticipantWindow_TruncatedStreamIsAnError: a window whose read dies part-way must
+// fail so the operator re-runs it. Reporting success would leave a permanent, undetected hole in
+// operation_participants; the job is idempotent so a failed window can be redone.
 func TestBackfillParticipantWindow_TruncatedStreamIsAnError(t *testing.T) {
 	truncated := errors.New("memory limit exceeded mid-scan")
 	read := &stubConn{respond: func(string) (driver.Rows, error) {

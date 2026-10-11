@@ -149,16 +149,11 @@ func TestCuratedRWADirectory_BothBoundsAreEnforcedInSQL(t *testing.T) {
 	}
 }
 
-// TestCuratedRWADirectoryByAddress_CensusAndRowsShareOneTransaction pins
-// the doc's claim (rwa_curated_directory.go:70-71) that the census and the
-// row read "come from ONE snapshot". Two autocommit statements on the pool
-// each take their own READ COMMITTED snapshot, so a sync landing between
-// them can leave the census reporting Stale=N while the rows served are
-// the N rows that just aged in (or out) — the fail-closed signal the
-// census exists to give would be lying beside a directory that disagrees
-// with it. The method must run both reads inside one transaction; the
-// scripted driver's rollback count is the only observable proof of that
-// without a real database.
+// TestCuratedRWADirectoryByAddress_CensusAndRowsShareOneTransaction pins the claim that the
+// census and the row read "come from ONE snapshot". Two autocommit statements each take their
+// own READ COMMITTED snapshot, so a sync landing between them can leave the census reporting
+// Stale=N beside rows that disagree with it, breaking its fail-closed signal. Both reads must
+// run in one transaction; the scripted driver's rollback count is the only proof without a DB.
 func TestCuratedRWADirectoryByAddress_CensusAndRowsShareOneTransaction(t *testing.T) {
 	t.Parallel()
 

@@ -9,25 +9,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The RedStone payload parser is the only place in the ingest path that
-// walks an ATTACKER-SHAPED binary format by hand: parsePayload reads the
-// third op-arg of write_prices backwards from its end, deriving every
-// offset from length fields inside the buffer itself
-// (internal/sources/redstone/payload.go:110-162). Signatures are
-// deliberately not verified, so nothing upstream constrains the bytes
-// beyond "the adapter accepted them"; a backfill replays whatever the
-// lake holds.
+// parsePayload walks an ATTACKER-SHAPED binary format by hand, reading the third op-arg of
+// write_prices backwards and deriving every offset from length fields inside the buffer.
+// Signatures are deliberately not verified, and a backfill replays whatever the lake holds.
 //
-// Its two failure modes are exactly the two a fuzz target is for:
+// Its two failure modes are what a fuzz target is for:
 //
-//   - an unchecked offset (a slice expression on a length the payload
-//     chose) panics the ingest goroutine;
-//   - a partial read succeeds and ATTRIBUTES A PRICE TO THE WRONG FEED,
-//     which is the misattribution this file's whole design — refuse
-//     rather than guess — exists to prevent.
+//   - an unchecked offset (a slice on a payload-chosen length) panics the ingest goroutine;
+//   - a partial read succeeds and ATTRIBUTES A PRICE TO THE WRONG FEED, the misattribution
+//     the refuse-rather-than-guess design exists to prevent.
 //
-// Both fuzz targets run as plain seed-corpus tests under `go test`; the
-// generative runs are
+// Both targets run as seed-corpus tests under `go test`; the generative runs are
 //
 //	go test -run=^$ -fuzz=FuzzParsePayload    -fuzztime=20s ./internal/sources/redstone/
 //	go test -run=^$ -fuzz=FuzzAttributeSubset -fuzztime=20s ./internal/sources/redstone/
@@ -72,11 +64,9 @@ func FuzzParsePayload(f *testing.F) {
 		// Property 1 — totality: no offset in the backwards walk may
 		// panic, whatever the embedded length fields claim.
 		byFeed, err := parsePayload(payload)
-		// Property 2 — one refusal class. The doc contract is that every
-		// structural failure wraps ErrMalformedRedstonePayload so the
-		// caller can treat "payload unparseable" as a single honest-blind
-		// outcome; a bare error would fall through the caller's
-		// errors.Is and be reported as a decode bug instead.
+		// Property 2 — one refusal class. Every structural failure must wrap
+		// ErrMalformedRedstonePayload; a bare error would miss the caller's errors.Is and be
+		// reported as a decode bug instead of an honest-blind outcome.
 		if err != nil {
 			if !errors.Is(err, ErrMalformedRedstonePayload) {
 				t.Fatalf("parse error does not wrap ErrMalformedRedstonePayload: %v", err)
@@ -102,12 +92,9 @@ func FuzzParsePayload(f *testing.F) {
 			if feed == "" {
 				t.Fatal("parse produced an empty feed id")
 			}
-			// NOTE: no assertion that the id is printable. The 32-byte
-			// slot is zero-RIGHT-padded and parsePayload trims exactly
-			// that; a slot holding arbitrary bytes yields an id that
-			// simply matches no op-args feed_id, which is a refusal, not
-			// a misattribution. Asserting otherwise would be asserting a
-			// property of the INPUT.
+			// No printable-id assertion: the 32-byte slot is zero-RIGHT-padded and trimmed, and
+			// arbitrary bytes yield an id matching no op-args feed_id (a refusal, not a
+			// misattribution). Asserting otherwise would assert a property of the INPUT.
 			if len(pkgs) == 0 {
 				t.Fatalf("feed %q has zero packages", feed)
 			}
@@ -157,14 +144,10 @@ func FuzzParsePayload(f *testing.F) {
 // FuzzAttributeSubset fuzzes the attribution itself: the order-preserving
 // DP that decides which feed_id each surviving price belongs to.
 //
-// The invariant under test is the one the F1 caveat in payload.go is
-// about — a returned assignment must be JUSTIFIED, not merely
-// well-formed. Every price it assigns must equal that feed's payload
-// median at that price's own package_timestamp EXACTLY, and the
-// assignment must be strictly order-preserving in feed_ids (the adapter
-// builds updated_feeds in one pass, which is why the equal-arity case
-// zips positionally). Anything else is a misattribution: a price
-// published under another asset's name.
+// A returned assignment must be JUSTIFIED, not merely well-formed: every assigned price must
+// equal that feed's payload median at the price's own package_timestamp EXACTLY, and the
+// assignment must be strictly order-preserving in feed_ids (the adapter builds updated_feeds
+// in one pass). Anything else publishes a price under another asset's name.
 func FuzzAttributeSubset(f *testing.F) {
 	realPayload, err := payloadFromOpArgs(subsetFixtureEvent().OpArgs)
 	if err != nil {
@@ -177,11 +160,9 @@ func FuzzAttributeSubset(f *testing.F) {
 	f.Add([]byte(nil), "BTC", int64(1), int64(2), uint64(1), false)
 	// The cross-feed median collision that the ORDER constraint resolves.
 	f.Add(realPayload, "BTC,BTC,ETH", int64(12449969251710), int64(460561235000), uint64(1759758520000), true)
-	// Prices that are NOT either feed's median, at a timestamp both feeds
-	// DO have packages for. The only correct answer is a refusal; a
-	// matcher that keyed on the timestamp and forgot the value would find
-	// a unique order-preserving alignment here and publish 1 and 2 as
-	// BTC/USD and ETH/USD.
+	// Prices that are NOT either feed's median, at a timestamp both feeds have packages for.
+	// The only correct answer is a refusal; a matcher keyed on timestamp alone would find a
+	// unique alignment and publish 1 and 2 as BTC/USD and ETH/USD.
 	f.Add(realPayload, "BTC,ETH", int64(1), int64(2), uint64(1759758520000), true)
 
 	f.Fuzz(func(t *testing.T, payload []byte, feedsCSV string, p0, p1 int64, ts uint64, two bool) {
@@ -248,11 +229,9 @@ func FuzzAttributeSubset(f *testing.F) {
 	})
 }
 
-// fuzzFeedIDs turns the fuzzer's string into a small, unique feed_ids
-// vector. Unique because the property under test indexes back into it
-// (duplicates make "which slot was this?" unanswerable, and real op-args
-// feed_ids are unique); small because the alignment DP is O(n×m) and the
-// interesting cases are batch-sized, not pathological.
+// fuzzFeedIDs turns the fuzzer's string into a small, unique feed_ids vector. Unique because
+// the property indexes back into it and real feed_ids are unique; small because the
+// alignment DP is O(n×m) and the interesting cases are batch-sized.
 func fuzzFeedIDs(csv string) []string {
 	const maxFeeds = 8
 	seen := make(map[string]bool)

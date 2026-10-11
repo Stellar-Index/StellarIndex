@@ -10,13 +10,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The catalogue SQL rounds a RAW ratio to 10 places before the decimals
-// normalisation can run, and scaling UP promotes that rounding error by
-// the same power of ten. An 18-decimals token (factor 10^11) worth $1 has
-// a raw ratio of 1e-11 — the SQL hands back zero — and one worth $14
-// comes back as exactly $10. Those must become gaps, not precise-looking
-// fiction; a value that kept enough quanta is corrected exactly; and the
-// un-rounded ATH is never floored at all.
+// The catalogue SQL rounds a RAW ratio to 10 places before decimals normalisation runs, and
+// scaling UP promotes that rounding error by the same power of ten. An 18-decimals token
+// (factor 10^11) worth $1 has a raw ratio of 1e-11 and comes back as zero, and one worth $14
+// comes back as exactly $10. Those must become gaps, not precise-looking fiction; a value that
+// kept enough quanta is corrected exactly; the un-rounded ATH is never floored.
 func TestNormalizeCatalogueUSD_PrecisionFloor(t *testing.T) {
 	const sorobanContract = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 	token, err := canonical.ParseAsset(sorobanContract)

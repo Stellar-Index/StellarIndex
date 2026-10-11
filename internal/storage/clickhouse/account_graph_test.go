@@ -8,13 +8,10 @@ import (
 	"testing"
 )
 
-// The graph exists in two sort orders precisely so that each direction is
-// a primary-key range read. Reading a direction off the WRONG ordering is
-// the failure this pins, and it is a silent one: the query returns the
-// right rows, so no test of the payload can see it — it just becomes a
-// full scan of a 21-million-row table on a served route, which is the
-// exact regression stellar.ops_by_source was built to retire (a
-// skip-index scan measured 110x slower than the PK-prefixed read).
+// The graph exists in two sort orders so that each direction is a primary-key range read.
+// Reading a direction off the WRONG ordering is silent: the query returns the right rows, so no
+// payload test sees it, but it becomes a full table scan on a served route (a skip-index scan
+// is far slower than the PK-prefixed read, which stellar.ops_by_source exists to avoid).
 func TestAccountGraphReadsEachDirectionOffItsOwnOrdering(t *testing.T) {
 	for _, tc := range []struct {
 		name, query, wantTable, wantKey, forbidTable string
@@ -79,11 +76,9 @@ func TestAccountGraphReadsEachDirectionOffItsOwnOrdering(t *testing.T) {
 	}
 }
 
-// The graph must never be read out of a cycle's WORKING table. Those are
-// TRUNCATEd and refilled over 65 walked windows, so for the length of a
-// cycle they hold a PARTIAL archive — a served read against one would
-// answer "this account was created by nobody" for most of the chain,
-// intermittently, and only while a cycle happened to be running.
+// The graph must never be read out of a cycle's WORKING table. Those are TRUNCATEd and refilled
+// window by window, so during a cycle they hold a PARTIAL archive, and a served read against one
+// would intermittently answer "this account was created by nobody".
 func TestAccountGraphNeverReadsAWorkingTable(t *testing.T) {
 	working := []string{
 		"stellar.account_creators_ops",

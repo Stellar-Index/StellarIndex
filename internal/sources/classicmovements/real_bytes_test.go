@@ -10,15 +10,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Real pre-P23 mainnet bytes, pulled read-only from r1's ClickHouse
-// lake (HTTP :8123, stellar.operations JOIN stellar.operation_results,
-// windowed + LIMIT'd queries per maintainer-workflow.md's heavy-job discipline;
-// see the ADR-0047 implementation session for the exact SELECTs) —
-// NOT synthetic fixtures. Each case pins the decoder against actual
-// on-chain data around ledger 40,000,000 (2022-03-12), long before
-// the P23 boundary. decode_test.go covers the synthetic edge cases
-// this real data doesn't happen to exercise (native-asset payment,
-// malformed-amount defensive path, etc).
+// Real pre-P23 mainnet bytes from the ClickHouse lake (stellar.operations joined to
+// stellar.operation_results), not synthetic fixtures. Each case pins the decoder against
+// actual on-chain data far below the P23 boundary. decode_test.go covers the synthetic
+// edge cases this data does not exercise (native-asset payment, malformed amounts).
 func TestRealBytes_payment_success(t *testing.T) {
 	// ledger 40000000, tx 0761af68c3cd6f5fc9a94b5ffca8129ccd6a3a6faa515fe1169706a8521ba248, op_index 2.
 	// source_account (from) = GA2QXW7YFAIR35LGKM2TDCQQZFR33XJCWF4N6SMRLOKX3HL76JKKPA62
@@ -141,14 +136,10 @@ func TestRealBytes_createAccount_success(t *testing.T) {
 	assertMovementEqual(t, movements[0], want, "2732091143")
 }
 
-// TestRealBytes_payment_failed_sourceNoAccount is the path-negative
-// case: a REAL failed payment (ledger 40035852, tx
-// 8cca530c735f7bff37a587db8c48082739c12f06f6d3a9fa0ec0f4771e1dbbd1,
-// op_index 2) whose outer OperationResultCode is opNO_ACCOUNT (-2,
-// "source account was not found") — the op never reached its own
-// PaymentResult union at all. Must decode to ZERO movements, not an
-// error: this is routine on-chain failure, indistinguishable at the
-// decoder layer from "offer didn't cross" in SDEX's failed-op tests.
+// TestRealBytes_payment_failed_sourceNoAccount is the path-negative case: a real failed
+// payment whose outer OperationResultCode is opNO_ACCOUNT, so the op never reached its own
+// PaymentResult union. It must decode to zero movements, not an error: this is routine
+// on-chain failure.
 func TestRealBytes_payment_failed_sourceNoAccount(t *testing.T) {
 	const (
 		bodyB64   = "AAAAAQAAAAA3mZB7bnHFoxwyZpTTMRdQvzdJKQrlJgLjpW6jCNCEtwAAAAJSQU5ESTEAAAAAAAAAAAAAjNPgGB5OHDkXLDlbk4XOaCVSZtwsVbgQoA84G19p0YkAAAAAAAAAAQ=="
@@ -180,13 +171,9 @@ func TestRealBytes_resultCodeIsOpNoAccount(t *testing.T) {
 
 // ─── Phase 2: PathPaymentStrictReceive / PathPaymentStrictSend ────
 
-// TestRealBytes_pathPaymentStrictReceive_singleHop is a real
-// pre-P23 mainnet PathPaymentStrictReceive: source spends native
-// through ONE order-book offer to deliver an exact SONY amount.
-// Confirms the destination leg (Asset/Amount) is read from the
-// result's Last, not the body's DestAsset/DestAmount (though they
-// agree here, as they always should for a successful op), and that
-// the source leg is the single offer's AmountBought.
+// TestRealBytes_pathPaymentStrictReceive_singleHop is a real PathPaymentStrictReceive through
+// ONE order-book offer. The destination leg must be read from the result's Last rather than
+// the body's DestAsset/DestAmount, and the source leg is the single offer's AmountBought.
 func TestRealBytes_pathPaymentStrictReceive_singleHop(t *testing.T) {
 	// ledger 40000001, tx 32696e52909644d21ff1e36afbb6379cb8a555cbf658e8c7ae66a0c9c5b417b0, op_index 0.
 	// source GALHA4OVKNZ555C7VJFIXVXM4F2R7PPJNO7IZHIYE2SMKFYY5U7V254G pays
@@ -219,14 +206,9 @@ func TestRealBytes_pathPaymentStrictReceive_singleHop(t *testing.T) {
 	}
 }
 
-// TestRealBytes_pathPaymentStrictReceive_twoHop is a real pre-P23
-// mainnet PathPaymentStrictReceive routed native→SHIB→native (an
-// arbitrage-shaped path with SendAsset==DestAsset but two real
-// hops) — the fixture pathPaymentStrictReceiveSourceAmount's doc
-// comment cites directly. Confirms the derivation sums ONLY the
-// first hop (Offers[0], AssetBought==native) and stops before the
-// second hop (Offers[1], AssetBought==SHIB) even though both offers
-// are present in the result.
+// TestRealBytes_pathPaymentStrictReceive_twoHop is a real native→SHIB→native path (SendAsset
+// equals DestAsset, two real hops), the fixture pathPaymentStrictReceiveSourceAmount cites.
+// The derivation must sum ONLY the first hop (Offers[0]) even though both offers are present.
 func TestRealBytes_pathPaymentStrictReceive_twoHop(t *testing.T) {
 	// ledger 40000003, tx 49203432aa0b5da1a3f621e093cdde6a116064f969efe6f3b6162691d1afb84b, op_index 0.
 	const (
@@ -251,11 +233,8 @@ func TestRealBytes_pathPaymentStrictReceive_twoHop(t *testing.T) {
 	}
 }
 
-// TestRealBytes_pathPaymentStrictSend_success is a real pre-P23
-// mainnet PathPaymentStrictSend: exact aiXDOGE SendAmount from the
-// body, AQUA delivered per the result's Last (below DestMin's floor
-// check, already enforced by core — Last.Amount is what actually
-// landed).
+// TestRealBytes_pathPaymentStrictSend_success is a real PathPaymentStrictSend: SendAmount comes
+// from the body and the delivered amount from the result's Last, which is what actually landed.
 func TestRealBytes_pathPaymentStrictSend_success(t *testing.T) {
 	// ledger 40000000, tx 04f7f85101dd3d9c3d370f65ddeb619b93058f5d8d55d1499932fdf8747a6a40, op_index 2.
 	const (
@@ -323,12 +302,9 @@ func TestRealBytes_createClaimableBalance_success(t *testing.T) {
 	}
 }
 
-// TestRealBytes_claimClaimableBalance_success is a real pre-P23
-// mainnet ClaimClaimableBalance. Its create is NOT in this test's
-// window, so the in-run index can't resolve it — this decodes to
-// zero movements plus one PendingClaimableBalanceRef, exercising the
-// exact "create outside this run" path production traffic hits
-// constantly (§ decode.go's Decoder doc).
+// TestRealBytes_claimClaimableBalance_success is a real ClaimClaimableBalance whose create is
+// outside the window, so the in-run index cannot resolve it: it decodes to zero movements plus
+// one PendingClaimableBalanceRef, the "create outside this run" path production hits constantly.
 func TestRealBytes_claimClaimableBalance_unresolved(t *testing.T) {
 	// ledger 40000000, tx 04f7f85101dd3d9c3d370f65ddeb619b93058f5d8d55d1499932fdf8747a6a40, op_index 1.
 	const (
@@ -373,11 +349,8 @@ func TestRealBytes_claimClaimableBalance_unresolved(t *testing.T) {
 	}
 }
 
-// TestRealBytes_clawback_success is a real pre-P23 mainnet Clawback:
-// the holder (op.From) and the issuer (the op's resolved source
-// account) are DIFFERENT real addresses — confirms FromAddress /
-// ToAddress are not accidentally swapped or both set to the same
-// value.
+// TestRealBytes_clawback_success is a real Clawback where the holder (op.From) and the issuer
+// (the resolved source) differ, so FromAddress and ToAddress cannot be swapped or collapsed.
 func TestRealBytes_clawback_success(t *testing.T) {
 	// ledger 45000001, tx 9a3e58558762d50ba9b90a0d1ce934325fc9f1af1c2b4e646e1a4368890bfe84, op_index 2.
 	const (
@@ -479,18 +452,10 @@ func TestRealBytes_accountMerge_success(t *testing.T) {
 
 // ─── Phase 4 (entry-changes half): LiquidityPoolDeposit/Withdraw ──
 //
-// Real pre-P23 mainnet LP deposit/withdraw op bodies (ledger
-// ~50,000,000, well below the P23 boundary AND below
-// ledger_entry_changes' current per-op fidelity floor of
-// ~61,996,000 — README boundaries). This is exactly the "fidelity
-// absent" era every classic-movements-backfill invocation runs in
-// TODAY: StreamEntryChanges returns zero rows for these ops, not
-// because nothing happened but because Phase 0's ch-backfill hasn't
-// reached this range yet. Confirming that DecodeLiquidityPoolOp
-// returns ErrEntryChangesUnavailable (never an error, never a
-// guessed amount) against REAL op bytes — not just a synthetic empty
-// slice — is the strongest evidence the skip-honestly path is wired
-// correctly end to end.
+// Real LP deposit/withdraw op bodies below both the P23 boundary and ledger_entry_changes'
+// per-op fidelity floor. In that era StreamEntryChanges returns zero rows for these ops
+// because the entry-change data is absent, not because nothing happened. DecodeLiquidityPoolOp
+// must return ErrEntryChangesUnavailable (never a guessed amount) against real op bytes.
 
 func TestRealBytes_liquidityPoolDeposit_entryChangesUnavailable(t *testing.T) {
 	// ledger 50000031, tx 294abbd9b62ed717abb6e7008cf86ba7b99c9e5a6a20444350fc418bf2d00071, op_index 0.
@@ -546,11 +511,8 @@ func TestRealBytes_liquidityPoolWithdraw_entryChangesUnavailable(t *testing.T) {
 
 // ─── helpers ──────────────────────────────────────────────────────
 
-// decodeRealBytes unmarshals real op body/result XDR (base64, exactly
-// as stored in stellar.operations.body_xdr / operation_results.result_xdr)
-// and runs it through the production Decoder, exactly the way
-// clickhouse.StreamClassicOps + the classic-movements-backfill
-// command's consumer loop would.
+// decodeRealBytes unmarshals real op body/result XDR (base64, as stored in the lake) and runs
+// it through the production Decoder the way the backfill consumer loop would.
 func decodeRealBytes(t *testing.T, bodyB64, resultB64 string, ledger uint32, txHash string, opIndex uint32, fromAddr string, closedAt time.Time) []Movement {
 	t.Helper()
 	var body xdr.OperationBody

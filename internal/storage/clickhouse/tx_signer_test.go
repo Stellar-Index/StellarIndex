@@ -10,21 +10,16 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// TestTxSignersForLedgerRange_ReadsTheWindowInBindOrder pins the shape the
-// signer back-tagger depends on.
+// TestTxSignersForLedgerRange_ReadsTheWindowInBindOrder pins the shape the signer back-tagger
+// depends on. Each fragment is load-bearing:
 //
-// Why each fragment is load-bearing:
-//
-//   - `stellar.transactions FINAL`: the table is a ReplacingMergeTree, and a
-//     re-ingest (retry, or a decode-fix re-derive) can leave un-merged
-//     duplicate parts for one (ledger_seq, tx_index). Without FINAL the sweep
-//     can pick up a STALE pre-correction source_account and stamp it onto the
-//     trade as its signer.
-//   - `ledger_seq >= ? AND ledger_seq <= ?`: ledger_seq is the table's primary
-//     key, so this is an index-pruned range read. A function-wrapped or
-//     reordered predicate turns a few-minute sweep into a full-table scan.
-//   - the non-empty source_account predicate: a blank signer is not a signer;
-//     writing it would overwrite a real one with nothing.
+//   - `stellar.transactions FINAL`: the table is a ReplacingMergeTree, and a re-ingest can leave
+//     un-merged duplicate parts for one (ledger_seq, tx_index). Without FINAL the sweep can stamp
+//     a STALE pre-correction source_account onto the trade as its signer.
+//   - `ledger_seq >= ? AND ledger_seq <= ?`: ledger_seq is the primary key, so this is an
+//     index-pruned range read. A function-wrapped or reordered predicate becomes a full scan.
+//   - the non-empty source_account predicate: a blank signer is not a signer, and writing it would
+//     overwrite a real one with nothing.
 func TestTxSignersForLedgerRange_ReadsTheWindowInBindOrder(t *testing.T) {
 	conn := &stubConn{respond: func(string) (driver.Rows, error) { return &stubRows{}, nil }}
 	r := &ExplorerReader{conn: conn}

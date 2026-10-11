@@ -18,13 +18,10 @@ import (
 // TestProductionScamGateIsPairAware pins the type assertion in
 // v1.scamWithheld to the type that actually runs in production.
 //
-// scamWithheld falls back to the BASE-ONLY question for a gate that
-// does not implement the pair form. That fallback is a migration seam
-// for gates written before the pair question existed — if the
-// production gate ever stopped satisfying it, every handler would
-// quietly go back to serving a flagged issuer's price through the quote
-// leg with no compile error and no failing behavioural test that used a
-// fake. This assertion is what makes that impossible.
+// scamWithheld falls back to the BASE-ONLY question for a gate lacking the pair form. If the
+// production gate ever stopped satisfying the pair form, every handler would quietly serve a
+// flagged issuer's price through the quote leg, with no compile error and no failing test
+// that used a fake. This assertion makes that impossible.
 func TestProductionScamGateIsPairAware(t *testing.T) {
 	var gate v1.PriceScamGate = (*pricingguard.ScamGate)(nil)
 	if _, ok := gate.(v1.PriceScamPairGate); !ok {
@@ -34,22 +31,18 @@ func TestProductionScamGateIsPairAware(t *testing.T) {
 	}
 }
 
-// TestScamGateIsAskedThePairQuestion fails when any production file
-// under internal/api/v1 — this package or any subpackage — can ask the
-// scam gate the BASE-ONLY question, or asks a pair decider the same leg
-// twice (which is the base-only question in effect).
+// TestScamGateIsAskedThePairQuestion fails when any production file under internal/api/v1
+// (including subpackages) can ask the scam gate the BASE-ONLY question, or asks a pair
+// decider the same leg twice (the base-only question in effect).
 //
-// What it proves: every selector named `Withheld` is a finding whatever
-// its receiver — a Server field of any name, a parameter, a local alias,
-// a method value — except the one migration fallback inside this
-// package's scamWithheld; and no call to a pair decider passes the same
-// expression as base and quote. There is no exemption list.
+// Proves: every selector named `Withheld` is a finding whatever its receiver (field,
+// parameter, local alias, method value) except the one fallback inside scamWithheld, and no
+// pair-decider call passes the same expression as base and quote. No exemption list.
 //
-// What it does NOT prove: that every price surface consults the gate. A
-// surface that asks no gate at all has no call for this scan to match;
-// that coverage is per-surface (see pricingguard's package doc) and, for
-// reader-backed seams, cmd/stellarindex-api's TestPriceServingSeamsAreGated
-// and TestV1VWAPCacheSeamsAreGated.
+// Does NOT prove every price surface consults the gate: a surface asking no gate has no call
+// to match. That coverage is per-surface (pricingguard's package doc) and, for reader-backed
+// seams, cmd/stellarindex-api's TestPriceServingSeamsAreGated and
+// TestV1VWAPCacheSeamsAreGated.
 func TestScamGateIsAskedThePairQuestion(t *testing.T) {
 	fset := token.NewFileSet()
 	files := parseScamGateTree(t, fset, ".")

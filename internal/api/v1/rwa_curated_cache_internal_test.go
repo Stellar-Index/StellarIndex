@@ -36,12 +36,10 @@ func rwaCuratedCacheTestServer(reader RWACuratedDirectoryReader) *Server {
 	}
 }
 
-// The curated snapshot is a process-wide cache shared by every request
-// inside its ten-minute TTL. The request that happens to trigger a
-// refresh must not be able to poison that shared cache for everyone
-// else by disconnecting mid-read — the read has to run on a context
-// detached from the caller's, the same way the membership cache's
-// rebuild does.
+// The curated snapshot is a process-wide cache shared by every request within its TTL. The
+// request that triggers a refresh must not poison it for everyone else by disconnecting
+// mid-read, so the read runs on a context detached from the caller's, as the membership
+// cache's rebuild does.
 func TestRWACuratedSnapshot_ReadDoesNotInheritCallerCancellation(t *testing.T) {
 	reader := &blockingRWACuratedReader{rows: map[string]timescale.CuratedRWAEntry{
 		"CBUBVYRKTQLMDRUBPP6SH4GO33KZCEEYBIWB5AWNGKODP4A6KPKM2VJ4": {

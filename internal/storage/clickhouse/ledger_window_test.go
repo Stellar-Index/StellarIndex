@@ -7,15 +7,10 @@ import (
 	"testing"
 )
 
-// walk drives the exact loop shape every windowed backfill in this package
-// runs (BackfillTxHashIndex, BackfillContractActiveLedgers,
-// BackfillContractInstanceChanges, BackfillOperationParticipants), collecting
-// the [lo,hi] windows it would execute. It is a transcription of those loops,
-// with the ClickHouse call removed — so a walk assertion here is an assertion
-// about the production walk, not about a test helper.
-//
-// The `guard` cap exists so a non-terminating walk fails as a bounded test
-// failure rather than hanging the package.
+// walk transcribes the loop every windowed backfill in this package runs, minus the
+// ClickHouse call, and collects the [lo,hi] windows, so an assertion on it is an assertion
+// about the production walk. The `guard` cap makes a non-terminating walk fail instead of
+// hanging the package.
 func walk(t *testing.T, from, to, window uint32) [][2]uint32 {
 	t.Helper()
 	const guard = 10_000
@@ -42,16 +37,10 @@ func fmtWindows(ws [][2]uint32) string {
 	return strings.Join(parts, " ")
 }
 
-// TestLedgerWindowHi_WalkCoversRangeExactlyOnce is the core contract: for any
-// (from, to, window) the walk must tile [from,to] with contiguous,
-// non-overlapping, non-empty windows — first window starts at `from`, last
-// window ends at `to`, and each window starts exactly one past the previous
-// one's end.
-//
-// The failure this pins is the last-partial-window class: a walk that computes
-// `hi = lo + window - 1` unconditionally either reads PAST the tip (hi > to) or,
-// with a naive `if hi > to { return }` bail, DROPS the remainder — silently
-// leaving the tail of a backfill range unwritten while the job reports success.
+// TestLedgerWindowHi_WalkCoversRangeExactlyOnce is the core contract: the walk must tile
+// [from,to] with contiguous, non-overlapping, non-empty windows. It pins the last-partial-window
+// class: an unconditional `hi = lo + window - 1` reads past the tip, and a naive `if hi > to`
+// bail drops the remainder, leaving the tail of a backfill unwritten while the job succeeds.
 func TestLedgerWindowHi_WalkCoversRangeExactlyOnce(t *testing.T) {
 	cases := []struct {
 		name             string
@@ -149,11 +138,9 @@ func TestLedgerWindowHi_WalkCoversRangeExactlyOnce(t *testing.T) {
 	}
 }
 
-// TestLedgerWindowHi_NoUint32Overflow pins the reason the helper tests the
-// REMAINING span rather than computing lo+window-1 and clamping: near the top
-// of the uint32 ledger-sequence space that addition WRAPS, and a wrapped hi is
-// both less than `to` (so the loop never terminates) and a garbage window
-// bound. `lo = hi + 1` then restarts the walk from near zero.
+// TestLedgerWindowHi_NoUint32Overflow pins why the helper tests the REMAINING span instead of
+// clamping lo+window-1: near the top of the uint32 space that addition wraps, giving a hi below
+// `to` (the loop never terminates) and a garbage bound that restarts the walk near zero.
 func TestLedgerWindowHi_NoUint32Overflow(t *testing.T) {
 	const maxU32 = uint32(math.MaxUint32)
 
@@ -179,14 +166,10 @@ func TestLedgerWindowHi_NoUint32Overflow(t *testing.T) {
 	}
 }
 
-// TestWindowedBackfills_RejectDegenerateArguments pins the shared usage
-// contract every windowed backfill validates BEFORE dialing ClickHouse:
-// 0 < from <= to and window > 0. window == 0 matters most — ledgerWindowHi's
-// `rem >= window` is true for every rem, so a zero window would return
-// lo+MaxUint32, i.e. a wrapped bound, on every iteration.
-//
-// These four all reject on the argument check, so they never reach openRead and
-// need no ClickHouse; addr is deliberately unroutable to prove that.
+// TestWindowedBackfills_RejectDegenerateArguments pins the usage contract every windowed
+// backfill validates BEFORE dialing ClickHouse: 0 < from <= to and window > 0. window == 0
+// matters most, since `rem >= window` would then always hold and return a wrapped bound.
+// These reject on the argument check, so addr is deliberately unroutable to prove no dial.
 func TestWindowedBackfills_RejectDegenerateArguments(t *testing.T) {
 	const unreachable = "127.0.0.1:1" // never dialled: the arg check fires first
 	noLog := func(string, ...any) {}

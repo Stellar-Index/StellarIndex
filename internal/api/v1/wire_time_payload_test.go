@@ -18,27 +18,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// wireTimeLocalZone is a deliberately non-UTC location, fixed rather
-// than loaded from tzdata so the test behaves identically on a machine
-// with no zoneinfo. +02:00 is the offset production actually leaked:
-// r1 runs Europe/Berlin and pgx decodes `timestamptz` into the
-// process's local zone, so every stored instant arrived at the
-// handlers wearing an offset.
+// wireTimeLocalZone is a deliberately non-UTC location, fixed rather than loaded from tzdata
+// so the test behaves identically without zoneinfo. pgx decodes `timestamptz` into the
+// process's local zone, so stored instants reach handlers wearing an offset like this one.
 var wireTimeLocalZone = time.FixedZone("WIRETEST+02", 2*60*60)
 
-// wireTimeFixture is the instant every fixture below is built from,
-// expressed IN THAT ZONE. Rendered honestly it is
-// 2026-06-01T10:00:00Z; rendered with the location attached it is
-// 2026-06-01T12:00:00+02:00. Both are the same instant and both pass
-// `format: date-time`, which is exactly why the leak survived every
-// schema check the contract test runs.
+// wireTimeFixture is the instant every fixture below is built from, expressed IN THAT ZONE.
+// Rendered as UTC it ends in `Z`; with the location attached it ends in `+02:00`. Both
+// pass `format: date-time`, so schema checks cannot see the leak.
 var wireTimeFixture = time.Date(2026, 6, 1, 12, 0, 0, 0, wireTimeLocalZone)
 
-// rfc3339Like matches any JSON string shaped like an RFC 3339
-// timestamp, capturing the offset. Deliberately loose on the payload
-// side: the point is to find timestamps the test author did not know
-// about, including ones nested inside response types this file never
-// names.
+// rfc3339Like matches any JSON string shaped like an RFC 3339 timestamp, capturing the offset.
+// Deliberately loose, to find timestamps the author did not know about, including ones nested
+// inside response types this file never names.
 var rfc3339Like = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(Z|z|[+-]\d{2}:?\d{2})$`)
 
 // scanTimestamps walks a decoded JSON document and returns every
@@ -152,18 +144,13 @@ func (s wireTimePriceAtStub) PriceAt(
 	return s.value, s.bucketAt, 60, nil
 }
 
-// TestWireTime_RenderedPayloadsCarryNoLocalOffset is the class test
-// for the timezone leak. It feeds every timestamp-bearing reader a
-// fixture stamped in a NON-UTC zone — the condition that produced the
-// bug in production — then walks the RENDERED JSON of many endpoints
-// and fails on any timestamp that is not `Z`.
+// TestWireTime_RenderedPayloadsCarryNoLocalOffset is the class test for the timezone leak. It
+// feeds every timestamp-bearing reader a fixture stamped in a NON-UTC zone, then walks the
+// RENDERED JSON of many endpoints and fails on any timestamp that is not `Z`.
 //
-// It scans payloads rather than naming fields on purpose. A handler
-// that grows a new timestamp, or a response struct that gains a
-// nested one, is covered the moment its endpoint appears in the table
-// below — no per-field assertion to remember. The structural half of
-// the guarantee (a NEW endpoint cannot opt out) is
-// TestWireTime_NoRawTimeOnTheWire.
+// It scans payloads rather than naming fields on purpose: a new or nested timestamp is covered
+// as soon as its endpoint is in the table below. The structural half of the guarantee (a NEW
+// endpoint cannot opt out) is TestWireTime_NoRawTimeOnTheWire.
 func TestWireTime_RenderedPayloadsCarryNoLocalOffset(t *testing.T) {
 	ts := wireTimePayloadServer(t)
 

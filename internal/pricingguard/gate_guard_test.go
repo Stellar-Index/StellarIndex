@@ -43,10 +43,9 @@ var closedVWAPSeamExempt = map[string]string{
 		"GATED lookupUSDPrice succeeds first",
 }
 
-// TestEveryBinaryAsksTheGate is the cross-binary seam guard. Each binary's
-// own guard parses its own main.go, so no test could see a publish site
-// in another binary or another file. This one walks the non-test sources
-// of every cmd/* binary and fails when
+// TestEveryBinaryAsksTheGate is the cross-binary seam guard: each binary's own guard parses
+// only its main.go, so none sees a publish site in another binary or file. This walks the
+// non-test sources of every cmd/* binary and fails when
 //
 //   - any function reads a closed VWAP bucket (a *ClosedVWAP* call on any
 //     receiver) without asking a Gate, directly or through a package-level
@@ -182,11 +181,10 @@ func readsClosedVWAPAnyReceiver(body *ast.BlockStmt) bool {
 // under across the binaries.
 var gateHolderNames = map[string]bool{"substance": true, "Substance": true, "scam": true, "Scam": true}
 
-// halfReferences returns every gate-half selector in body: each call on any
-// receiver, and a method value taken from a gate holder or a local alias of
-// one (g := r.scam; f := g.WithheldPair), which is a call deferred.
-// Non-call references need a holder because the half names are generic:
-// a rate-limit result carries a plain Allowed field.
+// halfReferences returns every gate-half selector in body: each call on any receiver, and a
+// method value taken from a gate holder or a local alias of one (g := r.scam;
+// f := g.WithheldPair), which is a deferred call. Non-call references need a holder because
+// the half names are generic (a rate-limit result carries a plain Allowed field).
 func halfReferences(body *ast.BlockStmt) []*ast.SelectorExpr {
 	calls := map[*ast.SelectorExpr]bool{}
 	ast.Inspect(body, func(n ast.Node) bool {

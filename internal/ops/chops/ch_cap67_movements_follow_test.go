@@ -11,11 +11,9 @@ import (
 	"time"
 )
 
-// TestFollowLoop_ErrorRetriesThenCancelExits pins the daemon's two load-bearing
-// contracts: a transient catch-up error must NOT kill the loop (it retries on
-// the next tick — the watermark holds, so no ledger is skipped), and a
-// ctx-cancel between ticks must end the loop cleanly (return nil). This is the
-// real-time movement feed's resilience guarantee, testable without ClickHouse.
+// TestFollowLoop_ErrorRetriesThenCancelExits pins two contracts: a transient catch-up error
+// must NOT kill the loop (it retries next tick; the watermark holds, so no ledger is skipped),
+// and a ctx-cancel between ticks ends the loop cleanly (return nil).
 func TestFollowLoop_ErrorRetriesThenCancelExits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -38,13 +36,10 @@ func TestFollowLoop_ErrorRetriesThenCancelExits(t *testing.T) {
 	}
 }
 
-// TestFollowLoop_MidDeriveCancelIsClean: if SIGTERM lands WHILE a catch-up is
-// running, catchUp surfaces the ctx error; the loop must treat that as a clean
-// shutdown (return nil) AND NOT log it as a derive failure. The `ctx.Err()`
-// shortcut in followLoop exists precisely to keep a shutdown out of the error
-// log — without it the loop logs a misleading "catch-up error ... retrying"
-// line on every SIGTERM. This captures stderr to make that guard non-vacuous:
-// delete the shortcut and this test goes red on the spurious log.
+// TestFollowLoop_MidDeriveCancelIsClean: if SIGTERM lands WHILE a catch-up is running, the
+// loop must treat the surfaced ctx error as a clean shutdown (return nil) and NOT log a
+// derive failure. The `ctx.Err()` shortcut in followLoop exists to keep shutdown out of the
+// error log; this captures stderr so deleting the shortcut turns the test red.
 func TestFollowLoop_MidDeriveCancelIsClean(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -96,12 +91,10 @@ func TestFollowLoop_RunsCatchUpImmediately(t *testing.T) {
 	}
 }
 
-// TestFollowLoop_IdleAccounting pins the count the loop hands each tick:
-// consecutive idle ticks so far, reset to 0 by a tick that worked and left
-// alone by a tick that errored. The idle journal line and the idle backoff
-// both key off this count, so a loop that miscounted would either never
-// print the stall or back off a live feed. No timing is asserted — the
-// policy itself is TestFollowTick.
+// TestFollowLoop_IdleAccounting pins the count handed to each tick: consecutive idle ticks,
+// reset to 0 by a tick that worked and left alone by one that errored. The idle log line and
+// backoff both key off it, so a miscount would hide a stall or back off a live feed. No
+// timing is asserted; the policy itself is TestFollowTick.
 func TestFollowLoop_IdleAccounting(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

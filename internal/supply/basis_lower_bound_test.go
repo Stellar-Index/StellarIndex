@@ -10,13 +10,10 @@ import (
 	"testing"
 )
 
-// TestLowerBoundNamesEveryBasisInTheVocabulary is the guard that matters more
-// than the two positive cases. [Basis.LowerBound] has a default arm, so a
-// basis added later and never considered falls through it as "complete" —
-// silently, and in the direction that publishes a floor as a total. This test
-// enumerates the whole vocabulary and fails on any member it does not have an
-// explicit expectation for, which forces the decision to be made rather than
-// defaulted.
+// TestLowerBoundNamesEveryBasisInTheVocabulary is the guard that matters more than the two
+// positive cases. [Basis.LowerBound] has a default arm, so a basis added later falls through it
+// as "complete", publishing a floor as a total. The test enumerates the whole vocabulary and
+// fails on any member without an explicit expectation, forcing the decision.
 func TestLowerBoundNamesEveryBasisInTheVocabulary(t *testing.T) {
 	want := map[Basis]bool{
 		// Floors. Blind in different ways: the trustline sum misses
@@ -24,11 +21,10 @@ func TestLowerBoundNamesEveryBasisInTheVocabulary(t *testing.T) {
 		BasisClassicTrustlineSum:     true,
 		BasisContractStorageBalances: true,
 
-		// Flow sums. A flow does not know whether the token came to rest
-		// in a trustline, a claimable balance, an LP reserve or a
-		// SAC-held contract balance, so one sum covers all four. Their
-		// failure mode is the opposite of a floor's — an incompletely
-		// replayed burn stream over-counts.
+		// Flow sums. A flow does not know whether the token rests in a trustline, claimable
+		// balance, LP reserve or SAC-held contract balance, so one sum covers all four. Their
+		// failure mode is the opposite of a floor's: an incompletely replayed burn stream
+		// over-counts.
 		BasisClassicLakeFlows: false,
 		BasisSEP41LakeFlows:   false,
 

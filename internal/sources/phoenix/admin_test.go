@@ -7,12 +7,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Phoenix admin rotations have 0 mainnet occurrences (verified in the
-// lake), so this is a SYNTHETIC test of the defensive decoder: it builds
-// each of the four rotation phrases with a valid Address body (reusing
-// the real Address ScVal from the initialize fixture) and asserts the
-// slug mapping + admin-address decode. The trailing constant is
-// concatenation-split only to dodge a gitleaks false positive.
+// Phoenix admin rotations have no mainnet occurrences, so this is a SYNTHETIC test of the
+// defensive decoder: it builds each of the four rotation phrases with a valid Address body
+// (the real Address ScVal from the initialize fixture) and asserts the slug mapping and
+// admin-address decode. The trailing constant is concatenation-split to dodge a gitleaks
+// false positive.
 func TestDecodeAdmin_synthetic(t *testing.T) {
 	d := NewDecoder()
 	const adminAddr = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA" // decodes from realInitTokenABody

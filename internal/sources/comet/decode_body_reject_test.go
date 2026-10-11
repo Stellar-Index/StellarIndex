@@ -13,9 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// sdkDecodeSwapBody has 5 required fields, each with a "missing"
-// path and a "wrong type" path. Existing tests cover one missing
-// field (token_out) and the happy path. This file pins:
+// sdkDecodeSwapBody has 5 required fields, each with a "missing" and a "wrong type" path.
+// This file pins what other tests do not:
 //   - body that is not a Map at all
 //   - missing caller / token_in / token_amount_in / token_amount_out
 //   - wrong type for caller (symbol instead of Address)

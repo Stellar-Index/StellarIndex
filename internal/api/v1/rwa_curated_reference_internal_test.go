@@ -10,12 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// A curated row's reference is a curator's own uploaded price, not a
-// listing platform's aggregate — so its premium refusal must say that
-// and not the listing-price wording rwaApplyListingReference sets as
-// its default. Reference.Provenance already carries the curator-price
-// value; Premium.Status must carry a matching one rather than the
-// generic listing refusal the shared helper leaves behind.
+// A curated row's reference is a curator's own uploaded price, not a listing platform's
+// aggregate, so its premium refusal must say that rather than the listing-price wording
+// rwaApplyListingReference defaults to. Premium.Status must match Reference.Provenance.
 func TestRWAApplyCuratorReference_PremiumStatusMatchesCuratorProvenance(t *testing.T) {
 	now := time.Now().UTC()
 	supply := "100000000000"

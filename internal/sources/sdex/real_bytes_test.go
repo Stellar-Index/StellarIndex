@@ -9,12 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Real mainnet op+result frames (ledgers 40,000,000-40,000,003, 2022-03-12),
-// byte-identical to the ones internal/sources/classicmovements/real_bytes_test.go
-// pulled from the r1 lake. Every other test in this package decodes hand-built
-// XDR, so only these pin what stellar-core actually emits: the ClaimAtom
-// discriminants, the atom order inside a multi-hop result, and which side of
-// each atom is "sold".
+// Real mainnet op+result frames, byte-identical to those in classicmovements/real_bytes_test.go.
+// Every other test here decodes hand-built XDR, so only these pin what stellar-core emits: the
+// ClaimAtom discriminants, the atom order inside a multi-hop result, and which side is "sold".
 
 type wantClaim struct {
 	pair        string

@@ -123,18 +123,13 @@ func TestWireTime_OutOfRangeYearRendersNull(t *testing.T) {
 
 // TestWireTime_NoRawTimeOnTheWire is the structural ratchet.
 //
-// The payload scan in wire_time_payload_test.go can only see the
-// endpoints it lists. This one sees every struct in every package under
-// internal/api — the v1 handlers, their sub-packages and the SSE
-// producers — including ones nobody has written a test for yet: it
-// parses the source and fails if any json-tagged field is a raw
-// time.Time. Such a field renders in whatever location its value happens
-// to carry, which is precisely how /v1/price/at and
-// /v1/history/since-inception came to serve `+02:00` and `+01:00`.
+// The payload scan in wire_time_payload_test.go only sees the endpoints it lists. This one
+// parses every struct in every package under internal/api (handlers, sub-packages, SSE
+// producers) and fails if any json-tagged field is a raw time.Time, which renders in whatever
+// location its value carries and so leaks local offsets like `+02:00`.
 //
-// The package set is walked, not listed, so a new package that marshals
-// to a client is covered the day it is created. A struct that never
-// reaches a client is named in wireTimeExclusions; nothing else is.
+// The package set is walked, not listed, so a new package that marshals to a client is covered
+// at once. A struct that never reaches a client is named in wireTimeExclusions; nothing else is.
 func TestWireTime_NoRawTimeOnTheWire(t *testing.T) {
 	fset := token.NewFileSet()
 	byDir := parseAPITree(t, fset)

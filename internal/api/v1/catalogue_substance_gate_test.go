@@ -123,12 +123,11 @@ func gatedCatalogueRow(t *testing.T, ts *testServer, path string) gatedValuation
 	return gatedValuation{}
 }
 
-// TestCatalogueListingHonoursSubstanceGate pins the catalogue surfaces to the
-// thin-market substance gate the classic listing and the CODE-ISSUER detail
-// already apply: a verified Stellar-only entry whose on-chain market fails the
-// floor must not publish its headline price (fillGlobalPriceFromOnChain), nor a
-// market cap or change pills merged from its ungated twin row. The allow arm
-// proves the fixture does reach every one of those fields.
+// TestCatalogueListingHonoursSubstanceGate pins the catalogue surfaces to the thin-market
+// substance gate the classic listing and CODE-ISSUER detail already apply: a verified
+// Stellar-only entry whose on-chain market fails the floor must not publish its headline price
+// (fillGlobalPriceFromOnChain), nor a market cap or change pills merged from its ungated twin
+// row. The allow arm proves the fixture reaches every one of those fields.
 func TestCatalogueListingHonoursSubstanceGate(t *testing.T) {
 	cat, err := currency.LoadEmbedded()
 	if err != nil {

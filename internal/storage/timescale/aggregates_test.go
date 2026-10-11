@@ -77,12 +77,9 @@ func TestStringArray_Scan_Errors(t *testing.T) {
 	}
 }
 
-// TestStringArray_Scan_NullElement covers the (currently
-// non-occurring) NULL-element case. array_agg(DISTINCT source) over
-// the trades.source column won't ever produce NULL elements because
-// the column is NOT NULL, but the parser still tolerates the
-// literal "NULL" defensively — silently dropping it rather than
-// emitting it as a string with the value "NULL".
+// TestStringArray_Scan_NullElement covers a NULL element, which array_agg(DISTINCT source) cannot
+// produce because trades.source is NOT NULL. The parser still drops the literal "NULL"
+// defensively rather than emitting it as the string "NULL".
 func TestStringArray_Scan_NullElement(t *testing.T) {
 	var got stringArray
 	if err := got.Scan([]byte("{a,NULL,b}")); err != nil {
@@ -120,11 +117,10 @@ func TestNormalizeVwapSources_ShortSlicesUntouched(t *testing.T) {
 	}
 }
 
-// TestLatestVWAPGateInsidePrices1mRetention pins the invariant migration
-// 0156's safety argument rests on: the 400-day latestVWAPWindow is only a
-// plan-time pruning bound, and the served value is found by the existence
-// gate, which must stay inside prices_1m's 90-day retention (0156, re-
-// attached by 0166) or an armed policy could empty the gate's window.
+// TestLatestVWAPGateInsidePrices1mRetention pins the invariant migration 0156's safety argument
+// rests on: the 400-day latestVWAPWindow is only a plan-time pruning bound, and the served value
+// comes from the existence gate, which must stay inside prices_1m's 90-day retention or an armed
+// policy could empty the gate's window.
 func TestLatestVWAPGateInsidePrices1mRetention(t *testing.T) {
 	const prices1mRetention = 90 * 24 * time.Hour
 	if latestVWAPGateWindow >= prices1mRetention {

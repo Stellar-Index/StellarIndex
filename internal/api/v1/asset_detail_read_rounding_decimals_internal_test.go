@@ -11,13 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// The per-asset reader and the price-history readers round a confirmed
-// non-7-decimals token's raw ratio to 10 + k places (k = decimals - 7),
-// which is the corrected price rounded to 10. The detail page still ran
-// those strings through the flat 10-place precision floor, so the extra
-// places the SQL now carries bought nothing there: an 18-decimals token
-// at 14 USD — raw 1.4e-10, 1.4 quanta on the OLD scale — stayed withheld
-// on /v1/assets/{id} while the listing beside it served the price.
+// The per-asset and price-history readers round a confirmed non-7-decimals token's raw ratio
+// to 10 + k places (k = decimals - 7), i.e. the corrected price rounded to 10. The detail page
+// must not push those strings through the flat 10-place precision floor, or an 18-decimals
+// token at 14 USD (raw 1.4e-10) stays withheld on /v1/assets/{id} while the listing serves it.
 func TestAssetDetail_ReadsRoundedAfterTheCorrectionAreNotFloored(t *testing.T) {
 	const sorobanContract = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"
 	token, err := canonical.ParseAsset(sorobanContract)

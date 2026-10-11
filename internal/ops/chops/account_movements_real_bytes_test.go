@@ -11,18 +11,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestAccountMovementsRealBytes_payment_fanOut chains a REAL pre-P23
-// mainnet fixture (the exact bytes classicmovements/real_bytes_test.go's
-// TestRealBytes_payment_success pins) through this command's
-// accountMovementOf + clickhouse.FanOutAccountMovement, asserting the
-// stellar.account_movements ROW SHAPE (not just the decode-time
-// Movement) for a two-participant kind — one 'sent' row for the
-// source, one 'received' row for the destination, correct
-// counterparty on each. Lives in this package (not
-// classicmovements' own real_bytes_test.go) because
-// internal/sources/ may not import internal/storage/ (see
-// scripts/ci/lint-imports.sh's L/sources-app-purity rule) — this is
-// the one package that legitimately imports both.
+// TestAccountMovementsRealBytes_payment_fanOut chains a real pre-P23 mainnet fixture (the bytes
+// classicmovements' TestRealBytes_payment_success pins) through accountMovementOf and
+// clickhouse.FanOutAccountMovement. It asserts the stellar.account_movements row shape for a
+// two-participant kind: a 'sent' row for the source and a 'received' row for the destination,
+// each with the right counterparty. It lives here because internal/sources/ may not import
+// internal/storage/ (lint-imports.sh L/sources-app-purity).
 func TestAccountMovementsRealBytes_payment_fanOut(t *testing.T) {
 	// Same bytes as classicmovements' TestRealBytes_payment_success:
 	// ledger 40000000, tx 0761af68c3cd6f5fc9a94b5ffca8129ccd6a3a6faa515fe1169706a8521ba248, op_index 2.
@@ -85,13 +79,9 @@ func TestAccountMovementsRealBytes_payment_fanOut(t *testing.T) {
 	}
 }
 
-// TestAccountMovementsRealBytes_claimableBalanceCreate_fanOut chains a
-// REAL pre-P23 mainnet CreateClaimableBalance fixture (the exact bytes
-// classicmovements/real_bytes_test.go's
-// TestRealBytes_createClaimableBalance_success pins) through the same
-// accountMovementOf + FanOutAccountMovement path, asserting the
-// single-participant "acting side" row shape (ADR-0048 D2): the
-// creator, direction=sent, counterparty="" (no claimant known yet).
+// TestAccountMovementsRealBytes_claimableBalanceCreate_fanOut runs a real CreateClaimableBalance
+// fixture through the same path and asserts the single-participant "acting side" row: the creator,
+// direction=sent, counterparty="" (no claimant is known yet).
 func TestAccountMovementsRealBytes_claimableBalanceCreate_fanOut(t *testing.T) {
 	// Same bytes as classicmovements' TestRealBytes_createClaimableBalance_success:
 	// ledger 40000000, tx 05fd6eea40b036204d6817d4ba945663e3071e2331385de78f38a9b9bed661cc, op_index 0.
@@ -132,15 +122,10 @@ func TestAccountMovementsRealBytes_claimableBalanceCreate_fanOut(t *testing.T) {
 	}
 }
 
-// decodeOneRealMovement decodes one real mainnet op/result pair via the
-// production classicmovements.Decoder — the same call
-// classic-movements-backfill's main loop makes against
-// clickhouse.StreamClassicOps output — and returns its single decoded
-// Movement. Mirrors classicmovements' own (unexported, package-local)
-// decodeRealBytes test helper; duplicated here rather than shared
-// because internal/sources/ test helpers aren't importable across
-// packages and this package is the one place both classicmovements and
-// clickhouse can be imported together (see this file's package doc).
+// decodeOneRealMovement decodes one real mainnet op/result pair via the production
+// classicmovements.Decoder, as the backfill loop does, and returns its single Movement. It
+// duplicates classicmovements' unexported decodeRealBytes helper because test helpers are not
+// importable across packages.
 func decodeOneRealMovement(t *testing.T, bodyB64, resultB64 string, ledger uint32, txHash string, opIndex uint32, fromAddr string, closedAt time.Time) classicmovements.Movement {
 	t.Helper()
 	var body xdr.OperationBody

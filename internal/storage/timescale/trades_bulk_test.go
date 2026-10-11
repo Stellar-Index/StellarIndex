@@ -14,13 +14,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The two pure pieces of the bulk backfill writer are the ones a DB-backed
-// test would only exercise incidentally: the bounding box the emptiness proof
-// is built from, and the partition split that makes parallel COPY safe. Both
-// are load-bearing for correctness, not just for speed — a bounding box that
-// misses a row's PK space would let a COPY run into a conflict it was told
-// could not exist, and a partition split that overlapped would let two writers
-// present the same key.
+// The two pure pieces of the bulk backfill writer are the bounding box the emptiness proof is
+// built from and the partition split that makes parallel COPY safe. Both are load-bearing for
+// correctness: a box that misses a row's PK space lets a COPY hit a conflict it was told could
+// not exist, and overlapping partitions let two writers present the same key.
 
 func bulkTestTrade(source string, ledger uint32, ts time.Time) canonical.Trade {
 	return canonical.Trade{
@@ -161,12 +158,9 @@ func TestTradeBulkColumns_MatchTheRowWriters(t *testing.T) {
 	}
 }
 
-// TestBulkTradeValues_MirrorsTheInsertBindings proves the COPY tuple carries
-// the same values the INSERT statement's placeholders carry — in particular
-// that an absent maker/taker becomes SQL NULL rather than a zero-length text
-// value (both statements wrap those placeholders in a NULLIF against the
-// empty string), that amounts go over as their decimal strings, and that the
-// store's derive_generation is stamped per row rather than left to a default.
+// TestBulkTradeValues_MirrorsTheInsertBindings proves the COPY tuple carries the same values as
+// the INSERT placeholders: an absent maker/taker becomes SQL NULL rather than empty text, amounts
+// go over as decimal strings, and derive_generation is stamped per row rather than defaulted.
 func TestBulkTradeValues_MirrorsTheInsertBindings(t *testing.T) {
 	s := &Store{deriveGeneration: 4242}
 	usdc, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")

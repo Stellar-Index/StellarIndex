@@ -7,12 +7,10 @@ import (
 	"time"
 )
 
-// A DSN the parser rejects fails every Open* entry point before any
-// network I/O, and the api/aggregator/indexer print that error to
-// stderr (journald, Loki). The password must not survive into it in
-// whole or in part: net/url quotes the fragment it choked on, which for
-// a reserved character in the password is the password up to that
-// character.
+// A DSN the parser rejects fails every Open* entry point before any network I/O, and the binaries
+// print that error to stderr (journald, Loki). The password must not survive into it in whole or
+// in part: net/url quotes the fragment it choked on, which for a reserved character in the
+// password is the password up to that character.
 func TestOpenRejectsAMalformedDSNWithoutEchoingThePassword(t *testing.T) {
 	cases := []struct {
 		name, dsn string

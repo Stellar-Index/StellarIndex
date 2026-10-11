@@ -32,13 +32,9 @@ func installTestRegistry(t *testing.T, wrappers map[string]string) {
 	t.Cleanup(func() { InstallAliasRegistry(nil) })
 }
 
-// TestAliasRegistry_ClassicKeyedReadFoldsSAC is the core W2 regression:
-// before the registry, a classic-form USDC read returned ONLY the classic
-// form, so ~53.5% of USDC volume (the SAC-form rows Soroban AMMs write)
-// was invisible on every served money path. With the configured wrapper
-// installed, the classic-keyed read now folds in the SAC form too.
-//
-// RED without the fix: AssetAliases(USDC-classic) is length 1.
+// TestAliasRegistry_ClassicKeyedReadFoldsSAC is the core regression: a classic-form USDC read must
+// also fold in the SAC form that Soroban AMMs write, or that volume is invisible on every served
+// money path. Without the configured wrapper, AssetAliases(USDC-classic) has length 1.
 func TestAliasRegistry_ClassicKeyedReadFoldsSAC(t *testing.T) {
 	installTestRegistry(t, map[string]string{usdcSACAddr: "USDC:" + usdcIssuer})
 
@@ -71,12 +67,9 @@ func TestAliasRegistry_ClassicKeyedReadFoldsSAC(t *testing.T) {
 	}
 }
 
-// TestAliasRegistry_SACOrderedLast pins the money-safety invariant: on a
-// classic-keyed read the SAC form is the LAST alias tried, so a thin
-// Soroban pool can never become the served price/volume ahead of the deep
-// classic form. (A SAC-keyed read still returns the SAC literal first,
-// because that caller explicitly asked for that form — mirroring the
-// documented XLM rule.)
+// TestAliasRegistry_SACOrderedLast pins the money-safety invariant: on a classic-keyed read the SAC
+// form is the LAST alias tried, so a thin Soroban pool never becomes the served price/volume ahead
+// of the deep classic form. A SAC-keyed read still returns the SAC literal first, as for XLM.
 func TestAliasRegistry_SACOrderedLast(t *testing.T) {
 	installTestRegistry(t, map[string]string{usdcSACAddr: "USDC:" + usdcIssuer})
 
@@ -187,11 +180,10 @@ func TestNewAliasRegistry_RejectsDuplicateClassic(t *testing.T) {
 	}
 }
 
-// TestNewAliasRegistry_AcceptsConfiguredWrappers: the archival-node
-// template's [supply.sac_wrappers], as rendered for each network the
-// inventories deploy, builds a registry on that network's passphrase, so the
-// deployed config boots everywhere. Pubnet loads every pair; a test net must
-// render none of the pubnet contract ids, which cannot derive there.
+// TestNewAliasRegistry_AcceptsConfiguredWrappers: the archival-node template's
+// [supply.sac_wrappers], rendered per network, must build a registry on that network's passphrase
+// so the deployed config boots everywhere. Pubnet loads every pair; a test net must render none of
+// the pubnet contract ids, which cannot derive there.
 func TestNewAliasRegistry_AcceptsConfiguredWrappers(t *testing.T) {
 	for _, tc := range []struct {
 		network, passphrase string
@@ -243,11 +235,10 @@ func TestNewAliasRegistry_AcceptsConfiguredWrappers(t *testing.T) {
 	}
 }
 
-// templateSACWrappers evaluates the template's [supply.sac_wrappers] table
-// for one stellar_network, returning the rendered pairs and the count of
-// entries in the table regardless of guard. Only the `{% if stellar_network
-// == "..." %}` / `{% endif %}` guard is understood; any other jinja tag in
-// the table fails the test rather than being evaluated wrongly.
+// templateSACWrappers evaluates the template's [supply.sac_wrappers] table for one stellar_network,
+// returning the rendered pairs and the table's entry count regardless of guard. Only the
+// `{% if stellar_network == "..." %}` / `{% endif %}` guard is understood; any other jinja tag
+// fails the test rather than being evaluated wrongly.
 func templateSACWrappers(t *testing.T, network string) (map[string]string, int) {
 	t.Helper()
 	const tmpl = "../../configs/ansible/roles/archival-node/templates/stellarindex.toml.j2"

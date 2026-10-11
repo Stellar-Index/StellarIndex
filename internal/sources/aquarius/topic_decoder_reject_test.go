@@ -5,13 +5,10 @@ import (
 	"testing"
 )
 
-// sdkDecodeAssetTopic and sdkDecodeAddressTopic are the topic-slot
-// decoders called once per Aquarius trade. Each must reject when:
-//   - the base64 input fails XDR parse
-//   - the parsed SCVal isn't an Address (asset topic) / G-or-C
-//     strkey (address topic)
-// Returning a partial / zero asset on these paths would mis-attribute
-// trades to nil-asset rows in the trades table.
+// sdkDecodeAssetTopic and sdkDecodeAddressTopic are the topic-slot decoders called once per
+// Aquarius trade. Each must reject a base64 input that fails XDR parse, and an SCVal that is not
+// an Address (asset topic) or G-or-C strkey (address topic). A partial or zero asset would
+// mis-attribute trades to nil-asset rows.
 
 func TestSdkDecodeAssetTopic_invalidBase64(t *testing.T) {
 	if _, err := sdkDecodeAssetTopic("!!!not-base64!!!"); err == nil {

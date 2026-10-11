@@ -5,16 +5,11 @@ package canonical
 
 import "testing"
 
-// TestCanonical_FoldsSACOntoClassic is the directory-fold key regression
-// (task #28 Part A): the SAC wrapper form and its classic asset are the
-// SAME asset, so a listing that ranks them as two rows shows "USDC twice".
-// Canonical must map BOTH forms to the classic (priority-first) member so
-// the fold groups them onto one row.
-//
-// RED without the Canonical fix: a naive resolver that echoes the input
-// (or returns Aliases()[0], which leads with the caller's own spelling)
-// returns the SAC form for a SAC-keyed call, so the two rows never share a
-// group key and the duplicate survives.
+// TestCanonical_FoldsSACOntoClassic: the SAC wrapper form and its classic asset are the SAME
+// asset, so a listing that ranks them as two rows shows it twice. Canonical must map BOTH forms
+// to the classic (priority-first) member so the fold groups them onto one row. A resolver that
+// echoes the input, or returns Aliases()[0] (which leads with the caller's own spelling),
+// would give the two rows different group keys.
 func TestCanonical_FoldsSACOntoClassic(t *testing.T) {
 	installTestRegistry(t, map[string]string{usdcSACAddr: "USDC:" + usdcIssuer})
 
