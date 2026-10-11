@@ -442,41 +442,29 @@ type scoredRoute struct {
 	confidence float64
 }
 
-// CombineRoutes is the top-level cross-rate resolver: it finds the shortest
-// (fewest-hop) routes from base to quote, computes each route's exact composite
-// and weakest-link confidence, gates them on minConfidence, rejects outlier
-// composites (median-relative), and serves the price of the most-trusted
-// surviving route(s).
-//
-// minConfidence is the floor: routes at or above it alone back the combine when
-// any exist, so a low-confidence path cannot drag a high-confidence one. Pass 0
-// to disable it.
+// CombineRoutes is the top-level cross-rate resolver: it finds the fewest-hop
+// routes from base to quote, gates them on weakest-link confidence, rejects
+// median-relative outliers, and serves the most-trusted surviving route(s).
+// minConfidence is the floor (0 disables it): routes at or above it alone back
+// the combine when any exist.
 //
 // Returns:
-//   - composite: the MEMBER median of the highest-confidence tier of the gated
-//     routes, chosen BEFORE price-median outlier omission
-//     ([highestConfidencePrice]): a lower-confidence route can trip diverged but
-//     never evict or move the top price. nil only with err.
-//   - combinedConfidence: the MAXIMUM weakest-link confidence among survivors;
-//     never more than the strongest single route.
-//   - servedRouteCount: size of the top tier after its own outlier omission,
-//     i.e. how many routes back the served value.
-//   - pathCount: survivors of outlier omission over ALL gated routes, carried on
-//     the composite meta. Not the routes that produced the value (the sets can
-//     be disjoint) and not the corroboration count. 1 for a single-route target.
+//   - composite: the MEMBER median of the highest-confidence tier, chosen BEFORE
+//     outlier omission ([highestConfidencePrice]): a lower-confidence route can
+//     trip diverged but never move the top price.
+//   - combinedConfidence: the MAXIMUM weakest-link confidence among survivors.
+//   - servedRouteCount: size of the top tier after its own outlier omission.
+//   - pathCount: survivors of outlier omission over ALL gated routes; not
+//     necessarily the routes that produced the value, nor the corroboration count.
 //   - corroborationCount: an audit signal only, never a source count (ADR-0019
-//     amendment §2). 0 when diverged or when no two survivors agree within
-//     routerCorroborationAgreePct; otherwise the largest set of
-//     tightly-agreeing, PAIRWISE EDGE-DISJOINT routes, since routes sharing an
-//     edge are one manipulable market (corroboratingRouteCount).
-//   - diverged: any route rejected as an outlier, survivors spread more than
-//     routerDivergenceSpreadPct of their median, or the composite disagrees by
-//     that much with the next-longer route tier (nextTierDisagrees). A soft
-//     signal, not a clean price.
-//   - lowConfidence: NO route cleared minConfidence; the best-effort composite
-//     may be served flagged/stale but must never feed market-cap.
-//   - err: [ErrNoRoute] when no path connects base to quote within maxHops; a
-//     chaining/positivity error only if an edge is malformed.
+//     amendment §2). 0 when diverged or no two survivors agree within
+//     routerCorroborationAgreePct; otherwise the largest tightly-agreeing set of
+//     PAIRWISE EDGE-DISJOINT routes (routes sharing an edge are one market).
+//   - diverged: any outlier rejected, survivors spread beyond
+//     routerDivergenceSpreadPct, or the next-longer tier disagrees that much.
+//   - lowConfidence: NO route cleared minConfidence; the composite may be served
+//     flagged/stale but must never feed market-cap.
+//   - err: [ErrNoRoute] when no path exists within maxHops.
 func CombineRoutes(
 	edges []RouteLeg, base, quote canonical.Asset, maxHops int, minConfidence float64,
 ) (composite *big.Rat, combinedConfidence float64, servedRouteCount, pathCount, corroborationCount int, diverged, lowConfidence bool, err error) {
@@ -630,27 +618,24 @@ func maxConfidence(scored []scoredRoute) float64 {
 // prices of only the routes whose weakest-link confidence equals the maximum
 // (the top-confidence TIER), computed on the GATED set BEFORE outlier omission.
 // A lower-confidence route therefore can never evict the top tier as a
-// price-median outlier and take over the served value: a thin, unguarded bridge
-// route (e.g. XLM->BTC->GBP, whose XLM/BTC leg escapes the USD-volume floor) can
-// corroborate and trip the divergence flags but never move the price.
+// price-median outlier: a thin, unguarded bridge route (e.g. XLM->BTC->GBP,
+// whose XLM/BTC leg escapes the USD-volume floor) can trip the divergence flags
+// but never move the price.
 //   - single route: that route's price.
 //   - one deep route + one thin bridge route: the deep route's price, even when
-//     the thin one is a divergent majority that would evict it from the outlier
-//     survivors; its disagreement still sets diverged, so the composite is
-//     served FLAGGED, not silently blended.
+//     the thin one is a divergent majority; the disagreement still sets
+//     diverged, so the composite is served FLAGGED, not silently blended.
 //   - several co-equal top routes: the member median, so the value is always a
 //     price a route actually produced, never an averaged midpoint of two
-//     disagreeing routes (the bimodal case, H1). A divergent minority
-//     (median-relative, >=3 only) is dropped first.
+//     disagreeing routes. A divergent minority (median-relative, >=3 only) is
+//     dropped first.
 //
-// This is coherent with combinedConfidence = maxConfidence(gated): we serve the
-// price OF the route(s) whose confidence we report. best is always some route's
-// confidence (L5 sanitizes non-finite values), so the top tier is never empty
-// when routes is non-empty.
+// Coherent with combinedConfidence = maxConfidence(gated): we serve the price OF
+// the route(s) whose confidence we report. The top tier is never empty when
+// routes is non-empty.
 //
-// It also returns the top tier's size after its own outlier omission, reported
-// by CombineRoutes as servedRouteCount (distinct from pathCount, which can be a
-// disjoint route population).
+// Also returns the top tier's size after its own outlier omission
+// (servedRouteCount, distinct from pathCount).
 func highestConfidencePrice(routes []scoredRoute) (*big.Rat, int) {
 	best := maxConfidence(routes)
 	top := make([]*big.Rat, 0, len(routes))

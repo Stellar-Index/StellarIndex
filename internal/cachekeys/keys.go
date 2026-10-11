@@ -72,33 +72,25 @@ func VWAP(base, quote canonical.Asset, window time.Duration) VWAPKey {
 // OOM, Redis write failures, or a window with no trades left).
 //
 // It is NOT the aggregation window. Every configured (pair, window) is rewritten
-// on EVERY tick (orchestrator.Tick; default cadence
-// [orchestrator.DefaultInterval] = 30 s), so an old value means "nobody is
-// publishing", not "a long window". Keying the TTL to the window let
-// `vwap:<pair>:86400` outlive its writer by up to 24 hours, and the windowed
-// /v1/price surface stamps `observed_at` at request time, so a stopped
-// aggregator was served as a current price with no age field to reveal it.
+// on EVERY tick (default [orchestrator.DefaultInterval] = 30 s), so an old value
+// means "nobody is publishing". Keying the TTL to the window would let
+// `vwap:<pair>:86400` outlive its writer by 24 hours, and /v1/price stamps
+// `observed_at` at request time, so a stopped aggregator would be served as
+// current with no age field to reveal it.
 //
-// 5 minutes = 10 missed ticks, the same number and reasoning as [FreezeTTL]:
-// long enough to ride out a deploy or slow tick, short enough that a dead
-// publisher stops serving.
+// 5 minutes = 10 missed ticks, the same reasoning as [FreezeTTL].
 //
-// No page precedes the expiry: customers see 404s first. The page that covers a
-// dead publisher is `stellarindex_aggregator_silent`
-// (deploy/monitoring/rules/aggregator.yml), which fires about 10 minutes after
-// the last write while the process is still scraped and about 15 minutes after
-// it when the process is gone, so the 404 window opens 5 to 10 minutes before
-// anyone is paged. The freshness alert, `stellarindex_api_price_stale`, is a
-// ticket, and its `> 120` leg reads a gauge this same aggregator emits, so it is
-// silent in this scenario. Raising this constant to meet the page would serve a
-// dead publisher's value as current for that long; if the gap must close,
-// tighten the alert, not this grace.
+// No page precedes the expiry: customers see 404s first. The page for a dead
+// publisher is `stellarindex_aggregator_silent`, which fires about 10 minutes
+// after the last write while the process is still scraped and about 15 minutes
+// after it when the process is gone, so the 404 window opens 5 to 10 minutes
+// before anyone is paged. The freshness alert, `stellarindex_api_price_stale`, is
+// a ticket and reads a gauge this same aggregator emits, so it is silent here.
+// Raising this constant to meet the page would serve a dead publisher's value as
+// current; tighten the alert, not this grace.
 //
-// Expiry is the fail-closed answer for a rolling window: `/v1/price?window=…`
-// documents a missing key as an honest 404 and refuses to substitute a different
-// window, so refusing a different TIME is the same contract. A freeze is the one
-// exception: the orchestrator extends the last-known-good TTL to cover the
-// ADR-0019 hold (keepFrozenVWAPAlive), and that response carries `flags.frozen`.
+// Expiry is the fail-closed answer for a rolling window: a missing key is an
+// honest 404, never a substituted window. A freeze is the one exception.
 const VWAPMaxAge = 5 * time.Minute
 
 // VWAPTTL is the TTL for a VWAP key — its window, bounded by
@@ -675,22 +667,20 @@ func APIKeyCacheEvicted(keyHash string) APIKeyCacheKey {
 //	k:<key_id>       → <sha256-hex> of the record that KeyID names
 //	o:<identifier>   → space-separated <sha256-hex> list of the records that owner holds
 //
-// Writer: `internal/auth.RedisAPIKeyStore`, atomically with the record at
-// issuance (Create / CreateWithSecret) and by the one sanctioned keyspace walk
-// that indexes older records. Reader: the same store's by-owner / by-KeyID
-// lookups. No TTL: the index lives as long as the records.
+// Writer and reader: `internal/auth.RedisAPIKeyStore`, atomically with the record
+// at issuance and by the one sanctioned keyspace walk that indexes older
+// records. No TTL: the index lives as long as the records.
 //
 // Why ONE hash: under an allkeys-* policy every Redis key is independently
 // evictable, and a per-owner set evicted while its records survive would make
 // live credentials invisible to list, revoke and the tier clamp (a revocation
-// that silently no-ops). With entries and the `ready` marker in one key they
-// share one fate: eviction takes the marker too, readers see "not ready" and
-// fall back to the walk, which is always correct.
+// that silently no-ops). With entries and the `ready` marker in one key,
+// eviction takes the marker too, readers see "not ready" and fall back to the
+// walk, which is always correct.
 //
 // The family is deliberately NOT under `apikey:`: a HASH there would be matched
 // by the `apikey:*` walk, whose GET would fail WRONGTYPE. It is therefore a NEW
-// pattern for the Redis ACL allow-list
-// (configs/ansible/roles/redis-sentinel/templates/users.acl.j2,
+// pattern for the Redis ACL allow-list (redis-sentinel users.acl.j2,
 // `~apikey-index:*`); until a lockdown deployment applies it, every access is
 // NOPERM and the store keeps using the walk.
 

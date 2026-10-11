@@ -113,31 +113,24 @@ func (r *LCMReserveBalanceReader) ReserveBalanceTotal(ctx context.Context, accou
 // It is the third leg of the supply-snapshot freshness gate.
 //
 // The anchor is the observer watermark, not MIN over the accounts' last
-// observations. SDF reserve accounts move every few days-to-weeks by
-// design, so a per-account anchor goes stale while nothing is wrong, the
-// gate reads a stalled observer, and XLM's served supply freezes.
-// Per-account last-activity measures how busy an account is, not whether
-// our data is current; the observer watermark measures the latter, and a
-// dead observer stops advancing it for every account at once.
+// observations. SDF reserve accounts move every few days-to-weeks by design, so
+// a per-account anchor goes stale while nothing is wrong and XLM's served supply
+// freezes. Last-activity measures how busy an account is, not whether our data
+// is current; a dead observer stops the watermark for every account at once.
 //
-// The per-account probe exists not for its ledger value but because
-// "every configured reserve account is actually observed" is a real
-// precondition. If one is missing we cannot compute the reserve exclusion at
-// all, so the gate must stay permissive rather than bless a partial sum
-// behind a healthy-looking watermark.
+// The per-account probe exists because "every configured reserve account is
+// actually observed" is a real precondition. If one is missing the reserve
+// exclusion cannot be computed, so the gate must stay permissive rather than
+// bless a partial sum behind a healthy-looking watermark.
 //
 // Returns 0 (gate-permissive bypass) when:
 //   - `accounts` is empty (no signal to compute);
-//   - any account has no observation at-or-before `asOfLedger`
-//     (indistinguishable from "the observer hasn't backfilled
-//     this account yet"); same shape the
-//     [ConfigReserveBalanceReader] preserves by not implementing
-//     this interface at all.
+//   - any account has no observation at-or-before `asOfLedger` (indistinguishable
+//     from "the observer hasn't backfilled this account yet"); same shape
+//     [ConfigReserveBalanceReader] preserves by not implementing this interface.
 //
-// Returns a non-nil error only on storage-side failures the
-// caller should bubble; the [XLMComputer] swallows them and
-// falls back to the permissive posture so a transient
-// query error doesn't reject an otherwise-valid snapshot.
+// A non-nil error means storage failure; [XLMComputer] swallows it and stays
+// permissive so a transient query error doesn't reject a valid snapshot.
 func (r *LCMReserveBalanceReader) MinReserveAccountLedger(ctx context.Context, accounts []string, asOfLedger uint32) (uint32, error) {
 	if len(accounts) == 0 {
 		return 0, nil

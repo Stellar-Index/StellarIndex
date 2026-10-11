@@ -1,35 +1,26 @@
 // Package sourcenet is the single answer to "does this source exist on
 // this Stellar network?"
 //
-// Every protocol source in the registry is anchored to CONTRACT IDENTITY
-// (ADR-0035): the soroswap factory, Blend's child gate, the curated
-// phoenix / aquarius / defindex / comet sets, the reflector / redstone /
-// band oracle contracts. Those identities are PUBNET addresses. On testnet
-// or futurenet the same decoders correctly match nothing — but a consumer
-// that lists all of them anyway carries pubnet genesis floors (soroswap
-// 50,746,266 on a network whose tip was 4.4M): /v1/coverage on both test
-// nets read "0 of 14 complete" BY CONSTRUCTION and the completeness
-// alerts there were noise while the lake itself was complete.
+// Every protocol source is anchored to CONTRACT IDENTITY (ADR-0035), and those
+// identities are PUBNET addresses. On testnet or futurenet the same decoders
+// correctly match nothing, but a consumer that lists them anyway carries pubnet
+// genesis floors (soroswap 50,746,266 on a network whose tip was 4.4M), so
+// /v1/coverage there read "0 of 14 complete" BY CONSTRUCTION and the
+// completeness alerts were noise while the lake was complete.
 //
-// This package is deliberately a static table, not configuration: a
-// source becomes applicable on a network when a contract set for that
-// network is added to its decoder, which is a code change — the table
-// changes in the same commit. Consumers: the reconciliation catalogue
-// (compute-completeness, internal/ops/chops), the coverage endpoint
-// (internal/api/v1/coverage_verdicts.go), the source catalogue and
-// per-source health endpoints (handleSources, handleSourceHealth), and the
-// per-source gap detector (timescale.ApplicableGapDetectorTargets).
+// This package is deliberately a static table, not configuration: a source
+// becomes applicable on a network when a contract set for it is added to its
+// decoder, a code change, so the table changes in the same commit.
 //
 // The catalogue endpoints pass every external.Registry name, including
 // off-chain CEX / FX / aggregator feeds this table does not classify; the
 // default false excludes them from test nets on purpose, since no test-net
 // deployment runs a price feed.
 //
-// A consumer whose source names are not config.KnownSources — the gap
-// detector keys its targets per TABLE ("aquarius-liquidity") — maps each
-// one onto a canonical name first and guards that mapping with [Known],
-// because [Applicable] answers false for anything it does not classify
-// and that failure direction silently REMOVES a signal.
+// A consumer whose source names are not config.KnownSources (the gap detector
+// keys per TABLE, e.g. "aquarius-liquidity") maps each onto a canonical name
+// first and guards that mapping with [Known], because [Applicable] answers false
+// for anything it does not classify, which silently REMOVES a signal.
 package sourcenet
 
 import (

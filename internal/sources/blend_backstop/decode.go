@@ -1,18 +1,12 @@
 // Package blend_backstop decodes Blend's Backstop contract events on Soroban,
-// a SEPARATE event surface from the Blend pool / pool-factory decoder
-// (internal/sources/blend). Do NOT fold it into that package; they share
-// neither contract addresses nor event vocabulary.
+// a SEPARATE event surface from the Blend pool decoder (internal/sources/blend).
+// Do NOT fold it into that package; they share neither contract addresses nor
+// event vocabulary.
 //
-// The backstop is the insurance / shared-liquidity module: depositors stake
-// the BLND:USDC LP into a per-pool backstop, earn emissions, and absorb bad
-// debt via draw/donate. 12 event types (topic[0] = Symbol): deposit, claim,
-// donate, queue_withdrawal, withdraw, distribute, gulp_emissions,
-// dequeue_withdrawal, draw, rw_zone_add, rw_zone (the V1 spelling of
-// rw_zone_add) and rw_zone_remove (V2 only; never seen on mainnet).
-//
-// Field layouts come from mainnet lake samples (golden frames in
-// decode_test.go) and blend-contracts-v2 backstop/src/events.rs. Easy to get
-// wrong:
+// The backstop is the insurance module (BLND:USDC LP stakers earn emissions and
+// absorb bad debt). 12 event types (topic[0] = Symbol); `rw_zone` is the V1
+// spelling of rw_zone_add and rw_zone_remove is V2 only. Field layouts come from
+// mainnet lake samples (golden frames in decode_test.go). Easy to get wrong:
 //
 //  1. V1 gulp_emissions has 1 topic (no pool) and a BARE i128 body; requiring
 //     the V2 shape would error all 209 V1 rows. V2 has the pool topic and a
@@ -21,21 +15,13 @@
 //     knowing only `rw_zone_add` drops its 5 real events.
 //  3. V2 rw_zone_add's body is Vec[to_add: Address, to_remove: Option<Address>];
 //     the second element is not a u32 index.
-//  4. rw_zone_remove is decoded from the source alone (decodeRwZoneRemove).
-//  5. gulp_emissions' topic[1] is the POOL address; it lands in the Pool
-//     column, not in attributes.
-//  6. withdraw's body is (shares_burned, tokens_out), the OPPOSITE of
-//     deposit's (tokens_in, shares_minted), so Amount cannot uniformly promote
-//     vec[0].
+//  4. gulp_emissions' topic[1] is the POOL address; it lands in the Pool column.
+//  5. withdraw's body is (shares_burned, tokens_out), the OPPOSITE of deposit's
+//     (tokens_in, shares_minted), so Amount cannot uniformly promote vec[0].
 //
-// These are schema correctness, not a completeness guarantee for eras this
-// decoder has never run against: applying them to stored rows takes
-// `projector-replay -source blend_backstop -from 51499923`.
-//
-// Per ADR-0013 SCVal is read only through internal/scval
-// (scripts/ci/lint-imports.sh). Rows persist via
-// Store.InsertBlendBackstopEvent into blend_backstop_events; README.md covers
-// wiring and provenance.
+// Applying these to stored rows takes
+// `projector-replay -source blend_backstop -from 51499923`. Per ADR-0013 SCVal is
+// read only through internal/scval; README.md covers wiring and provenance.
 package blend_backstop
 
 import (
