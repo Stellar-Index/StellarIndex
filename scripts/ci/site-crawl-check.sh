@@ -1,25 +1,19 @@
 #!/usr/bin/env bash
 # site-crawl-check.sh — the site-audit recurring guard.
 #
-# Guards a CLASS of silent rot: pages 404ing
-# from the site's own links, canonicals pointing at dead URLs,
-# placeholder text baked into HTML, doubled title suffixes, and a
-# curated sliver presented as the asset universe. Each check below
-# pins one of those failure modes so the class stays closed.
+# Guards a class of silent rot: pages 404ing from the site's own links,
+# canonicals pointing at dead URLs, placeholder text baked into HTML, doubled
+# title suffixes, and a curated sliver presented as the asset universe. Each
+# check pins one failure mode.
 #
 # Runs read-only against production. Exit != 0 on any regression.
 set -euo pipefail
-# No head/early-exit `awk … exit` / `sed … q` / piped `grep -q,-l,-m` sites
-# exist in this script (lint-shell-sigpipe already sweeps it, since `-e`
-# alone already put it in scope) — the awk stages below are all `NR==1` /
-# `NR<=40` with no `exit`, so they read to EOF and never close a pipe
-# early. The real pipefail hazard was different: three `VAR=$(… | grep
-# -oE … | sed/awk …)` assignments below had no `|| true`, and grep exits 1
-# on a legitimate "no match" (an empty sitemap, no /markets/ URL, no URL
-# for a sample family) — under pipefail that failed the assignment and,
-# under `-e`, aborted the whole crawl before its own `[ -z "$URL" ]` /
-# `if [ -n "$PAIR_URL" ]` fallbacks ran. Guarded with `|| true` below, the
-# same as this file's other optional lookups.
+# lint-shell-sigpipe sweeps this file (`-e` puts it in scope). No early-exit
+# awk/sed/grep -q pipe sites exist here: the awk stages read to EOF. The real
+# pipefail hazard: `VAR=$(… | grep -oE … | sed/awk …)` assignments need
+# `|| true`, because grep exits 1 on a legitimate no-match (empty sitemap, no
+# /markets/ URL) and `-e` would abort before the `[ -z "$URL" ]` / `[ -n
+# "$PAIR_URL" ]` fallbacks ran.
 
 SITE="${SITE:-https://stellarindex.io}"
 API="${API:-https://api.stellarindex.io}"
@@ -32,8 +26,8 @@ fail() {
 
 fetch() { curl -sfL --max-time 30 "$1"; }
 status_of() { curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$1"; }
-# A site page as a visitor's click lands on it: the explorer links
-# /assets/<slug> and the host 308s it to the trailing-slash form.
+# A page as a visitor lands on it: the explorer links /assets/<slug> and the
+# host 308s to the trailing-slash form.
 page_status_of() { curl -sL -o /dev/null -w "%{http_code}" --max-time 30 "$1"; }
 
 echo "== 1. sitemap sample resolves (one URL per path family)"
@@ -77,10 +71,8 @@ COUNT=$(python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]))' <
 
 echo "== 5. issuer list↔detail closure (sample 20)"
 KEYS=$(fetch "$API/v1/issuers?limit=20" | python3 -c 'import json,sys; [print(r["g_strkey"]) for r in json.load(sys.stdin)["data"]]' || true)
-# A fetch/parse failure and a genuinely empty issuer listing both leave
-# KEYS empty — the for loop below then iterates zero times and reports
-# nothing, so a broken listing endpoint silently skipped this whole
-# check instead of failing it.
+# A fetch/parse failure and an empty listing both leave KEYS empty, and the
+# loop would then skip the whole check silently instead of failing it.
 [ -n "$KEYS" ] || fail "issuer listing unfetchable or unparseable (0 keys) — cannot run the list↔detail closure check"
 for g in $KEYS; do
   CODE=$(status_of "$API/v1/issuers/$g")
@@ -90,9 +82,8 @@ for g in $KEYS; do
 done
 
 echo "== 6. asset list↔detail closure (first 20 of section 4's page)"
-# Probe what the /assets table links: `slug ?? asset_id` (coinSlug in
-# web/explorer/src/api/hooks.ts), both as the API detail the page reads
-# and as the site page itself.
+# Probe what the /assets table links (`slug ?? asset_id`, coinSlug in
+# web/explorer/src/api/hooks.ts): the API detail and the site page.
 ASSET_KEYS=$(python3 -c '
 import json, sys
 for r in json.load(sys.stdin)["data"][:20]:
@@ -107,12 +98,10 @@ for a in $ASSET_KEYS; do
 done
 
 echo "== 7. long-tail shell fallback (structurally unreached by the sitemap sample)"
-# sitemap.ts deliberately excludes per-entity long tails ("unbounded
-# long tails served as noindex shells") so section 1's sitemap sample can
-# never land on a CF Pages Function's fallback branch. Probe one synthetic
-# id per shell-fallback Function directly (functions/*/[[path]].js): each
-# must answer 200 with its shell document (never a hard 404), and the
-# shell itself must clear the same red flags as section 2.
+# sitemap.ts excludes per-entity long tails (noindex shells), so section 1
+# never reaches a CF Pages Function's fallback branch. Probe one synthetic id
+# per shell-fallback Function (functions/*/[[path]].js): each must answer 200
+# with its shell (never a hard 404) that clears section 2's red flags.
 PROBE_ID="sitecrawlprobe$(date +%s)"
 for path in \
   "/assets/${PROBE_ID}" \
@@ -143,9 +132,8 @@ for path in \
 done
 
 echo "== 8. og image Function"
-# The 8th CF Pages Function (functions/og/[[path]].js) renders a PNG,
-# not HTML, so it needs its own shape check rather than section 2's markup
-# greps.
+# functions/og/[[path]].js renders a PNG, not HTML, so it needs its own
+# shape check rather than section 2's markup greps.
 OG_PATH="/og/assets/native"
 OG_CODE=$(status_of "$SITE$OG_PATH")
 [ "$OG_CODE" = "200" ] || fail "$OG_PATH → HTTP $OG_CODE"
@@ -156,13 +144,12 @@ case "$OG_CTYPE" in
 esac
 
 echo "== 9. deployed build freshness (BUILD_SHA vs main, wall-clock age)"
-# Compare the deployed build against main and measure its age. The explorer's own footer (BuildBadge, components/nav/Footer.tsx)
-# stamps `title="Built <ISO time> from commit <sha>"` — read it back and
-# check it two ways: the commit is actually an ancestor of main (via
-# GitHub's compare API, read-only/unauthenticated), and the build isn't
-# older than the freshness budget below. Catches the exact failure mode
-# explorer-deploy.yml's own header names as a reason it exists: "CF git
-# integration paused" silently freezing the live site.
+# Deployed build vs main, and its age. The explorer footer (BuildBadge,
+# components/nav/Footer.tsx) stamps `title="Built <ISO time> from commit
+# <sha>"`; check the commit is an ancestor of main (GitHub compare API,
+# unauthenticated) and the build is inside the freshness budget. Catches
+# "CF git integration paused" silently freezing the live site
+# (explorer-deploy.yml's stated reason to exist).
 HOME_HTML=$(fetch "$SITE/" || true)
 BADGE=$(grep -oE 'title="Built [^"]*"' <<<"$HOME_HTML" | awk 'NR==1' || true)
 if [ -z "$BADGE" ]; then
@@ -185,10 +172,10 @@ except Exception:
     case "$CMP_STATUS" in
       identical | behind) ;; # deployed sha IS main, or main hasn't caught up to it yet
       ahead)
-        # CF auto-deploys on every push (explorer-deploy.yml); a small lag
-        # is normal mid-build. Budget is generous so one CF build window
-        # never false-positives, but still catches a stuck deploy inside
-        # the same weekly crawl run. Tune via STALE_COMMIT_BUDGET.
+        # CF auto-deploys on every push (explorer-deploy.yml); lag mid-build is
+        # normal. Generous budget so one CF build window never false-positives
+        # but a stuck deploy is still caught in the weekly run. Tune via
+        # STALE_COMMIT_BUDGET.
         [ "$CMP_AHEAD" -le "${STALE_COMMIT_BUDGET:-200}" ] ||
           fail "deployed build $DEPLOY_SHA is $CMP_AHEAD commit(s) behind main — auto-deploy may be stuck (docs/operations/explorer-deployment.md)"
         ;;
@@ -208,10 +195,8 @@ except Exception:
     if [ "$DEPLOY_EPOCH" -gt 0 ]; then
       NOW_EPOCH=$(date +%s)
       AGE_HOURS=$(((NOW_EPOCH - DEPLOY_EPOCH) / 3600))
-      # 72h ≈ 10x CF Pages' normal build latency (minutes) — generous
-      # enough not to flag a slow build, tight enough to still be caught
-      # inside the weekly crawl window rather than a full week later.
-      # Tune via STALE_HOURS_BUDGET.
+      # 72h ≈ 10x CF Pages' normal build latency: not flagging a slow build,
+      # still caught inside the weekly crawl window. Tune via STALE_HOURS_BUDGET.
       [ "$AGE_HOURS" -le "${STALE_HOURS_BUDGET:-72}" ] ||
         fail "deployed build is ${AGE_HOURS}h old (built $DEPLOY_TIME) — exceeds the ${STALE_HOURS_BUDGET:-72}h freshness budget"
     fi

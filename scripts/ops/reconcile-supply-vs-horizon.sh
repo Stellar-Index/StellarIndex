@@ -31,11 +31,10 @@ TOLERANCE_PCT="${TOLERANCE_PCT:-1.0}"
 API_BASE="${API_BASE_URL:-https://api.stellarindex.io}"
 HORIZON="${HORIZON_URL:-https://horizon.stellar.org}"
 
-# Distinct exit code for "the upstream oracle could not be consulted" — an
-# INCONCLUSIVE run, NOT a clean pass. Uses BSD sysexits.h EX_TEMPFAIL (75:
-# "temporary failure; the user is invited to retry"), deliberately OUTSIDE the
-# 0..len(ASSETS) tolerance-breach count band so cron/Healthchecks can tell
-# "Horizon down, retry" apart from "N assets actually drifted".
+# Exit code for "the upstream oracle could not be consulted": an INCONCLUSIVE
+# run, not a pass. BSD sysexits EX_TEMPFAIL (75), outside the 0..len(ASSETS)
+# breach-count band, so cron/Healthchecks can tell "Horizon down, retry" from
+# "N assets drifted".
 readonly EXIT_INCONCLUSIVE=75
 
 while getopts "t:a:h" opt; do
@@ -47,9 +46,8 @@ while getopts "t:a:h" opt; do
   esac
 done
 
-# The tracked classic-asset set (Algorithm 2). Sourced from the live
-# trustline_observations distinct asset_key set on r1. Keep in
-# sync with [supply] watched_classic_assets.
+# Tracked classic-asset set (Algorithm 2): the distinct trustline_observations
+# asset_key set on r1. Keep in sync with [supply] watched_classic_assets.
 ASSETS=(
   "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
   "BLND:GDJEHTBE6ZHUXSWFI642DCGLUOECLHPF3KSXHPXTSTJ7E3JF6MQ5EZYY"
@@ -71,11 +69,9 @@ inconclusive=0
 for a in "${ASSETS[@]}"; do
   code="${a%%:*}"; issuer="${a##*:}"
 
-  # Fetch the Horizon record. `curl -f` turns an HTTP >=400 (e.g. a 5xx
-  # outage page) into a non-zero exit, and the `if !` also captures a
-  # network / TLS / timeout failure. A failed fetch must NOT fall through to
-  # an all-zero component sum that "reconciles" against nothing — that is
-  # exactly how an upstream outage would read as a green pass.
+  # `curl -f` turns HTTP >=400 into a non-zero exit, and `if !` also catches
+  # network/TLS/timeout failures. A failed fetch must not fall through to an
+  # all-zero component sum that "reconciles" against nothing.
   h=""
   if ! h=$(curl -sf --max-time 30 "${HORIZON}/assets?asset_code=${code}&asset_issuer=${issuer}"); then
     h=""
@@ -85,9 +81,8 @@ for a in "${ASSETS[@]}"; do
     hrec=$(printf '%s' "$h" | jq -c '._embedded.records[0] // empty' 2>/dev/null || true)
   fi
   if [ -z "$hrec" ]; then
-    # Horizon unreachable, errored, returned non-JSON, or carried no record
-    # for an asset we DO track: the reference sum is unavailable, so the
-    # reconciliation cannot be certified. INCONCLUSIVE — not a pass.
+    # Horizon unreachable, errored, non-JSON, or no record for a tracked asset:
+    # the reference sum is unavailable. INCONCLUSIVE, not a pass.
     printf '%-6s %14s %14s %14s %14s %16s %16s %9s  %s\n' \
       "$code" "-" "-" "-" "-" "-" "-" "-" "INCONCLUSIVE(horizon)"
     inconclusive=$((inconclusive + 1))
@@ -100,10 +95,9 @@ for a in "${ASSETS[@]}"; do
       (.liquidity_pools_amount // "0"),
       (.contracts_amount // "0") ] | @tsv' | tr '\t' ' ')
 
-  # Same failure discipline as the Horizon fetch above: `curl -f` turns an
-  # HTTP >=400 from our own API into a non-zero exit instead of a non-JSON
-  # body that would otherwise make jq fail and, under `set -eo pipefail`,
-  # abort the whole run before it ever reaches the SKIP(no-data) branch below.
+  # Same discipline for our own API: without `curl -f` a non-JSON error body
+  # makes jq fail and, under `set -eo pipefail`, aborts the run before the
+  # SKIP(no-data) branch.
   ar=""
   if ! ar=$(curl -sf --max-time 30 "${API_BASE}/v1/assets/${code}-${issuer}"); then
     ar=""
@@ -119,8 +113,8 @@ for a in "${ASSETS[@]}"; do
     continue
   fi
 
-  # Horizon reports decimal units; ours is stroops. Compare in decimal via
-  # awk (bash has no float). 1 unit = 10^7 stroops.
+  # Horizon reports decimal units, ours is stroops (1 unit = 10^7); compare in
+  # awk because bash has no float.
   read -r htot omine delta verdict < <(awk -v tl="$tl" -v cb="$cb" -v lp="$lp" -v ct="$ct" \
       -v ours="$ours" -v tol="$TOLERANCE_PCT" 'BEGIN{
     htot = tl + cb + lp + ct;

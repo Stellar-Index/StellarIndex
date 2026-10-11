@@ -1,33 +1,24 @@
 #!/usr/bin/env bash
-# lint-deploy-systemd-authority.sh — deploy/systemd/ is MIXED AUTHORITY,
-# and this keeps that fact true and visible.
-#
-# Two kinds of file live in that directory and they behave oppositely:
+# lint-deploy-systemd-authority.sh — deploy/systemd/ is MIXED AUTHORITY;
+# this keeps that fact true and visible.
 #
 #   AUTHORITATIVE — ansible installs the file straight from here
 #     (`src: {{ playbook_dir }}/../../../deploy/systemd/{{ item }}`).
 #     Editing it changes production on the next apply.
+#   REFERENCE — the role ships its own .j2 for the same unit. The copy here
+#     is documentation, NOT what runs; editing it changes nothing, which is
+#     how several drifted (RestartSec, User, VERIFY_ARCHIVE_MAX_RUNTIME; see
+#     the drift notes in stellarindex-api.service.j2). The two must agree on
+#     every shared directive, checked by deploy-systemd-reference-diff.py.
+#   ORPHAN — installed by nothing, templated nowhere: the finding this lint
+#     exists for. It reads like a deployed unit, and r1-deployment-state.md
+#     documents an operator convention of scp-ing units out of this directory,
+#     so it will start and nothing will ever reconcile it.
 #
-#   REFERENCE — the role ships its own .j2 for the same unit. The copy
-#     here is documentation and is NOT what runs; the .j2 is. Editing it
-#     changes nothing, which is how several of these drifted (see the
-#     drift notes in stellarindex-api.service.j2) — RestartSec, User and
-#     VERIFY_ARCHIVE_MAX_RUNTIME among them. The two must also agree on
-#     every directive they share, checked by deploy-systemd-reference-diff.py.
-#
-# A third state is the finding this lint exists for:
-#
-#   ORPHAN — installed by nothing and templated nowhere. It looks like a
-#     deployed unit, reads like one, and is not one. r1-deployment-state.md
-#     documents an operator convention of scp-ing units straight out of
-#     this directory, so an orphan is a live footgun: it will start, and
-#     nothing will ever reconcile it.
-#
-# Every orphan must be listed in deploy/systemd/ORPHANS with a reason, so
-# adding one is a deliberate act with a written justification rather than
-# an accident. Every REFERENCE/template directive disagreement not yet
-# reconciled must likewise be listed in deploy/systemd/DIVERGENCES — a
-# todo list, not a suppression; an UNDECLARED one still fails the lint.
+# Every orphan must be listed in deploy/systemd/ORPHANS with a reason, and
+# every not-yet-reconciled REFERENCE/template disagreement in
+# deploy/systemd/DIVERGENCES (a todo list, not a suppression; an undeclared
+# one still fails).
 #
 # Run: bash scripts/ci/lint-deploy-systemd-authority.sh
 set -uo pipefail
@@ -62,28 +53,19 @@ for f in "$DIR"/*.service "$DIR"/*.timer; do
   b=$(basename "$f")
   checked=$((checked + 1))
 
-  # AUTHORITATIVE: named in the loop of a task that COPIES/TEMPLATES a
-  # src under deploy/systemd — both facts about the SAME task.
-  #
-  # Two INDEPENDENT greps ("does `- <unit>` appear as a list item
-  # anywhere in tasks/" and "does the string `deploy/systemd/{{ item }}`
-  # appear anywhere in tasks/") would not do: the second is a repo-wide
-  # constant — one unrelated task in 15-log-discipline.yml satisfies it for
-  # every unit — so classification would collapse to the first, which
-  # matches ANY YAML list item. Adding a unit to an
-  # `ansible.builtin.systemd` ENABLE loop (installing nothing) would pass
-  # as authoritative: precisely the "enable a unit you don't
-  # install" footgun this lint exists to name, and which the header
-  # itself describes.
-  #
-  # The set is computed by deploy-systemd-authoritative.py, which parses
-  # the task YAML instead of grepping it.
+  # AUTHORITATIVE: named in the loop of a task that COPIES/TEMPLATES a src
+  # under deploy/systemd, both facts about the SAME task. Two independent
+  # greps would not do: "deploy/systemd/{{ item }} appears in tasks/" is a
+  # repo-wide constant (one task in 15-log-discipline.yml satisfies it for
+  # every unit), leaving "`- <unit>` is a list item", which matches ANY YAML
+  # list, so a unit added to an `ansible.builtin.systemd` ENABLE loop
+  # (installing nothing) would pass: the "enable a unit you don't install"
+  # footgun. deploy-systemd-authoritative.py parses the task YAML instead.
   if grep -qxF "$b" <<<"$authoritative"; then
     continue
   fi
-  # REFERENCE: the role templates the same unit itself, and the two copies
-  # must also agree on every directive they both declare — see
-  # deploy-systemd-reference-diff.py for what counts as a divergence.
+  # REFERENCE: the role templates the same unit; the copies must agree on
+  # every shared directive (deploy-systemd-reference-diff.py).
   j2="$ROLE/templates/systemd/$b.j2"
   if [ -f "$j2" ]; then
     diverged=$(python3 "$(dirname "$0")/deploy-systemd-reference-diff.py" "$f" "$j2")

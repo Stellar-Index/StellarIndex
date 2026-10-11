@@ -2,33 +2,29 @@
 # install-hooks.sh — install (or remove) the opt-in pre-commit hook that runs
 # scripts/dev/lint-changed.sh over the staged files.
 #
-# Opt-in by design: nothing in the repository forces a hook on a clone. A
-# contributor who wants the changed-file lints at `git commit` runs
-# `make hooks` once; `git commit --no-verify` skips it for one commit, and
+# Opt-in: nothing in the repository forces a hook on a clone. `make hooks`
+# installs it once; `git commit --no-verify` skips it for one commit;
 # `make hooks-remove` takes it out.
 #
-# Where the hook goes is git's answer, not this script's: `git rev-parse
-# --git-path hooks` honours `core.hooksPath` and resolves to the shared git
-# directory from a linked worktree, so one install covers every worktree of
-# the checkout. Two refusals keep that honest:
-#
+# Where the hook goes is git's answer: `git rev-parse --git-path hooks`
+# honours `core.hooksPath` and resolves to the shared git directory from a
+# linked worktree, so one install covers every worktree. Two refusals:
 #   - `core.hooksPath` set to a directory that does not exist. git runs NO
-#     hooks for the repository in that state, and creating a directory inside
-#     whatever that path points at (it may be another repository) is not
-#     this script's decision. It reports the path and the setting and stops.
-#   - an existing pre-commit hook that this script did not write. It is not
-#     overwritten and not chained into; the one-line invocation to add to it
-#     is printed instead.
+#     hooks in that state, and creating a directory inside whatever the path
+#     points at (maybe another repository) is not this script's call. It
+#     reports the path and setting and stops.
+#   - an existing pre-commit hook this script did not write: neither
+#     overwritten nor chained into; the one-line invocation to add is printed.
 #
-# The hook itself is a no-op in any repository without
-# scripts/dev/lint-changed.sh, so a shared `core.hooksPath` cannot make it
-# fail commits elsewhere.
+# The hook is a no-op in any repository without scripts/dev/lint-changed.sh,
+# so a shared `core.hooksPath` cannot make it fail commits elsewhere.
 #
 # Usage:
 #   scripts/dev/install-hooks.sh              install or refresh the hook
 #   scripts/dev/install-hooks.sh --uninstall  remove it (only if it is ours)
 #   make hooks / make hooks-remove
 #
+# Exit 0 when the requested state holds; 1 when it refused; 2 on usage.
 # Exit 0 when the requested state holds; 1 when it refused; 2 on usage.
 set -uo pipefail
 

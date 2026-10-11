@@ -2,41 +2,34 @@
 # dns-perimeter-check.sh — assert the intended DNS/email perimeter for
 # stellarindex.io against the authoritative nameservers.
 #
-# The email perimeter lives OUTSIDE this repo, so none of the repo's gate
-# machinery can see it. A domain with no MX, no SPF, no DMARC and no CAA
-# while it sends magic-link auth email — spoofable, with a dead
-# security@ letterbox. This script is the drift check that would have caught it,
-# and it is the reason the intended record set is written down at all.
+# The email perimeter lives outside this repo, so no repo gate sees it. A
+# domain with no MX, SPF, DMARC or CAA that sends magic-link auth email is
+# spoofable and has a dead security@ letterbox; this is the drift check for
+# that, and why the intended record set is written down at all.
 #
-# Exit code = number of failed assertions, so cron and Healthchecks.io can
-# consume it the way scripts/dev/r1-smoke.sh is consumed.
+# Exit code = number of failed assertions (consumed like scripts/dev/r1-smoke.sh
+# by cron and Healthchecks.io). 99 when no NS resolves.
 #
 #   bash scripts/ops/dns-perimeter-check.sh
 #   DOMAIN=stellarindex.io bash scripts/ops/dns-perimeter-check.sh
 #
-# Design notes for whoever changes a record and comes here to update the script:
-#
-#   * SPF is asserted as an EXACT string, not a substring. A second apex SPF
-#     record is a permerror that silently disables SPF everywhere, and a
-#     substring match would not see it. The apex record must stay singular.
-#   * CAA is asserted as a SUPERSET check, not equality. Cloudflare injects its
-#     own CA set (it added comodoca.com and digicert.com to ours), so pinning
-#     equality would go red the next time Cloudflare rotates a partner. What
-#     matters is that letsencrypt.org is present — r1's Caddy renews through it
-#     and a CAA set that omitted it would take api.stellarindex.io TLS-dark
-#     roughly 60 days later, silently.
-#   * DMARC alignment is deliberately RELAXED. Resend's Return-Path is
+# Design notes for whoever changes a record:
+#   * SPF is an EXACT string, not a substring: a second apex SPF record is a
+#     permerror that silently disables SPF everywhere, and a substring match
+#     would not see it. The apex record must stay singular.
+#   * CAA is a SUPERSET check: Cloudflare injects its own CAs (comodoca.com,
+#     digicert.com), so equality goes red when it rotates a partner. What
+#     matters is letsencrypt.org: r1's Caddy renews through it, and without
+#     it api.stellarindex.io goes TLS-dark ~60 days later, silently.
+#   * DMARC alignment is deliberately RELAXED: Resend's Return-Path is
 #     @send.stellarindex.io while From: is @stellarindex.io, so aspf=s would
-#     fail SPF alignment on every legitimate message we send. DKIM (d=
-#     stellarindex.io) aligns strictly either way, so DMARC would still pass —
-#     but there is no reason to build in that fragility. The original issue
-#     suggested adkim=s/aspf=s; it was wrong for this topology.
+#     fail SPF alignment on every legitimate message. DKIM aligns strictly
+#     either way.
 set -uo pipefail
 
 DOMAIN="${DOMAIN:-stellarindex.io}"
-# Land the NS list before slicing it: `dig | sort | head -1` under
-# `pipefail` makes head exit early, SIGPIPEs sort, and fails the script
-# (scripts/ci/lint-shell-sigpipe.sh refuses that shape for this reason).
+# Land the NS list before slicing it: `dig | sort | head -1` under `pipefail`
+# SIGPIPEs sort and fails the script (scripts/ci/lint-shell-sigpipe.sh).
 if [ -z "${NS:-}" ]; then
   ns_list="$(dig +short NS "$DOMAIN" | sort)"
   NS="${ns_list%%$'\n'*}"
@@ -60,8 +53,8 @@ if [ -z "$mx" ]; then
 else
   n=$(printf '%s\n' "$mx" | grep -c .)
   pass "apex MX: $n record(s)"
-  # A count alone would pass on an MX pointing anywhere at all, including a
-  # host that accepts nothing. Assert the destination, not just its presence.
+  # Assert the destination: a bare count passes an MX pointing at a host that
+  # accepts nothing.
   mx_one_line="$(printf '%s\n' "$mx" | tr '\n' ' ')"
   case "$(printf '%s' "$mx_one_line" | tr '[:upper:]' '[:lower:]')" in
     *google.com*) pass "apex MX points at Google Workspace" ;;
@@ -140,8 +133,7 @@ if [ -z "$caa" ]; then
   fail "CAA: absent — any public CA may issue for $DOMAIN"
 else
   pass "CAA: $(printf '%s\n' "$caa" | grep -c .) record(s)"
-  # r1's Caddy renews through Let's Encrypt. Losing this entry takes
-  # api.$DOMAIN TLS-dark at the next renewal, ~60 days later, silently.
+  # Losing letsencrypt.org takes api.$DOMAIN TLS-dark at the next renewal.
   if grep -q 'letsencrypt.org' <<<"$caa"; then
     pass "CAA allows letsencrypt.org (r1 Caddy renewal)"
   else

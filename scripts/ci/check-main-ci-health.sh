@@ -1,35 +1,29 @@
 #!/usr/bin/env bash
 # check-main-ci-health.sh — main-CI-red tripwire.
 #
-# The operator doesn't notice when `main` CI goes red for long periods
-# (chronically-red main is a standing pain). This script queries the
-# recent completed runs of the `ci` workflow on `main` and decides
-# whether main has been red past a threshold — a consecutive-failure
-# count OR a wall-clock age since the last green run. It is the decision
-# core called by .github/workflows/ci-health.yml, which turns a RED
-# verdict into an opened/updated tracking issue + a failed run.
+# Queries recent completed runs of the `ci` workflow on `main` and decides
+# whether main has been red past a threshold: consecutive failures OR
+# wall-clock age since the last green run. Decision core of
+# .github/workflows/ci-health.yml, which turns RED into a tracking issue and
+# a failed run.
 #
-# Self-contained: uses the gh CLI with the workflow's ${{ github.token }}
-# (via GH_TOKEN) — no new secrets. Set:
-#   GH_REPO           owner/repo (gh reads this automatically in Actions)
+# Uses the gh CLI with the workflow's token (GH_TOKEN); no new secrets.
+#   GH_REPO           owner/repo (gh reads it automatically in Actions)
 #   CI_WORKFLOW_FILE  workflow filename to watch     (default: ci.yml)
 #   CI_HEALTH_BRANCH  branch to watch                (default: main)
 #   FAIL_RUNS         consecutive red runs → RED     (default: 3)
-#   FAIL_HOURS        hours since last green → RED    (default: 6)
-#   CI_HEALTH_FIXTURE optional path to a JSON file shaped like the
-#                     GitHub API's {"workflow_runs":[...]} — used for
-#                     offline tests instead of calling gh. An optional
+#   FAIL_HOURS        hours since last green → RED   (default: 6)
+#   CI_HEALTH_FIXTURE JSON file shaped like the API's {"workflow_runs":[...]},
+#                     for offline tests instead of gh. An optional
 #                     "latest_runs" array stands in for the unfiltered
 #                     listing the staleness check reads.
 #
-# Exit code: 0 = healthy (main green, or completed runs exist but none
-#            carry a health signal yet — e.g. cancelled-only),
-#            1 = RED beyond threshold, OR UNKNOWN (the API returned zero
-#            runs at all for the configured workflow/branch — treated as
-#            a fault rather than silently read as healthy, since it is
-#            the same shape a wrong CI_WORKFLOW_FILE/CI_HEALTH_BRANCH
-#            produces — or the run listing is stale, see latest_runs).
-#            A human-readable report is printed to stdout in all cases.
+# Exit code: 0 = healthy (main green, or completed runs exist but none carry
+#            a health signal yet, e.g. cancelled-only).
+#            1 = RED beyond threshold, or UNKNOWN: zero runs came back (the
+#            same shape a wrong CI_WORKFLOW_FILE/CI_HEALTH_BRANCH produces,
+#            so a fault, not healthy) or the run listing is stale.
+#            A report is printed to stdout in all cases.
 set -euo pipefail
 
 CI_WORKFLOW_FILE="${CI_WORKFLOW_FILE:-ci.yml}"
@@ -38,10 +32,9 @@ FAIL_RUNS="${FAIL_RUNS:-3}"
 FAIL_HOURS="${FAIL_HOURS:-6}"
 
 # ── Fetch recent completed runs (newest first) ──
-# jq reduces each run to a single line: "<conclusion>\t<created_at>\t<html_url>\t<head_sha>".
-# Only conclusions that are unambiguously green/red are kept; cancelled /
-# skipped / neutral runs carry no health signal and are dropped so a
-# cancelled run can't mask (or manufacture) a red streak.
+# jq reduces each run to "<conclusion>\t<created_at>\t<html_url>\t<head_sha>".
+# Only unambiguous green/red conclusions are kept, so a cancelled run can't
+# mask or manufacture a red streak.
 JQ_FILTER='.workflow_runs[]
   | select(.conclusion=="success" or .conclusion=="failure"
            or .conclusion=="timed_out" or .conclusion=="startup_failure")
@@ -52,8 +45,8 @@ PER_PAGE=100
 MAX_PAGES=5
 NL=$'\n'
 
-# fetch_page <n> — one page of completed runs, newest first. The fixture
-# holds the whole history and is sliced the same way the API pages it.
+# fetch_page <n> — one page of completed runs, newest first. The fixture is
+# sliced the way the API pages it.
 fetch_page() {
   if [ -n "${CI_HEALTH_FIXTURE:-}" ]; then
     jq --argjson p "$1" --argjson n "$PER_PAGE" \
@@ -64,9 +57,9 @@ fetch_page() {
   fi
 }
 
-# latest_runs — the workflow's newest runs, unfiltered. fetch_page's
-# filtered listing is served from a search index that has answered a month
-# stale while main was building; this listing is the reference for it.
+# latest_runs — the newest runs, unfiltered. fetch_page's filtered listing
+# comes from a search index that has answered a month stale; this is the
+# reference for it.
 latest_runs() {
   if [ -n "${CI_HEALTH_FIXTURE:-}" ]; then
     jq '{workflow_runs: (.latest_runs // [])}' "$CI_HEALTH_FIXTURE"
@@ -75,9 +68,9 @@ latest_runs() {
   fi
 }
 
-# Rapid merges cancel most runs on main (cancel-in-progress), so one page
-# can hold little or no signal. Page on until the tip streak is settled:
-# a green run is seen, or more reds than FAIL_RUNS, or history runs out.
+# Rapid merges cancel most runs on main (cancel-in-progress), so one page can
+# hold little signal. Page on until a green run is seen, reds exceed
+# FAIL_RUNS, or history runs out.
 collect_runs() {
   raw_count=0
   runs=""
@@ -106,8 +99,8 @@ collect_runs() {
 }
 
 # A run on the branch that finished over LISTING_LAG_MIN minutes ago and is
-# newer than everything listed proves the listing stale. A stale listing is
-# re-asked and, if it stays stale, reported UNKNOWN — never judged.
+# newer than everything listed proves the listing stale. Re-ask; if still
+# stale, report UNKNOWN, never judge.
 LISTING_LAG_MIN=15
 STALE_RETRIES=3
 lag_cutoff="$(date -u -d "-${LISTING_LAG_MIN} minutes" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
@@ -130,15 +123,10 @@ while :; do
   [ -n "${CI_HEALTH_FIXTURE:-}" ] || sleep 20
 done
 
-# Raw count BEFORE the health-signal filter. A 200 response with a
-# genuinely empty `workflow_runs` array is indistinguishable, from the
-# filtered result alone, from a misconfigured CI_WORKFLOW_FILE/
-# CI_HEALTH_BRANCH (a wrong workflow file or a typo'd branch name still
-# gets a 200 with zero matches, not an error) — "probed nothing" must
-# not read the same as "probed and it's green". Only when the API
-# handed back SOME completed runs (just none with an actionable
-# conclusion — e.g. cancelled-only) is an empty `runs` a genuine "no
-# signal yet, not faulted".
+# Count BEFORE the signal filter: a 200 with zero runs is what a wrong
+# CI_WORKFLOW_FILE/CI_HEALTH_BRANCH also returns, and "probed nothing" must
+# not read as "green". Only when runs exist but none are actionable (e.g.
+# cancelled-only) is an empty `runs` a genuine "no signal yet".
 if [ -z "$runs" ]; then
   if [ "$raw_count" -eq 0 ]; then
     echo "ci-health: UNKNOWN — zero '${CI_WORKFLOW_FILE}' runs at all came back for '${CI_HEALTH_BRANCH}'. This is indistinguishable from a misconfigured CI_WORKFLOW_FILE/CI_HEALTH_BRANCH and is NOT treated as healthy."
@@ -164,7 +152,6 @@ while IFS=$'\t' read -r conclusion created url _sha; do
     last_good_created="$created"
     break
   fi
-  # red run at (or continuing) the tip
   streak=$((streak + 1))
   streak_oldest_created="$created"
   [ -z "$first_red_url" ] && first_red_url="$url"
@@ -177,9 +164,9 @@ if [ "$newest_conclusion" = "success" ] || [ "$streak" -eq 0 ]; then
   exit 0
 fi
 
-# Age of the red streak: now − created_at of the OLDEST run in the streak.
+# Streak age: now minus created_at of the OLDEST run in the streak.
 now_epoch="$(date -u +%s)"
-# Portable ISO-8601 → epoch (GNU date and BSD/macOS date differ).
+# ISO-8601 → epoch; GNU and BSD date differ.
 to_epoch() {
   date -u -d "$1" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$1" +%s 2>/dev/null || echo 0
 }

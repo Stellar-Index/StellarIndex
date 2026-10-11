@@ -1,40 +1,34 @@
 #!/usr/bin/env bash
-# check-deploy-protection.sh — assert that a production deploy
-# environment actually requires a human approval AND admits only `main`.
+# check-deploy-protection.sh — assert that a production deploy environment
+# requires a human approval AND admits only `main`.
 #
-# Why:
+# Why: `environment: <region>` in .github/workflows/deploy.yml looks like a
+# gate but enforces nothing alone; an environment with no `required_reviewers`
+# rule runs unattended, and the reviewer list lives in GitHub settings that no
+# repo file can set. The repo can refuse to deploy when the gate is missing and
+# say how to fix it. The deploy job runs this BEFORE it touches SSH keys or
+# production; .github/workflows/deploy-protection.yml runs it alone to catch
+# drift between deploys.
 #
-#   .github/workflows/deploy.yml declares `environment: <region>`, which
-#   LOOKS like a gate but enforces nothing on its own — an environment
-#   with no `required_reviewers` protection rule runs unattended. The
-#   reviewer list lives in GitHub repo settings, which no file in this
-#   repo can set. What the repo CAN do is refuse to deploy when the gate
-#   is missing, and say exactly how to fix it. That is this script: the
-#   deploy job runs it BEFORE it touches SSH keys or production, and
-#   .github/workflows/deploy-protection.yml runs it on its own so drift
-#   is caught without waiting for a deploy.
+# Reviewers alone are half a gate: with `deployment_branch_policy: null` a
+# dispatch from ANY branch runs that branch's own workflow and playbook, so an
+# approval clicks through code nobody reviewed. The environment must also carry
+# a custom branch policy whose only pattern is `main`, the precondition for
+# moving production credentials into environment-scoped secrets.
 #
-#   Reviewers alone are half a gate: with `deployment_branch_policy: null`
-#   a dispatch from ANY branch runs that branch's own workflow and
-#   playbook, and an approval is a click on a run whose code nobody
-#   reviewed. So the environment must also carry a custom branch policy
-#   whose only pattern is the branch `main` — the precondition for moving
-#   the production credentials into environment-scoped secrets.
-#
-# The inputs are saved responses from
+# Inputs are saved responses from
 #   GET /repos/{owner}/{repo}/environments/{environment_name}
 #   GET /repos/{owner}/{repo}/environments/{environment_name}/deployment-branch-policies
-# so the assertion logic is pure and testable (no network, no token).
-# scripts/ci/assert-deploy-gate.sh does the fetching; call that.
+# so the logic is pure and testable (no network, no token);
+# scripts/ci/assert-deploy-gate.sh does the fetching.
 #
 # Usage:
 #   bash scripts/ci/check-deploy-protection.sh [--observe] env.json r1 [policies.json]
 #
-#   --observe  skip the reviewer requirement (scheduled read-only jobs,
-#              which cannot wait on a human); the branch policy still holds.
+#   --observe  skip the reviewer requirement (scheduled read-only jobs cannot
+#              wait on a human); the branch policy still holds.
 #
-# Exit 0 = gate present. Exit 1 = gate missing / malformed input.
-# Fail CLOSED, always.
+# Exit 0 = gate present. Exit 1 = gate missing / malformed input. Fail CLOSED.
 set -euo pipefail
 
 MODE=deploy
@@ -53,10 +47,9 @@ ENV_NAME="$2"
 POLICIES="${3:-}"
 
 if ! command -v jq >/dev/null 2>&1; then
-  # Fail closed, but say WHY: without this the missing-tool case is
-  # indistinguishable from "the API returned garbage", and an operator
-  # chases a phantom tampering incident. jq is preinstalled on
-  # GitHub-hosted runners.
+  # Fail closed, but say WHY: otherwise a missing tool reads as "the API
+  # returned garbage" and an operator chases phantom tampering. jq is
+  # preinstalled on GitHub-hosted runners.
   echo "::error::deploy approval gate NOT VERIFIED — jq is not installed on this runner." >&2
   exit 1
 fi
@@ -180,10 +173,9 @@ fi
 
 echo "✅ deploy approval gate present on '$ENV_NAME': ${reviewer_count} required reviewer(s), prevent_self_review=${self_review}, main-only branch policy."
 if [ "$self_review" != "true" ]; then
-  # Deliberately NOT fatal: this is a single-operator project, and
-  # demanding a second human would block every deploy. The gate's value
-  # here is that an interactive approval by a designated reviewer is
-  # required at all — a token that can dispatch the workflow still
-  # cannot approve the deployment.
+  # Not fatal: a single-operator project would have every deploy blocked by a
+  # second-human demand. The value is that an interactive approval by a
+  # designated reviewer is required at all; a token that can dispatch the
+  # workflow still cannot approve the deployment.
   echo "::notice::'$ENV_NAME' allows self-review; the approval is a deliberate interactive step, not a second pair of eyes. Enable 'Prevent self-review' once a second reviewer exists."
 fi

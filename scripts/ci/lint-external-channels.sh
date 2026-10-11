@@ -1,24 +1,22 @@
 #!/usr/bin/env bash
-# lint-external-channels.sh — a shipped file may not point at a channel
-# that is switched off.
+# lint-external-channels.sh — a shipped file may not point at a channel that
+# is switched off.
 #
-# GitHub repository settings and DNS names live outside the repo, so no
-# other gate can see them, and three of them shipped as promises while
-# switched off: SUPPORT.md linked GitHub Discussions on a repo with
-# Discussions disabled, SECURITY.md offered the Security-tab reporting
-# button on a repo with private vulnerability reporting disabled — so
-# BOTH documented disclosure routes were dead at once, leaving a
-# researcher with a real finding nowhere to go — and the OpenAPI spec
-# carried a Staging server for a hostname with no DNS record, which
-# every client importing the spec inherited.
+# GitHub repository settings and DNS names live outside the repo, so no other
+# gate sees them, and three shipped as promises while off: SUPPORT.md linked
+# Discussions on a repo with Discussions disabled; SECURITY.md offered the
+# Security-tab reporting button with private vulnerability reporting disabled
+# (so BOTH disclosure routes were dead at once); the OpenAPI spec carried a
+# Staging server for a hostname with no DNS record, inherited by every client.
 #
-# docs/operations/external-channels.md carries each channel's state and
-# the literal strings that must not appear while it is `disabled`. That
-# keeps the switch and the wording in one file: turning a channel on is
-# a one-line flip, after which the same commit may restore the text.
+# docs/operations/external-channels.md holds each channel's state and the
+# literal strings that must not appear while it is `disabled`, so the switch
+# and the wording live in one file: enabling a channel is a one-line flip,
+# after which the same commit may restore the text.
 #
-# Exit code is the number of violations, so cron and the other gates
-# consume it the same way lint-doc-links.sh is consumed.
+# Exit code is the number of violations (consumed like lint-doc-links.sh).
+#
+# Env overrides (used by the self-test): CHANNELS_MANIFEST.
 #
 # Env overrides (used by the self-test): CHANNELS_MANIFEST.
 set -uo pipefail
@@ -40,14 +38,11 @@ TMP=$(mktemp -d)
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
-# Rows are `| `id` | `state` | where | `pat`, `pat` |`. Only rows whose
-# first cell is a backticked id are data; the header and its separator
-# are not. Emits `id<TAB>state<TAB>pattern`, one line per pattern.
-#
-# Patterns are trimmed to nothing when the cell holds only whitespace.
-# They were not, once: a blank-looking cell yielded a pattern of three
-# spaces, which matches almost every line of every file in the tree —
-# 56 MB of "violations" and no usable signal.
+# Rows are `| `id` | `state` | where | `pat`, `pat` |`. Only rows whose first
+# cell is a backticked id are data. Emits `id<TAB>state<TAB>pattern`, one line
+# per pattern. A whitespace-only pattern cell is trimmed to nothing: it once
+# yielded a three-space pattern matching almost every line (56 MB of
+# "violations").
 awk -F'|' '
   function trim(v) { sub(/^[ \t]+/, "", v); sub(/[ \t]+$/, "", v); return v }
   /^\| *`[^`]+` *\|/ {
@@ -75,9 +70,8 @@ fi
 
 violations=0
 
-# Validate the manifest before trusting it. A typo'd state silently
-# means "not disabled", which is the failure mode this gate exists to
-# prevent, so it is an error rather than a skip.
+# Validate the manifest before trusting it: a typo'd state silently means "not
+# disabled", the failure this gate exists to prevent, so it is an error.
 while IFS=$'\t' read -r id state pat; do
   case "$state" in
     enabled) ;;
@@ -86,9 +80,8 @@ while IFS=$'\t' read -r id state pat; do
         fail "$MANIFEST: channel '$id' is disabled but names no forbidden string"
         violations=$((violations + 1))
       elif [ "${#pat}" -lt "$MIN_PATTERN_LEN" ]; then
-        # A forbidden string identifies one channel — a URL or a button
-        # label, never a fragment. Anything shorter is a typo, and a
-        # typo here matches half the tree instead of failing.
+        # A forbidden string identifies one channel (URL or button label),
+        # never a fragment; shorter is a typo that matches half the tree.
         fail "$MANIFEST: channel '$id' forbids '$pat', under $MIN_PATTERN_LEN characters — too broad to name a channel"
         violations=$((violations + 1))
       fi
@@ -100,9 +93,8 @@ while IFS=$'\t' read -r id state pat; do
   esac
 done < "$TMP/rows"
 
-# Stop here on a malformed manifest rather than scanning with it. The
-# scan below is only as meaningful as the rows driving it, and a bad row
-# buries its own diagnostic under whatever it happens to match.
+# Stop on a malformed manifest: a bad row buries its own diagnostic under
+# whatever it happens to match.
 if [ "$violations" -gt 0 ]; then
   echo >&2
   echo "lint-external-channels: $MANIFEST is malformed — fix the rows above, then re-run." >&2
@@ -113,15 +105,13 @@ awk -F'\t' '$2 == "disabled" && $3 != ""' "$TMP/rows" > "$TMP/disabled"
 cut -f3 "$TMP/disabled" | sort -u > "$TMP/patterns"
 
 if [ ! -s "$TMP/patterns" ]; then
-  # Every channel is on. Nothing to forbid — report it rather than
-  # printing a pass that looks like a scan.
+  # Every channel is on: report it rather than print a pass that looks like a scan.
   echo "lint-external-channels: no channel is switched off — nothing forbidden"
   exit "$violations"
 fi
 
-# Tracked files PLUS untracked, non-ignored ones — the same file set
-# lint-doc-links uses, and for the same reason: a tracked-only scan is
-# blind to exactly the files a change is adding.
+# Tracked plus untracked non-ignored files (as lint-doc-links): a tracked-only
+# scan is blind to the files a change is adding.
 { git ls-files -z; git ls-files -z --others --exclude-standard; } > "$TMP/files"
 if [ ! -s "$TMP/files" ]; then
   fail "git listed zero files — refusing to pass vacuously (not a work tree?)"
@@ -137,10 +127,8 @@ while IFS= read -r hit; do
   lineno=${rest%%:*}
   text=${rest#*:}
 
-  # One exemption, and it is definitional: the manifest names every
-  # forbidden string in order to forbid it. Nothing else is exempt —
-  # including CHANGELOG.md, which today quotes neither string and can
-  # record a channel's history without pasting a dead URL into it.
+  # One exemption: the manifest names every forbidden string in order to
+  # forbid it. Nothing else is exempt, CHANGELOG.md included.
   case "$file" in
     "$MANIFEST") continue ;;
   esac

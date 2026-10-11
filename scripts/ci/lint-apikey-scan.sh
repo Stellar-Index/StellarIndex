@@ -1,44 +1,35 @@
 #!/usr/bin/env bash
 # lint-apikey-scan.sh — no new walk of the API-key credential keyspace.
 #
-# The defect this pins shut: a lookup of credential records by something
-# other than their Redis key — "which keys does this owner hold", "which
-# record has this KeyID" — written as `SCAN apikey:*` plus one GET per
-# match. It reads as a harmless helper, it passes every test (the test
-# keyspace has three keys in it), and on a request path it costs O(every
-# credential in the deployment) against the single-threaded Redis that is
-# also the rate limiter. Open registration makes that keyspace
-# attacker-sized. Four of them shipped, three behind /v1/account/keys,
-# and each new one was written by copying the one before it.
+# The defect: looking up credential records by something other than their
+# Redis key ("which keys does this owner hold", "which record has this
+# KeyID") as `SCAN apikey:*` plus one GET per match. It passes every test (the
+# test keyspace has three keys) but on a request path costs O(every credential)
+# against the single-threaded Redis that is also the rate limiter, and open
+# registration makes that keyspace attacker-sized. Each new copy was written by
+# copying the last.
 #
-# The lookups now read the `apikey-index:v1` hash
-# (internal/auth/list_keys.go). Exactly ONE walk remains on purpose —
-# `walkAPIKeyRecords`, which builds that index and serves lookups while
-# it is unusable. This gate keeps it at one.
+# Lookups read the `apikey-index:v1` hash (internal/auth/list_keys.go). Exactly
+# ONE walk remains on purpose, `walkAPIKeyRecords`, which builds that index and
+# serves lookups while it is unusable. This gate keeps it at one.
 #
-# Rules, over production Go (tests are exempt — they seed and inspect
-# keyspaces freely):
-#
-#   1. Under internal/auth: no Redis scan-family call at all —
-#      `.Scan(` `.ScanType(` `.Keys(` `.SScan(` `.HScan(` `.ZScan(`.
-#      The package holds no SQL, so there is no honest `.Scan(` to
-#      confuse this with; if that changes, mark the site.
+# Rules, over production Go (tests are exempt):
+#   1. Under internal/auth: no Redis scan-family call
+#      (`.Scan(` `.ScanType(` `.Keys(` `.SScan(` `.HScan(` `.ZScan(`). The
+#      package holds no SQL, so there is no honest `.Scan(`; if that changes,
+#      mark the site.
 #   2. Under internal/ cmd/ pkg/: nobody builds the credential wildcard
-#      — `APIKey("*")` or a literal `apikey:*`. This is the tell that
-#      survives a scan split across lines or moved to another package.
-#   3. A site is exempt only with an `apikey-scan-ok: <reason>` marker
-#      on the line or in the comment block directly above it, and the
-#      whole tree may hold AT MOST ONE marked site. A second walk needs
-#      this script edited in the same diff, which is the review.
-#   4. A marker that exempts nothing FAILS, so the allowance can only
-#      shrink.
+#      (`APIKey("*")` or a literal `apikey:*`). This survives a scan split
+#      across lines or moved to another package.
+#   3. A site is exempt only with an `apikey-scan-ok: <reason>` marker on the
+#      line or in the comment block directly above, and the tree may hold AT
+#      MOST ONE marked site. A second walk needs this script edited in the same
+#      diff, which is the review.
+#   4. A marker that exempts nothing FAILS, so the allowance can only shrink.
 #
-# Usage: lint-apikey-scan.sh [ROOT]   (ROOT defaults to the repo root;
-# the self-test points it at fixture trees).
-#
-# Run by verify.sh and CI's repo-gates job; internal/auth/
-# apikey_scan_lint_test.go also runs it and its self-test under `go test`.
-#
+# Usage: lint-apikey-scan.sh [ROOT]   (default: repo root; the self-test points
+# it at fixture trees). Run by verify.sh, CI's repo-gates job and
+# internal/auth/apikey_scan_lint_test.go.
 # Exit 0 clean, 1 on any violation or a vacuous run.
 set -uo pipefail
 
@@ -109,8 +100,8 @@ if [ -d "$auth_dir" ]; then
   done < <(find "$auth_dir" -type f -name '*.go' | sort)
 fi
 
-# One recursive grep, not one per file: this sweep covers ~2,000 files
-# and runs inside `go test ./internal/auth`.
+# One recursive grep, not one per file: ~2,000 files, run inside
+# `go test ./internal/auth`.
 if [ "${#tree_dirs[@]}" -gt 0 ]; then
   while IFS= read -r hit; do
     f="${hit%%:*}"

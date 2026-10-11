@@ -1,34 +1,26 @@
 #!/usr/bin/env bash
 # govulncheck-gated.sh — govulncheck with a documented accepted-risk allowlist.
 #
-# The per-PR `vuln` job (.github/workflows/ci.yml) runs govulncheck as a hard
-# blocking gate. github.com/lib/pq@v1.10.9 — an indirect dependency pulled in
-# by golang-migrate's postgres driver for schema migrations (the app's own
-# Postgres driver is github.com/jackc/pgx/v5, ADR-0006) — carries a batch of
-# disclosed, UNPATCHED vulns (lib/pq is unmaintained), so bare
-# `govulncheck ./...` reds every PR with no way to land unrelated work. These
-# lib/pq risks are all triggered by a malicious/compromised PostgreSQL server
-# or a pre-auth MITM, and stellarindex only ever talks to its OWN Postgres
-# over localhost — so they are accepted risks
-# (rationale + per-id justification live in scripts/ci/govulncheck-allow.txt).
+# The per-PR `vuln` job (.github/workflows/ci.yml) is a hard gate.
+# github.com/lib/pq@v1.10.9 (indirect, via golang-migrate's postgres driver;
+# the app's own driver is pgx/v5, ADR-0006) carries disclosed, UNPATCHED vulns
+# (lib/pq is unmaintained), so bare `govulncheck ./...` would red every PR.
+# They need a malicious/compromised Postgres server or a pre-auth MITM, and
+# stellarindex only talks to its own Postgres over localhost, so they are
+# accepted risks (per-id rationale: scripts/ci/govulncheck-allow.txt).
 #
-# This wrapper keeps the gate SHARP while accepting exactly those reviewed vulns:
+# The gate stays sharp while accepting exactly those reviewed vulns:
+#   * Runs `govulncheck -format json ./...` and takes the vulns actually
+#     CALLED: a finding whose call-stack top frame names a function. This
+#     mirrors govulncheck's exit-3 semantics; imported-but-not-called vulns
+#     never gated and are ignored.
+#   * FAILS (exit 1, ::error:: annotation) if ANY called vuln id is not in the
+#     allowlist. Accept-by-review, never by default; cannot pass vacuously.
+#   * Passes (exit 0) only when every called vuln is an accepted entry.
 #
-#   * It runs `govulncheck -format json ./...` and computes the set of vulns that
-#     are actually CALLED — a finding with a call-stack frame whose top element
-#     names a function. That mirrors govulncheck's own exit-3 semantics: a vuln
-#     that is merely imported-but-not-called (module/package frames only, no
-#     function) never gated and is ignored here too.
-#   * It FAILS (exit 1, with a ::error:: annotation) if ANY called vuln id is not
-#     present in the allowlist — a new lib/pq CVE, or a vuln in any other module,
-#     reds CI until a human reviews and justifies it. The allowlist is
-#     accept-by-review, never accept-by-default; it cannot pass vacuously.
-#   * It passes (exit 0) only when every called vuln is an accepted entry.
-#
-# Note: `govulncheck -format json` intentionally exits 0 even when vulns are found
-# (the JSON is a data stream; the verdict is the consumer's job) — so this script,
-# not govulncheck's exit code, is the gate. A non-zero govulncheck exit with no
-# parseable JSON is treated as a scan failure and reds CI.
+# `govulncheck -format json` exits 0 even when vulns are found (the JSON is a
+# data stream), so this script, not govulncheck's exit code, is the gate. A
+# non-zero exit with no parseable JSON is a scan failure and reds CI.
 #
 # Usage:  scripts/ci/govulncheck-gated.sh [scan-target ...]     (default: ./...)
 # Env:    GOVULNCHECK_ALLOWLIST   allowlist path (default scripts/ci/govulncheck-allow.txt)
@@ -56,8 +48,8 @@ if [[ ! -f "$ALLOWLIST" ]]; then
 fi
 
 # ── Load the allowlist ──
-# An entry is the GO-id token on a line; inline `# reason` comments and blank /
-# pure-comment lines are ignored. Bash 3.2-compatible (no mapfile).
+# An entry is the GO-id token on a line; inline `# reason` comments and blank
+# or comment-only lines are ignored. Bash 3.2-compatible (no mapfile).
 ALLOWED=()
 while IFS= read -r id; do
   [[ -n "$id" ]] && ALLOWED+=("$id")
@@ -69,10 +61,10 @@ if [[ "${#ALLOWED[@]}" -eq 0 ]]; then
 fi
 
 is_allowed() {
-  # exact-line match against the allowed set (empty-array safe under set -u).
-  # The list is landed before the match rather than piped into it: `grep -Fxq`
-  # exits at its first hit, and pipefail would then report the SUCCESSFUL
-  # match as a failed lookup once printf outgrew the pipe buffer.
+  # Exact-line match, empty-array safe under set -u. The list is landed
+  # before the match, not piped: `grep -Fxq` exits at its first hit and
+  # pipefail would report that SUCCESSFUL match as a failed lookup once
+  # printf outgrew the pipe buffer.
   grep -Fxq -- "$1" <<<"$(printf '%s\n' ${ALLOWED[@]+"${ALLOWED[@]}"})"
 }
 
@@ -86,19 +78,17 @@ govulncheck -format json "${TARGETS[@]}" >"$json_out" 2>"$scan_err"
 scan_rc=$?
 set -e
 
-# `govulncheck -format json` exits 0 on a COMPLETED scan whether or not vulns
-# are found (the JSON stream is data; computing the verdict is this script's
-# job). A non-zero exit therefore means govulncheck itself failed — a build or
-# tooling error, never "vulnerabilities found". Fail closed: a broken or partial
-# scan must red CI, never pass vacuously as "no vulnerabilities".
+# JSON mode exits 0 on a COMPLETED scan whether or not vulns are found, so a
+# non-zero exit means govulncheck itself failed (build/tooling). Fail closed:
+# a broken scan must never pass as "no vulnerabilities".
 if [[ "$scan_rc" -ne 0 ]]; then
   echo "::error::govulncheck-gated: govulncheck exited non-zero ($scan_rc) — the scan failed to complete (build/tooling error), which is NOT the same as 'no vulnerabilities'." >&2
   echo "---- govulncheck stderr ----" >&2
   cat "$scan_err" >&2
   exit 1
 fi
-# Defence in depth: even on a 0 exit, require a parseable JSON stream before
-# trusting an empty finding set.
+# Defence in depth: on a 0 exit, still require parseable JSON before trusting
+# an empty finding set.
 if ! jq -e . "$json_out" >/dev/null 2>&1; then
   echo "::error::govulncheck-gated: govulncheck exited 0 but did not emit parseable JSON — treating as scan failure, NOT as 'no vulnerabilities'." >&2
   echo "---- govulncheck stderr ----" >&2
@@ -107,9 +97,8 @@ if ! jq -e . "$json_out" >/dev/null 2>&1; then
 fi
 
 # ── Compute the set of CALLED vuln ids ──
-# Slurp the whole JSON-object stream (-s) into an array, keep `finding` objects
-# whose call trace has a top frame with a non-empty `function` (i.e. reachable /
-# called), and collect their distinct OSV ids.
+# Slurp the JSON stream (-s); keep `finding`s whose top trace frame has a
+# non-empty `function` (reachable/called); collect distinct OSV ids.
 called_ids="$(jq -rs '
   [ .[]
     | select(has("finding")) | .finding
@@ -141,8 +130,8 @@ if [[ "${#accepted_seen[@]}" -gt 0 ]]; then
   done
 fi
 
-# Stale-allowlist notice (informational only — never fails): an accepted id that
-# is no longer called can eventually be pruned, but a stale entry must not red CI.
+# Stale-allowlist notice (informational, never fails): an accepted id no
+# longer called can be pruned, but a stale entry must not red CI.
 for id in "${ALLOWED[@]}"; do
   if ! grep -Fxq -- "$id" <<<"$(printf '%s\n' ${accepted_seen[@]+"${accepted_seen[@]}"})"; then
     echo "::notice::govulncheck-gated: allowlisted vuln $id is not currently called — candidate for pruning once the dependency is gone."

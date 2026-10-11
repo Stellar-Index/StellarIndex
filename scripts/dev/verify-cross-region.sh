@@ -2,20 +2,14 @@
 # verify-cross-region.sh — assert closed-bucket VWAP values are
 # byte-identical across R1 / R2 / R3 (per ADR-0015).
 #
-# This is the load-bearing cross-region consistency claim: a
-# request to api.stellarindex.io resolves to whichever region is
-# closest, but the response should be identical regardless. If a
-# customer in EU sees a different price than a customer in APAC
-# for the same closed bucket + same pair, ADR-0015 is broken and
-# the multi-region story is fiction.
+# api.stellarindex.io resolves to the nearest region, but the same closed
+# bucket + pair must return the same price everywhere; otherwise ADR-0015 is
+# broken and the multi-region story is fiction.
 #
-# Pre-launch posture: only R1 is
-# deployed today; R2/R3 are tracked as future work in
-# docs/architecture/ha-plan.md §10. To skip a not-yet-deployed
-# region, set its env var empty (`R2= R3= ./verify-cross-region.sh`).
-# Single-region invocations report "no regions to compare against"
-# and exit 0 rather than failing — failing on absent R2/R3 just
-# trains operators to ignore the script.
+# Pre-launch only R1 is deployed (R2/R3: docs/architecture/ha-plan.md §10).
+# Skip a region by setting its env var empty (`R2= R3= ./verify-cross-region.sh`).
+# Single-region runs report "no regions to compare against" and exit 0:
+# failing on absent R2/R3 trains operators to ignore the script.
 #
 # Usage:
 #   ./scripts/dev/verify-cross-region.sh
@@ -30,17 +24,16 @@
 #     # explicit "R1 only — R2/R3 not deployed yet"
 #
 # Exit:
-#   0 — every available-region pair returned a price AND, when
-#       ≥ 2 regions are configured, every pair's regional prices
-#       are byte-identical.
+#   0 — every available-region pair returned a price AND, with ≥ 2 regions
+#       configured, every pair's regional prices are byte-identical.
 #   1 — any pair has divergent prices across configured regions.
 #   2 — at least one configured region failed to respond for a pair.
 
 set -euo pipefail
 
 # ─── Per-region URLs (override via env) ──────────────────────
-# Default R1 to the public hostname; default R2/R3 to empty so
-# pre-multi-region deployments skip them rather than fail.
+# R1 defaults to the public hostname; R2/R3 to empty so pre-multi-region
+# deployments skip them rather than fail.
 R1="${R1:-https://api.stellarindex.io}"
 R2="${R2:-}"
 R3="${R3:-}"
@@ -69,9 +62,7 @@ echo "    R2=${R2:-(unset — skipped)}"
 echo "    R3=${R3:-(unset — skipped)}"
 echo
 
-# Count configured regions. Single-region runs short-circuit:
-# there's nothing to compare to, but failing the script trains
-# operators to ignore it.
+# Single-region runs short-circuit (see header).
 CONFIGURED=0
 [ -n "$R1" ] && CONFIGURED=$((CONFIGURED + 1))
 [ -n "$R2" ] && CONFIGURED=$((CONFIGURED + 1))
@@ -93,8 +84,8 @@ for pair in "${PAIR_LIST[@]}"; do
 
     bold "Pair: ${base}/${quote}"
 
-    # Fetch /v1/price from each region. Plain shell vars (no
-    # associative arrays — bash 3.2 on macOS doesn't have them).
+# Fetch /v1/price per region. Plain vars: macOS bash 3.2 has no associative
+# arrays.
     p1=""; p2=""; p3=""
     a1=""; a2=""; a3=""
     r1ok=no; r2ok=no; r3ok=no
@@ -110,8 +101,7 @@ for pair in "${PAIR_LIST[@]}"; do
             R2) host="$R2" ;;
             R3) host="$R3" ;;
         esac
-        # Skip regions the operator hasn't configured (R2/R3 in
-        # the single-region pre-launch posture).
+# Skip regions not configured.
         if [ -z "$host" ]; then
             continue
         fi
@@ -141,9 +131,8 @@ for pair in "${PAIR_LIST[@]}"; do
         esac
     done
 
-    # Build the list of "ok regions we got a price from" honouring
-    # the configured set — unset regions are absent by design, not
-    # by failure.
+# Prices from configured regions that answered; unset regions are absent by
+# design, not failure.
     collected=()
     [ -n "$R1" ] && [ "$r1ok" = "yes" ] && collected+=("R1=$p1")
     [ -n "$R2" ] && [ "$r2ok" = "yes" ] && collected+=("R2=$p2")
@@ -160,9 +149,7 @@ for pair in "${PAIR_LIST[@]}"; do
         continue
     fi
 
-    # Compare every collected price against the first. Skips
-    # unset regions naturally because they never landed in
-    # `collected`.
+# Compare every collected price against the first.
     first_price="${collected[0]#*=}"
     diverged=no
     for entry in "${collected[@]}"; do
