@@ -17,21 +17,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// seedSoroswapPairs reads every pair contract the Soroswap factory has deployed via
-// stellar-rpc simulateTransaction and writes the (pair, token0, token1) tuples to
-// the soroswap_pairs registry.
-//
-// One-shot bootstrap for first deployment or a factory reset, so the indexer and
-// backfill chunks boot with the registry primed; later new_pair events are upserted
-// live (internal/pipeline/soroswap_registry.go). The sweep is ~3N+1 simulate calls
-// at a 300ms throttle, under public stellar-rpc's ~3-5 req/s limit.
-//
-// Insert-only: a pair already in the registry is never rewritten, since on-chain
-// new_pair rows outrank an unauthenticated RPC simulation. A pair whose RPC tokens
-// disagree with its row is printed as a diff, left untouched, and fails the run.
-//
-// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN reporting the pairs
-// it WOULD insert; -write applies.
+// seedSoroswapPairs reads every pair contract the Soroswap factory has deployed via stellar-rpc simulateTransaction into the soroswap_pairs registry.
+// One-shot bootstrap (~3N+1 simulate calls at a 300ms throttle). Insert-only: on-chain new_pair rows outrank an unauthenticated RPC simulation, so a disagreeing pair is printed as a diff, left untouched, and fails the run.
+// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN; -write applies.
 func seedSoroswapPairs(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("seed-soroswap-pairs")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -192,12 +180,8 @@ func (s *soroswapPairSeeder) finish() error {
 	return nil
 }
 
-// logSeedStart announces the sweep target. The RPC endpoint is redacted:
-// -rpc / seed_rpc_endpoint / rpc_endpoints[0] can point at a keyed
-// third-party provider that carries its API key in the URL path, the
-// same shape externalchainlink.RedactEndpoint already scrubs for the
-// Chainlink RPC client — printing it raw would put the key in stderr,
-// and from there in any log aggregator that captures ops output.
+// logSeedStart announces the sweep target. The RPC endpoint is redacted because a keyed provider carries its API key in the URL path
+// (same shape externalchainlink.RedactEndpoint scrubs).
 func logSeedStart(w io.Writer, factory, endpoint string) {
 	_, _ = fmt.Fprintf(w, "seed-soroswap-pairs: factory=%s rpc=%s\n",
 		factory, externalchainlink.RedactEndpoint(endpoint))

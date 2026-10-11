@@ -13,23 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// tagSigner is the HISTORICAL / recovery half of AMM signer attribution
-// (migration 0150), the mirror of tag-routed-via. The live sweeper
-// (internal/pipeline.RunSignerTagger) only covers a trailing 30-min window, so
-// an indexer/ClickHouse outage or a projector lag longer than that leaves
-// those trades' `signer` permanently NULL (a re-derive PRESERVES the column,
-// it does not re-tag). This walks a ledger range in windows, reading each
-// window's tx source accounts from the lake (stellar.transactions) and
-// back-tagging trades.signer via the SAME first-wins timescale.TagTradesSigner
-// primitive the live sweeper uses — so historical and live tagging cannot
-// drift. Idempotent + resumable: already-tagged rows never match
-// (signer IS NULL), and progress checkpoints into ingestion_cursors as
-// (source='tag-signer', sub_source='<from>-<to>') after each completed
-// window. -resume (default true) only resumes a run of the same -from/-to.
-//
-// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN that
-// reads each window and reports how many trades it WOULD tag, writing
-// neither the tags nor a checkpoint. -write applies.
+// tagSigner is the historical/recovery half of AMM signer attribution (mirror of tag-routed-via): the live sweeper covers only a trailing 30-min window, and a re-derive preserves a NULL signer rather than re-tagging.
+// It walks a range in windows, reads tx source accounts from stellar.transactions and back-tags trades.signer via the same first-wins timescale.TagTradesSigner as the live sweeper. Idempotent and resumable via ingestion_cursors (source='tag-signer', sub_source='<from>-<to>'); -resume only resumes the same -from/-to.
+// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN writing neither tags nor checkpoint; -write applies.
 func tagSigner(args []string) error { //nolint:funlen,gocognit,gocyclo // linear windowed pass: flags → bounds → per-window read+tag + checkpoint (mirrors tagRoutedVia)
 	fs, gate := opsutil.NewMutatingFlagSet("tag-signer")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -186,16 +172,8 @@ func writeModeVerb(write bool, applied, preview string) string {
 	return preview
 }
 
-// tagSignerWindow applies one window's signer tags, or — in the default
-// fail-closed preview — reports how many it WOULD apply without touching
-// the trades table.
-//
-// The preview count is an UPPER BOUND, not a prediction: it is the number
-// of tx signers the lake returned for the window, and TagTradesSigner is
-// first-wins over rows whose signer IS NULL, so the real number is the
-// subset of those txs that have an untagged trade. Counting the subset
-// exactly would need a second query over the same compressed chunks the
-// windowing exists to avoid decompressing.
+// tagSignerWindow applies one window's signer tags, or in the default preview reports how many it WOULD apply.
+// The preview is an UPPER BOUND (tx signers the lake returned; TagTradesSigner is first-wins over signer IS NULL); an exact count needs a second query over the compressed chunks the windowing avoids decompressing.
 func tagSignerWindow(ctx context.Context, store *timescale.Store, write bool,
 	tsFrom, tsTo time.Time, tags []timescale.SignerTag,
 ) (int64, error) {

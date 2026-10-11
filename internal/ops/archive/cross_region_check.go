@@ -17,14 +17,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// cross-region-check queries each region's /v1/vwap (or twap/ohlc) for the
-// same closed-bucket window and asserts the responses agree on every stable
-// user-visible field.
-//
-// Per ADR-0015, closed-bucket aggregations are deterministic given the same
-// trades, so divergence means one of: replication lag (transient), decoder
-// version drift, upstream ledger-meta divergence, or broken Postgres
-// replication. Any disagreement exits non-zero with a structured diff.
+// cross-region-check compares each region's closed-bucket /v1/vwap (or twap/ohlc) on every stable field (ADR-0015);
+// any divergence exits non-zero with a structured diff.
 
 type crossRegionMetric string
 
@@ -34,11 +28,7 @@ const (
 	metricOHLC crossRegionMetric = "ohlc"
 )
 
-// crossRegionResponse is the shape we extract from each region's
-// rate endpoint. We don't unmarshal every possible envelope member
-// (for example `as_of` is intentionally excluded because handlers
-// stamp it at response time), but we do extract every stable
-// user-visible field that ADR-0015 expects to agree cross-region.
+// crossRegionResponse holds the stable user-visible fields ADR-0015 expects to agree across regions; as_of is excluded (stamped at response time).
 type crossRegionResponse struct {
 	From    time.Time        `json:"from"`
 	To      time.Time        `json:"to"`
@@ -164,11 +154,7 @@ func crossRegionCheck(args []string) error { //nolint:funlen,gocognit,gocyclo //
 			totalDivergences, len(regions))
 	}
 	if totalComparable == 0 {
-		// No sampled bucket ever had >=2 responding regions, so
-		// NOTHING was actually compared — a total inability to compare
-		// (every region down but one, or a total outage) must not read
-		// as "all consistent". See the ERR lines above for which
-		// regions failed to respond.
+		// Nothing was compared (no sample had >=2 responding regions); that must not read as all consistent.
 		return fmt.Errorf("cross-region-check inconclusive — none of %d sample(s) had >=2 responding regions to compare; see ERR lines above", totalSamples)
 	}
 	_, _ = fmt.Fprintf(os.Stderr,
@@ -198,11 +184,7 @@ func parseRegionList(csv string) ([]regionEndpoint, error) {
 	return out, nil
 }
 
-// resolveAnchor picks the upper bound of the most-recent closed bucket
-// to start sampling from. Default = now() − window, truncated down
-// to a window boundary. The −window step protects against clock skew
-// between the local box and the regions' "now"; we always want a
-// bucket that's CLOSED everywhere.
+// resolveAnchor returns the newest closed bucket's upper bound: now minus window, truncated to a window boundary (guards clock skew).
 func resolveAnchor(toFlag string, window time.Duration) (time.Time, error) {
 	if toFlag != "" {
 		t, err := time.Parse(time.RFC3339, toFlag)
@@ -307,15 +289,9 @@ func splitPair(p string) (base, quote string, err error) {
 	return parts[0], parts[1], nil
 }
 
-// analyseRegionResults examines a single (pair, bucket) sample across
-// regions and writes a divergence report (or "OK" line) to w. Returns
-// (diverged, compared): diverged is true when the ≥2 responding
-// regions disagreed; compared is true when there were actually ≥2
-// responding regions to compare at all — false means this sample
-// proves NOTHING (a caller that only tracks `diverged` would
-// read "no divergence" across a run where every sample was
-// incomparable as "all consistent", when in fact nothing was ever
-// checked).
+// analyseRegionResults compares one (pair, bucket) sample across regions and writes a divergence report.
+// diverged: >=2 regions disagree. compared is false when fewer than 2 responded, so the sample proves
+// nothing and must not count toward all consistent.
 //
 //nolint:gocognit,gocyclo // linear diagnostic; splitting it would hide the compare → report flow
 func analyseRegionResults(
@@ -345,11 +321,7 @@ func analyseRegionResults(
 		}
 	}
 	if len(good) < 2 {
-		// Not enough successful regions to compare. This happens when
-		// only one region is online or the data isn't replicated yet.
-		// Don't flag as divergence; leave it to the caller to decide
-		// based on the ERR lines above. NOT compared — the caller
-		// must not count this sample toward "all consistent".
+		// Too few regions to compare: not a divergence, and NOT compared, so the caller must not count it as consistent.
 		return false, false
 	}
 

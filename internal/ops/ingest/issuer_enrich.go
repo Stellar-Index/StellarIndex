@@ -13,17 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// issuerEnrich populates issuers.home_domain from the on-chain account state in
-// the ClickHouse lake (DATA-TRUTH-PLAN G5 prerequisite). The issuers table only
-// ever gets g_strkey written by the indexer; home_domain was never synced, so
-// sep1-refresh (which selects issuers WITH a home_domain) had zero candidates
-// and org_name stayed null. This reads each issuer's account home_domain from
-// ledger_entries_current (complete after the G2 account backfill) in batches
-// and writes it back, unblocking sep1-refresh → org_name.
-//
-// creation_ledger is NOT set here: it needs the create_account op from full
-// history (operation_participants only covers ~1 day), which is a separate
-// genesis op-scan — tracked, not done here.
+// issuerEnrich populates issuers.home_domain from account state in the ClickHouse lake (ledger_entries_current), unblocking sep1-refresh and org_name.
+// creation_ledger is not set here: it needs a genesis create_account op-scan.
 func issuerEnrich(args []string) error {
 	fs := flag.NewFlagSet("issuer-enrich", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "config path")
@@ -89,14 +80,7 @@ type homeDomainWriter interface {
 }
 
 // issuerEnrichLoop resolves and writes home_domain in fixed-size batches.
-//
-// It must not abort the entire run — leaving every remaining batch
-// unenriched — the moment a single batch's lookup or write failed. For a
-// table of thousands of issuers split into hundreds of batches, one
-// transient ClickHouse or Postgres hiccup partway through meant the rest
-// of the issuers silently never got a chance. It logs the failing
-// batch, counts it, and keeps going; the caller decides whether any
-// failedBatches should fail the run.
+// A failed batch is logged and counted, not fatal, so one transient hiccup does not skip every later batch; the caller decides whether failedBatches fail the run.
 func issuerEnrichLoop(ctx context.Context, er homeDomainLookup, store homeDomainWriter, ids []string, batchSize int, dryRun bool) (found, updated, failedBatches int) {
 	start := time.Now()
 	for lo := 0; lo < len(ids); lo += batchSize {
@@ -148,22 +132,9 @@ func loadIssuerGStrkeys(ctx context.Context, store *timescale.Store) ([]string, 
 	return ids, rows.Err()
 }
 
-// updateIssuerHomeDomains writes each issuer's on-chain home_domain onto
-// its row and returns how many rows actually changed.
-//
-// It must not write only into an EMPTY column ("never clobbers a
-// resolver-set value"), which would make this job unable to CORRECT anything and
-// the column write-once. See [timescale.Store.SyncIssuerHomeDomain] for why
-// that is an identity defect rather than a conservatism, and why the only
-// other writer of the column had the same clause for the same absent reason.
-//
-// An empty domain is an account the lake READ as declaring none, and clears
-// the row: keeping a domain the account has cleared leaves the lapsed name in
-// the SEP-1 refresh's fetch queue for whoever registers it next.
-//
-// A single row's write failure does not abort the rest of the batch —
-// every domain in the batch still gets its write attempt, and the caller
-// learns via the returned error how many failed.
+// updateIssuerHomeDomains writes each issuer's on-chain home_domain and returns how many rows changed.
+// It overwrites non-empty values (see [timescale.Store.SyncIssuerHomeDomain]), and an empty domain clears the row so a lapsed name leaves the SEP-1 fetch queue.
+// A single row's failure does not abort the batch; the returned error counts failures.
 func updateIssuerHomeDomains(ctx context.Context, store homeDomainWriter, domains map[string]string) (int, error) {
 	n, failed := 0, 0
 	var lastErr error

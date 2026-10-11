@@ -10,10 +10,7 @@ import (
 	"testing"
 )
 
-// TestRunChunkGuardedRecoversPanic pins NS27: a panic inside one parallel
-// backfill chunk must not propagate past runChunkGuarded (which would crash
-// the whole process, per Go's cross-goroutine panic semantics). It must
-// instead be turned into an error on errCh and wg.Done must still fire.
+// TestRunChunkGuardedRecoversPanic pins that a chunk panic becomes an error on errCh and wg.Done still fires.
 func TestRunChunkGuardedRecoversPanic(t *testing.T) {
 	var wg sync.WaitGroup
 	errCh := make(chan error, 1)
@@ -23,11 +20,7 @@ func TestRunChunkGuardedRecoversPanic(t *testing.T) {
 	chunk := chunkRange{from: 100, to: 200}
 
 	func() {
-		// A real goroutine's panic would crash the test binary before this
-		// deferred assertion ever ran; calling runChunkGuarded directly
-		// (recover() works in any deferring frame, not only a `go` one)
-		// still proves the guard, without taking the whole process down if
-		// the fix regresses.
+		// Call runChunkGuarded directly: a real goroutine panic would crash the test binary before the assertion ran.
 		defer func() {
 			if r := recover(); r != nil {
 				t.Fatalf("panic escaped runChunkGuarded: %v", r)
@@ -57,9 +50,7 @@ func TestRunChunkGuardedRecoversPanic(t *testing.T) {
 	}
 }
 
-// TestRunChunkGuardedPropagatesRunError confirms the guard's non-panic path
-// is unchanged: an ordinary error from run() still reaches errCh, and no
-// panic is fabricated.
+// TestRunChunkGuardedPropagatesRunError confirms an ordinary run() error reaches errCh with no panic fabricated.
 func TestRunChunkGuardedPropagatesRunError(t *testing.T) {
 	var wg sync.WaitGroup
 	errCh := make(chan error, 1)

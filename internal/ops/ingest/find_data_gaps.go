@@ -15,29 +15,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// find-data-gaps — data-derived gap detector for Soroban-era ledger
-// ingest coverage.
-//
-// The cursor-derived density projection in `/v1/diagnostics/ingestion`
-// measures process state ("did we walk this ledger") and can read 100% while
-// underlying data is missing. This subcommand scans the soroban_events
-// hypertable directly and reports contiguous ledger-coverage gaps >=
-// --min-gap-size, as input to a *targeted* backfill.
-//
-// The default threshold of 1000 ledgers (~1.5 h of network time) filters out
-// legitimate "no Soroban contract emitted" stretches; a longer gap implies an
-// ingest-side failure, not network quiet.
+// findDataGapsDefaultMinGapSize (1000 ledgers, ~1.5 h) filters legitimate no-event stretches; a longer
+// gap implies an ingest failure. find-data-gaps scans soroban_events directly because the cursor-derived
+// density can read 100% while data is missing; its output feeds a targeted backfill.
 const findDataGapsDefaultMinGapSize = int64(1000)
 
 type findDataGapsReport struct {
 	ScannedAt time.Time `json:"scanned_at"`
 	Source    string    `json:"source"`
-	// ProjectorSource is the target's [timescale.GapDetectorTarget.SourceNetKey],
-	// i.e. CanonicalSource when set else Source — the name
-	// `projector-replay -source` accepts when this target is
-	// projected. Empty when the target's Source has no
-	// CanonicalSource override (SourceNetKey falls back to Source
-	// itself, which is still the value to check).
+	// ProjectorSource is the target's SourceNetKey (CanonicalSource, else Source): the name
+	// projector-replay -source accepts when the target is projected.
 	ProjectorSource     string                `json:"projector_source,omitempty"`
 	Table               string                `json:"table"`
 	MinGapSize          int64                 `json:"min_gap_size"`
@@ -47,11 +34,7 @@ type findDataGapsReport struct {
 	TotalMissingLedgers int64                 `json:"total_missing_ledgers"`
 }
 
-// findDataGapsMultiReport groups one report per per-source target.
-// Emitted by `find-data-gaps --source all` (the default when no
-// --source is given). Operators reading JSON pipe it through `jq`
-// to filter by source; humans reading text get one block per
-// target.
+// findDataGapsMultiReport groups one report per per-source target (find-data-gaps --source all, the default).
 type findDataGapsMultiReport struct {
 	ScannedAt time.Time            `json:"scanned_at"`
 	Reports   []findDataGapsReport `json:"reports"`
@@ -151,12 +134,7 @@ func findDataGaps(args []string) error {
 	}
 }
 
-// ResolveFindDataGapsTargets maps the --source flag value to the
-// concrete list of [timescale.GapDetectorTarget] to scan. "all"
-// returns every registered target; a single name matches by Source;
-// a comma-separated list filters the registry to that subset.
-// An unmatched name is a hard error so a typo doesn't silently scan
-// nothing.
+// ResolveFindDataGapsTargets maps --source ("all", a name, or a comma list) to targets; an unmatched name is a hard error.
 func ResolveFindDataGapsTargets(source string) ([]timescale.GapDetectorTarget, error) {
 	if source == "" || source == "all" {
 		return timescale.DefaultGapDetectorTargets, nil
@@ -216,13 +194,8 @@ func writeFindDataGapsText(w io.Writer, r findDataGapsReport) {
 	}
 	_, _ = fmt.Fprintln(w, "    Targeted backfill plan:")
 	for i, g := range r.Gaps {
-		// soroban-events uses the binary `backfill` subcommand (re-walk
-		// MinIO into the soroban_events raw landing zone). Per-source
-		// classifier tables (trades, blend_*, phoenix_*, …) are
-		// projected from soroban_events by the projector
-		// (ADR-0032); operators rewind the per-source projector
-		// cursor with `projector-replay`. Non-projected sources
-		// (sdex, external) still use their own backfill paths.
+		// soroban-events uses the binary backfill subcommand; projected per-source tables are rewound with
+		// projector-replay (ADR-0032); non-projected sources (sdex, external) use their own paths.
 		switch r.Source {
 		case "soroban-events":
 			_, _ = fmt.Fprintf(w,
@@ -233,18 +206,8 @@ func writeFindDataGapsText(w io.Writer, r findDataGapsReport) {
 				"      %2d  stellarindex-ops backfill -write --config /etc/stellarindex.toml --from %d --to %d --source sdex\n",
 				i+1, g.Start, g.End)
 		default:
-			// r.ProjectorSource is target.SourceNetKey() — CanonicalSource
-			// when the per-table hyphenated target (blend-backstop,
-			// sep41-transfers, soroswap-skim, …) diverges from the
-			// projector's underscored decoder name, else Source itself
-			// for the targets where the two namespaces already coincide
-			// (cctp, rozo, defindex, reflector-dex, redstone, …).
-			// projector.KnownProjectorSources is buildSource's own
-			// registered-name set, so this can't drift the way a
-			// hand-copied switch would (replay refuses an unknown source, so a
-			// wrong command fails loudly rather than exiting 0 — but a false
-			// "not projected" message is worse, since the operator never tries
-			// the real command).
+			// r.ProjectorSource is SourceNetKey; KnownProjectorSources is buildSource's own registered set, so
+			// this cannot drift like a hand-copied switch (a false "not projected" message would stop the operator trying the real command).
 			if _, ok := projector.KnownProjectorSources[r.ProjectorSource]; ok {
 				_, _ = fmt.Fprintf(w,
 					"      %2d  stellarindex-ops projector-replay --config /etc/stellarindex.toml --source %s --from %d\n",

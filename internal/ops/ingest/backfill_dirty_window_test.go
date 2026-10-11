@@ -41,10 +41,7 @@ func memoisedGate(verdict error) *replayGateOnce {
 	return g
 }
 
-// TestBackfillRecordsDirtyWindowBeforeFirstWrite pins the dirty-window-first rule: a backfill
-// that rewrites served rows for a range records a dirty window covering that
-// range before its dispatcher (the only path to a write) exists, and never
-// gets that far if recording fails.
+// TestBackfillRecordsDirtyWindowBeforeFirstWrite: a backfill records its dirty window before its dispatcher exists, and aborts if recording fails.
 func TestBackfillRecordsDirtyWindowBeforeFirstWrite(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	gateReached := errors.New("reached the wasm gate")
@@ -133,11 +130,7 @@ func (f *fakeProjectorCursorStore) GetCursor(_ context.Context, source, sub stri
 	return timescale.Cursor{Source: source, Sub: sub, LastLedger: last}, nil
 }
 
-// TestRawBackfillBelowProjectorCursor pins the below-cursor case: a soroban-events backfill
-// (projector reading Postgres soroban_events) records a dirty window over the
-// full [from,to] of every projected source with a cursor, whatever the cursor
-// position (it can move during the backfill), and names the projector-replay
-// command that re-projects it. The backfill itself never writes a projected table.
+// TestRawBackfillBelowProjectorCursor: a soroban-events backfill records dirty windows for projected sources and names projector-replay; it writes no projected table.
 func TestRawBackfillBelowProjectorCursor(t *testing.T) {
 	var legacy config.Config // ClickHouseProjectorSource=false: projector tails soroban_events
 	var chFeed config.Config

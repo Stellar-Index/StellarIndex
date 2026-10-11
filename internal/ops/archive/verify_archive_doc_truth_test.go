@@ -5,18 +5,7 @@ import (
 	"testing"
 )
 
-// "Local Tier D" was documented as comparing sampled
-// checkpoint hashes against a locally-held ledger hash.
-// verifyArchivePeers never reads one — it fetches each peer's
-// history-XXXXXXXX.json and cross-compares the rest against one peer
-// picked as reference, pure peer-vs-peer consensus. R2/R3, the
-// regions Tier D exists for, have no local /srv/history-archive
-// mirror to hold such a hash in the first place (that's Tier B,
-// R1-only). A doc that claims a local comparison promises a security
-// property Tier D doesn't have.
-//
-// ha-plan.md is a living architecture doc, corrected in place.
-// ADR-0016's Decision and Invariant state the peer-only mechanism.
+// TestDoc_TierDDescribedAsPeerOnly_RLT304: Tier D is pure peer-vs-peer (no local hash; R2/R3 have no mirror), so docs must not claim a local comparison.
 func TestDoc_TierDDescribedAsPeerOnly_RLT304(t *testing.T) {
 	t.Parallel()
 

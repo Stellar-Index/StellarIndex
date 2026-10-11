@@ -12,8 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// What the refresh cron writes must read back through the API's decoder
-// field for field, with an undeclared boolean still undeclared.
+// TestPayloadRoundTripsCurrencyAuthority checks the refresh cron's payload reads back field for field, undeclared booleans staying undeclared.
 func TestPayloadRoundTripsCurrencyAuthority(t *testing.T) {
 	yes, no := true, false
 	sep := &metadata.SEP1{

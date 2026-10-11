@@ -8,10 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestIncidentEventKey_StableAcrossRuns: the key a re-run is
-// deduplicated on must not carry the emit time (the payload's `at`), or a
-// re-run after a partial fan-out re-pages every subscriber. It must still
-// separate the SEV-1 from the resolution of the same incident.
+// TestIncidentEventKey_StableAcrossRuns: the dedup key must not carry the emit time (a re-run would re-page everyone) yet must still separate the SEV-1 from its resolution.
 func TestIncidentEventKey_StableAcrossRuns(t *testing.T) {
 	started := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 	resolved := started.Add(90 * time.Minute)

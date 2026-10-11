@@ -6,11 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 )
 
-// TestCapCheckpointAtLoss pins the resume-cursor cap: backfill must not
-// checkpoint lastFullyEnqueued when a sink dropped or abandoned rows
-// (a SIGINT while the soroban-events sink applied back-pressure, or a
-// served-tier drain that timed out), so -resume restarted past them and
-// they never landed.
+// TestCapCheckpointAtLoss pins that backfill never checkpoints lastFullyEnqueued past rows a sink dropped or abandoned, else -resume skips them.
 func TestCapCheckpointAtLoss(t *testing.T) {
 	const startFrom, enqueued = 1_000, 1_500
 	cases := []struct {

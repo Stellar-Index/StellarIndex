@@ -52,10 +52,7 @@ func seedUsageDetail(t *testing.T, rdb redis.Cmdable, day time.Time, subject, en
 	}
 }
 
-// TestUsageRollupBackfill_RecoversADaySweepCannotReach — the manual
-// recovery path folds exactly the requested day's counters into the
-// sink, and not the day before it (it folds the days it is given, not
-// a live sweep window pinned to them).
+// TestUsageRollupBackfill_RecoversADaySweepCannotReach: the recovery path folds exactly the requested day's counters, not the day before.
 func TestUsageRollupBackfill_RecoversADaySweepCannotReach(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -103,11 +100,7 @@ func TestUsageRollupBackfill_RecoversADaySweepCannotReach(t *testing.T) {
 	}
 }
 
-// TestUsageRollupBackfill_DryRunWritesNothing — -dry-run must size the
-// recovery without touching usage_daily, so an operator can check the
-// blast radius of a range before committing to it. The REAL sink is
-// handed in (as the production wiring does) and fails any write, so a
-// dry run that reaches it errors instead of passing silently.
+// TestUsageRollupBackfill_DryRunWritesNothing: -dry-run sizes the recovery without touching usage_daily; the real sink fails any write, so reaching it errors.
 func TestUsageRollupBackfill_DryRunWritesNothing(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -154,11 +147,7 @@ func captureOpsStderr(t *testing.T, fn func()) string {
 	return string(<-done)
 }
 
-// TestUsageRollupDays covers the flag-expansion guards. Redis holds the
-// counters for usage.RetentionDays ending today, so a day before that
-// window has expired and a day after today has not happened: folding
-// either prints "0 row(s)" and exits 0, which reads as "no traffic".
-// Both are refused however narrow the range.
+// TestUsageRollupDays covers flag-expansion guards: days before the Redis retention window or after today are refused, since folding them prints "0 row(s)" and reads as no traffic.
 func TestUsageRollupDays(t *testing.T) {
 	now := time.Date(2026, 7, 21, 15, 30, 0, 0, time.UTC)
 	cases := []struct {

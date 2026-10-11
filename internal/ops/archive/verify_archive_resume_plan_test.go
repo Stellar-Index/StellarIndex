@@ -45,22 +45,7 @@ func walkedChunk(idx int, c opsutil.RangeChunk, firstPrev, last sdkxdr.Hash) chu
 	}
 }
 
-// TestPlanResumedWalk_AllDoneRewalksRatherThanCertifying pins
-// the all-Done resume case.
-//
-// A prior run that marked every chunk Done and still left InProgress
-// behind is a run that failed AT OR AFTER the post-walk proofs — the
-// cross-chunk stitch and the checkpoint-anchor decision run after the
-// last chunk is marked Done, and a real boundary chain break leaves
-// exactly this state. If verifyArchiveLCMWalk read resumeChunks'
-// nil verdict directly and `return 0, "", nil`, that would be a zero-ledger
-// success. Its caller's textfile defer keys on retErr == nil, so
-// stellarindex_verify_archive_last_success_unix would advance for a run
-// that anchored nothing, holding the run-stale page green, and
-// updateTierState would clear the InProgress record that was the only
-// remaining trace of the failed run.
-//
-// The correct value is the FULL plan: every chunk, in plan order.
+// TestPlanResumedWalk_AllDoneRewalksRatherThanCertifying: a prior run with every chunk Done but InProgress left behind failed at or after the post-walk proofs (stitch, checkpoint anchor). Returning a zero-ledger success would advance last_success_unix for a run that anchored nothing and clear the only trace of the failure, so the correct value is the FULL plan in order.
 func TestPlanResumedWalk_AllDoneRewalksRatherThanCertifying(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
@@ -97,10 +82,7 @@ func TestPlanResumedWalk_AllDoneRewalksRatherThanCertifying(t *testing.T) {
 	}
 }
 
-// TestPlanResumedWalk_PartialResumeStillSkipsDoneChunks: neither fix
-// may disable resume. A genuinely interrupted run (some chunks Done
-// WITH their boundary evidence, some not) still skips the finished
-// ones.
+// TestPlanResumedWalk_PartialResumeStillSkipsDoneChunks: an interrupted run with Done chunks carrying boundary evidence still skips them.
 func TestPlanResumedWalk_PartialResumeStillSkipsDoneChunks(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
@@ -117,12 +99,7 @@ func TestPlanResumedWalk_PartialResumeStillSkipsDoneChunks(t *testing.T) {
 	}
 }
 
-// TestPlanResumedWalk_DoneWithoutBoundaryEvidenceIsRewalked pins the
-// boundary-evidence admission rule: a chunk recorded Done by a binary that never
-// persisted its boundary terms cannot supply either side of a
-// cross-chunk boundary, so skipping it would leave that boundary
-// unchecked in every run. It is re-walked instead — self-healing,
-// because the re-walk records the evidence and the next resume works.
+// TestPlanResumedWalk_DoneWithoutBoundaryEvidenceIsRewalked: a chunk marked Done without persisted boundary terms cannot supply a cross-chunk boundary, so it is re-walked (self-healing, the re-walk records the evidence).
 func TestPlanResumedWalk_DoneWithoutBoundaryEvidenceIsRewalked(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
@@ -144,17 +121,7 @@ func TestPlanResumedWalk_DoneWithoutBoundaryEvidenceIsRewalked(t *testing.T) {
 
 // ─── The cross-chunk chain proof must survive a resume ────
 
-// TestFullPlanStitchInput_ChainBreakBesideSkippedChunkIsCaught is the
-// skipped-chunk regression, and its first assertion is the contrast that
-// makes the second non-vacuous: the SAME stitchChunks, over the chunks
-// this run walked, cannot see the break at all.
-//
-// Plan: three contiguous chunks. The prior run finished chunk 0; this
-// run walks chunks 1 and 2. Chunks 1 and 2 ARE adjacent to each other,
-// so the live-results stitch is clean — and the boundary between the
-// skipped chunk 0 and chunk 1 is checked by no run, in either run.
-// Plant a real chain break exactly there: the archive's ledger 1001
-// does not chain onto ledger 1000.
+// TestFullPlanStitchInput_ChainBreakBesideSkippedChunkIsCaught: with chunk 0 skipped and chunks 1-2 walked, stitchChunks over live results alone cannot see a break between 0 and 1 (the first assertion is that contrast). A planted break at ledger 1001 must be caught by the full-plan input.
 func TestFullPlanStitchInput_ChainBreakBesideSkippedChunkIsCaught(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
@@ -213,11 +180,7 @@ func TestFullPlanStitchInput_ChainBreakBesideSkippedChunkIsCaught(t *testing.T) 
 	}
 }
 
-// TestFullPlanStitchInput_IntactChainAcrossSkippedChunkPasses is the
-// other half: a resumed walk whose chunks DO chain must not be failed.
-// Over the live results alone this shape produces a spurious gap —
-// stitchChunks compares chunk 0 (ends 1000) against chunk 2 (starts 2001)
-// because the skipped chunk 1 is simply absent from the slice.
+// TestFullPlanStitchInput_IntactChainAcrossSkippedChunkPasses: a resumed walk whose chunks chain must not fail; live results alone would show a spurious gap where the skipped chunk is absent.
 func TestFullPlanStitchInput_IntactChainAcrossSkippedChunkPasses(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
@@ -253,10 +216,7 @@ func TestFullPlanStitchInput_IntactChainAcrossSkippedChunkPasses(t *testing.T) {
 	}
 }
 
-// TestFullPlanStitchInput_RefusesAHoleInThePlan: a skipped chunk with
-// no persisted evidence must be an error, never a silently shortened
-// plan. planResumedWalk does not produce this input, so it is the
-// defensive edge.
+// TestFullPlanStitchInput_RefusesAHoleInThePlan: a skipped chunk with no persisted evidence is an error, never a silently shortened plan (defensive edge).
 func TestFullPlanStitchInput_RefusesAHoleInThePlan(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
@@ -273,16 +233,7 @@ func TestFullPlanStitchInput_RefusesAHoleInThePlan(t *testing.T) {
 	}
 }
 
-// TestVerifyArchiveState_StitchSurvivesTheStateFile writes and reads
-// the real state file. The boundary evidence is only useful if it
-// survives the process boundary it exists to cross — the writer and
-// the reader are the two halves of one loop, and neither half proves
-// the other.
-//
-// It also pins backward compatibility in both directions: a state file
-// written before the field existed must read back with Stitch nil (the
-// shape planResumedWalk re-walks), not as a zero-valued record that
-// would be treated as evidence.
+// TestVerifyArchiveState_StitchSurvivesTheStateFile round-trips the real state file, since boundary evidence only helps if it survives the process boundary. A state file written before the field existed must read back with Stitch nil (re-walked), not a zero-valued record treated as evidence.
 func TestVerifyArchiveState_StitchSurvivesTheStateFile(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
@@ -344,9 +295,7 @@ func TestVerifyArchiveState_StitchSurvivesTheStateFile(t *testing.T) {
 	}
 }
 
-// TestChunkStitchRoundTrip: a corrupt or truncated persisted hash must
-// be an error, not a zero hash — two zero hashes compare equal and
-// would turn a corrupt state file into a passing chain proof.
+// TestChunkStitchRoundTrip: a corrupt or truncated persisted hash must be an error, not a zero hash, since two zero hashes compare equal and would pass a chain proof.
 func TestChunkStitchRoundTrip(t *testing.T) {
 	t.Parallel()
 	cp := ChunkProgress{Idx: 0, From: 2, To: 1000}
@@ -383,8 +332,7 @@ func TestChunkStitchRoundTrip(t *testing.T) {
 	}
 }
 
-// TestPlanResumedWalk_NoPriorStateWalksEverything: the cold-start and
-// plan-mismatch paths are unchanged.
+// TestPlanResumedWalk_NoPriorStateWalksEverything: the cold-start and plan-mismatch paths walk everything.
 func TestPlanResumedWalk_NoPriorStateWalksEverything(t *testing.T) {
 	t.Parallel()
 	chunks := threeChunkPlan()
@@ -397,13 +345,7 @@ func TestPlanResumedWalk_NoPriorStateWalksEverything(t *testing.T) {
 	}
 }
 
-// TestFullPlanStitchInput_PreservesCheckpointTallyForSkippedChunk is
-// the checkpoint-tally-loss regression: a chunk the prior run walked
-// with the checkpoint tier active and recorded CheckpointsMissed>0
-// for must not silently reconstruct as CheckpointsMissed=0 just
-// because a resumed run skips it. verifyArchiveLCMWalk sums its
-// tier-verdict counters over exactly this reconstructed slice, so a
-// zero here is what let -fail-on-missed pass over a real hole.
+// TestFullPlanStitchInput_PreservesCheckpointTallyForSkippedChunk: a skipped chunk recorded with CheckpointsMissed>0 must not reconstruct as 0, since verifyArchiveLCMWalk sums its tier counters over that slice and a zero let -fail-on-missed pass over a real hole.
 func TestFullPlanStitchInput_PreservesCheckpointTallyForSkippedChunk(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
@@ -436,12 +378,7 @@ func TestFullPlanStitchInput_PreservesCheckpointTallyForSkippedChunk(t *testing.
 	}
 }
 
-// TestPlanResumedWalk_RefusesToSkipChunkCheckpointsNeverChecked: a
-// chunk marked Done by a run that did NOT have the checkpoint tier
-// active (doCheckpoint=false, e.g. a "chain"-only run reusing the
-// same InProgress record) has Checkpoints*=0 meaning "never counted",
-// not "zero misses". A checkpoint-tier run must not skip it on that
-// evidence — it must re-walk the full plan instead.
+// TestPlanResumedWalk_RefusesToSkipChunkCheckpointsNeverChecked: a chunk Done without the checkpoint tier active has Checkpoints*=0 meaning "never counted", not "zero misses", so a checkpoint-tier run must re-walk the full plan.
 func TestPlanResumedWalk_RefusesToSkipChunkCheckpointsNeverChecked(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
@@ -460,16 +397,7 @@ func TestPlanResumedWalk_RefusesToSkipChunkCheckpointsNeverChecked(t *testing.T)
 	}
 }
 
-// TestChunkProgressLastVerifiedHash_IsNotTheBoundaryProof pins the
-// corrected doc claim on ChunkProgress.LastVerifiedHash, which said it
-// was "used for the cross-run chain-continuity proof" while no code
-// read it. Which field is load-bearing has to be mechanical,
-// not a comment: an operator debugging a boundary failure who edits
-// the wrong field gets no signal at all.
-//
-// Poisoning LastVerifiedHash must change nothing — it is a
-// human-readable mirror. Poisoning Stitch.LastHash must break the
-// stitch, because that is the term the proof reads.
+// TestChunkProgressLastVerifiedHash_IsNotTheBoundaryProof: LastVerifiedHash is a human-readable mirror and poisoning it changes nothing; poisoning Stitch.LastHash must break the stitch, because that is the term the proof reads.
 func TestChunkProgressLastVerifiedHash_IsNotTheBoundaryProof(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
@@ -520,11 +448,7 @@ func TestChunkProgressLastVerifiedHash_IsNotTheBoundaryProof(t *testing.T) {
 	}
 }
 
-// TestChunkProgressLastVerifiedHash_NamesTheLastWalkedLedger pins the
-// trailing-missing case. Under TolerateTrailingMissing a chunk's walk can
-// end short of To and still be marked Done, so LastVerifiedHash holds
-// the hash of Stitch.LastSeq, not of To. The field doc must say so: an
-// operator reading the state file by hand is the field's only consumer.
+// TestChunkProgressLastVerifiedHash_NamesTheLastWalkedLedger: under TolerateTrailingMissing a Done chunk can end short of To, so LastVerifiedHash holds the hash of Stitch.LastSeq, not To.
 func TestChunkProgressLastVerifiedHash_NamesTheLastWalkedLedger(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)

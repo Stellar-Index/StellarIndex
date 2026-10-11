@@ -87,8 +87,7 @@ func fakeSource(ledgers ...xdr.LedgerCloseMeta) ledgerSource {
 	}
 }
 
-// Two exports listing one ledger's block in different key orders must compare
-// equal: the re-extract has to be identical whichever export it read.
+// TestCompareEntryChangeRange_ExportOrderIsNotADifference: one ledger's block in different key orders must compare equal.
 func TestCompareEntryChangeRange_ExportOrderIsNotADifference(t *testing.T) {
 	a, b, c := cmpAccountChange(t, 1, 10), cmpAccountChange(t, 2, 20), cmpAccountChange(t, 3, 30)
 	ours := fakeSource(cmpLedger(t, 10, []xdr.LedgerEntryChange{a, b, c}), cmpLedger(t, 11, []xdr.LedgerEntryChange{b}))

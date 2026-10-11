@@ -16,24 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// supplySeedSACBalances seeds sac_balance_observations from the ClickHouse lake
-// for every current `Balance(Address)` contract_data entry of each
-// `[supply.sac_wrappers]` contract (ADR-0022 / migration 0014). The live
-// observer writes a row only when a Balance entry changes, so a dormant balance
-// is invisible to Algorithm-2 classic supply and market_cap.
-//
-// Idempotent: rows land at each entry's true last-modified ledger and readers
-// pick the newest row per (contract_id, holder). A removed or archived entry is
-// an is_removal tombstone, never a holder.
-//
-// Scans every contract_data entry network-wide: run under run-heavy-job.sh on
-// r1. Writes happen after the scan, so a -timeout mid-scan loses the pass.
-// Without -write it is a dry run.
-//
-// -full-history: stellar.ledger_entries_current misses entries dormant since
-// before its MV (~ledger 62,000,000), so this reads stellar.ledger_entry_changes
-// after proving stellar.ledgers contiguous and hash-linked, and stamps
-// provenance with the verified ledger. -contracts scopes the pass.
+// supplySeedSACBalances seeds sac_balance_observations from the lake for each watched SAC contract's current Balance entries
+// (ADR-0022); removed entries become is_removal tombstones. Idempotent. Scans network-wide, so run under run-heavy-job.sh;
+// dry run without -write. -full-history reads ledger_entry_changes after proving stellar.ledgers contiguous and hash-linked.
 func supplySeedSACBalances(args []string) error {
 	fs := flag.NewFlagSet("supply seed-sac-balances", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -146,11 +131,7 @@ func (r sacSeedRun) seed(ctx context.Context, progress *seedProgress) error {
 			ObservedAt: seed.CloseTime,
 			Balance:    seed.Balance,
 			IsRemoval:  seed.IsRemoval,
-			// The seed is the authoritative reconstructed FINAL state for its
-			// ledger (latest lake entry), so it sits at the top of the
-			// intra-ledger order — unbeatable within its walk_version (a
-			// stamped re-derive under a higher version replaces it), so a live
-			// per-ledger change can't overwrite it and a re-seed stays corrective.
+			// The seed is the authoritative final state for its ledger, so it takes the top intra-ledger order: a live change cannot overwrite it.
 			IntraLedgerSeq: timescale.SeedIntraLedgerSeq,
 		})
 	})
@@ -248,12 +229,8 @@ func unmatchedSACWrappersErr(watched map[string]string, tallies map[string]*sacS
 		len(unmatched), strings.Join(unmatched, ", "))
 }
 
-// checkSACSeedShrink refuses a pass that accounts for fewer keys than the
-// previous same-source pass seeded. Each pass re-resolves every key its reader
-// has ever held, as a live holder or a tombstone, so holders + retracted cannot
-// fall; a shortfall is holders neither re-seeded nor retracted, whose old rows
-// the served tier still sums. A different source is not comparable:
-// current_state cannot see holders below its floor that full_history seeded.
+// checkSACSeedShrink refuses a pass that accounts for fewer keys than the previous same-source pass (holders + retracted cannot fall);
+// a shortfall leaves old rows the served tier still sums. Different sources are not comparable.
 func checkSACSeedShrink(prev timescale.SACBalanceSeedProvenance, source timescale.SACBalanceSeedSource, t *sacSeedTally) error {
 	if prev.Source != source || t.matched() >= prev.HoldersSeeded {
 		return nil
@@ -262,11 +239,8 @@ func checkSACSeedShrink(prev timescale.SACBalanceSeedProvenance, source timescal
 		prev.ContractID, source, t.matched(), t.holders, t.retracted, prev.Source, prev.HoldersSeeded, prev.HoldersSeeded-t.matched())
 }
 
-// writeSACSeedProvenance upserts one sac_balance_seed_provenance row per
-// watched contract that matched at least one Balance key (migration 0102).
-// A contract that fails [checkSACSeedShrink] keeps its previous row. Best-effort
-// per contract: a failure is reported but does not unwind the observations
-// already committed (the audit trail is secondary to the supply data itself).
+// writeSACSeedProvenance upserts one provenance row per matched contract, skipping any that failed [checkSACSeedShrink].
+// Best-effort: a failure is reported but does not unwind committed observations.
 func writeSACSeedProvenance(ctx context.Context, store *timescale.Store, watched map[string]string, tallies map[string]*sacSeedTally, source timescale.SACBalanceSeedSource, ev clickhouse.SeedEvidence) error {
 	var errs []error
 	for cid, ak := range watched {

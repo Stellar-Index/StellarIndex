@@ -21,12 +21,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// stubDuneResults serves GET /api/v1/query/{id}/results for the two
-// public queries a run reads. Rows are paged TWO per page regardless of
-// the requested limit so the offset loop is exercised; the metadata
-// declares the whole result's row count on every page, as the platform
-// does. It records the key header and refuses anything that is not a
-// GET, so a run that regressed to executing SQL fails here.
+// stubDuneResults serves GET /api/v1/query/{id}/results for the two public queries, paging TWO rows per page regardless of limit so the offset loop runs, with the whole row count in every page's metadata. It records the key header and refuses non-GET, so a run that executes SQL fails.
 func stubDuneResults(t *testing.T, byQuery map[int64][]map[string]any, state string) (*httptest.Server, *atomic.Int32, *string) {
 	t.Helper()
 	var gets atomic.Int32
@@ -225,17 +220,7 @@ func TestCuratedRWAFetch_RefusesAnIncompleteOrShortResult(t *testing.T) {
 	}
 }
 
-// TestCuratedRWAFetch_RefusesToPublishAPartiallyParsedResult pins the
-// fail-closed half of the drop.
-//
-// A row the curator printed that this run cannot read must not be
-// counted and skipped, exiting 0 and publishing the survivors.
-// The cache is replaced series-whole, so that would not merely fail to
-// add the unread row — it DELETES the month already cached and serves
-// the hole, and when the unread row is the newest month the headline
-// is re-dated to an older one and understates. Nothing would be red
-// anywhere. So a result this run could only read part of is a
-// refusal, before anything is written.
+// TestCuratedRWAFetch_RefusesToPublishAPartiallyParsedResult: the cache is replaced series-whole, so counting and skipping an unread row would DELETE its cached month (and re-date the headline if it is the newest) under a green run. A partially readable result is refused before any write.
 func TestCuratedRWAFetch_RefusesToPublishAPartiallyParsedResult(t *testing.T) {
 	goodTotal := []map[string]any{
 		{"month_end": "2025-07-31", "total_rwa_market_cap_usd": json.Number("3900000000")},
@@ -311,9 +296,7 @@ func TestCuratedRWAFetch_RefusesToPublishAPartiallyParsedResult(t *testing.T) {
 	}
 }
 
-// TestCuratedRWAParse_CountsEveryUnreadableRow keeps the per-shape
-// accounting the refusal above reports: each of these is one row the
-// curator printed and this run cannot read, counted once.
+// TestCuratedRWAParse_CountsEveryUnreadableRow keeps the per-shape accounting the refusal reports.
 func TestCuratedRWAParse_CountsEveryUnreadableRow(t *testing.T) {
 	var counts curatedRWACounts
 	total := parseCuratedRWAMonthlyTotal(duneQueryResult{Rows: rawRows(t, []map[string]any{
@@ -374,11 +357,7 @@ func TestCuratedRWAMonthEndAndDecimal(t *testing.T) {
 			t.Errorf("decimal %q -> (%q, %v), want itself", s, got, ok)
 		}
 	}
-	// An exponent form is a RENDERING of the curator's figure, not a
-	// different figure: the point is shifted out exactly, so the row is
-	// kept and the stored literal is readable. Refusing it dropped the
-	// row — and when it was the newest month, published the series
-	// dated to an older one under a green run.
+	// An exponent form only renders the curator's figure: shift the point exactly and keep the row; refusing it would drop the row, and the newest month, under a green run.
 	for _, tc := range []struct{ in, want string }{
 		{"4.0e9", "4000000000"},
 		{"4.00479586e9", "4004795860"},
@@ -431,10 +410,7 @@ func TestCuratedRWASync_RefusesWithoutKeyOrConfig(t *testing.T) {
 	}
 }
 
-// TestCuratedRWASync_ReadsTheKeyFromConfig — the key resolves through
-// [external.dune] api_key like every other credential, so a key set in the
-// config (env empty) runs the sync instead of refusing it. The unreachable
-// base URL makes the run fail at the fetch, which only a keyed run reaches.
+// TestCuratedRWASync_ReadsTheKeyFromConfig: the key resolves through [external.dune] api_key like other credentials; the unreachable base URL fails at the fetch, which only a keyed run reaches.
 func TestCuratedRWASync_ReadsTheKeyFromConfig(t *testing.T) {
 	t.Setenv("DUNE_API_KEY", "")
 	path := filepath.Join(t.TempDir(), "stellarindex.toml")
@@ -458,10 +434,7 @@ api_key = "fixture-dune-key"
 	}
 }
 
-// TestCuratedRWASync_AFailedWriteStampsNothing — a run that reads the
-// curator but cannot commit the cache must not stamp the textfile. A
-// stamp there set `_written 1` and a fresh last_run_unix, so the 30 h
-// staleness alert stayed silent through every failing write.
+// TestCuratedRWASync_AFailedWriteStampsNothing: a run that cannot commit the cache must not stamp the textfile, or the 30 h staleness alert stays silent through failing writes.
 func TestCuratedRWASync_AFailedWriteStampsNothing(t *testing.T) {
 	byQuery := map[int64][]map[string]any{
 		curatedRWAQueryMonthlyTotal: {
@@ -557,8 +530,7 @@ func TestCuratedRWATextfile_ShapeAndAtomicity(t *testing.T) {
 	}
 }
 
-// A run with no API key stamps the textfile like any other — the
-// staleness alert measures the timer, not the key — and says it refused.
+// A run with no API key stamps the textfile and says it refused: the staleness alert measures the timer, not the key.
 func TestCuratedRWATextfileStampsARefusedRun(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "curated.prom")
 	if err := writeCuratedRWATextfile(path, curatedRWACounts{}, false, true); err != nil {
@@ -585,15 +557,7 @@ func TestCuratedRWATextfileStampsARefusedRun(t *testing.T) {
 // one public query's latest result.
 const curatedRWATestResultsPath = "/api/v1/query/6961845/results"
 
-// TestCuratedRWAClient_RefusesARedirectThatWouldCarryTheKey pins the
-// paid key to the origin the run dialled.
-//
-// Go's redirect header copier strips ONLY Authorization,
-// WWW-Authenticate and Cookie when a hop crosses hosts, so
-// X-Dune-API-Key is otherwise re-sent verbatim to whatever a 302 names
-// — a vendor redirect, a hijacked edge, or a mistyped -base-url,
-// including an https:// -> http:// downgrade. The https:// check on
-// -base-url only ever saw the CONFIGURED URL, never the dialled one.
+// TestCuratedRWAClient_RefusesARedirectThatWouldCarryTheKey pins the paid key to the dialled origin: Go strips only Authorization, WWW-Authenticate and Cookie across hosts, so X-Dune-API-Key would follow a 302 (including an https to http downgrade); the -base-url check only saw the configured URL.
 func TestCuratedRWAClient_RefusesARedirectThatWouldCarryTheKey(t *testing.T) {
 	var elsewhereHits atomic.Int32
 	var elsewhereSawKey atomic.Bool
@@ -627,9 +591,7 @@ func TestCuratedRWAClient_RefusesARedirectThatWouldCarryTheKey(t *testing.T) {
 	}
 }
 
-// TestCuratedRWAClient_FollowsASameOriginRedirect — the policy is "the
-// key does not leave this origin", not "no redirects": a hop that keeps
-// the scheme and host is still followed, carrying the key as before.
+// TestCuratedRWAClient_FollowsASameOriginRedirect: the key does not leave the origin, but same-scheme-and-host hops are followed.
 func TestCuratedRWAClient_FollowsASameOriginRedirect(t *testing.T) {
 	var gotKey string
 	mux := http.NewServeMux()
@@ -710,9 +672,7 @@ func TestCuratedRWAClient_RedirectPolicy(t *testing.T) {
 	assertKeyedRedirectPolicy(t, newCuratedRWAClient("https://api.dune.com", "k-secret").http.CheckRedirect)
 }
 
-// TestCuratedRWAClient_StopsASelfRedirectLoop — a same-origin 302 to
-// itself must end at the hop cap, not re-send the key until the 90 s
-// client timeout.
+// TestCuratedRWAClient_StopsASelfRedirectLoop: a same-origin self-redirect ends at the hop cap, not at the 90 s timeout.
 func TestCuratedRWAClient_StopsASelfRedirectLoop(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

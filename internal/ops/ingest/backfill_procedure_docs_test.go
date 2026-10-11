@@ -7,14 +7,7 @@ import (
 	"testing"
 )
 
-// TestBackfillProcedureDocReferencesExistingGoFiles pins that
-// docs/operations/backfill-procedure.md stays truthful. A claim that
-// "The CLI lives at `cmd/stellarindex-ops/backfill.go`" is wrong —
-// that file was removed by the maintainability split that created this
-// package (internal/ops/ingest), and never existed under that path
-// again. An operator following the runbook link would get a 404. Every
-// `.go` path the runbook cites, backtick-quoted or as a markdown link
-// target, must exist on disk.
+// TestBackfillProcedureDocReferencesExistingGoFiles: every .go path cited in docs/operations/backfill-procedure.md must exist on disk.
 func TestBackfillProcedureDocReferencesExistingGoFiles(t *testing.T) {
 	root := ingestDocsRepoRoot(t)
 	doc, err := os.ReadFile(filepath.Join(root, "docs/operations/backfill-procedure.md"))

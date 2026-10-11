@@ -4,9 +4,7 @@ import (
 	"testing"
 )
 
-// verify-decoders and verify-external print how many members were
-// silent; the exit status must carry the same finding. 9/9 silent used
-// to exit 0.
+// TestSilentVerdict: verify-decoders and verify-external exit status must carry the silent-member finding, not just print it.
 func TestSilentVerdict(t *testing.T) {
 	cases := []struct {
 		name          string

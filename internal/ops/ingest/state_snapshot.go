@@ -34,14 +34,8 @@ type snapTally struct {
 	elapsed       time.Duration
 	partial       bool
 
-	// collect=true accumulates rows for InsertEntryChanges. scope widens the
-	// set from the contract scope (contract_code + instances) to the
-	// account-state/supply types (scope.all) or to contract_data
-	// STORAGE + LP for the dormant current-state fill (scope.storage).
-	// closeTime stamps every collected row (metadata only — readers key on
-	// ledger_seq = the entry's LastModifiedLedgerSeq). maxModLedger, when
-	// non-zero, restricts collection to entries last modified BELOW that
-	// ledger — the dormant tail the live-capture floor (~62M) never captured.
+	// collect accumulates rows for InsertEntryChanges; scope widens the set (contracts, all, storage) and closeTime is metadata only.
+	// A non-zero maxModLedger restricts collection to entries last modified BELOW it, the dormant tail live capture never saw.
 	collect      bool
 	scope        snapScope
 	maxModLedger uint32
@@ -71,18 +65,8 @@ func parseSnapScope(s string) (snapScope, error) {
 	}
 }
 
-// stateSnapshot reads a history-archive checkpoint's full current ledger-entry
-// state (the bucket list) and tallies it by entry type. This is the read-only
-// foundation of the data-truth backfill: the served current-state projection
-// (ledger_entries_current) only holds entries that CHANGED since ledger ~62M,
-// so a checkpoint snapshot is the source of truth for the dormant-pre-62M tail
-// — contract code/instances (→ WASM), accounts/trustlines (→ account state +
-// circulating supply). The CheckpointChangeReader streams the bucket list and
-// emits the CURRENT entry for every live key in one pass (no genesis replay).
-//
-// Read-only unless -write, which inserts the collected set into ClickHouse
-// ledger_entry_changes. -limit caps entries processed so a read-only proof
-// stays bounded; -write refuses a -limit-truncated read (see writeSnapshot).
+// stateSnapshot reads a history-archive checkpoint's full current ledger-entry state and tallies it by entry type; the served projection only holds entries changed since ledger ~62M.
+// Read-only unless -write, which inserts into ClickHouse ledger_entry_changes. -limit bounds the read, and -write refuses a -limit-truncated read (see writeSnapshot).
 func stateSnapshot(args []string) error {
 	o, err := parseStateSnapshotFlags(args)
 	if err != nil {
@@ -209,18 +193,8 @@ func printWriteSet(t *snapTally) {
 	}
 }
 
-// resolveArchiveTarget picks the archive URL + network passphrase, preferring
-// the config but falling back to the public pubnet archive so a read works
-// even without a config file.
-//
-// A write is different: -write inserts the checkpoint's entries straight into
-// the target ClickHouse's ledger_entry_changes, and nothing downstream checks
-// that the archive network just read actually matches the network the target
-// ClickHouse tracks. Silently defaulting to the public archive on a config
-// load failure would let a stale/missing -config write pubnet's checkpoint
-// into a testnet (or vice versa) ledger_entry_changes without the operator
-// ever seeing more than a stderr line. For write, resolveArchiveTarget
-// refuses to guess instead: an unresolved network aborts the run.
+// resolveArchiveTarget picks the archive URL and passphrase from config, falling back to the public pubnet archive for reads.
+// A write never guesses: nothing checks the archive network matches the target ClickHouse's, so an unresolved network aborts the run.
 func resolveArchiveTarget(cfgPath, override string, write bool) (url, passphrase string, err error) {
 	url, passphrase = override, defaultPubnetPassphrase
 	cfg, cfgErr := config.LoadWithEnv(cfgPath)
@@ -325,28 +299,14 @@ func (t *snapTally) observe(typ xdr.LedgerEntryType, post *xdr.LedgerEntry) {
 	}
 }
 
-// withinModWindow reports whether an entry last modified at ledgerSeq is in the
-// collection window. maxModLedger=0 collects everything; a non-zero bound
-// restricts collection to the dormant tail — entries whose last change
-// predates the live-capture floor and so are absent from the
-// current-state projection. Writing an entry already present is idempotent
-// (ledger_entry_changes is a ReplacingMergeTree keyed by the entry's ledger),
-// so the bound is purely a cost control, never a correctness gate.
+// withinModWindow reports whether an entry last modified at ledgerSeq is in the collection window (0 = everything).
+// Rewriting an entry is idempotent (ReplacingMergeTree), so the bound is a cost control, not a correctness gate.
 func (t *snapTally) withinModWindow(ledgerSeq uint32) bool {
 	return t.maxModLedger == 0 || ledgerSeq < t.maxModLedger
 }
 
-// shouldCollect decides whether an entry of this type is in the write scope.
-// contract_code + contract instances are always in; the account-state /
-// supply types join when scope=all. contract_data STORAGE entries join
-// when scope=storage — the dormant current-state fill: the
-// ledger_entries_current MV only projects contract_data changes captured after
-// the ~62M live-capture floor, so a SAC/SEP-41 Balance(Address) or Blend
-// reserve entry idle since before then is ABSENT from current-state and
-// invisible to seed-sac-balances / the ADR-0039 reserve readers. LP joins
-// scope=all AND scope=storage (the ADR-0039 native liquidity-pool reserve
-// reader, internal/storage/clickhouse/liquidity_pool_state_reader.go). ttl /
-// config_setting are never written (not read by any current-state reader).
+// shouldCollect decides whether an entry type is in the write scope: contract_code and instances always; account-state/supply types for scope=all;
+// contract_data STORAGE for scope=storage (ledger_entries_current only projects changes after the ~62M floor); LP for all and storage (ADR-0039). ttl and config_setting are never written.
 func (t *snapTally) shouldCollect(typ xdr.LedgerEntryType, isInstance bool) bool {
 	switch typ {
 	case xdr.LedgerEntryTypeContractCode:

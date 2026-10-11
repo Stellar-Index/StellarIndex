@@ -11,9 +11,7 @@ import (
 	"time"
 )
 
-// TestVerifyArchiveArchivist_PassesVerify pins Tier E's argv. A bare
-// `stellar-archivist scan` only checks that files exist; --verify is what
-// recomputes every bucket's sha256, the property Tier E is counted on for.
+// TestVerifyArchiveArchivist_PassesVerify pins Tier E's argv: a bare `stellar-archivist scan` only checks existence; --verify recomputes every bucket's sha256.
 func TestVerifyArchiveArchivist_PassesVerify(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("sh"); err != nil {
@@ -51,10 +49,7 @@ var tierFlagByADRLetter = map[string]string{
 	"E": "archivist",
 }
 
-// TestVerifyArchiveTiers_ADRIntegrityLeaderTiersAreScheduled: ADR-0016's
-// Invariant states R1's scheduled tiers. Every tier that sentence names must
-// be invoked by a shipped unit or cron, or the guarantee is a claim nothing
-// runs.
+// TestVerifyArchiveTiers_ADRIntegrityLeaderTiersAreScheduled: every tier ADR-0016's Invariant names must be invoked by a shipped unit or cron, or the guarantee is a claim nothing runs.
 func TestVerifyArchiveTiers_ADRIntegrityLeaderTiersAreScheduled(t *testing.T) {
 	t.Parallel()
 	adr := readRepoFile(t, "docs/adr/0016-per-region-storage-strategy.md")

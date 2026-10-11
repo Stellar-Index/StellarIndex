@@ -20,15 +20,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
-// findIncidentForEmit locates the incident named by `slug` in the
-// embedded corpus and validates that emitting `eventType` makes
-// sense given the incident's current frontmatter status/severity.
-//
-// Refusals are operator-friendly: the most common finger-trouble
-// (emitting `resolved` against a still-firing incident; emitting
-// `sev1` against a non-SEV-1 or already-resolved entry) is caught
-// before any network I/O so the operator can re-check their
-// inputs rather than chase a downstream silent fan-out.
+// findIncidentForEmit locates `slug` in the embedded corpus and checks the event fits the incident's status/severity, catching finger-trouble (resolved against a firing incident, sev1 against a non-SEV-1 or resolved one) before any network I/O.
 func findIncidentForEmit(all []incidents.Incident, slug string, eventType platform.WebhookEventType) (*incidents.Incident, error) {
 	var found *incidents.Incident
 	for i := range all {
@@ -86,11 +78,7 @@ func incidentPayloadFields(found *incidents.Incident, eventType platform.Webhook
 		"started_at": found.StartedAt.UTC().Format(time.RFC3339Nano),
 		"at":         time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	// A map value's json tag has no effect — unlike incidents.Incident
-	// (`affected_components,omitempty`), a nil slice assigned into a
-	// map[string]any always marshals as `"affected_components":null`.
-	// Only set the key when there's something to report, matching the
-	// omitempty contract the corpus struct and pkg/client/types.go pin.
+	// A nil slice in a map[string]any marshals as null whatever the struct's omitempty says; only set the key when non-empty, matching the omitempty contract the corpus struct and pkg/client/types.go pin.
 	if len(found.AffectedComponents) > 0 {
 		fields["affected_components"] = found.AffectedComponents
 	}
@@ -115,24 +103,7 @@ func parseIncidentEvent(event string) (platform.WebhookEventType, error) {
 	}
 }
 
-// Emit fans out an `incident.sev1` or `incident.resolved` webhook to
-// every subscribed dashboard hook for the given slug.
-//
-// Incident content is embedded from `internal/incidents/data/*.md`, so
-// Emit is an operator step of the SEV runbook:
-//
-//  1. Draft `internal/incidents/data/<slug>.md` (status=investigating,
-//     severity=SEV-1), merge and redeploy.
-//  2. Run `stellarindex-ops emit-incident -slug <slug> -event sev1`.
-//  3. On close, set status=resolved, redeploy, run `-event resolved`.
-//
-// It returns non-zero on hard input errors AND when the fan-out lost a
-// delivery: a subscribed customer was not told and no retry row exists.
-// A zero-subscriber fan-out is a successful no-op.
-//
-// -dry-run counts the subscribers and enqueues nothing. A run with
-// neither flag is refused, so a stale runbook line fails instead of
-// silently telling no one.
+// Emit fans out an `incident.sev1` or `incident.resolved` webhook to every subscribed dashboard hook for the slug, from the embedded internal/incidents/data/*.md corpus. Runbook: draft the slug md (status=investigating, severity=SEV-1) and redeploy; run `stellarindex-ops emit-incident -slug <slug> -event sev1`; on close set status=resolved, redeploy, run `-event resolved`. It returns non-zero on input errors AND when the fan-out lost a delivery (a subscriber not told, no retry row); zero subscribers is a successful no-op. -dry-run counts subscribers and enqueues nothing; a run with neither flag is refused so a stale runbook line fails instead of telling no one.
 func Emit(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("emit-incident")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -168,11 +139,7 @@ func Emit(args []string) error {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	// Load the incident corpus and find the slug. Going through
-	// `incidents.Load` keeps the payload aligned with what the
-	// dashboard explorer + /v1/incidents API render, so a hook
-	// subscriber sees the same title/severity/components as the
-	// public status page.
+	// Load via incidents.Load so the payload matches what the dashboard explorer and /v1/incidents render.
 	all, err := incidents.Load(logger)
 	if err != nil {
 		return fmt.Errorf("load incidents: %w", err)
@@ -225,12 +192,7 @@ func Emit(args []string) error {
 	if len(subs) == 0 {
 		fmt.Fprintln(os.Stderr, "emit-incident: no dashboard hooks subscribed — fan-out was a no-op")
 	}
-	// The operator ran this command to make customers aware of
-	// an incident. A partial or total fan-out failure means some of them
-	// were NOT told, and there is no retry row to drain — so the command
-	// must exit non-zero rather than printing a reassuring summary. Safe
-	// to re-run: deliveries are keyed on incidentEventKey, so a re-run
-	// queues only the subscribers the failed attempt missed.
+	// A fan-out failure means customers were NOT told and no retry row exists, so exit non-zero rather than print a reassuring summary. Safe to re-run: deliveries are keyed on incidentEventKey, so only missed subscribers are queued.
 	if err != nil {
 		return fmt.Errorf("emit-incident: %w", err)
 	}

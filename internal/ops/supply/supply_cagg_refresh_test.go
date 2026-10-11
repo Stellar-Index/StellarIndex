@@ -7,9 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// A corrective re-derive older than supply_1d's 7-day policy window must
-// be refreshed explicitly, or the market-cap chart serves the
-// uncorrected day forever.
+// TestSupplyCAGGRefreshWindow: a re-derive older than supply_1d's 7-day policy window must be refreshed explicitly.
 func TestSupplyCAGGRefreshWindow(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 25, 12, 0, 0, 0, time.UTC)

@@ -21,26 +21,7 @@ import (
 // package speaks (Redis key suffix, DetailRow.Date, RollupRow.Day).
 const usageRollupDateLayout = "2006-01-02"
 
-// RollupBackfill re-folds the Redis per-endpoint usage counters into the
-// `usage_daily` Timescale hypertable for an operator-chosen UTC date range.
-//
-// The in-process rollup worker ([usage.Rollup.Run], API binary) re-folds
-// skipped days on its own, a bounded batch per sweep. This is the manual
-// path for when that is not enough or not soon enough. It cannot reach
-// past the Redis counters' 35-day TTL.
-//
-// Usage:
-//
-//	stellarindex-ops usage-rollup-backfill \
-//	  -config /etc/stellarindex.toml \
-//	  -from YYYY-MM-DD -to YYYY-MM-DD -write
-//
-// Omitting -write runs a dry pass that reports what it would upsert (see
-// [opsutil.RegisterWriteGate]).
-//
-// Safe to re-run: [timescale.Store.UpsertUsageDaily] is a GREATEST() merge
-// over cumulative per-day counters, so a repeat pass never regresses a row a
-// live sweep wrote. Days fold via [usage.Rollup.SweepDays].
+// RollupBackfill re-folds Redis per-endpoint usage counters into usage_daily for a UTC date range (-from/-to, -write; dry run otherwise), bounded by the 35-day TTL; re-runs are safe (GREATEST() merge).
 func RollupBackfill(args []string) error {
 	fs := flag.NewFlagSet("usage-rollup-backfill", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -88,15 +69,8 @@ func RollupBackfill(args []string) error {
 	return runUsageRollupBackfill(ctx, rdb, store, days, dryRun)
 }
 
-// usageRollupDays expands the -from/-to flags into the inclusive list
-// of UTC days to fold, rejecting the shapes that would otherwise walk
-// the whole Redis keyspace for nothing.
-//
-// The range must sit inside the Redis counters' retention window
-// ending today (UTC). An older day has expired from Redis, so its fold
-// reads nothing and prints "0 row(s)" — indistinguishable from a day
-// with no traffic — and a future day has nothing to read yet. Both are
-// refused rather than run.
+// usageRollupDays expands -from/-to into inclusive UTC days. The range must sit inside the Redis retention window
+// ending today: an expired day reads nothing and prints "0 row(s)", indistinguishable from no traffic, and a future day has nothing yet; both are refused.
 func usageRollupDays(fromStr, toStr string, now time.Time) ([]time.Time, error) {
 	if fromStr == "" {
 		return nil, errors.New("-from is required (YYYY-MM-DD, UTC)")

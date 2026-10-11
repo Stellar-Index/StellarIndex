@@ -21,10 +21,7 @@ var hotFloorConsumers = []string{
 	"configs/ansible/roles/archival-node/templates/systemd/verify-archive-tier-b.service.j2",
 }
 
-// TestArchiveHotFloor_OneRoleDefault: the hot floor is one concept with
-// several consumers. Per-consumer `| default(...)` fallbacks disagreed (0 on
-// the fill, 2 on the verifiers) and hid that no defaults file defined it, so
-// the value is pinned once in the role defaults and nowhere else.
+// TestArchiveHotFloor_OneRoleDefault: the hot floor is pinned once in the role defaults; per-consumer `| default(...)` fallbacks disagreed.
 func TestArchiveHotFloor_OneRoleDefault(t *testing.T) {
 	t.Parallel()
 

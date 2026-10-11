@@ -24,22 +24,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// curated-rwa-sync caches the totals a third party PUBLISHES about tokenized
-// real-world assets on Stellar into curated_rwa_published_series (migration 0162)
-// for the RWA surface's CURATED arm.
-//
-// The first curator is the Stellar team's "RWAs on Stellar" Dune dashboard. Its
-// per-asset inputs (dataset_recognized_assets, dataset_asset_prices) are private
-// to the uploading team, so no outside key can read them. What anyone can read is
-// the latest RESULT of the dashboard's public queries via
-// GET /api/v1/query/{id}/results: the monthly RWA market-cap total and its split
-// by the curator's subclass labels. This run reads exactly those two results and
-// stores them under the curator's name. It executes nothing; a latest-result read
-// bills by datapoints, never by execution.
-//
-// Nothing here attests to anything: a row is the curator's arithmetic over private
-// inputs, with no signature, per-asset breakdown or market. The surface serves it
-// as `curated.published` beside the verified set and never inside it.
+// curated-rwa-sync caches the totals a third party publishes about tokenized RWAs (the Stellar team's Dune dashboard public query results) into curated_rwa_published_series.
+// It executes nothing and attests to nothing: rows are the curator's arithmetic over private inputs, served as `curated.published` beside the verified set, never inside it.
 
 const (
 	curatedRWACuratorDune  = "dune:stellar"
@@ -50,11 +36,7 @@ const (
 	// under twenty rows and the split a few hundred; a result past this
 	// is not one of those queries.
 	curatedRWAMaxRows = 5000
-	// curatedRWAMaxPlainDigits bounds the plain rendering of a literal
-	// the curator printed in exponent form. A market capitalisation in
-	// USD needs a dozen digits; forty is room for any of them, and a
-	// refusal for a literal whose exponent is an allocation rather than
-	// a figure.
+	// curatedRWAMaxPlainDigits bounds plain rendering of an exponent-form literal; larger is refused.
 	curatedRWAMaxPlainDigits = 40
 )
 
@@ -113,11 +95,7 @@ func curatedRWASync(args []string) error {
 	}
 	key := strings.TrimSpace(cfg.External.Dune.APIKey)
 	if key == "" {
-		// Refused, not failed: the run still stamps its textfile so the
-		// staleness alert measures the TIMER's cadence, and a separate
-		// `refused` gauge says why nothing was read. A fresh install's
-		// empty placeholder would otherwise read as a sync that never
-		// ran, which is a different problem with a different fix.
+		// Refused, not failed: the run still stamps its textfile so staleness measures the timer's cadence; a `refused` gauge says why nothing was read.
 		fmt.Fprintln(os.Stderr, "curated-rwa-sync: REFUSED — DUNE_API_KEY ([external.dune] api_key) is not set; this run cannot read the curator and will not pretend it did")
 		stampCuratedRWATextfile(*textfile, curatedRWACounts{}, false, true)
 		return nil
@@ -275,25 +253,8 @@ func (c *curatedRWAClient) fetch(ctx context.Context) ([]timescale.CuratedRWAPub
 	return append(totalRows, splitRows...), counts, nil
 }
 
-// curatedRWAWholeResult refuses a result this run could only read PART
-// of. A row the curator printed that the parse below could not read is
-// data loss, and every layer under it was silent about that:
-//
-//   - the cache is replaced series-whole (ReplaceCuratedRWAPublished
-//     deletes and re-inserts), so publishing the survivors does not
-//     merely fail to add the dropped month — it DELETES the month
-//     already cached and serves the hole;
-//   - the run's headline (LatestMonthEnd/LatestTotalUSD) is the last
-//     SURVIVING row, so losing the newest month re-dates the curator's
-//     total to an older one and understates it, on a money surface;
-//   - and the run still exited 0, so nothing anywhere said so.
-//
-// Refusing is the conservation-correct half of that trade: the previous
-// good series stays served (stale, and the reader's own 48h recognition
-// bound says so), the unit lands in `failed`, and the catch-all
-// stellarindex_systemd_unit_failed alert tickets it within 15 minutes
-// with the counts below in the journal. Stale-but-whole beats
-// fresh-but-holed for a published figure.
+// curatedRWAWholeResult refuses a result this run could only read in part: the cache is replaced series-whole, so publishing survivors would delete the dropped month and re-date the headline total older.
+// Refusing keeps the previous good series served and fails the unit so the systemd-failed alert tickets it; stale-but-whole beats fresh-but-holed for a published figure.
 func curatedRWAWholeResult(queryID int64, read, malformed int) error {
 	if malformed == 0 {
 		return nil
@@ -453,24 +414,8 @@ func curatedRWAMonthEnd(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// curatedRWADecimal accepts a finite decimal literal and returns it in
-// PLAIN form: byte-for-byte as printed when the curator printed it
-// plainly, and with the decimal point shifted out when the curator
-// printed an exponent.
-//
-// Exponent forms must not be refused outright: a query engine renders a
-// large numeric in exponent form whenever it feels like it, and a refusal
-// would make a whole month of the curator's headline series unreadable to
-// this run — which, were the parse not fatal below, would mean the
-// month was dropped and the series published dated to an older one.
-//
-// Shifting the point is exact: it moves the digits the curator printed
-// and invents none, so the stored value is still the curator's own
-// figure (ADR-0003) — no float ever holds it. The sibling tolerance
-// off-chain sources use, scale.SciDecimalStringToScaledInt, is
-// deliberately not reached for here: it normalises through float64 and
-// lands on a scaled integer, and this column stores the curator's literal
-// in a numeric of its own precision.
+// curatedRWADecimal accepts a finite decimal literal and returns it in plain form, shifting the point out of exponent form.
+// Shifting is exact (ADR-0003): it invents no digits and no float holds the value, unlike scale.SciDecimalStringToScaledInt, which goes through float64.
 func curatedRWADecimal(n json.Number) (string, bool) {
 	s := strings.TrimSpace(n.String())
 	sign, intPart, fracPart, exp, ok := splitCuratedRWADecimal(s)
@@ -483,15 +428,8 @@ func curatedRWADecimal(n json.Number) (string, bool) {
 	return plainCuratedRWADecimal(sign, intPart, fracPart, exp)
 }
 
-// splitCuratedRWADecimal takes a decimal literal apart into sign,
-// integer digits, fraction digits and exponent, accepting exactly what
-// a JSON number may be and nothing else.
-//
-// It is deliberately stricter than [big.Rat.SetString], which this used
-// to validate through: that also accepts a fraction bar ("5/3") and a
-// hexadecimal float ("0x1p-2"), neither of which is a figure a curator
-// published, and both of which would have been carried into the store
-// as one.
+// splitCuratedRWADecimal splits a decimal literal into sign, integer, fraction and exponent, accepting exactly a JSON number.
+// It is stricter than big.Rat.SetString, which also accepts "5/3" and hex floats that no curator published.
 func splitCuratedRWADecimal(s string) (sign, intPart, fracPart string, exp int, ok bool) {
 	if s == "" {
 		return "", "", "", 0, false

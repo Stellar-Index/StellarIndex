@@ -10,19 +10,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Regression tests for the P1
-// `stellarindex_stellar_archive_divergence` page had no producer on
-// r1 because `stellarindex_verify_archive_mismatches_total` only
-// ever left the process through the opt-in `-metrics-listen` HTTP
-// endpoint. These pin the textfile export path AND the three
-// properties that make the exported counter fire `increase()`:
-// zero-seeding, cross-run accumulation, and per-tier isolation.
+// Regression tests for the missing producer of stellarindex_verify_archive_mismatches_total: they pin the textfile export path and its three
+// properties (zero-seeding, cross-run accumulation, per-tier isolation).
 
-// TestRenderVerifyArchiveTextfile_zeroSeedsEveryReason is the
-// anti-"absence reads as health" pin. A counter series that first
-// APPEARS at 1 and stays flat has no earlier sample to subtract, so
-// `increase(...) > 0` never fires on the first divergence. Every
-// reason must therefore be present at 0 on a clean run.
+// TestRenderVerifyArchiveTextfile_zeroSeedsEveryReason: every reason must be present at 0 on a clean run, or increase() never fires on the first divergence.
 func TestRenderVerifyArchiveTextfile_zeroSeedsEveryReason(t *testing.T) {
 	t.Parallel()
 	var sb strings.Builder
@@ -42,12 +33,7 @@ func TestRenderVerifyArchiveTextfile_zeroSeedsEveryReason(t *testing.T) {
 	}
 }
 
-// TestWriteVerifyArchiveTextfile_accumulatesAcrossRuns pins the
-// monotonic-counter contract. The file is rewritten wholesale each
-// run, so without folding the previous total back in, a clean run
-// would reset the counter to 0 and `increase()` over the alert's
-// window would go NEGATIVE-then-reset — i.e. the page would clear
-// itself the night after a divergence.
+// TestWriteVerifyArchiveTextfile_accumulatesAcrossRuns pins the monotonic-counter contract: the file is rewritten wholesale, so the previous total must be folded in or a clean run would clear the page.
 func TestWriteVerifyArchiveTextfile_accumulatesAcrossRuns(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "verify_archive_tier_a.prom")
@@ -73,11 +59,7 @@ func TestWriteVerifyArchiveTextfile_accumulatesAcrossRuns(t *testing.T) {
 	assertSample(t, path, `stellarindex_verify_archive_mismatches_total{tier="chain",reason="checkpoint"}`, "0")
 }
 
-// TestWriteVerifyArchiveTextfile_tierScopedCarryForward proves the
-// tier-a and tier-b units cannot transplant each other's totals. A
-// repointed `-tier` starts a fresh zero baseline instead of
-// inheriting a foreign total (which would read as a counter jump and
-// false-page a P1).
+// TestWriteVerifyArchiveTextfile_tierScopedCarryForward: a repointed -tier starts a zero baseline instead of inheriting a foreign total that would false-page.
 func TestWriteVerifyArchiveTextfile_tierScopedCarryForward(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "verify_archive.prom")
@@ -94,10 +76,7 @@ func TestWriteVerifyArchiveTextfile_tierScopedCarryForward(t *testing.T) {
 	}
 }
 
-// TestWriteVerifyArchiveTextfile_atomicRenameLeavesNoTmp pins the
-// node_exporter contract: the collector parses every file in its
-// directory that does not end in `.tmp`, and treats a partial write
-// as a scrape error for the WHOLE directory.
+// TestWriteVerifyArchiveTextfile_atomicRenameLeavesNoTmp pins the node_exporter contract: a partial (non-.tmp) write is a scrape error for the whole directory.
 func TestWriteVerifyArchiveTextfile_atomicRenameLeavesNoTmp(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -117,11 +96,7 @@ func TestWriteVerifyArchiveTextfile_atomicRenameLeavesNoTmp(t *testing.T) {
 	}
 }
 
-// TestReadPriorVerifyArchiveTextfile_degradesToEmpty covers the
-// best-effort contract: a missing or garbage previous file must not
-// fail the run. To Prometheus that is an ordinary counter reset; an
-// ops binary that refused to publish because it could not parse its
-// own last output would recreate that blind spot.
+// TestReadPriorVerifyArchiveTextfile_degradesToEmpty: a missing or garbage previous file must not fail the run (to Prometheus it is a counter reset).
 func TestReadPriorVerifyArchiveTextfile_degradesToEmpty(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -139,14 +114,7 @@ func TestReadPriorVerifyArchiveTextfile_degradesToEmpty(t *testing.T) {
 	}
 }
 
-// TestCollectVerifyArchiveMismatches_sumsOverChunkIdx proves the
-// readback aggregates the per-chunk in-process counter down to the
-// per-reason totals the textfile carries — chunk_idx is a per-run
-// worker index with no cross-run meaning, so a mismatch on a
-// never-before-seen chunk must not create a brand-new (and therefore
-// unfireable) series.
-//
-// Not t.Parallel: obs.VerifyArchiveMismatchesTotal is process-global.
+// TestCollectVerifyArchiveMismatches_sumsOverChunkIdx: the readback sums the per-chunk counter to per-reason totals, so a never-seen chunk_idx cannot create an unfireable series. Not t.Parallel: obs.VerifyArchiveMismatchesTotal is process-global.
 func TestCollectVerifyArchiveMismatches_sumsOverChunkIdx(t *testing.T) {
 	obs.VerifyArchiveMismatchesTotal.Reset()
 	t.Cleanup(obs.VerifyArchiveMismatchesTotal.Reset)
@@ -185,17 +153,7 @@ func readFile(t *testing.T, path string) string {
 	return string(b)
 }
 
-// TestVerifyArchiveTextfile_OnlyCleanRunsAdvanceLastSuccess is the
-// regression test for the staleness signal.
-//
-// node_systemd_timer_last_trigger_seconds records when
-// the TIMER last fired, independent of the triggered service's exit
-// status. A job that failed every single night would keep that gauge perfectly
-// fresh, defeating the page for "the archive has not been verified in 36h"
-// in exactly the scenario it names.
-//
-// The last-success signal only means something if a FAILED run cannot
-// advance it. That is what this pins.
+// TestVerifyArchiveTextfile_OnlyCleanRunsAdvanceLastSuccess: a FAILED run must not advance the last-success signal, since the systemd timer gauge stays fresh while the job fails nightly and would defeat the staleness page.
 func TestVerifyArchiveTextfile_OnlyCleanRunsAdvanceLastSuccess(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "verify_archive_tier_a.prom")
 
@@ -231,10 +189,7 @@ func TestVerifyArchiveTextfile_OnlyCleanRunsAdvanceLastSuccess(t *testing.T) {
 	}
 }
 
-// A host that has never completed a run reads 0, not a missing series.
-// Zero makes the staleness alert FIRE (time() - 0 is enormous), which is
-// the safe direction: a signal whose job is to notice absence must not
-// itself go absent.
+// TestVerifyArchiveTextfile_NeverSucceededReadsZero: a never-succeeded host reads 0, which makes the staleness alert fire (the safe direction) instead of the series going absent.
 func TestVerifyArchiveTextfile_NeverSucceededReadsZero(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "verify_archive_tier_a.prom")
 	if err := writeVerifyArchiveTextfile(path, "chain", nil, false, time.Unix(1_700_000_000, 0)); err != nil {
@@ -249,9 +204,7 @@ func TestVerifyArchiveTextfile_NeverSucceededReadsZero(t *testing.T) {
 	}
 }
 
-// Each tier keeps its own timestamp: tier-a and tier-b write separate
-// .prom files but share one node_exporter target, and a tier-b success
-// must not make a stale tier-a look fresh.
+// TestVerifyArchiveTextfile_LastSuccessIsPerTier: tiers share a node_exporter target, so a tier-b success must not make a stale tier-a look fresh.
 func TestVerifyArchiveTextfile_LastSuccessIsPerTier(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "verify_archive.prom")
 	ts := time.Unix(1_700_000_000, 0)

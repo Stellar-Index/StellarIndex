@@ -35,10 +35,7 @@ func boundValues(params []bigquery.QueryParameter, name string) []string {
 	return nil
 }
 
-// TestBuildSorobanEventsQuery_NoTopicFilter exercises the SQL
-// generator with the minimum required inputs (range + contracts,
-// no topic filters). Confirms parameter binding and the absence
-// of optional WHERE clauses.
+// TestBuildSorobanEventsQuery_NoTopicFilter: minimum inputs (range + contracts) bind their parameters and add no optional WHERE clauses.
 func TestBuildSorobanEventsQuery_NoTopicFilter(t *testing.T) {
 	q, params := mustBuildSorobanEventsQuery(t, []string{"CONTRACT_A", "CONTRACT_B"}, "", "")
 
@@ -66,12 +63,7 @@ func TestBuildSorobanEventsQuery_NoTopicFilter(t *testing.T) {
 	}
 }
 
-// TestBuildSorobanEventsQuery_WithTopic0 confirms that supplying
-// topic0 adds a single AND clause + one extra parameter. We bind
-// to @topic0 (named) so an injection-shaped contract ID can't
-// rewrite the SQL — defence in depth even though the filter values
-// are operator-supplied. history_contract_events has no topic_N
-// columns; the filter must index the real `topics` JSON array.
+// TestBuildSorobanEventsQuery_WithTopic0: topic0 adds one AND clause and one parameter, bound by name so an injection-shaped value cannot rewrite the SQL; history_contract_events has no topic_N columns, so the filter must index the real topics JSON array.
 func TestBuildSorobanEventsQuery_WithTopic0(t *testing.T) {
 	q, params := mustBuildSorobanEventsQuery(t, []string{"X"}, "swap", "")
 
@@ -92,9 +84,7 @@ func TestBuildSorobanEventsQuery_WithTopic0(t *testing.T) {
 	}
 }
 
-// TestBuildSorobanEventsQuery_WithBothTopics exercises the
-// Phoenix-style filter: topic[0]+topic[1] both supplied. Both
-// AND clauses should appear; both parameters should bind.
+// TestBuildSorobanEventsQuery_WithBothTopics: the Phoenix-style filter (topic[0] and topic[1]) adds both AND clauses and both parameters.
 func TestBuildSorobanEventsQuery_WithBothTopics(t *testing.T) {
 	q, params := mustBuildSorobanEventsQuery(t, []string{"X"}, "swap", "offer_amount")
 
@@ -112,8 +102,7 @@ func TestBuildSorobanEventsQuery_WithBothTopics(t *testing.T) {
 	}
 }
 
-// TestTopicFilterEncodings pins the encoding against a real Hubble row and
-// checks both ScVal types are matched: Soroswap's topic[0] is a String.
+// TestTopicFilterEncodings pins the encoding against a real Hubble row and checks both ScVal types match (Soroswap's topic[0] is a String).
 func TestTopicFilterEncodings(t *testing.T) {
 	got, err := topicFilterEncodings("transfer")
 	if err != nil {
@@ -145,11 +134,7 @@ func TestTopicFilterEncodings(t *testing.T) {
 	}
 }
 
-// TestHubbleSorobanEvents_FlagValidation locks down the argv
-// guards. We don't load config or hit BigQuery here — same shape
-// as TestHubbleCheck_FlagValidation; consistency in failure modes
-// across the two subcommands matters because operators write
-// scripts that wrap both.
+// TestHubbleSorobanEvents_FlagValidation locks down the argv guards without loading config or hitting BigQuery, matching TestHubbleCheck_FlagValidation.
 func TestHubbleSorobanEvents_FlagValidation(t *testing.T) {
 	cases := []struct {
 		name string

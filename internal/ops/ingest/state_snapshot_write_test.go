@@ -18,10 +18,7 @@ func (r *recordingInserter) insert(_ context.Context, _ string, rows []clickhous
 	return len(rows), nil
 }
 
-// TestWriteSnapshot_RefusesLimitTruncatedRead: the default -limit stops the
-// bucket-list walk at 2M of ~48M entries. Writing that prefix published ~4%
-// of the checkpoint as the whole and printed a green checkmark; the
-// write must be refused before a single row reaches ClickHouse.
+// TestWriteSnapshot_RefusesLimitTruncatedRead: the default -limit stops at 2M of ~48M entries, so -write must refuse before any row reaches ClickHouse.
 func TestWriteSnapshot_RefusesLimitTruncatedRead(t *testing.T) {
 	t.Parallel()
 	tally := &snapTally{total: 2_000_000, partial: true, rows: make([]clickhouse.LedgerEntryChangeRow, 3)}

@@ -14,26 +14,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// supplySeedSEP41Genesis seeds each watched SEP-41 contract's pre-Soroban
-// per-kind OPENING BALANCE into sep41_supply_rollup (migration 0088).
-//
-// The Algorithm-3 refresher derives total as Σmint−Σburn−Σclawback from
-// `sep41_supply_events`, which the observer fills ONLY over the Soroban era
-// [50457424, tip]. A classic asset's SAC wrapper (VELO, AQUA, yXLM, ...) was
-// largely issued before Soroban, so over that window Σburn > Σmint and the
-// negative-total guard rejects the total. This seed sums the lake's pre-Soroban
-// stellar.supply_flows (ADR-0034) below the Soroban genesis ledger and writes
-// the per-kind baseline the reader adds to the Soroban-era totals.
-//
-// Provenance (ADR-0033): those supply_flows rows are replay-derived and
-// core-version-dependent; genesis_baseline_ledger + genesis_seeded_at record the
-// boundary and capture time. If that history is re-derived, re-run this seed.
-//
-// Idempotent: the baseline is SET (not added), and the rollup fold beneath it is
-// rebuilt under the new floor in the same transaction
-// ([timescale.Store.UpsertSEP41GenesisBaseline]), which also repairs a fold that
-// swept the pre-boundary band in before the first seed. A Soroban-only contract
-// is seeded with a zero baseline. Without -write it is a dry run.
+// supplySeedSEP41Genesis seeds each watched SEP-41 contract's pre-Soroban per-kind OPENING BALANCE into
+// sep41_supply_rollup: the observer fills sep41_supply_events only from Soroban genesis, so classic-issued SAC supply would
+// fail the negative-total guard. It sums the lake's pre-Soroban supply_flows (ADR-0034, replay-derived, so re-run
+// if re-derived). Idempotent (baseline SET, fold rebuilt in one transaction); without -write it is a dry run.
 func supplySeedSEP41Genesis(args []string) error {
 	fs := flag.NewFlagSet("supply seed-sep41-genesis", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -51,12 +35,8 @@ func supplySeedSEP41Genesis(args []string) error {
 	if err != nil {
 		return err
 	}
-	// Resolve the boundary: an explicit -genesis-ledger wins; otherwise the
-	// config's network-appropriate value (stellar.soroban_genesis_ledger —
-	// pubnet's protocol-20 activation, or 1 on a reset test net). A test-net
-	// seed must NOT fall back to the pubnet boundary, or it would sum the
-	// entire young test-net history as a "pre-Soroban" baseline that the
-	// SEP-41 supply observer then double-counts.
+	// Resolve the boundary: -genesis-ledger wins, else the config's network value. A test-net seed must NOT
+	// fall back to the pubnet boundary or it would double-count its whole history as pre-Soroban.
 	genesis := uint(*genesisLedger)
 	if genesis == 0 {
 		genesis = uint(cfg.Stellar.SorobanGenesisLedger)
@@ -119,20 +99,9 @@ func supplySeedSEP41Genesis(args []string) error {
 	return nil
 }
 
-// validateGenesisLedgerBoundary vets the operator-supplied -genesis-ledger.
-//
-// The whole reason the seed is CORRECT is that the two supply slices it stitches
-// together are a DISJOINT ledger partition: the ClickHouse genesis sum covers
-// `ledger < boundary`, and the Postgres Soroban-era total covers the era the
-// SEP-41 observer populates, `ledger >= clickhouse.SorobanGenesisLedger`. That
-// disjointness — and therefore "no double-count" — only holds when the boundary
-// is AT-OR-BELOW the true Soroban genesis ledger. A boundary set ABOVE it would
-// make the CH `ledger < boundary` slice reach up into the Soroban era and sum
-// flows that the PG total ALSO counts, so the seeded baseline would inflate the
-// served lifetime supply. Fail closed: reject rather than silently double-count.
-//
-// The default (clickhouse.SorobanGenesisLedger) is accepted — the check is
-// strictly-greater-than, so boundary == genesis passes.
+// validateGenesisLedgerBoundary vets -genesis-ledger. The CH sum (ledger < boundary) and the PG Soroban-era
+// total must be a DISJOINT partition, which holds only when boundary <= clickhouse.SorobanGenesisLedger;
+// above it the served supply double-counts, so fail closed. boundary == genesis passes.
 func validateGenesisLedgerBoundary(genesisLedger uint) error {
 	if genesisLedger == 0 {
 		return errors.New("-genesis-ledger must be > 0")

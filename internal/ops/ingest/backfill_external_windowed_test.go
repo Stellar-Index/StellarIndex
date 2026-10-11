@@ -86,10 +86,7 @@ func xlmUSD(t *testing.T) canonical.Pair {
 	return pair
 }
 
-// TestWalkWindowed_VenueErrorKeepsEarlierWindows: a venue fault partway
-// through a deep -raw-trades walk must leave every earlier window written
-// (each fill exactly once, the on-boundary fill included) and report the
-// failing window's start as the resume point.
+// TestWalkWindowed_VenueErrorKeepsEarlierWindows: a mid-walk venue fault keeps earlier windows written exactly once and reports the failing window's start as the resume point.
 func TestWalkWindowed_VenueErrorKeepsEarlierWindows(t *testing.T) {
 	day3 := windowDay1.Add(48 * time.Hour)
 	srv := newFakeKrakenTrades(t, day3.Add(-time.Minute))
@@ -145,9 +142,7 @@ func windowTrades(from, to time.Time) []canonical.Trade {
 	return out
 }
 
-// TestWalkWindowed_WriteFaults: an infra write fault stops the walk at
-// that window's start; a per-row data fault keeps walking but must never
-// let the command exit 0.
+// TestWalkWindowed_WriteFaults: an infra write fault stops the walk; a per-row fault keeps walking but never exits 0.
 func TestWalkWindowed_WriteFaults(t *testing.T) {
 	fetch := func(_ context.Context, f, to time.Time) ([]canonical.Trade, error) { return windowTrades(f, to), nil }
 	plan := windowPlan{size: 24 * time.Hour}

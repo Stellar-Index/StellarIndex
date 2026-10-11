@@ -24,44 +24,23 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// directory-sync mirrors the MIT-licensed
-// github.com/stellar-expert/public-directory account labels into the
-// `account_directory` table (migration 0136): one HTTPS GET of the
-// repo tarball, parse accounts/*.json, upsert the full set, prune
-// rows upstream removed. Run from a daily timer.
-//
-// The labels carry third-party attribution and are NOT display-only: a
-// scam-class tag withholds the issuer's price (pricingguard.ScamGate)
-// and a recognition tag admits it to the RWA surface. They never feed
-// the currency catalogue. A false positive is corrected durably with
-// `directory-override`, whose rows this sync never touches.
-// A truncated, corrupt or oversized tarball fails the run
-// (parseDirectoryTarball), `ReplaceDirectory` refuses an empty parse
-// (a broken fetch must not prune the table), and `-sha256` with a
-// commit-pinned `-url` refuses any tarball but the reviewed one. A
-// committed run's prune / flag / un-flag counts are exported as
-// stellarindex_directory_sync_rows_changed{kind}.
+// directory-sync mirrors the stellar-expert public-directory labels into account_directory (full upsert, prune removed rows).
+// Labels are NOT display-only: scam tags withhold an issuer's price (pricingguard.ScamGate), recognition tags admit RWA; directory-override rows are never touched.
+// Bad tarballs fail, ReplaceDirectory refuses an empty parse (no prune on a broken fetch), -sha256 pins the tarball.
 const (
 	directorySource     = "stellar-expert"
 	directoryDefaultURL = "https://github.com/stellar-expert/public-directory/archive/refs/heads/master.tar.gz"
 
-	// directoryMaxTarballBytes bounds both the compressed and the
-	// decompressed read. The tarball is ~4 MB compressed today; 256 MB
-	// of headroom is an order-of-magnitude guard against a
-	// decompression bomb from a compromised -url, not a tight fit. A
-	// stream that reaches the bound is REFUSED, never truncated: see
-	// boundedReader.
+	// directoryMaxTarballBytes bounds both compressed and decompressed reads as a decompression-bomb
+	// guard; a stream reaching the bound is REFUSED, never truncated (see boundedReader).
 	directoryMaxTarballBytes = 256 << 20
 )
 
 var errDirectoryTarballTooLarge = errors.New("directory-sync: tarball reached the size bound")
 
-// boundedReader is io.LimitReader with the bound made fatal. A plain
-// LimitReader reports a clean EOF at the bound, and 256 MiB is an
-// exact multiple of tar's 512-byte block, so a stream cut there
-// between two entries handed tar.Reader a well-formed end of archive:
-// a partial, non-empty snapshot that ReplaceDirectory would then
-// accept and prune the table down to.
+// boundedReader is io.LimitReader with the bound made fatal: a plain LimitReader returns clean EOF
+// at the bound, which on a tar block boundary looks like a valid but partial archive that
+// ReplaceDirectory would prune the table down to.
 type boundedReader struct {
 	r    io.Reader
 	left int64
@@ -132,16 +111,8 @@ func directorySync(args []string) error {
 		return nil
 	}
 
-	// Without a heartbeat, the only signal a stalled/failed sync has is the generic
-	// stellarindex_systemd_unit_failed catch-all, which covers nothing
-	// but a nonzero process exit and takes 15m+ to ticket. Wiring the
-	// same JobHeartbeat every other stellarindex-ops job uses gives
-	// directory-sync a dedicated, near-immediate
-	// stellarindex_ops_job_run_failed (deploy/monitoring/rules/ingestion.yml)
-	// plus an entries-synced gauge (progress_total), for free, off the
-	// existing alert rules — no bespoke metric or rule needed. Started
-	// before store.Open so a Postgres connect/ping failure is captured
-	// too, not just a failed write.
+	// Heartbeat gives directory-sync the dedicated stellarindex_ops_job_run_failed alert and an
+	// entries gauge; started before store.Open so a connect failure is captured too.
 	hb := opsutil.NewJobHeartbeat("directory-sync", *heartbeat, nil)
 	if hb.Enabled() {
 		fmt.Printf("directory-sync: heartbeat -> %s\n", hb.Path())
@@ -191,13 +162,8 @@ func fetchDirectoryTarball(ctx context.Context, url, wantSHA256 string) (entries
 	if err != nil {
 		return nil, 0, err
 	}
-	// http.DefaultClient has NO timeout. A tarball fetch against a
-	// third-party host that accepts the connection and then stops sending
-	// would hang this command forever, and an operator command that
-	// never returns looks like a slow network, not a bug.
-	//
-	// ctx still bounds it when the caller supplies a deadline; this makes
-	// the bound unconditional.
+	// http.DefaultClient has no timeout; a host that stalls after connecting would hang this command
+	// forever, so the bound is made unconditional.
 	client := &http.Client{Timeout: directoryFetchTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -225,11 +191,8 @@ func checkDirectorySourceFlags(url, wantSHA256 string) error {
 	return nil
 }
 
-// parsePinnedDirectoryTarball is parseDirectoryTarball plus, when
-// wantSHA256 is set, a SHA-256 check over every compressed byte: any
-// tarball other than the pinned one is refused before an entry is
-// returned. gzip can stop short of trailing bytes, so the rest of the
-// stream is hashed too, under the same size bound.
+// parsePinnedDirectoryTarball is parseDirectoryTarball plus, when wantSHA256 is set, a SHA-256 over
+// every compressed byte (trailing bytes included) so any other tarball is refused before an entry returns.
 func parsePinnedDirectoryTarball(body io.Reader, maxBytes int64, wantSHA256 string) (entries []timescale.DirectoryEntry, skipped int, err error) {
 	if wantSHA256 == "" {
 		return parseDirectoryTarball(body, maxBytes)
@@ -284,11 +247,8 @@ func parseDirectoryTarball(body io.Reader, maxBytes int64) (entries []timescale.
 		}
 		entries = append(entries, e)
 	}
-	// tar.Reader stops at the end-of-archive marker without reading
-	// the gzip trailer, so a CRC or length mismatch (and a stream cut
-	// inside the trailer) went unverified. Draining to EOF makes gzip
-	// check both; it is the only integrity signal an unpinned branch
-	// tarball carries.
+	// tar.Reader stops before the gzip trailer; draining to EOF makes gzip verify the CRC and length,
+	// the only integrity signal an unpinned tarball carries.
 	if _, err := io.Copy(io.Discard, plain); err != nil {
 		return nil, 0, fmt.Errorf("directory-sync: tarball integrity: %w", err)
 	}

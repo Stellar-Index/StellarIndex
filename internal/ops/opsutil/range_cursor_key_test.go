@@ -19,10 +19,7 @@ func TestRangeCursorKey(t *testing.T) {
 	}
 }
 
-// TestOpsCheckpointSubIsNeverAFixedString: ops checkpoints are range-scoped
-// and UpsertCursor is monotone-forward, so a sub_source that is a literal or
-// constant lets a finished later range swallow an earlier one. Build range
-// checkpoint keys with RangeCursorKey.
+// TestOpsCheckpointSubIsNeverAFixedString: a literal or constant sub_source lets a finished later range swallow an earlier one (UpsertCursor is monotone-forward); use RangeCursorKey.
 func TestOpsCheckpointSubIsNeverAFixedString(t *testing.T) {
 	var hits []string
 	calls := 0

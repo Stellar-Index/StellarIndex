@@ -27,24 +27,7 @@ type keyRebudgeter interface {
 	UpdateRateLimit(ctx context.Context, keyID string, newRateLimitPerMin int) (auth.APIKeyRecord, error)
 }
 
-// Upgrade lifts (or lowers) the per-minute rate limit on an existing API
-// key, for manual / partner budgets (via `auth.RedisAPIKeyStore.UpdateRateLimit`).
-//
-// Usage:
-//
-//	stellarindex-ops upgrade-key \
-//	  -config /etc/stellarindex.toml \
-//	  -key-id kid_515c8d94191f4e93 \
-//	  -rate-limit-per-min 10000 \
-//	  -reason 'partner contract renewal' \
-//	  -write
-//
-// Every change lands a "key.ratelimit.update" audit_log row (actor,
-// reason, old and new budget); a change whose row cannot be written is
-// rolled back. Without -write it prints the change and touches nothing.
-//
-// Exit codes: 0 upgraded; 1 error (Redis unreachable, key not found,
-// etc.); 2 usage error (missing flag).
+// Upgrade changes the per-minute rate limit of an API key (-key-id, -rate-limit-per-min, -reason); -write is required, and each change logs a key.ratelimit.update audit row or is rolled back.
 func Upgrade(args []string) error {
 	opts, err := parseUpgradeKeyFlags(args)
 	if err != nil {

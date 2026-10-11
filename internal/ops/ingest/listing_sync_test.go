@@ -21,31 +21,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// listingCoinsFixture is a trimmed copy of a real
-// `/coins/list?include_platform=true` response,
-// cut to seven elements and kept byte-faithful in shape: the real field
-// names, the real `platforms` objects with their other chains left in,
-// and the `name` field this sync does not read.
-//
-// The seven are chosen so every path through parseListingCatalogue is exercised
-// by a row that either occurs live or plausibly could:
-//
-//  1. bitcoin              — platforms is EMPTY. Skipped, and not
-//     counted as a Stellar row at all.
-//  2. stellar              — a contract C-strkey.
-//  3. aquarius             — a classic CODE-GISSUER pair.
-//  4. stellar-synthetic-usd — a classic code with a LOWERCASE letter
-//     (sUSD). Live, and the row an
-//     `[A-Z0-9]`-only code class would discard.
-//  5. cetes                — a classic code BEGINNING WITH C, alongside
-//     a Solana address that also begins with C.
-//     Live, and the row a `LIKE 'C%'`-style
-//     contract test misfiles.
-//  6. broken-listing       — a malformed Stellar address. Skipped AND
-//     counted; the run still succeeds.
-//  7. empty-platform       — `platforms.stellar` present but empty,
-//     which the upstream does emit. Not a
-//     Stellar row and not a skip.
+// listingCoinsFixture is a trimmed, shape-faithful `/coins/list?include_platform=true` response whose seven rows each exercise a parseListingCatalogue path:
+// bitcoin (empty platforms, not a Stellar row), stellar (C-strkey), aquarius (CODE-GISSUER), stellar-synthetic-usd (lowercase code sUSD, defeats an `[A-Z0-9]`-only class),
+// cetes (code beginning with C beside a Solana C-address, defeats a `LIKE 'C%'` contract test), broken-listing (malformed address, skipped AND counted), empty-platform (`platforms.stellar` present but empty; not a row, not a skip).
 const listingCoinsFixture = `[
   {"id": "bitcoin", "symbol": "btc", "name": "Bitcoin", "platforms": {}},
   {"id": "stellar", "symbol": "xlm", "name": "Stellar",
@@ -64,25 +42,9 @@ const listingCoinsFixture = `[
    "platforms": {"stellar": ""}}
 ]`
 
-// listingMarketsFixture is a trimmed `/coins/markets` response for the
-// ids above, again shaped like the real one (which carries ~26 fields
-// per element; four are kept, plus one unread field to prove the decode
-// ignores the rest).
-//
-// Three of the five rows are the cases that matter:
-//
-//   - stellar               — a normal priced row.
-//   - aquarius              — a price with MORE SIGNIFICANT DIGITS than
-//     a float64 holds. It must survive verbatim.
-//   - stellar-synthetic-usd — a price with NO `last_updated`. REJECTED:
-//     a price whose age cannot be verified is
-//     not served, and no timestamp is invented
-//     for it.
-//   - cetes                 — `current_price: null`. Unpriced, which is
-//     a normal state, NOT a rejection.
-//   - broken-listing        — priced, but its address never made it into
-//     the entry set, so the price has nothing to
-//     attach to.
+// listingMarketsFixture is a trimmed `/coins/markets` response for those ids, with one unread field to prove the decode ignores the rest. The cases that matter:
+// aquarius has more significant digits than a float64 holds and must survive verbatim; stellar-synthetic-usd has no `last_updated` and is REJECTED (an unverifiable age is not served, no timestamp invented);
+// cetes has `current_price: null` (unpriced, not a rejection); broken-listing is priced but its address is not in the entry set.
 const listingMarketsFixture = `[
   {"id": "stellar", "symbol": "xlm", "current_price": 0.195274,
    "market_cap": 6814637810, "last_updated": "2026-09-15T14:05:00.000Z"},
@@ -100,10 +62,7 @@ const listingMarketsFixture = `[
 // minutes after the upstream stamped its prices.
 var listingFixtureNow = time.Date(2026, 9, 15, 14, 30, 0, 0, time.UTC)
 
-// TestParseCoinsList_KeepsStellarRowsAndCountsTheRest walks the fixture
-// and pins every bucket of the census. The counts are the only evidence
-// an operator has that the parser still recognises the upstream, so they
-// are asserted individually rather than as "did it return something".
+// TestParseCoinsList_KeepsStellarRowsAndCountsTheRest pins every census bucket individually; the counts are an operator's only evidence the parser still recognises the upstream.
 func TestParseCoinsList_KeepsStellarRowsAndCountsTheRest(t *testing.T) {
 	t.Parallel()
 
@@ -169,8 +128,7 @@ func TestParseCoinsList_KeepsStellarRowsAndCountsTheRest(t *testing.T) {
 	}
 }
 
-// TestClassifyListingAddress is the form table, including the two shapes
-// that occur live and defeat the obvious shortcuts.
+// TestClassifyListingAddress is the form table, including two live shapes that defeat obvious shortcuts.
 func TestClassifyListingAddress(t *testing.T) {
 	t.Parallel()
 
@@ -203,11 +161,7 @@ func TestClassifyListingAddress(t *testing.T) {
 	}
 }
 
-// TestParseCoinsList_RefusesEmptyParse — a catalogue with no Stellar
-// rows means the upstream layout changed or the fetch was truncated, not
-// that a platform delisted ~50 assets inside an hour. It must error
-// rather than hand ReplaceListingDirectory a set that prunes the table
-// to nothing.
+// TestParseCoinsList_RefusesEmptyParse: a catalogue with no Stellar rows means a changed layout or truncated fetch, so it must error rather than let ReplaceListingDirectory prune the table to nothing.
 func TestParseCoinsList_RefusesEmptyParse(t *testing.T) {
 	t.Parallel()
 
@@ -218,10 +172,7 @@ func TestParseCoinsList_RefusesEmptyParse(t *testing.T) {
 	}
 }
 
-// TestParseCoinsList_MalformedDocumentIsFatal draws the other half of
-// that line: a malformed ADDRESS is data and is skipped, but a JSON
-// decode failure leaves the stream unsynchronised and nothing after it
-// can be trusted.
+// TestParseCoinsList_MalformedDocumentIsFatal: a malformed address is skipped data, but a JSON decode failure leaves the stream unsynchronised and is fatal.
 func TestParseCoinsList_MalformedDocumentIsFatal(t *testing.T) {
 	t.Parallel()
 
@@ -235,12 +186,7 @@ func TestParseCoinsList_MalformedDocumentIsFatal(t *testing.T) {
 	}
 }
 
-// TestParseMarkets_RejectsAPriceWithNoPublicationTime is the core price
-// rule. The storage layer's 24-hour price bound is measured on the
-// PLATFORM's own `last_updated`; a price that arrives without one has no
-// verifiable age, and inventing a timestamp for it — `time.Now()` being
-// the obvious and wrong choice — would defeat that bound entirely and
-// launder an arbitrarily old number as fresh.
+// TestParseMarkets_RejectsAPriceWithNoPublicationTime: the 24-hour price bound uses the platform's `last_updated`, so a price without one is rejected, never stamped time.Now(), which would launder an old number as fresh.
 func TestParseMarkets_RejectsAPriceWithNoPublicationTime(t *testing.T) {
 	t.Parallel()
 
@@ -278,11 +224,7 @@ func TestParseMarkets_RejectsAPriceWithNoPublicationTime(t *testing.T) {
 	}
 }
 
-// TestParseMarkets_RejectsAPublicationTimeInTheFuture — the storage
-// layer's 24-hour price bound is a floor on `priced_at`, so a timestamp
-// in the future would keep a frozen price "fresh" for as long as it is
-// ahead of now. Only clock skew is tolerated; anything past it is
-// rejected and COUNTED, never clamped to now (which would invent a time).
+// TestParseMarkets_RejectsAPublicationTimeInTheFuture: a future timestamp would keep a frozen price fresh past the 24-hour floor, so beyond clock skew it is rejected and COUNTED, never clamped to now.
 func TestParseMarkets_RejectsAPublicationTimeInTheFuture(t *testing.T) {
 	t.Parallel()
 
@@ -318,12 +260,7 @@ func TestParseMarkets_RejectsAPublicationTimeInTheFuture(t *testing.T) {
 	}
 }
 
-// TestParseMarkets_CarriesThePriceLiteralWithNoFloatRoundTrip is the
-// ADR-0003 guard at the wire boundary. The fixture's aquarius price has
-// far more significant digits than a float64 holds; decoding it through
-// one and printing it back yields a DIFFERENT, entirely plausible-looking
-// decimal, which is precisely why the loss is undetectable downstream.
-// json.Number keeps the literal.
+// TestParseMarkets_CarriesThePriceLiteralWithNoFloatRoundTrip is the ADR-0003 wire guard: a float64 round trip yields a plausible but different decimal, so json.Number must keep the literal.
 func TestParseMarkets_CarriesThePriceLiteralWithNoFloatRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -347,10 +284,7 @@ func TestParseMarkets_CarriesThePriceLiteralWithNoFloatRoundTrip(t *testing.T) {
 	}
 }
 
-// TestApplyListingPrices_LeavesUnpricedEntriesUnpriced — an entry with
-// no upstream price keeps an empty price and a zero time, which is what
-// the storage layer writes as NULL/NULL and what the table CHECK
-// requires. The count returned must be the number actually filled.
+// TestApplyListingPrices_LeavesUnpricedEntriesUnpriced: no upstream price keeps an empty price and zero time (NULL/NULL per the table CHECK), and the returned count is the number actually filled.
 func TestApplyListingPrices_LeavesUnpricedEntriesUnpriced(t *testing.T) {
 	t.Parallel()
 
@@ -388,11 +322,7 @@ func TestApplyListingPrices_LeavesUnpricedEntriesUnpriced(t *testing.T) {
 	}
 }
 
-// TestListingClient_SendsTheKeyInAHeaderNotTheQuery pins the no-key-in-the-query
-// rule on this path. A transport error's *url.Error embeds the request URL in
-// its message, so a key in the query string ends up in every log line
-// that reports a failed fetch — and the failed fetches are exactly the
-// ones that get logged.
+// TestListingClient_SendsTheKeyInAHeaderNotTheQuery: a *url.Error embeds the request URL, so a key in the query would reach every failed-fetch log line.
 func TestListingClient_SendsTheKeyInAHeaderNotTheQuery(t *testing.T) {
 	proKey := config.CoinGeckoVenueConfig{APIKey: "pro-secret"}
 
@@ -422,11 +352,7 @@ func TestListingClient_SendsTheKeyInAHeaderNotTheQuery(t *testing.T) {
 	}
 }
 
-// TestNewListingClient_HostFollowsTheKeyMode — a Pro key authenticates
-// ONLY against the pro host (the public host answers a Pro key with HTTP
-// 400 / error_code 10010), so the host has to follow the key rather than
-// the operator having to know they move together. An explicit -base-url
-// still wins.
+// TestNewListingClient_HostFollowsTheKeyMode: a Pro key works only against the pro host (the public host answers HTTP 400 / 10010), so the host follows the key; an explicit -base-url still wins.
 func TestNewListingClient_HostFollowsTheKeyMode(t *testing.T) {
 	for _, tc := range []struct {
 		name                    string
@@ -470,9 +396,7 @@ func TestNewListingClient_HostFollowsTheKeyMode(t *testing.T) {
 	}
 }
 
-// TestListingClient_HTTPErrorIsFatal — a non-200 must not be parsed as
-// an empty catalogue, which would be a refusal at best and a prune at
-// worst.
+// TestListingClient_HTTPErrorIsFatal: a non-200 must not parse as an empty catalogue, which would refuse at best and prune at worst.
 func TestListingClient_HTTPErrorIsFatal(t *testing.T) {
 	t.Parallel()
 
@@ -491,10 +415,7 @@ func TestListingClient_HTTPErrorIsFatal(t *testing.T) {
 	}
 }
 
-// TestFetchListingPrices_ChunksTheIDList — the markets endpoint caps a
-// request at 250 ids, so a longer list must arrive as several requests
-// each asking a FIXED question, and every id must be represented exactly
-// once across them.
+// TestFetchListingPrices_ChunksTheIDList: the endpoint caps a request at 250 ids, so a longer list is several fixed-question requests covering each id exactly once.
 func TestFetchListingPrices_ChunksTheIDList(t *testing.T) {
 	t.Parallel()
 
@@ -541,15 +462,7 @@ func TestFetchListingPrices_ChunksTheIDList(t *testing.T) {
 	}
 }
 
-// TestListingSync_FailsClosedByDefault pins the ops write-gate
-// convention for this command: it previews by DEFAULT and mutates
-// Postgres only on an explicit -write, announced by a loud stderr
-// banner. The automated hourly caller passes -write; nothing else
-// should have to.
-//
-// The banner is emitted after flag validation and BEFORE config load or
-// any network fetch, so a nonexistent config lets the run announce its
-// mode and then error out without touching Postgres or the network.
+// TestListingSync_FailsClosedByDefault pins the write-gate convention: preview by default, mutate Postgres only on -write with a loud stderr banner. The banner precedes config load and any fetch, so a nonexistent config announces the mode then errors without touching Postgres or the network.
 func TestListingSync_FailsClosedByDefault(t *testing.T) {
 	const cfg = "/nonexistent/stellarindex-listing-sync-gate-test.toml"
 
@@ -570,8 +483,7 @@ func TestListingSync_FailsClosedByDefault(t *testing.T) {
 	}
 }
 
-// TestListingSync_RequiresConfigAndHTTPS — the two flag validations that
-// run before anything else.
+// TestListingSync_RequiresConfigAndHTTPS covers the two flag validations that run first.
 func TestListingSync_RequiresConfigAndHTTPS(t *testing.T) {
 	if err := listingSync(nil); err == nil {
 		t.Error("listing-sync with no -config must error")
@@ -605,15 +517,7 @@ func runListingSyncCapturingStderr(t *testing.T, args []string) (error, string) 
 	return runErr, <-done
 }
 
-// TestListingClient_RefusesARedirectThatWouldCarryTheKey pins the paid
-// key to the origin the run dialled.
-//
-// Go's redirect header copier strips ONLY Authorization,
-// WWW-Authenticate and Cookie when a hop crosses hosts, so
-// x-cg-pro-api-key is otherwise re-sent verbatim to whatever a 302
-// names — a vendor redirect, a hijacked edge, or a mistyped -base-url,
-// including an https:// -> http:// downgrade. Keeping the key out of
-// the query string is only half of keeping it out of a stranger's logs.
+// TestListingClient_RefusesARedirectThatWouldCarryTheKey pins the paid key to the dialled origin: Go strips only Authorization, WWW-Authenticate and Cookie across hosts, so x-cg-pro-api-key would be re-sent to whatever a 302 names (including an https to http downgrade).
 func TestListingClient_RefusesARedirectThatWouldCarryTheKey(t *testing.T) {
 	proKey := config.CoinGeckoVenueConfig{APIKey: "pro-secret"}
 
@@ -646,9 +550,7 @@ func TestListingClient_RefusesARedirectThatWouldCarryTheKey(t *testing.T) {
 	}
 }
 
-// TestListingClient_FollowsASameOriginRedirect — the policy is "the key
-// does not leave this origin", not "no redirects": a hop that keeps the
-// scheme and host is still followed, carrying the key as before.
+// TestListingClient_FollowsASameOriginRedirect: the policy is that the key does not leave the origin, not no redirects.
 func TestListingClient_FollowsASameOriginRedirect(t *testing.T) {
 	proKey := config.CoinGeckoVenueConfig{APIKey: "pro-secret"}
 
@@ -681,9 +583,7 @@ func TestListingClient_RedirectPolicy(t *testing.T) {
 	assertKeyedRedirectPolicy(t, newListingClient("", proKey).http.CheckRedirect)
 }
 
-// TestListingClient_StopsASelfRedirectLoop — a same-origin 302 to itself
-// must end at the hop cap, not re-send the key until the 60 s client
-// timeout.
+// TestListingClient_StopsASelfRedirectLoop: a same-origin self-redirect must end at the hop cap, not re-send the key until the 60 s timeout.
 func TestListingClient_StopsASelfRedirectLoop(t *testing.T) {
 	proKey := config.CoinGeckoVenueConfig{APIKey: "pro-secret"}
 

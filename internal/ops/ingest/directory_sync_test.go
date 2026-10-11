@@ -97,9 +97,7 @@ func TestFetchDirectoryTarball_ParsesAccountsAndSkipsNoise(t *testing.T) {
 	}
 }
 
-// TestFetchDirectoryTarball_RefusesEmptyParse — a tarball with no
-// account files (layout change, truncated fetch) must error rather
-// than hand ReplaceDirectory an empty set.
+// TestFetchDirectoryTarball_RefusesEmptyParse: a tarball with no account files must error rather than hand ReplaceDirectory an empty set.
 func TestFetchDirectoryTarball_RefusesEmptyParse(t *testing.T) {
 	tarball := buildDirectoryTarball(t, map[string]string{
 		"public-directory-master/README.md": "layout moved",
@@ -126,19 +124,8 @@ func TestFetchDirectoryTarball_HTTPErrorIsFatal(t *testing.T) {
 	}
 }
 
-// TestDirectorySync_FailsClosedByDefault pins the ops write-gate:
-// directory-sync must not WRITE unless asked — default-WRITE is unsafe. It
-// previews by DEFAULT and mutates Postgres only on an explicit -write,
-// announced by a loud stderr banner. This asserts the CORRECTED default
-// (dry run, no writes) and that -write is the opt-in — the contract
-// the automated systemd caller depends on. Reverting the gate
-// makes the default assertion fail (no DRY-RUN banner is printed): the
-// non-vacuous red.
-//
-// The banner is emitted after flag validation and BEFORE config load /
-// any network fetch, so a nonexistent config + never-resolving https URL
-// let the run announce its mode and then error out without touching
-// Postgres or the network.
+// TestDirectorySync_FailsClosedByDefault pins the write gate: directory-sync previews by default and mutates Postgres only on -write, after a loud stderr banner.
+// The banner precedes config load and any fetch, so a nonexistent config and unresolvable URL still reach it without touching Postgres.
 func TestDirectorySync_FailsClosedByDefault(t *testing.T) {
 	const cfg = "/nonexistent/stellarindex-directory-sync-gate-test.toml"
 	const url = "https://directory.invalid/archive.tar.gz"
@@ -162,15 +149,8 @@ func TestDirectorySync_FailsClosedByDefault(t *testing.T) {
 	}
 }
 
-// TestDirectorySync_WiresAJobHeartbeat — without a heartbeat, directory-sync has no
-// signal of its own, only the generic stellarindex_systemd_unit_failed
-// catch-all (a 15m+, exit-code-only ticket). Wiring the same
-// opsutil.JobHeartbeat every other stellarindex-ops job uses gives it
-// stellarindex_ops_job_run_failed for free off the existing alert rules
-// (deploy/monitoring/rules/ingestion.yml) — with no bespoke metric or
-// rule to invent. This drives directorySync all the way to a failed
-// Postgres ping (a closed local port refuses instantly) and asserts the
-// heartbeat textfile records that failure.
+// TestDirectorySync_WiresAJobHeartbeat: the shared opsutil.JobHeartbeat gives directory-sync stellarindex_ops_job_run_failed off existing alert rules.
+// Drives it to a failed Postgres ping and asserts the textfile records the failure.
 func TestDirectorySync_WiresAJobHeartbeat(t *testing.T) {
 	tarball := buildDirectoryTarballN(t, 1)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -252,12 +232,7 @@ func buildDirectoryTarballN(t *testing.T, n int) []byte {
 	return buildDirectoryTarball(t, files)
 }
 
-// TestParseDirectoryTarball_RefusesTruncationAtBlockBoundary — the
-// size bound is an exact multiple of tar's 512-byte block. Cut there,
-// between two entries, tar.Reader sees a clean end of archive and the
-// walk could return the entries read so far with a nil error: a
-// partial snapshot that ReplaceDirectory would then prune the table down
-// to. The bound must be a refusal, not a shorter result.
+// TestParseDirectoryTarball_RefusesTruncationAtBlockBoundary: a cut at tar's 512-byte block boundary looks like a clean end, so the size bound must be a refusal, not a shorter result ReplaceDirectory would prune to.
 func TestParseDirectoryTarball_RefusesTruncationAtBlockBoundary(t *testing.T) {
 	tarball := buildDirectoryTarballN(t, 3) // 3 × 1024 B + 1024 B end-of-archive, uncompressed
 
@@ -273,10 +248,7 @@ func TestParseDirectoryTarball_RefusesTruncationAtBlockBoundary(t *testing.T) {
 	}
 }
 
-// TestParseDirectoryTarball_RejectsCorruptGzipTrailer — tar.Reader
-// stops at the end-of-archive marker, before the gzip trailer, so the
-// CRC-32 the archive carries was never checked. A flipped CRC byte
-// must fail the run.
+// TestParseDirectoryTarball_RejectsCorruptGzipTrailer: tar.Reader stops before the gzip trailer, so a flipped CRC byte must still fail the run.
 func TestParseDirectoryTarball_RejectsCorruptGzipTrailer(t *testing.T) {
 	tarball := buildDirectoryTarballN(t, 3)
 	// gzip trailer: 4-byte CRC-32 then 4-byte ISIZE, last 8 bytes.
@@ -291,8 +263,7 @@ func TestParseDirectoryTarball_RejectsCorruptGzipTrailer(t *testing.T) {
 	}
 }
 
-// TestParseDirectoryTarball_AcceptsIntactArchiveWithinTheBound — the
-// integrity checks must not reject a well-formed archive that fits.
+// TestParseDirectoryTarball_AcceptsIntactArchiveWithinTheBound: integrity checks must not reject a well-formed archive that fits.
 func TestParseDirectoryTarball_AcceptsIntactArchiveWithinTheBound(t *testing.T) {
 	tarball := buildDirectoryTarballN(t, 3)
 	entries, skipped, err := parseDirectoryTarball(bytes.NewReader(tarball), 8*1024)
@@ -309,9 +280,7 @@ func sha256Hex(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// TestParsePinnedDirectoryTarball_RefusesAnyOtherTarball — with a pin,
-// only the byte-identical tarball is parsed: a well-formed archive of
-// different content is refused with no entries, not synced.
+// TestParsePinnedDirectoryTarball_RefusesAnyOtherTarball: with a pin, a well-formed archive of different content is refused with no entries.
 func TestParsePinnedDirectoryTarball_RefusesAnyOtherTarball(t *testing.T) {
 	pinned := buildDirectoryTarballN(t, 3)
 	other := buildDirectoryTarballN(t, 2)
@@ -331,9 +300,7 @@ func TestParsePinnedDirectoryTarball_RefusesAnyOtherTarball(t *testing.T) {
 	}
 }
 
-// TestDirectorySync_PinnedDigestMismatchFailsBeforeTheDB — the pin is
-// wired through the command: a mismatching tarball fails the run at the
-// fetch, not at the (unreachable) Postgres ping after it.
+// TestDirectorySync_PinnedDigestMismatchFailsBeforeTheDB: a mismatching tarball fails at the fetch, before the Postgres ping.
 func TestDirectorySync_PinnedDigestMismatchFailsBeforeTheDB(t *testing.T) {
 	tarball := buildDirectoryTarballN(t, 1)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -361,9 +328,7 @@ func TestDirectorySync_PinnedDigestMismatchFailsBeforeTheDB(t *testing.T) {
 	}
 }
 
-// TestRenderDirectorySyncTextfile_ExportsUnflagged — the counts a
-// committed sync printed only to stdout are exported per kind, un-flags
-// included, for the directory-sync un-flag alert.
+// TestRenderDirectorySyncTextfile_ExportsUnflagged: per-kind counts, un-flags included, are exported for the directory-sync un-flag alert.
 func TestRenderDirectorySyncTextfile_ExportsUnflagged(t *testing.T) {
 	got := renderDirectorySyncTextfile("stellar-expert", timescale.DirectorySyncResult{Upserted: 18500, Pruned: 4, NewlyFlagged: 2, Unflagged: 7})
 	for _, want := range []string{

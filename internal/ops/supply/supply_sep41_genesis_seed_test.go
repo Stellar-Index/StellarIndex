@@ -6,16 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestValidateGenesisLedgerBoundary pins the -genesis-ledger validation that
-// keeps the seed's disjoint-partition invariant SOUND (review Finding 2). The
-// CH genesis sum covers `ledger < boundary` and the PG Soroban-era total covers
-// `ledger >= clickhouse.SorobanGenesisLedger`; these are only non-overlapping —
-// and so the seeded baseline only correct — when the boundary is at-or-below
-// the true Soroban genesis. A boundary ABOVE it would sum Soroban-era flows into
-// BOTH slices → double-count → inflated served supply, so it must be rejected.
-//
-// The default (clickhouse.SorobanGenesisLedger) must keep working: the check is
-// strictly-greater-than, so boundary == genesis passes.
+// TestValidateGenesisLedgerBoundary: a -genesis-ledger above the true Soroban genesis double-counts flows in the CH and PG slices, so it must be rejected; equal passes.
 func TestValidateGenesisLedgerBoundary(t *testing.T) {
 	genesis := uint(clickhouse.SorobanGenesisLedger)
 	cases := []struct {

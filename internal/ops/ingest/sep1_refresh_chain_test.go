@@ -44,10 +44,7 @@ func tomlListing(org, issuer string) string {
 	return fmt.Sprintf("VERSION = \"2.0.0\"\n\n[DOCUMENTATION]\nORG_NAME = %q\n\n[[CURRENCIES]]\ncode = \"USD\"\nissuer = %q\n", org, issuer)
 }
 
-// TestSep1RefreshRebindsToTheChainsDomainBeforeFetching — the stored column
-// holds a domain the account has since moved away from, and that domain
-// serves a toml listing the issuer back. The refresh must re-read the chain,
-// re-bind the row to the declared domain, and fetch only that one.
+// TestSep1RefreshRebindsToTheChainsDomainBeforeFetching: a stale stored domain is re-bound to the chain's declared domain and only that one is fetched.
 func TestSep1RefreshRebindsToTheChainsDomainBeforeFetching(t *testing.T) {
 	const issuer = "GMOVED"
 	log := &sep1CallLog{}
@@ -68,9 +65,7 @@ func TestSep1RefreshRebindsToTheChainsDomainBeforeFetching(t *testing.T) {
 	}
 }
 
-// TestSep1RefreshClearsADomainTheChainNoLongerDeclares — an account that has
-// cleared its home_domain has nothing to fetch; the stored name is cleared
-// rather than fetched, and that is not a failed attempt.
+// TestSep1RefreshClearsADomainTheChainNoLongerDeclares: a cleared home_domain is cleared in the row, not fetched, and not a failed attempt.
 func TestSep1RefreshClearsADomainTheChainNoLongerDeclares(t *testing.T) {
 	const issuer = "GCLEARED"
 	log := &sep1CallLog{}
@@ -89,10 +84,7 @@ func TestSep1RefreshClearsADomainTheChainNoLongerDeclares(t *testing.T) {
 	}
 }
 
-// TestSep1RefreshDoesNotFetchAnUnconfirmedDomain — no live entry (merged, or
-// outside the lake) or an unreadable lake means the stored domain cannot be
-// confirmed, so it is not fetched. The attempt is marked and failed, which
-// keeps a lake outage inside the systemic verdict's unwind.
+// TestSep1RefreshDoesNotFetchAnUnconfirmedDomain: an unconfirmable domain is not fetched; the attempt is marked failed so a lake outage stays in the systemic unwind.
 func TestSep1RefreshDoesNotFetchAnUnconfirmedDomain(t *testing.T) {
 	for name, tc := range map[string]struct {
 		chain   sep1ChainStub
@@ -121,8 +113,7 @@ func TestSep1RefreshDoesNotFetchAnUnconfirmedDomain(t *testing.T) {
 	}
 }
 
-// TestSep1RefreshDryRunRebindsNothing — a dry run fetches the chain's domain
-// but writes no row, the re-bind included.
+// TestSep1RefreshDryRunRebindsNothing: a dry run fetches the chain's domain but writes no row.
 func TestSep1RefreshDryRunRebindsNothing(t *testing.T) {
 	const issuer = "GMOVED"
 	log := &sep1CallLog{}
@@ -142,9 +133,7 @@ func TestSep1RefreshDryRunRebindsNothing(t *testing.T) {
 	}
 }
 
-// TestSep1RefreshClassifiesAFailedWrite — a payload the database refused on
-// its content is the document's fault and keeps its ladder step; any other
-// write failure is ours and is handed back for unwinding.
+// TestSep1RefreshClassifiesAFailedWrite: a content-refused payload is the document's fault and keeps its ladder step; other write failures are ours and unwound.
 func TestSep1RefreshClassifiesAFailedWrite(t *testing.T) {
 	for name, tc := range map[string]struct {
 		err     error

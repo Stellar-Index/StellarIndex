@@ -9,11 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 )
 
-// rpcProbe runs a one-shot diagnostic against a stellar-rpc endpoint:
-// getHealth, getLatestLedger, getNetwork, getVersionInfo, getFeeStats.
-// Prints a human-readable report to stdout + returns the first fatal
-// error (e.g. endpoint unreachable). Stale-rpc is not fatal — it's
-// reported in the staleness line.
+// rpcProbe runs a one-shot diagnostic against a stellar-rpc endpoint (health, latest ledger, network, version, fee stats) and prints a report;
+// only a fatal error such as an unreachable endpoint is returned, staleness is reported in its own line.
 func rpcProbe(endpoint string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -21,11 +18,7 @@ func rpcProbe(endpoint string) error {
 	c := stellarrpc.New(endpoint, stellarrpc.WithTimeout(5*time.Second))
 	fmt.Printf("stellar-rpc probe — %s\n\n", c.Endpoint())
 
-	// getVersionInfo first — cheapest and tells us we can reach the
-	// thing at all. On failure, print actionable context before
-	// propagating the error so an operator running `rpc-probe` at
-	// 3 AM sees WHY the connection failed rather than just a Go
-	// error string.
+	// getVersionInfo first: cheapest reachability check. On failure print actionable context before returning the error.
 	vi, err := c.VersionInfo(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\n❌ cannot reach stellar-rpc at %s\n", endpoint)
@@ -115,11 +108,7 @@ func rpcProbe(endpoint string) error {
 	return nil
 }
 
-// shortHex returns the first `n` characters of s, or s if it is
-// already shorter. Guards the probe against panicking on a
-// malformed-RPC response whose ID/hash is shorter than expected —
-// a diagnostic binary should never crash on bad input, it should
-// report whatever it got.
+// shortHex returns the first n characters of s, or s if shorter, so a malformed RPC response cannot panic the probe.
 func shortHex(s string, n int) string {
 	if len(s) <= n {
 		return s

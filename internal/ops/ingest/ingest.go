@@ -1,16 +1,8 @@
 // Copyright 2026 Stellar Index contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package ingest holds the stellarindex-ops ingest / backfill
-// subcommands: `backfill`, `backfill-external`, `backfill-chainlink`,
-// `detect-gaps`, `list-cursors`, `reap-cursors`,
-// `resume-stalled`,
-// `find-data-gaps`, `census-backfill`, `tag-routed-via`,
-// `seed-soroswap-pairs`, `seed-protocol-contracts`,
-// `seed-entry-counts`, `projector-replay`, `scan-soroban-events`,
-// `state-snapshot`, `issuer-enrich`, `sep1-refresh`,
-// `asset-registry-backfill`. The dispatch table in
-// cmd/stellarindex-ops/main.go calls Run below.
+// Package ingest holds the stellarindex-ops ingest and backfill subcommands; the dispatch table in
+// cmd/stellarindex-ops/main.go calls Run.
 package ingest
 
 import (
@@ -18,10 +10,7 @@ import (
 	"os"
 )
 
-// Run is the internal/ops/ingest package's entry point — see
-// discovery.Run's doc comment for the calling convention shared by
-// every internal/ops/* package post-split. args[0] is the subcommand
-// verb (one of the eighteen this package owns); args[1:] are its flags.
+// Run dispatches an ingest subcommand; args[0] is the verb, args[1:] its flags (see discovery.Run).
 func Run(args []string) error { //nolint:gocyclo // flat command-dispatch switch; one arm per ops subcommand
 	switch args[0] {
 	case "backfill":

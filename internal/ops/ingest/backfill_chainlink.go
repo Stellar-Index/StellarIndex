@@ -16,13 +16,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// chainlinkFeedSetFromConfig — same shape + reasoning as the
-// adapter in cmd/stellarindex-indexer/main.go. Duplicated rather
-// than promoted to a shared internal package because the cmd/
-// boundary is the natural seam: the chainlink package itself can't
-// import config (no cycle today, no cycle tomorrow), and a
-// dedicated cmd-helper package for two ~15-line functions would be
-// over-engineering. Keep them in sync by convention.
+// chainlinkFeedSetFromConfig mirrors the adapter in cmd/stellarindex-indexer/main.go; duplicated because the chainlink package cannot import config. Keep both in sync.
 func chainlinkFeedSetFromConfig(in map[string]config.ChainlinkFeedSetting) (map[string]chainlink.FeedSpec, []canonical.Pair, error) {
 	adapted := make(map[string]chainlink.FeedSpec, len(in))
 	for k, v := range in {
@@ -36,22 +30,8 @@ func chainlinkFeedSetFromConfig(in map[string]config.ChainlinkFeedSetting) (map[
 	return chainlink.BuildFeedSet(adapted)
 }
 
-// backfillChainlink walks each configured Chainlink feed's
-// AnswerUpdated event log across the requested block range and
-// inserts one canonical.OracleUpdate row per historical round
-// into oracle_updates.
-//
-// All-time backfill of 516 feeds at 5k blocks/chunk on Alchemy
-// free tier completes in roughly 7 hours of wall time with the
-// default per-chunk sleep; the operator should run this overnight.
-//
-// Idempotent: the oracle_updates PK (source, ledger, tx_hash,
-// op_index, ts) plus the deterministic syntheticTxHash(feed,
-// roundId) means re-running this command over an already-backfilled
-// range is a no-op at the SAME derive_generation. InsertOracleUpdate is a
-// generation-guarded DO UPDATE (migration 0109), not DO NOTHING —
-// so a re-run at a HIGHER generation deliberately overwrites, which is the
-// point.
+// backfillChainlink inserts one canonical.OracleUpdate per historical AnswerUpdated round into oracle_updates.
+// Idempotent at the same derive_generation (PK plus deterministic syntheticTxHash); InsertOracleUpdate is a generation-guarded DO UPDATE, so a higher generation deliberately overwrites.
 //
 //nolint:gocognit,gocyclo,funlen // ops-CLI subcommand: flag parsing + config load + insert loop in one function is the most readable shape
 func backfillChainlink(args []string) error {
@@ -149,11 +129,8 @@ type oracleUpdateInserter interface {
 	InsertOracleUpdate(ctx context.Context, u canonical.OracleUpdate) error
 }
 
-// drainChainlinkUpdates writes every decoded round and returns the walk's
-// error joined with the run's row accounting. A failed insert is logged and
-// counted rather than aborting the walk, but it still fails the run: the
-// command is idempotent by tx hash, so an exit 0 over dropped rounds is
-// never re-run and the rounds stay missing.
+// drainChainlinkUpdates writes every decoded round. A failed insert is logged and counted but still fails the run:
+// the command is idempotent by tx hash, so an exit 0 over dropped rounds would never be re-run.
 func drainChainlinkUpdates(
 	ctx context.Context,
 	updates <-chan canonical.OracleUpdate,

@@ -19,18 +19,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// seedProtocolContracts is the genesis bootstrap for a factory-anchored gated
-// decoder's pool/vault registry (ADR-0035): it walks the source's factory creation
-// events (e.g. Blend pool-factory `deploy`) from the factory genesis ledger in the
-// lake's contract_events and upserts every announced child into protocol_contracts.
-//
-// Run once per FACTORY-anchored source as a DEPLOY PRECONDITION: until then the
-// registry holds no discovered children and (ADR-0035) drops their events.
-// CURATED-set sources (ADR-0040 §1 mechanism 3) are seeded by the indexer on every
-// boot; this remains a repair step for them.
-//
-// Idempotent (UpsertProtocolContract is ON CONFLICT DO UPDATE). Without -write the
-// run is a fail-closed DRY RUN (opsutil.WriteGate) reporting what it WOULD upsert.
+// seedProtocolContracts bootstraps a factory-anchored gated decoder's registry (ADR-0035) from the lake's factory creation events; run once per factory-anchored source as a deploy precondition.
+// Idempotent; without -write it is a fail-closed dry run (opsutil.WriteGate).
 func seedProtocolContracts(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("seed-protocol-contracts")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -125,16 +115,8 @@ type lakeSeedStore struct {
 	clickhouse.ReconcileEventStreamer
 }
 
-// seedOneGatedSource upserts one source's protocol_contracts rows and
-// returns how many it seeded: its in-code curated set, if it declares one,
-// then every child its factories' creation events announce.
-//
-// Curated sets (ADR-0040 §1 mechanism 3 — comet, blend_emitter, upshift,
-// and defindex, whose permissionless factory's creation events never
-// admit a child) are upserted with provenance factory_id =
-// pipeline.CuratedFactoryID. The indexer reconciles the same set at warm
-// time, so running this for them is a repair/verification step rather
-// than a deploy precondition.
+// seedOneGatedSource upserts one source's protocol_contracts rows: its curated set (ADR-0040, factory_id = pipeline.CuratedFactoryID), then every child its factories announce.
+// The indexer reconciles curated sets at warm time, so for them this is a repair step.
 func seedOneGatedSource(ctx context.Context, store gatedSeedStore, write bool, source string, hi uint32) (int, error) {
 	meta, ok := pipeline.GatedMetaFor(source)
 	if !ok {
@@ -156,11 +138,7 @@ func seedOneGatedSource(ctx context.Context, store gatedSeedStore, write bool, s
 // seedCuratedSet upserts meta.CuratedSet, or in preview counts it.
 func seedCuratedSet(ctx context.Context, store gatedSeedStore, write bool, source string, meta pipeline.GatedMeta) (int, error) {
 	if !write {
-		// Preview of the curated path. It mirrors
-		// SeedCuratedContracts' own refusal rather than reporting a
-		// clean zero: a curated-only source with an empty CuratedSet
-		// declares a gate with no trust root, and a preview that
-		// prints "0 contracts" for it reads as "nothing to do".
+		// Preview of the curated path mirrors SeedCuratedContracts' refusal: an empty CuratedSet is a gate with no trust root, not "0 contracts".
 		if len(meta.CuratedSet) == 0 {
 			return 0, fmt.Errorf("seed curated contracts %s: GatedMeta.CuratedSet is empty — "+
 				"a curated-set source (ADR-0040 §1 mechanism 3) must declare its in-code trust root", source)
@@ -177,13 +155,8 @@ func seedCuratedSet(ctx context.Context, store gatedSeedStore, write bool, sourc
 // walkFactoryCreations replays meta's factory creation events through the
 // source's decoder and upserts each child it admits.
 func walkFactoryCreations(ctx context.Context, store gatedSeedStore, write bool, source string, meta pipeline.GatedMeta, hi uint32) (int, error) {
-	// Build the source's decoder with a hook that upserts each newly
-	// observed child into protocol_contracts — the SAME persistence path
-	// the live indexer uses, so the genesis walk and live ingest converge
-	// on identical rows. The factory that deployed each child is supplied by
-	// the decoder (a protocol can have several factories).
-	// Each per-row failure is counted, not just printed: a child that
-	// misses protocol_contracts has its events dropped by the gate forever.
+	// The decoder hook upserts each observed child through the live indexer's persistence path, so the walk and live ingest converge.
+	// Failures are counted: a child missing from protocol_contracts has its events dropped by the gate forever.
 	seeded, failed := 0, 0
 	hook := func(childID, factoryID string, firstLedger uint32) {
 		if write {

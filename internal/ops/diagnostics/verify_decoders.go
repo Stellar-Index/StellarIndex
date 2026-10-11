@@ -33,14 +33,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// protocolContractsGatedSources are the curated-set decoders
-// (buildVerifyDispatcher) that also have an operator-admitted seam
-// in Postgres' protocol_contracts (see pipeline.GatedRegistryOptions).
-// verify-decoders defaults to the in-code curated set only — the tool
-// is documented as a dry harness with no Timescale dependency — so a
-// pool admitted only via protocol_contracts (not yet in the curated
-// set) looks falsely silent unless -seed-protocol-contracts unions it
-// in, mirroring production's gate.
+// protocolContractsGatedSources are curated-set decoders (buildVerifyDispatcher) that also admit contracts via protocol_contracts. verify-decoders defaults to the in-code set (no Timescale), so such a pool looks falsely silent unless -seed-protocol-contracts unions it in, as production's gate does.
 var protocolContractsGatedSources = []string{
 	aquarius.SourceName,
 	phoenix.SourceName,
@@ -50,12 +43,7 @@ var protocolContractsGatedSources = []string{
 	spectra.SourceName,
 }
 
-// loadProtocolContractSeeds unions protocol_contracts into the
-// curated-set decoders' gate over a short-lived connection, opened
-// and closed within this call — verify-decoders otherwise never
-// touches Postgres. Returns an error (fail closed) rather than a
-// silently empty seed, since a caller who asked for this coverage and
-// got none would draw the wrong conclusion from a clean run.
+// loadProtocolContractSeeds unions protocol_contracts into the curated-set gates over a short-lived connection. It fails closed rather than return an empty seed: a caller who asked for this coverage would misread a clean run.
 func loadProtocolContractSeeds(ctx context.Context, dsn string) (map[string][]string, error) {
 	if dsn == "" {
 		return nil, fmt.Errorf("-seed-protocol-contracts requires a postgres DSN (storage.postgres_dsn in -config)")
@@ -77,25 +65,8 @@ func loadProtocolContractSeeds(ctx context.Context, dsn string) (map[string][]st
 	return out, nil
 }
 
-// verifyDecoders streams a bounded ledger range from the configured
-// Galexie datastore through a Dispatcher wired with EVERY registered
-// decoder (regardless of cfg.Ingestion.EnabledSources), then prints
-// a per-source table of:
-//
-//	source | matched events | outputs emitted | first sample line
-//
-// This is a dry harness — no Timescale, no Redis, no cursor writes.
-// Useful for:
-//
-//   - Proving each decoder fires at least once over a recent window,
-//     which is the cheapest way to confirm live pubnet traffic
-//     matches the topic bytes + schema we compiled against.
-//   - Smoke-testing a decoder change: pick a historical range known
-//     to contain the source's events, verify outputs didn't regress.
-//
-// Oracle-variant decoders need their contract addresses in
-// cfg.Oracle; any variant with an empty address is skipped with a
-// warning rather than failing the whole run.
+// verifyDecoders streams a bounded range from the Galexie datastore through a Dispatcher with EVERY registered decoder and prints per source: matched events, outputs emitted, first sample line.
+// A dry harness (no Timescale, Redis or cursor writes). Oracle variants with an empty cfg.Oracle address are skipped with a warning.
 func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // linear diagnostic, splitting reduces readability
 	fs := flag.NewFlagSet("verify-decoders", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -160,13 +131,7 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 
 	fmt.Fprintf(os.Stderr, "verify-decoders: registered %d decoders: %s\n",
 		len(registered), strings.Join(registered, ", "))
-	// Seam-aware bucket choice with a -bucket escape hatch, shared with
-	// ch-backfill / census-backfill rather than
-	// re-derived. There was no flag at all here and the bucket was
-	// hardcoded to cfg.Storage.S3BucketLive, which is TRIMMED: pointing
-	// verify-decoders at a historic range read a prefix of it or none of
-	// it, and the table below then reported every decoder as silent —
-	// the exact conclusion an operator uses this command to reach.
+	// Seam-aware bucket choice with a -bucket escape hatch, shared with ch-backfill / census-backfill. The live bucket is TRIMMED, so a historic range would read a prefix or nothing and report every decoder as silent.
 	streamBucket, err := opsutil.ResolveStreamBucket(cfg, *bucket, uint32(*from), uint32(*to))
 	if err != nil {
 		return err
@@ -271,24 +236,14 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 		}
 	}
 
-	// Coverage last, so the operator keeps the full table, but non-zero
-	// so a short walk is never read as the verdict. Every
-	// number above — and above all the "emitted zero outputs" line, the
-	// single claim this command exists to make — describes the ledgers
-	// that were actually delivered. A walk that covered a fraction of
-	// the range reports the same silent decoders as a decoder that is
-	// genuinely broken.
+	// Coverage runs last so the operator keeps the table, but exits non-zero: a short walk reports the same silent decoders as a broken decoder, so the table is not a verdict on its own.
 	if err := verifyWalkCoverage(uint32(*from), uint32(*to), totalLedgers, streamBucket); err != nil {
 		return err
 	}
 	return silentVerdict("verify-decoders", "registered decoders", silent, len(registered), *failOnSilent)
 }
 
-// silentVerdict is verify-decoders' and verify-external's exit status
-// once the table is printed. Every member silent is always a failure —
-// nothing was verified; any member silent fails too under
-// -fail-on-silent. The stderr line above is for a human; this is the
-// only verdict a script or deploy gate can read.
+// silentVerdict is the exit status for verify-decoders and verify-external: all members silent always fails; any silent fails under -fail-on-silent. It is the only verdict a script or gate can read.
 func silentVerdict(cmd, what string, silent, total int, failOnSilent bool) error {
 	if err := opsutil.AssertNonVacuous(total-silent, total, what); err != nil {
 		return fmt.Errorf("%s: %w", cmd, err)
@@ -299,22 +254,8 @@ func silentVerdict(cmd, what string, silent, total int, failOnSilent bool) error
 	return nil
 }
 
-// verifyWalkCoverage turns a verify-decoders walk that did not deliver
-// its whole range into a hard error, naming the bucket it read.
-//
-// Same defect class as chops.walkCoverage / chops.backfillCoverage /
-// ingest.censusCoverage, reached here by the same two roads: the trimmed
-// live bucket cannot hold a historic range, and
-// opsutil.NewBoundedLedgerStreamConfig always sets
-// TolerateTrailingMissing, which converts the SDK's missing-object error
-// into a clean walk-complete for any hole within 65,536 ledgers of -to.
-// Either way ledgerstream.Stream returns nil and the per-source table is
-// simply computed over fewer ledgers.
-//
-// It fails closed rather than warning because this command's output is
-// consumed as an assertion — "decoder X fired / did not fire over
-// [from,to]" — and that assertion is worthless over an unknown subset.
-// Re-running is free: the command writes nothing.
+// verifyWalkCoverage turns a walk that did not deliver its whole range into a hard error naming the bucket (same defect class as chops.walkCoverage and ingest.censusCoverage).
+// The trimmed live bucket cannot hold a historic range, and TolerateTrailingMissing turns a missing object within 65,536 ledgers of -to into a clean finish. It fails closed because the output is consumed as an assertion, worthless over an unknown subset; re-running is free.
 func verifyWalkCoverage(from, to uint32, delivered int, bucket string) error {
 	requested := uint64(to) - uint64(from) + 1
 	if uint64(delivered) == requested {
@@ -334,14 +275,8 @@ func verifyWalkCoverage(from, to uint32, delivered int, bucket string) error {
 		delivered, requested, from, to, bucket)
 }
 
-// buildVerifyDispatcher wires every decoder we ship, returning the
-// dispatcher, the Soroswap decoder (so callers can seed it from the
-// factory RPC), and the list of source names that were actually
-// registered (oracle variants with an unset contract address are
-// skipped). protocolContractSeeds, when non-nil, unions each curated-
-// set decoder's protocol_contracts warm into its gate (see
-// loadProtocolContractSeeds); a nil/missing entry leaves the decoder
-// on its in-code curated set only, unchanged from before.
+// buildVerifyDispatcher wires every shipped decoder and returns the dispatcher, the Soroswap decoder (for factory-RPC seeding) and the registered source names (oracle variants with no address are skipped).
+// Non-nil protocolContractSeeds union into each curated decoder's gate (see loadProtocolContractSeeds); a missing entry leaves it on the in-code set.
 func buildVerifyDispatcher(oracle config.OracleConfig, protocolContractSeeds map[string][]string) (*dispatcher.Dispatcher, *soroswap.Decoder, []string) {
 	seedOpt := func(source string) contractid.Option {
 		return contractid.WithSeed(protocolContractSeeds[source])

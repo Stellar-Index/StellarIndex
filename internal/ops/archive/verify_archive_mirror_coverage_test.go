@@ -14,18 +14,8 @@ import (
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// The cross-anchor mirror is filled by its own periodic job, so
-// the newest checkpoints the LCM walk reaches have no mirror file yet
-// and never did. Measured on r1: the mirror holds
-// 1,007,807 of the 1,007,807 checkpoint files between ledger 63 and
-// its high-water 64,499,647 — no hole anywhere — while the nightly
-// tier-B run walked to 64,501,171 and logged `matched=325 missed=23`.
-// Every one of those 23 was a checkpoint ABOVE 64,499,647; the run
-// then advanced the checkpoint tier's high-water to 64,501,171,
-// certifying a span the anchor had never been asked about.
-//
-// These tests pin both halves: an absence beyond the mirror's span is
-// not a miss, and the high-water stops at what was anchored.
+// The cross-anchor mirror is filled by its own periodic job, so the newest checkpoints the walk reaches have no mirror file yet.
+// These tests pin that an absence beyond the mirror's span is not a miss, and the high-water stops at what was anchored.
 
 // mirrorFixture builds a history-archive mirror under a temp root
 // holding one gzipped XDR ledger-header file per checkpoint given,
@@ -260,10 +250,7 @@ func TestCheckpointAnchorReached_NothingAnchoredIsInconclusive(t *testing.T) {
 	}
 }
 
-// The fill job maintains ledger/ only, so history/ can stop far below
-// ledger/'s high-water. Tier D reads history/*.json: measuring its
-// coverage from ledger/ turned every unfilled history file into a "missed"
-// checkpoint and failed the weekly run.
+// TestPeerSelfTally_HistoryAbsenceAboveHistoryTreeIsUnmirrored: Tier D measures coverage from history/, not ledger/.
 func TestPeerSelfTally_HistoryAbsenceAboveHistoryTreeIsUnmirrored(t *testing.T) {
 	t.Parallel()
 	root := mirrorFixture(t, 127, 191, 255)

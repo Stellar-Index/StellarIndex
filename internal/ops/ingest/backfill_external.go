@@ -25,24 +25,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// externalInsertBudget bounds the DATABASE half of a backfill-external
-// run, separately from the venue-walk budget.
-//
-// One shared deadline over both halves would make a long walk
-// self-defeating: the fills endpoint is paced at one page per 1.1s, so a
-// multi-year pair walk spends hours in pagination and would then have
-// whatever is left — possibly nothing — to write tens of millions of rows
-// with. A walk that used its whole budget would discard every fill it
-// had just paid the venue rate limit to fetch. The insert loop gets its
-// own clock so salvage is possible at all.
+// externalInsertBudget bounds the DATABASE half of a backfill-external run
+// on its own clock: a shared deadline with the venue walk would let a
+// long paced walk leave nothing to write the fills it just paid to fetch.
 const externalInsertBudget = 12 * time.Hour
 
-// backfillExternal drives the Backfiller interface for one external
-// venue. Operator passes the venue-native symbol (the same shape
-// each venue's Streamer would subscribe with): "XLMUSDT" for
-// Binance, "XLM/USD" for Kraken, "xlmusd" for Bitstamp, "XLM-USD"
-// for Coinbase. Keeps the CLI surface honest to venue conventions
-// rather than inventing our own cross-venue normalisation.
+// backfillExternal drives the Backfiller interface for one external venue.
+// The operator passes the venue-native symbol ("XLMUSDT" Binance, "XLM/USD" Kraken, "xlmusd" Bitstamp, "XLM-USD" Coinbase).
 //
 //nolint:gocognit,gocyclo,funlen // ops-CLI subcommand: flag parsing + venue dispatch + insert-loop in one function is the most readable shape
 func backfillExternal(args []string) error {
@@ -180,12 +169,9 @@ func openBackfillStore(ctx context.Context, cfgPath string) (*timescale.Store, e
 	// (usd_volume et al.) and wins over the live gen-0 value.
 	store.SetDeriveGeneration(time.Now().Unix())
 
-	// Mirror the indexer's USD-volume wiring so an ops-driven backfill
-	// populates usd_volume exactly the way live ingest does. This MUST
-	// install every tier: combined with the positive derive_generation
-	// above, a store missing the FX resolver computes NULL and then wins
-	// the upsert, overwriting correct stored values. See
-	// InstallUSDVolumeResolution for the tiers.
+	// Mirror the indexer's USD-volume wiring. MUST install every tier: a
+	// store missing the FX resolver computes NULL and then wins the upsert,
+	// overwriting correct stored values. See InstallUSDVolumeResolution.
 	if err := timescale.InstallUSDVolumeResolution(
 		store,
 		cfg.Trades.USDPeggedClassicAssets,
@@ -197,11 +183,8 @@ func openBackfillStore(ctx context.Context, cfgPath string) (*timescale.Store, e
 	return store, nil
 }
 
-// dropUnsettledCandles keeps only candle trades whose bar closed before
-// min(to, now): venues return their still-open bar and bars straddling
-// -to, and each connector stamps a candle at its last instant (close-1s,
-// or close-1ms for binance). Truncating the cutoff to the second makes
-// "stamp < cutoff" mean "bar end <= cutoff" at either resolution.
+// dropUnsettledCandles keeps only candle trades whose bar closed before min(to, now).
+// Candles are stamped at their last instant (close-1s, or close-1ms for binance), so truncating the cutoff to the second makes "stamp < cutoff" mean "bar end <= cutoff".
 func dropUnsettledCandles(trades []canonical.Trade, to, now time.Time) ([]canonical.Trade, int) {
 	cutoff := to
 	if now.Before(cutoff) {
@@ -217,18 +200,8 @@ func dropUnsettledCandles(trades []canonical.Trade, to, now time.Time) ([]canoni
 	return kept, len(trades) - len(kept)
 }
 
-// partialFetchResume reports whether a venue walk that ended early —
-// on context expiry, or on hitting a venue's historical-depth horizon
-// (externalkraken.ErrDepthExceeded) — still handed back usable fills,
-// and the instant a follow-up run should resume from.
-//
-// The venue walkers page forward in time and return what they have
-// alongside the error, so an expired budget or an exceeded depth horizon
-// is a stopping point, not a corruption: the fills already fetched are
-// as good as any others. The high-water timestamp is the resume cursor —
-// inserts are idempotent (ON CONFLICT), so re-running from it costs at
-// most one duplicate page. Any other error is a real fault and must not
-// be salvaged.
+// partialFetchResume reports whether a venue walk that ended early (context expiry or ErrDepthExceeded) still returned usable fills, and the instant to resume from.
+// The high-water timestamp is the cursor; inserts are idempotent (ON CONFLICT), so a re-run costs at most one duplicate page. Any other error is a real fault and must not be salvaged.
 func partialFetchResume(trades []canonical.Trade, err error) (time.Time, bool) {
 	if err == nil || len(trades) == 0 {
 		return time.Time{}, false
@@ -266,15 +239,8 @@ type storedTradeProbe interface {
 	EarliestTradeInWindow(ctx context.Context, source string, pair canonical.Pair, from, to time.Time) (time.Time, bool, error)
 }
 
-// refuseStoredOverlap refuses a window that already holds trades for
-// (source, pair). An off-chain row's identity is its synthesised tx_hash
-// plus ts. A candle has no venue trade id, so it never matches a live row;
-// a kraken raw fill shares the streamer's tx_hash, but its REST ts is not
-// proven to equal the streamed ts at the stored microsecond. Writing over
-// live rows would double-count their volume with no VWAP, outlier or
-// divergence guard to notice. Any stored row
-// refuses, not only live ones: the tool cannot tell a row it wrote
-// itself from one it did not, and -allow-overlap covers its own re-runs.
+// refuseStoredOverlap refuses a window that already holds trades for (source, pair).
+// Writing over live rows would double-count volume with no VWAP, outlier or divergence guard; any stored row refuses because the tool cannot tell its own rows from others, and -allow-overlap covers its own re-runs.
 func refuseStoredOverlap(ctx context.Context, probe storedTradeProbe, source string, pair canonical.Pair, from, to time.Time) error {
 	first, found, err := probe.EarliestTradeInWindow(ctx, source, pair, from, to)
 	if err != nil {
@@ -298,12 +264,8 @@ type foreignTradeProbe interface {
 	TradesInWindowOutside(ctx context.Context, source string, pair canonical.Pair, from, to time.Time, keep []canonical.Trade) (int64, time.Time, error)
 }
 
-// refuseForeignRows bounds -allow-overlap to what it is for: re-running a
-// window this command wrote at the same granularity, where every stored
-// row is one the run upserts. A stored row outside the run's identities
-// (another granularity, the live stream, or a candle written before
-// granularity was part of its identity) would sit beside the new rows and
-// double the window's volume, so the write is refused.
+// refuseForeignRows bounds -allow-overlap to re-running a window this command wrote at the same granularity.
+// A stored row outside the run's identities would sit beside the new rows and double the window's volume, so the write is refused.
 func refuseForeignRows(ctx context.Context, probe foreignTradeProbe, source string, pair canonical.Pair, from, to time.Time, trades []canonical.Trade) error {
 	n, first, err := probe.TradesInWindowOutside(ctx, source, pair, from, to, trades)
 	if err != nil {
@@ -404,15 +366,8 @@ func backfillKrakenRawTrades(kr *externalkraken.Streamer, pair canonical.Pair, f
 	}, os.Stderr)
 }
 
-// walkWindowed fetches [from, to) window by window and hands each window
-// to sink before fetching the next. Every window before the one that
-// stops the walk is fully written, so resuming at the stopping window's
-// start skips nothing and re-fetches at most one window. The partial
-// fills that window's walk returned are discarded: writing them would put
-// rows inside the resume range, which refuseStoredOverlap then blocks
-// unless the operator disables the overlap guard for the rest. A per-row
-// write fault does not stop the walk (the rows are already logged and
-// lost) but keeps the exit non-zero; an infra write fault stops it.
+// walkWindowed fetches [from, to) window by window, handing each to sink before the next.
+// The stopping window's partial fills are discarded (writing them would trip refuseStoredOverlap on resume). A per-row write fault keeps the exit non-zero without stopping; an infra write fault stops the walk.
 func walkWindowed(ctx context.Context, plan windowPlan, from, to time.Time, fetch windowFetch, sink windowSink, log io.Writer) error {
 	var (
 		written int
@@ -517,15 +472,8 @@ const backfillInsertChunk = 1000
 
 type insertTally struct{ inserted, skipped int }
 
-// insertBackfilledTrades is the DB-seamed core of the insert loop: an
-// infra fault (DB unreachable/restarting/out of capacity) affects every
-// remaining insert identically, so looping through the rest and counting
-// each as "skipped" would misreport a total write outage as a pile of
-// per-row data faults and still exit 0 — it aborts immediately instead,
-// so the operator sees ONE clear error and can re-run once the DB
-// recovers. A per-row data fault is skipped and logged, but ANY skip
-// makes the command return a non-nil error: a dropped row has no
-// dead-letter, so "some rows didn't make it" must never exit 0.
+// insertBackfilledTrades is the DB-seamed core of the insert loop.
+// An infra fault aborts immediately (it hits every insert, so counting skips would misreport an outage as data faults); a per-row fault is skipped and logged, but any skip returns non-nil because a dropped row has no dead-letter.
 func insertBackfilledTrades(ctx context.Context, store tradeInserter, trades []canonical.Trade, progressEvery int, log io.Writer, t0 time.Time) error {
 	var n insertTally
 	for start := 0; start < len(trades); start += backfillInsertChunk {
@@ -546,11 +494,8 @@ func insertBackfilledTrades(ctx context.Context, store tradeInserter, trades []c
 	}.Err()
 }
 
-// insertBackfillChunk writes trades[start:end] in one batch. Rows Validate
-// rejects go through InsertTrade instead: BatchInsertTrades drops them
-// without an error, and a dropped row must fail the run. A non-infra batch
-// fault is retried row by row to isolate the bad row; the inserts are
-// idempotent on their conflict key, so the retry cannot double-write.
+// insertBackfillChunk writes trades[start:end] in one batch. Rows Validate rejects go through InsertTrade
+// because BatchInsertTrades drops them silently; a non-infra batch fault is retried row by row (inserts are idempotent).
 func insertBackfillChunk(ctx context.Context, store tradeInserter, trades []canonical.Trade, start, end int, n *insertTally, log io.Writer) error {
 	valid := make([]canonical.Trade, 0, end-start)
 	var rowByRow []int
@@ -595,11 +540,7 @@ func infraAbortError(trades []canonical.Trade, i int, n insertTally, err error) 
 		i, len(trades), trades[i].TxHash, n.inserted, n.skipped, len(trades)-i, err)
 }
 
-// buildBackfiller maps the -source flag to the venue's Backfiller
-// implementation. Each venue's DefaultPairs is consulted to resolve
-// the venue-native symbol into a canonical.Pair. Unknown sources or
-// unconfigured pairs return a clear error rather than a generic
-// "not in map".
+// buildBackfiller maps the -source flag to the venue's Backfiller, resolving the venue-native symbol via DefaultPairs; unknown sources or pairs return a clear error.
 func buildBackfiller(source, symbol string) (external.Backfiller, canonical.Pair, error) {
 	switch source {
 	case externalbinance.SourceName:

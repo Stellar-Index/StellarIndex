@@ -7,12 +7,7 @@ import (
 	"testing"
 )
 
-// writeArchiveConfig drops a minimal, otherwise-valid stellarindex.toml
-// (everything else falls back to config.Default(), which validates) with
-// a KNOWN-GOOD postgres DSN in the file so a bare config.Load() accepts
-// it. Cold tiering is left off (no s3_cold_bucket_archive) so the trim /
-// rehydrate commands stop at the ColdTieringEnabled gate before any
-// network I/O.
+// writeArchiveConfig writes a minimal valid stellarindex.toml with a known-good postgres DSN and cold tiering off, so commands stop at the ColdTieringEnabled gate before network I/O.
 func writeArchiveConfig(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -27,16 +22,7 @@ postgres_dsn = "postgres://good:good@localhost/stellarindex?sslmode=disable"
 	return path
 }
 
-// TestTrimGalexieArchive_HonorsEnvOverride proves the trim command loads
-// config via LoadWithEnv (Load + ApplyEnvOverrides + re-Validate), not
-// bare config.Load. We inject a DELIBERATELY INVALID
-// STELLARINDEX_POSTGRES_DSN override: only a code path that APPLIES the
-// override and re-validates surfaces the postgres_dsn error. A bare
-// config.Load ignores the override entirely — the file DSN is valid, so
-// it sails past config load and fails later at the ColdTieringEnabled
-// gate with a completely different ("cold tier not configured") error,
-// never mentioning postgres_dsn. So this assertion is red on the
-// code that ignores the override and green after.
+// TestTrimGalexieArchive_HonorsEnvOverride proves trim loads config via LoadWithEnv: an invalid STELLARINDEX_POSTGRES_DSN override must surface a postgres_dsn error, which bare config.Load would ignore.
 func TestTrimGalexieArchive_HonorsEnvOverride(t *testing.T) {
 	cfgPath := writeArchiveConfig(t)
 	t.Setenv("STELLARINDEX_POSTGRES_DSN", "mysql://injected-but-invalid")
@@ -56,9 +42,7 @@ func TestTrimGalexieArchive_HonorsEnvOverride(t *testing.T) {
 	}
 }
 
-// TestRehydrateGalexieArchive_HonorsEnvOverride is the rehydrate-command
-// twin of the trim test above — same red→green logic on the same
-// invalid-DSN-override signal.
+// TestRehydrateGalexieArchive_HonorsEnvOverride is the rehydrate twin of the trim test above.
 func TestRehydrateGalexieArchive_HonorsEnvOverride(t *testing.T) {
 	cfgPath := writeArchiveConfig(t)
 	t.Setenv("STELLARINDEX_POSTGRES_DSN", "mysql://injected-but-invalid")

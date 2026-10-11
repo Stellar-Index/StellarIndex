@@ -9,9 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestSupplySeedSACBalances_AcceptsTimeout pins the -timeout flag: the
-// full-history pass writes only after the whole lake scan, so its deadline must
-// be operator-settable rather than a fixed budget that silently loses the pass.
+// TestSupplySeedSACBalances_AcceptsTimeout pins -timeout: the full-history pass writes only after the whole scan, so its deadline must be operator-settable.
 func TestSupplySeedSACBalances_AcceptsTimeout(t *testing.T) {
 	err := supplySeedSACBalances([]string{"-timeout", "20h"})
 	if err == nil || err.Error() != "-config is required" {
@@ -19,11 +17,7 @@ func TestSupplySeedSACBalances_AcceptsTimeout(t *testing.T) {
 	}
 }
 
-// TestSacSeedTally_ObserveTracksMinMaxLedger covers the min/max-ledger
-// bookkeeping that feeds sac_balance_seed_provenance.min_ledger_seen /
-// max_ledger_seen (migration 0102) — the evidence that a -full-history
-// pass actually reached below the ~62M current-state floor, not just a
-// source-label claim.
+// TestSacSeedTally_ObserveTracksMinMaxLedger covers the min/max-ledger bookkeeping behind sac_balance_seed_provenance, the evidence a -full-history pass reached below the current-state floor.
 func TestSacSeedTally_ObserveTracksMinMaxLedger(t *testing.T) {
 	tally := &sacSeedTally{}
 	if tally.haveLedgerBounds {
@@ -63,9 +57,7 @@ func TestSacSeedTally_ObserveTracksMinMaxLedger(t *testing.T) {
 	}
 }
 
-// TestSacSeedTally_TombstonesAreNotHolders — a retraction tombstone is counted
-// apart: it must not inflate holders_seeded, the summed balance, or the
-// min/max_ledger_seen provenance bounds.
+// TestSacSeedTally_TombstonesAreNotHolders: retraction tombstones must not inflate holders_seeded, the balance sum or the provenance bounds.
 func TestSacSeedTally_TombstonesAreNotHolders(t *testing.T) {
 	tally := &sacSeedTally{sum: big.NewInt(0)}
 	tally.add(clickhouse.SACBalanceSeed{Balance: big.NewInt(250), LedgerSeq: 50_000_000})
@@ -86,8 +78,7 @@ func TestSacSeedTally_TombstonesAreNotHolders(t *testing.T) {
 	}
 }
 
-// TestUnmatchedSACWrappersErr — a watched wrapper that matched no Balance key
-// fails the pass by name; one whose keys were all retracted did match.
+// TestUnmatchedSACWrappersErr: a watched wrapper matching no Balance key fails the pass by name; one fully retracted did match.
 func TestUnmatchedSACWrappersErr(t *testing.T) {
 	watched := map[string]string{"CLIVE": "LIVE:G1", "CGONE": "GONE:G2", "CNONE": "NONE:G3"}
 	tallies := map[string]*sacSeedTally{
@@ -108,9 +99,7 @@ func TestUnmatchedSACWrappersErr(t *testing.T) {
 	}
 }
 
-// TestCheckSACSeedShrink — a re-seed over a shrunken key-set must not
-// overwrite provenance: holders the previous same-source pass seeded that this
-// pass neither re-seeds nor retracts keep serving their old balance.
+// TestCheckSACSeedShrink: a re-seed over a shrunken key-set must not overwrite provenance for holders it neither re-seeds nor retracts.
 func TestCheckSACSeedShrink(t *testing.T) {
 	full := timescale.SACBalanceSeedSourceFullHistory
 	prev := timescale.SACBalanceSeedProvenance{ContractID: "CPHO", Source: full, HoldersSeeded: 45}
@@ -130,10 +119,7 @@ func TestCheckSACSeedShrink(t *testing.T) {
 	}
 }
 
-// TestSACSeedProvenance_FullHistoryNeedsLakeEvidence — the
-// full_history stamp comes from what the walk proved, not from -full-history.
-// A pass with no lake verification stamps nothing; a verified one records the
-// ledger it was verified through and its retractions.
+// TestSACSeedProvenance_FullHistoryNeedsLakeEvidence: the full_history stamp comes from lake verification, not from -full-history.
 func TestSACSeedProvenance_FullHistoryNeedsLakeEvidence(t *testing.T) {
 	full := timescale.SACBalanceSeedSourceFullHistory
 	tally := &sacSeedTally{holders: 6, retracted: 39, sum: big.NewInt(1)}

@@ -22,19 +22,7 @@ import (
 // hash-only tests but must be SOMETHING the SDK accepts.
 const testPassphrase = "Test SDF Network ; September 2015"
 
-// TestRunVerifyChunks_FilesystemBackend_ParallelWalk drives the
-// chunked verify path end-to-end against a real filesystem-backed
-// datastore (no MinIO testcontainer needed). Verifies:
-//
-//   - 8 chunks each see their slice of the ledger range
-//   - per-chunk Verified counters sum to the input range
-//   - boundary stitch passes (FirstPrevHash / LastHash continuity)
-//   - chain check internal to each chunk reports zero mismatches
-//
-// Empty ledgers all carry zero hashes; PreviousLedgerHash on each
-// is the zero hash too — so the chain check holds trivially. This
-// test exercises the parallel control flow + stitch math without
-// needing realistic XDR to be hand-rolled.
+// TestRunVerifyChunks_FilesystemBackend_ParallelWalk drives the chunked verify end-to-end on a filesystem datastore (8 chunks, Verified sums, stitch and chain checks pass).
 func TestRunVerifyChunks_FilesystemBackend_ParallelWalk(t *testing.T) {
 	const (
 		from    = uint32(100)
@@ -100,10 +88,7 @@ func TestRunVerifyChunks_FilesystemBackend_ParallelWalk(t *testing.T) {
 	}
 }
 
-// TestRunVerifyChunks_FilesystemBackend_SerialPath confirms the
-// same fixture works on the workers=1 path. Regression guard: a
-// future change to splitRange that broke the single-chunk degenerate
-// case would surface here, not just via the parallel test.
+// TestRunVerifyChunks_FilesystemBackend_SerialPath confirms the workers=1 single-chunk path on the same fixture.
 func TestRunVerifyChunks_FilesystemBackend_SerialPath(t *testing.T) {
 	const (
 		from = uint32(200)
@@ -141,11 +126,7 @@ func TestRunVerifyChunks_FilesystemBackend_SerialPath(t *testing.T) {
 	}
 }
 
-// TestRunVerifyChunks_CheckpointOnly_StillDetectsChainBreak is the
-// regression: a checkpoint-only run (Tier B, the nightly —
-// doCheckpoint=true, no "chain" tier requested) skipped the
-// internal sequence/hash continuity check entirely, because the check was
-// gated on a separate doChain flag. A hash break planted mid-chunk must still be caught.
+// TestRunVerifyChunks_CheckpointOnly_StillDetectsChainBreak: a checkpoint-only run (no "chain" tier) must still catch a mid-chunk hash break.
 func TestRunVerifyChunks_CheckpointOnly_StillDetectsChainBreak(t *testing.T) {
 	const (
 		from = uint32(300)
@@ -197,14 +178,8 @@ func filesystemLedgerstreamConfig(dir string) ledgerstream.Config {
 	}
 }
 
-// seedEmptyLedgers writes valid-but-empty xdr.LedgerCloseMeta values
-// to the filesystem datastore at `dir`. Each ledger has the right
-// LedgerSeq + an empty TxSet; PreviousLedgerHash + Hash default to
-// zero — the chain check passes trivially because zero == zero.
-//
-// Mirrored from test/integration/projector_test.go for
-// the same reason filesystemLedgerstreamConfig is duplicated: keeps
-// this test file self-contained inside cmd/stellarindex-ops.
+// seedEmptyLedgers writes valid empty LedgerCloseMeta values (right LedgerSeq, zero hashes, so the chain
+// check passes trivially) to the filesystem datastore at dir; duplicated from test/integration to stay self-contained.
 func seedEmptyLedgers(t *testing.T, ctx context.Context, dir string, seqs []uint32) { //nolint:revive // ctx-second matches the test/integration helper signature
 	t.Helper()
 	store, err := datastore.NewFilesystemDataStoreWithPath(dir)
@@ -254,11 +229,7 @@ func seedEmptyLedgers(t *testing.T, ctx context.Context, dir string, seqs []uint
 	}
 }
 
-// seedLedgersWithBrokenChain is seedEmptyLedgers with one ledger's
-// PreviousLedgerHash set to a non-zero value that does not match its
-// predecessor's (zero) hash — a planted chain break proves
-// the internal sequence/hash check still fires when it runs outside
-// the "chain" tier.
+// seedLedgersWithBrokenChain is seedEmptyLedgers with one ledger's PreviousLedgerHash non-matching, proving the continuity check fires outside the "chain" tier.
 func seedLedgersWithBrokenChain(t *testing.T, ctx context.Context, dir string, seqs []uint32, brokenSeq uint32) { //nolint:revive // ctx-second matches seedEmptyLedgers
 	t.Helper()
 	store, err := datastore.NewFilesystemDataStoreWithPath(dir)

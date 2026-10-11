@@ -34,11 +34,7 @@ func archiveCompleteness(args []string) error {
 	}
 }
 
-// archiveCompletenessVerifyOpts is archive-completeness verify's parsed
-// flags (parseArchiveCompletenessVerifyFlags), factored out so a unit
-// file's rendered ExecStart argv can be proven parseable — and its
-// resolved values inspectable — without running the check/fill/report
-// phases (mirrors parseTrimFlags).
+// archiveCompletenessVerifyOpts holds the parsed flags of archive-completeness verify, so a unit file's ExecStart argv can be proven parseable without running the phases.
 type archiveCompletenessVerifyOpts struct {
 	archiveRoot    string
 	from, to       uint32
@@ -51,11 +47,7 @@ type archiveCompletenessVerifyOpts struct {
 	gate           *opsutil.WriteGate
 }
 
-// parseArchiveCompletenessVerifyFlags parses and validates archive-completeness
-// verify's flags. -to has no usable zero value: unlike verify-archive's
-// -to (0 = unbounded/live is a real mode), a verify with no upper bound
-// would silently check nothing, so 0 is refused rather than defaulted —
-// see the ExecStartPre-computed ARCHIVE_TO wiring on the systemd units.
+// parseArchiveCompletenessVerifyFlags parses and validates the verify flags. -to has no usable zero value (a verify with no upper bound checks nothing), so 0 is refused.
 func parseArchiveCompletenessVerifyFlags(args []string) (archiveCompletenessVerifyOpts, error) {
 	fs := flag.NewFlagSet("archive-completeness verify", flag.ContinueOnError)
 	archiveRoot := fs.String("archive-root", "/srv/history-archive",
@@ -108,22 +100,8 @@ func ledgerRangeUint32(from, to uint) (uint32, uint32, error) {
 	return uint32(from), uint32(to), nil
 }
 
-// archiveCompletenessVerify is the daily-cron mode: runs check →
-// fix → re-check, then emits a Prometheus textfile for
-// node_exporter's textfile_collector to scrape. Also writes the
-// JSON Report.
-//
-// This is the canonical command the systemd timer fires:
-//
-//	stellarindex-ops archive-completeness verify \
-//	  -from 2 -to <network_head> \
-//	  -textfile-output /var/lib/node_exporter/textfile_collector/archive_completeness.prom \
-//	  -output-file /var/lib/galexie/last-completeness-report.json
-//
-// Exit semantics:
-//   - 0: clean (no missing files after fix)
-//   - 1: residual missing files (fallback chain exhausted some)
-//   - other: I/O error
+// archiveCompletenessVerify is the daily-cron mode: check, fix, re-check, then write a Prometheus textfile and the JSON Report.
+// Exit 0: clean; 1: residual missing files after the fallback chain; other: I/O error.
 func archiveCompletenessVerify(args []string) error {
 	opts, err := parseArchiveCompletenessVerifyFlags(args)
 	if err != nil {
@@ -167,16 +145,8 @@ func archiveCompletenessVerify(args []string) error {
 	}
 	report.SetCrossAnchor(opts.archiveRoot, postRes)
 
-	// Populate metrics. LastSuccessTimestamp is set ONLY when the
-	// state after the fill is clean AND non-vacuous — alert rules rely on
-	// this gauge going stale when something's wrong, and a range that
-	// contained no checkpoint position at all verified nothing, so it
-	// must not stamp success either.
-	//
-	// Leaving it zero here does NOT drop the series: WriteTextfileAtomic
-	// re-reads the previous textfile and carries the last clean run's
-	// timestamp (and the repair counters) forward, so the staleness
-	// alert keeps evaluating while the failure persists.
+	// Set LastSuccessTimestamp ONLY when the post-fill state is clean AND non-vacuous (a range with no checkpoint verified nothing); alerts rely on the gauge going stale.
+	// Leaving it zero does not drop the series: WriteTextfileAtomic carries the last clean run's timestamp forward.
 	snapshot.PopulateFromReport(report)
 	snapshot.PopulateFromFillResult(fillRes)
 	snapshot.RunDurationSeconds = time.Since(startedAt).Seconds()
@@ -240,11 +210,8 @@ func archiveCompletenessVerifyFill(ctx context.Context, write bool, missing []ui
 		// Nothing to fix.
 		return archivecompleteness.FillResult{}, nil
 	case !write:
-		// This is the mode the systemd timer fires, unattended,
-		// with no preview and no confirmation — a stale -archive-root
-		// default or a mis-templated mount would get checkpoints fetched and
-		// chowned into the wrong tree with nobody looking. Fail-closed
-		// DRY RUN by default; the shipped systemd units pass -write.
+		// This mode runs unattended from the systemd timer with no preview, so a stale -archive-root or bad mount would fetch into the wrong tree.
+		// Fail-closed DRY RUN by default; the shipped units pass -write.
 		fmt.Fprintf(os.Stderr,
 			"archive-completeness verify: DRY RUN — %d missing checkpoint(s) found, not fixed (pass -write to apply)\n",
 			len(missing))
@@ -268,15 +235,8 @@ func archiveCompletenessVerifyFill(ctx context.Context, write bool, missing []ui
 	}
 }
 
-// archiveCompletenessFix runs the `check` then fetches every
-// missing checkpoint via the multi-source fallback chain. Read-
-// then-write — does NOT mutate either archive without first
-// confirming the file is missing.
-//
-// Exit semantics:
-//   - 0: every missing file has been placed
-//   - 1: some files still missing after exhausting the chain
-//   - other: I/O / config error
+// archiveCompletenessFix runs check, then fetches every missing checkpoint via the multi-source fallback chain; it mutates nothing until a file is confirmed missing.
+// Exit 0: all placed; 1: some still missing; other: I/O or config error.
 func archiveCompletenessFix(args []string) error {
 	fs := flag.NewFlagSet("archive-completeness fix", flag.ContinueOnError)
 	archiveRoot := fs.String("archive-root", "/srv/history-archive",
@@ -337,11 +297,8 @@ func archiveCompletenessFix(args []string) error {
 		return writeReport(report, *outputFile)
 	}
 	if !write {
-		// The fill HTTP-fetches and runs os.Create/os.Rename/os.Chown into
-		// -archive-root with no preview and no confirmation — a stale
-		// -archive-root default or a mis-templated mount would get checkpoints
-		// written into the wrong tree with nobody looking. Fail-closed
-		// DRY RUN by default.
+		// The fill HTTP-fetches and writes into -archive-root with no preview, so a stale default or mis-templated mount would write into the wrong tree unseen.
+		// Fail-closed DRY RUN by default.
 		fmt.Fprintf(os.Stderr,
 			"archive-completeness fix: DRY RUN — %d missing checkpoint(s) would be fetched via the fallback chain (pass -write to apply)\n",
 			len(res.Missing))
@@ -411,14 +368,8 @@ func writeReport(report *archivecompleteness.Report, outputFile string) error {
 	return report.WriteJSON(w)
 }
 
-// archiveCompletenessCheck implements the read-only `check` mode.
-// Walks the cross-anchor archive only (the Primary section stays
-// nil) and emits a JSON [archivecompleteness.Report].
-//
-// Exit semantics:
-//   - 0: every section clean (no missing files in scope)
-//   - 1: at least one section reported missing files
-//   - other: I/O / config error before scan completed
+// archiveCompletenessCheck is the read-only `check` mode: walks the cross-anchor archive and emits a JSON [archivecompleteness.Report].
+// Exit 0: clean; 1: missing files in some section; other: I/O or config error.
 func archiveCompletenessCheck(args []string) error {
 	fs := flag.NewFlagSet("archive-completeness check", flag.ContinueOnError)
 	archiveRoot := fs.String("archive-root", "/srv/history-archive",

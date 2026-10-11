@@ -43,8 +43,7 @@ func auditMeta(t *testing.T, e platform.AuditEntry) map[string]any {
 	return m
 }
 
-// A CLI mint lands the same durable key.mint row the HTTP path writes:
-// staff actor, the minted key as target, who, why, and what was granted.
+// TestRunMintKey_RecordsAuditRow: a CLI mint writes the same durable key.mint row as the HTTP path (staff actor, target, who, why, grants).
 func TestRunMintKey_RecordsAuditRow(t *testing.T) {
 	ctx := context.Background()
 	store := newKeyTestStore(t)
@@ -75,8 +74,7 @@ func TestRunMintKey_RecordsAuditRow(t *testing.T) {
 	}
 }
 
-// No record, no credential: a mint whose audit row fails is revoked and
-// its plaintext never returned.
+// TestRunMintKey_AuditFailureRevokesKey: no record, no credential; a mint whose audit row fails is revoked and its plaintext never returned.
 func TestRunMintKey_AuditFailureRevokesKey(t *testing.T) {
 	ctx := context.Background()
 	store := newKeyTestStore(t)
@@ -97,8 +95,7 @@ func TestRunMintKey_AuditFailureRevokesKey(t *testing.T) {
 	}
 }
 
-// upgrade-key records the old and new budget; a failed audit row rolls the
-// budget back.
+// TestRunUpgradeKey_AuditsAndRollsBack: upgrade-key records old and new budget, and a failed audit row rolls the budget back.
 func TestRunUpgradeKey_AuditsAndRollsBack(t *testing.T) {
 	ctx := context.Background()
 	store := newKeyTestStore(t)

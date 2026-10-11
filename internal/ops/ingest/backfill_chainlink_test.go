@@ -36,10 +36,7 @@ func runChainlinkDrain(t *testing.T, store *failingOracleStore, walk error, dryR
 	return drainChainlinkUpdates(context.Background(), updates, walkErr, store, dryRun, 0, time.Now())
 }
 
-// TestDrainChainlinkUpdates_DroppedRoundFailsTheRun: a round the writer
-// rejects is counted and logged, but the run must not exit 0 on a clean
-// walk — the command is idempotent by tx hash, so a zero exit over dropped
-// rounds is never re-run.
+// TestDrainChainlinkUpdates_DroppedRoundFailsTheRun: a rejected round must fail the run, since the command is idempotent by tx hash and a zero exit is never re-run.
 func TestDrainChainlinkUpdates_DroppedRoundFailsTheRun(t *testing.T) {
 	t.Parallel()
 	store := &failingOracleStore{fail: map[string]bool{"b": true}}
@@ -55,8 +52,7 @@ func TestDrainChainlinkUpdates_DroppedRoundFailsTheRun(t *testing.T) {
 	}
 }
 
-// TestDrainChainlinkUpdates_KeepsWalkError: the venue walk's own error must
-// survive alongside the row accounting.
+// TestDrainChainlinkUpdates_KeepsWalkError: the venue walk's own error survives alongside the row accounting.
 func TestDrainChainlinkUpdates_KeepsWalkError(t *testing.T) {
 	t.Parallel()
 	walk := errors.New("eth_getLogs: 429")

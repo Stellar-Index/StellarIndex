@@ -42,11 +42,7 @@ func (f *fakeProjectorCursor) GetCursor(_ context.Context, _, _ string) (timesca
 	return timescale.Cursor{LastLedger: f.ledgers[i]}, nil
 }
 
-// TestAwaitProjectorCursor_ReturnsOnlyOnceTheRangeIsReWalked: the
-// post-replay CAGG refresh must not run against rows the projector has
-// not written yet. A refresh over an un-re-projected range SUCCEEDS and
-// materializes the short answer — worse than no refresh, because it
-// leaves a green run to point at.
+// TestAwaitProjectorCursor_ReturnsOnlyOnceTheRangeIsReWalked: the CAGG refresh must not run over rows not yet re-projected.
 func TestAwaitProjectorCursor_ReturnsOnlyOnceTheRangeIsReWalked(t *testing.T) {
 	f := &fakeProjectorCursor{ledgers: []uint32{60_000_000, 62_000_000, 63_500_000}}
 	if err := awaitProjectorCursor(context.Background(), discardLogger(), f, "cctp", 63_500_000, 30*time.Second, time.Millisecond); err != nil {
@@ -57,10 +53,7 @@ func TestAwaitProjectorCursor_ReturnsOnlyOnceTheRangeIsReWalked(t *testing.T) {
 	}
 }
 
-// A projector that never catches up must FAIL the command, naming the
-// range left unmaterialized. The rewind is durable by then, so a silent
-// return would leave every OHLC/VWAP read short over the replayed range
-// with nothing saying so.
+// TestAwaitProjectorCursor_TimeoutFailsLoudly: a projector that never catches up must fail, naming the unmaterialized range.
 func TestAwaitProjectorCursor_TimeoutFailsLoudly(t *testing.T) {
 	f := &fakeProjectorCursor{ledgers: []uint32{60_000_000}}
 	err := awaitProjectorCursor(context.Background(), discardLogger(), f, "cctp", 63_500_000, 10*time.Millisecond, time.Millisecond)
@@ -116,9 +109,7 @@ func (f *fakeReplayStore) RefreshContinuousAggregate(_ context.Context, name str
 	return nil
 }
 
-// TestRematerializeReplayedRange_RefreshesEveryViewOverTheReplayedRange:
-// once the projector is back at the pre-rewind ledger, the tail refreshes
-// every long-lived price CAGG over exactly the replayed ledger range.
+// TestRematerializeReplayedRange_RefreshesEveryViewOverTheReplayedRange: every long-lived price CAGG is refreshed over exactly the replayed range.
 func TestRematerializeReplayedRange_RefreshesEveryViewOverTheReplayedRange(t *testing.T) {
 	f := &fakeReplayStore{fakeProjectorCursor: fakeProjectorCursor{ledgers: []uint32{63_500_000}}}
 	replayed := chunkRange{from: 62_000_000, to: 63_500_000}
@@ -136,10 +127,7 @@ func TestRematerializeReplayedRange_RefreshesEveryViewOverTheReplayedRange(t *te
 	}
 }
 
-// TestRematerializeReplayedRange_NeverRefreshesAheadOfTheProjector: a
-// projector still short of the pre-rewind ledger when the budget runs out
-// is an ERROR, and no view is refreshed — a refresh over rows not yet
-// re-projected succeeds and materializes the short answer.
+// TestRematerializeReplayedRange_NeverRefreshesAheadOfTheProjector: a projector still short at timeout is an ERROR and no view is refreshed.
 func TestRematerializeReplayedRange_NeverRefreshesAheadOfTheProjector(t *testing.T) {
 	f := &fakeReplayStore{fakeProjectorCursor: fakeProjectorCursor{ledgers: []uint32{62_400_000}}}
 	err := rematerializeReplayedRange(io.Discard, discardLogger(), f, "cctp",
@@ -156,9 +144,7 @@ func TestRematerializeReplayedRange_NeverRefreshesAheadOfTheProjector(t *testing
 	}
 }
 
-// TestRematerializeReplayedRange_OptOutsTouchNothing: -refresh-caggs=false
-// and -wait=false both return nil without reading the cursor or
-// refreshing a view; the rewind they follow is already durable.
+// TestRematerializeReplayedRange_OptOutsTouchNothing: -refresh-caggs=false and -wait=false return nil without reading the cursor or refreshing.
 func TestRematerializeReplayedRange_OptOutsTouchNothing(t *testing.T) {
 	for name, opts := range map[string]replayFollowUp{
 		"-refresh-caggs=false": {refreshCAGGs: false, wait: true, waitTimeout: time.Minute},
@@ -174,13 +160,7 @@ func TestRematerializeReplayedRange_OptOutsTouchNothing(t *testing.T) {
 	}
 }
 
-// On a -wait-timeout, the recovery advice must not be
-// "re-run with the same -from" — a re-run recomputes the rewind target
-// from the now partially-advanced cursor and rewinds+re-walks the whole
-// range again, never refreshing the gap between the first run's partial
-// progress and its original pre-rewind cursor. The advice must instead
-// point at the refresh-only recovery path, which refreshes CAGGs over an
-// explicit range without touching the cursor.
+// TestAwaitProjectorCursor_TimeoutAdvisesRefreshOnly_NotPlainRerun: timeout advice must name the refresh-only path, since re-running -from re-walks from the advanced cursor and never refreshes the gap.
 func TestAwaitProjectorCursor_TimeoutAdvisesRefreshOnly_NotPlainRerun(t *testing.T) {
 	f := &fakeProjectorCursor{ledgers: []uint32{62_900_000}}
 	err := awaitProjectorCursor(context.Background(), discardLogger(), f, "cctp", 63_500_000, 10*time.Millisecond, time.Millisecond)
@@ -196,8 +176,7 @@ func TestAwaitProjectorCursor_TimeoutAdvisesRefreshOnly_NotPlainRerun(t *testing
 	}
 }
 
-// -refresh-only requires an explicit upper bound and refuses a
-// range that doesn't make sense, before touching config or the store.
+// TestProjectorReplay_RefreshOnlyRequiresRefreshTo: -refresh-only needs a sane explicit upper bound, checked before config or store.
 func TestProjectorReplay_RefreshOnlyRequiresRefreshTo(t *testing.T) {
 	t.Parallel()
 	err := projectorReplay(io.Discard, replayArgs(t, "cctp", "-refresh-only"))
@@ -211,8 +190,7 @@ func TestProjectorReplay_RefreshOnlyRequiresRefreshTo(t *testing.T) {
 	}
 }
 
-// -refresh-only -dry-run never rewinds the cursor and never loads the
-// config/store — it prints the range it would refresh and returns.
+// TestProjectorReplay_RefreshOnlyDryRun: -refresh-only -dry-run prints the range and never rewinds or loads config/store.
 func TestProjectorReplay_RefreshOnlyDryRun(t *testing.T) {
 	t.Parallel()
 	var err error
@@ -230,12 +208,8 @@ func TestProjectorReplay_RefreshOnlyDryRun(t *testing.T) {
 	}
 }
 
-// projector-replay is the documented catch-up procedure for every
-// projected source, and it re-decodes history with the CURRENT decoder —
-// but only `backfill` consulted external.BackfillSafe. These tests drive
-// the real subcommand entry point. The config path does not exist, so a
-// run that gets PAST the gate fails at "load config"; which of the two
-// errors comes back is therefore exactly "did the gate fire".
+// replayArgs drives the real subcommand entry point with a nonexistent config path, so a run past the
+// audit gate fails at "load config"; which error returns shows whether the gate fired.
 func replayArgs(t *testing.T, source string, extra ...string) []string {
 	t.Helper()
 	missing := filepath.Join(t.TempDir(), "absent.toml")
@@ -276,9 +250,7 @@ func TestProjectorReplay_RefusesUnknownSourceName(t *testing.T) {
 	}
 }
 
-// The destructive branch has a twin: the gate must NOT strand the
-// sanctioned replays. Every name here has to get past it (and then fail
-// on the absent config, proving the run continued).
+// TestProjectorReplay_AuditedAndRegistrylessSourcesPassTheGate: the gate must not strand sanctioned replays (they get past it, then fail on the absent config).
 func TestProjectorReplay_AuditedAndRegistrylessSourcesPassTheGate(t *testing.T) {
 	t.Parallel()
 	for _, source := range []string{
@@ -300,9 +272,7 @@ func TestProjectorReplay_AuditedAndRegistrylessSourcesPassTheGate(t *testing.T) 
 	}
 }
 
-// blend_backstop has no registry row of its own: its replay-safety is
-// `blend`'s attestation (docs/operations/wasm-audits/blend.md) and must
-// fall with it.
+// TestReplayBackfillSafe_BackstopFollowsBlendAttestation: blend_backstop has no registry row, so its replay safety follows blend's attestation.
 func TestReplayBackfillSafe_BackstopFollowsBlendAttestation(t *testing.T) {
 	// Not parallel: mutates the package-level registry.
 	orig := external.Registry["blend"]
@@ -322,8 +292,7 @@ func TestReplayBackfillSafe_BackstopFollowsBlendAttestation(t *testing.T) {
 	}
 }
 
-// The per-WASM gate has no skip: a BackfillPerWASM source (cctp) whose lake
-// cannot be read is refused, never admitted on the static policy alone.
+// TestProjectorReplayGate_UnreachableLakeRefusesPerWASMSource: the per-WASM gate has no skip; an unreadable lake is refused, never admitted on static policy.
 func TestProjectorReplayGate_UnreachableLakeRefusesPerWASMSource(t *testing.T) {
 	var cfg config.Config
 	cfg.Storage.ClickHouseAddr = "127.0.0.1:1"
@@ -349,16 +318,7 @@ func (f *fakeSEP41RollupResetter) ResetSEP41SupplyRollupFold(_ context.Context, 
 	return f.n, f.err
 }
 
-// TestResetSEP41RollupAfterReplay_ResetsOnlyForTheSEP41SupplySource is
-// the regression for a stale rollup: a replay of the
-// sep41_supply source re-drives rows a held-row retry gave up on
-// (quarantined) or corrects rows already written, exactly at-or-below
-// the ledger the cursor is rewound below. AdvanceSEP41SupplyRollup only
-// ever folds `ledger > last_ledger`, so without a fold reset those rows
-// are invisible to served SEP-41 supply forever, no matter how many
-// times the replay runs. This must fold a FULL reset (nil contract
-// scope), because a source-level replay re-walks every watched
-// contract's events over the range, not just one.
+// TestResetSEP41RollupAfterReplay_ResetsOnlyForTheSEP41SupplySource: a sep41_supply replay needs a FULL rollup reset, as re-driven rows sit below the fold checkpoint.
 func TestResetSEP41RollupAfterReplay_ResetsOnlyForTheSEP41SupplySource(t *testing.T) {
 	f := &fakeSEP41RollupResetter{n: 7}
 	reset, n, err := resetSEP41RollupAfterReplay(context.Background(), f, sep41supply.SourceName)
@@ -379,10 +339,7 @@ func TestResetSEP41RollupAfterReplay_ResetsOnlyForTheSEP41SupplySource(t *testin
 	}
 }
 
-// A replay of any OTHER source (trades sources: cctp, phoenix, blend,
-// …) never touches sep41_supply_events, so resetting the SEP-41 rollup
-// would be a no-op at best and a spurious "off the fast path" window for
-// every watched contract at worst. It must not be called.
+// TestResetSEP41RollupAfterReplay_NoopsForOtherSources: replaying other sources never touches sep41_supply_events, so the reset must not be called.
 func TestResetSEP41RollupAfterReplay_NoopsForOtherSources(t *testing.T) {
 	f := &fakeSEP41RollupResetter{}
 	reset, n, err := resetSEP41RollupAfterReplay(context.Background(), f, "cctp")
@@ -411,15 +368,7 @@ func TestResetSEP41RollupAfterReplay_PropagatesResetError(t *testing.T) {
 	}
 }
 
-// TestProjectorReplay_ResetsTheSEP41RollupAfterRewinding is the wiring
-// guard: resetSEP41RollupAfterReplay is only worth anything if
-// projectorReplay actually reaches it after the cursor rewind lands. The
-// call lives one hop down, in reportSEP41RollupReset (split out to keep
-// projectorReplay under the cognitive-complexity limit), so BOTH hops are
-// pinned — mirrors
-// TestProjectorReplay_RefreshesTheCAGGsOverTheReplayedRange's guard for
-// the sibling CAGG-refresh wiring. Read from the AST rather than a list so
-// the assertion cannot drift from the code it describes.
+// TestProjectorReplay_ResetsTheSEP41RollupAfterRewinding pins that projectorReplay reaches resetSEP41RollupAfterReplay via reportSEP41RollupReset (both hops, from the AST).
 func TestProjectorReplay_ResetsTheSEP41RollupAfterRewinding(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "projector.go", nil, 0)
@@ -449,22 +398,7 @@ func TestProjectorReplay_ResetsTheSEP41RollupAfterRewinding(t *testing.T) {
 	}
 }
 
-// TestProjectorReplay_RefreshesTheCAGGsOverTheReplayedRange is the
-// wiring guard: the helper above is only worth anything if the replay
-// command actually calls it and then refreshes the aggregates. A replay
-// re-projects trades into a historical range, and the CAGG refresh
-// policies only roll forward over their own start_offset window (five
-// minutes for prices_1m), so nothing else will ever materialize those
-// buckets — the rows land in the hypertable and no served read can
-// reach them.
-//
-// The calls live one hop down, in rematerializeReplayedRange (split out
-// to keep projectorReplay under the cyclomatic limit), so BOTH hops are
-// pinned: a helper that refreshes perfectly and is never reached from
-// the command is the same defect as no helper at all.
-//
-// Read from the AST rather than from a list so the assertion cannot
-// drift from the code it describes.
+// TestProjectorReplay_RefreshesTheCAGGsOverTheReplayedRange pins that projectorReplay reaches the CAGG refresh via rematerializeReplayedRange (both hops, from the AST).
 func TestProjectorReplay_RefreshesTheCAGGsOverTheReplayedRange(t *testing.T) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "projector.go", nil, 0)

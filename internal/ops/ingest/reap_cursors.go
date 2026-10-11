@@ -16,21 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// reap-cursors deletes the ingestion_cursors rows left behind by finished or
-// abandoned one-shot jobs (every sharded ops job mints one row per shard that
-// nothing removes).
-//
-// Posture:
-//   - Preview by default. Writes only under -write via [opsutil.WriteGate].
-//   - -older-than has a hard floor of [reapMinAge], so a mistyped small
-//     threshold cannot sweep live positions.
-//   - The namespaces in [timescale.LiveCursorSources] are never reaped, with or
-//     without -write: deleting a stuck live cursor turns "the indexer is
-//     behind" into "restart from the configured start ledger".
-//
-// Deleting a row deletes a RECORD, never data; what is lost is the resume point.
-// Reap only shards that are finished or deliberately abandoned; check first with
-// `resume-stalled -dry-run` or `/v1/diagnostics/cursors?status=abandoned`.
+// reap-cursors deletes ingestion_cursors rows left by finished or abandoned one-shot jobs.
+// Preview by default (-write via [opsutil.WriteGate]); -older-than has a floor of [reapMinAge];
+// [timescale.LiveCursorSources] namespaces are never reaped, since deleting a live cursor loses the resume point.
 func reapCursors(args []string) error {
 	opts, err := parseReapCursorsFlags(args)
 	if err != nil {
@@ -77,11 +65,8 @@ func reapCursors(args []string) error {
 	return nil
 }
 
-// reapMinAge is the floor on -older-than. Every writer in this system
-// checkpoints far more often than daily (the live indexer every ~5s,
-// the projector once per cycle, a walking backfill shard continuously),
-// so a threshold below a day cannot separate "finished" from "running"
-// — it can only sweep rows that are merely between writes.
+// reapMinAge floors -older-than: writers checkpoint far more often than daily, so a smaller threshold
+// would sweep rows that are merely between writes.
 const reapMinAge = 24 * time.Hour
 
 // reapDefaultAge matches the API's abandoned boundary
@@ -185,11 +170,7 @@ func printReapPlan(w io.Writer, plan reapPlan, cutoff time.Time, opts reapCursor
 	_, _ = fmt.Fprintf(w, "reap-cursors: last_updated < %s (older than %s)%s\n",
 		cutoff.Format(time.RFC3339), opts.olderThan, sourceScope(opts.source))
 
-	// A protected row past the cutoff is the one result here an
-	// operator must not miss: live ingest has not written in that long.
-	// Printed BEFORE the empty-plan return, because a table with
-	// nothing else old enough to reap is exactly the case where a stuck
-	// live cursor is the only thing the run has to report.
+	// A protected row past the cutoff means live ingest has stalled; print it BEFORE the empty-plan return.
 	for _, c := range plan.protected {
 		_, _ = fmt.Fprintf(w, "\n⚠️  %s/%s is older than the cutoff (last write %s) and is NOT reaped — a live cursor that stale means ingest is stuck.\n",
 			c.Source, c.Sub, c.UpdatedAt.UTC().Format(time.RFC3339))

@@ -27,23 +27,9 @@ const replayGenerationNote = "note: the projector re-writes at derive_generation
 const replayNotReachedMsg = "projector cursor for source=%q is at ledger %d, which has not yet passed requested ledger %d — " +
 	"nothing to rewind; the live projector's forward pass will project it (%d ledgers still ahead of the cursor).\n"
 
-// projectorReplay rewinds the projector's per-source cursor so the projector
-// goroutine re-projects a historical range from `soroban_events`. It replaces the
-// `*-backfill` subcommand family (ADR-0032 Phase 5).
-//
-// The rewind is one SQL operation on (projector, <name>): if `-from` is below the
-// current cursor it is lowered, otherwise it is a no-op. The re-walk is idempotent
-// in row count (generation-guarded upsert), but it overwrites gen-0 rows only, so a
-// row a re-derive stamped higher is not corrected by a replay.
-//
-// The command then STAYS to finish the job. A replay writes trades into a
-// historical range, but continuous aggregates only roll their refresh policy
-// FORWARD over their start_offset window (prices_1m: five minutes), so re-projected
-// rows older than that are durable yet invisible to /v1/ohlc, /v1/chart, /v1/vwap
-// and /v1/history/since-inception. Once the projector has re-walked past the
-// original cursor, this command re-materializes the price CAGGs over the replayed
-// range and fails loudly if it cannot. `-refresh-caggs=false` opts out. See
-// docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled.
+// projectorReplay rewinds the projector's per-source cursor so it re-projects a range from soroban_events (replaces *-backfill, ADR-0032; gen-0 rows only).
+// It then STAYS to re-materialize the price CAGGs, whose refresh policy only rolls forward, and fails loudly if it cannot; -refresh-caggs=false opts out.
+// See docs/operations/runbooks/projector.md#stellarindex_projector_replay_stalled.
 func projectorReplay(w io.Writer, args []string) error {
 	fs := flag.NewFlagSet("projector-replay", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -95,22 +81,9 @@ func projectorReplay(w io.Writer, args []string) error {
 		return fmt.Errorf("read projector cursor: %w", err)
 	}
 	if errors.Is(err, timescale.ErrNotFound) {
-		// Fail LOUDLY on an unknown source rather than falling through
-		// to currentLedger=0, where `target >= 0` prints "no action"
-		// and exits 0.
-		//
-		// The projector writes its cursor under the projector SOURCE
-		// name (blend_backstop, sep41_transfers, …), while the gap
-		// detector's per-TABLE target names are hyphenated
-		// (blend-backstop, sep41-transfers, soroswap-skim …) and mostly
-		// do not match. `find-data-gaps` prints the projector name, but
-		// an operator who typed the table target for a real projection
-		// hole would otherwise get a green exit code and a "no action"
-		// line, while nothing is rewound and the gap survives.
-		//
-		// A genuinely never-run source has no cursor row either, but
-		// there is nothing to rewind in that case, so refusing is
-		// correct for both.
+		// Fail LOUDLY on an unknown source: the cursor is keyed by projector name (blend_backstop), not the
+		// hyphenated gap-detector table target, and falling through to currentLedger=0 would print "no
+		// action" and exit 0 while the gap survives. A never-run source has no cursor row either, so refusing is right.
 		return fmt.Errorf("no projector cursor for source %q — check the name against "+
 			"internal/projector/registry.go (projector SOURCE names are underscored, e.g. "+
 			"blend_backstop / sep41_transfers; the gap detector's hyphenated per-table "+
@@ -179,14 +152,9 @@ type replayRewinder interface {
 	RewindCursor(ctx context.Context, source, sub string, lastLedger uint32) (uint32, error)
 }
 
-// rewindRecordingDirtyWindow records the dirty window [target, readLedger],
-// rewinds the projector cursor to target-1, and returns the ledger the
-// cursor actually held when rewound (the upper bound of the re-walk).
-//
-// Record-then-rewind is the fail-closed order: a crash between the two
-// leaves a spurious window (one clean verify clears it), never a rewind with
-// no record. The window forces compute-completeness to re-reconcile the
-// rewritten range instead of carrying its prior clean claim over it.
+// rewindRecordingDirtyWindow records the dirty window [target, readLedger], rewinds the cursor to
+// target-1 and returns the ledger it held. Record-then-rewind is fail-closed: a crash between leaves a
+// spurious window, never a rewind with no record; the window forces compute-completeness to re-reconcile.
 func rewindRecordingDirtyWindow(ctx context.Context, w io.Writer, store replayRewinder, source string, target, readLedger uint32) (uint32, error) {
 	if err := store.RecordProjectionDirtyWindow(ctx, timescale.ProjectionDirtyWindow{
 		Source: source,
@@ -227,18 +195,9 @@ func rewindRecordingDirtyWindow(ctx context.Context, w io.Writer, store replayRe
 	return rewoundFrom, nil
 }
 
-// projectorRefreshOnly is projector-replay's -refresh-only recovery path:
-// re-materialize the price CAGGs over an explicit [from,to] ledger range
-// WITHOUT touching the cursor. It exists because re-running with the
-// same -from after awaitProjectorCursor times out rewinds again from the
-// projector's now partially-advanced cursor and re-walks the whole range
-// from scratch, so the ledgers the timed-out run already re-projected
-// (but couldn't refresh in time) never get a refresh of their own. This path skips
-// checkReplayBackfillSafe and the rewind entirely: no decoding happens
-// here, only a refresh_continuous_aggregate over rows the projector has
-// already written. It still fails closed if the cursor has not actually
-// reached `to` — the same "don't refresh rows that aren't there yet"
-// invariant awaitProjectorCursor enforces on the rewind path.
+// projectorRefreshOnly is the -refresh-only recovery path: re-materialize the price CAGGs over an explicit
+// [from,to] WITHOUT touching the cursor (re-running -from after a timeout would rewind and re-walk
+// everything). It skips checkReplayBackfillSafe and the rewind, and fails closed if the cursor has not reached to.
 func projectorRefreshOnly(w io.Writer, cfgPath, source string, from, to uint32, gate *opsutil.WriteGate) error {
 	if to == 0 || to < from {
 		return errors.New("-refresh-only requires -refresh-to >= -from")
@@ -279,24 +238,10 @@ func projectorRefreshOnly(w io.Writer, cfgPath, source string, from, to uint32, 
 	return nil
 }
 
-// checkReplayBackfillSafe refuses a replay of a source whose decoder has
-// not been audited against every WASM generation that ran over its
-// history.
-//
-// A rewind hands the live projector's CURRENT decoder every historical
-// event from `from` to the tip — the same "current-only decoder over
-// old-generation event bodies" hazard `backfill` refuses via
-// checkBackfillSources. projector-replay is the documented catch-up
-// procedure for every projected source, so a gate on `backfill` alone
-// would never run on the path operators actually use. No override
-// flag, matching `backfill`: the way through is the audit plus the registry
-// flip, in one reviewed PR.
-//
-// The question is asked through [external.ReplayBackfillSafe], which
-// resolves the three projector source names that deliberately have no
-// registry row of their own; an unknown name is refused (fail-closed) —
-// the message carries the same naming hint the cursor-lookup refusal
-// below gives, because a typo stops here first.
+// checkReplayBackfillSafe refuses a replay of a source whose decoder is not audited against every WASM
+// generation over its history: a rewind feeds the CURRENT decoder every old event, the same hazard
+// checkBackfillSources guards. No override flag; the way through is the audit plus the registry flip.
+// Unknown names are refused via [external.ReplayBackfillSafe] with the naming hint.
 func checkReplayBackfillSafe(source string, from uint32) error {
 	if external.ReplayBackfillSafe(source) {
 		return nil
@@ -320,22 +265,10 @@ type sep41RollupResetter interface {
 	ResetSEP41SupplyRollupFold(ctx context.Context, contractIDs []string) (int64, error)
 }
 
-// resetSEP41RollupAfterReplay resets the sep41_supply_rollup fold checkpoint
-// whenever a replay rewinds and re-walks the sep41_supply source itself.
-//
-// [Store.AdvanceSEP41SupplyRollup] only folds `ledger > last_ledger` and
-// [Store.SEP41KindTotalsAtOrBefore]'s fast path trusts that checkpoint. A replay
-// re-drives quarantined rows (see [projector.quarantineCandidate]) or corrects
-// written ones, all at-or-below the rewound cursor. Without a reset they sit
-// beneath the checkpoint forever and served supply stays wrong. `ch-rebuild
-// -sep41 -write` does the same for its path (sep41RollupResetPlan in
-// internal/ops/chops/ch_rebuild.go).
-//
-// The reset is FULL (nil contractIDs): a source-level replay re-walks every
-// watched contract, and a reset is always safe since
-// [Store.ResetSEP41SupplyRollupFold] re-folds in place up to the rewound cursor.
-//
-// Returns reset=false and does nothing for any source other than sep41_supply.
+// resetSEP41RollupAfterReplay resets the sep41_supply_rollup fold checkpoint when a replay re-walks
+// sep41_supply: the fold only advances past last_ledger, so re-driven or corrected rows at or below the
+// rewound cursor would otherwise stay beneath it and served supply stays wrong. The reset is FULL
+// (nil contractIDs) and always safe; it returns reset=false for any other source.
 func resetSEP41RollupAfterReplay(ctx context.Context, store sep41RollupResetter, source string) (reset bool, n int64, err error) {
 	if source != sep41supply.SourceName {
 		return false, 0, nil
@@ -347,11 +280,7 @@ func resetSEP41RollupAfterReplay(ctx context.Context, store sep41RollupResetter,
 	return true, n, nil
 }
 
-// reportSEP41RollupReset calls resetSEP41RollupAfterReplay and prints its
-// outcome, or fails loudly. Split out of projectorReplay (alongside
-// printSEP41ReplayDryRunNote) purely to keep that function's branch count
-// under the cognitive-complexity limit — see rematerializeReplayedRange's
-// own godoc for the identical reason the CAGG-refresh tail was split out.
+// reportSEP41RollupReset calls resetSEP41RollupAfterReplay and prints the outcome or fails loudly (split out for the cognitive-complexity limit).
 func reportSEP41RollupReset(ctx context.Context, w io.Writer, store sep41RollupResetter, source string) error {
 	reset, n, err := resetSEP41RollupAfterReplay(ctx, store, source)
 	if err != nil {
@@ -391,16 +320,9 @@ type replayFinisher interface {
 	caggRefresher
 }
 
-// rematerializeReplayedRange is projectorReplay's post-rewind tail: wait
-// for the projector to re-walk `replayed` (its upper bound is the ledger
-// the cursor sat at before the rewind), then re-materialize the price
-// CAGGs over it. Split out of projectorReplay so the command stays under
-// the cyclomatic limit; the AST guard in projector_replay_refresh_test.go
-// pins both hops — projectorReplay calls this, and this calls
-// awaitProjectorCursor and refreshCAGGsForChunk.
-//
-// Both opt-outs return nil on purpose — the rewind they follow is
-// already durable — and each logs what the operator now owes.
+// rematerializeReplayedRange is projectorReplay's post-rewind tail: wait for the projector to re-walk
+// replayed, then re-materialize the price CAGGs. The AST guard in projector_replay_refresh_test.go pins
+// both hops. Both opt-outs return nil (the rewind is already durable) and log what the operator owes.
 func rematerializeReplayedRange(w io.Writer, logger *slog.Logger, store replayFinisher, source string, replayed chunkRange, opts replayFollowUp) error {
 	switch {
 	case !opts.refreshCAGGs:
@@ -449,17 +371,9 @@ type projectorCursorReader interface {
 	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
 }
 
-// awaitProjectorCursor blocks until the projector's cursor for `source`
-// has re-walked back up to `target` (the ledger it sat at before the
-// rewind), i.e. until the replayed range has actually been re-projected.
-//
-// Returning early would refresh the continuous aggregates over rows that
-// are not written yet — a refresh that reports success and materializes
-// the old, short answer, which is worse than not refreshing at all
-// because the operator has a green run to point at. On timeout it fails,
-// naming what is left to do: the rewind is already durable at that point,
-// so a silent return would leave the range invisible to every read with
-// nothing to say so.
+// awaitProjectorCursor blocks until the cursor re-walks to target. Returning early would refresh CAGGs
+// over unwritten rows and report a green run with the old answer; on timeout it fails naming what is
+// left, since the rewind is already durable.
 func awaitProjectorCursor(ctx context.Context, logger *slog.Logger, r projectorCursorReader, source string, target uint32, budget, poll time.Duration) error {
 	deadline := time.Now().Add(budget)
 	for {

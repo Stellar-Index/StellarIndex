@@ -9,9 +9,7 @@ import (
 	"testing"
 )
 
-// TestUpgradeKey_HelpMatchesParser — the parser rejects a negative
-// -rate-limit-per-min and treats 0 as "reset to tier default", so the
-// help text must not tell the operator to pass -1.
+// TestUpgradeKey_HelpMatchesParser: the parser rejects a negative -rate-limit-per-min and treats 0 as "reset to tier default", so the help must not say to pass -1.
 func TestUpgradeKey_HelpMatchesParser(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {

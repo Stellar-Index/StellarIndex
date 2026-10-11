@@ -11,10 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestFindDataGapsReport_TotalMissingLedgers pins the simple sum that
-// the subcommand reports. Operators reading the dashboard look at
-// this number first to decide whether the gap is structurally
-// significant or just no-Soroban-activity noise.
+// TestFindDataGapsReport_TotalMissingLedgers pins the simple sum the subcommand reports.
 func TestFindDataGapsReport_TotalMissingLedgers(t *testing.T) {
 	cases := []struct {
 		name string
@@ -45,10 +42,7 @@ func TestFindDataGapsReport_TotalMissingLedgers(t *testing.T) {
 	}
 }
 
-// TestWriteFindDataGapsText_NoGaps verifies the operator-friendly
-// path when the scanned target is gap-free — the message has to be
-// unambiguous so an operator scanning logs doesn't assume the
-// subcommand silently no-op'd.
+// TestWriteFindDataGapsText_NoGaps: a gap-free target must say so unambiguously, not look like a silent no-op.
 func TestWriteFindDataGapsText_NoGaps(t *testing.T) {
 	out := captureOutput(func(w io.Writer) {
 		writeFindDataGapsText(w, findDataGapsReport{
@@ -68,10 +62,7 @@ func TestWriteFindDataGapsText_NoGaps(t *testing.T) {
 	}
 }
 
-// TestWriteFindDataGapsText_WithGaps pins the operator-facing format
-// including the suggested backfill commands. The format is part of
-// the subcommand's contract — operators may grep for `stellarindex-
-// ops backfill` lines in the output and pipe them into bash.
+// TestWriteFindDataGapsText_WithGaps pins the output format, including the suggested backfill commands, which operators may grep and pipe into bash.
 func TestWriteFindDataGapsText_WithGaps(t *testing.T) {
 	r := findDataGapsReport{
 		ScannedAt:  time.Now().UTC(),
@@ -105,15 +96,7 @@ func TestWriteFindDataGapsText_WithGaps(t *testing.T) {
 	}
 }
 
-// TestWriteFindDataGapsText_IdentitySourceGetsReplayCommand covers a
-// gap target whose Source is ALREADY the projector source name (cctp
-// has no CanonicalSource override in per_source_gaps.go — its
-// SourceNetKey() falls back to "cctp", which is exactly what
-// buildSource registers). A hand-written switch in
-// projectorSourceForGapTarget with no case for
-// "cctp" would fall through to the "no direct projector source"
-// stub, hiding a real, runnable `projector-replay --source cctp`
-// command from the operator.
+// TestWriteFindDataGapsText_IdentitySourceGetsReplayCommand: a gap target whose Source already is the projector source name (cctp has no CanonicalSource override) must still get its runnable `projector-replay --source cctp` command, not the "no direct projector source" stub.
 func TestWriteFindDataGapsText_IdentitySourceGetsReplayCommand(t *testing.T) {
 	r := findDataGapsReport{
 		ScannedAt:       time.Now().UTC(),
@@ -140,10 +123,7 @@ func TestWriteFindDataGapsText_IdentitySourceGetsReplayCommand(t *testing.T) {
 	}
 }
 
-// TestWriteFindDataGapsJSON_Shape pins the JSON contract so a future
-// rename of LedgerGap or its JSON tags surfaces here. Operator
-// scripts piping into `jq '.gaps[] | "\(.start) \(.end)"'`
-// depend on the lowercase keys.
+// TestWriteFindDataGapsJSON_Shape pins the lowercase JSON keys that operator scripts (jq '.gaps[]') depend on.
 func TestWriteFindDataGapsJSON_Shape(t *testing.T) {
 	multi := findDataGapsMultiReport{
 		ScannedAt: time.Date(2026, 5, 28, 18, 29, 50, 0, time.UTC),

@@ -12,24 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// seedEntryCounts authoritatively recomputes the per-source entry tally
-// (source_entry_counts, migration 0035) from a full GROUP BY over every
-// decoded-event hypertable (list on [timescale.Store.SeedSourceEntryCounts]),
-// overwriting the table.
-//
-// The writers keep the counter live, but a fresh table only counts entries ingested
-// SINCE the counter went live, so this is the one-shot reconciliation for
-// pre-counter history and crash-induced increment drift. It SETs, not ADDs, so
-// re-running converges.
-//
-// Run it after the all-time backfill, when ingest only appends at the tip: the
-// GROUP BY scans every `trades` chunk in one transaction (within the 4096
-// max_locks_per_transaction budget) but is slow and lock-hungry mid-backfill. It is
-// not race-free against concurrent tip ingest (<0.01% drift) and self-corrects on
-// the next run.
-//
-// -write is required; a run passing neither -write nor -dry-run is refused so a
-// script written before -write fails rather than skipping.
+// seedEntryCounts recomputes source_entry_counts with a full GROUP BY, SETting (not adding) so re-runs converge.
+// Run it at the tip after the all-time backfill: the scan is lock-hungry and not race-free against live ingest.
+// -write is required; a run with neither -write nor -dry-run is refused.
 func seedEntryCounts(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("seed-entry-counts")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")

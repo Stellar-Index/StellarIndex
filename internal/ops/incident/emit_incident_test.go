@@ -12,10 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// TestFindIncidentForEmit_RefusesWrongStatus — operator-finger-
-// trouble combinations (sev1 on resolved, resolved on
-// investigating, sev1 on non-SEV-1) must be caught BEFORE any
-// network I/O so the operator can re-check inputs.
+// TestFindIncidentForEmit_RefusesWrongStatus: mismatched severity/status combinations are caught before any network I/O.
 func TestFindIncidentForEmit_RefusesWrongStatus(t *testing.T) {
 	resolved := time.Now().UTC()
 	corpus := []incidents.Incident{
@@ -115,14 +112,7 @@ func TestFindIncidentForEmit_RefusesWrongStatus(t *testing.T) {
 	}
 }
 
-// TestIncidentPayloadFields_OmitsAffectedComponentsWhenNil pins
-// that incidents.Incident tags affected_components `omitempty`,
-// so an incident with no components published via /v1/incidents
-// simply lacks the key. incidentPayloadFields hand-builds a
-// map[string]any for the webhook body, where a struct's json tag has
-// no bearing on map-value marshaling — a nil slice assigned into the
-// map serializes as `"affected_components":null` regardless of the
-// tag, giving webhook subscribers a shape /v1/incidents never sends.
+// TestIncidentPayloadFields_OmitsAffectedComponentsWhenNil: the webhook body is a hand-built map, so a nil slice would serialize as null despite the struct's omitempty, a shape /v1/incidents never sends.
 func TestIncidentPayloadFields_OmitsAffectedComponentsWhenNil(t *testing.T) {
 	found := &incidents.Incident{
 		Slug:      "2026-05-12-firing-sev1",
@@ -148,8 +138,7 @@ func TestIncidentPayloadFields_OmitsAffectedComponentsWhenNil(t *testing.T) {
 	}
 }
 
-// TestIncidentPayloadFields_IncludesAffectedComponentsWhenSet is the
-// companion positive case: a non-empty slice must still round-trip.
+// TestIncidentPayloadFields_IncludesAffectedComponentsWhenSet: a non-empty slice still round-trips.
 func TestIncidentPayloadFields_IncludesAffectedComponentsWhenSet(t *testing.T) {
 	found := &incidents.Incident{
 		Slug:               "2026-05-12-firing-sev1",
@@ -168,8 +157,7 @@ func TestIncidentPayloadFields_IncludesAffectedComponentsWhenSet(t *testing.T) {
 	}
 }
 
-// A run that states neither -write nor -dry-run is refused before any
-// config or network I/O, so an old runbook line cannot silently notify no one.
+// TestEmit_RequiresStatedMode: a run stating neither -write nor -dry-run is refused before any config or network I/O.
 func TestEmit_RequiresStatedMode(t *testing.T) {
 	err := Emit([]string{"-config", "/nonexistent.toml", "-slug", "x", "-event", "sev1"})
 	if !errors.Is(err, opsutil.ErrWriteModeUnstated) {

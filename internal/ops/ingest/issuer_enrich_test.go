@@ -51,9 +51,7 @@ func (f *fakeHomeDomainWriter) ClearIssuerHomeDomain(_ context.Context, gStrkey 
 	return true, nil
 }
 
-// TestUpdateIssuerHomeDomains_ClearsADomainTheAccountNoLongerDeclares — the
-// lake reader returns "" for a live account that declares no home_domain, and
-// that must reach the row as a clear, not be dropped as "not read".
+// TestUpdateIssuerHomeDomains_ClearsADomainTheAccountNoLongerDeclares: an empty home_domain from the lake must reach the row as a clear, not be dropped as "not read".
 func TestUpdateIssuerHomeDomains_ClearsADomainTheAccountNoLongerDeclares(t *testing.T) {
 	const (
 		cleared  = "GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55"
@@ -78,11 +76,7 @@ func TestUpdateIssuerHomeDomains_ClearsADomainTheAccountNoLongerDeclares(t *test
 	}
 }
 
-// TestIssuerEnrichLoop_ContinuesPastBatchFailure proves that a single
-// batch's lookup failure does not abort every batch behind it: with 3
-// batches of 10 ids and the middle batch's lookup failing, the loop must
-// still attempt (and count) all 3 batches, only skipping the one that
-// failed.
+// TestIssuerEnrichLoop_ContinuesPastBatchFailure: one failed batch lookup does not abort the batches behind it.
 func TestIssuerEnrichLoop_ContinuesPastBatchFailure(t *testing.T) {
 	ids := make([]string, 0, 30)
 	for i := 0; i < 30; i++ {

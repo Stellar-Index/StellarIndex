@@ -33,9 +33,7 @@ func stubServerStatus(t *testing.T, status int, body string) *httptest.Server {
 	}))
 }
 
-// TestAnalyseRegionResults_AllAgree is the happy path: every region
-// returned the same price for the same closed bucket. analyse should
-// emit "OK" and report no divergence.
+// TestAnalyseRegionResults_AllAgree is the happy path: identical prices yield "OK" and no divergence.
 func TestAnalyseRegionResults_AllAgree(t *testing.T) {
 	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	to := from.Add(30 * time.Second)
@@ -58,9 +56,7 @@ func TestAnalyseRegionResults_AllAgree(t *testing.T) {
 	}
 }
 
-// TestAnalyseRegionResults_PriceDisagreement is the failure case:
-// r2 returns a different price. analyse must emit a DIVERGENCE line
-// with both values and return true.
+// TestAnalyseRegionResults_PriceDisagreement: a differing price yields a DIVERGENCE line with both values and true.
 func TestAnalyseRegionResults_PriceDisagreement(t *testing.T) {
 	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	to := from.Add(30 * time.Second)
@@ -89,11 +85,7 @@ func TestAnalyseRegionResults_PriceDisagreement(t *testing.T) {
 	}
 }
 
-// TestAnalyseRegionResults_FetchErrorTolerated covers the partial-
-// failure case: one region's HTTP fetch failed (Err != nil). We
-// should NOT flag divergence on that alone — it's reported as ERR
-// but the comparison only runs across the regions we actually
-// reached.
+// TestAnalyseRegionResults_FetchErrorTolerated: one failed fetch is reported as ERR, not divergence; comparison runs over reached regions only.
 func TestAnalyseRegionResults_FetchErrorTolerated(t *testing.T) {
 	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	to := from.Add(30 * time.Second)
@@ -121,12 +113,7 @@ func TestAnalyseRegionResults_FetchErrorTolerated(t *testing.T) {
 	}
 }
 
-// TestAnalyseRegionResults_NotComparable is the not-comparable regression:
-// when fewer than 2 regions respond (here, only r1 — r2 and r3 both
-// failed), the sample proves NOTHING. It must not be flagged as a
-// divergence, but it MUST be reported as not-compared so a caller
-// tallying "all consistent" across many samples can distinguish
-// "everything agreed" from "nothing was ever actually compared".
+// TestAnalyseRegionResults_NotComparable: fewer than 2 responding regions is not a divergence but MUST be reported as not-compared, so "all agreed" is distinguishable from "nothing compared".
 func TestAnalyseRegionResults_NotComparable(t *testing.T) {
 	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	to := from.Add(30 * time.Second)
@@ -145,8 +132,7 @@ func TestAnalyseRegionResults_NotComparable(t *testing.T) {
 	}
 }
 
-// TestAnalyseRegionResults_ZeroRegionsRespond: every region failed —
-// the degenerate case must also be not-compared, not divergence.
+// TestAnalyseRegionResults_ZeroRegionsRespond: all regions failing is not-compared, not divergence.
 func TestAnalyseRegionResults_ZeroRegionsRespond(t *testing.T) {
 	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	to := from.Add(30 * time.Second)
@@ -165,13 +151,7 @@ func TestAnalyseRegionResults_ZeroRegionsRespond(t *testing.T) {
 	}
 }
 
-// TestCrossRegionCheck_InconclusiveWhenNoBucketComparable is the
-// Same regression at the command level: when EVERY sampled bucket
-// has fewer than 2 responding regions (here, both configured regions
-// are unreachable), crossRegionCheck must return a non-nil
-// "inconclusive" error instead of silently printing "OK" and exiting
-// 0 — a total inability to compare is not the same as "all
-// consistent".
+// TestCrossRegionCheck_InconclusiveWhenNoBucketComparable: if no sampled bucket has 2 responding regions the command returns an "inconclusive" error rather than exiting 0.
 func TestCrossRegionCheck_InconclusiveWhenNoBucketComparable(t *testing.T) {
 	down := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 	down.Close() // listener closed — every request now gets connection-refused
@@ -192,9 +172,7 @@ func TestCrossRegionCheck_InconclusiveWhenNoBucketComparable(t *testing.T) {
 	}
 }
 
-// TestCrossRegionCheck_AllAgreeIsOK: the healthy path still exits 0
-// when regions agree (regression guard against over-correcting the
-// not-comparable fix into always-error).
+// TestCrossRegionCheck_AllAgreeIsOK guards against over-correcting the not-comparable fix into always-error.
 func TestCrossRegionCheck_AllAgreeIsOK(t *testing.T) {
 	body := map[string]any{
 		"from": "2026-04-27T12:00:00Z", "to": "2026-04-27T12:00:30Z", "price": "1.00",
@@ -216,9 +194,7 @@ func TestCrossRegionCheck_AllAgreeIsOK(t *testing.T) {
 	}
 }
 
-// TestAnalyseRegionResults_OHLCAllFieldsCompared confirms that for
-// the OHLC metric, we compare open/high/low/close in addition to
-// price. A subtle divergence in `high` alone should still flag.
+// TestAnalyseRegionResults_OHLCAllFieldsCompared: for OHLC, open/high/low/close are all compared, so a divergence in `high` alone flags.
 func TestAnalyseRegionResults_OHLCAllFieldsCompared(t *testing.T) {
 	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	to := from.Add(30 * time.Second)
@@ -315,9 +291,7 @@ func TestAnalyseRegionResults_VWAPMetadataDisagreement(t *testing.T) {
 	}
 }
 
-// TestFetchOneRegion_RoundTrip confirms the HTTP path works against
-// an httptest server using a wrapped envelope (matching the real
-// API's {"data": ...} shape).
+// TestFetchOneRegion_RoundTrip checks the HTTP path against an httptest server using the real {"data": ...} envelope.
 func TestFetchOneRegion_RoundTrip(t *testing.T) {
 	from := time.Date(2026, 4, 27, 12, 0, 0, 0, time.UTC)
 	to := from.Add(30 * time.Second)
@@ -375,8 +349,7 @@ func TestFetchOneRegion_RoundTripEnvelopeFields(t *testing.T) {
 	}
 }
 
-// TestFetchOneRegion_HTTPErrorPropagates confirms a non-200 status
-// surfaces as a clear error (not silently treated as success).
+// TestFetchOneRegion_HTTPErrorPropagates: a non-200 status surfaces as an error, never success.
 func TestFetchOneRegion_HTTPErrorPropagates(t *testing.T) {
 	srv := stubServerStatus(t, 500, `{"error":"backend down"}`)
 	defer srv.Close()
@@ -425,9 +398,7 @@ func TestParseRegionList(t *testing.T) {
 	}
 }
 
-// TestResolveAnchor confirms the default anchor lands on a window
-// boundary AND is one window in the past (so we sample CLOSED
-// buckets, not the in-progress one).
+// TestResolveAnchor: the default anchor lands on a window boundary one window in the past, so CLOSED buckets are sampled.
 func TestResolveAnchor(t *testing.T) {
 	got, err := resolveAnchor("", 30*time.Second)
 	if err != nil {
@@ -448,8 +419,7 @@ func TestResolveAnchor(t *testing.T) {
 	}
 }
 
-// TestSplitPair covers pair parsing — base/quote with various
-// canonical forms.
+// TestSplitPair covers base/quote parsing across canonical forms.
 func TestSplitPair(t *testing.T) {
 	for _, tc := range []struct {
 		input     string

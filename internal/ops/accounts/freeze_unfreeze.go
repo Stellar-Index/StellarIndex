@@ -19,26 +19,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// FreezeUnfreeze is the OPERATOR half of ADR-0019's freeze lifecycle: the manual
-// unfreeze an ESCALATED freeze (one that climbed the whole ladder) waits for.
-//
-// It appends a "freeze.unfreeze" audit_log row (actor, reason) and writes the
-// freeze:override tombstone, so the aggregator counts the release as an operator
-// one. Then, in order:
-//
-//  1. delete the Redis marker (freeze.Writer.Clear), the serving path's authority
-//     for `flags.frozen`, so the price republishes immediately;
-//  2. stamp `recovered_at` on the open `freeze_events` row
-//     (FreezeEventSink.MarkRecovered), the timeline /anomalies reads.
-//
-// Idempotent: clearing an absent marker is a no-op; MarkRecovered on a closed
-// pair reports "no open row".
-//
-//	stellarindex-ops freeze-unfreeze -config /etc/stellarindex.toml \
-//	    -asset native -quote 'USDC-GA5ZS…' -reason "oracle recovered"
-//
-// -reason is REQUIRED: an unfreeze overrides an automated safety control on
-// a money surface, so who and why must be recorded.
+// FreezeUnfreeze manually unfreezes an escalated freeze (ADR-0019); -reason is required because it overrides a safety control.
 func FreezeUnfreeze(args []string) error {
 	fs := flag.NewFlagSet("freeze-unfreeze", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -135,23 +116,8 @@ func resolveUnfreezeMutationInputs(list bool, assetFlag, quoteFlag, reasonFlag, 
 	return reason, actor, nil
 }
 
-// newFreezeWriterForOps builds the freeze.Writer this command reads and clears
-// through. Extracted from [FreezeUnfreeze] so the WIRING is unit-testable.
-//
-// The ladder store (migration 0119) matters twice:
-//
-//  1. `-list` reads the ladder via [freeze.Writer.LoadState]; without the store that
-//     is Redis-only, so after a Redis flush an escalated freeze prints as
-//     `MARKER GONE` with `EXTS 0 / ESCALATED false`, understating the ladder.
-//
-//  2. [freeze.Writer.Clear] RETIRES the durable ladder (zero State, hold_until NULL)
-//     as well as deleting the marker. Without the store, an aggregator tick between
-//     Clear and MarkRecovered sees "marker gone, durable ladder live", rehydrates and
-//     re-writes the marker, silently defeating the unfreeze. With it the ladder
-//     retires at the same instant, so the override wins.
-//
-// The TTL is irrelevant (this only Clears and LoadStates) but NewWriter requires a
-// positive one.
+// newFreezeWriterForOps builds the freeze.Writer; it needs the ladder store so -list and Clear see the durable ladder,
+// otherwise an aggregator tick between Clear and MarkRecovered rehydrates the marker and defeats the unfreeze.
 func newFreezeWriterForOps(rdb freeze.RedisCache, ladder freeze.LadderStore) (*freeze.Writer, error) {
 	return freeze.NewWriter(rdb, time.Minute,
 		freeze.WithLadderStore(ladder, 0), // 0 → freeze.DefaultLadderGrace
@@ -183,26 +149,8 @@ type markerPresenceReader interface {
 	FrozenForPair(ctx context.Context, asset, quote canonical.Asset) (bool, error)
 }
 
-// listOpenFreezes prints every pair the durable mirror still records as
-// firing, how far up the extension ladder it got, and — the operationally
-// important column — WHICH authority is holding it.
-//
-// The STATE column has three values; collapsing them would be misleading:
-//
-//	live        the Redis marker is present. Normal running freeze.
-//	rehydrated  the marker is GONE but the durable ladder is still inside
-//	            its hold, so the aggregator will re-write it on its next
-//	            tick. The pair IS still frozen to every API caller. A row of
-//	            these right after a Redis restart is expected; a slow trickle
-//	            with Redis healthy means markers are evicted or expiring early.
-//	GONE        neither authority holds it — already unfrozen on the
-//	            serving path, just waiting for the recovery worker to close
-//	            the row.
-//
-// Reporting a rehydrated pair as `GONE` — which is what a marker-only probe would say —
-// is wrong: an operator reads GONE as "nothing to do here" on exactly
-// the pair whose marker just evaporated. An ESCALATED pair is one that will
-// never clear on its own.
+// listOpenFreezes prints open freezes with STATE live, rehydrated (marker gone but durable ladder still holds, so
+// still frozen to callers) or GONE; a marker-only probe would misreport rehydrated pairs as GONE.
 func listOpenFreezes(ctx context.Context, lister openFreezeLister, states freezeStateReader, markers markerPresenceReader) error {
 	open, err := lister.ListOpen(ctx)
 	if err != nil {
@@ -255,21 +203,8 @@ type unfreezeRequest struct {
 	dryRun        bool
 }
 
-// unfreezePair performs the two-step manual unfreeze and reports each half.
-//
-// The audit_log row and the override tombstone go first, and a failure of
-// either stops the run before the serving path changes: an unfreeze with
-// no record of who and why is the defect this ordering exists to prevent.
-// The row records the operator's decision, so a later half that fails is
-// reported here and the row still says who tried.
-//
-// Order matters: the Redis marker goes FIRST because it is the serving
-// path's authority — clearing it is what actually republishes the price.
-// If the durable stamp then fails, the operator is told loudly and the run
-// exits non-zero, but the pair IS unfrozen and the recovery worker will
-// close the row on its next poll; the reverse order would leave a closed
-// timeline row next to a pair that is still frozen to every API caller,
-// which is the dishonest direction.
+// unfreezePair writes the audit row and tombstone first (no unfreeze without a record), then clears the Redis marker,
+// the serving authority, before stamping the durable row; the reverse order would leave a closed row on a still-frozen pair.
 func unfreezePair(ctx context.Context, audit keys.AuditSink, recoverer freezeRecoverer, clearer freezeClearer, req unfreezeRequest) error {
 	asset, quote := req.asset, req.quote
 	if req.dryRun {
@@ -300,12 +235,7 @@ func unfreezePair(ctx context.Context, audit keys.AuditSink, recoverer freezeRec
 		// there first). Not a failure — the end state is the intended one.
 		fmt.Printf("freeze-unfreeze: no OPEN freeze_events row for %s/%s — already closed\n", asset.String(), quote.String())
 	default:
-		// Since migration 0119 the recovery worker is NOT a fallback here.
-		// The durable row is still open, so the aggregator's next tick reads
-		// the missing marker as "Redis lost it", rehydrates the ladder and
-		// re-writes the marker — and the sweep then correctly declines to
-		// close a row whose hold is live. The unfreeze has NOT stuck, and
-		// nothing will make it stick on its own.
+		// The unfreeze has NOT stuck: the aggregator rehydrates the ladder from the still-open row and re-freezes.
 		return fmt.Errorf("redis marker for %s/%s was cleared but the freeze_events row could not be stamped, so the unfreeze did NOT take: the aggregator will rehydrate the ladder from the still-open row and re-freeze the pair on its next tick. Fix Postgres and RE-RUN this command: %w",
 			asset, quote, err)
 	}

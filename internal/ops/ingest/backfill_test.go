@@ -79,23 +79,7 @@ func caseBackfill_RejectsMissingFlags(t *testing.T) {
 	}
 }
 
-// TestBackfill_BackfillSafeGate is the load-bearing safety check.
-// Every on-chain Soroban source defaults to BackfillSafe=false in
-// the registry until its WASM-history audit lands. This test
-// confirms the subcommand REFUSES to start when the operator's
-// source list contains an unsafe source — and that the error
-// message names the source so they know which audit to run.
-// TestBackfill_AllSorobanSourcesPass confirms the gate accepts
-// every audited on-chain Soroban source. All 8
-// sources (soroswap, phoenix, aquarius, comet, reflector-{dex,cex,
-// fx}, redstone, band) have completed their WASM-history audits
-// (see docs/operations/wasm-audits/) and should pass cleanly.
-//
-// The gate-rejects-unsafe path is unit-tested in
-// TestUnsafeBackfillSources_PureFunction below using a synthetic
-// source name (which bypasses config validation) — that's where
-// the regression coverage for "an unaudited source must be refused"
-// lives. This test is the positive-side counterpart.
+// TestBackfill_AllSorobanSourcesPass: the BackfillSafe gate accepts every audited Soroban source.
 func TestBackfill_AllSorobanSourcesPass(t *testing.T) {
 	// Only the audited on-chain sources the projector does NOT own reach
 	// the BackfillSafe gate; projected ones are refused first (see
@@ -108,11 +92,7 @@ func TestBackfill_AllSorobanSourcesPass(t *testing.T) {
 	}
 }
 
-// TestBackfill_RefusesProjectedSources pins invariant [7]: backfill
-// persists with SinkModeAll and an empty identity gate, so every source
-// the projector owns must be refused (blend would otherwise write zero
-// rows and exit 0; the rest would be a second writer), while the
-// dispatcher-written sources stay accepted.
+// TestBackfill_RefusesProjectedSources pins invariant [7]: projector-owned sources are refused (a second writer); dispatcher-written ones stay accepted.
 func TestBackfill_RefusesProjectedSources(t *testing.T) {
 	cfg := writeMinimalConfig(t, []string{"sdex"})
 	for _, name := range []string{
@@ -138,10 +118,7 @@ func TestBackfill_RefusesProjectedSources(t *testing.T) {
 	}
 }
 
-// TestBackfill_AllSafeSourcesAccepted confirms the gate doesn't
-// false-positive: a list that's all BackfillSafe=true sources (sdex
-// is the canonical pre-Soroban one + every off-chain CEX) reaches
-// the dry-run output without complaint.
+// TestBackfill_AllSafeSourcesAccepted: a list of only BackfillSafe sources reaches the dry-run output.
 func TestBackfill_AllSafeSourcesAccepted(t *testing.T) {
 	cfg := writeMinimalConfig(t, []string{"sdex"})
 	args := []string{"-config", cfg, "-from", "21000000", "-to", "21001000", "-dry-run"}
@@ -160,10 +137,7 @@ func TestBackfill_AllSafeSourcesAccepted(t *testing.T) {
 	}
 }
 
-// TestBackfill_SourceFlagOverridesConfig verifies the -source CSV
-// overrides the config's enabled_sources, so an operator with
-// `[soroswap, aquarius, sdex]` in the config can still backfill a
-// subset (e.g. just sdex while the Soroban audits land).
+// TestBackfill_SourceFlagOverridesConfig: the -source CSV overrides the config's enabled_sources.
 func TestBackfill_SourceFlagOverridesConfig(t *testing.T) {
 	// Every audited Soroban source is BackfillSafe=true, so
 	// this test verifies the override mechanism with a config that
@@ -179,9 +153,7 @@ func TestBackfill_SourceFlagOverridesConfig(t *testing.T) {
 	}
 }
 
-// TestBackfill_BucketOverride verifies -bucket replaces the default
-// cfg.Storage.S3BucketArchive. Useful for ad-hoc replays against a
-// staging bucket without editing the live config.
+// TestBackfill_BucketOverride: -bucket replaces cfg.Storage.S3BucketArchive.
 func TestBackfill_BucketOverride(t *testing.T) {
 	cfg := writeMinimalConfig(t, []string{"sdex"})
 	args := []string{"-config", cfg, "-from", "100", "-to", "200", "-bucket", "scratch-bucket", "-dry-run"}
@@ -194,12 +166,7 @@ func TestBackfill_BucketOverride(t *testing.T) {
 	}
 }
 
-// TestBackfillCursorSub_StableAcrossSourceOrder verifies the cursor
-// key construction is deterministic regardless of how the operator
-// types -source. Without sorting, `-source soroswap,sdex` and
-// `-source sdex,soroswap` produce different cursor rows and a
-// resume after a typo-driven re-order silently re-runs the whole
-// range — exactly the failure mode -resume exists to prevent.
+// TestBackfillCursorSub_StableAcrossSourceOrder: the cursor key sorts sources, so reordering -source cannot silently re-run a range on -resume.
 func TestBackfillCursorSub_StableAcrossSourceOrder(t *testing.T) {
 	a := backfillOpts{from: 100, to: 200, sources: []string{"soroswap", "sdex", "binance"}}
 	b := backfillOpts{from: 100, to: 200, sources: []string{"binance", "sdex", "soroswap"}}
@@ -209,10 +176,7 @@ func TestBackfillCursorSub_StableAcrossSourceOrder(t *testing.T) {
 	}
 }
 
-// TestBackfillCursorSub_DistinctRangesAndSources confirms that
-// changing the range OR the source list produces a different
-// cursor row — a different replay shouldn't share state with a
-// previous one.
+// TestBackfillCursorSub_DistinctRangesAndSources: a different range or source list gets a different cursor row.
 func TestBackfillCursorSub_DistinctRangesAndSources(t *testing.T) {
 	base := backfillOpts{from: 100, to: 200, sources: []string{"sdex"}}
 
@@ -236,10 +200,7 @@ func TestBackfillCursorSub_DistinctRangesAndSources(t *testing.T) {
 	}
 }
 
-// TestUnsafeBackfillSources_PureFunction is a unit-level check on
-// the helper itself — proves we filter rather than fail-on-first.
-// The error message in the gate test relies on getting the FULL
-// unsafe list back, not just the first one.
+// TestUnsafeBackfillSources_PureFunction: the helper returns the FULL unsafe list, not just the first.
 func TestUnsafeBackfillSources_PureFunction(t *testing.T) {
 	// Every on-chain Soroban source has been
 	// audited; use a synthetic typo'd source to exercise the
@@ -263,13 +224,7 @@ func TestUnsafeBackfillSources_PureFunction(t *testing.T) {
 	}
 }
 
-// TestIsKnownSupplyObserverName — `stellarindex-ops
-// backfill accounts` must fail with a supply-observer-aware error
-// rather than the generic "WASM-hash audit pending" message
-// (which is misleading for these names — they're not Soroban
-// sources at all). Pin the closed set so a future supply-observer
-// addition that forgets to update this map will surface in a code
-// review or a failing test rather than a misleading prod error.
+// TestIsKnownSupplyObserverName pins the closed set of supply-observer names so a new one cannot fall back to the misleading WASM-audit error.
 func TestIsKnownSupplyObserverName(t *testing.T) {
 	supplyNames := []string{
 		"accounts",
@@ -291,10 +246,7 @@ func TestIsKnownSupplyObserverName(t *testing.T) {
 	}
 }
 
-// TestCheckBackfillSources_TailoredErrors — the
-// supply-observer error message must differ from the WASM-audit one
-// so operators don't waste time auditing decoders for sources
-// that aren't Soroban sources at all.
+// TestCheckBackfillSources_TailoredErrors: the supply-observer error must differ from the WASM-audit one.
 func TestCheckBackfillSources_TailoredErrors(t *testing.T) {
 	t.Run("supply observer surfaces the supply-specific message", func(t *testing.T) {
 		err := checkBackfillSources([]string{"accounts"}, 100, 200)
@@ -324,11 +276,7 @@ func TestCheckBackfillSources_TailoredErrors(t *testing.T) {
 	})
 }
 
-// planBackfillChunks tests — the parallelism plan must satisfy two
-// invariants: the union of chunks covers [from, to] exactly with no
-// gaps and no overlaps; chunk count equals the requested parallel
-// (clamped to range size when the operator asks for more workers
-// than ledgers).
+// TestPlanBackfillChunks: chunks cover [from, to] exactly with no gap or overlap, and number the requested parallel (clamped to range size).
 func TestPlanBackfillChunks(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -486,12 +434,7 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// TestRefreshCAGGsForChunk_ViewFailurePropagates is the
-// view-failure regression: a single failing CAGG view must make the WHOLE function
-// return a non-nil error (not log and return nil),
-// so the caller does not advance the durable cursor past an
-// unmaterialised chunk. Every OTHER view must still be attempted —
-// one wedged view must not block refreshing the rest.
+// TestRefreshCAGGsForChunk_ViewFailurePropagates: one failing view errors the chunk (cursor must not advance) yet every other view is attempted.
 func TestRefreshCAGGsForChunk_ViewFailurePropagates(t *testing.T) {
 	// Fail a view nothing else is built on — its identity is not what
 	// this test is about (a failed prices_1m has its own test, since its
@@ -515,9 +458,7 @@ func TestRefreshCAGGsForChunk_ViewFailurePropagates(t *testing.T) {
 	}
 }
 
-// TestRefreshCAGGsForChunk_AllSucceedIsNil: the happy path must still
-// return nil (regression guard against over-correcting into
-// always-error).
+// TestRefreshCAGGsForChunk_AllSucceedIsNil: the happy path still returns nil.
 func TestRefreshCAGGsForChunk_AllSucceedIsNil(t *testing.T) {
 	fake := &fakeCAGGRefresher{tsFrom: time.Now().Add(-time.Hour), tsTo: time.Now()}
 	err := refreshCAGGsForChunk(context.Background(), discardLogger(), fake, chunkRange{from: 100, to: 200})
@@ -529,14 +470,7 @@ func TestRefreshCAGGsForChunk_AllSucceedIsNil(t *testing.T) {
 	}
 }
 
-// TestRefreshCAGGsForChunk_RefreshesEveryAggregateTheChunkFeeds is the
-// all-aggregates regression. A chunk that wrote trades and oracle rows must
-// refresh every aggregate rooted on either table — not only the seven
-// prices_* rungs — because none of their policies reach a historical
-// range: twap_1h 4 h, twap_1d and dex_volume_by_pair_1d 7 d,
-// oracle_prices_1d 7 d, against readers serving a year or a lifetime.
-// twap_* must follow a FORCED prices_1m whose window covers theirs, and
-// each root's views must be refreshed over that root's own time span.
+// TestRefreshCAGGsForChunk_RefreshesEveryAggregateTheChunkFeeds: every aggregate on trades or oracle rows refreshes; twap_* follow a FORCED prices_1m.
 func TestRefreshCAGGsForChunk_RefreshesEveryAggregateTheChunkFeeds(t *testing.T) {
 	tradesFrom := time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
 	oracleFrom := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -574,9 +508,7 @@ func TestRefreshCAGGsForChunk_RefreshesEveryAggregateTheChunkFeeds(t *testing.T)
 	}
 }
 
-// TestRefreshCAGGsForChunk_OracleOnlyChunkRefreshesOracleViews: a chunk
-// of an oracle-only backfill writes no trades, and that must not skip
-// the oracle aggregates.
+// TestRefreshCAGGsForChunk_OracleOnlyChunkRefreshesOracleViews: an oracle-only chunk writes no trades but must still refresh oracle aggregates.
 func TestRefreshCAGGsForChunk_OracleOnlyChunkRefreshesOracleViews(t *testing.T) {
 	oracleFrom := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	fake := &fakeCAGGRefresher{rangeErr: timescale.ErrNotFound, oracleFrom: oracleFrom, oracleTo: oracleFrom.Add(time.Hour)}
@@ -588,10 +520,7 @@ func TestRefreshCAGGsForChunk_OracleOnlyChunkRefreshesOracleViews(t *testing.T) 
 	}
 }
 
-// TestRefreshCAGGsForChunk_RefusesTwapsWhilePrices1mRetentionIsArmed:
-// with migration 0156's retention armed, a twap refresh could read minute
-// rows the policy drops, so it is refused and the chunk fails — while
-// every other view is still refreshed.
+// TestRefreshCAGGsForChunk_RefusesTwapsWhilePrices1mRetentionIsArmed: twap refresh is refused (dropped minute rows) and the chunk fails; other views refresh.
 func TestRefreshCAGGsForChunk_RefusesTwapsWhilePrices1mRetentionIsArmed(t *testing.T) {
 	fake := &fakeCAGGRefresher{tsFrom: time.Now().Add(-time.Hour), tsTo: time.Now(), armed: true}
 	err := refreshCAGGsForChunk(context.Background(), discardLogger(), fake, chunkRange{from: 100, to: 200})
@@ -608,9 +537,7 @@ func TestRefreshCAGGsForChunk_RefusesTwapsWhilePrices1mRetentionIsArmed(t *testi
 	}
 }
 
-// TestRefreshCAGGsForChunk_FailedPrices1mSkipsItsDependants: twap_*
-// recomputed over a minute range whose forced refresh failed would be
-// built from stale or dropped minute rows, so they are not attempted.
+// TestRefreshCAGGsForChunk_FailedPrices1mSkipsItsDependants: twap_* over a failed prices_1m refresh would use stale minutes, so they are skipped.
 func TestRefreshCAGGsForChunk_FailedPrices1mSkipsItsDependants(t *testing.T) {
 	fake := &fakeCAGGRefresher{
 		tsFrom: time.Now().Add(-time.Hour), tsTo: time.Now(),
@@ -627,9 +554,7 @@ func TestRefreshCAGGsForChunk_FailedPrices1mSkipsItsDependants(t *testing.T) {
 	}
 }
 
-// TestRefreshCAGGsForChunk_NoTradesIsNil: an empty chunk (no trades
-// inserted — ErrNotFound from LedgerRangeToTimeRange) is a legitimate
-// skip, not a failure.
+// TestRefreshCAGGsForChunk_NoTradesIsNil: an empty chunk (ErrNotFound) is a legitimate skip, not a failure.
 func TestRefreshCAGGsForChunk_NoTradesIsNil(t *testing.T) {
 	fake := &fakeCAGGRefresher{rangeErr: timescale.ErrNotFound}
 	err := refreshCAGGsForChunk(context.Background(), discardLogger(), fake, chunkRange{from: 100, to: 200})
@@ -641,12 +566,8 @@ func TestRefreshCAGGsForChunk_NoTradesIsNil(t *testing.T) {
 	}
 }
 
-// serialisationProbeRefresher is a caggRefresher that reports whether
-// two callers were ever inside RefreshContinuousAggregate at the same
-// time. It stands in for TimescaleDB's actual behaviour on that
-// overlap — an immediate 55P03 to the loser, which the real store
-// retries for a fixed ~3s budget and then surfaces as a hard error,
-// fatal to the chunk.
+// serialisationProbeRefresher reports whether two callers were ever inside RefreshContinuousAggregate together;
+// TimescaleDB answers an overlap with an immediate 55P03 that the real store retries only briefly.
 type serialisationProbeRefresher struct {
 	tsFrom, tsTo time.Time
 
@@ -697,17 +618,7 @@ func (p *serialisationProbeRefresher) RefreshContinuousAggregate(_ context.Conte
 	return nil
 }
 
-// TestRefreshCAGGsForChunk_SerialisesAcrossParallelWorkers is the
-// -parallel hazard: every worker `-parallel N` starts lives in ONE
-// process and walks the same CAGG list, and TimescaleDB answers a
-// second refresh of the same view with an immediate 55P03 rather than
-// a wait. With prices_1m leading the list, the losing worker's bounded
-// retry can expire against a refresh whose cost is the chunk's trade
-// count — and a refresh error is fatal to the chunk, so the cursor
-// never checkpoints and the documented weekly loop halts.
-//
-// The guard is behavioural, not structural: run the workers and assert
-// that no two were ever inside a refresh together.
+// TestRefreshCAGGsForChunk_SerialisesAcrossParallelWorkers: overlapping refreshes fail fast with 55P03, so no two workers may refresh together.
 func TestRefreshCAGGsForChunk_SerialisesAcrossParallelWorkers(t *testing.T) {
 	const workers = 4
 	probe := &serialisationProbeRefresher{
@@ -749,11 +660,7 @@ func TestRefreshCAGGsForChunk_SerialisesAcrossParallelWorkers(t *testing.T) {
 	}
 }
 
-// TestRefreshCAGGsForChunk_TimeoutIsFatalAndNamed is the caller
-// half: a per-CALL refresh bound firing on one view surfaces as a chunk
-// failure that names that view (the cursor must not advance), every
-// other view is still attempted, and the typed error is reachable on
-// the chain so the log line can carry the window and the bound.
+// TestRefreshCAGGsForChunk_TimeoutIsFatalAndNamed: a refresh timeout fails the chunk naming the view; others are attempted; the typed error stays on the chain.
 func TestRefreshCAGGsForChunk_TimeoutIsFatalAndNamed(t *testing.T) {
 	timedOut := independentTradesView(t)
 	tsFrom, tsTo := time.Now().Add(-time.Hour), time.Now()

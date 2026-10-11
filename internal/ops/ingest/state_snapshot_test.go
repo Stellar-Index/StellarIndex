@@ -38,10 +38,7 @@ func TestParseSnapScope(t *testing.T) {
 	}
 }
 
-// TestShouldCollect_ContractDataStorage is the regression guard for the
-// dormant-current-state fill: contract_data STORAGE entries (SAC
-// Balance / Blend reserve) must be collected under scope=storage but NOT under
-// scope=contracts or scope=all — the exact gap that hid ~99% of PHO supply.
+// TestShouldCollect_ContractDataStorage: contract_data STORAGE entries are collected under scope=storage but not contracts or all, the gap that hid ~99% of PHO supply.
 func TestShouldCollect_ContractDataStorage(t *testing.T) {
 	t.Parallel()
 	// (typ, isInstance) → collected? per scope.
@@ -79,15 +76,7 @@ func TestShouldCollect_ContractDataStorage(t *testing.T) {
 	}
 }
 
-// TestResolveArchiveTarget_WriteRefusesUnresolvedConfig is the regression test:
-// -write inserts the checkpoint straight into the target ClickHouse's
-// ledger_entry_changes with no cross-check against the network that
-// ClickHouse instance actually tracks. On a config load failure,
-// resolveArchiveTarget must not log one stderr line and silently fall back to
-// the public pubnet archive/passphrase — a stale or missing -config could
-// make -write insert mainnet's checkpoint into a testnet ledger (or vice
-// versa) with no abort and no operator-visible failure. For write=true, an
-// unresolved config must return an error, not a fallback.
+// TestResolveArchiveTarget_WriteRefusesUnresolvedConfig: with write=true an unresolved config must error, not fall back to the pubnet archive and write the wrong network's checkpoint.
 func TestResolveArchiveTarget_WriteRefusesUnresolvedConfig(t *testing.T) {
 	t.Parallel()
 	const missingCfg = "/nonexistent/stellarindex-config-does-not-exist.toml"
@@ -109,10 +98,7 @@ func TestResolveArchiveTarget_WriteRefusesUnresolvedConfig(t *testing.T) {
 	}
 }
 
-// TestResolveArchiveTarget_ReadStillFallsBackOnUnresolvedConfig pins the
-// read-only behaviour the fix must preserve: state-snapshot's read path is
-// documented to work without a config file, so write=false keeps falling
-// back to the public archive rather than erroring.
+// TestResolveArchiveTarget_ReadStillFallsBackOnUnresolvedConfig: the read path works without a config file and still falls back to the public archive.
 func TestResolveArchiveTarget_ReadStillFallsBackOnUnresolvedConfig(t *testing.T) {
 	t.Parallel()
 	const missingCfg = "/nonexistent/stellarindex-config-does-not-exist.toml"
@@ -150,8 +136,7 @@ func TestWithinModWindow(t *testing.T) {
 	}
 }
 
-// A bare run is the bounded read-only tally; an explicit -dry-run still
-// collects and prints the write set; -write wins over -dry-run.
+// TestParseStateSnapshotFlags_Mode: a bare run is the bounded read-only tally, -dry-run still collects, and -write wins over -dry-run.
 func TestParseStateSnapshotFlags_Mode(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

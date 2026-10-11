@@ -7,8 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// rederive-from.sh treats exit 0 as "counts reseeded", so a run with no
-// stated mode must fail rather than preview and succeed.
+// TestSeedEntryCounts_RequiresStatedMode: rederive-from.sh treats exit 0 as "counts reseeded", so a run with no stated mode must fail.
 func TestSeedEntryCounts_RequiresStatedMode(t *testing.T) {
 	if err := seedEntryCounts([]string{"-config", "/nonexistent.toml"}); !errors.Is(err, opsutil.ErrWriteModeUnstated) {
 		t.Fatalf("no mode = %v, want ErrWriteModeUnstated", err)

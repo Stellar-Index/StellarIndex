@@ -9,11 +9,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/metadata"
 )
 
-// tomlListsIssuer must canonicalise the same way timescale.Sep1EntryBindsTo
-// does (case-fold, trim) — otherwise an issuer that types its own key
-// lowercase in [[CURRENCIES]] gets org_verified: false here while
-// AllSep1Images/BoundSep1Currencies already treat the entry as bound,
-// overlay its logo, and admit it to /v1/rwa/assets.
+// TestTomlListsIssuer: tomlListsIssuer must canonicalise as timescale.Sep1EntryBindsTo does (case-fold, trim), or a lowercase-keyed issuer gets org_verified false while AllSep1Images already treats it as bound.
 func TestTomlListsIssuer(t *testing.T) {
 	const gStrkey = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 

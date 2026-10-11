@@ -5,10 +5,7 @@ package ingest
 
 import "testing"
 
-// TestSep1FetchDomain pins the curated-override semantics:
-// Circle's on-chain home_domain 404s its TOML; the override
-// redirects the FETCH while the on-chain value stays authoritative
-// for identity display.
+// TestSep1FetchDomain pins that the override redirects the FETCH while the on-chain value stays authoritative for identity.
 func TestSep1FetchDomain(t *testing.T) {
 	if got := sep1FetchDomain("GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", "circle.com"); got != "centre.io" {
 		t.Errorf("USDC issuer fetch domain = %q, want centre.io", got)

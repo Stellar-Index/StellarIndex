@@ -17,11 +17,7 @@ func testCensusConfig(seam uint32) config.Config {
 	return cfg
 }
 
-// TestCensusBucket_SeamAware — census-backfill carried the SAME unconditional
-// `streamBucket := cfg.Storage.S3BucketLive` default that ch-backfill was
-// fixed for at 5179250a. With a seam configured, the requested range must
-// decide the bucket, and a straddling range must be a hard error rather than
-// a coin flip (one walk reads exactly one bucket).
+// TestCensusBucket_SeamAware: with a seam configured the range decides the bucket, and a straddling range is a hard error.
 func TestCensusBucket_SeamAware(t *testing.T) {
 	const seam = uint32(60_000_000)
 	cfg := testCensusConfig(seam)
@@ -49,10 +45,7 @@ func TestCensusBucket_SeamAware(t *testing.T) {
 	}
 }
 
-// TestCensusBucket_NoSeamKeepsTheLiveDefault pins the DELIBERATE limit of the
-// shared resolver on r1 (no seam configured): the default stays live, and it
-// is censusCoverage — not a guessed default — that makes a wrong bucket
-// unmissable. Mirrors chops.TestBackfillBucket_NoSeamKeepsTheLiveDefault.
+// TestCensusBucket_NoSeamKeepsTheLiveDefault: without a seam the default stays live and censusCoverage catches a wrong bucket.
 func TestCensusBucket_NoSeamKeepsTheLiveDefault(t *testing.T) {
 	cfg := testCensusConfig(0)
 
@@ -71,9 +64,7 @@ func TestCensusBucket_NoSeamKeepsTheLiveDefault(t *testing.T) {
 	}
 }
 
-// TestCensusBucket_ExplicitOverrideAlwaysWins — docs/operations/
-// adr-0033-data-recovery.md drives census-backfill with an explicit -bucket;
-// resolution must never second-guess it.
+// TestCensusBucket_ExplicitOverrideAlwaysWins: an explicit -bucket is never second-guessed.
 func TestCensusBucket_ExplicitOverrideAlwaysWins(t *testing.T) {
 	cfg := testCensusConfig(60_000_000)
 	for _, tc := range []struct{ from, to uint32 }{
@@ -91,12 +82,7 @@ func TestCensusBucket_ExplicitOverrideAlwaysWins(t *testing.T) {
 	}
 }
 
-// TestCensusCoverage_ZeroPersistedIsAHardError — the live-observed shape:
-// census-backfill against a historic range read galexie-live, streamed
-// nothing, printed "done — 0 ledgers processed" and exited 0. ledger_ingest_log
-// is the substrate the ADR-0033 projection reconcile measures completeness
-// against, so a range recorded as backfilled but never written becomes a
-// completeness lie later.
+// TestCensusCoverage_ZeroPersistedIsAHardError: a zero-ledger walk must fail, since ledger_ingest_log is the substrate ADR-0033 reconcile measures against.
 func TestCensusCoverage_ZeroPersistedIsAHardError(t *testing.T) {
 	err := censusCoverage(2, 1_000_000, 0, 0, "galexie-live", false)
 	if err == nil {
@@ -110,10 +96,7 @@ func TestCensusCoverage_ZeroPersistedIsAHardError(t *testing.T) {
 	}
 }
 
-// TestCensusCoverage_PartialRunIsAHardError — a run whose ledgers were
-// partly absent / skipped / failed to upsert left a substrate hole and still
-// exited 0. The watermark froze the resume cursor correctly, but
-// nothing told the caller.
+// TestCensusCoverage_PartialRunIsAHardError: a run with absent, skipped or failed ledgers must not exit 0.
 func TestCensusCoverage_PartialRunIsAHardError(t *testing.T) {
 	err := censusCoverage(1_000_000, 1_000_999, 900, 40, "galexie-archive", false)
 	if err == nil {
@@ -129,8 +112,7 @@ func TestCensusCoverage_PartialRunIsAHardError(t *testing.T) {
 	}
 }
 
-// TestCensusCoverage_InterruptedRunIsNotADoneRange — a SIGINT'd walk unwinds
-// through `errors.Is(walkErr, context.Canceled)` and must not return nil.
+// TestCensusCoverage_InterruptedRunIsNotADoneRange: a cancelled walk must not return nil.
 func TestCensusCoverage_InterruptedRunIsNotADoneRange(t *testing.T) {
 	err := censusCoverage(1_000_000, 1_000_999, 1000, 0, "galexie-archive", true)
 	if err == nil {
@@ -141,9 +123,7 @@ func TestCensusCoverage_InterruptedRunIsNotADoneRange(t *testing.T) {
 	}
 }
 
-// TestCensusCoverage_CompleteRunPasses — the fix must not turn a genuinely
-// complete run (including a RESUMED one, which starts above -from) into a
-// failure.
+// TestCensusCoverage_CompleteRunPasses: a complete run, including a resumed one, passes.
 func TestCensusCoverage_CompleteRunPasses(t *testing.T) {
 	if err := censusCoverage(1_000_000, 1_000_999, 1000, 0, "galexie-archive", false); err != nil {
 		t.Fatalf("a complete run must pass, got: %v", err)
@@ -158,12 +138,7 @@ func TestCensusCoverage_CompleteRunPasses(t *testing.T) {
 	}
 }
 
-// TestContiguousWatermark_FreezesOnGap is the proof for the
-// census-backfill resume checkpoint: a mid-range skipped/failed ledger must
-// NOT let the checkpoint stride past it. Checkpointing the
-// last WRITTEN ledger (`lastProcessed`) advances straight over a gap
-// — leaving a permanent substrate hole on resume. The watermark instead
-// freezes at the last contiguous ledger before the first gap.
+// TestContiguousWatermark_FreezesOnGap: the resume checkpoint freezes at the last contiguous ledger before a gap instead of striding over it.
 func TestContiguousWatermark_FreezesOnGap(t *testing.T) {
 	t.Run("no gaps advances to the last ledger", func(t *testing.T) {
 		var wm contiguousWatermark

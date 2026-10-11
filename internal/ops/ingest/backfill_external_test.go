@@ -28,8 +28,7 @@ type fakeTradeInserter struct {
 	batches [][]string
 }
 
-// BatchInsertTrades mirrors the store: rows Validate rejects are dropped
-// without an error, and any failing row fails the whole batch unwritten.
+// BatchInsertTrades drops rows Validate rejects without error and fails the whole batch if any row fails.
 func (f *fakeTradeInserter) BatchInsertTrades(_ context.Context, trades []canonical.Trade) error {
 	var batch []string
 	for _, t := range trades {
@@ -64,9 +63,7 @@ func tradeWithHash(hash string) canonical.Trade {
 	return canonical.Trade{Source: "binance", Ledger: 1, TxHash: hash, Timestamp: time.Now()}
 }
 
-// TestInsertBackfilledTrades_SkippedRowIsError: a per-row data
-// fault must not be counted as "skipped" and silently exit 0. Dropped
-// rows have no dead-letter, so any skip must surface as a non-nil error.
+// TestInsertBackfilledTrades_SkippedRowIsError: any skipped row must surface as a non-nil error, since dropped rows have no dead-letter.
 func TestInsertBackfilledTrades_SkippedRowIsError(t *testing.T) {
 	trades := []canonical.Trade{tradeWithHash("a"), tradeWithHash("b"), tradeWithHash("c")}
 	store := &fakeTradeInserter{fail: map[string]error{"b": errors.New("numeric overflow")}}
@@ -83,8 +80,7 @@ func TestInsertBackfilledTrades_SkippedRowIsError(t *testing.T) {
 	}
 }
 
-// TestInsertBackfilledTrades_AllGoodIsNil: the happy path must still
-// exit 0 (regression guard against over-correcting into always-error).
+// TestInsertBackfilledTrades_AllGoodIsNil: the happy path still exits 0.
 func TestInsertBackfilledTrades_AllGoodIsNil(t *testing.T) {
 	trades := []canonical.Trade{tradeWithHash("a"), tradeWithHash("b")}
 	store := &fakeTradeInserter{}
@@ -98,10 +94,7 @@ func TestInsertBackfilledTrades_AllGoodIsNil(t *testing.T) {
 	}
 }
 
-// TestInsertBackfilledTrades_InfraFaultAborts: an infra fault (DB
-// unreachable) must abort the loop immediately rather than "skip" every
-// remaining trade one at a time and still report a misleading per-row
-// skip count.
+// TestInsertBackfilledTrades_InfraFaultAborts: an infra fault aborts the loop at once instead of skipping each remaining trade.
 func TestInsertBackfilledTrades_InfraFaultAborts(t *testing.T) {
 	trades := []canonical.Trade{tradeWithHash("a"), tradeWithHash("b"), tradeWithHash("c")}
 	store := &fakeTradeInserter{fail: map[string]error{"b": driver.ErrBadConn}, infra: true}
@@ -139,8 +132,7 @@ func storableTrades(t *testing.T, n int) []canonical.Trade {
 	return out
 }
 
-// TestInsertBackfilledTrades_Batches: valid fills are written in
-// backfillInsertChunk-sized batches, not one statement per row.
+// TestInsertBackfilledTrades_Batches: valid fills are written in backfillInsertChunk-sized batches.
 func TestInsertBackfilledTrades_Batches(t *testing.T) {
 	trades := storableTrades(t, backfillInsertChunk+5)
 	store := &fakeTradeInserter{}
@@ -156,9 +148,7 @@ func TestInsertBackfilledTrades_Batches(t *testing.T) {
 	}
 }
 
-// TestInsertBackfilledTrades_InvalidRowIsNotSilentlyDropped: the batch
-// path drops rows Validate rejects without an error, so the run must
-// still count such a row as skipped and exit non-zero.
+// TestInsertBackfilledTrades_InvalidRowIsNotSilentlyDropped: a row the batch path drops must still count as skipped and exit non-zero.
 func TestInsertBackfilledTrades_InvalidRowIsNotSilentlyDropped(t *testing.T) {
 	trades := storableTrades(t, 3)
 	// One zero leg is an admitted fill since 0191; both zero is still invalid.
@@ -175,9 +165,7 @@ func TestInsertBackfilledTrades_InvalidRowIsNotSilentlyDropped(t *testing.T) {
 	}
 }
 
-// TestInsertBackfilledTrades_BatchDataFaultIsolatesRow: a data fault fails
-// the whole batch; the chunk is retried row by row so only the bad row is
-// skipped and the run exits non-zero.
+// TestInsertBackfilledTrades_BatchDataFaultIsolatesRow: a failed batch is retried row by row so only the bad row is skipped.
 func TestInsertBackfilledTrades_BatchDataFaultIsolatesRow(t *testing.T) {
 	trades := storableTrades(t, 3)
 	store := &fakeTradeInserter{fail: map[string]error{trades[1].TxHash: errors.New("check violation")}}
@@ -195,8 +183,7 @@ func TestInsertBackfilledTrades_BatchDataFaultIsolatesRow(t *testing.T) {
 	}
 }
 
-// TestInsertBackfilledTrades_BatchInfraFaultAborts: an infra fault on a
-// batch aborts without a row-by-row retry against a dead database.
+// TestInsertBackfilledTrades_BatchInfraFaultAborts: an infra fault on a batch aborts with no row-by-row retry.
 func TestInsertBackfilledTrades_BatchInfraFaultAborts(t *testing.T) {
 	trades := storableTrades(t, 3)
 	store := &fakeTradeInserter{fail: map[string]error{trades[1].TxHash: driver.ErrBadConn}, infra: true}
@@ -224,11 +211,7 @@ func tradeAt(hash string, ts time.Time) canonical.Trade {
 	return canonical.Trade{Source: "kraken", Ledger: 0, TxHash: hash, Timestamp: ts}
 }
 
-// TestPartialFetchResume_SalvagesExpiredWalk: a multi-hour fills walk
-// that runs out of budget must hand back a resume cursor instead of
-// having its work discarded. The cursor is the high-water venue
-// timestamp, not the last element, because a venue page is not
-// guaranteed to be ordered within itself.
+// TestPartialFetchResume_SalvagesExpiredWalk: a walk that runs out of budget hands back a resume cursor at the high-water venue timestamp, since venue pages are not ordered within themselves.
 func TestPartialFetchResume_SalvagesExpiredWalk(t *testing.T) {
 	base := time.Date(2021, 2, 1, 0, 0, 0, 0, time.UTC)
 	trades := []canonical.Trade{
@@ -244,11 +227,7 @@ func TestPartialFetchResume_SalvagesExpiredWalk(t *testing.T) {
 		{"deadline", context.DeadlineExceeded},
 		{"cancel", context.Canceled},
 		{"wrapped", fmt.Errorf("kraken.BackfillTrades: %w", context.DeadlineExceeded)},
-		// A venue's OHLC horizon truncation (kraken: /OHLC ignores
-		// `since` once it is older than ~720 candles back and returns
-		// its most recent window instead, err=nil upstream) must also
-		// salvage the trades already fetched rather than let the
-		// caller silently report success on an incomplete range.
+		// A depth-exceeded truncation (kraken /OHLC returns its latest window once `since` is too old, err=nil) must also salvage fetched trades, not report success on an incomplete range.
 		{"depth exceeded", fmt.Errorf("kraken.Backfill: %w", externalkraken.ErrDepthExceeded)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -263,10 +242,7 @@ func TestPartialFetchResume_SalvagesExpiredWalk(t *testing.T) {
 	}
 }
 
-// TestPartialFetchResume_RefusesRealFaults: only a context expiry is a
-// stopping point. A venue 500, a decode fault or a nil error must never
-// be reported as a salvageable partial walk — treating a real fault as
-// "resume from here" would silently skip the range that faulted.
+// TestPartialFetchResume_RefusesRealFaults: only a context expiry is a stopping point; a venue 500, decode fault or nil error must never look resumable.
 func TestPartialFetchResume_RefusesRealFaults(t *testing.T) {
 	trades := []canonical.Trade{tradeAt("a", time.Now())}
 	for _, tc := range []struct {
@@ -286,9 +262,7 @@ func TestPartialFetchResume_RefusesRealFaults(t *testing.T) {
 	}
 }
 
-// TestPartialWalkError_NeverExitsZero: a truncated range must surface as
-// a non-nil error whether or not the writes themselves succeeded, and
-// must carry the resume cursor so a chunked walk can be scripted.
+// TestPartialWalkError_NeverExitsZero: a truncated range is a non-nil error carrying the resume cursor.
 func TestPartialWalkError_NeverExitsZero(t *testing.T) {
 	at := time.Date(2023, 6, 1, 12, 0, 0, 0, time.UTC)
 
@@ -325,9 +299,7 @@ func (f *fakeTradeProbe) EarliestTradeInWindow(_ context.Context, source string,
 	return f.first, f.found, f.err
 }
 
-// A backfill over a window the live streamer already wrote inserts every
-// fill again under a different synthesised tx_hash; the run must be
-// refused and name the earliest stored row so the operator can set -to.
+// TestRefuseStoredOverlap_RefusesWindowWithStoredRows: a window the live streamer already wrote is refused, naming the earliest stored row so the operator can set -to.
 func TestRefuseStoredOverlap_RefusesWindowWithStoredRows(t *testing.T) {
 	xlm, _ := canonical.NewCryptoAsset("XLM")
 	usd, _ := canonical.NewFiatAsset("USD")
@@ -376,10 +348,7 @@ func (f *fakeForeignProbe) TradesInWindowOutside(_ context.Context, _ string, _ 
 	return f.n, f.first, f.err
 }
 
-// -allow-overlap exists to re-run a window at the granularity that wrote
-// it. A 1m window re-run at 1h would upsert one row per hour and leave
-// the other stored minute rows beside it; the write must be refused and
-// name the first such row.
+// TestRefuseForeignRows_RefusesRowsTheRunWouldNotRewrite: -allow-overlap re-runs at the granularity that wrote the rows; a coarser rewrite is refused, naming the first such row.
 func TestRefuseForeignRows_RefusesRowsTheRunWouldNotRewrite(t *testing.T) {
 	xlm, _ := canonical.NewCryptoAsset("XLM")
 	usd, _ := canonical.NewFiatAsset("USD")
@@ -415,8 +384,7 @@ func TestRefuseForeignRows_RefusesRowsTheRunWouldNotRewrite(t *testing.T) {
 	}
 }
 
-// A walk that ended early covered only up to its high-water trade; rows
-// past it are ones a later resume writes, not foreign ones.
+// TestWalkedTo: a walk that ended early covers only up to its high-water trade; later rows are resume rows, not foreign.
 func TestWalkedTo(t *testing.T) {
 	to := time.Date(2025, 5, 1, 0, 0, 0, 0, time.UTC)
 	high := to.Add(-72 * time.Hour)
@@ -428,11 +396,7 @@ func TestWalkedTo(t *testing.T) {
 	}
 }
 
-// TestDropUnsettledCandles: a candle trade is stamped at its bar's last
-// instant, so only bars that ended by min(-to, now) may be written. The
-// venue's open bar and binance's inclusive-endTime bar (open == -to) must
-// not reach trades, at second (kraken/coinbase/bitstamp) or millisecond
-// (binance) stamp resolution.
+// TestDropUnsettledCandles: only bars that ended by min(-to, now) are written; the open bar and binance's inclusive-endTime bar never reach trades.
 func TestDropUnsettledCandles(t *testing.T) {
 	to := time.Date(2026, 9, 1, 6, 0, 0, 0, time.UTC)
 	barEnd := func(open time.Time, res time.Duration) time.Time { return open.Add(time.Hour - res) }

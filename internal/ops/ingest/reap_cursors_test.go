@@ -17,10 +17,7 @@ func mkReapCursor(source, sub string, age time.Duration) timescale.Cursor {
 	}
 }
 
-// The selection rules, against the population that produced this
-// subcommand: r1's table held 4,703 rows nobody had written to in over
-// a week, alongside a live ledgerstream cursor that must survive any
-// reap.
+// TestPlanReapCursors_SelectsOnlyAbandonedNonProtectedRows: a live ledgerstream cursor must survive any reap of week-old rows.
 func TestPlanReapCursors_SelectsOnlyAbandonedNonProtectedRows(t *testing.T) {
 	now := time.Now().UTC()
 	rows := []timescale.Cursor{
@@ -51,9 +48,7 @@ func TestPlanReapCursors_SelectsOnlyAbandonedNonProtectedRows(t *testing.T) {
 	}
 }
 
-// A live cursor past the cutoff is spared AND reported: that state is
-// "ingest is stuck", and deleting the row would turn a lag into a
-// restart from the configured start ledger.
+// TestPlanReapCursors_StaleProtectedRowIsSparedAndSurfaced: a stale live cursor is spared and reported, since deleting it would turn a lag into a restart from the start ledger.
 func TestPlanReapCursors_StaleProtectedRowIsSparedAndSurfaced(t *testing.T) {
 	now := time.Now().UTC()
 	rows := []timescale.Cursor{
@@ -72,8 +67,7 @@ func TestPlanReapCursors_StaleProtectedRowIsSparedAndSurfaced(t *testing.T) {
 	}
 }
 
-// -source narrows the plan to one job's shards without changing the
-// age rule.
+// TestPlanReapCursors_SourceFilter: -source narrows the plan to one job's shards without changing the age rule.
 func TestPlanReapCursors_SourceFilter(t *testing.T) {
 	now := time.Now().UTC()
 	rows := []timescale.Cursor{
@@ -88,9 +82,7 @@ func TestPlanReapCursors_SourceFilter(t *testing.T) {
 	}
 }
 
-// The preview IS the review step, so it has to carry the three things
-// an operator decides on: what would go, what was spared and why, and
-// that nothing has been deleted yet.
+// TestPrintReapPlan_PreviewCarriesTheReview: the preview must show what would go, what was spared and why, and that nothing is deleted yet.
 func TestPrintReapPlan_PreviewCarriesTheReview(t *testing.T) {
 	now := time.Now().UTC()
 	cutoff := now.Add(-7 * 24 * time.Hour)
@@ -119,12 +111,7 @@ func TestPrintReapPlan_PreviewCarriesTheReview(t *testing.T) {
 	}
 }
 
-// A plan that is nothing BUT a stuck live cursor is the case the
-// warning matters most in, and the one an early return is easiest to
-// lose it to: the table is otherwise clean, so the stuck cursor is the
-// only thing the run has to say. It must still be reported, and the
-// "nothing to reap" line must not claim no cursor is that old when one
-// plainly is.
+// TestPrintReapPlan_ProtectedOnlyPlanStillReportsTheStuckCursor: an early return must not lose the stuck-cursor warning, nor claim no cursor is that old.
 func TestPrintReapPlan_ProtectedOnlyPlanStillReportsTheStuckCursor(t *testing.T) {
 	now := time.Now().UTC()
 	cutoff := now.Add(-7 * 24 * time.Hour)
@@ -150,8 +137,7 @@ func TestPrintReapPlan_ProtectedOnlyPlanStillReportsTheStuckCursor(t *testing.T)
 	}
 }
 
-// The empty case keeps its own line: nothing past the cutoff at all is
-// a different fact from everything past it being protected.
+// TestPrintReapPlan_EmptyPlanSaysNoCursorIsThatOld: nothing past the cutoff differs from everything past it being protected.
 func TestPrintReapPlan_EmptyPlanSaysNoCursorIsThatOld(t *testing.T) {
 	now := time.Now().UTC()
 	cutoff := now.Add(-7 * 24 * time.Hour)
@@ -172,8 +158,7 @@ func TestPrintReapPlan_EmptyPlanSaysNoCursorIsThatOld(t *testing.T) {
 	}
 }
 
-// The flag posture: preview by default, a floor under -older-than, and
-// a refusal to aim the subcommand at a live cursor namespace.
+// TestParseReapCursorsFlags_Posture: preview by default, a floor under -older-than, and a refusal to target a live cursor namespace.
 func TestParseReapCursorsFlags_Posture(t *testing.T) {
 	opts, err := parseReapCursorsFlags([]string{"-config", "/etc/stellarindex.toml"})
 	if err != nil {

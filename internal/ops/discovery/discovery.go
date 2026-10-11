@@ -14,10 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Run is the internal/ops/discovery package's entry point. main.go's
-// dispatch table (cmd/stellarindex-ops) maps every subcommand name this
-// package owns to Run — currently just `discovery` — passing the FULL
-// argv starting at the verb (args[0] is the verb itself, args[1:] its flags).
+// Run is the package entry point; main.go maps every subcommand it owns to Run with the full argv starting at the verb.
 func Run(args []string) error {
 	switch args[0] {
 	case "discovery":
@@ -46,24 +43,8 @@ func discoveryCmd(args []string) error {
 	}
 }
 
-// discoveryList queries `discovered_assets` and prints rows in
-// ascending arrival order (newest first by first_seen_at) so an
-// operator scanning the output sees fresh contracts up top.
-//
-// Flags:
-//
-//	-config PATH    Required. TOML config file (for Postgres DSN).
-//	-since DUR      Filter to contracts first seen within the
-//	                supplied duration (e.g. 1h, 24h). Empty (default)
-//	                returns the full table subject to -limit.
-//	-limit N        Cap result rows. Default 100. 0 means no cap.
-//
-// Output is a tab-separated columnar dump that aligns sensibly when
-// piped through `column -t`. Stable column order so log-scrapers can
-// build automation around it. KIND distinguishes which sniffer
-// produced the sighting (sep41 | oracle_event | oracle_call — see
-// internal/canonical/discovery); FIRST_SYMBOL is the matched topic
-// symbol or function name (e.g. transfer, price_update, relay).
+// discoveryList prints `discovered_assets` as a stable tab-separated dump, newest first_seen_at first; -config is required, -since filters by duration, -limit caps rows (default 100, 0 = no cap).
+// KIND is the sniffer that produced the sighting (sep41, oracle_event, oracle_call); FIRST_SYMBOL is the matched topic symbol or function name.
 func discoveryList(args []string) error {
 	fs := flag.NewFlagSet("discovery list", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
