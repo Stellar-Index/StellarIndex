@@ -14,11 +14,10 @@ import (
 )
 
 // PriceStreamTopic returns the Hub topic key `closed:<asset>/<quote>/<window_seconds>` for
-// closed-bucket events. Exported so the publishers compute the same key as the handler.
-//
-// The window is part of the key because the aggregator publishes one bucket per (pair, window);
-// on one topic a subscriber would see the price flap across window lengths every tick. The
-// "closed:" prefix keeps it clear of the tip stream's "tip:" topics on the shared Hub.
+// closed-bucket events, exported so publishers compute the same key as the handler. The window is
+// in the key because the aggregator publishes one bucket per (pair, window); on one topic the
+// price would flap across window lengths every tick. The "closed:" prefix keeps it clear of the
+// tip stream's "tip:" topics on the shared Hub.
 func PriceStreamTopic(asset, quote canonical.Asset, windowSeconds int) string {
 	return "closed:" + asset.String() + "/" + quote.String() + "/" + strconv.Itoa(windowSeconds)
 }
@@ -57,29 +56,25 @@ func parseClosedWindowSeconds(w http.ResponseWriter, r *http.Request) (int, bool
 // bucket per connection, unrelated to request traffic.
 const closedStreamGateSurface = "price_stream"
 
-// closedStreamGateBudget bounds ONE withholding consultation: the connect-time pre-flight and
-// each per-event re-check.
-//
-// A budget is mandatory: /stream paths skip the request-timeout middleware and r1 runs
-// statement_timeout = 0, so a Postgres stall would pin the handler and its pool connection until
-// the client disconnects. It is deliberately generous (same as [tipStreamTickTimeout]) because
-// both gates fail OPEN on timeout, so a tight budget would silently re-open the hole the gate
-// closes. Verdicts are TTL-cached per pair and asked once per drained batch, so only a stalled
-// DB pays it.
+// closedStreamGateBudget bounds ONE withholding consultation: the connect-time pre-flight and each
+// per-event re-check. A budget is mandatory: /stream paths skip the request-timeout middleware and
+// statement_timeout is 0, so a Postgres stall would pin the handler and its pool connection until
+// the client leaves. It is generous (same as [tipStreamTickTimeout]) because both gates fail OPEN
+// on timeout, so a tight budget would silently re-open the hole the gate closes. Verdicts are
+// TTL-cached per pair and asked once per drained batch, so only a stalled DB pays it.
 const closedStreamGateBudget = tipStreamTickTimeout
 
-// closedStreamWithheld reports whether an aggregated closed-bucket price claim
-// for (asset, quote) may be published on this surface.
+// closedStreamWithheld reports whether an aggregated closed-bucket price claim for (asset, quote)
+// may be published on this surface.
 //
 // Both gates, never one: /v1/price consults substance AND scam through the priceWithheld
 // chokepoint, and a hand-written site that forgets one is the drift
 // TestWithholdingGatesAreSpelledOnlyAtTheChokepoint guards.
 //
 // Keyed on the requested (asset, quote); both gates resolve aliases themselves. Both legs are
-// checked on the scam side via [scamWithheld], so a flagged issuer named as the QUOTE is not
-// fanned its own inverted price. The scam gate is asked first so a pair both refuse is reported
-// under the flag, not as a thin market (see [writePriceWithheldProblem]). Nil gates withhold
-// nothing.
+// checked on the scam side via [scamWithheld], so a flagged issuer named as the QUOTE is not fanned
+// its own inverted price. The scam gate is asked first so a pair both refuse is reported under the
+// flag, not as a thin market (see [writePriceWithheldProblem]). Nil gates withhold nothing.
 func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonical.Asset) pricingguard.Withholding {
 	if s.Substance == nil && s.Scam == nil {
 		return pricingguard.NotWithheld
@@ -89,11 +84,10 @@ func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonica
 	return withheldBy(ctx, s.Substance, s.Scam, asset, quote, closedStreamGateSurface)
 }
 
-// closedStreamSeries picks ONE alias spelling's series for a connection.
-//
-// The aggregator prices XLM under both `native` and `crypto:XLM` (disjoint trade sets: SDEX vs
-// CEX), each on its own topic. The handler must subscribe to every alias topic, but forwarding
-// all of them would interleave two independent series that look like market moves.
+// closedStreamSeries picks ONE alias spelling's series for a connection. The aggregator prices XLM
+// under both `native` and `crypto:XLM` (disjoint trade sets: SDEX vs CEX), each on its own topic;
+// the handler subscribes to every alias topic, but forwarding all would interleave two independent
+// series that look like market moves.
 //
 // So a frame is forwarded only when no higher-priority spelling produced a bucket within
 // [cachekeys.VWAPMaxAge] of it. Priority is /v1/price's alias read order (the caller's spelling
@@ -168,16 +162,14 @@ func closedStreamFrameSeries(data []byte) (key string, at time.Time, bucket, ok 
 }
 
 // forwardClosedStream bridges the Hub subscription onto the SSE writer channel, re-consulting the
-// withholding gates for every event. It closes ch when the request context cancels or the Hub
-// subscription closes, so the SSE writer ends cleanly.
+// withholding gates for every event; it closes ch when the request context cancels or the Hub
+// subscription closes.
 //
-// The per-event re-check is the half that matters: the aggregator publishes a bucket for every
-// pair with no pricingguard consultation, so this is the only place the verdict applies. A
-// connect-time check alone would leave connections opened before an issuer was flagged receiving
-// its rate for hours.
-//
-// A withheld bucket is REPLACED by a price_withheld event, not a stream error: closing would send
-// every EventSource into a reconnect storm, and dropping would read as a quiet market.
+// The per-event re-check is the half that matters: the aggregator publishes a bucket for every pair
+// with no pricingguard consultation, so this is the only place the verdict applies. A connect-time
+// check alone would leave connections opened before an issuer was flagged receiving its rate for
+// hours. A withheld bucket is REPLACED by a price_withheld event, not a stream error: closing would
+// send every EventSource into a reconnect storm, and dropping would read as a quiet market.
 func (s *Server) forwardClosedStream(
 	ctx context.Context,
 	ch chan<- streaming.Event,
@@ -282,15 +274,14 @@ func sendClosedStreamBatch(ctx context.Context, ch chan<- streaming.Event, batch
 // stage staler prices behind a slow client.
 const closedStreamQueueDepth = 4
 
-// handlePriceStream serves GET /v1/price/stream, the SSE endpoint carrying the
-// strict ADR-0015 closed-bucket contract that /v1/price serves. Unlike the tip +
-// observations streams (per-connection tick) it is Hub-driven: the aggregator
-// publishes one event per closed bucket and every subscriber on the same
+// handlePriceStream serves GET /v1/price/stream, the SSE endpoint carrying the closed-bucket
+// contract /v1/price serves. Unlike the tip and observations streams (per-connection tick) it is
+// Hub-driven: the aggregator publishes one event per closed bucket and every subscriber on the same
 // (asset, quote) topic receives the same byte-identical payload.
 //
-// Wire shape: SSE headers on connect, optional replay from `Last-Event-ID` (per-topic Hub ring
-// buffer); per closed bucket one `price_update` shaped like a `/v1/price` response, or
-// `price_withheld` while a gate refuses the pair; 15 s comment-line heartbeats.
+// Wire shape: optional replay from `Last-Event-ID` (per-topic Hub ring buffer); per closed bucket
+// one `price_update` shaped like a `/v1/price` response, or `price_withheld` while a gate refuses
+// the pair; 15 s comment-line heartbeats.
 //
 // Pre-flight 503 when no Hub is wired; pre-flight 404 `errors/price-withheld`, because the same
 // contract as /v1/price implies the same withholding. The Redis->Hub bridge asks no gate, so

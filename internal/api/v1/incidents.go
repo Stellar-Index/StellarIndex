@@ -20,14 +20,9 @@ type IncidentsList struct {
 
 // handleIncidents serves GET /v1/incidents.
 //
-// Returns every customer-facing incident post the binary has
-// embedded (`internal/incidents/data/*.md`), parsed at startup
-// and cached on the Server. New posts ship with a redeploy.
-//
-// No filtering / pagination today — the corpus is small enough
-// (few entries per year of operation) that a flat list is fine.
-// If we ever cross 100 entries, an `?since=` filter is the
-// natural next step.
+// Returns every incident post embedded in the binary (`internal/incidents/data/*.md`), parsed at
+// startup and cached on the Server; new posts ship with a redeploy. There is no filtering or
+// pagination because the corpus is a few entries per year.
 func (s *Server) handleIncidents(w http.ResponseWriter, r *http.Request) {
 	// Nil-to-empty: a fresh deployment with no embedded posts
 	// (s.incidents == nil) would otherwise marshal as `null` rather
@@ -83,24 +78,13 @@ type atomEntry struct {
 
 // handleIncidentsAtom serves GET /v1/incidents.atom.
 //
-// Atom 1.0 feed of every customer-facing incident — same data
-// as /v1/incidents but in the syndication format that Feedly,
-// Slack's RSS bot, etc. consume out of the box. URLs in
-// <link> point at the status page so subscribers click straight
-// through to the human-readable post.
-//
-// Per RFC 4287 the feed's `<updated>` is the most recent
-// `<entry>`'s `<updated>`. Each entry's `<id>` is a stable URN
-// derived from the slug so feed readers dedupe correctly across
-// crawls.
+// Atom 1.0 feed of the same data as /v1/incidents, with <link> pointing at the status page. Per
+// RFC 4287 the feed's `<updated>` is the most recent `<entry>`'s `<updated>`; each entry's `<id>`
+// is a stable URN derived from the slug so feed readers dedupe across crawls.
 func (s *Server) handleIncidentsAtom(w http.ResponseWriter, r *http.Request) {
 	const baseURL = "https://status.stellarindex.io"
-	// feedEstablished is the stable <updated> emitted when the feed
-	// has zero entries. Falling back to time.Now() here would make an
-	// empty (or stale) feed appear freshly-updated on every crawl — a
-	// dishonest freshness signal to Feedly/Slack RSS. A fixed epoch
-	// keeps an empty feed quiescent. This is the date the
-	// incidents.atom feed went live.
+	// feedEstablished is the stable <updated> for a feed with zero entries: time.Now() would make
+	// an empty feed look freshly updated on every crawl, a dishonest freshness signal.
 	feedEstablished := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	feed := atomFeed{
 		Xmlns: "http://www.w3.org/2005/Atom",
@@ -131,13 +115,8 @@ func (s *Server) handleIncidentsAtom(w http.ResponseWriter, r *http.Request) {
 			Title:   inc.Title,
 			Updated: updated.UTC().Format(time.RFC3339),
 			Link: []atomLink{
-				// Per-incident detail page, not the
-				// homepage with an `#<slug>` anchor: the home
-				// page doesn't render an `id` per incident, so feed
-				// readers landed on `https://status.stellarindex.io/`
-				// with no scroll target. Use the canonical
-				// /incident/{slug} route so subscribers land on the
-				// postmortem they clicked.
+				// Per-incident detail page, not a homepage `#<slug>` anchor: the home page renders no
+				// `id` per incident, so readers would land with no scroll target.
 				{Rel: "alternate", Href: baseURL + "/incident/" + inc.Slug, Type: "text/html"},
 			},
 			Summary: summaryFromMarkdown(inc.BodyMarkdown),
@@ -187,15 +166,8 @@ func summaryFromMarkdown(body string) string {
 			continue
 		}
 		if len(p) > 400 {
-			// Walk back to the nearest rune boundary at or before
-			// byte 397 so multi-byte UTF-8 codepoints aren't split
-			// in half. A naive `p[:397]` would slice mid-rune for
-			// incident posts containing accented characters
-			// (é/ñ/ü/etc.) or any non-ASCII text, producing invalid
-			// UTF-8 in the atom feed body — strict feed validators
-			// (W3C feedvalidator.org, some Atom-1.0 readers) reject
-			// the whole entry, and the explorer's render shows a
-			// replacement character instead of the trailing rune.
+			// Walk back to a rune boundary at or before byte 397: a naive `p[:397]` can slice a
+			// multi-byte codepoint, yielding invalid UTF-8 that strict feed validators reject whole.
 			end := 397
 			for end > 0 && !utf8.RuneStart(p[end]) {
 				end--

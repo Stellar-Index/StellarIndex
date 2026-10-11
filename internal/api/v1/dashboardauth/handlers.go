@@ -31,14 +31,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
-// EmailLocker serialises first-login provisioning per email, so two concurrent callbacks cannot
-// both create an Account before the unique-email Users insert picks a winner (the loser's
-// Account would be orphaned). Production is Redis SETNX; nil falls back to Suspend-on-conflict.
+// EmailLocker serialises first-login provisioning per email, so two concurrent callbacks cannot both
+// create an Account before the unique-email Users insert picks a winner (orphaning the loser's).
+// Production is Redis SETNX; nil falls back to Suspend-on-conflict.
 //
-// Acquire returns (true, token, ...) when the caller holds the lock, and (false, "", ...) when
-// another caller does (poll GetUserByEmail briefly). An error means "not acquired": proceed
-// unlocked. Release deletes the lock only if it still carries the token, so a holder that
-// overran its TTL cannot delete a successor's lock.
+// Acquire returns (true, token, ...) when the caller holds the lock and (false, "", ...) when
+// another does (poll GetUserByEmail briefly); an error means not acquired, so proceed unlocked.
+// Release deletes the lock only if it still carries the token, so a holder that overran its TTL
+// cannot delete a successor's lock.
 type EmailLocker interface {
 	Acquire(ctx context.Context, emailHash string, ttl time.Duration) (bool, string, error)
 	Release(ctx context.Context, emailHash, token string) error
@@ -48,11 +48,10 @@ type EmailLocker interface {
 // burn. The global anonymous rate-limit is sized for browsing, far above any sane email rate,
 // so it cannot do this job. nil disables the check.
 type LoginThrottle interface {
-	// Allow reports whether a magic-link send for (ip, email) is within quota. On false the
-	// handler MUST skip the email yet still return the generic 200 {status:"sent"}, so neither
-	// attacker nor victim learns a throttle fired. A non-nil error means the store is
-	// unavailable and the handler falls OPEN (availability over a brief abuse window). email is
-	// lowercased; implementations hash it before keying on it.
+	// Allow reports whether a magic-link send for (ip, email) is within quota. On false the handler
+	// MUST skip the email yet still return the generic 200 {status:"sent"}, so no one learns a
+	// throttle fired. An error means the store is unavailable and the handler falls OPEN
+	// (availability over a brief abuse window). email is lowercased; implementations hash it.
 	Allow(ctx context.Context, ip, email string) (bool, error)
 }
 
@@ -233,26 +232,13 @@ func NewHandlers(cfg *Config) (*Handlers, error) {
 	return &Handlers{cfg: cfg}, nil
 }
 
-// Mount installs the auth routes onto a mux:
-//
-//	POST /v1/auth/login        — request sign-in email (link + code)
-//	GET  /v1/auth/callback     — consume magic-link token, mint session
-//	POST /v1/auth/verify-code  — consume the 6-digit code, mint session
-//	POST /v1/auth/logout       — revoke current session (?all=true: every session of its user)
-//
-// Plus, when Config.Passkeys is wired (see passkey.go):
-//
-//	POST   /v1/auth/passkey/begin-login       — WebAuthn assertion options
-//	POST   /v1/auth/passkey/finish-login      — verify assertion, mint session
-//	POST   /v1/auth/passkey/begin-register    — creation options (session-gated)
-//	POST   /v1/auth/passkey/finish-register   — store credential (session-gated)
-//	GET    /v1/auth/passkey/credentials       — list passkeys (session-gated)
-//	DELETE /v1/auth/passkey/credentials/{id}  — remove one (session-gated)
+// Mount installs the /v1/auth routes: login, callback, verify-code and logout (?all=true revokes
+// every session of the user), plus the passkey begin/finish login and register, credentials list
+// and delete routes when Config.Passkeys is wired (see passkey.go).
 //
 // Login entry points mount through public (admitted credential-less in every auth_mode);
-// session-gated routes do not. The POSTs sit behind [middleware.RequireSameSiteWrite]
-// (login-CSRF primitives); the GET callback has no usable Origin and is bound by
-// [LoginIntentCookieName].
+// session-gated routes do not. The POSTs sit behind [middleware.RequireSameSiteWrite] against
+// login-CSRF; the GET callback has no usable Origin and is bound by [LoginIntentCookieName].
 func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
 	public.Handle(mux, "POST /v1/auth/login", sameSite(http.HandlerFunc(h.HandleLogin)))
@@ -306,14 +292,12 @@ func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 // works, only code matching stops. 5 keeps brute force over the ~1e6 space negligible.
 const maxCodeAttempts = 5
 
-// Durable per-EMAIL code-failure policy.
-//
-// maxCodeAttempts alone is per mint: every new /v1/auth/login hands the guesser a fresh 5, and
-// the send throttle that bounds re-mints is a volatile fixed window (~25 guesses/hour/email,
-// ~0.22 chance of hitting a code over a year). This cuts it to ~10 guesses/day (~3.7e-3/year),
-// but only because each guess is compared against ONE code (the newest mint's); matching every
-// live mint would multiply it by the send throttle's 5. The lockout gates the code path only,
-// so the magic link keeps working. Deliberately not tunable per deployment.
+// Durable per-email code-failure policy. maxCodeAttempts alone is per mint: each new login hands
+// the guesser a fresh 5, and the send throttle bounding re-mints is a volatile fixed window (~25
+// guesses/hour/email, ~0.22 chance of hitting a code over a year). This cuts it to ~10 guesses/day
+// (~3.7e-3/year), but only because each guess is compared against ONE code (the newest mint's);
+// matching every live mint would multiply it by the send throttle's 5. The lockout gates the code
+// path only, so the magic link keeps working. Deliberately not tunable per deployment.
 const (
 	// maxDurableCodeFailures is the per-email failure budget inside
 	// durableCodeFailureWindow before the code path locks.
@@ -339,10 +323,10 @@ type loginResponse struct {
 // refuseLoginWithoutMail answers 503 and reports true when the mail transport holds no provider
 // credential ([notify.IsUnconfigured]), instead of a 200 "sent" for mail that never left.
 //
-// It runs BEFORE the throttle and any side effect, so no link row or login-intent cookie is
-// minted for mail nobody can receive, and every well-formed request gets the same 503: the
-// refusal is neither an enumeration oracle nor a throttle oracle (a decoy 200 would stand out).
-// It counts as a failed send, which is what the notify failure-ratio alert reads.
+// It runs before the throttle and any side effect, so no link row or login-intent cookie is minted
+// for undeliverable mail, and every well-formed request gets the same 503, so the refusal is
+// neither an enumeration nor a throttle oracle. It counts as a failed send for the notify
+// failure-ratio alert.
 func (h *Handlers) refuseLoginWithoutMail(w http.ResponseWriter) bool {
 	if !notify.IsUnconfigured(h.cfg.Sender) {
 		return false
@@ -455,11 +439,10 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(loginResponse{Status: "sent"})
 }
 
-// loginThrottled applies the magic-link abuse throttle (per IP and per target email). Over quota
-// it skips the send, writes the SAME generic 200 as the send path and reports true, so neither
-// attacker nor victim learns a throttle fired. A throttle error falls open;
-// auth.RedisLoginThrottle only errors after its in-process fallback admitted the send under
-// the same caps.
+// loginThrottled applies the magic-link throttle (per IP and per target email). Over quota it skips
+// the send, writes the same generic 200 as the send path and reports true, so no one learns a
+// throttle fired. A throttle error falls open; auth.RedisLoginThrottle only errors after its
+// in-process fallback admitted the send under the same caps.
 func (h *Handlers) loginThrottled(w http.ResponseWriter, r *http.Request, email string) bool {
 	if h.cfg.LoginThrottle == nil {
 		return false
@@ -485,10 +468,10 @@ func (h *Handlers) loginThrottled(w http.ResponseWriter, r *http.Request, email 
 }
 
 // admitSignedInBrowser lets a send past a full LoginThrottle when the request carries this
-// address's [LoginDeviceCookieName] proof. The per-address cap is shared by everyone who knows
-// the address, so the owner could otherwise be crowded out indefinitely. The bypass is bounded to
-// one send per address per link lifetime per instance, so it is no inbox flood. The proof is
-// checked first so a caller without one never adds a key.
+// address's [LoginDeviceCookieName] proof; the per-address cap is shared by everyone who knows the
+// address, so the owner could otherwise be crowded out. The bypass is one send per address per
+// link lifetime per instance, so no inbox flood. The proof is checked first so a caller without
+// one never adds a key.
 func (h *Handlers) admitSignedInBrowser(r *http.Request, email string) bool {
 	return h.hasLoginDeviceProof(r, email) &&
 		h.cfg.signedInBrowserSends.Allow(hashEmailForLocker(email), 1)
@@ -496,15 +479,13 @@ func (h *Handlers) admitSignedInBrowser(r *http.Request, email string) bool {
 
 // sessionSameSite picks the session-cookie SameSite policy. The explorer and the API share a
 // registrable domain (cross-origin but same-site), so Lax is sent on its credentialed requests
-// while genuine cross-site ones are blocked.
+// while genuine cross-site ones are blocked. Not None, which would let any site auto-submit a
+// credentialed POST to the cookie-authed /v1/dashboard/* mutations (CSRF); if the dashboard moves
+// to another site, add a CSRF token instead.
 //
-// Not None: that would let any site auto-submit a credentialed POST to the cookie-authed
-// /v1/dashboard/* mutations (CSRF). If the dashboard ever moves to a different site, add a CSRF
-// token rather than switching to None.
-//
-// Lax leaves a gap: a sibling origin counts as same-site, and Lax permits a top-level cross-site
-// GET. So every state-changing route is also gated by [middleware.RequireSameSiteWrite], and the
-// magic-link callback (a GET) by [LoginIntentCookieName]. SameSite is defence in depth only.
+// Lax leaves a gap: a sibling origin is same-site and Lax permits a top-level cross-site GET. So
+// state-changing routes are also gated by [middleware.RequireSameSiteWrite] and the magic-link
+// callback by [LoginIntentCookieName]; SameSite is defence in depth only.
 func sessionSameSite() http.SameSite {
 	return http.SameSiteLaxMode
 }
@@ -525,10 +506,8 @@ func credentialCookie(name, value string) *http.Cookie {
 }
 
 // HandleCallback consumes a magic-link token, finds-or-creates the user (one account per email)
-// and issues a session cookie.
-//
-// The link must be opened in the browser that requested it. The login-intent cookie (see
-// [LoginIntentCookieName]) is checked BEFORE the token is consumed, so opening the link on a
+// and issues a session cookie. The link must be opened in the requesting browser: the
+// [LoginIntentCookieName] cookie is checked before the token is consumed, so opening it on a
 // second device does not burn it for the device that asked.
 func (h *Handlers) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	// The request URL carries the magic-link plaintext; set here too so
@@ -601,17 +580,16 @@ type verifyCodeResponse struct {
 // HandleVerifyCode consumes the 6-digit email code and mints the same session cookie as
 // HandleCallback. It returns JSON, not a 303, because the SPA calls it via credentialed fetch.
 //
-// The code is matched only against the email's NEWEST in-flight token: one comparison per
-// request, so each guess has 1-in-1e6 odds however many sign-in emails an attacker triggered.
-// Every attempt is charged, per token and per email (a separate budget when the browser holds
-// this address's [LoginDeviceCookieName] proof), BEFORE it is compared and atomically in the
-// store, so concurrent guesses get no more comparisons than sequential ones. All failures
-// return one generic error.
+// The code is matched only against the email's newest in-flight token: one comparison per request,
+// so each guess has 1-in-1e6 odds however many sign-in emails an attacker triggered. Every attempt
+// is charged per token and per email (a separate budget when the browser holds this address's
+// [LoginDeviceCookieName] proof) BEFORE it is compared, atomically in the store, so concurrent
+// guesses get no more comparisons than sequential ones. All failures return one generic error.
 //
 // A correct-but-stale code (expired, consumed, burned or superseded) counts as a durable failure
-// while any code is live: the server cannot tell the owner pasting yesterday's code from an
-// attacker guessing a dead value without leaking which. Affordable because the lockout gates
-// this door only and a successful sign-in clears the counter.
+// while any code is live: telling the owner pasting yesterday's code from an attacker guessing a
+// dead value would leak which. Affordable because the lockout gates this door only and a
+// successful sign-in clears the counter.
 func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 	// MaxBytesReader, not LimitReader — see HandleLogin.
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
@@ -700,12 +678,9 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 }
 
 // loginCodeLocked reports whether the durable per-email failure counter currently bars the code
-// path.
-//
-// Fails OPEN on a store error, loudly: failing closed would take code sign-in offline for a
-// defence-in-depth control (e.g. a node missing the lockout migration). It is no attacker bypass,
-// since the candidate lookup uses the same Postgres pool and the per-token maxCodeAttempts cap
-// still applies.
+// path. It fails OPEN on a store error, loudly: failing closed would take code sign-in offline for
+// a defence-in-depth control (e.g. a node missing the lockout migration). That is no attacker
+// bypass, since the candidate lookup uses the same Postgres pool and maxCodeAttempts still applies.
 func (h *Handlers) loginCodeLocked(r *http.Request, email string) bool {
 	state, err := h.cfg.Tokens.LoginCodeLockoutStatus(r.Context(), email)
 	if err != nil {
@@ -749,14 +724,12 @@ func (h *Handlers) loginCodeLive(r *http.Request, email string) bool {
 	return live
 }
 
-// chargeLoginCodeAttempt records this attempt against the email's durable failure budget BEFORE
-// any code is compared, and reports whether it is within budget. It is charged as a failure up
-// front; a successful sign-in clears it ([Handlers.startSessionForEmail]). The store's upsert
-// serialises on the email's row, so concurrent attempts get distinct counts and at most
-// [maxDurableCodeFailures] per window are admitted, including the one that reaches the cap
-// (hence <=).
-//
-// Fails OPEN on a store error for the reason given on [Handlers.loginCodeLocked].
+// chargeLoginCodeAttempt records this attempt against the email's durable failure budget BEFORE any
+// code is compared, and reports whether it is within budget. It is charged as a failure up front; a
+// successful sign-in clears it ([Handlers.startSessionForEmail]). The store's upsert serialises on
+// the email's row, so concurrent attempts get distinct counts and at most [maxDurableCodeFailures]
+// per window are admitted, including the one reaching the cap (hence <=). Fails OPEN on a store
+// error, as [Handlers.loginCodeLocked] does.
 func (h *Handlers) chargeLoginCodeAttempt(r *http.Request, email string) bool {
 	state, err := h.cfg.Tokens.RegisterFailedLoginCode(
 		r.Context(), email, maxDurableCodeFailures, durableCodeFailureWindow, durableCodeLockout)
@@ -937,10 +910,10 @@ func (h *Handlers) clearSessionCookies(w http.ResponseWriter) {
 
 // signupNewUser creates the account and first user (as owner) from a just-verified email.
 //
-// Concurrent callbacks for one email can race: both pass GetUserByEmail and create an account,
-// and only the first user insert wins on users_email_idx. EmailLocker prevents the speculative
-// account. Without one, ErrConflict on CreateUser marks the speculative account Suspended with
-// a "signup-race:" reason (an unambiguous reaper signal) and reloads the winner.
+// Concurrent callbacks for one email can both pass GetUserByEmail and create an account; only the
+// first user insert wins on users_email_idx. EmailLocker prevents the speculative account. Without
+// one, ErrConflict on CreateUser marks it Suspended with a "signup-race:" reason (an unambiguous
+// reaper signal) and reloads the winner.
 func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.User, error) {
 	winner, gotWinner, release, err := h.acquireSignupLock(ctx, email)
 	if err != nil {
@@ -1012,13 +985,11 @@ func (h *Handlers) createSignupAccount(ctx context.Context, email string) (platf
 	return acct, nil
 }
 
-// acquireSignupLock serialises first-login provisioning for email through the EmailLocker.
-// Returns:
-//
-//	(winner, true, nil, nil)  - lock lost and the winner's user became visible; use it directly.
-//	(_, false, release, nil)  - no locker, acquire failed (fall through unlocked), or we hold
-//	                            the lock; release is non-nil only when held, and must be deferred.
-//	(_, false, nil, err)      - the re-check under the lock hit a non-NotFound store error.
+// acquireSignupLock serialises first-login provisioning for email through the EmailLocker. It
+// returns (winner, true, nil, nil) when the lock was lost and the winner's user became visible;
+// (_, false, release, nil) when there is no locker, acquire failed (fall through unlocked) or we
+// hold the lock, with release non-nil only when held and to be deferred; and (_, false, nil, err)
+// when the re-check under the lock hit a non-NotFound store error.
 func (h *Handlers) acquireSignupLock(ctx context.Context, email string) (platform.User, bool, func(), error) {
 	if h.cfg.EmailLocker == nil {
 		return platform.User{}, false, nil, nil
@@ -1067,11 +1038,9 @@ func hashEmailForLocker(email string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// waitForWinnerUser polls GetUserByEmail until the winner's row appears, the context expires or
-// the budget runs out, returning a zero User (ID == uuid.Nil) on timeout so the caller
-// provisions itself.
-//
-// The ~1.5s budget is tight on purpose: the user is waiting on the callback redirect, yet it
+// waitForWinnerUser polls GetUserByEmail until the winner's row appears, the context expires or the
+// budget runs out, returning a zero User (ID == uuid.Nil) on timeout so the caller provisions
+// itself. The ~1.5s budget is tight because the user is waiting on the callback redirect, yet it
 // bridges a slow first INSERT and fails open if the lock-holder crashed.
 func (h *Handlers) waitForWinnerUser(ctx context.Context, email string) (platform.User, error) {
 	const (

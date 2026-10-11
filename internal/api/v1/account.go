@@ -64,10 +64,9 @@ type AccountUser struct {
 
 // AccountInfo is the magic-link-session caller's parent account.
 //
-// RateLimitPerMin / MonthlyRequestQuota are what auth enforces on a key
-// minted at the dashboard defaults, account override included
-// ([platform.Account.EffectiveRateLimitPerMin]) — not the tier ceiling.
-// Limits are per key, so an explicitly budgeted key can differ.
+// RateLimitPerMin / MonthlyRequestQuota are what auth enforces on a key minted at the dashboard
+// defaults, account override included ([platform.Account.EffectiveRateLimitPerMin]), not the tier
+// ceiling. Limits are per key, so an explicitly budgeted key can differ.
 type AccountInfo struct {
 	ID                  string `json:"id"`
 	Name                string `json:"name,omitempty"`
@@ -148,11 +147,9 @@ type UsageDay struct {
 	Requests int64
 }
 
-// UsageRollupReader is the storage seam for the per-endpoint usage
-// rollups (`usage_daily` hypertable, maintained by the API binary's
-// usage-rollup worker). main.go's adapter bridges
-// *timescale.Store.ReadUsageDaily so this package stays free of the
-// storage import.
+// UsageRollupReader is the storage seam for the per-endpoint `usage_daily` rollups; main.go's
+// adapter bridges *timescale.Store.ReadUsageDaily so this package stays free of the storage
+// import.
 type UsageRollupReader interface {
 	ReadRollup(ctx context.Context, subject string, days int) ([]UsageEndpointDay, error)
 }
@@ -324,14 +321,10 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.readUsageLegacy(r, key), Flags{})
 }
 
-// usageKeyForSession derives the account-scoped usage key a
-// dashboard session reads under — the SAME key an API key minted on
-// that account writes under ([middleware.UsageKeyForSubject]'s
-// Identifier branch: `id:` + [auth.AccountIdentifier]). Routes
-// through the shared derivation rather than duplicating the `id:`
-// prefix so the two can never drift apart; the synthetic Subject's
-// Tier only needs to clear UsageKeyForSubject's anonymous guard and
-// never leaves this function.
+// usageKeyForSession derives the account-scoped usage key a dashboard session reads under: the
+// SAME key an API key minted on that account writes under ([middleware.UsageKeyForSubject]'s
+// Identifier branch, `id:` + [auth.AccountIdentifier]). It routes through the shared derivation
+// so the two cannot drift; the synthetic Subject's Tier only clears the anonymous guard.
 func usageKeyForSession(accountSlug string) string {
 	if accountSlug == "" {
 		return ""
@@ -342,13 +335,10 @@ func usageKeyForSession(accountSlug string) string {
 	})
 }
 
-// readUsageRollup reads the per-endpoint rollups for the subject and
-// backfills any day the rollup worker produced NO row for at all from
-// the legacy per-day reader, so a worker-outage gap in the
-// middle of the 30-day window doesn't silently vanish from the
-// response — only "the rollup reader itself produced nothing usable"
-// (unwired, read error, or zero rows) falls back to the legacy shape
-// entirely; ok=false means that.
+// readUsageRollup reads the per-endpoint rollups for the subject and backfills any day the
+// rollup worker produced NO row for from the legacy per-day reader, so a worker-outage gap
+// mid-window does not silently vanish. Only "the rollup reader produced nothing usable"
+// (unwired, read error, zero rows) falls back to the legacy shape entirely; ok=false means that.
 func (s *Server) readUsageRollup(r *http.Request, key string) ([]UsageRow, bool) {
 	if s.UsageRollupReader == nil {
 		return nil, false
@@ -378,13 +368,10 @@ func (s *Server) readUsageRollup(r *http.Request, key string) ([]UsageRow, bool)
 	return out, true
 }
 
-// backfillMissingUsageDays fills in, from the legacy per-day reader,
-// any day within the trailing 30-day window that `present` (the days
-// the rollup reader actually produced a row for) has no entry for at
-// all — a rollup-worker gap, not a legitimate zero-traffic day (which
-// the rollup reader still emits a row for). Best-effort: a legacy
-// read failure just means no backfill, same posture as
-// [Server.readUsageLegacy].
+// backfillMissingUsageDays fills, from the legacy per-day reader, any day in the trailing 30-day
+// window absent from `present` (the days the rollup produced a row for): a rollup-worker gap,
+// not a zero-traffic day, which the rollup still emits. Best-effort: a legacy read failure means
+// no backfill, as in [Server.readUsageLegacy].
 func (s *Server) backfillMissingUsageDays(r *http.Request, key string, present map[string]struct{}) []UsageRow {
 	if s.UsageReader == nil {
 		return nil
@@ -497,11 +484,9 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Delegation clamp: a scoped caller may only mint a child whose
-	// scopes are a subset of its own, and an empty request from a
-	// scoped caller inherits the caller's scopes rather than defaulting
-	// to full access. Without this a key narrowed at mint could mint an
-	// unrestricted sibling and escape its own confinement.
+	// Delegation clamp: a scoped caller may only mint a child whose scopes are a subset of its
+	// own, and an empty request inherits them rather than defaulting to full access. Otherwise a
+	// narrowed key could mint an unrestricted sibling and escape its confinement.
 	scopes, ok = s.clampMintToCaller(w, r, subject, scopes, subject.RateLimitPerMin)
 	if !ok {
 		return
@@ -532,11 +517,10 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 	})
 }
 
-// accountKeyIdempotencySubject scopes an Idempotency-Key on
-// POST /v1/account/keys to the authenticating CREDENTIAL, not just its
-// identifier: sibling keys share an identifier but not scopes, and a
-// replay hands back a minted plaintext, so a narrower sibling must never
-// be able to replay a wider one's mint. Empty (no dedupe) for anonymous.
+// accountKeyIdempotencySubject scopes an Idempotency-Key on POST /v1/account/keys to the
+// authenticating CREDENTIAL, not just its identifier: siblings share an identifier but not
+// scopes, and a replay hands back a minted plaintext, so a narrower sibling must never replay a
+// wider one's mint. Empty (no dedupe) for anonymous.
 func accountKeyIdempotencySubject(r *http.Request) string {
 	subject, ok := auth.SubjectFrom(r.Context())
 	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
@@ -589,12 +573,9 @@ func parseCreateKeyRequest(w http.ResponseWriter, r *http.Request) (createKeyReq
 	return req, true
 }
 
-// operatorReasonOK enforces the admin-write X-Reason contract
-// on the self-service key routes when — and only
-// when — the caller is operator-tier. Customer callers are untouched:
-// their mints/revokes are bounded to their own identifier and tier and
-// are not staff actions. Returns ok=false when it has already written
-// the 400.
+// operatorReasonOK enforces the admin-write X-Reason contract on the self-service key routes
+// only for operator-tier callers; customer mints/revokes are bounded to their own identifier and
+// tier and are not staff actions. Returns ok=false when it has already written the 400.
 func (s *Server) operatorReasonOK(w http.ResponseWriter, r *http.Request, subject auth.Subject) (string, bool) {
 	if subject.Tier != auth.TierOperator {
 		return "", true
@@ -611,12 +592,10 @@ func (s *Server) operatorReasonOK(w http.ResponseWriter, r *http.Request, subjec
 	return reason, true
 }
 
-// recordAccountKeyMintAudit logs and persists the "key.mint" audit row
-// for an operator-tier self-service mint — same shape as the admin mint
-// so one query over key.mint rows finds every operator credential ever
-// issued, whichever route minted it; "route" tells the two apart.
-// Best-effort — same contract as recordAdminKeyMintAudit: a sink
-// failure logs at WARN and never blocks the mint.
+// recordAccountKeyMintAudit logs and persists the "key.mint" audit row for an operator-tier
+// self-service mint, shaped like the admin mint so one query over key.mint rows finds every
+// operator credential; "route" tells the two apart. Best-effort as in recordAdminKeyMintAudit:
+// a sink failure logs at WARN and never blocks the mint.
 func (s *Server) recordAccountKeyMintAudit(
 	r *http.Request, actor auth.Subject, label string, scopes []string, mintedKeyID, reason string,
 ) {
@@ -710,14 +689,9 @@ func (s *Server) appendKeyAudit(r *http.Request, entry platform.AuditEntry, surf
 // defaultAccountKeyQuota is the self-service active-key ceiling one
 // caller identifier may hold when [Options.AccountKeyQuota] is unset.
 //
-// 25 is the free tier's rung of the dashboard tier ladder
-// ([platform.Tier.MaxActiveKeys], free 25 → partner 250). Reusing that
-// number rather than picking a new one keeps the bound above what any
-// legitimate caller holds (nobody rotates into 25 concurrent
-// self-service credentials) while still turning an unbounded mint loop into a 409 — the conservative
-// direction on a surface where the alternative is an operator-visible
-// regression for a paying customer. Operators tune per deployment via
-// [Options.AccountKeyQuota].
+// 25 is the free tier's rung of the dashboard ladder ([platform.Tier.MaxActiveKeys], free 25 →
+// partner 250). It sits above what any legitimate caller holds while still turning an unbounded
+// mint loop into a 409. Operators tune it via [Options.AccountKeyQuota].
 const defaultAccountKeyQuota = 25
 
 // mintAccountKey issues a self-service key under the per-identifier
@@ -725,9 +699,8 @@ const defaultAccountKeyQuota = 25
 //
 // Without a cap one caller could mint keys in a loop, each a live credential and a permanent Redis
 // record. The store enforces it in the same critical section as the write
-// ([auth.RedisAPIKeyStore.CreateCapped]), like the dashboard path's atomic maxKeys gate: a
-// handler-side count then Create would let a concurrent burst all read the same count below the
-// cap.
+// ([auth.RedisAPIKeyStore.CreateCapped]): a handler-side count then Create would let a
+// concurrent burst all read the same count below the cap.
 //
 // An unverifiable count fails CLOSED (503, no mint): unbounded minting is the abuse the cap exists
 // to stop.

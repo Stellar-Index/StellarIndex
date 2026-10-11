@@ -10,20 +10,18 @@ import (
 
 // Issuer directory-label overlay for /v1/assets + /v1/assets/{id}.
 //
-// Joins each asset's issuer G-address (a contract token's own C-address)
-// against account_directory and stamps issuer_directory_{tags,domain,name}
-// onto AssetDetail. DISPLAY-ONLY, except for SCAM-CLASS tags
-// (malicious/unsafe/fraud/scam/hack/phishing):
+// Joins each asset's issuer G-address (a contract token's own C-address) against
+// account_directory and stamps issuer_directory_{tags,domain,name} onto AssetDetail.
+// Display-only, except for scam-class tags (malicious/unsafe/fraud/scam/hack/phishing):
 //
-//  1. WITHHOLD every published dollar figure on the row (price, market cap,
-//     listing reference/valuation pair) via suppressScamIssuerPricing and
+//  1. WITHHOLD every dollar figure on the row via suppressScamIssuerPricing and
 //     pricingguard.ScamGate: a scam token must not lend itself legitimacy.
-//  2. DEMOTE the asset in the /v1/assets listing (listingRankTierExpr); the row
-//     and its warning fields stay.
+//  2. DEMOTE the asset in the /v1/assets listing (listingRankTierExpr); the row and its
+//     warning fields stay.
 //
-// Labels are best-effort: a nil reader, unlisted issuer or failed lookup omits
-// the fields. A failed lookup still withholds pricing (issuerDirectoryUnchecked).
-// A nil reader prices normally; the SQL demotion fails open.
+// Labels are best-effort: a nil reader, unlisted issuer or failed lookup omits the fields.
+// A failed lookup still withholds pricing (issuerDirectoryUnchecked); a nil reader prices
+// normally and the SQL demotion fails open.
 
 // stampIssuerDirectory copies one curated directory label onto the
 // detail. Tags are set only when non-empty so an unlabelled entry
@@ -140,18 +138,12 @@ func issuerPricingWithheld(d *AssetDetail) bool {
 	return d.issuerDirectoryUnchecked || pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags)
 }
 
-// suppressScamIssuerPricing withholds an asset's published PRICE claim on
-// the payload when its issuer carries a scam-class directory tag
-// (malicious/unsafe/fraud/scam/hack/phishing — pricingguard classifier):
-// price_usd, market_cap_usd, fdv_usd, the price-derived change_*, the
-// price_history_* SERIES and the listing-sourced listing_reference /
-// listing_valuation pair are nulled, while circulating_supply (a raw
-// chain fact) and the scam warning fields are kept. This is the
-// payload-side twin of the reader-seam pricingguard.ScamGate (which
-// withholds /v1/price and every reader-backed surface); together they
-// ensure a scam issuer publishes neither a price nor a market cap. An
-// unlisted/untagged issuer is left untouched; one whose lookup failed is
-// withheld (issuerDirectoryUnchecked). Idempotent + nil-safe.
+// suppressScamIssuerPricing nulls every dollar claim on the payload (price, market cap, FDV,
+// change_*, price_history_* series, listing reference/valuation) when the issuer carries a
+// scam-class directory tag or its lookup failed (issuerDirectoryUnchecked). Circulating supply
+// (a raw chain fact) and the warning fields stay. It is the payload-side twin of the reader-seam
+// pricingguard.ScamGate, so a scam issuer publishes neither a price nor a market cap.
+// Idempotent and nil-safe.
 func suppressScamIssuerPricing(d *AssetDetail) {
 	if d == nil || !issuerPricingWithheld(d) {
 		return
@@ -168,60 +160,28 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	d.Change1hPct = nil
 	d.Change24hPct = nil
 	d.Change7dPct = nil
-	// The withheld number must not come back as a PICTURE of itself: the
-	// last bucket of price_history_* IS the price we just refused to
-	// publish. Measured on r1: the flagged JFKBANK2 and RIO
-	// details served price_usd: null next to 24 hourly + 7 daily priced
-	// points, and the flagged listing rows drew a full sparkline beside
-	// their "—" price cell.
-	//
-	// ATH is nulled by the same call. An all-time HIGH is a USD price
-	// claim drawn from the same USD-quoted CAGG as price_usd, so serving
-	// `"ath": {"usd": "0.0091"}` next to `"price_usd": null` hands a
-	// client a published dollar valuation for a token the platform
-	// decided must publish none — and an anchor to expect value from,
-	// which is the legitimacy transfer this gate exists to prevent.
+	// The last bucket of price_history_* IS the withheld price, and an all-time high is a USD
+	// price claim from the same CAGG, so both go with it; otherwise a null price_usd would
+	// sit beside a priced sparkline or an "ath" figure.
 	withholdPriceSeriesWhenUnpriced(d)
-	// The listing-sourced second opinion is the same claim in a
-	// different field name. `listing_reference.price_usd` is a dollar
-	// price and `listing_valuation.value_usd` is a dollar market cap,
-	// both drawn from the third-party listing directory, and serving
-	// either beside the price_usd and market_cap_usd this function just
-	// withheld republishes the exact figure the tag exists to refuse.
-	//
-	// The arm that fills them has its own refusal for a flagged issuer,
-	// and it is not enough on its own: it reads IssuerDirectoryTags,
-	// which only the caller of THIS function populates, so on any path
-	// where the two run in the wrong order that refusal sees an empty
-	// slice and the figure is published anyway. This makes the outcome
-	// hold whatever the order — the tag is the authority, not the
-	// sequence.
-	//
-	// The pair is cleared TOGETHER. A reference with no valuation is a
-	// dollar price on the wire with no statement of what it was used
-	// for, which is the same half-carried shape mergeTwinStats refuses
-	// to produce.
+	// listing_reference and listing_valuation are the same dollar claims under other names.
+	// The arm that fills them reads IssuerDirectoryTags, which only this function's caller
+	// populates, so the tag must be enforced here whatever the call order. The pair is
+	// cleared together: a reference without a valuation is a half-carried shape that
+	// mergeTwinStats also refuses to produce.
 	d.ListingReference = nil
 	d.ListingValuation = nil
 	// global_market.price_usd is a dollar price for this row too.
 	d.GlobalMarket = nil
 }
 
-// withholdPriceSeriesWhenUnpriced drops every derived PRICE-OVER-TIME
-// claim from a payload that may not publish a price series — whatever
-// the reason (scam-issuer suppression, the thin-market substance gate,
-// a declared peg, or simply having no price at all). A price series is
-// the price over time and an all-time high is one point of it; serving
-// either beside a null price_usd both leaks the withheld value and
-// makes the payload self-contradictory.
+// withholdPriceSeriesWhenUnpriced drops the price-over-time claims (price_history_* and the
+// all-time high) from a payload that may not publish a price, for any reason. Serving them
+// beside a null price_usd leaks the withheld value and contradicts the payload.
 //
-// It shares [priceSeriesPublishable] with the listing's sparkline
-// attach, rather than restating the rule. Two copies drift: testing
-// only `PriceUSD != nil` here while [sparkline7dEligible] also excludes
-// declared-peg rows would refuse a declared-peg asset a sparkline on
-// /v1/assets and serve a full price_history_24h/7d on /v1/assets/{id} —
-// the dust series the listing had just declined to draw. One predicate
-// serves both callers, so they cannot drift.
+// It shares [priceSeriesPublishable] with the listing's sparkline attach so the two surfaces
+// cannot disagree, e.g. a declared-peg asset with no sparkline on /v1/assets but a full series
+// on /v1/assets/{id}.
 func withholdPriceSeriesWhenUnpriced(d *AssetDetail) {
 	if d == nil || priceSeriesPublishable(d) {
 		return

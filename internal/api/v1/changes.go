@@ -22,15 +22,12 @@ type ChangeSummaryReader interface {
 	GetChangeSummary(ctx context.Context, entityType, entityID string) (timescale.ChangeSummaryRow, error)
 }
 
-// ChangeSummaryResponse is the wire shape returned by
-// GET /v1/changes/{entity_type}/{id}.
+// ChangeSummaryResponse is the wire shape of GET /v1/changes/{entity_type}/{id}, mirroring the
+// change_summary_5m hypertable (null pointers, RFC 3339 timestamps, entity key echoed).
 //
-// Mirrors the change_summary_5m hypertable: pointers stay pointers (null on the wire), timestamps
-// are RFC 3339, and the entity-keying tuple is echoed so a payload is self-describing.
-//
-// The *_value fields are MONEY and cross the wire as JSON STRINGS carrying the exact decimal the
-// rollup stored, with no float64 round-trip. The *_delta_pct fields are display-grade percentages
-// and stay JSON numbers; streak_days stays an int.
+// The *_value fields are MONEY and cross the wire as JSON STRINGS carrying the exact stored
+// decimal, with no float64 round-trip. The *_delta_pct fields are display-grade percentages and
+// stay JSON numbers; streak_days stays an int.
 type ChangeSummaryResponse struct {
 	EntityType   string `json:"entity_type"`
 	EntityID     string `json:"entity_id"`
@@ -58,21 +55,18 @@ type ChangeSummaryResponse struct {
 
 // allowedChangeSummaryEntityTypes pins the entity_type values the API accepts: the families a
 // change-summary worker actually writes, both computed off one aggregator pair's 1-minute VWAP.
-//
-// The table CHECK also reserves 'protocol' and 'source', but no worker computes them, so
-// accepting them would only yield a misleading 404. Re-opening a family means landing its worker,
-// this set, and the OpenAPI enum together.
+// The table CHECK also reserves 'protocol' and 'source', but no worker computes them, so accepting
+// them would only yield a misleading 404; reopening one means landing its worker, this set and the
+// OpenAPI enum together.
 var allowedChangeSummaryEntityTypes = map[string]struct{}{
 	"coin": {},
 	"pair": {},
 }
 
-// changeSummaryCoinCandidates returns the entity_id forms to try for a coin lookup. The worker
+// changeSummaryCoinCandidates returns the entity_id forms to try for a coin lookup: the worker
 // writes rows under the canonical asset_id (`native`, `crypto:XLM`, `USDC-GA5Z...`) but consumers
-// use the slug (`XLM`), which would 404 without expansion.
-//
-// The first entry is always the literal input so an exact match short-circuits. Non-coin types
-// return just the literal input, since the pair form is an exact `base/quote` string.
+// use the slug (`XLM`). The literal input is always first so an exact match short-circuits;
+// non-coin types return only it, since the pair form is an exact `base/quote` string.
 func changeSummaryCoinCandidates(entityType, entityID string) []string {
 	if entityType != "coin" {
 		return []string{entityID}
@@ -110,11 +104,10 @@ func changeSummaryCoinCandidates(entityType, entityID string) []string {
 	if a, err := canonical.ParseAsset(entityID); err == nil {
 		add(a.String())
 	}
-	// Fold in the FULL canonical alias family of every form gathered so far, so the XLM SAC
-	// C-address (and any classic<->SAC pair) is a candidate: the worker writes a Soroban-sourced
-	// XLM rollup under the SAC form. AssetAliasStrings orders the SAC form LAST so thin Soroban
-	// data never shadows the established forms. Ranging over a snapshot stops the append feeding
-	// itself.
+	// Fold in the FULL alias family of every form gathered so far, so the XLM SAC C-address (and any
+	// classic<->SAC pair) is a candidate: the worker writes a Soroban-sourced XLM rollup under the
+	// SAC form. AssetAliasStrings orders the SAC form LAST so thin Soroban data never shadows the
+	// established forms. Ranging over a snapshot stops the append feeding itself.
 	for _, id := range append([]string(nil), out...) {
 		if a, err := canonical.ParseAsset(id); err == nil {
 			for _, form := range canonical.AssetAliasStrings(a) {
@@ -125,11 +118,9 @@ func changeSummaryCoinCandidates(entityType, entityID string) []string {
 	return out
 }
 
-// handleChangeSummary serves GET /v1/changes/{entity_type}/{id}.
-//
-// Returns 503 when no ChangeSummary reader is wired, 400 for a bad entity_type, and 404
-// (problem+json) when the entity has no row yet (not refreshed since it was added). The cache
-// header is short-lived because the worker refreshes every 5 minutes.
+// handleChangeSummary serves GET /v1/changes/{entity_type}/{id}: 503 when no reader is wired, 400
+// for a bad entity_type, 404 when the entity has no row yet. The cache header is short-lived
+// because the worker refreshes every 5 minutes.
 func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	if s.ChangeSummary == nil {
 		writeProblem(w, r,
@@ -156,8 +147,8 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For coin entities the worker writes one row per canonical asset_id form, so a bare slug
-	// would 404 on strict equality. Expand into candidates and take the first hit.
+	// The worker writes one coin row per canonical asset_id form, so a bare slug would 404 on strict
+	// equality: expand into candidates and take the first hit.
 	//
 	// Deliberately NOT the set `oracleAssetCandidates` builds: that ticker translation is gated on
 	// the verified-currency catalogue because it answers a per-ISSUER identity with global-ticker
@@ -214,9 +205,9 @@ const changeSummaryStaleAfter = 10 * time.Minute
 const changeSummaryGateSurface = "change_summary"
 
 // changeSummaryWithheld applies /v1/price's withholding verdict to a stored row and writes the
-// withheld problem when it fires. Every value on the row is an aggregated price claim for its
-// market, so a market /v1/price refuses to price must not be priced here. Decided at read time so
-// a new verdict (a flagged issuer, a thinned market) covers rows written before it.
+// withheld problem when it fires: every value is an aggregated price claim, so a market /v1/price
+// refuses to price must not be priced here. Decided at read time so a new verdict (flagged issuer,
+// thinned market) covers rows written before it.
 //
 // A "pair" row names its market exactly. A "coin" row names only the base, so the substance side
 // asks whether ANY plausible backing market clears the floor and the scam side asks about the
@@ -274,8 +265,8 @@ func changeSummaryLegs(entityType, entityID string) (base, quote canonical.Asset
 	return canonical.Asset{}, canonical.Asset{}, false
 }
 
-// changeSummaryResponse projects a stored row onto the wire shape,
-// decimals-normalising every absolute value on the way out.
+// changeSummaryResponse projects a stored row onto the wire shape, decimals-normalising every
+// absolute value.
 //
 // change_summary_5m holds RAW prices_1m ratios. The *_delta_pct fields, streak and acceleration
 // labels survive that because both legs share one raw series and the factor cancels; the absolute
@@ -317,12 +308,10 @@ func (s *Server) changeSummaryResponse(row timescale.ChangeSummaryRow) ChangeSum
 }
 
 // changeSummaryValueScale returns the exact non-standard-decimals factor for a stored row's
-// absolute values, or nil when there is nothing to scale (the common case).
-//
-// The legs are [changeSummaryLegs]'. For a "coin" row the assumed quote is the standard scale,
-// exact for every quote a coin row is realistically computed against (XLM, stablecoins, fiat or
-// global tickers). An id that does not parse names nothing the confirmed table could hold, so it
-// scales by nothing.
+// absolute values, or nil when there is nothing to scale (the common case). The legs are
+// [changeSummaryLegs]'; a "coin" row's assumed quote is the standard scale, exact for every quote
+// it is realistically computed against (XLM, stablecoins, fiat or global tickers). An unparseable
+// id names nothing the confirmed table could hold, so it scales by nothing.
 func (s *Server) changeSummaryValueScale(entityType, entityID string) *big.Rat {
 	base, quote, ok := changeSummaryLegs(entityType, entityID)
 	if !ok {

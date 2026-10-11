@@ -52,11 +52,10 @@ type IngestionDiagnostics struct {
 	Version  IngestionVersionInfo   `json:"version"`
 	Ledger   LedgerTip              `json:"ledger"`
 	Backfill []BackfillDecoderState `json:"backfill"`
-	// BackfillCoverage is the per-source "what fraction of genesis to tip have we processed"
-	// view. It is data-derived (ADR-0031): the gap detector persists it to
-	// source_coverage_snapshots and the handler reads one cheap row, with no trades scan.
-	// Cursors are an operational journal and do not feed coverage; trade_count is best-effort
-	// enrichment from the background trades-scan cache.
+	// BackfillCoverage is the per-source genesis-to-tip processed fraction. It is data-derived: the
+	// gap detector persists source_coverage_snapshots and the handler reads one row, with no
+	// trades scan. Cursors are an operational journal and do not feed coverage; trade_count is
+	// best-effort enrichment from the background trades-scan cache.
 	BackfillCoverage   []BackfillCoverageRow `json:"backfill_coverage"`
 	BackfillCoverageAt string                `json:"backfill_coverage_as_of,omitempty"`
 	// entryCounts is stashed by fillIngestionEntryCounts: the
@@ -68,11 +67,10 @@ type IngestionDiagnostics struct {
 	// stale:false would read as real zero counters. Fillers never write it directly; an
 	// atomic.Bool sidecar is copied here after wg.Wait() to avoid a data race.
 	degraded bool `json:"-"`
-	// CAGGCoverage is the time range of prices_1h, which powers /v1/chart and the
-	// since-inception history endpoint. Under ADR-0034 the Postgres trades hypertable is only
-	// the served tier, so its MIN(ledger) understates history; prices_1h is the indefinite OHLC
-	// spine, so its MIN(bucket) answers "do we have OHLC since genesis". Full raw history lives
-	// in the ClickHouse lake.
+	// CAGGCoverage is the time range of prices_1h, which powers /v1/chart and the since-inception
+	// history endpoint. The Postgres trades hypertable is only the served tier, so its MIN(ledger)
+	// understates history; prices_1h is the indefinite OHLC spine. Full raw history is in the
+	// ClickHouse lake.
 	CAGGCoverage CAGGCoverageView  `json:"cagg_coverage"`
 	FXBackfill   FXBackfillState   `json:"fx_backfill"`
 	Supply       SupplyStateView   `json:"supply"`
@@ -96,24 +94,21 @@ type SourceCoverageReader interface {
 	ListSourceCoverage(ctx context.Context) ([]timescale.SourceCoverage, error)
 }
 
-// CompletenessReader is the ADR-0033 Phase 6 read seam for the
-// per-source watermark verdict. Production wiring is
-// timescale.Store.ListCompletenessSnapshots, populated by
-// `stellarindex-ops compute-completeness` (cron). Nil reader / empty
-// slice → the completeness_* fields stay absent and the UI falls back
-// to the gap_free coverage signal; never a regression.
+// CompletenessReader is the read seam for the per-source watermark verdict, wired to
+// timescale.Store.ListCompletenessSnapshots (filled by `stellarindex-ops compute-completeness`).
+// A nil reader or empty slice leaves the completeness_* fields absent and the UI falls back to
+// the gap_free coverage signal.
 type CompletenessReader interface {
 	ListCompletenessSnapshots(ctx context.Context) ([]timescale.CompletenessSnapshot, error)
 }
 
 // BackfillCoverageRow is the per-source coverage projection.
 //
-// DensityPct is data-derived (ADR-0031): distinct_ledger_count / (tip - genesis + 1) from
-// source_coverage_snapshots, because cursors can say "fine" while the data says "missing".
-// GenesisLedger is the source's earliest-possible-data ledger, from sourceGenesisLedger.
-// EarliestLedger / LatestLedger are display context only. GapFreePct is 1 - max_gap / expected:
-// a sparse source running cleanly hits 1.0 despite low DensityPct, so it is the signal the
-// alert reads.
+// DensityPct is distinct_ledger_count / (tip - genesis + 1) from source_coverage_snapshots,
+// because cursors can say "fine" while the data says "missing". GenesisLedger comes from
+// sourceGenesisLedger; EarliestLedger / LatestLedger are display only. GapFreePct is
+// 1 - max_gap / expected: a sparse source running cleanly hits 1.0 despite low DensityPct, so
+// the alert reads it.
 type BackfillCoverageRow struct {
 	Source         string `json:"source"`
 	Applies        bool   `json:"applies"`
@@ -156,11 +151,10 @@ type BackfillCoverageRow struct {
 	// CoverageSnapshotAt against the cadence that actually refreshes it.
 	CoverageScanCadenceS int64 `json:"coverage_scan_cadence_s,omitempty"`
 
-	// CompletenessPct is the ADR-0033 watermark coverage, (watermark - genesis + 1) / (tip -
-	// genesis + 1), where the watermark is the highest ledger with substrate continuity, hash
-	// chain and recognition verified from genesis. The served-tier reconcile gates only
-	// CompletenessComplete, so this can read 100% while the served tier is short. It uses no
-	// sparsity threshold (one proven gap pins it), making it the headline signal. A pointer so
+	// CompletenessPct is (watermark - genesis + 1) / (tip - genesis + 1), where the watermark is
+	// the highest ledger with substrate continuity, hash chain and recognition verified from
+	// genesis. The served-tier reconcile gates only CompletenessComplete, so this can read 100%
+	// while the served tier is short. No sparsity threshold: one proven gap pins it. A pointer so
 	// a computed 0 is still emitted; presence means the audit ran.
 	CompletenessPct *float64 `json:"completeness_pct,omitempty"`
 	// CompletenessWatermark is the highest fully-verified ledger.
@@ -169,21 +163,19 @@ type BackfillCoverageRow struct {
 	// This is the SERVED/combined axis: substrate ∧ recognition ∧ the
 	// retention-scoped projection reconcile.
 	CompletenessComplete bool `json:"completeness_complete,omitempty"`
-	// CompletenessLakeComplete is the LAKE (archive) axis of the ADR-0033/0034 two-axis verdict:
-	// substrate and recognition only, genesis-to-tip, without the projection reconcile.
-	// A source is routinely lake_complete:true, complete:false while the served tier catches up;
-	// with only `complete`, a reader could not tell "data does not exist" from "projection is
-	// behind". /v1/coverage carries the same two axes.
+	// CompletenessLakeComplete is the LAKE (archive) axis of the two-axis verdict: substrate and
+	// recognition only, genesis-to-tip, without the projection reconcile. A source is routinely
+	// lake_complete:true, complete:false while the served tier catches up; with only `complete`,
+	// "data does not exist" would be indistinguishable from "projection is behind".
 	CompletenessLakeComplete bool `json:"completeness_lake_complete,omitempty"`
 	// CompletenessComputedAt is when compute-completeness last ran.
 	CompletenessComputedAt *WireTime `json:"completeness_computed_at,omitempty"`
 }
 
 // sourceGenesisLedger maps each source to the earliest ledger it can have data for: 2 for SDEX
-// (ledger 1 has no operations, so using it would cap DensityPct below 100%), the exact minimum
-// create_contract ledger across all of a protocol's contracts from its WASM audit, or 0 when
-// not applicable. It is the DensityPct denominator, so too early makes 100% unreachable and too
-// late hides early-history gaps; use the audited ledger, never a rounded estimate.
+// (ledger 1 has no operations), the audited minimum create_contract ledger for a protocol, or 0
+// when not applicable. It is the DensityPct denominator: too early makes 100% unreachable, too
+// late hides early-history gaps, so never use a rounded estimate.
 var sourceGenesisLedger = map[string]int64{
 	"sdex": 2,
 	// Soroban contracts — exact first-deploy ledgers, MIN across
@@ -227,11 +219,8 @@ type RegionInfo struct {
 	Deployment string `json:"deployment"`
 }
 
-// IngestionVersionInfo is the same five fields /v1/version returns.
-// Duplicated onto the ingestion response so an operator screen can
-// render "what's running here" without a second fetch — matters
-// during cross-region drift investigations when comparing r1 vs r2
-// without a SSH window open.
+// IngestionVersionInfo is the same five fields /v1/version returns, duplicated onto the
+// ingestion response so an operator screen needs no second fetch when comparing regions.
 type IngestionVersionInfo struct {
 	Version   string `json:"version"`
 	BuildDate string `json:"build_date"`
@@ -240,11 +229,9 @@ type IngestionVersionInfo struct {
 	GoVersion string `json:"go_version"`
 }
 
-// LedgerTip summarises live-network ingest progress. LatestLedger
-// comes from prices_1m's MAX(ledger_sequence); LagSeconds is the
-// wall-clock age of the most recent ledgerstream cursor update.
-// Volume / markets / assets come from the same source as
-// /v1/network/stats so the two endpoints agree.
+// LedgerTip summarises live-network ingest progress. LatestLedger is prices_1m's
+// MAX(ledger_sequence); LagSeconds is the age of the latest ledgerstream cursor update. Volume,
+// markets and assets share /v1/network/stats's source so the two endpoints agree.
 type LedgerTip struct {
 	LatestLedger    int64  `json:"latest_ledger"`
 	LagSeconds      int64  `json:"lag_seconds"`
@@ -300,11 +287,9 @@ type SupplyStateView struct {
 	LatestLedger   int64  `json:"latest_ledger,omitempty"`
 }
 
-// SourceHealthRow joins the static external.Registry metadata
-// (class, subclass, VWAP-eligibility, backfill-safety) with the
-// live 24h stats from sourcesStats (trades, volume, markets) so
-// operators can see at a glance which sources are silent vs
-// actively ingesting. Sorted by name for deterministic responses.
+// SourceHealthRow joins static external.Registry metadata with the live 24h stats from
+// sourcesStats so operators can see which sources are silent. Sorted by name for deterministic
+// responses.
 type SourceHealthRow struct {
 	Name          string `json:"name"`
 	Class         string `json:"class"`
@@ -445,10 +430,9 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 	out.Sources = []SourceHealthRow{}
 
 	// Independent fillers run concurrently, each with its own timeout so a slow reader cannot
-	// block the others. The trades-scan cache is only best-effort enrichment (per-source
-	// trade_count and off-chain row presence); authoritative coverage is data-derived (ADR-0031)
-	// and overlaid later by overlaySourceCoverageV2, so an empty or stale cache cannot blank
-	// the snapshot when the trades scan is too IO-contended to finish.
+	// block the others. The trades-scan cache is best-effort enrichment only; authoritative
+	// coverage is overlaid later by overlaySourceCoverageV2, so an empty or stale cache cannot
+	// blank the snapshot when the trades scan is too IO-contended to finish.
 	var cacheRows []timescale.BackfillCoverage
 	if s.BackfillCoverage != nil {
 		cacheRows, _ = s.BackfillCoverage.Snapshot()
@@ -507,13 +491,10 @@ func (s *Server) buildIngestionSnapshot(ctx context.Context) IngestionDiagnostic
 // overlaySourceCoverageV2 fills the authoritative DensityPct, CoveredLedgers, GapFreePct and
 // CoverageSnapshotAt from source_coverage_snapshots.
 //
-// Multi-table sources take the MIN of density, gap_free and covered_ledgers across tables, since
-// one empty target means the source is not fully covered; snapshot_at is the OLDEST last_updated.
-// expected_ledgers is the snapshot's window size, because the gap detector scans a trailing
-// window and covered/expected must stay coherent with density_pct.
-//
-// Soft-fail: a reader error or empty table leaves the fields zero, which the UI renders as
-// "Pending" rather than 0% coverage.
+// Multi-table sources take the MIN of density, gap_free and covered_ledgers across tables (one
+// empty target means not fully covered); snapshot_at is the OLDEST last_updated. expected_ledgers
+// is the snapshot's trailing-window size so covered/expected stays coherent with density_pct.
+// Soft-fail: a reader error or empty table leaves zeros, which the UI renders as "Pending".
 //
 //nolint:gocognit // linear pipeline; multi-table aggregation reads better inline than as a separate helper.
 func (s *Server) overlaySourceCoverageV2(ctx context.Context, rows *[]BackfillCoverageRow) {
@@ -627,11 +608,9 @@ func targetScanCadence(targetSource string) time.Duration {
 	return timescale.GapDetectorInterval
 }
 
-// sourceFromTargetSource maps the gap-detector target name
-// (per-table) back to the diagnostic's source name (per-protocol).
-// "blend-positions" → "blend"; "phoenix-liquidity" → "phoenix"; etc.
-// 1-to-1 for most sources; the multi-table protocols (blend,
-// phoenix, sep41) need explicit mapping.
+// sourceFromTargetSource maps a per-table gap-detector target name back to the per-protocol
+// source name ("blend-positions" → "blend"). Only the multi-table protocols (blend, phoenix,
+// sep41) need explicit mapping.
 func sourceFromTargetSource(targetSource string) string {
 	switch targetSource {
 	case "blend-positions", "blend-emissions", "blend-admin", "blend-auctions":
@@ -827,12 +806,10 @@ func (s *Server) fillIngestionSupplyCoverage(ctx context.Context, out *Ingestion
 	}
 }
 
-// aggregateBackfill collapses the per-range backfill cursor rows
-// into one row per decoder set. The cursor sub_source format is
-// "<start>-<end>:<decoder-set>" (e.g.
-// "50534290-51275895:sdex,soroswap"); a single decoder-set string
-// becomes one BackfillDecoderState row. RangesActive counts ranges
-// whose last_ledger < range_end — i.e. still catching up.
+// aggregateBackfill collapses per-range backfill cursor rows into one BackfillDecoderState per
+// decoder set. The cursor sub_source format is "<start>-<end>:<decoder-set>" (e.g.
+// "50534290-51275895:sdex,soroswap"). RangesActive counts ranges whose last_ledger < range_end,
+// i.e. still catching up.
 func aggregateBackfill(rows []timescale.Cursor) []BackfillDecoderState {
 	type group struct {
 		total       int
@@ -939,18 +916,14 @@ func ledgerStreamLagSeconds(rows []timescale.Cursor) int64 {
 	return 0
 }
 
-// buildSourceHealth projects the static external.Registry onto
-// the wire shape, joining each row with the live 24h stats from
-// sourcesStats. Sources with no recent trades render as 0/empty
-// rather than absent — operators want to see "binance had 0
-// trades in 24h", which is a signal not a hidden row.
+// buildSourceHealth projects the static external.Registry onto the wire shape, joined with the
+// 24h sourcesStats. Sources with no recent trades render as 0/empty rather than absent: zero
+// trades in 24h is a signal, not a hidden row.
 func buildSourceHealth(ctx context.Context, s *Server) []SourceHealthRow {
-	// Entries-24h from the universal per-source event counter
-	// (Prometheus) — runs FIRST and under its own short deadline. The
-	// trades aggregation below is slow + IO-contended under backfill
-	// load and can consume the entire sources-filler budget; running
-	// it first would leave this query no deadline, so every source
-	// would read 0. Soft-fail to empty.
+	// Entries-24h from the per-source Prometheus event counter runs FIRST under its own short
+	// deadline: the trades aggregation below is slow under backfill load and can consume the whole
+	// filler budget, which would leave this query no deadline and read 0 for every source.
+	// Soft-fail to empty.
 	entries24h := map[string]int64{}
 	if s.StatusBackend != nil {
 		ectx, cancel := context.WithTimeout(ctx, 5*time.Second)

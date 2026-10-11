@@ -16,15 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// StatusResponse is the wire shape for /v1/status — a customer-
-// facing rollup of system health. Distinct from /v1/healthz
-// (shallow liveness, k8s-style) and /v1/readyz (deep dependency
-// ping): /v1/status is what the public explorer status page
-// renders and what the "are the SLAs being met" pages
-// are built from.
-//
-// Operators inspecting /v1/diagnostics/cursors get more detail;
-// /v1/status is the human-friendly summary.
+// StatusResponse is the wire shape for /v1/status, the customer-facing health rollup behind the
+// public status page. It is distinct from /v1/healthz (shallow liveness) and /v1/readyz (deep
+// dependency ping); /v1/diagnostics/cursors carries the operator detail.
 type StatusResponse struct {
 	// Overall is "ok" when every signal is healthy, "degraded" when
 	// at least one signal is unhealthy but the API is still serving,
@@ -103,12 +97,10 @@ const (
 	incidentsStatusUnknown  = "unknown"
 )
 
-// incidentsStatusFor classifies the incidents block's trust state
-// from the Alertmanager query outcome. A query error (or no metrics
-// backend, which surfaces as inc being the zero value alongside a
-// nil err — handled by the caller setting "unknown" directly) must
-// NOT be published as an all-clear: err != nil is "unknown", not
-// "ok". See [StatusResponse.IncidentsStatus].
+// incidentsStatusFor classifies the incidents block's trust state from the Alertmanager query
+// outcome. A query error must NOT be published as an all-clear: err != nil is "unknown", not
+// "ok". A missing metrics backend is set to "unknown" by the caller. See
+// [StatusResponse.IncidentsStatus].
 func incidentsStatusFor(inc StatusIncidents, err error) string {
 	switch {
 	case err != nil:
@@ -137,11 +129,8 @@ type StatusLatency struct {
 	P99Ms      float64 `json:"p99_ms"`
 	WindowSecs int     `json:"window_secs"`
 
-	// Targets are echoed so the status page renders the same numbers the
-	// roll-up judges against. With the targets held only as literals in
-	// StatusPageClient.tsx, the page drew two red SLO bars underneath a
-	// green "All systems operational" banner: the frontend knew the
-	// targets and the roll-up did not.
+	// Targets are echoed so the status page renders the same numbers the roll-up judges
+	// against; targets held only in the frontend can contradict the overall banner.
 	P95TargetMs float64 `json:"p95_target_ms"`
 	P99TargetMs float64 `json:"p99_target_ms"`
 }
@@ -179,23 +168,15 @@ type StatusIncidents struct {
 	TicketCount        int `json:"ticket_count"`
 	InformationalCount int `json:"informational_count"`
 
-	// Active is the (deduplicated, severity-page-first) list of
-	// currently-firing alerts. Capped server-side at 16 — operators
-	// in a real incident reach for /metrics or alertmanager UI
-	// directly; this surface is a customer-facing "what's broken".
-	// Empty when no alerts are firing OR no Prometheus backend is
-	// wired.
+	// Active is the deduplicated, page-severity-first list of firing alerts, capped
+	// server-side at 16 because this is a customer-facing summary, not an operator view.
+	// Empty when nothing fires or no Prometheus backend is wired.
 	Active []ActiveIncident `json:"active,omitempty"`
 }
 
-// ActiveIncident is one entry in [StatusIncidents.Active] — the
-// fields a public status page wants to render. Internal labels
-// (component, team, instance) are deliberately excluded so this
-// surface stays anonymous-friendly. RunbookURL is included
-// because the runbooks themselves are public GitHub markdown —
-// operators clicking through from the status page during an
-// incident benefit from the direct link, and surfacing it doesn't
-// leak any operator-only signal that wasn't already public.
+// ActiveIncident is one entry in [StatusIncidents.Active]. Internal labels (component, team,
+// instance) are deliberately excluded to keep the surface public-safe. RunbookURL is included
+// because the runbooks are public markdown, so it leaks nothing.
 type ActiveIncident struct {
 	Name       string `json:"name"`
 	Severity   string `json:"severity"`
@@ -206,11 +187,8 @@ type ActiveIncident struct {
 // Production wiring is [PrometheusStatusBackend]; nil means we
 // degrade to in-process data only (uptime, region label).
 type StatusBackend interface {
-	// Heartbeats returns the latest scrape time per service.
-	// Map key is a friendly service name ("indexer", "aggregator",
-	// "api"); value is when Prometheus last successfully scraped
-	// the corresponding job. A zero time means the scrape has
-	// never succeeded.
+	// Heartbeats returns the latest successful scrape time per friendly service name
+	// ("indexer", "aggregator", "api"). A zero time means the scrape has never succeeded.
 	Heartbeats(ctx context.Context) (map[string]time.Time, error)
 
 	// Latency returns the 5-minute p50/p95/p99 of the API
@@ -224,23 +202,19 @@ type StatusBackend interface {
 	// grouped by severity label.
 	Incidents(ctx context.Context) (StatusIncidents, error)
 
-	// SourceEntries24h returns the per-source count of events
-	// ingested in the trailing 24h, from the same per-source counter
-	// (stellarindex_source_events_total) that backs active_sources.
-	// Universal across on-chain and external sources and cheap (a
-	// Prometheus range-increase, not a trades-hypertable scan).
-	// Sources with no events in the window are absent from the map.
+	// SourceEntries24h returns per-source events ingested in the trailing 24h, from the same
+	// counter (stellarindex_source_events_total) that backs active_sources. It covers on-chain
+	// and external sources and is cheap (a Prometheus range-increase, not a trades scan).
+	// Sources with no events in the window are absent.
 	SourceEntries24h(ctx context.Context) (map[string]int64, error)
 
 	// SourceEnabled reports which registry sources are actually switched
 	// on, from stellarindex_source_enabled. Sources absent from the map
 	// have never been enabled on this deployment.
 	//
-	// The status page lists every entry in external.Registry, so a source
-	// that was implemented but never wired up renders beside working ones
-	// with an entry count of 0 — indistinguishable from a dead connector.
-	// coinmarketcap and cryptocompare are both in that state: fully built,
-	// paid API keys, never switched on.
+	// The status page lists every external.Registry entry, so a source that was built but
+	// never switched on would otherwise render with a count of 0, indistinguishable from a
+	// dead connector.
 	SourceEnabled(ctx context.Context) (map[string]bool, error)
 }
 
@@ -378,11 +352,9 @@ func (p *PrometheusStatusBackend) queryCount(ctx context.Context, expr string) (
 func (p *PrometheusStatusBackend) Incidents(ctx context.Context) (StatusIncidents, error) {
 	var out StatusIncidents
 
-	// Single query over ALERTS gives us names AND lets us count by
-	// severity client-side — saves three round-trips. Excludes the
-	// deadmansswitch (it fires constantly by design) and the
-	// recording-rule artefacts that show up in ALERTS as
-	// alertname="" when severity isn't set.
+	// One query over ALERTS yields names and per-severity counts, saving three round-trips.
+	// It excludes the deadmansswitch (fires constantly by design) and recording-rule
+	// artefacts that appear in ALERTS with alertname="" when severity is unset.
 	res, err := p.queryVector(ctx,
 		`ALERTS{alertstate="firing",alertname!="stellarindex_deadmansswitch",alertname!=""}`)
 	if err != nil {
@@ -399,11 +371,9 @@ func (p *PrometheusStatusBackend) Incidents(ctx context.Context) (StatusIncident
 		}
 		seen[name] = true
 
-		// Only the three alert-rule severities we document are ever
-		// counted or published verbatim; anything else is an
-		// unvalidated Prometheus label value (any alertname can set
-		// severity to whatever it likes) and is normalized to
-		// "unknown" rather than passed through to the public JSON.
+		// Only the three documented severities are counted or published verbatim; any other
+		// value is an unvalidated label (an alert can set severity freely) and is normalized
+		// to "unknown" rather than passed into the public JSON.
 		switch severity {
 		case "page":
 			out.PageCount++
@@ -600,13 +570,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		freErr, incErr error
 	)
 	wg.Add(4)
-	// Each panel read runs DETACHED from the handler goroutine, so
-	// middleware.Recoverer does not cover it and an unrecovered panic
-	// would take the whole API down. Recovering leaves that panel's
-	// value at its zero and its err at nil — which every consumer
-	// below already treats as "the backend returned nothing": the
-	// panel degrades and the rest of the page still renders. Nothing
-	// is latched; the next request rebuilds from scratch.
+	// Each panel read runs DETACHED from the handler goroutine, so middleware.Recoverer does
+	// not cover it and an unrecovered panic would take the API down. Recovering leaves the
+	// panel's value zero and err nil, which consumers already treat as "backend returned
+	// nothing": that panel degrades and the rest renders. Nothing is latched.
 	go func() {
 		defer wg.Done()
 		defer worker.Recover(s.logger, "api-status-heartbeats")
@@ -674,11 +641,8 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	latencyBreached := latErr == nil && out.Latency.breached()
 	out.Overall = rollupOverall(out.Services, backendErr, pageFiring, latencyBreached)
 
-	// flags.stale reflects whether this envelope is reporting
-	// non-fresh state — any non-"ok" overall trips it so polling
-	// clients (status page, dashboards) can distinguish a healthy
-	// snapshot from a degraded/unknown/down one without parsing
-	// every per-service entry.
+	// flags.stale trips on any non-"ok" overall so polling clients can tell a healthy
+	// snapshot from a degraded one without parsing every per-service entry.
 	writeJSON(w, out, Flags{Stale: out.Overall != "ok"})
 }
 
@@ -694,15 +658,12 @@ func unknownServices(names []string) []StatusService {
 	return out
 }
 
-// heartbeatServices grades each DECLARED background service against the
-// heartbeat map. A heartbeat older than statusHeartbeatStaleAfter flags
-// the service down; a missing (or zero) heartbeat — including the whole
-// map being nil because the query failed — leaves it "unknown", which is
-// partial visibility rather than an all-clear.
+// heartbeatServices grades each DECLARED background service against the heartbeat map. A
+// heartbeat older than statusHeartbeatStaleAfter flags it down; a missing or zero heartbeat
+// (including a nil map from a failed query) leaves it "unknown", never an all-clear.
 //
-// Only the declared services are graded: a service this deployment
-// does not run has no heartbeat by design, and reporting it forever
-// "unknown" would pin `overall` at "degraded" on every lean test net.
+// Undeclared services are not graded: they have no heartbeat by design, and a permanent
+// "unknown" would pin `overall` at "degraded" on lean deployments.
 func heartbeatServices(names []string, hb map[string]time.Time) []StatusService {
 	now := time.Now().UTC()
 	out := make([]StatusService, 0, len(names))

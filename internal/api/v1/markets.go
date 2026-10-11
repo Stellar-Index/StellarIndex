@@ -45,15 +45,12 @@ func CexSourceNames() []string {
 	return out
 }
 
-// MarketsReader is the storage-side interface for /v1/markets
-// and /v1/pairs lookups. Implementations: *timescale.Store
-// (DistinctPairsExt + PairMarket), in-memory stubs for tests.
+// MarketsReader is the storage-side interface for /v1/markets and /v1/pairs lookups.
 //
-// Ownership contract: the row slices the list methods return belong to
-// the CALLER. handleMarkets / handlePools normalise and enrich them in
-// place, so an implementation that retains rows across calls (a cache)
-// must hand out a copy — [CachedMarketsReader] does. Callers may replace
-// a row's fields but must not write through its pointer/slice fields.
+// The row slices the list methods return belong to the caller, who normalises and enriches them in
+// place, so an implementation that retains rows (a cache) must hand out a copy, as
+// [CachedMarketsReader] does. Callers may replace a row's fields but not write through its
+// pointer/slice fields.
 type MarketsReader interface {
 	// DistinctPairsExt returns one page of (base, quote) pairs
 	// present in the trades store under the requested ordering.
@@ -66,26 +63,16 @@ type MarketsReader interface {
 	// for paginated drill-down.
 	SourceMarkets(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, error)
 
-	// AssetMarkets is DistinctPairsExt narrowed to pairs where the
-	// given asset_id appears on either side (base OR quote). Backs
-	// /v1/markets?asset=<asset_id> — the explorer's
-	// /assets/{slug} Markets tab uses it to surface every market
-	// the asset participates in without paying for a global scan +
-	// client-side filter.
+	// AssetMarkets is DistinctPairsExt narrowed to pairs where the asset_id is base or quote, so
+	// the Markets tab avoids a global scan plus client-side filter.
 	AssetMarkets(ctx context.Context, asset, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, error)
 
-	// AllPools returns every (source, base, quote) tuple — same
-	// pair on two venues becomes two rows. When `sources` is
-	// non-empty, restricts the result to rows whose source name
-	// appears in the slice. Backs /v1/pools (DEX-only) where the
-	// handler resolves the DEX subset of the source registry.
+	// AllPools returns every (source, base, quote) tuple, so the same pair on two venues is two
+	// rows. A non-empty filter sources list restricts rows to those venues (the DEX subset).
 	AllPools(ctx context.Context, filter timescale.PoolsFilter, cursor string, limit int, order timescale.MarketsOrder) ([]Pool, string, error)
 
-	// PairMarket returns the activity summary for a single (base,
-	// quote) pair. The bool is false when the pair has no trades —
-	// the /v1/pairs handler translates that to an empty 200 OK array,
-	// not a 404, so the wire shape stays consistent with the
-	// PairsEnvelope contract.
+	// PairMarket returns the activity summary for one pair. The bool is false when it has no
+	// trades; /v1/pairs answers that with an empty 200 array, not a 404, per PairsEnvelope.
 	PairMarket(ctx context.Context, base, quote canonical.Asset) (Market, bool, error)
 
 	// GetPairsVolumeHistory24hBatch returns per-pair hourly USD-volume
@@ -98,13 +85,11 @@ type MarketsReader interface {
 	FirstTradeBatch(ctx context.Context, pairs [][2]string) (map[string]time.Time, error)
 }
 
-// marketsStaleReader is the optional capability of a MarketsReader that can report each served
-// row-set's observed-at time and staleness; CachedMarketsReader implements it, the raw store
-// and test stubs do not. It lets handleMarkets stamp an honest as_of and flags.stale instead of
-// the SWR stale-serve path claiming as_of=now over arbitrarily old rows while refresh keeps failing.
-//
-// The *At methods add observedAt (fetch time of the served rows; zero means as_of=now, not
-// stale) and stale (the served bytes are past the cache TTL).
+// marketsStaleReader is the optional capability of a MarketsReader that reports each served
+// row-set's observed-at time and staleness; CachedMarketsReader implements it. It lets handleMarkets
+// stamp an honest as_of and flags.stale instead of the stale-while-revalidate path claiming
+// as_of=now over old rows while refresh keeps failing. The *At methods add observedAt (zero means
+// as_of=now, not stale) and stale (the served bytes are past the cache TTL).
 type marketsStaleReader interface {
 	DistinctPairsExtAt(ctx context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
 	SourceMarketsAt(ctx context.Context, source, cursor string, limit int, order timescale.MarketsOrder) ([]Market, string, time.Time, bool, error)
@@ -147,19 +132,15 @@ type Pool struct {
 	LastPrice *string `json:"last_price,omitempty"`
 }
 
-// handlePools serves GET /v1/pools: DEX/AMM liquidity pools only. One row per
-// (source, base, quote) where source is a DEX (Subclass=DEX in the source
-// registry). CEX pairs go through /v1/markets; "pool" misnames centralised
-// venues.
+// handlePools serves GET /v1/pools: DEX/AMM pools only, one row per (source, base, quote) where
+// the source is a DEX. CEX pairs go through /v1/markets.
 //
-// Query params (all optional): cursor (opaque, from pagination.next); limit
-// (1-500, default 100); order_by ("volume_24h_usd_desc" default, or "pair");
-// source (single DEX name; unknown / non-DEX names return an empty list);
-// base / quote (canonical asset_id per side, AND-combined); asset (canonical
-// asset_id on either side, mutually exclusive with `base`/`quote`: AND vs OR
-// has no well-defined combination).
+// Query params (all optional): cursor, limit (1-500, default 100), order_by ("volume_24h_usd_desc"
+// default, or "pair"), source (one DEX name; unknown or non-DEX names give an empty list),
+// base / quote (AND-combined), asset (either side; exclusive with base/quote since AND vs OR has no
+// well-defined combination).
 //
-// Every ?asset=/?base=/?quote= filter here is re-spelled through canonical.ParseAsset (see
+// Every ?asset=/?base=/?quote= filter is re-spelled through canonical.ParseAsset (see
 // canonicaliseAssetFilter): a bare alias like "XLM" differs from the stored form, and the SQL `=`
 // would return an authoritative empty 200, cached for 60s. `native` and `crypto:XLM` are stored
 // as distinct rows, so canonicalising does not merge them.
@@ -252,11 +233,8 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 			return
 		}
 	}
-	// Validate base/quote up front: the `asset` filter above already runs
-	// ParseAsset, but base/quote would otherwise flow raw into the
-	// trades-hypertable scan. Reject malformed input here
-	// rather than let it reach the query — the same silent-empty-page /
-	// DoS-lever guard the `asset` filter enforces.
+	// Validate base/quote up front, as `asset` is, so malformed input is rejected rather than
+	// reaching the trades-hypertable scan as a silent empty page or DoS lever.
 	if baseFilter != "" {
 		parsed, err := canonical.ParseAsset(baseFilter)
 		if err != nil {
@@ -285,13 +263,9 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 		Quote:   quoteFilter,
 		Asset:   assetFilter,
 	}
-	// Hard 8s ceiling — the AllPools query scans the trades
-	// hypertable's 24h window and can take 10s+ on a cold-cache
-	// path even with the cache wrapper above (the prewarm covers
-	// limit=25 + no filter; long-tail variants warm on first hit).
-	// Without this ceiling the user sees a hung request that
-	// eventually times out at the ingress; with it, they get a
-	// fast 503 they can retry against a now-warm cache.
+	// Hard 8s ceiling: AllPools scans the trades hypertable's 24h window and can take 10s+ cold
+	// (prewarm covers only limit=25 with no filter). Better a fast 503 to retry against a warm
+	// cache than a hung request that times out at the ingress.
 	pCtx, pCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer pCancel()
 	rows, next, observedAt, stale, err := allPools(pCtx, reader, filter, cursor, limit, order)
@@ -316,11 +290,9 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	if rows == nil {
 		rows = []Pool{}
 	}
-	// dex-nonstandard-decimals forward normalization (see
-	// docs/operations/runbooks/dex.md): /v1/pools's last_price needs it
-	// too — pools_per_source_1h's bucket_last_price is the same raw
-	// quote/base ratio /v1/price's closed-1m-bucket path serves.
-	// See adjustListingPriceStrings for the byte-identical-on-7dp contract.
+	// last_price needs dex-nonstandard-decimals normalization (docs/operations/runbooks/dex.md):
+	// pools_per_source_1h's bucket_last_price is the same raw ratio /v1/price serves. See
+	// adjustListingPriceStrings for the byte-identical-on-7dp contract.
 	for i := range rows {
 		rows[i].LastPrice = s.adjustListingPriceStrings(pCtx, rows[i].Base, rows[i].Quote, rows[i].LastPrice, "pools")
 	}
@@ -342,12 +314,10 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 // Volume24hUSD sums prices_1m's per-bucket volume_usd over 24h. It is a pointer so a pair with
 // no USD-equivalent trades emits null ("unknown") rather than "0" ("definitely zero").
 //
-// LastTradeAt vs BucketCloseAt:
-//   - LastTradeAt is the latest prices_1m bucket-start with a trade (minute precision), falling
-//     back to the daily bucket-start for pairs idle >24h but active in the 14d window. Use it for
-//     freshness: midnight-UTC daily buckets would show spuriously large staleness.
-//   - BucketCloseAt is the latest prices_1d bucket-start (UTC midnight). Do NOT use it for
-//     staleness.
+// LastTradeAt is the latest prices_1m bucket-start with a trade, falling back to the daily
+// bucket-start for pairs idle >24h but active in the 14d window; use it for freshness.
+// BucketCloseAt is the latest prices_1d bucket-start (UTC midnight) and would show spuriously
+// large staleness, so do not use it for that.
 type Market struct {
 	Base          string   `json:"base"`
 	Quote         string   `json:"quote"`
@@ -384,16 +354,10 @@ type MarketVolumeBucket struct {
 
 // handleMarkets serves GET /v1/markets.
 //
-// Query params:
-//   - cursor   (optional): opaque, from a prior response's pagination.next.
-//   - limit    (optional): integer 1-500, default 100.
-//   - order_by (optional): "pair" or "volume_24h_usd_desc" (DEFAULT, see the `case ""` arm), so
-//     clients need not page through ~5K dust pairs to find real activity.
-//   - source   (optional): single on-chain source or CEX venue name, restricted to pairs it
-//     observed in the recency window; a data vendor (aggregator, FX, oracle) is refused
-//     (sourceFilterOK).
-//   - asset    (optional): canonical asset_id on either side (base OR quote). Mutually exclusive
-//     with `source`; clients combine the two themselves. Backs the /assets/{slug} Markets tab.
+// Query params (all optional): cursor, limit (1-500, default 100), order_by ("pair" or
+// "volume_24h_usd_desc", the default, so clients skip ~5K dust pairs), source (one on-chain source
+// or CEX venue seen in the recency window; data vendors are refused by sourceFilterOK), and asset
+// (canonical asset_id on either side; mutually exclusive with `source`).
 func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo,funlen // option parsing + source/asset/no-filter dispatch + 8s-timeout guard + sparkline backfill are linear; splitting fragments the request lifecycle
 	cursor := r.URL.Query().Get("cursor")
 	limit := 100
@@ -411,11 +375,8 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	var order timescale.MarketsOrder
 	switch r.URL.Query().Get("order_by") {
 	case "":
-		// Default is volume-desc, not MarketsOrderPair: an alphabetical
-		// default surfaces spam tokens (`0-…`, `0TAX-…`, `0x1F3D4-…`)
-		// at the top of the listing, useless for callers expecting a
-		// "what's interesting on Stellar" view.
-		// Callers wanting the alphabetical view pass `?order_by=pair`.
+		// Default is volume-desc, not MarketsOrderPair: alphabetical order puts spam tokens at the
+		// top. Callers wanting it pass `?order_by=pair`.
 		order = timescale.MarketsOrderVolume24hDesc
 	case "pair":
 		order = timescale.MarketsOrderPair
@@ -443,14 +404,9 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	}
 
 	asset := r.URL.Query().Get("asset")
-	// Slug expansion: if `asset` doesn't parse as a canonical asset_id
-	// but DOES match a verified-currency catalogue slug, fan out to
-	// every asset_id form the catalogue knows for that slug — the
-	// networks[].asset_id entries (Stellar's USDC-GA5Z..., native,
-	// etc.) plus the global crypto:<TICKER> form (CEX trades, e.g.
-	// crypto:BTC on Binance/Coinbase). Empty if the slug has no
-	// expansion. Drives the cross-chain /assets/{slug} Markets tab
-	// surfacing both Stellar SDEX and CEX markets under one query.
+	// Slug expansion: an `asset` that is not a canonical asset_id but matches a verified-currency
+	// catalogue slug fans out to every asset_id form the catalogue knows (networks[].asset_id plus
+	// crypto:<TICKER> for CEX trades), so one query surfaces both SDEX and CEX markets.
 	var expandedAssets []string
 	if asset != "" {
 		if parsed, err := canonical.ParseAsset(asset); err == nil {
@@ -487,11 +443,8 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		writeJSON(w, []Market{}, Flags{})
 		return
 	}
-	// staleReader is the wired reader when it can surface each served
-	// row-set's observed-at + staleness (the TTL cache does; the raw
-	// store does not). When present we stamp an honest as_of + stale;
-	// when absent the read is live-fresh, so as_of=now / stale=false is
-	// truthful and unchanged. See marketsStaleReader.
+	// A reader that reports observed-at and staleness (the TTL cache) gets an honest as_of and
+	// stale; otherwise the read is live-fresh and as_of=now / stale=false is truthful.
 	staleReader, staleAware := reader.(marketsStaleReader)
 
 	var (
@@ -501,13 +454,8 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		stale      bool
 		err        error
 	)
-	// Hard 8s ceiling — DistinctPairsExt + SourceMarkets scan the
-	// trades hypertable's 24h window and can take 10s+ on a
-	// cold-cache path even with the cache wrapper. The same ceiling
-	// applies on /v1/pools; without it the
-	// user sees a hung request that eventually times out at the
-	// ingress (observed 6.9s for /v1/markets?limit=5 on prod
-	// when limit=5 missed the prewarm-25-only set).
+	// Hard 8s ceiling, as on /v1/pools: DistinctPairsExt and SourceMarkets scan the trades
+	// hypertable's 24h window and can take 10s+ cold, and prewarm covers only limit=25.
 	mCtx, mCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer mCancel()
 	switch {
@@ -518,15 +466,9 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 			rows, next, err = reader.SourceMarkets(mCtx, source, cursor, limit, order)
 		}
 	case len(expandedAssets) > 0:
-		// Catalogue-slug expansion path. Fan out one AssetMarkets
-		// query per expanded asset_id, merge results in-memory,
-		// sort by trade_count_24h desc, dedupe + cap at `limit`.
-		// Pagination is not supported on the slug-expansion path
-		// (each underlying cursor is per-asset_id; merging across
-		// streams would need a combined keyset that doesn't exist
-		// today). The cross-chain Markets tab uses this as a
-		// summary surface — operators wanting the full per-asset_id
-		// stream pass the canonical asset_id directly.
+		// Slug expansion fans out one AssetMarkets query per asset_id and merges in memory. There
+		// is no pagination: each cursor is per-asset_id and no combined keyset exists, so callers
+		// wanting the full stream pass the canonical asset_id.
 		rows, observedAt, stale, err = s.fanOutAssetMarkets(mCtx, reader, expandedAssets, limit, order)
 		next = ""
 	case asset != "":
@@ -616,14 +558,8 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		for i, m := range rows {
 			pairs[i] = [2]string{m.Base, m.Quote}
 		}
-		// Use the same 8s budget as the markets-list query — without
-		// this, the sparkline batch ran on r.Context() unbounded and
-		// could push total request latency to 10-15s after the markets
-		// query had already burned 5-8s. Sharing mCtx caps the total
-		// request at 8s; if markets ate most of it, sparkline gets
-		// what's left and degrades gracefully (best-effort path: a
-		// failure here logs at WARN and the response ships without
-		// sparkline data).
+		// Share mCtx so the sparkline batch cannot push the request past the 8s cap. It is
+		// best-effort: on failure it logs at WARN and the response ships without sparklines.
 		if hist, hErr := reader.GetPairsVolumeHistory24hBatch(mCtx, pairs); hErr != nil {
 			s.logger.Warn("markets sparkline batch failed", "err", hErr)
 			enrichFailed = true
@@ -643,12 +579,9 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		}
 	}
 
-	// Honest freshness: when the read came from the cache's SWR
-	// stale-serve path (stale=true) we stamp flags.stale and the served
-	// data's ACTUAL observation time — never now() over rows a failing
-	// refresh has let age past the TTL. A fresh serve stamps its recent
-	// observed-at (stale=false); an uncached/live read leaves observedAt
-	// zero and writeEnvelope defaults as_of to now.
+	// A stale-while-revalidate serve stamps flags.stale and the data's actual observation time,
+	// never now() over rows a failing refresh let age past the TTL. An uncached read leaves
+	// observedAt zero and writeEnvelope defaults as_of to now.
 	env := Envelope{
 		Data:  rows,
 		Flags: Flags{Stale: stale, Degraded: stale || enrichFailed},
@@ -665,11 +598,9 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 // expandSlugToAssetIDs resolves a verified-currency catalogue slug (e.g. "usdc", "xlm") to the
 // canonical asset_ids it represents, for /v1/markets?asset=<slug> fan-out.
 //
-// The expansion is every networks[].asset_id (non-Stellar networks have none and contribute
-// nothing, as we index no trades there), plus `crypto:<TICKER>` for crypto and stablecoin classes
-// so CEX trades match, plus `fiat:<TICKER>` for fiat.
-//
-// Returns nil when no catalogue is wired or the slug is unknown.
+// The expansion is every networks[].asset_id (non-Stellar networks contribute nothing, as we index
+// no trades there), plus `crypto:<TICKER>` for crypto and stablecoin classes so CEX trades match,
+// plus `fiat:<TICKER>` for fiat. Nil when no catalogue is wired or the slug is unknown.
 func (s *Server) expandSlugToAssetIDs(slug string) []string {
 	if s.VerifiedCurrencies == nil {
 		return nil
@@ -707,11 +638,8 @@ func (s *Server) expandSlugToAssetIDs(slug string) []string {
 	return out
 }
 
-// assetMarketsLeg fetches one expanded asset_id's markets for the fan-out,
-// returning its rows plus the cache-staleness meta (observedAt/stale) when
-// the reader is staleness-aware, else zero/false (an uncached read is
-// live-fresh). Keeps fanOutAssetMarkets' merge loop free of the
-// capability branch.
+// assetMarketsLeg fetches one expanded asset_id's markets plus observedAt/stale when the reader is
+// staleness-aware (zero/false otherwise), keeping fanOutAssetMarkets free of the capability branch.
 func assetMarketsLeg(ctx context.Context, reader MarketsReader, asset string, limit int, order timescale.MarketsOrder) ([]Market, time.Time, bool, error) {
 	if sr, ok := reader.(marketsStaleReader); ok {
 		rows, _, observedAt, stale, err := sr.AssetMarketsAt(ctx, asset, "", limit, order)
@@ -721,16 +649,12 @@ func assetMarketsLeg(ctx context.Context, reader MarketsReader, asset string, li
 	return rows, time.Time{}, false, err
 }
 
-// fanOutAssetMarkets calls AssetMarkets in parallel per expanded asset_id, merges, dedupes on
-// the (base, quote) tuple (one pair matched by two asset_id queries collapses to one row), sorts
-// per `order` and caps at `limit`.
+// fanOutAssetMarkets calls AssetMarkets in parallel per expanded asset_id, dedupes on (base, quote)
+// so a pair matched by two queries is one row, sorts per `order` and caps at `limit`. There is no
+// pagination because cursors across heterogeneous streams are not well-defined.
 //
-// There is no pagination: cursors across heterogeneous streams are not well-defined, so callers
-// wanting the full stream pass the canonical asset_id directly.
-//
-// Freshness is conservative: observedAt is the OLDEST contributing read and stale is the OR of
-// the legs. Both are zero/false when the reader cannot report them, so the handler falls back to
-// as_of=now.
+// Freshness is conservative: observedAt is the oldest contributing read and stale is the OR of the
+// legs; both are zero/false when the reader cannot report them, so the handler uses as_of=now.
 func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, assets []string, limit int, order timescale.MarketsOrder) ([]Market, time.Time, bool, error) {
 	type result struct {
 		rows       []Market
@@ -789,14 +713,10 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 	return merged, observedAt, stale, nil
 }
 
-// sortMergedMarkets orders a fan-out's merged rows the same way the
-// single-asset SQL path orders them (buildSourceMarketsQuery /
-// distinctPairsCommon), so `order_by` behaves identically whether the
-// caller passed a canonical asset_id or a slug that expanded into
-// several. MarketsOrderPair sorts ascending by (base, quote);
-// MarketsOrderVolume24hDesc sorts descending by volume_24h_usd,
-// NULLs treated as zero, tie-broken ascending by (base, quote) —
-// matching the SQL's `COALESCE(vol_24h_num, 0) DESC, base||quote ASC`.
+// sortMergedMarkets orders a fan-out's merged rows as the single-asset SQL path does
+// (buildSourceMarketsQuery / distinctPairsCommon), so `order_by` behaves the same for an asset_id
+// and a slug. Volume order treats NULL as zero and ties break ascending by (base, quote), matching
+// `COALESCE(vol_24h_num, 0) DESC, base||quote ASC`.
 func sortMergedMarkets(merged []Market, order timescale.MarketsOrder) {
 	switch order {
 	case timescale.MarketsOrderPair:
@@ -838,17 +758,14 @@ func compareVolumeUSD(a, b *string) int {
 	return toRat(a).Cmp(toRat(b))
 }
 
-// adjustListingPrice is the ONE path a listing row's last_price takes to
-// the wire: scam-issuer withholding first, then dex-nonstandard-decimals
-// normalization (docs/operations/runbooks/dex.md).
+// adjustListingPrice is the one path a listing row's last_price takes to the wire: scam-issuer
+// withholding, then dex-nonstandard-decimals normalization (docs/operations/runbooks/dex.md).
 //
 // Withholding returns nil: the row still lists (trades and volume are activity, not a price) but
-// carries no last_price, matching the 404 from /v1/price, /v1/vwap and /v1/twap. Gating here keeps
-// /v1/markets, /v1/pools and /v1/pairs aligned (see scamWithheld). `surface` labels the metric.
-//
-// nil / empty lastPrice passes through. lastPrice is returned UNCHANGED (same pointer) when
-// baseDecimals == quoteDecimals: the CAGG's NUMERIC::text format differs from [ratToDecimal]'s
-// fixed 10-digit rendering, so reformatting would change wire bytes for every correct 7dp pair.
+// has no last_price, matching the 404 from /v1/price, /v1/vwap and /v1/twap (see scamWithheld).
+// `surface` labels the metric. A nil or empty lastPrice passes through, and lastPrice is returned
+// unchanged (same pointer) when decimals match: the CAGG's NUMERIC::text differs from
+// [ratToDecimal]'s fixed 10-digit rendering, so reformatting would change bytes for every 7dp pair.
 func (s *Server) adjustListingPrice(ctx context.Context, base, quote canonical.Asset, lastPrice *string, surface string) *string {
 	if lastPrice == nil || *lastPrice == "" {
 		return lastPrice
@@ -869,14 +786,9 @@ func (s *Server) adjustListingPrice(ctx context.Context, base, quote canonical.A
 	return &adjusted
 }
 
-// adjustListingPriceStrings is [Server.adjustListingPrice] for callers
-// that only have the wire-shape base/quote strings (handleMarkets /
-// handlePools operate on the already-flattened v1.Market / v1.Pool
-// rows, one layer above where canonical.Asset is available). Both
-// strings originate from canonical.Asset.String() at the storage
-// layer, so a parse failure here is defensive-only (fails open —
-// returns lastPrice unchanged rather than dropping the row or 500ing
-// the whole listing).
+// adjustListingPriceStrings is [Server.adjustListingPrice] for callers holding only the wire-shape
+// base/quote strings. They come from canonical.Asset.String(), so a parse failure is defensive-only
+// and fails open, returning lastPrice unchanged rather than dropping the row or 500ing the listing.
 func (s *Server) adjustListingPriceStrings(ctx context.Context, baseRaw, quoteRaw string, lastPrice *string, surface string) *string {
 	if lastPrice == nil || *lastPrice == "" {
 		return lastPrice

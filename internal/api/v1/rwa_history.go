@@ -36,25 +36,16 @@ import (
 // Membership is today's SEP-1 attestations and curated directory, applied to the whole window
 // (see `membership_as_of` and `basis`).
 
-// rwaHistoryTTL bounds the reuse of one assembled history.
-//
-// It matches [rwaMembershipTTL] rather than [rwaReferenceTTL]: the
-// series is a DAILY grain, so its newest bucket cannot move faster than
-// the oracle publishes into today, and the reads behind it — a
-// ClickHouse scan over the flow log and a CAGG scan over every day the
-// oracles have published — are far too heavy to run per request.
+// rwaHistoryTTL bounds the reuse of one assembled history. It matches [rwaMembershipTTL]: the
+// series is DAILY grain, so its newest bucket cannot move faster than the oracle publishes, and
+// the reads behind it (a ClickHouse scan over the flow log, a CAGG scan over every oracle day)
+// are far too heavy to run per request.
 const rwaHistoryTTL = 10 * time.Minute
 
-// rwaHistoryBudget is the assembly's own deadline. Both legs are scans;
-// this bounds them together so a slow lake cannot hold a request open
-// for the handler's whole budget.
-//
-// Tied to [maxHandlerBudget] rather than a separate literal: on a cache
-// miss handleRWAHistory reaches buildRWAValueHistory synchronously
-// (cachedRWAValueHistory's leader branch), so a budget past the
-// blanket request deadline can never fire — the middleware's timeout
-// answers first and this handler's own unavailable-response branch
-// never runs.
+// rwaHistoryBudget is the assembly's own deadline, bounding both scan legs together so a slow
+// lake cannot hold a request open. It is tied to [maxHandlerBudget]: on a cache miss
+// handleRWAHistory reaches buildRWAValueHistory synchronously, so a budget past the blanket
+// request deadline never fires and the handler's unavailable-response branch would never run.
 const rwaHistoryBudget = maxHandlerBudget
 
 // rwaHistoryMaxPoints caps the served point count per series. The daily
@@ -111,11 +102,9 @@ type RWAHistoryView struct {
 	// could be valued on is ABSENT — never a zero and never a repeat of
 	// the previous day.
 	Points []RWAHistoryPoint `json:"points"`
-	// Groups is the same series decomposed, present only when `group_by`
-	// asked for one. The group series are NOT guaranteed to sum to
-	// `points` on every day, because a member that drops out of one day
-	// drops out of both — which is exactly what the per-point counts are
-	// there to expose.
+	// Groups is the same series decomposed, present only when `group_by` asked for one. The group
+	// series are NOT guaranteed to sum to `points` on every day, because a member that drops out
+	// of one day drops out of both; the per-point counts expose exactly that.
 	Groups []RWAHistoryGroup `json:"groups,omitempty"`
 	// Truncated reports that a cap bound the series, so it is known to
 	// be shorter than the data behind it.
@@ -197,11 +186,9 @@ const (
 	// the member's Stellar Asset Contract, so no supply level can be
 	// reconstructed for any day.
 	RWAHistoryExcludedNoSupplyHistory = "no_supply_history"
-	// RWAHistoryExcludedSupplyIncomplete — the running total of the
-	// member's flows goes NEGATIVE, which is physically impossible for a
-	// real token and means the contract's flows are incompletely seeded
-	// in the lake. The same refusal [clickhouse.TokenSupply.Incomplete]
-	// makes on the point-in-time path.
+	// RWAHistoryExcludedSupplyIncomplete: the running total of the member's flows goes NEGATIVE,
+	// which is impossible for a real token and means the flows are incompletely seeded in the
+	// lake. The same refusal [clickhouse.TokenSupply.Incomplete] makes point-in-time.
 	RWAHistoryExcludedSupplyIncomplete = "supply_incomplete"
 	// RWAHistoryExcludedNoReferenceHistory — the member is bound to a
 	// feed the oracles have never published a USD day bucket for.
@@ -226,26 +213,18 @@ const rwaHistoryBasisUnavailable = "No series is published: membership could not
 
 // ─── readers ────────────────────────────────────────────────────────
 
-// RWAOracleHistoryReader reads daily oracle observation buckets. Backs
-// the price leg of GET /v1/rwa/history.
-//
-// Declared apart from [OracleReader], the live-snapshot seam with many implementations, where a
-// history method would be a nil-returning stub in nearly all of them.
-//
-// Nil disables the endpoint (503): a series with the price leg missing is not a shorter series,
-// it is no series.
+// RWAOracleHistoryReader reads daily oracle observation buckets for the price leg of GET
+// /v1/rwa/history. It is declared apart from [OracleReader], where a history method would be a
+// nil-returning stub in nearly every implementation. Nil disables the endpoint (503): a series
+// with the price leg missing is not a shorter series, it is no series.
 type RWAOracleHistoryReader interface {
 	DailyOraclePrices(ctx context.Context, assets []canonical.Asset, quote canonical.Asset, from, to time.Time) ([]timescale.OracleDayPoint, error)
 }
 
-// rwaSupplyFlowHistoryReader is the narrow bulk capability the supply
-// leg needs. Type-asserted off [Server.tokenSupply] rather than added to
-// [TokenSupplyReader], the same optional-seam idiom
-// [classicLakeSupplyReader] uses next door, so every existing stub
-// implementing that seam keeps compiling and simply opts out.
-//
-// Production wiring: *clickhouse.SupplyReader, via
-// clickhouse.NewSupplyReaderAuth in cmd/stellarindex-api/main.go.
+// rwaSupplyFlowHistoryReader is the narrow bulk capability the supply leg needs. It is
+// type-asserted off [Server.tokenSupply] (the [classicLakeSupplyReader] idiom) so existing stubs
+// of [TokenSupplyReader] keep compiling and simply opt out. Production wiring is
+// *clickhouse.SupplyReader.
 type rwaSupplyFlowHistoryReader interface {
 	DailySupplyFlowsForContracts(ctx context.Context, contractIDs []string) ([]clickhouse.SupplyFlowDay, error)
 }
@@ -293,11 +272,9 @@ type rwaValueHistory struct {
 
 // ─── handler ────────────────────────────────────────────────────────
 
-// rwaHistoryTimeframes is the accepted window vocabulary — the chart
-// endpoint's, minus the two sub-daily tokens. `1h` and `24h` are refused
-// rather than quietly served as one or two points: a daily series cannot
-// answer an intraday question, and returning a two-point chart for it
-// would look like an answer.
+// rwaHistoryTimeframes is the chart endpoint's window vocabulary minus the two sub-daily tokens.
+// `1h` and `24h` are refused rather than served as one or two points: a daily series cannot
+// answer an intraday question, and a two-point chart would look like an answer.
 var rwaHistoryTimeframes = map[string]time.Duration{
 	"1w":  7 * 24 * time.Hour,
 	"1mo": 30 * 24 * time.Hour,
@@ -401,11 +378,9 @@ func rwaHistoryWindowStart(tf string, now time.Time) time.Time {
 
 // rwaHistoryTotal merges the constituents into the set series.
 //
-// Every day any member could be valued on becomes a point; a day none
-// could is ABSENT. `setAssets` — the size of the WHOLE set, not of the
-// contributing subset — is what the unvalued count is taken against, so
-// a point states its coverage of the sector rather than of whatever
-// happened to be readable.
+// Every day any member could be valued on becomes a point; a day none could is ABSENT.
+// `setAssets`, the size of the WHOLE set rather than the contributing subset, is what the
+// unvalued count is taken against, so a point states its coverage of the sector.
 func rwaHistoryTotal(members []rwaHistoryMember, setAssets int, from time.Time) ([]RWAHistoryPoint, bool) {
 	type acc struct {
 		sum    *big.Rat
@@ -571,15 +546,11 @@ func rwaHistoryExcludedRows(tally map[string]int) []RWAHistoryExcluded {
 
 // ─── assembly ───────────────────────────────────────────────────────
 
-// cachedRWAValueHistory returns the assembled history, rebuilt at most
-// once per TTL window and shared across concurrent requests by a
-// single-flight gate — the same shape [Server.cachedRWAMembership] uses,
-// and for a heavier reason: both legs are scans.
-//
-// On a failed assembly the last good history is served when there is
-// one, and an UNAVAILABLE one when there is not. Unavailable is not
-// empty: an empty series would say the sector has never been worth
-// anything, which is a finding a read that did not answer may not make.
+// cachedRWAValueHistory returns the assembled history, rebuilt at most once per TTL window and
+// shared by a single-flight gate (as in [Server.cachedRWAMembership], with heavier reason: both
+// legs are scans). On a failed assembly the last good history is served, else an UNAVAILABLE
+// one. Unavailable is not empty: an empty series would say the sector has never been worth
+// anything, a finding a read that did not answer may not make.
 func (s *Server) cachedRWAValueHistory(ctx context.Context) rwaValueHistory {
 	s.rwaHistMu.Lock()
 	if s.rwaHistCache != nil && time.Since(s.rwaHistAt) < rwaHistoryTTL {
@@ -637,11 +608,9 @@ func (s *Server) buildRWAValueHistory(ctx context.Context) rwaValueHistory {
 	defer cancel()
 
 	m := s.cachedRWAMembership(ctx)
-	// Unavailable means NEITHER arm answered — the same test
-	// handleRWAAssets applies. One arm reporting a set while the other
-	// failed is a partial measurement, and the excluded tally is where
-	// that shows up; refusing the whole series for it would publish less
-	// than we know.
+	// Unavailable means NEITHER arm answered, as in handleRWAAssets. One arm reporting a set
+	// while the other failed is a partial measurement shown in the excluded tally; refusing the
+	// whole series would publish less than we know.
 	if !m.available && !m.contractCensus.available &&
 		len(m.members) == 0 && len(m.contracts) == 0 {
 		return rwaValueHistory{}
@@ -758,11 +727,8 @@ func rwaHistoryCandidates(m rwaMembership, excluded map[string]int) []rwaHistory
 			issuerLabel: rwaHistoryLabel(mem.dirName, mem.homeDomain),
 			feed:        feed,
 			sac:         sac,
-			// Every classic asset is 7 decimals. Stated as the constant
-			// it is rather than read from a catalogue row: this arm
-			// admits classic assets only (R1), so there is no other
-			// value it could take, and a lookup would only introduce a
-			// way for it to be wrong.
+			// Every classic asset is 7 decimals. This arm admits classic assets only, so there is
+			// no other value, and a catalogue lookup would only add a way to be wrong.
 			decimals: 7,
 		})
 	}
@@ -785,13 +751,9 @@ type rwaSupplyLevel struct {
 	level *big.Int
 }
 
-// rwaHistorySupplyLevels reconstructs each candidate's supply level
-// history from the lake's flow log.
-//
-// Returns ok=false only when the READ itself failed — a distinction the
-// caller needs, because an empty result from a working read is a finding
-// about the lake's coverage and an empty result from a failed one is
-// not.
+// rwaHistorySupplyLevels reconstructs each candidate's supply level history from the lake's flow
+// log. It returns ok=false only when the READ itself failed: an empty result from a working
+// read is a finding about the lake's coverage, while one from a failed read is not.
 func (s *Server) rwaHistorySupplyLevels(
 	ctx context.Context, cands []rwaHistoryCandidate, excluded map[string]int,
 ) (map[string][]rwaSupplyLevel, bool) {
@@ -867,11 +829,9 @@ type rwaFeedSeries struct {
 	days map[time.Time]*big.Rat
 }
 
-// rwaHistoryPrices reads the oracle day buckets for the candidates'
-// bound feeds and reduces each feed to ONE source's series.
-//
-// Returns ok=false only on a failed read, for
-// [Server.rwaHistorySupplyLevels]'s reason.
+// rwaHistoryPrices reads the oracle day buckets for the candidates' bound feeds and reduces each
+// feed to ONE source's series. It returns ok=false only on a failed read, as
+// [Server.rwaHistorySupplyLevels] does.
 func (s *Server) rwaHistoryPrices(
 	ctx context.Context, cands []rwaHistoryCandidate,
 ) (map[string]*rwaFeedSeries, bool) {
@@ -884,12 +844,10 @@ func (s *Server) rwaHistoryPrices(
 		seen[c.feed] = struct{}{}
 		assets = append(assets, canonical.Asset{Type: canonical.AssetRWA, Code: c.feed})
 	}
-	// Open-ended at the start: the series reaches as far back as the
-	// oracle has ever published, and oracle_prices_1d carries no
-	// retention policy, so there is nothing to bound it to. Closed at
-	// the end on the last complete day. The supply leg needs no ceiling
-	// of its own: a level reaches the series only through a price day,
-	// and today's flows must still feed rwaCumulateSupply's negative check.
+	// Open-ended at the start: oracle_prices_1d has no retention policy, so there is nothing to
+	// bound it to. Closed at the end on the last complete day. The supply leg needs no ceiling of
+	// its own: a level reaches the series only through a price day, and today's flows must still
+	// feed rwaCumulateSupply's negative check.
 	to := rwaClosedDayCeiling(time.Now())
 	rows, err := s.OracleHistory.DailyOraclePrices(ctx, assets, rwaHistoryQuote, time.Time{}, to)
 	if err != nil {
@@ -953,16 +911,12 @@ func rwaFeedDaysBySource(rows []timescale.OracleDayPoint) map[string]rwaFeedDayI
 	return feeds
 }
 
-// rwaAdmissibleFeedRow reports whether one day bucket may enter a
-// reference series.
+// rwaAdmissibleFeedRow reports whether one day bucket may enter a reference series.
 //
-// The oracle-class gate is R-C from rwa_reference.go: an aggregator
-// writing into the same table for divergence comparison is not an
-// independent valuation of the instrument. A non-positive value is bad
-// data, not a valuation of zero — the same refusal
-// rwaReferenceValuationOf makes. Dropping the bucket leaves the day a
-// gap for this feed, which is correct: the oracle published, but not a
-// number anything may be multiplied by.
+// The oracle-class gate is R-C from rwa_reference.go: an aggregator writing into the same table
+// for divergence comparison is not an independent valuation. A non-positive value is bad data,
+// not a valuation of zero (the refusal rwaReferenceValuationOf makes); dropping the bucket
+// leaves a gap for this feed rather than a number anything may be multiplied by.
 func rwaAdmissibleFeedRow(row timescale.OracleDayPoint) bool {
 	switch {
 	case row.Asset.Type != canonical.AssetRWA:
@@ -1008,13 +962,11 @@ func rwaHistorySources(members []rwaHistoryMember) []string {
 
 // ─── the join ───────────────────────────────────────────────────────
 
-// rwaHistoryMemberDays multiplies one member's supply levels by its
-// feed's day buckets.
+// rwaHistoryMemberDays multiplies one member's supply levels by its feed's day buckets.
 //
 // The PRICE drives the series: a day is produced only where the oracle published. The supply
 // level is the running total as of that day, so a day between two flows takes the earlier flow's
-// level. That asymmetry is the honesty of this function: the leg that is a complete log may be
-// carried, the leg that is a sampled observation may not.
+// level: the leg that is a complete log may be carried, the sampled observation may not.
 //
 // A price day BEFORE the member's first flow yields nothing: the token did not exist yet, and a
 // zero supply times a real NAV is computable but meaningless.
