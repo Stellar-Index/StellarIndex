@@ -7,13 +7,10 @@ import (
 	"testing"
 )
 
-// TestWarnOpenCORS_WildcardWithExtraEntries pins that warnOpenCORS must
-// treat AllowedOrigins as wildcard-open whenever "*" appears ANYWHERE in
-// the list, matching middleware.CORS's own `allowed["*"]` set-membership
-// check (internal/api/v1/middleware/cors.go). A
-// `len(allowedOrigins) == 1 && allowedOrigins[0] == "*"` would silently skip
-// the SECURITY warning for a config like ["*", "https://evil.com"], even
-// though CORS() echoes "*" to every origin regardless of the extra entry.
+// TestWarnOpenCORS_WildcardWithExtraEntries pins that warnOpenCORS treats AllowedOrigins as
+// wildcard-open whenever "*" appears ANYWHERE in the list, matching middleware.CORS's own
+// `allowed["*"]` set-membership check. A single-entry check would silently skip the SECURITY
+// warning for ["*", "https://evil.com"], though CORS() echoes "*" to every origin regardless.
 func TestWarnOpenCORS_WildcardWithExtraEntries(t *testing.T) {
 	warnLogged := func(allowedOrigins []string, authMode string) bool {
 		var buf bytes.Buffer

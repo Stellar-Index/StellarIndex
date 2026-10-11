@@ -4,71 +4,28 @@
 package canonical
 
 // This file is the exhaustive-switch guard named in ADR-0010's Invariant
-// (docs/adr/0010-off-chain-fiat-representation.md). ROADMAP #48.
+// (docs/adr/0010-off-chain-fiat-representation.md).
 //
-// We DID already enable golangci-lint's `exhaustive` linter repo-wide
-// (.golangci.yml) — but scoped to `default-signifies-exhaustive:
-// true`, the low-noise setting. The probe
-// documented right there in .golangci.yml found that flipping to the
-// strict form (`default-signifies-exhaustive: false`) to actually
-// verify AssetType switches floods 12 findings repo-wide, only 3 of
-// which are AssetType (the rest are reflect.Kind walkers and other
-// enums this repo doesn't own) — golangci's `exhaustive` linter has
-// no way to scope strictness to a single named type. That's why this
-// exists as a second, narrow guard instead of a config tweak:
+// golangci-lint's `exhaustive` linter runs repo-wide with `default-signifies-exhaustive: true`.
+// Strict mode (`false`) would flood findings on enums this repo does not own (reflect.Kind
+// walkers, etc.), and the linter cannot scope strictness to one named type. So this narrow guard
+// exists instead:
 //
-//   - It walks the repo with go/types (same plumbing as
-//     TestI128TruncationGuard below/above in this package — see
-//     loadRepoPackages/repoRoot, reused verbatim) and only ever looks
-//     at switches whose tag type is canonical.AssetType. Zero noise
-//     on any other enum, so it can run at full strictness.
-//   - It also catches something `default-signifies-exhaustive: true`
-//     structurally cannot: a switch that HAS a `default:` clause but
-//     the clause is empty or a bare `fallthrough`/`break` — golangci
-//     counts the mere PRESENCE of a default as "exhaustive" and never
-//     looks inside it. A silently-empty default on a variant it
-//     doesn't handle is no safer than no default at all.
+//   - It walks the repo with go/types (loadRepoPackages/repoRoot, shared with
+//     TestI128TruncationGuard) and looks only at switches whose tag type is canonical.AssetType,
+//     so it runs at full strictness with no noise.
+//   - It catches what `default-signifies-exhaustive: true` cannot: a `default:` that is empty or
+//     a bare `fallthrough`/`break`. golangci counts the mere presence of a default as exhaustive,
+//     but a silently empty default on an unhandled variant is no safer than none.
 //
-// The declared-variant set is discovered dynamically from the
-// canonical package's own go/types Scope (every package-level
-// `const` of type AssetType) rather than hardcoded here — a 7th
-// AssetType variant that forgets to update a hardcoded list in THIS
-// file would recreate exactly the blind spot the guard exists to
-// close.
+// The declared-variant set is discovered from the canonical package's go/types Scope (every
+// package-level const of type AssetType), never hardcoded, so a new AssetType variant cannot
+// escape the guard by being missing from a list here.
 //
-// Escape hatch: this repo already has one for the `exhaustive`
-// linter — a `//exhaustive:ignore` comment on the line directly above
-// the switch (see internal/storage/timescale/usd_volume_quote_spec.go
-// for the one existing, documented site: an intentionally-partial
-// switch with prose above it explaining exactly which variants fall
-// through and why). This guard honors the SAME marker rather than
-// inventing a second one — a switch already justified to golangci's
-// linter doesn't need a redundant justification to this one.
-//
-// PROBE (per repo review-rule "gates that can't fail are
-// decorative"): two scenarios, each applied then reverted before
-// commit, `go test -run TestAssetTypeExhaustiveGuard
-// ./internal/canonical/` run against each:
-//
-//  1. Temporarily deleted the `//exhaustive:ignore` line above
-//     internal/storage/timescale/usd_volume_quote_spec.go's
-//     QuoteUSDPegInfo switch (the one switch in the repo with no
-//     default at all). Failed with "switch on canonical.AssetType
-//     has no default clause and is missing case(s) for: crypto,
-//     fiat, native, rwa" at that exact file:line.
-//  2. Temporarily deleted `case AssetRWA:` from Asset.String() in
-//     asset.go AND collapsed its `default: return "invalid-asset"`
-//     to an empty `default:` (return moved after the switch, so
-//     runtime behavior was unchanged — only the switch's shape
-//     regressed). Failed with "switch on canonical.AssetType has a
-//     default clause with no real body ... missing explicit case(s)
-//     for: rwa" at asset.go's String().
-//
-// (1) proves the "no default, missing case" arm; (2) proves the
-// "trivial default, missing case" arm — the one golangci's
-// `exhaustive` linter structurally cannot detect (see above). Both
-// reds were exact and specific, not generic; both reverted clean
-// (`git diff` empty) before this file was committed.
+// Escape hatch: the same `//exhaustive:ignore` marker the linter honors, on the line directly
+// above the switch (see internal/storage/timescale/usd_volume_quote_spec.go, an
+// intentionally-partial switch with prose naming which variants fall through and why). A switch
+// already justified to the linter needs no second justification here.
 import (
 	"fmt"
 	"go/ast"

@@ -265,12 +265,10 @@ func TestWorker_DefaultActiveSourceIsPrimary(t *testing.T) {
 	}
 }
 
-// A zero-value Worker (struct literal, as several sibling tests build)
-// must stamp the PRIMARY, not an empty string. Regression guard: routing
-// the label through w.activeSource directly broke
-// TestPersistSnapshot_stampsLivenessGaugeOnCommittedWrite and
-// TestAcceptRate_HistoryConflictVetoReclassifiesWhenStuck, because both
-// build &Worker{...} and would have written source="".
+// A zero-value Worker (struct literal, as several sibling tests build) must stamp the PRIMARY,
+// not an empty string. Reading w.activeSource directly would write source="" for those tests
+// (TestPersistSnapshot_stampsLivenessGaugeOnCommittedWrite,
+// TestAcceptRate_HistoryConflictVetoReclassifiesWhenStuck).
 func TestSourceLabel_ZeroValueWorkerFallsBackToPrimary(t *testing.T) {
 	if got := (&Worker{}).sourceLabel(); got != fxSource {
 		t.Fatalf("sourceLabel() = %q, want %q", got, fxSource)

@@ -27,12 +27,10 @@ func (s *storageSupplyStub) ContractStorageSupply(
 	return s.byContract[contractID], nil
 }
 
-// TestContractArmReadsStorageWhenTheEventLogIsEmpty is the regression this
-// path exists for. A token that emits no SEP-41 events is not UNDERCOUNTED by
-// the event reader, it is ABSENT from it — and an absent contract sums to a
-// confident zero, served as certainly as a measurement. Twenty-four
-// private-credit deal tokens on pubnet were in exactly that state, reporting a
-// total supply of 0 while their storage held 548,113,042.88 tokens.
+// TestContractArmReadsStorageWhenTheEventLogIsEmpty is the regression this path exists for. A
+// token that emits no SEP-41 events is ABSENT from the event reader, not undercounted, and an
+// absent contract sums to a confident zero served as certainly as a measurement. The contract
+// arm must read storage instead.
 //
 // Red without the storage read: the row publishes "0" on the sep41_lake_flows basis.
 func TestContractArmReadsStorageWhenTheEventLogIsEmpty(t *testing.T) {

@@ -156,14 +156,10 @@ func TestCapture_SymbolTopic(t *testing.T) {
 	}
 }
 
-// TestCapture_EventIndexDistinguishesSameOpEvents is the regression
-// guard for the ADR-0033 silent-loss bug: without event_index
-// threading, every contract event in one operation captures with
-// event_index=0, so a multi-event op (Phoenix emits 8 per swap)
-// collided on the (ledger, tx_hash, op_index, event_index) PK and
-// the writer's ON CONFLICT DO NOTHING dropped all but the first.
-// With event_index threaded, the eight events of one op produce
-// eight distinct PKs.
+// TestCapture_EventIndexDistinguishesSameOpEvents guards against silent loss: without event_index
+// threading every event in one operation captures with event_index=0, so a multi-event op
+// (Phoenix emits 8 per swap) collides on the (ledger, tx_hash, op_index, event_index) PK and ON
+// CONFLICT DO NOTHING drops all but the first. Threaded, the eight events get eight distinct PKs.
 func TestCapture_EventIndexDistinguishesSameOpEvents(t *testing.T) {
 	t.Parallel()
 
@@ -238,11 +234,9 @@ func TestCapture_StringTopic(t *testing.T) {
 	}
 }
 
-// TestCapture_NULStringTopic — a contract-supplied String topic
-// carrying a NUL byte must not be stored raw: Postgres text rejects
-// a NUL with SQLSTATE 22021, which would poison the whole ingest
-// batch. Topic0Sym must be the scval.ToText
-// hex-escaped form, not the raw bytes.
+// TestCapture_NULStringTopic: a contract-supplied String topic carrying a NUL byte must not be
+// stored raw, because Postgres text rejects NUL (SQLSTATE 22021) and would poison the whole
+// ingest batch. Topic0Sym must be the scval.ToText hex-escaped form.
 func TestCapture_NULStringTopic(t *testing.T) {
 	t.Parallel()
 
@@ -385,11 +379,9 @@ func TestCapture_OpArgsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestCapture_NonContractEvent — system / diagnostic events must
-// return ErrSkip rather than producing a row. Defence in depth:
-// the dispatcher already filters in contractEventToEventsEvent
-// (returns nil for non-contract events), so this path should never
-// fire on production input.
+// TestCapture_NonContractEvent: system and diagnostic events must return ErrSkip rather than a
+// row. This is defence in depth, since the dispatcher already filters them in
+// contractEventToEventsEvent.
 func TestCapture_NonContractEvent(t *testing.T) {
 	t.Parallel()
 	_, err := Capture(events.Event{

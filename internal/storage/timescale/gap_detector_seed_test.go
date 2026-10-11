@@ -12,13 +12,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestGapDetectorRestartHonoursPersistedCadence pins the r1
-// restart amplifier: with the per-target lastScan map starting empty,
-// every aggregator start re-ran the 6h-cadence soroban_events scan
-// immediately. Seeding from the persisted "gap-detector-scan" cursor's
-// last_updated means a restart 1h after the last scan SKIPS the target
-// on the first cycle, while a target whose cadence has elapsed (or that
-// has never scanned) is still due.
+// TestGapDetectorRestartHonoursPersistedCadence pins that the per-target lastScan map is seeded
+// from the persisted "gap-detector-scan" cursor's last_updated; an empty map would re-run the
+// 6h-cadence soroban_events scan on every aggregator start. A restart 1h after the last scan
+// SKIPS the target on the first cycle, while a target whose cadence has elapsed (or that has
+// never scanned) is still due.
 func TestGapDetectorRestartHonoursPersistedCadence(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 28, 18, 23, 0, 0, time.UTC)

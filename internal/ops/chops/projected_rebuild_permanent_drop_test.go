@@ -18,11 +18,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// writeOptsFor returns -write options over a decoder that emits outs for every
-// row. Store is nil on purpose: the poison trade below is rejected by
-// Trade.Validate before the store is touched, and the non-trade output's
-// nil-store panic is recovered by pipeline.HandleEvent into exactly the
-// generic, unclassified error a real failed insert surfaces as.
+// writeOptsFor returns -write options over a decoder that emits outs for every row. Store is nil
+// on purpose: the poison trade is rejected by Trade.Validate before the store is touched, and
+// the non-trade output's nil-store panic is recovered by pipeline.HandleEvent into the generic,
+// unclassified error a real failed insert surfaces as.
 func writeOptsFor(outs ...consumer.Event) ProjectedRebuildOptions {
 	return ProjectedRebuildOptions{
 		Write:  true,
@@ -39,16 +38,14 @@ func poisonSoroswapTrade() consumer.Event {
 	return soroswap.TradeEvent{Trade: canonical.Trade{Source: "soroswap", Ledger: 77, TxHash: "deadbeef"}}
 }
 
-// TestApplyProjectedEvent_PermanentlyDroppedTradeDoesNotHoldTheWindow pins the
-// projected-rebuild half of the permanent-drop rule. Once HandleEvent REPORTS a permanently
-// dropped trade (instead of folding it into nil), counting every non-nil
-// return as a window-holding insert error leaves a deterministically poison
-// trade's window un-checkpointed on EVERY resumed run, under a log line that
-// says "re-run to retry it" — which can never succeed.
+// TestApplyProjectedEvent_PermanentlyDroppedTradeDoesNotHoldTheWindow pins the projected-rebuild
+// half of the permanent-drop rule. HandleEvent REPORTS a permanently dropped trade; counting
+// every non-nil return as a window-holding insert error would leave a deterministically poison
+// trade's window un-checkpointed on EVERY resumed run, under a "re-run to retry it" log line that
+// can never succeed.
 //
-// Corrected: the drop is counted on its own and contributes NOTHING to the
-// window-holding count, so the window checkpoints, as it did before the drop
-// was reported — the difference is that the loss is now visible.
+// The drop is counted on its own and contributes NOTHING to the window-holding count, so the
+// window checkpoints and the loss is still visible.
 func TestApplyProjectedEvent_PermanentlyDroppedTradeDoesNotHoldTheWindow(t *testing.T) {
 	counters := newProjectedRebuildCounters()
 	emitted, insertErrs := applyProjectedEvent(context.Background(),

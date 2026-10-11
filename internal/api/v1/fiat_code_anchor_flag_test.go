@@ -10,14 +10,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 )
 
-// The fiat carve-out (TestFiatCodedAnchorKeepsItsValuation)
-// stops a SEP-1 anchor's deposit token from being flagged as an
-// impersonator, but that leaves the catalogue silent about it: nothing
-// on the wire distinguishes a recognised anchor from an arbitrary
-// issuer that happens to code its asset "USD". This pins the positive
-// verdict: a classic asset denominated in a catalogue fiat ticker gets
-// a `fiat_code_anchor` note, and `known_anchor` is true exactly when
-// the issuer is in the catalogue's curated set for that ticker.
+// The fiat carve-out (TestFiatCodedAnchorKeepsItsValuation) stops a SEP-1 anchor's deposit token
+// being flagged as an impersonator, but nothing on the wire then distinguishes a recognised
+// anchor from an arbitrary issuer that codes its asset "USD". This pins the positive verdict: a
+// classic asset in a catalogue fiat ticker gets a `fiat_code_anchor` note, and `known_anchor` is
+// true exactly when the issuer is in the catalogue's curated set for that ticker.
 func TestVerifiedCurrencyFlagsFiatCodeAnchor(t *testing.T) {
 	const (
 		anchorIssuer  = "GDUKMGUGDZQK6YHYA5Z6AY2G4XDSZPSZ3SW5UN3ARVMO6QSRDWP5YLEX"

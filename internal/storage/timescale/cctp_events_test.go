@@ -6,15 +6,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
 )
 
-// TestCCTPEventType_MatchesSourceEventNames cross-checks the second
-// gating layer (this enum's IsValid) against the FIRST (the decoder's
-// Event* constants in internal/sources/cctp) — the pair that was
-// ungated: a fixture that re-listed the 26 kinds as string
-// literals, so a source-side rename or a new Event* constant with no
-// matching CCTPEventType entry compiled and passed silently. Importing
-// the source package's actual constants means a rename here fails to
-// compile, and a set-membership diff catches an added-but-not-mirrored
-// (or removed-but-not-mirrored) event by name.
+// TestCCTPEventType_MatchesSourceEventNames cross-checks this enum's IsValid against the
+// decoder's Event* constants in internal/sources/cctp. Importing the real constants makes a
+// source-side rename fail to compile, and a set-membership diff catches an event added or
+// removed on one side only.
 func TestCCTPEventType_MatchesSourceEventNames(t *testing.T) {
 	t.Parallel()
 	fromSource := []string{

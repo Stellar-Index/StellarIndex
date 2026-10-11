@@ -89,14 +89,9 @@ func startC(logger *slog.Logger) { go worker.Recover(logger, "x") }
 	}
 }
 
-// TestScan_RecursedFuncLitUsesCalleeFileSet is a regression for site()
-// resolving Line and a FuncLit's Origin against the SCANNED file's
-// *token.FileSet even when the site was found by recursing into a callee
-// parsed into a different FileSet (indexDir/indexImport each build their
-// own). Computing both values with r.fset — the
-// outer resolver's FileSet — would mean a nested `go func(){}()` found while
-// recursing into workers.go (parsed by indexDir, not by ScanFile) reported
-// Line 0 and a garbage Origin instead of workers.go's real line.
+// TestScan_RecursedFuncLitUsesCalleeFileSet: a site found by recursing into a callee must
+// resolve Line and a FuncLit's Origin against the callee's own FileSet (indexDir/indexImport
+// each build one), not the scanned file's r.fset, or it reports Line 0 and a garbage Origin.
 func TestScan_RecursedFuncLitUsesCalleeFileSet(t *testing.T) {
 	dir := filepath.Join("testdata", "recursed_funclit")
 	if err := os.MkdirAll(dir, 0o750); err != nil {

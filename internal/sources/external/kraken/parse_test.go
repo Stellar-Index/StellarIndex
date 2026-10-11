@@ -251,13 +251,11 @@ func TestBuildTrade_UnknownSymbol(t *testing.T) {
 	}
 }
 
-// TestBuildTrade_DustReturnsTypedSentinel pins the regression for
-// the bitstamp/coinbase/binance dust-trade family extended to
-// Kraken. 1e-8 XLM at $0.16 → base × price floor-
-// divides to 0 at 10^8 integer scale → canonical validator would
-// reject with "quote_amount must be positive, got 0" → indexer
-// logs ERROR per frame. With ErrDustTrade the streamer's error-
-// skip branch silently absorbs it.
+// TestBuildTrade_DustReturnsTypedSentinel pins the dust-trade handling shared with the other
+// CEX venues. 1e-8 XLM at $0.16 floor-divides to a zero quote amount at 10^8 integer scale,
+// which the canonical validator rejects ("quote_amount must be positive, got 0") and the
+// indexer would log as an ERROR per frame. ErrDustTrade lets the streamer's error-skip
+// branch absorb it silently.
 func TestBuildTrade_DustReturnsTypedSentinel(t *testing.T) {
 	_, err := buildTrade(tradePayload{
 		Symbol:    "XLM/USD",

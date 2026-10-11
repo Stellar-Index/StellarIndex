@@ -2,12 +2,9 @@ package config
 
 import "testing"
 
-// Passphrase is the network-passphrase the indexer hands to
-// stellar-rpc / SDK code paths to compute transaction hashes.
-// Validate() catches unknown network names at startup, so the
-// fallback empty-string return is unreachable in practice — but
-// the test pins it to surface a failure in case validation
-// ever drifts.
+// Passphrase is the network-passphrase the indexer hands to stellar-rpc / SDK code paths to
+// compute transaction hashes. Validate() rejects unknown network names at startup, so the
+// empty-string fallback is unreachable in practice; the test pins it in case validation drifts.
 
 func TestStellarConfig_Passphrase(t *testing.T) {
 	cases := []struct {
@@ -47,11 +44,9 @@ func TestStellarConfig_Passphrase_emptyNetwork(t *testing.T) {
 	}
 }
 
-// TestStellarConfig_Passphrase_LiteralPin asserts the exact
-// github.com/stellar/go-stellar-sdk/network strings. The package
-// constants alias internal/canonical, so the table test above only
-// proves Passphrase() returns whatever canonical says — this test
-// proves canonical says the right thing.
+// TestStellarConfig_Passphrase_LiteralPin asserts the exact go-stellar-sdk/network strings.
+// The package constants alias internal/canonical, so the table test above only proves
+// Passphrase() returns whatever canonical says; this proves canonical says the right thing.
 func TestStellarConfig_Passphrase_LiteralPin(t *testing.T) {
 	cases := map[string]string{
 		"pubnet":    "Public Global Stellar Network ; September 2015",

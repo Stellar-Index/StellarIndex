@@ -12,18 +12,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Golden decode tests for the update_reserves / deposit_liquidity /
-// withdraw_liquidity surface (migration 0089). The topic+body blobs
-// below are UNTOUCHED base64 SCVals captured from the r1 ClickHouse
-// lake (stellar.contract_events) — real production wire
-// format, decoded here to prove the reserve / amount / share i128
-// paths line up with what the pool actually emitted.
+// Golden decode tests for the update_reserves / deposit_liquidity / withdraw_liquidity surface.
+// The topic+body blobs below are untouched base64 SCVals captured from the lake
+// (stellar.contract_events), proving the reserve / amount / share i128 paths match what the pool
+// emitted.
 //
-// Source pool: CAB6MICC2WKRT372U3FRPKGGVB5R3FDJSMWSLPF2UJNJPYMBZ76RQVYE
-// (a curated MainnetPools entry). All are 2-token (volatile) pools
-// except realDeposit3Token, which is a 3-token stableswap deposit from
-// CC3HFYXIBYO3NPPKHQMWZDNSGSTZ6DUG26WHDF2UGTC3VBY56SESDFQM — proving
-// the N-token fan-out, not a hard-coded a/b shape.
+// Source pool: CAB6MICC2WKRT372U3FRPKGGVB5R3FDJSMWSLPF2UJNJPYMBZ76RQVYE (a curated MainnetPools
+// entry). All are 2-token (volatile) pools except realDeposit3Token, a 3-token stableswap deposit
+// from CC3HFYXIBYO3NPPKHQMWZDNSGSTZ6DUG26WHDF2UGTC3VBY56SESDFQM, proving the N-token fan-out
+// rather than a hard-coded a/b shape.
 
 const (
 	// update_reserves — topic[0] only (no token addresses); body is a
@@ -197,11 +194,9 @@ func TestDecodeLiquidity_real3TokenDeposit(t *testing.T) {
 	}
 }
 
-// TestDecodeLiquidity_4TokenStableswap pins the widest stableswap
-// shape (topic_count 5, body length 5). No real lake fixture exists
-// for it, so the event is SDK-built; it must fan out to four exact
-// (token, amount) pairs, and a body sized for three tokens must be
-// rejected rather than silently re-sliced.
+// TestDecodeLiquidity_4TokenStableswap pins the widest stableswap shape (topic_count 5, body
+// length 5). No lake fixture exists, so the event is SDK-built; it must fan out to four exact
+// (token, amount) pairs, and a body sized for three tokens must be rejected, not re-sliced.
 func TestDecodeLiquidity_4TokenStableswap(t *testing.T) {
 	tokens := make([]string, 4)
 	topics := []string{realDeposit3Topic0}

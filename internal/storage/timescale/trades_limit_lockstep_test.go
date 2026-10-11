@@ -7,16 +7,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestMaxTradesInRangeLimit_matchesConfigCeiling keeps the two copies of
-// the trade-scan ceiling in lockstep.
-//
-// internal/config is a leaf package and must not import a storage
-// adapter, so its validator carries the ceiling as a literal. If the two
-// ever drift, config either refuses a legal value or — far worse —
-// accepts one the reader silently clamps, which is the exact defect this
-// validation was added to prevent: raising max_trades_per_window above
-// the ceiling does not widen the scan AND permanently blinds the
-// orchestrator's truncation detector.
+// TestMaxTradesInRangeLimit_matchesConfigCeiling keeps the two copies of the trade-scan
+// ceiling in lockstep. internal/config is a leaf package and cannot import a storage adapter,
+// so its validator carries a literal. On drift, config could accept a value the reader
+// silently clamps, which does not widen the scan and blinds the orchestrator's truncation
+// detector.
 func TestMaxTradesInRangeLimit_matchesConfigCeiling(t *testing.T) {
 	cfg := config.Default()
 	cfg.Aggregate.MaxTradesPerWindow = timescale.MaxTradesInRangeLimit

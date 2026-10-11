@@ -1,13 +1,10 @@
 package v1_test
 
-// §3 scam-label surfacing — the issuer_directory_{tags,domain,name}
-// overlay on /v1/assets + /v1/assets/{id}, joined from account_directory
-// (migration 0136). Oracle: the operator-reported scam AUD
-// (AUD-GAIF52QZ…GAUD, issuer audrev-stellar.com) whose issuer the
-// directory tags {malicious, unsafe} — but which the in-binary
-// scamIssuers list misses. These tests pin (a) that the tags surface and
-// (b) the DISPLAY-ONLY invariant: the malicious tag does NOT suppress the
-// asset's price or any gate.
+// Scam-label surfacing: the issuer_directory_{tags,domain,name} overlay on /v1/assets and
+// /v1/assets/{id}, joined from account_directory. Oracle: a scam AUD (AUD-GAIF52QZ…GAUD, issuer
+// audrev-stellar.com) whose issuer the directory tags {malicious, unsafe} but the in-binary
+// scamIssuers list misses. These tests pin (a) that the tags surface and (b) the DISPLAY-ONLY
+// invariant: the malicious tag does NOT suppress the asset's price or any gate.
 
 import (
 	"context"

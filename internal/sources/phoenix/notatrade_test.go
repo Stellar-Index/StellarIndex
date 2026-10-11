@@ -80,12 +80,10 @@ func decodeAll(t *testing.T, d *Decoder, evs []events.Event) (delivered []consum
 	return delivered, errs
 }
 
-// TestDecode_zeroAmountSwapIsRecognisedNoOp: a fully-decoded Phoenix
-// swap with a ZERO leg (the dust shape aquarius pins at ledger
-// 53,626,410) is not a trade, and not undecodable either. It must
-// return (nil, nil) so the dispatcher does not bump decode_errors and
-// the ADR-0033 re-derive counts expected=0 instead of failing the
-// source's verdict closed (as comet documents).
+// TestDecode_zeroAmountSwapIsRecognisedNoOp: a fully decoded swap with a ZERO leg (dust) is
+// neither a trade nor undecodable. It must return (nil, nil) so the dispatcher does not bump
+// decode_errors and the ADR-0033 re-derive counts expected=0 rather than failing the
+// source's verdict closed.
 func TestDecode_zeroAmountSwapIsRecognisedNoOp(t *testing.T) {
 	sell, buy := makeC(t, 0x20), makeC(t, 0x30)
 	d := newTestDecoder()
@@ -141,10 +139,9 @@ func TestDecode_negativeAmountStaysMalformed(t *testing.T) {
 	}
 }
 
-// TestDecode_rescuedTradeSurvivesCurrentEventError: a sweep-rescued
-// pre-upgrade trade must reach the caller even when the event that
-// triggered the sweep fails its own decode. Every Decode caller drops
-// the outputs of an erroring call, so returning (rescued, err) lost a
+// TestDecode_rescuedTradeSurvivesCurrentEventError: a sweep-rescued pre-upgrade trade must
+// reach the caller even when the event that triggered the sweep fails its own decode. Every
+// Decode caller drops the outputs of an erroring call, so (rescued, err) would lose a
 // complete trade with no counter.
 func TestDecode_rescuedTradeSurvivesCurrentEventError(t *testing.T) {
 	d := newTestDecoder()

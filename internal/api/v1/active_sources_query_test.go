@@ -5,30 +5,21 @@ import (
 	"testing"
 )
 
-// The public status page renders "Active sources: N / M" from these two
-// queries. A bug once rendered **26 / 25** — a numerator larger than
-// its own denominator.
+// The public status page renders "Active sources: N / M" from these two queries; the
+// numerator must never exceed its denominator. Two independent faults are pinned.
 //
-// Two independent faults produced that, and both are pinned here.
+// POPULATION. The numerator must intersect with source_enabled. Always-on supply observers
+// (trustlines, sep41_supply, sep41_transfers, sac_balances, liquidity_pools,
+// claimable_balances) emit events but carry no `enabled` flag because they are wired into
+// the indexer rather than configured, so counting ANY emitting source inflates the numerator.
 //
-// POPULATION. The numerator's comment already promised an intersection
-// with source_enabled, but the query never joined on it — it counted
-// ANY source emitting events. Six always-on supply observers
-// (trustlines, sep41_supply, sep41_transfers, sac_balances,
-// liquidity_pools, claimable_balances) emit events and carry no
-// `enabled` flag, because they are wired into the indexer rather than
-// configured. They inflated the numerator only. Measured on r1: 26
-// emitting, 25 enabled, with exactly those six as the difference.
+// WINDOW. A short window is far below several enabled sources' publication cadence (rozo,
+// phoenix, ecb, band emit a handful of events per day; band's contract publishes no events and
+// we observe the relay call instead) and would report them inactive, a false claim about our
+// own ingest.
 //
-// WINDOW. 10 minutes was far shorter than several enabled sources'
-// publication cadence — rozo emitted 2 events in 24h, phoenix 58, ecb
-// 27, band 40, and band emits nothing at all on most days by design
-// (its contract publishes no events; we observe the relay call
-// instead). A 10-minute window reported those as inactive, which is a
-// claim about our own ingest that is not true.
-//
-// The join is what makes the ratio coherent BY CONSTRUCTION rather than
-// by the two queries happening to agree.
+// The join makes the ratio coherent BY CONSTRUCTION rather than by the two queries happening
+// to agree.
 
 // TestActiveSourcesIsSubsetOfTotal is the load-bearing guard: the
 // numerator must be restricted to the same population the denominator

@@ -12,27 +12,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// /v1/chart served a full price SERIES for a directory-scam-flagged
-// issuer while /v1/price, /v1/price/tip, /v1/price/batch, /v1/vwap,
-// /v1/twap, the SEP-40 oracle and the asset headline all withheld it.
+// /v1/chart must withhold the price SERIES for a directory-scam-flagged issuer, as /v1/price,
+// /v1/price/tip, /v1/price/batch, /v1/vwap, /v1/twap, the SEP-40 oracle and the asset headline do.
 //
-// pricingguard/scam.go's package doc says the gate sits "at the
-// price-reader seam so every reader-backed surface is covered by ONE
-// gate", which is not true of endpoints that compute from raw trades via
-// their own fetch and never touch the reader (/v1/vwap, /v1/twap).
-// /v1/chart is the same shape: it reads history directly.
+// pricingguard/scam.go's "ONE gate at the price-reader seam" does not cover endpoints that
+// compute from raw trades via their own fetch (/v1/vwap, /v1/twap), and /v1/chart reads history
+// directly. A series is worse than a point: an ungated chart hands over the whole trajectory that
+// makes a manufactured market look legitimate.
 //
-// A series is arguably worse than a point. A single withheld price
-// denies one number; an ungated chart hands over the whole trajectory,
-// which is exactly what makes a manufactured market look legitimate.
-//
-// The gate is placed in handleChart BEFORE dispatchSpecialisedChart, so
-// it covers the default path AND every specialised variant (market-cap,
-// fiat-cross, TWAP) in one place. Gating each variant separately is how
-// this class keeps recurring: a surface added later simply misses the
-// check. These tests therefore exercise the variants explicitly — a
-// gate that only covered the default path would pass a naive test and
-// still leak three routes.
+// The gate sits in handleChart BEFORE dispatchSpecialisedChart, covering the default path AND
+// every specialised variant (market-cap, fiat-cross, TWAP) in one place; per-variant gating is how
+// a later-added surface misses the check. These tests exercise the variants explicitly, since a
+// gate covering only the default path would still leak three routes.
 
 // chartScamGate withholds the listed bases and records the surface
 // labels it was consulted with, so a test can assert the gate was

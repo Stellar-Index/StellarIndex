@@ -91,12 +91,9 @@ func TestAnomalies_FiringCountIsNotPageCapped(t *testing.T) {
 	}
 }
 
-// TestAnomalies_WindowDaysOutOfRangeRejects pins that
-// an out-of-range or unparseable ?window_days= must not silently fall
-// back to the default (30) instead of clamping to [1, 365] as the doc
-// comment claimed, or rejecting like the sibling ?days=/?limit= params
-// do. A client asking for a one-year window got one month back with no
-// signal it was ignored.
+// TestAnomalies_WindowDaysOutOfRangeRejects pins that an out-of-range or unparseable
+// ?window_days= is rejected like the sibling ?days=/?limit= params, not silently replaced by the
+// default (30), which would hand a client asking for a year a month with no signal.
 func TestAnomalies_WindowDaysOutOfRangeRejects(t *testing.T) {
 	s := &Server{
 		Options: Options{Anomalies: &fakeAnomalyReader{firing: 1}},

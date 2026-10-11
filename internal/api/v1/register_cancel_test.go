@@ -117,18 +117,12 @@ func (m *cancelTestMirror) RevokeKeyByID(ctx context.Context, _, _ string) error
 	return nil
 }
 
-// TestHandleRegister_ClientCancelDuringKeyCreate is the
-// regression: a client disconnecting between the Redis mirror write
-// and the Postgres management-row INSERT must still (a) quarantine
-// the now-orphaned account for the signup-reaper, and (b) roll the
-// mirror back on a context that is NOT already dead — otherwise the
-// rollback fails the same way the Postgres write just did, and a
-// live, unlistable credential outlives the request that minted it.
-//
-// Without the fix: the `errors.Is(err, context.Canceled)`
-// branch in handleRegister returns before suspendRegisterOrphan runs
-// (suspendCalls stays 0), and mintRegisterKey's rollback reuses the
-// same canceled ctx (revokeSawDeadCtx is true).
+// TestHandleRegister_ClientCancelDuringKeyCreate: a client disconnecting between the Redis
+// mirror write and the Postgres management-row INSERT must still (a) quarantine the orphaned
+// account for the signup-reaper, and (b) roll the mirror back on a context that is NOT already
+// dead, or the rollback fails like the Postgres write did and a live, unlistable credential
+// outlives the request that minted it. The context.Canceled branch must therefore not return
+// before suspendRegisterOrphan, and the rollback must not reuse the canceled ctx.
 func TestHandleRegister_ClientCancelDuringKeyCreate(t *testing.T) {
 	accounts := &cancelTestAccountStore{}
 	mirror := &cancelTestMirror{}

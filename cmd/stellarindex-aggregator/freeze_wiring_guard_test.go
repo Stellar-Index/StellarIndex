@@ -1,24 +1,16 @@
 package main
 
-// Source-level tripwire (the internal/api/v1/slo_guard_test.go pattern):
-// the freeze WRITER must never again be gated on the Phase 1 anomaly
-// checker.
+// Source-level tripwire (the internal/api/v1/slo_guard_test.go pattern): the freeze WRITER
+// must never be gated on the Phase 1 anomaly checker. The Phase 2 confidence lifecycle
+// (orchestrator.stepPhase2Freeze) runs on every scored bucket regardless of cfg.Anomaly and
+// REFUSES publication when its 3-signal AND fires, so a Phase-1-off / [anomaly.phase2]-tuned
+// deployment would engage real freezes that write NO Redis marker: frozen windows keep serving
+// their last value with flags.frozen absent, a stale price presented as fresh.
 //
-// The shape guarded against: the writer is built under
-// `if checker != nil && rdb != nil`, but the Phase 2 confidence
-// lifecycle (orchestrator.stepPhase2Freeze) runs on every scored bucket
-// regardless of cfg.Anomaly and REFUSES publication when its 3-signal
-// AND fires. A Phase-1-off / [anomaly.phase2]-tuned deployment (exactly
-// r1's TOML) therefore engaged real freezes that wrote NO Redis marker:
-// the frozen 5m/1h windows kept serving their last value with
-// flags.frozen absent — a stale price presented as fresh, the precise
-// state the marker exists to prevent.
-//
-// The guard pins the property, not a spelling: no conditional that
-// lexically encloses freeze.NewWriter (if/else-if arm, switch, loop), and
-// no earlier early-exit `if`, may read the value buildAnomalyChecker
-// returns, any variable derived from it, or the config expression it was
-// built from. It fails closed when the construction cannot be located.
+// The guard pins the property, not a spelling: no conditional that lexically encloses
+// freeze.NewWriter (if/else-if arm, switch, loop), and no earlier early-exit `if`, may read the
+// value buildAnomalyChecker returns, any variable derived from it, or the config expression it
+// was built from. It fails closed when the construction cannot be located.
 
 import (
 	"fmt"

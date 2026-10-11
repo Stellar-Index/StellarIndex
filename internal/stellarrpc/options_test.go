@@ -61,12 +61,9 @@ func TestWithHTTPClient_replacesDefault(t *testing.T) {
 }
 
 func TestWithTimeout_setsHTTPClient(t *testing.T) {
-	// WithTimeout's contract: when no http.Client is set, install one
-	// with the given timeout. The visible side-effect is that the
-	// constructed client honours a timeout-shaped Endpoint() — we
-	// can't read the timeout directly without exposing the internal
-	// http field, so we observe via "Endpoint() returns the URL we
-	// passed in", which proves the option ran without error.
+	// WithTimeout installs an http.Client with the given timeout when none is set. The timeout
+	// is not readable without exposing the internal http field, so this observes that Endpoint()
+	// returns the URL passed in, which proves the option ran without error.
 	c := rpc.New("https://example.invalid:8000", rpc.WithTimeout(2*time.Second))
 	if got := c.Endpoint(); got != "https://example.invalid:8000" {
 		t.Errorf("Endpoint() = %q, want \"https://example.invalid:8000\"", got)

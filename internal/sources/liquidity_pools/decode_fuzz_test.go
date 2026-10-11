@@ -99,13 +99,11 @@ func fuzzLPRemoved(pool []byte) xdr.LedgerEntryChange {
 	}
 }
 
-// FuzzObserverLifecycle drives one pool through a body change and the
-// removal that follows it, over arbitrary asset shapes, reserves and
-// watch sets. It asserts the served-supply contract end to end:
-// Matches iff a credit side is watched; one observation per watched side
-// carrying that side's exact reserve as *big.Int (ADR-0003) and the
-// change's position; nothing from a STATE pre-image; the removal
-// zeroes exactly the sides the pre-image named; and a removal whose
+// FuzzObserverLifecycle drives one pool through a body change and the removal that follows it,
+// over arbitrary asset shapes, reserves and watch sets. It asserts the served-supply contract:
+// Matches iff a credit side is watched; one observation per watched side carrying that side's
+// exact reserve as *big.Int (ADR-0003) and the change's position; nothing from a STATE
+// pre-image; the removal zeroes exactly the sides the pre-image named; and a removal whose
 // pre-image is from another ledger is an error, never a silent skip.
 func FuzzObserverLifecycle(f *testing.F) {
 	iss := []byte{1, 2, 3}

@@ -16,20 +16,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestResolvePendingClaimableBalances_CAP0038SameWindowCreate pins that
-// a claim against a claimable balance that CAP-0038 auto-liquidation
-// created LATER IN THE SAME WINDOW must resolve from that window's
-// own batch, not fall through to "unresolved" — the CAP-0038 create
-// never reaches dec's in-run BalanceId index (it bypasses dec.Decode
-// entirely; see classicMovementsHandleCAP0038Op), so
-// classicMovementsResolvePendingClaimableBalances must fall back to
-// scanning res.batch itself before counting a miss.
+// TestResolvePendingClaimableBalances_CAP0038SameWindowCreate pins that a claim against a
+// claimable balance created by CAP-0038 auto-liquidation LATER IN THE SAME WINDOW resolves from
+// that window's own batch rather than "unresolved". The CAP-0038 create bypasses dec.Decode (see
+// classicMovementsHandleCAP0038Op) and never reaches dec's BalanceId index, so
+// classicMovementsResolvePendingClaimableBalances must scan res.batch before counting a miss.
 func TestResolvePendingClaimableBalances_CAP0038SameWindowCreate(t *testing.T) {
-	// A claim against a balance_id the Decoder has never seen — this
-	// mirrors decodeClaimClaimableBalance's own recordPending path,
-	// exercised here via the real Decode() so the pending ref (and its
-	// balance_id hex, computed the same way production does) is
-	// genuine, not hand-built.
+	// A claim against a balance_id the Decoder has never seen, via the real Decode() so the
+	// pending ref and its balance_id hex are computed as production does, not hand-built.
 	var h xdr.Hash
 	h[0] = 0x42
 	bid := xdr.ClaimableBalanceId{Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0, V0: &h}
@@ -83,11 +77,8 @@ func TestResolvePendingClaimableBalances_CAP0038SameWindowCreate(t *testing.T) {
 		},
 	}
 
-	// chAddr is deliberately a bogus, unreachable address: if this call
-	// falls through to the ClickHouse lookup at all, the test must
-	// fail loudly (a network dial / DNS error) rather than silently
-	// passing, proving the batch-local resolution is what actually
-	// resolved the claim.
+	// chAddr is deliberately unreachable: a fall-through to the ClickHouse lookup fails loudly
+	// (dial/DNS error), proving the batch-local resolution resolved the claim.
 	classicMovementsResolvePendingClaimableBalances(context.Background(), "bogus.invalid:0", dec, 40_000_000, 40_000_200, res)
 
 	if res.windowUnresolved != 0 {

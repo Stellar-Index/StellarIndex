@@ -16,24 +16,18 @@ import (
 // `quote` / `asset_ids` parameter example is a value the canonical
 // asset parser actually accepts.
 //
-// Why this exists: a user reported every Scalar
-// default test request returning 400 Bad Request — examples in the
-// spec used short symbols like `USDC` / `XLM` that the
-// canonical-asset validator rejects. The fix updated the examples;
-// this test prevents the drift class from recurring. If a future
-// PR sets `example: BTC` on `/v1/price?asset=`, this test fails
-// at PR time rather than at deploy time.
+// Why: short symbols like `USDC` / `XLM` in examples are rejected by the canonical-asset
+// validator, so Scalar's default test requests would return 400. This fails at PR time if an
+// example such as `example: BTC` on `/v1/price?asset=` is added.
 //
 // Two namespaces are accepted:
-//   - canonical asset IDs (`native`, `<code>-<G…>`, `<contract>`)
-//     parsed by canonical.ParseAsset.
-//   - SEP-40 oracle keys (`crypto:XLM`, `fiat:EUR`) which
-//     canonical.ParseAsset also accepts.
+//   - canonical asset IDs (`native`, `<code>-<G…>`, `<contract>`) parsed by
+//     canonical.ParseAsset.
+//   - SEP-40 oracle keys (`crypto:XLM`, `fiat:EUR`), which canonical.ParseAsset also accepts.
 //
-// Tickers (`EUR`, `USD`) on the `/v1/currencies/{ticker}` path are
-// NOT canonical assets — they're ISO-4217 codes — so we accept
-// 3-letter alpha tokens via a permissive matcher. Same for the
-// asset slug (`/v1/coins/{slug}`) which has its own resolver.
+// Tickers on `/v1/currencies/{ticker}` are ISO-4217 codes, not canonical assets, so 3-letter
+// alpha tokens pass a permissive matcher. The asset slug (`/v1/coins/{slug}`) has its own
+// resolver.
 func TestOpenAPIExamplesParseAsCanonicalAssets(t *testing.T) {
 	spec := loadOpenAPISpec(t)
 
@@ -140,11 +134,9 @@ func TestOpenAPIOrderbookLegsAreAssetParams(t *testing.T) {
 	}
 }
 
-// isAssetParam returns true for the parameter names whose values
-// are canonical asset identifiers per the API's strict validators.
-// Excludes `ticker` (ISO-4217), `slug` (loose asset-slug resolver),
-// and `keyID` / `id` / `g_strkey` / `entity_type` / `name` which
-// are not asset identifiers.
+// isAssetParam reports whether a parameter name carries a canonical asset identifier per the
+// API's strict validators. It excludes `ticker` (ISO-4217), `slug` (loose resolver) and
+// `keyID` / `id` / `g_strkey` / `entity_type` / `name`, which are not asset identifiers.
 func isAssetParam(name string) bool {
 	switch name {
 	case "asset", "asset_id", "asset_ids", "base", "quote", "selling", "buying":
@@ -181,11 +173,9 @@ type schema struct {
 	Enum    []string `yaml:"enum"`
 }
 
-// example returns the parameter's example value, preferring the
-// top-level `example:` field but falling back to `schema.example`
-// (the OpenAPI 3.1 alternate location). Both are accepted by Scalar
-// and other tooling. Returns "" when neither is set or the value
-// isn't a string.
+// example returns the parameter's example value, preferring the top-level `example:` field
+// and falling back to `schema.example` (the OpenAPI 3.1 location). It returns "" when neither
+// is set or the value is not a string.
 func (p openAPIParameter) example() string {
 	if s, ok := p.Example.(string); ok {
 		return s

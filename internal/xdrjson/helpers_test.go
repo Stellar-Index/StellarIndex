@@ -29,11 +29,8 @@ func TestAssetCodeRejectsInvalidBytes(t *testing.T) {
 	}
 }
 
-// TestAssetIDRejectsInvalidCode proves assetID no longer emits a partial
-// "A\x01B-ISSUER" id for a code AssetFromXDR would reject — it must fall
-// back to the same "unknown_asset" sentinel used for other unrepresentable
-// inputs, matching AssetFromXDR's contract of erroring rather than
-// producing a partial id.
+// TestAssetIDRejectsInvalidCode: assetID must fall back to the "unknown_asset" sentinel for a
+// code AssetFromXDR would reject, never emit a partial "A\x01B-ISSUER" id.
 func TestAssetIDRejectsInvalidCode(t *testing.T) {
 	issuer := xdr.MustAddress(issuerAccount)
 	a := xdr.Asset{
@@ -68,13 +65,9 @@ func TestTrustLineAssetIDRejectsInvalidCode(t *testing.T) {
 	}
 }
 
-// TestChangeTrustAssetPoolShare: a change_trust op on a
-// liquidity-pool share must render the SAME "pool:<hex>" id the resulting
-// trustline gets from TrustLineAssetID — not the old opaque
-// "liquidity_pool_share" marker, which discarded AssetA/AssetB/Fee entirely.
-// The hex is independently re-derived here via xdr.NewPoolId (the network's
-// own pool-id hash) to prove it's a real, byte-exact identity, not a
-// re-spelling of the old marker string.
+// TestChangeTrustAssetPoolShare: a change_trust op on a liquidity-pool share must render the
+// SAME "pool:<hex>" id the resulting trustline gets from TrustLineAssetID. The hex is
+// re-derived via xdr.NewPoolId (the network's own pool-id hash) to prove a byte-exact identity.
 func TestChangeTrustAssetPoolShare(t *testing.T) {
 	issuer := xdr.MustAddress(issuerAccount)
 	assetB := xdr.Asset{

@@ -9,37 +9,23 @@ import (
 // TestBackgroundWorkersRecover is a guard-coverage test: every detached
 // background goroutine started in this binary must register panic recovery.
 //
-// An unrecovered panic in ANY goroutine terminates the whole Go process — it
-// is not confined to the goroutine that panicked. This binary spawns a large
-// fleet of detached workers (baseline / supply / change-summary / rollup /
-// gap-detector / mev / decimals / price-alert refreshers, plus the metrics
-// HTTP listener). Without recovery a single worker panic crash-loops the whole price
-// pipeline; the API binary wraps every worker in recoverBackgroundWorker.
+// An unrecovered panic in ANY goroutine terminates the whole Go process, not just that
+// goroutine. This binary runs a large fleet of detached workers plus the metrics HTTP
+// listener, so one worker panic would crash-loop the whole price pipeline.
 //
-// Why an AST guard rather than a behavioural test: the failure mode that
-// actually bites is the NEXT worker someone adds without the defer. A
-// behavioural test would have to drive each worker to panic through a real
-// dependency and would still only cover the ones that exist today. So this
-// derives the worker set from the source itself and fails if any of them lacks
-// recovery. Same discipline as the API binary's TestBackgroundWorkersRecover
-// and the v1 package's TestSourceShapeRules/sse_producer_goroutines_recover. The shared
-// guard's own recover-and-log behaviour is proven separately in
-// internal/worker (TestRecover_ContainsPanicAndLogs).
+// An AST guard, not a behavioural test: the failure that bites is the NEXT worker added
+// without the defer, and a behavioural test would only cover workers that exist today. The
+// worker set is derived from the source. The shared guard's recover-and-log behaviour is
+// proven in internal/worker (TestRecover_ContainsPanicAndLogs).
 //
-// The walk lives in internal/worker/guardscan, shared with the indexer and
-// API guards. Every `go` statement here is a literal today, but
-// the shared scanner also resolves `go namedFunc(…)` — the spelling that
-// a purely literal scan would miss — and fails on
-// any callee it cannot follow.
+// The walk lives in internal/worker/guardscan, shared with the indexer and API guards. It also
+// resolves `go namedFunc(...)`, which a purely literal scan would miss, and fails on any
+// callee it cannot follow.
 //
-// The metrics HTTP-server goroutine is the one deliberate exemption: if the
-// listener dies the process has no reason to live, and recovering would leave
-// a running process serving nothing. It is allow-listed BY ITS CONTENT (it
-// must call ListenAndServe/Serve), not by line number, so the exemption cannot
-// silently widen to cover an unrelated worker.
-//
-// Proven red: deleting any one `defer worker.Recover(...)` fails this test
-// naming the enclosing worker's line.
+// The metrics HTTP-server goroutine is the one deliberate exemption: if the listener dies the
+// process has no reason to live, and recovering would leave it serving nothing. It is
+// allow-listed BY ITS CONTENT (it must call ListenAndServe/Serve), not by line number, so the
+// exemption cannot silently widen to cover an unrelated worker.
 func TestBackgroundWorkersRecover(t *testing.T) {
 	sites, err := guardscan.ScanFile("main.go", guardscan.Config{
 		Guards: []string{"worker.Recover", "worker.Report"},

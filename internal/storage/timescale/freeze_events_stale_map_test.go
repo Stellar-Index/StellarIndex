@@ -9,9 +9,8 @@ import (
 
 // ─── openLadderRow.entries beside a stale window_ladders map ───
 //
-// No database: entries() is the pure rule that decides what a row MEANS.
-// The executing, real-Postgres half is
-// test/integration/freeze_test.go.
+// No database: entries() is the pure rule that decides what a row MEANS. The real-Postgres
+// half is test/integration/freeze_test.go.
 
 func TestOpenLadderRowEntries_StaleMapFailsClosed(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -82,14 +81,11 @@ func TestOpenLadderRowEntries_StaleMapFailsClosed(t *testing.T) {
 	}
 }
 
-// TestPairLadderAhead_IgnoresStoragePrecision: hold_until is timestamptz —
-// whole microseconds — while a window_ladders entry keeps the nanoseconds
-// time.Now gave it, so the column and the entry it summarises are never
-// bit-equal. Measured against the production driver the column is
-// TRUNCATED, i.e. never later; this pins that the rule does not depend on
-// that, because a driver or parameter format that ROUNDED would otherwise
-// read every freeze as stale and rehydrate an ownerless ladder onto windows
-// that were never frozen. A real disagreement is minutes, not nanoseconds.
+// TestPairLadderAhead_IgnoresStoragePrecision: hold_until is timestamptz (whole microseconds)
+// while a window_ladders entry keeps nanoseconds, so the two are never bit-equal. The rule
+// must not depend on the driver truncating: a driver that ROUNDED would read every freeze as
+// stale and rehydrate an ownerless ladder onto windows that were never frozen.
+// A real disagreement is minutes, not nanoseconds.
 func TestPairLadderAhead_IgnoresStoragePrecision(t *testing.T) {
 	entry := time.Date(2026, 9, 18, 12, 25, 0, 1600, time.UTC) // …00.0000016
 	summary := freeze.State{FiredAt: entry.Add(-time.Hour), HoldUntil: entry, ExtensionsUsed: 2}

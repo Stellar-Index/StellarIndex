@@ -15,16 +15,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
-// Third leg: projected-rebuild builds the live projector's CURRENT
-// decoder and runs it over a historical lake range with a winning
-// derive_generation — the bulk sibling the projector-replay runbook sends
-// any rewind over ~1M ledgers to — and it never consulted the
-// BackfillSafe gate its two siblings now ask.
+// Third leg: projected-rebuild runs the live projector's CURRENT decoder over a historical lake
+// range with a winning derive_generation (the bulk path for rewinds over ~1M ledgers), so it must
+// ask the BackfillSafe gate its two siblings ask.
 //
-// These tests drive the real subcommand entry point. The config path does
-// not exist, so a run that gets PAST the gate fails at the config load;
-// which of the two errors comes back is therefore exactly "did the gate
-// fire".
+// These tests drive the real subcommand entry point. The config path does not exist, so a run
+// that gets PAST the gate fails at the config load; which error comes back is exactly "did the
+// gate fire".
 func projectedRebuildArgs(t *testing.T, source string, extra ...string) []string {
 	t.Helper()
 	missing := filepath.Join(t.TempDir(), "absent.toml")

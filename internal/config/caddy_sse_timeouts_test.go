@@ -15,21 +15,19 @@ import (
 
 // ─── Proxy timeouts vs the SSE heartbeat ─────────────────────────
 //
-// An idle SSE stream stays alive only because the API writes a
-// `:keepalive` comment every streaming.DefaultHeartbeatInterval. That
-// works only while every bound on the stream path outlasts a heartbeat
-// gap, and nothing checked that: a `read_timeout` on the stream proxy's
-// transport shorter than the heartbeat, or any server `write` timeout
-// or `stream_timeout` (both absolute caps, not idle bounds), would cut
-// every quiet stream on a schedule while passing `caddy validate`.
+// An idle SSE stream stays alive only because the API writes a `:keepalive` comment every
+// streaming.DefaultHeartbeatInterval, so every bound on the stream path must outlast a
+// heartbeat gap. A transport `read_timeout` shorter than the heartbeat, or any server `write`
+// timeout or `stream_timeout` (absolute caps, not idle bounds), would cut every quiet stream
+// on a schedule while still passing `caddy validate`.
 //
 // The rule, applied to the stream path in both Caddyfiles:
 //   - absolute caps (server write timeout, stream_timeout): forbidden;
-//   - per-read bounds (transport read/write/response-header timeouts):
-//     unset, or at least caddySSEMinIdleBound — two heartbeats, so one
-//     late heartbeat does not end the stream.
-// Server read_body/read_header/idle timeouts are left alone: they bound
-// the request and the gap between requests, not a response in flight.
+//   - per-read bounds (transport read/write/response-header timeouts): unset, or at least
+//     caddySSEMinIdleBound, two heartbeats so one late heartbeat does not end the stream.
+//
+// Server read_body/read_header/idle timeouts are left alone: they bound the request and the
+// gap between requests, not a response in flight.
 
 // caddySSEMinIdleBound is the shortest per-read timeout the stream path
 // may carry.

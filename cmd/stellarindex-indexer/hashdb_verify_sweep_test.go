@@ -16,12 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestClassifyHashDBVerifySweep_DriftSurvivesShutdownCancel pins that a
-// sweep that tallied drift before the stream was cancelled (e.g. by
-// process shutdown) must still be classified as drift, not silently
-// discarded as "nothing to report". The Canceled-error
-// early return in hashDBVerifySweep must not run ahead of the
-// AnyDrift() check, or it throws the drift away.
+// TestClassifyHashDBVerifySweep_DriftSurvivesShutdownCancel pins that drift tallied before a
+// shutdown cancel is still classified as drift. The Canceled early return must not run ahead
+// of the AnyDrift() check, or the drift is discarded.
 func TestClassifyHashDBVerifySweep_DriftSurvivesShutdownCancel(t *testing.T) {
 	res := archivecompleteness.HashDBVerifyResult{
 		From: 100, To: 104,
@@ -88,12 +85,9 @@ func TestClassifyHashDBVerifySweep_IncompleteWithoutError(t *testing.T) {
 	}
 }
 
-// TestCountNewDrift_DedupesAcrossOverlappingWindows is Q109: two
-// consecutive periodic sweeps whose trailing windows overlap (the
-// normal case — see startHashDBVerifier's ticker comment) both
-// observe the same still-drifted ledger. Without dedup, the second
-// sweep would re-add it to HashdbDriftTotal even though it is not a
-// newly discovered drifted ledger.
+// TestCountNewDrift_DedupesAcrossOverlappingWindows pins that consecutive sweeps with
+// overlapping trailing windows count a still-drifted ledger once in HashdbDriftTotal, not
+// again on every sweep.
 func TestCountNewDrift_DedupesAcrossOverlappingWindows(t *testing.T) {
 	seen := make(map[uint32]struct{})
 

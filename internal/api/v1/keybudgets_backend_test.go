@@ -22,11 +22,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// registerStyleFixture mints the credential pair POST /v1/register
-// leaves behind: a Postgres management row carrying sha256(plaintext),
-// and — through the production mirror seam — the Redis record keyed by
-// the same hash. The plaintext is assembled at runtime from a repeated
-// two-byte pattern so it is unmistakably a fixture.
+// registerStyleFixture mints the credential pair POST /v1/register leaves behind: a Postgres
+// management row carrying sha256(plaintext) and, through the production mirror seam, the Redis
+// record keyed by the same hash. The plaintext is built from a repeated pattern so it is
+// unmistakably a fixture.
 func registerStyleFixture(
 	t *testing.T, budgets v1.APIKeyBudgetStores, acct platform.Account,
 ) (plaintext, redisKey string, row platform.APIKey) {
@@ -56,13 +55,10 @@ func registerStyleFixture(
 	return plaintext, cachekeys.APIKey(hex.EncodeToString(sum[:])).String(), row
 }
 
-// TestNewAPIKeyBudgetStores_RedisBackendNeverDeletesTheCredential pins
-// the credential-retention contract at the handler seam.
-//
-// Under the default auth_backend=redis, `apikey:<hash>` IS the
-// credential. Stores that carry a key-cache invalidator whenever
-// Redis was configured would, on an override-only PATCH — a quota RAISE —
-// DELete every /v1/register key the account held, permanently.
+// TestNewAPIKeyBudgetStores_RedisBackendNeverDeletesTheCredential pins the credential-retention
+// contract at the handler seam. Under the default auth_backend=redis, `apikey:<hash>` IS the
+// credential, so stores carrying a key-cache invalidator whenever Redis is configured would, on
+// an override-only PATCH (a quota RAISE), DELete every /v1/register key the account held.
 func TestNewAPIKeyBudgetStores_RedisBackendNeverDeletesTheCredential(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -109,11 +105,9 @@ func TestNewAPIKeyBudgetStores_RedisBackendNeverDeletesTheCredential(t *testing.
 	}
 }
 
-// TestNewAPIKeyBudgetStores_PostgresBackendStillEvicts is the other
-// direction: the fix must not turn the eviction off where it is
-// correct. Under auth_backend=postgres the same key is a rebuildable
-// read-through cache entry, and leaving it in place serves the stale
-// resolved budget for the validator TTL.
+// TestNewAPIKeyBudgetStores_PostgresBackendStillEvicts is the other direction: eviction must stay
+// on where it is correct. Under auth_backend=postgres the key is a rebuildable read-through cache
+// entry, and leaving it in place serves the stale resolved budget for the validator TTL.
 func TestNewAPIKeyBudgetStores_PostgresBackendStillEvicts(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

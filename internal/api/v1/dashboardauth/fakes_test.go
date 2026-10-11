@@ -17,13 +17,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// mintTestSession creates an active session for the given fields and
-// returns the created row plus the plaintext cookie token that resolves
-// to it. It mirrors production mintSession's contract post
-// W1-auth-passkey-2: the cookie carries a random token, the row stores
-// only sha256(token). Tests that need an authenticated request set the
-// cookie to the returned token — NOT to sess.ID (which no longer
-// resolves on the auth path).
+// mintTestSession creates an active session and returns the row plus the plaintext cookie token
+// that resolves to it. It mirrors production mintSession: the cookie carries a random token and
+// the row stores only sha256(token). Authenticated requests must use the returned token, NOT
+// sess.ID, which does not resolve on the auth path.
 func mintTestSession(t *testing.T, users *fakeUserStore, s platform.Session) (platform.Session, string) {
 	t.Helper()
 	token := uuid.NewString() + uuid.NewString() // opaque high-entropy cookie value

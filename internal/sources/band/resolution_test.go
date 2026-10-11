@@ -6,24 +6,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// DefaultResolutionSeconds is not documentation — it is published as
-// `stellarindex_oracle_resolution_seconds{source="band"}` and it seeds
-// every band asset's default staleness budget at 10× it
-// (obs.DeclareOracleResolution), which is the number
-// `stellarindex_oracle_stale` compares against. So the constant IS this
-// source's alert threshold for every asset without a per-asset
-// override, and getting it wrong does not fail a build — it produces an
-// alert that is either permanently firing or permanently blind.
+// DefaultResolutionSeconds is published as
+// `stellarindex_oracle_resolution_seconds{source="band"}` and seeds every band asset's default
+// staleness budget at 10× it (obs.DeclareOracleResolution), the number
+// `stellarindex_oracle_stale` compares against. So the constant IS this source's alert
+// threshold for every asset without a per-asset override; a wrong value does not fail a build,
+// it yields an alert that is permanently firing or permanently blind.
 //
-// It was 60, copied from a poll-cadence RECOMMENDATION (how often a
-// consumer might ask) rather than the relayer's publication interval.
-// Band publishes hourly, so the threshold sat at 10 minutes and
-// `stellarindex_oracle_stale{source="band"}` fired for 100% of samples
-// over 7 days on both crypto:USDC and crypto:XLM.
-//
-// These tests pin the RELATIONSHIP that was violated, not the number.
-// A test that only asserted `== 3600` would pass just as happily on a
-// future value that is wrong in the same way.
+// It must be Band's relayer publication interval (hourly), not a poll-cadence recommendation.
+// These tests pin that RELATIONSHIP, not the number: asserting `== 3600` would pass just as
+// happily on a future value that is wrong in the same way.
 
 // staleAlertMultiplier mirrors obs.OracleStaleBudgetMultiplier — the
 // `10 ×` that lives in the budget gauge the oracle-stale rule reads. The mirror is pinned by
@@ -43,18 +35,13 @@ func TestStaleAlertMultiplierMatchesTheShippedBudget(t *testing.T) {
 	}
 }
 
-// measuredRelayIntervalSeconds is Band's observed mainnet cadence,
-// measured on r1:
-//
-//	changes(stellarindex_oracle_last_update_unix{source="band"}[24h])
-//	  → 24 for crypto:USDC and 24 for crypto:XLM, i.e. hourly.
+// measuredRelayIntervalSeconds is Band's observed mainnet cadence: 24 changes of
+// stellarindex_oracle_last_update_unix{source="band"} per 24h for crypto:USDC and crypto:XLM,
+// i.e. hourly.
 const measuredRelayIntervalSeconds = 3600
 
-// TestStaleThresholdIsLooserThanBandsActualCadence is the regression.
-// The alert must not fire while Band is behaving normally. With the
-// old value the threshold was 600s against a 3600s cadence, so the
-// alert was true for ~50 minutes of every hour — which is what a
-// 100%-firing week looks like.
+// TestStaleThresholdIsLooserThanBandsActualCadence: the stale alert must not fire while Band
+// is behaving normally, i.e. the threshold must exceed the publication cadence.
 func TestStaleThresholdIsLooserThanBandsActualCadence(t *testing.T) {
 	threshold := staleAlertMultiplier * DefaultResolutionSeconds
 	if threshold <= measuredRelayIntervalSeconds {

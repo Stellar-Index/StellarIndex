@@ -6,20 +6,15 @@ import (
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestReDeriveNullVolumeGuard_ACRIT1 locks in the fail-closed guard for this
-// critical: a re-derive entry point that stamps a positive
-// derive_generation but never calls InstallUSDVolumeResolution would compute
-// usd_volume=NULL and, because the high generation wins the ON CONFLICT guard,
-// silently overwrite correct stored values — unrecoverably (a live gen-0 replay
-// can never beat it). projected-rebuild and the main on-chain backfill both
-// shipped exactly that combination.
+// TestReDeriveNullVolumeGuard_ACRIT1 locks in the fail-closed guard: a re-derive entry point that
+// stamps a positive derive_generation but never calls InstallUSDVolumeResolution would compute
+// usd_volume=NULL and, because the high generation wins the ON CONFLICT guard, silently and
+// unrecoverably overwrite correct stored values (a live gen-0 replay can never beat it).
 //
-// The guard is deliberately PRECISE, and these cases pin that precision: it must
-// fire only on the destructive combination (about to write NULL, resolution never
-// wired), NOT on every re-derive write. A blanket guard would refuse tier-1
-// CEX-USD trades, which price correctly from quote decimals with no resolver at
-// all — an over-broad guard breaks the generation-guard integration test, which is why
-// the "computed != nil passes" case below exists.
+// The guard is deliberately PRECISE: it must fire only on the destructive combination (about to
+// write NULL, resolution never wired), not on every re-derive write. Tier-1 CEX-USD trades price
+// correctly from quote decimals with no resolver, and an over-broad guard breaks the
+// generation-guard integration test, hence the "computed != nil passes" case below.
 func TestReDeriveNullVolumeGuard_ACRIT1(t *testing.T) {
 	priced := "12.34000000"
 	tr := c.Trade{Source: "binance", Ledger: 7}

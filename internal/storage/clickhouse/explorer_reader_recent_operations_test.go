@@ -10,19 +10,14 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Regression tests: RecentOperations carried NO ledger
-// lower bound on either arm, so ClickHouse had every part in every partition
-// as a candidate for the reverse read. Measured on r1's system.query_log:
-// one 50-row first page read 10.3M rows /
-// 1.37 GiB in 1,788–1,875 ms, which is what put /v1/operations at a 2.238 s
-// 6h p95 — the "cheap streamed reverse scan" the query's own comment
-// claimed, refuted by the engine's own accounting.
+// Regression tests: RecentOperations needs a ledger lower bound on both arms. Without one,
+// ClickHouse treats every part in every partition as a candidate for the reverse read, so a
+// 50-row first page scanned ~10M rows (>1 GiB) instead of being a cheap streamed reverse scan.
 //
-// These pin the SQL text through the exported reader (the same
-// stubConn/stubRows harness as explorer_reader_dat10_test.go), so they hold
-// across a rename of the private builder. They also pin the two-pass
-// contract, which is the CORRECTNESS half: a bounded page that comes back
-// short must be retried unbounded, never truncated.
+// These pin the SQL text through the exported reader (the stubConn/stubRows harness shared with
+// explorer_reader_dat10_test.go), so they hold across a rename of the private builder. They
+// also pin the two-pass contract, the CORRECTNESS half: a bounded page that comes back short
+// must be retried unbounded, never truncated.
 
 // opsPage builds n descending light rows starting at `top`.
 func opsPage(top uint32, n int) [][]any {
@@ -133,11 +128,10 @@ func TestRecentOperations_CursorNearGenesisClampsTheLowerBound(t *testing.T) {
 	}
 }
 
-// The correctness half of the bound: a tail window that does not hold a full
-// page (a quiet network, or a sparse historical region under a cursor) must
-// fall back to the UNBOUNDED read, not serve a short page. A short page here
-// would both truncate the listing and mint a next_cursor from the wrong last
-// row, permanently skipping every operation between.
+// The correctness half of the bound: a tail window that does not hold a full page (a quiet
+// network, or a sparse historical region under a cursor) must fall back to the UNBOUNDED read.
+// A short page would truncate the listing and mint a next_cursor from the wrong last row,
+// permanently skipping every operation between.
 func TestRecentOperations_ShortBoundedPageFallsBackToTheUnboundedRead(t *testing.T) {
 	conn := &stubConn{}
 	full := opsPage(40_000_000, 50)

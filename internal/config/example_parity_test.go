@@ -11,18 +11,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// TestExampleTOMLDocumentsSchemaFields guards
-// configs/example.toml, which is hand-maintained beside
-// internal/config/config.go's struct tags and can drift — whole
-// config surfaces (anomaly, api.sep10, api.dashboard, metadata,
-// price_alerts, signup_reaper, oracle.band/redstone/soroswap, and a
-// scatter of individual knobs) would otherwise be undocumented, so an operator
-// reading the example file could not discover them.
+// TestExampleTOMLDocumentsSchemaFields guards configs/example.toml, which is hand-maintained
+// beside internal/config/config.go's struct tags and can drift, leaving whole config
+// surfaces undocumented for operators.
 //
-// This pins specific fields so the drift
-// cannot silently occur. It is a targeted census, not a full
-// schema walk (config.Describe() also emits container/map-key rows
-// that have no single literal key to search for).
+// It pins specific fields: a targeted census, not a full schema walk (config.Describe() also
+// emits container/map-key rows that have no single literal key to search for).
 func TestExampleTOMLDocumentsSchemaFields(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

@@ -11,11 +11,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// pgxDialRefused reproduces, verbatim in shape, what pgx v5 hands a handler
-// when Postgres is not listening — a *pgconn.ConnectError rendered as
-// "failed to connect to `…`: dial error (…)" wrapping the *net.OpError from
-// the refused dial. Constructed from stdlib types so the test asserts on the
-// classification rule rather than on a vendored driver's internals.
+// pgxDialRefused reproduces the shape pgx v5 hands a handler when Postgres is not listening: a
+// *pgconn.ConnectError ("failed to connect to `…`: dial error (…)") wrapping the refused dial's
+// *net.OpError. It is built from stdlib types so the test asserts the classification rule, not
+// driver internals.
 func pgxDialRefused() error {
 	op := &net.OpError{
 		Op:   "dial",
@@ -26,15 +25,11 @@ func pgxDialRefused() error {
 	return fmt.Errorf("failed to connect to `host=127.0.0.1 user=si database=stellarindex`: dial error (%w)", op)
 }
 
-// TestTransientStorageErr_UnreachablePostgres pins that every substring
-// the classifier matched before ("57014", "bad connection", "broken pipe",
-// "connection reset", "EOF") describes a connection that EXISTED and then
-// misbehaved. None of them matches a failure to ESTABLISH one — which is
-// exactly what a restarting, downed or failing-over Postgres produces, and
-// is the one dependency-outage shape that hits every handler at once. It
-// fell through to a 500 "Internal error": an outage that reads as a bug.
-//
-// Red without the fix: every "want retryable" case below returns false.
+// TestTransientStorageErr_UnreachablePostgres pins that a failure to ESTABLISH a connection is
+// classified retryable. The substrings "57014", "bad connection", "broken pipe", "connection
+// reset" and "EOF" all describe a connection that EXISTED and then misbehaved; a restarting,
+// downed or failing-over Postgres hits every handler at once and would otherwise fall through to
+// a 500 "Internal error", an outage that reads as a bug.
 func TestTransientStorageErr_UnreachablePostgres(t *testing.T) {
 	dnsErr := &net.DNSError{Err: "no such host", Name: "postgres.internal", IsNotFound: true}
 

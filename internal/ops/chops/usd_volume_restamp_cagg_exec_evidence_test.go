@@ -16,37 +16,23 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// ─── a -write run never EXECUTES its own CAGG follow-up ───────────
+// A -write run never EXECUTES its own CAGG follow-up.
 //
 // restampCAGGFollowUp (usd_volume_restamp_xlmbase.go) renders the ordered
-// `CALL refresh_continuous_aggregate(...)` block every finished restamp
-// needs, and xlmBaseRestampRun.summary prints it after every run,
-// including a -write run that actually changed `trades`. Nothing in this
-// package ever sends that SQL: xlmBaseRestampStore (this file),
-// xlmQuoteRestampStore / cexFiatRestampStore (usd_volume_restamp_mirrors.go)
-// and estimatedChunkApply (usd_volume_restamp_chunks_estimated.go) carry
-// only Plan/Apply methods — no ExecContext, no
-// timescale.Store.RefreshContinuousAggregate. The SAME shared primitive
-// is also printed (never executed) by the exact tier's in-place run
-// (usd_volume_restamp.go:317) and its chunk walk
-// (usd_volume_restamp_chunks_exact.go's finish -> exactRestampSummary),
-// both OUTSIDE this unit's file fence.
+// `CALL refresh_continuous_aggregate(...)` block every finished restamp needs, and
+// xlmBaseRestampRun.summary prints it after every run, including a -write run that changed
+// `trades`. No restamp store (xlmBaseRestampStore, xlmQuoteRestampStore, cexFiatRestampStore,
+// estimatedChunkApply) has an ExecContext or timescale.Store.RefreshContinuousAggregate; they
+// carry only Plan/Apply. The exact tier's in-place run and chunk walk likewise print it.
 //
-// This is proven here by construction, not by a mock assertion: evidenceStore
-// below satisfies xlmBaseRestampStore with ONLY Plan+Apply — the compiler
-// itself confirms runXLMBaseRestamp needs no execution capability to
-// finish a -write run, and the captured stdout shows the operator is
-// handed SQL text instead of a completed refresh.
+// Proven by construction: evidenceStore satisfies xlmBaseRestampStore with ONLY Plan+Apply, so
+// the compiler confirms runXLMBaseRestamp needs no execution capability to finish a -write run,
+// and the captured stdout shows the operator handed SQL text instead of a completed refresh.
 //
-// NOT auto-fixed: restampCAGGFollowUp's print-only contract is the
-// reviewed resolution (see TestXLMBaseRestampFollowUp_* in
-// usd_volume_report_claims_test.go: "The report must therefore print the
-// refresh sequence itself"), so turning it into an executor is a product
-// decision (block a CLI invocation on a multi-hour refresh? new flag?
-// failure/exit-code semantics?) that also requires widening the shared
-// chunkRestampTier.finish contract the exact tier (outside this fence)
-// implements. Filed as NEEDS-COORDINATION rather than guessed at here.
-// Build-tagged evidence for whoever picks that up:
+// Deliberately not auto-fixed: the print-only contract is the reviewed resolution (see
+// TestXLMBaseRestampFollowUp_* in usd_volume_report_claims_test.go). Making it an executor is a
+// product decision (block a CLI run on a multi-hour refresh? new flag? exit-code semantics?)
+// and would widen the shared chunkRestampTier.finish contract the exact tier implements.
 //
 //	go test -tags t688evidence ./internal/ops/chops/ -run TestWriteRunNeverExecutesItsOwnCAGGFollowUp -v
 type evidenceStore struct{}
@@ -91,9 +77,7 @@ func TestWriteRunNeverExecutesItsOwnCAGGFollowUp(t *testing.T) {
 	if !bytes.Contains([]byte(out), []byte("CALL refresh_continuous_aggregate('prices_1m'")) {
 		t.Fatalf("expected the printed CAGG follow-up in a -write run's output, got:\n%s", out)
 	}
-	// ...which is exactly the defect: a -write run that changed `trades`
-	// leaves every served surface stale until a human pastes that SQL in
-	// by hand. evidenceStore proves no execution path exists to do it
-	// automatically: xlmBaseRestampStore, the only store seam this run
-	// type is given, has no method that could have sent it.
+	// ...so a -write run that changed `trades` leaves every served surface stale until a human
+	// pastes that SQL in by hand: xlmBaseRestampStore, the only store seam this run type is
+	// given, has no method that could send it.
 }

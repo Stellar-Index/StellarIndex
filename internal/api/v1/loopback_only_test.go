@@ -6,12 +6,10 @@ import (
 	"testing"
 )
 
-// TestLoopbackOnly pins the behaviour. The /metrics
-// gate checked only that RemoteAddr was loopback — but the documented
-// topology is Caddy on the SAME HOST proxying to 127.0.0.1:3000, so a
-// misconfigured proxy that forwards public traffic presents a loopback
-// RemoteAddr and the guard passed it. It was inert against exactly the
-// failure it was written for.
+// TestLoopbackOnly pins the /metrics gate. A RemoteAddr-is-loopback check alone is inert against
+// its own failure mode: the documented topology is Caddy on the SAME HOST proxying to
+// 127.0.0.1:3000, so a misconfigured proxy forwarding public traffic presents a loopback
+// RemoteAddr and would pass.
 func TestLoopbackOnly(t *testing.T) {
 	served := false
 	h := loopbackOnly(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

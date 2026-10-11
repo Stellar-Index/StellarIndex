@@ -73,10 +73,9 @@ func statsConn(t *testing.T, metrics, wealth, trust, held [][]any) (*ExplorerRea
 	return &ExplorerReader{conn: conn}, conn
 }
 
-// TestAccountsStats_AssemblesTheFullSnapshot pins the metric-name → field
-// mapping. That map is the whole of readStatsMetrics' correctness: the rollup
-// delivers name/value PAIRS, so a renamed or mistyped key does not fail — it
-// leaves the field at its zero value and the hub publishes "0 accounts" or a
+// TestAccountsStats_AssemblesTheFullSnapshot pins the metric-name → field mapping, which is the
+// whole of readStatsMetrics' correctness. The rollup delivers name/value PAIRS, so a renamed or
+// mistyped key does not fail: it leaves the field at zero and the hub publishes "0 accounts" or a
 // zero median as a measured fact.
 func TestAccountsStats_AssemblesTheFullSnapshot(t *testing.T) {
 	older := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
@@ -300,16 +299,10 @@ func TestAccountsStats_ProbeGatesEveryRead(t *testing.T) {
 	}
 }
 
-// TestAccountsStats_RetriesOnceWhenACycleSwapsMidRead pins: a swap
-// landing between the first read and the post-read marker check must not be
-// served as a blended snapshot. The stub reports the marker as having moved
-// forward exactly once — the shape one EXCHANGE landing mid-read produces —
-// so AccountsStats must retry and the second attempt's (self-consistent)
-// values must be what is served.
-//
-// Red against an AccountsStats that has no marker
-// re-check at all: it returns the FIRST read's snapshot (TotalAccounts=1)
-// instead of retrying to the second, consistent one (TotalAccounts=2).
+// TestAccountsStats_RetriesOnceWhenACycleSwapsMidRead pins that a swap landing between the first
+// read and the post-read marker check is not served as a blended snapshot. The stub moves the
+// marker forward exactly once (what one EXCHANGE mid-read produces), so AccountsStats must retry
+// and serve the second, self-consistent values (TotalAccounts=2, not the first read's 1).
 func TestAccountsStats_RetriesOnceWhenACycleSwapsMidRead(t *testing.T) {
 	cycle1 := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	cycle2 := cycle1.Add(30 * time.Minute)

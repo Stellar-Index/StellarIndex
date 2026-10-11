@@ -15,14 +15,12 @@ import (
 
 // ─── The stream proxy and the API upstream's health ───────────────────
 //
-// The /v1/*/stream routes are proxied by their own `reverse_proxy @sse`
-// handler (it needs `flush_interval -1`), separate from the catch-all
-// proxy that carries the active /v1/healthz check. Caddy keeps active
-// health state per handler, so a stream proxy without its own check
-// never learns the upstream is down: during a rolling restart ordinary
-// routes fail fast with 503 while every new stream request is still
-// proxied to the dead listener. These tests pin that every proxy to
-// the API carries the same active health check, in both Caddyfiles.
+// The /v1/*/stream routes use their own `reverse_proxy @sse` handler (it needs
+// `flush_interval -1`), separate from the catch-all proxy carrying the active /v1/healthz check.
+// Caddy keeps active health state per handler, so a stream proxy without its own check never
+// learns the upstream is down: during a rolling restart ordinary routes fail fast with 503 while
+// new streams still go to the dead listener. These tests pin that every proxy to the API carries
+// the same active health check, in both Caddyfiles.
 
 // caddyAPIUpstream is the dial address every API proxy in the
 // Caddyfiles points at.

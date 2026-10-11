@@ -12,16 +12,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
 )
 
-// `verify` rewrites the whole textfile atomically on every run and
-// only sets LastSuccessTimestamp on a clean, non-vacuous run. The
-// writer must not omit the last_success line whenever the timestamp
-// was zero on the theory that node_exporter would "surface the
-// previous-scrape value". node_exporter's textfile collector re-reads
-// the file on every scrape, so the SERIES DISAPPEARS instead — and
-// `(time() - archive_completeness_last_success_timestamp) > 26h`
-// yields no samples over an absent series, so the staleness alert
-// went silent during exactly the persistent-failure state it exists
-// for.
+// `verify` rewrites the whole textfile atomically on every run and only sets
+// LastSuccessTimestamp on a clean, non-vacuous run. The writer must not omit the last_success
+// line when the timestamp is zero: node_exporter's textfile collector re-reads the file on
+// every scrape, so the SERIES DISAPPEARS, and
+// `(time() - archive_completeness_last_success_timestamp) > 26h` yields no samples over an
+// absent series, silencing the staleness alert in exactly the persistent-failure state it
+// exists for.
 
 // sampleValue extracts a single unlabelled sample's value from a
 // textfile body. Fails the test when the series is absent — which is

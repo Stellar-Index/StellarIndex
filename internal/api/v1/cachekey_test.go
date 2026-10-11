@@ -7,11 +7,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestCacheKey_ScalarGrammar pins the wire format so a future edit
-// that changes the field encoding or dimension order is caught (the
-// key is an in-process detail, but stability makes the prewarm/handler
-// equality tests below meaningful). Length-prefixed netstring-style
-// fields: "<op-len>:<op><field-len>:<field>…".
+// TestCacheKey_ScalarGrammar pins the wire format so an edit that changes the field encoding or
+// dimension order is caught; stability makes the prewarm/handler equality tests below meaningful.
+// Length-prefixed netstring-style fields: "<op-len>:<op><field-len>:<field>…".
 func TestCacheKey_ScalarGrammar(t *testing.T) {
 	got := newCacheKey("SourceMarkets").
 		str("binance").str("cur").int(200).
@@ -27,14 +25,11 @@ func TestCacheKey_ScalarGrammar(t *testing.T) {
 	}
 }
 
-// TestCacheKey_SeparatorByteCannotForgeFieldBoundary guards that
-// a value containing the byte a '|'-delimited
-// grammar would use as a field separator must NOT let two different
-// dimension splits collide onto the same key. With that grammar,
-// str("a|b").str("c") and str("a").str("b|c") would both render as
-// "...a|b|c..." — one caller's cached page could be served to another
-// caller whose (issuer, code) pair split the same raw bytes
-// differently.
+// TestCacheKey_SeparatorByteCannotForgeFieldBoundary guards that a value containing the byte a
+// '|'-delimited grammar would use as a separator must NOT let two different dimension splits
+// collide onto one key: str("a|b").str("c") and str("a").str("b|c") would both render as
+// "...a|b|c...", and one caller's cached page could be served to another whose (issuer, code)
+// pair split the same raw bytes differently.
 func TestCacheKey_SeparatorByteCannotForgeFieldBoundary(t *testing.T) {
 	crossed := newCacheKey("ListAssetsExt").str("a|b").str("c").build()
 	straight := newCacheKey("ListAssetsExt").str("a").str("b|c").build()
@@ -57,11 +52,9 @@ func TestCacheKey_StrSetCommaCannotForgeMemberBoundary(t *testing.T) {
 	}
 }
 
-// TestCacheKey_StrSetNormalisesOrder is the core anti-drift guarantee:
-// a set-valued dimension built from the same members in a different
-// order produces the SAME key. This is exactly the Sources-order
-// footgun the AllPools prewarm avoids by a convention
-// (registry-sorted slices) to avoid.
+// TestCacheKey_StrSetNormalisesOrder is the core anti-drift guarantee: a set-valued dimension
+// built from the same members in a different order produces the SAME key, so the AllPools
+// prewarm need not rely on a registry-sorted-slices convention.
 func TestCacheKey_StrSetNormalisesOrder(t *testing.T) {
 	a := newCacheKey("AllPools").strSet([]string{"soroswap", "aquarius", "phoenix"}).build()
 	b := newCacheKey("AllPools").strSet([]string{"phoenix", "soroswap", "aquarius"}).build()

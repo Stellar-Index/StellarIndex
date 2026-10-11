@@ -8,18 +8,12 @@ import (
 	"testing"
 )
 
-// `unclassified` is the largest group on this breakdown after the
-// contract funds — in production it carried $971,860,304.89 of a
-// $2,535,764,187.91 total, which is BENJI and USDY. The word reads as a
-// gap in OUR data. It is a statement about the ISSUERS': Franklin
-// Templeton's own SEP-1 for BENJI declares `anchor_asset_type = "other"`
-// and Ondo declares none for USDY, so publishing a class would
-// contradict one issuer on their own asset and invent one for the other.
-//
-// A reader comparing this page with a third party's breakdown — which
-// classifies everything, because it is not reading the issuers — would
-// take the biggest number on it for missing work. The group carries the
-// reason with it.
+// `unclassified` is among the largest groups on this breakdown (BENJI and USDY). The word reads
+// as a gap in OUR data, but it describes the ISSUERS': BENJI's own SEP-1 declares
+// `anchor_asset_type = "other"` and USDY's issuer declares none, so publishing a class would
+// contradict one issuer and invent one for the other. A reader comparing with a third party's
+// breakdown (which classifies everything) would take it for missing work, so the group carries
+// the reason with it.
 func TestUnclassifiedGroupCarriesItsReason(t *testing.T) {
 	groups := rwaByClass([]RWAAsset{
 		{Code: "BENJI", AnchorClass: ""},

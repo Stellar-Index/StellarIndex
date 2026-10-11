@@ -18,21 +18,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
-// Decimals LOCKSTEP on GET /v1/assets/{id}. The response depends on
-// TWO decimals resolvers: the lake's on-chain decimals() (TokenDecimals →
-// detail.Decimals, the supply divisor) and the `nonstandard_decimals_assets`
-// projection (NonstandardDecimals, which the USD price is normalised
-// through). Without the check the cap would be computed regardless of whether they agreed.
+// Decimals LOCKSTEP on GET /v1/assets/{id}. The response depends on TWO decimals resolvers: the
+// lake's on-chain decimals() (TokenDecimals → detail.Decimals, the supply divisor) and the
+// `nonstandard_decimals_assets` projection (NonstandardDecimals, which the USD price is
+// normalised through). The cap must not be computed when they disagree.
 //
-// Fixture throughout: flaggedAsset with 1000 tokens circulating / 2000 max
-// (both at 9 dp), raw asset/fiat:USD ratio 41.32. With both resolvers at 9
-// the truth is price 4132, cap 4,132,000.00, FDV 8,264,000.00 (the existing
-// TestAssetsF2_NonstandardDecimals_NormalizesPriceAndCaps).
-//
-// PROVEN-RED: with the lockstep check in applyTokenDecimals and the refusal
-// in populateMarketCap removed, the three mismatch cases below serve a
-// NUMBER — 4,132,000,000.00, 41,320.00 and 413,200,000.00 respectively —
-// each wrong by a power of ten.
+// Fixture throughout: flaggedAsset with 1000 tokens circulating / 2000 max (both at 9 dp), raw
+// asset/fiat:USD ratio 41.32. With both resolvers at 9 the truth is price 4132, cap 4,132,000.00,
+// FDV 8,264,000.00 (see TestAssetsF2_NonstandardDecimals_NormalizesPriceAndCaps). Without the
+// lockstep check in applyTokenDecimals and the refusal in populateMarketCap, each mismatch case
+// below would serve a NUMBER wrong by a power of ten.
 
 // lockstepDecStub is a TokenDecimalsReader with error injection (decStub
 // has none).
@@ -150,11 +145,9 @@ func TestAssetsF2_DecimalsLockstep_LakeNonstandardProjectionUnseeded(t *testing.
 	}
 }
 
-// The lake read FAILS (timeout / ClickHouse down) while the projection
-// carries 9. The price was normalised with 9, so the supply must be scaled
-// by 9 too: 1000 × 4132 = 4,132,000.00. Without the fix decimals would stay at the
-// default 7 and the cap would come out 413,200,000.00 — a hundred times the
-// truth — on every lake blip.
+// The lake read FAILS (timeout / ClickHouse down) while the projection carries 9. The price was
+// normalised with 9, so the supply must be scaled by 9 too: 1000 × 4132 = 4,132,000.00. Staying
+// at the default 7 would give 413,200,000.00, a hundred times the truth, on every lake blip.
 func TestAssetsF2_DecimalsLockstep_LakeUnavailableUsesProjection(t *testing.T) {
 	before := assetDetailMismatchVal()
 	srv := v1.New(v1.Options{

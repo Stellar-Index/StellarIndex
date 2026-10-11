@@ -7,12 +7,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Golden decode tests for the twelve rewards-gauge event kinds
-// (migration 0099). Every topic/body blob below is an
-// UNTOUCHED base64 SCVal captured from the r1 ClickHouse lake
-// (stellar.contract_events) — real production wire
-// format, same capture method liquidity_decode_test.go documents.
-// Exact provenance (contract, ledger, tx) is cited per case.
+// Golden decode tests for the twelve rewards-gauge event kinds. Every topic/body blob below is an
+// UNTOUCHED base64 SCVal captured from the lake (stellar.contract_events), the real wire format,
+// using the capture method liquidity_decode_test.go documents. Provenance is cited per case.
 
 var rewardsClosedAtTest = time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
 

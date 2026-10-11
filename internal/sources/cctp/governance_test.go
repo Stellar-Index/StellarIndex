@@ -10,20 +10,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Golden fixtures below are VERBATIM real mainnet events pulled from
-// the ClickHouse raw lake (ADR-0034) for a
-// decoder topic-match audit. Each carries its real ledger + tx_hash
-// for cross-reference. See docs/protocols/cctp.md for the full
-// per-topic ledger range.
+// Golden fixtures below are VERBATIM real mainnet events from the ClickHouse raw lake
+// (ADR-0034), each with its real ledger and tx_hash for cross-reference. See
+// docs/protocols/cctp.md for the per-topic ledger range.
 
 // ─── ownership_transfer ──────────────────────────────────────────
 
 // TestDecodeOwnershipTransfer_RealMainnetFixture — ledger 62211157,
 // tx b75645d61204eca9fab9d04ba55a7a63c5c12a7bd7f613f180921e714f5226da,
-// TokenMessengerMinter. old_owner populated (this is the ONE real
-// ownership transfer observed on mainnet for this contract, not a
-// bootstrap event — TestDecodeOwnershipTransfer's own fixture is the
-// only occurrence per contract).
+// TokenMessengerMinter. old_owner is populated: a real transfer, not a bootstrap event.
 func TestDecodeOwnershipTransfer_RealMainnetFixture(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -100,9 +95,8 @@ func TestDecodeOwnershipTransferCompleted_RealMainnetFixture(t *testing.T) {
 
 // TestDecodeAdminChanged_BootstrapVoidOldAdmin — ledger 62146641, tx
 // 5b53d56d4950a854bd39e3bc806478fd2aafffa5bcbfb86c19ca51eef8b90b7a,
-// MessageTransmitter. old_admin is ScvVoid on the real mainnet
-// bootstrap event — the schema-evolution trap this decoder guards
-// against (AGENTS.md "Type-test before MustI128").
+// MessageTransmitter. old_admin is ScvVoid on the real bootstrap event, the type trap this
+// decoder guards against (type-test before MustI128).
 func TestDecodeAdminChanged_BootstrapVoidOldAdmin(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{

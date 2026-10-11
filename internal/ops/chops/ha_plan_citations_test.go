@@ -11,22 +11,14 @@ import (
 
 // ─── ha-plan.md's `file:line` citations must resolve ────────
 //
-// docs/architecture/ha-plan.md backs several claims with a `path:line`
-// or `path:start-end` citation into ansible/shell source, so a reader
-// can check the claim themselves instead of trusting the prose. Two of
-// these had drifted: `configs/healthchecks/sla-probe.sh:21` pointed past
-// the BASE_URL assignment (now line 27, after comment lines were added
-// above it), and the restore-drill-enable citation into
-// 18-pgbackrest-backup.yml still said :333-350 after the ClickHouse
-// schema-drift task block was inserted earlier in the file and pushed
-// it down to :512-537. Neither prose claim was wrong — only the pointer
-// — but a stale pointer sends an operator mid-incident to the wrong
-// lines, which is the exact failure this doc's own restore-drill
-// section (§8) warns about for a broken runbook link.
+// docs/architecture/ha-plan.md backs several claims with a `path:line` or `path:start-end`
+// citation into ansible/shell source so a reader can check them. A stale pointer sends an
+// operator mid-incident to the wrong lines, the failure the doc's restore-drill section (§8)
+// warns about for a broken runbook link.
 //
-// This pins the citations against the files they name, so the next
-// reflow of 18-pgbackrest-backup.yml (or sla-probe.sh) fails this test
-// instead of leaving a silently wrong line number in the doc.
+// This pins the citations against the files they name, so a reflow of
+// 18-pgbackrest-backup.yml (or sla-probe.sh) fails this test instead of leaving a silently
+// wrong line number in the doc.
 func TestHAPlanFileLineCitationsResolve(t *testing.T) {
 	doc := readRepoFile(t, "docs/architecture/ha-plan.md")
 

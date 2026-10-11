@@ -7,39 +7,24 @@ import "testing"
 //
 // # The failure this guards
 //
-// The catalogue's nineteen sovereign-currency entries carry `networks: []`
-// and an M2 circulating supply: they are units of account, not issued
-// tokens. Having no Stellar issuance, they never reach
-// indexStellarEntries' issuance loop, so indexTickerOnlyEntry filed each
-// ticker into byStellarCode — the impersonation index. StellarCollision
-// then found the code, found no Stellar issuance whose issuer matched,
-// and reported a collision for EVERY classic asset coded USD, EUR, GBP,
-// JPY, … whoever issued it.
+// The catalogue's sovereign-currency entries carry `networks: []`: they are units of account,
+// not issued tokens. With no Stellar issuance they skipped indexStellarEntries' issuance loop,
+// so indexTickerOnlyEntry filed each ticker into byStellarCode (the impersonation index), and
+// StellarCollision reported a collision for EVERY classic asset coded USD, EUR, GBP, JPY, ...
+// whoever issued it.
 //
-// The reasoning that put reference-only tickers there is sound for USDT,
-// XRP or BTC: those name a specific token issued somewhere else, so a
-// classic `USDT-G…` is by construction claiming to be something it is
-// not. A fiat ticker names a DENOMINATION that nobody issues, and on
-// Stellar `USD` is exactly how SEP-1 tells an anchor to code a
-// dollar-denominated deposit (`anchor_asset_type = "fiat"`,
-// `anchor_asset = "USD"`). A regulated anchor issuing `USD-G…` is
-// denominating in dollars, not impersonating the dollar.
-//
-// What the flag cost such an anchor was not cosmetic: it withheld the
-// market cap (internal/api/v1/assets_f2.go returned before the cap fill,
-// and the listing's fillRowMarketCap has the same guard), refused the
-// listing valuation (asset_listing_valuation.go), and attached a warning
-// saying the asset "matches a well-known asset that has NO verified
-// issuance on Stellar" — said of a dollar token, about the dollar.
+// That is right for USDT, XRP or BTC, which name a specific token issued elsewhere. A fiat ticker
+// names a DENOMINATION nobody issues, and `USD` is how SEP-1 tells an anchor to code a
+// dollar-denominated deposit (`anchor_asset_type = "fiat"`), so an anchor issuing `USD-G...` is
+// denominating in dollars, not impersonating them. The false flag withheld market cap and the
+// listing valuation and attached a "NO verified issuance on Stellar" warning.
 //
 // # The contract this pins
 //
-// A fiat TICKER in the reference catalogue is a DENOMINATION, not a
-// Stellar asset identity. ClassFiat entries with no Stellar issuance are
-// filed into byFiatCode, so StellarCollision stays silent for them and
-// every consumer of it stops suppressing at the source. The code stays
-// answerable through FiatDenomination, and a fiat entry that ever gains
-// a verified Stellar issuance collides like any other verified code.
+// A fiat TICKER in the reference catalogue is a DENOMINATION, not a Stellar asset identity.
+// ClassFiat entries with no Stellar issuance are filed into byFiatCode, so StellarCollision
+// stays silent for them. The code stays answerable through FiatDenomination, and a fiat entry
+// that gains a verified Stellar issuance collides like any other verified code.
 func TestFiatCodedAnchorIsNotAnImpersonator(t *testing.T) {
 	cat, err := LoadEmbedded()
 	if err != nil {

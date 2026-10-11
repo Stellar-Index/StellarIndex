@@ -60,13 +60,10 @@ func TestIsDexUnitRatioTrade(t *testing.T) {
 	}
 }
 
-// TestRecordDexTradeUnitRatio_MetricIncrements exercises the actual
-// production call site (recordDexTradeUnitRatio, called from
-// InsertTrade after a row lands) end to end against the real
-// obs.DexTradeUnitRatioTotal counter — without a live database
-// connection, since the decision + metric bump don't touch *sql.DB.
-// Each case uses a distinct fake source label so the assertions can't
-// be polluted by counter state left behind by other tests/cases.
+// TestRecordDexTradeUnitRatio_MetricIncrements exercises the production call site against the
+// real obs.DexTradeUnitRatioTotal counter without a database (the decision and metric bump
+// never touch *sql.DB). Each case uses a distinct fake source label so counter state from
+// other cases cannot pollute the assertions.
 func TestRecordDexTradeUnitRatio_MetricIncrements(t *testing.T) {
 	tests := []struct {
 		name        string

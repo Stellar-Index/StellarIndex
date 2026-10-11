@@ -8,8 +8,7 @@ import (
 //   - return ok=false when i is out of range
 //   - parse a float64 (Kraken sometimes serialises timestamps that way)
 //   - parse a string-of-digits (the more common form)
-//   - return ok=false for any other type (avoids silently coercing
-//     a bool/object into 0)
+//   - return ok=false for any other type, so a bool/object is never coerced into 0
 
 func TestKrakenCandle_intAt_outOfRange(t *testing.T) {
 	c := krakenCandle{float64(1_745_000_000)}

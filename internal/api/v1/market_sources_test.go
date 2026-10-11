@@ -145,14 +145,11 @@ func TestMarketSources_ExpandsXLMAliasForms(t *testing.T) {
 	}
 }
 
-// TestMarketSources_MembershipMatchesSACValuation is the
-// regression guard. The per-source breakdown SQL has
-// always VALUED a `CAS3J7GY…` leg as XLM (its volume CASE applies the
-// XLM/USD rate to it), while the handler's form set passed only
-// `native` + `crypto:XLM` — so every Soroban XLM trade was excluded
-// from the population it was willing to price, and
-// /v1/markets/sources?asset=native undercounted Soroban XLM volume in
-// production. Membership and valuation must name the SAME set of forms.
+// TestMarketSources_MembershipMatchesSACValuation: the per-source breakdown SQL VALUES a
+// `CAS3J7GY…` leg as XLM (its volume CASE applies the XLM/USD rate), so the handler's form set
+// must include it alongside `native` + `crypto:XLM`; otherwise Soroban XLM trades are excluded
+// from the priced population and /v1/markets/sources?asset=native undercounts volume.
+// Membership and valuation must name the SAME set of forms.
 func TestMarketSources_MembershipMatchesSACValuation(t *testing.T) {
 	reader := &stubMarketSourceReader{asset: []timescale.SourceStats{
 		{Source: "aquarius", TradeCount24h: 1, VolumeUSD24h: sql.NullString{String: "1", Valid: true}},

@@ -81,11 +81,9 @@ func readRunbooks(t *testing.T) map[string]string {
 	return out
 }
 
-// TestRunbookOpsInvocationsNameRegisteredSubcommands: a runbook that tells
-// the operator to run a stellarindex-ops verb the dispatcher does not
-// register dies on "unknown command" mid-incident, often partway through a
-// multi-step repair. `supply` verbs are nested, so its second word is
-// checked against usageBody's `supply <verb>` entries.
+// TestRunbookOpsInvocationsNameRegisteredSubcommands: a runbook naming a stellarindex-ops verb
+// the dispatcher does not register dies on "unknown command" mid-incident. `supply` verbs are
+// nested, so its second word is checked against usageBody's `supply <verb>` entries.
 func TestRunbookOpsInvocationsNameRegisteredSubcommands(t *testing.T) {
 	checked := 0
 	for name, md := range readRunbooks(t) {
@@ -120,12 +118,11 @@ var (
 	cteNameRE      = regexp.MustCompile(`(?i)\b([a-z_0-9]+)\s+AS\s*\(`)
 )
 
-// TestRunbookSQLNamesMigratedRelations: the first diagnostic query of a
-// page must not fail on a table that does not exist. Every unqualified
-// relation a runbook SELECTs FROM must be created by some migration.
-// Schema-qualified names (ClickHouse `stellar.*`, `timescaledb_information.*`),
-// Postgres catalogues (`pg_*`), golang-migrate's own `schema_migrations`,
-// CTE names and `…`-elided fragments are out of scope.
+// TestRunbookSQLNamesMigratedRelations: the first diagnostic query of a page must not fail on a
+// missing table, so every unqualified relation a runbook SELECTs FROM must be created by some
+// migration. Schema-qualified names (ClickHouse `stellar.*`, `timescaledb_information.*`),
+// Postgres catalogues (`pg_*`), `schema_migrations`, CTE names and `…`-elided fragments are
+// out of scope.
 func TestRunbookSQLNamesMigratedRelations(t *testing.T) {
 	root := repoRootForOpsTest(t)
 	files, err := filepath.Glob(filepath.Join(root, "migrations", "*.up.sql"))

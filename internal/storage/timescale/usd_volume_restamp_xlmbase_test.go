@@ -51,17 +51,10 @@ func xlmAnchorAt(r USDVolumeFXResolver) func(canonical.Trade) *string {
 
 func strptr(s string) *string { return &s }
 
-// TestXLMBaseRestampDecide_ProducesTheAnchorValueForTheIncidentRow is the
-// incident fixture, reproduced from the r1 measurement:
-//
-//	ledger 62643474, 2026-05-19T19:12:03Z, sdex native/BUCK
-//	base  49,999,996 stroops (4.9999996 XLM)
-//	XLM/USD at that minute  0.14488
-//	stored usd_volume       0.00372265   <- the quote-side thin-book value
-//	XLM-leg value           0.72439994   <- what the trade was worth
-//
-// The assertion is the CORRECTED NUMBER, not "non-nil": 4.9999996 x
-// 0.14488 rendered exactly as [tradeUSDVolume] renders it.
+// TestXLMBaseRestampDecide_ProducesTheAnchorValueForTheIncidentRow: an sdex native/BUCK trade
+// with base 4.9999996 XLM at XLM/USD 0.14488 was stored with the quote-side thin-book value.
+// The assertion is the CORRECTED NUMBER, not "non-nil": 4.9999996 x 0.14488 rendered exactly
+// as [tradeUSDVolume] renders it.
 func TestXLMBaseRestampDecide_ProducesTheAnchorValueForTheIncidentRow(t *testing.T) {
 	t.Parallel()
 	resolver := stubFXResolver{prices: map[string]string{
@@ -94,11 +87,9 @@ func TestXLMBaseRestampDecide_ProducesTheAnchorValueForTheIncidentRow(t *testing
 	}
 }
 
-// TestXLMBaseRestampDecide_IsLockstepWithTheInsertPath is the
-// anti-reimplementation pin: for the same row and the same resolver, the
-// value the re-derive would WRITE must be byte-identical to the value
-// [tradeUSDVolume] — the function InsertTrade calls — produces. If a
-// future change makes the restamp compute its own number, this fails.
+// TestXLMBaseRestampDecide_IsLockstepWithTheInsertPath is the anti-reimplementation pin: for
+// the same row and resolver, the value the re-derive would WRITE must be byte-identical to
+// what [tradeUSDVolume] (called by InsertTrade) produces.
 func TestXLMBaseRestampDecide_IsLockstepWithTheInsertPath(t *testing.T) {
 	t.Parallel()
 	resolver := stubFXResolver{prices: map[string]string{
@@ -138,11 +129,10 @@ func TestXLMBaseRestampDecide_IsLockstepWithTheInsertPath(t *testing.T) {
 	}
 }
 
-// TestXLMBaseRestampDecide_AnchorDeclinedIsNeverGuessedAt is rule 2+3 of
-// the file header, and the remediation requirement: a row the anchor cannot price keeps whatever it holds. A stored
-// NULL stays NULL — it is NOT filled with the quote-side estimate the
-// live waterfall would fall through to — and a stored (wrong) value is
-// not blanked either.
+// TestXLMBaseRestampDecide_AnchorDeclinedIsNeverGuessedAt is rule 2+3 of the file header: a
+// row the anchor cannot price keeps whatever it holds. A stored NULL stays NULL (not filled
+// with the quote-side estimate the live waterfall falls through to) and a stored value is
+// not blanked.
 func TestXLMBaseRestampDecide_AnchorDeclinedIsNeverGuessedAt(t *testing.T) {
 	t.Parallel()
 	// No XLM/USD rate at all: the anchor declines. The token DOES have a

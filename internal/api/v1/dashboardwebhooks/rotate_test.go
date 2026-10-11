@@ -114,12 +114,10 @@ func TestHandleRotateSecret_CrossAccountAndRole(t *testing.T) {
 	}
 }
 
-// TestMount_CreateIdempotencyKey_ReplaysInsteadOfRegistering: a client
-// that retries POST /v1/dashboard/webhooks with the same Idempotency-Key
-// (after a timed-out response) gets the ORIGINAL webhook and signing
-// secret replayed, not a second webhook registered with a secret the
-// client never saw. Routed through h.Mount so the wired middleware is
-// exercised.
+// TestMount_CreateIdempotencyKey_ReplaysInsteadOfRegistering: a client retrying POST
+// /v1/dashboard/webhooks with the same Idempotency-Key after a timeout gets the ORIGINAL webhook
+// and signing secret replayed, not a second webhook with a secret it never saw. Routed through
+// h.Mount so the wired middleware is exercised.
 func TestMount_CreateIdempotencyKey_ReplaysInsteadOfRegistering(t *testing.T) {
 	h, store, sc := newTestRig(t)
 	mux := http.NewServeMux()

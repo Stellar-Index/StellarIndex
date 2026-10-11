@@ -7,20 +7,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Real r1-lake bytes: ledger 53,626,410 (closed 2024-09-23T11:34:58Z),
+// Real lake bytes: ledger 53,626,410,
 // tx 3870e2fc05a8a37f7ec7b01faaf222f91a353e8ca5273afe03c86b56963ba760,
-// op 0 event 2 — a `trade` event from REGISTERED pool CCY2PXGM… whose
-// body is (sold=2, bought=0, fee=0): a genuine dust swap whose output
-// rounded to zero. First blind ledger of the first full-range
-// completeness reconcile — 40 of its 41 undecodable-but-matched events
-// are this zero-amount class (probe over the full range:
-// all 40 are bought=0 dust swaps, ledgers 53,626,410 → 57,323,650; the
-// 41st is the set_privileged_addrs v2 arity, see decode_admin_test.go).
+// op 0 event 2, a `trade` event from REGISTERED pool CCY2PXGM… whose body is
+// (sold=2, bought=0, fee=0): a genuine dust swap whose output rounded to zero.
 //
-// The event must decode as a RECOGNIZED NO-OP (nil rows, nil error) —
-// not an error, which blinds the projection reconcile; and not a
-// canonical.Trade, which Validate would reject (zero side breaks price
-// derivation). Same classification pattern as redstone's empty
+// The event must decode as a RECOGNIZED NO-OP (nil rows, nil error): not an error, which
+// blinds the projection reconcile, and not a canonical.Trade, which Validate would reject
+// (a zero side breaks price derivation). Same classification as redstone's empty
 // write_prices batch.
 const (
 	zeroAmountTradeContract = "CCY2PXGMKNQHO7WNYXEWX76L2C5BH3JUW3RCATGUYKY7QQTRILBZIFWV"

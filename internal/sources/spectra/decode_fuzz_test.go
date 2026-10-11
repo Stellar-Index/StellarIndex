@@ -6,10 +6,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// FuzzWrapUnwrapByName asserts wrap/unwrap decode {shares, vault_shares} by
-// field NAME at full i128 width, in either Map order, and that a body
-// missing a named field, or carrying a negative amount, is refused rather
-// than zero-filled or written.
+// FuzzWrapUnwrapByName asserts wrap/unwrap decode {shares, vault_shares} by field NAME at full
+// i128 width in either Map order, and refuse (not zero-fill) a body missing a named field or
+// carrying a negative amount.
 //
 // Generative run:
 // go test -run=^$ -fuzz=^FuzzWrapUnwrapByName$ -fuzztime=60s -parallel=2 ./internal/sources/spectra/

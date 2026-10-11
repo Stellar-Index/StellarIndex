@@ -13,22 +13,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// TestProblemResponses_NeverShareCacheable pins the cachecontrol.go
-// invariant: every middleware rejection (401/403/429 problem+json)
-// must override the route directive with `Cache-Control: no-store`.
+// TestProblemResponses_NeverShareCacheable pins the cachecontrol.go invariant: every middleware
+// rejection (401/403/429 problem+json) overrides the route directive with
+// `Cache-Control: no-store`.
 //
-// The CacheControl middleware sets the route's directive BEFORE the
-// auth/policy/quota middlewares run, so on a publicly-cacheable
-// route (e.g. /v1/price → `public, max-age=30, s-maxage=60`) a
-// rejection writer that forgets the override ships a per-key/per-IP
-// denial with shared-cacheable headers — a CDN keyed on the URL
-// would replay one caller's 401/403 to everyone else. Regression
-// test (writeAuthProblem,
-// writeKeyPolicyDenied, writeEmailUnverified, and the monthly-quota
-// writer all inherited the public directive).
+// CacheControl sets the route's directive BEFORE the auth/policy/quota middlewares run, so on a
+// publicly-cacheable route (e.g. /v1/price -> `public, max-age=30, s-maxage=60`) a rejection
+// writer that forgets the override ships a per-key/per-IP denial with shared-cacheable headers,
+// and a CDN keyed on the URL would replay one caller's 401/403 to everyone else.
 //
-// Each case runs the REAL stack shape: CacheControl outermost, the
-// rejecting middleware inside it, exactly as server.go composes them.
+// Each case runs the REAL stack shape: CacheControl outermost, the rejecting middleware inside
+// it, as server.go composes them.
 func TestProblemResponses_NeverShareCacheable(t *testing.T) {
 	failInner := http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 		t.Error("inner handler must not run on a rejection path")

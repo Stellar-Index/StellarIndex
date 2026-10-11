@@ -19,13 +19,10 @@ import (
 	"time"
 )
 
-// TestRunServedValueChecks_TolerancesAndOutages exercises the three
-// outcome classes against stub servers: within tolerance (ok),
-// drifted beyond tolerance (fail), and
-// ground-truth outage (SKIPPED, NaN rel_err — a dark truth source
-// must not read as a served-value failure, AND must not read as a
-// pass either: skipped never sets ok, closing the F5 fail-open where
-// a dark truth source would mask a real drift behind ok=1).
+// TestRunServedValueChecks_TolerancesAndOutages exercises the three outcome classes against
+// stub servers: within tolerance (ok), drifted beyond tolerance (fail), and ground-truth
+// outage (SKIPPED, NaN rel_err). A dark truth source must read as neither a served-value
+// failure nor a pass: skipped never sets ok, so it cannot mask a real drift behind ok=1.
 func TestRunServedValueChecks_TolerancesAndOutages(t *testing.T) {
 	ctx := context.Background()
 
@@ -252,11 +249,10 @@ func TestServedValuesVerdict_ListCheckIsNotAValueCheck(t *testing.T) {
 	}
 }
 
-// TestRunServedValueChecks_Recheck pins the snapshot-race handling: a drift
-// re-reads both sides, passes if the gap clears, and fails only when it
-// persists, naming a stale served snapshot when supply_as_of_ledger did not
-// advance. The 2^53 row passes under a float64 comparison (both sides round to
-// the same double) and must fail exactly.
+// TestRunServedValueChecks_Recheck pins the snapshot-race handling: a drift re-reads both
+// sides, passes if the gap clears, and fails only when it persists, naming a stale served
+// snapshot when supply_as_of_ledger did not advance. The 2^53 row would pass a float64
+// comparison (both sides round to the same double) and must fail exactly.
 func TestRunServedValueChecks_Recheck(t *testing.T) {
 	type read struct {
 		served string

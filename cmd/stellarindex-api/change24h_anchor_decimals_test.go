@@ -9,19 +9,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// change_24h_pct divides a current USD price by the bucket 24h before
-// it. The current leg is decimals-normalised in internal/api/v1
-// (lookupUSDPrice, and the batch row); the anchor comes from
-// storeChange24hReader here, and must not come back RAW. For a confirmed
-// 9-decimals token a raw anchor puts the two legs of one percentage a factor of
-// 100 apart, so a flat market served about +9900%.
+// change_24h_pct divides a current USD price by the bucket 24h before it. The current leg is
+// decimals-normalised in internal/api/v1 (lookupUSDPrice, and the batch row); the anchor comes
+// from storeChange24hReader here and must not come back RAW. For a confirmed 9-decimals token a
+// raw anchor puts the two legs of one percentage a factor of 100 apart, so a flat market would
+// serve about +9900%.
 //
-// storeChange24hReader.s is a concrete *timescale.Store with an
-// unexported db field (see price_at_guard_wiring_test.go), so the read
-// itself cannot be scripted from this package. The correction is
-// therefore proven on normalizeChange24hAnchor directly, and two
-// source-level tripwires pin that the reader cannot return a bucket
-// without going through it and that main() actually hands it the table.
+// storeChange24hReader.s is a concrete *timescale.Store with an unexported db field (see
+// price_at_guard_wiring_test.go), so the read cannot be scripted from this package. The correction
+// is proven on normalizeChange24hAnchor directly, and two source-level tripwires pin that the
+// reader cannot return a bucket without going through it and that main() hands it the table.
 
 type fixedDecimals map[string]int
 

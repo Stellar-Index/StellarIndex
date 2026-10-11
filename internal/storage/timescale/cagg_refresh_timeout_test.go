@@ -11,14 +11,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// TestCAGGRefreshTimeout_DerivedFromWindow pins the refresh bound: five
-// minutes of refresh per hour of window, floored at ten minutes and
-// capped at four hours. The rows are the windows the backfill actually
-// asks for — a 10k-ledger chunk (~4h), the documented `-parallel 4`
-// weekly slice, the SDEX history driver's 40k-ledger chunk (~55h) and
-// the padded MinWindow of each coarse rung — so a change to any
-// constant shows up as a changed expectation here, not as a surprise
-// on r1.
+// TestCAGGRefreshTimeout_DerivedFromWindow pins the refresh bound: five minutes of refresh per
+// hour of window, floored at ten minutes and capped at four hours. The rows are the windows the
+// backfill actually asks for (a 10k-ledger chunk, the `-parallel 4` weekly slice, the SDEX
+// history driver's 40k-ledger chunk, the padded MinWindow of each coarse rung), so a constant
+// change shows up as a changed expectation here.
 func TestCAGGRefreshTimeout_DerivedFromWindow(t *testing.T) {
 	cases := []struct {
 		name   string

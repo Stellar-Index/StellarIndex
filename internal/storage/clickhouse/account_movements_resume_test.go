@@ -8,21 +8,15 @@ import (
 	"testing"
 )
 
-// TestInsertAccountMovementsOrder_PartialSendLeavesNoGap pins the
-// storage half: what a PARTIALLY sent batch leaves behind must be sound
-// for the max(ledger) resume every caller checkpoints on.
+// TestInsertAccountMovementsOrder_PartialSendLeavesNoGap pins that what a PARTIALLY sent
+// batch leaves behind is sound for the max(ledger) resume every caller checkpoints on.
 //
-// InsertAccountMovements splits a batch into accountMovementsInsertChunk
-// INSERTs and returns on the first chunk error, leaving the earlier
-// chunks durably written — ClickHouse has no transaction across them. So
-// for every possible cut point the survivors must satisfy: every ledger
-// strictly below the highest written ledger is COMPLETE. Only then does
-// restarting at max(ledger) re-process one ledger and skip nothing.
-//
-// The previous address-first order violated this at almost every cut
-// point: chunk 0 was an address prefix spanning the window's whole
-// ledger range, so max(ledger) already sat at the top of the window
-// while every address after the cut held nothing for any of it.
+// InsertAccountMovements splits a batch into accountMovementsInsertChunk INSERTs and returns
+// on the first chunk error, leaving earlier chunks durably written (ClickHouse has no
+// transaction across them). For every cut point, every ledger strictly below the highest
+// written ledger must be COMPLETE, so restarting at max(ledger) re-processes one ledger and
+// skips nothing. An address-first order fails this: chunk 0 spans the window's whole ledger
+// range, so max(ledger) is already at the top while later addresses hold nothing.
 func TestInsertAccountMovementsOrder_PartialSendLeavesNoGap(t *testing.T) {
 	// A window shaped like a real one: many addresses, each active
 	// across the whole ledger range.

@@ -7,12 +7,9 @@ import (
 	"testing"
 )
 
-// TestAuditDoc_TracksEveryClassifiedSymbol guards the Q075 class of drift:
-// docs/operations/wasm-audits/sorocredit.md backs the `BackfillSafe` flag
-// with a hardcoded tracked-symbol count and inventory in prose, and
-// classify() grew an 8th arm (TreasuryUpdated) without
-// the doc being updated. Fail loudly if the doc's stated count or symbol
-// inventory ever falls behind EventSymbols() again.
+// TestAuditDoc_TracksEveryClassifiedSymbol: docs/operations/wasm-audits/sorocredit.md backs
+// the `BackfillSafe` flag with a hardcoded symbol count and inventory in prose. Fail loudly
+// if either falls behind EventSymbols() when classify() gains an arm.
 func TestAuditDoc_TracksEveryClassifiedSymbol(t *testing.T) {
 	const docPath = "../../../docs/operations/wasm-audits/sorocredit.md"
 	b, err := os.ReadFile(docPath)

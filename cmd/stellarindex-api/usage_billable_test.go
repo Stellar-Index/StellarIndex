@@ -25,12 +25,10 @@ func (s *rollupRowSink) UpsertUsageDaily(_ context.Context, rows []usage.RollupR
 	return nil
 }
 
-// TestUsageEndpointDay_BillableEqualsQuotaCounter pins that the
-// rollup path's `requests` must not include 5xx, which the MonthlyQuota counter
-// excludes, or no column of /v1/account/usage reconciles with a
-// quota 429's month_to_date. Real traffic goes through UsageTracker,
-// the real rollup folds it, and the billable column derived from the
-// rollup must equal the counter the quota enforces.
+// TestUsageEndpointDay_BillableEqualsQuotaCounter pins that the rollup path's `requests`
+// excludes 5xx, as the MonthlyQuota counter does, or no column of /v1/account/usage reconciles
+// with a quota 429's month_to_date. Real traffic goes through UsageTracker and the real
+// rollup, and the derived billable column must equal the counter the quota enforces.
 func TestUsageEndpointDay_BillableEqualsQuotaCounter(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

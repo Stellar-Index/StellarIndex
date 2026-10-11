@@ -13,18 +13,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// The monthly-quota gate mirrors ratelimit.Bucket's dwell clock
-// and inherited its blind spot with it: the month-to-date read
-// ran on the REQUEST's context, and the gate cannot tell a
-// caller-cancelled read from a counter outage. Its clock is
-// process-wide — one instance for the whole binary — so a client that
-// connects and immediately RSTs PRE-ARMS `redisErrorSince` for everyone.
+// The monthly-quota gate mirrors ratelimit.Bucket's dwell clock and its blind spot: the
+// month-to-date read runs on the REQUEST's context, and the gate cannot tell a caller-cancelled
+// read from a counter outage. The clock is process-wide, so a client that connects and
+// immediately RSTs PRE-ARMS `redisErrorSince` for everyone.
 //
-// What that buys an attacker is precisely the invariant this gate
-// documents: "a single blip must fail OPEN so a transient Redis hiccup
-// does not 429 paying customers". With the clock pre-armed and the dwell
-// window already elapsed, the very first genuine blip lands as a
-// fail-CLOSED 429 for whichever metered customer happens to hit it.
+// That defeats the gate's invariant "a single blip must fail OPEN so a transient Redis hiccup
+// does not 429 paying customers": with the clock pre-armed and the dwell window elapsed, the
+// first genuine blip becomes a fail-CLOSED 429 for whichever metered customer hits it.
 //
 // The counter is HEALTHY except where a blip is injected explicitly.
 

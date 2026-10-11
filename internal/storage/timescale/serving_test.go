@@ -124,11 +124,9 @@ func TestStatementTimeoutConnector_PropagatesDialError(t *testing.T) {
 	}
 }
 
-// TestBoundedConnector_PositiveTimeoutSetsBackstop pins that
-// OpenBackground (indexer/aggregator) with a positive
-// timeout builds a pool that SETs statement_timeout — the exact
-// milliseconds the config Duration renders to — so a runaway background
-// query is bounded SQL-side, unlike a plain Open with NO connector.
+// TestBoundedConnector_PositiveTimeoutSetsBackstop pins that OpenBackground (indexer and
+// aggregator) with a positive timeout builds a pool that SETs statement_timeout to the exact
+// milliseconds of the config Duration, so a runaway background query is bounded SQL-side.
 func TestBoundedConnector_PositiveTimeoutSetsBackstop(t *testing.T) {
 	conn, err := boundedConnector("postgres://u@127.0.0.1:5432/db?sslmode=disable", 30*time.Minute, false)
 	if err != nil {
@@ -164,11 +162,9 @@ func TestSessionConnConfig_PinsUTC(t *testing.T) {
 	}
 }
 
-// TestBoundedConnector_NonPositiveTimeoutIsUnbounded — the ops/migrate
-// escape hatch: <= 0 must yield NO connector (nil), so the caller falls
-// back to plain Open and the pool stays unbounded (legitimate multi-hour
-// migrations/backfills must not be killed — the rejected global-timeout
-// fix).
+// TestBoundedConnector_NonPositiveTimeoutIsUnbounded — the ops/migrate escape hatch: <= 0 must
+// yield NO connector (nil), so the caller falls back to plain Open and the pool stays
+// unbounded; legitimate multi-hour migrations and backfills must not be killed.
 func TestBoundedConnector_NonPositiveTimeoutIsUnbounded(t *testing.T) {
 	for _, d := range []time.Duration{0, -time.Second} {
 		conn, err := boundedConnector("postgres://u@127.0.0.1:5432/db?sslmode=disable", d, true)
@@ -181,13 +177,11 @@ func TestBoundedConnector_NonPositiveTimeoutIsUnbounded(t *testing.T) {
 	}
 }
 
-// TestStatementTimeoutConnector_ForceCustomPlans pins the
-// /v1/price p95-tail fix: the SERVING pool's connections must ALSO set
-// plan_cache_mode = force_custom_plan (generic-plan builds over the
-// ~870-chunk trades hypertable cost ~206 ms and are rebuilt on every
-// plancache invalidation — the measured 250-325 ms binds on the request
-// path). Order matters only in that both SETs run before the conn is
-// handed out; a failure on the second SET must fail-close like the first.
+// TestStatementTimeoutConnector_ForceCustomPlans pins that the SERVING pool's connections also
+// set plan_cache_mode = force_custom_plan: generic-plan builds over the ~870-chunk trades
+// hypertable cost ~206 ms and are rebuilt on every plancache invalidation, on the request path.
+// Both SETs must run before the conn is handed out; a failure on the second must fail closed
+// like the first.
 func TestStatementTimeoutConnector_ForceCustomPlans(t *testing.T) {
 	fc := &fakeConn{}
 	c := &statementTimeoutConnector{

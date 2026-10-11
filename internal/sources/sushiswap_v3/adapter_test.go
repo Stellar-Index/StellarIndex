@@ -43,15 +43,14 @@ func poolCreatedEvent(contractID, body string, ledger uint32) events.Event {
 	}
 }
 
-// TestMatches_ForeignContractEmittingOurTopicsIsRejected is the ADR-0035
-// gate, and it is the load-bearing test of this package.
+// TestMatches_ForeignContractEmittingOurTopicsIsRejected is the ADR-0035 gate, the load-bearing
+// test of this package.
 //
-// Every event in this protocol carries a ONE-element Symbol topic, and the
-// symbols are the most generic on the network: a bounded 10k-ledger census
-// of pubnet puts `mint` at 33% and `burn` at 12% of ALL contract events. A
-// topic-only decoder would therefore attribute a large slice of the
-// network's token traffic to this source. Replace [Decoder.Matches]'s
-// identity check with a topic check and every case below flips to true.
+// Every event in this protocol carries a ONE-element Symbol topic, and the symbols are the most
+// generic on the network (`mint` and `burn` are a large share of ALL contract events). A
+// topic-only decoder would attribute much of the network's token traffic to this source.
+// Replace [Decoder.Matches]'s identity check with a topic check and every case below flips to
+// true.
 func TestMatches_ForeignContractEmittingOurTopicsIsRejected(t *testing.T) {
 	d := NewDecoder()
 	for _, topic := range []struct {

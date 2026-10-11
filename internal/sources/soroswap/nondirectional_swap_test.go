@@ -6,25 +6,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Golden regression from the ONE undecodable-but-matched ledger a
-// soroswap completeness verify reported: mainnet ledger
-// 57,403,300, tx be7028b9…, registered pair CAM7DY… (soroswap_pairs:
-// token0=CAS3J7GY…, token1=CCW67TSZ…). The pair emitted sync
-// (event_index 6) then swap (event_index 7) whose body settled with
+// Golden regression: a real mainnet soroswap pair emitted sync then swap whose body settled with
 //
 //	amount_0_in=0, amount_0_out=0, amount_1_in=265, amount_1_out=70
 //
-// — value moved within token1 only, no cross-token exchange. pair.swap()
-// is directly invokable (Uniswap-v2-style) and accepts any argument
-// combination keeping K non-decreasing, so this is a real, successful,
-// recognized on-chain event that is NOT a trade. A decodeSwap that
-// errors ("no directional swap") leaves the ADR-0033 re-derive recording
-// the ledger blind (undecodable-but-matched). It is a
-// recognized no-op: Decode returns zero events and nil error, so the
-// re-derive counts expected-zero and the ledger verifies.
+// so value moved within token1 only, with no cross-token exchange. pair.swap() is directly
+// invokable (Uniswap-v2-style) and accepts any argument combination keeping K non-decreasing, so
+// this is a real, recognized on-chain event that is NOT a trade. A decodeSwap that errors ("no
+// directional swap") leaves the ADR-0033 re-derive recording the ledger as undecodable-but-matched.
+// It must be a recognized no-op: Decode returns zero events and nil error, so the re-derive
+// counts expected-zero and the ledger verifies.
 //
-// Bytes are verbatim from the r1 ClickHouse lake
-// (stellar.contract_events, ledger_seq=57403300).
+// Bytes are verbatim from the lake (stellar.contract_events, ledger_seq=57403300).
 const (
 	ndPair   = "CAM7DY53G63XA4AJRS24Z6VFYAFSSF76C3RZ45BE5YU3FQS5255OOABP"
 	ndTx     = "be7028b942c6ffa0cacdf35ae44ab1b19efa63fd04c2ee72049c3d6348594b7f"
@@ -102,11 +95,10 @@ func TestNonDirectionalSwap_RealLedger57403300_RecognizedNoOp(t *testing.T) {
 	}
 }
 
-// The pair WASM's LP-share SEP-41 token events (the pair is the token
-// of its own LP shares) are classified — the EVERY-event enumeration —
-// but deliberately NOT claimed: they are the sep41 domain, and the
-// dispatcher is first-match-wins, so claiming them would swallow the
-// events of any LP-share token later added to watched_sep41_contracts.
+// The pair WASM's LP-share SEP-41 token events (the pair is its own LP token) are classified for
+// the EVERY-event enumeration but deliberately NOT claimed: they are the sep41 domain, and the
+// dispatcher is first-match-wins, so claiming them would swallow the events of any LP-share token
+// later added to watched_sep41_contracts.
 func TestPairTokenEvents_ClassifiedButNotClaimed(t *testing.T) {
 	dec := NewDecoder()
 	dec.SeedPair(ndPair, mustSorobanAsset(t, 0x01), mustSorobanAsset(t, 0x02))

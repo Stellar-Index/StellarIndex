@@ -5,12 +5,10 @@ package supply
 
 import "testing"
 
-// TestCanonicalizeWatchedClassic pins that the config's
-// CODE-ISSUER (dash) form is canonicalised to the CODE:ISSUER (colon)
-// form the observers match on. Raw config strings in the watched sets
-// would match NOTHING in the trustline/claimable/LP observers and every
-// classic asset's served supply would degrade to its SAC-held slice
-// (USDC 40M vs ~266M).
+// TestCanonicalizeWatchedClassic pins that the config's CODE-ISSUER (dash) form is
+// canonicalised to the CODE:ISSUER (colon) form the observers match on. Raw config strings
+// would match nothing in the trustline/claimable/LP observers, degrading every classic
+// asset's served supply to its SAC-held slice.
 func TestCanonicalizeWatchedClassic(t *testing.T) {
 	const usdcDash = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	const usdcColon = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"

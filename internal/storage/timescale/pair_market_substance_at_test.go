@@ -13,15 +13,12 @@ import (
 	"time"
 )
 
-// [Store.PairMarketSubstanceAt] is the SQL half of the POINT-IN-TIME
-// thin-market verdict: the substance of the market that
-// existed in the window ending at a requested instant. Its sibling
-// [Store.PairMarketSubstance] always ends its window at now, which is
-// the defect — so what these tests pin is WHERE the window sits.
+// [Store.PairMarketSubstanceAt] is the SQL half of the POINT-IN-TIME thin-market verdict: the
+// market substance in the window ending at a requested instant. Its sibling
+// [Store.PairMarketSubstance] always ends at now, so these tests pin WHERE the window sits.
 //
-// The query is assembled inline, so the scripted driver records the text
-// the store actually issued. The executing proof against real Postgres
-// is test/integration/pg_pricing_markets_test.go.
+// The scripted driver records the query text the store issued; the executing proof against real
+// Postgres is test/integration/pg_pricing_markets_test.go.
 
 func substanceAtQuery(t *testing.T, asOf time.Time, window time.Duration, g HistoryGranularity) recordedStmt {
 	t.Helper()

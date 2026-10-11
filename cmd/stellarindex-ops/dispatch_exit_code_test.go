@@ -11,13 +11,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
-// caseDispatchExitCode_HelpIsNotAFailure: every subcommand
-// flag.FlagSet uses flag.ContinueOnError, so `-h`/`-help` on a subcommand
-// surfaces as flag.ErrHelp from fs.Parse, propagated up through the
-// handler's Run. That must not fall through to the generic error
-// branch, which would print "<subcommand>: flag: help requested" and return exit
-// code 1 — indistinguishable from a real failure for a scripted caller
-// that asked for help.
+// caseDispatchExitCode_HelpIsNotAFailure: every subcommand flag.FlagSet uses
+// flag.ContinueOnError, so `-h`/`-help` surfaces as flag.ErrHelp from fs.Parse through the
+// handler's Run. That must not fall through to the generic error branch, which would print
+// "<subcommand>: flag: help requested" and exit 1, indistinguishable from a real failure for
+// a scripted caller that asked for help.
 func caseDispatchExitCode_HelpIsNotAFailure(t *testing.T) {
 	var stderr bytes.Buffer
 	code := dispatchExitCode("backfill", flag.ErrHelp, &stderr)
@@ -86,11 +84,10 @@ func caseDispatchExitCode_ExitCodeErrorStillWins(t *testing.T) {
 	}
 }
 
-// TestEverySubcommandHelpExitsZero drives every help spelling through
-// every dispatch-table entry and the real exit-code chokepoint. Namespace
-// verbs (discovery, supply, archive-completeness) and the positional verb
-// rpc-probe read args[1] before any FlagSet exists, so their help request
-// never reaches fs.Parse and must be answered with flag.ErrHelp directly.
+// TestEverySubcommandHelpExitsZero drives every help spelling through every dispatch-table
+// entry and the real exit-code chokepoint. Namespace verbs (discovery, supply,
+// archive-completeness) and rpc-probe read args[1] before any FlagSet exists, so their help
+// request never reaches fs.Parse and must be answered with flag.ErrHelp directly.
 func TestEverySubcommandHelpExitsZero(t *testing.T) {
 	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
 	if err != nil {

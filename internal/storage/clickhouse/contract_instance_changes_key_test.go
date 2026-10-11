@@ -42,13 +42,11 @@ func createStmt(ddl, kind, name string) string {
 	}
 }
 
-// TestContractInstanceChanges_KeyIsTransactionScoped.
-// change_index restarts at 0 on every TRANSACTION (extractLedgerEntryChanges),
-// so under ORDER BY (contract_hash, ledger_seq, change_index) two
-// transactions writing one contract's instance in the same ledger share a key
-// and the ReplacingMergeTree keeps one of them. tx_hash makes the key the
-// change's identity; intra_ledger_seq must be projected for the read order.
-// Both the operator mirror and the fresh-host tier1 copy are checked.
+// TestContractInstanceChanges_KeyIsTransactionScoped: change_index restarts at 0 on every
+// TRANSACTION, so under ORDER BY (contract_hash, ledger_seq, change_index) two transactions
+// writing one contract's instance in a ledger share a key and the ReplacingMergeTree keeps
+// one. tx_hash makes the key the change's identity; intra_ledger_seq must be projected for
+// the read order. Both the operator mirror and the fresh-host tier1 copy are checked.
 func TestContractInstanceChanges_KeyIsTransactionScoped(t *testing.T) {
 	for _, file := range []string{"contract_instance_changes.sql", "tier1_schema.sql"} {
 		ddl := stripSQLComments(readDeployDDL(t, file))
@@ -145,11 +143,9 @@ func lastTimelineRead(t *testing.T, conn *stubConn) string {
 	return ""
 }
 
-// TestContractInstanceIndexedReads_OrderSameLedgerWritesByWalkPosition: on
-// the tx-keyed table both reads rank a ledger's writes by intra_ledger_seq
-// before change_index, so the ledger-final executable is the newest row.
-// Against the old ORDER BY ledger_seq DESC, change_index DESC two
-// transactions' writes (both change_index 0) tie and either may win.
+// TestContractInstanceIndexedReads_OrderSameLedgerWritesByWalkPosition: both reads rank a
+// ledger's writes by intra_ledger_seq before change_index, so the ledger-final executable is
+// the newest row. Ordering by change_index alone ties two transactions' writes (both 0).
 func TestContractInstanceIndexedReads_OrderSameLedgerWritesByWalkPosition(t *testing.T) {
 	var cid xdr.Hash
 	copy(cid[:], []byte("contract-id-32-bytes-padding----"))

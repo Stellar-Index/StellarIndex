@@ -8,21 +8,11 @@ import (
 	"time"
 )
 
-// Regression suite: `api.status_services` was
-// validated case-insensitively and consumed case-sensitively.
-//
-// config/validate.go lower-cases each entry before checking it against
-// {indexer, aggregator}. statusServicesOr only TRIMMED. The heartbeat
-// map is keyed by Prometheus `job` labels with the `stellarindex-`
-// prefix stripped, so its keys are always lower-case.
-//
-// The result: `status_services = ["Indexer", "Aggregator"]` booted
-// without complaint, then reported both services "unknown" on every
-// /v1/status request forever. `overall` never left degraded, the
-// explorer's status page stayed amber, and an operator debugging it
-// found a config value that passed validation and matched the
-// documented vocabulary — which is precisely the symptom the list was
-// added to remove.
+// `api.status_services` is validated case-insensitively (config/validate.go lower-cases each
+// entry), so statusServicesOr must lower-case too, not only TRIM. The heartbeat map is keyed by
+// Prometheus `job` labels with the `stellarindex-` prefix stripped, always lower-case. Otherwise
+// `["Indexer", "Aggregator"]` passes validation yet reports both services "unknown" on every
+// /v1/status request and `overall` never leaves degraded.
 
 // TestStatusServicesOrNormalisesCase pins the boundary transform. It
 // must match the one config validation applies, or a value can pass

@@ -10,24 +10,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Golden fixtures below are VERBATIM real mainnet events pulled from
-// the ClickHouse raw lake (ADR-0034) for a full
-// topic census: every topic_0_sym the three CCTP contracts have EVER
-// emitted (26 distinct topics, 9496 total events, exactly reconciled
-// against a plain count() over the same contract set; topics_xdr was
-// also checked for the empty-topic_0_sym trap — none found, every
-// CCTP topic is a Symbol). This file covers the 16 topics that were
-// still undecoded after governance_test.go's pass. Each carries
-// its real ledger + tx_hash for cross-reference. See
-// docs/protocols/cctp.md for the full per-topic ledger range.
+// Golden fixtures below are VERBATIM real mainnet events pulled from the ClickHouse raw lake
+// (ADR-0034) for a full topic census: every topic_0_sym the three CCTP contracts have emitted.
+// The census was reconciled against a plain count() over the same contract set and checked for
+// the empty-topic_0_sym trap (every CCTP topic is a Symbol). This file covers the 16 topics
+// left undecoded by governance_test.go; each carries its real ledger + tx_hash. See
+// docs/protocols/cctp.md for the per-topic ledger range.
 
 // ─── admin_change_started ──────────────────────────────────────────
 
-// TestDecodeAdminChangeStarted_RealMainnetFixture — ledger 62211158,
-// tx b2993ff4713de9dd111d5dc64adacb500dae7bf86d037997964876cc3ebddc92,
-// TokenMessengerMinter. The 2-step counterpart to admin_changed: this
-// fires when a change is INITIATED. old_admin populated in all three
-// observed instances (one per contract) but still type-tested.
+// TestDecodeAdminChangeStarted_RealMainnetFixture — ledger 62211158, TokenMessengerMinter.
+// The 2-step counterpart to admin_changed, fired when a change is INITIATED. old_admin is
+// populated in every observed instance but is still type-tested.
 func TestDecodeAdminChangeStarted_RealMainnetFixture(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{
@@ -96,11 +90,9 @@ func TestDecodeAttesterEnabled_RealMainnetFixture(t *testing.T) {
 
 // ─── attester_manager_updated ──────────────────────────────────────
 
-// TestDecodeAttesterManagerUpdated_BootstrapVoidOld — ledger 62146641,
-// tx 5b53d56d4950a854bd39e3bc806478fd2aafffa5bcbfb86c19ca51eef8b90b7a,
-// MessageTransmitter. old_attester_manager is Void on the ONLY
-// observed instance (bootstrap) — the schema-evolution trap this
-// decoder type-tests against, this time in a TOPIC field.
+// TestDecodeAttesterManagerUpdated_BootstrapVoidOld — ledger 62146641, MessageTransmitter.
+// old_attester_manager is Void on the ONLY observed instance (bootstrap): the schema-evolution
+// trap the decoder type-tests against, here in a TOPIC field.
 func TestDecodeAttesterManagerUpdated_BootstrapVoidOld(t *testing.T) {
 	t.Parallel()
 	ev := &events.Event{

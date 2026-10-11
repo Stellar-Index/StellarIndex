@@ -15,19 +15,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// PRV-2 — `magic_link_tokens` retention.
+// `magic_link_tokens` retention. The table is durable plaintext PII (email + requested_ip)
+// with an attacker-chosen key: POST /v1/auth/login is unauthenticated and inserts a row for
+// any well-formed address, and an unclicked link is never consumed. Without this reaper the
+// table grows without bound at the anonymous rate limit, on a disk-fixed host.
 //
-// The table is durable plaintext PII (email + requested_ip) and its
-// key is attacker-chosen: POST /v1/auth/login is unauthenticated and
-// inserts a permanent row for any well-formed address, and a link
-// nobody clicks is never consumed. Without this reaper the table grows
-// without bound at whatever rate the anonymous rate limit allows, on a
-// disk-fixed host. The sibling login_code_lockouts already had this
-// reaper; this table lacked one.
-//
-// These tests pin the worker's contract. The DELETE predicate itself —
-// including that a LIVE (unexpired) token is never reaped — is proven
-// against real Postgres in
+// These tests pin the worker's contract. The DELETE predicate itself, including that a LIVE
+// (unexpired) token is never reaped, is proven against real Postgres in
 // test/integration/pg_auth_core_test.go.
 
 type sweepCall struct{ olderThan time.Time }
@@ -240,11 +234,9 @@ func TestNew_NilStorePanics(t *testing.T) {
 	magiclinkreaper.New(nil, magiclinkreaper.Options{})
 }
 
-// TestSweep_MarksLiveness: every COMPLETED sweep — including a
-// failed one — stamps the liveness gauge, and construction publishes the
-// configured interval the stalled alert scales its threshold by. A dead
-// reaper is otherwise invisible: its rows gauge just freezes at a
-// healthy-looking number.
+// TestSweep_MarksLiveness: every COMPLETED sweep, including a failed one, stamps the liveness
+// gauge, and construction publishes the interval the stalled alert scales its threshold by.
+// A dead reaper is otherwise invisible: its rows gauge freezes at a healthy-looking number.
 func TestSweep_MarksLiveness(t *testing.T) {
 	g := obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperMagicLink)
 	start := float64(time.Now().Unix())

@@ -8,12 +8,9 @@ import (
 	"testing"
 )
 
-// caseParseTxIndexBackfillFlags_RefusesBareFullHistory pins the safe
-// default: a BARE `ch-txindex-backfill` (no bounds, no -full) must NOT resolve
-// into the implicit ledger-2..tip (~10.2B row) backfill. Before the guard the
-// defaults (-from 2, -to 0=tip) meant an argument-less invocation silently
-// kicked off the entire history — a heavy job the runbook says must be
-// babysat. The full run is still available, but only with an explicit word.
+// caseParseTxIndexBackfillFlags_RefusesBareFullHistory pins the safe default: a BARE
+// `ch-txindex-backfill` (no bounds, no -full) must NOT resolve into the implicit ledger-2..tip
+// backfill, a heavy job that must be babysat. The full run needs an explicit -full.
 func caseParseTxIndexBackfillFlags_RefusesBareFullHistory(t *testing.T) {
 	_, err := parseTxIndexBackfillFlags([]string{"-write"})
 	if err == nil {

@@ -6,13 +6,10 @@ import (
 	"testing"
 )
 
-// TestHistoryTimeoutComment_NoDanglingIssueCitation: the 8s
-// ceiling comment above tradesInRangeAfterWithAliases must not cite a bare
-// issue number. Bare numbers rot — a bare number can 404 or silently
-// resolve to an unrelated issue, which
-// is worse than a 404 because a reader following it lands on the wrong
-// history with no signal anything is off. The comment must
-// describe the pattern in prose instead.
+// TestHistoryTimeoutComment_NoDanglingIssueCitation: the timeout ceiling comment above
+// tradesInRangeAfterWithAliases must not cite a bare issue number. A bare number can silently
+// resolve to an unrelated issue, which is worse than a 404 because the reader gets no signal.
+// The comment must describe the pattern in prose instead.
 func TestHistoryTimeoutComment_NoDanglingIssueCitation(t *testing.T) {
 	src, err := os.ReadFile("history.go")
 	if err != nil {

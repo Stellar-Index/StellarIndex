@@ -9,16 +9,14 @@ import (
 )
 
 // TestAccountMovementsQuery_LedgerCeiling pins the storage half of the ledger ceiling: the
-// /movements merge boundary is a SQL predicate on this read, and its
-// set-signal is HasMaxLedger — never "MaxLedger != 0".
+// /movements merge boundary is a SQL predicate on this read, and its set-signal is
+// HasMaxLedger, never "MaxLedger != 0".
 //
-// Ceiling 0 is REACHABLE, not a sentinel for "no ceiling": a deployment
-// that installs the movements floor at genesis (testnet/futurenet,
-// timescale.InstallMovementsFloor(1)) computes ceiling = floor-1 == 0
-// whenever the cap67 watermark is absent or unreadable, and the arm must
-// then serve nothing at all. A `MaxLedger > 0` guard drops the clause at
-// exactly that value and serves the whole archive alongside the Postgres
-// tail instead — the fail-open inverse of what the ceiling is for.
+// Ceiling 0 is REACHABLE, not a sentinel for "no ceiling": a deployment that installs the
+// movements floor at genesis (testnet/futurenet, timescale.InstallMovementsFloor(1)) computes
+// ceiling = floor-1 == 0 when the cap67 watermark is absent or unreadable, and the arm must then
+// serve nothing. A `MaxLedger > 0` guard drops the clause at exactly that value and serves the
+// whole archive beside the Postgres tail, the fail-open inverse of the ceiling's purpose.
 func TestAccountMovementsQuery_LedgerCeiling(t *testing.T) {
 	const clause = " AND ledger <= ?"
 

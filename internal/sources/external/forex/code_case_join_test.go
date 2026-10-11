@@ -8,28 +8,24 @@ import (
 
 // The rates<->names join and currency-code case.
 //
-// A `names[code]` join in buildSnapshot is an exact-case
-// lookup between maps whose producers never agreed on a case:
+// A `names[code]` join in buildSnapshot is an exact-case lookup between maps whose producers
+// never agreed on a case:
 //
 //	primary rates   lower  (client.go lower-cases C:USDEUR -> "eur")
 //	primary names   lower  (client.go lower-cases both symbols)
 //	ECB rates       UPPER  (ecb/rates.go keys on the XML attribute)
 //	reused names    UPPER  (refreshOnce rebuilds them from Currency.Ticker)
 //
-// Any refresh that mixed a lower map with an UPPER one matched nothing,
-// and the snapshot collapsed to the one row buildSnapshot always adds:
-// a synthetic USD. Both mixes are the DEGRADED paths — the ones that
+// A refresh that mixed a lower map with an UPPER one matched nothing, and the snapshot collapsed
+// to the synthetic USD row buildSnapshot always adds. Both mixes are the DEGRADED paths, which
 // exist so an outage costs coverage rather than the whole feed.
 //
-// Every test here goes through [Worker.refreshOnce] with the real ECB
-// provider or the real client, so the case each producer ACTUALLY emits
-// is what gets joined.
+// Every test here goes through [Worker.refreshOnce] with the real ECB provider or the real
+// client, so the case each producer ACTUALLY emits is what gets joined.
 
-// TestFetchHistory_JoinsNamesInAnyCase covers the same join's second
-// site: fetchHistory drops every dated bar whose code is not in `names`,
-// so UPPER-keyed (reused) names silently emptied the trailing-7d series —
-// and with it the evidence the history-majority heal and the confirm veto
-// run on.
+// TestFetchHistory_JoinsNamesInAnyCase covers the same join's second site: fetchHistory drops
+// every dated bar whose code is not in `names`, so UPPER-keyed (reused) names would silently
+// empty the trailing-7d series the history-majority heal and the confirm veto run on.
 func TestFetchHistory_JoinsNamesInAnyCase(t *testing.T) {
 	up := &fakeMassive{
 		current: map[string]float64{"UZS": 11800},

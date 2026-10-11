@@ -133,13 +133,12 @@ func assertDefaultSubstancePolicy(t *testing.T, label string, pg cfg.PricingGuar
 	}
 }
 
-// TestPricingGuard_RejectsUnsatisfiableOrOverflowingSubstance: a span floor
-// above what the window's closed buckets can span, a bucket floor above the
-// count they can hold, or a window that wraps time.Duration must fail the
-// load — the first two withhold every pair, the last serves every pair
-// unguarded, all silently. Off a minute boundary a 24h window holds 1439
-// closed buckets spanning 1438 minutes; 1440 buckets or a 1439-minute span
-// clear only on a read landing exactly on the minute.
+// TestPricingGuard_RejectsUnsatisfiableOrOverflowingSubstance: a span floor above what the
+// window's closed buckets can span, a bucket floor above the count they can hold, or a window
+// that wraps time.Duration must fail the load. The first two silently withhold every pair, the
+// last silently serves every pair unguarded. Off a minute boundary a 24h window holds 1439
+// closed buckets spanning 1438 minutes, so 1440 buckets or a 1439-minute span clear only on a
+// read landing exactly on the minute.
 func TestPricingGuard_RejectsUnsatisfiableOrOverflowingSubstance(t *testing.T) {
 	reject := map[string]string{
 		"span equals default window":   "substance_min_span_minutes = 1440",

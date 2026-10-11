@@ -10,10 +10,8 @@ import (
 )
 
 // TestAcquireHoldersRollupLockSerializesConcurrentRuns pins that a manual
-// `stellarindex-ops ch-holders-rollup` invocation must not be able to run
-// while another invocation (the 30-minute timer, or a second manual run) is
-// still mid-cycle. Red without acquireHoldersRollupLock: with neither flock nor any
-// other advisory-lock primitive a second invocation always
+// `stellarindex-ops ch-holders-rollup` cannot run while another invocation (the 30-minute timer,
+// or a second manual run) is mid-cycle. Without acquireHoldersRollupLock a second invocation
 // proceeds straight into RunHoldersRollup alongside the first.
 func TestAcquireHoldersRollupLockSerializesConcurrentRuns(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ch-holders-rollup.lock")

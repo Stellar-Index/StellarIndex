@@ -12,30 +12,23 @@ import (
 
 // Oracle auth-tree price forgery.
 //
-// The Band decoder reads the price straight from the InvokeContract
-// call args, and the dispatcher routes ContractCall decoders from the
-// Soroban auth tree (extractInvokeContractCallTrees). A
-// SorobanAuthorizationEntry's RootInvocation is submitter-supplied and
-// the host does NOT require every declared authorization to be
-// exercised: an attacker can append a source-account auth entry naming
-// the Band StandardReference contract with FORGED relay() rates to a
-// transaction that succeeds doing something else entirely. Without
-// corroboration, the dispatcher walks that entry, matches the Band decoder,
-// and decodes the forged rate into a recognised oracle price — the whole update
-// never executed on chain.
+// The Band decoder reads the price straight from the InvokeContract call args, and the dispatcher
+// routes ContractCall decoders from the Soroban auth tree (extractInvokeContractCallTrees). A
+// SorobanAuthorizationEntry's RootInvocation is submitter-supplied and the host does NOT require
+// every declared authorization to be exercised, so an attacker can append a source-account auth
+// entry naming the Band StandardReference contract with FORGED relay() rates to a transaction
+// that does something else. Without corroboration the dispatcher decodes that never-executed
+// entry into a recognised oracle price.
 //
-// These tests drive the REAL Band decoder through the REAL
-// dispatcher.ProcessLedger auth-tree walk with real XDR, so they pin the
-// end-to-end behaviour, not a mock:
+// These tests drive the REAL Band decoder through the REAL dispatcher.ProcessLedger auth-tree
+// walk with real XDR, so they pin end-to-end behaviour, not a mock:
 //
-//   - a forged (auth-only-DECLARED, never-executed) Band relay entry
-//     produces ZERO price events and is counted as uncorroborated;
+//   - a forged (auth-only-DECLARED, never-executed) Band relay entry produces ZERO price events
+//     and is counted as uncorroborated;
 //   - a genuine top-level Band relay call still produces its price.
 //
-// Reverting the fix (Band no longer implementing
-// ExecutionCorroborationRequirer, or the dispatcher not computing
-// ExecutionCorroborated) makes the first test fail: the forged price is
-// recognised.
+// Band must implement ExecutionCorroborationRequirer and the dispatcher must compute
+// ExecutionCorroborated, or the first test fails.
 
 const testPassphrase = network.TestNetworkPassphrase
 
@@ -179,11 +172,10 @@ func countBandUpdates(outs []interface{ Source() string }) int {
 	return n
 }
 
-// TestProcessLedger_ForgedBandAuthEntry_NotRecognisedAsPrice is the
-// headline forgery proof. A benign top-level call to a NON-Band contract
-// carries an attacker-forged source-account auth entry naming the Band
-// StandardReference contract with fabricated relay() rates. That entry
-// never executed; the dispatcher must not decode it into a price.
+// TestProcessLedger_ForgedBandAuthEntry_NotRecognisedAsPrice is the headline forgery proof: a
+// benign top-level call to a NON-Band contract carries a forged source-account auth entry naming
+// Band StandardReference with fabricated relay() rates. It never executed, so the dispatcher must
+// not decode it into a price.
 func TestProcessLedger_ForgedBandAuthEntry_NotRecognisedAsPrice(t *testing.T) {
 	const forgedRateE9 = uint64(1_000_000_000_000_000) // $1,000,000/BTC — the fabricated print
 	bandCID := contractIDFromStrkey(t, adapterC)
@@ -245,11 +237,9 @@ func TestProcessLedger_ForgedBandAuthEntry_NotRecognisedAsPrice(t *testing.T) {
 	}
 }
 
-// TestProcessLedger_GenuineTopLevelBandRelay_IsRecognised is the
-// non-vacuous companion: a real relayer relay() call (the top-level
-// EXECUTED invocation, the shape every genuine Band update takes) still
-// yields its price. Without this, the fix could "pass" by dropping all
-// Band traffic.
+// TestProcessLedger_GenuineTopLevelBandRelay_IsRecognised is the non-vacuous companion: a real
+// top-level EXECUTED relayer relay() call still yields its price, so the gate cannot "pass" by
+// dropping all Band traffic.
 func TestProcessLedger_GenuineTopLevelBandRelay_IsRecognised(t *testing.T) {
 	const rateE9 = uint64(500_000_000_000_000)
 	bandCID := contractIDFromStrkey(t, adapterC)

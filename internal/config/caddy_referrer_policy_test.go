@@ -10,17 +10,14 @@ import (
 // in front of `Referrer-Policy`, if any.
 var caddyReferrerPolicyPattern = regexp.MustCompile(`(?m)^\s*(\S*)Referrer-Policy\s+"`)
 
-// TestCaddyReferrerPolicyDoesNotOverrideTheAPI pins that the API sets
-// `Referrer-Policy: no-referrer` itself
-// (internal/api/v1/middleware/security_headers.go), because
-// `/v1/auth/callback?token=…` and `/v1/signup/verify?token=…` are
-// top-level navigations whose query carries a credential. The site
-// block's `header` directive also deletes `-Server`, which — per Caddy's
-// Caddyfile header semantics — defers the WHOLE block's header ops to
-// write-time. An unconditional `Referrer-Policy "strict-…"` in that same
-// block therefore wins at write-time and silently downgrades the API's
-// no-referrer back to strict-origin-when-cross-origin. The `?` prefix
-// (set-only-if-absent) is the fix; a bare field name regresses it.
+// TestCaddyReferrerPolicyDoesNotOverrideTheAPI pins that the API sets `Referrer-Policy:
+// no-referrer` itself (internal/api/v1/middleware/security_headers.go), because
+// `/v1/auth/callback?token=…` and `/v1/signup/verify?token=…` are top-level navigations whose
+// query carries a credential. The site block's `header` directive also deletes `-Server`, which
+// per Caddyfile header semantics defers the WHOLE block's header ops to write-time, so an
+// unconditional `Referrer-Policy "strict-…"` in that block wins and silently downgrades the API's
+// no-referrer to strict-origin-when-cross-origin. The `?` prefix (set-only-if-absent) prevents
+// that; a bare field name regresses it.
 func TestCaddyReferrerPolicyDoesNotOverrideTheAPI(t *testing.T) {
 	for _, path := range caddyfiles {
 		t.Run(filepath.Base(path), func(t *testing.T) {

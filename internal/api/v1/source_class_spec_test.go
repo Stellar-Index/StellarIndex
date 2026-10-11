@@ -14,12 +14,10 @@ import (
 	"testing"
 )
 
-// TestSourceClassSurfacesAgree pins every surface that names a source
-// class to the external.Class constants themselves. A `bridge` class once reached
-// the registry and the methodology glossary but not to the ?class=
-// allow-list or either spec enum, so /v1/sources served rows it refused
-// to filter by and spec-validating clients rejected /v1/methodology.
-// The constants are read from source so a new class fails here until
+// TestSourceClassSurfacesAgree pins every surface naming a source class to the external.Class
+// constants: the registry, methodology glossary, ?class= allow-list and both spec enums. A
+// class missing from some makes /v1/sources serve rows it cannot filter by and breaks
+// spec-validating clients. The constants are read from source so a new class fails here until
 // every surface names it.
 func TestSourceClassSurfacesAgree(t *testing.T) {
 	want := goStringConsts(t, filepath.Join("internal", "sources", "external"), "Class")

@@ -5,12 +5,9 @@ import (
 	"time"
 )
 
-// Kraken shares the same healthy-connection backoff concern as
-// Binance/Bitstamp. NewStreamer's
-// default backoff is 5 s — large enough to avoid hammering Kraken on a
-// venue-wide outage, small enough that the per-cycle data-loss window
-// is ~5 s on a healthy connection. This test pins the defaults so a
-// drive-by edit can't silently regress them.
+// Kraken shares the healthy-connection backoff concern of Binance/Bitstamp. NewStreamer's default
+// backoff is 5 s: large enough not to hammer Kraken during a venue-wide outage, small enough that
+// the per-cycle data-loss window on a healthy connection stays ~5 s. This test pins the defaults.
 func TestNewStreamer_DefaultInitialBackoffIs5s(t *testing.T) {
 	s := NewStreamer(nil)
 	if got, want := s.InitialBackoff, 5*time.Second; got != want {

@@ -5,12 +5,10 @@ package timescale
 
 import "testing"
 
-// The third writer of projection_dirty_windows: a clean-slate window
-// scripts/ops/ch-rebuild-projected.sh DELETEd and did not re-derive. Its
-// provenance has to be distinguishable from the other two, and — the part
-// that matters to an on-call — it must NOT read as a projector-replay
-// rewind: that classification SUPPRESSES stellarindex_projector_lag_high,
-// and this row means rows are MISSING, which is the last state to silence.
+// The third writer of projection_dirty_windows: a clean-slate window that
+// scripts/ops/ch-rebuild-projected.sh deleted and did not re-derive. Its provenance must be
+// distinguishable from the other two and must NOT read as a projector-replay rewind, which
+// suppresses stellarindex_projector_lag_high while this row means rows are MISSING.
 func TestCHRebuildEmptiedReason(t *testing.T) {
 	got := CHRebuildEmptiedReason(61_000_000, 61_999_999)
 	if want := "ch-rebuild-projected emptied [61000000,61999999]"; got != want {

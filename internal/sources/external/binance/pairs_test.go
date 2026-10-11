@@ -8,11 +8,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestDefaultPairs_GoldenSet pins the YAML-embedded pair table to the
-// exact map of canonical pairs. The expected side is constructed through
-// the canonical constructors, so any drift — a symbol added or
-// dropped, a class flipped (fiat EUR vs crypto EUR), a base/quote
-// swap — fails loudly. Editing pairs.yaml intentionally means
+// TestDefaultPairs_GoldenSet pins the YAML-embedded pair table to the exact map of canonical
+// pairs, built through the canonical constructors, so any drift (symbol added or dropped, class
+// flipped such as fiat EUR vs crypto EUR, base/quote swap) fails loudly. Editing pairs.yaml means
 // updating this table in the same commit.
 func TestDefaultPairs_GoldenSet(t *testing.T) {
 	crypto := func(code string) canonical.Asset {
@@ -82,11 +80,8 @@ func TestDefaultPairs_GoldenSet(t *testing.T) {
 	}
 }
 
-// TestParsePairsYAML_RejectsUnknownField guards that an unknown
-// key in an asset spec (e.g. "klass" instead of "class") must fail the
-// load loudly instead of silently leaving Class at its zero value,
-// which would fall through to an "unknown asset class" error only
-// deep inside asset() — or worse, be misread as intentional.
+// TestParsePairsYAML_RejectsUnknownField guards that an unknown key in an asset spec (e.g.
+// "klass" for "class") fails the load loudly instead of silently leaving Class at its zero value.
 func TestParsePairsYAML_RejectsUnknownField(t *testing.T) {
 	bad := []byte(`pairs:
   - symbol: FOOBAR

@@ -6,11 +6,9 @@ import (
 	"testing"
 )
 
-// TestMethodologySourcesUseOwnSchema pins that /v1/methodology's
-// `sources[]` documented the full Source schema (trade_count_24h,
-// volume_24h_usd, markets_count_24h, volume_history_24h/7d) although
-// handleMethodology never populates those — MethodologySource is the
-// static registry subset it actually serves.
+// TestMethodologySourcesUseOwnSchema pins that /v1/methodology's `sources[]` documents
+// MethodologySource, the static registry subset handleMethodology serves, not the full Source
+// schema (trade_count_24h, volume_24h_usd, ...) whose fields it never populates.
 func TestMethodologySourcesUseOwnSchema(t *testing.T) {
 	doc := loadSpecDoc(t)
 	schemas := mustMap(t, doc, "components", "schemas")
@@ -28,12 +26,10 @@ func TestMethodologySourcesUseOwnSchema(t *testing.T) {
 	assertSameSet(t, "MethodologySource", specProps, goProps)
 }
 
-// TestDiagnosticsIngestionBackfillCoverageFieldsDocumented pins that
-// BackfillCoverageRow serves density_pct, covered_ledgers,
-// expected_ledgers, gap_free_pct and coverage_snapshot_at unconditionally
-// (they are omitempty, but genuinely populated once the gap detector has
-// run) and the spec named none of them as properties — a prose disclaimer
-// is not a schema.
+// TestDiagnosticsIngestionBackfillCoverageFieldsDocumented pins that the spec names, as
+// properties, density_pct, covered_ledgers, expected_ledgers, gap_free_pct and
+// coverage_snapshot_at, which BackfillCoverageRow serves once the gap detector has run (they are
+// omitempty). A prose disclaimer is not a schema.
 func TestDiagnosticsIngestionBackfillCoverageFieldsDocumented(t *testing.T) {
 	doc := loadSpecDoc(t)
 	op := mustMap(t, doc, "paths", "/diagnostics/ingestion", "get")

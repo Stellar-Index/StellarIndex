@@ -43,16 +43,11 @@ func assertCCTPNumericSafe(t *testing.T, q string) {
 	assertNoFloatSQL(t, "cctp flow query", q)
 }
 
-// assertCCTPRawValueReads guards the post-deletion honesty rule (file-doc
-// rule 1): the legacy event_index-0 twins were DELETED, so
-// value-carrying flow queries read RAW per-event rows. The old per-(tx, op)
-// collapse with max(amount) was a workaround for those twins, and keeping
-// it would silently HALVE a future genuine batched double-transfer in one
-// op (the 0112 class — admin events already prove same-op same-type groups
-// occur on the wire: attester_enabled ×2, remote_token_messenger_added ×23
-// in single ops on the lake census). max(amount) is the
-// fingerprint of that collapse — cctpRecvCTE's legitimate one-body-per-op
-// group uses min(body), so its presence in a full query is unambiguous.
+// assertCCTPRawValueReads guards the honesty rule (file-doc rule 1): the legacy event_index-0
+// twins are deleted, so value-carrying flow queries read RAW per-event rows. A per-(tx, op)
+// collapse with max(amount) would silently HALVE a genuine batched double-transfer in one op
+// (same-op same-type groups do occur on the wire). max(amount) is the fingerprint of that
+// collapse; cctpRecvCTE's legitimate one-body-per-op group uses min(body), so it is unambiguous.
 func assertCCTPRawValueReads(t *testing.T, q string) {
 	t.Helper()
 	if strings.Contains(q, "max(amount)") {
@@ -60,11 +55,9 @@ func assertCCTPRawValueReads(t *testing.T, q string) {
 	}
 }
 
-// TestCCTPValueCTEsReadRawRows pins file-doc rule 1 at the CTE level: the
-// value-carrying subqueries (mints, burns) carry NO grouping at all, while
-// the receive-side CTE keeps its per-(tx, op) group — that one is join
-// semantics (one BurnMessage body per op so mint rows never fan out), not
-// twin dedup, and must survive.
+// TestCCTPValueCTEsReadRawRows pins file-doc rule 1 at the CTE level: the value-carrying
+// subqueries (mints, burns) carry NO grouping, while the receive-side CTE keeps its per-(tx, op)
+// group, which is join semantics (one BurnMessage body per op so mint rows never fan out).
 func TestCCTPValueCTEsReadRawRows(t *testing.T) {
 	for name, cte := range map[string]string{
 		"mints windowed": cctpMintsCTE(true),
@@ -88,11 +81,10 @@ func TestCCTPValueCTEsReadRawRows(t *testing.T) {
 	}
 }
 
-// TestCCTPFlowSeriesQueryShape guards the load-bearing properties of the
-// CCTP directional flow series SQL: hourly buckets at the 24h window, daily
-// otherwise, honest direction sourcing (inbound = mint_and_withdraw ONLY —
-// mint_and_forward restates the same funds at 10× local scale), dedup, and
-// EXACT NUMERIC division (ADR-0003).
+// TestCCTPFlowSeriesQueryShape guards the CCTP directional flow series SQL: hourly buckets at
+// the 24h window and daily otherwise, honest direction sourcing (inbound = mint_and_withdraw
+// ONLY; mint_and_forward restates the same funds at 10× local scale), dedup, and EXACT NUMERIC
+// division (ADR-0003).
 func TestCCTPFlowSeriesQueryShape(t *testing.T) {
 	hourly := cctpFlowSeriesQuery(1, true)
 	if !strings.Contains(hourly, "date_trunc('hour', ts)") {

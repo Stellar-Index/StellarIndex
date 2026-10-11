@@ -15,18 +15,12 @@ import (
 
 // TestRecover_ContainsPanicAndLogs proves the guard does its two jobs:
 //
-//	(a) it CONFINES the panic — a deferred worker.Recover stops the panic
-//	    from propagating past the function that deferred it, so a detached
-//	    worker's fault no longer terminates the whole process; and
-//	(b) it LOGS the fault at Error with the worker name, the panic value,
-//	    and a stack, so a silently-stopped worker cannot pass unnoticed.
+//	(a) it CONFINES the panic, so a detached worker's fault cannot terminate the process; and
+//	(b) it LOGS the fault at Error with the worker name, the panic value and a stack, so a
+//	    silently-stopped worker cannot pass unnoticed.
 //
-// Without Recover, every guarded worker has
-// no recover() anywhere in the goroutine's stack. If worker.Recover
-// omitted its recover() (that analog), the panic below escapes
-// guardedWorker into this test function, which has no recover of its
-// own, and crashes the test binary. With the guard, guardedWorker
-// returns normally and the assertions run.
+// If worker.Recover omitted its recover(), the panic below would escape guardedWorker into
+// this test, which has no recover of its own, and crash the test binary.
 func TestRecover_ContainsPanicAndLogs(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError}))

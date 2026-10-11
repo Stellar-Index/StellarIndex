@@ -8,12 +8,10 @@ import (
 	"testing"
 )
 
-// danglingBacklog47Ref is a citation client.go's package doc must not
-// carry: "BACKLOG #47" resolves (via `gh pr view 47`) to an
-// unrelated merged dependency-bump PR, not the FX-into-external fold it
-// was cited for. CHANGELOG.md records the fold under ROADMAP #47, not
-// BACKLOG #47. Built from parts so this guard's own source doesn't trip
-// the check it performs.
+// danglingBacklog47Ref is a citation client.go's package doc must not carry: "BACKLOG #47"
+// resolves to an unrelated PR, not the FX-into-external fold it was cited for (CHANGELOG.md
+// records the fold under ROADMAP #47). Built from parts so this guard's own source doesn't
+// trip the check it performs.
 var danglingBacklog47Ref = "BACKLOG #" + "47"
 
 // TestFrankfurterDocHasNoDanglingBacklogReference guards that the

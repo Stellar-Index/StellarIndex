@@ -14,11 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestScamFlagTagSet_MatchesFrontend pins the exact scam-tag set. It MUST
-// equal DIRECTORY_SCAM_FLAG_TAGS in web/explorer/src/lib/directory-tags.ts
-// — a gate/warning split (an asset shows a scam banner but keeps its
-// price, or vice-versa) is the drift this pin prevents. If you change one
-// list, change the other and both tests.
+// TestScamFlagTagSet_MatchesFrontend pins the exact scam-tag set. It MUST equal
+// DIRECTORY_SCAM_FLAG_TAGS in web/explorer/src/lib/directory-tags.ts, so an asset never shows a
+// scam banner yet keeps its price (or vice-versa). Change both lists and both tests together.
 func TestScamFlagTagSet_MatchesFrontend(t *testing.T) {
 	want := []string{"fraud", "hack", "malicious", "phishing", "scam", "unsafe"}
 	var got []string
@@ -129,11 +127,10 @@ func TestScamGate_Withheld(t *testing.T) {
 	}
 }
 
-// TestScamGate_FailOpenIsCounted: a failed directory lookup serves a
-// possibly-flagged issuer's price unguarded, so every one must reach the
-// metric the stellarindex_scam_gate_fail_open alert watches — a Warn
-// line alone left a directory outage visible only to a log grep.
-// A cancelled request serves nothing and is not counted.
+// TestScamGate_FailOpenIsCounted: a failed directory lookup serves a possibly-flagged issuer's
+// price unguarded, so every one must reach the metric the stellarindex_scam_gate_fail_open alert
+// watches (a Warn line alone hides an outage). A cancelled request serves nothing and is not
+// counted.
 func TestScamGate_FailOpenIsCounted(t *testing.T) {
 	const surface = "test_fail_open"
 	counter := obs.ScamGateLookupFailuresTotal.WithLabelValues(surface)
@@ -179,16 +176,11 @@ func TestPriceWithholding_NamesTheScamGateFirst(t *testing.T) {
 	}
 }
 
-// TestScamGate_WithheldThroughSACSpelling pins the identity half of the
-// gate: a Stellar Asset Contract wrapper IS the classic issuance it
-// wraps, so naming the wrapper's C-address must reach the same verdict
-// as naming `CODE-ISSUER`.
-//
-// Before the base was resolved to its canonical family form, the
-// classic-only guard rejected the SAC spelling outright — the gate
-// returned false without ever asking the directory, and the flagged
-// issuer's price stayed servable to any caller who spelled the asset as
-// its contract id (R8).
+// TestScamGate_WithheldThroughSACSpelling pins the identity half of the gate: a Stellar Asset
+// Contract wrapper IS the classic issuance it wraps, so naming the wrapper's C-address must reach
+// the same verdict as naming `CODE-ISSUER`. A classic-only guard would reject the SAC spelling
+// without asking the directory, leaving a flagged issuer's price servable to anyone who spells
+// the asset as its contract id.
 //
 // NOT parallel: the alias registry is process-global (same convention as
 // TestTVLValuer_GateSeesTheCanonicalIdentity).
@@ -286,11 +278,10 @@ func TestScamGate_DirectoryFlaggedContractIsWithheld(t *testing.T) {
 	}
 }
 
-// TestScamGate_BareSorobanIsJudgedOnItsOwnAddress is the other half of the
-// same rule. A pure-SEP-41 contract with no classic twin has no issuer
-// G-address, but the directory labels C-addresses too, so the gate asks
-// about the contract itself — and only about it. Resolving an asset that
-// is in no family returns the asset itself, so no classic lookup happens.
+// TestScamGate_BareSorobanIsJudgedOnItsOwnAddress is the other half of the same rule. A
+// pure-SEP-41 contract with no classic twin has no issuer G-address, but the directory labels
+// C-addresses too, so the gate asks about the contract itself and only it. Resolving an asset in
+// no family returns the asset itself, so no classic lookup happens.
 func TestScamGate_BareSorobanIsJudgedOnItsOwnAddress(t *testing.T) {
 	ctx := context.Background()
 	// A registry is installed and knows a DIFFERENT wrapper, so the miss
@@ -340,11 +331,10 @@ func TestScamGate_BareSorobanIsJudgedOnItsOwnAddress(t *testing.T) {
 	}
 }
 
-// A flagged issuer's asset named by its SAC contract id carries no issuer
-// of its own, and with no [supply].sac_wrappers entry canonicalisation
-// cannot invert it — so the gate served the flagged market's price under
-// that C-address. These tests pin the flagged-issuer→SAC index that
-// closes it.
+// A flagged issuer's asset named by its SAC contract id carries no issuer of its own, and with no
+// [supply].sac_wrappers entry canonicalisation cannot invert it, so the gate would serve the
+// flagged market's price under that C-address. These tests pin the flagged-issuer→SAC index
+// that closes it.
 
 // sacIndexDirectory flags the listed issuers and lists the given classic
 // assets as their scam-flagged issuances, the way *timescale.Store does.

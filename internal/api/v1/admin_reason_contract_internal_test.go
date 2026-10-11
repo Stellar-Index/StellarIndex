@@ -3,14 +3,10 @@
 
 package v1
 
-// Pins requireReason: the X-Reason contract
-// shared by every unconditional operator-tier write — POST/DELETE
-// /v1/admin/keys, PATCH /v1/admin/accounts/{id}, and the status-notice
-// create/resolve routes — must be a single chokepoint, not five
-// copy-pasted header reads. A duplicated-checks regression (reverting
-// any one call site back to an inline read) would still pass an
-// HTTP-level test with an identical response; this test targets the
-// helper itself so the extraction is verified directly.
+// Pins requireReason: the X-Reason contract shared by every unconditional operator-tier write
+// (admin keys, admin accounts, status-notice routes) must be a single chokepoint, not
+// copy-pasted header reads. Reverting one call site to an inline read would still pass an
+// HTTP-level test with an identical response, so this test targets the helper itself.
 
 import (
 	"encoding/json"

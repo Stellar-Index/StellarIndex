@@ -305,12 +305,9 @@ func TestDecodeSwap_RefusesSameSignDeltas(t *testing.T) {
 	}
 }
 
-// TestDecodeSwap_FansOutOpIndexByEventIndex proves two swaps in one
-// operation get distinct trade identities. Without the fan-out they share
-// (source, ledger, tx_hash, op_index, ts) and the second is silently
-// dropped by the writer's ON CONFLICT. The lake shows the shape is real
-// here: tx f6fb00ef…c308 carries swaps at event indices 2 and 14 of one
-// operation.
+// TestDecodeSwap_FansOutOpIndexByEventIndex proves two swaps in one operation get distinct trade
+// identities. Without the fan-out they share (source, ledger, tx_hash, op_index, ts) and the
+// writer's ON CONFLICT silently drops the second.
 func TestDecodeSwap_FansOutOpIndexByEventIndex(t *testing.T) {
 	fields, err := sdkDecodeSwapFields(goldenSwapSellToken0)
 	if err != nil {
@@ -439,11 +436,9 @@ func swapBodyWithBadTick(t *testing.T, amount0, amount1 *big.Int, recipient stri
 	return base64.StdEncoding.EncodeToString(b)
 }
 
-// TestDecodeSwapFields_ToleratesMalformedUnusedFields proves that a
-// malformed/missing tick (or liquidity, sqrt_price_x96, sender — none of
-// which decodeSwap reads) must not fail the whole decode and drop an
-// otherwise-good, price-forming trade. Only amount0, amount1, and
-// recipient — the fields decodeSwap actually consumes — are required.
+// TestDecodeSwapFields_ToleratesMalformedUnusedFields proves a malformed or missing tick (or
+// liquidity, sqrt_price_x96, sender, none of which decodeSwap reads) must not fail the decode and
+// drop an otherwise-good trade. Only amount0, amount1 and recipient are required.
 func TestDecodeSwapFields_ToleratesMalformedUnusedFields(t *testing.T) {
 	recipient := "GCBYPF2OVPSZ7NJSXIOINCBMOSMY7I6KOWHPZV36OH4OH5R2A63DKUKY"
 	body := swapBodyWithBadTick(t, big.NewInt(100), big.NewInt(-50), recipient)

@@ -15,18 +15,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// POST /v1/account/keys built its
-// [auth.CreateAPIKeyRequest] without a monthly cap, so a child minted
-// from a METERED parent persisted MonthlyQuota=0 and
-// middleware.MonthlyQuota's `MonthlyQuota <= 0` short-circuit left it
-// UNMETERED — a metered customer could mint an uncapped credential from
-// a capped one, and the cap the operator sold them was one rotation
-// away from gone.
+// POST /v1/account/keys must carry the caller's OWN effective monthly quota onto the child it
+// mints. Otherwise a child of a METERED parent persists MonthlyQuota=0, middleware.MonthlyQuota's
+// `MonthlyQuota <= 0` short-circuit leaves it UNMETERED, and a capped customer can mint an
+// uncapped credential.
 //
-// The fix carries the caller's OWN effective quota onto the child. It
-// copies a cap and never invents one: a parent with no cap still mints
-// an uncapped child (pinned below), because the ceiling is opt-in by
-// contract and defaulting it here would arm a 429 for every key that
+// It copies a cap and never invents one: a parent with no cap still mints an uncapped child
+// (pinned below), because the ceiling is opt-in by contract and defaulting it would 429 keys that
 // never had one.
 
 // mintChildKeySubject drives the PRODUCTION chain for a self-service

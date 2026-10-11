@@ -218,19 +218,16 @@ func textColumnSafe(s string) bool {
 	return utf8.ValidString(s) && !strings.Contains(s, "\x00")
 }
 
-// TestDecoder_Decode_MemoIsBytesNotText is a regression guard.
-//
-// The memo is an ScString: the payer chooses its BYTES, for one stroop.
-// Handing those bytes straight to the rozo_events.memo
-// `text` column is wrong, because there a NUL or an invalid UTF-8 sequence is refused on
-// every attempt — a permanently un-ingestible event.
+// TestDecoder_Decode_MemoIsBytesNotText: the memo is an ScString whose BYTES the payer
+// chooses. Writing them straight to the rozo_events.memo `text` column is wrong, because a
+// NUL or invalid UTF-8 sequence is refused on every attempt, leaving a permanently
+// un-ingestible event.
 //
 // Pins, through the production Decoder.Decode entry point:
 //   - the emitted Memo is text-column-safe for every hostile shape;
-//   - it is the EXACT expected value (deterministic — a re-derive
-//     writes the same row), not merely "something valid";
+//   - it is the EXACT expected value (deterministic, so a re-derive writes the same row);
 //   - no byte is lost: scval.FromText recovers the on-chain memo;
-//   - ordinary memos are byte-identical to what was stored before.
+//   - ordinary memos are byte-identical to the stored form.
 func TestDecoder_Decode_MemoIsBytesNotText(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

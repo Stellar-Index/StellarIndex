@@ -14,19 +14,14 @@ func TestDefindexDirection_HarvestIsValid(t *testing.T) {
 	}
 }
 
-// A vault-layer row with a present-but-empty AmountsVec is the
-// decode/insert boundary for decodeVaultFlow's documented degenerate
-// case: an on-chain zero-asset deposit/withdraw decodes cleanly
-// (TestDecodeVaultFlow_emptyAmountsVec, internal/sources/defindex) and
-// the insert guard must accept it rather than reject it as malformed —
-// a rejection here is a plain errors.New that classifySinkFault cannot
-// place in dispositionSkip, so it becomes an unclassified sink fault:
-// held for a full retry budget, then quarantined, on a legitimate event.
+// A vault-layer row with a present-but-empty AmountsVec is decodeVaultFlow's documented
+// degenerate case: an on-chain zero-asset deposit/withdraw decodes cleanly
+// (TestDecodeVaultFlow_emptyAmountsVec), so the insert guard must accept it. A rejection is a
+// plain errors.New that classifySinkFault cannot place in dispositionSkip, so a legitimate event
+// would be held for a full retry budget and then quarantined.
 //
-// s is a zero-value Store (nil db): any code path that reaches
-// s.db.ExecContext panics, which is what makes "the guard let it
-// through" observable without a real database — the same technique
-// TestInsertDefindexFee_guards uses for the rejection side.
+// s is a zero-value Store (nil db): reaching s.db.ExecContext panics, which makes "the guard let
+// it through" observable without a database, as TestInsertDefindexFee_guards does for rejection.
 func TestInsertDefindexFlow_vaultEmptyAmountsVecIsAccepted(t *testing.T) {
 	row := DefindexFlow{
 		Ledger:          60_903_337,

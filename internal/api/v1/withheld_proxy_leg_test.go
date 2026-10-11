@@ -11,24 +11,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Regression suite: a WITHHELD verdict reached on the
-// stablecoin-proxy leg was swallowed, so the response said
-// errors/price-not-found.
+// Regression suite: a WITHHELD verdict reached on the stablecoin-proxy leg must surface as the
+// withheld problem, not errors/price-not-found. "No price data" tells a customer to look nowhere;
+// the withheld problem names /v1/observations, /v1/ohlc and /v1/history, where the data IS
+// available.
 //
-// The two answers are not interchangeable. "No price data" tells a
-// customer to look nowhere. The withheld problem names /v1/observations,
-// /v1/ohlc and /v1/history — where the data IS available — and that
-// guidance is the whole reason the distinct problem type exists.
-//
-// The mechanism: the direct fiat read misses (on-chain trades are quoted
-// in issuer stablecoins, not fiat:USD), so the handler enters
-// priceFallback; the proxy loop calls LatestPrice(asset, <peg>), which
-// returns ErrPriceWithheld; and the loop's bare `continue` — written to
-// skip an INACTIVE peg — discarded it along with the miss.
-//
-// Withheld is now sticky across the loop and does NOT stop it: a later
-// peg may still serve, which beats a 404, and the verdict surfaces only
-// if none does.
+// Mechanism: the direct fiat read misses (on-chain trades are quoted in issuer stablecoins, not
+// fiat:USD), so priceFallback loops the pegs calling LatestPrice(asset, <peg>), which can return
+// ErrPriceWithheld. A bare `continue` meant to skip an INACTIVE peg must not discard it. Withheld
+// is sticky across the loop without stopping it: a later peg may still serve, which beats a 404,
+// and the verdict surfaces only if none does.
 
 // pegAwarePriceReader returns a different error per pair, which is what
 // this scenario needs: not-found on the fiat leg, withheld on the peg.

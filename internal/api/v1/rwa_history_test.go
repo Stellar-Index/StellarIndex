@@ -2,20 +2,15 @@ package v1_test
 
 // GET /v1/rwa/history — the RWA set valued over time.
 //
-// The surface exists because /v1/rwa/assets is a snapshot and the
-// question everyone actually asks is "and is it growing". What makes it
-// hard is that answering it honestly means refusing to answer on most of
-// the days: a set member is worth something on a day only if BOTH the
-// lake knows its supply on that day and an oracle published a value for
-// its instrument on that day. These tests pin the refusals, because a
-// chart that quietly fills its gaps is the failure mode this whole
-// endpoint is written against.
+// /v1/rwa/assets is a snapshot; this surface answers "is it growing". Answering honestly
+// means refusing on most days: a set member is worth something on a day only if BOTH the lake
+// knows its supply that day and an oracle published a value for its instrument that day.
+// These tests pin the refusals, because a chart that quietly fills its gaps is the failure
+// this endpoint is written against.
 //
-// Production wiring: v1.New with Options.OracleHistory = *timescale.Store
-// and Options.TokenSupply = *clickhouse.SupplyReader (see
-// cmd/stellarindex-api/main.go). The tests below use the SAME
-// constructor — there is no test-only server builder — and substitute
-// only those two readers.
+// Production wiring: v1.New with Options.OracleHistory = *timescale.Store and
+// Options.TokenSupply = *clickhouse.SupplyReader. The tests use the SAME constructor (no
+// test-only server builder) and substitute only those two readers.
 
 import (
 	"context"
@@ -36,11 +31,10 @@ import (
 
 // ─── stubs ──────────────────────────────────────────────────────────
 
-// stubOracleHistory serves canned day buckets. It records the assets it
-// was asked about so a test can prove the handler joined on the FEED
-// rather than on the Stellar asset code, and applies the store's
-// inclusive `bucket >= from AND bucket <= to` window so the bound the
-// handler passes is the bound it gets.
+// stubOracleHistory serves canned day buckets. It records the assets asked about so a test
+// can prove the handler joined on the FEED, not the Stellar asset code, and applies the
+// store's inclusive `bucket >= from AND bucket <= to` window so the handler's bound is the
+// bound it gets.
 type stubOracleHistory struct {
 	rows  []timescale.OracleDayPoint
 	err   error

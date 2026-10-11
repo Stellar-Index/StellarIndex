@@ -8,11 +8,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// TestEnrichIssuer_DBWins — when both home_domain and org_name come
-// from the DB, the curated map MUST NOT override. The DB is the
-// source of truth (operator's `stellarindex-ops sep1-refresh` cron
-// reflects current SEP-1 state); the static map is only a fallback
-// for issuers that haven't been resolved yet.
+// TestEnrichIssuer_DBWins: when home_domain and org_name both come from the DB, the curated
+// map MUST NOT override. The DB (refreshed from SEP-1) is the source of truth; the static map
+// is only a fallback for issuers not yet resolved.
 func TestEnrichIssuer_DBWins(t *testing.T) {
 	usdc := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	domain, org := enrichIssuer(usdc, "centre.io.fresh", "Circle Fresh")
@@ -99,17 +97,11 @@ func (erroringAccountStateReader) AccountStateCached(
 	return clickhouse.AccountState{}, false, context.DeadlineExceeded
 }
 
-// TestBackfillHomeDomain_ReadFailureDoesNotFallBackToStaticMap
-// An on-chain read failure (deadline, store error) must
-// NOT be treated the same as a verified absence. Without this guard,
-// onChainHomeDomain would collapse "read failed" and "no domain" into the
-// same "" and backfillHomeDomain then filled from the curated
-// knownIssuers map — serving a potentially stale hand-maintained
-// domain as if it were a live-confirmed one, with SEP-1 verifying
-// against it. This asserts the corrected behaviour: on a read
-// failure, HomeDomain stays unset (nil) and the caller is told the
-// read degraded, rather than silently getting Circle's curated
-// "circle.com" for an issuer whose live state couldn't be read.
+// TestBackfillHomeDomain_ReadFailureDoesNotFallBackToStaticMap: an on-chain read failure
+// (deadline, store error) must NOT be treated as a verified absence. Collapsing "read failed"
+// and "no domain" would fill from the hand-maintained knownIssuers map and serve a possibly
+// stale domain as live-confirmed, with SEP-1 verifying against it. On a read failure
+// HomeDomain stays nil and the caller is told the read degraded.
 func TestBackfillHomeDomain_ReadFailureDoesNotFallBackToStaticMap(t *testing.T) {
 	usdc := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	s := &Server{Options: Options{Explorer: erroringAccountStateReader{}}}

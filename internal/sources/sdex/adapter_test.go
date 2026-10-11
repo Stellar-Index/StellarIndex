@@ -6,12 +6,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// TradeEvent.EventKind / Source and Decoder.Name are trivial
-// accessors but they're load-bearing — the consumer-layer event
-// sink type-switches on EventKind to route trades to the right
-// metric label, and the dispatcher maps Decoder.Name to the
-// per-source decode-error counter. A future rename that breaks
-// the value would silently misroute prod telemetry.
+// TradeEvent.EventKind / Source and Decoder.Name are trivial accessors but load-bearing: the
+// consumer-layer event sink type-switches on EventKind to pick the metric label, and the
+// dispatcher maps Decoder.Name to the per-source decode-error counter. Changing the value would
+// silently misroute telemetry.
 func TestTradeEvent_implementsConsumerEvent(t *testing.T) {
 	te := TradeEvent{}
 	if got := te.EventKind(); got != "sdex.trade" {

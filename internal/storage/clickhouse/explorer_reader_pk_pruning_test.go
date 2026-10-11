@@ -8,29 +8,21 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// TestAccountListings_ArmsPageAccountKeyedTables pins the
-// rewrite of the account listing arms (r1: `AccountOperations deadline
-// exceeded` 503s, 14×/24h, for an account with 11,925 sourced + 26,064
-// participant ops).
-//
-// The old arms resolved their keys OVER THE WIDE TABLE:
+// TestAccountListings_ArmsPageAccountKeyedTables pins the account listing arms against the
+// wide-table pathology:
 //
 //	SELECT pk FROM stellar.operations
 //	 WHERE pk IN (SELECT pk FROM stellar.ops_by_source WHERE source_account = ?)
 //	 ORDER BY pk DESC LIMIT n
 //
-// ClickHouse's set-based index analysis prunes that to exact granules —
-// but to ONE GRANULE PER KEY IN THE SET, before the LIMIT ever applies.
-// 37,989 keys × 8192-row granules is the 164–238 M rows / ~8 s per page
-// the live query_log showed. The page's cost was the account's whole
-// history, not the page size.
+// ClickHouse prunes that to one granule per key in the set before the LIMIT applies, so a page
+// costs the account's whole history (hundreds of millions of rows), not the page size.
 //
-// The fix pages the ACCOUNT-KEYED tables directly — ops_by_source and
-// operation_participants are ORDER BY (account, ledger_seq, tx_index,
-// op_index), so `account = ?` + cursor + bound + `ORDER BY … DESC LIMIT n`
-// is a primary-key-prefix range read — and touches the wide table only with
-// literal key lists: the hydration pass and the participant visibility lookup.
-// A wide-table query with `IN (SELECT` is the pathology.
+// The arms must instead page the ACCOUNT-KEYED tables directly: ops_by_source and
+// operation_participants are ORDER BY (account, ledger_seq, tx_index, op_index), so
+// `account = ?` + cursor + bound + `ORDER BY … DESC LIMIT n` is a primary-key-prefix range read.
+// The wide table is touched only with literal key lists (hydration, participant visibility);
+// a wide-table query with `IN (SELECT` is the pathology.
 func TestAccountListings_ArmsPageAccountKeyedTables(t *testing.T) {
 	cur := ExplorerCursor{Ledger: 63_000_000, A: 4, B: 2}
 	for name, tc := range map[string]struct {

@@ -10,15 +10,11 @@ import (
 
 // Both /v1/pools orderings must read the SAME canonical CTE.
 //
-// A pair-ordered tail selecting `FROM pools` — the pre-collapse
-// CTE — while the volume-desc tail selects `FROM canon` would make the two
-// orderings disagree about what a pool is: `?order_by=pair` would return
-// both orientations of every two-sided market as separate rows, each
-// carrying only its own direction's vol_24h_usd and count_24h rather
-// than the summed pair, with last_price un-inverted on the flipped
-// side. Measured on r1: 61 duplicate both-orientation pairs
-// in a 200-row page versus 0 on the default ordering, and both variants
-// cache under distinct keys so the disagreement would be durable.
+// A pair-ordered tail selecting `FROM pools` (the pre-collapse CTE) while the volume-desc tail
+// selects `FROM canon` would make the orderings disagree about what a pool is: `?order_by=pair`
+// would return both orientations of every two-sided market as separate rows, each carrying only
+// its own direction's vol_24h_usd and count_24h, with last_price un-inverted on the flipped
+// side. Both variants cache under distinct keys, so the disagreement would be durable.
 func TestBuildPoolsQuery_BothOrderingsSelectFromCanon(t *testing.T) {
 	t.Parallel()
 
@@ -47,11 +43,10 @@ func TestBuildPoolsQuery_BothOrderingsSelectFromCanon(t *testing.T) {
 	}
 }
 
-// /v1/pools filters run on the raw pools_per_source_1h rows, which hold
-// both stored orientations of a market and every alias spelling of an
-// asset. A scalar `p.base_asset = $5` bind kept only one direction and
-// one spelling: the pair page dropped the reversed-orientation half of
-// SDEX volume, and ?asset=native never saw a SAC-keyed Soroban pool.
+// /v1/pools filters run on the raw pools_per_source_1h rows, which hold both stored orientations
+// of a market and every alias spelling of an asset. A scalar `p.base_asset = $5` bind keeps one
+// direction and one spelling: the pair page would drop the reversed half of SDEX volume, and
+// ?asset=native would never see a SAC-keyed Soroban pool.
 func TestBuildPoolsQuery_FiltersBindAliasSets(t *testing.T) {
 	t.Parallel()
 	since := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)

@@ -3,23 +3,18 @@
 
 package chops
 
-// An emptied window has TWO records to keep in scripts/ops/ch-rebuild-
-// projected.sh:
+// An emptied window has TWO records to keep in scripts/ops/ch-rebuild-projected.sh:
 //
-//   - $DIRTY, the local marker that drives this script's own recovery. It
-//     must be WRITTEN before anything is deleted — a failed append may not
-//     be shrugged off, or the DELETE proceeds with nothing left to rebuild
-//     the window.
-//   - the ADR-0033 projection dirty window, which is what the completeness
-//     verdict reads. Nothing on this box's filesystem reaches it, so until
-//     the emptied range is filed there, /v1/coverage keeps carrying its
-//     prior clean claim over a hole.
+//   - $DIRTY, the local marker that drives this script's own recovery. It must be WRITTEN
+//     before anything is deleted; a failed append may not be shrugged off, or the DELETE
+//     proceeds with nothing left to rebuild the window.
+//   - the ADR-0033 projection dirty window, which the completeness verdict reads. Until the
+//     emptied range is filed there, /v1/coverage keeps its prior clean claim over a hole.
 //
-// These tests EXECUTE the shipped script (the harness in
-// ch_rebuild_projected_script_test.go) and pin both, plus the case that
-// must NOT change: a window that re-derived cleanly files nothing (a measured decision —
-// filing one per routine window would point the next nightly at ~12.9M
-// ledgers across 8 sources and time every verdict out).
+// These tests EXECUTE the shipped script (the harness in ch_rebuild_projected_script_test.go)
+// and pin both, plus the case that must NOT change: a window that re-derived cleanly files
+// nothing, since filing one per routine window would point the next nightly at a huge
+// ledger range across all sources and time every verdict out.
 
 import (
 	"strings"

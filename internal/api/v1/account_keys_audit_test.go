@@ -12,13 +12,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// POST /v1/account/keys copied an
-// operator caller's tier verbatim into the child and recorded nothing —
-// no X-Reason, no key.mint audit row — so a compromised staff credential
-// could spawn further operator credentials that the admin mint contract
-// (POST /v1/admin/keys) would have refused without a reason and logged.
-// Tier inheritance is documented intent (staff rotation); the audit
-// contract is what was missing.
+// POST /v1/account/keys copies an operator caller's tier into the child (documented intent,
+// for staff rotation), so it must carry the admin mint audit contract: an X-Reason and a
+// key.mint audit row. Otherwise a compromised staff credential could spawn further operator
+// credentials that POST /v1/admin/keys would have refused without a reason and logged.
 
 func operatorSelfSubject() auth.Subject {
 	return auth.Subject{

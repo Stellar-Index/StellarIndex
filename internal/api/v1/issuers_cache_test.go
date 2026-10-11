@@ -219,11 +219,9 @@ func TestCachedIssuersReader_PassThroughListAssets(t *testing.T) {
 }
 
 // TestCachedIssuersReader_HitMissCounter pins the
-// stellarindex_api_cache_ops_total{cache="issuers"} counter for the
-// list_issuers op. Same regression-guard rationale as the markets +
-// assetsReader + sources_stats variants — if a future refactor drops the
-// .Inc() on either branch the api_cache_miss_rate_high alert
-// silently stops firing for /v1/issuers.
+// stellarindex_api_cache_ops_total{cache="issuers"} counter for list_issuers. If a refactor drops
+// the .Inc() on either branch, the api_cache_miss_rate_high alert silently stops firing for
+// /v1/issuers.
 func TestCachedIssuersReader_HitMissCounter(t *testing.T) {
 	up := &fakeIssuersUpstream{}
 	c := NewCachedIssuersReader(up, 5*time.Minute)
@@ -246,11 +244,8 @@ func TestCachedIssuersReader_HitMissCounter(t *testing.T) {
 	}
 }
 
-// BenchmarkCachedIssuersReader_ListIssuers — informal perf guard. A
-// cached read should complete in microseconds while the upstream
-// stub takes 5ms (a tiny fraction of the real PG 196ms). If a
-// future refactor breaks the fast-path the benchmark surfaces it
-// loudly. Not gated in CI; run manually via `go test -bench .`.
+// BenchmarkCachedIssuersReader_ListIssuers is an informal perf guard: a cached read should take
+// microseconds against a 5ms upstream stub. Not gated in CI; run via `go test -bench .`.
 func BenchmarkCachedIssuersReader_ListIssuers(b *testing.B) {
 	up := &fakeIssuersUpstream{listDelay: 5 * time.Millisecond}
 	c := NewCachedIssuersReader(up, 5*time.Minute)

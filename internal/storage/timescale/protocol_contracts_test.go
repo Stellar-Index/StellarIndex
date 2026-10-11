@@ -44,11 +44,9 @@ func TestProtocolContracts_rejectInvalidArgs(t *testing.T) {
 	}
 }
 
-// TestSourceContractCountQueryShape guards the count-without-enumeration
-// path: sorocredit's child-contract total must come from a DISTINCT over
-// credit_positions.collateral_contract (the NewCollateralContract announcement
-// of each Collateral-<uuid> child, migration 0090) and must be unwindowed —
-// it is the lifetime contract set, not a window's activity. Every other
+// TestSourceContractCountQueryShape guards the count-without-enumeration path: sorocredit's
+// child-contract total must be a DISTINCT over credit_positions.collateral_contract and
+// unwindowed, since it is the lifetime contract set, not a window's activity. Every other
 // source has no such query, so its roster stays its count.
 func TestSourceContractCountQueryShape(t *testing.T) {
 	q, ok := sourceContractCountQuery("sorocredit")

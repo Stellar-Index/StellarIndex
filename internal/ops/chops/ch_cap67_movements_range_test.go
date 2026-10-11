@@ -5,14 +5,11 @@ import (
 	"time"
 )
 
-// TestResolveStart pins the first-run clamp that unblocked the test nets'
-// empty account_movements archive: a floor of genesis=1
-// against a lake that begins at ledger 2 — every net's lake, ledger 1 is
-// never exported — must start at 2, because ContiguousWatermark reads a
-// `from` the lake does not hold as a boundary hole and answers from-1
-// forever. Starting at floor = 1 would leave the daemon
-// idle indefinitely without deriving a row. A resumed run and a pubnet
-// floor above the lake's start are unchanged.
+// TestResolveStart pins the first-run clamp: a genesis floor of 1 against a lake that begins at
+// ledger 2 (ledger 1 is never exported) must start at 2, because ContiguousWatermark reads a
+// `from` the lake does not hold as a boundary hole and answers from-1 forever, leaving the
+// daemon idle without deriving a row. A resumed run and a pubnet floor above the lake's start
+// are unchanged.
 func TestResolveStart(t *testing.T) {
 	for _, tc := range []struct {
 		name               string

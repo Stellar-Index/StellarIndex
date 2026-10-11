@@ -14,12 +14,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// The classic↔SAC wrappers this file's fixtures need — the operator's
-// declared USD peg (Circle's classic USDC and the SAC that wraps it) and
-// a traded asset that also has both forms — plus a second USD-pegged
-// classic with no wrapper. The C-strkeys are the pubnet contracts the
-// deployed `[supply].sac_wrappers` declares; the PYUSD issuer is the
-// official one.
+// The classic↔SAC wrappers this file's fixtures need: the declared USD peg (classic USDC and its
+// SAC), a traded asset with both forms, and a second USD-pegged classic with no wrapper. The
+// C-strkeys are the pubnet contracts `[supply].sac_wrappers` declares.
 const (
 	pegAliasUSDCIssuer  = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	pegAliasUSDCClassic = "USDC-" + pegAliasUSDCIssuer

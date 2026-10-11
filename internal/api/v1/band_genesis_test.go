@@ -4,19 +4,15 @@ import "testing"
 
 // bandGenesisLedger is Band's first on-chain write.
 //
-// It is NOT discoverable the obvious way: Band's Soroban contract emits
-// zero events, so `min(ledger_seq) FROM contract_events` returns 0 rows
-// and reads as "no data" rather than "wrong table". The number comes from
-// `contract_instance_changes` (whose own floor is 50,457,429, so this is
-// Band's first write and not the table's edge), corroborated by 4,210
-// contract_data writes in `ledger_entry_changes` from the same ledger and
-// by the WASM audit.
+// It is NOT discoverable the obvious way: Band's Soroban contract emits zero events, so
+// `min(ledger_seq) FROM contract_events` returns 0 rows and reads as "no data". The number comes
+// from `contract_instance_changes` (whose own floor, 50,457,429, is below it, so this is Band's
+// first write and not the table's edge), corroborated by contract_data writes in
+// `ledger_entry_changes` from the same ledger and by the WASM audit.
 //
-// Two of the four constants that carry it must not say 60,000,000:
-// the 9.16M-ledger difference shortens the range every completeness and
-// gap check evaluates for Band, so the source could read CLEAN over a
-// window that excluded most of its history — the worst shape for a
-// coverage claim, because it passes.
+// Two of the four constants that carry it must not say 60,000,000: that would shorten the range
+// every completeness and gap check evaluates for Band by 9.16M ledgers, so the source could read
+// CLEAN over a window excluding most of its history, the worst shape for a coverage claim.
 const bandGenesisLedger = 50_842_736
 
 // TestBandGenesis_ProtocolRegistry pins the copy in the protocol

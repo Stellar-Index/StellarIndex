@@ -12,12 +12,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
 )
 
-// makeTestArchive builds a minimal `<root>/ledger/XX/YY/ZZ/ledger-…xdr.gz`
-// tree with checkpoint files at the supplied sequences. Each file
-// contains a valid, non-empty gzip stream — Check() runs a cheap
-// structural probe (non-empty on disk + valid gzip + non-empty
-// decompressed content) on every present file, so a
-// "present" fixture must pass that probe to be counted as Found.
+// makeTestArchive builds a minimal `<root>/ledger/XX/YY/ZZ/ledger-…xdr.gz` tree with
+// checkpoint files at the given sequences. Check() structurally probes every present file
+// (non-empty, valid gzip, non-empty content), so each fixture is a valid non-empty gzip
+// stream to be counted as Found.
 func makeTestArchive(t *testing.T, present []uint32) string {
 	t.Helper()
 	root := t.TempDir()
@@ -42,11 +40,9 @@ func gzipBytes(t *testing.T, s string) []byte {
 	return buf.Bytes()
 }
 
-// writeCheckpointFile writes raw bytes `content` at the canonical
-// checkpoint path for seq under root, creating parent directories as
-// needed. Used both for valid fixtures (gzipBytes output) and
-// deliberately-corrupt ones (empty, truncated, non-gzip) to exercise
-// the structural-probe rejection paths.
+// writeCheckpointFile writes raw `content` at the canonical checkpoint path for seq under
+// root. It serves valid fixtures (gzipBytes output) and deliberately corrupt ones (empty,
+// truncated, non-gzip) that exercise the structural-probe rejection paths.
 func writeCheckpointFile(t *testing.T, root string, seq uint32, content []byte) string {
 	t.Helper()
 	hex := fmt.Sprintf("%08x", seq)
@@ -343,11 +339,9 @@ func TestReport_AnyMissing(t *testing.T) {
 	}
 }
 
-// TestReport_Vacuous is the regression: a report whose only
-// populated section scanned ZERO expected checkpoint positions
-// (Expected=0) must be flagged Vacuous — "clean" per AnyMissing() but
-// NOTHING was actually verified. A section that scanned something
-// (Expected > 0, even if clean) is NOT vacuous.
+// TestReport_Vacuous: a report whose only populated section scanned ZERO expected checkpoint
+// positions (Expected=0) must be flagged Vacuous, since AnyMissing() reads clean while NOTHING
+// was verified. A section that scanned something (Expected > 0, even if clean) is not vacuous.
 func TestReport_Vacuous(t *testing.T) {
 	t.Run("no section populated is not vacuous", func(t *testing.T) {
 		r := archivecompleteness.NewReport(2, 191)

@@ -10,12 +10,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// FuzzSEP41Counterparty: the counterparty position is chosen by the TYPE
-// of topic[2], never by topic count alone. For mint/clawback, topic[2] is
-// the counterparty iff it is an Address (legacy admin-prefixed form);
-// anything else there (the CAP-67 sep0011 String, garbage, or nothing)
-// leaves the counterparty at topic[1]. burn is topic[1] in every shape.
-// Whatever topic[2] holds, the decoded amount must be unaffected.
+// FuzzSEP41Counterparty: the counterparty position is chosen by the TYPE of topic[2], never
+// by topic count alone. For mint/clawback, topic[2] is the counterparty iff it is an Address
+// (legacy admin-prefixed form); anything else (the CAP-67 String, garbage, nothing) leaves it
+// at topic[1]. burn is topic[1] in every shape. The decoded amount must not depend on topic[2].
 //
 // Generative run:
 // go test -run=^$ -fuzz=^FuzzSEP41Counterparty$ -fuzztime=60s -parallel=2 ./internal/sources/sep41_supply

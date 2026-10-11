@@ -3,19 +3,13 @@
 
 package chops
 
-// The last leg. scripts/ops/ch-rebuild-projected.sh knows when it has left
-// a window EMPTY and printed the command that tells the ADR-0033
-// completeness verdict about it — but it did not run the command, so the
-// obligation existed only for as long as it took an operator to read
-// /var/log/ch-rebuild-projected.log. Between a failed re-derive and that
-// reading, /v1/coverage kept certifying a range with no rows in it
-// complete=true.
+// The last leg. scripts/ops/ch-rebuild-projected.sh must itself file the ADR-0033 dirty window
+// whenever it leaves a window EMPTY. Otherwise the obligation lives only in an operator reading
+// the log, and /v1/coverage keeps certifying a range with no rows complete=true.
 //
-// These execute the shipped script (harness in
-// ch_rebuild_projected_script_test.go) and pin the filing itself: every
-// state that leaves a window emptied FILES one projection dirty window for
-// exactly the deleted sources, a state that empties nothing files none
-//, and a filing that fails is loud rather than silent.
+// These execute the shipped script (harness in ch_rebuild_projected_script_test.go) and pin the
+// filing: every state that empties a window FILES one projection dirty window for exactly the
+// deleted sources, a state that empties nothing files none, and a failed filing is loud.
 
 import (
 	"testing"

@@ -8,12 +8,10 @@ import (
 	"testing"
 )
 
-// A skip index declared only inside tier1_schema.sql's
-// `CREATE TABLE IF NOT EXISTS` never reaches a host whose table predates it —
-// the CREATE is a no-op there, and `MATERIALIZE INDEX` fails on an index the
-// table does not have. Every tier1 skip index therefore needs an
-// `ALTER TABLE … ADD INDEX` beside it in an operator artifact, with the same
-// definition, so the documented retrofit is executable.
+// A skip index declared only inside tier1_schema.sql's `CREATE TABLE IF NOT EXISTS` never
+// reaches a host whose table predates it (the CREATE is a no-op, and `MATERIALIZE INDEX` fails
+// on a missing index). Every tier1 skip index therefore needs an `ALTER TABLE … ADD INDEX` with
+// the same definition in an operator artifact, so the documented retrofit is executable.
 
 var (
 	tier1CreateTableRE = regexp.MustCompile(`^CREATE TABLE (?:IF NOT EXISTS )?stellar\.(\w+) \(`)
