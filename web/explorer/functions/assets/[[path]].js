@@ -1,7 +1,7 @@
 // CF Pages Function for /assets/* — serves the pre-rendered pages first,
 // else the client shell.
 //
-// 2026-08-05: /assets/[slug] pre-renders the top-500 listing + verified
+// /assets/[slug] pre-renders the top-500 listing + verified
 // catalogue at build time. Migration 0134 gave EVERY classic asset
 // (194k) a unique public slug, the API resolves them
 // (/v1/assets/{slug}), and the listing links by slug — so any asset

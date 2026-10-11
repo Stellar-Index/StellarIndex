@@ -36,8 +36,8 @@ multiple trades.
 ### Q2 — Three ClaimAtom variants
 
 `xdr.ClaimAtom` is a union with three arms; the decoder decodes
-**all three** (corrected 2026-08-04 — this section previously said V0
-was surfaced as a hard error, which has not been true since F-1233;
+**all three** (V0 is decoded as an order-book trade, never surfaced as a
+hard error;
 `decode_test.go`'s `TestDecoder_v0ClaimAtom_decodedAsOrderBook` pins
 the real behaviour):
 

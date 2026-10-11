@@ -202,11 +202,10 @@ describe.each(cases)(
 // and if-modified-since — validators that describe the LONG-TAIL url the
 // client asked for, not the shell asset being read, but they are also the
 // only validators a conforming client can present for the shell asset
-// itself once the origin starts emitting an ETag/Last-Modified on it. The
-// old behaviour (strip both headers unconditionally) meant the fallback
-// could never honor a cache revalidation even when the origin supported
-// one; production emits no ETag on these routes today (verified
-// 2026-08-04), so this was latent rather than live.
+// itself once the origin starts emitting an ETag/Last-Modified on it.
+// Stripping both headers unconditionally would stop the fallback honoring a
+// cache revalidation even when the origin supports one; production emits
+// no ETag on these routes today.
 describe.each(cases)(
   '%s/[[path]].js conditional requests',
   (_name, onRequest) => {

@@ -9,8 +9,8 @@ cd "$(dirname "$0")/../.."
 # ── Preconditions: five seconds, before anything expensive ───────────────
 #
 # Missing installs (`openapi-typescript: command not found`, `tsc: command not
-# found`) used to kill a run ten minutes into its twelve, because the section
-# guards tested pnpm-lock.yaml, which is tracked and always present, never
+# found`) would kill a run ten minutes into its twelve, because the section
+# guards test pnpm-lock.yaml, which is tracked and always present, never
 # node_modules. This block resolves those same conditions up front, reports
 # every gap at once and stops before the first slow gate. It asserts nothing
 # new: a gap named here is a gate that would fail later.

@@ -1,5 +1,5 @@
 // Cloudflare Pages Function for /transactions/* (the unbounded transaction
-// entity routes). SEO plan D1; required because Spike A (2026-06-24) proved a
+// entity routes). Required because a
 // `_redirects` 200-rewrite catch-all CLOBBERS real static files — so we serve
 // the shell from a Function that explicitly defers to static assets first.
 //

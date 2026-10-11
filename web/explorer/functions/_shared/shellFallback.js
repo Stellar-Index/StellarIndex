@@ -9,9 +9,8 @@
 // Forward the client's conditional-request headers to the shell
 // sub-fetch and pass through a real 304 (body-less) instead of stripping
 // if-none-match/if-modified-since. Production emits no ETag/Last-Modified
-// on these routes today (verified 2026-08-04), so this was latent — but
-// stripping the validators meant the fallback could never honor one once
-// the origin started sending them.
+// on these routes today, but stripping the validators would stop the
+// fallback honoring one once the origin starts sending them.
 //
 // `public/_headers` is applied by the Pages static-asset server
 // only. Every route below is caught by this Function's `[[path]].js`

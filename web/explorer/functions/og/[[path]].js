@@ -153,10 +153,9 @@ function recordUpstreamOutcome(ok) {
   }
 }
 
-// The old fixed-precision formatter here dropped into exponential
-// notation below 1e-6 (e.g. "7.407e-7"), the same scientific-notation
-// regression `@/lib/format`'s formatSubunitPrice
-// was written to avoid (2026-08-06: "is not user-friendly"). This
+// Fixed-precision formatting drops into exponential notation below 1e-6
+// (e.g. "7.407e-7"), which `@/lib/format`'s formatSubunitPrice
+// also avoids. This
 // function isn't reachable from `src/lib/format.ts` — Pages Functions
 // bundle standalone from the app — so it mirrors formatSubunitPrice's
 // plain-decimal, trimmed-trailing-zero behavior instead of importing it.
