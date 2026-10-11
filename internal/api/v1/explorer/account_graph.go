@@ -10,24 +10,16 @@ import (
 )
 
 // AccountGraphView is the wire response for GET
-// /v1/accounts/{g_strkey}/graph — one account's neighbourhood in the two
-// relationships (creation and sponsorship), traversable in both directions.
+// /v1/accounts/{g_strkey}/graph: one account's creation and sponsorship neighbourhood,
+// traversable in both directions. Every figure is history, and the two relationships differ:
 //
-// EVERY FIGURE HERE IS HISTORY, and the two relationships are kept apart
-// because they are not the same kind of fact:
+//   - CREATION is immutable, but an address can be created more than once (created, merged
+//     away, created again), so `created_by` is a list.
+//   - SPONSORSHIP is revocable and this surface cannot see the live set: figures count
+//     arrangements started, not in force. A revocation names its entry inside XDR the rollup does
+//     not decode, so `revocations_issued` is account-level with no per-edge "current" flag.
 //
-//   - CREATION is immutable, but an address can be created more than once
-//     (created, merged away, created again), so `created_by` is a LIST.
-//
-//   - SPONSORSHIP is revocable and this surface cannot see the live
-//     set: every figure counts arrangements STARTED, not those in
-//     force. A revocation names its entry inside XDR the rollup does
-//     not decode, so it is attributable to the account that ISSUED it,
-//     not to an edge; `revocations_issued` is therefore account-level,
-//     with no per-edge "current" flag.
-//
-// Stroops-denominated values are decimal STRINGS (ADR-0003); counts are
-// JSON numbers.
+// Stroops values are decimal strings; counts are JSON numbers.
 type AccountGraphView struct {
 	Account string `json:"account"`
 	// Inbound is where this account came from. Bounded by construction:
@@ -38,11 +30,9 @@ type AccountGraphView struct {
 		CreatedBy   AccountGraphInboundV `json:"created_by"`
 		SponsoredBy AccountGraphInboundV `json:"sponsored_by"`
 	} `json:"inbound"`
-	// Outbound is what this account has done to others, as whole-history
-	// summaries. The edge LISTS behind these are paged separately
-	// (?relation=), because the busiest sponsor on the network covers
-	// 785,543 distinct accounts — a number no response and no rendering
-	// may attempt to hold.
+	// Outbound is what this account has done to others, as whole-history summaries. The edge
+	// lists are paged separately (?relation=) because the busiest sponsor covers hundreds of
+	// thousands of accounts, too many for any response to hold.
 	Outbound struct {
 		Created   AccountGraphCreatedSideV   `json:"created"`
 		Sponsored AccountGraphSponsoredSideV `json:"sponsored"`
@@ -86,10 +76,8 @@ type AccountGraphEdgeV struct {
 	// created, merged away and created again by the same funder.
 	Creations uint64 `json:"creations,omitempty"`
 	// FundedStroops is the starting balance summed over those creations,
-	// as a decimal string. "0" is a real value — a CAP-33 sponsored
-	// creation pays no reserve of its own — so the field is present on
-	// every creation edge and absent on sponsorship edges, which move no
-	// balance.
+	// as a decimal string. "0" is real (a CAP-33 sponsored creation pays no reserve), so the
+	// field is present on every creation edge and absent on sponsorship edges.
 	FundedStroops string `json:"funded_stroops,omitempty"`
 	// SponsorshipsStarted is set on sponsorship edges: arrangements this
 	// pair BEGAN. Never a count of arrangements still in force.
@@ -119,12 +107,10 @@ type AccountGraphCreatedSideV struct {
 type AccountGraphSponsoredSideV struct {
 	Accounts            uint64 `json:"accounts"`
 	SponsorshipsStarted uint64 `json:"sponsorships_started"`
-	// RevocationsIssued counts RevokeSponsorship operations this account
-	// was the source of. It is an account-level fact and CANNOT be
-	// attributed to any edge above: the revoked entry is named inside
-	// body_xdr, which the rollup does not decode. It is also a lower
-	// bound on arrangements that ended, because an entry stops being
-	// sponsored when it is deleted too, and that emits no operation.
+	// RevocationsIssued counts RevokeSponsorship operations this account sourced. It cannot be
+	// attributed to an edge (the revoked entry sits in body_xdr, which the rollup does not
+	// decode) and is a lower bound on ended arrangements, since deleting an entry also ends
+	// sponsorship without an operation.
 	RevocationsIssued uint64 `json:"revocations_issued"`
 	FirstLedger       uint32 `json:"first_ledger,omitempty"`
 	LastLedger        uint32 `json:"last_ledger,omitempty"`
@@ -145,11 +131,8 @@ type AccountGraphCoverageV struct {
 const (
 	// graphDefaultLimit is one screen of outbound edges.
 	graphDefaultLimit = 50
-	// graphMaxLimit bounds ONE page, not the traversal. The outbound
-	// direction is genuinely unbounded — 785,543 distinct sponsored
-	// accounts for the busiest sponsor measured on r1 — so a
-	// caller that wants the whole set walks the cursor. Matched to the
-	// sibling league-table endpoints' cap.
+	// graphMaxLimit bounds one page, not the traversal: outbound is unbounded, so a caller
+	// wanting the whole set walks the cursor. Matches the sibling league-table endpoints' cap.
 	graphMaxLimit = 500
 )
 
@@ -179,11 +162,9 @@ func (h *Handler) parseGraphRelation(w http.ResponseWriter, r *http.Request) (st
 	return "", false
 }
 
-// parseGraphCursor reads the opaque ?cursor=. The cursor IS the last
-// served counterparty's account id — the second column of both edge
-// tables' ORDER BY — so it is validated as a G-strkey rather than
-// accepted as free text: a caller echoing back a mangled value gets a
-// 400 instead of a silently shifted page.
+// parseGraphCursor reads the opaque ?cursor=, which is the last served counterparty's account id
+// (the second ORDER BY column of both edge tables). It is validated as a G-strkey so a mangled
+// value gets a 400 instead of a silently shifted page.
 func (h *Handler) parseGraphCursor(w http.ResponseWriter, r *http.Request) (string, bool) {
 	raw := r.URL.Query().Get("cursor")
 	if raw == "" {
@@ -198,15 +179,13 @@ func (h *Handler) parseGraphCursor(w http.ResponseWriter, r *http.Request) (stri
 	return raw, true
 }
 
-// AccountGraph serves GET /v1/accounts/{g_strkey}/graph — who created
-// and sponsored this account, and whom it created and sponsored.
+// AccountGraph serves GET /v1/accounts/{g_strkey}/graph: who created and sponsored this account,
+// and whom it created and sponsored.
 //
-// The default response is BOUNDED BY CONSTRUCTION: inbound edges are
-// capped, outbound is summarised, and the unbounded direction is served
-// only when a caller names it with ?relation= and is keyset-paged from
-// there. That asymmetry is the endpoint's whole shape, and it follows
-// the measured data — inbound tops out in single digits, outbound at
-// three quarters of a million.
+// The default response is bounded by construction: inbound edges are capped, outbound is
+// summarised, and the unbounded direction is served only via ?relation= and keyset-paged. The
+// asymmetry follows the data: inbound tops out in single digits, outbound in the hundreds of
+// thousands.
 func (h *Handler) AccountGraph(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

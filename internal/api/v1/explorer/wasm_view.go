@@ -20,15 +20,11 @@ type WasmExportView struct {
 	Results []string `json:"results"`
 }
 
-// ContractWasmView is the wire response for GET /v1/contracts/{id}/wasm: the
-// contract's resolved wasm hash + size, its exported function table (always
-// present — parsed natively in Go), and best-effort WAT disassembly +
-// wasm-decompile pseudocode (empty when the wabt toolchain isn't installed on
-// the server). source_note explains provenance + any degraded stages.
-//
-// size_bytes is small (< 2^31) so it stays a JSON number; the wasm hash is a
-// hex string. There are no i128 fields here, so ADR-0003 string-encoding
-// doesn't apply.
+// ContractWasmView is the wire response for GET /v1/contracts/{id}/wasm: the resolved wasm hash
+// and size, the exported function table (always present, parsed natively), and best-effort WAT
+// and decompile pseudocode (empty without the wabt toolchain). source_note explains provenance
+// and any degraded stages. size_bytes is small, so it stays a JSON number; there are no i128
+// fields.
 type ContractWasmView struct {
 	ContractID string           `json:"contract_id"`
 	WasmHash   string           `json:"wasm_hash"`
@@ -42,17 +38,12 @@ type ContractWasmView struct {
 	TTL *ContractTTLV `json:"ttl,omitempty"`
 }
 
-// ContractWasm serves GET /v1/contracts/{contract_id}/wasm — the
-// contract's on-chain WASM surfaced for the explorer's "see the code" view:
-// metadata + exported function table (+ WAT + decompiled pseudocode when the
-// wabt toolchain is present). Read on demand from the certified lake (ADR-0034);
-// the wasm for a hash is immutable, so the response is cached for a day
-// unless it carries a ttl verdict (wasmCacheControl).
+// ContractWasm serves GET /v1/contracts/{contract_id}/wasm: metadata, the exported function
+// table, and WAT plus decompiled pseudocode when wabt is present, read on demand from the lake.
+// Cache lifetime is set by wasmCacheControl.
 //
-// 404 when the contract's wasm isn't resolvable from the captured
-// ledger_entry_changes window (the instance or code entry wasn't captured —
-// most pre-capture deploy-time entries are outside it; see
-// clickhouse.ErrContractWasmUnresolved).
+// 404 when the wasm is not resolvable from the captured ledger_entry_changes window (the instance
+// or code entry was not captured; see clickhouse.ErrContractWasmUnresolved).
 func (h *Handler) ContractWasm(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -74,11 +65,8 @@ func (h *Handler) ContractWasm(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, clickhouse.ErrContractIsSAC) {
-			// The instance IS captured — it's a Stellar Asset Contract, which
-			// runs built-in host logic and has no user WASM module. A distinct
-			// 404 so clients (and the explorer) say "SAC — no WASM" instead of
-			// "not captured yet" (which would be misleading: no backfill will
-			// ever produce WASM for a SAC).
+			// A Stellar Asset Contract runs built-in host logic and has no user WASM. A distinct 404
+			// lets clients say "SAC, no WASM" rather than a misleading "not captured yet".
 			h.WriteProblem(w, r, "https://api.stellarindex.io/errors/contract-is-sac",
 				"Stellar Asset Contract — no WASM", http.StatusNotFound,
 				"this contract is a Stellar Asset Contract (the built-in SAC host "+
@@ -87,12 +75,9 @@ func (h *Handler) ContractWasm(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, clickhouse.ErrContractWasmUnresolved) {
-			// The reader couldn't find an instance (its entry predates the
-			// capture window). Before reporting a generic miss, check the
-			// operator's SAC-wrapper registry: a contract that wraps a
-			// classic asset is a SAC with no WASM, ever — so even with the
-			// instance uncaptured we can answer definitively rather than
-			// implying a backfill will produce WASM.
+			// No instance found (its entry predates the capture window). Check the SAC-wrapper
+			// registry first: a contract wrapping a classic asset never has WASM, so the answer
+			// is definitive even uncaptured.
 			if h.IsKnownSAC(cid) {
 				h.WriteProblem(w, r, "https://api.stellarindex.io/errors/contract-is-sac",
 					"Stellar Asset Contract — no WASM", http.StatusNotFound,
@@ -101,14 +86,10 @@ func (h *Handler) ContractWasm(w http.ResponseWriter, r *http.Request) {
 						"module — there is no WASM bytecode to show")
 				return
 			}
-			// Event-derived SAC identification: ~55k
-			// contracts are SACs whose instance was never captured
-			// (deployed pre-lake, TTL-evicted before every checkpoint —
-			// structurally invisible to snapshots). Their CAP-67 events
-			// carry the wrapped asset in the trailing sep0011 topic;
-			// the derivation cross-check makes it spoof-proof (a fake
-			// contract can emit the topic but can never occupy the
-			// derived address).
+			// Event-derived SAC identification: many SACs have no captured instance (deployed
+			// pre-lake or TTL-evicted before every checkpoint). Their CAP-67 events carry the
+			// wrapped asset in the trailing sep0011 topic; the derivation cross-check makes it
+			// spoof-proof, since a fake contract can emit the topic but not occupy the derived address.
 			if assetName, found := h.sacAssetViaEvents(ctx, cid); found {
 				h.WriteProblem(w, r, "https://api.stellarindex.io/errors/contract-is-sac",
 					"Stellar Asset Contract — no WASM", http.StatusNotFound,
@@ -187,14 +168,10 @@ func (h *Handler) setWasmLiveness(ctx context.Context, cid string, view *Contrac
 	}
 }
 
-// wasmCacheControl bounds the wasm view's cache lifetime. The wasm for a
-// content-addressed hash IS immutable, but this URL is keyed on contract_id,
-// not on the wasm hash: an in-place upgrade changes the bytes this
-// same URL serves (see GET .../code-history), so treating it as
-// forever-immutable would let a CDN/browser serve pre-upgrade bytecode, exports
-// and decompile for up to a day after an upgrade. Bounded to the standard
-// catalogue band instead until the route is content-addressed. A ttl
-// verdict (archival/restore) takes the tighter band regardless.
+// wasmCacheControl bounds the wasm view's cache lifetime. Wasm for a hash is immutable, but this
+// URL is keyed on contract_id, and an in-place upgrade changes the bytes it serves, so long-lived
+// caching would show pre-upgrade bytecode. It uses the standard catalogue band until the route is
+// content-addressed; a ttl verdict (archival/restore) takes the tighter band regardless.
 func wasmCacheControl(view ContractWasmView) string {
 	if view.TTL != nil {
 		return "public, max-age=300"

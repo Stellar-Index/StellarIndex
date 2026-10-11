@@ -3,16 +3,10 @@
 // /v1/operations, /v1/network/throughput, /v1/tx/{hash}, /v1/search,
 // /v1/contracts*, /v1/accounts*, /v1/assets/{asset_id}/holders.
 //
-// A package of its own so internal/api/v1 does not carry the explorer
-// cluster as flat files. The handlers
-// read the certified ClickHouse lake directly through ExplorerReader
-// and otherwise depend only on a handful of narrow, injected seams
-// (Handler below) — they do NOT hold a reference to v1.Server, so
-// this package does not import internal/api/v1 (that would cycle,
-// since v1.Server wires a *Handler into its route table). Package
-// v1 keeps type aliases for every exported type here so its existing
-// tests keep compiling unchanged — see explorer.go
-// in internal/api/v1.
+// Handlers read the certified ClickHouse lake through ExplorerReader and otherwise depend only on
+// narrow injected seams (Handler below). They must not reference v1.Server, so this package
+// cannot import internal/api/v1: v1.Server wires a *Handler into its routes, which would cycle.
+// Package v1 keeps type aliases for every exported type here (see explorer.go there).
 package explorer
 
 import (
@@ -34,30 +28,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// explorerReadTimeout is the per-request ceiling every explorer handler
-// wraps its ClickHouse lake reads in. The
-// explorer endpoints read the shared explorer pool (MaxOpenConns:8);
-// without a bounded context a handful of slow unauthenticated requests
-// (e.g. AssetHolders' two ledger_entries_current FINAL scans) hold every
-// connection open and block every lake-backed endpoint — the server
-// WriteTimeout does NOT cancel an in-flight query. A request-scoped
-// deadline lets the reads observe cancellation and release the
-// connection. 8s matches the sibling raw-scan endpoints in package v1
-// (liquidity_pools.go, markets.go) and fires before the blanket
-// request-timeout middleware (defaultRequestTimeout, 15s).
+// explorerReadTimeout is the per-request ceiling on every handler's ClickHouse lake reads. The
+// shared explorer pool has 8 connections, and the server WriteTimeout does not cancel an in-flight
+// query, so a few slow unauthenticated requests would otherwise hold every connection. 8s matches
+// the sibling raw-scan endpoints in package v1 and fires before the 15s request-timeout middleware.
 const explorerReadTimeout = 8 * time.Second
 
-// readTimedOut reports whether a handler-scoped read context — the
-// context.WithTimeout(r.Context(), explorerReadTimeout) every handler in this
-// package wraps its lake reads in — hit its deadline. Pass the PER-CALL ctx,
-// not r.Context(): the driver often beats the caller to noticing and returns
-// its own cancellation error rather than something that unwraps to
-// context.DeadlineExceeded, so the context itself is the reliable signal.
+// readTimedOut reports whether a handler-scoped read context hit its deadline. Pass the PER-CALL
+// ctx, not r.Context(): the driver often returns its own cancellation error that does not unwrap
+// to context.DeadlineExceeded, so the context itself is the reliable signal.
 //
-// A 1:1 mirror of v1's handlerTimedOut (internal/api/v1/envelope.go), which
-// this package cannot import — v1.Server embeds a *Handler from here, so the
-// import would cycle (see the package doc). Keep the two in sync — including
-// recording a true verdict for usage metering, which makes the read billable.
+// A 1:1 mirror of v1's handlerTimedOut (envelope.go), which this package cannot import (cycle).
+// Keep the two in sync, including recording a true verdict for usage metering, which makes the
+// read billable.
 func readTimedOut(callCtx context.Context, err error) bool {
 	timedOut := errors.Is(err, context.DeadlineExceeded) ||
 		callCtx.Err() == context.DeadlineExceeded
@@ -67,26 +50,18 @@ func readTimedOut(callCtx context.Context, err error) bool {
 	return timedOut
 }
 
-// retryableColdMiss reports whether a cold-path SWR-cache error is the
-// capacity class the handlers map to the retryable 503: the request
-// deadline expired waiting for the detached compute, or the shared
-// detached-refresh gate was saturated and the refresh was skipped — both
-// "try again shortly", neither a bug. Two saturation sentinels are matched:
-// this package's errRefreshSaturated (asset-holders / contracts SWR caches)
-// and clickhouse.ErrRefreshSaturated, raised by the lake reader's own
-// account-state cache (AccountStateCached) — same condition, different
-// package (this one can't own a sentinel the clickhouse layer must return).
+// retryableColdMiss reports whether a cold-path SWR-cache error is the capacity class mapped to
+// the retryable 503: the deadline expired waiting for the detached compute, or the shared refresh
+// gate was saturated. Both saturation sentinels are matched (this package's errRefreshSaturated
+// and the clickhouse layer's, which it cannot share because that layer must return its own).
 func retryableColdMiss(callCtx context.Context, err error) bool {
 	if readTimedOut(callCtx, err) ||
 		errors.Is(err, errRefreshSaturated) ||
 		errors.Is(err, clickhouse.ErrRefreshSaturated) {
 		return true
 	}
-	// Driver-level network timeouts (`read tcp …: i/o timeout` from the
-	// ClickHouse conn under load) are the same transient capacity class:
-	// they arrive as net.Error, not context.DeadlineExceeded, and would
-	// otherwise fall through to 500 "Internal error" (/accounts/{g}/operations
-	// served exactly that during a refresh storm).
+	// Driver-level i/o timeouts are the same transient capacity class but arrive as net.Error,
+	// not context.DeadlineExceeded, and would otherwise fall through to a 500.
 	var ne net.Error
 	if errors.As(err, &ne) && ne.Timeout() {
 		return true
@@ -94,25 +69,19 @@ func retryableColdMiss(callCtx context.Context, err error) bool {
 	return lakeUnreachable(err)
 }
 
-// lakeUnreachable reports whether err is a TRANSPORT-layer failure below the
-// query layer (connection refused, socket died mid-query, host stopped
-// resolving). The query cannot provoke these, so none is a bug in this
-// process: "dependency down, retry", the same class as the saturation
-// sentinels above.
+// lakeUnreachable reports whether err is a TRANSPORT-layer failure below the query layer
+// (connection refused, socket died mid-query, host stopped resolving). A query cannot provoke
+// these, so they mean "dependency down, retry", not a bug in this process.
 //
-// Matching only net.Error with Timeout() true is not enough: a hard-down lake
-// answers instantly with `dial tcp ...: connection refused`, a *net.OpError
-// with Timeout() false. Unmatched, it falls to `errors/internal` 500 on 20+
-// unauthenticated explorer routes, so a ClickHouse outage reads as a code bug
-// in logs, the 5xx SLA probe and every alert built on them.
+// Matching only net.Error with Timeout() true is not enough: a hard-down lake answers instantly
+// with a *net.OpError whose Timeout() is false. Unmatched, a ClickHouse outage would read as a
+// code bug (500) in logs, the 5xx SLA probe and every alert built on them.
 //
-// Same rule as the package's other storage seams: IsCacheUnavailable
-// (cache_errors.go) for Redis and transientStorageErr (envelope.go) for
-// Postgres. Keep the three in step.
+// Same rule as the other storage seams: IsCacheUnavailable (cache_errors.go) for Redis and
+// transientStorageErr (envelope.go) for Postgres. Keep the three in step.
 //
-// *net.OpError covers dial/read/write; *net.DNSError covers "no such host"
-// (reached bare, not wrapped in an OpError, Timeout() false); the bare errno
-// arms catch a driver that re-wrapped only the syscall error.
+// *net.DNSError arrives bare, not wrapped in an OpError; the errno arms catch a driver that
+// re-wrapped only the syscall error.
 func lakeUnreachable(err error) bool {
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
@@ -127,20 +96,12 @@ func lakeUnreachable(err error) bool {
 		errors.Is(err, syscall.EPIPE)
 }
 
-// writeReadTimeout writes the standard response for a lake read that blew
-// explorerReadTimeout: 503 + problem+json with an endpoint-specific
-// `…-timeout` type URL. Mapping a deadline to `errors/internal` 500 would tell
-// the caller "we broke" when the truthful answer is "this exceeded our time
-// budget, retry" — and make a capacity problem indistinguishable from a bug
-// in the logs and the 5xx SLA probe.
+// writeReadTimeout writes the standard 503 problem+json, with an endpoint-specific `...-timeout`
+// type URL, for a lake read that blew explorerReadTimeout. A 500 would make a capacity problem
+// indistinguishable from a bug in the logs and the 5xx SLA probe.
 //
-// 503, not 504: this is the convention the rest of the API already uses for a
-// server-side read deadline (14 call sites in package v1 pair handlerTimedOut
-// with a `…-timeout` 503 — markets, lending, history, chart, ohlc, oracle,
-// issuers, observations, sep41-transfers, cursors), it is the decision rule
-// documented on v1's clientAborted ("the client is still waiting and deserves a
-// 503"), and every explorer route ALREADY declares 503 in
-// openapi/stellar-index.v1.yaml — so this needs no new wire shape.
+// 503, not 504: the rest of the API uses 503 for a server-side read deadline (see v1's
+// clientAborted) and every explorer route already declares 503 in the OpenAPI spec.
 func (h *Handler) writeReadTimeout(w http.ResponseWriter, r *http.Request, typeURL, title string) {
 	// Also reached by a driver i/o timeout, which readTimedOut does not see.
 	middleware.MarkReadDeadline(r.Context())
@@ -149,13 +110,9 @@ func (h *Handler) writeReadTimeout(w http.ResponseWriter, r *http.Request, typeU
 			" explorer read budget; retry shortly")
 }
 
-// writeRetryable is writeReadTimeout with an honest split by cause:
-// a saturation reject is NOT a
-// timeout — it's an instant "the shared refresh capacity is busy
-// warming other cold pages" answer, and labeling it "timed out" sends
-// every investigation down the wrong path (it reads as a slow query
-// when the query never ran). Same 503 + type URL contract either way;
-// only the detail tells the truth about which condition occurred.
+// writeRetryable is writeReadTimeout with an honest split by cause. A saturation reject is not a
+// timeout (the query never ran), and labeling it one sends investigations down the wrong path.
+// Same 503 + type URL either way; only the detail says which condition occurred.
 func (h *Handler) writeRetryable(w http.ResponseWriter, r *http.Request, err error, typeURL, title string) {
 	if errors.Is(err, errRefreshSaturated) || errors.Is(err, clickhouse.ErrRefreshSaturated) {
 		w.Header().Set("Retry-After", retryAfterBusy)
@@ -165,14 +122,9 @@ func (h *Handler) writeRetryable(w http.ResponseWriter, r *http.Request, err err
 				"retry in a few seconds")
 		return
 	}
-	// Third cause, same 503: the lake itself is unreachable.
-	// Saying "timed out" here would be the same category of lie the
-	// saturation split above exists to prevent — a refused dial answers
-	// in microseconds, so an operator reading "didn't return within the
-	// 8s budget" goes looking for a slow query that never ran. The
-	// underlying error is logged here rather than at the call sites: they
-	// all log a fixed "deadline exceeded" line WITHOUT err,
-	// so without this the dial failure would leave no trace of its cause.
+	// Third cause, same 503: the lake is unreachable. A refused dial answers in microseconds, so
+	// "timed out" would send an operator hunting a slow query that never ran. The error is logged
+	// here because call sites log a fixed "deadline exceeded" line without err.
 	if lakeUnreachable(err) {
 		h.Logger.Warn("explorer lake unreachable", "err", err, "path", r.URL.Path)
 		w.Header().Set("Retry-After", retryAfterDependencyDown)
@@ -186,29 +138,21 @@ func (h *Handler) writeRetryable(w http.ResponseWriter, r *http.Request, err err
 	h.writeReadTimeout(w, r, typeURL, title)
 }
 
-// Retry-After hints on the retryable 503s. A 503 whose body says "retry
-// shortly" but carries no Retry-After makes every client guess, and the
-// guess is usually "immediately" — which is exactly the retry storm a
-// saturated refresh gate or a downed dependency must not receive. Values
-// mirror the two existing precedents in package v1: 30s for a dependency
-// outage (writeCacheUnavailableProblem, sized to a Redis/CH fail-over
-// window) and a few seconds for in-process busy-ness, which is what the
-// saturation + read-budget details already promise in prose.
+// Retry-After hints on the retryable 503s. Without one, clients retry immediately, which is the
+// retry storm a saturated refresh gate or a downed dependency must not receive. Values mirror
+// package v1: 30s for a dependency outage (sized to a Redis/CH fail-over window), a few seconds
+// for in-process busy-ness.
 const (
 	retryAfterBusy           = "5"
 	retryAfterDependencyDown = "30"
 )
 
-// ExplorerReader is the seam the network-explorer endpoints (ADR-0038) read
-// through: the certified Tier-1 ClickHouse lake (the full chain to genesis —
-// ledgers / transactions / operations / contract events). *clickhouse.ExplorerReader
-// satisfies it. Nil disables the explorer endpoints (503). The interface grows
-// per ADR-0038 phase (A: ledgers/tx/ops/contracts; B: account history; C: state).
+// ExplorerReader is the seam the explorer endpoints (ADR-0038) read the certified ClickHouse lake
+// through (the full chain to genesis). *clickhouse.ExplorerReader satisfies it; nil disables the
+// endpoints (503).
 //
-// NOTE: this interface is also the read seam behind a few v1 handlers
-// OUTSIDE this package (asset SAC resolution, lending TVL, liquidity-pool
-// reserves) — internal/api/v1 keeps its own `ExplorerReader` as a type
-// alias to this one so those callers are unaffected by the extraction.
+// It is also the read seam behind a few v1 handlers outside this package (SAC resolution, lending
+// TVL, liquidity-pool reserves); v1 aliases its own ExplorerReader to this type.
 type ExplorerReader interface {
 	RecentLedgers(ctx context.Context, limit int, beforeSeq uint32) ([]clickhouse.LedgerHeader, error)
 	LedgerBySeq(ctx context.Context, seq uint32) (clickhouse.LedgerHeader, bool, error)
@@ -222,11 +166,9 @@ type ExplorerReader interface {
 	TransactionByHash(ctx context.Context, hash string) (clickhouse.TxSummary, bool, error)
 	OperationsByTx(ctx context.Context, seq uint32, hash string) ([]clickhouse.OpRow, error)
 	OperationResultsByTx(ctx context.Context, seq uint32, hash string) (map[uint32]clickhouse.OpResult, error)
-	// TxOutcomesByHash batch-reads parent-transaction outcomes (applied verdict
-	// + result code) keyed by tx_hash, so the operation list views can mark a
-	// failed transaction's operations FAILED rather than show them as applied.
-	// `ledgers` is the EXACT set of ledgers the page's operations sit in, not a
-	// span across them — see the implementation for why that is load-bearing.
+	// TxOutcomesByHash batch-reads parent-transaction outcomes keyed by tx_hash, so operation lists
+	// can mark a failed transaction's operations FAILED. `ledgers` is the EXACT set of ledgers the
+	// page's operations sit in, not a span across them (see the implementation).
 	TxOutcomesByHash(ctx context.Context, ledgers []uint32, hashes []string) (map[string]clickhouse.TxOutcome, error)
 	EventsByTx(ctx context.Context, seq uint32, hash string) ([]clickhouse.EventSummary, error)
 	ContractEventsRecent(ctx context.Context, contractID string, limit int, cur clickhouse.ContractEventsCursor) ([]clickhouse.ContractActivityRow, error)
@@ -238,44 +180,34 @@ type ExplorerReader interface {
 	ContractStats(ctx context.Context) (clickhouse.ContractStats, error)
 	// ContractTypes maps contract ids to isSAC; ids with no instance row are absent.
 	ContractTypes(ctx context.Context, contractIDs []string) (map[string]bool, error)
-	// ContractInteractions returns the edges plus the EFFECTIVE window
-	// floor, which may be newer than the requested sinceLedger: a busy
-	// contract's window is narrowed to its own recent activity so the
-	// read stays sub-second. Callers must serve the returned floor as
-	// since_ledger, not the one they asked for.
+	// ContractInteractions returns the edges plus the EFFECTIVE window floor, which may be newer
+	// than sinceLedger (a busy contract's window narrows to keep the read sub-second). Callers
+	// must serve the returned floor as since_ledger, not the one they asked for.
 	ContractInteractions(ctx context.Context, contractID string, limit int, sinceLedger uint32) ([]clickhouse.ContractEdgeRow, uint32, error)
 	ContractCodeHistory(ctx context.Context, contractID string) ([]clickhouse.ContractCodeVersion, error)
 	// AccountTransactions' resume, when set, is the next page's cursor: the
 	// page stopped at a scan frontier and may be short without being last.
 	AccountTransactions(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) (_ []clickhouse.TxSummary, resume clickhouse.ExplorerCursor, _ error)
 	AccountOperations(ctx context.Context, account string, limit int, cur clickhouse.ExplorerCursor) (_ []clickhouse.OpRow, resume clickhouse.ExplorerCursor, _ error)
-	// AccountOperationTypeCounts is the whole-history aggregate variant
-	// of AccountOperations (same two UNION arms, GROUP BY op_type) —
-	// scan-shaped, so callers must run it under a detached budget (the
-	// activity endpoint's SWR cache), never a request deadline.
+	// AccountOperationTypeCounts is the whole-history GROUP BY op_type variant of AccountOperations.
+	// It is scan-shaped, so run it under a detached budget (the activity SWR cache), never a
+	// request deadline.
 	AccountOperationTypeCounts(ctx context.Context, account string) ([]clickhouse.OpTypeCount, error)
 	AccountState(ctx context.Context, account string) (clickhouse.AccountState, error)
-	// AccountStateCached serves account state from a bounded TTL cache;
-	// a cold miss waits on a DETACHED fill bounded by the caller's
-	// deadline, and an EXPIRED entry is served immediately with
-	// stale=true while one detached refresh runs —
-	// pair stale with flags.stale in the envelope.
+	// AccountStateCached serves account state from a bounded TTL cache. A cold miss waits on a
+	// DETACHED fill bounded by the caller's deadline; an EXPIRED entry is served at once with
+	// stale=true while one detached refresh runs. Pair stale with flags.stale in the envelope.
 	AccountStateCached(ctx context.Context, account string) (clickhouse.AccountState, bool, error)
 	AssetHolders(ctx context.Context, asset string, limit int) ([]clickhouse.AssetHolder, int64, error)
 	AccountsByWealth(ctx context.Context, assets, prices []string, limit int) ([]clickhouse.AccountWealth, error)
-	// AccountsByWealthCached serves the ranking from a background-refreshed
-	// cache and NEVER runs the underlying FINAL scan on the caller's
-	// deadline. The snapshot's AsOf/AsOfLedger are the ranking's vintage — an
-	// entry past its TTL is STILL served (with them; the handler flags it degraded)
-	// rather than treated as a miss, so a window of failed refreshes
-	// degrades to old-but-real data, not to 503s.
-	// ok=false means "never computed yet" — render a warming state, do
-	// not fall back to AccountsByWealth on the request path (that scan
-	// needs 11-20s against an 8s handler deadline, so it 500'd
-	// 100% of the time). Basis ("usd" | "native_xlm") records which unit
-	// the cached ranking is in, so the handler labels the served numbers
-	// correctly — native XLM where no USD price map was available (the lean
-	// test nets).
+	// AccountsByWealthCached serves the ranking from a background-refreshed cache and NEVER runs
+	// the underlying FINAL scan on the caller's deadline. AsOf/AsOfLedger are the ranking's
+	// vintage; an entry past its TTL is still served (the handler flags it degraded) so failed
+	// refreshes degrade to old-but-real data, not 503s.
+	// ok=false means never computed: render a warming state and do not fall back to
+	// AccountsByWealth on the request path (the scan needs 11-20s against an 8s deadline).
+	// Basis ("usd" | "native_xlm") is the unit of the cached ranking, so the handler labels the
+	// numbers correctly where no USD price map was available.
 	AccountsByWealthCached(ctx context.Context, assets, prices []string, limit int) (clickhouse.AccountWealthSnapshot, bool)
 	SoroswapPairReserves(ctx context.Context, pairs []string) (map[string]clickhouse.SoroswapPairState, error)
 	NativeLiquidityPoolReserves(ctx context.Context, poolIDs []string) (map[string]clickhouse.NativeLiquidityPoolState, error)
@@ -293,12 +225,10 @@ type ExplorerReader interface {
 	// EntryHistoryCoverage is the ch-entry-history derive watermark and the
 	// from-genesis backfill marker (0 = not derived / not verified).
 	EntryHistoryCoverage(ctx context.Context) (watermark, backfilledThru uint32, err error)
-	// Cap67MovementsWatermark is the highest ledger the cap67 movement
-	// derive has completed through — 0 when the feed
-	// isn't provisioned. The movements handler floors its Postgres tail
-	// arm at watermark+1 and ceilings the ClickHouse arm at the
-	// watermark, keeping the merge gap-free and double-count-free at
-	// any derive progress. Implementations cache (~60s).
+	// Cap67MovementsWatermark is the highest ledger the cap67 movement derive has completed
+	// through (0 when the feed isn't provisioned). The movements handler floors its Postgres tail
+	// arm at watermark+1 and ceilings the ClickHouse arm at the watermark, keeping the merge
+	// gap-free and double-count-free. Implementations cache (~60s).
 	Cap67MovementsWatermark(ctx context.Context) (uint32, error)
 	// Cap67SupplyCoverage is the ledger range, at or below the watermark,
 	// the derive has also covered with mint, burn and clawback (ok=false:
@@ -307,37 +237,26 @@ type ExplorerReader interface {
 	// AccountsStats is the /accounts hub analytics snapshot (rollup-
 	// backed; ok=false while the rollup hasn't completed a cycle).
 	AccountsStats(ctx context.Context) (clickhouse.AccountsStats, bool, error)
-	// AccountCreators is the account-creator league table plus the
-	// ledger span the cycle that built it actually aggregated.
-	// ok=false while the rollup hasn't completed a cycle, or when it
-	// carries a board with no span to qualify it.
-	// `account`, when non-empty, narrows the board to that one row,
-	// keyed, so a caller can read a rank the top-N page does not reach.
+	// AccountCreators is the account-creator league table plus the ledger span its building cycle
+	// aggregated. ok=false while no cycle has completed, or when the board has no span to
+	// qualify it. A non-empty `account` narrows the board to that keyed row, so a caller can read
+	// a rank the top-N page does not reach.
 	AccountCreators(ctx context.Context, limit int, account string) (clickhouse.AccountCreators, bool, error)
-	// AccountSponsors is the sponsor league table plus the ledger span
-	// the cycle that built it aggregated. History only — it never
-	// carries a live sponsored set. ok=false while the rollup hasn't
-	// completed a cycle, or when it carries a board with no span.
-	// `account` narrows it the same way AccountCreators does.
+	// AccountSponsors is the sponsor league table plus the ledger span its building cycle
+	// aggregated. History only, never a live sponsored set. ok=false and `account` behave as in
+	// AccountCreators.
 	AccountSponsors(ctx context.Context, limit int, account string) (clickhouse.AccountSponsors, bool, error)
-	// AccountGraph is one account's neighbourhood in the sponsorship and
-	// account-creation graph: the inbound edges (bounded — who created
-	// or sponsored this account), both outbound summaries, and, when
-	// `relation` names one, a keyset page of that outbound direction.
-	// ok=false while either graph arm is unbuilt, which the handler
-	// serves as a warming 503 rather than as "no relationships".
+	// AccountGraph is one account's neighbourhood in the sponsorship and account-creation graph:
+	// bounded inbound edges, both outbound summaries and, when `relation` names one, a keyset page
+	// of that direction. ok=false while either graph arm is unbuilt; the handler serves that as a
+	// warming 503, not as "no relationships".
 	AccountGraph(ctx context.Context, account, relation string, limit int, cursor string) (clickhouse.AccountGraph, bool, error)
-	// AccountGraphHistory is the same graph on a time axis: one
-	// account's creation and sponsorship activity bucketed into calendar
-	// months, with the events the served tier cannot place in a month
-	// counted rather than smeared. ok=false on the same condition
-	// AccountGraph refuses — either arm unbuilt.
+	// AccountGraphHistory is the same graph bucketed into calendar months. Events the served tier
+	// cannot place in a month are counted separately, not smeared. ok=false as in AccountGraph.
 	AccountGraphHistory(ctx context.Context, account string) (clickhouse.AccountGraphHistory, bool, error)
-	// AccountCohort is what the accounts this address created or
-	// sponsored went on to hold and do — the cohort rollup's snapshot
-	// for one root and one relation. ok=false means no cycle has
-	// completed on this deployment; a completed cycle that does not
-	// cover the root returns ok=true with Covered=false.
+	// AccountCohort is the cohort rollup's snapshot of what the accounts a root created or
+	// sponsored went on to hold and do. ok=false means no cycle has completed on this deployment;
+	// a completed cycle that does not cover the root returns ok=true with Covered=false.
 	AccountCohort(ctx context.Context, account, relation string) (clickhouse.AccountCohort, bool, error)
 	// ContractActivitySummaryFor is the per-contract liveness card
 	// (first/last seen + daily active-ledger series; ok=false when the
@@ -345,27 +264,18 @@ type ExplorerReader interface {
 	ContractActivitySummaryFor(ctx context.Context, contractID string, days int) (clickhouse.ContractActivitySummary, bool, error)
 }
 
-// ContractsReader is the narrow read seam onto the protocol_contracts
-// registry (ADR-0035) this package needs: contract_id → owning-protocol
-// attribution. v1.ProtocolContractsReader (a wider interface used
-// elsewhere in package v1) satisfies this structurally — v1 passes its
-// reader straight through when constructing a Handler, no adapter needed.
+// ContractsReader is the narrow read seam onto the protocol_contracts registry (ADR-0035):
+// contract_id to owning-protocol attribution. v1.ProtocolContractsReader satisfies it structurally.
 type ContractsReader interface {
 	ProtocolContractIndex(ctx context.Context) (map[string]string, error)
 }
 
-// Handler holds every explorer endpoint's dependencies. Package v1
-// constructs one at startup (internal/api/v1/server.go) and registers
-// its exported methods directly on the mux — the "thin router" side
-// of the split lives in v1; this package holds the endpoint logic.
+// Handler holds every explorer endpoint's dependencies. Package v1 constructs one at startup and
+// registers its exported methods on the mux.
 //
-// The response-writing (WriteJSON/WriteProblem/ClientAborted) and a
-// handful of cross-cutting reads (LookupUSDPrice/IsKnownSAC/LakeWatermark/
-// ParseWindowDays) are injected function values rather than pulled in via
-// an import of package v1, because v1.Server itself embeds a *Handler —
-// an import the other way would cycle. Each of these mirrors a v1
-// package-level helper or Server method 1:1; see server.go's Handler
-// construction for the wiring.
+// Response writing and the cross-cutting reads (LookupUSDPrice, IsKnownSAC, LakeWatermark,
+// ParseWindowDays) are injected function values, not imports of package v1, which would cycle.
+// Each mirrors a v1 helper 1:1; see server.go for the wiring.
 type Handler struct {
 	Reader             ExplorerReader
 	Logger             *slog.Logger
@@ -375,10 +285,8 @@ type Handler struct {
 	// endpoint (GET /v1/accounts) needs a priced asset set and 503s
 	// without one, independent of whether the lake reader is wired.
 	PricingEnabled bool
-	// SEP41Movements, when non-nil, backs the Postgres "recent tail"
-	// half of GET /v1/accounts/{g}/movements' merge (ADR-0048 D5). Nil
-	// degrades that endpoint to serving the ClickHouse pre-P23 archive
-	// alone, with an honest coverage_note — see movements.go.
+	// SEP41Movements, when non-nil, backs the Postgres recent-tail half of the movements merge
+	// (ADR-0048 D5). Nil serves the ClickHouse pre-P23 archive alone, with an honest coverage_note.
 	SEP41Movements SEP41MovementsReader
 
 	// Positions, when non-nil, backs GET /v1/accounts/{g}/positions
@@ -386,32 +294,22 @@ type Handler struct {
 	// Nil 503s the endpoint (positions.go).
 	Positions PositionsReader
 
-	// Activity, when non-nil, backs the Postgres segments of GET
-	// /v1/accounts/{g}/activity (trades_total / defi_actions /
-	// bridge_transfers); the ops_by_type segment reads the ClickHouse
-	// lake via Reader. Either seam may be nil independently — the
-	// endpoint degrades segment-wise with an honest coverage_note and
-	// only 503s when BOTH are nil (activity.go).
+	// Activity, when non-nil, backs the Postgres segments of GET /v1/accounts/{g}/activity; the
+	// ops_by_type segment reads the lake via Reader. Either seam may be nil: the endpoint degrades
+	// per segment with an honest coverage_note and 503s only when BOTH are nil.
 	Activity ActivityReader
 
-	// Trades, when non-nil, backs GET /v1/accounts/{g}/trades — the
-	// per-address historic-trades listing over the Postgres `trades`
-	// hypertable (taker/maker attribution). Nil 503s the endpoint
-	// (account_trades.go).
+	// Trades, when non-nil, backs GET /v1/accounts/{g}/trades over the Postgres `trades`
+	// hypertable (taker/maker attribution). Nil 503s the endpoint.
 	Trades TradesReader
 
-	// PoolTokens, when non-nil, best-effort resolves a pool-based
-	// protocol's venue to a human asset-pair label on the positions
-	// endpoint (blend / aquarius; see positions.go's poolTokensFor).
-	// Nil / a read error just omits venue_label — never fails the
-	// request.
+	// PoolTokens, when non-nil, best-effort resolves a pool-based protocol's venue to an asset-pair
+	// label on the positions endpoint. Nil or a read error omits venue_label, never fails the request.
 	PoolTokens PoolTokensReader
 
-	// Directory, when non-nil, resolves curated third-party address
-	// labels (stellar-expert/public-directory via account_directory,
-	// migration 0136) for the account + contract detail views'
-	// `directory` field and GET /v1/directory. Nil omits the field
-	// and 503s the batch endpoint (directory.go).
+	// Directory, when non-nil, resolves curated third-party address labels for the account and
+	// contract detail views' `directory` field and GET /v1/directory. Nil omits the field and 503s
+	// the batch endpoint.
 	Directory DirectoryReader
 
 	// ContractProtocol names the protocol a C… contract belongs to, for
@@ -430,68 +328,53 @@ type Handler struct {
 	ParseWindowDays func(w http.ResponseWriter, r *http.Request, def int) (int, bool)
 
 	WriteJSON func(w http.ResponseWriter, data any, stale bool)
-	// WriteJSONAt is WriteJSON with an explicit envelope as_of — used by the
-	// snapshot-backed listings so a degraded (stale-snapshot) response
-	// carries the snapshot's REAL computation time instead of now().
-	// degraded marks a carried-forward body that no shared cache may keep
-	// (v1 Flags.Degraded). Optional: nil falls back to WriteJSON (same wire
-	// shape; as_of is always present on the envelope either way).
+	// WriteJSONAt is WriteJSON with an explicit envelope as_of, so a degraded stale-snapshot
+	// response carries the snapshot's REAL computation time, not now(). degraded marks a
+	// carried-forward body that no shared cache may keep. Optional: nil falls back to WriteJSON.
 	WriteJSONAt   func(w http.ResponseWriter, data any, stale, degraded bool, asOf time.Time)
 	WriteProblem  func(w http.ResponseWriter, r *http.Request, typeURL, title string, status int, detail string)
 	ClientAborted func(r *http.Request, err error) bool
 
-	// opsDir is the short-TTL, stale-serving cache for the /v1/operations
-	// directory first page (opsDirCache doc comment in operations.go has
-	// the full rationale). Zero value is ready to use.
+	// opsDir is the short-TTL, stale-serving cache for the /v1/operations directory first page
+	// (rationale on opsDirCache in operations.go). Zero value is ready to use.
 	opsDir opsDirCache
 
-	// opTypeStats caches the trailing-24h op-type breakdown SEPARATELY from
-	// the directory cache. It summarises a 24-HOUR window over a 34B-row
-	// table, so recomputing it on the directory's few-seconds cadence was
-	// ~1,200 pointless recomputes/hour and the dominant cause of
-	// /v1/operations blowing its read deadline under load.
+	// opTypeStats caches the trailing-24h op-type breakdown SEPARATELY from the directory cache:
+	// it summarises a 24-hour window over a 34B-row table, so recomputing it on the directory's
+	// few-second cadence blew the /v1/operations read deadline under load.
 	opTypeStats opTypeStatsCache
 
-	// assetHolders + contractsDir are the bounded-TTL, single-flighted
-	// caches in front of the two UNAUTHENTICATED reads whose cost scales
-	// with the lake rather than the request — GET /v1/assets/{id}/holders
-	// (two current-state FINAL scans) and the GET /v1/contracts directory
-	// (a multi-day GROUP BY over contract_events). Both zero values are
-	// ready to use; see hot_reads.go for the full rationale.
+	// assetHolders and contractsDir are the bounded-TTL, single-flighted caches in front of the two
+	// UNAUTHENTICATED reads whose cost scales with the lake, not the request (holders: two
+	// current-state FINAL scans; contracts directory: a multi-day GROUP BY over contract_events).
+	// Zero values are ready; see hot_reads.go.
 	assetHolders assetHoldersCache
 	contractsDir contractsDirCache
 	// contractStats is the single-entry snapshot behind GET /v1/contracts/stats.
 	contractStats contractStatsCache
 
-	// contractDetail is the shared bounded-TTL, single-flighted cache in
-	// front of the three per-contract detail reads (recent events /
-	// interactions / code-history): inline on the request deadline, a busy
-	// contract's read would time out on every request and no retry could
-	// land warm. Zero value ready; see contract_detail_cache.go.
+	// contractDetail is the shared bounded-TTL, single-flighted cache in front of the per-contract
+	// events / interactions / code-history reads: inline on the request deadline, a busy contract
+	// would time out on every request and no retry could land warm. See contract_detail_cache.go.
 	contractDetail contractDetailCache
 
 	// sacNames memoises proven SAC resolutions across requests (movements.go).
 	sacNames sacNameMemo
 
-	// throughput is the single-entry, single-flighted cache in front of
-	// GET /v1/network/throughput — a FINAL scan over up to a year of
-	// stellar.ledgers that, run inline on the 8s request budget, would
-	// lose the /network panel whenever it missed it. Zero
-	// value ready; see network_throughput_cache.go.
+	// throughput is the single-entry, single-flighted cache in front of GET /v1/network/throughput,
+	// a FINAL scan over up to a year of stellar.ledgers that would miss the 8s request budget.
+	// See network_throughput_cache.go.
 	throughput networkThroughputCache
 
 	// attribution memoises the contract → protocol registry map read by the
 	// contracts directory, interactions and detail routes. Zero value ready.
 	attribution contractAttributionCache
 
-	// refreshGate bounds this handler's DETACHED cache refreshes globally
-	// across keys AND cache kinds: per-key
-	// single-flight alone leaves the key space attacker-chosen on these
-	// unauthenticated routes, so fabricated-key churn could queue one
-	// unbounded lake scan per key on the shared explorer pool. Resolved
-	// lazily by detachedGate() — shared with the lake reader's own
-	// account-state gate when the Reader exposes one, so the whole
-	// explorer surface has ONE bound.
+	// refreshGate bounds DETACHED cache refreshes globally across keys AND cache kinds. Per-key
+	// single-flight alone leaves the key space attacker-chosen on these unauthenticated routes,
+	// so fabricated keys could queue one unbounded lake scan each. Resolved lazily by
+	// detachedGate(), shared with the lake reader's account-state gate so the whole explorer
+	// surface has ONE bound.
 	refreshGateOnce sync.Once
 	refreshGate     *clickhouse.RefreshGate
 }
@@ -534,11 +417,8 @@ func (h *Handler) lakeTip(ctx context.Context) (ledger uint32, stale, ok bool) {
 	return h.LakeWatermark(ctx)
 }
 
-// unavailable writes the standard 503 when no explorer reader is wired
-// (deployment without ClickHouse, or ClickHouse unreachable at startup).
-// Mirrors v1's Server.explorerUnavailable, which stays in package v1 —
-// three other v1 handlers (lending/liquidity-pools/pool-reserves) that
-// also read through ExplorerReader call that copy directly.
+// unavailable writes the standard 503 when no explorer reader is wired (no ClickHouse, or it was
+// unreachable at startup). Mirrors v1's Server.explorerUnavailable, which other v1 handlers use.
 func (h *Handler) unavailable(w http.ResponseWriter, r *http.Request) {
 	h.WriteProblem(w, r,
 		"https://api.stellarindex.io/errors/explorer-unavailable",
@@ -564,10 +444,9 @@ func (h *Handler) parseUint32Query(w http.ResponseWriter, r *http.Request, name 
 	return uint32(n), true
 }
 
-// encodeCursor renders a composite keyset position as an opaque dotted-decimal
-// cursor string ("63000000.4.7") for ?cursor=. The component count matches the
-// listing's ORDER BY arity (2 for account txs, 3 for account ops + contract
-// events). Clients treat it as opaque and echo it back verbatim.
+// encodeCursor renders a keyset position as an opaque dotted-decimal ?cursor= ("63000000.4.7").
+// The component count matches the listing's ORDER BY arity (2 account txs; 3 account ops and
+// contract events).
 func encodeCursor(parts ...uint32) string {
 	ss := make([]string, len(parts))
 	for i, p := range parts {
@@ -576,11 +455,9 @@ func encodeCursor(parts ...uint32) string {
 	return strings.Join(ss, ".")
 }
 
-// parseExplorerCursor reads the optional ?cursor= opaque keyset cursor and
-// decodes it into an ExplorerCursor with exactly `parts` components (2 → account
-// txs; 3 → account ops + contract events). Absent → zero cursor (first page).
-// ok=false (after a problem+json) on a malformed value or a zero ledger (a real
-// cursor always points past an actual row).
+// parseExplorerCursor decodes the optional ?cursor= into an ExplorerCursor with exactly `parts`
+// components; absent is the zero cursor (first page). ok=false (after a problem+json) on a
+// malformed value or a zero ledger, since a real cursor always points past an actual row.
 func (h *Handler) parseExplorerCursor(w http.ResponseWriter, r *http.Request, parts int) (clickhouse.ExplorerCursor, bool) {
 	raw := r.URL.Query().Get("cursor")
 	if raw == "" {

@@ -18,14 +18,11 @@ import (
 // Stroops-denominated values are decimal STRINGS (ADR-0003); counts are
 // JSON numbers (all far below 2^53).
 //
-// The creation and sponsorship relationships are NOT merged here. This
-// surface is the CREATOR one only — funder → created account, from the
-// CreateAccount operation, immutable once it happened. The SPONSOR
-// relationship (who pays an entry's base reserve) is a different
-// question over a different source; its history (arrangements started,
-// never the live set) is served by /v1/accounts/sponsors and
-// /v1/accounts/{g_strkey}/graph?relation=sponsored. Nothing in this
-// response should be read as a sponsorship figure.
+// Creation and sponsorship are NOT merged here. This surface is the CREATOR relationship only
+// (funder to created account, from the immutable CreateAccount operation). Sponsorship (who pays
+// an entry's base reserve) is a different question over a different source, served by
+// /v1/accounts/sponsors and /v1/accounts/{g_strkey}/graph?relation=sponsored; nothing here is a
+// sponsorship figure.
 type AccountCreatorsView struct {
 	Creators []AccountCreatorV `json:"creators"`
 	Totals   struct {
@@ -36,11 +33,9 @@ type AccountCreatorsView struct {
 		AccountsCreated int64 `json:"accounts_created"`
 		LiveAccounts    int64 `json:"live_accounts"`
 	} `json:"totals"`
-	// Coverage is the ledger span the rollup actually aggregated, read
-	// off the same cycle that produced the board. It is not a claim
-	// about the chain and not a constant: a consumer that wants to know
-	// whether these counts cover all of history compares thru_ledger
-	// against the tip itself.
+	// Coverage is the ledger span the rollup actually aggregated, read from the cycle that produced
+	// the board. It is not a claim about the chain: a consumer checking for full history compares
+	// thru_ledger against the tip.
 	Coverage struct {
 		FromLedger uint32 `json:"from_ledger"`
 		ThruLedger uint32 `json:"thru_ledger"`
@@ -54,11 +49,9 @@ type AccountCreatorsView struct {
 type AccountCreatorV struct {
 	Rank    uint32 `json:"rank"`
 	Account string `json:"account"`
-	// AccountsCreated and FundedStroops are immutable history: the count
-	// of successful CreateAccount operations this account was the source
-	// of, and the sum of the starting balances it paid. FundedStroops is
-	// legitimately "0" for a creator that only ever created sponsored
-	// accounts (CAP-33), whose reserves someone else covered.
+	// AccountsCreated and FundedStroops are immutable history: successful CreateAccount operations
+	// sourced by this account and the starting balances it paid. FundedStroops is legitimately "0"
+	// for a creator of only sponsored accounts (CAP-33), whose reserves someone else covered.
 	AccountsCreated uint64 `json:"accounts_created"`
 	FundedStroops   string `json:"funded_stroops"`
 	// LiveAccounts and LiveStroops are point-in-time as of ComputedAt:
@@ -96,17 +89,12 @@ func stroopsString(v *big.Int) string {
 // parseBoardAccount reads the optional `?account=` filter both league
 // tables accept: return only this address's row, with its rank intact.
 //
-// It exists because rank is a property of the whole aggregation while
-// the board is a top-N page. Without it a caller wanting one row has to
-// pull the cap and hope — and an address past the cap is
-// indistinguishable from one that never appears at all, which are
-// different answers a UI must not conflate.
+// It exists because rank is a property of the whole aggregation while the board is a top-N page:
+// an address past the cap is otherwise indistinguishable from one that never appears, which a UI
+// must not conflate.
 //
-// A malformed strkey is a 400, never a silently empty board: echoing a
-// mangled address back as "this account did nothing" is the same class
-// of lie parseGraphCursor refuses. A WELL-FORMED address holding no row
-// is a 200 with an empty array — "this account never did this" is an
-// answer.
+// A malformed strkey is a 400, never a silently empty board, which would read as "this account did
+// nothing". A WELL-FORMED address with no row is a 200 with an empty array, a real answer.
 func (h *Handler) parseBoardAccount(w http.ResponseWriter, r *http.Request) (string, bool) {
 	raw := strings.TrimSpace(r.URL.Query().Get("account"))
 	if raw == "" {

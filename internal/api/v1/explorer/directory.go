@@ -19,13 +19,11 @@ type DirectoryReader interface {
 	DirectoryEntriesByAddresses(ctx context.Context, addresses []string) (map[string]timescale.DirectoryEntry, error)
 }
 
-// DirectoryInfoV is the wire form of one directory label. These are
-// DISPLAY labels with third-party attribution (`source` names the
-// upstream set) — they are not a verification signal, and listing is
-// not endorsement. Tags follow the upstream registry (#exchange,
-// #anchor, #issuer, #wallet, #custodian, #sdf, #memo-required,
-// #malicious, #unsafe, …); clients should treat `malicious`/`unsafe`
-// as warnings worth surfacing prominently.
+// DirectoryInfoV is the wire form of one directory label. These are DISPLAY labels with
+// third-party attribution (`source` names the upstream set), not a verification signal; listing
+// is not endorsement. Tags follow the upstream registry (#exchange, #anchor, #issuer, #wallet,
+// #custodian, #sdf, #memo-required, #malicious, #unsafe, ...); clients should surface
+// `malicious`/`unsafe` prominently.
 type DirectoryInfoV struct {
 	Name   string   `json:"name"`
 	Domain string   `json:"domain,omitempty"`
@@ -41,13 +39,10 @@ func dirInfoV(e timescale.DirectoryEntry) *DirectoryInfoV {
 	return &DirectoryInfoV{Name: e.Name, Domain: e.Domain, Tags: tags, Source: e.Source}
 }
 
-// directoryFor resolves one address's label, reporting whether the read
-// answered at all. The label is nil when no reader is wired or the
-// address isn't listed (the overwhelmingly common case). ok=false is NOT
-// "unlisted": the read failed, so a #malicious/#unsafe label may exist
-// unseen, and the caller must say so on the wire rather than render the
-// silence of an unlisted address. A directory outage still never fails
-// the account/contract view it decorates.
+// directoryFor resolves one address's label, reporting whether the read answered. The label is
+// nil when no reader is wired or the address is unlisted (the common case). ok=false is NOT
+// "unlisted": a #malicious/#unsafe label may exist unseen, so the caller must say so on the wire.
+// A directory outage never fails the account/contract view it decorates.
 func (h *Handler) directoryFor(ctx context.Context, address string) (*DirectoryInfoV, bool) {
 	if h.Directory == nil {
 		return nil, true

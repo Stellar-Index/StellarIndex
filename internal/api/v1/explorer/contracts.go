@@ -31,12 +31,10 @@ type ContractEventView struct {
 	Data   string   `json:"data,omitempty"`
 }
 
-// ContractDetailView is the wire response for GET /v1/contracts/{contract_id}:
-// the contract id + its most-recent events. NextCursor is the opaque keyset
-// cursor for the next (older) page — the full row-identity composite
-// (ledger, tx_hash, op_index, event_index) so a contract that emits many
-// events in one ledger (across many txs) never loses rows across a page
-// boundary. Echo it back as ?cursor=. Set only when a full page returned.
+// ContractDetailView is the wire response for GET /v1/contracts/{contract_id}: the contract id
+// and its most-recent events. NextCursor is the opaque keyset cursor for the next (older) page,
+// the full row identity (ledger, tx_hash, op_index, event_index) so many events in one ledger
+// never lose rows at a page boundary. Set only when a full page returned.
 type ContractDetailView struct {
 	ContractID string `json:"contract_id"`
 	// Protocol names the registry protocol this contract belongs to
@@ -121,12 +119,10 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	// First page (no cursor): served through the shared contract-detail
-	// SWR cache, computed once at the max page size and sliced — a busy
-	// contract's scan cannot fit the request deadline, and dying with the
-	// request would leave the cache permanently cold.
-	// Cursor pages stay inline: they are unique per cursor (caching them
-	// would just churn the bounded cache) and their PK range is narrower.
+	// First page (no cursor): served through the shared contract-detail SWR cache, computed once
+	// at the max page size and sliced, because a busy contract's scan cannot fit the request
+	// deadline and dying with the request would leave the cache cold. Cursor pages stay inline:
+	// they are unique per cursor (caching would churn the bounded cache) and scan a narrower range.
 	var (
 		rows     []clickhouse.ContractActivityRow
 		asOf     time.Time
@@ -312,14 +308,10 @@ func (h *Handler) contractTTL(ctx context.Context, liveUntil uint32) *ContractTT
 	return &ContractTTLV{LiveUntil: liveUntil, State: state, AsOfLedger: tip}
 }
 
-// parseContractEventsCursor decodes the opaque `?cursor=` for the contract
-// activity feed — dotted-decimal with the tx_hash segment second
-// ("63000000.<64-hex>.0.2"), mirroring parseMovementCursor. The tx_hash
-// segment is required: the 3-part (ledger, op_index, event_index) tuple is
-// not unique (single-op txs all tie at 0.0), and paging on it permanently
-// skips tied rows at page boundaries. Old 3-part
-// cursors are rejected as invalid — they are short-lived client echoes, and
-// resuming them exactly is impossible without the tx discriminator anyway.
+// parseContractEventsCursor decodes the opaque `?cursor=` for the contract activity feed:
+// dotted-decimal with tx_hash second ("63000000.<64-hex>.0.2"), mirroring parseMovementCursor.
+// The tx_hash segment is required because (ledger, op_index, event_index) is not unique
+// (single-op txs all tie at 0.0) and paging on it skips tied rows. 3-part cursors are rejected.
 func (h *Handler) parseContractEventsCursor(w http.ResponseWriter, r *http.Request) (clickhouse.ContractEventsCursor, bool) {
 	raw := r.URL.Query().Get("cursor")
 	if raw == "" {
