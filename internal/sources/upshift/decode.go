@@ -181,9 +181,7 @@ func decodeFlow(e *events.Event, kind string) (Event, error) {
 //
 // The bare form is tried first and the Map is the fallback, taken ONLY
 // on a type mismatch — any other failure of the i128 read is a real
-// error and is returned as one. (Discriminating on sv.Type directly
-// would be more direct but would name raw XDR type constants inside a
-// Soroban event decoder, which ADR-0013 scopes to internal/scval.)
+// error and is returned as one.
 //
 // `to_muxed_id` is not stored: the muxed destination is a routing detail
 // of the recipient, not a vault-economics fact, and

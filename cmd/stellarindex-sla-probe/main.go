@@ -12,13 +12,6 @@
 //	                    defaultClosedBucketFreshTarget)
 //	availability ≥ 99.9 %  (sampled per-tick error rate)
 //
-// Usage:
-//
-//	stellarindex-sla-probe -base-url https://api.stellarindex.io/v1 \
-//	    -duration 60s -concurrency 4 \
-//	    -pair native,fiat:USD -pair USDC:GA5...,fiat:USD \
-//	    -report-format json
-//
 // Output: a JSON report. Exit 0 = pass, 1 = at least one SLA violated.
 package main
 
