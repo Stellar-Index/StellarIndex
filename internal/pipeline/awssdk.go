@@ -14,15 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// checksumWarnSubstring is the marker every aws-sdk-go-v2 line we want
-// to drop contains. The full line emitted by the SDK reads
-//
-//	SDK 2026/05/24 14:39:14 WARN Response has no supported checksum. Not validating response payload.
-//
-// — substring match is good enough; the SDK never logs the same
-// phrase for anything else, and we accept the (vanishingly small)
-// risk of dropping a future unrelated line that happens to contain
-// it.
+// checksumWarnSubstring marks every aws-sdk-go-v2 "Response has no supported checksum" line to drop; substring match is safe enough.
 const checksumWarnSubstring = "Response has no supported checksum"
 
 // silenceOnce guards against accidental double-install (e.g. a test
@@ -33,21 +25,9 @@ var (
 	silenceFlush func()
 )
 
-// SilenceSDKChecksumWarnings wraps the process's stderr (fd 2) with a
-// filtering pipe that drops lines containing
-// "Response has no supported checksum"; all else passes through.
-//
-// aws-sdk-go-v2 WARNs on every GetObject lacking a checksum header and
-// MinIO never sends one. The env-var off switch does not help:
-// go-stellar-sdk/support/datastore/s3.go hardcodes
-// `ChecksumMode: types.ChecksumModeEnabled`.
-//
-//   - Must run BEFORE config.LoadDefaultConfig, which binds os.Stderr
-//     into the SDK logger; call it first in main().
-//   - Fail-soft on pipe/dup2 error; sync.Once-guarded.
-//
-// The caller MUST run the returned flush (never nil) before exiting or
-// short-lived processes lose buffered output. os.Exit skips defers.
+// SilenceSDKChecksumWarnings filters stderr (fd 2) through a pipe dropping the SDK's no-checksum WARNs, which MinIO triggers on every GetObject.
+// Must run before config.LoadDefaultConfig, which binds os.Stderr into the SDK logger. Fail-soft and sync.Once-guarded.
+// The caller MUST run the returned flush (never nil) before exiting; os.Exit skips defers.
 func SilenceSDKChecksumWarnings() (flush func()) {
 	silenceOnce.Do(func() {
 		f, err := installStderrFilter()
@@ -76,12 +56,7 @@ func installStderrFilter() (func(), error) {
 	return installStderrFilterTo(filteringForwarder)
 }
 
-// installStderrFilterTo is the test seam: the consumer function
-// receives the pipe reader + the real-stderr writer and is
-// responsible for draining the reader to completion. The returned
-// flush func dup2's the saved real-stderr back onto fd 2, closes
-// the pipe writer, and waits on the consumer goroutine (via the
-// internal WaitGroup) to return.
+// installStderrFilterTo is the test seam: consume drains the pipe reader to completion; flush restores real stderr onto fd 2, closes the writer and waits for consume.
 func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func(), error) {
 	// Duplicate fd 2 to a fresh fd so we can keep writing to the
 	// real stderr after we overwrite fd 2 with the pipe.
@@ -107,22 +82,12 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 		return nil, fmt.Errorf("dup2 onto fd 2: %w", err)
 	}
 
-	// pw still holds a duplicate FD pointing at the pipe's writer
-	// end; we keep it around so flush() can close it deterministically.
-	// Closing it before flush would mean fd 2 (the dup'd target) is
-	// the sole writer reference — that's fine for ongoing writes,
-	// but flush() needs an explicit close to signal EOF to the
-	// reader after dup2'ing the real stderr back onto fd 2.
+	// pw is kept so flush() can close it explicitly: that close, after dup2 restores real stderr, is what signals EOF to the reader.
 
 	realStderr := os.NewFile(uintptr(savedFD), "stderr-original")
 
-	// A fatal panic/runtime throw freezes the world and writes its
-	// traceback directly to the OS fd 2 via a raw syscall, bypassing
-	// the pipe's reader goroutine entirely (which may never be
-	// scheduled again before exit). SetCrashOutput duplicates
-	// realStderr's fd so the runtime's crash writer lands on the real
-	// stderr independent of the filter/forwarder below. Fail-soft:
-	// if this errors, crash text still lands in the pipe as before.
+	// A fatal panic writes its traceback to fd 2 by raw syscall, bypassing the pipe reader; SetCrashOutput points the runtime's crash writer at the real stderr.
+	// Fail-soft: on error, crash text still lands in the pipe.
 	_ = debug.SetCrashOutput(realStderr, debug.CrashOptions{})
 
 	var wg sync.WaitGroup
@@ -140,15 +105,8 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 	var flushOnce sync.Once
 	flush := func() {
 		flushOnce.Do(func() {
-			// Restore real stderr on fd 2 BEFORE closing the pipe
-			// writer. Order matters: any goroutine that wakes up
-			// between these two calls and writes to os.Stderr
-			// should land on the real fd, not a half-closed pipe.
-			// dup2 closes the existing fd-2 target as part of its
-			// atomic replacement — which is the pipe writer we
-			// installed in installStderrFilterTo. That close is
-			// what signals EOF to the reader, *provided* pw (the
-			// remaining handle) is also closed; do that next.
+			// Restore real stderr on fd 2 BEFORE closing the pipe writer, so writes between the two land on the real fd.
+			// dup2 closes the pipe writer's fd-2 reference; the reader sees EOF only once pw is closed too, next.
 			_ = dupOnto(savedFD, int(os.Stderr.Fd()))
 			_ = pw.Close()
 			// fd 2 is the real stderr again as of the dup2 above, so
@@ -170,20 +128,9 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 	return flush, nil
 }
 
-// filteringForwarder reads `r` line-by-line, drops every line that
-// contains checksumWarnSubstring, and forwards the rest verbatim to
-// `realStderr`.
-//
-// INVARIANT: this loop may exit ONLY when the pipe itself reports
-// EOF/error — i.e. flush() closed the writer. A reader that gives up
-// early (bufio.Scanner with a 1 MiB cap returns false on a single
-// oversized line) leaves the pipe silently without its only reader.
-// The 64 KiB pipe then fills and EVERY stderr write in the process
-// blocks forever — log flood → whole-binary seizure (an
-// aquarius-replay PG error flood did exactly this, freezing ingest
-// for ~28 min; even SIGQUIT's traceback couldn't flush). Oversized
-// lines are therefore forwarded in raw chunks instead of terminating
-// the drain.
+// filteringForwarder drops lines containing checksumWarnSubstring and forwards the rest to realStderr.
+// INVARIANT: exit only when the pipe reports EOF/error. A reader giving up early (oversized line) fills the 64 KiB pipe and blocks every stderr write in the process,
+// so oversized lines are forwarded in raw chunks.
 func filteringForwarder(r io.Reader, realStderr *os.File) {
 	br := bufio.NewReaderSize(r, 64*1024)
 	for {

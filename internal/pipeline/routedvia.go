@@ -10,22 +10,9 @@ import (
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 )
 
-// Router attribution — the live half of migration 0025's
-// trades.routed_via design.
-//
-// Why a periodic sweep instead of tagging at router-persist time:
-// the same-tx `trades` rows for a soroswap-router call are written
-// by the PROJECTOR (ADR-0031/0032: soroswap trades project from the
-// soroban_events landing zone), while the router call itself rides
-// the dispatcher's events goroutine. The two writers race — at the
-// moment the router row lands, its pair-level trades usually don't
-// exist yet, so an inline UPDATE would systematically miss. A
-// trailing-window sweep is immune to that ordering, costs the trade
-// hot path nothing (one batched UPDATE per tick, first-wins /
-// idempotent — see timescale.TagTradesRoutedVia), and re-covers the
-// window every tick so projector lag inside the lookback is
-// self-healing. Older misses (projector down > lookback) are caught
-// by the historical pass: `stellarindex-ops tag-routed-via`.
+// Router attribution sweep. The projector writes the same-tx soroswap `trades` rows (ADR-0031/0032) while the router call rides the dispatcher, so the two race and an inline UPDATE would miss.
+// A trailing-window sweep is race-free, first-wins and idempotent (TagTradesRoutedVia), and self-heals projector lag within the lookback;
+// older misses are caught by `stellarindex-ops tag-routed-via`.
 
 const (
 	// routedViaSweepInterval is how often the sweeper ticks.
@@ -42,16 +29,7 @@ type RoutedViaTagger interface {
 	TagTradesRoutedVia(ctx context.Context, routerName, tradeSource string, from, to time.Time) (int64, error)
 }
 
-// RunRoutedViaTagger sweeps the trailing lookback window every
-// interval, tagging same-tx soroswap trades via
-// timescale.TagTradesRoutedVia — routed_via='soroswap-router' by
-// default, or a more specific registered wrapper's name when the
-// router call's call_path (migration 0101/0103) identifies one.
-// Blocks until ctx cancels (run it in its own goroutine); performs
-// one final sweep on shutdown so the last partial window isn't left
-// to the next boot's first tick.
-//
-// interval/lookback <= 0 select the package defaults.
+// RunRoutedViaTagger sweeps the trailing lookback every interval, tagging same-tx soroswap trades via TagTradesRoutedVia, and sweeps once more on shutdown; interval/lookback <= 0 select defaults.
 func RunRoutedViaTagger(ctx context.Context, logger *slog.Logger, store RoutedViaTagger, interval, lookback time.Duration) {
 	if interval <= 0 {
 		interval = routedViaSweepInterval

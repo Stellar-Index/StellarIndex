@@ -13,14 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// TestNewKeyCacheInvalidatorForBackend pins which backends get a
-// key-cache invalidator at all.
-//
-// `apikey:<hash>` is a rebuildable cache entry only under
-// auth_backend=postgres. Under every other value — the shipped default
-// "redis", or unset, which buildAPIKeyValidator also treats as redis —
-// it is the canonical credential, and handing a mutation path something
-// that DELs it is how an admin PATCH destroyed customers' keys.
+// TestNewKeyCacheInvalidatorForBackend pins which backends get an invalidator: `apikey:<hash>` is a rebuildable cache only under auth_backend=postgres;
+// under the default "redis" (or unset) it is the canonical credential, and a mutation path that DELs it destroyed customers' keys.
 func TestNewKeyCacheInvalidatorForBackend(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

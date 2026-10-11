@@ -15,11 +15,8 @@ import (
 	"testing"
 )
 
-// TestLateTradeRefreshWindows_SingleWriter pins the clear guard's premise:
-// cagg_late_refresh_windows has one writer, LateTradeRefresher, in one
-// process, the single stellarindex-indexer unit. The in-flight guard that
-// stops a clear racing an uncommitted write sees only its own process's
-// writers; a second writer process would rely on the gen guard alone.
+// TestLateTradeRefreshWindows_SingleWriter pins the clear guard's premise: cagg_late_refresh_windows has one writer (LateTradeRefresher) in one process,
+// because the in-flight guard only sees its own process's writers; a second writer process would rely on the gen guard alone.
 func TestLateTradeRefreshWindows_SingleWriter(t *testing.T) {
 	root := filepath.Join("..", "..")
 	want := map[string][]string{

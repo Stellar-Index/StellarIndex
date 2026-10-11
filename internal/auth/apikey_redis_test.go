@@ -129,11 +129,7 @@ func TestRedisAPIKey_LookupExpired(t *testing.T) {
 	}
 }
 
-// TestRedisAPIKey_LookupExactlyAtExpiry pins the boundary. A record
-// whose expires_at equals now() is treated as expired — `now.Before(exp)`
-// is false at equality. This matters for tests that seed a record
-// with ExpiresAt == fixed-clock and would otherwise flake on
-// machine clock skew.
+// TestRedisAPIKey_LookupExactlyAtExpiry pins the boundary: expires_at equal to now() is expired (`now.Before(exp)` is false at equality), so fixed-clock tests do not flake.
 func TestRedisAPIKey_LookupExactlyAtExpiry(t *testing.T) {
 	v, mr, now := newTestValidator(t)
 	seedKey(t, mr, "rek_at_boundary", APIKeyRecord{
@@ -249,11 +245,7 @@ func TestHashAPIKey_Stable(t *testing.T) {
 	}
 }
 
-// TestNewRedisAPIKeyValidator_PanicsOnNil confirms the constructor
-// rejects a nil client. The auth middleware fails-loud upstream when
-// the validator is the Noop stub; passing nil here would yield a
-// runtime panic on the first request instead of a startup panic,
-// which is much harder to debug.
+// TestNewRedisAPIKeyValidator_PanicsOnNil: a nil client must panic at startup, not on the first request.
 func TestNewRedisAPIKeyValidator_PanicsOnNil(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
@@ -263,16 +255,7 @@ func TestNewRedisAPIKeyValidator_PanicsOnNil(t *testing.T) {
 	_ = NewRedisAPIKeyValidator(nil)
 }
 
-// TestRedisAPIKey_LookupMapsMonthlyQuota pins that Lookup copies
-// MonthlyQuota onto the Subject.
-//
-// MonthlyQuota is persisted on APIKeyRecord ("the per-key monthly
-// request cap the runtime quota middleware enforces") and mapped by the
-// Postgres validator. middleware.MonthlyQuota short-circuits on
-// `subject.MonthlyQuota <= 0`, so if Lookup skipped it, on the default
-// (redis) backend, which is what r1 runs, the cap would be dead for
-// every key: a metered key would never be metered or 429'd, and nothing
-// would log or alert. Same bug class as dropping the permission fields.
+// TestRedisAPIKey_LookupMapsMonthlyQuota: Lookup must copy MonthlyQuota onto the Subject; middleware.MonthlyQuota skips at <= 0, so on the default redis backend a dropped copy leaves every key unmetered with no log or alert.
 func TestRedisAPIKey_LookupMapsMonthlyQuota(t *testing.T) {
 	v, mr, _ := newTestValidator(t)
 	seedKey(t, mr, "rek_test_quota", APIKeyRecord{
@@ -323,11 +306,7 @@ func fullSubject(t *testing.T) Subject {
 	return sub
 }
 
-// TestPostgresValidator_CacheRoundTripCarriesEverySubjectField pins
-// that the Postgres validator's read-through cache hands back the
-// Subject it was given, field for field. Rebuilding the record by hand
-// can drop EmailVerifiedAt, so a verified signup customer served from a
-// cache hit would read as permanently unverified.
+// TestPostgresValidator_CacheRoundTripCarriesEverySubjectField: the read-through cache must hand back the Subject field for field; a hand-rebuilt record can drop EmailVerifiedAt and make a verified customer read as unverified.
 func TestPostgresValidator_CacheRoundTripCarriesEverySubjectField(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -370,11 +349,7 @@ func newStatusCacheValidator(t *testing.T, accounts AccountStatusReader, clock *
 	return v, mr
 }
 
-// TestRedisAPIKey_AccountStatusBlipRidesOutOnLastKnownActive is the
-// core check: an active customer seen moments ago must keep
-// authenticating through a transient Postgres blip instead of being
-// failed. The second Lookup rides out on the cached last-known-active
-// status rather than propagating the transport failure.
+// TestRedisAPIKey_AccountStatusBlipRidesOutOnLastKnownActive: an active customer seen moments ago keeps authenticating through a transient Postgres blip on the cached last-known status.
 func TestRedisAPIKey_AccountStatusBlipRidesOutOnLastKnownActive(t *testing.T) {
 	clock := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	accounts := &stubAccountStatusReader{
@@ -407,12 +382,7 @@ func TestRedisAPIKey_AccountStatusBlipRidesOutOnLastKnownActive(t *testing.T) {
 	}
 }
 
-// TestRedisAPIKey_AccountStatusBlipNoCacheIsRetryable pins the
-// mis-signalling fix: when there is no usable cached status (cold
-// process, first request), a Postgres transport error is a retryable
-// ErrAccountStatusUnavailable (→ 503), NOT ErrUnauthorized (→ 401
-// "credential invalid"). Still fails closed, but with correct,
-// non-key-rotating semantics.
+// TestRedisAPIKey_AccountStatusBlipNoCacheIsRetryable: with no usable cached status a Postgres transport error is the retryable ErrAccountStatusUnavailable (503), not ErrUnauthorized (401); still fails closed.
 func TestRedisAPIKey_AccountStatusBlipNoCacheIsRetryable(t *testing.T) {
 	clock := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	accounts := &stubAccountStatusReader{err: errors.New("postgres unreachable")}
@@ -435,11 +405,7 @@ func TestRedisAPIKey_AccountStatusBlipNoCacheIsRetryable(t *testing.T) {
 	}
 }
 
-// TestRedisAPIKey_AccountStatusRideOutBounded pins that the ride-out is
-// bounded: once a cached status ages past the staleness bound
-// (10×TTL = 5m) it is not trusted, so a still-degraded Postgres
-// yields the retryable ErrAccountStatusUnavailable rather than an
-// unbounded stale authentication.
+// TestRedisAPIKey_AccountStatusRideOutBounded: a cached status older than the bound (10xTTL = 5m) is not trusted, so degraded Postgres yields the retryable error, not unbounded stale authentication.
 func TestRedisAPIKey_AccountStatusRideOutBounded(t *testing.T) {
 	clock := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	accounts := &stubAccountStatusReader{
@@ -703,11 +669,7 @@ func TestRedisAPIKey_MissingAccountRejected(t *testing.T) {
 	}
 }
 
-// TestRedisAPIKey_AccountReadErrorFailsClosed pins the degradation
-// direction. Every other store failure in this package degrades toward
-// serving the request; the suspension gate must not — "the account store
-// blipped, so authenticate the suspended customer anyway" is the one
-// degradation a kill switch cannot make.
+// TestRedisAPIKey_AccountReadErrorFailsClosed: unlike other store failures, the suspension gate must not degrade toward serving; authenticating a suspended customer because the account store blipped is the one degradation a kill switch cannot make.
 func TestRedisAPIKey_AccountReadErrorFailsClosed(t *testing.T) {
 	accounts := &stubAccountStatusReader{err: errors.New("postgres unreachable")}
 	v, mr := newSuspendTestValidator(t, accounts)
@@ -745,11 +707,7 @@ func TestRedisAPIKey_NoAccountReaderIsPreFixBehaviour(t *testing.T) {
 	}
 }
 
-// TestRedisAPIKey_AccountOverridesResolved pins that, on the default
-// redis backend an operator's account overrides are enforced on the next
-// Lookup, with the Postgres validator's cascade (the rate-limit override is
-// a floor, the monthly-quota override a ceiling), and a change lands once the
-// account cache refreshes.
+// TestRedisAPIKey_AccountOverridesResolved: on the redis backend account overrides apply on the next Lookup with the Postgres cascade (rate-limit a floor, monthly quota a ceiling), landing once the account cache refreshes.
 func TestRedisAPIKey_AccountOverridesResolved(t *testing.T) {
 	acct := acctWithStatus("acme", platform.AccountActive)
 	acct.RateLimitPerMinOverride = 50_000

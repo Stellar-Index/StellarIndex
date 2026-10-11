@@ -40,25 +40,8 @@ type lateTradeCAGGStore interface {
 	timescale.CAGGStepRefresher
 }
 
-// LateTradeRefresher materialises the [timescale.TradesCAGGs] over trades
-// the live writers land older than a view's refresh policy reaches back.
-// Each policy only re-aggregates the last start_offset (prices_1m: 15
-// minutes), so after a projector or dispatcher outage longer than that the
-// resumed writers insert trades no policy ever revisits and the OHLC/TWAP
-// views under-report them for good.
-//
-// Before a late write, its writer records the window durably (migration
-// 0211); every flush unions those rows in, and Run flushes once at start,
-// so a window survives a crash. After the write commits, the writer
-// records any trade the write's own duration made late, then calls
-// ObserveTrades, which widens the in-memory window and kicks Run. Run
-// refreshes it once per debounce interval, one refresh in flight at a
-// time, and each view at most once per its own policy's schedule_interval,
-// so a long catch-up costs a refresh per interval rather than per batch. A failed
-// refresh is logged, counted, kept pending and retried with backoff;
-// ingest never waits on it, and one view's failure does not hold the
-// others. FlushOnShutdown refreshes what is left once the writers have
-// stopped.
+// LateTradeRefresher refreshes the trades continuous aggregates over trades landed older than a view's refresh policy reaches back (e.g. after an outage), which no policy would ever revisit.
+// Late windows are recorded durably before the write and widened in memory after it, refreshed once per debounce interval and per view schedule; failures are retried with backoff and never block ingest.
 type LateTradeRefresher struct {
 	store      lateTradeCAGGStore
 	logger     *slog.Logger
@@ -408,13 +391,9 @@ func (r *LateTradeRefresher) FlushOnShutdown(ctx context.Context) {
 	}
 }
 
-// flush moves the observed window onto every bounded view, then refreshes
-// each view whose policy cannot reach it, in [timescale.TradesCAGGs] order.
-// With rateLimited, a view refreshed less than its schedule_interval ago is
-// held, and next is how long until the first held view falls due. A view's
-// window is dropped only once its refresh succeeds or its policy covers it.
-// A failed view does not stop the others, except that the twaps built on
-// prices_1m wait out its failure; err joins every failure.
+// flush moves the observed window onto every bounded view and refreshes each view whose policy cannot reach it, in TradesCAGGs order;
+// rateLimited holds a view refreshed within its schedule_interval, and next is when the first held view falls due. A window drops only after its refresh succeeds or the policy covers it;
+// a failed view does not stop the others, except twaps built on prices_1m wait for it.
 func (r *LateTradeRefresher) flush(ctx context.Context, rateLimited bool) (next time.Duration, err error) {
 	r.flushMu.Lock()
 	defer r.flushMu.Unlock()

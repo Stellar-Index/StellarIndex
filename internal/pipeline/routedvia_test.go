@@ -39,12 +39,8 @@ func (f *fakeRoutedViaTagger) call(i int) taggerCall {
 	return f.calls[i]
 }
 
-// TestRunRoutedViaTagger_SweepArgs pins the sweeper's tagging
-// policy: routed_via value is the soroswap-router source name, the
-// trade scope is source='soroswap', and the window is
-// [now-lookback, now]. A drift in any of these silently breaks
-// attribution (wrong tag, wrong protocol scoped, or a window that
-// misses the projector lag it exists to cover).
+// TestRunRoutedViaTagger_SweepArgs pins the tagging policy: routed_via is the soroswap-router source name, scope is source='soroswap', window is [now-lookback, now].
+// Drift misattributes or misses the projector lag the window covers.
 func TestRunRoutedViaTagger_SweepArgs(t *testing.T) {
 	fake := &fakeRoutedViaTagger{ret: 3}
 	ctx, cancel := context.WithCancel(context.Background())

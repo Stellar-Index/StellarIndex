@@ -10,33 +10,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// AMM actor attribution — the live half of migration 0150's trades.signer.
-//
-// Same shape + rationale as RunRoutedViaTagger: the AMM `trades` rows are
-// written by the PROJECTOR (ADR-0032) from the lake events, which carry no
-// tx source account, so the signer cannot be set on the decode path and an
-// inline tag would race the projector. A trailing-window sweep is immune to
-// that ordering, is first-wins/idempotent (timescale.TagTradesSigner), and
-// self-heals projector lag inside the lookback.
-//
-// Where it differs from routed_via: the source (the tx signer) lives in the
-// ClickHouse lake (stellar.transactions), not a pre-filtered Postgres table.
-// A naive "read every recent tx" sweep would pull tens of thousands of rows
-// per tick at pubnet volume, so this scopes the lake read to the SMALL ledger
-// span of AMM trades that still need a signer (UntaggedAMMSignerLedgerRange);
-// at steady state that span is a minute or two of ledgers, and it skips the
-// lake entirely when nothing is untagged.
+// AMM signer attribution sweep, same rationale as RunRoutedViaTagger: the projector writes AMM trades from lake events that carry no tx source account, so an inline tag would race it.
+// The signer lives in the ClickHouse lake (stellar.transactions), so the read is scoped to the small ledger span still untagged (UntaggedAMMSignerLedgerRange)
+// to avoid pulling every recent tx each tick, and skipped entirely when nothing is untagged.
 
 const (
 	signerSweepInterval = time.Minute
 	signerSweepLookback = 30 * time.Minute
-	// signerSweepMaxLedgerSpan caps how many ledgers one sweep reads from the
-	// lake + tags in a single UPDATE. At steady state the untagged span is a
-	// minute or two of ledgers, well under this; but a cold start or a
-	// multi-minute projector lag can widen it toward the full lookback, so
-	// this clamps each tick to the OLDEST slice of the span — the rest is
-	// picked up on the next tick(s) (first-wins, so the just-tagged head drops
-	// out and min-ledger advances). Bounds the per-tick CH read + UPDATE.
+	// signerSweepMaxLedgerSpan clamps each tick to the OLDEST slice of the untagged span (cold start or projector lag can widen it); the rest follows next tick, bounding the CH read and UPDATE.
 	signerSweepMaxLedgerSpan = 120 // ~10 min of pubnet ledgers
 )
 
@@ -53,11 +34,7 @@ type SignerRangeTagger interface {
 	TagTradesSigner(ctx context.Context, from, to time.Time, tags []timescale.SignerTag) (int64, error)
 }
 
-// RunSignerTagger sweeps the trailing lookback window every interval,
-// back-tagging trades.signer (first-wins, AMM sources) from the lake's
-// stellar.transactions. Blocks until ctx cancels (run it in its own
-// goroutine); performs one final sweep on shutdown so the last partial window
-// isn't left to the next boot. interval/lookback <= 0 select the defaults.
+// RunSignerTagger sweeps the trailing lookback every interval, back-tagging trades.signer (first-wins, AMM sources) from the lake, and sweeps once more on shutdown; interval/lookback <= 0 select defaults.
 func RunSignerTagger(ctx context.Context, logger *slog.Logger, lake SignerLakeReader, store SignerRangeTagger, interval, lookback time.Duration) {
 	if interval <= 0 {
 		interval = signerSweepInterval

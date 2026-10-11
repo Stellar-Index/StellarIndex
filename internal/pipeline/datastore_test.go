@@ -74,11 +74,7 @@ func TestLedgerstreamConfig_ColdTierArchive(t *testing.T) {
 	}
 }
 
-// TestLedgerstreamConfig_ColdTierSkippedForLiveBucket verifies
-// the cold tier does NOT attach when the caller is reading the
-// live bucket — galexie-live is the rolling near-tip working set
-// authored locally by galexie, and a cold fallback would point
-// at a different source of truth.
+// TestLedgerstreamConfig_ColdTierSkippedForLiveBucket: the cold tier must not attach to the live bucket, whose local near-tip data has no separate cold source of truth.
 func TestLedgerstreamConfig_ColdTierSkippedForLiveBucket(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{
@@ -102,19 +98,8 @@ func TestLedgerstreamConfig_ColdTierSkippedForLiveBucket(t *testing.T) {
 	}
 }
 
-// TestLedgerstreamConfig_LiveTailRetryPolicy pins BOTH halves of the
-// live-tail retry policy on the bucket that actually gets it.
-//
-// The two are one decision, not two independent knobs: the NotFound
-// fast path (LiveRetryWait — "the tip isn't written yet", retried
-// WITHOUT consuming an attempt) is what keeps ingest lag small, and the
-// fault budget (LiveRetryBudget) is what keeps a MinIO restart from
-// exiting the process. Before the budget existed the first silently
-// determined the second — 500ms × the SDK's RetryLimit of 5 = 2.5
-// SECONDS of tolerance for a dependency that restarts for minutes.
-//
-// The archive bucket is read as a BOUNDED range, where a missing object
-// is a hard error rather than a wait-for-tip, so neither applies there.
+// TestLedgerstreamConfig_LiveTailRetryPolicy pins both halves of the live-tail retry policy: the NotFound fast path (LiveRetryWait, no attempt consumed) keeps lag small,
+// and the fault budget (LiveRetryBudget) keeps a minutes-long MinIO restart from exiting the process. The archive bucket is a bounded read, so neither applies there.
 func TestLedgerstreamConfig_LiveTailRetryPolicy(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{

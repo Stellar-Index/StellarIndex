@@ -88,16 +88,8 @@ func anyCuratedSource(t *testing.T) (string, GatedMeta) {
 	return "", GatedMeta{}
 }
 
-// TestGatedRegistryOptions_curatedSetSeededWithEmptyTable is THE invariant.
-//
-// It asserts on the OPTIONS the warm returns, deliberately NOT through
-// meta.NewDecoder: every gated decoder's constructor re-installs its own
-// MainnetGatedSet, so a decoder-level assertion passes whether or not the
-// pipeline layer carries the curated set and would be vacuous. The thing
-// that broke on r1 is the pipeline's warm — protocol_contracts held zero
-// upshift rows and nothing but an operator command would ever have put one
-// there — so the property to pin is that the warm's own output gates the
-// declared trust root with an EMPTY table.
+// TestGatedRegistryOptions_curatedSetSeededWithEmptyTable is THE invariant: assert on the options the warm returns, not meta.NewDecoder,
+// whose constructor re-installs its own MainnetGatedSet and would make a decoder-level assertion vacuous.
 func TestGatedRegistryOptions_curatedSetSeededWithEmptyTable(t *testing.T) {
 	store := &fakeProtocolContractStore{rows: map[string][]string{}} // the whole table is empty
 	opts, err := gatedRegistryOptions(context.Background(), store, quietLogger(), context.Background(), false)
@@ -143,12 +135,7 @@ func TestGatedRegistryOptions_curatedSetUnionsWithTable(t *testing.T) {
 	}
 }
 
-// TestGatedRegistryOptions_readOnlyConsumersWriteNothing holds the clause
-// the withHook flag exists for: the recognition / completeness audits must
-// not mutate protocol_contracts while auditing it. Seeding an in-code
-// constant into an in-memory registry is not that mutation (WithSeed fires
-// no hook — TestRegistry_WithSeed_doesNotFireHook); writing a row is, and
-// this asserts none is written.
+// TestGatedRegistryOptions_readOnlyConsumersWriteNothing: audits (withHook=false) must not write protocol_contracts; seeding the in-memory registry is not a write.
 func TestGatedRegistryOptions_readOnlyConsumersWriteNothing(t *testing.T) {
 	store := &fakeProtocolContractStore{rows: map[string][]string{}}
 	if _, err := gatedRegistryOptions(context.Background(), store, quietLogger(), context.Background(), false); err != nil {
@@ -160,11 +147,7 @@ func TestGatedRegistryOptions_readOnlyConsumersWriteNothing(t *testing.T) {
 	}
 }
 
-// TestGatedRegistryOptions_indexerReconcilesCuratedRows pins the second
-// half of the fix: the indexer path heals the TABLE, which is what backs
-// GET /v1/protocols/{name} and the explorer's contract attribution. The
-// provenance must be byte-identical to what seed-protocol-contracts
-// writes, or the two writers disagree about the same row.
+// TestGatedRegistryOptions_indexerReconcilesCuratedRows: the indexer heals the table with provenance byte-identical to seed-protocol-contracts.
 func TestGatedRegistryOptions_indexerReconcilesCuratedRows(t *testing.T) {
 	store := &fakeProtocolContractStore{rows: map[string][]string{}}
 	if _, err := gatedRegistryOptions(context.Background(), store, quietLogger(), context.Background(), true); err != nil {
@@ -248,11 +231,7 @@ func TestGatedRegistryOptions_reconcileFailureDoesNotBreakTheGate(t *testing.T) 
 	}
 }
 
-// TestGatedSources_curatedOnlyDeclaresTrustRoot is the registry-parity
-// guard for the next curated source. A curated-only entry (no factories,
-// no creation symbol) with an empty CuratedSet declares a gate with NO
-// trust root: it drops every event, and `seed-protocol-contracts -source
-// <name>` reports "upserted 0 child contract(s)" and exits 0.
+// TestGatedSources_curatedOnlyDeclaresTrustRoot: a curated-only entry with an empty CuratedSet has no trust root and drops every event while the seed CLI exits 0.
 func TestGatedSources_curatedOnlyDeclaresTrustRoot(t *testing.T) {
 	for name, meta := range gatedSources {
 		if len(meta.Factories) != 0 {
@@ -329,12 +308,7 @@ func (h *capturingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 
 func (h *capturingHandler) WithGroup(string) slog.Handler { return h }
 
-// TestGatedRegistryOptions_emptyGateWarns covers a FACTORY-anchored source
-// with no curated set whose genesis walk has not run: the warm hands its
-// decoder no children, so any child outside the decoder's own in-code seed
-// is dropped while every upstream signal still reads healthy. Its children
-// are discovered from creation events — the only available answer is to
-// stop `children=0` reading as normal.
+// TestGatedRegistryOptions_emptyGateWarns: a factory-anchored source with no curated set and no genesis walk must warn, so `children=0` does not read as normal.
 func TestGatedRegistryOptions_emptyGateWarns(t *testing.T) {
 	var factoryAnchored []string
 	for name, meta := range gatedSources {
@@ -373,13 +347,7 @@ func TestGatedRegistryOptions_emptyGateWarns(t *testing.T) {
 	}
 }
 
-// TestGatedRegistryOptions_defindexRosterReconciled pins that the indexer
-// warm writes DeFindex's in-code trust root into protocol_contracts. Its
-// factory is permissionless, so its decoder deliberately never admits a
-// child from a `create` event: nothing but this reconcile can populate
-// the roster that GET /v1/protocols/defindex and the explorer's contract
-// attribution read, and without it the empty-gate WARN fires at every
-// fresh boot naming a CLI walk that seeds nothing.
+// TestGatedRegistryOptions_defindexRosterReconciled: the factory is permissionless so the decoder never admits from create events; only this reconcile populates the roster.
 func TestGatedRegistryOptions_defindexRosterReconciled(t *testing.T) {
 	meta, ok := gatedSources[defindex.SourceName]
 	if !ok {
@@ -419,13 +387,7 @@ func TestGatedRegistryOptions_defindexRosterReconciled(t *testing.T) {
 	}
 }
 
-// TestGatedRegistryOptions_phoenixStakeContractsReconciled is a
-// regression guard: phoenix's stake contracts are never
-// announced by the factory (only the pools are — see the decoder's
-// NewDecoder doc), so unless GatedMeta.CuratedSet declares them nothing
-// ever writes them to protocol_contracts and GET /v1/protocols/phoenix
-// omits every one of them. Against the unfixed entry (CuratedSet unset)
-// this reconcile writes zero phoenix rows at all.
+// TestGatedRegistryOptions_phoenixStakeContractsReconciled: the factory never announces stake contracts, so GatedMeta.CuratedSet must declare them.
 func TestGatedRegistryOptions_phoenixStakeContractsReconciled(t *testing.T) {
 	meta, ok := gatedSources[phoenix.SourceName]
 	if !ok {
@@ -458,11 +420,7 @@ func TestGatedRegistryOptions_phoenixStakeContractsReconciled(t *testing.T) {
 	}
 }
 
-// TestGatedSources_everySourceHasAProtocolContractsWriter guards against
-// the next source shaped like DeFindex was: gated, factory-declared, and
-// with no writer of protocol_contracts at all. Rows come from exactly two
-// places — GatedMeta.CuratedSet (warm reconcile, seed CLI) or the decoder
-// admitting a child via reg.Seed (live hook, seed CLI factory walk).
+// TestGatedSources_everySourceHasAProtocolContractsWriter: every gated source needs a writer, either CuratedSet or the decoder admitting children via reg.Seed.
 func TestGatedSources_everySourceHasAProtocolContractsWriter(t *testing.T) {
 	for name, meta := range gatedSources {
 		if len(meta.CuratedSet) > 0 {

@@ -10,52 +10,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// RedisKeyCacheInvalidator evicts a single API-key record from the
-// Redis read-through cache that [PostgresAPIKeyValidator] populates.
-//
-// It is the write-side counterpart for key-mutation paths outside the
-// dashboard's Revoke handler, e.g. the admin tier clamp rewriting
-// `RateLimitPerMin` on the Postgres `api_keys` rows. Without an eviction
-// there, `auth_backend=postgres` keeps serving the pre-change budget from
-// the cache for up to the TTL (~1h).
-//
-// WIRING HAZARD — NOT safe to wire wherever a Redis client is in scope.
-// It also DELs `apikey:<hash>`, which the postgres validator serves ahead
-// of its cache (see [evictCachedKey]). Under the default
-// `auth_backend=redis` that key IS the canonical credential
-// ([RedisAPIKeyValidator] reads nothing else), so a DEL destroys a
-// customer's key irrecoverably: the plaintext was shown once and Postgres
-// holds only its hash. Construct through
-// [NewKeyCacheInvalidatorForBackend], which returns nil for every backend
-// but postgres. A nil cache or receiver makes every call a no-op.
+// RedisKeyCacheInvalidator evicts one API-key record from the Redis cache PostgresAPIKeyValidator populates, for mutations outside the Revoke handler (e.g. the admin tier clamp), else postgres-backend keys keep the old budget for the ~1h TTL.
+// WIRING HAZARD: it also DELs `apikey:<hash>`, which under the default redis backend IS the canonical credential (plaintext shown once, Postgres holds only the hash), destroying a customer's key irrecoverably.
+// Construct only via NewKeyCacheInvalidatorForBackend (nil for every non-postgres backend); a nil cache or receiver makes calls no-ops.
 type RedisKeyCacheInvalidator struct {
 	cache redis.Cmdable
 }
 
-// BackendPostgres is the `[api].auth_backend` value under which the
-// runtime validator is [PostgresAPIKeyValidator], backed by Postgres
-// and a rebuildable `apikey-cache:<hash>` read-through cache. Every
-// other value (the default "redis", or unset) runs
-// [RedisAPIKeyValidator], for which `apikey:<hash>` is the canonical
-// record.
+// BackendPostgres is the `[api].auth_backend` value running PostgresAPIKeyValidator with a rebuildable `apikey-cache:<hash>` cache; any other value (default "redis") runs RedisAPIKeyValidator, where `apikey:<hash>` is canonical.
 const BackendPostgres = "postgres"
 
-// NewKeyCacheInvalidatorForBackend returns the invalidator a mutation
-// path outside the validator should use under authBackend, or nil when
-// that backend has no separate key cache to evict.
-//
-// Only [BackendPostgres] gets one. Under the redis backend the
-// canonical record is rewritten in place by the store
-// ([RedisAPIKeyStore.UpdateRateLimit] and friends) and account-level
-// state is enforced by the validator's own account-status gate, so
-// there is nothing to evict — and the only thing a DEL could hit is
-// the credential itself (see the wiring hazard on
-// [RedisKeyCacheInvalidator]).
-//
-// Callers holding the result in an interface-typed field must assign
-// it only when non-nil; a typed-nil pointer in an interface defeats the
-// `== nil` guards the eviction call sites use to skip (and to avoid
-// counting) evictions that never happened.
+// NewKeyCacheInvalidatorForBackend returns the invalidator mutation paths should use under authBackend, or nil when it has no separate cache. Only BackendPostgres gets one: under redis the only DEL target would be the credential itself.
+// Assign the result to an interface field only when non-nil; a typed-nil pointer defeats the `== nil` guards that skip uncounted evictions.
 func NewKeyCacheInvalidatorForBackend(authBackend string, cache redis.Cmdable) *RedisKeyCacheInvalidator {
 	if authBackend != BackendPostgres || cache == nil {
 		return nil
@@ -63,11 +29,7 @@ func NewKeyCacheInvalidatorForBackend(authBackend string, cache redis.Cmdable) *
 	return NewRedisKeyCacheInvalidator(cache)
 }
 
-// NewRedisKeyCacheInvalidator returns an invalidator over cache.
-// cache may be nil (every Invalidate becomes a no-op). Production
-// wiring goes through [NewKeyCacheInvalidatorForBackend]; this
-// unconditional form is for callers that have already established the
-// postgres backend.
+// NewRedisKeyCacheInvalidator returns an invalidator over cache (nil makes Invalidate a no-op); production goes through NewKeyCacheInvalidatorForBackend, this form is for callers that already established the postgres backend.
 func NewRedisKeyCacheInvalidator(cache redis.Cmdable) *RedisKeyCacheInvalidator {
 	return &RedisKeyCacheInvalidator{cache: cache}
 }
@@ -86,15 +48,8 @@ func (i *RedisKeyCacheInvalidator) InvalidateCachedKey(ctx context.Context, hexH
 // default request timeout is 15s and the server write timeout 30s.
 const apiKeyCacheTombstoneTTL = 60 * time.Second
 
-// evictCachedKey DELs both records the postgres-backend validator can
-// serve a key from: the `apikey-cache:` row and the canonical `apikey:`
-// record it reads first. Separate commands, not one multi-key DEL, so a
-// Redis ACL that does not yet admit `apikey-cache:*` cannot also fail the
-// canonical eviction.
-//
-// The tombstone is written first: a cache-miss Lookup that read Postgres
-// before the change being evicted for would otherwise re-cache the stale
-// row after the DELs, for the full cache TTL (see cacheStore).
+// evictCachedKey DELs both records the postgres validator can serve from: `apikey-cache:` and the canonical `apikey:` it reads first, as separate commands so an ACL lacking `apikey-cache:*` cannot fail the canonical eviction.
+// The tombstone is written first so a concurrent cache-miss Lookup that read Postgres before the change cannot re-cache the stale row (see cacheStore).
 func evictCachedKey(ctx context.Context, rdb redis.Cmdable, hexHash string) error {
 	return errors.Join(
 		rdb.Set(ctx, cachekeys.APIKeyCacheEvicted(hexHash).String(), "1", apiKeyCacheTombstoneTTL).Err(),

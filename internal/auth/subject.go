@@ -33,13 +33,7 @@ const (
 // type assertion.
 func (t Tier) String() string { return string(t) }
 
-// Subject is the authenticated identity attached to a request. The
-// middleware sets a Subject on the request context BEFORE the
-// rate-limit middleware runs so per-tier limits work.
-//
-// For anonymous requests Identifier is the request's RemoteIP +
-// User-Agent hash (set by the middleware), so the rate-limit
-// middleware still has a stable key to bucket against.
+// Subject is the authenticated identity on a request, set before the rate-limit middleware so per-tier limits work; for anonymous requests Identifier is a RemoteIP + User-Agent hash.
 type Subject struct {
 	// Identifier — for apikey/sep10 the subject's stable identity
 	// (e.g. Stellar G-strkey for SEP-10, the API key's owner-account
@@ -50,19 +44,10 @@ type Subject struct {
 	// Tier — see above. Drives rate-limit budget + feature gating.
 	Tier Tier
 
-	// Scopes — optional capability list drawn from the
-	// platform.KeyScope* vocabulary ("read", "account",
-	// "dashboard", "admin"). EMPTY means full access, so a key
-	// minted without scopes keeps working. Non-empty confines the
-	// key to the listed route families; the KeyPolicy middleware enforces via
-	// [RequiredScope] + [Subject.HasScope].
+	// Scopes is an optional capability list from the platform.KeyScope* vocabulary; EMPTY means full access, non-empty confines the key to the listed route families (enforced via RequiredScope + HasScope).
 	Scopes []string
 
-	// KeyID — public-safe identifier for the credential the caller
-	// presented. For apikey, populated from APIKeyRecord.KeyID
-	// (distinct from the secret hash so it's safe to appear in
-	// logs / /v1/account/me responses). Empty for anonymous and for
-	// SEP-10 subjects, which have no key record to draw one from.
+	// KeyID is the public-safe credential identifier (from APIKeyRecord.KeyID, distinct from the secret hash); empty for anonymous and SEP-10 subjects.
 	KeyID string
 
 	// RateLimitPerMin — per-tier budget the rate-limit middleware
@@ -76,11 +61,7 @@ type Subject struct {
 	// elsewhere.
 	CreatedAt time.Time
 
-	// Label — customer-supplied human-readable name for the
-	// credential (set at /v1/account/keys POST time). Surfaced via
-	// /v1/account/me so the UI can show "your key 'ci-bot'"; never
-	// consulted by auth or rate-limit logic. Empty for anonymous
-	// and for records seeded without a label.
+	// Label is the customer-supplied credential name shown via /v1/account/me; never consulted by auth or rate-limit logic.
 	Label string
 
 	// KeyPrefix — first 12 chars of the plaintext key (e.g.
@@ -95,17 +76,8 @@ type Subject struct {
 	// the key record.
 	IPAllowlist []netip.Prefix
 
-	// RefererAllowlist — when non-empty, the request's `Referer`
-	// header's host must exactly match one entry or the request
-	// is rejected with 403. Populated like IPAllowlist; empty
-	// disables the check.
-	//
-	// NOT a theft control. `Referer` is fully client-settable, so
-	// anyone holding a stolen key sends whatever host the list
-	// wants; this only constrains BROWSERS embedding the key, which
-	// is a scoping convenience for the key's owner. IPAllowlist is
-	// the sibling that IS a control — it uses the trusted-proxy-
-	// resolved address, which the caller cannot forge.
+	// RefererAllowlist: when non-empty, the Referer host must exactly match an entry or the request gets 403; empty disables it.
+	// NOT a theft control: Referer is client-settable, so it only scopes BROWSERS embedding the key. IPAllowlist is the real control (trusted-proxy-resolved address).
 	RefererAllowlist []string
 
 	// AllowAllPermissions — if true, the per-endpoint permission
@@ -124,20 +96,10 @@ type Subject struct {
 	// consulted (even when AllowAllPermissions is true).
 	DenyPermissions []SubjectPermissionEntry
 
-	// MonthlyQuota — when > 0, the [middleware.MonthlyQuota]
-	// enforcer 429s authenticated requests for this Subject once
-	// the calendar-month request count reaches the value. Zero
-	// (the default) disables the check. Populated by both API-key
-	// validators from the key record, then resolved against the
-	// owning account's override.
+	// MonthlyQuota: when > 0, middleware.MonthlyQuota 429s the Subject once the calendar-month count reaches it; zero disables. Both validators populate it, resolved against the account override.
 	MonthlyQuota int64
 
-	// EmailVerifiedAt is when the customer proved ownership of their
-	// signup email. Zero = never verified. `middleware.RequireEmailVerified`,
-	// mounted unless the operator disables signup_require_email_verification,
-	// answers an unverified `signup-` Subject with 403
-	// `signup-verify-required`. Without the middleware, the field is
-	// informational only.
+	// EmailVerifiedAt is when the customer proved their signup email (zero = never); RequireEmailVerified answers an unverified `signup-` Subject with 403 signup-verify-required, and the field is informational without that middleware.
 	EmailVerifiedAt time.Time
 
 	// ExpiresAt — when the presented API key stops authenticating. Zero
@@ -147,15 +109,8 @@ type Subject struct {
 	ExpiresAt time.Time
 }
 
-// SubjectPermissionEntry mirrors platform.KeyPermissionEntry so
-// the auth layer can carry the policy without importing the
-// platform package. Either Endpoint (exact `<METHOD> <PATH>`) or
-// EndpointPrefix (`<PATH-PREFIX>`) — never both.
-//
-// JSON tags are present so this type can round-trip through the
-// `APIKeyRecord` cache entry the PostgresAPIKeyValidator writes
-// into Redis. Without them the cache-hit Subject would have
-// empty permission fields, silently bypassing KeyPolicy.
+// SubjectPermissionEntry mirrors platform.KeyPermissionEntry so auth need not import platform: either Endpoint (exact `<METHOD> <PATH>`) or EndpointPrefix, never both.
+// The JSON tags are required: the Redis cache round-trips this type, and dropping them would silently bypass KeyPolicy on cache hits.
 type SubjectPermissionEntry struct {
 	Endpoint       string `json:"endpoint,omitempty"`
 	EndpointPrefix string `json:"endpoint_prefix,omitempty"`

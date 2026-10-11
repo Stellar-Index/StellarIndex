@@ -13,26 +13,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// ─── The API-key lookup index ─────────────────────────────────────
-//
-// Four store methods answer a question the Redis key cannot: "which
-// records does this owner hold" (ListKeysForIdentifier) and "which
-// record carries this KeyID" (RevokeKeyByID, UpdateRateLimit,
-// MarkEmailVerified). Walking `apikey:*` with one GET per credential
-// would put that cost on request paths any anonymously registered key
-// can drive.
-//
-// They read [cachekeys.APIKeyIndex] instead: one HASH holding a pointer
-// per KeyID, a record list per owner, and a `ready` marker. See the
-// family comment in internal/cachekeys/keys.go for why it is ONE key
-// (allkeys-lru eviction must take the marker with the entries).
-//
-// The index is only trusted while `ready` is readable; otherwise (evicted,
-// NOPERM under a lockdown ACL, never built) readers walk the keyspace,
-// which is always correct, and try to build it. A build marks `ready` only
-// if its generation survived the walk, and the API drops both at startup,
-// so neither a hash lost mid-build nor records written raw by a
-// rolled-back binary leave a trusted gap.
+// The API-key lookup index. ListKeysForIdentifier (owner) and RevokeKeyByID, UpdateRateLimit, MarkEmailVerified (KeyID) cannot be answered from the Redis key, and walking `apikey:*` would put O(keyspace) cost on request paths any anonymously registered key can drive.
+// They read cachekeys.APIKeyIndex: ONE HASH (a pointer per KeyID, a record list per owner, a `ready` marker; one key so allkeys-lru eviction takes the marker with the entries; see internal/cachekeys/keys.go).
+// It is trusted only while `ready` is readable; otherwise readers walk the keyspace (always correct) and try to build it. A build marks `ready` only if its generation survived the walk and the API drops both at startup, so no trusted gap remains.
 
 const (
 	keyIndexReadyField  = "ready"
@@ -86,15 +69,8 @@ local function index_add(idx, hash, kid, owner)
 end
 `
 
-// writeIndexedRecordScript writes a record AND its index entries as one
-// atomic step, so no reader can observe a record the index does not
-// know. KEYS: index, record. ARGV: body, ttl-ms (0 = none), hash,
-// key_id, identifier.
-//
-// The index is touched FIRST on purpose. Redis does not roll a script
-// back, so if the ACL denies the index family the script must die
-// before the record exists — the caller then knows nothing was written
-// and can fall back to the plain record write.
+// writeIndexedRecordScript writes a record AND its index entries atomically so no reader sees a record the index lacks. KEYS: index, record. ARGV: body, ttl-ms (0 = none), hash, key_id, identifier.
+// The index is touched FIRST: Redis does not roll back a script, so an ACL denial must kill it before the record exists, letting the caller fall back to the plain write.
 var writeIndexedRecordScript = redis.NewScript(keyIndexAddLua + `
 index_add(KEYS[1], ARGV[3], ARGV[4], ARGV[5])
 if ARGV[2] == '0' then
@@ -113,11 +89,8 @@ index_add(KEYS[1], ARGV[1], ARGV[2], ARGV[3])
 return 1
 `
 
-// removeIndexedRecordScript drops a record's index entries and, when
-// ARGV[4] is '1', the record itself. KEYS: index, record. ARGV: hash,
-// key_id (empty = unknown), identifier (empty = unknown), delete-record.
-// The KeyID pointer is only removed while it still names this hash, so
-// pruning a stale entry can never unhook a live record.
+// removeIndexedRecordScript drops a record's index entries and, when ARGV[4] is '1', the record. KEYS: index, record. ARGV: hash, key_id, identifier (empty = unknown), delete-record.
+// The KeyID pointer is removed only while it still names this hash, so pruning a stale entry cannot unhook a live record.
 var removeIndexedRecordScript = redis.NewScript(`
 if ARGV[2] ~= '' and redis.call('HGET', KEYS[1], 'k:' .. ARGV[2]) == ARGV[1] then
 	redis.call('HDEL', KEYS[1], 'k:' .. ARGV[2])
@@ -151,15 +124,8 @@ func isRedisNoPerm(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "NOPERM")
 }
 
-// writeRecord persists a credential record under its hash, indexed.
-// Shared by both issuance writers ([RedisAPIKeyStore.Create] and
-// [RedisAPIKeyStore.CreateWithSecret]) so the index cannot drift from
-// one of them. ttl 0 means no expiry.
-//
-// Outcomes: indexed write succeeded; or the ACL denied the index and
-// the record was written alone (readers are walking in that state, so
-// the record is still found); or an error with NOTHING written. There
-// is no outcome in which a trusted index is missing a record.
+// writeRecord persists a credential record under its hash, indexed; shared by Create and CreateWithSecret so the index cannot drift. ttl 0 means no expiry.
+// Outcomes: indexed write; or the ACL denied the index and the record was written alone (readers walk then); or an error with NOTHING written. A trusted index is never missing a record.
 func (s *RedisAPIKeyStore) writeRecord(ctx context.Context, hash string, rec APIKeyRecord, body []byte, ttl time.Duration) error {
 	recordKey := cachekeys.APIKey(hash).String()
 	err := writeIndexedRecordScript.Run(ctx, s.rdb,
@@ -171,12 +137,8 @@ func (s *RedisAPIKeyStore) writeRecord(ctx context.Context, hash string, rec API
 	return s.rdb.Set(ctx, recordKey, body, ttl).Err()
 }
 
-// walkAPIKeyRecords visits every decodable `apikey:*` record until
-// visit returns stop. It is the ONE sanctioned walk of the credential
-// keyspace (scripts/ci/lint-apikey-scan.sh bans any other): the index
-// build uses it, and so does a lookup while the index is unusable.
-// Records that vanish between SCAN and GET, or fail to decode, are
-// skipped — one corrupt record must not fail every lookup.
+// walkAPIKeyRecords visits every decodable `apikey:*` record until visit returns stop: the ONE sanctioned keyspace walk (scripts/ci/lint-apikey-scan.sh bans others), used by the index build and by lookups while the index is unusable.
+// Records that vanish or fail to decode are skipped, so one corrupt record cannot fail every lookup.
 func (s *RedisAPIKeyStore) walkAPIKeyRecords(ctx context.Context, visit func(hash string, rec APIKeyRecord) (stop bool, err error)) error {
 	prefix := cachekeys.APIKey("").String()
 	// apikey-scan-ok: the one sanctioned walk — builds the lookup index
@@ -242,21 +204,9 @@ func (s *RedisAPIKeyStore) indexLookup(ctx context.Context, field string) (value
 	return "", false, false
 }
 
-// BuildKeyIndex indexes every record that exists and then marks the
-// index ready. It is the backfill for records that predate the index
-// and the repair after an eviction; lookups call it themselves when
-// they find the index absent, and an operator may call it directly.
-//
-// Safe to run at any time and concurrently with issuance: every write
-// is idempotent, issuance indexes its own records atomically, and an
-// entry left behind for a record deleted mid-build is a dangling
-// pointer that readers skip and prune. `ready` is written only after
-// a walk that completed with every index write acknowledged, and only
-// while the generation the build stamped first is still in the hash.
-//
-// Returns the number of records indexed, [ErrKeyIndexBuildBusy] when
-// another process is building, or the first Redis error — including
-// NOPERM while the ACL does not admit the family.
+// BuildKeyIndex indexes every record and then marks the index ready: the backfill for pre-index records and the repair after eviction (lookups call it when the index is absent; operators may too).
+// Safe concurrently with issuance: writes are idempotent and a dangling entry is skipped and pruned. `ready` is written only after a complete walk with every write acknowledged, and only while this build's generation is still in the hash.
+// Returns the count indexed, ErrKeyIndexBuildBusy if another process is building, or the first Redis error (including NOPERM).
 func (s *RedisAPIKeyStore) BuildKeyIndex(ctx context.Context) (int, error) {
 	token, err := newLockToken()
 	if err != nil {
@@ -335,11 +285,7 @@ func (s *RedisAPIKeyStore) InvalidateKeyIndex(ctx context.Context) error {
 	return nil
 }
 
-// pruneIndex drops index entries that point at a record that is gone —
-// an idle mirrored key that aged out, or a record deleted by a path
-// that bypasses this store. Best-effort: a dangling entry is skipped by
-// every reader, so failing to prune costs memory, never correctness.
-// keyID or identifier may be "" when the reader does not know it.
+// pruneIndex drops index entries pointing at a gone record (aged-out mirror, or a path bypassing this store). Best-effort: a dangling entry is skipped by readers, so a failed prune costs memory, not correctness. keyID or identifier may be "".
 func (s *RedisAPIKeyStore) pruneIndex(ctx context.Context, hash, keyID, identifier string) {
 	_ = removeIndexedRecordScript.Run(ctx, s.rdb,
 		[]string{cachekeys.APIKeyIndex().String(), cachekeys.APIKey(hash).String()},
@@ -373,23 +319,8 @@ func (s *RedisAPIKeyStore) findRecordByKeyID(ctx context.Context, keyID string) 
 	return hash, rec, found, err
 }
 
-// ListKeysForIdentifier returns every [APIKeyRecord] whose
-// Identifier matches. Used by:
-//
-//   - The admin tier-clamp path, which lowers every key an
-//     account holds when its tier ceiling drops.
-//   - The /v1/account/keys (GET) endpoint that lists a
-//     caller's keys, and its POST quota check.
-//
-// Cost is proportional to the keys the identifier OWNS: one index read
-// plus one GET per owned record. Only while the index is unusable does
-// it walk the keyspace (see the index comment at the top of this file).
-// Every returned record is re-checked against `identifier`, so a stale
-// index entry can hide nothing and leak nothing.
-//
-// Returns nil + nil for "no matches" (the operator-facing path
-// distinguishes "an identifier we don't know" from a Redis I/O
-// failure).
+// ListKeysForIdentifier returns every APIKeyRecord whose Identifier matches (admin tier-clamp, GET/POST /v1/account/keys), at cost proportional to the keys the identifier OWNS, walking the keyspace only while the index is unusable.
+// Every record is re-checked against `identifier`, so a stale index entry hides and leaks nothing. Returns nil, nil for no matches, distinct from a Redis I/O failure.
 func (s *RedisAPIKeyStore) ListKeysForIdentifier(ctx context.Context, identifier string) ([]APIKeyRecord, error) {
 	if identifier == "" {
 		return nil, errors.New("auth: ListKeysForIdentifier: identifier is required")
@@ -469,17 +400,8 @@ func (s *RedisAPIKeyStore) DeleteKeysForIdentifier(ctx context.Context, identifi
 	return deleted, nil
 }
 
-// RevokeKeyByID deletes the API key whose KeyID matches `keyID`,
-// constrained to the supplied `identifier` so a caller can only
-// revoke keys they own. Returns [ErrKeyNotFound] when nothing was
-// revoked — the key does not exist OR belongs to another identifier.
-// The two are deliberately the same error so the result is no
-// cross-account existence oracle, but it is never nil: a caller that
-// reports success on nil (the operator kill switch) must not report a
-// typo'd identifier as a contained leak.
-//
-// The ownership check is made against the RECORD, never against the
-// index: the index only says where to look.
+// RevokeKeyByID deletes the key with `keyID` constrained to `identifier`, so a caller can revoke only keys they own. ErrKeyNotFound covers both a missing key and another identifier's (no cross-account existence oracle) and is never nil:
+// the operator kill switch reports success on nil, so a typo'd identifier must not read as a contained leak. Ownership is checked against the RECORD, never the index.
 func (s *RedisAPIKeyStore) RevokeKeyByID(ctx context.Context, identifier, keyID string) error {
 	if identifier == "" {
 		return errors.New("auth: RevokeKeyByID: identifier is required")

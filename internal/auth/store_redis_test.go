@@ -90,11 +90,7 @@ func TestRedisAPIKeyStore_CreateRoundTrip(t *testing.T) {
 		t.Errorf("Lookup CreatedAt = %v, want %v", subject.CreatedAt, rec.CreatedAt)
 	}
 
-	// KeyPrefix is the first 12 chars of the plaintext — covering
-	// `sip_` plus 8 hex chars. Customers see this in dashboard
-	// listings to identify which key matches a row in their secret
-	// manager. Same prefix appears on the record AND on the
-	// Subject the validator constructs from it.
+	// KeyPrefix is the first 12 chars of the plaintext (`sip_` plus 8 hex), identical on the record and the validator's Subject.
 	if rec.KeyPrefix == "" {
 		t.Error("KeyPrefix not set on Create()")
 	}
@@ -375,11 +371,8 @@ func TestRedisAPIKeyStore_CreateEnforcesTheMinter(t *testing.T) {
 	}
 }
 
-// TestRedisAPIKeyStore_RevokeKeyByID_NothingRevokedIsAnError is the store
-// contract behind the operator kill switch: a revoke that matched
-// no key must be distinguishable from one that killed a credential. A nil
-// here would let DELETE /v1/admin/keys/{id} answer 204 and write a key.revoke
-// audit row for a typo'd identifier while the leaked key kept working.
+// TestRedisAPIKeyStore_RevokeKeyByID_NothingRevokedIsAnError: a revoke matching no key must be distinguishable from one that killed a credential,
+// or DELETE /v1/admin/keys/{id} would answer 204 and audit a typo'd identifier while the leaked key kept working.
 func TestRedisAPIKeyStore_RevokeKeyByID_NothingRevokedIsAnError(t *testing.T) {
 	s, _, _ := newTestStore(t)
 	ctx := context.Background()

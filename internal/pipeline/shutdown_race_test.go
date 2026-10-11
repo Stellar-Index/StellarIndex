@@ -15,14 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
-// shutdownRacedTradeStore models a steady-state batch write that is IN
-// FLIGHT when the parent ctx is cancelled — the pipeline sibling of the
-// sorobanevents race. The first BatchInsertTrades parks
-// until its ctx is cancelled and returns ctx.Err(), exactly as a real
-// pgx INSERT does when its context dies mid-statement; every call
-// (batch or row) honours an already-dead ctx the same way pgx does.
-// Later calls under a live ctx land. Deterministic: nothing depends on
-// which of two ready select cases the scheduler picks.
+// shutdownRacedTradeStore models a batch write IN FLIGHT when the parent ctx is cancelled: the first BatchInsertTrades parks until its ctx is cancelled and returns ctx.Err(), as pgx does;
+// every call honours an already-dead ctx; later calls under a live ctx land. Deterministic regardless of which select case the scheduler picks.
 type shutdownRacedTradeStore struct {
 	entered chan struct{} // closed when the first (in-flight) batch write starts
 
@@ -84,24 +78,8 @@ func (s *shutdownRacedTradeStore) calls() (batch, row int) {
 	return s.batchCalls, s.rowCalls
 }
 
-// TestPersistWorker_ShutdownRacingInFlightTradeFlush_RowsLandNotLost pins
-// the pipeline instance of the shutdown data-loss class fixed for the
-// sorobanevents AsyncSink: a steady-state trade batch whose
-// BatchInsertTrades is in flight when the parent ctx is cancelled.
-//
-// Mechanism (without the fix): persistWorker's ticker flush runs under the
-// parent ctx (shutdownSafeCtx passes a live ctx straight through). The
-// cancel makes the in-flight write return context.Canceled, which
-// timescale.IsInfraError deliberately does NOT classify as infra, so
-// flushTradeBatch fell into per-row isolation — every InsertTrade then
-// failed instantly against the same dead ctx and persistTrade logged
-// each row as "abandoned on shutdown — re-derive". Up to tradeBatchSize
-// already-accepted trades were lost on every deploy that caught a flush
-// mid-flight, while the worker's own flushShutdown (a FRESH ctx bounded
-// by drainTimeout) ran a moment later with an empty tradeBuf.
-//
-// The interrupted batch must instead be carried into flushShutdown and
-// land there. Red without the fix: landed 0, want 3.
+// TestPersistWorker_ShutdownRacingInFlightTradeFlush_RowsLandNotLost: a ticker flush interrupted by cancel returns context.Canceled, which is not infra,
+// so without the carry every row would be isolated against the dead ctx and logged lost. The interrupted batch must land via flushShutdown (red without the fix: landed 0, want 3).
 func TestPersistWorker_ShutdownRacingInFlightTradeFlush_RowsLandNotLost(t *testing.T) {
 	droppedBefore := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade")
 
@@ -151,13 +129,7 @@ func TestPersistWorker_ShutdownRacingInFlightTradeFlush_RowsLandNotLost(t *testi
 	}
 }
 
-// shutdownRacedEventPersister models a steady-state NON-trade served-tier
-// write that is IN FLIGHT when the parent ctx is cancelled — the
-// non-trade sibling of [shutdownRacedTradeStore]. The first call parks
-// until its ctx is cancelled and returns ctx.Err(), exactly as a real
-// pgx INSERT does when its context dies mid-statement; later calls under
-// a live ctx land. Deterministic: nothing depends on which of two ready
-// select cases the scheduler picks.
+// shutdownRacedEventPersister is the non-trade sibling of shutdownRacedTradeStore: the first call parks until its ctx is cancelled and returns ctx.Err(); later calls under a live ctx land.
 type shutdownRacedEventPersister struct {
 	entered chan struct{} // closed when the first (in-flight) write starts
 
@@ -195,29 +167,8 @@ func (p *shutdownRacedEventPersister) landedEvents() []consumer.Event {
 	return append([]consumer.Event(nil), p.landed...)
 }
 
-// TestPersistWorker_ShutdownRacingInFlightEventWrite_EventLandsNotLost is
-// the NON-TRADE half of the shutdown data-loss class. Its trade
-// twin is TestPersistWorker_ShutdownRacingInFlightTradeFlush_RowsLandNotLost
-// above; the same race on the same select arm was still open for
-// everything that is not trade-shaped.
-//
-// Mechanism (without the fix): persistWorker's `<-in` arm dequeued a non-trade
-// event and wrote it under the parent ctx (shutdownSafeCtx passes a LIVE
-// ctx straight through — it only swaps in a fresh one when ctx is
-// ALREADY dead). A SIGTERM landing while that write was in flight made
-// it return context.Canceled, retryInfra classified that as
-// faultShutdown and gave up, and persistEventResilient logged the event
-// "abandoned on shutdown" and counted it dropped. The event was already
-// OFF the channel, so no later drain pass could see it and nothing would
-// ever redeliver it — while the worker's whole drain budget
-// (drainTimeout) sat unused a moment later. These are served-tier writes
-// NOBODY else makes (band oracle_updates, external.UpdateEvent, the
-// supply observers' LedgerEntry observations, soroswap_router swaps,
-// defindex flows), and their cursor had already advanced.
-//
-// The interrupted event must instead be CARRIED into the shutdown pass
-// and land there, exactly as the interrupted trade batch is. Proven red
-// without the fix: landed 0 events, want 1, and dropped +1.
+// TestPersistWorker_ShutdownRacingInFlightEventWrite_EventLandsNotLost: a non-trade event dequeued by the `<-in` arm and interrupted by cancel is already off the channel,
+// so nothing redelivers it unless it is carried into the shutdown pass (red without the fix: landed 0, want 1, dropped +1). The trade twin is above.
 func TestPersistWorker_ShutdownRacingInFlightEventWrite_EventLandsNotLost(t *testing.T) {
 	droppedBefore := counter(t, obs.SourceInsertErrorsTotal, band.SourceName, "dropped")
 
@@ -279,14 +230,8 @@ func TestPersistWorker_ShutdownRacingInFlightEventWrite_EventLandsNotLost(t *tes
 	}
 }
 
-// TestPersistWorker_PostCancelPhasesShareOneDeadline pins the shutdown deadline against
-// the racy select: once ctx is cancelled, a `<-in` or ticker arm that wins
-// the race (via shutdownSafeCtx) and the `<-ctx.Done()` arm must all write
-// under the SAME absolute deadline. If each started its own drainTimeout,
-// one extra blocking arm pushed the Done arm's deadline past main's
-// ShutdownDeadline hard exit, so carried rows died unreported. The select
-// picks `<-in` first with p=1/2 per run, so 50 runs make a pass without the fix
-// vanishingly unlikely.
+// TestPersistWorker_PostCancelPhasesShareOneDeadline: after cancel, a winning `<-in`/ticker arm and the Done arm must write under the SAME absolute deadline,
+// or an extra arm pushes Done past main's ShutdownDeadline and carried rows die unreported. 50 runs make a pass without the fix vanishingly unlikely.
 func TestPersistWorker_PostCancelPhasesShareOneDeadline(t *testing.T) {
 	for run := 0; run < 50; run++ {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -315,13 +260,8 @@ func TestPersistWorker_PostCancelPhasesShareOneDeadline(t *testing.T) {
 	}
 }
 
-// TestPersistWorker_Phase3ParallelWriteCountsOnlyInProjector pins that
-// under SinkModeSkipSoleWriter (persist_per_source=true) the dispatcher and
-// the projector both persist every un-promoted projected event, and counting
-// it in both would double the `entries` column and
-// stellarindex_source_events_total for every projected source. The
-// dispatcher's copy must count nothing; events only it writes (sdex, band)
-// and every event under SinkModeAll (no projector) still count once.
+// TestPersistWorker_Phase3ParallelWriteCountsOnlyInProjector: under SinkModeSkipSoleWriter both writers persist un-promoted projected events, so only the projector counts them;
+// events only the dispatcher writes, and every event under SinkModeAll, still count once.
 func TestPersistWorker_Phase3ParallelWriteCountsOnlyInProjector(t *testing.T) {
 	cases := []struct {
 		name          string

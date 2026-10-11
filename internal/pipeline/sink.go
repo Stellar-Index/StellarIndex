@@ -43,70 +43,23 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// SinkMode controls which event classes [PersistEvents] writes when
-// draining the dispatcher's events channel. Introduced for ADR-0032
-// Phase 4: once the projector becomes sole writer for Soroban-derived
-// events, the dispatcher's events-goroutine must stop writing them
-// (otherwise duplicate-PK errors flood + the writer-of-record is
-// ambiguous). Soroban-derived sinks (trades, blend_*, phoenix_*,
-// comet_*, soroswap_skim, sep41_*, cctp_events, rozo_events,
-// reflector/redstone oracle_updates) ride the projector path;
-// everything else (sdex trades, external CEX/FX, band oracle_updates,
-// supply observers writing LedgerEntry observations) still rides
-// the dispatcher path because those sources don't flow through
-// soroban_events.
+// SinkMode selects which event classes PersistEvents writes; see ADR-0032.
 type SinkMode int
 
 const (
-	// SinkModeAll writes every consumer.Event the dispatcher emits —
-	// nothing is skipped. Used when the projector is NOT running: the
-	// dispatcher's events-goroutine is then the only writer, so it must
-	// persist every class (including sep41). `stellarindex-ops backfill`
-	// also uses this mode (the projector never runs there). When the
-	// projector IS enabled the events-goroutine instead uses
-	// [SinkModeSkipSoleWriter] (Phase-3) or [SinkModeSkipProjected]
-	// (Phase-4) — see [SinkModeForProjector].
+	// SinkModeAll writes every event; used when the projector is not running (it is then the only writer) and by backfill.
 	SinkModeAll SinkMode = iota
 
-	// SinkModeSkipProjected skips Soroban-derived events the
-	// projector handles (see [IsProjectedEvent]). Phase 4+ the
-	// dispatcher's events-goroutine uses this mode so the projector
-	// owns Soroban-derived writes outright; the events-goroutine
-	// continues handling sdex / external / band / supply observers.
+	// SinkModeSkipProjected skips events the projector owns (see IsProjectedEvent); sdex/external/band/supply still write here.
 	SinkModeSkipProjected
 
-	// SinkModeSkipSoleWriter skips ONLY the events whose domain the
-	// projector has EARNED sole-writer status for (see
-	// [IsSoleWriterProjected]): the specs with [ProjectorSpec.SoleWriter]
-	// set. It's the Phase-3 parallel mode for every
-	// OTHER projected source (those still double-write for the
-	// duplicate-absorbing ON CONFLICT soak) while the promoted
-	// sole-writer domains are owned by the projector outright — so
-	// they never double-write and, crucially, never depend on the
-	// `PersistPerSource` flag's value (closing the config foot-gun
-	// where a mis-set flag silently dropped sep41 rows). The
-	// events-goroutine still writes sdex / external / band / supply
-	// observers, exactly as in [SinkModeSkipProjected]. Its copies of
-	// the double-written events count nothing: see [countsInProjector].
+	// SinkModeSkipSoleWriter skips only sole-writer domains (ProjectorSpec.SoleWriter); the rest double-write and never depend on the PersistPerSource flag.
 	SinkModeSkipSoleWriter
 )
 
-// SinkModeForProjector selects the dispatcher events-goroutine's sink
-// mode from the projector config booleans. Extracted here (rather than
-// inlined in cmd/stellarindex-indexer) so the foot-gun-closure
-// invariant is unit-testable: for EVERY combination of these two
-// booleans, a sole-writer source's event is written exactly once (see
-// TestSinkModeForProjector_SoleWriterInvariant).
+// SinkModeForProjector picks the events-goroutine sink mode so a sole-writer event is written exactly once for every flag combination.
 //
-//   - projector disabled → SinkModeAll: the events-goroutine is the
-//     ONLY writer, so it must persist every class (including sep41).
-//   - projector enabled, persist_per_source=true → SinkModeSkipSoleWriter:
-//     Phase-3 parallel for un-promoted sources, but the projector owns
-//     the sole-writer domains outright — the events-goroutine
-//     skips them so they are never double-written and never at risk of
-//     the flag being flipped.
-//   - projector enabled, persist_per_source=false → SinkModeSkipProjected:
-//     Phase-4, projector is sole writer for ALL projected sources.
+// projector off: SinkModeAll. On with persist_per_source: SinkModeSkipSoleWriter. On without: SinkModeSkipProjected.
 func SinkModeForProjector(projectorEnabled, persistPerSource bool) SinkMode {
 	if !projectorEnabled {
 		return SinkModeAll
@@ -132,12 +85,8 @@ func skipInSink(ev consumer.Event, mode SinkMode) bool {
 	}
 }
 
-// countsInProjector reports whether ev's per-source counts belong to the
-// projector rather than to the dispatcher running under mode: in Phase-3
-// parallel mode both writers persist every un-promoted projected event, so
-// counting it on both sides doubled the `entries` column and
-// stellarindex_source_events_total. The projector counts in every mode it
-// runs in, so its tally reads the same in Phase 3 and Phase 4.
+// countsInProjector reports whether ev's per-source counts belong to the projector, not the dispatcher under mode.
+// In Phase-3 both writers persist un-promoted projected events; counting both doubled `entries` and source_events_total.
 func countsInProjector(ev consumer.Event, mode SinkMode) bool {
 	return mode == SinkModeSkipSoleWriter && IsProjectedEvent(ev)
 }
@@ -164,50 +113,18 @@ func countReceived(source string) {
 	obs.SourceLastEventUnix.WithLabelValues(source).Set(float64(time.Now().Unix()))
 }
 
-// PersistEvents drains `in` and writes each event to its hypertable via the supplied store. Returns
-// when ctx is canceled and the channel has been drained, or when the channel is closed.
-//
-// Cursor-vs-channel safety: callers advance their per-source cursor AFTER ProcessLedger enqueues
-// events to `in` but BEFORE this sink writes them, so returning on cancellation without draining
-// would drop up to cap(in) buffered events and `-resume` would skip them. The drain uses a fresh
-// context bounded by [drainTimeout]; if it trips, the remaining events are logged at ERROR with
-// their ledger range.
-//
-// `mode` (ADR-0032 Phase 4): see [SinkMode].
-// PersistEvents launches [PersistWorkers] concurrent drain goroutines sharing `in`, each with its own trade-batch buffer; one goroutine (one PG round
-// trip in flight) backs ProcessLedger up far below the ledger rate. Each worker claims a pool
-// connection per flush, so keep [PersistWorkers] well under PoolMaxOpenConns.
-//
-// Ordering within a source is NOT preserved across workers; safe because the trades PK is the full
-// identity, so duplicate writes resolve via ON CONFLICT DO NOTHING.
-//
-// late (nil in the backfill, which refreshes its own chunks) observes committed trade writes.
+// PersistEvents launches [PersistWorkers] concurrent drain goroutines over in, writing each event via the store until ctx is canceled and in is drained, or in closes.
 func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.Store, in <-chan consumer.Event, mode SinkMode, late *LateTradeRefresher) ShutdownLoss {
 	lt := &lossTracker{}
-	// Bounded async retry buffer for external (CEX/FX) trades that hit
-	// an infrastructure fault (ADR-0041).
-	// On-chain trades block-and-retry instead (cursor gating); external
-	// trades — no cursor, vendor-refillable — buffer here and drop-oldest
-	// under sustained overflow so they never block the pipeline. A nil
-	// store (unit tests hitting only the default/unhandled path) skips
-	// the buffer + its goroutine entirely.
+	// Bounded async retry buffer for external (CEX/FX) trades on infra faults (ADR-0041): they have no cursor to gate,
+	// so they drop-oldest on overflow rather than block. A nil store skips the buffer.
 	var extBuf *externalRetryBuffer
 	var bufWG sync.WaitGroup
 	var bufCancel context.CancelFunc
 	if store != nil {
 		extBuf = newExternalRetryBuffer(late.writer(store), logger, externalRetryBufferMaxDepth)
-		// Run the retry buffer under a context DERIVED from ctx and tied to
-		// worker lifetime, not ctx itself. extBuf.run only returns on
-		// <-ctx.Done() (→ finalDrain). Under ctx, a BACKFILL — whose input
-		// channel closes when the range completes but whose process ctx is
-		// never canceled (no SIGTERM on a clean range-complete) — would leave
-		// run() spinning forever, so bufWG.Wait() below hangs, the chunk never
-		// logs complete, and the cursor + CAGG materialisation never run.
-		// Cancelling this derived context once the workers have drained lets
-		// run() exit via its fresh-context finalDrain (no buffered external
-		// trades lost). Live ingest is unaffected: its workers only exit when
-		// the source closes `in` (i.e. at shutdown), which is when ctx is
-		// cancelled anyway.
+		// Derived ctx tied to worker lifetime, not ctx: a backfill's ctx is never canceled, so run() would spin and bufWG.Wait() hang.
+		// Cancelling it after the workers drain lets run() exit via its fresh-context finalDrain without losing buffered trades.
 		var bufCtx context.Context
 		bufCtx, bufCancel = context.WithCancel(ctx)
 		bufWG.Add(1)
@@ -239,47 +156,24 @@ func PersistEvents(ctx context.Context, logger *slog.Logger, store *timescale.St
 	return lt.snapshot()
 }
 
-// PersistWorkers is the count of concurrent drain goroutines run by
-// PersistEvents. Sized to balance PG-pool capacity (25) and worker
-// throughput. Measured on live r1: 4 workers gave ~5 ledgers/min vs
-// the ~10 ledgers/min network rate. 8 workers lifts processing
-// rate above the network rate so the cursor's last_updated stays
-// fresh enough for the SLA-freshness threshold. Peak PG-conn use
-// is still well under the 25-conn pool ceiling.
+// PersistWorkers is the count of concurrent drain goroutines; 8 keeps ingest above the network ledger rate within the 25-conn PG pool.
 const PersistWorkers = 8
 
-// ep and tw are the two write seams. In production both are the real
-// store (PersistEvents passes it twice, once wrapped by
-// [storeEventPersister]); a fake in the shutdown-race tests, which is the
-// only reason they are parameters rather than a `*timescale.Store`.
+// ep and tw are the two write seams: the real store in production, a fake in the shutdown-race tests.
 //
 //nolint:gocognit,contextcheck // batched-drain loop has natural fan-out: ctx.Done, ticker, channel — splitting hurts readability of the flush invariants. The shutdown flush intentionally uses a fresh context (parent is canceled); see flushShutdown.
 func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, tw tradeWriter, in <-chan consumer.Event, mode SinkMode, workerID int, extBuf *externalRetryBuffer, lt *lossTracker) {
 	tradeBuf := make([]canonical.Trade, 0, tradeBatchSize)
-	// carried holds NON-trade events whose steady-state write was
-	// cancelled mid-flight by the parent ctx — the non-trade twin of the
-	// `flush` carry below. Such an event is already OFF the channel, so
-	// nothing will ever redeliver it; abandoning it there would throw away
-	// an already-cursored served-tier write while the worker's whole drain
-	// budget still sits unused. Bounded in practice by one
-	// entry: once ctx is cancelled shutdownSafeCtx hands out a FRESH
-	// bounded context, so every later abandon is a genuine loss and is
-	// reported rather than carried. Both arms that hand it to
-	// [persistCarried] then RETURN, so there is no reset — nothing reads
-	// it again.
+	// carried holds non-trade events whose steady-state write was cancelled mid-flight by the parent ctx.
+	// They are already off the channel, so nothing redelivers them; both arms hand them to persistCarried and return.
 	var carried []consumer.Event
 	var drain drainDeadline
 	ep = dispatcherEventPersister(ep, mode)
 	flushTicker := time.NewTicker(tradeBatchFlushInterval)
 	defer flushTicker.Stop()
 
-	// flushWith writes the buffered batch through the resilient sink and
-	// returns the trades the flush had to abandon because fctx was
-	// cancelled mid-write (see flushTradeBatch).
-	// buf routes external trades to the async retry buffer; passing nil
-	// (shutdown paths) makes external trades block-and-retry within the
-	// bounded shutdown context instead, since the buffer's background
-	// retrier is winding down.
+	// flushWith writes the buffered batch and returns trades abandoned because fctx was cancelled.
+	// A nil buf (shutdown paths) makes external trades block-and-retry in the bounded shutdown context instead.
 	flushWith := func(fctx context.Context, buf *externalRetryBuffer) []canonical.Trade {
 		if len(tradeBuf) == 0 {
 			return nil
@@ -288,20 +182,8 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 		tradeBuf = make([]canonical.Trade, 0, tradeBatchSize)
 		return flushTradeBatch(fctx, logger, tw, buf, batch, workerID)
 	}
-	// flush is the steady-state flush. It runs under the parent ctx (via
-	// shutdownSafeCtx) so a stuck write can't hold shutdown hostage —
-	// which means a shutdown that RACES an in-flight write cancels it.
-	// The rows that write had to abandon are not lost: they go back into
-	// tradeBuf, and the `<-ctx.Done()` arm's flushShutdown retries them
-	// under the worker's bounded drain deadline — the same
-	// carry-into-the-drain shape as the sorobanevents AsyncSink.
-	// Without the carry they would fall straight into flushTradeBatch's
-	// per-row isolation against the dead ctx and be logged as "abandoned —
-	// re-derive" (up to tradeBatchSize rows) on every deploy that caught
-	// a flush mid-flight. Only the parent-ctx case is carried: when
-	// shutdownSafeCtx already handed out a fresh bounded ctx,
-	// its deadline IS the drain budget, so an abandon there is reported
-	// as the genuine loss it is.
+	// flush is the steady-state flush under the parent ctx, so a stuck write cannot hold shutdown hostage.
+	// Rows abandoned by a racing cancel go back into tradeBuf for flushShutdown to retry; a fresh bounded ctx's abandon is a genuine loss.
 	flush := func(fctx context.Context) {
 		abandoned := flushWith(fctx, extBuf)
 		if len(abandoned) == 0 {
@@ -314,17 +196,8 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 		reportAbandonedTrades(logger, lt, "steady-state flush under shutdown ctx", abandoned, fctx.Err())
 	}
 
-	// flushShutdown flushes this worker's in-memory tradeBuf on the
-	// shutdown paths (parent ctx canceled OR channel closed) using a
-	// FRESH context bounded by the worker's SHARED drain deadline.
-	// The parent ctx is already canceled by the time those arms
-	// fire, so passing it to BatchInsertTrades / persistTrade makes every
-	// postgres call fail instantly and silently drops the buffered
-	// trades. The fresh context (same pattern as drainBufferedEvents)
-	// lets the final flush actually land; sharing ONE deadline with the
-	// worker's other shutdown phases is what keeps the total
-	// drain inside [ShutdownDeadline] instead of stacking a fresh
-	// [drainTimeout] per phase.
+	// flushShutdown flushes tradeBuf under a FRESH ctx bounded by the worker's shared drain deadline; the canceled parent would fail every insert.
+	// One shared deadline keeps the total drain inside ShutdownDeadline.
 	flushShutdown := func(deadline time.Time) {
 		if len(tradeBuf) == 0 {
 			return
@@ -337,20 +210,8 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 	for {
 		select {
 		case <-ctx.Done():
-			// Shutdown requested. Before exiting, drain every event THIS worker can pull right now, so the
-			// racy select — which can pick this arm even while events sit buffered in `in` — cannot drop
-			// in-flight work. The drain is NON-BLOCKING (the default arm breaks out the instant `in` is
-			// momentarily empty), so a channel the producer hasn't closed yet can't pin the worker: worker
-			// 0's blocking drainBufferedEvents below still catches late arrivals and the channel close. The
-			// parent ctx is already cancelled, so trade-shaped events go to tradeBuf (flushed by
-			// flushShutdown with a fresh ctx) and everything else drains under a fresh bounded ctx — never
-			// the cancelled parent, which would fail every insert instantly and silently drop the event.
-			//
-			// Every phase below shares ONE absolute deadline, latched by whichever post-cancellation phase
-			// ran first (possibly a racy select arm via shutdownSafeCtx), so the worker's whole drain is
-			// bounded by [drainTimeout] rather than by drainTimeout × phases. That is what guarantees worker
-			// 0 reaches drainBufferedEvents' deadline arm — and logs the undrained ledger range — before
-			// main hard-exits at [ShutdownDeadline].
+			// Shutdown: drain whatever this worker can pull NON-BLOCKING, since the racy select can pick this arm with events still buffered.
+			// Every phase shares one deadline latched by the first post-cancellation phase, so worker 0 logs the undrained range before main hard-exits.
 			deadline := drain.get()
 			// Carried events first: they were dequeued BEFORE anything
 			// still sitting in `in`, and nothing else can redeliver them.
@@ -367,12 +228,8 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 			}
 			return
 		case <-flushTicker.C:
-			// Go's select has no priority, so on
-			// the very iteration ctx is cancelled this arm can still win the
-			// race against `<-ctx.Done()` above. shutdownSafeCtx swaps in a
-			// fresh bounded context when that happens, so the flush gets its
-			// fair share of the drain budget instead of failing every insert
-			// instantly against the already-dead parent.
+			// select has no priority, so this arm can win on the iteration ctx is cancelled;
+			// shutdownSafeCtx then swaps in a fresh bounded ctx so the flush is not failed against the dead parent.
 			fctx, fcancel := shutdownSafeCtx(ctx, &drain)
 			flush(fctx)
 			fcancel()
@@ -405,11 +262,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 			// persistEventResilient. See the flushTicker arm above.
 			fctx, fcancel := shutdownSafeCtx(ctx, &drain)
 			if err := persistEventResilient(fctx, logger, ep, ev); err != nil {
-				// Same carry rule as `flush` above, for the same reason:
-				// only the parent-ctx case is carried. When shutdownSafeCtx
-				// already handed out a fresh bounded ctx its
-				// deadline IS the drain budget, so an abandon there is the
-				// genuine loss it is reported as.
+				// Same carry rule as flush: only the parent-ctx case is carried; an abandon under a fresh bounded ctx is a genuine loss.
 				if fctx == ctx {
 					carried = append(carried, ev)
 				} else {
@@ -421,22 +274,8 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 	}
 }
 
-// drainInFlightNow makes a NON-BLOCKING sweep over whatever is already
-// buffered in `in` and returns tradeBuf with every trade-shaped event it
-// found appended; non-trade events are persisted under ctx as it goes.
-//
-// [persistWorker]'s shutdown arm calls this before exiting,
-// because the racy select can pick `<-ctx.Done()` while events are still
-// sitting in the channel buffer. Non-blocking (the default arm returns
-// the instant `in` is momentarily empty) so a channel the producer has
-// not closed yet cannot pin the worker — worker 0's blocking
-// [drainBufferedEvents] still catches late arrivals and the close.
-//
-// Extracted from that arm to keep [persistWorker] under the
-// cognitive-complexity gate (the campaign's precedent is to lower real
-// complexity rather than suppress the linter); behaviour is unchanged,
-// including that a closed channel and a momentarily-empty one both just
-// return.
+// drainInFlightNow sweeps NON-BLOCKING whatever is buffered in in: trade events are appended to tradeBuf, others persisted under ctx.
+// Non-blocking so an unclosed channel cannot pin the worker; worker 0's drainBufferedEvents catches late arrivals.
 func drainInFlightNow(ctx context.Context, in <-chan consumer.Event, logger *slog.Logger, ep eventPersister, mode SinkMode, tradeBuf []canonical.Trade, lt *lossTracker) []canonical.Trade {
 	for {
 		select {
@@ -460,18 +299,8 @@ func drainInFlightNow(ctx context.Context, in <-chan consumer.Event, logger *slo
 	}
 }
 
-// persistCarried is flushShutdown's non-trade half: it re-writes the
-// events a steady-state persist had to abandon mid-flight, under a FRESH
-// context bounded by the worker's SHARED drain deadline. Same rationale
-// as flushShutdown — the parent ctx is already cancelled on both
-// shutdown paths, so passing it through would fail every insert
-// instantly — and the same reason for taking the absolute deadline
-// rather than a fresh budget. Anything it still cannot land IS a genuine
-// loss, so it is reported here rather than carried further.
-//
-// The caller resets its own slice afterwards; taking it by value keeps
-// this a plain function rather than a closure over persistWorker's
-// locals, which is what keeps that function under the complexity gate.
+// persistCarried re-writes events a steady-state persist abandoned, under a FRESH ctx bounded by the shared drain deadline.
+// Anything it cannot land is reported as a genuine loss.
 //
 //nolint:contextcheck // intentional fresh context; see godoc above.
 func persistCarried(carried []consumer.Event, logger *slog.Logger, ep eventPersister, deadline time.Time, lt *lossTracker) {
@@ -487,16 +316,8 @@ func persistCarried(carried []consumer.Event, logger *slog.Logger, ep eventPersi
 	}
 }
 
-// shutdownSafeCtx returns ctx unchanged when it is still live. When ctx
-// has ALREADY been cancelled it returns a FRESH context bounded by the
-// worker's latched drain deadline instead: the racy select in
-// [persistWorker]'s main loop can pick the flushTicker or `<-in` arm on
-// the exact same iteration ctx.Done() fires, and passing the dead
-// parent straight through to a flush/persist call would fail every
-// write instantly — abandoning it — rather than giving it the same
-// bounded shot at landing the worker's `<-ctx.Done()` arm would have
-// given it. The caller must always call the returned CancelFunc (a
-// no-op when ctx was live).
+// shutdownSafeCtx returns ctx if live, else a FRESH ctx bounded by the latched drain deadline, because the racy select can run a flush
+// on the iteration ctx fires. The caller must always call the returned CancelFunc.
 func shutdownSafeCtx(ctx context.Context, drain *drainDeadline) (context.Context, context.CancelFunc) {
 	if ctx.Err() == nil {
 		return ctx, func() {}
@@ -504,11 +325,7 @@ func shutdownSafeCtx(ctx context.Context, drain *drainDeadline) (context.Context
 	return context.WithDeadline(context.Background(), drain.get())
 }
 
-// drainDeadline latches ONE absolute post-cancellation deadline per
-// worker. Whichever shutdown phase asks first fixes it — a racy
-// select arm via [shutdownSafeCtx] or the `<-ctx.Done()` arm — and every
-// later phase reuses it, so arms taken after cancellation spend the same
-// [drainTimeout] budget instead of each starting a fresh one.
+// drainDeadline latches ONE absolute post-cancellation deadline per worker so every shutdown phase shares one drainTimeout budget.
 type drainDeadline struct{ at time.Time }
 
 func (d *drainDeadline) get() time.Time {
@@ -518,31 +335,14 @@ func (d *drainDeadline) get() time.Time {
 	return d.at
 }
 
-// tradeBatchSize caps the trades-per-batch in BatchInsertTrades.
-// Sized to fit comfortably under PostgreSQL's max-bind-params limit
-// (32767 parameters); each row has 12 placeholders, so 200 rows =
-// 2400 placeholders — well under. Production throughput is roughly
-// linear in this until either PG's planning cost or the events
-// channel runs dry; 200 is the validated operating point.
+// tradeBatchSize caps trades per batch: 12 placeholders per row, so 200 rows stays well under PostgreSQL's 32767 bind-param limit.
 const tradeBatchSize = 200
 
-// tradeBatchFlushInterval is the upper bound on staleness for events
-// stuck below the size threshold. With low-volume periods the buffer
-// fills slowly; this caps how long a trade waits before landing
-// regardless. 200ms keeps per-batch latency well under the SLA
-// freshness threshold while still amortising the per-roundtrip cost.
+// tradeBatchFlushInterval bounds how long a trade waits below the size threshold.
 const tradeBatchFlushInterval = 200 * time.Millisecond
 
-// tradeFromEvent returns the underlying canonical.Trade for any
-// event that targets the trades hypertable. Used by the PersistEvents
-// batcher to route trade-shaped events down the batch path while
-// leaving everything else (oracle updates, supply observations,
-// log-only events) on the single-row HandleEvent path.
-//
-// MUST stay in lockstep with HandleEvent — every event type whose
-// HandleEvent case calls persistTrade(...) must return its trade
-// here, otherwise the event silently falls through to HandleEvent's
-// per-event slow path (correctness-equivalent, but slow).
+// tradeFromEvent returns the trade for events targeting the trades hypertable, for the batch path.
+// MUST stay in lockstep with HandleEvent: every case calling persistTrade must return its trade here, or it silently takes the slow path.
 func tradeFromEvent(ev consumer.Event) (canonical.Trade, bool) {
 	switch e := ev.(type) {
 	case soroswap.TradeEvent:
@@ -564,11 +364,7 @@ func tradeFromEvent(ev consumer.Event) (canonical.Trade, bool) {
 	}
 }
 
-// IsProjectedEvent reports whether the ADR-0032 projector writes ev:
-// its type is listed by a [SourceSpec] with a Projector. Phase 4+ the
-// dispatcher's events goroutine skips these. Everything else (sdex,
-// external CEX/FX, band, soroswap_router, supply observers) is written
-// only by the events goroutine.
+// IsProjectedEvent reports whether the ADR-0032 projector writes ev (its type is listed by a SourceSpec with a Projector).
 func IsProjectedEvent(ev consumer.Event) bool {
 	return eventRoles[reflect.TypeOf(ev)].projected
 }
@@ -581,20 +377,8 @@ func IsSoleWriterProjected(ev consumer.Event) bool {
 	return eventRoles[reflect.TypeOf(ev)].soleWriter
 }
 
-// drainBufferedEvents writes any remaining buffered events using a
-// fresh shutdown context so postgres calls succeed past the parent
-// context's cancellation. Bounded by the caller's shared drain
-// `deadline` so a hung shutdown can't keep the binary alive
-// indefinitely; on deadline, it surfaces the exact undrained ledger
-// range at ERROR (recoverable from the CH lake per ADR-0034) rather
-// than dropping it silently.
-//
-// Deliberately takes a DEADLINE, not a context — the whole reason this
-// exists is to keep writing past the parent's cancellation, and the
-// shared deadline requires the instant it gives up to be the same
-// instant its caller's earlier shutdown phases were bounded by (a fresh
-// [drainTimeout] here would push the ERROR report past main's
-// [ShutdownDeadline], so it would never fire).
+// drainBufferedEvents writes remaining buffered events under a fresh ctx bounded by the caller's shared drain deadline.
+// It takes a deadline, not a ctx, so its ERROR report of the undrained ledger range fires before main's ShutdownDeadline.
 //
 //nolint:contextcheck,gocognit // intentional fresh context + batched-drain fan-out; see godoc above.
 func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, ep eventPersister, tw tradeWriter, mode SinkMode, deadline time.Time, lt *lossTracker) {
@@ -647,14 +431,8 @@ func drainBufferedEvents(in <-chan consumer.Event, logger *slog.Logger, ep event
 	}
 }
 
-// ledgerSpan tracks the min/max ledger observed across the trades a shutdown
-// drain could not persist, so the undrained-range ERROR can name the exact
-// range an operator must re-derive (`ch-rebuild -sdex-gaps`).
-//
-// Extracted from drainFinalPass's inner loop purely to keep that function under
-// the cognitive-complexity gate, lowering real complexity rather than
-// suppressing the linter. min stays 0 until the first observation, so a drain
-// that loses nothing reports 0/0.
+// ledgerSpan tracks the min/max ledger of trades a shutdown drain could not persist, naming the range to re-derive (`ch-rebuild -sdex-gaps`).
+// min stays 0 until the first observation.
 type ledgerSpan struct{ min, max uint32 }
 
 func (s *ledgerSpan) observe(l uint32) {
@@ -666,11 +444,8 @@ func (s *ledgerSpan) observe(l uint32) {
 	}
 }
 
-// drainFinalPass runs once the drain deadline has passed: a non-blocking sweep of what is
-// already buffered in `in`, persisted under a fresh drainFinalPassBudget context because the
-// parent is done. Every non-skipped event it picks up is counted and logged at ERROR with the
-// trades' ledger span, so the residual can be re-derived from the lake (`ch-rebuild -sdex-gaps`).
-// Standalone so the skip-before-count ordering is testable with a pre-filled `in`.
+// drainFinalPass makes a non-blocking sweep after the drain deadline, persisting under a fresh drainFinalPassBudget ctx and logging the residual at ERROR.
+// Standalone so skip-before-count ordering is testable.
 //
 //nolint:contextcheck // intentional fresh context; see godoc above.
 func drainFinalPass(in <-chan consumer.Event, logger *slog.Logger, ep eventPersister, tw tradeWriter, mode SinkMode, lt *lossTracker) {
@@ -686,13 +461,7 @@ drainRemainder:
 			if !ok {
 				break drainRemainder
 			}
-			// Skip-check FIRST. A
-			// projector-owned event (skipInSink) was never going to be
-			// persisted by this drain even on a clean shutdown, so it
-			// must not inflate undrained_events/undrained_trades or
-			// widen the re-derive ledger range — that would send an
-			// operator re-deriving a range the projector already owns
-			// and durably wrote.
+			// Skip-check first: a projector-owned event was never going to be persisted here, so it must not inflate the undrained counts or the re-derive range.
 			if skipInSink(ev, mode) {
 				continue
 			}
@@ -725,22 +494,9 @@ drainRemainder:
 	}
 }
 
-// ShutdownDeadline is the process-level drain budget the indexer
-// enforces after SIGINT/SIGTERM (cmd/stellarindex-indexer/main.go): once
-// it expires main logs "drain timeout exceeded — hard exit" and returns,
-// and the process dies with whatever the sink was still doing.
-//
-// Exported because the sink's own drain budgets are DERIVED from it.
-// Independent budgets fail: a sink that gives itself 90s per drain
-// phase across four stacked phases while main kills the process at 30s
-// means worker 0's deadline arm — the one that logs the exact undrained
-// ledger range at ERROR, the single artifact telling an operator what
-// to re-derive — can never fire, and operators lose the loss report on
-// every non-clean shutdown.
-//
-// Pinned against main's wiring by TestShutdownDeadline_MainUsesConstant
-// and against the sink's own budgets by
-// TestDrainBudget_FitsShutdownDeadline.
+// ShutdownDeadline is the process drain budget after SIGINT/SIGTERM; the sink's drain budgets are derived from it.
+// Independent budgets would stop worker 0's deadline arm (the undrained-range ERROR) from ever firing.
+// Pinned by TestShutdownDeadline_MainUsesConstant and TestDrainBudget_FitsShutdownDeadline.
 const ShutdownDeadline = 30 * time.Second
 
 // Drain budgets of the indexer's other shutdown sinks. main wires each
@@ -764,11 +520,7 @@ const (
 const IndexerStopTimeout = ShutdownDeadline + CHLiveSinkStopBudget +
 	RawEventDrainBudget + DiscoveryDrainBudget + stopTimeoutMargin
 
-// drainFinalPassBudget is the tail reserved for the FINAL best-effort
-// persist pass drainBufferedEvents makes after its deadline trips
-// and for the external retry buffer's finalDrain. Both run
-// AFTER the shared drain deadline has expired, so their budget must fit
-// in the gap between [drainTimeout] and [ShutdownDeadline].
+// drainFinalPassBudget is the tail reserved for the final best-effort pass and the retry buffer's finalDrain, which run after the drain deadline.
 const drainFinalPassBudget = 5 * time.Second
 
 // drainReportMargin is slack left at the end of the shutdown window for
@@ -776,64 +528,19 @@ const drainFinalPassBudget = 5 * time.Second
 // before main hard-exits. Nothing may be scheduled inside it.
 const drainReportMargin = 5 * time.Second
 
-// drainTimeout caps how long PersistEvents will spend writing
-// already-buffered events on shutdown. Derived from [ShutdownDeadline]
-// so the whole sequence — drain, final best-effort pass, ERROR report —
-// completes INSIDE the process's shutdown window by construction.
-//
-// 20s is ample for the work itself: a 256-deep buffer at typical
-// 1ms-per-insert latency drains in ~250 ms, so this tolerates a ~80x
-// slowdown (e.g. postgres saturated by a concurrent VACUUM) before
-// giving up. If the deadline trips anyway (e.g. postgres genuinely
-// down), drainBufferedEvents logs the exact undrained ledger range at
-// ERROR rather than dropping silently — the raw ops are in the CH lake
-// (ADR-0034), so the range is recoverable via `stellarindex-ops
-// ch-rebuild -sdex-gaps` and the completeness timer.
-//
-// It is a budget for the WHOLE post-cancellation drain of one worker,
-// not per phase: the worker computes one absolute deadline when it sees
-// shutdown and every phase shares it (see persistWorker). Stacking
-// independent per-phase timeouts would let the sink's total exceed
-// main's deadline.
+// drainTimeout caps one worker's WHOLE post-cancellation drain (derived from ShutdownDeadline), not each phase;
+// on trip, drainBufferedEvents logs the undrained range, recoverable via `stellarindex-ops ch-rebuild -sdex-gaps` (ADR-0034).
 const drainTimeout = ShutdownDeadline - drainFinalPassBudget - drainReportMargin
 
-// HandleEvent dispatches one event to its hypertable insert and RETURNS the underlying Insert error
-// (nil on success). A panic is recovered and returned as a generic (non-classified) error, which
-// the projector treats as transient; that is acceptable because the sole-writer sep41 insert path
-// returns errors rather than panicking, and decoder panics are caught upstream in the projector's
-// processEventSafely.
-//
-// The error return is load-bearing for the ADR-0032 projector, which gates its cursor on it: a
-// transiently failed write must NOT let the cursor advance past that ledger, or a sole-writer
-// (sep41) row is permanently lost. The dispatcher's drain reaches it through persistEventResilient.
-//
-// A trade the store permanently rejects is returned as a *[TradeDroppedError], never nil: nil means
-// the row landed. The projector skips that output, counts it outcome="sink_permanent" and keeps
-// sinking the row's other outputs; `stellarindex-ops projected-rebuild` counts it as a permanent
-// drop and still checkpoints the window, because no re-run can land it (every OTHER insert failure
-// holds the window).
-//
-// Exported for the projector (`internal/projector`) and the ops re-derive tools (`stellarindex-ops
-// projected-rebuild` / `ch-rebuild`).
+// HandleEvent dispatches one event to its insert and returns the Insert error; a trade the store permanently rejects is a *TradeDroppedError, never nil.
 func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, ev consumer.Event) error {
 	return handleEvent(ctx, logger, store, ev, true)
 }
 
-// ErrSinkPanic is the sentinel every recovered sink panic wraps, so both
-// classifiers on the durability edge — this package's [classifyFault] and
-// the projector's classifySinkFault — read it as permanent for that event:
-// a tight retry loop over a panicking decode is strictly worse than
-// isolating it.
+// ErrSinkPanic wraps every recovered sink panic; both fault classifiers read it as permanent so a panicking decode is isolated, not retried.
 var ErrSinkPanic = errors.New("pipeline: panic in event sink")
 
-// handleEvent is [HandleEvent]'s body with one extra knob: countEvent.
-// The per-source received/last-seen counters must be bumped ONCE per
-// event, but the sink re-invokes this function on an
-// infrastructure retry — without the knob a 10-minute Postgres outage
-// would inflate stellarindex_source_events_total by one count per
-// backoff attempt for the blocked event and drag its last-event
-// timestamp forward, corrupting exactly the freshness/liveness signals
-// an operator reads during that outage. Retries pass false.
+// handleEvent is HandleEvent's body; countEvent=false on retries so an infra outage does not inflate source_events_total or freshness signals.
 func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, ev consumer.Event, countEvent bool) (retErr error) { //nolint:gocyclo,funlen // dispatch table; one case per consumer.Event implementation. Splitting would reduce clarity.
 	defer func() {
 		if r := recover(); r != nil {
@@ -854,15 +561,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		countReceived(source)
 	}
 
-	// Every arm RETURNS its persist result so the projector can gate its
-	// cursor on a sink failure. Trade-shaped events go through
-	// persistTrade's ADR-0041 block-and-retry (infra faults BLOCK the
-	// caller, data faults drop and return a *TradeDroppedError) and RETURN
-	// its abandon error like every other arm, so a bounded-ctx caller (the
-	// projector's per-source cycle) cursor-gates trades too. Swallowing the
-	// error (return nil) would let the projector advance the cursor past a
-	// trade abandoned when its 60s cycle ctx expired during a Postgres
-	// outage, and that trade would never self-heal.
+	// Every arm RETURNS its persist result so the projector can gate its cursor on a sink failure.
+	// Swallowing a trade's abandon error would let the cursor pass a trade that never self-heals.
 	switch e := ev.(type) {
 	case soroswap.TradeEvent:
 		return persistTrade(ctx, logger, store, e.Trade)
@@ -915,14 +615,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 	case band.UpdateEvent:
 		return persistOracle(ctx, logger, store, e.Update)
 	case soroswap_router.Event:
-		// Persist to the soroswap_router_swaps hypertable (migration
-		// 0049), one row per router invocation, so the gap-detector
-		// target on the hypertable measures honest coverage (a
-		// log-only source has no row to count). The `entries` bump for
-		// /v1/diagnostics/ingestion follows the landed insert, as in
-		// every persist helper: the sink re-invokes this function on an
-		// infra retry, so a bump ahead of the insert would count one
-		// entry per attempt (and one for a row the store then rejected).
+		// Persist one row per router invocation so the gap-detector measures honest coverage.
+		// The `entries` bump follows the landed insert: the sink re-invokes on infra retry, so bumping first would overcount.
 		row := timescale.SoroswapRouterSwap{
 			Ledger:          e.Swap.Ledger,
 			LedgerCloseTime: e.Swap.ClosedAt,
@@ -947,11 +641,7 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 			row.DeadlineTS = &e.Swap.DeadlineTs
 		}
 		if err := store.InsertSoroswapRouterSwap(ctx, row); err != nil {
-			// Count the persist failure like every sibling case in this
-			// switch: a Warn without a SourceInsertErrorsTotal bump leaves
-			// a dropped swap invisible to metrics/alerts, and silent to
-			// any caller that discards the returned err. Counter only —
-			// the case still returns err.
+			// Count the persist failure like sibling cases: a Warn without a SourceInsertErrorsTotal bump leaves a dropped swap invisible to alerts.
 			obs.SourceInsertErrorsTotal.WithLabelValues(soroswap_router.SourceName, "soroswap_router_swap").Inc()
 			logger.Warn("soroswap-router persist failed",
 				"source", soroswap_router.SourceName,
@@ -962,11 +652,7 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		bumpEntryCount(ctx, logger, store, soroswap_router.SourceName)
 		return nil
 	case defindex.Event:
-		// Strategy-layer flow (vault → strategy capital movement).
-		// Persists to defindex_flows with layer='strategy' (migration
-		// 0050). `actor` here is the vault contract C-strkey
-		// (the strategy contract's `from` field); end-user attribution
-		// lives at the vault layer (case defindex.VaultEvent below).
+		// Strategy-layer flow (vault to strategy) in defindex_flows with layer='strategy'; actor is the vault contract C-strkey.
 		strategyRow := timescale.DefindexFlow{
 			Ledger:          e.Flow.Ledger,
 			LedgerCloseTime: e.Flow.ClosedAt,
@@ -1026,13 +712,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		bumpEntryCount(ctx, logger, store, defindex.SourceName)
 		return nil
 	case defindex.DFeesEvent:
-		// Vault-layer per-asset protocol-fee distribution (`dfees`).
-		// One event per distributed_fees Vec entry, one row per
-		// event — fee_index carries the Vec position. dfees fires in the
-		// SAME op as the vault deposit/withdraw flow above and fans out
-		// per token, a shape defindex_flows' one-row-per-flow schema
-		// doesn't carry — hence its own defindex_fees table (migration
-		// 0146; correlate by tx_hash + op_index).
+		// Per-asset protocol-fee distribution (dfees): one row per distributed_fees Vec entry (fee_index = position).
+		// Own table because defindex_flows is one-row-per-flow; correlate by tx_hash + op_index.
 		feeRow := timescale.DefindexFee{
 			Ledger:          e.Fee.Ledger,
 			LedgerCloseTime: e.Fee.ClosedAt,
@@ -1103,15 +784,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 	case sep41_transfers.Event:
 		return persistSEP41TransferEvent(ctx, logger, store, e)
 	default:
-		// A source emitted an event type the sink doesn't know how
-		// to persist. Usually means a new source was registered in
-		// BuildDispatcher but the type-switch wasn't updated in
-		// lock-step. Count + log — silent drops would otherwise
-		// look like "metrics say we're ingesting but the tables
-		// stay empty" from the operator's POV. Return nil (not an
-		// error): the lockstep AST tests guarantee every projected
-		// type has an arm, so this is unreachable for the projector;
-		// returning an error would make it retry a wiring bug forever.
+		// Unknown event type: count + log, since silent drops look like ingesting-but-empty tables.
+		// Return nil: lockstep AST tests make this unreachable for the projector, and an error would retry a wiring bug forever.
 		obs.SourceInsertErrorsTotal.WithLabelValues(source, "unhandled").Inc()
 		logger.Warn("unhandled event kind",
 			"kind", ev.EventKind(),
@@ -1131,25 +805,8 @@ func eventSource(ev consumer.Event) string {
 	return "_unknown"
 }
 
-// persistEventResilient writes ONE non-trade served-tier event with the same ADR-0041 failure
-// policy as the trade path: an infrastructure fault BLOCKS the drain goroutine and retries with
-// capped backoff (backpressure that gates the enqueue-advanced cursor), while a permanent data
-// fault is counted and skipped so one poison row can't wedge the pipeline.
-// Callers must not `_ = HandleEvent(...)`: this path carries writes NOBODY else makes (band
-// oracle_updates, external.UpdateEvent, supply LedgerEntry observations, soroswap_router swaps),
-// which a Postgres fault would silently drop while the cursor advanced.
-// Retries reuse TradeInsertRetriesTotal so the `trade_insert_backpressure` alert fires here too.
-// Genuine drops show on SourceInsertErrorsTotal{kind="dropped"}.
-// Return contract. Unlike [persistTrade], a permanent-fault drop is NOT a *[TradeDroppedError]: the
-// callers (dispatcher drain carry-or-report arms) read ANY non-nil return as a shutdown abandon, so
-// a drop would be double-reported.
-//   - nil: the write landed, OR it hit a permanent data fault (counted + logged
-//     HERE and dropped).
-//   - the ctx error: the retry was abandoned because ctx was cancelled or its
-//     drain deadline expired. NOT counted or logged here: only the caller knows
-//     whether the event still has a bounded drain pass ahead of it
-//     (persistWorker's `<-in` arm) or is a genuine loss
-//     ([reportAbandonedEvent]).
+// persistEventResilient writes one non-trade served-tier event with the ADR-0041 policy: infra faults block and retry (gating the cursor), permanent faults are counted and skipped.
+// A permanent drop returns nil, not *TradeDroppedError, and a ctx error means abandoned: the caller decides whether that is a loss ([reportAbandonedEvent]).
 func persistEventResilient(ctx context.Context, logger *slog.Logger, ep eventPersister, ev consumer.Event) error {
 	attempt := 0
 	err := retryInfra(ctx, logger, "handle_event", func(c context.Context) error {
@@ -1170,13 +827,8 @@ func persistEventResilient(ctx context.Context, logger *slog.Logger, ep eventPer
 	return nil
 }
 
-// reportAbandonedEvent counts and logs a non-trade served-tier event no
-// drain pass could land — the non-trade sibling of
-// [reportAbandonedTrades]. Call it exactly where the event has nowhere
-// left to go, never where it is about to be retried: consumer.Event
-// carries no ledger (kind + source is the whole identity the interface
-// exposes), so the re-derive hint is the source's own gap detector /
-// the completeness verdict rather than a ledger range.
+// reportAbandonedEvent counts and logs a non-trade event no drain pass could land; call it only where the event has nowhere left to go.
+// consumer.Event carries no ledger, so the re-derive hint is the source's gap detector.
 func reportAbandonedEvent(logger *slog.Logger, lt *lossTracker, ev consumer.Event, err error) {
 	lt.event()
 	obs.SourceInsertErrorsTotal.WithLabelValues(eventSource(ev), "dropped").Inc()
@@ -1241,12 +893,7 @@ func (l *lossTracker) snapshot() ShutdownLoss {
 	return l.loss
 }
 
-// eventPersister writes ONE non-trade served-tier event. It is always
-// [handleEvent] bound to the real store in production (see
-// [storeEventPersister]); the shutdown-race tests bind a fake, which is
-// the only reason the sink's drain path takes this rather than a
-// concrete *timescale.Store — the same seam rationale as [tradeWriter]
-// on the trade half.
+// eventPersister writes ONE non-trade served-tier event: handleEvent on the real store in production, a fake in the shutdown-race tests.
 type eventPersister func(ctx context.Context, ev consumer.Event, countEvent bool) error
 
 // storeEventPersister binds [handleEvent] to a store and logger. A nil
@@ -1258,25 +905,7 @@ func storeEventPersister(logger *slog.Logger, store *timescale.Store) eventPersi
 	}
 }
 
-// TradeDroppedError reports that a trade was PERMANENTLY dropped: the store
-// rejected it as a deterministic data fault ([isPermanentDataFault] — SQLSTATE
-// class 22/23 or a canonical validation sentinel), so it was counted, logged
-// and skipped rather than retried. The row is NOT in the served tier.
-//
-// It exists so "landed" and "dropped" do not share a return value. If
-// [persistTrade] returned nil for both, the projector — which binds
-// [HandleEvent] as its per-event sink and counts every nil as a durable commit
-// — would publish the dropped trade under
-// stellarindex_projector_events_decoded_total{outcome="ok"}, the one label
-// that promises it was written.
-//
-// Unwrap exposes the store's error, and that is load-bearing in both
-// directions: the projector classifies with timescale.IsPermanentDataError /
-// the canonical sentinels and SKIPS (outcome="sink_permanent", cursor
-// advances — an opaque error would read as unclassified and HOLD a sole-writer
-// cursor on a row that can never land), and this package's own
-// [classifyFault] keeps reading it as [faultData] (an opaque error would
-// block-and-retry forever inside [persistEventResilient]).
+// TradeDroppedError reports a trade PERMANENTLY dropped (deterministic data fault), so landed and dropped never share a nil return.
 type TradeDroppedError struct {
 	Source  string
 	Ledger  uint32
@@ -1300,35 +929,15 @@ func newTradeDroppedError(t canonical.Trade, cause error) *TradeDroppedError {
 	return &TradeDroppedError{Source: t.Source, Ledger: t.Ledger, TxHash: t.TxHash, OpIndex: t.OpIndex, Cause: cause}
 }
 
-// persistTrade writes one trade with ADR-0041 infrastructure resilience: an infra fault (connection
-// refused/reset, PG restarting) is RETRIED with backpressure, blocking the caller so an on-chain
-// cursor can't advance past an un-landed trade, while a data fault (constraint / numeric /
-// validation) is permanent for that row and is dropped + counted so retrying can't wedge the
-// pipeline. It also serves the projector's per-event sink (HandleEvent).
-// Return contract (a BOUNDED-ctx caller cursor-gates on it):
-//   - nil ONLY when the trade landed.
-//   - a *[TradeDroppedError] on a permanent data fault. REPORTED, not folded into
-//     nil: the projector counts every nil as a durable commit, so nil would
-//     publish a dropped trade as outcome="ok". The projector classifies the
-//     unwrapped error permanent and SKIPS it (cursor advances), labelled
-//     sink_permanent. A drop is never a ctx error, so [isCtxErr] callers are
-//     unaffected.
-//   - the ctx error when the retry is abandoned (shutdown, or the projector's
-//     60s cycle timeout), so the projector HOLDS the cursor and re-derives.
-//     persistTradeRouted / retryOnChainBatchBlocking deliberately ignore it.
-//
-// NOT the instrumentation point for the unit-ratio sentinel or usd_volume coverage: the live path
-// goes through [flushTradeBatch] and bypasses this.
+// persistTrade writes one trade with ADR-0041 resilience: infra faults retry (blocking the caller), data faults drop and return a *TradeDroppedError.
+// Returns nil only when the trade landed, or the ctx error if the retry was abandoned.
 func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t canonical.Trade) error {
 	if err := retryInfra(ctx, logger, "insert_trade", func(c context.Context) error {
 		return w.InsertTrade(c, t)
 	}); err != nil {
 		if isCtxErr(err) {
-			// Shutdown / cycle-timeout mid-retry — the raw op is durable in
-			// the CH lake (ADR-0034), so this row is re-derivable; surface it
-			// loudly AND return it so a bounded-ctx caller gates the cursor.
-			// Its own kind: kind="trade" means a row is GONE, and the
-			// any-rate persist_drop tripwire keys on it.
+			// Shutdown or cycle timeout mid-retry: the row is re-derivable from the CH lake (ADR-0034); return it so a bounded-ctx caller gates the cursor.
+			// Its own kind, since kind="trade" means a row is gone and the persist_drop tripwire keys on it.
 			obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, obs.InsertErrorKindTradeAbandoned).Inc()
 			logger.Error("insert trade abandoned on shutdown — recoverable from the CH lake (ADR-0034); re-derive",
 				"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash, "op_index", t.OpIndex, "err", err)
@@ -1356,15 +965,8 @@ func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t can
 	return nil
 }
 
-// recordOracleMetricIfMapped emits the paired staleness gauges
-// ([obs.RecordOracleUpdate]) for every mapped oracle asset, but skips
-// [canonical.AssetOracleRaw] rows. Capture-totality persists every
-// oracle-published symbol verbatim, including ones on no allow-list,
-// so an unmapped ("raw:<symbol>") row would otherwise mint its own
-// unbounded asset label value — exactly the "passthrough every asset"
-// cardinality risk OracleLastUpdateUnix's doc warns about. Raw rows
-// are record-layer only and are never compared by the interpretation
-// layer, so they have nothing to alert on here.
+// recordOracleMetricIfMapped emits the staleness gauges for mapped oracle assets and skips raw rows,
+// whose unmapped symbols would mint an unbounded asset label (cardinality risk).
 func recordOracleMetricIfMapped(source string, asset canonical.Asset, updatedAtUnix float64) {
 	if !asset.IsMapped() {
 		return
@@ -1469,11 +1071,7 @@ func persistCometLiquidity(ctx context.Context, logger *slog.Logger, store *time
 	return nil
 }
 
-// persistUpshiftVaultEvent lands one decoded Upshift vault event into
-// upshift_vault_events (migration 0157) — a deposit, a withdrawal, a
-// movement of the vault's own share token, or a change in the capital
-// the vault has deployed into strategies. Upshift publishes no price,
-// so these rows never reach the trades hypertable or VWAP.
+// persistUpshiftVaultEvent lands one Upshift vault event into upshift_vault_events; Upshift publishes no price, so rows never reach VWAP.
 func persistUpshiftVaultEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e upshift.Event) error {
 	if err := store.InsertUpshiftVaultEvent(ctx, timescale.UpshiftVaultEvent{
 		ContractID:      e.ContractID,
@@ -1504,11 +1102,7 @@ func persistUpshiftVaultEvent(ctx context.Context, logger *slog.Logger, store *t
 	return nil
 }
 
-// persistAquariusReserves lands one update_reserves observation (the
-// pool's POST-STATE reserve vector) into aquarius_reserves — one row
-// per token position (migration 0089). The first real Aquarius TVL /
-// liquidity-depth signal; Aquarius has no published price so these
-// rows never reach VWAP.
+// persistAquariusReserves lands one update_reserves post-state reserve vector into aquarius_reserves (one row per token); no price, so never VWAP.
 func persistAquariusReserves(ctx context.Context, logger *slog.Logger, store *timescale.Store, e aquarius.ReservesEvent) error {
 	// reserves_sync is a DISTINCT reserve-sync signal (not the
 	// update_reserves post-state); route it to its own table. An empty
@@ -1740,11 +1334,7 @@ func persistBlendEmissionEvent(ctx context.Context, logger *slog.Logger, store *
 	return nil
 }
 
-// persistBlendAdminEvent routes one admin / pool-config / pool-
-// factory lifecycle event (set_admin / update_pool /
-// queue_set_reserve / cancel_set_reserve / set_reserve / set_status
-// / deploy) to the blend_admin hypertable. The deploy event from
-// the pool-factory drives runtime pool enumeration.
+// persistBlendAdminEvent routes admin / pool-config / pool-factory lifecycle events to blend_admin; the factory deploy event drives pool enumeration.
 func persistBlendAdminEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend.AdminEvent) error {
 	if err := store.InsertBlendAdminEvent(ctx, domain.BlendAdminEvent(e)); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(blend.SourceName, "blend_admin").Inc()
@@ -1846,12 +1436,8 @@ func persistBlendEmitterDrop(ctx context.Context, logger *slog.Logger, store *ti
 	return nil
 }
 
-// blendEmitterUnlockTime converts a Soroban-emitted raw UnlockTime to a
-// UTC time, or the zero time if the raw value would overflow the int64
-// cast (see canonical.UnboundedUnixSeconds) — a queued (q_swap)
-// UnlockTime is legitimately days beyond its own ledger close time, so
-// a close-time-windowed guard like SafeUnixSeconds would wrongly clamp
-// a real value (see blend_emitter/README's timelock lifecycle).
+// blendEmitterUnlockTime converts a raw UnlockTime to UTC, or the zero time on int64 overflow.
+// Queued unlock times legitimately lie days past ledger close, so a close-time-windowed guard would wrongly clamp them.
 func blendEmitterUnlockTime(raw uint64) time.Time {
 	t, ok := canonical.UnboundedUnixSeconds(raw)
 	if !ok {
@@ -1945,14 +1531,8 @@ func persistRozoEvent(ctx context.Context, logger *slog.Logger, store *timescale
 	return nil
 }
 
-// persistSoroCreditEvent routes one sorocredit event to its served-tier
-// table by EventType — the single Go event type fans out to four tables
-// (credit_positions / credit_statements / credit_settlements /
-// credit_events). It converts the source event into the timescale row
-// struct here (storage keeps its no-upward-import boundary). NOTE: the
-// on-wire "Liquidation" event is a SCHEDULED settlement, written to
-// credit_settlements — NOT a distress/liquidation signal (see
-// internal/sources/sorocredit).
+// persistSoroCreditEvent routes one sorocredit event to its served-tier table by EventType.
+// The on-wire Liquidation event is a SCHEDULED settlement (credit_settlements), not a distress signal.
 func persistSoroCreditEvent(ctx context.Context, logger *slog.Logger, store *timescale.Store, e sorocredit.Event) error {
 	var err error
 	switch e.EventType {
@@ -2035,16 +1615,8 @@ func persistSoroCreditEvent(ctx context.Context, logger *slog.Logger, store *tim
 	return nil
 }
 
-// bumpEntryCount is the shared 'entries' counter increment used by
-// every sink whose decoded events don't ride the trades + oracle_updates
-// per-insert bump path (those tables have their counter bump inlined
-// in the INSERT, counting only rows that landed). Surfaces
-// source-attributed protocol activity on /v1/diagnostics/ingestion's
-// `entries` column. It is a bare +1 per persisted event, so a Phase-3
-// parallel write must not reach it: [dispatcherEventPersister] marks
-// that ctx. Errors are logged at Warn — a failed bump doesn't fail
-// the underlying decode/persist; the operator's periodic
-// `stellarindex-ops seed-entry-counts` reconciles drift.
+// bumpEntryCount is the shared `entries` increment for sinks outside the trades/oracle_updates per-insert bump path.
+// A bare +1 per event, so Phase-3 parallel writes must not reach it ([dispatcherEventPersister] marks that ctx).
 func bumpEntryCount(ctx context.Context, logger *slog.Logger, store *timescale.Store, source string) {
 	if uncounted, _ := ctx.Value(uncountedEntriesKey{}).(bool); uncounted {
 		return

@@ -29,13 +29,8 @@ func mintForQuotaTest(t *testing.T, store *RedisAPIKeyStore, req CreateAPIKeyReq
 	return rec, plaintext
 }
 
-// TestStoreCreate_UnsetQuotaInheritsIdentifierCeiling — a mint path that
-// builds its request without a ceiling (POST /v1/admin/keys, the ops
-// mint-key CLI) must still issue a METERED key to an identifier whose
-// credentials are metered: the usage counter is shared per identifier,
-// so an unmetered sibling bills the plan without limit. The most
-// generous existing ceiling wins, so the mint neither lifts nor tightens
-// the plan, and another identifier's ceiling never leaks across.
+// TestStoreCreate_UnsetQuotaInheritsIdentifierCeiling: a mint path with no ceiling (POST /v1/admin/keys, ops mint-key) must still issue a METERED key to a metered identifier, since the usage counter is shared and an unmetered sibling bills the plan without limit.
+// The most generous existing ceiling wins, and another identifier's ceiling never leaks across.
 func TestStoreCreate_UnsetQuotaInheritsIdentifierCeiling(t *testing.T) {
 	store, rdb := newQuotaInheritStore(t)
 
@@ -118,12 +113,7 @@ func TestStoreCreate_UnsetQuotaKeepsLapsedCeilingWithNoLiveKey(t *testing.T) {
 	}
 }
 
-// TestStoreCreate_PersistsMonthlyQuota pins the store primitive every
-// mint site shares (self-service rotation, signup, admin mint, the ops
-// CLI): a requested monthly ceiling reaches the persisted record, so
-// the validator can map it onto the Subject the quota middleware reads.
-// Without it every key the store mints is born with MonthlyQuota=0 —
-// unmetered.
+// TestStoreCreate_PersistsMonthlyQuota pins the primitive every mint site shares: a requested monthly ceiling reaches the persisted record, or every minted key is born unmetered (MonthlyQuota=0).
 func TestStoreCreate_PersistsMonthlyQuota(t *testing.T) {
 	const quota int64 = 1_000_000
 

@@ -12,11 +12,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/redistest"
 )
 
-// TestRedisPasskeyCeremonyGuard_ConsumeIsOneShot — the adapter's
-// contract: the first presentation of a ceremony claims it, every
-// later presentation of the SAME ceremony is refused. That refusal is
-// what stops a captured `/v1/auth/passkey/finish-login` request from
-// minting a second session.
+// TestRedisPasskeyCeremonyGuard_ConsumeIsOneShot: the first presentation of a ceremony claims it and every later one is refused, which stops a captured finish-login from minting a second session.
 func TestRedisPasskeyCeremonyGuard_ConsumeIsOneShot(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -69,11 +65,7 @@ func TestRedisPasskeyCeremonyGuard_RecordExpires(t *testing.T) {
 	}
 }
 
-// TestRedisPasskeyCeremonyGuard_KeyNamespace pins the key prefix: it
-// has to stay in step with the Redis ACL allow-list
-// (configs/ansible/roles/redis-sentinel/templates/users.acl.j2), or a
-// lockdown deployment ACL-denies the SETNX and — because the handler
-// fails closed — passkey sign-in stops working.
+// TestRedisPasskeyCeremonyGuard_KeyNamespace pins the key prefix to the Redis ACL allow-list (users.acl.j2), or a lockdown deployment ACL-denies the SETNX and passkey sign-in fails closed.
 func TestRedisPasskeyCeremonyGuard_KeyNamespace(t *testing.T) {
 	if got := passkeyCeremonyKey("abc"); got != "passkey:ceremony:abc" {
 		t.Fatalf("key = %q, want passkey:ceremony:abc", got)
@@ -124,11 +116,7 @@ func TestRedisPasskeyCeremonyGuard_ReserveClaimIsOneShot(t *testing.T) {
 	}
 }
 
-// TestRedisPasskeyCeremonyGuard_ReserveRefusesExistingMarker — every
-// begin mints a fresh random challenge, so a live marker that already
-// exists is never a legitimate re-begin. Reserve must surface it rather
-// than discard the SETNX result and hand out a challenge whose
-// reservation it did not create; the existing marker's TTL is untouched.
+// TestRedisPasskeyCeremonyGuard_ReserveRefusesExistingMarker: challenges are fresh randoms, so an existing marker is never a legitimate re-begin; Reserve must surface it (TTL untouched), not hand out a challenge whose reservation it did not create.
 func TestRedisPasskeyCeremonyGuard_ReserveRefusesExistingMarker(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -149,14 +137,8 @@ func TestRedisPasskeyCeremonyGuard_ReserveRefusesExistingMarker(t *testing.T) {
 	}
 }
 
-// TestRedisPasskeyCeremonyGuard_ClaimFailsClosedOnEviction is the core
-// of W1-auth-passkey-1. R1 runs allkeys-lru, so under memory pressure
-// the reservation marker can be evicted before its TTL. When it is, the
-// claim must REFUSE (fail closed), never treat the free slot as a fresh
-// ceremony — otherwise a replayed finish-login mints a second session
-// for the victim. The bare SETNX spent-set did the opposite: an evicted
-// marker let SETNX re-claim. Eviction is simulated by deleting the live
-// marker out from under the guard, exactly as an LRU pass would.
+// TestRedisPasskeyCeremonyGuard_ClaimFailsClosedOnEviction: allkeys-lru can evict the reservation before its TTL; the claim must then REFUSE, or a replayed finish-login mints a second session (the bare SETNX spent-set re-claimed).
+// Eviction is simulated by deleting the live marker.
 func TestRedisPasskeyCeremonyGuard_ClaimFailsClosedOnEviction(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

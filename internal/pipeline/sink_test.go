@@ -39,13 +39,7 @@ func (fakeEvent) Source() string    { return "test-fake-source" }
 
 var _ consumer.Event = fakeEvent{}
 
-// TestPersistEvents_DrainsBufferedEventsOnShutdown — the load-bearing
-// safety property: when the parent ctx is cancelled mid-stream,
-// PersistEvents must still consume every event already in the
-// channel buffer before returning. Without this, the indexer's
-// per-ledger cursor advance (which happens AFTER the producer
-// enqueues events to `in`, BEFORE the sink writes them) would
-// silently lose up to cap(in) events on every SIGTERM.
+// TestPersistEvents_DrainsBufferedEventsOnShutdown: a cancelled ctx must still drain events already in the channel, since the cursor advances before the sink writes.
 func TestPersistEvents_DrainsBufferedEventsOnShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	in := make(chan consumer.Event, 10)
@@ -68,12 +62,7 @@ func TestPersistEvents_DrainsBufferedEventsOnShutdown(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// Pass nil store — the test events hit the default
-		// (unhandled) switch case which only logs + increments a
-		// counter, never touching the store. If a future
-		// handleOneEvent change makes the default case dereference
-		// the store, this test surfaces it as a panic — which is
-		// the correct signal.
+		// Nil store: test events hit the default switch case, which never touches the store; a future dereference there surfaces as a panic.
 		PersistEvents(ctx, logger, nil, in, SinkModeAll, nil)
 	}()
 
@@ -94,12 +83,7 @@ func TestPersistEvents_DrainsBufferedEventsOnShutdown(t *testing.T) {
 	}
 }
 
-// TestPersistEvents_DrainTimeoutBoundsHang — paranoid safety net:
-// if the drain path's `handleOneEvent` ever blocks (e.g. a future
-// store call hangs), [drainTimeout] still bounds the shutdown. We
-// can't easily simulate a hang in unit-time, so we just sanity-check
-// the timeout constant is non-zero and within an operationally-sane
-// bound.
+// TestPersistEvents_DrainTimeoutBoundsHang sanity-checks that drainTimeout is non-zero and operationally sane (a real hang is not simulable in unit time).
 func TestPersistEvents_DrainTimeoutBoundsHang(t *testing.T) {
 	if drainTimeout <= 0 {
 		t.Errorf("drainTimeout = %v; must be positive", drainTimeout)
@@ -109,13 +93,7 @@ func TestPersistEvents_DrainTimeoutBoundsHang(t *testing.T) {
 	}
 }
 
-// TestDrainBudget_FitsShutdownDeadline —
-// The sink's post-cancellation drain, PLUS the final best-effort pass
-// that runs after it, must finish INSIDE the process-level shutdown
-// window; otherwise main hard-exits first and worker 0's deadline arm —
-// the only thing that reports the exact undrained ledger range for
-// re-derive — never runs. A drainTimeout of 90s against a 30s
-// process deadline would mean the loss report can never fire.
+// TestDrainBudget_FitsShutdownDeadline: drain plus final pass must finish inside the process shutdown window, or the undrained-range report never fires.
 func TestDrainBudget_FitsShutdownDeadline(t *testing.T) {
 	if drainTimeout <= 0 {
 		t.Fatalf("drainTimeout = %v; must be positive", drainTimeout)
@@ -135,11 +113,7 @@ func TestDrainBudget_FitsShutdownDeadline(t *testing.T) {
 	}
 }
 
-// TestShutdownDeadline_MainUsesConstant — the other half of the shutdown budgets: the
-// budgets above are only consistent if the indexer's shutdown context is
-// actually built from [ShutdownDeadline]. A literal there is exactly how
-// the two drifted apart (90s of sink drain inside a 30s process
-// deadline), so pin the wiring by AST rather than by hope.
+// TestShutdownDeadline_MainUsesConstant pins by AST that the indexer's shutdown context is built from ShutdownDeadline, not a drifting literal.
 func TestShutdownDeadline_MainUsesConstant(t *testing.T) {
 	fset := token.NewFileSet()
 	main := parseFile(t, fset, repoDir("cmd", "stellarindex-indexer", "main.go"))
@@ -172,12 +146,7 @@ func TestShutdownDeadline_MainUsesConstant(t *testing.T) {
 	}
 }
 
-// TestIndexerStopTimeout_UnitsCoverDrainBudgets — the shutdown budgets lifted to
-// the process. main drains the ClickHouse live sink, the
-// soroban-events sink and the discovery sink AFTER the ShutdownDeadline
-// window, so the unit's TimeoutStopSec must cover their sum; at systemd's
-// 90s default a slow ClickHouse plus a slow Postgres gets SIGKILLed
-// mid-drain, silently discarding the buffers the drains exist to save.
+// TestIndexerStopTimeout_UnitsCoverDrainBudgets: the unit's TimeoutStopSec must cover the sinks drained after ShutdownDeadline, or SIGKILL discards their buffers.
 func TestIndexerStopTimeout_UnitsCoverDrainBudgets(t *testing.T) {
 	sum := ShutdownDeadline + CHLiveSinkStopBudget + RawEventDrainBudget + DiscoveryDrainBudget
 	if IndexerStopTimeout <= sum {
@@ -263,24 +232,8 @@ func TestShutdownBudgets_MainWiresConstants(t *testing.T) {
 	}
 }
 
-// TestSinkDrain_NonTradeWritesAreResilient. The dispatcher drain carries served-tier writes
-// NOBODY else makes (band oracle_updates, external.UpdateEvent, the
-// supply observers' LedgerEntry observations, soroswap_router swaps,
-// defindex flows). A drain site calling `_ = HandleEvent(...)`
-// would discard the error, so a Postgres infra fault would drop the row while
-// the cursor advanced. They must all go through persistEventResilient
-// (block-and-retry on infra, isolate+count on a permanent data fault).
-//
-// Structural because it is a wiring invariant over every call site, which
-// no single behavioural test can cover. The scan is the whole package, not
-// a list of drain functions: the only functions allowed to call
-// handleEvent directly are the two that bind it (sinkEventBinders), and
-// every drain site is discovered by its persistEventResilient call. The
-// policy itself is proven behaviourally by the retryInfra / classifyFault
-// tests, end-to-end by TestPersistEvents_DataFaultEventIsCountedAsDropped,
-// and — for the shutdown-race half — by
-// TestPersistWorker_ShutdownRacingInFlightEventWrite_EventLandsNotLost,
-// which the eventPersister seam made possible.
+// TestSinkDrain_NonTradeWritesAreResilient: drain sites must call persistEventResilient, never `_ = HandleEvent(...)`, which would drop rows while the cursor advanced.
+// Structural (a whole-package wiring invariant); only the handleEvent binders in sinkEventBinders may call it directly.
 func TestSinkDrain_NonTradeWritesAreResilient(t *testing.T) {
 	resilient := map[string]int{}
 	for _, decl := range packageFuncDecls(t) {
@@ -346,13 +299,7 @@ func packageFuncDecls(t *testing.T) []*ast.FuncDecl {
 	return out
 }
 
-// TestPersistEvents_DataFaultEventIsCountedAsDropped —
-// end-to-end through the real drain: an oracle update the store rejects
-// as permanently invalid (canonical.ErrInvalidOracle, returned by
-// Validate before any SQL runs) must be ISOLATED — counted on the
-// ADR-0041 drop label and skipped — and must NOT wedge the drain in a
-// retry loop. Discarding the error would count no drop
-// anywhere, leaving the loss invisible to metrics.
+// TestPersistEvents_DataFaultEventIsCountedAsDropped: a permanently invalid oracle update is isolated and counted as a drop, not retried forever or silently discarded.
 func TestPersistEvents_DataFaultEventIsCountedAsDropped(t *testing.T) {
 	before := testutil.ToFloat64(obs.SourceInsertErrorsTotal.WithLabelValues(band.SourceName, "dropped"))
 
@@ -422,21 +369,8 @@ var processedCount atomic.Int64
 
 func init() { processedCount.Store(0) }
 
-// TestDrainFinalPass_SkipInSinkExcludedFromReport is the regression
-// test: drainBufferedEvents' final
-// best-effort pass must not bump undrained_events/undrained_trades
-// (or widen the ledger range) for events still in the channel
-// that skipInSink will skip — a projector-owned
-// event that was never going to be persisted by this drain even on a
-// clean shutdown. Counting them would inflate the drain-timeout recovery hint,
-// telling an operator to re-derive a range the projector already
-// durably owns.
-//
-// Calls drainFinalPass directly (extracted from drainBufferedEvents'
-// ctx.Done() case) rather than racing drainBufferedEvents' outer
-// select against its own already-expired ctx.Done() — see
-// drainFinalPass's godoc for why that race can't be made
-// deterministic through the public API.
+// TestDrainFinalPass_SkipInSinkExcludedFromReport: projector-owned events skipped by skipInSink must not inflate undrained counts or widen the re-derive range.
+// Calls drainFinalPass directly since the outer select race cannot be made deterministic.
 func TestDrainFinalPass_SkipInSinkExcludedFromReport(t *testing.T) {
 	in := make(chan consumer.Event, 2)
 	// Projector-owned under SinkModeSkipProjected (see
@@ -463,24 +397,8 @@ func TestDrainFinalPass_SkipInSinkExcludedFromReport(t *testing.T) {
 	}
 }
 
-// TestDrainBufferedEvents_UndrainedRowsAreCounted pins the served-tier
-// shutdown-loss counter: a sink shut down with buffered rows its bounded
-// drain cannot land must advance
-// stellarindex_sink_undrained_rows_total{persist_events,<kind>} by the
-// exact ROW count, per kind. Before the counter the only trace of this
-// loss was the ERROR log line, while the ledger cursor — upserted per
-// ledger BEFORE the sink writes — had already advanced past the rows, so
-// a deploy that caught Postgres slow or down lost served-tier rows with
-// nothing alerting (the CH live-sink half of the same class already had
-// its `dropped` counter + rules).
-//
-// Both fakes answer the way a store answers a drain whose budget has
-// expired — with the ctx error. flushTradeBatch hands such a batch
-// straight back (no per-row pass, no backoff) and persistEventResilient
-// returns it unchanged, so the drain's only remaining move is to REPORT,
-// which makes the count deterministic without waiting out a real
-// drainTimeout. The channel is closed so drainBufferedEvents takes its
-// `!ok` flush path rather than racing its own deadline arm.
+// TestDrainBufferedEvents_UndrainedRowsAreCounted: rows a bounded drain cannot land advance the undrained-rows counter by exact row count, per kind.
+// Both fakes return the ctx error and the channel is closed, so the count is deterministic without waiting out drainTimeout.
 func TestDrainBufferedEvents_UndrainedRowsAreCounted(t *testing.T) {
 	tradesBefore := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "trade")
 	eventsBefore := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "event")
@@ -520,11 +438,7 @@ func TestDrainBufferedEvents_UndrainedRowsAreCounted(t *testing.T) {
 	}
 }
 
-// TestDrainBufferedEvents_CleanDrainCountsNoUndrainedRows is the
-// non-vacuity half of the test above: the same buffered rows through a
-// store that accepts them must leave the counter untouched. The counter
-// means LOSS — a clean deploy must read as zero, or the alert on it
-// tickets every restart.
+// TestDrainBufferedEvents_CleanDrainCountsNoUndrainedRows is the non-vacuity half: a clean drain leaves the loss counter at zero.
 func TestDrainBufferedEvents_CleanDrainCountsNoUndrainedRows(t *testing.T) {
 	tradesBefore := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "trade")
 	eventsBefore := counter(t, obs.SinkUndrainedRowsTotal, obs.SinkPersistEvents, "event")
@@ -569,22 +483,8 @@ func TestShutdownSafeCtx_LiveCtxPassedThroughUnchanged(t *testing.T) {
 	}
 }
 
-// TestShutdownSafeCtx_CancelledParentGetsFreshBoundedCtx is the
-// regression test: persistWorker's
-// flushTicker and `<-in` arms must not pass the worker's ctx straight
-// into flush()/persistEventResilient() unchecked. Go's select has
-// no priority, so on the exact iteration the parent ctx is cancelled,
-// one of those arms can still win the race against `<-ctx.Done()` —
-// passing the already-dead ctx through makes every write fail
-// instantly (ctx.Err() short-circuits before the DB is ever touched),
-// silently abandoning work that the worker's own shutdown path a
-// moment later would have given a fair shot at landing within
-// [drainTimeout].
-//
-// Asserts the corrected behaviour: given an ALREADY-CANCELLED parent,
-// shutdownSafeCtx must return a DIFFERENT, still-LIVE context (so the
-// caller's next write isn't dead on arrival) with a real deadline
-// roughly [drainTimeout] out.
+// TestShutdownSafeCtx_CancelledParentGetsFreshBoundedCtx: select has no priority, so a cancelled parent must yield a different, live ctx with a deadline
+// about drainTimeout out, rather than failing every write instantly.
 func TestShutdownSafeCtx_CancelledParentGetsFreshBoundedCtx(t *testing.T) {
 	parent, parentCancel := context.WithCancel(context.Background())
 	parentCancel() // simulate the racy-select window: ctx already done
@@ -607,12 +507,7 @@ func TestShutdownSafeCtx_CancelledParentGetsFreshBoundedCtx(t *testing.T) {
 	}
 }
 
-// TestBlendEmitterUnlockTime_overflowSentinelRejected is the
-// regression test for this call site: a Blend Emitter
-// UnlockTime near math.MaxUint64 (a plausible "unlimited" sentinel)
-// wrapped NEGATIVE under a bare int64(e.UnlockTime) cast, landing near
-// the 1970 epoch — a bogus but postgres-representable time that would
-// silently corrupt the stored unlock time instead of leaving it unset.
+// TestBlendEmitterUnlockTime_overflowSentinelRejected: an UnlockTime near MaxUint64 must not wrap negative through an int64 cast into a bogus 1970 time.
 func TestBlendEmitterUnlockTime_overflowSentinelRejected(t *testing.T) {
 	if got := blendEmitterUnlockTime(math.MaxUint64); !got.IsZero() {
 		t.Errorf("blendEmitterUnlockTime(MaxUint64) = %v, want zero time — got a wrapped near-epoch time instead of the overflow being rejected", got)
@@ -648,12 +543,7 @@ func entriesBumpReachesStore(ctx context.Context) (reached bool) {
 	return false
 }
 
-// TestRecordOracleMetricIfMapped_SkipsUnmappedRawAsset pins that a
-// capture-totality "raw:<symbol>" row must never mint its own
-// stellarindex_oracle_last_update_unix / _staleness_budget_seconds
-// label value, or an unbounded set of unmapped oracle symbols would
-// give the two gauges unbounded cardinality. A mapped asset must still
-// go through untouched.
+// TestRecordOracleMetricIfMapped_SkipsUnmappedRawAsset: a raw:<symbol> row must not mint a gauge label (unbounded cardinality); mapped assets pass through.
 func TestRecordOracleMetricIfMapped_SkipsUnmappedRawAsset(t *testing.T) {
 	const source = "q099-test-source"
 

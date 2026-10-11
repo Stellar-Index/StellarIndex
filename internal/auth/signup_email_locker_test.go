@@ -59,12 +59,7 @@ func TestRedisSignupEmailLocker_AcquireReleaseRoundTrip(t *testing.T) {
 	}
 }
 
-// TestRedisSignupEmailLocker_ReleaseDoesNotDeleteSuccessorLock — the
-// fencing property: caller A's lock TTL-expires while A is still
-// provisioning, caller B SETNX-acquires the free key, then A's
-// deferred Release runs. A's Release MUST NOT delete B's lock (they
-// carry different tokens), otherwise a third caller could acquire and
-// race B — the orphan race the lock exists to prevent.
+// TestRedisSignupEmailLocker_ReleaseDoesNotDeleteSuccessorLock: A's lock TTL-expires, B acquires, then A's Release must NOT delete B's lock (different tokens), or a third caller could race B.
 func TestRedisSignupEmailLocker_ReleaseDoesNotDeleteSuccessorLock(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -148,11 +143,7 @@ func TestRedisSignupEmailLocker_TTLExpires(t *testing.T) {
 	}
 }
 
-// TestRedisSignupEmailLocker_ReleaseOfAbsentKeyIsNoop — Release
-// on a key that was never set (or has already TTL-expired) is a
-// successful no-op. The dashboardauth handler always defers
-// Release, so this matters when the lock TTL elapses before
-// Account.Create + Users.CreateUser finishes.
+// TestRedisSignupEmailLocker_ReleaseOfAbsentKeyIsNoop: Release of a never-set or TTL-expired key is a successful no-op, since the handler always defers Release.
 func TestRedisSignupEmailLocker_ReleaseOfAbsentKeyIsNoop(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})

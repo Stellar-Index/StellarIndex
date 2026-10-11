@@ -3,19 +3,9 @@
 
 package pipeline
 
-// Three sites must agree for a source's data to flow (ADR-0031/0032):
-//
-//   source_spec.go           — one SourceSpec per source: projected
-//                              membership, projector and dispatcher wiring
-//   sink.go HandleEvent      — persist arm per consumer.Event type
-//   sink.go tradeFromEvent   — trade-shaped fast path
-//
-// Drift between them is SILENT DATA LOSS (for example the projector
-// writing zero sep41_transfers rows because one list was missed).
-// These tests read the specs, parse the sink's switch statements and
-// the source packages with go/ast, and cross-check, so adding an event
-// type or source without completing the wiring fails CI instead of
-// dropping rows.
+// Three sites must agree for a source's data to flow (ADR-0031/0032): source_spec.go (one SourceSpec per source),
+// sink.go HandleEvent (a persist arm per consumer.Event type), and sink.go tradeFromEvent (trade fast path).
+// Drift is silent data loss; these tests cross-check them with go/ast so incomplete wiring fails CI.
 
 import (
 	"fmt"
@@ -43,14 +33,7 @@ var notProjectedEvents = map[string]string{
 	// register it here with the ADR/why.)
 }
 
-// notSunkEvents is the conscious-decision register for consumer.Event
-// types under internal/sources that deliberately have NO persist arm
-// in sink.go's HandleEvent (i.e. some OTHER writer owns them and they
-// never reach HandleEvent). Empty today — every source event type is
-// sunk by HandleEvent. If you ever add an event type handled entirely
-// off the HandleEvent path, register it here with the reason so the
-// exhaustiveness guard below stays a real signal rather than being
-// loosened wholesale.
+// notSunkEvents registers consumer.Event types that deliberately have NO HandleEvent arm (another writer owns them), with the reason.
 var notSunkEvents = map[string]string{
 	"classicmovements.MovementEvent": "ADR-0047 D2: historical-only, lake-derived, pre-P23 classic-movement reconstruction. Its Decoder is never registered with the live dispatcher (nothing to decode live — the P23 boundary is a hard upper bound), so MovementEvent never flows through HandleEvent. The sole writer is `stellarindex-ops classic-movements-backfill` (internal/ops/chops), which streams clickhouse.ClassicOp -> classicmovements.Decoder -> timescale.Store.BatchInsertClassicMovements directly, bypassing pipeline.HandleEvent entirely.",
 }
@@ -77,12 +60,7 @@ func funcDecl(t *testing.T, f *ast.File, name string) *ast.FuncDecl {
 	return nil
 }
 
-// caseTypeNames extracts the `pkg.Type` names listed across all case
-// clauses of every type-switch inside fn, including ones nested inside
-// another switch's case body — a switch found at any depth still
-// yields its own cases (a "return false" after the
-// first match would stop descent into that switch's children and hide
-// a type-switch nested inside one of its case bodies).
+// caseTypeNames extracts the `pkg.Type` names of every case clause of every type-switch in fn, descending into nested switches.
 func caseTypeNames(t *testing.T, fn *ast.FuncDecl) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
@@ -112,15 +90,7 @@ func caseTypeNames(t *testing.T, fn *ast.FuncDecl) map[string]bool {
 	return out
 }
 
-// caseBodyPersists reports, per `pkg.Type` case label collected by
-// [caseTypeNames] on the SAME fn, whether that case clause's body
-// contains a call shaped like a real persist arm: a `persist*` helper
-// or a `store.<Method>(...)` call anywhere in its subtree (covering
-// the `if err := store.Insert…; err != nil { … }` guard shape used by
-// the router/defindex cases). caseTypeNames alone only proves
-// the TYPE LABEL is listed, which `case X: return nil` also satisfies
-// — silently dropping the event while every lockstep guard stays
-// green.
+// caseBodyPersists reports per case label whether the body calls a persist* helper or store.<Method>, since a bare `case X: return nil` would silently drop the event.
 func caseBodyPersists(t *testing.T, fn *ast.FuncDecl) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
@@ -266,11 +236,7 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
-// TestLockstep_ProjectedEventsHavePersistArms — every type a
-// projected SourceSpec lists must have a HandleEvent persist arm, and
-// every tradeFromEvent fast-path type must too. A projected event
-// without a persist arm reaches the projector and is dropped by
-// HandleEvent's default (silent loss).
+// TestLockstep_ProjectedEventsHavePersistArms: every projected SourceSpec type and tradeFromEvent type needs a HandleEvent persist arm.
 func TestLockstep_ProjectedEventsHavePersistArms(t *testing.T) {
 	fset := token.NewFileSet()
 	sink := parseFile(t, fset, "sink.go")
@@ -327,11 +293,8 @@ func specEventNames(projected bool) map[string]bool {
 	return out
 }
 
-// unlistedEventError explains why full, a consumer.Event type defined in a
-// package some SourceSpec draws events from, is not wired, or returns "".
-// In a projected package only a projected spec or a notProjectedEvents
-// entry clears it: a non-projected listing there is the same silent
-// Phase-4 drop the allowlist exists to make a conscious decision.
+// unlistedEventError explains why an event type is unwired, or returns "".
+// In a projected package only a projected spec or a notProjectedEvents entry clears it; a non-projected listing is a silent Phase-4 drop.
 func unlistedEventError(full string, projectedPkg bool, projected, dispatched map[string]bool, allow map[string]string) string {
 	if projected[full] {
 		return ""
@@ -348,11 +311,8 @@ func unlistedEventError(full string, projectedPkg bool, projected, dispatched ma
 	return fmt.Sprintf("%s implements consumer.Event in a PROJECTED source package but no projected SourceSpec lists it — Phase-4 ingest silently drops it (F-1316 class). Add it to the projected spec's Events, or register it in notProjectedEvents with a reason", full)
 }
 
-// TestLockstep_SpecsListEveryEventType guards against silent drops. For every
-// package a SourceSpec draws events from, every consumer.Event type the
-// package defines must be listed by a spec; in a projected package, by a
-// projected spec or a notProjectedEvents entry. Each spec must list at least
-// one event and have a decoder for every writer it claims.
+// TestLockstep_SpecsListEveryEventType: every consumer.Event type in a spec's package must be listed by a spec (projected package: a projected spec or a notProjectedEvents entry),
+// and each spec lists at least one event with a decoder for every writer it claims.
 func checkSpecShape(t *testing.T, s *SourceSpec) {
 	t.Helper()
 	if len(s.Events) == 0 {
@@ -426,13 +386,7 @@ func TestUnlistedEventError_ProjectedPackageNeedsProjectedSpec(t *testing.T) {
 	}
 }
 
-// allSourceEventTypes walks internal/sources recursively and returns
-// the set of "pkg.Type" names for every consumer.Event implementer
-// (a type with an EventKind() method), keyed by DIRECTORY BASENAME —
-// which is exactly the import ident sink.go's HandleEvent uses for
-// every source package (underscore dirs are import-aliased to their
-// basename throughout the repo). This is the authoritative universe
-// of event types the sink's type-switch must cover.
+// allSourceEventTypes returns every consumer.Event implementer under internal/sources as "pkg.Type", keyed by directory basename (the import ident HandleEvent uses).
 func allSourceEventTypes(t *testing.T) map[string]bool {
 	t.Helper()
 	root := repoDir("internal", "sources")
@@ -459,23 +413,8 @@ func allSourceEventTypes(t *testing.T) map[string]bool {
 	return out
 }
 
-// TestLockstep_EveryConsumerEventHasSinkArm is the exhaustiveness guard
-// for the "pipeline sink type-switch trap": EVERY type
-// that implements consumer.Event under internal/sources MUST have a
-// persist arm in sink.go's HandleEvent. A missing arm means the event
-// falls through to HandleEvent's `default` and is counted as an
-// "unhandled event kind" drop instead of being persisted — the exact
-// silent-loss failure mode where "metrics say we're ingesting but the
-// tables stay empty".
-//
-// The sibling guards (TestLockstep_ProjectedEventsHavePersistArms,
-// TestLockstep_RegistrySourcesFullyWired) only cover PROJECTED source
-// packages, reached via IsProjectedEvent. This one covers ALL source
-// packages — the non-projected ones too (sdex / external / band /
-// soroswap_router / the five supply observers), which have
-// no other automated guard tying them to a HandleEvent arm. Adding a new
-// consumer.Event type without wiring the sink now fails CI here rather
-// than silently dropping its rows in production.
+// TestLockstep_EveryConsumerEventHasSinkArm: EVERY consumer.Event type under internal/sources needs a HandleEvent arm, or it hits `default` and is dropped.
+// Unlike its siblings it covers non-projected packages too (sdex, external, band, soroswap_router, supply observers).
 func TestLockstep_EveryConsumerEventHasSinkArm(t *testing.T) {
 	fset := token.NewFileSet()
 	sink := parseFile(t, fset, "sink.go")

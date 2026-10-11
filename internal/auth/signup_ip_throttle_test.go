@@ -217,12 +217,7 @@ func TestRedisSignupIPThrottle_DwellTime_FailsClosedAfterWindow(t *testing.T) {
 	}
 }
 
-// TestRedisSignupIPThrottle_DwellTime_FlapVsSustainedRecovery pins the
-// recovery semantic: a single Redis success must NOT reset the fail-closed dwell
-// clock (a flapping Redis still trips fail-closed after dwellTime); only a
-// sustained healthy streak (dwellTime of unbroken successes) clears it and
-// restores fail-open. If one success wiped the clock, a flapping Redis
-// would keep this signup throttle fail-open indefinitely.
+// TestRedisSignupIPThrottle_DwellTime_FlapVsSustainedRecovery: a single Redis success must NOT reset the fail-closed dwell clock (a flapping Redis still trips fail-closed); only dwellTime of unbroken successes clears it and restores fail-open.
 func TestRedisSignupIPThrottle_DwellTime_FlapVsSustainedRecovery(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()
@@ -392,17 +387,8 @@ func TestRedisSignupIPThrottle_DwellTime_DefaultApplied(t *testing.T) {
 // window-bucket assertions.
 var _ = strconv.Itoa
 
-// TestRedisSignupIPThrottle_IPv6RotationWithinSlash64CannotEvadeCap is
-// the IPv6-keying check (same class the API rate-limit middleware
-// guards against).
-//
-// Attack: bulk-mint accounts from a single delegated IPv6 /64 — the
-// standard residential / VPS allocation — sourcing every signup from a
-// different /128 inside it. Keying on the caller's exact address would
-// give each of the 2^64 addresses in that one allocation its own
-// pristine 5/hour bucket, so stopping bulk-mint of email→key_id pairs
-// would cost the attacker nothing to defeat. The key is the /64: the
-// entire allocation shares one budget.
+// TestRedisSignupIPThrottle_IPv6RotationWithinSlash64CannotEvadeCap: bulk-minting from one delegated /64 across different /128s would get a pristine 5/hour bucket each if keyed on the exact address;
+// the key is the /64, so the whole allocation shares one budget.
 func TestRedisSignupIPThrottle_IPv6RotationWithinSlash64CannotEvadeCap(t *testing.T) {
 	mr := miniredis.RunT(t)
 	defer mr.Close()

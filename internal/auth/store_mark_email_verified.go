@@ -15,22 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// MarkEmailVerified flips an existing API key's
-// `EmailVerifiedAt` timestamp to now (or to the optional
-// `at` override, used by tests for determinism). The optional
-// `RequireEmailVerified` middleware gates /v1/* access on the flag.
-//
-// Implementation mirrors `UpdateRateLimit`: resolve the KeyID through
-// the index ([RedisAPIKeyStore.findRecordByKeyID]), then
-// read-modify-write the JSON record back.
-//
-// Idempotent: re-marking an already-verified key updates the
-// timestamp to the new value but doesn't error. The verify
-// handler relies on this so a customer clicking the link twice
-// in 24h doesn't get a 500.
-//
-// Returns the updated record on success or [ErrKeyNotFound]
-// if no matching key exists.
+// MarkEmailVerified sets an existing key's EmailVerifiedAt to now (or the optional `at`, for tests), which RequireEmailVerified gates /v1/* on. Like UpdateRateLimit it resolves the KeyID via the index and read-modify-writes the record.
+// Idempotent: re-marking updates the timestamp without error, so a double click on the link is not a 500. Returns the updated record or ErrKeyNotFound.
 func (s *RedisAPIKeyStore) MarkEmailVerified(ctx context.Context, keyID string, at time.Time) (APIKeyRecord, error) {
 	if keyID == "" {
 		return APIKeyRecord{}, errors.New("auth: MarkEmailVerified: keyID is required")
@@ -53,11 +39,7 @@ func (s *RedisAPIKeyStore) MarkEmailVerified(ctx context.Context, keyID string, 
 		return APIKeyRecord{}, fmt.Errorf("auth: MarkEmailVerified: marshal: %w", err)
 	}
 	k := cachekeys.APIKey(hash).String()
-	// KeepTTL: same reasoning as UpdateRateLimit — this
-	// read-modify-write must not clear a register-mirrored record's
-	// sliding idle TTL ([MirroredKeyIdleTTL]). A bare `SET ... 0` here
-	// would turn the FIRST verification click into a permanent, never-
-	// expiring credential regardless of subsequent use.
+	// KeepTTL, as in UpdateRateLimit: a bare `SET ... 0` would turn the FIRST verification click into a permanent credential by clearing a mirrored record's sliding idle TTL.
 	if err := s.rdb.Set(ctx, k, body, redis.KeepTTL).Err(); err != nil {
 		return APIKeyRecord{}, fmt.Errorf("auth: MarkEmailVerified: redis set %s: %w", k, err)
 	}

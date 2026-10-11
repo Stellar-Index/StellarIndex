@@ -11,12 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TestPersistTrade_PermanentFaultIsReportedNotSwallowed pins the
-// return contract: a trade the store rejects as a permanent data fault is
-// DROPPED (never retried, never landed) and persistTrade says so. Returning
-// nil would be indistinguishable from a landed trade, and the
-// projector's per-event sink would count the dropped row as emitted and
-// publish it under outcome="ok".
+// TestPersistTrade_PermanentFaultIsReportedNotSwallowed pins the return contract: a trade rejected as a permanent data fault is dropped and persistTrade says so,
+// since returning nil would read as landed and the projector's sink would publish it under outcome="ok".
 func TestPersistTrade_PermanentFaultIsReportedNotSwallowed(t *testing.T) {
 	before := counter(t, obs.SourceInsertErrorsTotal, "soroswap", "trade")
 	store := &fakeTradeStore{dataErr: true}
@@ -97,11 +93,8 @@ func TestPersistTrade_AbandonStaysABareCtxError(t *testing.T) {
 	}
 }
 
-// TestPersistTrade_AbandonIsNotCountedAsADrop pins the insert-error label
-// split: kind="trade" is what the any-rate persist_drop tripwire
-// keys on, so it must mean "row gone". A ctx-abandoned retry (cursor held,
-// re-derivable) counts under kind="trade_abandoned" instead. The literal
-// strings are deliberate — they are the alert rule's wire contract.
+// TestPersistTrade_AbandonIsNotCountedAsADrop: kind="trade" (the persist_drop tripwire) must mean row gone;
+// a ctx-abandoned retry (re-derivable) counts as "trade_abandoned". The literals are the alert rule's wire contract.
 func TestPersistTrade_AbandonIsNotCountedAsADrop(t *testing.T) {
 	droppedBefore := counter(t, obs.SourceInsertErrorsTotal, "soroswap", "trade")
 	abandonedBefore := counter(t, obs.SourceInsertErrorsTotal, "soroswap", "trade_abandoned")

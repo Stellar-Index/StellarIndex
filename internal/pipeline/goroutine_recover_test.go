@@ -8,24 +8,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
-// TestPipelineGoroutinesRecover is the package-wide guard:
-// every `go` statement in this package's non-test files must defer
-// worker.Recover/worker.Report, EXCEPT the sink's two crash-by-design
-// drain goroutines (persistWorker and extBuf.run). Those are deliberately
-// unguarded per cmd/stellarindex-indexer/main.go:12-19: a recover() there
-// would be cosmetic (persistWorker's own writes happen in child
-// goroutines a recover here cannot reach) and swallowing the panic would
-// leave the process answering /metrics and /healthz with a frozen cursor
-// instead of crashing and letting systemd restart from the last cursor.
-//
-// awssdk.go's stderr-filter goroutine is not exempt: it is a log-plumbing
-// side channel, not part of the write path, so it recovers and this test
-// subsumes a file-scoped guard on it.
-//
-// Proven red: adding any bare `go func(){}()` to a non-test file in this
-// package fails this test — either as a new unguarded, non-exempt site,
-// or (if named persistWorker/extBuf.run) it would need its own content
-// match to be exempted at all.
+// TestPipelineGoroutinesRecover: every `go` statement in non-test files must defer worker.Recover/worker.Report,
+// except the sink's two crash-by-design drain goroutines (persistWorker, extBuf.run): swallowing a panic there would leave /metrics and /healthz up on a frozen cursor
+// instead of crashing so systemd restarts from the last cursor (cmd/stellarindex-indexer/main.go).
 func TestPipelineGoroutinesRecover(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {

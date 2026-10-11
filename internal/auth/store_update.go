@@ -16,21 +16,8 @@ import (
 // see this when they typo a KeyID on the upgrade-key CLI.
 var ErrKeyNotFound = errors.New("auth: key_id not found")
 
-// UpdateRateLimit lifts (or lowers) the per-minute rate-limit budget
-// of an existing API key, identified by its public KeyID. Used by:
-//
-//   - `stellarindex-ops upgrade-key` (operator-side manual tier
-//     changes).
-//   - The admin tier-clamp path, which lowers every key an account
-//     holds when its tier ceiling drops.
-//
-// The record is resolved through the KeyID index
-// ([RedisAPIKeyStore.findRecordByKeyID]) — one index read and one GET —
-// and only by walking the keyspace while that index is unusable.
-//
-// Returns the updated record (with the new RateLimitPerMin)
-// and nil on success, or [ErrKeyNotFound] if no matching key
-// exists, or a wrapped error on Redis I/O failure.
+// UpdateRateLimit sets the per-minute budget of the key with the given public KeyID (used by `stellarindex-ops upgrade-key` and the admin tier-clamp path), resolving it via the KeyID index (findRecordByKeyID), walking the keyspace only while the index is unusable.
+// Returns the updated record, ErrKeyNotFound, or a wrapped Redis error.
 func (s *RedisAPIKeyStore) UpdateRateLimit(ctx context.Context, keyID string, newRateLimitPerMin int) (APIKeyRecord, error) {
 	if keyID == "" {
 		return APIKeyRecord{}, errors.New("auth: UpdateRateLimit: keyID is required")
@@ -54,12 +41,7 @@ func (s *RedisAPIKeyStore) UpdateRateLimit(ctx context.Context, keyID string, ne
 		return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: marshal: %w", err)
 	}
 	k := cachekeys.APIKey(hash).String()
-	// KeepTTL: this is a read-modify-write on a record that may
-	// carry the register-mirror's sliding idle TTL
-	// ([MirroredKeyIdleTTL]). A bare `SET ... 0` clears any existing TTL,
-	// turning a bounded-lifetime mirrored key permanent the first time an
-	// operator rate-limit change touches it — silently defeating the
-	// idle-expiry that bounds open-registration keyspace growth.
+	// KeepTTL: this read-modify-write may touch a mirrored record carrying the sliding idle TTL; a bare `SET ... 0` would clear it and make the key permanent on the first rate-limit change.
 	if err := s.rdb.Set(ctx, k, body, redis.KeepTTL).Err(); err != nil {
 		return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: redis set %s: %w", k, err)
 	}

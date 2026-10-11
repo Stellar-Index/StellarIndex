@@ -15,12 +15,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
-// r1's /etc/default/stellarindex exports MinIO's root credentials in
-// the standard AWS env-var form, because the HOT datastore
-// authenticates through the SDK's default credential chain. These
-// constants reproduce that environment inside the test process — the
-// whole point of the ADR-0027 cold-tier fix is that a cold client
-// built in such a process must ignore all four.
+// r1's /etc/default/stellarindex exports MinIO's root credentials in AWS env-var form for the hot tier;
+// these constants reproduce that, and a cold client built in such a process must ignore all four.
 const (
 	ambientMinIOAccessKey = "minioadmin-hot-tier-key"
 	ambientMinIOSecretKey = "minioadmin-hot-tier-secret"
@@ -28,13 +24,8 @@ const (
 	ambientMinIORegion    = "r1"
 )
 
-// setAmbientMinIOCredentials reproduces r1's process environment and
-// asserts the ambient AWS chain really does resolve to MinIO's
-// credentials. That assertion is load-bearing, not decorative: the
-// SDK's datastore.NewS3DataStore only degrades to anonymous when
-// `cfg.Credentials.Retrieve(ctx)` FAILS, so a test where the ambient
-// chain happened to be empty would pass trivially against the broken
-// code and prove nothing.
+// setAmbientMinIOCredentials reproduces r1's environment and asserts the ambient chain really resolves to MinIO's credentials;
+// an empty ambient chain would make the test pass trivially against the broken code (the SDK goes anonymous only when Retrieve fails).
 func setAmbientMinIOCredentials(t *testing.T) {
 	t.Helper()
 	t.Setenv("AWS_ACCESS_KEY_ID", ambientMinIOAccessKey)
@@ -81,19 +72,8 @@ func coldOnlyStorage() config.StorageConfig {
 	}
 }
 
-// TestNewColdS3Client_AnonymousDespiteAmbientCredentials is the
-// regression test for the cold-tier anonymous-read incident: with MinIO's
-// credentials live in the process environment (which is r1's steady
-// state, because the hot tier needs them there), a cold client
-// configured for anonymous reads must be anonymous — not signed with
-// the hot tier's keys. The production symptom of getting this wrong is
-// every cold read failing with `InvalidAccessKeyId: The AWS Access Key
-// Id you provided does not exist in our records`.
-//
-// The endpoint/region assertions cover the same disease one layer
-// down: config.LoadDefaultConfig also resolves AWS_ENDPOINT_URL and
-// AWS_REGION, so a cold client built through it would inherit MinIO's
-// endpoint and region label from the environment.
+// TestNewColdS3Client_AnonymousDespiteAmbientCredentials: with MinIO credentials in the environment, an anonymous-configured cold client must not sign with them
+// (symptom: InvalidAccessKeyId), nor inherit the ambient endpoint or region, as config.LoadDefaultConfig would.
 func TestNewColdS3Client_AnonymousDespiteAmbientCredentials(t *testing.T) {
 	setAmbientMinIOCredentials(t)
 	storage := coldOnlyStorage()
@@ -136,18 +116,8 @@ func TestNewColdS3Client_AnonymousDespiteAmbientCredentials(t *testing.T) {
 	}
 }
 
-// TestColdDataStoreFactory_SendsUnsignedRequests is the end-to-end
-// counterpart: it drives the real production wiring
-// (pipeline.LedgerstreamConfig → ColdDataStoreFactory →
-// NewColdDataStore → datastore.FromS3Client) against an in-process S3
-// stand-in and asserts the wire-level property — the cold tier's
-// bucket probe carries NO Authorization header.
-//
-// The second half is the control that makes this non-vacuous: the same
-// storage config routed through the SDK's own datastore.NewDataStore —
-// i.e. the code that shipped, and that this fix replaces — signs the
-// identical request with the ambient MinIO access key. That signed
-// request is the production failure, reproduced.
+// TestColdDataStoreFactory_SendsUnsignedRequests drives the production wiring against an in-process S3 stand-in and asserts the bucket probe carries no Authorization header.
+// The control routes the same config through the SDK's datastore.NewDataStore, which signs with the ambient MinIO key.
 func TestColdDataStoreFactory_SendsUnsignedRequests(t *testing.T) {
 	setAmbientMinIOCredentials(t)
 
@@ -271,12 +241,7 @@ func TestColdCredentials_StaticFromNamedEnvVars(t *testing.T) {
 	}
 }
 
-// TestColdCredentials_NamedButUnsetEnvFailsLoudly pins the fail-closed
-// decision: an operator who named the env vars is telling us the bucket
-// is private. If the value is missing at runtime we must refuse, not
-// quietly retry anonymously — an anonymous read of a private bucket
-// surfaces as an AccessDenied deep inside a walk, which is exactly how
-// the original cold-tier breakage stayed invisible for so long.
+// TestColdCredentials_NamedButUnsetEnvFailsLoudly pins fail-closed: named env vars mean a private bucket, so a missing value must refuse, not retry anonymously.
 func TestColdCredentials_NamedButUnsetEnvFailsLoudly(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -353,24 +318,8 @@ func TestNewColdDataStore_RequiresBucket(t *testing.T) {
 	}
 }
 
-// TestNewColdDataStore_RequiresRegion is (half of) a regression:
-// a bucket set without its region must not sail past NewColdDataStore
-// straight into newColdS3Client and out to FromS3Client's live bucket
-// probe, which (with a local stand-in endpoint) fails deep inside the
-// AWS SDK's own endpoint-rule evaluation ("A region must be set when
-// sending requests to S3") rather than at our load-time boundary.
-// config.StorageConfig.validate rejects this shape at load time, but
-// NewColdDataStore is reachable from hand-built configs (tests, future
-// operators) so it must name the actual missing field itself rather
-// than surface the SDK's error from three layers down — the same
-// reason coldCredentials repeats the key-pair check below.
-//
-// The sibling s3_cold_endpoint requirement is covered by
-// config.TestValidate_RejectsBadFields's "cold bucket set without
-// endpoint" case rather than here: an empty endpoint doesn't fail like
-// this — it silently resolves to AWS's real default regional endpoint,
-// so reproducing ITS unfixed behaviour would mean actually reaching
-// live AWS, which this repo's tests must not do.
+// TestNewColdDataStore_RequiresRegion: a bucket without a region must be rejected by name here, not fail inside the SDK's endpoint-rule evaluation after the bucket probe.
+// The empty-endpoint case lives in config.TestValidate_RejectsBadFields, since reproducing it would reach live AWS.
 func TestNewColdDataStore_RequiresRegion(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

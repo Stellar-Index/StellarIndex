@@ -16,26 +16,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
-// APIKeyStore is the WRITER side of the API-key persistence
-// interface. [APIKeyValidator] is the read path; the two are
-// deliberately separated so the validator (hot path on every
-// request) can be wired without exposing the mutating surface to
-// non-admin callers.
-//
-// Implementations must be safe for concurrent use.
+// APIKeyStore is the writer side of API-key persistence (APIKeyValidator is the read path, kept separate so the hot path does not expose the mutating surface). Implementations must be safe for concurrent use.
 type APIKeyStore interface {
-	// Create issues a fresh API key for the supplied request data.
-	// The plaintext key is returned ONCE and is unrecoverable
-	// thereafter — callers must echo it to the requester before
-	// dropping the response.
-	//
-	// req carries the operator-supplied fields (Identifier, Label,
-	// Tier, Scopes, RateLimitPerMin, MonthlyQuota, ExpiresAt). The store fills
-	// in KeyID + CreatedAt and generates the plaintext.
-	//
-	// Returns the public-safe APIKeyRecord (without the plaintext)
-	// alongside the plaintext. Callers must not log or persist
-	// the plaintext beyond the one-shot response body.
+	// Create issues a fresh key from req (the store fills KeyID and CreatedAt and generates the plaintext).
+	// The plaintext is returned ONCE and is unrecoverable; callers must not log or persist it beyond the one-shot response.
 	Create(ctx context.Context, req CreateAPIKeyRequest) (rec APIKeyRecord, plaintext string, err error)
 }
 
@@ -61,32 +45,15 @@ type CreateAPIKeyRequest struct {
 	// Zero means "use the tier default".
 	RateLimitPerMin int
 
-	// MonthlyQuota — non-zero is the calendar-month billable-request
-	// ceiling `middleware.MonthlyQuota` enforces against the key.
-	// Zero means "inherit": the store copies the ceiling the
-	// identifier's existing credentials already carry (see
-	// [RedisAPIKeyStore.inheritedMonthlyQuota]), and persists 0 — no
-	// ceiling — only when the identifier has none. The cap is opt-in
-	// by contract; the store never invents one.
-	//
-	// The self-service rotation path (POST /v1/account/keys) sets it to
-	// the caller's EFFECTIVE quota rather than its stored per-key value:
-	// a record this store writes is read back without the Postgres
-	// validator's account-override cascade, so copying a per-key 0
-	// would ship the child unmetered.
+	// MonthlyQuota is the billable-request ceiling middleware.MonthlyQuota enforces; zero means inherit the identifier's existing ceiling (0 only if it has none), never an invented cap.
+	// Self-service rotation passes the caller's EFFECTIVE quota: a stored record is read back without the Postgres account-override cascade, so copying a per-key 0 would ship the child unmetered.
 	MonthlyQuota int64
 
 	// ExpiresAt — zero means never. The self-service rotation path sets
 	// it to the caller's own expiry via [ChildKeyRequest].
 	ExpiresAt time.Time
 
-	// EmailVerifiedAt — zero means the key's owner never proved
-	// ownership of their signup email. Set by the self-service
-	// rotation path (POST /v1/account/keys) to the caller's own
-	// stamp so a child key inherits its parent's verification:
-	// the verification is a property of the identifier's owner,
-	// not of one record, and there is no path that can verify a
-	// non-signup KeyID after the fact. Signup leaves it zero.
+	// EmailVerifiedAt zero means the owner never proved their signup email. Rotation copies the parent's stamp: verification belongs to the identifier's owner, and no path verifies a non-signup KeyID later.
 	EmailVerifiedAt time.Time
 
 	// MintedBy is the authenticated credential issuing this key. When
@@ -104,23 +71,9 @@ type CreateAPIKeyRequest struct {
 // for more authority than the minting credential holds.
 var ErrMintExceedsCaller = errors.New("auth: mint exceeds the minting credential's own authority")
 
-// ClampToMinter enforces the delegation invariant that a credential may
-// only mint a child no more privileged than itself, returning the scopes
-// to persist or an error wrapping [ErrMintExceedsCaller].
-//
-// Scopes:
-//   - A full-access minter (empty scope list) delegates freely.
-//   - A scoped minter with no explicit request passes on its OWN scopes,
-//     never an empty (full-access) list.
-//   - A scoped minter's explicit request must be a subset of its scopes
-//     (via [Subject.HasScope], so a "*" minter delegates freely); a scope
-//     it lacks is refused, not silently dropped.
-//
-// Rate limit (0 = the deployment default every key gets):
-//   - A minter with its own ceiling may set a child's up to that ceiling.
-//   - A minter on the default may set one only if it is full-access: it
-//     can already mint itself an unrestricted key, so a clamp would not
-//     bind it. A scoped minter on the default may only issue the default.
+// ClampToMinter enforces that a credential mints no child more privileged than itself, returning the scopes to persist or an error wrapping ErrMintExceedsCaller.
+// Scopes: a full-access minter (empty list) delegates freely; a scoped minter with no request passes on its OWN scopes, never an empty list; an explicit request must be a Subject.HasScope subset and is refused, not dropped.
+// Rate limit (0 = deployment default): a minter's own ceiling bounds the child's; on the default, only a full-access minter may set one, a scoped minter may only issue the default.
 func ClampToMinter(minter Subject, scopes []string, rateLimitPerMin int) ([]string, error) {
 	if rateLimitPerMin > 0 {
 		if minter.RateLimitPerMin > 0 && rateLimitPerMin > minter.RateLimitPerMin {
@@ -147,12 +100,8 @@ func ClampToMinter(minter Subject, scopes []string, rateLimitPerMin int) ([]stri
 	return scopes, nil
 }
 
-// ChildKeyRequest builds the mint request for a key that parent delegates
-// to itself (POST /v1/account/keys). It is the one place every delegated
-// dimension is copied, so a field added to [CreateAPIKeyRequest] is pinned
-// by TestChildKeyRequest_InheritsEveryField instead of silently minting
-// as zero — zero means "unlimited" for quota and "never" for expiry.
-// The store re-checks scopes against parent via MintedBy ([ClampToMinter]).
+// ChildKeyRequest builds the mint request for a key parent delegates to itself, the one place every delegated dimension is copied (TestChildKeyRequest_InheritsEveryField pins it;
+// zero means unlimited quota or never-expiring). The store re-checks scopes via MintedBy (ClampToMinter).
 func ChildKeyRequest(parent Subject, label string, scopes []string) CreateAPIKeyRequest {
 	return CreateAPIKeyRequest{
 		MintedBy:        &parent,
@@ -168,14 +117,8 @@ func ChildKeyRequest(parent Subject, label string, scopes []string) CreateAPIKey
 	}
 }
 
-// RedisAPIKeyStore implements [APIKeyStore] against the same
-// `apikey:<sha256-hex>` shape that [RedisAPIKeyValidator] reads.
-//
-// The store is the source of truth for issuance — it generates the
-// plaintext (32 bytes from crypto/rand, hex-encoded with the `sip_`
-// prefix) and the KeyID (8 bytes from crypto/rand, hex-encoded with
-// the `kid_` prefix). The KeyID is distinct from the secret hash so
-// it can appear in logs and customer-facing responses safely.
+// RedisAPIKeyStore implements APIKeyStore over the `apikey:<sha256-hex>` records RedisAPIKeyValidator reads.
+// It generates the plaintext (`sip_` + 32 crypto/rand bytes hex) and the KeyID (`kid_` + 8 bytes), which is distinct from the secret hash so it is safe in logs and responses.
 type RedisAPIKeyStore struct {
 	rdb redis.Cmdable
 	now func() time.Time
@@ -201,11 +144,7 @@ func withRandRead(fn func([]byte) (int, error)) StoreOption {
 	return func(s *RedisAPIKeyStore) { s.randRead = fn }
 }
 
-// NewRedisAPIKeyStore constructs a store. rdb MUST be non-nil — the
-// store is only wired when Redis is reachable; the API binary's
-// auth layer falls back to the Noop validator (so requests 503)
-// when Redis is missing, and the issuance endpoints simply 503 by
-// not being mounted at all.
+// NewRedisAPIKeyStore constructs a store; rdb must be non-nil. It is wired only when Redis is reachable (otherwise the Noop validator 503s and issuance is not mounted).
 func NewRedisAPIKeyStore(rdb redis.Cmdable, opts ...StoreOption) *RedisAPIKeyStore {
 	if rdb == nil {
 		panic("auth: NewRedisAPIKeyStore: rdb must not be nil")
@@ -251,22 +190,9 @@ func (s *RedisAPIKeyStore) GetByKeyID(ctx context.Context, keyID string) (APIKey
 	return rec, nil
 }
 
-// Create implements [APIKeyStore].
-//
-// Workflow:
-//
-//  1. Validate request (Identifier required); resolve an unset
-//     MonthlyQuota from the identifier's existing credentials.
-//  2. Generate KeyID (`kid_<16-hex>`) and plaintext (`sip_<64-hex>`).
-//  3. Build APIKeyRecord with stamped CreatedAt and tier-defaulted Tier.
-//  4. SET apikey:<sha256(plaintext)> JSON, with [MirroredKeyIdleTTL]
-//     when req.SelfService, else no expiry. SETNX semantics aren't
-//     needed — the SHA-256 collision domain is astronomical and
-//     the KeyID is independently unique.
-//  5. Return (record, plaintext).
-//
-// On Redis I/O failure the plaintext is not surfaced (caller
-// receives an empty string + the error). The record is also empty.
+// Create implements APIKeyStore: validate (Identifier required) and resolve an unset MonthlyQuota from the identifier's credentials;
+// generate KeyID and plaintext; SET apikey:<sha256(plaintext)> with MirroredKeyIdleTTL when req.SelfService, else no expiry (SETNX unneeded, collisions are astronomical).
+// On Redis failure the plaintext is not surfaced: the caller gets an empty record, empty string and the error.
 func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) (APIKeyRecord, string, error) {
 	if req.Identifier == "" {
 		return APIKeyRecord{}, "", errors.New("auth: Create: Identifier is required")
@@ -325,12 +251,7 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 		CreatedAt:       s.now().UTC(),
 		ExpiresAt:       req.ExpiresAt,
 		EmailVerifiedAt: req.EmailVerifiedAt,
-		// Operator-minted keys are full-access by default — matching the
-		// dashboard issuance default (Permissions.All=true). Without this
-		// the permission middleware's closed posture (no allow entries +
-		// PermissionsAll=false) 403s EVERY request from a freshly minted
-		// key ("this key has no permission entries"); a mint-key'd
-		// load-test key failed 210k/210k requests that way.
+		// Operator-minted keys are full-access by default (Permissions.All=true): with no allow entries and PermissionsAll=false the permission middleware's closed posture 403s every request from the new key.
 		// Per-endpoint restriction stays a dashboard feature.
 		PermissionsAll: true,
 	}
@@ -342,12 +263,8 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 	}
 
 	hash := hashAPIKey(plaintext)
-	// Expiry and revocation live in the JSON record; the Redis TTL only
-	// bounds how long an unused self-service key occupies the keyspace.
-	// The validator slides it on every successful Lookup.
-	//
-	// The record and its lookup-index entries land as one atomic write
-	// ([RedisAPIKeyStore.writeRecord]); on failure nothing was written.
+	// Expiry and revocation live in the JSON record; the Redis TTL only bounds how long an unused self-service key occupies the keyspace, and the validator slides it on each Lookup.
+	// The record and its lookup-index entries land as one atomic write (writeRecord).
 	ttl := cachekeys.APIKeyTTL
 	if req.SelfService {
 		ttl = MirroredKeyIdleTTL
@@ -408,12 +325,8 @@ end
 return 0
 `)
 
-// CreateCapped is [RedisAPIKeyStore.Create] with the identifier's
-// active-key ceiling enforced in the same critical section as the write.
-// A per-identifier lock serialises count-then-create across every API
-// instance, so a concurrent burst cannot all read a count below
-// maxActive and all mint. Active means un-revoked. A lock or count
-// failure refuses the mint: the cap exists to stop unbounded minting.
+// CreateCapped is Create with the identifier's active-key ceiling enforced under a per-identifier lock shared across API instances, so a concurrent burst cannot all read a count below maxActive and mint.
+// Active means un-revoked; a lock or count failure refuses the mint.
 func (s *RedisAPIKeyStore) CreateCapped(ctx context.Context, req CreateAPIKeyRequest, maxActive int) (APIKeyRecord, string, error) {
 	if req.Identifier == "" {
 		return APIKeyRecord{}, "", errors.New("auth: CreateCapped: Identifier is required")
@@ -473,12 +386,8 @@ func (s *RedisAPIKeyStore) lockMint(ctx context.Context, identifier string) (fun
 	}
 }
 
-// inheritedMonthlyQuota is the ceiling a key minted without one takes
-// from the credentials its identifier already holds: the most generous
-// LIVE one, so a mint can neither lift the identifier's plan nor tighten
-// it. A live unmetered credential means the plan is unmetered (0). With
-// no live credential the most generous lapsed one still binds, so letting
-// every key lapse cannot reset a metered identifier to unmetered.
+// inheritedMonthlyQuota is the ceiling a key minted without one takes: the most generous LIVE credential's (a live unmetered one means 0), else the most generous lapsed one,
+// so a mint can neither lift nor tighten the plan and letting every key lapse cannot reset a metered identifier to unmetered.
 func (s *RedisAPIKeyStore) inheritedMonthlyQuota(ctx context.Context, identifier string) (int64, error) {
 	recs, err := s.ListKeysForIdentifier(ctx, identifier)
 	if err != nil {
@@ -504,17 +413,7 @@ func (s *RedisAPIKeyStore) inheritedMonthlyQuota(ctx context.Context, identifier
 	return lapsed, nil
 }
 
-// KeyPrefix returns the human-friendly identifier portion of a
-// plaintext API key — the first 12 characters,
-// covering the `sip_` namespace prefix plus 8 hex chars of
-// entropy. Safe to log: 32 bits is far short of authentication-
-// material; the secret tail is what makes the key. Customers
-// see this in dashboard listings to identify which row maps to
-// which key in their secret manager (mirrors AWS's `AKIA…`
-// pattern).
-//
-// Returns "" for inputs shorter than 12 chars (defensive — never
-// happens in practice; generateID always emits long enough).
+// KeyPrefix returns the first 12 chars of a plaintext key (`sip_` plus 8 hex), safe to log (32 bits is not authentication material) and shown in dashboard listings; "" for shorter input.
 func KeyPrefix(plaintext string) string {
 	const prefixLen = 12
 	if len(plaintext) < prefixLen {
