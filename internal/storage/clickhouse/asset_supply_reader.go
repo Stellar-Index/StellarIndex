@@ -42,8 +42,7 @@ const classicCirculatingSupplyQuery = `SELECT asset, toString(sum(toInt128(balan
 // the asset's SAC contract (internal/api/v1/classic_lake_supply.go); and
 // only then this.
 //
-// Callers MUST cache the result (it changes slowly): the GROUP BY over the
-// trustline slice is far too heavy for an API hot path.
+// Callers MUST cache the result: the GROUP BY is far too heavy for a hot path.
 func (r *ExplorerReader) ClassicCirculatingSupply(ctx context.Context) (map[string]string, error) {
 	rows, err := r.conn.Query(ctx, classicCirculatingSupplyQuery)
 	if err != nil {
