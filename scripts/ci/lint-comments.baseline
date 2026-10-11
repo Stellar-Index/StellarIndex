@@ -10,8 +10,6 @@ internal/api/v1/admin_accounts.go	long-block
 internal/api/v1/admin_accounts.go	long-block
 internal/api/v1/admin_keys.go	long-block
 internal/api/v1/auth_sep10.go	long-block
-internal/api/v1/cache_errors.go	long-block
-internal/api/v1/changes.go	long-block
 internal/api/v1/chart.go	long-block
 internal/api/v1/chart.go	long-block
 internal/api/v1/chart.go	long-block
@@ -50,8 +48,6 @@ internal/api/v1/middleware/usage.go	long-block
 internal/api/v1/middleware/usage.go	long-block
 internal/api/v1/middleware/usage.go	long-block
 internal/api/v1/nonstandard_decimals_cache.go	long-block
-internal/api/v1/oracle.go	long-block
-internal/api/v1/price_stream.go	long-block
 internal/api/v1/register.go	long-block
 internal/api/v1/transitive_price.go	long-block
 internal/auth/apikey_cache_invalidator.go	long-block
