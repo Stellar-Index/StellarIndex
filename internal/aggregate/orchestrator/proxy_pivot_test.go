@@ -27,13 +27,7 @@ func pivotTrade(pair canonical.Pair, source string, base, quote int64, ts time.T
 	}
 }
 
-// runProxyPivotTick prices crypto:XLM/fiat:GBP through
-// [XLM/fiat:USD, USD/GBP 0.79] where the XLM/USD leg is 6 XLM @ 0.40 real
-// USD (coinbase, 8dp) plus 4 XLM quoted in USDC on SDEX (7dp) at
-// usdcPrice, folded in at par by the stablecoin-fiat proxy. The direct
-// XLM/GBP market prints 0.32 real GBP. ownUSD=false drops the real-USD
-// print so the leg is all proxy. Returns the served XLM/GBP value, its
-// composite_meta and the proxy_pivot / ok outcome deltas.
+// runProxyPivotTick prices crypto:XLM/fiat:GBP via [XLM/USD, USD/GBP 0.79], the XLM/USD leg being 6 XLM at 0.40 real USD (coinbase, 8dp) plus 4 XLM quoted in USDC on SDEX (7dp) folded in at par by the proxy; direct XLM/GBP prints 0.32. ownUSD=false drops the real-USD print. Returns the served value, composite_meta and proxy_pivot/ok deltas.
 func runProxyPivotTick(t *testing.T, usdcQuote7dp int64, ownUSD bool) (string, compositeMeta, float64, float64) {
 	t.Helper()
 	now := time.Now()
@@ -87,11 +81,7 @@ func runProxyPivotTick(t *testing.T, usdcQuote7dp int64, ownUSD bool) (string, c
 	return served, meta, pivotDelta, okDelta
 }
 
-// A USDC de-peg must not reach the published composite at par: XLM is
-// 0.40 real USD but 0.41237 USDC (USDC at 0.97). The par-merged leg VWAP
-// is 0.404948, × 0.79 = 0.319909 GBP — which would overwrite the correct
-// 0.32 direct print unflagged. The leg's two quote surfaces disagree by
-// ~309 bps, so the composite is refused and the direct print serves.
+// TestTriangulation_ProxyPivotDepegRefusesComposite: a USDC de-peg (0.97) must not reach the composite at par; the leg's quote surfaces disagree by ~309 bps, so the composite (0.319909) is refused and the 0.32 direct print serves.
 func TestTriangulation_ProxyPivotDepegRefusesComposite(t *testing.T) {
 	served, meta, pivotDelta, okDelta := runProxyPivotTick(t, 16_494_800, true)
 

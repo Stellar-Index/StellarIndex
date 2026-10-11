@@ -9,34 +9,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Direction-symmetry regressions for every robust band in this package:
-// [aggregate.FilterOutliers], [aggregate.FilterOutliersLocal],
-// [aggregate.GuardServedVWAP] and the oracle-aggregator band
-// (rejectAggregatorOutliers; its served-price test is global_band_symmetry_test.go).
-//
-// An ADDITIVE robust band in price space
-// (`|p − centre| > K·scale`), which is one-sided-blind by construction:
-// a price can only be `centre` below the centre, so once `K·scale`
-// reaches the centre NO downward print — a 5× crash, a decimal-shift
-// fat finger (on the served guard, even an exact 0) — can exceed the threshold, while the
-// mirror-image up-move still is. The additive band goes blind below at
-// a relative scale of 1/K: 16.9 % relative MAD for [FilterOutliers] at
-// the default σ=4, 6.75 % for the served-VWAP guard at K=10 — dispersion
-// an ordinary long-tail pair reaches routinely.
-//
-// The bands are now symmetric in RATIO space (ADR-0046 §1's direction symmetry: a ½× and a 2×
-// deviation are equally outlying), so these assert the DOWNWARD half of
-// each band as tightly as the upward half, and pin the upward half
-// unchanged so the fix cannot degenerate into "reject more of
-// everything".
+// Direction-symmetry regressions for every robust band here (FilterOutliers, FilterOutliersLocal, GuardServedVWAP, the
+// oracle-aggregator band): an additive band |p - centre| > K*scale is blind below the centre once K*scale reaches it.
+// The bands are ratio-symmetric (ADR-0046 §1), so these pin the downward half as tightly as the upward half.
 
-// TestFilterOutliers_DownAndUpOutliersBothDropped is the window-filter
-// half. The same dispersed window is contaminated once with a crash
-// print and once with its mirror-image pump; both must be rejected and
-// the served VWAP must be the clean window's, in both directions.
-//
-// An additive band lets the crash print survive (window relative MAD
-// 25 % ⇒ additive lower edge −90.9) and drag the served VWAP from 105 to 87.5.
+// TestFilterOutliers_DownAndUpOutliersBothDropped pins that a crash print and its mirror-image pump are both rejected, leaving the clean window's VWAP.
 func TestFilterOutliers_DownAndUpOutliersBothDropped(t *testing.T) {
 	// Base window: a genuinely dispersed pair (~1.25× step between
 	// prints, relative MAD 25 %). Base amount 1 ⇒ price = quote.
@@ -81,10 +58,7 @@ func TestFilterOutliers_DownAndUpOutliersBothDropped(t *testing.T) {
 	}
 }
 
-// TestFilterOutliers_SymmetricWindowFullyKept pins the other side: a
-// window that is merely dispersed, with no contamination, keeps every
-// print. The ratio-symmetric band must not start trimming the low tail
-// of an honest window.
+// TestFilterOutliers_SymmetricWindowFullyKept pins that a merely dispersed, uncontaminated window keeps every print.
 func TestFilterOutliers_SymmetricWindowFullyKept(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(1, 64), mkTrade(1, 80), mkTrade(1, 100),
@@ -96,13 +70,7 @@ func TestFilterOutliers_SymmetricWindowFullyKept(t *testing.T) {
 	}
 }
 
-// TestFilterOutliersLocal_CrashPrintDroppedOnDispersedWindow covers the
-// PUBLISHED-VWAP path (orchestrator.go's FilterOutliersLocal). Its
-// reference set folds the WINDOW reference in first and keeps the
-// SMALLEST score across references, so the window's wide, unclamped band
-// decides a print no local reference vouches for — and an additive band
-// has no lower edge at all on a dispersed window, so the crash print is
-// published into the VWAP.
+// TestFilterOutliersLocal_CrashPrintDroppedOnDispersedWindow covers the published-VWAP path: an additive window band has no lower edge on a dispersed window, so the crash print must be dropped.
 func TestFilterOutliersLocal_CrashPrintDroppedOnDispersedWindow(t *testing.T) {
 	base := []int64{64, 80, 100, 125, 156}
 	trades := make([]canonical.Trade, 0, len(base)+1)
@@ -125,12 +93,7 @@ func TestFilterOutliersLocal_CrashPrintDroppedOnDispersedWindow(t *testing.T) {
 	}
 }
 
-// TestGuardServedVWAP_CrashPrintRejectedOnVolatileBaseline is the
-// serving-guard half. A trailing baseline with 10 %
-// relative MAD pushes an additive guard's lower edge to −48.26,
-// from where EVERY non-negative candidate — 0 included — was served
-// verbatim as a confident price, while the mirror-image pump was still
-// caught.
+// TestGuardServedVWAP_CrashPrintRejectedOnVolatileBaseline is the serving-guard half: a volatile baseline must not let every non-negative candidate, 0 included, be served verbatim.
 func TestGuardServedVWAP_CrashPrintRejectedOnVolatileBaseline(t *testing.T) {
 	// Newest-first; median 100, MAD 10 (10 % relative — above the 6.75 %
 	// at which the old additive lower edge went non-positive).
@@ -165,11 +128,7 @@ func TestGuardServedVWAP_CrashPrintRejectedOnVolatileBaseline(t *testing.T) {
 	}
 }
 
-// TestGuardServedVWAP_MADArmStillWidensDownward proves the fix did not
-// collapse the MAD arm into the ratio arm: on a 15 %-relative-MAD
-// baseline the band's lower edge is still BELOW centre/3 (the ratio
-// bound) — the volatile pair still earns latitude from its own spread —
-// yet it is finite and positive, so a crash print is rejected.
+// TestGuardServedVWAP_MADArmStillWidensDownward proves the MAD arm still widens below the ratio bound yet stays finite and positive, so a crash print is rejected.
 func TestGuardServedVWAP_MADArmStillWidensDownward(t *testing.T) {
 	// Median 100, MAD 22.5 ⇒ K·1.4826·MAD = 333.59, upper edge 433.59,
 	// ratio-symmetric lower edge 100²/433.59 = 23.06 — below the ratio
@@ -183,12 +142,7 @@ func TestGuardServedVWAP_MADArmStillWidensDownward(t *testing.T) {
 	}
 }
 
-// TestRejectAggregatorOutliers_SurvivorSetSymmetric is the
-// oracle-aggregator half. Five vendors at 70/85/100/115/130 (relative MAD
-// 15 %, past the 13.5 % at which the additive lower edge goes
-// non-positive) are contaminated once with a decimal-shifted 1.00 quote
-// and once with its ratio mirror about the 92.50 median; the survivor set
-// must be exactly the five honest vendors in both directions.
+// TestRejectAggregatorOutliers_SurvivorSetSymmetric is the oracle-aggregator half: a decimal-shifted quote and its ratio mirror are both dropped, leaving the five honest vendors.
 func TestRejectAggregatorOutliers_SurvivorSetSymmetric(t *testing.T) {
 	honest := []canonical.OracleUpdate{
 		oracleRow("a", 7000), oracleRow("b", 8500), oracleRow("c", 10000),

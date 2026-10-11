@@ -1,17 +1,6 @@
-// Package protoeventsrollup maintains the protocol_events_24h rollup
-// that backs the events_24h column on /v1/protocols.
-//
-// A ticker-driven worker runs the trailing-24h per-source event census
-// (a UNION ALL count(*) over ~17 served protocol hypertables) on a slow
-// cadence and upserts one row per source into the rollup table, so the
-// API read path is a keyed-on-PK lookup instead of the multi-second
-// census. Runs in the
-// aggregator binary alongside the change-summary + supply refresh
-// workers.
-//
-// See migrations/0086_create_protocol_events_24h_rollup.up.sql for the
-// table and internal/storage/timescale/protocol_stats.go for the
-// census + upsert SQL.
+// Package protoeventsrollup maintains the protocol_events_24h rollup behind events_24h on /v1/protocols.
+// A slow ticker runs the trailing-24h per-source event census (UNION ALL count over ~17 hypertables) into one row per source, replacing a multi-second request-time census.
+// See migrations/0086_create_protocol_events_24h_rollup.up.sql and internal/storage/timescale/protocol_stats.go.
 package protoeventsrollup
 
 import (
@@ -24,21 +13,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// DefaultInterval is the refresh cadence. The census legs are each a
-// 24h count over one hypertable's recent chunks — cheap, but not free —
-// and a couple of minutes of staleness on a trailing-24h event count is
-// immaterial to the /v1/protocols surface it feeds.
+// DefaultInterval is the refresh cadence; the census is cheap per hypertable but not free.
 const DefaultInterval = 2 * time.Minute
 
-// Refresher recomputes and atomically replaces the protocol_events_24h
-// rollup. Production wiring is *timescale.Store.RefreshProtocolEventCounts;
-// tests use a fake.
+// Refresher recomputes and atomically replaces the protocol_events_24h rollup.
 type Refresher interface {
 	RefreshProtocolEventCounts(ctx context.Context) error
 }
 
-// Options tunes a Worker. Logger rides here (not positional) per the
-// repo's Go idioms.
+// Options tunes a Worker.
 type Options struct {
 	// Interval is the refresh cadence. <= 0 falls back to DefaultInterval.
 	Interval time.Duration
@@ -52,8 +35,7 @@ type Worker struct {
 	logger    *slog.Logger
 }
 
-// New constructs the worker. Returns nil when the refresher is missing
-// so callers can gate with a plain nil check (mirrors usage.NewRollup).
+// New constructs the worker, or returns nil when the refresher is missing.
 func New(refresher Refresher, opts Options) *Worker {
 	if refresher == nil {
 		return nil
@@ -69,10 +51,7 @@ func New(refresher Refresher, opts Options) *Worker {
 	return &Worker{refresher: refresher, interval: interval, logger: logger}
 }
 
-// Run refreshes once immediately (so a fresh boot doesn't render zeros
-// for a full interval), then on every tick until ctx is cancelled.
-// Refresh failures log + count in the metric; the worker never exits on
-// a transient Postgres error.
+// Run refreshes immediately (no zeros after boot), then every tick until ctx is cancelled; errors are logged, never fatal.
 func (w *Worker) Run(ctx context.Context) error {
 	if w == nil {
 		return errors.New("protoeventsrollup: nil Worker")

@@ -102,15 +102,8 @@ func TestMultiBaseline_FullBootstrap(t *testing.T) {
 	}
 }
 
-// TestMultiBaseline_FrogBoilingDefense — the headline test:
-//
-// An attacker drifts the asset 0.5% per day for 14 days. The 1d
-// and 7d windows have learned the drift (their median has moved
-// with it). The 30d window still includes pre-attack data, so a
-// fresh return that's small relative to the drifted recent
-// baseline is still LARGE relative to the 30d baseline.
-//
-// MaxZScore picks the 30d window — anomaly fires.
+// TestMultiBaseline_FrogBoilingDefense — an attacker drifts the asset 0.5%/day for 14 days: the 1d/7d windows learn the drift,
+// but the 30d window still holds pre-attack data, so a fresh small return is LARGE against it and MaxZScore picks the 30d window.
 func TestMultiBaseline_FrogBoilingDefense(t *testing.T) {
 	const (
 		bucketsPerDay = 1440 // 1m buckets per 24h
@@ -203,11 +196,8 @@ func TestMultiBaseline_SuddenSpikeFiresFromShortWindow(t *testing.T) {
 	}
 }
 
-// TestMaxZScore_ThinWindowDoesNotOutvoteWellSampledOne — a pair with a
-// month of ~2% per-bucket moves that traded in only three buckets in the
-// last 24h has a Day1 baseline built from TWO returns. That MAD is noise
-// (null P(z>=5) is 14% at n=2), so it must not turn an ordinary 1% move
-// into a 5-sigma anomaly while the 1999-return 30d window scores it < 1.
+// TestMaxZScore_ThinWindowDoesNotOutvoteWellSampledOne — a Day1 baseline from TWO returns is noise (null P(z>=5) is 14% at n=2),
+// so it must not turn an ordinary 1% move into a 5-sigma anomaly while the 1999-return 30d window scores it < 1.
 func TestMaxZScore_ThinWindowDoesNotOutvoteWellSampledOne(t *testing.T) {
 	d1 := []float64{1.0, 1.001, 1.0022}
 	d7 := vwapSeries(1.0, stableJitter(400, 0.02))
@@ -299,11 +289,8 @@ func TestSplitByLookback_BoundaryInclusive(t *testing.T) {
 	}
 }
 
-// TestMaxZScore_NaNObservationFiresFreeze pins the contract:
-// a pathological observation (NaN) MUST surface as max-anomalous
-// so the orchestrator's Phase 2 freeze threshold (z > 5) actually
-// fires. Without this guard, `NaN > 5` evaluates false and the
-// silently-bad price would slip through.
+// TestMaxZScore_NaNObservationFiresFreeze pins that a NaN observation surfaces as max-anomalous,
+// because NaN > 5 is false and a silently bad price would slip past the Phase 2 freeze.
 func TestMaxZScore_NaNObservationFiresFreeze(t *testing.T) {
 	// Build a multi-baseline with all three windows non-nil (so the
 	// bug would be triggered if it were present — the test isn't
@@ -349,11 +336,8 @@ func TestMaxZScore_PosInfObservationFiresFreeze(t *testing.T) {
 	}
 }
 
-// TestMaxZScore_NegInfObservationFiresFreeze — and -Inf, which
-// would naturally yield +Inf z-score (|-Inf - median| / mad =
-// +Inf), but the explicit guard makes the contract easier to
-// reason about — the result is identical regardless of how
-// IEEE-754 happens to handle the underlying math.
+// TestMaxZScore_NegInfObservationFiresFreeze — -Inf would naturally yield +Inf z, but the explicit guard makes the
+// contract independent of how IEEE-754 handles the math.
 func TestMaxZScore_NegInfObservationFiresFreeze(t *testing.T) {
 	d1Returns := []float64{0.001, -0.001, 0.002, -0.002, 0.001}
 	mb := baseline.NewMultiBaseline(minutely(d1Returns...), minutely(d1Returns...), minutely(d1Returns...))
@@ -367,11 +351,8 @@ func TestMaxZScore_NegInfObservationFiresFreeze(t *testing.T) {
 	}
 }
 
-// TestMaxZScore_PathologicalAttributesToFirstAvailableWindow —
-// when only the 30d window is wired (e.g. the asset is mature
-// but the 1d/7d windows happened to evict during retention),
-// the pathological-input path attributes the result to the 30d
-// window rather than panicking on a nil baseline lookup.
+// TestMaxZScore_PathologicalAttributesToFirstAvailableWindow — with only the 30d window wired, a pathological input
+// is attributed to the 30d window rather than panicking on a nil baseline.
 func TestMaxZScore_PathologicalAttributesToFirstAvailableWindow(t *testing.T) {
 	d30Returns := []float64{0.001, -0.001, 0.002, -0.002, 0.001}
 	// Pass empty slices for d1 + d7 — buildOrNil returns nil for

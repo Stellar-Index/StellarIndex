@@ -66,9 +66,7 @@ const (
 
 // ── sandwich ────────────────────────────────────────────────────────
 
-// Attacker trades in two txs bracketing a victim's tx on the same
-// pair in one ledger, front and back in OPPOSITE directions → detected,
-// with the (front, victim, back) legs.
+// TestDetectSandwiches_Bracket: front and back trades in OPPOSITE directions bracketing a victim are detected with (front, victim, back) legs.
 func TestDetectSandwiches_Bracket(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}), // front: buys native
@@ -102,9 +100,7 @@ func TestDetectSandwiches_Bracket(t *testing.T) {
 	}
 }
 
-// The same pair written in the opposite orientation still groups —
-// pair identity is orientation-independent. (The attacker's front/back
-// legs are in opposite directions so the group is a genuine sandwich.)
+// TestDetectSandwiches_OrientationIndependent: pair identity ignores the orientation it is written in.
 func TestDetectSandwiches_OrientationIndependent(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}), // front: buys native
@@ -117,10 +113,7 @@ func TestDetectSandwiches_OrientationIndependent(t *testing.T) {
 	}
 }
 
-// A bracket whose front and back legs are in the SAME direction cannot
-// be a sandwich (you don't front-run and back-run the same way) — it is
-// dropped, not published. This is the ~196/200 impossible-candidate
-// class a positional-only detector names accounts on.
+// TestDetectSandwiches_SameDirectionDropped: same-direction front and back legs are not a sandwich and are not published.
 func TestDetectSandwiches_SameDirectionDropped(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}), // front: buys native
@@ -133,10 +126,7 @@ func TestDetectSandwiches_SameDirectionDropped(t *testing.T) {
 	}
 }
 
-// Opposition across two SOURCES with the INVERTED base convention is
-// resolved correctly: sdex base=received, aquarius base=sold. A front
-// buy on sdex and a back sell on aquarius of the same pair is a genuine
-// sandwich even though both legs are written base=native.
+// TestDetectSandwiches_CrossSourceConventionOpposition: opposition resolves across sources with INVERTED base conventions (sdex base=received, aquarius base=sold).
 func TestDetectSandwiches_CrossSourceConventionOpposition(t *testing.T) {
 	trades := []canonical.Trade{
 		// sdex: base=native = taker RECEIVED native (bought native).
@@ -151,8 +141,7 @@ func TestDetectSandwiches_CrossSourceConventionOpposition(t *testing.T) {
 	}
 }
 
-// A source with no known base-direction convention is indeterminate:
-// we cannot prove opposition, so no account is named. Fail closed.
+// TestDetectSandwiches_UnknownSourceDropped: an unknown base-direction convention cannot prove opposition (fail closed).
 func TestDetectSandwiches_UnknownSourceDropped(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(t, tOpt{source: "mysteryvenue", tx: txA, taker: "GATK", base: "native", quote: usdc}),
@@ -178,8 +167,7 @@ func TestDetectSandwiches_NoVictimInBracket(t *testing.T) {
 	}
 }
 
-// Both attacker trades in ONE tx is an atomic pattern (arbitrage
-// territory), not a cross-tx sandwich.
+// TestDetectSandwiches_SingleTxAttackerIgnored: both attacker trades in ONE tx is arbitrage territory, not a sandwich.
 func TestDetectSandwiches_SingleTxAttackerIgnored(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(t, tOpt{tx: txA, op: 0, taker: "GATK", base: "native", quote: usdc}),
@@ -192,8 +180,7 @@ func TestDetectSandwiches_SingleTxAttackerIgnored(t *testing.T) {
 	}
 }
 
-// Unresolved hashes (not in the tx_index map) degrade to no
-// detection — order is never guessed.
+// TestDetectSandwiches_UnresolvedOrderSkips: hashes missing from the tx_index map are never ordered by guess.
 func TestDetectSandwiches_UnresolvedOrderSkips(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}),
@@ -221,9 +208,7 @@ func oracleRef(asset string) OracleRef {
 	}
 }
 
-// Trades on the oracle's asset in txs on both sides of the update, in
-// OPPOSITE directions on it (sdex: base = what the taker received, so
-// buys USDC before, sells it after) → detected with before/after legs.
+// TestDetectOracleSandwiches_Bracket: opposite-direction trades on the oracle's asset on both sides of the update are detected.
 func TestDetectOracleSandwiches_Bracket(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: usdc, quote: "native"}),
@@ -262,8 +247,7 @@ func TestDetectOracleSandwiches_OneSideOnly(t *testing.T) {
 	}
 }
 
-// The native-XLM SAC id and "native" are the same asset for oracle
-// matching.
+// TestDetectOracleSandwiches_XLMSACNormalised: the native-XLM SAC id and "native" match as one asset.
 func TestDetectOracleSandwiches_XLMSACNormalised(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: "native", quote: usdc}),
@@ -275,10 +259,7 @@ func TestDetectOracleSandwiches_XLMSACNormalised(t *testing.T) {
 	}
 }
 
-// A market maker trading the oracle's asset the SAME way on both sides
-// of the update is not a sandwich and must not be published — including
-// when the two legs are on different pairs, and when the venues' base
-// conventions differ (sdex base = received, soroswap base = sold).
+// TestDetectOracleSandwiches_SameDirectionDropped: same-way trading on both sides is not a sandwich, even across pairs or differing venue conventions.
 func TestDetectOracleSandwiches_SameDirectionDropped(t *testing.T) {
 	idx := map[string]uint32{txA: 1, txO: 3, txB: 5}
 	cases := map[string][]canonical.Trade{
@@ -311,8 +292,7 @@ func TestDetectOracleSandwiches_SameDirectionDropped(t *testing.T) {
 	}
 }
 
-// A leg on a venue with no known base convention has no provable
-// direction → dropped.
+// TestDetectOracleSandwiches_UnknownSourceDropped: a leg with no known base convention has no provable direction.
 func TestDetectOracleSandwiches_UnknownSourceDropped(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(t, tOpt{tx: txA, taker: "GATK", base: usdc, quote: "native"}),
@@ -358,8 +338,7 @@ func washAccount(t *testing.T, b byte) string {
 	return strkeyOf(t, strkey.VersionByteAccountID, b)
 }
 
-// maker == taker → self-trade candidate with the default (tx, actor)
-// dedup identity.
+// TestDetectWashTrades_SelfTrade: maker == taker yields a candidate with the default (tx, actor) dedup identity.
 func TestDetectWashTrades_SelfTrade(t *testing.T) {
 	self := washAccount(t, 1)
 	trades := []canonical.Trade{
@@ -379,8 +358,7 @@ func TestDetectWashTrades_SelfTrade(t *testing.T) {
 	}
 }
 
-// ≥2 fills each direction between two accounts on one pair in one UTC
-// day → round-trip candidate keyed on (day, pair, account pair).
+// TestDetectWashTrades_RoundTrip: two or more fills each way between two accounts in one bucket yield a candidate.
 func TestDetectWashTrades_RoundTrip(t *testing.T) {
 	x, y := washAccount(t, 2), washAccount(t, 3)
 	lo, hi := min(x, y), max(x, y)
@@ -413,9 +391,7 @@ func TestDetectWashTrades_RoundTrip(t *testing.T) {
 	}
 }
 
-// A round trip's identity is a bucket one scan can see whole, not the UTC
-// day. Keyed on the day, the evening's round trip collided with the
-// morning's stored row and its evidence was dropped.
+// TestDetectWashTrades_RoundTripKeyedOnBucketNotDay: identity is a bucket one scan can see whole, so evening trips do not collide with morning rows.
 func TestDetectWashTrades_RoundTripKeyedOnBucketNotDay(t *testing.T) {
 	x, y := washAccount(t, 2), washAccount(t, 3)
 	slice := func(ts time.Time, txs [4]string) []canonical.Trade {
@@ -442,9 +418,7 @@ func TestDetectWashTrades_RoundTripKeyedOnBucketNotDay(t *testing.T) {
 	}
 }
 
-// Some scan must see a whole round-trip bucket, or no stored row ever holds
-// its complete evidence: the bucket plus one worker tick must fit in the
-// default scan window.
+// TestRoundTripBucketFitsTheScanWindow: the bucket plus one worker tick must fit the default scan window so some scan sees it whole.
 func TestRoundTripBucketFitsTheScanWindow(t *testing.T) {
 	const tick = 5 * time.Minute // cmd/stellarindex-aggregator runs the worker every 5m
 	w := NewWorker(&fakeScanner{}, &fakeSink{}, WorkerConfig{})
@@ -453,8 +427,7 @@ func TestRoundTripBucketFitsTheScanWindow(t *testing.T) {
 	}
 }
 
-// One fill each direction is ordinary trading, not the repeated
-// back-and-forth signature.
+// TestDetectWashTrades_RoundTripBelowThreshold: one fill each way is ordinary trading.
 func TestDetectWashTrades_RoundTripBelowThreshold(t *testing.T) {
 	x, y := washAccount(t, 2), washAccount(t, 3)
 	trades := []canonical.Trade{
@@ -466,8 +439,7 @@ func TestDetectWashTrades_RoundTripBelowThreshold(t *testing.T) {
 	}
 }
 
-// Maker-less rows (AMM trades: pool identity absent/irrelevant) never
-// wash-match.
+// TestDetectWashTrades_NoMakerIgnored: maker-less (AMM) rows never wash-match.
 func TestDetectWashTrades_NoMakerIgnored(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(t, tOpt{tx: txA, taker: "GXXX", base: "native", quote: usdc}),
@@ -478,10 +450,7 @@ func TestDetectWashTrades_NoMakerIgnored(t *testing.T) {
 	}
 }
 
-// The maker column also carries pool identities (SDEX liquidity-pool fills
-// record the pool's hex id there). A pool is not an account, so it never
-// forms a wash signature — even where the same pool identity also lands in
-// taker (a Soroban swap whose recipient is a pool contract).
+// TestDetectWashTrades_PoolMakerIgnored: a pool identity in maker or taker is not an account and never forms a wash signature.
 func TestDetectWashTrades_PoolMakerIgnored(t *testing.T) {
 	classicPool := strings.Repeat("ab", 32)
 	sorobanPool := strkeyOf(t, strkey.VersionByteContract, 4)
@@ -514,9 +483,7 @@ func fill(pool, user, filler, tx string, ledger uint32) AuctionFill {
 	}
 }
 
-// Two fills against different positions within the window with an
-// oracle update in the bracket → one candidate anchored on the later
-// fill.
+// TestDetectLiquidationCascades_Cluster: two fills on different positions with an oracle update in the bracket give one candidate on the later fill.
 func TestDetectLiquidationCascades_Cluster(t *testing.T) {
 	fills := []AuctionFill{
 		fill("CPOOLA", "GUSER1", "GFILL1", txA, 100),
@@ -540,10 +507,7 @@ func TestDetectLiquidationCascades_Cluster(t *testing.T) {
 	}
 }
 
-// The liquidated borrowers are the subjects of the liquidations: they
-// must not appear in the published accounts of an event whose kind names
-// an MEV pattern, nor default into Taker when a fill has no filler. They
-// stay in the detail under the explicit `liquidated` role.
+// TestDetectLiquidationCascades_LiquidatedNotPublishedAsAccount: liquidated borrowers stay in detail under the liquidated role, never in accounts or Taker.
 func TestDetectLiquidationCascades_LiquidatedNotPublishedAsActors(t *testing.T) {
 	oracles := []OracleRef{{Source: "reflector-dex", Asset: usdc, Ledger: 102, TxHash: txO}}
 	got := DetectLiquidationCascades([]AuctionFill{
@@ -579,10 +543,7 @@ func TestDetectLiquidationCascades_LiquidatedNotPublishedAsActors(t *testing.T) 
 	}
 }
 
-// The oracle leg must price one of the filled position's own assets: an
-// update for an unrelated asset in the bracket is not evidence, and a
-// fill with no recorded assets correlates with nothing. Alias forms of
-// the position's asset (XLM SAC vs native / crypto:XLM) do match.
+// TestDetectLiquidationCascades_OracleMustPriceThePosition: the oracle must price one of the position's own assets (alias forms match); no recorded assets correlates with nothing.
 func TestDetectLiquidationCascades_OracleMustPriceThePosition(t *testing.T) {
 	fills := []AuctionFill{
 		fill("CPOOLA", "GUSER1", "GFILL1", txA, 100),
@@ -610,8 +571,7 @@ func TestDetectLiquidationCascades_OracleMustPriceThePosition(t *testing.T) {
 	}
 }
 
-// Partial fills of the SAME position are one auction lifecycle, not a
-// cascade.
+// TestDetectLiquidationCascades_SamePositionIgnored: partial fills of one position are one auction, not a cascade.
 func TestDetectLiquidationCascades_SamePositionIgnored(t *testing.T) {
 	fills := []AuctionFill{
 		fill("CPOOLA", "GUSER1", "GFILL1", txA, 100),
@@ -635,8 +595,7 @@ func TestDetectLiquidationCascades_OutsideWindow(t *testing.T) {
 	}
 }
 
-// No oracle update in the bracket → no candidate (the correlation is
-// the point).
+// TestDetectLiquidationCascades_NoOracle: no oracle update in the bracket means no candidate.
 func TestDetectLiquidationCascades_NoOracle(t *testing.T) {
 	fills := []AuctionFill{
 		fill("CPOOLA", "GUSER1", "GFILL1", txA, 100),
@@ -653,9 +612,7 @@ func TestDetectLiquidationCascades_NoOracle(t *testing.T) {
 
 // ── ordering prefilter ──────────────────────────────────────────────
 
-// OrderingTxHashes only asks the lake about hashes that could matter:
-// a minimal sandwich-shaped group qualifies, an unrelated pair's
-// trades don't.
+// TestOrderingTxHashes_Prefilter: only hashes that could matter are asked of the lake.
 func TestOrderingTxHashes_Prefilter(t *testing.T) {
 	trades := []canonical.Trade{
 		// Sandwich-shaped group (≥3 trades, ≥2 takers, one taker on 2 txs).

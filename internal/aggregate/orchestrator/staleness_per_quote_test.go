@@ -68,13 +68,7 @@ func liveTrades(pair canonical.Pair, ts time.Time) []canonical.Trade {
 	return []canonical.Trade{mk(0, 100_000_000, 21_000_000), mk(1, 200_000_000, 42_000_000)}
 }
 
-// compositeStalenessHarness is the composite-served shape: BTC/USD
-// publishes from direct trades on every Tick; BTC/EUR is a CONFIGURED
-// pair with no direct trades at all, reachable only through the chain
-// BTC/USD × USD/EUR. Whether the chain publishes is up to the caller
-// (the FX store and the route-confidence floor).
-//
-// BTC, not XLM, so the native ↔ crypto:XLM merge is not in play.
+// compositeStalenessHarness is the composite-served shape: BTC/USD publishes from direct trades every Tick; BTC/EUR has no direct trades and is reachable only via BTC/USD x USD/EUR, publishing depending on the FX store and route-confidence floor. BTC, not XLM, avoids the native merge.
 type compositeStalenessHarness struct {
 	o              *Orchestrator
 	clk            *stalenessTestClock

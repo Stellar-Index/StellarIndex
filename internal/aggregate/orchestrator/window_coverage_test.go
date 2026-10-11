@@ -30,11 +30,7 @@ func readCoverage(t *testing.T, mr *miniredis.Miniredis, pair canonical.Pair, wi
 	return c
 }
 
-// TestDecideBucket_TruncatedWindowStatesCoveredSpan: a 24h window whose
-// trade read hits the row cap inside its last 2h must publish, with the
-// value, that it is truncated and the oldest trade the read reached.
-// Before, the cap only counted and logged, and the value was published
-// as if it covered the whole day.
+// TestDecideBucket_TruncatedWindowStatesCoveredSpan: a 24h window whose trade read hits the row cap in its last 2h must publish, with the value, that it is truncated and the oldest trade reached.
 func TestDecideBucket_TruncatedWindowStatesCoveredSpan(t *testing.T) {
 	const window = 24 * time.Hour
 	tickTime := time.Date(2026, 10, 6, 12, 0, 30, 0, time.UTC)

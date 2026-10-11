@@ -53,13 +53,7 @@ func TestPhase2FreezeFires_MissingOneSignal(t *testing.T) {
 // TestPhase2FreezeFires_BoundaryStrictness — the conditions are
 // strictly > / < / <=. Boundary values don't fire.
 func TestPhase2FreezeFires_BoundaryStrictness(t *testing.T) {
-	// confidence == the threshold — strictly less-than required.
-	// Deliberately expressed against the constant rather than a literal:
-	// this test is about the STRICTNESS of the comparison, not about
-	// whatever value the freeze is currently calibrated to, so a
-	// recalibration must not be able to silently invalidate it. (It
-	// nearly did — it read `Confidence: 0.10` when the threshold moved
-	// from 0.10 to 0.45.)
+	// Confidence == the threshold: strictly less-than is required. Expressed against the constant, not a literal, so recalibrating the threshold cannot silently invalidate this strictness test.
 	if phase2FreezeFires(confidenceWithSourceCount{
 		Confidence: DefaultPhase2ConfidenceMaxFreeze, ZScore: 8.0, SourceCount: 1,
 	}, defaultThresh()) {
@@ -130,27 +124,8 @@ func TestPhase2FreezeFires_PartialOverrideMergesDefaults(t *testing.T) {
 	}
 }
 
-// TestPhase2FreezeFires_ConfidenceConditionIsNotVacuous: the freeze is a THREE-signal AND, and
-// the confidence signal only carries information because
-// confidence.Compute normalises the weighted geometric mean.
-//
-// This test feeds real [confidence.Compute] output (not a literal)
-// for a single-source bucket that is otherwise unremarkable — a low
-// z, one source class, mature baseline, no cross-oracle reference,
-// and $12K of window liquidity (just over the production
-// min_usd_volume floor). Under the shipped combiner it scores 0.530,
-// so the confidence sub-condition does NOT hold and the bucket does
-// NOT freeze on source-count alone.
-//
-// Under the bare product ADR-0019's formula block shows, the same
-// bucket scores 0.0223 — below the 0.10 threshold before z is even
-// considered, because source_count_factor(1) = 0.119 and
-// diversity_factor(1) = 0.5 multiply to 0.06 on their own. Every
-// single-source window would satisfy the confidence condition, the
-// AND would collapse to two signals, and freezes (serving stale LKG
-// prices on /v1/price) would fire far more often. Changing the
-// combiner without changing this threshold is therefore NOT a
-// documentation-only change — that is what this test guards.
+// TestPhase2FreezeFires_ConfidenceConditionIsNotVacuous feeds real [confidence.Compute] output for an unremarkable single-source bucket: it scores 0.530, so confidence does NOT hold and source count alone does not freeze.
+// Under the bare product in ADR-0019's formula block it would score 0.0223, every single-source window would satisfy the condition, and the AND would collapse to two signals; changing the combiner without this threshold is not a docs-only change.
 func TestPhase2FreezeFires_ConfidenceConditionIsNotVacuous(t *testing.T) {
 	singleSourceButOrdinary := confidence.Inputs{
 		ZScore:                   0.5,
@@ -195,32 +170,9 @@ func TestPhase2FreezeFires_ConfidenceConditionIsNotVacuous(t *testing.T) {
 	}
 }
 
-// TestPhase2FreezeFires_CalibratedToADRZBand pins the
-// operator decision: DefaultPhase2ConfidenceMaxFreeze = 0.45 exists so
-// the freeze actually fires in the neighbourhood of ADR-0019's stated
-// `z > 5`, across every population the aggregator serves.
-//
-// Why this test rather than a comment. Confidence is a weighted
-// geometric mean, so it decays gently in z and the freeze's real
-// trigger point is an EMERGENT property of (threshold x combiner x
-// factor set) — not something any one of them states. At the previous
-// 0.10 the emergent trigger was z ~= 15, roughly a 30% move in one
-// 1-minute bucket for XLM, i.e. the control was decorative while every
-// individual piece still looked correct in isolation. Nothing failed
-// when that happened. This test is what fails.
-//
-// It asserts a BAND (no freeze at z <= 5, freeze by z = 6) rather than
-// an exact crossing point, so ordinary combiner tuning stays free while
-// a change that pushes the trigger back out to z ~= 15 — or pulls it in
-// to z ~= 2 — breaks the build. Both directions are real hazards: a
-// freeze that never fires serves manipulated prices, and one that fires
-// too readily serves stale LKG prices (its own money bug).
-//
-// The three populations are the ones that actually differ:
-//   - mature + measured liquidity: the 4 USD-quoted default pairs
-//   - sparse baseline: any newly-tracked pair (bootstrap-capped)
-//   - unmeasured liquidity: the 8 non-USD-quoted default pairs, which
-//     without the unmeasured sentinel have confidence pinned to 0 and so freeze at z > 0
+// TestPhase2FreezeFires_CalibratedToADRZBand pins DefaultPhase2ConfidenceMaxFreeze = 0.45 so the freeze fires near ADR-0019's z > 5. The real trigger is emergent from threshold x combiner x factors; at 0.10 it was z ~ 15 (a ~30% one-minute XLM move) and nothing failed.
+// It asserts a band (no freeze at z <= 5, freeze by z = 6) so combiner tuning stays free but drift toward z ~ 15 (manipulated prices served) or z ~ 2 (stale LKG served) breaks the build.
+// Populations: mature with measured liquidity (4 USD-quoted pairs), sparse baseline (bootstrap-capped), and unmeasured liquidity (8 non-USD pairs, which without the sentinel freeze at z > 0).
 func TestPhase2FreezeFires_CalibratedToADRZBand(t *testing.T) {
 	base := func(z, ageDays, liquidity float64) float64 {
 		return confidence.Compute(confidence.Inputs{

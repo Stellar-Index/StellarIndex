@@ -7,8 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// AssetClass classifies an asset for threshold lookup. Its values appear in
-// operator config and Prometheus labels, so renaming one is a wire break.
+// AssetClass classifies an asset for threshold lookup; values are wire-visible (config, metric labels).
 type AssetClass string
 
 const (
@@ -32,12 +31,10 @@ const (
 	ClassDefault AssetClass = "default"
 )
 
-// String makes AssetClass usable as a Prometheus label without a
-// type assertion.
+// String returns the class as a Prometheus label value.
 func (c AssetClass) String() string { return string(c) }
 
 // AllClasses returns every defined class in canonical order.
-// Useful for config validation + test enumeration.
 func AllClasses() []AssetClass {
 	return []AssetClass{
 		ClassStablecoin,
@@ -56,18 +53,13 @@ type Classifier struct {
 	overrides map[string]AssetClass
 }
 
-// NewClassifier builds a Classifier from canonical asset strings to classes; unlisted
-// assets get [ClassDefault]. Keys fold through the alias registry, and conflicting aliases
-// resolve to the first key (production rejects them first via [ValidateOverrides]).
+// NewClassifier maps alias-folded asset strings to classes; unlisted assets get [ClassDefault].
 func NewClassifier(overrides map[string]AssetClass) *Classifier {
 	folded, _ := foldOverrides(overrides)
 	return &Classifier{overrides: folded}
 }
 
-// ValidateOverrides rejects an override map in which two keys name the
-// same asset under the alias registry (e.g. "native" and "crypto:XLM") but
-// assign it different classes, which would otherwise leave one spelling on
-// the wrong thresholds. Call it after the registry is installed.
+// ValidateOverrides rejects overrides that give two aliases of one asset different classes.
 func ValidateOverrides(overrides map[string]AssetClass) error {
 	if _, conflict := foldOverrides(overrides); conflict != "" {
 		return fmt.Errorf("anomaly: classifications %s name the same asset with different classes", conflict)
@@ -110,9 +102,7 @@ func foldKey(k string) string {
 	return canonical.CanonicalAsset(a).String()
 }
 
-// ClassOf returns the asset's class. Falls back to [ClassDefault]
-// when the asset isn't in the operator's classification map. Any alias
-// of a classified asset gets the same class.
+// ClassOf returns the asset's class (any alias matches), or [ClassDefault] if unclassified.
 func (c *Classifier) ClassOf(asset canonical.Asset) AssetClass {
 	if cls, ok := c.overrides[canonical.CanonicalAsset(asset).String()]; ok {
 		return cls

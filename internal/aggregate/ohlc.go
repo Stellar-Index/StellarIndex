@@ -6,16 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// OHLC is an Open/High/Low/Close bar over a bucket of trades, plus
-// total base + quote volumes. Prices are exact rationals.
-//
-// Invariants populated by [ComputeOHLC]:
-//
-//   - Open is the first (chronologically) trade's price.
-//   - Close is the last trade's price.
-//   - High ≥ Close, High ≥ Open. Low ≤ Close, Low ≤ Open.
-//   - TradeCount is the number of trades that contributed (zero-base
-//     trades are silently skipped).
+// OHLC is an open/high/low/close bar with total base and quote volumes; prices are exact rationals.
 type OHLC struct {
 	Open        *big.Rat
 	High        *big.Rat
@@ -26,14 +17,7 @@ type OHLC struct {
 	TradeCount  int
 }
 
-// ComputeOHLC produces an [OHLC] bar from the given trades.
-//
-// trades MUST be sorted by Timestamp, ascending — Open/Close
-// depend on ordering. The function doesn't sort internally to
-// avoid hiding caller bugs (consistent with [TWAP]).
-//
-// Returns [ErrNoTrades] when no trade contributes a valid price
-// (every input had zero base or zero quote).
+// ComputeOHLC builds an [OHLC] bar from trades that MUST be sorted ascending by Timestamp (not sorted here, like [TWAP]); [ErrNoTrades] if none has a valid price.
 func ComputeOHLC(trades []canonical.Trade) (*OHLC, error) {
 	if len(trades) == 0 {
 		return nil, ErrNoTrades

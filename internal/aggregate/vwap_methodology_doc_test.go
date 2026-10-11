@@ -16,16 +16,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
 )
 
-// docs/methodology/vwap-aggregation.md and docs/protocols/README.md
-// are public methodology pages, not generated from code — a reader
-// (or a protocol team asked to verify their contract set) trusts the
-// prose directly. Reading alone cannot confirm the pages stay
-// correct, because nothing in the repo re-checks the load-bearing
-// numbers the pages state against the source they describe. This
-// file is that check for the facts most likely to silently drift:
-// the stablecoin fiat-proxy set and the two bridges' pinned-contract
-// counts. It is a compile step for the overlap, same shape as
-// internal/api/v1/methodology_explorer_drift_test.go.
+// docs/methodology/vwap-aggregation.md and docs/protocols/README.md are hand-written public pages; this file checks the facts most likely
+// to drift against source: the stablecoin fiat-proxy set and the bridges' pinned-contract counts.
 
 const (
 	vwapMethodologyDocPath = "../../docs/methodology/vwap-aggregation.md"
@@ -47,12 +39,7 @@ func sortedCopy(in []string) []string {
 	return out
 }
 
-// TestVWAPDocStablecoinProxyMapMatchesSource pins the "Stablecoin ->
-// fiat proxy" table's three backer lists against
-// aggregate.FiatBackers, the exported enumeration the aggregator
-// itself uses to build its fetch plan. Adding or removing a
-// stablecoin in internal/aggregate/stablecoin.go without touching
-// the doc's table — or vice versa — fails this test.
+// TestVWAPDocStablecoinProxyMapMatchesSource pins the stablecoin-to-fiat table's backer lists against aggregate.FiatBackers.
 func TestVWAPDocStablecoinProxyMapMatchesSource(t *testing.T) {
 	doc := readDoc(t, vwapMethodologyDocPath)
 
@@ -89,10 +76,7 @@ func TestVWAPDocStablecoinProxyMapMatchesSource(t *testing.T) {
 	}
 }
 
-// TestProtocolsReadmeBridgeContractCountsMatchSource pins the CCTP
-// and Rozo "N pinned contracts" claims in the bridges table against
-// each source's exported mainnet contract set — the fact a protocol
-// team is asked to confirm when sent this page.
+// TestProtocolsReadmeBridgeContractCountsMatchSource pins the CCTP and Rozo pinned-contract counts in the bridges table against each source's exported mainnet contract set.
 func TestProtocolsReadmeBridgeContractCountsMatchSource(t *testing.T) {
 	doc := readDoc(t, protocolsReadmeDocPath)
 

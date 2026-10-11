@@ -14,14 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// ─── ReleaseWindow falls back to the DURABLE record, not to Clear ───
-//
-// The marker is only the first place the record lives. When Redis has lost
-// it — the one situation migration 0163's per-window durable ladders exist
-// for — "the marker names no sibling" is not "no sibling is frozen", and a
-// release that read it that way retired the whole durable record: a
-// recovering 5m window ended an ESCALATED 1h sibling's freeze, which
-// ADR-0019 holds "until manual unfreeze".
+// ReleaseWindow falls back to the DURABLE record, not to Clear: when Redis lost the marker, "no sibling named" is not
+// "no sibling frozen", and treating it so let a recovering 5m window end an ESCALATED 1h freeze.
 
 // bothWindowsFrozen freezes the 1h window (escalated) and the 5m window
 // (fresh) through the production writer shape: a ladder store is wired.
@@ -47,11 +41,7 @@ func bothWindowsFrozen(t *testing.T) (*miniredis.Miniredis, *freeze.Writer, *win
 	return mr, w, store
 }
 
-// TestReleaseWindow_AsksTheDurableRecordWhenTheMarkerCannotAnswer: for
-// every shape of marker that names no sibling — gone, undecodable, or
-// written before per-window ladders — the 5m window's release must leave
-// the escalated 1h window's durable ladder exactly as it was, retire only
-// its own, and report the freeze kept.
+// TestReleaseWindow_AsksTheDurableRecordWhenTheMarkerCannotAnswer: for a gone, undecodable or pre-Ladders marker, the 5m release retires only its own durable ladder and reports the freeze kept.
 func TestReleaseWindow_AsksTheDurableRecordWhenTheMarkerCannotAnswer(t *testing.T) {
 	asset, quote := nativeUSD(t)
 	key := cachekeys.Freeze(asset, quote).String()
@@ -119,9 +109,7 @@ func TestReleaseWindow_AsksTheDurableRecordWhenTheMarkerCannotAnswer(t *testing.
 	}
 }
 
-// TestReleaseWindow_KeepsALiveUnownedDurableLadder: a row written before
-// 0163 carries one pair-level ladder with no recorded owner. It may be a
-// sibling's, so a window's release must not retire it either.
+// TestReleaseWindow_KeepsALiveUnownedDurableLadder: a pre-0163 pair-level ladder may be a sibling's, so a window's release must not retire it.
 func TestReleaseWindow_KeepsALiveUnownedDurableLadder(t *testing.T) {
 	_, rdb := newRedis(t)
 	store := newWindowedFakeLadderStore()
@@ -147,11 +135,7 @@ func TestReleaseWindow_KeepsALiveUnownedDurableLadder(t *testing.T) {
 	}
 }
 
-// TestReleaseWindow_DoesNotClearADurableRecordItCannotRead: with the marker
-// gone the durable record is the only authority, and a release that cannot
-// read it does not get to retire it. The rehydrate reads degrade a store
-// error to "absent" because there that invents nothing; here "absent" is
-// the answer that destroys every sibling's ladder.
+// TestReleaseWindow_DoesNotClearADurableRecordItCannotRead: with the marker gone the durable record is the only authority, so an unreadable one must not be retired.
 func TestReleaseWindow_DoesNotClearADurableRecordItCannotRead(t *testing.T) {
 	mr, w, store := bothWindowsFrozen(t)
 	asset, quote := nativeUSD(t)
@@ -173,11 +157,7 @@ func TestReleaseWindow_DoesNotClearADurableRecordItCannotRead(t *testing.T) {
 	}
 }
 
-// TestReleaseWindow_StillClearsOnceTheRecordIsRetired pins the other side:
-// the operator override (`stellarindex-ops freeze-unfreeze`) retires the
-// durable record itself, so the release each window then makes finds no
-// sibling anywhere and is the same idempotent clear as before. Consulting
-// the durable record must not make an override fail to stick.
+// TestReleaseWindow_StillClearsOnceTheRecordIsRetired: after the operator override retires the durable record, each window's release is the same idempotent clear.
 func TestReleaseWindow_StillClearsOnceTheRecordIsRetired(t *testing.T) {
 	mr, w, _ := bothWindowsFrozen(t)
 	asset, quote := nativeUSD(t)
@@ -218,11 +198,7 @@ func TestReleaseWindow_AbandonedSiblingDoesNotKeepThePairFrozen(t *testing.T) {
 
 // ─── ReleaseWindow asks the RECORD whether a sibling is frozen ────
 
-// TestReleaseWindow_KeepsTheMarkerForASiblingsLadder: the caller believes
-// it is the pair's last frozen window — but only because the 1h window has
-// not been evaluated in its process. The marker says otherwise, and the
-// marker wins: the 5m ladder goes, everything the 1h window owns stays, in
-// Redis and in the durable record.
+// TestReleaseWindow_KeepsTheMarkerForASiblingsLadder: the marker wins over the caller's last-window belief; the 5m ladder goes, the 1h window's state stays in Redis and the durable record.
 func TestReleaseWindow_KeepsTheMarkerForASiblingsLadder(t *testing.T) {
 	mr, rdb := newRedis(t)
 	store := newWindowedFakeLadderStore()
@@ -269,9 +245,7 @@ func TestReleaseWindow_KeepsTheMarkerForASiblingsLadder(t *testing.T) {
 	}
 }
 
-// TestReleaseWindow_ClearsWhenNoSiblingIsRecorded: with no other window in
-// the record, releasing IS clearing — flags.frozen drops at once and the
-// durable ladder is retired, so a restart cannot resurrect the freeze.
+// TestReleaseWindow_ClearsWhenNoSiblingIsRecorded: with no other window recorded, releasing IS clearing, including the durable ladder.
 func TestReleaseWindow_ClearsWhenNoSiblingIsRecorded(t *testing.T) {
 	mr, rdb := newRedis(t)
 	store := newWindowedFakeLadderStore()
@@ -321,9 +295,7 @@ func (c *getFailingCache) Del(ctx context.Context, keys ...string) *redis.IntCmd
 	return c.RedisCache.Del(ctx, keys...)
 }
 
-// TestReleaseWindow_DoesNotClearAMarkerItCannotRead: not knowing whether a
-// sibling window is frozen is no ground for unfreezing it. The marker is
-// left to its TTL and the caller is told.
+// TestReleaseWindow_DoesNotClearAMarkerItCannotRead: not knowing whether a sibling is frozen is no ground to unfreeze it; the marker is left to its TTL.
 func TestReleaseWindow_DoesNotClearAMarkerItCannotRead(t *testing.T) {
 	_, rdb := newRedis(t)
 	cache := &getFailingCache{RedisCache: rdb}

@@ -99,17 +99,8 @@ func TestDiversityFactor(t *testing.T) {
 
 // ─── LiquidityFactor ──────────────────────────────────────────────
 
-// TestLiquidityFactor_AnchorPoints pins the curve's endpoints and the
-// two interior volumes that matter operationally: the production
-// `min_usd_volume` publish floor ($10K) and the measured p50 bucket
-// volume of the index's deepest pair (BTC/USD, $123,678 when
-// measured).
-//
-// Proven red against a $100K ceiling: that curve
-// returns 1.0 at $100K and at $123,678 — the deepest pair's MEDIAN
-// bucket saturated the factor, so it carried no information across the
-// whole top half of its own population and $100K of wash volume bought
-// the same full credit as $10M of real depth.
+// TestLiquidityFactor_AnchorPoints pins the endpoints plus the $10K publish floor and the deepest pair's p50 bucket ($123,678).
+// A $100K ceiling saturates at that median, so $100K of wash volume would score like $10M of real depth.
 func TestLiquidityFactor_AnchorPoints(t *testing.T) {
 	cases := []struct {
 		usd       float64
@@ -147,11 +138,8 @@ func TestLiquidityFactor_LogShape(t *testing.T) {
 	}
 }
 
-// TestLiquidityFactor_GuardsBadInputs — NaN is a caller bug, not a
-// sentinel, and must not poison the geometric mean. A MEASURED zero
-// stays 0: "we looked and there is nothing here" is a real signal.
-// (Negative inputs are the "unmeasured" sentinel, covered by
-// TestLiquidityFactor_UnmeasuredIsNeutral.)
+// TestLiquidityFactor_GuardsBadInputs: NaN must not poison the geometric mean, and a MEASURED zero stays 0 (a real signal).
+// Negative is the unmeasured sentinel, covered by TestLiquidityFactor_UnmeasuredIsNeutral.
 func TestLiquidityFactor_GuardsBadInputs(t *testing.T) {
 	for _, in := range []float64{math.NaN(), 0.0} {
 		got := confidence.LiquidityFactor(in)
@@ -161,13 +149,8 @@ func TestLiquidityFactor_GuardsBadInputs(t *testing.T) {
 	}
 }
 
-// TestLiquidityFactor_UnmeasuredIsNeutral — the negative
-// sentinel means "we could not value this pair in USD at all", which
-// is not a finding about the pair's liquidity and must NOT zero the
-// factor (and with it, the whole geometric mean).
-//
-// Proven red against a factor returning 0 for every
-// negative input: each case reports 0 instead of 0.5.
+// TestLiquidityFactor_UnmeasuredIsNeutral: the negative sentinel means the pair could not be valued in USD, which is no finding
+// about liquidity and must not zero the factor (and with it the whole geometric mean); each case reads 0.5, not 0.
 func TestLiquidityFactor_UnmeasuredIsNeutral(t *testing.T) {
 	for _, in := range []float64{confidence.LiquidityUnmeasured, -1.0, -0.5, math.Inf(-1)} {
 		got := confidence.LiquidityFactor(in)
@@ -220,12 +203,8 @@ func TestCrossOracleFactor_GuardsNaN(t *testing.T) {
 
 // ─── TriangulationAgreementFactor ─────────────────────────────────
 
-// TestTriangulationAgreementFactor_AnchorPoints pins the corroboration
-// curve: full credit inside the 2% tolerance (which exists to absorb a
-// chained-fiat leg snapped to a DAILY fx_quotes bucket, not to be
-// lenient), halving every 4 percentage points past it, and near-zero
-// for the divergence a single-venue manipulation on a thin pair
-// produces.
+// TestTriangulationAgreementFactor_AnchorPoints pins the curve: full credit inside the 2% tolerance (absorbs a chained-fiat leg
+// on a DAILY fx_quotes bucket), halving every 4 points past it, near zero for a single-venue manipulation on a thin pair.
 func TestTriangulationAgreementFactor_AnchorPoints(t *testing.T) {
 	cases := []struct {
 		divergencePct float64

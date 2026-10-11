@@ -7,8 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// KindLiquidationCascade is the mev_events.kind for clustered Blend
-// liquidation fills correlated with an oracle move.
+// KindLiquidationCascade is the mev_events.kind for clustered Blend liquidations correlated with an oracle move.
 const KindLiquidationCascade = "liquidation_cascade"
 
 const cascadeNote = "A Blend liquidation-auction fill followed at least one other " +
@@ -63,12 +62,9 @@ type cascadeDetail struct {
 	Note          string             `json:"note"`
 }
 
-// DetectLiquidationCascades scans Blend auction fills for cascade
-// clusters: a fill preceded by ≥1 fill against a DIFFERENT position
-// (pool, user) within cascadeWindowLedgers, with ≥1 on-chain oracle
-// update ledger-positioned inside [earliest prior fill − window,
-// fill]. One candidate per cascade-extending fill, anchored on that
-// fill's identity so re-scans of overlapping windows dedup cleanly.
+// DetectLiquidationCascades scans Blend fills for clusters: a fill preceded by a fill against a DIFFERENT
+// position within cascadeWindowLedgers, with an oracle update in the bracket. One candidate per
+// cascade-extending fill, anchored on its identity so overlapping re-scans dedup.
 func DetectLiquidationCascades(fills []AuctionFill, oracles []OracleRef) []Candidate {
 	if len(fills) < 2 {
 		return nil
@@ -126,11 +122,9 @@ func buildCascadeCandidate(sorted []AuctionFill, i int, oracles []OracleRef) (Ca
 	return assembleCascadeCandidate(f, priors, correlated), true
 }
 
-// correlatedOracles returns the oracle updates inside [lowLedger − window,
-// f.Ledger] that price one of f's own position assets. Without the asset
-// key, any mapped update from a many-feed oracle publishing on a short
-// cadence lands in almost every bracket and the leg carries no evidence.
-// A fill with no recorded assets correlates with nothing (fail closed).
+// correlatedOracles returns oracle updates in the bracket that price one of f's own position assets;
+// without the asset key a many-feed oracle lands in almost every bracket. No recorded assets
+// correlates with nothing (fail closed).
 func correlatedOracles(f AuctionFill, lowLedger uint32, oracles []OracleRef) []cascadeOracleRef {
 	position := positionAssetSet(f.Assets)
 	var out []cascadeOracleRef
@@ -232,13 +226,9 @@ func assembleCascadeCandidate(f AuctionFill, priors []AuctionFill, correlated []
 	}
 }
 
-// oracleRefIsMapped reports whether the oracle row's asset is a MAPPED
-// canonical asset. The `raw:` rows the oracle capture-totality design
-// records verbatim for unmapped symbols are orientation-unknown
-// reference data, never interpretation input, so they never become
-// cascade evidence. OracleUpdatesForMEVScan already excludes them in SQL; this is
-// the in-process guard for any other OracleScanner. A string that is
-// not a canonical asset at all is treated as unmapped (fail closed).
+// oracleRefIsMapped reports whether the row's asset is a MAPPED canonical asset. raw: rows are
+// orientation-unknown reference data and never become cascade evidence; a non-canonical string is
+// unmapped (fail closed).
 func oracleRefIsMapped(o OracleRef) bool {
 	a, err := canonical.ParseAsset(o.Asset)
 	return err == nil && a.IsMapped()

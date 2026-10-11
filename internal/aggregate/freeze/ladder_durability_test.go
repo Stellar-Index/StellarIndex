@@ -96,28 +96,8 @@ func freezeDecision() anomaly.Decision {
 	}
 }
 
-// TestWriter_LadderSurvivesRedisFlush is THE regression for the durable
-// freeze ladder (migration 0119).
-//
-// Scenario, exactly as it happens in production:
-//
-//  1. A pair has climbed ADR-0019's whole 4 × 30-minute extension ladder
-//     without earning its auto-unfreeze. It is ESCALATED — a P1 has paged a
-//     human, and the ADR says the freeze "stays active until manual
-//     unfreeze". /v1/price is serving a last-known-good value for it.
-//  2. Redis is flushed (restart without persistence, an incident, an
-//     eviction). The `freeze:<asset>:<quote>` marker is gone.
-//
-// Pre-0119 the ladder lived ONLY in that marker's JSON and in the
-// aggregator's memory, and the orchestrator reads a missing marker under a
-// live freeze as the ADR-0019 operator force-unfreeze — so the next tick
-// released the freeze and republished the price a P1 had already escalated.
-//
-// This asserts the corrected values, not merely that something is returned:
-// the freeze must read as PRESENT, and the restored state must carry the
-// escalation flag and the exhausted extension count, because those are what
-// the orchestrator's next Evaluate() reads to decide the freeze does not
-// auto-unfreeze.
+// TestWriter_LadderSurvivesRedisFlush: an ESCALATED ladder must read as PRESENT with its escalation flag and exhausted
+// extension count after a Redis flush, because a missing marker would otherwise read as an operator force-unfreeze and republish the price.
 func TestWriter_LadderSurvivesRedisFlush(t *testing.T) {
 	mr, rdb := newRedis(t)
 	ladder := newFakeLadderStore()
@@ -175,14 +155,7 @@ func TestWriter_LadderSurvivesRedisFlush(t *testing.T) {
 	}
 }
 
-// TestWriter_OperatorUnfreezeStillSticks — the durable fallback must not
-// take the ADR-0019 operator override away.
-//
-// `stellarindex-ops freeze-unfreeze` does both halves: it clears the Redis
-// marker AND stamps recovered_at on the open freeze_events row. After that
-// there is no OPEN durable row, so the pair must read ABSENT even though
-// its last ladder was escalated — otherwise a human could not
-// end a freeze that by construction never ends on its own.
+// TestWriter_OperatorUnfreezeStillSticks: freeze-unfreeze stamps recovered_at, so with no OPEN durable row the pair reads ABSENT even if escalated.
 func TestWriter_OperatorUnfreezeStillSticks(t *testing.T) {
 	mr, rdb := newRedis(t)
 	ladder := newFakeLadderStore()
@@ -209,14 +182,7 @@ func TestWriter_OperatorUnfreezeStillSticks(t *testing.T) {
 	}
 }
 
-// TestWriter_LapsedDurableHoldIsNotResurrected — the freshness bound.
-//
-// A row can sit open indefinitely if the aggregator (which also runs the
-// recovery worker) dies: nothing is left to close it. Honouring such a
-// ladder unconditionally would mean a week-old freeze springs back to life
-// the moment the aggregator restarts, pinning a healthy pair to a
-// week-stale last-known-good price. Past hold_until + grace, behave exactly
-// as before 0119.
+// TestWriter_LapsedDurableHoldIsNotResurrected: past hold_until + grace an open row is not honoured, or a week-old freeze would pin a healthy pair on restart.
 func TestWriter_LapsedDurableHoldIsNotResurrected(t *testing.T) {
 	_, rdb := newRedis(t)
 	ladder := newFakeLadderStore()
@@ -248,9 +214,7 @@ func TestWriter_LapsedDurableHoldIsNotResurrected(t *testing.T) {
 	}
 }
 
-// TestWriter_NoLadderStoreKeepsPre0119Behaviour — a deployment that wires
-// no ladder store (and every existing test double) must behave bit-for-bit
-// as before: a missing marker reads ABSENT.
+// TestWriter_NoLadderStoreKeepsPre0119Behaviour: with no ladder store a missing marker reads ABSENT.
 func TestWriter_NoLadderStoreKeepsPre0119Behaviour(t *testing.T) {
 	mr, rdb := newRedis(t)
 	w, err := freeze.NewWriter(rdb, 0)
@@ -269,10 +233,7 @@ func TestWriter_NoLadderStoreKeepsPre0119Behaviour(t *testing.T) {
 	}
 }
 
-// TestWriter_LadderStoreErrorDegradesToRedisOnly — a Postgres blip must not
-// invent a freeze. The marker is already gone; reporting "present" off a
-// failed read would pin a price to a last-known-good value with no evidence
-// anything is wrong with it. Degrade to the pre-0119 answer instead.
+// TestWriter_LadderStoreErrorDegradesToRedisOnly: a failed durable read must not invent a freeze; degrade to the Redis-only answer.
 func TestWriter_LadderStoreErrorDegradesToRedisOnly(t *testing.T) {
 	_, rdb := newRedis(t)
 	ladder := newFakeLadderStore()
@@ -288,12 +249,7 @@ func TestWriter_LadderStoreErrorDegradesToRedisOnly(t *testing.T) {
 	}
 }
 
-// TestWriter_MarkDoesNotStampAnEmptyLadder — [Writer.Mark] is the
-// lifecycle-FREE entry point (the triangulated-composite refusal, which
-// owns no ladder). It passes a zero State, and stamping that would
-// overwrite a real pair's durable ladder with zeros the reader would then
-// restore as "fired just now, 0 extensions" — resetting the escalation
-// clock through a side door.
+// TestWriter_MarkDoesNotStampAnEmptyLadder: Mark owns no ladder, and stamping its zero State would reset a real pair's durable escalation clock.
 func TestWriter_MarkDoesNotStampAnEmptyLadder(t *testing.T) {
 	_, rdb := newRedis(t)
 	ladder := newFakeLadderStore()
@@ -327,9 +283,7 @@ func TestWriter_MarkDoesNotStampAnEmptyLadder(t *testing.T) {
 	}
 }
 
-// TestWriter_LadderStoreErrorDoesNotFailMarkHold — same best-effort
-// contract as the event sink: the Redis write is the serving path's
-// authority and has already succeeded by the time the ladder is mirrored.
+// TestWriter_LadderStoreErrorDoesNotFailMarkHold: the Redis write is the authority and has already succeeded; the ladder mirror is best-effort.
 func TestWriter_LadderStoreErrorDoesNotFailMarkHold(t *testing.T) {
 	_, rdb := newRedis(t)
 	ladder := newFakeLadderStore()
@@ -348,17 +302,7 @@ func TestWriter_LadderStoreErrorDoesNotFailMarkHold(t *testing.T) {
 	}
 }
 
-// TestWriter_ClearRetiresDurableLadder closes the auto-release window.
-//
-// The durable freeze_events row is closed asynchronously by the recovery
-// worker (60s poll), so between an auto-release and that sweep the row is
-// still OPEN with a live hold. An aggregator restarting inside that window
-// would find no marker, rehydrate from the still-open row, and RE-FREEZE a
-// pair whose anomaly had already cleared — serving a stale last-known-good
-// price for two more buckets on no evidence.
-//
-// Clear therefore retires the ladder at the same instant it clears the
-// marker, so both authorities agree the freeze is over.
+// TestWriter_ClearRetiresDurableLadder: Clear retires the durable ladder with the marker, or a restart before the recovery sweep re-freezes a cleared pair.
 func TestWriter_ClearRetiresDurableLadder(t *testing.T) {
 	_, rdb := newRedis(t)
 	ladder := newFakeLadderStore()
@@ -387,19 +331,8 @@ func TestWriter_ClearRetiresDurableLadder(t *testing.T) {
 	}
 }
 
-// TestWriter_LadderWriteFailureIsCounted — the failure was always possible;
-// the SILENCE is the defect. Neither the Writer nor the timescale sink holds
-// a logger, so a persistently failing ladder write produced no signal on any
-// surface: every freeze looked healthy right up until a Redis flush needed
-// the ladder that had never been written.
-//
-// The concrete shape is a partially-failed deploy — the pipeline applies
-// migrations BEFORE swapping the binary, so a new binary against a schema
-// where 0119 did not apply sees every ladder write match zero rows.
-//
-// Asserts the exact per-call-site delta, and that a HEALTHY write leaves the
-// counter alone (a counter that ticks on success is permanently firing and
-// therefore useless).
+// TestWriter_LadderWriteFailureIsCounted: a failing ladder write (e.g. an unapplied migration matches zero rows) must be counted per call site,
+// and a HEALTHY write must leave the counter alone.
 func TestWriter_LadderWriteFailureIsCounted(t *testing.T) {
 	_, rdb := newRedis(t)
 	asset, quote := nativeUSD(t)
@@ -444,8 +377,7 @@ func TestWriter_LadderWriteFailureIsCounted(t *testing.T) {
 	}
 }
 
-// TestWriter_MarkRoundTrip — Mark writes a JSON Marker to the
-// expected key with the expected TTL.
+// TestWriter_MarkRoundTrip: Mark writes a JSON Marker to the expected key with the expected TTL.
 func TestWriter_MarkRoundTrip(t *testing.T) {
 	mr, rdb := newRedis(t)
 	w, err := freeze.NewWriter(rdb, 0)
@@ -495,9 +427,7 @@ func TestWriter_MarkRoundTrip(t *testing.T) {
 	}
 }
 
-// TestWriter_MarkRefreshesTTL — calling Mark twice for the same
-// pair refreshes the TTL (anomaly persists ⇒ freeze stays in
-// effect). Mirrors the Redis SET ... EX semantics.
+// TestWriter_MarkRefreshesTTL: marking the same pair twice refreshes the TTL.
 func TestWriter_MarkRefreshesTTL(t *testing.T) {
 	mr, rdb := newRedis(t)
 	w, _ := freeze.NewWriter(rdb, 30*time.Second)
@@ -518,12 +448,7 @@ func TestWriter_MarkRefreshesTTL(t *testing.T) {
 	}
 }
 
-// TestWriter_MarkHoldRoundTrip — the lifecycle write path. The
-// marker must carry the freeze [freeze.State] verbatim and expire on
-// the caller's TTL (remaining hold + grace), NOT on the writer's flat
-// default. A marker that outlived its hold would keep flags.frozen
-// set after a release; one that expired inside its hold would let the
-// serving path forget a live freeze.
+// TestWriter_MarkHoldRoundTrip: the marker carries the State verbatim and expires on the caller's TTL (remaining hold + grace), not the flat default.
 func TestWriter_MarkHoldRoundTrip(t *testing.T) {
 	mr, rdb := newRedis(t)
 	w, err := freeze.NewWriter(rdb, 0) // default TTL = 5m
@@ -585,10 +510,7 @@ func TestWriter_MarkHoldRoundTrip(t *testing.T) {
 	}
 }
 
-// TestWriter_ClearRemovesTheMarker — the auto-unfreeze / operator-
-// override path. Letting the TTL lapse instead would keep
-// flags.frozen true for the whole remaining hold after the price was
-// republished as healthy.
+// TestWriter_ClearRemovesTheMarker: clearing, not TTL lapse, ends the freeze, or flags.frozen stays true for the rest of the hold.
 func TestWriter_ClearRemovesTheMarker(t *testing.T) {
 	_, rdb := newRedis(t)
 	w, _ := freeze.NewWriter(rdb, 0)
@@ -622,9 +544,7 @@ func TestWriter_ClearRemovesTheMarker(t *testing.T) {
 	}
 }
 
-// TestWriter_LoadState_PreLifecycleMarker — a marker written by the
-// flat-TTL Mark path (or by an older build) decodes to a zero State
-// rather than erroring, so a rolling deploy doesn't fail ticks.
+// TestWriter_LoadState_PreLifecycleMarker: a flat-TTL or older-build marker decodes to a zero State rather than erroring.
 func TestWriter_LoadState_PreLifecycleMarker(t *testing.T) {
 	_, rdb := newRedis(t)
 	w, _ := freeze.NewWriter(rdb, 0)
@@ -647,11 +567,7 @@ func TestWriter_LoadState_PreLifecycleMarker(t *testing.T) {
 	}
 }
 
-// TestWriter_Mark_FiresEventSink — Mark must call the wired sink
-// in addition to the Redis write. Production wires the timescale-
-// backed sink so the freeze_events hypertable mirrors the Redis
-// state; this test pins that the Writer respects the WithEventSink
-// option.
+// TestWriter_Mark_FiresEventSink: Mark calls the wired EventSink in addition to the Redis write.
 func TestWriter_Mark_FiresEventSink(t *testing.T) {
 	_, rdb := newRedis(t)
 	sink := &recordingSink{}
@@ -687,9 +603,7 @@ func TestWriter_Mark_FiresEventSink(t *testing.T) {
 	}
 }
 
-// TestWriter_Mark_SinkErrorIsSwallowed — a sink failure must not
-// fail the Mark call. The Redis write is the load-bearing operation
-// for flags.frozen on the API; the durable mirror is best-effort.
+// TestWriter_Mark_SinkErrorIsSwallowed: a sink failure must not fail Mark; the durable mirror is best-effort.
 func TestWriter_Mark_SinkErrorIsSwallowed(t *testing.T) {
 	_, rdb := newRedis(t)
 	sink := &recordingSink{err: errExploded}
@@ -704,24 +618,11 @@ func TestWriter_Mark_SinkErrorIsSwallowed(t *testing.T) {
 	}
 }
 
-// ─── the durable ladder is per WINDOW (migration 0163) ───────────
-//
-// Migration 0119 gave the ADR-0019 ladder a durable home, but on the
-// pair's single open `freeze_events` row: four columns, no window. The
-// lifecycle runs one state machine per (pair, window), every frozen
-// window mirrors its ladder on every tick, and so the durable record was
-// whichever window wrote LAST. These tests pin the consequences that
-// matter once Redis has lost the marker, which is the only time the
-// durable ladder is read at all.
+// The durable ladder is per WINDOW: the single open freeze_events row holds whichever window wrote LAST,
+// which is what gets read once Redis has lost the marker.
 
-// windowedFakeLadderStore is fakeLadderStore plus the window-aware half.
-//
-// The pair-level SaveLadder / LoadLadder keep last-writer-wins semantics
-// on purpose — that IS the pre-0163 store — so a Writer that still
-// mirrors through them reproduces the defect, and one that uses the
-// window-aware calls does not. The window-aware half maintains the same
-// fail-closed pair-level summary the SQL does, because the recovery
-// worker and `stellarindex-ops freeze-unfreeze -list` still read it.
+// windowedFakeLadderStore is fakeLadderStore plus the window-aware half. The pair-level SaveLadder/LoadLadder stay
+// last-writer-wins on purpose, so a Writer still using them reproduces the defect; the window half keeps the fail-closed pair summary.
 type windowedFakeLadderStore struct {
 	*fakeLadderStore
 	windows map[string]map[time.Duration]freeze.State
@@ -736,8 +637,7 @@ func newWindowedFakeLadderStore() *windowedFakeLadderStore {
 	}
 }
 
-// SaveLadder is the pair-level write. An inactive state retires the whole
-// durable record (what [freeze.Writer.Clear] relies on).
+// SaveLadder is the pair-level write; an inactive state retires the whole durable record.
 func (f *windowedFakeLadderStore) SaveLadder(ctx context.Context, asset, quote canonical.Asset, st freeze.State) error {
 	if !st.Active() {
 		delete(f.windows, f.key(asset, quote))
@@ -832,19 +732,8 @@ func freshState(now time.Time) freeze.State {
 	}
 }
 
-// TestWriter_DurableLadderIsPerWindow is the regression for the durable
-// half of the pair-keyed ladder.
-//
-// The 1h window has climbed the whole ladder and ESCALATED — ADR-0019
-// holds it "until manual unfreeze". The 5m window of the same pair then
-// fires a fresh freeze of its own. Both mirror their ladder durably on
-// every tick. Redis is then lost and the aggregator restarts.
-//
-// A last-writer-wins durable record would be the 5m window's: the
-// ten-minute, zero-extension, un-escalated ladder. Every window
-// would rehydrate that — the escalated 1h freeze would come back as an
-// ordinary one that auto-unfreezes (the dangerous direction), and the 24h
-// window, never frozen, would come back frozen.
+// TestWriter_DurableLadderIsPerWindow: with an escalated 1h and a fresh 5m ladder, a last-writer-wins record would rehydrate every
+// window as the 5m one (the escalated freeze would auto-unfreeze); each window must get its own, and the never-frozen 24h none.
 func TestWriter_DurableLadderIsPerWindow(t *testing.T) {
 	mr, rdb := newRedis(t)
 	store := newWindowedFakeLadderStore()
@@ -907,12 +796,7 @@ func TestWriter_DurableLadderIsPerWindow(t *testing.T) {
 	}
 }
 
-// TestWriter_FirstRemarkAfterRedisLossRestoresEveryWindow pins the write
-// side of the same recovery. After a flush the first window to re-mark
-// rebuilds the marker, and from then on the marker — not the durable
-// store — answers every cold sibling. It must therefore be rebuilt with
-// EVERY window's durable ladder, or the 1h window's escalation is lost
-// one tick later than in the test above instead of not at all.
+// TestWriter_FirstRemarkAfterRedisLossRestoresEveryWindow: the first window to re-mark rebuilds the marker, so it must carry EVERY window's durable ladder.
 func TestWriter_FirstRemarkAfterRedisLossRestoresEveryWindow(t *testing.T) {
 	mr, rdb := newRedis(t)
 	store := newWindowedFakeLadderStore()
@@ -960,11 +844,7 @@ func TestWriter_FirstRemarkAfterRedisLossRestoresEveryWindow(t *testing.T) {
 	}
 }
 
-// TestWriter_PreWindowDurableRowStillRehydratesEveryWindow is the
-// fail-closed guard for a row written before migration 0163: it carries
-// one pair-level ladder and nothing that says whose. Narrowing it to "no
-// window owns this" would DROP a freeze that is still running, so it
-// keeps answering for every window until window-aware writes replace it.
+// TestWriter_PreWindowDurableRowStillRehydratesEveryWindow: a pre-0163 pair-level row has no owner, so it keeps answering for every window (fail closed).
 func TestWriter_PreWindowDurableRowStillRehydratesEveryWindow(t *testing.T) {
 	_, rdb := newRedis(t)
 	store := newWindowedFakeLadderStore()

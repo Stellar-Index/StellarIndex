@@ -52,11 +52,7 @@ func TestMedian_Empty(t *testing.T) {
 	}
 }
 
-// TestMAD_KnownInput — manual computation:
-//
-//	xs = [1,2,3,4,5], median = 3
-//	deviations = [2,1,0,1,2], median(devs) = 1
-//	MAD = 1.4826 * 1 = 1.4826
+// TestMAD_KnownInput — xs=[1,2,3,4,5]: median 3, deviations [2,1,0,1,2] have median 1, so MAD = 1.4826.
 func TestMAD_KnownInput(t *testing.T) {
 	got := baseline.MAD([]float64{1, 2, 3, 4, 5})
 	want := baseline.MADScale * 1.0
@@ -73,11 +69,8 @@ func TestMAD_AllIdentical(t *testing.T) {
 	}
 }
 
-// TestMAD_RobustToOutlier — a single outlier moves σ a lot but
-// barely moves MAD. The whole reason ADR-0019 picked MAD.
-//
-//	clean   = [1,2,3,4,5]                MAD = 1.4826
-//	tainted = [1,2,3,4,5, 1000]          MAD should be barely larger
+// TestMAD_RobustToOutlier — one outlier barely moves MAD (ADR-0019's reason for MAD):
+// [1,2,3,4,5] vs [1,2,3,4,5,1000].
 func TestMAD_RobustToOutlier(t *testing.T) {
 	clean := baseline.MAD([]float64{1, 2, 3, 4, 5})
 	tainted := baseline.MAD([]float64{1, 2, 3, 4, 5, 1000})
@@ -151,17 +144,8 @@ func TestZScore_ZeroMADExactMatch(t *testing.T) {
 	}
 }
 
-// TestZScore_ZeroMADIsFlooredNotInfinite is the zero-MAD regression.
-// Expecting a 1e-5 deviation from a zero-spread baseline to score +Inf
-// is the defect: a zero MAD is the
-// NORMAL state of a pegged or quiet pair (a strict majority of bucket
-// returns are exactly 0), so "any deviation is infinitely anomalous"
-// pinned every such pair at z=+Inf on a rounding wiggle — zeroing its
-// confidence score and satisfying the Phase 2 freeze's `z > 5` leg.
-//
-// This is not a loosened assertion: it pins the exact corrected value
-// AND keeps the half that mattered — a genuinely large move from a
-// flat baseline still clears the 5σ trigger.
+// TestZScore_ZeroMADIsFlooredNotInfinite: zero MAD is the normal state of a pegged pair, so a tiny deviation
+// must score the floored value, not +Inf; a genuinely large move from flat must still clear 5σ.
 func TestZScore_ZeroMADIsFlooredNotInfinite(t *testing.T) {
 	b := baseline.Baseline{Median: 1.5, MAD: 0, N: 10}
 
@@ -182,10 +166,8 @@ func TestZScore_ZeroMADIsFlooredNotInfinite(t *testing.T) {
 	}
 }
 
-// TestZScore_PeggedWindowDoesNotSelfTrigger drives the same zero-MAD
-// regression through the real construction path (FromReturns), on the
-// shape that actually occurs in production: a USD peg whose 1-minute
-// VWAP reprints unchanged in most buckets.
+// TestZScore_PeggedWindowDoesNotSelfTrigger drives the zero-MAD case through FromReturns, on a USD peg
+// whose 1-minute VWAP reprints unchanged in most buckets.
 func TestZScore_PeggedWindowDoesNotSelfTrigger(t *testing.T) {
 	// 1440 buckets of a pegged asset: mostly unchanged, a handful of
 	// sub-basis-point wiggles. A strict majority of returns are 0, so
@@ -305,11 +287,8 @@ func TestNewBucketReturn_ScalesByElapsedBuckets(t *testing.T) {
 	}
 }
 
-// TestEndToEnd_StableCoinClassThreshold — sanity-check the
-// ADR-0019 §"typical return_mad" claim: ~0.05% MAD on a stablecoin,
-// ~0.25% 5σ trigger. Round-trip a synthetic stable series of
-// realistic minute-to-minute jitter and assert MAD is in the right
-// ballpark.
+// TestEndToEnd_StableCoinClassThreshold — ADR-0019's typical return_mad claim: ~0.05% MAD on a stablecoin,
+// ~0.25% 5σ trigger, from a synthetic series of realistic minute-to-minute jitter.
 func TestEndToEnd_StableCoinClassThreshold(t *testing.T) {
 	// 30 returns with 1-bp σ — plausible for USDC during a quiet
 	// market. Manually constructed (not random) so the test is
@@ -347,10 +326,8 @@ func hourlyTimed(now time.Time, levels []float64) []baseline.TimedVWAP {
 	return out
 }
 
-// A pair that prints hourly has no row for its 59 empty minutes, so each
-// raw return spans an hour. The refreshed baseline must be in one-minute
-// units — the raw hourly MAD divided by sqrt(60) — or a genuinely
-// minute-on-minute observation is scored against a spread ~8x too wide.
+// A pair that prints hourly has no row for its 59 empty minutes, so each raw return spans an hour; the refreshed
+// baseline must be in one-minute units (hourly MAD / sqrt(60)) or a minute-on-minute observation is scored against a spread ~8x too wide.
 func TestRefreshPair_SparsePairTrainsInOneMinuteUnits(t *testing.T) {
 	pair := mustPair(t, "native", "fiat:USD")
 	now := time.Now().UTC()

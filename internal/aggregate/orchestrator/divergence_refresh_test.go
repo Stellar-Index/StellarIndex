@@ -90,11 +90,7 @@ func TestRefreshDivergenceAll_NilRefresherIsNoOp(t *testing.T) {
 	// without panicking, which is the whole assertion.
 }
 
-// TestRefreshDivergenceAll_PublishesWiredGauge pins the gauge that arms
-// stellarindex_divergence_no_ok_outcomes: 1 whenever the pass has a
-// refresher, even when every pair yields only no_vwap and no `ok` is
-// ever counted; 0 when the refresher is deliberately unwired. Not
-// parallel: the gauge is process-global.
+// TestRefreshDivergenceAll_PublishesWiredGauge pins the gauge arming stellarindex_divergence_no_ok_outcomes: 1 with a refresher (even if no ok is ever counted), 0 when unwired. Not parallel: the gauge is process-global.
 func TestRefreshDivergenceAll_PublishesWiredGauge(t *testing.T) {
 	rdb, _ := newTestRedis(t)
 	base := Config{
@@ -282,12 +278,7 @@ func TestRefreshDivergenceAll_RefresherErrorDoesNotAbortOtherPairs(t *testing.T)
 	}
 }
 
-// TestRefreshDivergenceAll_DurationMetricRecorded pins the
-// latency-histogram wiring: a successful
-// per-pair refresh advances
-// `stellarindex_divergence_refresh_duration_seconds{outcome="ok"}`.
-// Guards against
-// a future refactor silently dropping the timing call.
+// TestRefreshDivergenceAll_DurationMetricRecorded guards the latency histogram: a successful per-pair refresh advances the outcome="ok" series of stellarindex_divergence_refresh_duration_seconds.
 func TestRefreshDivergenceAll_DurationMetricRecorded(t *testing.T) {
 	t.Parallel()
 	rdb, _ := newTestRedis(t)
@@ -316,16 +307,7 @@ func TestRefreshDivergenceAll_DurationMetricRecorded(t *testing.T) {
 	}
 }
 
-// TestRefreshDivergenceAll_MinIntervalSkipsConsecutiveTicks asserts
-// the min-interval gate: if cfg.DivergenceMinInterval is set,
-// only the first call within a window of that duration actually
-// invokes the refresher. Subsequent calls within the same window
-// are skipped silently (no metric increment, no RefreshPair call,
-// no log spam). After the window elapses, the next call is allowed.
-//
-// Without the gate the live r1 deployment hit the CMC monthly cap
-// inside 5 days; with the default 5-minute gate the quota drops
-// roughly 10× to a sustainable footprint.
+// TestRefreshDivergenceAll_MinIntervalSkipsConsecutiveTicks: with DivergenceMinInterval set, only the first call per interval invokes the refresher, silently; later calls proceed after it elapses. This bounds provider quota use.
 func TestRefreshDivergenceAll_MinIntervalSkipsConsecutiveTicks(t *testing.T) {
 	t.Parallel()
 	rdb, _ := newTestRedis(t)
@@ -428,14 +410,7 @@ func TestShortestWindowIsTheDivergenceRefreshWindow(t *testing.T) {
 	}
 }
 
-// TestRefreshDivergenceAll_FrozenPairIsNotJudgedOnItsPinnedPrice: a pair
-// frozen on a genuine repricing keeps serving its last-known-good while
-// the market settles 8% higher. Across two divergence passes past the
-// warning persistence — the first in the freeze's own tick, the second
-// later in its hold — the pinned value must not raise warning_fired or the
-// divergence.firing hook, and must not reach the confidence score as a
-// cross-oracle disagreement. The reference median must still reach the
-// release path.
+// TestRefreshDivergenceAll_FrozenPairIsNotJudgedOnItsPinnedPrice: a pair frozen on a real repricing serves its LKG while the market settles 8% higher; the pinned value must not raise warning_fired, the divergence.firing hook or the confidence cross-oracle factor, yet the reference median must still reach the release path.
 func TestRefreshDivergenceAll_FrozenPairIsNotJudgedOnItsPinnedPrice(t *testing.T) {
 	t.Parallel()
 	o, rdb, pair, hooks := pinnedDivergenceRig(t)

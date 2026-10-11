@@ -26,12 +26,7 @@ func ratFromDecimal(t *testing.T, s string) *big.Rat {
 	return r
 }
 
-// TestFormatRatFixed_TinyPositiveNeverReparsesToZero: a strictly-
-// positive rational below 10^-decimals must NOT render to a string that
-// reparses to zero. Before the magnitude-relative render, formatRatFixed
-// truncated any 0<r<1e-12 to "0.000000000000", which big.Rat.SetString
-// reads back as 0 — served as price 0 AND (read back as a chain leg the
-// next tick) collapses the whole window edge graph.
+// TestFormatRatFixed_TinyPositiveNeverReparsesToZero: a positive rational below 10^-decimals must not render to a string that reparses to zero, which would serve price 0 and collapse the next window's edge graph.
 func TestFormatRatFixed_TinyPositiveNeverReparsesToZero(t *testing.T) {
 	tiny := []string{
 		"0.0000000000005",      // 5e-13 — the finding's exact value
@@ -68,12 +63,7 @@ func TestFormatRatFixed_TinyPositiveNeverReparsesToZero(t *testing.T) {
 	}
 }
 
-// TestFormatRatFixed_RelativeTruncationBounded — the fixed 12-place
-// render kept as few as ONE significant digit for a price in
-// [1e-12, 1e-10): 1.99e-12 published as "0.000000000001", 49.7% low.
-// Every strictly-positive magnitude must render within a relative
-// truncation error below 1e-5, while prices down to
-// 1e-7 keep their byte-identical 12-place output.
+// TestFormatRatFixed_RelativeTruncationBounded: every positive magnitude must render within relative truncation error below 1e-5 (a fixed 12-place render kept one significant digit near 1e-12), while prices down to 1e-7 keep byte-identical 12-place output.
 func TestFormatRatFixed_RelativeTruncationBounded(t *testing.T) {
 	bound := new(big.Rat).SetFrac(big.NewInt(1),
 		new(big.Int).Exp(big.NewInt(10), big.NewInt(5), nil)) // six significant digits at 12 places
@@ -115,12 +105,7 @@ func absInt(n int) int {
 	return n
 }
 
-// TestBuildWindowEdges_ZeroLegDoesNotCollapseWindow is the render's belt-and-
-// suspenders: a single leg whose cached VWAP parses to a non-positive
-// price must be dropped from the graph, NOT abort BuildEdges and nil the
-// ENTIRE window (which turned one micro-valued pair into a window-wide
-// triangulation outage). Every other priced pair in the window must
-// survive.
+// TestBuildWindowEdges_ZeroLegDoesNotCollapseWindow: a leg whose cached VWAP parses non-positive must be dropped from the graph, not abort BuildEdges and nil the whole window; every other priced pair survives.
 func TestBuildWindowEdges_ZeroLegDoesNotCollapseWindow(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD") // the poisoned leg
 	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")   // (absent) sibling leg
@@ -197,11 +182,7 @@ func (c metaFailCache) TxPipelined(ctx context.Context, fn func(redis.Pipeliner)
 	})
 }
 
-// TestPublishComposite_DivergedNeverOverwritesDirectWithoutMeta: a
-// diverged composite's quality flags are load-bearing. If the composite-
-// meta write fails, publishComposite must REFUSE to overwrite the served
-// direct price — otherwise a self-disagreeing (diverged) composite is
-// served as a clean direct price with no warning flags.
+// TestPublishComposite_DivergedNeverOverwritesDirectWithoutMeta: a diverged composite's flags are load-bearing, so if the meta write fails publishComposite must refuse to overwrite the direct price rather than serve it unflagged.
 func TestPublishComposite_DivergedNeverOverwritesDirectWithoutMeta(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")

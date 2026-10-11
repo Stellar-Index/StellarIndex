@@ -280,9 +280,7 @@ func TestAverageAggregatorPrices_RejectsZeroPrices(t *testing.T) {
 	}
 }
 
-// A source published above 14 dp must not be truncated before it is
-// averaged, and a positive mean below 1e-14 must miss rather than serve
-// "0.00000000000000" as a price.
+// TestAverageAggregatorPrices_AboveCommonDecimals pins that a source above 14 dp is not truncated before averaging, and a positive mean below 1e-14 misses rather than serving zero.
 func TestAverageAggregatorPrices_AboveCommonDecimals(t *testing.T) {
 	row := func(src string, price int64, dec uint8) canonical.OracleUpdate {
 		return canonical.OracleUpdate{Source: src, Timestamp: time.Now(), Price: canonical.NewAmount(big.NewInt(price)), Decimals: dec}
@@ -299,8 +297,7 @@ func TestAverageAggregatorPrices_AboveCommonDecimals(t *testing.T) {
 	}
 }
 
-// The mean is rounded half-up once at 14 dp, not floored: a mean whose
-// 15th decimal is 5 rounds up, and one just below it rounds down.
+// TestAverageAggregatorPrices_RoundsHalfUp pins half-up rounding once at 14 dp: a 15th decimal of 5 rounds up, just below it rounds down.
 func TestAverageAggregatorPrices_RoundsHalfUp(t *testing.T) {
 	row := func(src string, price int64, dec uint8) canonical.OracleUpdate {
 		return canonical.OracleUpdate{Source: src, Timestamp: time.Now(), Price: canonical.NewAmount(big.NewInt(price)), Decimals: dec}
@@ -349,13 +346,7 @@ func (r *aliasAwareReader) LookupTriangulated(_ context.Context, _, _ canonical.
 	return "", time.Time{}, false, nil
 }
 
-// TestComputeGlobalPrice_VWAPTierLoopsAliases pins alias looping:
-// the global view must find the XLM VWAP regardless of which
-// canonical form (`native` vs `crypto:XLM`) the configured pair set
-// publishes under. A tryVWAPTier querying only the literal base
-// would miss when the caller passes `native` but the VWAP lives under
-// `crypto:XLM`, and the view would degrade to
-// aggregator_avg.
+// TestComputeGlobalPrice_VWAPTierLoopsAliases pins alias looping: the XLM VWAP is found whether the pair set publishes under native or crypto:XLM.
 func TestComputeGlobalPrice_VWAPTierLoopsAliases(t *testing.T) {
 	quote, err := canonical.NewFiatAsset("USD")
 	if err != nil {
@@ -380,9 +371,7 @@ func TestComputeGlobalPrice_VWAPTierLoopsAliases(t *testing.T) {
 	}
 }
 
-// TestComputeGlobalPrice_VWAPTierAliasUnderThreshold — an alias hit
-// that's below the trade-count floor must NOT win the VWAP tier; the
-// loop keeps trying and ultimately falls through to a lower tier.
+// TestComputeGlobalPrice_VWAPTierAliasUnderThreshold pins that an alias hit below the trade-count floor does not win the VWAP tier and falls through.
 func TestComputeGlobalPrice_VWAPTierAliasUnderThreshold(t *testing.T) {
 	quote, err := canonical.NewFiatAsset("USD")
 	if err != nil {
@@ -424,12 +413,7 @@ func (r *aliasTierReader) LookupTriangulated(_ context.Context, base, _ canonica
 	return "", time.Time{}, false, nil
 }
 
-// TestComputeGlobalPrice_AggregatorTierLoopsAliases pins that the
-// aggregator tier must find the headline price when the base's
-// aggregator coverage lives under an alias form (here crypto:XLM) and
-// the caller queries native. A tryAggregatorTier querying only
-// the literal base makes a `native` query miss the crypto:XLM
-// aggregator average and degrade to triangulated / ErrNoPrice.
+// TestComputeGlobalPrice_AggregatorTierLoopsAliases pins that the aggregator tier finds a price held under an alias form (crypto:XLM) when the caller queries native.
 func TestComputeGlobalPrice_AggregatorTierLoopsAliases(t *testing.T) {
 	quote, err := canonical.NewFiatAsset("USD")
 	if err != nil {
@@ -464,11 +448,7 @@ func TestComputeGlobalPrice_AggregatorTierLoopsAliases(t *testing.T) {
 	}
 }
 
-// TestComputeGlobalPrice_TriangulatedTierLoopsAliasesSACLast pins
-// the alias loop for tier 3: the triangulated tier must reach the SAC form,
-// and only as the LAST resort. Calling LookupTriangulated
-// once with the literal base means a `native` query never sees a bridge
-// path published under the SAC form.
+// TestComputeGlobalPrice_TriangulatedTierLoopsAliasesSACLast pins the triangulated tier's alias loop: the SAC form is reached, and only last.
 func TestComputeGlobalPrice_TriangulatedTierLoopsAliasesSACLast(t *testing.T) {
 	quote, err := canonical.NewFiatAsset("USD")
 	if err != nil {
@@ -500,13 +480,7 @@ func TestComputeGlobalPrice_TriangulatedTierLoopsAliasesSACLast(t *testing.T) {
 	}
 }
 
-// TestAssetAliases pins that this package's wrapper is a pure
-// delegation to [canonical.AssetAliases] . The alias TABLE itself is tested once, in
-// canonical — the whole point of the hoist is that there is no second
-// copy here to drift. What this asserts is the property tryVWAPTier
-// depends on: the literal comes first and the SAC form comes LAST, so
-// the VWAP tier can only land on a thin Soroban pool after both SDEX
-// (`native`) and CEX (`crypto:XLM`) have missed.
+// TestAssetAliases pins that the wrapper delegates to [canonical.AssetAliases]: literal first, SAC last, so a thin Soroban pool is reached only after SDEX and CEX miss.
 func TestAssetAliases(t *testing.T) {
 	for _, in := range []string{"native", "crypto:XLM", canonical.XLMSacContractID} {
 		a, err := canonical.ParseAsset(in)
@@ -545,15 +519,7 @@ func TestAssetAliases(t *testing.T) {
 	}
 }
 
-// TestComputeGlobalPrice_VWAPTierReachesSACOnlyLast is the
-// manipulation-surface guard for the SAC alias: adding the XLM SAC to the
-// alias family widened what tryVWAPTier can find, and the whole safety
-// of that widening is the ORDER. Two assertions, both load-bearing:
-//
-//  1. when a deep `native` VWAP exists, the SAC pool is never even
-//     queried — a Soroban pool cannot displace SDEX depth; and
-//  2. when both established forms miss, the SAC IS reached, so a
-//     Soroban-only market still gets a price instead of a 404.
+// TestComputeGlobalPrice_VWAPTierReachesSACOnlyLast guards the SAC alias order: a deep native VWAP means the SAC pool is never queried; when both established forms miss, the SAC is reached.
 func TestComputeGlobalPrice_VWAPTierReachesSACOnlyLast(t *testing.T) {
 	quote, err := canonical.NewFiatAsset("USD")
 	if err != nil {
@@ -597,9 +563,7 @@ func TestComputeGlobalPrice_VWAPTierReachesSACOnlyLast(t *testing.T) {
 	}
 }
 
-// A VWAP that clears the trade floor but is days old must not beat a
-// minute-old aggregator reading: tier order ranks trust between current
-// prices, it does not make a stale tier-1 price current.
+// TestComputeGlobalPrice_StaleVWAPYieldsToFreshAggregator pins that a days-old VWAP clearing the trade floor does not beat a fresh aggregator reading.
 func TestComputeGlobalPrice_StaleVWAPYieldsToFreshAggregator(t *testing.T) {
 	reader := &stubGlobalReader{}
 	reader.vwap.price = "0.50000000000000"
@@ -624,8 +588,7 @@ func TestComputeGlobalPrice_StaleVWAPYieldsToFreshAggregator(t *testing.T) {
 	}
 }
 
-// With no fresher tier the stale VWAP is still the best price there is:
-// it is served with its own observation time rather than dropped.
+// TestComputeGlobalPrice_StaleVWAPIsLastResort pins that with no fresher tier the stale VWAP is served with its own observation time.
 func TestComputeGlobalPrice_StaleVWAPIsLastResort(t *testing.T) {
 	reader := &stubGlobalReader{}
 	asOf := time.Now().UTC().Add(-9 * 24 * time.Hour)
@@ -682,12 +645,7 @@ func assertVWAPCalls(t *testing.T, got, want []string) {
 	}
 }
 
-// TestComputeGlobalPrice_VWAPTierConfiguredWrapperSACLast: a configured
-// classic↔SAC family walks classic FIRST. When the classic book clears
-// the trade-count floor the SAC pool is never queried — the tier has no
-// freshness preference, so a quiet-but-deep classic bucket beats a fresh
-// thin pool by ORDER alone — and when the classic misses the SAC form is
-// reached, second, so a Soroban-only market still prices.
+// TestComputeGlobalPrice_VWAPTierConfiguredWrapperSACLast pins that a configured classic/SAC family walks classic first and reaches the SAC form only when classic misses.
 func TestComputeGlobalPrice_VWAPTierConfiguredWrapperSACLast(t *testing.T) {
 	classic := installThinPoolRegistry(t)
 	quote, err := canonical.NewFiatAsset("USD")
@@ -723,15 +681,7 @@ func TestComputeGlobalPrice_VWAPTierConfiguredWrapperSACLast(t *testing.T) {
 	assertVWAPCalls(t, sacOnly.vwapCalls, []string{thinPoolAquaClassic, thinPoolAquaSAC})
 }
 
-// TestComputeGlobalPrice_VWAPTierBelowFloorSACDoesNotRescue: a classic
-// bucket UNDER the trade-count floor falls through to the SAC form — the
-// floor is per-form, and the SAC pool can then answer. That is the one
-// arrangement in which a thin pool prices a wrapped classic on this tier,
-// and it is bounded by the same floor: the pool must itself clear
-// VWAPMinTradeCount, and the reader behind it (globalPriceReader in the
-// API binary) withholds the pair when the alias-union market is below the
-// substance floor. Pinned so the boundary is explicit rather than
-// implied.
+// TestComputeGlobalPrice_VWAPTierBelowFloorSACDoesNotRescue pins that a classic bucket under the trade floor falls through to the SAC form, which must itself clear VWAPMinTradeCount.
 func TestComputeGlobalPrice_VWAPTierBelowFloorSACDoesNotRescue(t *testing.T) {
 	classic := installThinPoolRegistry(t)
 	quote, err := canonical.NewFiatAsset("USD")
@@ -762,11 +712,7 @@ func TestComputeGlobalPrice_VWAPTierAcceptsExactlyMinTradeCount(t *testing.T) {
 	}
 }
 
-// TestComputeGlobalPrice_AggregatorRejectsDivergentSource is the
-// divergent-source proof: averaging the global Tier-2 headline's aggregator
-// sources with a PLAIN MEAN lets a single 2x-off print drag the
-// served price ~33%. A median+MAD filter drops the divergent
-// print and serves the consensus of the two agreeing sources.
+// TestComputeGlobalPrice_AggregatorRejectsDivergentSource pins that the aggregator tier drops a divergent source (median+MAD) instead of letting a plain mean drag the price ~33%.
 func TestComputeGlobalPrice_AggregatorRejectsDivergentSource(t *testing.T) {
 	reader := &stubGlobalReader{}
 	reader.vwap.ok = false // force the aggregator tier

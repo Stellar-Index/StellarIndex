@@ -125,13 +125,8 @@ func TestGuardServedVWAP_EmptyBaselineFailsOpen(t *testing.T) {
 }
 
 func TestServedBaselineValidated_EmptyBaselineUnvalidatedButStillServed(t *testing.T) {
-	// A pair's first-ever served minute has NO trailing
-	// baseline. GuardServedVWAP FAILS OPEN there (accepts any value — even
-	// a wildly-off, lone manipulated/fat-finger print). That is fine ONLY
-	// if the accept is paired with an UNVALIDATED signal so the serving
-	// path flags the value stale/low-confidence instead of serving it as a
-	// confident price. This proves BOTH halves: the value is still served
-	// (no blackout of a legitimate new pair) AND it reports unvalidated.
+	// A pair's first served minute has NO baseline, so the guard fails OPEN; that is fine only if paired with an UNVALIDATED signal. This proves both:
+	// the value is still served (no blackout of a legitimate new pair) AND it reports unvalidated.
 	for _, empty := range [][]*big.Rat{nil, {}, {nil, nil}} {
 		// Half 1 — still served (no blackout): a 1,000,000x candidate on an
 		// empty baseline is accepted (there is no centre to reject against).
@@ -289,10 +284,7 @@ func TestGuardServedVWAP_BigIntScaleNoFloatArtifacts(t *testing.T) {
 	}
 }
 
-// TestGuardServedVWAP_Catches5xManipulation is the 5x-pump
-// proof: a serve-time guard rejecting only >=10x deviations serves a 5x
-// pump. With the ratio bound at 3x it is held, while a realistic large-but-real move inside the bound is
-// still served.
+// TestGuardServedVWAP_Catches5xManipulation is the 5x-pump proof: a guard rejecting only >=10x serves a 5x pump; the 3x ratio bound holds it while a realistic large move inside the bound is served.
 func TestGuardServedVWAP_Catches5xManipulation(t *testing.T) {
 	// A realistic liquid history: ~1% bucket-to-bucket noise around 100
 	// (MAD small, so the ratio band governs).
@@ -309,12 +301,7 @@ func TestGuardServedVWAP_Catches5xManipulation(t *testing.T) {
 	}
 }
 
-// TestGuardServedVWAP_ThinHistoryNotFullyOpen is the thin-history
-// proof: with fewer than guardMinSamples trailing buckets the guard
-// must not fail FULLY OPEN, passing any manipulation. A thin (but
-// non-empty) baseline falls back to a wider-but-FINITE 10x band, so
-// gross manipulation is still caught; only a truly empty baseline
-// fails open.
+// TestGuardServedVWAP_ThinHistoryNotFullyOpen is the thin-history proof: fewer than guardMinSamples buckets fall back to a wider finite 10x band, not fully open; only an empty baseline fails open.
 func TestGuardServedVWAP_ThinHistoryNotFullyOpen(t *testing.T) {
 	thin := repeatRat(t, "1.0", guardMinSamples-1) // 4 samples
 	if accept, lkg := GuardServedVWAP(rat(t, "1000.0"), thin); accept || lkg < 0 {

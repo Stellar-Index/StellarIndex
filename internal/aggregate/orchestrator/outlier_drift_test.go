@@ -14,21 +14,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Regression for the outlier-trim drift artifact (r1:
-// `stellarindex_aggregator_outlier_storm` for hours + an
-// `anomaly_freeze_engaged` on crypto:XLM/fiat:GBP after Kraken stepped
-// 0.1337 → 0.1364, a GENUINE +2% that matched the XLM/USD × GBP/USD
-// cross). The whole-window median+MAD filter trimmed every post-step
-// print — the band is the majority regime's dispersion — so the
-// published window VWAP stayed pinned at the stale level and the drop
-// counter re-counted the tail every tick.
-//
-// Replays that shape through refreshPairWindow on a THIN, SINGLE-SOURCE
-// series (one Kraken print per minute) and asserts the orchestrator
-// (a) drops nothing, (b) publishes a VWAP that carries the step, and
-// (c) publishes the per-venue / per-stage window gauges the redesigned
-// alert reads. A sibling case proves a lone +10% print on the same
-// series IS still dropped.
+// Outlier-trim drift regression: a genuine +2% step (matching the XLM/USD x GBP/USD cross) was trimmed in full by the whole-window median+MAD filter, pinning the VWAP at the stale level and re-counting drops every tick.
+// Replays that shape on a thin single-source series and asserts nothing is dropped, the VWAP carries the step and the per-venue/per-stage gauges publish; a lone +10% print on the same series is still dropped.
 
 func thinStepFixture(t *testing.T, now time.Time, totalMin, tailMin int) []canonical.Trade {
 	t.Helper()
@@ -268,12 +255,7 @@ func TestRefreshPairWindow_RecordsWindowBaseVolumePerStage(t *testing.T) {
 	}
 }
 
-// TestRefreshPairWindow_DirectWriteClearsStaleProvenance is
-// W1-flow-price-serve-2: when the direct per-pair refresh overwrites the
-// shared VWAP key with a DIRECT value, it must clear any stale
-// "triangulated" provenance a prior tick's composite left, so
-// LookupTriangulatedVWAP cannot serve the thin direct price mislabeled as
-// a robust composite.
+// TestRefreshPairWindow_DirectWriteClearsStaleProvenance: a direct refresh overwriting the shared VWAP key must clear a prior composite's triangulated provenance, so LookupTriangulatedVWAP cannot serve a thin direct price as a robust composite.
 func TestRefreshPairWindow_DirectWriteClearsStaleProvenance(t *testing.T) {
 	store := &mockStore{
 		trades: []canonical.Trade{

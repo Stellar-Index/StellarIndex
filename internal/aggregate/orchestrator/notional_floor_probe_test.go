@@ -71,11 +71,7 @@ func probeFreezes(t *testing.T, series []baseline.TimedVWAP, wantOutcome baselin
 	}
 }
 
-// A thin pair that can publish must keep a Phase 2 guard under the notional
-// floor. 200 organic $3 minutes a day for 30 days, then two
-// $5,000 minutes at 5x on the last day ($10,000 clears the 24h publish
-// floor): the persisted baseline stays under the bootstrap gate and the 5x
-// print fires the freeze.
+// TestNotionalFloor_ThinPublishablePairKeepsFreeze: a thin pair that can publish keeps a Phase 2 guard under the notional floor (200 organic $3 minutes/day for 30 days, then two $5,000 5x minutes): the baseline stays under the bootstrap gate and the 5x print freezes.
 func TestNotionalFloor_ThinPublishablePairKeepsFreeze(t *testing.T) {
 	now := time.Now().UTC()
 	start := now.Add(-baseline.Window30d)

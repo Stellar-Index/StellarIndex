@@ -52,9 +52,7 @@ func (r *fakeRecoverer) MarkRecovered(_ context.Context, asset, quote canonical.
 	return r.failWith
 }
 
-// TestRecovery_ClosesRowsWhenRedisMarkerGone — the canonical happy
-// path: postgres has an open row, Redis has no marker (TTL elapsed)
-// → MarkRecovered fires.
+// TestRecovery_ClosesRowsWhenRedisMarkerGone: an open row with no Redis marker (TTL elapsed) fires MarkRecovered.
 func TestRecovery_ClosesRowsWhenRedisMarkerGone(t *testing.T) {
 	_, rdb := newRedis(t)
 	asset, quote := nativeUSD(t)
@@ -87,9 +85,7 @@ func TestRecovery_ClosesRowsWhenRedisMarkerGone(t *testing.T) {
 	}
 }
 
-// TestRecovery_LeavesStillFiringRowsAlone — when the Redis marker is
-// still present (orchestrator is refreshing it because the anomaly
-// hasn't cleared), MarkRecovered MUST NOT fire.
+// TestRecovery_LeavesStillFiringRowsAlone: a present marker means MarkRecovered MUST NOT fire.
 func TestRecovery_LeavesStillFiringRowsAlone(t *testing.T) {
 	_, rdb := newRedis(t)
 	asset, quote := nativeUSD(t)
@@ -125,8 +121,7 @@ func TestRecovery_LeavesStillFiringRowsAlone(t *testing.T) {
 	}
 }
 
-// TestRecovery_ListErrorIsNonFatal — a lister failure is counted
-// under outcome="error", closes nothing, and the next tick retries.
+// TestRecovery_ListErrorIsNonFatal: a lister failure is counted under outcome="error", closes nothing, and retries next tick.
 func TestRecovery_ListErrorIsNonFatal(t *testing.T) {
 	_, rdb := newRedis(t)
 	lister := &fakeOpenLister{err: errors.New("boom")}
@@ -162,13 +157,7 @@ func TestRecovery_ListErrorIsNonFatal(t *testing.T) {
 	}
 }
 
-// TestRecovery_SweepDurationMetricRecorded pins the
-// latency-histogram wiring: a sweep with no open
-// rows still records a sample on
-// `stellarindex_anomaly_freeze_recovery_sweep_duration_seconds{outcome="ok"}`.
-// Same shape as the regression tests for the
-// customer-webhook + divergence-refresh histograms — guards
-// against a future refactor silently dropping the timing call.
+// TestRecovery_SweepDurationMetricRecorded: an empty sweep still records a sample on the recovery sweep duration histogram with outcome="ok".
 func TestRecovery_SweepDurationMetricRecorded(t *testing.T) {
 	_, rdb := newRedis(t)
 	// Empty open-list → sweep takes the zero-rows fast path,
@@ -265,26 +254,8 @@ func escalatedLadder(now time.Time) freeze.State {
 	}
 }
 
-// TestRecovery_DoesNotCloseARowWhoseDurableHoldIsLive is the regression for
-// the third marker-miss consumer (migration 0119 follow-up).
-//
-// The recovery worker's trigger is "the Redis marker is gone", which since
-// 0119 is AMBIGUOUS: the freeze ended (close the row — its whole job), or
-// Redis lost the marker (leave it; the orchestrator rehydrates from this
-// very row). Closing is not neutral in the second case, because
-// `recovered_at IS NULL` is the exact predicate LoadLadder tests: the sweep
-// deletes the rehydrate's evidence AND records on /v1/anomalies that the
-// freeze recovered normally.
-//
-// The race is not theoretical and it is not close. Recovery.Run does an
-// IMMEDIATE tick on start, and the orchestrator computes VWAPs before it
-// evaluates any freeze — so on an aggregator restart after a flush the sweep
-// wins essentially always; on a running aggregator it is a 60s sweep against
-// a 30s tick.
-//
-// Models the restart-after-flush ordering exactly: no marker, an escalated
-// durable ladder still inside its hold, sweep runs FIRST. The ladder must
-// survive and still rehydrate.
+// TestRecovery_DoesNotCloseARowWhoseDurableHoldIsLive: a missing marker is ambiguous (ended vs Redis flush); closing the row deletes the
+// rehydrate's evidence, and the sweep wins on restart. With no marker and a live escalated ladder, the sweep runs FIRST and the ladder must survive.
 func TestRecovery_DoesNotCloseARowWhoseDurableHoldIsLive(t *testing.T) {
 	_, rdb := newRedis(t) // empty: the flush already happened
 	asset, quote := nativeUSD(t)
@@ -328,11 +299,7 @@ func TestRecovery_DoesNotCloseARowWhoseDurableHoldIsLive(t *testing.T) {
 	}
 }
 
-// TestRecovery_ClosesRowsWhoseDurableHoldHasLapsed — the guard must not turn
-// the worker off. A hold that lapsed beyond the grace means the aggregator
-// has been down longer than the freeze's own hold, so nobody is coming to
-// rehydrate it; leaving it open would show a finished freeze as permanently
-// firing on /v1/anomalies, which is the worker's entire reason to exist.
+// TestRecovery_ClosesRowsWhoseDurableHoldHasLapsed: past hold plus grace nobody will rehydrate, so the row must close or /v1/anomalies shows it firing forever.
 func TestRecovery_ClosesRowsWhoseDurableHoldHasLapsed(t *testing.T) {
 	_, rdb := newRedis(t)
 	asset, quote := nativeUSD(t)
@@ -356,10 +323,7 @@ func TestRecovery_ClosesRowsWhoseDurableHoldHasLapsed(t *testing.T) {
 	}
 }
 
-// TestRecovery_LadderReadFailureClosesOnThePre0119Rule — a Postgres blip
-// must not strand open rows forever. Closing wrongly is bounded (the
-// orchestrator re-freezes on the pair's own signal if the anomaly is live);
-// never closing is unbounded.
+// TestRecovery_LadderReadFailureClosesOnThePre0119Rule: a ladder read failure must not strand rows; a wrong close is bounded, never closing is not.
 func TestRecovery_LadderReadFailureClosesOnThePre0119Rule(t *testing.T) {
 	_, rdb := newRedis(t)
 	asset, quote := nativeUSD(t)
@@ -381,10 +345,7 @@ func TestRecovery_LadderReadFailureClosesOnThePre0119Rule(t *testing.T) {
 	}
 }
 
-// TestLadderStillLive_BoundaryIsShared pins the predicate all three
-// marker-miss consumers read. A divergence between the Writer's rehydrate
-// bound and the sweep's close bound re-opens the whole finding, with the row
-// additionally marked "recovered normally".
+// TestLadderStillLive_BoundaryIsShared pins the predicate all marker-miss consumers read; divergence re-opens the finding.
 func TestLadderStillLive_BoundaryIsShared(t *testing.T) {
 	now := time.Date(2026, 7, 26, 12, 0, 0, 0, time.UTC)
 	const grace = 5 * time.Minute
@@ -401,10 +362,7 @@ func TestLadderStillLive_BoundaryIsShared(t *testing.T) {
 	}
 }
 
-// TestRecovery_LadderGraceBoundaryOnInjectedClock pins the hold+grace
-// boundary of the marker-miss sweep on the injected clock. The hold is
-// dated in the past, so a sweep judging it on the wall clock closes the
-// row in every case.
+// TestRecovery_LadderGraceBoundaryOnInjectedClock pins the hold+grace boundary on the injected clock, not the wall clock.
 func TestRecovery_LadderGraceBoundaryOnInjectedClock(t *testing.T) {
 	holdUntil := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	grace := 5 * time.Minute

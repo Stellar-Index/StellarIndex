@@ -14,11 +14,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// orderedCache records the order of writes to the keys it watches, with
-// the MULTI/EXEC boundaries around any it writes transactionally, and can
-// fail the Del of one of them (inside a transaction, the whole
-// transaction, as Redis discards a MULTI whose queued command was
-// refused).
+// orderedCache records write order for watched keys with MULTI/EXEC boundaries, and can fail a Del (inside a transaction, the whole transaction, as Redis discards a refused MULTI).
 type orderedCache struct {
 	*redis.Client
 	watch   map[string]string // key → label
@@ -78,11 +74,7 @@ func (c *orderedCache) Set(ctx context.Context, key string, value any, exp time.
 	return c.Client.Set(ctx, key, value, exp)
 }
 
-// The direct refresh must clear a prior composite's "triangulated" marker
-// in the same transaction as, and ahead of, its value, and must not
-// publish when the clear fails:
-// the API serves the Redis fallback only under that marker, so a direct
-// value landing beneath a stale one is served as a composite.
+// TestPublishDirect_ClearsProvenanceBeforeValueAndRefusesOnFailure: a direct refresh must clear a prior composite's triangulated marker in the same transaction, ahead of its value, and not publish if the clear fails, else a direct value is served as a composite.
 func TestPublishDirect_ClearsProvenanceBeforeValueAndRefusesOnFailure(t *testing.T) {
 	pair := xlmUSDPair(t)
 	window := 5 * time.Minute

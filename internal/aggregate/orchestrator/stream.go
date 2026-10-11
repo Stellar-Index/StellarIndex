@@ -9,12 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// streamBucketOnce publishes a served closed bucket to the stream the
-// first time any writer serves it. The SSE contract (ADR-0015, openapi
-// price/stream) promises byte-identical payloads across subscribers and
-// regions on the same (asset, quote, window), so the event is stamped
-// with the bucket it covers, not the tick's jittered clock, and a
-// replaying tick does not re-emit it.
+// streamBucketOnce publishes a served closed bucket to the stream the first time any writer serves it.
+// The payload is stamped with the bucket it covers, not the tick's jittered clock, so SSE stays byte-identical across subscribers and regions (ADR-0015).
 func (o *Orchestrator) streamBucketOnce(
 	ctx context.Context, pair canonical.Pair, window time.Duration, value string, bucketEnd time.Time,
 	coverage *cachekeys.WindowCoverage,
@@ -62,11 +58,7 @@ func (o *Orchestrator) claimStreamBucket(pair canonical.Pair, window time.Durati
 	return true
 }
 
-// publishToStream fans the closed-bucket event out to the
-// configured StreamPublisher (Redis pub/sub in production). Pure
-// best-effort: never returns an error — failures log + increment
-// the per-outcome counter. The VWAP cache write upstream is the
-// source of truth; the stream is enrichment for SSE subscribers.
+// publishToStream fans the closed-bucket event out to the StreamPublisher; best-effort, failures only log and count (the VWAP cache write is the source of truth).
 func (o *Orchestrator) publishToStream(
 	ctx context.Context,
 	pair canonical.Pair,

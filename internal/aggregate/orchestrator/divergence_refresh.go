@@ -12,33 +12,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// refreshDivergenceAll iterates over every configured pair and asks
-// the [DivergenceRefresher] to update its `div:<base>/<quote>` cache entry
-// for the asset, using the shortest-window VWAP this Tick just
-// wrote as the "our price" input, or, for a pair frozen at that
-// window, the pinned last-known-good ([Orchestrator.refreshPairDivergence]).
-//
-// Best-effort: per-pair errors are counted via
-// `obs.DivergenceRefreshTotal{outcome=…}` and logged at WARN; the
-// Tick's outcome label is unaffected. The cache TTL is the safety net:
-// if a few ticks fail, the API still serves stale-but-valid data.
-//
-// Outcome labels:
-//   - `no_vwap`       — VWAP cache miss for this pair (frozen, empty
-//     window, transient cache error). Skip.
-//   - `parse_error`   — cached value not parseable as float; a writer
-//     regression.
-//   - `refresh_error` — the refresher failed (all references down,
-//     marshal or cache write failure). The entry is NOT updated; the
-//     previous entry's TTL keeps counting down.
+// refreshDivergenceAll asks the [DivergenceRefresher] to update each configured pair's `div:<base>/<quote>` cache entry, using the shortest-window VWAP this Tick wrote (or the pinned last-known-good for a frozen pair; see [Orchestrator.refreshPairDivergence]).
+// Best-effort: errors are counted in obs.DivergenceRefreshTotal{outcome} and logged; the cache TTL is the safety net.
+// Outcomes: no_vwap (cache miss, skip), parse_error (writer regression), refresh_error (entry NOT updated, old TTL keeps counting down).
 func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) {
-	// The divergence cross-check is a SECONDARY, best-effort guard; a
-	// panic in it (or the references it fans out to) must never crash the
-	// aggregator and take the PRIMARY VWAP refresh down with it. Contain
-	// it here so the panic path matches the "best-effort, never abort the
-	// tick" contract the caller (Tick) already documents. Compare already
-	// recovers per-reference goroutine panics; this covers the outer
-	// per-pair loop.
+	// Divergence is a SECONDARY best-effort guard; a panic in it must never take the PRIMARY VWAP refresh down. Compare recovers per-reference panics; this covers the outer per-pair loop.
 	defer func() {
 		if r := recover(); r != nil {
 			o.logger.Error("divergence refresh panicked; VWAP tick protected", "panic", r)
@@ -51,12 +29,7 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 	// Set before the interval gate and the per-pair loop, so a pass that
 	// never reaches an outcome still arms stellarindex_divergence_no_ok_outcomes.
 	obs.DivergenceRefresherWired.Set(1)
-	// Gate the refresh behind a minimum-elapsed interval so the
-	// external-reference quota (CMC free tier = 10K/month) isn't
-	// exhausted by every-tick refreshes. Skip silently when within the
-	// interval — operators see the gap via
-	// `obs.DivergenceRefreshTotal{outcome=*}` rate going to zero during
-	// the suppressed window. Zero interval = refresh every tick.
+	// Gate behind a minimum interval so the external-reference quota (CMC free tier = 10K/month) isn't exhausted; skips are visible as the outcome rate going to zero. Zero interval = every tick.
 	if o.cfg.DivergenceMinInterval > 0 && !o.lastDivergenceRefreshAt.IsZero() &&
 		now.Sub(o.lastDivergenceRefreshAt) < o.cfg.DivergenceMinInterval {
 		return
@@ -70,12 +43,7 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 		if err := ctx.Err(); err != nil {
 			return
 		}
-		// Time the full per-pair refresh attempt — including the
-		// VWAP cache lookup + parse + HTTP fan-out to every
-		// configured reference. Recorded against the outcome
-		// label so operators chart `ok` p95/p99 separately from
-		// `refresh_error` (often the fast-fail path) and the
-		// near-zero `no_vwap` / `parse_error` paths.
+		// Time the full per-pair attempt (cache lookup, parse, HTTP fan-out), labelled by outcome so `ok` latency is charted apart from fast-fail paths.
 		start := time.Now()
 		key := cachekeys.VWAP(pair.Base, pair.Quote, shortest)
 		raw, err := o.cache.Get(ctx, key.String()).Result()
@@ -116,15 +84,8 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 	}
 }
 
-// refreshPairDivergence hands the refresher the pair's cached VWAP, as a
-// pinned price when the pair is frozen at that window. A freeze skips the
-// VWAP write and keeps the last-known-good alive ([Orchestrator.keepFrozenVWAPAlive]),
-// so the cached value is then the price the freeze refused to move off:
-// judged as a fresh price it reads as divergence from the market, which
-// fires divergence_warning and its webhook for a pair deliberately not
-// updating, and feeds a depressed cross-oracle input back into the
-// confidence that is itself a freeze leg. frozenLeg covers a freeze made
-// this tick and one still inside its hold.
+// refreshPairDivergence hands the refresher the pair's cached VWAP, as a pinned price when frozen at that window ([Orchestrator.keepFrozenVWAPAlive]).
+// Judged as fresh, the refused price would read as divergence, fire divergence_warning for a pair deliberately not updating, and feed a depressed input into the confidence that is itself a freeze leg. frozenLeg covers a freeze made this tick and one still in its hold.
 func (o *Orchestrator) refreshPairDivergence(
 	ctx context.Context, pair canonical.Pair, window time.Duration, price float64, now time.Time,
 ) error {

@@ -6,23 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// FilterOutliers returns a copy of trades with prices further than `sigma`
-// σ-equivalents from the robust centre removed, using a median + MAD guard.
-//
-// Why MAD, not mean/σ: a mean/σ filter is MASKING-vulnerable (extreme prints
-// inflate σ enough to escape rejection) and below ~18 trades rejects nothing.
-//
-// A price is dropped when its deviation from the median exceeds
-// sigma · (1.4826 · MAD); [madToStd] rescales MAD to a σ-equivalent. The
-// deviation is symmetric in RATIO space ([symmetricDev]; ADR-0046 §1). Exact
-// *big.Rat on the value path (ADR-0003); `sigma` is converted to a rational first.
-//
-//   - sigma <= 0 is a no-op (shallow copy).
-//   - Fewer than 3 usable prices → no robust centre; returned unchanged.
-//   - Zero-base / zero-quote trades have no price and are dropped first.
-//   - MAD == 0 falls back to [zeroScaleRelFloor]·centre (±2% at sigma=4).
-//   - A trim whose survivors carry less base volume than the dropped prints
-//     returns an EMPTY slice ([keepIfVolumeMajority]).
+// FilterOutliers drops prices beyond sigma*(1.4826*MAD) of the median in ratio space (ADR-0046 §1), exact big.Rat; sigma <= 0 or fewer than 3 usable prices is a no-op, and a trim dropping the base-volume majority returns an empty slice.
 func FilterOutliers(trades []canonical.Trade, sigma float64) []canonical.Trade {
 	if sigma <= 0 || len(trades) < 3 {
 		out := make([]canonical.Trade, len(trades))
@@ -67,20 +51,8 @@ func FilterOutliers(trades []canonical.Trade, sigma float64) []canonical.Trade {
 	return keepIfVolumeMajority(trades, validIdx, kept, nil)
 }
 
-// keepIfVolumeMajority returns the kept trades, in order, unless they
-// carry less base volume than the usable trades the filter dropped — in
-// which case it returns an empty slice and the window is withheld.
-//
-// The robust centre is a per-print (count) median, so a count majority
-// of dust prints can put the honest block outside the band: the trim
-// then deletes most of the money traded and the dust becomes the whole
-// Σquote/Σbase. A volume-weighted centre only moves the lever to one
-// large print (ADR-0046 §5). Requiring the survivors to hold the volume
-// majority as well means setting the published price costs both.
-//
-// scaleOf lifts every trade to one smallest-unit scale before volumes
-// are compared ([NormalizeAmountScale]); nil compares raw BaseAmount,
-// which is exact for a single-scale window.
+// keepIfVolumeMajority returns kept unless it carries less base volume than the usable trades dropped, then empty: a count majority of
+// dust prints must not delete the money traded (ADR-0046 §5). scaleOf lifts volumes to one scale first; nil compares raw BaseAmount.
 func keepIfVolumeMajority(trades []canonical.Trade, validIdx, kept []int, scaleOf func(source string) int) []canonical.Trade {
 	if len(kept) == len(validIdx) {
 		return keepByIndex(trades, kept)

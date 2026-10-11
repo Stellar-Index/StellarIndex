@@ -13,9 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestFilterFreshAggregatorRows_LeavesInputUntouched pins that the
-// freshness filter does not overwrite the caller's backing array with
-// its survivors.
+// TestFilterFreshAggregatorRows_LeavesInputUntouched pins that the freshness filter does not overwrite the caller's backing array.
 func TestFilterFreshAggregatorRows_LeavesInputUntouched(t *testing.T) {
 	now := time.Now()
 	rows := []canonical.OracleUpdate{
@@ -31,11 +29,7 @@ func TestFilterFreshAggregatorRows_LeavesInputUntouched(t *testing.T) {
 	}
 }
 
-// TestNoInPlaceSliceFilter fails on any `x[:0]` in non-test code under
-// internal/aggregate. Filtering into x[:0] overwrites the caller's
-// backing array, so a caller that keeps the pre-filter slice (for a
-// drop count, a pre-filter total, a second pass) reads survivors where
-// its dropped rows were. Allocate the output instead.
+// TestNoInPlaceSliceFilter fails on any in-place filter into x[:0] in non-test code here: it overwrites the caller's backing array; allocate the output instead.
 func TestNoInPlaceSliceFilter(t *testing.T) {
 	var hits []string
 	scanned := 0

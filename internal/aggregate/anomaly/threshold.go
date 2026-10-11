@@ -7,8 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Thresholds holds a class's absolute percentages: above WarnPct warns; above
-// FreezePct with at most one source freezes. Both > 0 and FreezePct > WarnPct.
+// Thresholds holds a class's WarnPct and FreezePct (both > 0, FreezePct > WarnPct).
 type Thresholds struct {
 	WarnPct   float64
 	FreezePct float64
@@ -71,8 +70,7 @@ func (c *Checker) ClassOf(asset canonical.Asset) AssetClass {
 	return c.classifier.ClassOf(asset)
 }
 
-// Observation is the input to [Checker.Evaluate]. The aggregator
-// fills this in for each bucket-close before publishing.
+// Observation is the input to [Checker.Evaluate], filled per bucket-close.
 type Observation struct {
 	// Pair is the asset pair being evaluated. The Checker uses
 	// Pair.Base.String() to look up the asset's class.
@@ -102,9 +100,7 @@ func (c *Checker) thresholdsFor(class AssetClass) Thresholds {
 	return c.thresholds[ClassDefault]
 }
 
-// Evaluate returns a [Decision] for obs (ADR-0019). A deviation at or above
-// FreezePct freezes only on a single source; with corroborating sources it is a
-// real market move and only warns.
+// Evaluate returns a [Decision] for obs; freeze needs deviation >= FreezePct and at most one source.
 func (c *Checker) Evaluate(obs Observation) Decision {
 	class := c.classifier.ClassOf(obs.Pair.Base)
 	thresholds := c.thresholdsFor(class)

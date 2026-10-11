@@ -66,11 +66,7 @@ func (s *recordingStream) PublishFrozenBucket(
 	return nil
 }
 
-// A pair that is both a direct pair and a triangulation target has one
-// writer per tick on its served key. Two ticks inside one closed bucket —
-// the deciding tick and a replaying one — must never write the direct
-// print to the key the composite serves from, and the stream must carry
-// the composite, once, stamped with the bucket end.
+// TestTriangulationTarget_ServedKeyNeverHoldsTheDirectPrintUnderTheComposite: a pair that is both direct and a triangulation target has one writer per tick on its served key; two ticks in one closed bucket must never write the direct print there, and the stream carries the composite once, stamped with the bucket end.
 func TestTriangulationTarget_ServedKeyNeverHoldsTheDirectPrintUnderTheComposite(t *testing.T) {
 	ctx := context.Background()
 	window := 5 * time.Minute

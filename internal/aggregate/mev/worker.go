@@ -12,53 +12,32 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
-// TradeScanner supplies the recent on-chain trades the detector scans.
-// Production: timescale.Store.TradesForArbScan (a ts-windowed, capped
-// read of the trades hypertable, on-chain rows with a taker).
+// TradeScanner supplies recent on-chain trades with a taker; production is timescale.Store.TradesForArbScan.
 type TradeScanner interface {
 	TradesForArbScan(ctx context.Context, since time.Time, limit int) ([]canonical.Trade, []string, error)
 }
 
-// Sink persists a detected event. InsertMEVEvent is idempotent on
-// StoredEvent.DedupKey — it returns inserted=false when the event was
-// already present, so a re-scan of an overlapping window doesn't
-// double-count; a re-scan whose legs contain the stored legs replaces
-// the stored evidence. Production: timescale.Store.
+// Sink persists a detected event; InsertMEVEvent is idempotent on StoredEvent.DedupKey (inserted=false if present) and a re-scan with a superset of legs replaces the stored evidence.
 type Sink interface {
 	InsertMEVEvent(ctx context.Context, e StoredEvent) (inserted bool, err error)
 }
 
-// OracleScanner supplies recent ON-CHAIN oracle updates for the
-// oracle_sandwich + liquidation_cascade detectors. Production:
-// timescale.Store.OracleUpdatesForMEVScan. Optional — nil skips the
-// oracle-correlated detectors.
+// OracleScanner supplies recent ON-CHAIN oracle updates; optional, nil skips the oracle-correlated detectors.
 type OracleScanner interface {
 	OracleUpdatesForMEVScan(ctx context.Context, since time.Time, limit int) ([]OracleRef, error)
 }
 
-// AuctionScanner supplies recent Blend liquidation-auction fills for
-// the cascade detector. Production:
-// timescale.Store.BlendFillsForMEVScan. Optional — nil skips cascade
-// detection.
+// AuctionScanner supplies recent Blend liquidation fills; optional, nil skips cascade detection.
 type AuctionScanner interface {
 	BlendFillsForMEVScan(ctx context.Context, since time.Time, limit int) ([]AuctionFill, error)
 }
 
-// TxOrderResolver resolves tx hashes to their intra-ledger
-// application order (tx_index) — the signal the served trades table
-// does not carry but the raw lake does (stellar.tx_hash_index,
-// ADR-0034). Production: clickhouse.TxIndexReader. Optional — nil
-// skips the ordering-dependent detectors (sandwich, oracle_sandwich).
+// TxOrderResolver resolves tx hashes to intra-ledger tx_index from the raw lake (ADR-0034); optional, nil skips the sandwich detectors.
 type TxOrderResolver interface {
 	TxIndexes(ctx context.Context, hashes []string) (map[string]uint32, error)
 }
 
-// StoredEvent is the persistence-ready form of a Candidate — the shape
-// the mev_events row is built from. DetailJSON is the row's `detail`
-// jsonb (assets / sources / legs / notional as evidence).
-//
-// Canonical definition lives in [domain.MEVStoredEvent] — see the
-// [OracleRef] doc (inputs.go) for why this is an alias.
+// StoredEvent is the persistence-ready Candidate; an alias of [domain.MEVStoredEvent].
 type StoredEvent = domain.MEVStoredEvent
 
 // arbDetail is the JSON shape persisted to mev_events.detail for an
@@ -72,11 +51,7 @@ type arbDetail struct {
 	Note               string   `json:"note"`
 }
 
-// storedFrom converts a detected Candidate into its persistence form,
-// marshalling the evidence into the detail jsonb. Candidates without
-// an explicit Detail get the arbitrage evidence shape (the original
-// v1 behaviour); every kind's detail carries the candidate's assets
-// and sources (detailWithAssets).
+// storedFrom converts a Candidate to its persistence form; candidates without Detail get the arbitrage evidence shape, and every detail carries assets and sources.
 func storedFrom(c Candidate) (StoredEvent, error) {
 	detail := c.Detail
 	if detail == nil {
@@ -145,10 +120,7 @@ func detailWithAssets(detail any, c Candidate) ([]byte, error) {
 	return json.Marshal(fields)
 }
 
-// Worker runs the MEV detectors on a schedule: each tick it scans the
-// last `window` of served rows, runs every detector whose inputs are
-// wired, and persists new candidates. Idempotent via the dedup key,
-// so overlapping windows are safe.
+// Worker runs the MEV detectors each tick over the trailing window; idempotent via the dedup key, so overlapping windows are safe.
 type Worker struct {
 	scanner  TradeScanner
 	sink     Sink
@@ -164,8 +136,7 @@ type Worker struct {
 	obs       Observer
 }
 
-// Observer records per-run outcomes. nil → no-op (NopObserver).
-// Truncated fires once per input scan (ScanInput*) that hit ScanLimit.
+// Observer records per-run outcomes (nil is a no-op); Truncated fires once per input scan that hit ScanLimit.
 type Observer interface {
 	Run(outcome string, dur time.Duration, detected, inserted int)
 	Truncated(input string)
@@ -178,17 +149,9 @@ const (
 	ScanInputAuctions = "auction_fills"
 )
 
-// WorkerConfig configures a Worker. Window defaults to 30m, ScanLimit
-// to 50_000. The scanners return the NEWEST ScanLimit rows of the
-// window; a scan that fills the cap is reported via Observer.Truncated.
-//
-// Oracles / Auctions / Order are optional inputs: each nil seam
-// simply disables the detectors that need it (see the interface docs)
-// — detection degrades honestly rather than guessing.
-//
-// There is no retention knob: the worker never deletes mev_events. The
-// detectors only see a trailing window, so a pruned event cannot be
-// re-derived, and the served tier keeps what it indexes (launch-plan D5).
+// WorkerConfig configures a Worker (Window 30m, ScanLimit 50_000; a capped scan is reported via Observer.Truncated).
+// Oracles/Auctions/Order are optional: a nil seam disables its detectors rather than guessing.
+// The worker never deletes mev_events: a pruned event cannot be re-derived from the trailing window.
 type WorkerConfig struct {
 	Window    time.Duration
 	ScanLimit int
@@ -230,22 +193,13 @@ func NewWorker(scanner TradeScanner, sink Sink, cfg WorkerConfig) *Worker {
 	return w
 }
 
-// SetOrder wires (or re-wires) the tx-order resolver after construction.
-// Safe to call concurrently with Run: a background ClickHouse dial retry
-// arms the sandwich/oracle-sandwich detectors once the lake
-// answers, rather than the worker either blocking start on that dial or
-// giving up on it forever after one failure.
+// SetOrder wires or re-wires the tx-order resolver; safe to call concurrently with Run (a background lake dial retry arms the sandwich detectors).
 func (w *Worker) SetOrder(o TxOrderResolver) {
 	w.order.Store(&o)
 }
 
-// RunOnce scans the trailing window once and persists new MEV events
-// across every wired detector. Returns (detected, inserted): detected
-// is candidates found, inserted is the new (non-duplicate) rows
-// written. now is the upper bound of the scan window — injectable for
-// tests. Auxiliary inputs (oracle updates, auction fills, lake
-// tx-order) are best-effort: a failure there logs + skips the
-// detectors that need it, it never fails the run.
+// RunOnce scans the trailing window once and returns (detected, inserted); now is the window's upper bound.
+// Auxiliary inputs are best-effort: a failure skips their detectors and never fails the run.
 func (w *Worker) RunOnce(ctx context.Context, now time.Time) (detected, inserted int, err error) {
 	start := now
 	since := now.Add(-w.window)
@@ -283,10 +237,7 @@ func (w *Worker) RunOnce(ctx context.Context, now time.Time) (detected, inserted
 	return detected, inserted, nil
 }
 
-// Run drives RunOnce on a ticker until ctx is cancelled. It runs once
-// immediately on start, then every `interval`. A failed run is logged
-// and retried on the next tick — detection is best-effort analytics,
-// not a correctness path. interval defaults to 5m.
+// Run drives RunOnce on a ticker (immediately, then every interval, default 5m) until ctx is cancelled; failures are logged and retried next tick.
 func (w *Worker) Run(ctx context.Context, interval time.Duration) error {
 	if interval <= 0 {
 		interval = 5 * time.Minute
@@ -309,11 +260,8 @@ func (w *Worker) Run(ctx context.Context, interval time.Duration) error {
 	}
 }
 
-// scanTrades reads the window's newest scanLimit trades. When the scan
-// fills the cap it is reported, and the oldest ledger is dropped: the
-// cap may have cut that ledger mid-transaction, and a partial
-// transaction can pass the arbitrage checks a complete one fails (a
-// dropped leg can lift the single-venue leg-count rejection).
+// scanTrades reads the window's newest scanLimit trades. A capped scan is reported and its oldest ledger dropped:
+// the cap may cut it mid-transaction, and a dropped leg can lift the single-venue leg-count rejection.
 func (w *Worker) scanTrades(ctx context.Context, since time.Time) ([]canonical.Trade, []string, error) {
 	trades, usd, err := w.scanner.TradesForArbScan(ctx, since, w.scanLimit)
 	if err != nil || len(trades) < w.scanLimit {

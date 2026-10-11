@@ -82,11 +82,7 @@ func TestDecimalsAdjustment_PositiveAndNegativeDelta(t *testing.T) {
 	}
 }
 
-// TestAdjustPrice_ByteIdenticalWhenBothStandard proves constraint #5's
-// "7dp assets are byte-identical before/after": AdjustPrice on a
-// standard-decimals pair returns the exact same *big.Rat value (not merely
-// an equal one) as the unadjusted input — the historical/default code path
-// is untouched.
+// TestAdjustPrice_ByteIdenticalWhenBothStandard proves a standard-decimals pair returns the exact same *big.Rat value as the unadjusted input.
 func TestAdjustPrice_ByteIdenticalWhenBothStandard(t *testing.T) {
 	raw := new(big.Rat).SetFrac(big.NewInt(340), big.NewInt(120)) // 17/6
 	adjusted := AdjustPrice(raw, StandardDecimals, StandardDecimals)
@@ -104,16 +100,7 @@ func TestAdjustPrice_NilInputReturnsNil(t *testing.T) {
 	}
 }
 
-// TestAdjustPrice_Golden18DecimalToken is the golden-number regression
-// constraint #5 asks for: a real-shaped trade of an 18-decimal bridged
-// token (base leg) quoted against a 7-decimal SAC/classic asset (quote
-// leg), showing the OLD unadjusted ratio is off by exactly 10^11 — the
-// |18-7| skew docs/operations/runbooks/dex.md describes — and that AdjustPrice
-// corrects it exactly.
-//
-// Trade shape: base_amount = 2_500_000_000_000_000_000 (2.5 whole tokens
-// at 18dp), quote_amount = 12_420_000 (1.242 USDC at 7dp). True price =
-// 1.242 / 2.5 = 0.4968 USDC per token.
+// TestAdjustPrice_Golden18DecimalToken is the golden regression: an 18dp base against a 7dp quote is off by exactly 10^11 unadjusted, and AdjustPrice corrects it.
 func TestAdjustPrice_Golden18DecimalToken(t *testing.T) {
 	baseAmount := new(big.Int)
 	baseAmount.SetString("2500000000000000000", 10) // 2.5 * 10^18
@@ -144,10 +131,7 @@ func TestAdjustPrice_Golden18DecimalToken(t *testing.T) {
 	}
 }
 
-// TestAdjustPrice_Golden6DecimalQuoteToken covers the opposite direction
-// (a 6dp quote leg — one of the five confirmed offenders
-// is exactly 6dp) — the base leg is standard, so the adjustment scales
-// DOWN.
+// TestAdjustPrice_Golden6DecimalQuoteToken covers the opposite direction: a 6dp quote leg with a standard base scales DOWN.
 func TestAdjustPrice_Golden6DecimalQuoteToken(t *testing.T) {
 	// base_amount = 100 * 10^7 (100 whole units at 7dp), quote_amount =
 	// 250 * 10^6 (250 whole units at 6dp). True price = 250/100 = 2.5.

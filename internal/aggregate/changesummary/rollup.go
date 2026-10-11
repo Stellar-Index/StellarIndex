@@ -1,16 +1,6 @@
-// Package changesummary computes the multi-window delta strip
-// every entity on the explorer renders.
-//
-// Periodic worker reads the source table for each (entity_type,
-// entity_id), computes h1/h24/d7/d30 deltas + ATH/ATL + streak +
-// acceleration, and writes one row to the change_summary_5m
-// hypertable. Every list view + every detail page on the explorer
-// reads from this in O(1) — without it, every render would do
-// N+1 queries against prices_1m.
-//
-// See migrations/0022_create_change_summary_5m.up.sql for the
-// table shape and docs/architecture/explorer-data-inventory.md
-// §6.1 + §9.6 for the design.
+// Package changesummary computes the multi-window delta strip (h1/h24/d7/d30, ATH/ATL, streak, acceleration) every explorer entity renders.
+// A periodic worker writes one change_summary_5m row per entity so views read in O(1) instead of N+1 prices_1m queries.
+// See migrations/0022_create_change_summary_5m.up.sql and docs/architecture/explorer-data-inventory.md §6.1, §9.6.
 package changesummary
 
 import (
@@ -28,28 +18,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Row is the storage-neutral shape the worker hands to the Sink.
-// The aggregator binary translates this to timescale.ChangeSummaryRow
-// at the boundary; changesummary stays free of a storage import to
-// avoid the cycle (storage owns the read-side Point type via the
-// PriceSource adapter).
-//
-// SCALE. Every *Value field is the RAW prices_1m ratio the PriceSource
-// returned — deliberately NOT dex-nonstandard-decimals normalised. The
-// sink ratchets ATHValue / ATLValue against the stored row (GREATEST /
-// LEAST), and an asset is confirmed non-7-decimals only after it has
-// been trading, so normalising here would change a row's scale mid-life
-// and pin the ratchet to an extreme from the old scale permanently. The
-// table stays raw, like the CAGG it is derived from, and the reader
-// normalises: internal/api/v1's changeSummaryResponse. Any NEW reader of
-// change_summary_5m must do the same. The *DeltaPct fields, the streak
-// and the acceleration are scale-free.
+// Row is the storage-neutral summary the worker hands to the Sink.
 type Row struct {
 	EntityType   string
 	EntityID     string
 	RefreshedAt  time.Time
 	CurrentValue string
 
+	// Every *Value field is the RAW prices_1m ratio, NOT decimals-normalised: normalising here would change a row's scale mid-life and pin the GREATEST/LEAST ATH/ATL ratchet to the old scale.
+	// Readers normalise (internal/api/v1 changeSummaryResponse); any new reader of change_summary_5m must too.
 	H1Value     *string
 	H1DeltaPct  *float64
 	H24Value    *string
@@ -69,36 +46,23 @@ type Row struct {
 	Acceleration    string
 }
 
-// PriceSource is the read seam — what the worker queries to compute
-// deltas. Implemented by timescale.Store via TimedVWAPs1mForChangeSummary.
-//
-// The worker passes a window of [from, to) and expects the source to
-// return CLOSED buckets only (ADR-0015), ordered oldest-first, each
-// timestamped by its bucket end.
+// PriceSource is the read seam: CLOSED buckets only (ADR-0015) over [from, to), oldest-first, stamped by bucket end.
 type PriceSource interface {
 	TimedVWAPs1m(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]TimedValue, error)
 }
 
-// TimedValue is one (timestamp, value) data point. value is decimal
-// as a string to dodge float precision issues during delta math —
-// the worker parses to float64 only at the moment of computing %
-// change, accepting the rounding because deltas are display-grade.
+// TimedValue is one (timestamp, decimal-string value) point; parsed to float64 only for display-grade delta percentages.
 type TimedValue struct {
 	At    time.Time
 	Value string
 }
 
-// Sink is the write seam — where computed summaries land. The
-// aggregator binary wires an adapter that translates Row to the
-// timescale row type and calls UpsertChangeSummary.
+// Sink is the write seam where computed summaries land.
 type Sink interface {
 	UpsertChangeSummary(ctx context.Context, row Row) error
 }
 
-// Worker periodically refreshes change_summary_5m for a configured
-// set of (entity_type, entity_id, pair) tuples.
-//
-// Run via [Worker.Run]; caller cancels via context.
+// Worker periodically refreshes change_summary_5m for its configured entities; stop it via the Run context.
 type Worker struct {
 	source   PriceSource
 	sink     Sink
@@ -106,20 +70,13 @@ type Worker struct {
 	interval time.Duration
 	clock    func() time.Time
 
-	// entities is the working set. Each one maps an
-	// (entity_type, entity_id) coordinate to the canonical pair
-	// whose VWAP drives the entity's deltas. An entity with no
-	// single canonical pair — a protocol summing across pools, an
-	// ingest source summing across assets — cannot be expressed
-	// here at all, and no other worker computes one, so 'protocol'
-	// and 'source' rows do not exist on any deployment. The API
-	// surface says so rather than promising them (see
-	// allowedChangeSummaryEntityTypes in internal/api/v1/changes.go).
+	// entities is the working set, each mapping an (entity_type, entity_id) to the canonical pair driving its deltas.
+	// Entities with no single canonical pair (protocol, source) cannot be expressed, so those rows exist nowhere;
+	// see allowedChangeSummaryEntityTypes in internal/api/v1/changes.go.
 	entities []Entity
 }
 
-// Entity binds an (entity_type, entity_id) tuple to the source pair
-// whose 1-minute VWAP series drives the deltas.
+// Entity binds an (entity_type, entity_id) tuple to the pair whose 1m VWAP series drives its deltas.
 type Entity struct {
 	Type string         // 'coin' | 'pair'
 	ID   string         // canonical id, e.g. "crypto:XLM" or "crypto:XLM/fiat:USD"
@@ -136,8 +93,7 @@ type Options struct {
 	Clock func() time.Time
 }
 
-// New constructs a Worker. Returns an error if required fields are
-// missing.
+// New constructs a Worker, erroring when required fields are missing.
 func New(source PriceSource, sink Sink, entities []Entity, logger *slog.Logger, opts Options) (*Worker, error) {
 	if source == nil {
 		return nil, errors.New("changesummary: PriceSource is required")
@@ -169,10 +125,7 @@ func New(source PriceSource, sink Sink, entities []Entity, logger *slog.Logger, 
 	}, nil
 }
 
-// Run blocks until ctx is cancelled, refreshing every interval.
-// Returns nil on context cancellation; never returns an error
-// (per-entity failures log + continue so one bad pair doesn't kill
-// the whole worker).
+// Run refreshes every interval until ctx is cancelled and returns nil; per-entity failures are logged, never fatal.
 func (w *Worker) Run(ctx context.Context) error {
 	t := time.NewTicker(w.interval)
 	defer t.Stop()
@@ -270,12 +223,8 @@ func closedPoints(series []TimedValue, now time.Time) []TimedValue {
 	return series[:end]
 }
 
-// computeSummary derives the full Row from a sorted (oldest-first)
-// series of TimedValues. Pulled out of refreshOne so it's directly
-// testable without a fake PriceSource.
-//
-// Empty series is rejected upstream — by the time we land here,
-// len(series) >= 1.
+// computeSummary derives the Row from an oldest-first series (len >= 1, enforced upstream);
+// split out so it is testable without a fake PriceSource.
 func computeSummary(ent Entity, series []TimedValue, now time.Time) Row {
 	current := series[len(series)-1]
 
@@ -310,13 +259,8 @@ func computeSummary(ent Entity, series []TimedValue, now time.Time) Row {
 		}
 	}
 
-	// ATH / ATL across the full series, compared with big.Rat so a price
-	// with more significant digits than float64 carries
-	// never gets truncated on the way into the ratcheted ath_value /
-	// atl_value columns. Note this is "30d ATH" not all-time — the
-	// worker only fetches 30d of history. A future pass that wants true
-	// all-time can switch the query to a 1-day-bucketed CAGG covering
-	// the full hypertable.
+	// ATH / ATL across the full series, compared with big.Rat so prices with more digits than float64 are never truncated into the ratcheted columns.
+	// This is a 30d ATH/ATL, not all-time: the worker only fetches 30d.
 	if athValue, athAt, atlValue, atlAt, ok := extremes(series, current); ok {
 		row.ATHValue = ptrStr(athValue)
 		row.ATHAt = ptrTime(athAt)
@@ -340,12 +284,9 @@ const extremeBand = 1000
 // anything about which side of a two-point gap is the outlier.
 const minPointsForBand = 3
 
-// extremes returns the ATH and ATL over series, ignoring unparseable and
-// zero points and (once the series is long enough to tell) points further
-// than extremeBand from the median. ok is false when current is itself out
-// of band or nothing qualifies: the caller then leaves ATH/ATL NULL so the
-// sink's GREATEST/LEAST keep the stored extremes. A zero mid-series must
-// not become the ATL ([100,5,0,90] has ATL 5).
+// extremes returns the ATH and ATL over series, ignoring unparseable/zero points and (once long enough) points further than extremeBand from the median.
+// ok is false when current is out of band or nothing qualifies: ATH/ATL stay NULL so the sink's GREATEST/LEAST keep stored extremes.
+// A zero mid-series must not become the ATL ([100,5,0,90] has ATL 5).
 func extremes(series []TimedValue, current TimedValue) (athValue string, athAt time.Time, atlValue string, atlAt time.Time, ok bool) {
 	pts := positivePoints(series)
 	var lo, hi *big.Rat
@@ -397,11 +338,8 @@ func positivePoints(series []TimedValue) []ratPoint {
 	return pts
 }
 
-// valueAt returns the most-recent observation whose timestamp is
-// at-or-before target. ok=false when no observation reaches that far
-// back, or when that observation is older than notBefore (a baseline
-// that stale describes a different period). series is assumed sorted
-// oldest-first.
+// valueAt returns the most recent observation at or before target (series is oldest-first).
+// ok is false when none reaches back that far, or it is older than notBefore (a stale baseline describes a different period).
 func valueAt(series []TimedValue, target, notBefore time.Time) (string, bool) {
 	// Binary-search the largest index whose At <= target.
 	idx := sort.Search(len(series), func(i int) bool {
@@ -413,12 +351,8 @@ func valueAt(series []TimedValue, target, notBefore time.Time) (string, bool) {
 	return series[idx].Value, true
 }
 
-// deltaPct = (current - past) / past * 100. Returns 0 on past=0 or an
-// unparseable leg (avoids divide-by-zero; a delta against a zero
-// baseline is undefined and we'd rather leak a fresh entity's NULL
-// than stamp Inf%). *DeltaPct is a percentage, not money — display-grade
-// float64 rounding here is accepted by design (the underlying *Value
-// fields stay exact; only this ratio is float).
+// deltaPct = (current - past) / past * 100; 0 on past=0 or an unparseable leg (undefined delta, avoids Inf%).
+// A percentage, not money: display-grade float64 is accepted here; the *Value fields stay exact.
 func deltaPct(pastStr, currentStr string) float64 {
 	past, errP := strconv.ParseFloat(pastStr, 64)
 	current, errC := strconv.ParseFloat(currentStr, 64)
@@ -504,23 +438,9 @@ func computeStreak(series []TimedValue) (string, *int) {
 	return streakDir, ptrInt(count)
 }
 
-// computeAcceleration returns 'increasing' / 'flat' / 'decreasing'
-// describing whether the MAGNITUDE of recent per-step moves is bigger
-// or smaller than the older moves — i.e. is momentum building. The
-// label is direction-agnostic: a steepening downtrend and a steepening
-// uptrend both report "increasing".
-//
-// We compare the absolute mean per-step delta of the last quarter
-// against the previous quarter with a ±5% deadband. Comparing the
-// signed deltas directly (the previous implementation) inverted for
-// negative trends — a steady downtrend's `last < prev*0.95` branch
-// fired and mislabelled it "decreasing" (and a steepening downtrend,
-// where last is MORE negative than prev, was labelled "decreasing"
-// when momentum was in fact building). Taking magnitudes first fixes
-// both.
-//
-// Defensive: returns empty string if series too short for the
-// comparison. Caller treats empty as NULL.
+// computeAcceleration returns increasing / flat / decreasing for whether the MAGNITUDE of recent per-step moves exceeds older ones (direction-agnostic: a steepening downtrend is increasing).
+// It compares the absolute mean per-step delta of the last quarter against the previous with a ±5% deadband; signed deltas mislabelled negative trends.
+// Returns empty (NULL) if the series is too short.
 func computeAcceleration(series []TimedValue) string {
 	if len(series) < 4 {
 		return ""

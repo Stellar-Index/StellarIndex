@@ -16,11 +16,7 @@ func firing(at time.Time) freeze.Signal {
 	return freeze.Signal{Now: at, Fires: true, Scored: true, Confidence: 0.02, ZScore: 12}
 }
 
-// healthy is a bucket that meets the ADR-0019 auto-unfreeze
-// condition: confidence strictly above 0.30 AND z strictly below 3.0,
-// with a corroborating lens agreeing with the release candidate
-// (calm alone earns no streak — a held manipulation is
-// calm too, so release additionally requires ReleaseCorroborated).
+// healthy is a bucket meeting the auto-unfreeze condition: confidence > 0.30, z < 3.0, plus ReleaseCorroborated (calm alone earns no streak; a held manipulation is calm too).
 func healthy(at time.Time) freeze.Signal {
 	return freeze.Signal{Now: at, Scored: true, Confidence: 0.50, ZScore: 0.4, ReleaseCorroborated: true}
 }
@@ -39,10 +35,7 @@ func middling(at time.Time) freeze.Signal {
 	return freeze.Signal{Now: at, Scored: true, Confidence: 0.50, ZScore: 4.2}
 }
 
-// TestPolicy_WithDefaults_MatchesADR0019 pins the shipped defaults to
-// the ADR's own numbers. These are the values an operator inherits by
-// leaving `[anomaly.phase2]` alone, so a silent drift here is a
-// silent change to how long every frozen pair serves a stale price.
+// TestPolicy_WithDefaults_MatchesADR0019 pins the shipped defaults to the ADR's numbers; drift silently changes how long every frozen pair serves a stale price.
 func TestPolicy_WithDefaults_MatchesADR0019(t *testing.T) {
 	p := freeze.Policy{}.WithDefaults()
 
@@ -78,8 +71,7 @@ func TestPolicy_WithDefaults_MatchesADR0019(t *testing.T) {
 	}
 }
 
-// TestPolicy_FireStartsTheHold — a fresh fire sets the hold from the
-// corroboration signal and starts the ladder at zero.
+// TestPolicy_FireStartsTheHold: a fresh fire sets the hold from the corroboration signal and starts the ladder at zero.
 func TestPolicy_FireStartsTheHold(t *testing.T) {
 	p := freeze.Policy{}
 
@@ -116,11 +108,7 @@ func TestPolicy_NoFireNoFreeze(t *testing.T) {
 	}
 }
 
-// TestPolicy_MiddlingBucketDoesNotRelease is the core regression in
-// pure form: the band between the fire threshold and the unfreeze
-// threshold (z ∈ [3, 5], confidence ∈ [0.30, 0.45]) is a HOLD band,
-// not a release band. The pre-lifecycle code treated it as release,
-// because release was `!fires`.
+// TestPolicy_MiddlingBucketDoesNotRelease: the band between fire and unfreeze thresholds is a HOLD band, not a release band.
 func TestPolicy_MiddlingBucketDoesNotRelease(t *testing.T) {
 	p := freeze.Policy{}
 	st := p.Evaluate(freeze.State{}, firing(t0)).State
@@ -141,8 +129,7 @@ func TestPolicy_MiddlingBucketDoesNotRelease(t *testing.T) {
 	}
 }
 
-// TestPolicy_ReleaseNeedsTwoConsecutiveAndTheMinimumHold walks the
-// three ways a release can be refused and the one way it is granted.
+// TestPolicy_ReleaseNeedsTwoConsecutiveAndTheMinimumHold walks the three ways a release is refused and the one way it is granted.
 func TestPolicy_ReleaseNeedsTwoConsecutiveAndTheMinimumHold(t *testing.T) {
 	p := freeze.Policy{}
 	fired := p.Evaluate(freeze.State{}, firing(t0)).State
@@ -202,12 +189,7 @@ func TestPolicy_ReleaseNeedsTwoConsecutiveAndTheMinimumHold(t *testing.T) {
 	})
 }
 
-// TestPolicy_UnscoredBucketNeverEarnsRelease — a bucket the scorer
-// could not score (no baseline, no previous VWAP, Phase 1 firing
-// before the confidence step ran) is the ABSENCE of evidence. It must
-// reset the streak, not credit it: the state right after an
-// aggregator restart is exactly an unscored bucket, and crediting it
-// would make "restart the aggregator twice" an unfreeze primitive.
+// TestPolicy_UnscoredBucketNeverEarnsRelease: an unscored bucket is absence of evidence and resets the streak, or restarting the aggregator twice would unfreeze.
 func TestPolicy_UnscoredBucketNeverEarnsRelease(t *testing.T) {
 	p := freeze.Policy{}
 	st := p.Evaluate(freeze.State{}, firing(t0)).State
@@ -238,10 +220,7 @@ func TestPolicy_UnscoredBucketNeverEarnsRelease(t *testing.T) {
 	}
 }
 
-// TestPolicy_LadderExtendsFourTimesThenEscalates pins the ADR's
-// "up to 4 extensions (2 hours total); after 4 extensions escalate to
-// operator review (P1 alert); freeze stays active until manual
-// unfreeze".
+// TestPolicy_LadderExtendsFourTimesThenEscalates pins ADR-0019: up to 4 extensions, then escalation to operator review and a freeze held until manual unfreeze.
 func TestPolicy_LadderExtendsFourTimesThenEscalates(t *testing.T) {
 	p := freeze.Policy{}
 	st := p.Evaluate(freeze.State{}, firing(t0)).State
@@ -281,10 +260,7 @@ func TestPolicy_LadderExtendsFourTimesThenEscalates(t *testing.T) {
 	}
 }
 
-// TestPolicy_EscalatedFreezeNeverAutoUnfreezes — ADR-0019 holds an
-// escalated freeze "until manual unfreeze". Auto-unfreeze is
-// suppressed on purpose: the ladder already spent two hours asking
-// whether the pair had recovered, and a human has been paged.
+// TestPolicy_EscalatedFreezeNeverAutoUnfreezes: an escalated freeze holds until manual unfreeze (ADR-0019); a human has been paged.
 func TestPolicy_EscalatedFreezeNeverAutoUnfreezes(t *testing.T) {
 	p := freeze.Policy{}
 	st := freeze.State{
@@ -312,12 +288,7 @@ func TestPolicy_EscalatedFreezeNeverAutoUnfreezes(t *testing.T) {
 	}
 }
 
-// TestPolicy_UncorroboratedCalmNeverEarnsAStreak — the
-// corroborated-release gate at the policy layer. Buckets that clear
-// both calm legs (confidence, z) but carry no lens agreement with the
-// release candidate must never advance the streak: under the per-tick
-// shadow comparator a HELD manipulated level produces exactly this
-// signal shape, so releasing on it is releasing the attack.
+// TestPolicy_UncorroboratedCalmNeverEarnsAStreak: calm buckets without a lens agreeing with the release candidate never advance the streak, since a held manipulation reads calm.
 func TestPolicy_UncorroboratedCalmNeverEarnsAStreak(t *testing.T) {
 	p := freeze.Policy{}.WithDefaults()
 	st := p.Evaluate(freeze.State{}, firing(t0)).State
@@ -336,11 +307,7 @@ func TestPolicy_UncorroboratedCalmNeverEarnsAStreak(t *testing.T) {
 	}
 }
 
-// TestPolicy_FiringBucketNeverEarnsAStreak — defence in depth against
-// an operator configuring overlapping fire and unfreeze bands (e.g.
-// raising confidence_max_freeze above the unfreeze bound). A bucket
-// that is simultaneously "anomalous enough to freeze" and "healthy
-// enough to release" must resolve as frozen.
+// TestPolicy_FiringBucketNeverEarnsAStreak: with overlapping fire and unfreeze bands, a bucket that is both must resolve as frozen.
 func TestPolicy_FiringBucketNeverEarnsAStreak(t *testing.T) {
 	p := freeze.Policy{UnfreezeZScoreMax: 20} // deliberately overlapping
 	st := p.Evaluate(freeze.State{}, firing(t0)).State
@@ -364,9 +331,7 @@ func TestPolicy_FiringBucketNeverEarnsAStreak(t *testing.T) {
 	}
 }
 
-// TestPolicy_MarkerTTLTracksRemainingHold — the TTL must shrink as
-// the hold is consumed and never go negative, so a marker cannot
-// outlive its hold by more than the grace.
+// TestPolicy_MarkerTTLTracksRemainingHold: the TTL shrinks with the hold, never goes negative, and never outlives the hold by more than the grace.
 func TestPolicy_MarkerTTLTracksRemainingHold(t *testing.T) {
 	p := freeze.Policy{}
 	st := p.Evaluate(freeze.State{}, firing(t0)).State
@@ -380,8 +345,7 @@ func TestPolicy_MarkerTTLTracksRemainingHold(t *testing.T) {
 	}
 }
 
-// TestPolicy_OperatorTuning — every duration is operator-tunable, and
-// a partial override keeps the ADR defaults for everything else.
+// TestPolicy_OperatorTuning: every duration is tunable, and a partial override keeps ADR defaults for the rest.
 func TestPolicy_OperatorTuning(t *testing.T) {
 	p := freeze.Policy{
 		InitialHold:   2 * time.Hour,
@@ -411,14 +375,8 @@ func TestPolicy_OperatorTuning(t *testing.T) {
 	}
 }
 
-// TestPolicy_UnscoredExpiryDoesNotBurnTheLadder — the restart-
-// rehydration trap (live occurrence: crypto:XLM/fiat:GBP 24h):
-// during the ~30-minute post-restart confidence
-// bootstrap every bucket is UNSCORED, so a rehydrated freeze could
-// never accumulate an unfreeze streak while its expiries still burned
-// extensions — it marched to ESCALATED without one scored
-// evaluation. An unscored expiry now slides the hold WITHOUT
-// consuming an extension; the ladder resumes when scoring does.
+// TestPolicy_UnscoredExpiryDoesNotBurnTheLadder: during the post-restart confidence bootstrap every bucket is unscored, so an unscored
+// expiry slides the hold WITHOUT consuming an extension; otherwise a rehydrated freeze marches to ESCALATED unscored.
 func TestPolicy_UnscoredExpiryDoesNotBurnTheLadder(t *testing.T) {
 	p := freeze.Policy{}
 	st := p.Evaluate(freeze.State{}, firing(t0)).State
@@ -473,11 +431,7 @@ func TestPolicy_UnscoredExpiryDoesNotBurnTheLadder(t *testing.T) {
 	}
 }
 
-// TestPolicy_RefireAfterOverrideResumesTheLadder — an override ends a
-// freeze, but a pair still anomalous after it is not a fresh first hold. An
-// escalated ladder the operator force-unfroze must not come back 30 s later as
-// a 10-minute hold with ExtensionsUsed=0, silent on the escalation counter for
-// another two hours.
+// TestPolicy_RefireAfterOverrideResumesTheLadder: a pair still anomalous after an override resumes its (possibly escalated) ladder, not a fresh first hold.
 func TestPolicy_RefireAfterOverrideResumesTheLadder(t *testing.T) {
 	p := freeze.Policy{}
 	escalated := freeze.State{

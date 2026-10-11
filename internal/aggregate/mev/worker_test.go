@@ -48,8 +48,7 @@ func arbTrades(t *testing.T) []canonical.Trade {
 	}
 }
 
-// RunOnce detects + persists once, and a re-run over the same window
-// inserts nothing (dedup via the key).
+// TestWorker_RunOnce_DetectsThenDedups: RunOnce persists once and a re-run over the same window inserts nothing.
 func TestWorker_RunOnce_DetectsThenDedups(t *testing.T) {
 	scanner := &fakeScanner{trades: arbTrades(t), usd: []string{"5.00", "5.00"}}
 	sink := &fakeSink{}
@@ -98,9 +97,7 @@ func TestWorker_RunOnce_ScanError(t *testing.T) {
 	}
 }
 
-// Every pair-scoped kind persists its primary asset/quote (the per-asset
-// history index is keyed on asset_id), and every kind's stored detail
-// carries the candidate's assets + sources, not just arbitrage's.
+// TestStoredFrom_AssetsReachEveryKind: every pair-scoped kind persists its primary asset/quote, and every kind's detail carries assets and sources.
 func TestStoredFrom_AssetsReachEveryKind(t *testing.T) {
 	idx := map[string]uint32{txA: 1, txB: 2, txC: 3, txO: 4, txD: 5}
 	sandwich := DetectSandwiches([]canonical.Trade{
@@ -150,9 +147,7 @@ func TestStoredFrom_AssetsReachEveryKind(t *testing.T) {
 	}
 }
 
-// An empty, non-nil TxHashes would reach mev_events as '{}', which 0021's
-// CHECK does not catch; it must fall back to the candidate's own tx, and a
-// candidate naming no transaction at all is refused.
+// TestStoredFrom_EmptyTxHashes: empty non-nil TxHashes would reach mev_events as '{}' past the CHECK; fall back to the candidate's tx, and refuse a candidate naming none.
 func TestStoredFrom_EmptyTxHashes(t *testing.T) {
 	ev, err := storedFrom(Candidate{Kind: KindArbitrage, TxHash: txA, Taker: "GATK", TxHashes: []string{}})
 	if err != nil {
@@ -173,10 +168,7 @@ type truncObserver struct {
 
 func (o *truncObserver) Truncated(input string) { o.truncated = append(o.truncated, input) }
 
-// A trade scan that fills ScanLimit is reported, and its oldest ledger —
-// which the cap may have cut mid-transaction — is not detected over.
-// Here that ledger holds a complete-looking arbitrage cycle; the newest
-// ledger holds one unrelated trade.
+// TestWorker_RunOnce_TruncatedScanReportedAndOldestLedgerDropped: a scan filling ScanLimit is reported and its oldest (possibly cut) ledger is not detected over.
 func TestWorker_RunOnce_TruncatedScanReportedAndOldestLedgerDropped(t *testing.T) {
 	trades := arbTrades(t) // ledger 100
 	tip := trade(t, "sdex", 0, "GOTHER", "native", usdc)

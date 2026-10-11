@@ -21,24 +21,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// TriangulationChain is one chain pricing entry. Target is the
-// implied pair (e.g. XLM/EUR); Legs is the ordered chain whose
-// product yields the target price (e.g. [XLM/USD, USD/EUR]).
-//
-// Validation: at least 2 legs; Legs[0].Base must equal Target.Base;
-// Legs[N-1].Quote must equal Target.Quote; adjacent legs must share
-// their pivot asset (Legs[i].Quote == Legs[i+1].Base); a fiat/fiat leg
-// must have fiat:USD on one side. Caller-side
-// validation lives in [ValidateTriangulationChain].
+// TriangulationChain is one chain pricing entry: a Target pair and the ordered Legs whose product yields it; see [ValidateTriangulationChain].
 type TriangulationChain struct {
 	Target canonical.Pair
 	Legs   []canonical.Pair
 }
 
-// ValidateTriangulationChain returns nil when the chain is
-// structurally consistent (chainable legs, Target endpoints match
-// the chain endpoints). Returns an error naming the specific
-// violation otherwise. Cheap; runs once per chain at startup.
+// ValidateTriangulationChain returns an error naming the violation when legs do not chain or Target endpoints do not match; run once per chain at startup.
 func ValidateTriangulationChain(chain TriangulationChain) error {
 	if len(chain.Legs) < 2 {
 		return fmt.Errorf("triangulation: chain for %s has %d legs, want at least 2",
@@ -73,21 +62,8 @@ func ValidateTriangulationChain(chain TriangulationChain) error {
 	return nil
 }
 
-// triangulateAll runs the post-refresh triangulation pass. For each
-// window it builds ONE cross-rate edge graph (this tick's priced-pair
-// VWAPs plus every configured chain's resolved legs) and prices every
-// target through the graph router (internal/aggregate/router.go). A
-// target reachable by a single route behaves exactly like the old
-// static single-chain multiply (pathCount=1); a target reachable by ≥2
-// agreeing routes is corroborated, which feeds the freeze's source_count
-// leg (see triangulate_corroborate.go). Per-target failures are logged +
-// counted but never abort the tick.
-//
-// `bucketEnd` for the X2.5 forex-snap rule is computed once per window as
-// `now.Truncate(window)` — the most recent UTC-aligned boundary
-// at-or-before now. Every region computes the same boundary for the same
-// wall-clock now, which is what makes the chained-fiat output
-// across-region deterministic per ADR-0018.
+// triangulateAll prices every configured target per window through one cross-rate edge graph (router.go). A target with >=2 agreeing routes is corroborated and feeds the freeze's source_count leg; per-target failures are logged and counted, never abort the tick.
+// bucketEnd for the forex-snap rule is now.Truncate(window), so every region computes the same boundary (ADR-0018 determinism).
 func (o *Orchestrator) triangulateAll(ctx context.Context) {
 	if len(o.cfg.Triangulations) == 0 {
 		return
@@ -119,62 +95,25 @@ func (o *Orchestrator) tickClock() time.Time {
 	return o.tickNow
 }
 
-// chainLegStatus is the per-chain result of resolving that chain's legs
-// while building the window's edge graph: whether a leg was frozen this
-// tick (so an unreachable target inherits the freeze), whether a
-// leg hard-failed (Redis/parse — the target can't be trusted this tick),
-// and whether a configured leg was DRY (missing_leg) so any route the
-// router still finds to the target is a SUBSTITUTE path (a reroute), not
-// the documented direct chain.
+// chainLegStatus is the per-chain leg result: frozen (target inherits the freeze), hardFail (Redis/parse, target untrustworthy this tick), legDry (missing_leg, so any route found is a SUBSTITUTE reroute, not the documented chain).
 type chainLegStatus struct {
 	frozen    bool
 	frozenLeg canonical.Pair
 	hardErr   string // "redis_error" / "parse_error", or "" on success
 
-	// legDry is set when a configured chain leg had no price this tick
-	// (missing_leg). A target reached DESPITE a dry configured leg is a
-	// reroute/leg-substitution — the router walked around the gap through
-	// other markets — which R3 requires be confidence-gated on a sane
-	// floor and flagged, not silently published over the direct price.
+	// legDry is set when a configured leg had no price this tick. A target reached despite it is a reroute, which must be confidence-gated on a sane floor and flagged, not silently published over the direct price.
 	legDry bool
 	dryLeg canonical.Pair
 }
 
-// legEdgeConfidence is the weakest-link confidence assigned to an FX
-// (fiat/fiat) chain leg that is not one of this tick's priced pairs — the
-// legs that resolve through the X2.5 forex-snap path against the
-// institutional FX feed (the authority-sanity reference). It is a MINIMUM
-// ceiling, not a claim of perfection: the router's route confidence is the
-// minimum across a route's edges, so a value of 1.0 here simply means the FX
-// reference is never the LIMITING edge — the route's trust reflects the
-// crypto/USD leg's own confidence score (the genuinely less-certain leg).
-// Priced-pair legs never use this; they carry their real per-pair confidence
-// from [newEdgeQuote].
-//
-// This applies ONLY to FX legs (isFXLeg). A cached NON-FX leg uses the
-// conservative [cachedLegConfidence] instead: if EVERY
-// cached leg entered at 1.0, a stale cached crypto leg could never be a
-// route's weakest link.
+// legEdgeConfidence is the confidence of an FX (fiat/fiat) leg resolved via forex-snap. It is a ceiling: route confidence is the minimum across edges, so 1.0 means the FX reference is never the limiting edge.
+// Only FX legs (isFXLeg) use it; cached non-FX legs use [cachedLegConfidence] so a stale crypto leg can still be the weakest link.
 const legEdgeConfidence = 1.0
 
-// cachedLegConfidence is the weakest-link confidence assigned to a NON-FX
-// chain leg resolved from CACHE (a crypto/crypto or crypto/fiat leg that was
-// not one of this tick's priced pairs, so it carries no fresh per-pair quality
-// signal from [newEdgeQuote]). Unlike an FX leg it has unknown freshness
-// and provenance, so it must be able to be the route's LIMITING edge rather
-// than silently entering at max trust and dragging a stale crypto price
-// through a hub at full confidence (L1). Set to the bootstrap cap, the
-// trust an unscored edge gets: a cache-only route still serves as an
-// ordinary chain, but it cannot clear the strict [aggregate.RouteTrustFloor],
-// so it can neither displace a direct price as a reroute nor corroborate.
+// cachedLegConfidence is the confidence of a non-FX leg resolved from cache (unknown freshness). It is the bootstrap cap, so such a route cannot clear [aggregate.RouteTrustFloor]: it neither displaces a direct price as a reroute nor corroborates.
 const cachedLegConfidence = confidence.BootstrapConfidenceCap
 
-// buildWindowEdges assembles the cross-rate edge graph for one window:
-// this tick's priced-pair VWAPs (each with its real per-pair
-// confidence, captured in [newEdgeQuote]) plus every configured
-// chain's resolved legs (FX legs via the snap path, others from cache).
-// It returns the deterministic edge set and the per-chain leg status the
-// router pass needs to distinguish a dry leg from a frozen one.
+// buildWindowEdges assembles one window's edge graph: priced-pair VWAPs with their real confidence ([newEdgeQuote]) plus every chain's resolved legs, and returns the per-chain leg status the router pass needs.
 func (o *Orchestrator) buildWindowEdges(
 	ctx context.Context, window time.Duration, bucketEnd time.Time,
 ) ([]aggregate.RouteLeg, []chainLegStatus) {
@@ -202,15 +141,8 @@ func (o *Orchestrator) buildWindowEdges(
 	return edges, status
 }
 
-// resolveChainLegs resolves one chain's legs into the shared window edge
-// map and reports the chain's leg status. A leg that is already a priced
-// pair this tick keeps its real per-pair confidence (not overwritten by
-// the leg version); an FX/cache leg is added with [legEdgeConfidence].
-//
-// FX-snap resolution runs PER CHAIN (not once per distinct leg), so the
-// stellarindex_aggregator_fx_snap_fallback_total counting stays exactly
-// as it was before the router landed — the alert calibration is
-// unchanged.
+// resolveChainLegs resolves one chain's legs into the shared edge map. A leg already priced this tick keeps its real confidence; FX/cache legs get [legEdgeConfidence].
+// FX-snap runs per chain, not per distinct leg, to keep stellarindex_aggregator_fx_snap_fallback_total calibration unchanged.
 func (o *Orchestrator) resolveChainLegs(
 	ctx context.Context,
 	chain TriangulationChain,
@@ -234,12 +166,7 @@ func (o *Orchestrator) resolveChainLegs(
 		case "redis_error", "parse_error":
 			st.hardErr = outcome
 		case "missing_leg", outcomeStaleLeg:
-			// Leg absent this tick — leave it out of the graph. The router
-			// may still reach the target via an alternative route, or
-			// report the target unreachable (missing_leg) below. Record the
-			// substitution so [routeTarget] can gate + flag any reroute
-			// rather than let a thin substitute path silently overwrite the
-			// direct price.
+			// Leg absent this tick: leave it out of the graph; the router may reroute. Record it (legDry) so [routeTarget] gates and flags any substitute path.
 			st.legDry = true
 			st.dryLeg = leg
 		}
@@ -247,25 +174,9 @@ func (o *Orchestrator) resolveChainLegs(
 	return st
 }
 
-// routeTarget prices ONE target through the window's edge graph and
-// returns the [obs.AggregatorTriangulationsTotal] outcome label.
-//
-// The direct base→quote edge is excluded so the router must go through
-// hub assets: a 1-hop "route" equal to the direct price would corroborate
-// nothing. Outcomes: a single-route target publishes "ok" (or "missing_leg"
-// when its leg is dry); an unreachable target whose leg was frozen inherits
-// the freeze ("frozen_leg"). "low_confidence" covers both "no route clears
-// min_route_confidence" AND "a leg-substitution reroute did not clear
-// [aggregate.RouteTrustFloor]": the composite is flagged but NOT published
-// over the direct price. "proxy_pivot" does the same when a priced leg's
-// stablecoin-proxy prints disagree with its own-quote prints.
-//
-// A leg that is DRY (st.legDry) or FROZEN (st.frozen), with the target still
-// reachable AROUND it, yields a SUBSTITUTE-path composite gated on
-// [aggregate.RouteTrustFloor] (reroutes only; at the bootstrap cap, so an
-// unscored weakest leg cannot displace a direct market) and flagged
-// (compositeMeta.Rerouted). A target frozen on its OWN direct market keeps
-// serving its frozen last-known-good.
+// routeTarget prices ONE target through the edge graph and returns the [obs.AggregatorTriangulationsTotal] outcome label.
+// The direct base-quote edge is excluded so routes must use hubs. low_confidence covers no route clearing min_route_confidence and a reroute below [aggregate.RouteTrustFloor] (flagged, not published over the direct price); proxy_pivot means a leg's stablecoin-proxy and own-quote prints disagree.
+// A dry or frozen leg with the target reachable around it yields a flagged (Rerouted) composite gated on the trust floor; a target frozen on its OWN market keeps serving its frozen LKG.
 func (o *Orchestrator) routeTarget(
 	ctx context.Context,
 	chain TriangulationChain,
@@ -284,19 +195,8 @@ func (o *Orchestrator) routeTarget(
 		routeEdges, chain.Target.Base, chain.Target.Quote, o.cfg.MaxHops, o.cfg.MinRouteConfidence)
 	switch {
 	case errors.Is(err, aggregate.ErrNoRoute):
-		// Unreachable. A frozen leg of THIS chain makes it a freeze
-		// inheritance: the target keeps serving its LKG and
-		// carries flags.frozen. Otherwise the legs are simply dry/absent —
-		// the missing_leg the chains-dry alert watches.
-		//
-		// But the target may have published its OWN direct print this tick
-		// (tickEdgePrice) even though the route around it is unreachable —
-		// e.g. XLM/USD frozen, XLM/GBP printed directly, XLM/EUR dry. That
-		// fresh, independently-checked value is not an LKG: inheriting the
-		// freeze onto it would Expire it down to FreezeTTL and stamp
-		// flags.frozen=true on a price nothing actually froze. Serve it
-		// unmarked instead — a distinct outcome, not "missing_leg" (that
-		// feeds the chains-dry alert, and nothing here is dry).
+		// Unreachable. A frozen leg of THIS chain means freeze inheritance (LKG served, flags.frozen); otherwise the legs are dry (missing_leg, which the chains-dry alert watches).
+		// If the target published its own direct print this tick, serve it unmarked under a distinct outcome: inheriting the freeze would expire a fresh value to FreezeTTL and mark it frozen, and it is not dry.
 		if st.frozen {
 			if _, ok := o.tickEdgePrice(chain.Target, window); ok {
 				return outcomeFrozenLegDirectServed
@@ -311,20 +211,11 @@ func (o *Orchestrator) routeTarget(
 		return "parse_error"
 	}
 
-	// A leg was DRY, or a leg FROZE this tick and the router reached the
-	// target by walking AROUND it (st.frozen with a route found, not
-	// ErrNoRoute) — either way the composite came from a SUBSTITUTE path, so
-	// it is gated on the route trust floor and flagged Rerouted the same way.
-	// A frozen leg's LKG was declined upstream; a reroute around it must
-	// not silently republish at max trust any more than a dry-leg reroute may.
+	// A dry leg, or a frozen leg the router walked around, means the composite came from a SUBSTITUTE path: gate it on the route trust floor and flag Rerouted.
+	// A frozen leg's LKG was declined upstream, so a reroute must not republish at max trust.
 	rerouted := st.legDry || st.frozen
 
-	// The TARGET itself froze this tick on its own direct market. Respect that
-	// freeze: do NOT overwrite its frozen last-known-good with a fresh
-	// composite (the marker says frozen — overwriting the value contradicts
-	// it). Leave the LKG serving, flag the meta for Step 3, and record no
-	// corroboration. Reuses the frozen_leg outcome: "we refused to publish a
-	// derived price because [the target] was frozen".
+	// The TARGET froze on its own direct market: do not overwrite its frozen LKG with a fresh composite. Flag the meta for Step 3, record no corroboration, and reuse the frozen_leg outcome.
 	if o.frozenLeg(chain.Target, window) {
 		o.writeCompositeMeta(ctx, chain.Target, window, compositeMeta{
 			ServedRouteCount:   servedRouteCount,
@@ -338,13 +229,7 @@ func (o *Orchestrator) routeTarget(
 	}
 
 	if lowConf || (rerouted && !aggregate.ClearsRouteTrustFloor(combinedConf)) {
-		// Either every route runs through a dust/thin edge below
-		// min_route_confidence, OR this is a leg-substitution reroute
-		// whose best route does not clear the sane reroute floor. In both
-		// cases: do NOT overwrite the direct price (requirement (b)); carry
-		// the flags for Step 3 and leave the direct value serving. Nothing
-		// is recorded as corroboration, so the freeze falls back to the
-		// direct source count.
+		// Every route runs through a thin edge below min_route_confidence, or a reroute missed the floor: do not overwrite the direct price. Carry the flags for Step 3 and record no corroboration, so the freeze falls back to the direct source count.
 		if rerouted && !lowConf {
 			// Observability: a thin substitute was BLOCKED from
 			// displacing the direct price — surface which leg dried so it is
@@ -375,12 +260,7 @@ func (o *Orchestrator) routeTarget(
 	return o.publishComposite(ctx, chain, window, composite, servedRouteCount, pathCount, corroboration, combinedConf, diverged, rerouted)
 }
 
-// publishComposite writes a CONFIDENT composite to the target's VWAP
-// cache key (served instead of the target's held direct print for the
-// tick, provenance stamped, and streamed), records it as this tick's corroboration for the next tick,
-// and carries its quality flags for Step 3. rerouted marks a publish that
-// came from a leg-substitution path — it cleared the route trust floor
-// so it publishes, but the substitution is flagged for observability.
+// publishComposite writes a confident composite to the target's VWAP key with provenance, streams it, and records it as next tick's corroboration. rerouted marks a leg-substitution publish that cleared the floor, flagged for observability.
 func (o *Orchestrator) publishComposite(
 	ctx context.Context,
 	chain TriangulationChain,
@@ -392,13 +272,7 @@ func (o *Orchestrator) publishComposite(
 ) string {
 	value := formatRatFixed(composite, 12)
 
-	// Belt-and-suspenders: never overwrite the served direct price
-	// with a rendering that reparses to a non-positive price for a
-	// strictly-positive composite. formatRatFixed now renders
-	// magnitude-relative precision so this cannot fire for any value
-	// above 10^-formatRatMaxScale, but a pathologically tiny composite
-	// would still clamp — refuse rather than publish a zero that would be
-	// served as price 0 AND collapse the next tick's window edge graph.
+	// Never overwrite the served direct price with a rendering that reparses non-positive for a positive composite: a pathologically tiny value would clamp, serve price 0 and collapse the next window's edge graph.
 	if composite.Sign() > 0 {
 		if parsed, ok := new(big.Rat).SetString(value); !ok || parsed.Sign() <= 0 {
 			o.logger.Warn("triangulation: composite rendered non-positive — refusing to publish",
@@ -427,12 +301,7 @@ func (o *Orchestrator) publishComposite(
 		return "parse_error"
 	}
 
-	// The value never lands without its qualifiers (the quality-flags
-	// meta, the triangulated-provenance marker the API sets
-	// flags.triangulated from, and the observed-at stamp it serves as
-	// observed_at). One MULTI/EXEC: a reader sees the previous state or
-	// all of them, never the value under a prior tick's flags, provenance
-	// or stamp, and a failed write leaves the previous state whole.
+	// Value, quality-flags meta, triangulated-provenance marker and observed-at stamp land in one MULTI/EXEC: a reader sees the old state or all of the new, never a value under a prior tick's qualifiers.
 	provKey := cachekeys.VWAPProvenance(chain.Target.Base, chain.Target.Quote, window)
 	atKey := cachekeys.VWAPObservedAt(chain.Target.Base, chain.Target.Quote, window)
 	covKey := cachekeys.VWAPCoverage(chain.Target.Base, chain.Target.Quote, window)
@@ -459,24 +328,10 @@ func (o *Orchestrator) publishComposite(
 	// same once-per-closed-bucket contract as the direct path.
 	o.streamBucketOnce(ctx, chain.Target, window, value, bucketEnd, nil)
 
-	// The served VWAP key was just written, so this pair published this
-	// tick: stamp the pair-level write clock the staleness gauge reads
-	// This is the key's SECOND writer — a target served only
-	// through its chain never reaches refreshPairWindow's stamp, and
-	// without this one it reads as a dead feed while publishing every
-	// tick. Only here, after the value landed: every refusal above
-	// (parse_error, redis_error) and every non-publishing outcome in
-	// routeTarget (low_confidence, missing_leg, frozen) returned without
-	// reaching it. The Tick's clock, not triangulateAll's wall-clock read.
+	// The VWAP key was just written, so stamp the pair write clock the staleness gauge reads. This is the key's second writer: a target served only via its chain never reaches refreshPairWindow's stamp and would read as dead. Only here, after the value landed, with the Tick's clock.
 	o.recordPairWrite(chain.Target, o.tickNow)
 
-	// Corroboration input for the NEXT tick — both the freeze's
-	// source_count leg (via the INDEPENDENT corroboration count, not the
-	// raw survivor pathCount) and the confidence divergence factor
-	// ([Orchestrator.triangulationDivergencePct]). Recorded only on a
-	// confident publish: a low-confidence, missing-leg, frozen-leg or
-	// failed target must leave no value behind for the next tick to treat
-	// as evidence.
+	// Corroboration input for the NEXT tick (freeze source_count via the independent corroboration count, and the divergence factor). Recorded only on a confident publish so failed or unpublished targets leave no evidence behind.
 	o.recordComposite(chain.Target, window, composite, corroboration, combinedConf, diverged)
 	return "ok"
 }
@@ -496,13 +351,7 @@ func excludeDirectEdge(edges []aggregate.RouteLeg, target canonical.Pair) []aggr
 	return out
 }
 
-// newEdgeQuote builds a successfully-published (pair, window) VWAP as a
-// router edge input for the triangulation pass. The edge's weakest-link
-// confidence reuses the pair's existing quality signal (see
-// [edgeConfidence]); nothing new is invented. Built by refreshPairWindow
-// only after a confident publish, so frozen / dropped / empty /
-// below-floor windows contribute no edge — the min_usd_volume gate is
-// what keeps a dust pair out of the cross-rate graph.
+// newEdgeQuote builds a published (pair, window) VWAP as a router edge input, reusing the pair's quality signal ([edgeConfidence]). Built only after a confident publish, so frozen/empty/below-floor windows add no edge; min_usd_volume keeps dust pairs out of the graph.
 func newEdgeQuote(
 	pair canonical.Pair,
 	vwap *big.Rat,
@@ -540,24 +389,9 @@ func (o *Orchestrator) tickEdgePrice(pair canonical.Pair, window time.Duration) 
 	return nil, false
 }
 
-// edgeConfidence derives a router edge's weakest-link confidence from
-// the pair's EXISTING quality signals — the multi-factor confidence
-// score when this tick computed one, else the source-count factor alone
-// (the same [confidence.SourceCountFactor] the score itself uses). No
-// new formula; a single-source edge still reads as low-confidence so it
-// cannot set a confident cross.
-//
-// The unscored fallback is capped at [confidence.BootstrapConfidenceCap].
-// An edge reaches it precisely when the scorer COULDN'T run — no
-// baseline row, first tick after a restart, no prior comparator — which
-// is the state the scorer itself treats as stricter than bootstrap (a
-// negative BaselineAgeDays sentinel caps the score). Uncapped, a bare
-// source-count factor (0.731 at 4 sources, 0.953 at 6) OUTRANKED every
-// fully-scored edge and cleared the reroute and corroboration gates —
-// so the least-evidenced edges, with no z-score, no liquidity measure and
-// no cross-oracle check, would set composites. Capped, an unscored edge cannot clear those gates at all:
-// they are strictly above the cap ([aggregate.RouteTrustFloor]). Ranking
-// among unscorable edges is preserved below the cap.
+// edgeConfidence derives an edge's weakest-link confidence from the multi-factor score when computed, else the source-count factor alone ([confidence.SourceCountFactor]).
+// The unscored fallback is capped at [confidence.BootstrapConfidenceCap]: it applies when the scorer could not run (no baseline, first tick), and uncapped a bare source-count factor outranked fully-scored edges and cleared the reroute and corroboration gates.
+// Capped, it cannot clear gates strictly above the cap ([aggregate.RouteTrustFloor]); ranking among unscorable edges is preserved.
 func edgeConfidence(conf confidenceComputation, confOK bool, trades []canonical.Trade) float64 {
 	if confOK {
 		return conf.Score.Confidence
@@ -573,15 +407,7 @@ func edgeConfidence(conf confidenceComputation, confOK bool, trades []canonical.
 // can respect it without recomputing. Written to
 // [cachekeys.VWAPCompositeMeta].
 type compositeMeta struct {
-	// ServedRouteCount is the number of routes that actually produced the
-	// served composite — the highest-confidence tier's size after its own
-	// outlier omission (aggregate.CombineRoutes' servedRouteCount). PathCount
-	// below is the unrelated, and possibly disjoint, post-omission survivor
-	// count of the FULL gated route set: a thin divergent majority
-	// can survive median-relative omission into PathCount while the served
-	// value came from a single top-confidence outlier route ServedRouteCount
-	// names. Read PathCount as "surviving route population", never as "how
-	// many routes back this value" — that question is ServedRouteCount's.
+	// ServedRouteCount is the size of the highest-confidence tier that produced the served composite, unrelated to PathCount (the survivor count of the full gated set); never read PathCount as how many routes back the value.
 	ServedRouteCount int `json:"served_route_count"`
 	PathCount        int `json:"path_count"`
 	// CorroborationCount is the router's independent, tightly-agreeing
@@ -592,33 +418,14 @@ type compositeMeta struct {
 	CombinedConfidence float64 `json:"combined_confidence"`
 	LowConfidence      bool    `json:"low_confidence"`
 	Diverged           bool    `json:"diverged"`
-	// Rerouted marks a composite whose route(s) substituted around a DRY
-	// configured chain leg. true means the documented direct chain
-	// could not resolve and the router walked an alternative path; when it
-	// also failed the route trust floor the composite was NOT published over
-	// the direct price (LowConfidence is set too). Lets Step 3 / the API
-	// surface a leg-substitution instead of it being a silent change.
+	// Rerouted marks a composite whose routes substituted around a DRY configured leg; if it also failed the trust floor it was not published (LowConfidence is set too).
 	Rerouted bool `json:"rerouted,omitempty"`
 
-	// CorroborationBasis / CompositeLegSources carry the
-	// composite-reference reading the freeze decision for this target
-	// used on THIS tick: "composite" when the current-bucket reference
-	// corroborated the direct print, "venue" when it refuted it or was
-	// unavailable. Absent (omitempty) when the reference was not
-	// evaluated (multi-venue bucket, target not allow-listed, mechanism
-	// off) — so the JSON is byte-identical to before in those cases.
-	// CompositeLegSources maps each chain leg to the distinct venue /
-	// provider count behind it, so a reader can see how strong the
-	// agreement was. Never a source count for the target itself.
+	// CorroborationBasis and CompositeLegSources record the composite-reference reading the freeze used this tick ("composite" corroborated, "venue" refuted or unavailable); omitted when not evaluated. CompositeLegSources maps each leg to its distinct venue/provider count, never a count for the target itself.
 	CorroborationBasis  string         `json:"corroboration_basis,omitempty"`
 	CompositeLegSources map[string]int `json:"composite_leg_sources,omitempty"`
 
-	// PivotProxyShare maps each priced chain leg that took prints through
-	// the stablecoin-fiat proxy to the share of its survivor base volume
-	// priced in a stablecoin at par, not in the leg's own quote asset.
-	// PivotSurfaceRefusal names the leg and why the composite was NOT
-	// published (outcome proxy_pivot): its stablecoin and own-quote
-	// prints disagree, so the pivot is not the USD the FX leg multiplies.
+	// PivotProxyShare maps each stablecoin-proxy leg to its share of base volume priced in a par stablecoin; PivotSurfaceRefusal names the leg whose stablecoin and own-quote prints disagree (outcome proxy_pivot).
 	PivotProxyShare     map[string]float64 `json:"pivot_proxy_share,omitempty"`
 	PivotSurfaceRefusal string             `json:"pivot_surface_refusal,omitempty"`
 	// PivotUnverified marks a published composite with a priced leg made
@@ -632,11 +439,7 @@ type compositeMeta struct {
 // own-quote prints beyond the leg-dispersion bound: the direct serves.
 const outcomeProxyPivot = "proxy_pivot"
 
-// pivotComposition reports, for this tick's publish of each priced chain
-// leg, the stablecoin-proxy share of its volume, the first leg whose
-// two quote surfaces disagree ("" when none do), and whether any leg had
-// no own-quote surface to compare against. A leg not published this tick
-// carries no composition and is not judged here.
+// pivotComposition reports, for legs published this tick, the stablecoin-proxy share, the first leg whose two quote surfaces disagree ("" if none), and whether any leg lacked an own-quote surface. Unpublished legs are not judged.
 func (o *Orchestrator) pivotComposition(chain TriangulationChain, window time.Duration) (shares map[string]float64, refusal string, unverified bool) {
 	maxBps := o.cfg.CompositeReference.withDefaults().LegDispersionBps
 	for _, leg := range chain.Legs {
@@ -696,15 +499,7 @@ func (o *Orchestrator) withPivotComposition(chain TriangulationChain, window tim
 	return meta
 }
 
-// writeCompositeMeta persists a composite's quality flags for Step 3.
-// Best-effort: a marshal/write failure logs at debug and is swallowed.
-// Used by the branches that do NOT overwrite the served value (frozen
-// target, low-confidence / below-floor reroute) — there the meta is the
-// only artefact and a miss just leaves the untouched direct value
-// without flags. The value-overwriting path writes the meta in the same
-// MULTI/EXEC as the value it qualifies instead ([publishComposite]).
-// TTL matches the VWAP key so the flags can't outlive the price they
-// describe.
+// writeCompositeMeta persists a composite's quality flags for Step 3, best-effort (failure logs at debug). Used where the served value is not overwritten; the overwriting path writes meta in the same MULTI/EXEC ([publishComposite]). TTL matches the VWAP key.
 func (o *Orchestrator) writeCompositeMeta(
 	ctx context.Context, target canonical.Pair, window time.Duration, meta compositeMeta,
 ) {
@@ -727,21 +522,12 @@ func (o *Orchestrator) setCompositeMeta(
 	return o.cache.Set(ctx, key.String(), body, o.vwapTTL(window)).Err()
 }
 
-// isFXLeg reports whether a leg should use the X2.5 forex-snap rule.
-// Per the design note (approach A): a leg is FX iff its Base AND
-// Quote are both [canonical.AssetFiat]. This is a structural test —
-// crypto-vs-fiat legs (XLM/USD) stay on the cached-VWAP path because
-// CEX/DEX trades dominate that pair; fiat-vs-fiat legs (USD/EUR) are
-// the chained-fiat factor that ADR-0018 mandates be snapped.
+// isFXLeg reports whether both sides are [canonical.AssetFiat], the structural test for the forex-snap rule (ADR-0018); crypto/fiat legs stay on the cached-VWAP path.
 func isFXLeg(leg canonical.Pair) bool {
 	return leg.Base.Type == canonical.AssetFiat && leg.Quote.Type == canonical.AssetFiat
 }
 
-// legConfidence returns the weakest-link confidence for a CACHE-resolved
-// chain leg: [legEdgeConfidence] (1.0) for an FX leg (the authoritative snap
-// reference, never the limiting edge) and the conservative
-// [cachedLegConfidence] for a non-FX cached leg (unknown freshness — it must
-// be able to limit the route, L1).
+// legConfidence returns [legEdgeConfidence] for an FX leg and [cachedLegConfidence] for a non-FX cached leg, which must be able to limit the route.
 func legConfidence(leg canonical.Pair) float64 {
 	if isFXLeg(leg) {
 		return legEdgeConfidence
@@ -749,24 +535,9 @@ func legConfidence(leg canonical.Pair) float64 {
 	return cachedLegConfidence
 }
 
-// legPrice returns the price for one leg of a triangulation chain, plus
-// its data-[]provenance ([aggregate.RouteLeg.Provenance]).
-// On success, returns (price, provenance, ""); on a recoverable
-// miss/error, returns (nil, nil, outcomeLabel) where outcomeLabel is the
-// metric label the caller bubbles up via [obs.AggregatorTriangulationsTotal].
-//
-// FX legs (both sides fiat) attempt the X2.5 snap path via
-// [Config.FXStore]. Snap misses and snaps refused by [fxSnapRejection] (stale,
-// or not from the FX source class) fall back to the cached-VWAP path and
-// increment [obs.AggregatorFXSnapFallbackTotal], so the chain keeps publishing
-// through fresh deploys / FX-source outages. Snap DB errors propagate as
-// "redis_error"-class outcomes: we can't trust ANY chained-fiat output this
-// tick, so the chain skips publish.
-//
-// Non-FX legs (and FX legs when FXStore is nil, or on a snap miss) read the
-// cached VWAP and carry no FX provenance; only a genuine snap hit does (USD/GBP
-// and EUR/GBP can snap the same GBP fx_quotes row, and the router needs that
-// identity to refuse counting them as independent corroboration).
+// legPrice returns a leg's price and data provenance ([aggregate.RouteLeg.Provenance]), or (nil, nil, outcomeLabel) on a recoverable miss.
+// FX legs try the forex-snap path via [Config.FXStore]; misses and snaps refused by [fxSnapRejection] fall back to cached VWAP and increment [obs.AggregatorFXSnapFallbackTotal]. Snap DB errors yield a redis_error-class outcome and the chain skips publish.
+// Only a genuine snap hit carries FX provenance (USD/GBP and EUR/GBP share a GBP row, which the router must not count as independent corroboration).
 func (o *Orchestrator) legPrice(
 	ctx context.Context,
 	chain TriangulationChain,
@@ -805,13 +576,7 @@ func (o *Orchestrator) legPrice(
 	return price, nil, outcome
 }
 
-// fxLegProvenance names the fx_quotes ticker(s) an FX-snap leg's price was
-// actually computed from, excluding the USD anchor (which contributes an
-// exact 1 — see internal/storage/timescale/fx_quotes.go's fxSnapTickers,
-// which this mirrors). USD/GBP snaps only the GBP row; EUR/GBP snaps BOTH
-// the EUR and GBP rows — so the two share "fx:GBP" and the router's
-// corroboration count correctly refuses to treat them as
-// independent evidence.
+// fxLegProvenance names the fx_quotes tickers an FX-snap price came from, excluding the USD anchor (mirrors fxSnapTickers in timescale/fx_quotes.go); USD/GBP and EUR/GBP share "fx:GBP" so the router refuses to count them as independent.
 func fxLegProvenance(leg canonical.Pair) []string {
 	var out []string
 	if leg.Base.Code != "USD" {
@@ -828,12 +593,7 @@ func fxLegProvenance(leg canonical.Pair) []string {
 // publish".
 const outcomeFrozenLeg = "frozen_leg"
 
-// outcomeFrozenLegDirectServed is the [obs.AggregatorTriangulationsTotal]
-// label for "a leg of this chain was frozen this tick, the route around it
-// is unreachable, but the target published its own direct print this tick
-// anyway". Unlike [outcomeFrozenLeg], no freeze is
-// inherited: the direct value is fresh, not an LKG, so it serves unmarked
-// and its TTL is left alone.
+// outcomeFrozenLegDirectServed is the [obs.AggregatorTriangulationsTotal] label for a frozen leg with the route unreachable but the target's own fresh direct print served unmarked; no freeze is inherited.
 const outcomeFrozenLegDirectServed = "frozen_leg_direct_served"
 
 // outcomeStaleLeg is legPriceFromCache's refusal of a leg this
@@ -842,24 +602,9 @@ const outcomeFrozenLegDirectServed = "frozen_leg_direct_served"
 // around it gated and flagged as a reroute.
 const outcomeStaleLeg = "stale_leg"
 
-// legPriceFromCache reads a leg's freshly-cached VWAP. Used for non-
-// FX legs and for FX legs when the snap path produced ErrNoFXQuote.
-//
-// Refuses when the leg was frozen earlier in this same tick.
-// A freeze means "we do not trust this pair's newest bucket, keep
-// serving its last-known-good and flag it" — and the freeze path
-// deliberately leaves that LKG in the cache (keepFrozenVWAPAlive).
-// Reading it here would launder a value we just declined to publish
-// into a DERIVED pair that carries no frozen flag of its own: the
-// manipulated leg reaches consumers anyway, one multiplication later,
-// looking fresh. The chain is refused instead, and the caller inherits
-// the freeze onto the target ([Orchestrator.inheritLegFreeze]).
-//
-// A pair the aggregator prices itself never reads the cache: it resolves
-// to this tick's own VWAP, or to [outcomeStaleLeg] when this tick priced
-// nothing for it (empty window, under min_usd_volume, no VWAP). Its cache
-// entry is then a previous tick's value, and admitting it would bypass
-// the very gate that refused the window.
+// legPriceFromCache reads a leg's cached VWAP for non-FX legs and FX snap misses.
+// It refuses a leg frozen earlier this tick: the freeze keeps its LKG in cache (keepFrozenVWAPAlive), and reading it would launder a declined value into a derived pair with no frozen flag. The caller inherits the freeze ([Orchestrator.inheritLegFreeze]).
+// A pair the aggregator prices itself resolves to this tick's VWAP or [outcomeStaleLeg]; its cache entry is a previous tick's and would bypass the gate that refused the window.
 func (o *Orchestrator) legPriceFromCache(
 	ctx context.Context,
 	chain TriangulationChain,
@@ -895,15 +640,7 @@ func (o *Orchestrator) legPriceFromCache(
 			"raw", raw)
 		return nil, "parse_error"
 	}
-	// Belt-and-suspenders: a leg VWAP that parses to a non-positive
-	// price (e.g. a legacy "0.000000000000" written before the
-	// magnitude-relative render, or any future zero-reparsing string)
-	// must NOT enter the edge graph — aggregate.BuildEdges rejects a
-	// Sign()<=0 quote by nilling the ENTIRE window, turning one
-	// micro-valued pair into a window-wide triangulation outage. Treat it
-	// as an absent leg instead: the router either reroutes around it or
-	// reports this one target unreachable (missing_leg), leaving every
-	// other target in the window priced.
+	// A leg VWAP parsing non-positive (e.g. a legacy zero string) must not enter the edge graph: BuildEdges rejects Sign()<=0 by nilling the whole window. Treat it as an absent leg so only this target is missing_leg.
 	if price.Sign() <= 0 {
 		o.logger.Warn("triangulation: leg VWAP parsed non-positive — treating leg as absent",
 			"chain", chain.Target.String(),
@@ -914,23 +651,9 @@ func (o *Orchestrator) legPriceFromCache(
 	return price, ""
 }
 
-// inheritLegFreeze applies the direct-pair freeze semantics to a
-// triangulated TARGET whose chain could not publish because a leg was
-// frozen this tick.
-//
-// It mirrors [Orchestrator.engageFreeze]: we serve the prior value, so its
-// TTL must be kept alive and the pair must carry flags.frozen=true. Without
-// the marker the target would serve a stale derived price with no indication
-// anything is wrong, worse than the frozen leg it descends from.
-//
-// It deliberately does NOT enter the ADR-0019 freeze lifecycle (no hold, no
-// extension ladder, flat [cachekeys.FreezeTTL] marker). The refusal is
-// inherited per tick from the frozen leg, whose lifecycle already owns the
-// hold. A second ladder would keep a target frozen long after its leg was
-// released, and would page twice for one event.
-//
-// Best-effort: the LKG read (to stamp the freeze_events row) and the marker
-// write log rather than propagate; a failure must not cost the rest of the pass.
+// inheritLegFreeze applies direct-pair freeze semantics to a target whose chain could not publish because a leg was frozen: keep the prior value's TTL alive and set flags.frozen (mirrors [Orchestrator.engageFreeze]), else a stale derived price would serve unmarked.
+// It does NOT enter the ADR-0019 lifecycle (no hold, ladder, flat [cachekeys.FreezeTTL] marker): the leg's lifecycle owns the hold, and a second ladder would outlast the leg and page twice.
+// Best-effort: LKG read and marker write log rather than propagate.
 func (o *Orchestrator) inheritLegFreeze(
 	ctx context.Context,
 	chain TriangulationChain,

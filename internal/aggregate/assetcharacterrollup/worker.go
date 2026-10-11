@@ -1,21 +1,6 @@
-// Package assetcharacterrollup maintains the asset_volume_character rollup
-// that backs the volume_character label + account-structure signals on the
-// GET /v1/assets listing and the GET /v1/assets/{id} detail
-// (wash-and-scam-signals design §2).
-//
-// A ticker-driven worker runs the all-asset single-pass account-structure
-// roll over the trailing window of the `trades` hypertable (each trade
-// contributes to BOTH its base_asset and quote_asset, folded onto their
-// canonical assets) on a slow cadence and upserts one row per asset into
-// the rollup table, so the detail does a keyed-on-PK lookup and the listing
-// LEFT JOINs a small keyed table instead of running the ~4s per-request
-// trades roll (which trips the 4s per-request timeout on busy assets and
-// returns null). Runs in the aggregator binary
-// alongside the asset-volume + protocol-events + change-summary workers.
-//
-// See migrations/0149_create_asset_volume_character_rollup.up.sql for the
-// table and internal/storage/timescale/asset_volume_character_rollup.go for
-// the all-asset roll + upsert SQL.
+// Package assetcharacterrollup maintains the asset_volume_character rollup behind volume_character on /v1/assets.
+// A slow ticker rolls the trailing window of trades (each trade counts for both base and quote, folded to canonical assets) into one row per asset, replacing a ~4s per-request roll.
+// See migrations/0149_create_asset_volume_character_rollup.up.sql and internal/storage/timescale/asset_volume_character_rollup.go.
 package assetcharacterrollup
 
 import (
@@ -28,40 +13,18 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// DefaultInterval is the refresh cadence. The roll scans the full trailing
-// window of `trades` for EVERY actively-traded asset (both sides, unordered
-// account-pair aggregation) — the heaviest of the aggregator's asset
-// rollups — so a slow cadence keeps aggregator load modest. A
-// volume-character label a few minutes stale is immaterial to the analytics
-// overlay it feeds (the window itself is 14 days).
-// DefaultInterval — the all-asset roll scans the FULL 14-day trailing
-// window of the `trades` hypertable, so a single refresh is a multi-minute
-// read. It must NOT run often: at 15m it is effectively always running and
-// starves the customer API. volume_character is a slow-moving wash-vs-market
-// label + the §4-B demote-rank input, both tolerant of hours-stale data, so
-// a 6h cadence is ample. rollAssetVolumeCharacter additionally caps the
-// roll's parallelism + statement_timeout so even the 6h refresh can't
-// monopolize the primary. (A proper fix — incremental maintenance instead of
-// a full re-scan — is a follow-up.)
+// DefaultInterval is the refresh cadence; slow because each roll scans the full 14-day trades window.
 const DefaultInterval = 6 * time.Hour
 
-// DefaultStartupDelay holds the first roll back after boot. The roll's long
-// ACCESS SHARE lock on `trades` would otherwise block a follow-up deploy's
-// migrations within that window of a restart. A roll started by the tick is
-// cancelled by the deploy (pg_cancel_backend on its application_name) just
-// before `migrate up`; that is safe because the heavy read runs outside the
-// upsert transaction, so a cancel writes nothing and the next tick re-rolls.
+// DefaultStartupDelay holds the first roll back so its long ACCESS SHARE lock on trades cannot block a post-deploy migration.
 const DefaultStartupDelay = 30 * time.Minute
 
-// Refresher recomputes and atomically replaces the asset_volume_character
-// rollup. Production wiring is *timescale.Store.RefreshAssetVolumeCharacter;
-// tests use a fake.
+// Refresher recomputes and atomically replaces the asset_volume_character rollup.
 type Refresher interface {
 	RefreshAssetVolumeCharacter(ctx context.Context) error
 }
 
-// Options tunes a Worker. Logger rides here (not positional) per the repo's
-// Go idioms.
+// Options tunes a Worker.
 type Options struct {
 	// Interval is the refresh cadence. <= 0 falls back to DefaultInterval.
 	Interval time.Duration
@@ -79,8 +42,7 @@ type Worker struct {
 	logger    *slog.Logger
 }
 
-// New constructs the worker. Returns nil when the refresher is missing so
-// callers can gate with a plain nil check (mirrors assetvolrollup.New).
+// New constructs the worker, or returns nil when the refresher is missing.
 func New(refresher Refresher, opts Options) *Worker {
 	if refresher == nil {
 		return nil
@@ -100,9 +62,7 @@ func New(refresher Refresher, opts Options) *Worker {
 	return &Worker{refresher: refresher, interval: interval, delay: delay, logger: logger}
 }
 
-// Run refreshes once after the startup delay, then on every tick until ctx
-// is cancelled. Refresh failures log + count in the metric; the worker never
-// exits on a transient Postgres error.
+// Run refreshes after the startup delay, then every tick until ctx is cancelled; refresh errors are logged, never fatal.
 func (w *Worker) Run(ctx context.Context) error {
 	if w == nil {
 		return errors.New("assetcharacterrollup: nil Worker")

@@ -139,12 +139,8 @@ func TestVWAP_NegativeAmountsSkipped(t *testing.T) {
 }
 
 func TestVWAP_I128ScaleExactPrecision(t *testing.T) {
-	// Realistic Soroban magnitudes — amounts that would lose
-	// precision if they passed through float64. ADR-0003 invariant:
-	// prices stay as *big.Rat throughout the pipeline.
-	//
-	// Mix of trades near u128 boundaries + one near the low end,
-	// proving the big.Int arithmetic doesn't overflow or round.
+	// Realistic Soroban magnitudes that would lose precision in float64 (ADR-0003: prices stay *big.Rat): trades near u128 boundaries
+	// plus one near the low end prove big.Int does not overflow or round.
 	tradeA := canonical.Trade{ // base=10^36, quote=2*10^36 → price 2
 		Source: "test", Ledger: 1,
 		TxHash:  "0000000000000000000000000000000000000000000000000000000000000001",
@@ -252,9 +248,7 @@ func TestSourceContributions_PerSourceWeights(t *testing.T) {
 	}
 }
 
-// TestSourceContributions_WeightIsExactAboveTwoPow53 pins each weight to
-// the exact ratio. Any float64 on the way loses it once a quote volume
-// exceeds 2^53, the ordinary case for a Soroban i128.
+// TestSourceContributions_WeightIsExactAboveTwoPow53 pins each weight to the exact ratio; any float64 on the way loses it once a quote volume exceeds 2^53.
 func TestSourceContributions_WeightIsExactAboveTwoPow53(t *testing.T) {
 	const q1, q2 = 1<<53 + 1, 1<<53 + 10
 	trades := []canonical.Trade{

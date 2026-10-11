@@ -18,26 +18,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// defaultDivergenceMinSources is the fallback applied when
-// Config.DivergenceMinSources is unset (<= 0) — mirrors
-// divergence.NewService's own fallback and the API's
-// defaultDivergenceMinSources so an operator who never touches
-// `divergence.min_sources_for_warning` gets the same quorum on all
-// three consumers.
+// defaultDivergenceMinSources is the fallback for an unset Config.DivergenceMinSources; it mirrors divergence.NewService and the API so all three consumers share one quorum.
 const defaultDivergenceMinSources = 2
 
-// divergenceMinSources returns the floor on a cached divergence
-// result's SuccessCount before its DivergencePct is trusted as a
-// confidence input. Below this we pass the "no cross-oracle data"
-// sentinel — safer to neutralise the factor than to score a single
-// reference's hiccup as a multi-source signal.
-//
-// Sourced from Config.DivergenceMinSources, not a hardcoded const, so it
-// follows the operator's `divergence.min_sources_for_warning`. A const
-// would not move with that knob while the worker's own WarningFired gate
-// and the API's divergence_checked predicate did: a pair below the RAISED
-// quorum would still count as corroborated here, so Phase 2's freeze could
-// hold and release on a cross-oracle signal the API had stopped publishing.
+// divergenceMinSources is the floor on a cached divergence result's SuccessCount before its DivergencePct is a confidence input; below it the "no cross-oracle data" sentinel is passed.
+// Config-sourced, not a const, so it follows `divergence.min_sources_for_warning`; otherwise a pair under the raised quorum would still count as corroborated here and Phase 2 could hold or release on a signal the API stopped publishing.
 func (o *Orchestrator) divergenceMinSources() int {
 	if o.cfg.DivergenceMinSources > 0 {
 		return o.cfg.DivergenceMinSources
@@ -45,10 +30,7 @@ func (o *Orchestrator) divergenceMinSources() int {
 	return defaultDivergenceMinSources
 }
 
-// BaselineSource is the read-side interface the confidence step
-// uses to look up a per-pair MultiBaseline. Production wiring
-// adapts `*timescale.Store.LatestBaseline`. Nil = confidence step
-// runs with z-factor in bootstrap (no baseline available).
+// BaselineSource looks up a per-pair MultiBaseline for the confidence step; nil means the z-factor stays in bootstrap.
 type BaselineSource interface {
 	// LatestBaseline returns the current per-pair baseline plus the
 	// wall-clock timestamp it was computed at. Implementations
@@ -64,16 +46,8 @@ func (o *Orchestrator) confidenceCacheTTL(window time.Duration) time.Duration {
 	return o.vwapTTL(window)
 }
 
-// confidenceComputation bundles the score with the z-score that
-// produced it. Returned by [Orchestrator.computeConfidence] so the
-// Phase 2 freeze check can read both without recomputing.
-//
-// ZScore is deliberately the OBSERVATION-based score
-// ([baseline.MultiBaseline.MaxZScore] of this bucket's return), not
-// the wider score that fed [confidence.Compute]. The two differ when
-// the sustained-drift signal is the larger of the pair — see
-// [Orchestrator.computeConfidence] for why the freeze leg must stay
-// observation-based.
+// confidenceComputation bundles the score with the z-score that produced it, so the Phase 2 freeze check reads both without recomputing.
+// ZScore is deliberately the OBSERVATION-based score (MaxZScore of this bucket's return), not the wider score fed to [confidence.Compute]; see [Orchestrator.computeConfidence].
 type confidenceComputation struct {
 	Score  confidence.Score
 	ZScore float64
@@ -87,26 +61,13 @@ type confidenceComputation struct {
 	// the raw median rather than the cached divergencePct.
 	CrossOracleMedian float64
 
-	// TriangulationChecked / TriangulationDivergencePct carry the FRESH
-	// composite comparison for this bucket's own VWAP (the same values
-	// fed to confidence.Compute). The freeze release path reads these
-	// rather than confidence.Factors, which folds the pct into a scored
-	// agreement factor and does not retain the raw divergence.
+	// TriangulationChecked / TriangulationDivergencePct carry the FRESH composite comparison for this bucket's VWAP; the freeze release path reads these because confidence.Factors folds the pct into a score and drops the raw divergence.
 	TriangulationChecked       bool
 	TriangulationDivergencePct float64
 }
 
-// computeConfidence runs the multi-factor confidence math for the
-// freshly-computed (pair, window) bucket, scoring the largest z among rets —
-// the returns of the closed minutes this decision scores (see
-// marginalBuckets). Returns (_, false) when the inputs aren't ready yet — no
-// comparable prior bucket, no baseline, baseline in full bootstrap.
-//
-// The split between compute and cache exists so the Phase 2 freeze
-// check (ADR-0019) can read the score before deciding whether to
-// publish — frozen buckets must NOT cache confidence either, or
-// the next API read would surface a stale score from a refused
-// bucket.
+// computeConfidence runs the confidence math for the fresh (pair, window) bucket, scoring the largest z among rets (see marginalBuckets). Returns (_, false) when inputs aren't ready: no comparable prior bucket, no baseline, or full bootstrap.
+// Compute is split from caching so the Phase 2 freeze (ADR-0019) can read the score first; a frozen bucket must NOT cache confidence or the API would serve a stale score.
 func (o *Orchestrator) computeConfidence(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -139,25 +100,9 @@ func (o *Orchestrator) computeConfidence(
 		return confidenceComputation{}, false
 	}
 
-	// Frog-boiling (ADR-0019 §"Multi-window safeguard"): MaxZScore only
-	// asks whether THIS bucket's return is unusual, so a slow sustained
-	// push, with the window medians drifting along, scores ~0 at every
-	// window length. MaxDriftZScore scores the drift itself, and the larger
-	// of the two becomes the confidence input.
-	//
-	// It feeds the SCORE ONLY, never the freeze leg below. MaxDriftZScore
-	// takes no observation, so it is a pure function of the hourly-refreshed
-	// baseline row; a freeze gated on it cannot self-clear when the current
-	// bucket is fine. Measured on the real path, one genuine +50%-over-7-days
-	// repricing of a quiet asset holds driftZ above 5 for 30 days, 24 of them
-	// AFTER the move finished: a month of serving a pre-repricing
-	// last-known-good price.
-	//
-	// Requiring the current bucket to corroborate does not fix this:
-	// corroboration means observedZ is itself over the threshold, which is
-	// the existing spike check. A window-level statistic either latches or
-	// adds nothing to a per-bucket decision, so drift expresses itself only
-	// as reduced confidence, which is graded and self-correcting.
+	// Frog-boiling (ADR-0019 multi-window safeguard): MaxZScore misses a slow sustained push, so MaxDriftZScore scores the drift and the larger of the two is the confidence input.
+	// It feeds the SCORE ONLY, never the freeze leg: drift takes no observation, so a freeze gated on it cannot self-clear when the current bucket is fine (one +50%-over-7-days repricing held driftZ above 5 for 30 days).
+	// Requiring the current bucket to corroborate just restates the spike check, so drift is expressed only as graded, self-correcting reduced confidence.
 	scoringZ := observedZ
 	if dz, _, ok := multi.MaxDriftZScore(); ok && dz > scoringZ {
 		scoringZ = dz
@@ -167,12 +112,7 @@ func (o *Orchestrator) computeConfidence(
 	triPct, triChecked := o.triangulationDivergencePct(pair, window, vwap)
 	score := confidence.Compute(confidence.Inputs{
 		ZScore: scoringZ,
-		// SourceCount counts CONTRIBUTING SOURCES only. The composite
-		// comparison below is corroboration, not a source, and must
-		// never be folded in here — this is the input the freeze's
-		// `source_count <= 1` leg reads, and a derived path that shares
-		// our legs and our pipeline cannot satisfy an independence test
-		// (see triangulate_corroborate.go's header).
+		// SourceCount counts CONTRIBUTING SOURCES only. The composite comparison is corroboration, never folded in: this feeds the freeze's `source_count <= 1` leg (see triangulate_corroborate.go).
 		SourceCount:               distinctSourceCount(trades),
 		SourceClassCount:          distinctSourceClassCount(trades),
 		LiquidityUSD:              approxUSDVolume(trades, pair),
@@ -190,23 +130,8 @@ func (o *Orchestrator) computeConfidence(
 	o.bootstrapReleased[pair.String()] = !score.Factors.BootstrapCapped
 	exportBootstrapState(pair, score.Factors)
 
-	// ZScore carries the OBSERVATION-based score to the Phase 2
-	// freeze. Widening it to scoringZ would let drift alone freeze a
-	// pair: the drift statistic takes no observation, so a freeze
-	// gated on it cannot self-clear when the current bucket is fine —
-	// it stays engaged until the drift ages out of all three windows
-	// (see the paragraph above and [baseline.Baseline.DriftZScore]).
-	//
-	// Without the unmeasured-liquidity sentinel that widening is worse
-	// still, because the confidence leg of the 3-signal AND is pinned true for a large
-	// population by construction: approxUSDVolume returns 0 for every
-	// non-USD-quoted pair, LiquidityFactor(0) is 0, and one zero factor
-	// drives the geometric mean to 0 — so the `confidence < threshold` leg holds
-	// there regardless of every other input, and 8 of the 12 pairs in
-	// defaultPairs() are non-USD-quoted. That leg is live because an
-	// unvaluable pair passes the [confidence.LiquidityUnmeasured]
-	// sentinel instead, but the latching argument above stands on its
-	// own and drift stays out of the freeze path.
+	// ZScore carries the OBSERVATION-based score to the Phase 2 freeze; widening it to scoringZ would let drift alone freeze a pair, and the freeze would not self-clear until the drift ages out of all three windows.
+	// Worse, the confidence leg is pinned true for non-USD-quoted pairs by construction (zero liquidity factor zeroes the geometric mean); the [confidence.LiquidityUnmeasured] sentinel fixes that leg, but drift stays out of the freeze regardless.
 	return confidenceComputation{
 		Score:                      score,
 		ZScore:                     observedZ,
@@ -247,11 +172,7 @@ func (o *Orchestrator) cacheConfidence(
 // canonical package import. Same shape; same semantics.
 type canonicalTrade = canonical.Trade
 
-// crossOracleSignal is what [Orchestrator.lookupCrossOracle] extracts
-// from the cached divergence result for the confidence step. The
-// no-data state (unchecked) is both fields at their -1
-// sentinels — [confidence.Compute] then uses the neutral factor and
-// serves CrossOracleChecked=false.
+// crossOracleSignal is what [Orchestrator.lookupCrossOracle] extracts for the confidence step; no data means both fields at their -1 sentinels (neutral factor, CrossOracleChecked=false).
 type crossOracleSignal struct {
 	// divergencePct — % deviation from the cross-reference median,
 	// or -1 ("no cross-oracle data", the [confidence.CrossOracleFactor]
@@ -260,33 +181,15 @@ type crossOracleSignal struct {
 	// agreementCount — references corroborating our VWAP within the
 	// divergence threshold (ADR-0019 Phase 3), or -1 when unchecked.
 	agreementCount int
-	// median — the cross-reference median PRICE itself (0 below the
-	// trust floor). Carried so the freeze release path can compare a
-	// mid-freeze RELEASE CANDIDATE against the references directly:
-	// during a freeze the refresh is pinned to the last-known-good, so
-	// divergencePct and agreementCount are unchecked while the median
-	// stays set — it is the one field that says anything about the
-	// refused fresh print.
+	// median is the cross-reference median PRICE (0 below the trust floor). During a freeze divergencePct and agreementCount are unchecked while median stays set, so it is the only field that judges a mid-freeze RELEASE CANDIDATE against the references.
 	median float64
 }
 
 // noCrossOracle is the unchecked-state signal (both sentinels).
 var noCrossOracle = crossOracleSignal{divergencePct: -1, agreementCount: -1}
 
-// lookupCrossOracle reads the cached divergence result for the
-// specific `pair` and returns its DivergencePct + AgreementCount
-// when the SuccessCount meets the trust floor
-// (`divergenceMinSources`). Otherwise (no key, decode error,
-// transient cache failure, single-source success) returns
-// [noCrossOracle] — the "no cross-oracle data" sentinels.
-//
-// Reads the per-PAIR key (`div:<base>/<quote>`), not a per-base key:
-// the confidence score for XLM/USDT must use XLM/USDT's own divergence,
-// not one computed against a different quote.
-//
-// Best-effort: divergence is enrichment, not a publish-blocker.
-// Read failures don't propagate; the confidence step continues with
-// the neutral sentinels.
+// lookupCrossOracle reads the cached divergence result for this exact pair (`div:<base>/<quote>`, never a per-base key, so XLM/USDT uses its own divergence) and returns it when SuccessCount meets the trust floor.
+// Otherwise (no key, decode error, cache failure, single-source) returns [noCrossOracle]. Best-effort: failures never propagate.
 func (o *Orchestrator) lookupCrossOracle(ctx context.Context, pair canonical.Pair) crossOracleSignal {
 	raw, err := o.cache.Get(ctx, cachekeys.Divergence(pair).String()).Bytes()
 	if errors.Is(err, redis.Nil) {
@@ -323,25 +226,8 @@ func (o *Orchestrator) lookupCrossOracle(ctx context.Context, pair canonical.Pai
 	}
 }
 
-// distinctSourceClassCount returns the count of distinct
-// (Class, Subclass) buckets represented in the trade slice. Used
-// by the confidence diversity factor (ADR-0019): sources of the
-// same economic kind agree less informatively than sources from
-// different kinds.
-//
-// Bucket key is `Class:Subclass`. This means:
-//   - two CEXes (binance + coinbase) → both `exchange:cex` → 1
-//   - CEX + DEX (binance + soroswap) → `exchange:cex` + `exchange:dex` → 2
-//   - CEX + Oracle (binance + reflector-dex) → 2
-//   - DEX + FX (soroswap + massive) → 2
-//
-// Sources outside ClassExchange typically have empty Subclass —
-// their parent Class already captures the economic distinction
-// (oracles, aggregators, authority anchors don't sub-partition).
-//
-// Sources missing from the registry fall into the [external.Lookup]
-// fallback (`exchange:`, no subclass) — an unknown source name
-// doesn't get its own bucket.
+// distinctSourceClassCount returns the count of distinct (Class, Subclass) buckets in the trade slice, for the confidence diversity factor (ADR-0019): same-kind sources agree less informatively.
+// The key is `Class:Subclass` (two CEXes = 1, CEX + DEX = 2); non-exchange classes have empty Subclass; unknown sources fall into the [external.Lookup] fallback (`exchange:`).
 func distinctSourceClassCount(trades []canonicalTrade) int {
 	if len(trades) == 0 {
 		return 0
@@ -355,20 +241,8 @@ func distinctSourceClassCount(trades []canonicalTrade) int {
 	return len(seen)
 }
 
-// approxUSDVolume returns an approximation of bucket USD volume. Best when the pair quotes in
-// fiat:USD or a USD-pegged stablecoin; sums each trade's QuoteAmount scaled by ITS SOURCE's
-// decimals.
-//
-// For non-USD-quoted pairs it returns [confidence.LiquidityUnmeasured], NOT 0. Zero is a
-// measurement ("no dollars traded"), and a zero LiquidityFactor drives the geometric mean to zero.
-// The sentinel routes to the neutral factor, so the score reflects the factors we DID measure.
-//
-// The quote amount's scale is a per-SOURCE property: off-chain CEX / aggregator quotes use 1e8 (see
-// each poller's externalAmountDecimals), FX pollers 1e6, on-chain legs 1e7. A fixed 1e7 divisor
-// would overstate every 8dp CEX quote by 10×. LiquidityFactor is log-linear across its band, so a
-// one-decade error shifts it by ln(10)/ln(ceiling/floor) (a third of [0,1] on the [1e3, 1e6]
-// band). Resolve the scale as the contribution-sink USD valuation does:
-// external.Metadata.AmountScaleDecimals.
+// approxUSDVolume approximates bucket USD volume for fiat:USD or USD-pegged quotes, summing QuoteAmount scaled by each trade's SOURCE decimals (CEX/aggregator 1e8, FX 1e6, on-chain 1e7; a fixed 1e7 would overstate 8dp quotes 10x). Resolve via external.Metadata.AmountScaleDecimals.
+// Non-USD-quoted pairs return [confidence.LiquidityUnmeasured], NOT 0: zero is a measurement and zeroes the geometric mean; the sentinel routes to the neutral factor.
 func approxUSDVolume(trades []canonicalTrade, pair canonical.Pair) float64 {
 	if !isUSDQuoted(pair) {
 		return confidence.LiquidityUnmeasured
@@ -403,21 +277,9 @@ func isUSDQuoted(pair canonical.Pair) bool {
 	return false
 }
 
-// baselineAgeDays returns how much real history backs the 30d baseline, in DAYS-EQUIVALENT of
-// 1-minute buckets: the number of 1m buckets that fed the median/MAD divided by 1440. Returns -1
-// (the [confidence.BaselineQualityFactor] sentinel) when the 30d window is in bootstrap.
-//
-// The bucket count is Day30.N+1, not Day30.N: N counts bucket-to-bucket RETURNS, and N returns
-// span N+1 buckets. Dividing N would make this unable to reach 30 (a fully-traded window yields
-// 43,199 returns and reads 29.99931, under every [confidence] threshold), leaving the bootstrap cap
-// engaged forever. A completely-observed window reads exactly 30.0, and none can read higher.
-//
-// This is sample DENSITY, not calendar age, despite the name. It takes no wall-clock input:
-// nothing available here carries the asset's first-observation time. Density is also the better
-// signal: un-capping a calendar-mature but sparsely-traded pair by age would raise confidence on a
-// thin baseline, the less-safe direction for a money-adjacent signal. A calendar maturity signal
-// must be ADDITIVE (never replace density) and plumbed from storage's first-observation time. See
-// [confidence.Inputs.BaselineAgeDays].
+// baselineAgeDays returns how much real history backs the 30d baseline in days-equivalent of 1m buckets (-1 = bootstrap sentinel for [confidence.BaselineQualityFactor]).
+// Bucket count is Day30.N+1: N counts RETURNS, so dividing N could never reach 30 and the bootstrap cap would stay engaged forever.
+// It is sample DENSITY, not calendar age (un-capping a sparse pair by age would raise confidence on a thin baseline); see [confidence.Inputs.BaselineAgeDays].
 func baselineAgeDays(multi baseline.MultiBaseline) float64 {
 	if multi.Day30 == nil {
 		return -1

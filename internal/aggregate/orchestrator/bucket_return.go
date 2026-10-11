@@ -9,21 +9,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// marginalBuckets is what one (pair, window) decision scores: every non-empty
-// closed minute from the newest one the previous decision scored onward (that
-// one again, so a trade ingested into it late is still scored), each measured
-// against the non-empty minute before it. Both freeze phases score these
-// minute-on-minute returns, never the rolling window's tick-to-tick delta:
-// consecutive windows overlap by (window-closedBucket)/window, which damps a
-// new print by closedBucket/window, while the class thresholds and the
-// z-score baseline are calibrated per closed bucket (ADR-0019). Empty minutes
-// have no baseline row, so the predecessor is the previous NON-EMPTY minute —
-// the construction the baseline trains on — and Phase 2 scales that return by
-// the minutes between them as the baseline does (baseline.NewBucketReturn);
-// Phase 1's class thresholds stay on the raw move. Scoring every minute since the
-// previous decision rather than only the newest keeps a move that lands in
-// one batch (ingest backlog, skipped tick) measured against the level before
-// the batch.
+// marginalBuckets is what one (pair, window) decision scores: each non-empty closed minute since the previous decision's newest, measured against the previous NON-EMPTY minute.
+// Both freeze phases score minute-on-minute returns, never the rolling window's tick-to-tick delta, which overlap damps (ADR-0019). Phase 2 scales by minutes between; Phase 1 uses the raw move.
+// Scoring every minute since the last decision keeps a batched move measured against the pre-batch level.
 type marginalBuckets struct {
 	pred    *minuteVWAP  // the minute before minutes[0]; nil when none is known
 	minutes []minuteVWAP // oldest first; empty only when no minute can be priced

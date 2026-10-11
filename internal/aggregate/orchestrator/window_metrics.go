@@ -12,13 +12,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Per-refresh window observability.
-//
-// A per-tick re-count of trimmed prints measures the whole-window MAD
-// band's disagreement with the window tail, not venue disagreement. These
-// helpers publish what the `outlier_storm` alert actually wants: the
-// per-venue VWAP of the trade set the filter was handed, and how many
-// trades each filter stage left standing in THIS refresh.
+// Per-refresh window observability: per-venue VWAP of the trade set the filter was handed, and how many trades each filter stage left standing in THIS refresh.
+// A per-tick re-count of trimmed prints would measure the MAD band's disagreement with the window tail, not venue disagreement.
 
 // windowLabel renders a refresh window as the metric label the alert
 // rules match on: "5m", "1h", "24h" (seconds for anything not a whole
@@ -40,11 +35,7 @@ func recordWindowStage(pair canonical.Pair, window time.Duration, stage string, 
 	obs.AggregatorWindowTrades.WithLabelValues(pair.String(), windowLabel(window), stage).Set(float64(n))
 }
 
-// recordWindowStageVolume is [recordWindowStage] plus the stage's base
-// volume (AggregatorWindowBaseVolume). Volume is in whole units rather
-// than at the stage's common smallest-unit scale: that scale is the
-// stage's own maximum, so a trim that removed every 8dp print would put
-// the survivors on a different scale from the class set.
+// recordWindowStageVolume is [recordWindowStage] plus the stage's base volume, in whole units: the stage's common smallest-unit scale is its own maximum, so a trim could shift survivors onto a different scale.
 func recordWindowStageVolume(pair canonical.Pair, window time.Duration, stage string, trades []canonical.Trade) {
 	recordWindowStage(pair, window, stage, len(trades))
 	bySource := make(map[string]*big.Int, 4)
@@ -65,16 +56,8 @@ func recordWindowStageVolume(pair canonical.Pair, window time.Duration, stage st
 	obs.AggregatorWindowBaseVolume.WithLabelValues(pair.String(), windowLabel(window), stage).Set(vol)
 }
 
-// recordVenueVWAPs publishes one AggregatorVenueVWAP series per source
-// present in `trades` (the PRE-outlier, post-class set) and deletes
-// the series of every source that was present on a previous refresh
-// but is absent now — a venue that stopped trading must not keep a
-// stale level in the max/min disagreement ratio.
-//
-// Prices are adjusted to the served scale with the same decimals
-// lookup as [Orchestrator.computeNormalizedVWAP]; the float64
-// conversion happens only at the gauge boundary (operator signal,
-// never a served value).
+// recordVenueVWAPs publishes one AggregatorVenueVWAP series per source in `trades` (the pre-outlier, post-class set) and deletes series of sources absent now, so a stopped venue leaves no stale level in the disagreement ratio.
+// Prices use the same decimals lookup as [Orchestrator.computeNormalizedVWAP]; float64 only at the gauge boundary (operator signal, never a served value).
 func (o *Orchestrator) recordVenueVWAPs(pair canonical.Pair, window time.Duration, trades []canonical.Trade) {
 	pairLabel, wLabel := pair.String(), windowLabel(window)
 	// Drop every series for this (pair, window) first so absent

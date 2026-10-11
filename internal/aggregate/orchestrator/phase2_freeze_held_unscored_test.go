@@ -13,12 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestLogFreezeTransition_HeldUnscored_IsCounted — a hold expiry that
-// lands on an unscored bucket ([freeze.TransitionHeldUnscored]) must
-// be visible: a dedicated counter increments so a sustained run (a
-// stuck scorer) is distinguishable from the silent, Debug-only
-// default arm it would otherwise fall into alongside every unrecognised
-// transition.
+// TestLogFreezeTransition_HeldUnscored_IsCounted: a hold expiry on an unscored bucket ([freeze.TransitionHeldUnscored]) must increment a dedicated counter, so a sustained run (stuck scorer) is not hidden in the Debug-only default arm.
 func TestLogFreezeTransition_HeldUnscored_IsCounted(t *testing.T) {
 	o := &Orchestrator{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	pair := xlmUsdtPair(t)

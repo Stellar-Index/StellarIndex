@@ -14,18 +14,14 @@ const (
 	Window30d = 30 * 24 * time.Hour
 )
 
-// MultiBaseline is a pair's baseline at 1d / 7d / 30d (ADR-0019 multi-window safeguard).
-// [MultiBaseline.MaxZScore] catches spikes; [MultiBaseline.MaxDriftZScore] catches frog-boiling, and is
-// not optional: return series keep no level memory, so no window length makes MaxZScore see a drift.
-// A nil window is still bootstrapping, without invalidating the others.
+// MultiBaseline is a pair's baseline at 1d / 7d / 30d (ADR-0019 multi-window safeguard); a nil window is still bootstrapping.
 type MultiBaseline struct {
 	Day1  *Baseline
 	Day7  *Baseline
 	Day30 *Baseline
 }
 
-// NewMultiBaseline builds a [MultiBaseline] from three caller-sliced VWAP series (see
-// [SplitByLookback]); a window with too few samples is nil.
+// NewMultiBaseline builds a [MultiBaseline] from three caller-sliced series (see [SplitByLookback]); a window with too few samples is nil.
 func NewMultiBaseline(vwapsDay1, vwapsDay7, vwapsDay30 []TimedVWAP) MultiBaseline {
 	return MultiBaseline{
 		Day1:  buildOrNil(vwapsDay1),
@@ -43,34 +39,18 @@ func buildOrNil(vwaps []TimedVWAP) *Baseline {
 	return &b
 }
 
-// HasAnyValid reports whether any window has a baseline; if none does, the pair is in full
-// bootstrap and must not be used for anomaly detection.
+// HasAnyValid reports whether any window has a baseline; if none, the pair is in full bootstrap and must not be used for anomaly detection.
 func (m MultiBaseline) HasAnyValid() bool {
 	return m.Day1 != nil || m.Day7 != nil || m.Day30 != nil
 }
 
-// MinZScoreSamples is the sample floor before a window's [Baseline.ZScore] votes in
-// [MultiBaseline.MaxZScore]: a MAD from a handful of returns is noise, and a low draw flags ordinary moves.
-//
-// Measured null false-positive rate (200k trials: baseline from n
-// Gaussian returns, one fresh draw from the same distribution, MAD well
-// above [MinMAD], P(z >= 5)):
-//
-//	n=2    14%       n=20   0.13%
-//	n=3    19%       n=30   0.041%
-//	n=5    6.8%      n=60   0.004%
-//	n=10   0.97%     n=100  <0.005% (20k trials, none)
-//
-// 60 matches [MinDriftSamples] (one hour of 1m buckets) and is the first
-// round window within an order of magnitude of zero.
+// MinZScoreSamples is the floor before a window votes in [MultiBaseline.MaxZScore]: a small-n MAD is noise (null P(z>=5) 14% at n=2, 0.004% at n=60).
 const MinZScoreSamples = 60
 
-// MaxZScore returns the largest z for bucket return r across windows with at least
-// [MinZScoreSamples] returns (else the best-sampled one alone), and which window it was. SPIKES only:
-// callers needing the frog-boiling defence also take [MultiBaseline.MaxDriftZScore]. valid is false in
-// full bootstrap. NaN/±Inf return +Inf on the smallest window: NaN > 5 is false, so a bad price would
-// otherwise bypass the freeze.
+// MaxZScore returns the largest z for bucket return r across windows with at least [MinZScoreSamples] returns (else the best-sampled one), and which window; valid is false in full bootstrap.
 func (m MultiBaseline) MaxZScore(r BucketReturn) (z float64, window time.Duration, valid bool) {
+	// Spikes only: return series keep no level memory, so frog-boiling needs [MultiBaseline.MaxDriftZScore] too.
+	// NaN/±Inf return +Inf on the smallest window: NaN > 5 is false and a bad price would otherwise bypass the freeze.
 	if !m.HasAnyValid() {
 		return 0, 0, false
 	}
@@ -124,13 +104,10 @@ func (m MultiBaseline) zScoreVoters() []windowBaseline {
 	return voters
 }
 
-// MaxDriftZScore returns the largest [Baseline.DriftZScore] across windows, and which window; it
-// takes no observation because drift is a property of the training window. MUST NOT gate a per-bucket
-// decision (publish, freeze, serve): no later good bucket clears it, so one real +50%-over-7-days
-// repricing held it above 5 for 30 days. Use it for graded signals such as the confidence score.
-// Drift must cover most of a window, so 1d/7d/30d form a ladder over attack duration and an attacker
-// must evade all three. valid is false when no window cleared [MinDriftSamples].
+// MaxDriftZScore returns the largest [Baseline.DriftZScore] across windows and which window; valid is false when none cleared [MinDriftSamples].
 func (m MultiBaseline) MaxDriftZScore() (z float64, window time.Duration, valid bool) {
+	// It takes no observation, so no later good bucket clears it: MUST NOT gate a per-bucket decision (publish, freeze, serve).
+	// Use it for graded signals such as the confidence score; 1d/7d/30d form a ladder over attack duration.
 	consider := func(b *Baseline, w time.Duration) {
 		if b == nil {
 			return
@@ -149,9 +126,7 @@ func (m MultiBaseline) MaxDriftZScore() (z float64, window time.Duration, valid 
 	return z, window, valid
 }
 
-// SplitByLookback slices oldest-first timed VWAPs into the 1d, 7d and 30d windows ending at now
-// (bucketEnd >= cutoff, inclusive), so one storage read serves all three. Slices share the input's
-// memory — callers MUST NOT mutate.
+// SplitByLookback slices oldest-first VWAPs into the 1d/7d/30d windows ending at now; slices share the input's memory, so callers MUST NOT mutate.
 func SplitByLookback(timed []TimedVWAP, now time.Time) (day1, day7, day30 []TimedVWAP) {
 	cut1 := now.Add(-Window1d)
 	cut7 := now.Add(-Window7d)
@@ -164,8 +139,7 @@ func SplitByLookback(timed []TimedVWAP, now time.Time) (day1, day7, day30 []Time
 	return day1, day7, day30
 }
 
-// TimedVWAP is one bucket VWAP stamped with its bucket end. Canonical in
-// [domain.BaselineTimedVWAP] so internal/storage/timescale need not import upward.
+// TimedVWAP is one bucket VWAP stamped with its bucket end, aliased from [domain.BaselineTimedVWAP].
 type TimedVWAP = domain.BaselineTimedVWAP
 
 // firstAtOrAfter returns the first index with BucketEnd >= cutoff, or len(timed).

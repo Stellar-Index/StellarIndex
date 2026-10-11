@@ -305,18 +305,8 @@ func (s *panicSource) TimedVWAPsForPair1m(ctx context.Context, pair canonical.Pa
 	return s.base.TimedVWAPsForPair1m(ctx, pair, from, to)
 }
 
-// TestRefresher_RefreshAll_RecoversPanickingPair proves that
-// a panic in one pair's per-pair goroutine (the RefreshAll fan-out
-// at refresh.go) is CONTAINED — the batch completes and the healthy pair
-// still upserts, instead of the panic crashing the whole aggregator.
-//
-// Proven red: without the `defer worker.Recover(...)` added to the
-// per-pair goroutine, the panic below is unrecovered in a DETACHED
-// goroutine and takes the entire test binary down — a Go panic in any
-// goroutine terminates the process and cannot be caught by RefreshAll's
-// caller. With the guard, RefreshAll returns and the healthy pair's
-// outcome is counted (OK == 1); the panicking pair is absent from the
-// summary rather than fatal.
+// TestRefresher_RefreshAll_RecoversPanickingPair proves a panic in one pair's goroutine is contained: the batch completes
+// and the healthy pair still upserts (unrecovered, a panic in a detached goroutine kills the process).
 func TestRefresher_RefreshAll_RecoversPanickingPair(t *testing.T) {
 	now := time.Now().UTC()
 	pHappy := mustPair(t, "native", "fiat:USD")

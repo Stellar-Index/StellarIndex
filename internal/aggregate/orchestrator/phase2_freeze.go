@@ -17,77 +17,29 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Phase 2 freeze thresholds per ADR-0019 §"Freeze policy". All
-// three signals must agree to fire — keeps the freeze decision
-// robust against legitimate market events (those have multi-source
-// corroboration even if z is high) while still catching the
-// USTRY-shape attack pattern (single source, large deviation,
-// confidence-killing combination of factors).
-//
-// The package-level defaults match the ADR-0019 documented values
-// and are used when [Config.Phase2Thresholds] is the zero value
-// (operator hasn't overridden via TOML). Operators tune via the
-// `[anomaly.phase2]` config block.
+// Phase 2 freeze thresholds per ADR-0019: all three signals must agree, so legitimate multi-source events (high z) don't freeze but the single-source, large-deviation, low-confidence attack shape does.
+// Defaults apply when [Config.Phase2Thresholds] is zero; operators tune via `[anomaly.phase2]`.
 const (
-	// 0.45, NOT ADR-0019's original 0.10.
-	//
-	// Why the ADR's own z>5 needs a number this high: confidence is a
-	// weighted geometric mean, so it decays gently in z. Measured on the
-	// real combiner for a single-source bucket, mature baseline:
-	//   z=0 -> 0.5241   z=5 -> 0.4674   z=6 -> 0.4215
-	// and sparse/bootstrap-capped: z=0 -> 0.4767, z=5 -> 0.4252.
-	// At 0.10 the freeze needs z ~= 14.95 — roughly a 30% move in one
-	// 1-minute bucket for XLM (return_mad ~2%), i.e. the control was
-	// decorative. 0.45 puts the trigger just past z=5 (~5.4 mature,
-	// ~4.2 sparse), which is what ADR-0019 §"Freeze fires only when all
-	// three of the following hold" specifies.
-	//
-	// The old "Phase 2 false-fires" recorded in markPhase2Freeze came from
-	// approxUSDVolume returning 0 for non-USD-quoted pairs, which pinned the
-	// confidence leg true so the 3-signal AND was really a 2-signal one. With
-	// the unmeasured-liquidity sentinel, confidence is a genuine third gate
-	// and this is strictly stricter than the configuration that false-fired.
+	// 0.45, NOT ADR-0019's original 0.10: confidence is a geometric mean that decays gently in z (single-source, mature baseline: z=0 0.524, z=5 0.467, z=6 0.422), so at 0.10 the freeze needed z ~ 14.95 (a ~30% one-minute move) and the control was decorative.
+	// 0.45 triggers just past z=5 (~5.4 mature, ~4.2 sparse) as the ADR specifies. It relies on the unmeasured-liquidity sentinel: approxUSDVolume returning 0 for non-USD quotes used to pin the confidence leg true.
 	DefaultPhase2ConfidenceMaxFreeze  = 0.45 // freeze when confidence < this
 	DefaultPhase2ZScoreMinFreeze      = 5.0  // freeze when z > this
 	DefaultPhase2SourceCountMaxFreeze = 1    // freeze when source_count <= this
 )
 
-// Phase2Thresholds is the operator-tunable shape of the Phase 2
-// freeze condition AND of the ADR-0019 freeze lifecycle it feeds.
-// The orchestrator's [Config.Phase2Thresholds] holds an instance of
-// this struct; zero values fall back to documented defaults so unset
-// fields do the right thing.
-//
-// The two halves answer different questions and are tuned
-// independently: the first three fields decide WHETHER a bucket fires
-// a freeze, the [freeze.Policy] fields decide HOW LONG the resulting
-// freeze holds, when it re-evaluates, and what it takes to end.
+// Phase2Thresholds is the operator-tunable Phase 2 freeze condition and the ADR-0019 lifecycle it feeds; zero values take defaults.
+// The first three fields decide WHETHER a bucket fires; the [freeze.Policy] fields decide HOW LONG it holds and what ends it.
 type Phase2Thresholds struct {
 	ConfidenceMaxFreeze  float64
 	ZScoreMinFreeze      float64
 	SourceCountMaxFreeze int
 
-	// Lifecycle is the ADR-0019 §"Freeze duration" policy — initial
-	// hold (corroborated / uncorroborated), extension size, extension
-	// cap before operator escalation, and the auto-unfreeze condition.
-	// Zero-valued fields fall back to the `freeze.Default*` constants,
-	// which are the ADR's own numbers.
+	// Lifecycle is the ADR-0019 freeze-duration policy (initial holds, extension size and cap, auto-unfreeze); zero fields fall back to the `freeze.Default*` constants.
 	Lifecycle freeze.Policy
 }
 
-// withDefaults returns a Phase2Thresholds with any zero-valued
-// field replaced by the package default. Lets the orchestrator
-// merge an operator's partial override over the documented
-// stop-gap without forcing the operator to repeat every value.
-//
-// The zero value sentinel: ConfidenceMaxFreeze == 0 means "use
-// default" because a literal 0.0 would mean "never freeze on
-// confidence" (any value < 0 is impossible since confidence is
-// clamped [0, 1]) — equivalent to disabling that condition. We
-// treat the zero value as "use default"; operators who genuinely
-// want to disable the confidence check set a value >= 1.0 (always
-// fires the confidence sub-condition; freeze still requires z +
-// source_count to also pass).
+// withDefaults replaces zero-valued fields with package defaults so a partial operator override merges over them.
+// Zero ConfidenceMaxFreeze means "use default" (a literal 0.0 would never freeze on confidence); to disable that leg set >= 1.0 (z and source_count must still pass).
 func (p Phase2Thresholds) withDefaults() Phase2Thresholds {
 	if p.ConfidenceMaxFreeze == 0 {
 		p.ConfidenceMaxFreeze = DefaultPhase2ConfidenceMaxFreeze
@@ -105,23 +57,8 @@ func (p Phase2Thresholds) withDefaults() Phase2Thresholds {
 	return p
 }
 
-// phase2FreezeFires reports whether the Phase 2 freeze condition
-// (3-signal AND) holds for a bucket given its confidence score,
-// raw z-score, and contributing source count, evaluated against
-// the supplied (or default-merged) thresholds.
-//
-// Per ADR-0019 §"Freeze policy":
-//
-//	freeze_condition = (
-//	  confidence  < ConfidenceMaxFreeze
-//	  AND z_score > ZScoreMinFreeze
-//	  AND source_count <= SourceCountMaxFreeze
-//	)
-//
-// All three must be true. A two-of-three pattern (e.g. anomalous
-// z + low confidence but multi-source) does NOT freeze — those
-// scenarios surface via flags.divergence_warning instead, set by
-// the API's read-side divergence check.
+// phase2FreezeFires reports whether the ADR-0019 3-signal AND holds for a bucket: confidence < ConfidenceMaxFreeze AND z_score > ZScoreMinFreeze AND source_count <= SourceCountMaxFreeze.
+// Two-of-three (e.g. anomalous z + low confidence but multi-source) does NOT freeze; those surface via flags.divergence_warning.
 func phase2FreezeFires(c confidenceWithSourceCount, t Phase2Thresholds) bool {
 	t = t.withDefaults()
 	return c.Confidence < t.ConfidenceMaxFreeze &&
@@ -129,43 +66,16 @@ func phase2FreezeFires(c confidenceWithSourceCount, t Phase2Thresholds) bool {
 		c.SourceCount <= t.SourceCountMaxFreeze
 }
 
-// releaseAgreementMaxPct bounds how far a mid-freeze RELEASE CANDIDATE
-// may sit from a corroborating lens's reading and still count as
-// "agreeing" for the auto-unfreeze streak (Signal.ReleaseCorroborated).
-// 5%: a genuine repricing carries the references with it (candidate vs
-// reference median lands within low single digits), while the held-
-// manipulation band (~5-40% held offsets releasing under per-tick
-// calmness, as measured) stays
-// blocked and walks the ladder to the operator.
+// releaseAgreementMaxPct bounds how far a mid-freeze RELEASE CANDIDATE may sit from a corroborating lens and still count as agreeing (Signal.ReleaseCorroborated).
+// 5%: a genuine repricing carries the references with it, while held-manipulation offsets (~5-40%) stay blocked and walk the ladder to the operator.
 const releaseAgreementMaxPct = 5.0
 
-// releaseCorroborated reports whether a corroborating lens produced a
-// reading THIS bucket that agrees with the bucket's own fresh price:
-//   - the triangulation composite (computed against the fresh VWAP). The
-//     PRIOR-TICK chain sample cannot fire mid-freeze: routeTarget records no
-//     composite for a target frozen this tick and samples go stale in ~2
-//     ticks. So for a pair WITHOUT a resolved current-bucket reference, the
-//     cross-oracle median below is the operative release lens.
-//   - the CURRENT-BUCKET composite reference (composite_reference.go), for
-//     allow-listed single-venue targets whose reference RESOLVED this
-//     bucket. It replaces the triangulation lens but is read against its
-//     OWN, tighter band ([CompositeReferenceConfig.ReleaseBandPct], default
-//     2 %): the shared 5 % band would release a held +4 % venue-specific
-//     offset that the 75-bps fire band had refused to corroborate. A
-//     reference that resolved and disagrees holds the streak at zero.
-//   - the cross-oracle reference median, compared against the fresh
-//     candidate HERE, not the cached DivergencePct, which mid-freeze was
-//     computed against the pinned served price and so certifies the LKG.
-//
-// No lens reading ⇒ false ⇒ the streak holds at zero; the ladder escalates.
+// releaseCorroborated reports whether a lens produced a reading THIS bucket agreeing with the fresh price: the triangulation composite (prior-tick samples can't fire mid-freeze); the CURRENT-BUCKET composite reference, against its tighter [CompositeReferenceConfig.ReleaseBandPct] band (a reference that resolved and disagrees holds the streak at zero); or the cross-oracle median compared against the fresh candidate here, not the cached DivergencePct, which certifies the pinned LKG.
+// No lens reading means false: the streak holds at zero and the ladder escalates.
 func releaseCorroborated(c confidenceComputation, candidate *big.Rat, ref compositeReference, compositeBandPct float64) bool {
 	switch {
 	case ref.resolved():
-		// Exact Rat compare, matching how the verdict above it was
-		// decided (composite_reference.go) — a float64 divergencePct
-		// compare here would put the release boundary at the mercy of
-		// binary rounding on a decision that gates whether a held,
-		// possibly-manipulated price is released.
+		// Exact Rat compare, matching how the verdict was decided; a float64 compare would put the release boundary of a possibly-manipulated held price at the mercy of binary rounding.
 		band := new(big.Rat).SetFloat64(compositeBandPct / 100.0)
 		if band != nil && ref.deviationRatio != nil && ref.deviationRatio.Cmp(band) <= 0 {
 			return true
@@ -204,16 +114,8 @@ func (o *Orchestrator) classOf(pair canonical.Pair) anomaly.AssetClass {
 	return anomaly.ClassDefault
 }
 
-// unpricedBucket is decideBucket's exit for a bucket that produced no
-// price: empty after filtering, under [Config.MinUSDVolume], or with no
-// computable VWAP. It publishes nothing, but a window that is already
-// frozen still advances its lifecycle here, because the marker TTL and
-// the durable ladder's liveness are refreshed only by that step. Skipping
-// it let hold + grace of thinness lapse the freeze, and the next priced
-// bucket read the lapse as the operator override.
-//
-// The signal is unscored: it resets the unfreeze streak, slides an expired
-// hold without spending an extension, and can never release.
+// unpricedBucket is decideBucket's exit for a bucket with no price (empty after filtering, under [Config.MinUSDVolume], or no computable VWAP). It publishes nothing, but a frozen window still advances its lifecycle: marker TTL and ladder liveness are refreshed only there, and skipping it let thin buckets lapse the freeze, which the next priced bucket read as the operator override.
+// The signal is unscored: it resets the unfreeze streak, slides an expired hold without spending an extension, and never releases.
 func (o *Orchestrator) unpricedBucket(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -232,19 +134,8 @@ func (o *Orchestrator) unpricedBucket(
 	return nil, nil
 }
 
-// stepPhase2Freeze translates one scored bucket into a [freeze.Signal]
-// and advances the ADR-0019 lifecycle. Returns true when the bucket
-// must be refused publication.
-//
-// Called on EVERY bucket, not only on buckets the 3-signal AND fires
-// for — a pair inside its hold stays frozen through quiet buckets,
-// and only the ADR's auto-unfreeze condition ends it.
-//
-// confOK=false (no baseline, no previous VWAP, bootstrap) yields an
-// UNSCORED signal: it cannot fire a freeze and it cannot earn an
-// auto-unfreeze streak. That asymmetry is deliberate — "we could not
-// measure this bucket" is not evidence the pair recovered, and the
-// state right after an aggregator restart is exactly that.
+// stepPhase2Freeze translates one scored bucket into a [freeze.Signal] and advances the ADR-0019 lifecycle; returns true when publication must be refused. Called on EVERY bucket, since a pair inside its hold stays frozen through quiet buckets.
+// confOK=false (no baseline, no prev VWAP, bootstrap) yields an UNSCORED signal that can neither fire nor earn an unfreeze streak: "could not measure" is not evidence of recovery, and right after a restart that is the state.
 func (o *Orchestrator) stepPhase2Freeze(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -291,11 +182,7 @@ func (o *Orchestrator) stepPhase2Freeze(
 		if compositeRef.verdict != "" {
 			decision.Reason += compositeRef.reasonSuffix()
 			if sig.Fires && compositeRef.verdict == compositeVerdictCorroborated {
-				// The deep-market composite moved WITH the venue on this
-				// very bucket: the move is market-wide, not venue-specific,
-				// so the single-source AND does not engage (or, mid-hold,
-				// does not reset the release streak). Refuted/unavailable
-				// leave Fires exactly as computed.
+				// The deep-market composite moved WITH the venue on this bucket: the move is market-wide, so the single-source AND does not engage (mid-hold, it does not reset the release streak). Refuted/unavailable leave Fires as computed.
 				sig.Fires = false
 				obs.AggregatorCompositeFreezeSuppressedTotal.WithLabelValues(pair.String(), windowLabel(window)).Inc()
 				o.logger.Info("phase2 freeze suppressed: composite reference corroborates the move",
@@ -308,37 +195,14 @@ func (o *Orchestrator) stepPhase2Freeze(
 	return o.stepFreezeLifecycle(ctx, pair, window, stateKey, sig, decision)
 }
 
-// corroborated reports whether a corroborating lens produced a
-// reading for this bucket — i.e. whether the freeze decision was
-// taken with a second opinion available at all. It selects between
-// ADR-0019's 30-minute initial hold and the shorter uncorroborated
-// one (see freeze.DefaultUncorroboratedInitialHold).
-//
-// "Was a lens consulted", NOT "did the lens agree". A composite or an
-// external reference that DISAGREES is the strongest evidence a
-// freeze is true, so reading only the agreeing case as corroboration
-// would hand the shortest hold to the best-evidenced freezes — the
-// exact inversion of what the duration is for. The agreeing case is
-// already priced in elsewhere: agreement raises the confidence score,
-// which is a leg of the fire condition, so a well-corroborated
-// healthy pair mostly does not reach this code at all.
+// corroborated reports whether a lens produced a reading for this bucket, i.e. whether a second opinion was available; it selects ADR-0019's 30-minute initial hold over the shorter uncorroborated one (freeze.DefaultUncorroboratedInitialHold).
+// "Was a lens consulted", NOT "did it agree": a DISAGREEING composite or reference is the strongest evidence the freeze is true, so counting only agreement would give the best-evidenced freezes the shortest hold. Agreement is already priced in via the confidence leg of the fire condition.
 func corroborated(f confidence.Factors) bool {
 	return f.TriangulationChecked || f.CrossOracleChecked
 }
 
-// stepFreezeLifecycle is the single owner of a pair's freeze
-// lifecycle and of its `freeze:<asset>:<quote>` marker: it evaluates
-// the ADR-0019 policy, persists the resulting state, drives the
-// marker (write / refresh / delete), emits metrics + logs, and keeps
-// the last-known-good VWAP alive for the hold's duration.
-//
-// Returns true when the bucket must be refused publication.
-//
-// Both freeze phases funnel through here. One owner per marker key is
-// a correctness requirement, not tidiness: two writers with different
-// TTL semantics would let a Phase 1 fire truncate a Phase 2 hold, and
-// a phase that wrote the marker without advancing the ladder would
-// hold a freeze forever without ever escalating it to an operator.
+// stepFreezeLifecycle is the single owner of a pair's freeze lifecycle and its `freeze:<asset>:<quote>` marker: evaluates the ADR-0019 policy, persists state, drives the marker, emits metrics and keeps the LKG VWAP alive. Returns true when the bucket must be refused.
+// Both freeze phases funnel here: two writers with different TTL semantics would let a Phase 1 fire truncate a Phase 2 hold, and a marker written without advancing the ladder would hold forever without escalating to an operator.
 func (o *Orchestrator) stepFreezeLifecycle(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -373,25 +237,9 @@ func (o *Orchestrator) stepFreezeLifecycle(
 	return true
 }
 
-// loadFreezeState returns the working lifecycle state for a (pair, window) key,
-// plus whether the operator has force-unfrozen it out of band.
-//
-// Two cheap Redis reads, both deliberate:
-//
-//   - Cold key (first evaluation in this process): re-hydrate THIS
-//     window's ladder from the marker ([Orchestrator.loadMarkerState]).
-//     Without it, every deploy restarts the 2-hour escalation clock, so
-//     restarts more often than every 2 hours could hold a pair frozen
-//     Without it, every deploy restarts the 2-hour escalation clock, so
-//     frequent restarts could hold a pair frozen forever without paging;
-//     and a restart leaves no prev-VWAP comparator, so the window would
-//     publish the bucket the freeze was withholding.
-//     the marker is that override; without this check the in-memory
-//     ladder would re-write the marker next tick. The read is
-//     window-AGNOSTIC: the marker is pair-scoped.
-//
-// A cold-key read error returns err and caches nothing, so the next tick
-// retries; the caller must withhold the bucket.
+// loadFreezeState returns the working lifecycle state for a (pair, window) key plus whether the operator force-unfroze it out of band. Two cheap Redis reads:
+// a cold key (first evaluation in this process) re-hydrates THIS window's ladder from the marker ([Orchestrator.loadMarkerState]), else every deploy restarts the 2-hour escalation clock and the window publishes the bucket the freeze was withholding; an absent marker is the operator override (the read is window-AGNOSTIC, the marker is pair-scoped), else the in-memory ladder would re-write it.
+// A cold-key read error returns err and caches nothing; the caller must withhold the bucket.
 func (o *Orchestrator) loadFreezeState(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -430,17 +278,8 @@ func (o *Orchestrator) loadFreezeState(
 	return st, false, nil
 }
 
-// loadMarkerState reads the lifecycle the marker records for (pair,
-// window), asking the window-aware reader when the configured writer has
-// one.
-//
-// The pair-wide [FreezeMarker.LoadState] is the fallback, not the
-// preference: it answers with whichever ladder the marker happens to
-// carry, which for a pair whose windows freeze independently is the
-// cross-window bleed [WindowedFreezeMarker] exists to stop. Production
-// wires the window-aware writer; the fallback keeps a writer that cannot
-// scope a marker behaving exactly as it did before, i.e. erring towards
-// holding a freeze rather than dropping one.
+// loadMarkerState reads the lifecycle the marker records for (pair, window), via the window-aware reader when the writer has one.
+// The pair-wide [FreezeMarker.LoadState] is only the fallback: it returns whichever ladder the marker carries, the cross-window bleed [WindowedFreezeMarker] exists to stop. A writer that can't scope a marker errs towards holding a freeze rather than dropping one.
 func (o *Orchestrator) loadMarkerState(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -469,12 +308,7 @@ func (o *Orchestrator) engageFreeze(
 	o.freezesEngaged++
 	o.mu.Unlock()
 
-	// Per FROZEN TICK, not per fire transition. The pre-existing
-	// anomaly.yml rules read a sustained freeze as a sustained rate()
-	// on this counter ("a sustained freeze keeps the counter
-	// incrementing"), and a lifecycle hold is precisely a sustained
-	// freeze — incrementing only on the fire would silently disarm
-	// stellarindex_anomaly_freeze_engaged, a severity:ticket rule.
+	// Per FROZEN TICK, not per fire transition: anomaly.yml rules read a sustained freeze as a sustained rate() on this counter, so incrementing only on the fire would silently disarm stellarindex_anomaly_freeze_engaged (severity:ticket).
 	obs.AnomalyFreezeEngagedTotal.WithLabelValues(string(decision.Class)).Inc()
 
 	o.logFreezeTransition(pair, window, decision, out)
@@ -501,11 +335,7 @@ func (o *Orchestrator) engageFreeze(
 	if held := o.prevVWAPs[stateKey]; held != nil {
 		frozenValue = formatRatFixed(held, 12)
 	}
-	// Record the ladder against the window that owns it: the marker is
-	// pair-scoped (its presence is the API's pair-wide flags.frozen) but
-	// the lifecycle inside it is this window's alone, and a cold sibling
-	// that cannot tell the difference adopts it — see
-	// [WindowedFreezeMarker].
+	// Record the ladder against the window that owns it: the marker is pair-scoped (its presence is the pair-wide flags.frozen) but the lifecycle in it is this window's alone, and a cold sibling would otherwise adopt it ([WindowedFreezeMarker]).
 	if err := o.markHoldForWindow(ctx, pair, window,
 		frozenValue, decision, out.State, out.MarkerTTL); err != nil {
 		o.logger.Warn("freeze marker write failed",
@@ -531,15 +361,8 @@ end
 return 0
 `
 
-// reseedFrozenVWAP writes the held comparator back as the window's VWAP, with
-// the observed-at stamp the API requires, when the keys are absent (cache
-// flushed mid-hold). Without it the API reads frozen=true with no servable
-// value and answers 503 for the rest of the hold. SetNX: a surviving value or
-// stamp is never overwritten. The stamp is the held bucket's own end, never
-// the reseed time, so the served age stays honest; with no known end the
-// reseed is skipped. The coverage key is written only when the held value
-// itself lands (its coverage, or cleared to unknown): a surviving value — a
-// composite included — must never gain the held window's coverage.
+// reseedFrozenVWAP writes the held comparator back as the window's VWAP, with its observed-at stamp, when the keys are absent (cache flushed mid-hold); otherwise the API reads frozen=true with nothing servable and answers 503.
+// SetNX never overwrites a surviving value or stamp. The stamp is the held bucket's own end (skipped if unknown) so served age stays honest; coverage is written only when the held value lands, so a surviving composite never gains the held window's coverage.
 func (o *Orchestrator) reseedFrozenVWAP(ctx context.Context, pair canonical.Pair, window time.Duration, stateKey string, ttl time.Duration) {
 	// Read the last PUBLISHED value, not the caller's comparator: mid-freeze
 	// that is the previous refused bucket and must never be served as held.
@@ -589,13 +412,7 @@ func (o *Orchestrator) markHoldForWindow(
 		frozenValue, decision, state, ttl)
 }
 
-// logFreezeTransition emits the per-transition operator signal and
-// the extension / escalation counters.
-//
-// Escalation logs at ERROR: it is the one transition that will not
-// resolve itself. ADR-0019 holds an escalated freeze "until manual
-// unfreeze", so the pair's /v1/price is pinned to a last-known-good
-// price until a human acts.
+// logFreezeTransition emits the per-transition operator signal and extension/escalation counters. Escalation logs at ERROR: ADR-0019 holds it "until manual unfreeze", so /v1/price stays pinned to the LKG until a human acts.
 func (o *Orchestrator) logFreezeTransition(
 	pair canonical.Pair,
 	window time.Duration,
@@ -635,12 +452,7 @@ func (o *Orchestrator) logFreezeTransition(
 			"resumed_override_ladder", !out.State.OverriddenAt.IsZero(),
 			"reason", decision.Reason)
 	case freeze.TransitionHeldUnscored:
-		// The hold expired on a bucket the scorer could not evaluate
-		// (restart bootstrap or a scoring outage). Correct per
-		// ADR-0019 to slide rather than extend, but a sustained run
-		// of these means scoring itself is stuck while the extension
-		// and escalation counters stay at zero the whole time — give
-		// it its own counter and a WARN so that state isn't invisible.
+		// The hold expired on a bucket the scorer could not evaluate (restart bootstrap, scoring outage). ADR-0019 says slide, not extend, but a sustained run means scoring is stuck while extension/escalation counters stay zero, so it gets its own counter and WARN.
 		obs.AnomalyFreezeHeldUnscoredTotal.Inc()
 		o.logger.Warn("freeze hold slid — bucket could not be scored",
 			"pair", pair.String(),
@@ -658,14 +470,8 @@ func (o *Orchestrator) logFreezeTransition(
 	}
 }
 
-// releaseFreeze ends ONE window's freeze: drop that window's ladder,
-// count the release by mode, and — once no sibling window for the pair
-// is still frozen — delete the shared marker so `flags.frozen` clears
-// immediately rather than after the remaining hold's TTL.
-//
-// The state entry is kept present-but-inactive rather than deleted,
-// so [Orchestrator.loadFreezeState]'s hydrate-on-cold-key path stays
-// a once-per-process cost.
+// releaseFreeze ends ONE window's freeze: drops its ladder, counts the release by mode, and once no sibling window is still frozen deletes the shared marker so `flags.frozen` clears immediately.
+// The state entry stays present-but-inactive so [Orchestrator.loadFreezeState]'s hydrate stays once-per-process.
 func (o *Orchestrator) releaseFreeze(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -699,32 +505,11 @@ func (o *Orchestrator) releaseFreeze(
 		return
 	}
 
-	// The freeze marker AND the durable ladder are keyed by
-	// (asset, quote), but a pair's lifecycle runs independently per
-	// window ([DefaultWindows] is 5m/1h/24h). That shared marker's
-	// presence is the single flag the API serves as `flags.frozen` for
-	// the WHOLE pair, so it must stay set while ANY window is still
-	// frozen. Clearing it when a short window auto-releases mid-hold on a
-	// sibling deletes the marker out from under the still-frozen window;
-	// the next tick reads the absent marker as an operator override
-	// (loadFreezeState) and republishes that window's still-anomalous
-	// VWAP with flags.frozen=false — defeating the freeze in exactly the
-	// thin/single-source case it exists for, and it does not self-heal.
-	// So retire the shared marker + durable ladder only when the LAST
-	// frozen window for the pair releases.
-	//
-	// A genuine operator override is unaffected: `freeze-unfreeze`
-	// deletes the marker (and stamps recovered_at) out of band, and each
-	// window observes that independently in loadFreezeState — so every
-	// window releases regardless of which one's releaseFreeze reaches the
-	// Clear below.
+	// The marker and durable ladder are keyed by (asset, quote) but windows run independently, and the marker's presence is the pair-wide `flags.frozen`, so it must stay set while ANY window is frozen.
+	// Clearing it when a short window releases would let the next tick read the absent marker as an operator override (loadFreezeState) and republish a still-anomalous VWAP with frozen=false, with no self-heal. Retire it only when the LAST frozen window releases.
+	// A genuine operator override (`freeze-unfreeze` deletes the marker out of band) is unaffected: each window observes it independently.
 	if o.siblingWindowFrozen(pair, window) {
-		// The marker stays for the sibling, but THIS window's ladder must
-		// not: left behind it would be rehydrated by a restart as a
-		// freeze that had already released, and re-pin a healthy window
-		// to a last-known-good price for the rest of the stale hold.
-		// Retiring it keeps the marker's per-window ladders a faithful
-		// record of which windows are actually frozen.
+		// The marker stays for the sibling, but THIS window's ladder must not: a restart would rehydrate it as a freeze that had already released and re-pin a healthy window to its LKG. Retiring it keeps the per-window ladders a faithful record of what is frozen.
 		if o.windowedFreeze != nil {
 			if err := o.windowedFreeze.RetireWindowLadder(ctx, pair.Base, pair.Quote, window); err != nil {
 				o.logger.Warn("freeze ladder retire failed — this window's released ladder stays in the marker",
@@ -757,22 +542,9 @@ func (o *Orchestrator) overrideMode(ctx context.Context, pair canonical.Pair) st
 	return "lapsed"
 }
 
-// clearReleasedMarker deletes the pair's freeze marker on the release of
-// what THIS PROCESS believes is its last frozen window.
-//
-// [Orchestrator.siblingWindowFrozen] reads o.freezeStates, and a window
-// only enters that map by reaching the freeze step in this process. A
-// window under [Config.MinUSDVolume] never does, and after a restart none
-// has yet — so its freeze lives only in the marker, invisible to that
-// check. A window-aware writer is therefore asked to release against the
-// marker's own record ([WindowedFreezeMarker.ReleaseWindow]): it keeps the
-// marker, and the sibling's ladder in it, when one is still there. Before
-// this a recovering 5m window cleared an ESCALATED 1h sibling's marker and
-// durable ladder, ending a freeze ADR-0019 holds "until manual unfreeze".
-//
-// A writer that cannot scope a marker clears it outright, as before. An
-// operator override already deleted the marker; clearing again is a
-// harmless idempotent DEL and keeps the two paths identical.
+// clearReleasedMarker deletes the pair's marker when what THIS PROCESS believes is its last frozen window releases.
+// [Orchestrator.siblingWindowFrozen] only sees windows that reached the freeze step in this process; a window under [Config.MinUSDVolume], or any window after a restart, is invisible to it. So a window-aware writer releases against the marker's own record ([WindowedFreezeMarker.ReleaseWindow]) and keeps a still-frozen (e.g. ESCALATED) sibling's marker and ladder; a writer that can't scope clears outright.
+// An operator override already deleted the marker; clearing again is an idempotent DEL.
 func (o *Orchestrator) clearReleasedMarker(ctx context.Context, pair canonical.Pair, window time.Duration) {
 	if o.windowedFreeze == nil {
 		if err := o.cfg.FreezeWriter.Clear(ctx, pair.Base, pair.Quote); err != nil {
@@ -793,17 +565,8 @@ func (o *Orchestrator) clearReleasedMarker(ctx context.Context, pair canonical.P
 	}
 }
 
-// siblingWindowFrozen reports whether any window OTHER than `window`
-// still holds a live freeze for `pair`. It is what keeps the shared
-// (asset, quote) freeze marker + durable ladder alive until the last
-// window releases.
-//
-// Reads o.freezeStates on the single-Tick goroutine — the same
-// no-lock invariant loadFreezeState relies on. Reconstructs each
-// sibling's stateKey with the exact shape refreshPairWindow uses
-// (`pair:window`) rather than prefix-matching map keys, so an asset id
-// that itself contains the ':' separator (e.g. `fiat:USD`) can't
-// produce a false match.
+// siblingWindowFrozen reports whether any window OTHER than `window` still holds a live freeze for `pair`, keeping the shared marker alive until the last releases.
+// Reads o.freezeStates on the single-Tick goroutine (no lock, as loadFreezeState). Rebuilds each sibling's `pair:window` stateKey exactly as refreshPairWindow does instead of prefix-matching, since asset ids contain ':' (`fiat:USD`).
 func (o *Orchestrator) siblingWindowFrozen(pair canonical.Pair, window time.Duration) bool {
 	for _, w := range o.cfg.Windows {
 		if w == window {

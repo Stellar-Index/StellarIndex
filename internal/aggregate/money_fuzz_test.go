@@ -11,11 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Property fuzz targets for the exact-rational money path. Every
-// reference below is computed independently of the function under test
-// (different association, different primitive, or an order statistic
-// instead of a sort), so a target fails on a wrong value, not only on
-// a panic.
+// Property fuzz targets for the exact-rational money path. Each reference is computed independently of the function
+// under test, so a target fails on a wrong value, not only on a panic.
 
 // fuzzBytes is a cursor over fuzz input that decodes arbitrary-width
 // signed integers, so amounts routinely exceed 2^63 and 2^128.
@@ -190,9 +187,7 @@ func addTradeSeeds(f *testing.F) {
 	f.Add(big1)
 }
 
-// FuzzVWAP pins VWAP to an independent per-trade weighted mean and the
-// volume helpers to big.Int sums over the same priced population VWAP
-// draws from (priceable: both legs strictly positive) — not every trade.
+// FuzzVWAP pins VWAP to an independent per-trade weighted mean and the volume helpers to big.Int sums over the same priceable population.
 func FuzzVWAP(f *testing.F) {
 	addTradeSeeds(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -327,8 +322,7 @@ func FuzzComputeOHLC(f *testing.F) {
 	})
 }
 
-// FuzzTWAP bounds TWAP by the prices that carried time weight; the
-// fixed-point accumulator may truncate by at most 10^-40 relative.
+// FuzzTWAP bounds TWAP by the prices that carried time weight; the fixed-point accumulator truncates by at most 10^-40 relative.
 func FuzzTWAP(f *testing.F) {
 	addTradeSeeds(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -418,9 +412,7 @@ func addRatSeeds(f *testing.F) {
 	f.Add([]byte{0x1f, 1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 0, 7, 0, 1, 0, 4, 0, 1})
 }
 
-// FuzzRobustStats pins medianRat / medianMemberRat / madRat to their
-// order-statistic definitions and symmetricDev to its ratio-space
-// contract.
+// FuzzRobustStats pins medianRat, medianMemberRat and madRat to their order-statistic definitions and symmetricDev to its ratio-space contract.
 func FuzzRobustStats(f *testing.F) {
 	addRatSeeds(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -548,8 +540,7 @@ func FuzzRobustStats(f *testing.F) {
 	})
 }
 
-// FuzzFilterOutliers checks FilterOutliers is an order-preserving,
-// price-scale-invariant, sigma-monotone subset filter.
+// FuzzFilterOutliers checks FilterOutliers is an order-preserving, price-scale-invariant, sigma-monotone subset filter.
 func FuzzFilterOutliers(f *testing.F) {
 	for _, s := range []byte{0, 1, 4, 8, 40} {
 		f.Add(seedTradeBytes(1, 100, 1, 100, 1, 100, 1, 100, 1, 200), s, uint8(3))
@@ -704,8 +695,7 @@ func sameKeys(a, b []canonical.Trade) bool {
 	return true
 }
 
-// FuzzDecimalsAdjustment compares the factor against a decimal-string
-// reference and checks AdjustPrice round-trips.
+// FuzzDecimalsAdjustment compares the factor to a decimal-string reference and checks AdjustPrice round-trips.
 func FuzzDecimalsAdjustment(f *testing.F) {
 	f.Add(int64(3), int64(7), int8(7), int8(7))
 	f.Add(int64(3), int64(7), int8(7), int8(18))
@@ -744,8 +734,7 @@ func FuzzDecimalsAdjustment(f *testing.F) {
 	})
 }
 
-// FuzzNormalizeAmountScale checks per-trade price preservation, exact
-// 10^k lifts, and that the normalised VWAP equals the real-volume VWAP.
+// FuzzNormalizeAmountScale checks per-trade price preservation, exact 10^k lifts, and that the normalised VWAP equals the real-volume VWAP.
 func FuzzNormalizeAmountScale(f *testing.F) {
 	f.Add(seedTradeBytes(100, 200, 100, 300, 100, 250), uint8(7), uint8(8), uint8(6))
 	f.Add(seedTradeBytes(100, 200, 100, 300), uint8(7), uint8(7), uint8(7))
@@ -804,8 +793,7 @@ func FuzzNormalizeAmountScale(f *testing.F) {
 	})
 }
 
-// FuzzTriangulateChain pins the chain to a product that is order
-// independent and rejects any non-positive leg.
+// FuzzTriangulateChain pins the chain to an order-independent product that rejects any non-positive leg.
 func FuzzTriangulateChain(f *testing.F) {
 	addRatSeeds(f)
 	f.Add([]byte{0xc0, 0, 1})
@@ -903,9 +891,7 @@ func addOracleSeeds(f *testing.F) {
 	f.Add([]byte{16, 1, 0x03, 0xe8, 8, 0, 1, 8, 0, 1})
 }
 
-// FuzzAverageAggregatorPrices checks the aggregator-tier mean against
-// the exact rational mean of the real prices, and that a served price
-// is always strictly positive.
+// FuzzAverageAggregatorPrices checks the aggregator-tier mean against the exact rational mean and that a served price is strictly positive.
 func FuzzAverageAggregatorPrices(f *testing.F) {
 	addOracleSeeds(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -987,8 +973,7 @@ func FuzzFormatScaledDecimal(f *testing.F) {
 	})
 }
 
-// FuzzRejectAggregatorOutliers checks the divergence filter is an
-// in-order subset that never empties and always keeps the median.
+// FuzzRejectAggregatorOutliers checks the divergence filter is an in-order subset that never empties and keeps the median.
 func FuzzRejectAggregatorOutliers(f *testing.F) {
 	addOracleSeeds(f)
 	f.Fuzz(func(t *testing.T, data []byte) {

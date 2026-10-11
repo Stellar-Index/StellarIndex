@@ -1,18 +1,6 @@
-// Package assetvolrollup maintains the asset_volume_24h rollup that
-// backs the volume_24h_usd column on the /v1/assets listing.
-//
-// A ticker-driven worker runs the trailing-24h per-asset USD-volume SUM
-// over the prices_1m continuous aggregate (single-sided: each asset as
-// base OR quote) on a slow cadence and upserts one row per asset into
-// the rollup table, so the listing LEFT JOINs a small keyed-on-PK table
-// instead of re-summing prices_1m per request — the ~4.8s cold
-// all-asset scan. Runs in the
-// aggregator binary alongside the change-summary + supply refresh
-// workers.
-//
-// See migrations/0087_create_asset_volume_24h_rollup.up.sql for the
-// table and internal/storage/timescale/asset_catalogue.go for the SUM + upsert
-// SQL.
+// Package assetvolrollup maintains the asset_volume_24h rollup behind volume_24h_usd on /v1/assets.
+// A slow ticker sums trailing-24h per-asset USD volume over prices_1m (single-sided) into one row per asset, replacing a ~4.8s per-request scan.
+// See migrations/0087_create_asset_volume_24h_rollup.up.sql and internal/storage/timescale/asset_catalogue.go.
 package assetvolrollup
 
 import (
@@ -25,22 +13,15 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// DefaultInterval is the refresh cadence. The SUM scans ~24h of
-// prices_1m per asset — the heaviest of the two 24h rollups — so a
-// couple of minutes keeps the aggregator load modest while a
-// trailing-24h volume figure a minute or two stale is immaterial to the
-// /v1/assets listing it feeds.
+// DefaultInterval is the refresh cadence; the SUM scans ~24h of prices_1m per asset, so it stays at minutes.
 const DefaultInterval = 2 * time.Minute
 
-// Refresher recomputes and atomically replaces the asset_volume_24h
-// rollup. Production wiring is *timescale.Store.RefreshAssetVolume24h;
-// tests use a fake.
+// Refresher recomputes and atomically replaces the asset_volume_24h rollup.
 type Refresher interface {
 	RefreshAssetVolume24h(ctx context.Context) error
 }
 
-// Options tunes a Worker. Logger rides here (not positional) per the
-// repo's Go idioms.
+// Options tunes a Worker.
 type Options struct {
 	// Interval is the refresh cadence. <= 0 falls back to DefaultInterval.
 	Interval time.Duration
@@ -54,8 +35,7 @@ type Worker struct {
 	logger    *slog.Logger
 }
 
-// New constructs the worker. Returns nil when the refresher is missing
-// so callers can gate with a plain nil check (mirrors usage.NewRollup).
+// New constructs the worker, or returns nil when the refresher is missing.
 func New(refresher Refresher, opts Options) *Worker {
 	if refresher == nil {
 		return nil
@@ -71,10 +51,7 @@ func New(refresher Refresher, opts Options) *Worker {
 	return &Worker{refresher: refresher, interval: interval, logger: logger}
 }
 
-// Run refreshes once immediately (so a fresh boot doesn't render
-// null-volume for a full interval), then on every tick until ctx is
-// cancelled. Refresh failures log + count in the metric; the worker
-// never exits on a transient Postgres error.
+// Run refreshes immediately (no null volume after boot), then every tick until ctx is cancelled; errors are logged, never fatal.
 func (w *Worker) Run(ctx context.Context) error {
 	if w == nil {
 		return errors.New("assetvolrollup: nil Worker")

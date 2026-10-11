@@ -105,11 +105,8 @@ func TestDetectArbitrage_SingleVenueRoundTripRejected(t *testing.T) {
 	}
 }
 
-// A 3-asset graph that pads a genuine triangular cycle with a redundant
-// second leg on a pair it already covers (native/usdc twice) — all on
-// one venue — must still be rejected as a single-venue degenerate, the
-// same as the 2-asset round-trip. nEdges(4) > nNodes(3) here, so the
-// plain nEdges>=nNodes cycle test alone would wrongly accept it.
+// A 3-asset cycle padded with a redundant same-venue leg on a covered pair is still a single-venue
+// degenerate; nEdges(4) > nNodes(3) so the plain edges>=nodes test would wrongly accept it.
 func TestDetectArbitrage_DoubledLegSingleVenueRejected(t *testing.T) {
 	trades := []canonical.Trade{
 		trade(t, "soroswap", 1, "GUSER", "native", usdc),
@@ -122,10 +119,8 @@ func TestDetectArbitrage_DoubledLegSingleVenueRejected(t *testing.T) {
 	}
 }
 
-// A path payment USDC → XLM → AQUA whose first hop fills two resting
-// offers is three trades (one per claim atom) over three assets, but
-// only two hops — no cycle. Parallel claim atoms must not count as
-// extra cycle edges, on one venue or with the second hop elsewhere.
+// A path payment whose first hop fills two offers is three trades over three assets but two hops,
+// so no cycle: parallel claim atoms must not count as extra cycle edges.
 func TestDetectArbitrage_MultiOfferHopPathNotCycle(t *testing.T) {
 	cases := map[string][]canonical.Trade{
 		"all sdex": {
@@ -146,8 +141,7 @@ func TestDetectArbitrage_MultiOfferHopPathNotCycle(t *testing.T) {
 	}
 }
 
-// Cross-venue 2-asset arb whose first leg fills two offers is still
-// one cycle: parallel atoms collapse, the two venues' hops remain.
+// TestDetectArbitrage_MultiOfferCrossVenueCycle: parallel atoms collapse, so a cross-venue 2-asset arb is one cycle.
 func TestDetectArbitrage_MultiOfferCrossVenueCycle(t *testing.T) {
 	trades := []canonical.Trade{
 		trade(t, "sdex", 1<<8|0, "GARB", "native", usdc),
@@ -203,8 +197,7 @@ func TestDetectArbitrage_NotionalSum(t *testing.T) {
 	}
 }
 
-// A partly priced cycle's notional is a lower bound, and the stored
-// evidence says so.
+// TestDetectArbitrage_PartialNotionalIsLowerBound: a partly priced notional is a lower bound and the evidence says so.
 func TestDetectArbitrage_PartialNotionalIsLowerBound(t *testing.T) {
 	trades := []canonical.Trade{
 		trade(t, "soroswap", 1, "GARB", "native", usdc),
@@ -229,8 +222,7 @@ const (
 	sol = "SOL-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 )
 
-// A single-venue component the venue guard rejects on its own must not
-// pass because a disjoint leg on another venue shares its (tx, taker).
+// TestDetectArbitrage_DisjointLegCannotLendVenue: a disjoint leg on another venue cannot rescue a single-venue component.
 func TestDetectArbitrage_DisjointLegCannotLendVenue(t *testing.T) {
 	trades := []canonical.Trade{
 		trade(t, "soroswap", 1, "GUSER", "native", usdc),
@@ -258,8 +250,7 @@ func TestDetectArbitrage_DisjointSameVenueRoundTrips(t *testing.T) {
 	}
 }
 
-// A qualifying cycle beside an unrelated swap in the same tx is still
-// detected, and the candidate carries only the cycle's legs and notional.
+// TestDetectArbitrage_UnrelatedLegExcluded: evidence carries only the cycle's legs, not unrelated swaps in the tx.
 func TestDetectArbitrage_UnrelatedLegExcluded(t *testing.T) {
 	trades := []canonical.Trade{
 		trade(t, "soroswap", 1, "GARB", "native", usdc),
@@ -276,10 +267,8 @@ func TestDetectArbitrage_UnrelatedLegExcluded(t *testing.T) {
 	}
 }
 
-// The evidence legs tell readers to verify a candidate on chain, so the
-// op_index they publish must be the transaction's operation index, not
-// the packed trades.op_index key (opIndex<<16 | eventIndex for the
-// Soroban AMMs, opIndex*1024 + claim for SDEX).
+// Evidence legs publish the transaction's operation index, not the packed trades.op_index
+// (opIndex<<16 | eventIndex for Soroban AMMs, opIndex*1024 + claim for SDEX).
 func TestDetectArbitrage_LegsPublishOnChainOpIndex(t *testing.T) {
 	a := trade(t, "soroswap", canonical.FanoutOpIndex(2, 1), "GARB", "native", usdc)
 	b := trade(t, "sdex", 3*sdexOpIndexStride+4, "GARB", usdc, "native")
@@ -313,8 +302,7 @@ func TestDetectArbitrage_LegsPublishOnChainOpIndex(t *testing.T) {
 	}
 }
 
-// A source whose op_index encoding is unknown publishes no decoded
-// op_index rather than a number that may not be an operation index.
+// TestOpRefOf_UnknownSourceOmitsDecodedIndex: an unknown op_index encoding publishes no decoded index.
 func TestOpRefOf_UnknownSourceOmitsDecodedIndex(t *testing.T) {
 	ref := opRefOf(canonical.Trade{Source: "somedex", OpIndex: 70_000})
 	b, err := json.Marshal(ref)
@@ -326,8 +314,7 @@ func TestOpRefOf_UnknownSourceOmitsDecodedIndex(t *testing.T) {
 	}
 }
 
-// sdexOpIndexStride must stay equal to the sdex decoder's stride; it is
-// unexported there, so pin it at the source.
+// TestSDEXOpIndexStrideMatchesSource pins sdexOpIndexStride to the (unexported) sdex decoder stride.
 func TestSDEXOpIndexStrideMatchesSource(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join("..", "..", "sources", "sdex", "decode.go"))
 	if err != nil {

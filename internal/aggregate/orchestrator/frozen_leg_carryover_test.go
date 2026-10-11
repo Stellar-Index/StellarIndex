@@ -7,13 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestFrozenLeg_DoesNotOutliveTheHold bounds the carry-over. The
-// in-memory ladder of a window that stops being evaluated is never
-// advanced and never released, so reading it without a bound would refuse
-// every chain through that pair for as long as its window stayed empty —
-// long after the marker and the last-known-good value it protects have
-// both expired out of Redis. The guard covers exactly the span the LKG
-// can still be read back: the hold plus the marker grace.
+// TestFrozenLeg_DoesNotOutliveTheHold bounds the carry-over: an unevaluated window's in-memory ladder is never advanced or released, so an unbounded read would refuse chains through that pair long after the marker and LKG expired. The bound is hold plus marker grace.
 func TestFrozenLeg_DoesNotOutliveTheHold(t *testing.T) {
 	leg := xlmUsdtPair(t)
 	window := 5 * time.Minute

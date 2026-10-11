@@ -14,34 +14,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// OpenFreezeLister enumerates the (asset, quote) pairs that the
-// durable mirror still records as firing. Implemented by
-// `internal/storage/timescale.FreezeEventSink.ListOpen`.
+// OpenFreezeLister enumerates the (asset, quote) pairs the durable mirror records as firing (`timescale.FreezeEventSink.ListOpen`).
 type OpenFreezeLister interface {
 	ListOpen(ctx context.Context) ([]OpenFreezePair, error)
 }
 
-// OpenFreezePair mirrors `timescale.OpenFreeze` to keep the freeze
-// package free of a hard dependency on the storage adapter.
+// OpenFreezePair mirrors `timescale.OpenFreeze` so freeze does not depend on the storage adapter.
 type OpenFreezePair struct {
 	Asset canonical.Asset
 	Quote canonical.Asset
 }
 
-// Recoverer closes a firing freeze row, stamping recovered_at=now
-// on the open `freeze_events` row for (asset, quote). Implemented
-// by `internal/storage/timescale.FreezeEventSink.MarkRecovered`.
+// Recoverer closes a firing freeze row by stamping recovered_at on the open `freeze_events` row (`timescale.FreezeEventSink.MarkRecovered`).
 type Recoverer interface {
 	MarkRecovered(ctx context.Context, asset, quote canonical.Asset, releasedBy string) error
 }
 
-// ReleasedBySystemRecovery is the freeze_events.released_by value the
-// recovery worker stamps when it closes a row after an auto or lapsed release.
+// ReleasedBySystemRecovery is the freeze_events.released_by value the recovery worker stamps on auto or lapsed releases.
 const ReleasedBySystemRecovery = "system:recovery"
 
-// Recovery closes durable `freeze_events` rows whose Redis marker has gone, so /anomalies shows
-// finished freezes. It polls each minute rather than subscribing to keyspace expiry, which is off
-// by default and CPU-costly; the API freshness SLO is minute-scale anyway.
+// Recovery closes durable `freeze_events` rows whose Redis marker has gone. It polls each minute: keyspace expiry notifications are off by default and CPU-costly.
 type Recovery struct {
 	cache    RedisCache
 	lister   OpenFreezeLister
@@ -78,9 +70,7 @@ type RecoveryOptions struct {
 	Clock func() time.Time
 }
 
-// NewRecovery constructs a recovery worker. cache + lister + closer
-// are all required — passing nil panics, since a recovery worker
-// without one of its three legs is a no-op pretending to be useful.
+// NewRecovery constructs a recovery worker; cache, lister and closer are required and nil panics.
 func NewRecovery(
 	cache RedisCache,
 	lister OpenFreezeLister,
@@ -120,9 +110,7 @@ func NewRecovery(
 	}
 }
 
-// Run drives the recovery loop until ctx is cancelled. Returns
-// the context error on shutdown — caller's WaitGroup-style worker
-// pattern can `_ = r.Run(ctx)` and move on.
+// Run drives the recovery loop until ctx is cancelled and returns the context error.
 func (r *Recovery) Run(ctx context.Context) error {
 	ticker := time.NewTicker(r.interval)
 	defer ticker.Stop()
@@ -167,11 +155,8 @@ func (r *Recovery) tick(ctx context.Context) {
 		_, err := r.cache.Get(ctx, key.String()).Bytes()
 		switch {
 		case errors.Is(err, redis.Nil):
-			// Marker gone. Since migration 0119 that is AMBIGUOUS: either
-			// the freeze ended (close the row — this worker's whole job) or
-			// Redis lost the marker (leave it; the orchestrator's next tick
-			// rehydrates the ladder from this very row). Ask the durable
-			// ladder which one it is before destroying the evidence.
+			// Marker gone is AMBIGUOUS: the freeze ended (close the row) or Redis lost it (leave it, the orchestrator
+			// rehydrates from this row). Ask the durable ladder before destroying the evidence.
 			if r.ladderStillHolds(ctx, p) {
 				heldByLadder++
 				continue

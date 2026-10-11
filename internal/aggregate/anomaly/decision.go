@@ -1,8 +1,6 @@
 package anomaly
 
-// Action is the recommended publishing behaviour for a bucket.
-// Stable string values appear in metric labels; renaming is a wire
-// break.
+// Action is the recommended publishing behaviour; its string values are metric labels, so renaming is a wire break.
 type Action string
 
 const (
@@ -40,16 +38,13 @@ type Decision struct {
 	Reason string
 }
 
-// IsFrozen reports whether the decision says to freeze. Convenience
-// for callers that only need the boolean.
+// IsFrozen reports whether the decision says to freeze.
 func (d Decision) IsFrozen() bool { return d.Action == ActionFreeze }
 
-// IsWarn reports whether the decision says to warn (publish but
-// flag).
+// IsWarn reports whether the decision says to warn (publish but flag).
 func (d Decision) IsWarn() bool { return d.Action == ActionWarn }
 
-// Publishes reports whether the bucket should be published. The switch fails
-// closed so a new Action variant refuses to publish rather than silently publishing.
+// Publishes reports whether the bucket may be published; an unknown Action fails closed.
 func (d Decision) Publishes() bool {
 	switch d.Action {
 	case ActionAllow, ActionWarn:

@@ -7,26 +7,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ErrNoTrades is returned from [VWAP] when the input slice is empty
-// or every trade has zero base volume. Callers treat this as "price
-// unavailable for this window" — not a programming error.
+// ErrNoTrades is returned from [VWAP] when the input is empty or every trade has zero base volume; callers treat it as price unavailable.
 var ErrNoTrades = errors.New("aggregate: no trades in window")
 
-// VWAP returns the volume-weighted average price of a window of
-// trades as an exact-precision big.Rat (quote-per-base). It takes a
-// [ScaledWindow] because a raw sum over trades at different source scales
-// weights each by its smallest-unit magnitude, not its volume.
-//
-// Definition: VWAP = Σ(QuoteAmount_i) / Σ(BaseAmount_i). Trades
-// whose base OR quote is non-positive are skipped — they can't
-// contribute to a meaningful weighted price. canonical.Trade.Validate
-// admits one zero leg (a stored SDEX rounding fill), so this skip is
-// load-bearing, not merely defensive.
-//
-// Returns [ErrNoTrades] when the sum of base volumes is zero (either
-// an empty input or every trade skipped). The returned *big.Rat is
-// always strictly positive: only priceable trades (base > 0 AND
-// quote > 0) contribute.
+// VWAP returns Σquote/Σbase over a [ScaledWindow] as an exact big.Rat, skipping trades with a non-positive leg (load-bearing: Validate admits one zero leg); [ErrNoTrades] if nothing is priceable, so the result is strictly positive.
 func VWAP(w ScaledWindow) (*big.Rat, error) {
 	trades := w.trades
 	if len(trades) == 0 {
@@ -57,8 +41,7 @@ func priceable(t *canonical.Trade) bool {
 	return t.BaseAmount.BigInt().Sign() > 0 && t.QuoteAmount.BigInt().Sign() > 0
 }
 
-// TotalBaseVolume returns Σ(BaseAmount_i) over the trades [VWAP] prices
-// from, so it is the exact denominator of the price served beside it.
+// TotalBaseVolume returns Σ(BaseAmount) over the trades [VWAP] prices from, the exact denominator of the served price.
 func TotalBaseVolume(trades []canonical.Trade) canonical.Amount {
 	sum := new(big.Int)
 	for i := range trades {
@@ -69,8 +52,7 @@ func TotalBaseVolume(trades []canonical.Trade) canonical.Amount {
 	return canonical.NewAmount(sum)
 }
 
-// TotalQuoteVolume returns Σ(QuoteAmount_i) over the trades [VWAP] prices
-// from, so it is the exact numerator of the price served beside it.
+// TotalQuoteVolume returns Σ(QuoteAmount) over the trades [VWAP] prices from, the exact numerator of the served price.
 func TotalQuoteVolume(trades []canonical.Trade) canonical.Amount {
 	sum := new(big.Int)
 	for i := range trades {
@@ -81,11 +63,7 @@ func TotalQuoteVolume(trades []canonical.Trade) canonical.Amount {
 	return canonical.NewAmount(sum)
 }
 
-// SourceContribution captures one source's share of a windowed VWAP
-// — the building block the explorer source-contribution donut renders.
-//
-// Weight is the exact quote-volume share in [0, 1]; the weights of one
-// trade slice sum to exactly 1.
+// SourceContribution is one source's exact quote-volume share (Weight in [0, 1], summing to exactly 1 per slice) of a windowed VWAP.
 type SourceContribution struct {
 	Source      string
 	Weight      *big.Rat
@@ -94,14 +72,7 @@ type SourceContribution struct {
 	TradeCount  int
 }
 
-// SourceContributions returns one [SourceContribution] per distinct
-// trade.Source in `trades`. Each entry's Weight is its
-// quote-volume share (i.e. how much that source contributed to the
-// VWAP's numerator).
-//
-// Skips the same edge cases as [VWAP] — trades with non-positive
-// base or quote volumes don't contribute. Returns nil for an empty
-// or all-skipped input.
+// SourceContributions returns one [SourceContribution] per distinct Source, skipping the same trades as [VWAP]; nil for empty or all-skipped input.
 func SourceContributions(trades []canonical.Trade) []SourceContribution {
 	if len(trades) == 0 {
 		return nil
