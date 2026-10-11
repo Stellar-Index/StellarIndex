@@ -136,12 +136,9 @@ func TestTxDetail_FailedSubReadDropsCacheBand(t *testing.T) {
 	}
 }
 
-// TestTxDetail_FailedSubReadSurfacesCoverageNote is the regression guard: a
-// FAILED per-op-result-code read and a FAILED contract-event read must each
-// surface a non-empty coverage_note distinct from a transaction that genuinely
-// had none. Both `events` and each op's `result_code` are omitempty, so without a
-// note a failed read serialises byte-identically to a real empty — this test
-// pins that they differ.
+// TestTxDetail_FailedSubReadSurfacesCoverageNote pins that a FAILED per-op-result-code read and a
+// FAILED contract-event read each surface a coverage_note. `events` and `result_code` are
+// omitempty, so without the note a failed read serialises identically to a real empty.
 func TestTxDetail_FailedSubReadSurfacesCoverageNote(t *testing.T) {
 	readErr := errors.New("clickhouse read failed")
 
@@ -294,13 +291,10 @@ func TestTxDetail_FeeBumpByInnerHash(t *testing.T) {
 // TestTxDetail_SubReadDeadlineIs503NotAPartial202OK pins the boundary
 // between the two things a failed sub-read can mean on /v1/tx/{hash}.
 //
-// A plain read failure is the non-fatal class: serve the transaction
-// without per-op result codes or contract events, and say so in
-// coverage_note. A blown DEADLINE is not that class. The budget
-// belongs to the whole request, so every remaining sub-read is already
-// doomed, and the "partial" 200 assembled out of nothing but failures
-// tells the caller the transaction emitted no events — a wrong answer
-// served with full confidence, where the truthful answer is "retry".
+// A plain read failure is non-fatal: serve the transaction without result codes or events and say
+// so in coverage_note. A blown DEADLINE is not: the budget is request-wide, so the remaining
+// sub-reads are doomed and a "partial" 200 would wrongly claim no events; the truthful answer is
+// "retry".
 //
 // The two fatal reads above these already take that branch; this pins
 // that the non-fatal pair now agrees with them.

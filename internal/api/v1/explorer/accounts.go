@@ -33,11 +33,10 @@ type AccountOperationsView struct {
 	Operations []OpView `json:"operations"`
 	NextCursor string   `json:"next_cursor,omitempty"`
 	Scope      string   `json:"scope"`
-	// CoverageNote is non-empty when the parent-transaction outcome read failed:
-	// operations without transaction_successful are then of UNKNOWN outcome, not
-	// applied. Failed transactions ARE listed here (an on-chain, fee-charged
-	// record), so this marker is what keeps a FAILED op from masquerading as a
-	// real interaction in public account history (opsOutcomeCoverageNote).
+	// CoverageNote is non-empty when the parent-transaction outcome read failed: operations without
+	// transaction_successful are then of UNKNOWN outcome, not applied. Failed transactions are
+	// listed (they are fee-charged records), so this keeps a FAILED op from masquerading as a real
+	// interaction (opsOutcomeCoverageNote).
 	CoverageNote string `json:"coverage_note,omitempty"`
 	// AsOfLedger: see AccountTransactionsView.AsOfLedger.
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
@@ -48,13 +47,11 @@ type AccountOperationsView struct {
 // capture + backfill.
 const accountScopeAll = "all"
 
-// parseAccountStrkey validates the {g_strkey} path segment, accepting either
-// a G-strkey or an M-strkey (muxed). A muxed address is resolved to its
-// underlying G before the lake read: ledger state and account_movements'
-// `address`/`counterparty` columns are keyed on G-strkey equality (see
-// baseAccountAddress in internal/sources/classicmovements/decode.go), so a
-// query for the M-form must resolve or every muxed-attributed row is
-// unreachable. ok=false (after a problem+json) on an invalid strkey.
+// parseAccountStrkey validates the {g_strkey} path segment, accepting a G-strkey or a muxed
+// M-strkey. A muxed address is resolved to its underlying G before the lake read, because ledger
+// state and account_movements' `address`/`counterparty` are keyed on G-strkey equality (see
+// baseAccountAddress in internal/sources/classicmovements/decode.go); otherwise muxed-attributed
+// rows are unreachable. ok=false (after a problem+json) on an invalid strkey.
 func (h *Handler) parseAccountStrkey(w http.ResponseWriter, r *http.Request) (string, bool) {
 	g := r.PathValue("g_strkey")
 	if canonical.IsMuxedAccount(g) {

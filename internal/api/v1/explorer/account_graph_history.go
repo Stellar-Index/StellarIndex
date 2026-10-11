@@ -12,18 +12,12 @@ import (
 )
 
 // AccountGraphHistoryView is the wire response for GET
-// /v1/accounts/{g_strkey}/graph/history — one account's creation and
-// sponsorship activity over time, the time axis of the
-// neighbourhood /v1/accounts/{g_strkey}/graph serves as a snapshot.
+// /v1/accounts/{g_strkey}/graph/history: creation and sponsorship activity over time, the time
+// axis of the snapshot the graph endpoint serves. Everything is history: a sponsorship figure
+// counts arrangements started, never those in force.
 //
-// EVERYTHING HERE IS HISTORY, with the same reading the graph endpoint
-// carries: a creation is immutable, a sponsorship figure counts
-// arrangements STARTED and is never a count of arrangements in force.
-//
-// The two series are kept apart rather than summed. They are different
-// kinds of fact over different spans — creation reaches genesis,
-// sponsorship only reaches protocol 14's activation, where the feature
-// began to exist — and an account can legitimately be busy in one and
+// The two series are kept apart, not summed: they cover different spans (creation reaches
+// genesis, sponsorship only protocol 14's activation) and an account can be busy in one and
 // absent from the other.
 type AccountGraphHistoryView struct {
 	Account string `json:"account"`
@@ -42,11 +36,9 @@ type AccountGraphHistoryView struct {
 // AccountGraphHistorySeriesV is one relation's series and the totals that
 // qualify it.
 type AccountGraphHistorySeriesV struct {
-	// Points holds ONLY the months that carry something. A quiet month
-	// emits no point and no zero, and nothing is carried forward across
-	// one. Read an absent month against `coverage`: inside the covered
-	// span it means nothing happened, outside it means nothing was
-	// observed.
+	// Points holds only the months that carry something; a quiet month emits no point and
+	// nothing is carried forward. Read an absent month against `coverage`: inside the covered span
+	// nothing happened, outside it nothing was observed.
 	Points []AccountGraphHistoryPointV `json:"points"`
 	Totals AccountGraphHistoryTotalsV  `json:"totals"`
 	// LowerBound is true when the points cannot account for every event
@@ -54,11 +46,9 @@ type AccountGraphHistorySeriesV struct {
 	// is then a lower bound on that month, and `new_accounts` is exact
 	// either way.
 	LowerBound bool `json:"lower_bound"`
-	// Unplaced names what the series could not place and why, tallied by
-	// reason — the same register /v1/rwa/assets publishes as `excluded`,
-	// for the same purpose: a figure that silently dropped rows is a
-	// smaller claim wearing the full one's name. Absent when nothing was
-	// refused.
+	// Unplaced names what the series could not place, tallied by reason (like `excluded` on
+	// /v1/rwa/assets), so a figure that dropped rows is not passed off as the full one. Absent
+	// when nothing was refused.
 	Unplaced []AccountGraphHistoryUnplacedV `json:"unplaced,omitempty"`
 	// Coverage is the span the rollup cycle behind this arm actually
 	// aggregated (ADR-0031, data-derived — never a constant, never the
@@ -103,13 +93,10 @@ type AccountGraphHistoryUnplacedV struct {
 	Detail string `json:"detail"`
 }
 
-// unplacedRepeatEvents is the only reason this surface can refuse a
-// month, and it is a property of the stored shape rather than of any
-// account: the graph is one row per distinct pair carrying first_at and
-// last_at, so an edge with N events places two of them and the middle
-// N-2 have no recorded time. The per-event timestamps live only in the
-// rollups' working tables, which are truncated and refilled every cycle
-// and therefore hold a partial archive for the length of one.
+// unplacedRepeatEvents is the only reason this surface refuses a month, and it comes from the
+// stored shape: the graph holds one row per distinct pair with first_at and last_at, so an edge
+// with N events places two and the middle N-2 have no recorded time. Per-event timestamps live
+// only in the rollups' working tables, which are truncated and refilled every cycle.
 const unplacedRepeatEvents = "repeat-events-not-timestamped"
 
 const unplacedRepeatEventsDetail = "an edge stores first_at and last_at only, so events between " +
@@ -130,12 +117,10 @@ const accountGraphHistoryNote = "History, not live state: creations are immutabl
 
 // AccountGraphHistory serves GET /v1/accounts/{g_strkey}/graph/history.
 //
-// Bounded by construction: both arms are primary-key range reads over the
-// account's own edges, and the response is one point per month the
-// account was active, so neither the query nor the payload grows with the
-// tables. There is deliberately no ?granularity= and no window parameter
-// — see AccountGraphHistoryView.Granularity and the reader's file
-// comment.
+// Bounded by construction: both arms are primary-key range reads over the account's own edges and
+// the response is one point per active month, so neither query nor payload grows with the tables.
+// There is deliberately no ?granularity= or window parameter (see
+// AccountGraphHistoryView.Granularity).
 func (h *Handler) AccountGraphHistory(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)

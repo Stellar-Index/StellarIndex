@@ -60,15 +60,12 @@ type AccountCohortHoldingV struct {
 }
 
 // AccountCohortValuationV totals the priced holdings at the live price.
-// Pricing is bounded: only the PriceCap largest holdings by balance (and
-// the flow assets) are looked up, so a cohort holding hundreds of assets
-// does not spend the whole request budget on price reads.
-// UnpricedOverCap is the subset of UnpricedHoldings that was never looked
-// up because it fell outside that cap; the rest had no live price.
-// Degraded is true when at least one in-cap lookup was abandoned because
-// the request's context expired mid-walk (the LabelsContractsBeforePricing
-// case), not because the asset genuinely has no price — the priced/
-// unpriced counts above are then a partial read, not a complete one.
+// Pricing is bounded: only the PriceCap largest holdings by balance (and the flow assets) are
+// looked up, so a cohort with hundreds of assets does not spend the request budget on price reads.
+// UnpricedOverCap is the subset of UnpricedHoldings never looked up because it fell outside the
+// cap; the rest had no live price. Degraded is true when an in-cap lookup was abandoned because
+// the context expired mid-walk, not because the asset has no price, so the priced/unpriced counts
+// are then a partial read.
 type AccountCohortValuationV struct {
 	TotalUSD         *string `json:"total_usd,omitempty"`
 	PricedHoldings   int     `json:"priced_holdings"`
@@ -82,22 +79,17 @@ type AccountCohortValuationV struct {
 // AccountCohortFlowsV is the cohort's value moved in and out, by month.
 type AccountCohortFlowsV struct {
 	Granularity string `json:"granularity"`
-	// Assets are the assets broken out per month, the cohort's most
-	// moved first; a month's Movements and ActiveAccounts count EVERY
-	// asset, not only these. AssetsTruncated says the read cap
-	// (clickhouse.CohortFlowAssetsLimit) applied and assets past it were
-	// left out — not folded into an "other" bucket, since their units
-	// differ.
+	// Assets are broken out per month, most moved first; a month's Movements and ActiveAccounts
+	// count EVERY asset. AssetsTruncated says the read cap (clickhouse.CohortFlowAssetsLimit)
+	// dropped assets, which are not folded into an "other" bucket because their units differ.
 	Assets          []string                  `json:"assets"`
 	AssetsTruncated bool                      `json:"assets_truncated"`
 	Points          []AccountCohortFlowPointV `json:"points"`
 }
 
-// AccountCohortFlowPointV is one month. The point's USD figures value
-// ONE basket — the PricedAssets by_asset rows priced both today and then
-// — on each basis, summed exactly and rounded once, so switching basis
-// changes only the price, never the asset set. They are absent when the
-// basket is empty (never zero).
+// AccountCohortFlowPointV is one month. Its USD figures value ONE basket (the by_asset rows priced
+// both today and then) on each basis, summed exactly and rounded once, so switching basis changes
+// only the price, never the asset set. They are absent, never zero, when the basket is empty.
 type AccountCohortFlowPointV struct {
 	Period         string                    `json:"period"`
 	PeriodStart    string                    `json:"period_start"`
@@ -111,14 +103,11 @@ type AccountCohortFlowPointV struct {
 	ByAsset        []AccountCohortAssetFlowV `json:"by_asset"`
 }
 
-// AccountCohortAssetFlowV is one asset's month. Inflow and Outflow are
-// decimal strings in whole units when Scaled (classic assets, 7 places)
-// and the contract's own smallest unit otherwise. The USD figures are AT
-// TODAY'S PRICE — the month's quantity valued now, not what it was worth
-// then — and absent where nothing prices the asset. The *Then figures
-// value the same quantity at PriceUSDThen — that month's volume-weighted
-// USD price on this index's own markets — and are absent where no
-// USD-quoted market priced the asset that month.
+// AccountCohortAssetFlowV is one asset's month. Inflow and Outflow are decimal strings in whole
+// units when Scaled (classic assets, 7 places) and the contract's own smallest unit otherwise.
+// The USD figures are AT TODAY'S PRICE, absent where nothing prices the asset. The *Then figures
+// value the same quantity at PriceUSDThen, that month's volume-weighted USD price on this index's
+// own markets, and are absent where no USD-quoted market priced the asset that month.
 type AccountCohortAssetFlowV struct {
 	Asset          string  `json:"asset"`
 	Inflow         string  `json:"inflow"`
@@ -131,12 +120,9 @@ type AccountCohortAssetFlowV struct {
 	PriceUSDThen   *string `json:"price_usd_then,omitempty"`
 }
 
-// AccountCohortContractV is one C… contract the cohort moved value
-// through. Protocol is set when the protocol roster claims the contract;
-// Label when it does not but the lake can name it — a Stellar Asset
-// Contract (the classic asset's code) or a SEP-41 token (its symbol) —
-// so a cohort that moved value through a token contract reads as
-// "token USDC" rather than an unlabelled address.
+// AccountCohortContractV is one C... contract the cohort moved value through. Protocol is set when
+// the protocol roster claims it; Label when the lake can name it instead (a SAC's classic code or
+// a SEP-41 symbol), so a token reads as "token USDC" rather than a bare address.
 type AccountCohortContractV struct {
 	ContractID     string `json:"contract_id"`
 	Protocol       string `json:"protocol,omitempty"`
@@ -185,20 +171,12 @@ const accountCohortNote = "Every figure is the cohort's own ledger footprint as 
 
 const accountCohortValuationBasis = "live_vwap_current"
 
-// cohortPricedHoldingsCap bounds how many holdings one request prices.
-// Every price is a live read (LookupUSDPrice → the closed-VWAP path plus
-// its substance gate and stablecoin-proxy fan-out, 40–350 ms each on
-// production), and a large cohort carries up to
-// clickhouse.CohortHoldingsLimit (400) holdings: pricing them all serially
-// spent the whole explorerReadTimeout on prices alone, so the contracts
-// table was labelled on a dead context and every such request pinned at
-// the budget. The cap keeps the price reads to the largest holdings by
-// balance, a proxy for value (not the value itself — ranking by actual
-// USD value would mean pricing every holding first, which is exactly
-// what the cap exists to avoid); the response says how many were left
-// unpriced by it (AccountCohortValuationV.UnpricedOverCap).
-// Flow assets (at most clickhouse.CohortFlowAssetsLimit, 12) are priced on
-// top of the cap.
+// cohortPricedHoldingsCap bounds how many holdings one request prices. Each price is a live read
+// (40-350 ms) and a cohort carries up to clickhouse.CohortHoldingsLimit (400) holdings, so pricing
+// them all serially exhausts explorerReadTimeout. The cap takes the largest holdings by balance, a
+// proxy for value (ranking by USD value would need pricing everything first); the response
+// reports the rest as AccountCohortValuationV.UnpricedOverCap. Flow assets (at most
+// clickhouse.CohortFlowAssetsLimit) are priced on top of the cap.
 const cohortPricedHoldingsCap = 50
 
 // AccountGraphCohort serves GET /v1/accounts/{g_strkey}/graph/cohort?relation=…
@@ -270,11 +248,8 @@ func (h *Handler) accountCohortView(ctx context.Context, c clickhouse.AccountCoh
 		Accounts: c.CohortAccounts, LiveAccounts: c.LiveAccounts,
 		Active30d: c.Activity.Active30d, Active90d: c.Activity.Active90d, Active365d: c.Activity.Active365d,
 	}
-	// Labels first, prices last: the labels are cheap cached lookups and
-	// the lake's token-name reads; the prices are the expensive live
-	// reads. Pricing ahead of labelling let a large cohort spend the whole
-	// request budget on prices and then label its contracts on a dead
-	// context.
+	// Labels first, prices last: labels are cheap cached lookups, prices are the expensive live
+	// reads that could otherwise exhaust the budget and leave contracts labelled on a dead context.
 	out.Contracts = h.cohortContractsView(ctx, c.Contracts)
 	out.Positions = h.cohortPositionsView(ctx, c.Positions)
 	eligible := cohortPriceable(c.Holdings, c.Flows)
@@ -371,12 +346,9 @@ func cohortHoldingsView(holdings []clickhouse.AccountCohortHolding, price cohort
 	return out, val
 }
 
-// cohortFlowsView groups the reader's rows — ascending by (month, asset),
-// the all-assets row keyed CohortAllAssets — into one point per month.
-// Assets is then re-ordered by total movements across every month, most
-// moved first (ties broken by asset id), matching the reader's own
-// ranking (sum(movements) DESC, asset) rather than the rows' alphabetic
-// per-month order.
+// cohortFlowsView groups the reader's rows (ascending by month, asset; the all-assets row keyed
+// CohortAllAssets) into one point per month. Assets is re-ordered by total movements across all
+// months, ties by asset id, matching the reader's own ranking rather than per-month alphabetic order.
 func cohortFlowsView(flows []clickhouse.AccountCohortFlow, price cohortPriceFn) AccountCohortFlowsV {
 	out := AccountCohortFlowsV{Granularity: "1M", Assets: []string{}, Points: []AccountCohortFlowPointV{}}
 	shown := map[string]struct{}{}
@@ -461,11 +433,9 @@ func (s *cohortMonthSum) apply(p *AccountCohortFlowPointV) {
 	p.InflowUSD, p.OutflowUSD, p.InflowUSDThen, p.OutflowUSDThen = &ti, &to, &hi, &ho
 }
 
-// cohortAssetFlowView renders one asset's month: whole units for classic
-// keys, the contract's own unit otherwise, USD at today's price where
-// the asset is priced, and USD at the month's own price where the reader
-// joined one. The exact USD legs are returned beside the view so the
-// month point can sum its basket before rounding.
+// cohortAssetFlowView renders one asset's month: whole units for classic keys, the contract's own
+// unit otherwise, USD at today's price and at the month's own price where available. The exact USD
+// legs are returned beside the view so the month point can sum its basket before rounding.
 func cohortAssetFlowView(f clickhouse.AccountCohortFlow, price cohortPriceFn) (AccountCohortAssetFlowV, cohortAssetUSD) {
 	var usd cohortAssetUSD
 	scaled := cohortAssetKind(f.Asset) != "contract"
@@ -549,19 +519,15 @@ func (h *Handler) cohortPositionsView(ctx context.Context, positions []clickhous
 	return out
 }
 
-// cohortPricer prices a canonical asset id at the live USD rate, once per
-// asset per request, and only for the assets in eligible (see
-// cohortPriceable) — everything else is unpriced without a read. The
-// price string is parsed once into an exact big.Rat; a price that does
-// not parse or is not positive is a miss, never a zero.
+// cohortPricer prices a canonical asset id at the live USD rate, once per asset per request, and
+// only for assets in eligible (see cohortPriceable); everything else is unpriced without a read.
+// The price is parsed once into an exact big.Rat; an unparseable or non-positive price is a miss,
+// never a zero.
 //
-// The returned *bool reports true once the walk has abandoned an in-cap
-// lookup because ctx expired mid-request: LookupUSDPrice has no way to
-// tell a cancelled read apart from a genuine no-price (both are (_,
-// false)), so without this the priced/unpriced counts silently read as a
-// complete answer when the walk was actually cut short by the budget.
-// Read it only after every price call for the request has been
-// made — it is not safe to read from another goroutine mid-walk.
+// The returned *bool is true once the walk abandoned an in-cap lookup because ctx expired.
+// LookupUSDPrice cannot tell a cancelled read from a genuine no-price (both are (_, false)), so
+// without it the counts would read as complete when the budget cut the walk short. Read it only
+// after every price call has been made; it is not safe from another goroutine mid-walk.
 func (h *Handler) cohortPricer(ctx context.Context, eligible map[string]struct{}) (cohortPriceFn, *bool) {
 	cache := map[string]cohortPrice{}
 	miss := map[string]struct{}{}
@@ -591,12 +557,9 @@ func (h *Handler) cohortPricer(ctx context.Context, eligible map[string]struct{}
 	return fn, &degraded
 }
 
-// lookupCohortPrice does the ctx-aware USD lookup and parse for asset,
-// split out of cohortPricer's closure so a canceled ctx, a bad canonical
-// id, a failed lookup, and a bad/non-positive rate are one flat set of
-// early returns instead of nested inside it. Sets *degraded when the
-// miss was caused by ctx expiry rather than a genuine no-price, per
-// cohortPricer's doc comment.
+// lookupCohortPrice does the ctx-aware USD lookup and parse for asset, split out of cohortPricer's
+// closure to keep its early returns flat. It sets *degraded when the miss was caused by ctx
+// expiry rather than a genuine no-price, per cohortPricer.
 func (h *Handler) lookupCohortPrice(ctx context.Context, asset string, degraded *bool) (cohortPrice, bool) {
 	if ctx.Err() != nil {
 		*degraded = true

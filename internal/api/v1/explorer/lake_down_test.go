@@ -411,26 +411,19 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 				t.Fatalf("%s: reader received a context with NO deadline — the read is unbounded "+
 					"(C3-1 pool-exhaustion DoS regression)", tc.name)
 			}
-			// Pin the budget to the route's expected read ceiling: present,
-			// positive, never larger than the ceiling, and close to it
-			// (distinguishes the route's own budget from any looser
-			// upstream/middleware deadline). Every read is request-scoped at
-			// explorerReadTimeout except AssetHolders, whose cold-path scan
-			// runs DETACHED on its own assetHoldersRefreshTimeout budget
-			// (stale-while-revalidate) — still
-			// bounded, still cancellation-observing, just not
-			// request-scoped.
+			// Pin the budget to the route's read ceiling: present, positive, never larger, and close
+			// to it (distinguishing it from any looser middleware deadline). Reads are
+			// request-scoped at explorerReadTimeout except AssetHolders, whose cold scan runs
+			// DETACHED on assetHoldersRefreshTimeout (stale-while-revalidate): still bounded and
+			// cancellation-observing.
 			wantBudget := explorerReadTimeout
 			switch tc.name {
 			case "AssetHolders":
 				wantBudget = assetHoldersRefreshTimeout
 			case "OperationsDirectory":
-				// The never-computed first page is single-flighted
-				// through refreshOpsDirectory, which runs the fill DETACHED
-				// on its own budget (like every sibling cold-path here) so a
-				// burst of concurrent first-page requests shares the one
-				// read instead of each paying for its own — still bounded,
-				// just not request-scoped.
+				// The never-computed first page is single-flighted through refreshOpsDirectory,
+				// which fills DETACHED on its own budget so concurrent first-page requests share
+				// one read: bounded, but not request-scoped.
 				wantBudget = opsDirRefreshTimeout
 			case "ContractDetail":
 				// First page is SWR'd: the cold
@@ -444,12 +437,9 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 				// just not request-scoped.
 				wantBudget = networkThroughputRefreshTimeout
 			case "AccountPositions":
-				// SWR'd on the shared contract-detail cache:
-				// the six-fold fan-out runs DETACHED on
-				// that budget — still bounded, still
-				// cancellation-observing, just not request-scoped. The
-				// REQUEST-side bound is unchanged (the cold wait is
-				// capped by explorerReadTimeout in the handler).
+				// SWR'd on the shared contract-detail cache: the six-fold fan-out runs DETACHED on
+				// that budget (bounded, not request-scoped), while the handler still caps the cold
+				// wait at explorerReadTimeout.
 				wantBudget = contractDetailRefreshTimeout
 			}
 			if probe.budget <= 0 || probe.budget > wantBudget {
@@ -463,13 +453,9 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 	}
 }
 
-// TestExplorerReads_ReturnWhenReadExceedsBudget proves the end-to-end anti-DoS
-// property the deadline exists to deliver: a reader that would otherwise block
-// indefinitely is abandoned once the handler's own read budget elapses, so the
-// handler returns (and releases its pool connection) instead of hanging. Against
-// the un-fixed code the reader gets a deadline-less r.Context(), never observes
-// cancellation, and the handler hangs — this test then trips its budget+slack
-// ceiling and fails.
+// TestExplorerReads_ReturnWhenReadExceedsBudget proves the anti-DoS property of the read
+// deadline: a reader that would block indefinitely is abandoned once the handler's budget
+// elapses, so the handler returns and releases its pool connection instead of hanging.
 func TestExplorerReads_ReturnWhenReadExceedsBudget(t *testing.T) {
 	probe := &deadlineProbe{}
 	h := newProbeHandler(&blockingReader{capReader: &capReader{probe: probe}}, nil)

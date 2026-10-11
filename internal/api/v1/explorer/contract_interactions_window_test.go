@@ -13,13 +13,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// ixWindowGenesis and ixWindowCadence model a synthetic, deliberately
-// NON-theoretical ledger close cadence (6s, i.e. 14,400/day — distinct from
-// a hardcoded 17,280/day) so windowFloorLedger's close_time
-// boundary produces a DIFFERENT, independently-computable answer than
-// ledger-count arithmetic. ixWindowCloseTime is the
-// single source of truth both the fake reader and the test's expectation
-// are built from.
+// ixWindowGenesis and ixWindowCadence model a deliberately non-standard close cadence (6s, 14,400
+// ledgers/day, not 17,280) so windowFloorLedger's close_time boundary differs from ledger-count
+// arithmetic. ixWindowCloseTime is the single source of truth for the fake reader and the
+// test's expectation.
 var (
 	ixWindowGenesis = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	ixWindowCadence = 6 * time.Second
@@ -29,12 +26,9 @@ func ixWindowCloseTime(seq uint32) time.Time {
 	return ixWindowGenesis.Add(ixWindowCadence * time.Duration(seq))
 }
 
-// ixWindowReader embeds capReader (a full ExplorerReader) and overrides the
-// seams ContractInteractions exercises: it hands back a fixed tip and a
-// close_time for every sequence (so windowFloorLedger's binary search is
-// deterministic), and it counts every ContractInteractions compute so the
-// test can prove distinct raw ?days= values on ONE ladder rung collapse to
-// a single shared cache key rather than N cold scans.
+// ixWindowReader embeds capReader and overrides the ContractInteractions seams: a fixed tip and a
+// close_time per sequence (so windowFloorLedger's binary search is deterministic), and a count of
+// computes so the test can prove distinct raw ?days= values on one ladder rung share one cache key.
 type ixWindowReader struct {
 	*capReader
 	tipSeq    uint32
@@ -76,11 +70,9 @@ func (r *ixWindowReader) ContractInteractions(_ context.Context, _ string, _ int
 	return nil, since, nil
 }
 
-// TestContractInteractions_QuantizesWindow is the W1-explorer-perf-1 regression
-// guard. The cache key, the window floor, and the echoed window_days must all
-// be built from the LADDER-QUANTIZED window, not the raw ?days=. Against the
-// un-fixed handler (raw days) each distinct ?days= is its own cold cache key
-// and window_days echoes the raw value, so both assertions below fail.
+// TestContractInteractions_QuantizesWindow pins that the cache key, the window floor and the
+// echoed window_days are all built from the LADDER-QUANTIZED window, not the raw ?days=, so
+// distinct raw values do not each become a cold cache key.
 func TestContractInteractions_QuantizesWindow(t *testing.T) {
 	const tip = uint32(60_000_000)
 	reader := &ixWindowReader{capReader: &capReader{probe: &deadlineProbe{}}, tipSeq: tip}
@@ -158,12 +150,9 @@ func (r *failingTipReader) ContractInteractions(_ context.Context, _ string, _ i
 	return nil, since, nil
 }
 
-// TestContractInteractions_TipReadFailureRefusesWindow is the
-// regression guard. windowFloorLedger must not fold a FAILED tip read into
-// the same 0 it returns for "genuinely no ledgers captured yet": a naive
-// handler serves 200 OK with since_ledger=0 (an unbounded, genesis-wide scan)
-// on every ClickHouse tip-read error; the real handler refuses the request
-// instead of ever asking the reader to scan from ledger 0.
+// TestContractInteractions_TipReadFailureRefusesWindow: windowFloorLedger must not fold a FAILED
+// tip read into the 0 it returns for "no ledgers captured yet", which would serve a genesis-wide
+// scan (since_ledger=0) on every tip-read error. The handler refuses the request instead.
 func TestContractInteractions_TipReadFailureRefusesWindow(t *testing.T) {
 	reader := &failingTipReader{capReader: &capReader{probe: &deadlineProbe{}}}
 

@@ -12,25 +12,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// This file holds the bounded-TTL + single-flight layer in front of the two
-// UNAUTHENTICATED explorer reads whose cost is set by the size of the lake,
-// not the request: GET /v1/assets/{asset_id}/holders and the GET /v1/contracts
-// directory. A client looping either would otherwise hold every connection of
-// the shared explorer pool.
+// This file holds the bounded-TTL + single-flight layer in front of the two UNAUTHENTICATED
+// explorer reads whose cost is set by the size of the lake, not the request: GET
+// /v1/assets/{asset_id}/holders and the GET /v1/contracts directory. A client looping either
+// would otherwise hold every connection of the shared explorer pool.
 //
-//   - A short TTL cache with a bounded entry count, keyed on the query's
-//     expensive dimension.
-//   - Per-key single-flight, so a burst of misses launches ONE scan.
-//   - `limit` is deliberately NOT in the cache key: one warm entry holds the
-//     maximum page and every request size slices from it (see
-//     AccountsByWealthCached).
+// Entries are keyed on the query's expensive dimension, never on `limit`: one warm entry holds
+// the maximum page and every request size slices from it. Per-key single-flight means a burst
+// of misses launches ONE scan.
 //
-// Both scans can outlast the 8s request budget, so they run DETACHED from any
-// request context. A request serves a fresh entry, a STALE entry (200 +
-// flags.stale + the entry's real as_of) while a single-flight refresh runs, or
-// on a stone-cold key waits up to its own deadline (then 503s while the compute
-// continues, so the retry lands warm). A failed refresh keeps the previous
-// entry. PrewarmContractsDirectory keeps the directory's default rung warm.
+// Both scans can outlast the 8s request budget, so they run DETACHED from any request context.
+// A request serves a fresh entry, or a STALE one (200 + flags.stale + the entry's real as_of)
+// while a refresh runs, or on a stone-cold key waits up to its own deadline and then 503s while
+// the compute continues, so the retry lands warm. A failed refresh keeps the previous entry.
 
 // perKeyFlight collapses concurrent work for the same key. Derived from the
 // clickhouse-package helper of the same name (this package cannot import an
@@ -75,12 +69,10 @@ func (f *perKeyFlight) end(key string, fl *keyFlight, err error) {
 	close(fl.done)
 }
 
-// assetHoldersTTL bounds how stale a cached holders board may be.
-// Trustline balances move continuously, but a "top holders" board
-// tolerates a minute of staleness, and the read behind it is TWO FINAL
-// scans of the 43.6M-row current-state table. Same trade the 30s
-// AccountStateCacheTTL makes on the sibling detail read, doubled because
-// this one is twice the scans and its output changes more slowly.
+// assetHoldersTTL bounds how stale a cached holders board may be. A "top holders" board
+// tolerates a minute of staleness, and the read behind it is TWO FINAL scans of the large
+// current-state table. Double the 30s AccountStateCacheTTL since it costs twice the scans and
+// changes more slowly.
 const assetHoldersTTL = 60 * time.Second
 
 // assetHoldersCacheMax bounds resident entries. Holder boards are
@@ -183,21 +175,15 @@ var errRefreshFailed = errors.New("explorer: detached cache refresh produced no 
 // retryable 503 as a read timeout — it is a capacity condition, not a bug.
 var errRefreshSaturated = errors.New("explorer: detached refresh capacity saturated; retry shortly")
 
-// errRefreshPanicked is what a COLD-path waiter receives when the
-// detached refresh it joined panicked. Distinct from a reader error so
-// an operator can tell "the refresher died" (which also moved
-// stellarindex_worker_panics_total) from "the query failed". A STALE
-// entry is unaffected: the served value is kept and the next request
-// starts a fresh flight, because the panicking flight is ended rather
-// than left latched.
+// errRefreshPanicked is what a COLD-path waiter receives when the detached refresh it joined
+// panicked, distinct from a reader error so an operator can tell "the refresher died" from "the
+// query failed". A STALE entry is unaffected: the panicking flight is ended, not left latched, so
+// the next request starts a fresh one.
 var errRefreshPanicked = errors.New("explorer: detached refresh panicked")
 
-// refreshAssetHolders kicks ONE detached holders scan for asset (no-op when
-// a flight is already up) and returns the flight to optionally wait on.
-// Detached on purpose: bound to a request's 8s deadline the scan for a huge
-// asset never completed, so the cache never filled and every request kept
-// paying the timeout (the same failure shape as the wealth
-// ranking).
+// refreshAssetHolders kicks ONE detached holders scan for asset (no-op when a flight is up) and
+// returns the flight to optionally wait on. Detached on purpose: bound to an 8s request deadline,
+// a huge asset's scan never completes, the cache never fills and every request pays the timeout.
 func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 	fl, owner := h.assetHolders.flight.begin(asset)
 	if !owner {
@@ -239,13 +225,10 @@ func (h *Handler) refreshAssetHolders(asset string) *keyFlight {
 	return fl
 }
 
-// assetHoldersCached serves the holders board for `asset` from the cache.
-// fresh entry → served as-is; STALE entry → served (degraded=true, with its
-// real asOf) while a detached single-flight rescan runs; never-computed →
-// wait for the detached scan up to the request deadline (fast assets fill
-// well within it; a huge asset 503s THIS request but the scan keeps
-// running, so a retry lands warm). The returned slice is capped at `limit`;
-// the total holder count is limit-independent.
+// assetHoldersCached serves the holders board for `asset`: a fresh entry as-is; a STALE one
+// (degraded=true, with its real asOf) while a detached rescan runs; a never-computed one waits
+// for the detached scan up to the request deadline, so a huge asset 503s THIS request but a retry
+// lands warm. The slice is capped at `limit`; the total holder count is limit-independent.
 func (h *Handler) assetHoldersCached(ctx context.Context, asset string, limit int) (holders []clickhouse.AssetHolder, total int64, asOf snapshotVintage, degraded bool, err error) {
 	if e, ok, fresh := h.assetHolders.get(asset); ok {
 		if !fresh {
@@ -277,27 +260,18 @@ func sliceHolders(rows []clickhouse.AssetHolder, limit int) []clickhouse.AssetHo
 	return rows
 }
 
-// contractsDirTTL bounds how stale the cached contracts directory may
-// be. Deliberately much longer than the 3s opsDirTTL, for the same
-// reason opTypeStatsTTL is 5 minutes: this is an aggregate over a
-// MULTI-DAY window (30 by default), so second-level precision on it is
-// meaningless — and each recompute is a GROUP BY over that window of the
-// billions-row contract_events table.
+// contractsDirTTL bounds how stale the cached contracts directory may be. Much longer than the 3s
+// opsDirTTL (as with opTypeStatsTTL): it aggregates a MULTI-DAY window, so second-level precision
+// is meaningless, and each recompute is a GROUP BY over the billions-row contract_events table.
 const contractsDirTTL = 5 * time.Minute
 
-// contractsWindowLadder is the set of windows GET /v1/contracts actually
-// aggregates over. A caller's `?days=` is rounded UP to the next rung
-// (365 is the last), and the served window is echoed back in
-// `window_days` / `since_ledger`.
+// contractsWindowLadder is the set of windows GET /v1/contracts aggregates over. A caller's
+// `?days=` is rounded UP to the next rung and the served window is echoed in `window_days` and
+// `since_ledger`.
 //
-// Without the ladder the endpoint accepted 365 distinct window sizes,
-// each a separate multi-day GROUP BY — so a cache keyed on the raw value
-// bounds a repeat caller but not an adversary, who just walks
-// `?days=1..365` and gets 365 full-price scans. Quantising collapses
-// that to at most len(ladder) distinct queries, which the TTL cache then
-// absorbs. Rounding UP rather than down keeps the response a SUPERSET of
-// what the caller asked for: a client asking for 45 days is never shown
-// less than 45 days of activity.
+// Quantising bounds an adversary walking `?days=1..365`, who would otherwise force 365 distinct
+// multi-day GROUP BYs past a cache keyed on the raw value; it caps them at len(ladder). Rounding
+// UP keeps the response a SUPERSET of what was asked, never less than the requested days.
 var contractsWindowLadder = []int{1, 7, 30, 90, 365}
 
 // contractsWindow rounds a requested day count up to the ladder.
@@ -360,11 +334,10 @@ func (c *contractsDirCache) put(window int, e contractsDirEntry) {
 	c.entries[window] = e
 }
 
-// refreshContractsDir kicks ONE detached directory aggregation for the
-// ladder rung `window` (no-op when a flight is already up) and returns the
-// flight channel to optionally wait on. Detached for the same reason as
-// refreshAssetHolders: the multi-day GROUP BY cannot be relied on to fit a
-// request deadline, and dying with the request left the cache cold forever.
+// refreshContractsDir kicks ONE detached directory aggregation for the ladder rung `window`
+// (no-op when a flight is up) and returns the flight to optionally wait on. Detached for the same
+// reason as refreshAssetHolders: the multi-day GROUP BY cannot be relied on to fit a request
+// deadline, and dying with the request would leave the cache cold forever.
 func (h *Handler) refreshContractsDir(window int) *keyFlight {
 	key := strconv.Itoa(window)
 	fl, owner := h.contractsDir.flight.begin(key)
@@ -424,15 +397,11 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 	return fl
 }
 
-// recentContractsCached serves the contracts directory for the
-// ladder-quantised `window`: fresh entry as-is; STALE entry served
-// (degraded=true, with its real asOf) while a detached single-flight
-// re-aggregation runs; a never-computed rung waits for the detached
-// compute up to the request deadline (the prewarm loop keeps the default
-// rung permanently warm, so this is cold-start + non-default rungs only).
-// Returns the rows (capped at `limit`) plus the ledger floor the cached
-// aggregate used, so the response's `since_ledger` describes the data
-// actually served rather than a floor recomputed after the fact.
+// recentContractsCached serves the directory for the ladder-quantised `window`: a fresh entry
+// as-is; a STALE one (degraded=true, with its real asOf) while a detached re-aggregation runs; a
+// never-computed rung waits for it up to the request deadline (prewarm keeps the default rung
+// warm). It returns the ledger floor the cached aggregate used, so `since_ledger` describes the
+// data actually served, not a floor recomputed afterwards.
 func (h *Handler) recentContractsCached(ctx context.Context, window, limit int) (rows []clickhouse.ContractDirectoryRow, types map[string]bool, since uint32, asOf time.Time, degraded bool, err error) {
 	if e, ok, fresh := h.contractsDir.get(window); ok {
 		if !fresh {
@@ -455,13 +424,10 @@ func (h *Handler) recentContractsCached(ctx context.Context, window, limit int) 
 	}
 }
 
-// PrewarmContractsDirectory primes the /v1/contracts directory's DEFAULT
-// ladder rung (30d — what the explorer UI requests) so no user meets the
-// cold state. Called from the API's 5-minute prewarm loop
-// (cmd/stellarindex-api/main.go), which matches contractsDirTTL, so the
-// rung stays permanently fresh. Kicks the same detached single-flight
-// refresh the request path uses and returns immediately when it is already
-// warm; ctx only gates whether the kick happens at shutdown.
+// PrewarmContractsDirectory primes the directory's DEFAULT ladder rung (30d, what the explorer UI
+// requests) so no user meets the cold state. The API's 5-minute prewarm loop matches
+// contractsDirTTL, keeping the rung fresh. It kicks the request path's detached refresh and
+// returns at once; ctx only gates whether the kick happens at shutdown.
 func (h *Handler) PrewarmContractsDirectory(ctx context.Context) {
 	if h.Reader == nil || ctx.Err() != nil {
 		return

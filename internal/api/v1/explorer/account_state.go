@@ -15,11 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// AccountsListView is the wire response for GET /v1/accounts — accounts ranked
-// by wealth. On the priced networks that is total USD value of holdings; on the
-// lean networks that have no aggregator (testnet/futurenet), where no USD price
-// map exists, it is native XLM balance. `ranked_by` says which, so clients label
-// the numbers correctly.
+// AccountsListView is the wire response for GET /v1/accounts. Ranking is by total USD value on
+// priced networks and by native XLM balance on lean ones with no price map; `ranked_by` says
+// which so clients label the numbers correctly.
 type AccountsListView struct {
 	PricedAssets int `json:"priced_assets"`
 	// RankedBy is the wealth basis: "usd" (holdings valued in USD) or
@@ -60,11 +58,9 @@ type AccountWealthRow struct {
 	Locked bool `json:"locked,omitempty"`
 }
 
-// AccountsList serves GET /v1/accounts — the accounts directory ranked
-// by total USD wealth: native XLM plus every trustline asset we have a verified
-// USD price for. Builds the price map from the verified-currency catalogue
-// (the curated set of assets we price), then ranks over the current-state
-// projection. Coverage tracks the entry-change capture + backfill.
+// AccountsList serves GET /v1/accounts, ranked by total USD wealth: native XLM plus every
+// trustline asset with a verified USD price from the verified-currency catalogue. Coverage tracks
+// the entry-change capture and backfill.
 func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -78,13 +74,9 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	// Ranking inputs. With a USD price map we rank by total USD holdings; where
-	// there is none — the lean networks run no aggregator, so usdPriceMap comes
-	// back empty — fall back to ranking by native XLM balance rather than 503ing
-	// or serving an empty list. The native fallback is exactly the single key
-	// "native" priced at 1, so sum(balance × price) is the XLM quantity; the
-	// cache records the basis (wealthBasis) and the handler reads it back so the
-	// served numbers are labelled correctly.
+	// With no USD price map (lean networks run no aggregator) rank by native XLM balance rather
+	// than 503ing or serving an empty list. That fallback is the single key "native" priced at 1;
+	// the cache records the basis (wealthBasis) so the served numbers are labelled correctly.
 	assets, prices := h.wealthRankingInputs(ctx)
 	// Served from a background-refreshed cache; the underlying FINAL scan
 	// over 43.6M current-state rows needs 11-20s and can never fit this
@@ -105,15 +97,11 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	// background refresher is failing/behind) — the data is real, the flag +
 	// the envelope's as_of (stamped from the snapshot) say how old.
 	snapshotStale := time.Since(snap.AsOf) > clickhouse.AccountsWealthCacheTTL
-	// Locked-burn detection: the SDF burn address ranks as the richest
-	// account — $11.3B of provably unspendable XLM presented as wealth.
-	// Badge, don't hide: the balance is real, the spendability isn't.
-	// The locked-burn flag is resolved by the background refresh and cached
-	// on each row (a.Locked), NOT re-queried here — AccountsUnspendable is a
-	// FINAL scan that was the residual 6-8s of /v1/accounts latency once the
-	// ranking itself was cached.
-	// as_of_ledger is the snapshot's own vintage; the serve-time watermark
-	// read contributes only the lake-wedged `stale` signal.
+	// The SDF burn address would rank as the richest account with provably unspendable XLM, so
+	// it is badged rather than hidden. The flag is resolved by the background refresh and cached
+	// on each row (a.Locked); AccountsUnspendable is a FINAL scan too slow to run per request.
+	// as_of_ledger is the snapshot's own vintage; the serve-time watermark read contributes only
+	// the lake-wedged `stale` signal.
 	_, stale, _ := h.LakeWatermark(ctx)
 	out := AccountsListView{
 		RankedBy: snap.Basis, Accounts: make([]AccountWealthRow, len(snap.Rows)), AsOfLedger: snap.AsOfLedger,
@@ -137,22 +125,14 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	h.writeJSONAt(w, out, stale || snapshotStale, snapshotStale, snap.AsOf)
 }
 
-// usdPriceMap builds parallel (asset, price) arrays for wealth ranking: native
-// XLM plus every browseable verified-currency Stellar asset that currently has
-// a USD price. "native" is the key for the account entry's XLM balance. Prices
-// resolve through LookupUSDPrice, so stablecoins pick up the fiat-proxy
-// fallback (USDC/USDT/… → ~$1) rather than dropping out for want of a direct
-// fiat:USD market.
-// usdPriceMapTTL caches the priced-asset set used to rank account wealth.
-//
-// usdPriceMap resolves each price with a SEQUENTIAL LookupUSDPrice call,
-// ~8s on the request path.
-//
-// TTL is set ABOVE the prewarm cadence (5 min) on purpose:
-// PrewarmAccountsWealth calls usdPriceMap every 5 minutes, so a 10-minute
-// TTL means the entry is always refreshed before it expires and real
-// requests never pay the walk. 10 minutes stale is fine: this feeds a
-// ranking cached for 15 minutes.
+// usdPriceMap builds parallel (asset, price) arrays for wealth ranking: native XLM (key "native")
+// plus every browseable verified-currency asset with a USD price. Prices resolve through
+// LookupUSDPrice, so stablecoins pick up the fiat-proxy fallback (~$1) rather than dropping out
+// for want of a direct fiat:USD market.
+// usdPriceMapTTL caches that set. usdPriceMap makes SEQUENTIAL LookupUSDPrice calls (~8s), so the
+// TTL is deliberately above the 5-minute PrewarmAccountsWealth cadence: the entry is refreshed
+// before it expires and requests never pay the walk. 10 minutes stale is fine for a ranking
+// cached for 15.
 const usdPriceMapTTL = 10 * time.Minute
 
 // usdPriceMapEmptyTTL is shorter so a pricing outage clears quickly, yet
@@ -234,13 +214,10 @@ func (h *Handler) usdPriceMap(ctx context.Context) (assets, prices []string) {
 	}
 }
 
-// wealthRankingInputs returns the (asset, price) arrays to rank account wealth
-// by. It is the USD price map where one exists; where it doesn't — pricing
-// disabled, or the catalogue is empty because no aggregator runs (the lean
-// test nets) — it returns the native-XLM fallback (key "native" priced at 1)
-// so the ranking is by native XLM balance instead of coming back empty. Both
-// the request path and the prewarmer call this so the cache is populated with
-// one consistent basis (wealthBasis derives it from these inputs).
+// wealthRankingInputs returns the (asset, price) arrays to rank wealth by: the USD price map, or
+// the native-XLM fallback (key "native" priced at 1) when pricing is disabled or no aggregator
+// runs. The request path and the prewarmer both call it so the cache has one consistent basis
+// (wealthBasis derives it from these inputs).
 func (h *Handler) wealthRankingInputs(ctx context.Context) (assets, prices []string) {
 	if h.PricingEnabled {
 		if a, p := h.usdPriceMap(ctx); len(a) > 0 {
@@ -320,12 +297,9 @@ type AccountStateView struct {
 	Trustlines         []TrustlineV       `json:"trustlines,omitempty"`
 	Offers             []OfferV           `json:"offers,omitempty"`
 	LastLedger         uint32             `json:"last_modified_ledger,omitempty"`
-	// AsOfLedger is the lake watermark the served state was fresh to WHEN
-	// IT WAS SCANNED (its cache vintage), not a serve-time read and not
-	// the account's last-modified ledger — the state can be up to
-	// AccountStateCacheTTL old, so a serve-time watermark could name a
-	// ledger the cached rows never saw. Omitted when the
-	// watermark was unreadable at fill time.
+	// AsOfLedger is the lake watermark when the state was SCANNED (its cache vintage), not a
+	// serve-time read: the state can be up to AccountStateCacheTTL old, so a serve-time watermark
+	// could name a ledger the cached rows never saw. Omitted when unreadable at fill time.
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 	// Directory is the curated third-party label for this address
 	// (directory.go) — display attribution, not verification. Omitted
@@ -383,23 +357,17 @@ type OfferV struct {
 	PriceD  int32  `json:"price_d"`
 }
 
-// AccountState serves GET /v1/accounts/{g_strkey} — the account's current
-// on-chain state reconstructed from the lake: native balance, sequence,
-// thresholds, flags, signers, home domain, plus its live trustlines and offers.
-// `exists:false` (200, not 404) for an account with no live AccountEntry in the
-// captured window — clients distinguish "no such account / not yet captured"
-// from a malformed request.
+// AccountState serves GET /v1/accounts/{g_strkey}, the account's current state reconstructed from
+// the lake, with live trustlines and offers. An account with no live AccountEntry in the captured
+// window gets `exists:false` (200, not 404), so clients can tell "no such account / not yet
+// captured" from a malformed request.
 func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
 		return
 	}
-	// Checksum-valid strkey (canonical.IsAccountID via parseAccountStrkey),
-	// matching every sibling account endpoint (AccountTransactions,
-	// AccountOperations, AccountMovements, AccountPositions). A shape-only
-	// check (length + base32 alphabet) would send a corrupted-checksum
-	// G-strkey through to the lake read, which then 500s + error-logs on
-	// every such request instead of 400ing up front.
+	// Checksum-valid strkey, as on every sibling account endpoint. A shape-only check would send a
+	// corrupted-checksum G-strkey to the lake read, which 500s instead of 400ing up front.
 	g, ok := h.parseAccountStrkey(w, r)
 	if !ok {
 		return
@@ -414,11 +382,8 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if retryableColdMiss(ctx, err) {
-			// Either the read blew explorerReadTimeout or the shared
-			// detached-refresh gate was saturated (clickhouse.ErrRefreshSaturated)
-			// — both transient/retryable, so 503, not the 500 a real
-			// bug gets. Mirrors the sibling SWR handlers (AssetHolders,
-			// ContractDetail, ContractsList) which map the same class here.
+			// The read blew explorerReadTimeout or the shared detached-refresh gate was saturated
+			// (clickhouse.ErrRefreshSaturated). Both are retryable, so 503 rather than a 500.
 			h.Logger.Warn("explorer AccountState deadline/saturation", "account", g, "err", err)
 			h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/account-state-timeout",
 				"Account state timed out")
@@ -430,12 +395,9 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// as_of_ledger is the CACHED state's own vintage (stamped at fill time,
-	// before its scan — clickhouse.AccountState.AsOfLedger), not a
-	// serve-time watermark read: the state can be up to AccountStateCacheTTL
-	// old, and a fresh watermark here would torn-read a ledger the cache's
-	// rows never saw. The serve-time watermark still feeds
-	// flags.stale, which is about lake health, not the cache's vintage.
+	// as_of_ledger is the cached state's own vintage (stamped at fill time, before its scan), not a
+	// serve-time read, which could name a ledger the cached rows never saw. The serve-time
+	// watermark still feeds flags.stale, which is about lake health.
 	_, stale, _ := h.LakeWatermark(ctx)
 	out := AccountStateView{AccountID: g, Exists: st.Exists, AsOfLedger: st.AsOfLedger}
 	// Directory labels apply regardless of Exists — a listed address
@@ -506,20 +468,15 @@ type AssetHolderV struct {
 	Balance   string `json:"balance"`
 }
 
-// isNativeHoldersAsset reports whether a requested asset form serves the
-// native-XLM holders board. Native has no trustlines — every account holds
-// XLM in its AccountEntry balance — so the board is computed from the
-// account-balance ranking under the single key "native", and every non-SAC
-// member of XLM's alias family (`native`, `crypto:XLM`, plus ParseAsset's
-// "XLM" shorthand — the AGENTS.md native ↔ crypto:XLM dual-form rule) folds
-// down to it: one cache entry, one detached flight, one reader arm.
+// isNativeHoldersAsset reports whether a requested asset form serves the native-XLM holders
+// board. Native has no trustlines (every account holds XLM in its AccountEntry), so the board
+// comes from the account-balance ranking under the single key "native", and the non-SAC members
+// of XLM's alias family (`native`, `crypto:XLM`, "XLM") fold into it: one cache entry, one
+// detached flight, one reader arm.
 //
-// The family's THIRD member — the SAC wrapper C-address (CAS3J7GY…) — is
-// deliberately NOT folded in: a caller naming the C-address is asking about
-// the wrapper's own contract-balance domain (Soroban `Balance(addr)`
-// entries), which is a genuinely different holder set from classic
-// AccountEntry balances. It keeps the (currently empty) trustline read
-// rather than being mislabelled as the account board.
+// The third member, the SAC wrapper C-address, is deliberately NOT folded in: it names the
+// wrapper's own Soroban `Balance(addr)` domain, a different holder set from classic AccountEntry
+// balances, and must not be mislabelled as the account board.
 func isNativeHoldersAsset(a canonical.Asset) bool {
 	if a.Type == canonical.AssetSoroban {
 		return false
@@ -532,15 +489,10 @@ func isNativeHoldersAsset(a canonical.Asset) bool {
 	return false
 }
 
-// AssetHolders serves GET /v1/assets/{asset_id}/holders — the top holders
-// of an asset by current balance, plus the total holder count. asset_id is
-// the canonical form ("CODE-ISSUER" / "native"). Lake-backed
-// (ledger_entry_changes): trustline balances for issued assets; for native
-// XLM (and its crypto:XLM alias) the AccountEntry balance ranking, with
-// holder_count = the exact number of funded accounts — native has no
-// trustlines, so a trustline read would serve {"holder_count":0} for it by
-// construction. The response's `asset` echoes the
-// canonical board key ("native" for any XLM alias form).
+// AssetHolders serves GET /v1/assets/{asset_id}/holders: top holders by current balance plus the
+// total holder count, lake-backed. Issued assets read trustline balances; native XLM (and its
+// alias) reads the AccountEntry ranking with holder_count = funded accounts, since a trustline
+// read would serve holder_count 0 for it by construction. `asset` echoes the canonical board key.
 func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	if h.Reader == nil {
 		h.unavailable(w, r)
@@ -553,11 +505,8 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 			"Invalid asset", http.StatusBadRequest, "asset_id path segment is required")
 		return
 	}
-	// Validate up front: a malformed asset_id
-	// otherwise reaches ClickHouse as-is and drives TWO
-	// ledger_entries_current FINAL scans before any 400. ParseAsset is the
-	// same validator the sibling /v1/pools?asset= (markets.go) enforces —
-	// reject genuinely-malformed input here, cheaply.
+	// Validate up front: a malformed asset_id would otherwise drive TWO ledger_entries_current FINAL
+	// scans before any 400.
 	parsed, err := canonical.ParseAsset(asset)
 	if err != nil {
 		h.WriteProblem(w, r, "https://api.stellarindex.io/errors/invalid-asset-id",
@@ -565,12 +514,9 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 			"asset_id must be a canonical asset_id (e.g. 'native', 'USDC-G…'); got "+asset+" ("+err.Error()+")")
 		return
 	}
-	// Normalize to the canonical spelling BEFORE the cache and the lake
-	// query: ParseAsset also admits the Horizon "CODE:ISSUER" spelling
-	// (and bare "XLM"), but the lake stores canonical "CODE-ISSUER" —
-	// keying/querying the raw request string would scan for a spelling
-	// that never matches and cache the resulting authoritative-looking
-	// EMPTY board under a duplicate key.
+	// Normalize to the canonical spelling BEFORE the cache and lake query: ParseAsset also admits
+	// "CODE:ISSUER" and bare "XLM", but the lake stores "CODE-ISSUER", so the raw string would
+	// cache an authoritative-looking empty board under a duplicate key.
 	asset = parsed.String()
 	// Fold XLM's alias forms to the one canonical board key BEFORE the
 	// cache: "native" and "crypto:XLM" are the same asset (assetAliases
@@ -587,14 +533,11 @@ func (h *Handler) AssetHolders(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	// Cached + single-flighted: this is an
-	// unauthenticated route over two ledger_entries_current FINAL scans on
-	// the shared explorer pool, so a single client looping it
-	// could hold every connection and stall every other lake-backed
-	// endpoint. Snapshot-served: a stale
-	// board is 200 + flags.stale + its real as_of while the detached
-	// rescan runs; only a never-computed asset can time out here (and its
-	// detached scan keeps running, so a retry lands warm). See hot_reads.go.
+	// Cached + single-flighted: this unauthenticated route runs two ledger_entries_current FINAL
+	// scans on the shared explorer pool, so one looping client could stall every lake-backed
+	// endpoint. A stale board is served as 200 + flags.stale + its real as_of while the detached
+	// rescan runs; only a never-computed asset can time out (its scan keeps running, so a retry
+	// lands warm). See hot_reads.go.
 	holders, total, asOf, degraded, err := h.assetHoldersCached(ctx, asset, limit)
 	if err != nil {
 		if h.ClientAborted(r, err) {
@@ -651,17 +594,12 @@ func (h *Handler) writeAssetHoldersCSV(w http.ResponseWriter, r *http.Request, v
 	}
 }
 
-// PrewarmAccountsWealth primes the wealth-ranking cache so no user ever
-// meets the cold state.
+// PrewarmAccountsWealth primes the wealth-ranking cache so no user meets the cold state.
 //
-// The ranking is a FINAL scan over 43.6M current-state rows (~23 s) and
-// cannot run on a request deadline — attempted inline, it 500'd on 100%
-// of requests. Calling the cached reader here is
-// enough: on a miss it kicks off the detached background refresh and
-// returns immediately, so this is cheap to call on a timer. The cache
-// stores ONE ranking (the top accountsWealthMaxLimit) that every request
-// size slices from, so a single warm entry covers all traffic — the limit
-// argument is not a cache key.
+// The ranking is a FINAL scan over tens of millions of current-state rows (~23 s) and cannot run
+// on a request deadline. Calling the cached reader is enough: on a miss it starts the detached
+// refresh and returns immediately, so it is cheap on a timer. The cache stores ONE ranking (the
+// top accountsWealthMaxLimit) that every request size slices from; limit is not a cache key.
 func (h *Handler) PrewarmAccountsWealth(ctx context.Context) {
 	if h.Reader == nil {
 		return

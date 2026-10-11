@@ -67,17 +67,14 @@ type TxSummaryView struct {
 	Result   string `json:"result"`
 	MemoType string `json:"memo_type,omitempty"`
 	Memo     string `json:"memo,omitempty"`
-	// MemoBase64 is the lossless byte-for-byte copy of a MEMO_TEXT memo.
-	// MEMO_TEXT is opaque XDR bytes, not guaranteed UTF-8 (exchange deposit
-	// tokens are frequently binary/latin-1); encoding/json silently replaces
-	// invalid bytes in Memo with U+FFFD, which breaks deposit-attribution
-	// reconciliation with no signal that anything changed. Present only for
-	// memo_type "text" — Memo stays the best-effort display value.
+	// MemoBase64 is the lossless copy of a MEMO_TEXT memo. MEMO_TEXT is opaque XDR bytes, not
+	// guaranteed UTF-8 (exchange deposit tokens are often binary), and encoding/json silently
+	// replaces invalid bytes in Memo with U+FFFD, breaking deposit reconciliation. Present only for
+	// memo_type "text"; Memo stays the best-effort display value.
 	MemoBase64 string `json:"memo_base64,omitempty"`
-	// FeeBump is present on a fee-bump transaction: Hash is then the OUTER
-	// hash, SourceAccount the inner tx's source, and MaxFee the fee payer's
-	// bid — the bound FeeCharged is held to. Absent on a fee bump ingested
-	// before the lake captured the outer layer; its Result still reads
+	// FeeBump is present on a fee-bump transaction: Hash is then the OUTER hash, SourceAccount the
+	// inner tx's source, and MaxFee the payer's bid, which bounds FeeCharged. Absent on a fee bump
+	// ingested before the lake captured the outer layer; its Result still reads
 	// tx_fee_bump_inner_success / tx_fee_bump_inner_failed.
 	FeeBump *FeeBumpView `json:"fee_bump,omitempty"`
 }
