@@ -19,24 +19,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// verifyUSDVolume is the stellarindex-ops `verify-usd-volume` subcommand, the
-// VALUE half of the usd_volume checks. The standing alerts
-// (configs/prometheus/rules.r1/usd-volume-coverage.yml) only check COVERAGE; a
-// trade priced with the wrong number is fully covered and wrong, and every
-// volume surface is a sum of that column. The tiers (timescale.tradeUSDVolume)
-// split in two:
-//
-//	CHECKED: tiers 1/2 and 2b are pure decimal rescalings of a USD-pegged leg
-//	  already on the row, so there is no tolerance; a mismatch FAILS the run.
-//
-//	MEASURED: tiers 3/4 value the trade from an FX rate or the XLM anchor and
-//	  are legitimately inexact (two routes measured up to 134.92% apart). Their
-//	  sums are PRINTED, not judged: that threshold is what this run produces.
-//
-// Otherwise report-only and read-only against Postgres.
-//
-// Exit: non-zero iff an EXACT-tier identity is violated. A clean run says
-// nothing about tier-3/4 accuracy, and the report says so.
+// verifyUSDVolume checks the VALUE of usd_volume; the standing alerts only check coverage. Tiers
+// 1/2/2b are exact rescalings of a USD-pegged leg, so any mismatch fails the run. Tiers 3/4 are
+// legitimately inexact and their sums are printed, not judged. Read-only against Postgres; exit
+// is non-zero only for an exact-tier violation, so a clean run says nothing about tier 3/4.
 func verifyUSDVolume(args []string) error {
 	fs := flag.NewFlagSet("verify-usd-volume", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "path to stellarindex.toml (Postgres DSN + the operator's USD peg list)")
@@ -69,9 +55,7 @@ func verifyUSDVolume(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	// The SAME peg inputs the insert path is configured with. A tool that
-	// built its own peg set would "verify" a different waterfall than the
-	// one that wrote the rows — the reimplementation trap.
+	// Use the insert path's own peg inputs; a separate peg set would verify a different waterfall.
 	spec, err := timescale.NewUSDVolumeQuoteSpec(cfg.Trades.USDPeggedClassicAssets, cfg.Supply.SACWrappers)
 	if err != nil {
 		return fmt.Errorf("verify-usd-volume: usd-volume quote spec: %w", err)
@@ -94,23 +78,13 @@ func verifyUSDVolume(args []string) error {
 	return nil
 }
 
-// xlmBaseBoundTolerance is the XLM-BASE BOUND's relative tolerance: stored
-// Σusd_volume must land within [1−tol, 1+tol] of Σbase_amount/1e7 × the day's
-// XLM/USD VWAP. It is a sanity bound, not an exact identity.
+// xlmBaseBoundTolerance is the relative tolerance of the XLM-base bound: stored Σusd_volume must
+// land within [1-tol, 1+tol] of Σbase_amount/1e7 times the day's XLM/USD VWAP. It is a sanity
+// bound, not an identity.
 //
-// It fires at 1.30× overstatement or 1.43× understatement. The 10×–10⁶× tier-3b
-// poisoning that motivated it is NOT its sensitivity: a 1.3–1.7 ratio is still
-// an error.
-//
-// It is not immune to intraday movement: each trade is anchored at its own
-// minute's prices_1m bucket, the bound at the day's prices_1d VWAP, so an honest
-// day can reach max(intraday_hi / day_vwap, day_vwap / intraday_lo). Measured on
-// r1 over 120 days: worst 1.2206, mean 1.0370, none at 1.30. The bound holds by
-// measurement, not construction; tightening below ~1.25 without a notional
-// floor makes false fires routine.
-//
-// A breach where stored AND expected both round to $0.00 is exempt
-// ([xlmBaseBoundIsDust]).
+// Trades are anchored at their own minute's price and the bound at the day VWAP, so honest days
+// drift (worst measured 1.2206, none at 1.30). Tightening below ~1.25 without a notional floor
+// makes false fires routine. A breach where stored and expected both round to $0.00 is exempt.
 const xlmBaseBoundTolerance = 0.30
 
 // xlmBaseBoundDustCeiling is half a cent: below it a value renders as
@@ -126,13 +100,9 @@ func xlmBaseBoundIsDust(stored, expected *big.Rat) bool {
 		new(big.Rat).Abs(expected).Cmp(xlmBaseBoundDustCeiling) < 0
 }
 
-// xlmBaseLegScale returns the denominator that lifts a group's raw XLM
-// base-amount sum to whole XLM. The scale is a CONNECTOR property, not
-// an asset one: on-chain DEX
-// rows stamp stroops (1e7), off-chain CEX rows 1e8, the FX pollers
-// 1e6. A hardcoded 1e7 would flag every honest kraken/bitstamp XLM/EUR
-// day at ratio ≈ 0.100 — the check would be wrong, not the data.
-// Same subclass dispatch the insert path's usdVolumeDecimals uses.
+// xlmBaseLegScale returns the denominator that lifts a raw XLM base-amount sum to whole XLM. The
+// scale is a connector property: DEX rows stamp 1e7, CEX rows 1e8, FX pollers 1e6. It uses the
+// same subclass dispatch as the insert path's usdVolumeDecimals.
 func xlmBaseLegScale(source string) *big.Rat {
 	baseDecimals := int64(7) // on-chain stroop scale
 	md := external.Lookup(source)
@@ -145,33 +115,22 @@ func xlmBaseLegScale(source string) *big.Rat {
 	return new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(baseDecimals), nil))
 }
 
-// checkXLMBaseBound judges the estimated-tier groups whose BASE leg is
-// XLM (any canonical spelling): stored Σusd_volume must land within
-// [1−tol, 1+tol] × (Σbase/1e7 × dayVWAP). Returns the violation count;
-// sub-cent breaches ([xlmBaseBoundIsDust]) are printed, not counted.
-// Skips silently when the day has no XLM/USD bucket (rate unknowable —
-// printed by the caller).
+// checkXLMBaseBound judges estimated-tier groups whose base leg is XLM (any alias) and returns
+// the violation count. Sub-cent breaches are printed, not counted.
 func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.USDVolumeQuoteSpec, dayVWAP *big.Rat, minRows int64, maxList int) int {
 	return checkXLMLegBound(groups, spec, dayVWAP, minRows, maxList, "XLM-BASE",
 		func(g timescale.TradeValuationGroup) (asset, amount string) { return g.BaseAsset, g.SumBaseAmount })
 }
 
-// checkXLMQuoteBound is [checkXLMBaseBound]'s mirror for the `-tier
-// xlm-quote` population: DEX trades where XLM sits in the
-// QUOTE leg instead of the base one. checkXLMBaseBound can never match
-// these rows (their BaseAsset is never an XLM form), so without this they
-// get no automated judgement at all — only counted into the printed
-// MEASURED rollup.
+// checkXLMQuoteBound mirrors checkXLMBaseBound for DEX trades with XLM in the quote leg, which
+// the base check can never match.
 func checkXLMQuoteBound(groups []timescale.TradeValuationGroup, spec *timescale.USDVolumeQuoteSpec, dayVWAP *big.Rat, minRows int64, maxList int) int {
 	return checkXLMLegBound(groups, spec, dayVWAP, minRows, maxList, "XLM-QUOTE",
 		func(g timescale.TradeValuationGroup) (asset, amount string) { return g.QuoteAsset, g.SumQuoteAmount })
 }
 
-// checkXLMLegBound is the shared body of [checkXLMBaseBound] and
-// [checkXLMQuoteBound]: stored Σusd_volume must land within
-// [1−tol, 1+tol] × (Σleg/1e7 × dayVWAP), where `leg` picks out whichever
-// side (base or quote) of the group is being judged. `label` names the
-// bound in printed output.
+// checkXLMLegBound is the shared body of the base and quote bounds; leg picks the judged side
+// and label names the bound in output.
 func checkXLMLegBound(groups []timescale.TradeValuationGroup, spec *timescale.USDVolumeQuoteSpec, dayVWAP *big.Rat, minRows int64, maxList int, label string, leg func(timescale.TradeValuationGroup) (asset, amount string)) int {
 	xlmForms := map[string]bool{}
 	for _, a := range canonical.AssetAliases(canonical.NativeAsset()) {
@@ -217,11 +176,8 @@ func checkXLMLegBound(groups []timescale.TradeValuationGroup, spec *timescale.US
 	return violations
 }
 
-// xlmLegStoredAndExpected returns an estimated-tier group's stored
-// Σusd_volume and its expected Σleg × dayVWAP, where `legAmount` is
-// whichever side (SumBaseAmount or SumQuoteAmount) the caller is
-// judging; ok is false when the group is not estimated-tier or either
-// side is unparseable or non-positive.
+// xlmLegStoredAndExpected returns a group's stored Σusd_volume and expected Σleg × dayVWAP; ok
+// is false if the group is not estimated-tier or a side is unparseable or non-positive.
 func xlmLegStoredAndExpected(g timescale.TradeValuationGroup, spec *timescale.USDVolumeQuoteSpec, dayVWAP *big.Rat, legAmount string) (stored, expected *big.Rat, ok bool) {
 	tier, _, cerr := timescale.ClassifyUSDVolumeTier(g.Source, g.BaseAsset, g.QuoteAsset, spec)
 	if cerr != nil || tier != timescale.TierEstimated {
@@ -240,9 +196,8 @@ func xlmLegStoredAndExpected(g timescale.TradeValuationGroup, spec *timescale.US
 	return stored, expected, true
 }
 
-// resolveUSDVolumeDay parses -day, defaulting to YESTERDAY: today's chunk is
-// still being written, so a today-scoped run races the ingest path and would
-// report phantom deltas on rows the aggregator has not finished valuing.
+// resolveUSDVolumeDay parses -day, defaulting to yesterday because today's rows are still being
+// valued and would show phantom deltas.
 func resolveUSDVolumeDay(flagVal string) (time.Time, error) {
 	if flagVal == "" {
 		return time.Now().UTC().AddDate(0, 0, -1).Truncate(24 * time.Hour), nil
@@ -271,15 +226,10 @@ func newTierRollup() *usdVolumeTierRollup {
 	return &usdVolumeTierRollup{sumUSD: new(big.Rat), worstDelta: new(big.Rat)}
 }
 
-// classifyExactTierGroups classifies one day's (source, base, quote) groups
-// and checks each judged exact-tier group's identity, printing per-group
-// diagnostics as it goes. Returns the exact-tier violation count, how many
-// groups were judged against the identity, how many groups could not be
-// classified or had unparseable sums, and the tier rollups for the report.
-//
-// parseErrs is counted separately from violations here — the caller decides
-// whether to fold it in (it must, so a mis-spelled asset id on a
-// landed trade can't leave the judged population with a clean exit).
+// classifyExactTierGroups classifies one day's groups and checks each exact-tier identity,
+// printing diagnostics. It returns the violation count, the judged count, the unclassifiable or
+// unparseable count and the tier rollups. The caller must fold parseErrs into violations so a
+// mis-spelled asset id cannot leave a clean exit.
 //
 //nolint:gocognit // one linear pass: classify → accumulate → judge exact tiers → print.
 func classifyExactTierGroups(
@@ -294,13 +244,8 @@ func classifyExactTierGroups(
 	for _, g := range groups {
 		tier, decimals, cerr := timescale.ClassifyUSDVolumeTier(g.Source, g.BaseAsset, g.QuoteAsset, spec)
 		if cerr != nil {
-			// An unparseable asset id on a LANDED trade is its own finding;
-			// report it rather than dropping the group silently. Counted as
-			// a violation by the caller: ClassifyUSDVolumeTier's
-			// error path demotes the group to TierEstimated, which
-			// !tier.Exact() then skips — a mis-spelled asset id would
-			// otherwise drop out of the judged population with no
-			// non-zero exit to show for it.
+			// The error path demotes the group to TierEstimated, which would skip the judged
+			// population, so the caller counts this as a violation.
 			parseErrs++
 			fmt.Fprintf(os.Stderr, "  UNCLASSIFIABLE %s %s/%s: %v\n", g.Source, g.BaseAsset, g.QuoteAsset, cerr)
 		}
@@ -352,12 +297,8 @@ func classifyExactTierGroups(
 	return violations, judged, parseErrs, rollups
 }
 
-// usdVolumeTotalViolations combines the exact-tier and XLM-bound violation
-// counts with parseErrs: an unclassifiable or unparseable group on a
-// LANDED trade — a mis-spelled asset id, a scale ClassifyUSDVolumeTier
-// couldn't resolve — is a defect, not a benign skip. If parseErrs were
-// printed but not folded in, a day with nothing but unclassifiable
-// groups would exit 0.
+// usdVolumeTotalViolations folds parseErrs into the violation total: an unclassifiable group is
+// a defect, and otherwise a day of only such groups would exit 0.
 func usdVolumeTotalViolations(exactViolations, xlmBoundViolations, parseErrs int) int {
 	return exactViolations + xlmBoundViolations + parseErrs
 }
@@ -409,11 +350,8 @@ func verifyXLMBounds(
 	maxList int,
 ) (int, error) {
 	violations := 0
-	// XLM-BASE BOUND: without it the estimated tiers are structurally
-	// unjudged — Exact() covers only the pegged tiers — which is how a
-	// tier-3b poisoning stayed invisible for 13 days. For groups whose
-	// BASE leg is XLM the anchor formula IS checkable against the day's
-	// CEX-fed XLM/USD VWAP, within a coarse intraday tolerance.
+	// Exact() covers only the pegged tiers, so the XLM bounds are the only judgement of the
+	// estimated tiers, checked against the day's CEX-fed XLM/USD VWAP.
 	rate, rateOK, rerr := store.DayCloseVWAPXLMUSD(ctx, day)
 	if rerr != nil {
 		return 0, rerr
@@ -430,11 +368,8 @@ func verifyXLMBounds(
 		}
 		violations += n
 
-		// XLM-QUOTE BOUND: the mirror population — DEX trades
-		// with XLM in the quote leg (-tier xlm-quote) — would be structurally
-		// unjudged without it, as with the XLM-base bound above: this
-		// command's own "acceptance" line would report 0
-		// violations for a tier it never looked at.
+		// Without the quote bound the xlm-quote population would be unjudged, and the
+		// acceptance line would report 0 violations for a tier it never looked at.
 		nq := checkXLMQuoteBound(groups, spec, rateRat, minRows, maxList)
 		if nq > 0 {
 			fmt.Printf("  XLM-QUOTE BOUND: %d violation(s) at ±%.0f%% vs day VWAP %s\n",
@@ -454,9 +389,7 @@ func mustRat(s string) *big.Rat {
 	return new(big.Rat)
 }
 
-// printUSDVolumeTierTable renders the per-tier distribution — the whole
-// point of the MEASURED half. Tier order is fixed (not map order) so runs
-// diff cleanly against each other.
+// printUSDVolumeTierTable renders the per-tier distribution in a fixed order so runs diff cleanly.
 func printUSDVolumeTierTable(rollups map[timescale.USDVolumeTier]*usdVolumeTierRollup) {
 	order := []timescale.USDVolumeTier{
 		timescale.TierQuotePegged,
@@ -494,23 +427,14 @@ func printUSDVolumeTierTable(rollups map[timescale.USDVolumeTier]*usdVolumeTierR
 	}
 }
 
-// printUSDVolumeFooter states, in the report itself, exactly what this run
-// did and did NOT prove, plus the operator follow-up that turns the measured
-// half into an alert. Printing it here (rather than only in a runbook) is
-// deliberate: the person reading this output is the person who has to make
-// that call, and a clean exit code on a money surface must never be mistaken
-// for "usd_volume is verified correct".
+// printUSDVolumeFooter states in the report what the run did and did not prove, so a clean exit
+// on a money surface is not mistaken for "usd_volume is verified correct".
 func printUSDVolumeFooter(violations int) {
 	fmt.Print(usdVolumeFooterText(violations))
 }
 
-// xlmBaseBoundFiresOver / xlmBaseBoundFiresUnder are the bound's ACTUAL
-// firing thresholds, derived from [xlmBaseBoundTolerance] rather than
-// restated: a stored sum above (1+tol)× expected, or below (1−tol)×
-// expected — the latter meaning the stored value is 1/(1−tol) times too
-// LOW. They exist so [usdVolumeFooterText] cannot drift from the
-// constant the check actually uses, which is exactly how the footer came
-// to advertise "catches 10x+ errors" for a bound that fires at 1.30×.
+// xlmBaseBoundFiresOver and xlmBaseBoundFiresUnder derive the bound's firing thresholds from
+// xlmBaseBoundTolerance so the footer text cannot drift from the check.
 func xlmBaseBoundFiresOver() *big.Rat {
 	return new(big.Rat).Add(big.NewRat(1, 1), new(big.Rat).SetFloat64(xlmBaseBoundTolerance))
 }

@@ -16,20 +16,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// verifyReconciliation implements ADR-0033 Claim 2b: per ledger, the rows a
-// source SHOULD have produced must equal the rows in its table. The expected
-// side, by source class:
-//
-//   - Soroban sources: run the real decoder over the lake's contract_events,
-//     as compute-completeness -ch does ([expectedProjection]). Event-less
-//     ContractCall sources (band, soroswap-router) re-derive from the lake's
-//     InvokeContract ops.
-//   - SDEX: run the lake's operations through the SDEX decoder and the served
-//     write filter (Validate + primary-key de-dup), gated on lake coverage.
-//     Not the classic_trade_effect_count census, which counts one-side-zero
-//     fills the trades table cannot hold. `hubble-check` is the external
-//     cross-check.
-//
+// verifyReconciliation implements ADR-0033 Claim 2b: per ledger, the rows a source should have
+// produced must equal the rows in its table. Soroban sources re-run the real decoder over the
+// lake's contract_events ([expectedProjection]); event-less ContractCall sources re-derive from
+// InvokeContract ops; SDEX runs lake operations through the decoder and the served write
+// filter, not the census, which counts one-side-zero fills the trades table cannot hold.
 // Exits non-zero on any mismatch.
 func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funlen // linear per-source loop; splitting reduces clarity (same as backfillRouter).
 	fs := flag.NewFlagSet("verify-reconciliation", flag.ContinueOnError)
@@ -72,14 +63,9 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 	if verr := validateSourceFilter(*only, catalogue); verr != nil {
 		return fmt.Errorf("verify-reconciliation: %w", verr)
 	}
-	// Re-derive on the gate the live indexer runs with — curated set ∪
-	// protocol_contracts — not on the bare in-code seed: a
-	// contract an operator admitted through protocol_contracts is decoded
-	// live, so its rows are in the table, while an unwarmed re-derive
-	// expects none of them and reports the source as a mismatch that is
-	// not in the data. Read-only (no upsert hook). Must precede the
-	// per-source preseed below, which seeds into the decoders this
-	// rebuilds.
+	// Re-derive on the live indexer's gate (curated set plus protocol_contracts), not the bare
+	// seed, or an admitted contract's rows would show as a false mismatch. Read-only, and it
+	// must precede the per-source preseed below, which seeds the decoders this rebuilds.
 	if catalogue, err = warmCatalogueGates(ctx, store, slog.Default(), catalogue); err != nil {
 		return fmt.Errorf("verify-reconciliation: %w", err)
 	}
@@ -102,11 +88,8 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 		if eerr != nil {
 			return fmt.Errorf("%s: %w", src.name, eerr)
 		}
-		// Rows the re-derive could not decode are dropped from the
-		// EXPECTED side, and the projector dropped them from the ACTUAL side
-		// for the same reason — so the per-ledger diff below is structurally
-		// blind there and would report OK. Report it as a mismatch so the
-		// command exits non-zero.
+		// Undecodable rows drop from both sides, so the per-ledger diff below is blind to them
+		// and would report OK; report a mismatch so the command exits non-zero.
 		if blind.Any() {
 			anyGaps = true
 			fmt.Fprintf(os.Stderr, "verify-reconciliation: %-28s %s\n", src.name, blind.Detail())
@@ -122,12 +105,8 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 			label := src.name + "/" + tgt.table
 			expTotal, actTotal := sumCounts(expected), sumCounts(actual)
 			if len(gaps) == 0 {
-				// A source redeployed behind a new contract id (config not
-				// updated) writes nothing, the re-derive expects nothing over
-				// two empty maps, and ReconcileCounts sees no mismatch — the
-				// same vacuous-pass shape verify-recognition guards.
-				// expected=0 actual=0 is refused rather than
-				// certified: a target dark for weeks must not print OK.
+				// Refuse expected=0 actual=0 rather than certify it: a target dark for weeks must
+				// not print OK. See reconciliationIsVacuous.
 				if reconciliationIsVacuous(expTotal, actTotal) {
 					anyGaps = true
 					fmt.Fprintf(os.Stderr, "verify-reconciliation: %-28s VACUOUS — expected=0 actual=0 over ledgers [%d, %d]; refusing to certify reconciliation vacuously\n", label, lo, hi)
@@ -184,33 +163,19 @@ func sumCounts(m map[uint32]int) int {
 	return total
 }
 
-// reconciliationIsVacuous reports whether a no-gap target saw zero events on
-// both sides — the vacuous-pass shape: a source redeployed behind a
-// new contract id with the config not updated writes nothing, the re-derive
-// expects nothing over two empty maps, and ReconcileCounts sees no mismatch.
-// That is indistinguishable from "fully reconciled" unless it is refused.
+// reconciliationIsVacuous reports whether a no-gap target saw zero events on both sides. A
+// source redeployed behind a new contract id writes nothing, so two empty maps look like a full
+// reconciliation unless refused.
 func reconciliationIsVacuous(expTotal, actTotal int) bool {
 	return expTotal == 0 && actTotal == 0
 }
 
-// seedSoroswapForRecon seeds the soroswap pair registry from the factory via
-// RPC so the re-derive resolves pairs created before the audited range, with
-// the same contract as verify-decoders' seed:
-//
-//   - An empty oracle.soroswap.factory_contract (the default, and both test
-//     nets) disables the seed: nil, nothing seeded; pairs whose new_pair
-//     events fall inside the range are still learned.
-//   - A factory with no RPC endpoint, or a failed sweep, is an error the
-//     caller must not swallow. SeedFromFactoryRPC can stop mid-loop, and a
-//     partly seeded registry makes the re-derive expect 0 rows for unseeded
-//     pairs, so compute-completeness would publish projection_ok=false over
-//     healthy data and trigger a from-genesis re-derive the next night.
-//
-// SeedFromFactoryRPC retries transient failures within a bounded budget, so
-// an error here is deterministic or an endpoint down for the whole budget;
-// the 15-minute context below bounds the sweep. Notices carry no command
-// prefix because both verify-reconciliation and compute-completeness call
-// this.
+// seedSoroswapForRecon seeds the soroswap pair registry from the factory via RPC so the
+// re-derive resolves pairs created before the audited range, as verify-decoders does. An empty
+// oracle.soroswap.factory_contract disables the seed. A factory with no RPC endpoint, or a failed
+// sweep, is an error the caller must not swallow: a partly seeded registry expects 0 rows for
+// unseeded pairs and would publish projection_ok=false over healthy data. Notices carry no
+// command prefix because compute-completeness shares this.
 func seedSoroswapForRecon(ctx context.Context, cfg config.Config, dec *soroswap.Decoder) error {
 	factory := cfg.Oracle.Soroswap.FactoryContract
 	if factory == "" {

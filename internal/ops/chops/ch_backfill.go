@@ -17,16 +17,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// runCHBackfill walks a bounded ledger range from galexie and writes the
-// Tier-1 structural rows to ClickHouse (ADR-0034). Mirrors the
-// census-backfill ledgerstream walk; the per-ledger work is
-// clickhouse.ExtractLedger -> Sink. Idempotent (ReplacingMergeTree), so a
-// re-run over the same range is safe.
-//
-// -parallel N splits [from,to] into N contiguous chunks, each walked by its
-// own goroutine with its own Sink (ClickHouse ingests concurrent writers
-// well — this is the throughput unlock Postgres couldn't give us). N=1 is
-// the plain single-walker path.
+// runCHBackfill walks a bounded ledger range from galexie and writes the Tier-1 rows to
+// ClickHouse (ADR-0034). It is idempotent (ReplacingMergeTree). -parallel N splits the range
+// into N contiguous chunks, each with its own goroutine and Sink.
 func chBackfill(args []string) error {
 	fs, gate := opsutil.NewMutatingFlagSet("ch-backfill")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -111,15 +104,9 @@ func chBackfill(args []string) error {
 	return nil
 }
 
-// backfillProgress owns everything a ch-backfill walk reports about its own
-// pace: the periodic stderr rate line the operator watches, and the
-// node_exporter heartbeat that makes a WEDGED walk distinguishable from a
-// working one without somebody tailing the journal.
-//
-// It exists as a type rather than a closure because both concerns need the
-// same mutex-guarded counter, and because chBackfill is already at the
-// funlen ceiling — the walk's control flow is the readable part of that
-// function and the bookkeeping is not.
+// backfillProgress owns a walk's pace reporting: the periodic stderr rate line and the
+// node_exporter heartbeat that tells a wedged walk from a working one. Both share one
+// mutex-guarded counter.
 type backfillProgress struct {
 	hb      *opsutil.JobHeartbeat
 	mu      sync.Mutex
@@ -195,33 +182,17 @@ func (p *backfillProgress) stop() {
 	p.hb.Stop(ok)
 }
 
-// backfillBucket resolves which galexie bucket a bounded ch-backfill walk
-// reads. The seam policy itself lives in opsutil.ResolveStreamBucket,
-// shared with census-backfill, because two independent copies of a subtle
-// seam rule let a wrong live-bucket default survive in one of them. This thin wrapper
-// stays so the call site and the tests keep reading in ch-backfill's own
-// vocabulary.
+// backfillBucket resolves which galexie bucket a bounded walk reads. The seam policy lives in
+// opsutil.ResolveStreamBucket, shared with census-backfill so the rule has one copy.
 func backfillBucket(cfg config.Config, override string, from, to uint32) (string, error) {
 	return opsutil.ResolveStreamBucket(cfg, override, from, to)
 }
 
-// backfillCoverage turns a walk that did not cover its requested range into
-// a hard error, naming the bucket it read.
-//
-// Without it ch-backfill exits 0 after streaming ZERO ledgers of a nonzero
-// request: TolerateTrailingMissing (set by every ops walker so a `-to` at the
-// live tip doesn't explode) makes an ENTIRELY absent range indistinguishable
-// from a clean walk, so a wrong-bucket run reports success.
-// scripts/ops/ch-full-backfill.sh appends the window to its resume state only
-// when ch-backfill exits 0, so one vacuous success removes that window from
-// the backfill forever.
-//
-// A PARTIAL walk fails too: short counts mean the bucket lacks those objects,
-// or per-ledger extraction failed (chBackfillChunk logs and skips those so one
-// bad ledger doesn't abort a multi-day run, but the run must not claim the
-// range). An interrupted run fails for the same reason. Re-running is free
-// (ReplacingMergeTree is idempotent), so failing closed costs a re-run and
-// failing open costs a silent hole.
+// backfillCoverage turns a walk that did not cover its requested range into a hard error naming
+// the bucket. TolerateTrailingMissing makes an entirely absent range look like a clean walk, and
+// scripts/ops/ch-full-backfill.sh records a window as done only on exit 0, so a vacuous success
+// would drop that window forever. A partial or interrupted walk fails too. Re-running is
+// idempotent, so failing closed costs a re-run and failing open costs a silent hole.
 func backfillCoverage(from, to uint32, streamed int64, bucket string, interrupted bool) error {
 	want := int64(to) - int64(from) + 1
 	switch {
@@ -238,17 +209,10 @@ func backfillCoverage(from, to uint32, streamed int64, bucket string, interrupte
 	return nil
 }
 
-// chBackfillChunk walks one chunk's range with its own Sink. A ClickHouse
-// write failure is fatal (returns the error so errgroup cancels siblings);
-// re-running the range is safe under ReplacingMergeTree.
-//
-// dryRun opens NO Sink and writes nothing: the walk still fetches every
-// galexie object and runs the full clickhouse.ExtractLedger decode, so
-// coverage and throughput are measured against the real recovery path, but
-// the live lake is untouched. This is what the ADR-0043 §2.2 restore drill
-// runs — see the drill's own note on why it cannot use a scratch database
-// (clickhouse.Open pins the `stellar` database) and why re-deriving into
-// the LIVE lake is the wrong default on a capacity-constrained host.
+// chBackfillChunk walks one chunk's range with its own Sink. A ClickHouse write failure is
+// fatal so errgroup cancels siblings. dryRun opens no Sink and writes nothing, but still
+// fetches and decodes every ledger; the ADR-0043 restore drill uses it because
+// clickhouse.Open pins the stellar database, so a scratch lake is not possible.
 func chBackfillChunk(
 	ctx context.Context,
 	idx int,

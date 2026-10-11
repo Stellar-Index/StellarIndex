@@ -121,13 +121,11 @@ func tradesCAGGRefresh(args []string) error {
 	return refreshTradesCAGGsOverLedgers(ctx, store, a.from, a.to, a.force, time.Now(), os.Stdout)
 }
 
-// sizeTradesCAGGBacklog prints, per [timescale.TradesCAGGs] view, the
-// invalidation ranges a non-forced refresh would re-materialise, then
-// their hull as the -from/-to ledgers that cover it. A range that starts
-// before [tradesCAGGNonForcedFloor] is left out of that hull and printed
-// on its own: the non-forced run refuses it ([refuseTwapsBelowPrices1mFloor]).
-// So is everything up to a gap in prices_1m the hull's twap buckets would
-// read ([refuseUncoveredTwapReads]): the floor rises past it.
+// sizeTradesCAGGBacklog prints, per [timescale.TradesCAGGs] view, the invalidation ranges a
+// non-forced refresh would re-materialise and their hull as -from/-to ledgers. Ranges below
+// [tradesCAGGNonForcedFloor] are printed separately because the non-forced run refuses them
+// ([refuseTwapsBelowPrices1mFloor]); a prices_1m gap raises the floor past it
+// ([refuseUncoveredTwapReads]).
 func sizeTradesCAGGBacklog(ctx context.Context, s tradesCAGGSizer, now time.Time, out io.Writer) error {
 	views := make([]string, len(timescale.TradesCAGGs))
 	for i, c := range timescale.TradesCAGGs {
@@ -281,12 +279,10 @@ func tradesCAGGNonForcedFloor(prices1mEarliest time.Time) time.Time {
 	return prices1mEarliest.Add(pad)
 }
 
-// refuseTwapsBelowPrices1mFloor refuses a non-forced plan whose twap
-// window starts before prices_1m's earliest materialised bucket. Below
-// it a past retention drop (migration 0156) emptied the minute rows, even
-// once disarmed again, and a non-forced twap refresh recomputes every
-// invalidated bucket there from them; the forced plan rebuilds prices_1m
-// from trades first.
+// refuseTwapsBelowPrices1mFloor refuses a non-forced plan whose twap window starts before
+// prices_1m's earliest bucket. A past retention drop (migration 0156) emptied the minute rows
+// below it, and a non-forced twap refresh would recompute from them; the forced plan rebuilds
+// prices_1m from trades first.
 func refuseTwapsBelowPrices1mFloor(ctx context.Context, s tradesCAGGStore, plan []timescale.CAGGRefreshStep, from, to uint32) error {
 	earliest, err := s.Prices1mEarliestBucket(ctx)
 	if errors.Is(err, timescale.ErrNotFound) {
@@ -311,19 +307,12 @@ func refuseTwapsBelowPrices1mFloor(ctx context.Context, s tradesCAGGStore, plan 
 	return nil
 }
 
-// refreshTradesCAGGsOverLedgers refreshes every [timescale.TradesCAGGs]
-// view, in its order (twap_* after prices_1m), over the time span of the
-// trades now stored in [from, to], stopping at the first failure: a later
-// view may be built on the one that failed. Non-forced, each view
-// re-materialises only the buckets its invalidation log names.
-//
-// No trades in the range is an error, not a no-op: the caller has just
-// rewritten it, so an empty range means the time span of whatever was
-// deleted cannot be recovered here, and the aggregates may still hold it.
-//
-// A refresh that returned is not yet proof the aggregates are right, so
-// it succeeds only once prices_1m agrees with `trades` over sampled
-// windows of the span ([checkTradesPrices1mDrift]).
+// refreshTradesCAGGsOverLedgers refreshes every [timescale.TradesCAGGs] view in order (twap_*
+// after prices_1m) over the span of the trades stored in [from, to], stopping at the first
+// failure because a later view may build on it. No trades in the range is an error: the caller
+// just rewrote it, so the deleted span is unrecoverable here and the aggregates may still hold
+// it. It succeeds only once prices_1m agrees with trades over sampled windows
+// ([checkTradesPrices1mDrift]).
 func refreshTradesCAGGsOverLedgers(ctx context.Context, s tradesCAGGStore, from, to uint32, force bool, now time.Time, out io.Writer) error {
 	tsFrom, tsTo, plan, err := planTradesCAGGRefresh(ctx, s, from, to, force, now, out)
 	if err != nil {
@@ -390,12 +379,9 @@ func previewTradesCAGGRefresh(ctx context.Context, s tradesCAGGStore, from, to u
 	return nil
 }
 
-// tradesCAGGRefreshWindow widens [from, to] by half the view's MinWindow
-// on each side. Timescale refreshes only the buckets wholly inside the
-// window, and MinWindow is at least two buckets, so the half is at least
-// one: the buckets holding the first and last rewritten rows — which
-// straddle the range's edges — are refreshed too, and the window always
-// clears the two-bucket minimum.
+// tradesCAGGRefreshWindow widens [from, to] by half the view's MinWindow on each side.
+// Timescale refreshes only buckets wholly inside the window, so the edge buckets holding the
+// first and last rewritten rows need that padding, and it clears the two-bucket minimum.
 func tradesCAGGRefreshWindow(from, to time.Time, minWindow time.Duration) (time.Time, time.Time) {
 	pad := minWindow / 2
 	return from.Add(-pad), to.Add(pad)

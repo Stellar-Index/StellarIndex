@@ -17,20 +17,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// chReproject is the validation path (ADR-0034): it re-derives a ledger
-// range's protocol output from the ClickHouse Tier-1 lake using the EXISTING
-// decoders, and compares to the currently-served Postgres protocol tables.
-// For each source's target table it reports CH-re-derived vs served per-ledger counts.
-//
-//   - ClickHouse side: a single pass over stellar.contract_events, feeding each
-//     event to every source decoder (Matches-gated, per-source-independent),
-//     bucketed by EventKind() — then SumKinds projects the kinds that land in
-//     each target table.
-//   - Served side: the actual protocol-table row counts (store.CountRowsByLedger).
-//
-// soroswap is re-derived WITHOUT RPC pair-seeding, so its trade count
-// undercounts pairs created before the range; that delta is expected here
-// (absolute soroswap correctness is verify-reconciliation's job) and flagged.
+// chReproject re-derives a ledger range from the ClickHouse lake with the existing decoders and
+// compares per-ledger counts to the served Postgres protocol tables (ADR-0034). Soroswap is
+// re-derived without RPC pair-seeding, so its undercount for earlier pairs is expected and flagged.
 func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // linear: build cats, two re-derives, compare; splitting reduces clarity.
 	fs := flag.NewFlagSet("ch-reproject", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -65,31 +54,16 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 	if err != nil {
 		return fmt.Errorf("ch-reproject: reconciliation catalogue: %w", err)
 	}
-	// Re-derive on the gate the live indexer runs with — curated set ∪
-	// protocol_contracts — not on the bare in-code seed: a
-	// contract an operator admitted through protocol_contracts was decoded
-	// live, so it HAS served rows, while an unwarmed re-derive both drops
-	// it from the static contractIDs prefilter and rejects its events in
-	// Matches(). This command writes nothing, so the damage is in what it
-	// TELLS an operator: a CH-under-served delta that is not in the data,
-	// on the one report whose whole purpose is to answer "what would
-	// rebuilding Postgres from ClickHouse change?" — and the answer it
-	// invites is the destructive `ch-rebuild -write`.
-	// Read-only (no upsert hook). Must precede the preseed below, which
-	// seeds into the decoders this rebuilds.
+	// Re-derive on the live gate (curated set plus protocol_contracts), not the bare seed: an
+	// unwarmed re-derive drops admitted contracts and reports a false CH-under-served delta,
+	// which invites the destructive ch-rebuild -write. Must precede the preseed below.
 	if cat, err = warmCatalogueGates(ctx, store, slog.Default(), cat); err != nil {
 		return fmt.Errorf("ch-reproject: %w", err)
 	}
 
-	// Factory-anchored sources (ADR-0035): seed each gate registry from
-	// the factory's creation events in [genesis, lo) BEFORE the
-	// re-derive, exactly as verify-reconciliation and
-	// compute-completeness do. Without it a source whose
-	// decoder carries no in-code curated set — blend is the only one —
-	// re-derives 0 rows for any window above its factory deploys, which
-	// reads as a bogus delta here and as a silently-empty arm in
-	// ch-rebuild -write. Read-only, idempotent,
-	// and a no-op for the 20+ non-factory sources.
+	// Factory-anchored sources (ADR-0035): seed each gate registry from creation events in
+	// [genesis, lo) before re-deriving. Without it blend re-derives 0 rows above its factory
+	// deploys, a bogus delta here and a silently empty arm in ch-rebuild -write.
 	for _, src := range cat {
 		if len(src.factories) == 0 {
 			continue
@@ -145,14 +119,9 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 		}
 		return nil
 	}
-	// Window the CH stream per 1M-ledger partition — event_reader.go's rule for
-	// whole-history callers. One unbounded StreamContractEvents over the Soroban
-	// era buffers an unbounded result set and outruns the 1h per-read
-	// ReadTimeout before the first block even arrives ("clickhouse ... read:
-	// i/o timeout" on a whole-lake -from). The `cat` decoders persist across
-	// windows, so any correlation-buffer group state carries over each 1M
-	// boundary — identical output to one continuous pass, but each query stays
-	// bounded to a partition.
+	// Window the stream per 1M-ledger partition: one unbounded read over the Soroban era outruns
+	// the 1h ReadTimeout. The cat decoders persist across windows, so correlation state carries
+	// over each boundary and output matches one continuous pass.
 	var cherr error
 	for wlo := lo; ; {
 		whi := hi
@@ -173,11 +142,8 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 	fmt.Fprintf(os.Stderr, "ch-reproject: ClickHouse pass done in %s\n", time.Since(chStart).Round(time.Second))
 
 	// ─── SDEX side: op-based re-derivation ───────────────────────────────
-	// SDEX trades are op-derived (operations + operation_results), NOT
-	// event-derived, so they don't flow through StreamContractEvents. Count
-	// the served projection — decoder output the writer can store — not raw
-	// decoder output: a one-side-zero fill is decoded but never storable, so
-	// counting it would print a permanent CH > served no rebuild can clear.
+	// SDEX trades are op-derived, not event-derived. Count the storable projection, not raw
+	// decoder output: a one-side-zero fill is never stored and would print a permanent CH > served.
 	sdexStart := time.Now()
 	sdexByLedger, sdexBlind, serr := reDeriveSDEXCensusViaDecoder(ctx, *chAddr, lo, hi)
 	if serr != nil {
