@@ -122,12 +122,6 @@ internal/storage/timescale/cursors.go	long-block
 internal/storage/timescale/cursors.go	long-block
 internal/storage/timescale/cursors.go	long-block
 internal/storage/timescale/cursors.go	long-block
-internal/storage/timescale/diagnostics.go	long-block
-internal/storage/timescale/diagnostics.go	long-block
-internal/storage/timescale/diagnostics.go	long-block
-internal/storage/timescale/diagnostics.go	long-block
-internal/storage/timescale/diagnostics.go	long-block
-internal/storage/timescale/diagnostics.go	long-block
 internal/storage/timescale/discovery.go	long-block
 internal/storage/timescale/errors.go	long-block
 internal/storage/timescale/freeze_events.go	long-block
