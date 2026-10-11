@@ -1,16 +1,12 @@
 // Package band decodes on-chain price updates from Band Protocol's Soroban
 // StandardReference contract.
 //
-// Band's Stellar contract **emits zero events**, so a conventional
-// dispatcher.Decoder would never fire. This package plugs into
-// dispatcher.ContractCallDecoder instead: it observes the InvokeContract op
-// and decodes the relayer's call args (relay / force_relay, carrying
-// symbol_rates: Vec<(Symbol, u64)>, resolve_time, request_id) as the payload.
+// Band's Stellar contract **emits zero events**, so this package plugs into
+// dispatcher.ContractCallDecoder and decodes the relayer's call args (relay / force_relay:
+// symbol_rates Vec<(Symbol, u64)>, resolve_time, request_id) as the payload.
 //
-// Rates are u64 at E9 scale, USD-denominated per symbol (`get_ref_data(XYZ)`
-// prices XYZ in USD). Pair rates (`get_reference_data`) are computed on read
-// at E18 from storage state, so relay calls do not emit them. resolve_time is
-// UNIX seconds.
+// Rates are u64 at E9 scale, USD-denominated per symbol. Pair rates are computed on read at
+// E18, so relay calls do not carry them. resolve_time is UNIX seconds.
 //
 // See docs/protocols/band.md for the full analysis.
 package band
@@ -27,20 +23,13 @@ const SourceName = "band"
 // is u64 at this scale.
 const DefaultDecimals uint8 = 9
 
-// DefaultResolutionSeconds is Band's MEASURED relay cadence on mainnet: one
-// hour.
+// DefaultResolutionSeconds is Band's MEASURED mainnet relay cadence: one hour.
 //
-// [pipeline.BuildDispatcher] emits it as the
-// `stellarindex_oracle_resolution_seconds` gauge, and
-// `stellarindex_oracle_stale` alerts at 10× this value, so the constant IS the
-// alert threshold. A 60 taken from the discovery doc's consumer poll
-// recommendation (not the relayer's publish cadence) made that alert fire for
-// 100% of samples; an always-firing alert hides a real outage.
-//
-// Measured on r1 over 24h: changes(stellarindex_oracle_last_update_unix
-// {source="band"}[24h]) = 24 for both crypto:USDC and crypto:XLM, i.e. every
-// 3600s. If Band's cadence changes, RE-MEASURE with that query rather than
-// reasoning from docs.
+// [pipeline.BuildDispatcher] emits it as the `stellarindex_oracle_resolution_seconds` gauge
+// and `stellarindex_oracle_stale` alerts at 10x this value, so the constant IS the alert
+// threshold; a too-small value fires on every sample and hides a real outage. If the cadence
+// changes, re-measure with changes(stellarindex_oracle_last_update_unix{source="band"}[24h])
+// rather than reasoning from docs.
 const DefaultResolutionSeconds = 3600
 
 // Relay function names on the StandardReference contract. Both
@@ -62,10 +51,8 @@ var (
 	// shifted the signature, or the envelope is broken.
 	ErrMalformedArgs = errors.New("band: malformed InvokeContract args")
 
-	// ErrEmptyRates — every slot of a non-empty symbol_rates vector
-	// was USD / rate 0, or relay()'s resolve_time falls outside the
-	// contract's acceptance window (an empty vector is a no-op, not
-	// this error). An unmapped symbol is NOT a reason: it is recorded
-	// verbatim as a `raw:<symbol>` row (canonical.AssetOracleRaw).
+	// ErrEmptyRates — every slot of a non-empty symbol_rates vector was USD / rate 0, or
+	// relay()'s resolve_time is outside the contract's window (an empty vector is a no-op, not
+	// this error). An unmapped symbol is NOT a reason: it is recorded as `raw:<symbol>`.
 	ErrEmptyRates = errors.New("band: empty symbol_rates vector")
 )

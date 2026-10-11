@@ -6,21 +6,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the dispatcher-facing view of the Upshift vaults. One
-// instance per indexer; no goroutines, no polling, no correlation
-// buffer — every decoded body is self-contained, so there is no orphan
-// class here.
+// Decoder is the dispatcher-facing view of the Upshift vaults. Every decoded body is
+// self-contained, so there is no correlation buffer and no orphan class.
 //
-// It owns one piece of state: the contract-identity gate (ADR-0035).
-// Unlike the factory-anchored sources there is nothing to fan out from
-// — neither vault has a creation event in the lake, each one's first
-// event being its own `admin_set` — so this is the ADR-0040 CURATED-SET
-// mechanism, the shape internal/sources/comet uses. The trust root is
-// the in-code [MainnetGatedSet]; caller options layer the
-// `protocol_contracts` DB warm on top (contractid.WithSeed), which is
-// the operator seam for admitting a new vault without a redeploy.
-// There are no factories, so [contractid.Registry.Seed] never fires
-// from a decode.
+// Its one piece of state is the contract-identity gate (ADR-0035). Neither vault has a
+// creation event in the lake, so this is the ADR-0040 CURATED-SET mechanism (as in
+// internal/sources/comet): the trust root is the in-code [MainnetGatedSet], with the
+// `protocol_contracts` DB warm layered on top (contractid.WithSeed) as the seam for admitting
+// a vault without a redeploy. With no factories, [contractid.Registry.Seed] never fires.
 type Decoder struct {
 	reg *contractid.Registry
 }
@@ -35,33 +28,27 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 // Name implements [dispatcher.Decoder].
 func (*Decoder) Name() string { return SourceName }
 
-// GatedContractSet returns every contract whose events Matches can
-// accept — the tightest sound contract-id prefilter for a lake read
-// over this decoder. The projector reads it every cycle as Source.ContractIDsFunc.
+// GatedContractSet returns every contract whose events Matches can accept: the tightest sound
+// contract-id prefilter for a lake read. The projector reads it every cycle as
+// Source.ContractIDsFunc.
 //
-// It is not an optimisation here, it is what makes a catch-up window
-// affordable: this source's own symbols are `deposit`, `withdraw` and
-// `transfer`, three of the most common on pubnet, so the topic-exclusion
-// prefilter the other Soroban sources use would have to exclude this
-// source's own events to be worth anything. Scoping to two contracts is
-// both cheaper and lossless.
+// It is what makes a catch-up window affordable: `deposit`, `withdraw` and `transfer` are among
+// the most common symbols on pubnet, so a topic-exclusion prefilter would be useless here.
+// Scoping to two contracts is both cheaper and lossless.
 func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 
 // Matches implements [dispatcher.Decoder]. Gates on CONTRACT IDENTITY,
 // never on topic bytes alone (ADR-0035).
 //
-// `deposit`, `withdraw` and `transfer` are generic Soroban symbols with no
-// protocol namespace: a bounded 20,000-ledger pubnet census
-// (63,000,000-63,020,000) found four distinct contracts emitting `deposit`,
-// the vaults a minority of them. A topic-only decoder would record strangers'
-// vault flows under this source, and corrupt the ADR-0033 re-derive (served
-// table and re-derived expectation would agree over polluted data).
+// `deposit`, `withdraw` and `transfer` are generic Soroban symbols with no protocol namespace;
+// a pubnet sample found four distinct contracts emitting `deposit`, the vaults a minority. A
+// topic-only decoder would record strangers' flows under this source and corrupt the ADR-0033
+// re-derive (served table and expectation would agree over polluted data).
 //
-// Coverage trade (ADR-0035): an un-admitted real vault's events are DROPPED, so
-// [MainnetVaults] completeness is load-bearing, held by the bespoke-symbol
-// sweep in the package doc plus the `protocol_contracts` warm. A missed vault
-// fails CLOSED into a visible recognition gap (ADR-0033 Claim 2a), never a
-// silent mis-attribution.
+// Coverage trade (ADR-0035): an un-admitted real vault's events are DROPPED, so [MainnetVaults]
+// completeness is load-bearing (bespoke-symbol sweep plus the `protocol_contracts` warm). A
+// missed vault fails CLOSED into a visible recognition gap (ADR-0033 Claim 2a), never a silent
+// mis-attribution.
 func (d *Decoder) Matches(ev events.Event) bool {
 	if classify(&ev) == "" {
 		return false
@@ -69,22 +56,16 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	return d.reg.Has(ev.ContractID)
 }
 
-// Decode implements [dispatcher.Decoder]. Returns exactly one
-// consumer.Event for the four decoded kinds and ZERO events for the
-// ten recognized-but-undecoded ones.
+// Decode implements [dispatcher.Decoder]: one consumer.Event for the four decoded kinds and
+// ZERO events for the ten recognized-but-undecoded ones.
 //
-// Zero rows with NO error is the deliberate ADR-0033 signal: those
-// ten are real, gated, fully classified events with no serveable
-// state of their own (see the package doc for why each is skipped), so
-// the re-derive must count their ledgers as expected-zero. Returning an
-// error instead would mark the ledger blind and hold this source's
-// completeness verdict open forever — the do-nothing re-derive
-// trap that kept `comet` permanently incomplete. The error path stays
-// reserved for INDETERMINATE parse failures, which must remain blind.
+// Zero rows with NO error is the deliberate ADR-0033 signal: those ten are real, gated,
+// classified events with no serveable state (package doc), so the re-derive must count their
+// ledgers as expected-zero. Returning an error would mark the ledger blind and hold the
+// completeness verdict open forever; errors stay reserved for INDETERMINATE parse failures.
 //
-// Decode itself is shape-only: the identity gate lives in Matches,
-// which the dispatcher consults first. Direct Decode callers (tests,
-// fixture tooling) bypass the gate by design.
+// Decode is shape-only: the identity gate is Matches, consulted first by the dispatcher.
+// Direct callers (tests, fixture tooling) bypass the gate by design.
 func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	kind := classify(&ev)
 	switch kind {

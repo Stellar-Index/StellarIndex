@@ -34,12 +34,10 @@ type Observation struct {
 	// Asset_key is still populated (from the operator map).
 	IsRemoval bool
 
-	// IntraLedgerSeq is the within-ledger position of the change that
-	// produced this observation, in the dispatcher's canonical meta-walk
-	// order (see dispatcher.LedgerEntryChangeContext.IntraLedgerSeq). When a
-	// single (contract, holder) balance changes MULTIPLE times within one
-	// ledger, this is what lets the writer keep the FINAL change rather than
-	// whichever out-of-order PersistEvents worker committed last, which
-	// would serve a wrong supply component.
+	// IntraLedgerSeq is the change's within-ledger position in the dispatcher's canonical
+	// meta-walk order (dispatcher.LedgerEntryChangeContext.IntraLedgerSeq). When one (contract,
+	// holder) balance changes several times in a ledger, it lets the writer keep the FINAL change
+	// rather than whichever out-of-order PersistEvents worker committed last, which would serve a
+	// wrong supply component.
 	IntraLedgerSeq uint32
 }

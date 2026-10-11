@@ -1,18 +1,10 @@
-// Package incidents loads + parses customer-facing incident
-// post-mortems from `internal/incidents/data/*.md` (embedded at
-// build time via go:embed) and exposes the parsed list to API
-// handlers.
+// Package incidents loads customer-facing incident post-mortems from `internal/incidents/data/*.md`
+// (embedded via go:embed) and exposes the parsed list to API handlers. The checked-in directory is
+// the source of truth for the status page; there is no runtime write path.
 //
-// The directory is the source of truth for the incidents shown
-// on status.stellarindex.io. Files are checked in; this package
-// is read-only at runtime — there is no admin write path.
-//
-// File naming follows `<YYYY-MM-DD>-<short-slug>.md`. Files
-// starting with `_` are conventional templates / scratch and are
-// skipped at parse time. Files that fail YAML frontmatter
-// validation (missing required keys, malformed types) are dropped
-// with a log entry but never panic the binary — one bad post
-// shouldn't break the rest of the feed.
+// Files are named `<YYYY-MM-DD>-<short-slug>.md`; files starting with `_` are templates and are
+// skipped. A file that fails YAML frontmatter validation is dropped with a log entry and never
+// panics the binary, so one bad post cannot break the rest of the feed.
 package incidents
 
 import (
@@ -56,14 +48,10 @@ const (
 
 // valid reports whether s is one of the three published severities.
 //
-// The OpenAPI contract declares `severity` as a required enum
-// [SEV-1, SEV-2, SEV-3]. A loader that cast the raw YAML string
-// straight through would let a one-keystroke slip (`sev-1`) ship an
-// out-of-enum value to every typed client, AND every downstream
-// severity mapping is a ternary chain whose final branch is
-// `maintenance`, which the status page renders GREEN. An ongoing SEV-1
-// could then be published looking like routine maintenance. Validating
-// here fails the post loudly instead.
+// The OpenAPI contract declares `severity` as a required enum [SEV-1, SEV-2, SEV-3]. Casting the
+// raw YAML string would let a typo (`sev-1`) reach typed clients, and downstream severity mappings
+// fall through to `maintenance`, which the status page renders green, so an ongoing SEV-1 could
+// look routine. Validating here fails the post loudly instead.
 func (s Severity) valid() bool {
 	switch s {
 	case SeverityMajor, SeverityMinor, SeverityInformative:
@@ -112,12 +100,9 @@ type rawFrontmatter struct {
 	Date               string   `yaml:"date"`
 }
 
-// Load parses every `data/*.md` file in the embedded directory and
-// returns the resulting slice sorted by `started_at` descending
-// (most recent first). Files prefixed with `_` are skipped.
-//
-// Errors on individual files are logged + skipped; the function
-// returns successfully whenever the embedded FS is readable.
+// Load parses every `data/*.md` file in the embedded directory, newest `started_at` first, skipping
+// `_`-prefixed files. Per-file errors are logged and skipped; Load fails only if the embedded FS
+// is unreadable.
 func Load(logger *slog.Logger) ([]Incident, error) {
 	if logger == nil {
 		logger = slog.Default()
@@ -189,14 +174,10 @@ func parseSource(name, raw string) (Incident, error) {
 	if fm.ResolvedAt != "" {
 		t, err := parseTimestamp(fm.ResolvedAt, "")
 		if err != nil {
-			// Do NOT silently drop it. An unparseable resolved_at used
-			// to leave the field nil, which publishes a RESOLVED
-			// incident as never-resolved: /v1/incidents omits the
-			// field, the Atom entry's <updated> falls back to
-			// started_at, the status page prints the status string
-			// where a timestamp belongs, and `emit-incident -event
-			// resolved` ships a payload with no resolved_at while
-			// still passing its status==resolved gate.
+			// Do NOT silently drop it: a nil resolved_at publishes a RESOLVED incident as
+			// never-resolved (/v1/incidents omits the field, the Atom <updated> falls back to
+			// started_at, and `emit-incident -event resolved` ships no resolved_at while still
+			// passing its status==resolved gate).
 			return Incident{}, fmt.Errorf("resolved_at: %w", err)
 		}
 		resolvedAt = &t

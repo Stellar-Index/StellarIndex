@@ -33,25 +33,19 @@ var (
 	TopicSymbolClawback = scval.MustEncodeSymbol(SymbolClawback)
 )
 
-// Event is one observed mint / burn / clawback event. Routed
-// through the dispatcher → consumer pipeline; the indexer-side
-// sink writes to `sep41_supply_events`.
+// Event is one observed mint / burn / clawback event, written to `sep41_supply_events`.
 //
-// Amount is always non-negative — Kind discriminates direction
-// for the running sum. Counterparty is the recipient (mint) or
-// holder (burn / clawback) and is never empty: an event whose
-// topic vector carries no counterparty fails decode (ErrShortTopic)
-// and is dropped rather than written with a blank holder.
+// Amount is always non-negative; Kind gives direction for the running sum. Counterparty is the
+// recipient (mint) or holder (burn / clawback) and is never empty: an event with no
+// counterparty fails decode (ErrShortTopic) and is dropped rather than written with a blank holder.
 type Event struct {
 	ContractID string
 	Ledger     uint32
 	TxHash     string
 	OpIndex    uint32
-	// EventIndex is the contract event's index within its operation —
-	// the per-event discriminator that keeps multiple supply events
-	// emitted by ONE op (mint-to-many, or a burn + clawback folded into
-	// one call) from collapsing onto a single sep41_supply_events row via
-	// ON CONFLICT DO NOTHING. It is part of the PK (migration 0057).
+	// EventIndex is the contract event's index within its operation. It is part of the PK so
+	// several supply events from ONE op (mint-to-many, burn + clawback) do not collapse onto a
+	// single sep41_supply_events row via ON CONFLICT DO NOTHING.
 	EventIndex   uint32
 	ObservedAt   time.Time
 	Kind         string // SymbolMint | SymbolBurn | SymbolClawback

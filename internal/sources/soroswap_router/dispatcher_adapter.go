@@ -5,20 +5,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Decoder implements dispatcher.ContractCallDecoder. The Soroswap
-// router emits no events itself (its swap functions call down to
-// per-pair contracts that emit `SoroswapPair("swap")`); we hook
-// the InvokeContract call directly so the router-level intent
-// (path + amounts + deadline) is captured distinct from the per-
-// pair leg-level swaps.
+// Decoder implements dispatcher.ContractCallDecoder. The Soroswap router emits no events itself
+// (its swaps call per-pair contracts that emit `SoroswapPair("swap")`), so it hooks the
+// InvokeContract call to capture router-level intent (path + amounts + deadline) distinct from
+// the per-pair legs, as Band's StandardReference decoder does.
 //
-// Same wire pattern as Band's StandardReference decoder
-// (internal/sources/band) — both protocols expose state-changing
-// functions that don't publish events.
-//
-// Stateless. Matching is O(1) string compare on (contract_id,
-// function_name); SCVal arg parsing only happens for matching
-// calls.
+// Stateless. Matching is an O(1) compare on (contract_id, function_name); SCVal args are parsed
+// only for matching calls.
 type Decoder struct {
 	routerContract string
 }
@@ -33,11 +26,9 @@ func NewDecoder(routerContract string) *Decoder {
 // Name implements [dispatcher.ContractCallDecoder].
 func (d *Decoder) Name() string { return SourceName }
 
-// Matches implements [dispatcher.ContractCallDecoder]. Cheap
-// predicate: contract ID == the configured router AND function
-// is one of the two swap entry points. Admin functions
-// (set_pair_fee, set_protocol_fee_recipient, init, …) don't move
-// tokens and aren't useful for trade attribution.
+// Matches implements [dispatcher.ContractCallDecoder]: the contract ID is the configured router
+// AND the function is one of the two swap entry points. Admin functions (set_pair_fee,
+// set_protocol_fee_recipient, init, …) move no tokens and are useless for trade attribution.
 func (d *Decoder) Matches(contractID, functionName string) bool {
 	if contractID != d.routerContract {
 		return false

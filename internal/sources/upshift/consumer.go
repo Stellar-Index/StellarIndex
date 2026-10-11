@@ -7,23 +7,17 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 )
 
-// Event is one decoded Upshift vault event — the single
-// [consumer.Event] this package emits, discriminated by Kind (the
-// internal/sources/sep41_transfers shape). The pipeline sink writes it
-// to the `upshift_vault_events` hypertable (migration 0157).
-//
-// Which fields are populated is a function of Kind, and the migration's
-// CHECK constraints enforce the same table:
+// Event is the single [consumer.Event] this package emits, discriminated by Kind and written
+// to the `upshift_vault_events` hypertable. Populated fields depend on Kind, and the
+// migration's CHECK constraints enforce the same table:
 //
 //	deposit / withdraw        Caller, Receiver, Owner, Assets, Shares
 //	transfer                  Caller (from), Receiver (to), Shares (amount)
 //	deployed_assets_changed   Caller (operator), OldAmount, NewAmount
 //
-// Amounts are RAW i128 (canonical.Amount → NUMERIC per ADR-0003).
-// Nothing here divides shares by assets or applies a decimals
-// assumption: the two are on different scales (the vault mints with an
-// ERC-4626 decimals offset of 6, see the package doc) and the offset is
-// evidence, not a constant this package is entitled to bake in.
+// Amounts are RAW i128 (canonical.Amount → NUMERIC per ADR-0003). Shares and assets are on
+// different scales (ERC-4626 decimals offset of 6, see the package doc), so nothing here
+// divides one by the other or bakes in a decimals assumption.
 type Event struct {
 	// ContractID is the emitting vault — always a member of the gated
 	// set, since Matches has already run.
@@ -66,11 +60,9 @@ type Event struct {
 	// withdraw, moved on transfer. Zero on deployed_assets_changed.
 	Shares canonical.Amount
 
-	// OldAmount / NewAmount are the deployed-capital totals a
-	// deployed_assets_changed event reports. Zero on every other kind.
-	// These are the DEPLOYED leg only — the vault's idle balance is not
-	// observable in any event, so they are NOT the vault's total assets
-	// and must never be served as TVL on their own.
+	// OldAmount / NewAmount are the deployed-capital totals of a deployed_assets_changed event,
+	// zero on every other kind. They are the DEPLOYED leg only (idle balance is in no event),
+	// so they are NOT total assets and must never be served as TVL on their own.
 	OldAmount canonical.Amount
 	NewAmount canonical.Amount
 }

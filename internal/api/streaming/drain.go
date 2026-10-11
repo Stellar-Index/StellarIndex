@@ -5,20 +5,17 @@ import "sync"
 // Drain is the one-shot "this server is shutting down" broadcast that the SSE
 // writer watches alongside the request context.
 //
-// http.Server.Shutdown waits for every connection to go idle, and an SSE
-// connection never does; r.Context() is cancelled when the CLIENT leaves, not on
-// server shutdown. Without Drain one attached stream pins the listener drain for
-// the whole shutdown budget (measured on r1: 30.18s with one browser on
-// /v1/ledger/stream, 0.21s with none).
+// http.Server.Shutdown waits for every connection to go idle, and an SSE connection never does;
+// r.Context() is cancelled when the CLIENT leaves, not on server shutdown. Without Drain one
+// attached stream pins the listener drain for the whole shutdown budget.
 //
-// Not http.Server.BaseContext: that would cancel every in-flight request the
-// instant SIGTERM lands, not just the few streams.
+// Not http.Server.BaseContext: that would cancel every in-flight request the instant SIGTERM
+// lands, not just the streams.
 //
-// One Drain per server: pass Begin to http.Server.RegisterOnShutdown and hand
-// the Drain to the stream writers through [StreamOptions]. Begin and Done are
-// safe on a nil receiver and the zero value (a nil channel, which blocks forever
-// in a select), so a caller that wires no Drain is never told to drain. Use
-// NewDrain for one that can fire.
+// One Drain per server: pass Begin to http.Server.RegisterOnShutdown and hand the Drain to the
+// stream writers through [StreamOptions]. Begin and Done are safe on a nil receiver and the zero
+// value (a nil channel blocks forever in a select), so a caller that wires no Drain is never told
+// to drain. Use NewDrain for one that can fire.
 type Drain struct {
 	once sync.Once
 	ch   chan struct{}

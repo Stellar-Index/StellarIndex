@@ -10,19 +10,10 @@ const (
 	ObservationKind = "claimable_balances.observation"
 )
 
-// Observation is one ClaimableBalanceEntry-delta record.
-// Identity is per-claimable-balance-id (not per-account) — a
-// claimable balance has its own ledger entry that exists from
-// creation until claim.
-//
-// Created / Updated / Restored variants populate ClaimableID +
-// AssetKey + Balance. Removed variants (a claim) populate
-// ClaimableID + AssetKey with Balance zero and IsRemoval true
-// (see package doc).
+// Observation is one ClaimableBalanceEntry-delta record, identified per claimable balance id (not
+// per account). Removed variants (a claim) carry Balance zero and IsRemoval true.
 type Observation struct {
-	// ClaimableID is the BalanceID's hex form. Unique across the
-	// network — a single claimable balance occupies one ledger
-	// entry from creation until claim.
+	// ClaimableID is the BalanceID's hex form, unique across the network.
 	ClaimableID string
 
 	// AssetKey is the supply.AssetKey form (CODE:ISSUER for
@@ -36,18 +27,12 @@ type Observation struct {
 	// ADR-0003.
 	Balance *big.Int
 
-	// IsRemoval is true when the change removed the claimable
-	// balance (a ClaimClaimableBalance op). Balance is zeroed and
-	// the row lands with is_removal=true, which the served
-	// aggregate (SumClaimableBalancesAtOrBefore) excludes — so the
-	// claimed amount stops counting toward total supply.
+	// IsRemoval is true when the change removed the balance (a claim). Balance is zeroed and
+	// SumClaimableBalancesAtOrBefore excludes the row, so the amount stops counting toward supply.
 	IsRemoval bool
 
-	// IntraLedgerSeq is the within-ledger position of the change that
-	// produced this observation, in the dispatcher's canonical meta-walk
-	// order (see dispatcher.LedgerEntryChangeContext.IntraLedgerSeq). The
-	// writer guards its last-writer-wins upsert on it so an out-of-order
-	// PersistEvents worker can never overwrite a later intra-ledger change
-	// with an earlier one.
+	// IntraLedgerSeq is the change's within-ledger position in the dispatcher's canonical
+	// meta-walk order. The writer guards its last-writer-wins upsert on it so an out-of-order
+	// PersistEvents worker cannot overwrite a later change with an earlier one.
 	IntraLedgerSeq uint32
 }

@@ -3,10 +3,9 @@
 
 // Package sdexclaim holds the shared helpers for interpreting SDEX
 // ClaimAtoms (the per-fill records inside a ManageOffer/PathPayment result).
-// Both the dispatcher's census walk and the ClickHouse structural extractor
-// count "real" trades from the same xdr.ClaimAtom slices; this is their single
-// canonical copy (they can't share via internal/sources/sdex — that would
-// cycle back through internal/dispatcher).
+// The dispatcher's census walk and the ClickHouse structural extractor both count "real" trades
+// from the same slices; this is their single copy, since sharing via internal/sources/sdex would
+// cycle back through internal/dispatcher.
 package sdexclaim
 
 import (
@@ -15,15 +14,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// (The former exported `Amounts` helper is gone: it had no callers left,
-// and its "return (0, 0) for an unknown variant" contract is exactly the
-// shape that let an un-decodable atom be counted as a zero-amount trade
-// rather than rejected outright. Use [IsRealTrade]; `parts` below is the
-// destructuring it needs.)
-
-// parts destructures one ClaimAtom into the five fields every drop rule
-// needs, plus `known` = whether the atom's discriminant is one of the
-// three variants we understand. All zero values when known is false.
+// parts destructures one ClaimAtom into the fields every drop rule needs, plus `known` for whether
+// the discriminant is one of the three variants we understand (all zero values when false). A
+// zero-returning helper for unknown variants would count an un-decodable atom as a zero-amount
+// trade, so callers must check known.
 func parts(a xdr.ClaimAtom) (sold, bought xdr.Int64, soldAsset, boughtAsset xdr.Asset, known bool) {
 	switch a.Type {
 	case xdr.ClaimAtomTypeClaimAtomTypeOrderBook:
@@ -39,11 +33,9 @@ func parts(a xdr.ClaimAtom) (sold, bought xdr.Int64, soldAsset, boughtAsset xdr.
 	return 0, 0, xdr.Asset{}, xdr.Asset{}, false
 }
 
-// BoughtSide returns one ClaimAtom's (AssetBought, AmountBought) — what
-// the taker PAID into that offer or pool — and whether its discriminant is
-// a known variant. Callers that need a leg rather than the trade predicate
-// use this instead of switching on the variant themselves, so a new
-// ClaimAtom variant is taught to [parts] once.
+// BoughtSide returns one ClaimAtom's (AssetBought, AmountBought), what the taker PAID into that
+// offer or pool, and whether its discriminant is a known variant. Callers needing a leg use this
+// so a new ClaimAtom variant is taught to [parts] once.
 func BoughtSide(a xdr.ClaimAtom) (asset xdr.Asset, amount xdr.Int64, known bool) {
 	_, bought, _, boughtAsset, known := parts(a)
 	return boughtAsset, bought, known

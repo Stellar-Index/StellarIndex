@@ -1,16 +1,9 @@
-// Package sdex decodes classic-Stellar DEX trades from
-// LedgerCloseMeta operation results. Unlike the four Soroban
-// source packages, SDEX doesn't emit contract events — trades are
-// implicit in the results of ManageSellOffer / ManageBuyOffer /
-// CreatePassiveSellOffer / PathPayment* operations. The dispatcher
-// hands this package the (op, result) pair via OpContext and we
-// iterate `OffersClaimed` to yield one canonical.Trade per
-// ClaimAtom.
-//
-// Reference implementation: go-stellar-sdk/stellar-extract/trades.go
-// covers the OrderBook + V0 variants; we add LiquidityPool on top
-// (ADR-0001 rules out Horizon-style classic-DEX APIs so we parse
-// XDR directly).
+// Package sdex decodes classic-Stellar DEX trades from LedgerCloseMeta operation results.
+// SDEX emits no contract events: trades are implicit in the results of ManageSellOffer /
+// ManageBuyOffer / CreatePassiveSellOffer / PathPayment* operations. The dispatcher hands
+// over the (op, result) pair via OpContext and we iterate `OffersClaimed` to yield one
+// canonical.Trade per ClaimAtom (OrderBook, V0 and LiquidityPool), parsing XDR directly
+// rather than via Horizon (ADR-0001).
 package sdex
 
 import "errors"
@@ -38,13 +31,10 @@ var (
 	// failure: the drop is deterministic and mirrored by sdexclaim.IsRealTrade.
 	ErrNoOpClaim = errors.New("sdex: both-zero no-op claim")
 
-	// ErrClaimIndexOverflow — a claim atom's position within its op
-	// reached opIndexFanoutStride. Op-index fanout packs tradeIndex
-	// into OpIndex as opIdx*stride+tradeIndex (decode.go); an index
-	// at or past the stride aliases into the next op's OpIndex range,
-	// and the trades upsert has been ON CONFLICT DO UPDATE since
-	// migration 0109, so the alias would silently overwrite an
-	// unrelated trade instead of being rejected. Surfaced as a
-	// per-entry decode error so SourceDecodeErrorsTotal catches it.
+	// ErrClaimIndexOverflow — a claim atom's position reached opIndexFanoutStride. OpIndex is
+	// opIdx*stride+tradeIndex (decode.go), so an index at or past the stride aliases into the
+	// next op's range, and because the trades upsert is ON CONFLICT DO UPDATE it would
+	// silently overwrite an unrelated trade. Surfaced as a per-entry decode error so
+	// SourceDecodeErrorsTotal catches it.
 	ErrClaimIndexOverflow = errors.New("sdex: claim index exceeds op_index fanout stride")
 )

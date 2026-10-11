@@ -15,11 +15,8 @@ var (
 	ErrUnsupportedClaimableAsset = errors.New("claimable_balances: claimable asset is not a classic credit asset")
 )
 
-// extractFromChange returns (claimable_id, asset_key, balance)
-// for a State/Created/Updated/Restored ClaimableBalanceEntry-delta.
-// Removed variants carry no entry body — they are decoded from the
-// LedgerKey via [removedClaimableID] plus the pre-image memo (see
-// package doc).
+// extractFromChange returns (claimable_id, asset_key, balance) for a body-carrying change.
+// Removed variants have no entry body; see [removedClaimableID] and the pre-image memo.
 func extractFromChange(change xdr.LedgerEntryChange) (claimableID, assetKey string, balance *big.Int, err error) {
 	switch change.Type {
 	case xdr.LedgerEntryChangeTypeLedgerEntryCreated:
@@ -35,10 +32,8 @@ func extractFromChange(change xdr.LedgerEntryChange) (claimableID, assetKey stri
 }
 
 // removedClaimableID pulls the claimable_id hex off a Removed
-// change's LedgerKey. Returns ok=false when the change is not a
-// claimable-balance removal (or the key is malformed) — the asset
-// is NOT recoverable here, which is why the observer pairs this with
-// the pre-image memo.
+// change's LedgerKey. Returns ok=false when the change is not a claimable-balance removal or the
+// key is malformed. The asset is not recoverable from the key, hence the pre-image memo.
 func removedClaimableID(change xdr.LedgerEntryChange) (string, bool) {
 	key := change.Removed
 	if key == nil || key.Type != xdr.LedgerEntryTypeClaimableBalance || key.ClaimableBalance == nil {

@@ -134,11 +134,9 @@ func (t *topicState) hasEvictedBuffered() bool {
 	return t.buffer != nil && t.buffer.hasEvicted()
 }
 
-// NewHub returns a Hub with [DefaultBufferSize] per topic. Pass 0 to
-// take the default; positive values override per-topic capacity.
-//
-// Topic retention takes [DefaultTopicIdleTTL] and [DefaultMaxTopics];
-// override with [Hub.SetTopicIdleTTL] / [Hub.SetMaxTopics].
+// NewHub returns a Hub with bufferSize events per topic (0 takes [DefaultBufferSize]). Retention
+// defaults to [DefaultTopicIdleTTL] and [DefaultMaxTopics]; see [Hub.SetTopicIdleTTL] and
+// [Hub.SetMaxTopics].
 func NewHub(bufferSize int) *Hub {
 	if bufferSize <= 0 {
 		bufferSize = DefaultBufferSize
@@ -426,11 +424,9 @@ func (h *Hub) withTopic(name string, bounded bool, fn func(t *topicState)) error
 	}
 }
 
-// getOrCreateTopic returns the topicState for `name`, creating it
-// on first use. Held outside any topic lock so two concurrent
-// publishers on different topics don't serialise. With bounded set it
-// refuses, rather than grows the map past maxTopics, once a reap leaves
-// no room.
+// getOrCreateTopic returns the topicState for `name`, creating it on first use. It runs outside any
+// topic lock so publishers on different topics do not serialise. With bounded set it refuses,
+// rather than grow the map past maxTopics, once a reap leaves no room.
 func (h *Hub) getOrCreateTopic(name string, bounded bool) (*topicState, error) {
 	h.mu.RLock()
 	t, ok := h.topics[name]

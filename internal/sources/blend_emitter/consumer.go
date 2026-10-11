@@ -36,13 +36,9 @@ func (DistributeEvent) EventKind() string { return "blend_emitter.distribute" }
 // Source implements [consumer.Event].
 func (DistributeEvent) Source() string { return SourceName }
 
-// DropEvent is the [consumer.Event] emitted on a successful `drop`
-// decode — a one-shot BLND airdrop to a variable-length recipient
-// list. Recipients carries every (address, amount) pair from the
-// ONE underlying Soroban event; the storage writer fans this out one
-// row per recipient (a `recipient_index` discriminator distinguishes
-// them in the PK), same shape as
-// [internal/sources/aquarius.ReservesEvent]'s per-token fan-out.
+// DropEvent is the [consumer.Event] for a `drop`, a one-shot BLND airdrop to a variable-length
+// recipient list. Recipients holds every pair from the ONE Soroban event; the writer fans it out
+// one row per recipient, with `recipient_index` in the PK so the rows do not collapse.
 type DropEvent struct {
 	ContractID string
 	Ledger     uint32

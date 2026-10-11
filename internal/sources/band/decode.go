@@ -16,34 +16,23 @@ import (
 // submission), well under 1024.
 const opIndexFanoutStride = 1024
 
-// bandMaxFutureResolveTime mirrors the Band contract's own acceptance
-// window: relay() applies an update only while
-// `resolve_time < ledger.timestamp + OFFSET`, OFFSET = 3600 seconds
-// (ref_data.rs). A relay outside it is a silent on-chain no-op that
-// still leaves a successful transaction, so the decoder has to apply
-// the same bound or it records prices the chain refused.
+// bandMaxFutureResolveTime mirrors the contract's relay() window (resolve_time < ledger
+// timestamp + 3600s). A relay outside it is a silent on-chain no-op in a successful tx, so
+// the decoder must apply the same bound or it records prices the chain refused.
 const bandMaxFutureResolveTime = time.Hour
 
-// safeUnixEpochFloorSeconds mirrors canonical.SafeUnixSeconds's own
-// year-2001 floor (unexported there). A raw resolve_time below it is
-// garbage SafeUnixSeconds itself would have clamped to closedAt; band
-// needs the raw comparison directly (not just the clamped result) to
-// tell "garbage" apart from a resolve_time that legitimately equals
-// the ledger close.
+// safeUnixEpochFloorSeconds mirrors canonical.SafeUnixSeconds's unexported year-2001 floor.
+// Band needs the raw comparison, not the clamped result, to tell garbage apart from a
+// resolve_time that legitimately equals the ledger close.
 const safeUnixEpochFloorSeconds = 1_000_000_000
 
-// decodeRelayArgs converts one Band relay/force_relay InvokeContract
-// call into a slice of canonical.OracleUpdate — one per (symbol,
-// rate) pair in symbol_rates.
-//
-// fnName selects between the two function shapes:
+// decodeRelayArgs converts one relay/force_relay call into one canonical.OracleUpdate per
+// symbol_rates pair. fnName selects the shape:
 //
 //   - relay:       args = [from, symbol_rates, resolve_time, request_id]
 //   - force_relay: args = [symbol_rates, resolve_time, request_id]
 //
-// Updates share (ledger, tx_hash) but get distinct OpIndex values
-// derived from the vector position, mirroring the Reflector /
-// Redstone fan-out.
+// Updates share (ledger, tx_hash) and get distinct OpIndex values from the vector position.
 func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitting would reduce linearity
 	fnName string,
 	args []string,
@@ -119,29 +108,17 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 		// on-chain: a recognised no-op, not a decode error that blinds the ledger.
 		return nil, nil
 	}
-	// Defensive fallback: relayer-supplied resolve_time is a u64;
-	// canonical.SafeUnixSeconds bound-checks the RAW u64 (a year-2001 floor
-	// and a close+24h ceiling, catching the >MaxInt64 wrap class of the
-	// router deadline_ts overflow) and falls back to the ledger close on
-	// garbage. Real-world Band payloads are post-2020 UNIX seconds ≤ the
-	// close.
+	// resolve_time is a relayer-supplied u64; SafeUnixSeconds bound-checks the RAW value
+	// (catching the >MaxInt64 wrap class) and falls back to the ledger close on garbage.
 	ts := canonical.SafeUnixSeconds(resolveSeconds, closedAt)
-	// relay() (not force_relay) applies an update only while
-	// `resolve_time < ledger.timestamp + OFFSET` (ref_data.rs); outside
-	// that the on-chain call is a silent no-op though the tx succeeds.
-	// Clamping and writing such a rate would let one the chain never applied
-	// win our `ORDER BY ts DESC` latest-read, so drop it (bandRelayWouldNoOp).
-	//
-	// We can't see the per-symbol stored resolve_time the contract also
-	// gates on, so a genuine first write for a symbol with no live RefData
-	// entry is dropped too: an accepted false-negative over serving a
-	// rejected rate. Both surface via obs.SourceDecodeErrorsTotal{source="band"}.
-	//
-	// force_relay is the unconditional admin path, so it keeps the
-	// clamp-to-close fallback below.
-	//
-	// Applied after the symbol_rates loop so a malformed pair still surfaces
-	// its own ErrMalformedArgs.
+	// relay() (not force_relay) silently no-ops outside its window though the tx succeeds.
+	// Writing such a rate would let one the chain never applied win our `ORDER BY ts DESC`
+	// latest-read, so drop it (bandRelayWouldNoOp). We can't see the per-symbol stored
+	// resolve_time the contract also gates on, so a genuine first write for a symbol with no
+	// live RefData entry is dropped too: an accepted false-negative over serving a rejected
+	// rate. Both surface via obs.SourceDecodeErrorsTotal{source="band"}. force_relay is the
+	// unconditional admin path and keeps the clamp-to-close fallback below. Applied after the
+	// symbol_rates loop so a malformed pair still surfaces its own ErrMalformedArgs.
 	relayRejected := fnName == FnRelay && bandRelayWouldNoOp(resolveSeconds, closedAt)
 	if !ts.Before(closedAt.Add(bandMaxFutureResolveTime)) {
 		ts = closedAt.UTC()
@@ -166,11 +143,8 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 		if err != nil {
 			return nil, fmt.Errorf("%w: symbol_rates[%d] rate: %w", ErrMalformedArgs, i, err)
 		}
-		// USD is a special-case in Band's storage (always 1 at E9,
-		// not relayer-set). We skip it in relay payloads — if a
-		// relayer somehow pushes USD its storage write is rejected
-		// on-chain and emitting an OracleUpdate would be false
-		// signal. See band-soroban/src/storage/ref_data.rs:30-38.
+		// USD is fixed at 1 (E9) in Band's storage, not relayer-set; a pushed USD write is
+		// rejected on-chain, so emitting an update for it would be false signal.
 		if sym == "USD" {
 			continue
 		}
@@ -179,11 +153,9 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 			return nil, fmt.Errorf("%w: symbol_rates[%d] %q: %w", ErrMalformedArgs, i, sym, err)
 		}
 		if !asset.IsMapped() {
-			// Oracle capture-totality: a symbol outside the allow-lists is
-			// RECORDED verbatim as raw:<symbol> at this same vector slot, not
-			// skipped (same pattern as Reflector / RedStone). Still count it so
-			// the unknown-symbols runbook signals on upstream coverage drift — a
-			// raw row is a mapping gap the allow-list owner has to close.
+			// An unmapped symbol is recorded verbatim as raw:<symbol> at this vector slot,
+			// never skipped. Still count it: a raw row is a mapping gap the allow-list owner
+			// must close.
 			obs.SourceUnknownSymbolsTotal.WithLabelValues("band").Inc()
 		}
 		if rate == 0 {
@@ -217,26 +189,16 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 	return out, nil
 }
 
-// symbolToAsset maps a Band symbol to a canonical.Asset. Band
-// publishes a mix of crypto tickers (BTC, ETH, XLM …) and fiat
-// codes (USD is special-cased above; EUR, JPY, ...) via the same
-// symbol_rates channel. canonical.MapOracleSymbol tries fiat
-// (ADR-0010), then crypto (ADR-0014), then RWA (ADR-0028) — the one
-// shared precedence for every oracle decoder — and returns a verbatim
-// raw:<symbol> asset for anything else, so the slot is recorded rather
-// than dropped. The only error is a symbol the raw validator cannot
-// represent (impossible for an ScSymbol).
+// symbolToAsset maps a Band symbol (crypto tickers and fiat codes share symbol_rates) to a
+// canonical.Asset via canonical.MapOracleSymbol, the one precedence shared by every oracle
+// decoder. Unknown symbols come back as raw:<symbol> rather than dropped.
 func symbolToAsset(sym string) (canonical.Asset, error) {
 	return canonical.MapOracleSymbol(sym)
 }
 
-// bandRelayWouldNoOp reports whether the Band contract's relay()
-// would silently reject resolveSeconds outside its own OFFSET window
-// (ref_data.rs: `resolve_time < ledger.timestamp + OFFSET`), checked
-// on the RAW value rather than canonical.SafeUnixSeconds's
-// already-clamped result — that helper's 24h ceiling is looser than
-// Band's 1h one, so a raw value inside canonical's window but outside
-// Band's would otherwise slip through unrejected.
+// bandRelayWouldNoOp reports whether relay() would silently reject resolveSeconds. It checks
+// the RAW value: SafeUnixSeconds's 24h ceiling is looser than Band's 1h one, so a clamped
+// value would let an out-of-window rate through.
 func bandRelayWouldNoOp(resolveSeconds uint64, closedAt time.Time) bool {
 	if resolveSeconds < safeUnixEpochFloorSeconds {
 		return true

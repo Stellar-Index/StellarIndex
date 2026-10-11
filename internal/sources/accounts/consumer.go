@@ -2,11 +2,8 @@ package accounts
 
 import "github.com/Stellar-Index/StellarIndex/internal/consumer"
 
-// EventKind / Source on Observation implement [consumer.Event] so
-// the observer's outputs flow through the standard dispatcher →
-// orchestrator → indexer-sink path. The sink type-switches on
-// ObservationKind to route into the account_observations
-// hypertable.
+// EventKind / Source on Observation implement [consumer.Event]; the sink type-switches on
+// ObservationKind to route into the account_observations hypertable.
 
 // EventKind implements [consumer.Event].
 func (Observation) EventKind() string { return ObservationKind }

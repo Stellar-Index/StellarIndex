@@ -9,15 +9,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Observer is the dispatcher-facing AccountEntry observer per
-// ADR-0021. Implements [dispatcher.LedgerEntryChangeDecoder].
-//
-// Watched-set driven: the observer only fires on changes touching
-// G-strkeys explicitly listed in operator config — see
-// [NewObserver]. Switching to a "watch every account" mode is a
-// non-trivial table-size decision that needs its own ADR; the
-// current scope is the operator-curated set (SDF reserves +
-// classic-asset issuers + future validator accounts).
+// Observer is the dispatcher-facing AccountEntry observer (ADR-0021), implementing
+// [dispatcher.LedgerEntryChangeDecoder]. It fires only on G-strkeys in the operator-configured
+// watched set (see [NewObserver]); a watch-every-account mode would be a table-size decision
+// needing its own ADR.
 type Observer struct {
 	// watched maps G-strkey → true. Map lookup is O(1) per change;
 	// the watched set is typically small (single-digit accounts at
@@ -52,16 +47,8 @@ func NewObserver(watched []string) (*Observer, error) {
 // Name implements [dispatcher.LedgerEntryChangeDecoder].
 func (*Observer) Name() string { return SourceName }
 
-// Matches implements [dispatcher.LedgerEntryChangeDecoder]. Returns
-// true only when:
-//
-//  1. The change touches an AccountEntry (not Trustline /
-//     ContractCode / etc.), AND
-//  2. The AccountEntry's AccountId is in the watched-set.
-//
-// Both checks are cheap — type discrimination + map lookup. No
-// SCVal parsing or balance extraction at the match step (Decode
-// does that work after the match wins).
+// Matches implements [dispatcher.LedgerEntryChangeDecoder]. It is true only for an AccountEntry
+// change whose AccountId is in the watched set; both checks are cheap, with extraction left to Decode.
 func (o *Observer) Matches(change xdr.LedgerEntryChange) bool {
 	id, err := accountIDFromChange(change)
 	if err != nil {

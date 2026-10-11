@@ -1,22 +1,21 @@
 // Package upshift decodes events from the Upshift tokenized yield vaults on
 // Stellar (curated by Gami Labs and Stake Capital Group).
 //
-// A vault is ERC-4626-shaped and the vault contract IS the share token (SEP-41 transfer/approve).
-// RedStone prices `earnUSDC_FUNDAMENTAL` on that identity ([MainnetVaultEarnUSDC]), not the
-// underlying's: a yield-bearing claim is a different instrument from USDC.
+// A vault is ERC-4626-shaped and the vault contract IS the share token (SEP-41). RedStone prices
+// `earnUSDC_FUNDAMENTAL` on that identity ([MainnetVaultEarnUSDC]), not the underlying's: a
+// yield-bearing claim is a different instrument from USDC.
 //
 // Two vaults: earnUSDC (CCL3WITW…) and earnXLM (CC6TRAPQ…). Each underlying is proven by the SAC
 // `transfer` one event ahead of a `deposit` for exactly its `assets` amount; ticker names are
 // inferred, CONTRACT IDS are proven.
 //
-// Shapes: `deposit`/`withdraw` carry three Address topics and Map{assets, shares}. `transfer` is a
-// bare i128 OR Map{amount, to_muxed_id} (CAP-67). Shares are not at the underlying's scale.
-// Not decoded (zero rows, so the ADR-0033 re-derive counts them expected-zero): custody-side
-// events (they would double-count `deployed_assets_changed`), governance events, `approve`.
+// Shapes: `deposit`/`withdraw` carry three Address topics and Map{assets, shares}. `transfer` is
+// a bare i128 OR Map{amount, to_muxed_id} (CAP-67). Shares are not at the underlying's scale.
+// Not decoded (zero rows, counted expected-zero by the ADR-0033 re-derive): custody-side events
+// (they would double-count `deployed_assets_changed`), governance events, `approve`.
 //
-// Gating: the symbols are generic, so ADR-0035 contract-identity gating is essential. With no
-// creation event, the ADR-0040 curated set applies ([MainnetGatedSet] plus the
-// `protocol_contracts` DB warm).
+// Gating: the symbols are generic, so ADR-0035 contract-identity gating is essential; with no
+// creation event the ADR-0040 curated set applies ([MainnetGatedSet] plus the DB warm).
 package upshift
 
 import (
@@ -46,13 +45,9 @@ const (
 	// imports THIS constant so the two can never drift apart.
 	MainnetVaultEarnUSDC = "CCL3WITWFFXIHV2I52ECV5DPIEOFSTU3PBPR53ILPLF2IP5KHECXRUTY"
 
-	// MainnetVaultEarnXLM is the earnXLM vault: native XLM in, earnXLM
-	// shares out. Identified from the lake by the same
-	// method used for earnUSDC (see the package doc): it is one of only
-	// two contracts emitting this protocol's bespoke symbols, it was
-	// deployed in the same batch onto the same operator and custody
-	// subaccount, and its underlying is pinned by the native-SAC
-	// `transfer` that shares a transaction with its first `deposit`.
+	// MainnetVaultEarnXLM is the earnXLM vault: native XLM in, earnXLM shares out. Identified
+	// like earnUSDC (package doc): one of only two contracts emitting the bespoke symbols, with
+	// its underlying pinned by the native-SAC `transfer` sharing a tx with its first `deposit`.
 	MainnetVaultEarnXLM = "CC6TRAPQD3NK7THUKWPV5SL2JHKQGNXZVB6S6MVYFSLRWAKEFUWZKZ7J"
 )
 
@@ -86,15 +81,12 @@ type VaultMeta struct {
 	FirstEventLedger uint32
 }
 
-// MainnetVaults is the curated Upshift vault set on pubnet — the
-// ADR-0040 curated-set trust root. Verified complete against the lake
-// (see the package doc): these are the only two contracts
-// emitting the protocol's bespoke event vocabulary.
+// MainnetVaults is the curated Upshift vault set on pubnet, the ADR-0040 trust root; the lake
+// sweep in the package doc shows these are the only contracts emitting the bespoke vocabulary.
 //
-// Completeness of this map is load-bearing exactly as a factory set
-// would be: a vault missing here has its events DROPPED, not
-// mis-attributed. Re-run the bespoke-symbol sweep to admit a new one,
-// or admit it as a `protocol_contracts` row without a redeploy.
+// Completeness is load-bearing: a vault missing here has its events DROPPED, not
+// mis-attributed. Re-run the bespoke-symbol sweep, or add a `protocol_contracts` row, to admit
+// a new one without a redeploy.
 var MainnetVaults = map[string]VaultMeta{
 	MainnetVaultEarnUSDC: {
 		Label:            "earnUSDC",
@@ -110,13 +102,9 @@ var MainnetVaults = map[string]VaultMeta{
 	},
 }
 
-// MainnetGatedSet returns the curated vault allowlist the decoder seeds
-// into its contract-identity registry.
-//
-// Derived from [MainnetVaults] rather than listed a second time — a
-// hand-kept parallel list is exactly the drift that would gate one set
-// and document another — and sorted so the projector's contract-id
-// prefilter and the reconcile's lake read are byte-stable across runs.
+// MainnetGatedSet returns the vault allowlist seeded into the decoder's identity registry.
+// It is derived from [MainnetVaults] so the gated and documented sets cannot drift, and sorted
+// so the projector's contract-id prefilter and the reconcile's lake read are byte-stable.
 func MainnetGatedSet() []string {
 	out := make([]string, 0, len(MainnetVaults))
 	for id := range MainnetVaults {

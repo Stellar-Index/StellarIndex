@@ -5,14 +5,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 )
 
-// Decoder implements dispatcher.ContractCallDecoder. Unlike the
-// event-based Decoders in sibling packages, Band plugs in here
-// because its Soroban contract emits zero events — the relayer's
-// `relay()` / `force_relay()` InvokeContract call carries the full
-// update payload. See docs/protocols/band.md + events.go.
-//
-// No goroutines, no state. Matching is by (contract_id, function
-// name) — O(1) string compare, no SCVal parsing on the hot path.
+// Decoder implements dispatcher.ContractCallDecoder. Band's contract emits zero events, so
+// the relayer's relay()/force_relay() InvokeContract call carries the payload (see
+// docs/protocols/band.md). Stateless; matching is an O(1) string compare with no SCVal
+// parsing on the hot path.
 type Decoder struct {
 	standardReferenceContract string
 }
@@ -27,24 +23,15 @@ func NewDecoder(standardReferenceContract string) *Decoder {
 // Name implements [dispatcher.ContractCallDecoder].
 func (d *Decoder) Name() string { return SourceName }
 
-// RequiresExecutionCorroboration implements
-// [dispatcher.ExecutionCorroborationRequirer]: Band's relay() /
-// force_relay() call args ARE the price payload, decoded verbatim, so a
-// call the attacker-controlled Soroban auth tree merely DECLARED (a
-// source-account auth entry naming the StandardReference contract with
-// forged rates, riding along in a successful tx without ever executing)
-// would otherwise be laundered into a recognised oracle price. Requiring
-// corroboration makes the dispatcher drop any Band call that is not the
-// op's top-level EXECUTED invocation — the shape every genuine relayer
-// update takes (docs/protocols/band.md: "observes the InvokeContract op
-// itself").
+// RequiresExecutionCorroboration implements [dispatcher.ExecutionCorroborationRequirer].
+// The call args ARE the price payload, so a call the attacker-controlled auth tree merely
+// DECLARED (forged rates naming the StandardReference contract, never executed) would be
+// laundered into a recognised oracle price. Corroboration drops any call that is not the
+// op's top-level EXECUTED invocation, the shape every genuine relayer update takes.
 func (d *Decoder) RequiresExecutionCorroboration() bool { return true }
 
-// Matches implements [dispatcher.ContractCallDecoder]. Cheap
-// predicate — checks contract ID and one of the two relay entry
-// points. Any other function on the same contract (get_ref_data,
-// add_relayers, init, …) is read-only or admin and doesn't affect
-// our price view.
+// Matches implements [dispatcher.ContractCallDecoder]: the contract ID plus one of the two
+// relay entry points. Every other function on the contract is read-only or admin.
 func (d *Decoder) Matches(contractID, functionName string) bool {
 	if contractID != d.standardReferenceContract {
 		return false
