@@ -26,7 +26,7 @@ type SEP41EventType string
 const (
 	// EventTransfer fires on `transfer` events. Topic shape:
 	// ("transfer", from, to, sep0011_asset?). The asset topic
-	// position-3 was added post-P23 (CAP-67) for unified events.
+	// position-3 exists post-P23 (CAP-67) for unified events.
 	EventTransfer SEP41EventType = "transfer"
 
 	// EventMint fires on `mint`. The topic shape varies (legacy SAC carries an

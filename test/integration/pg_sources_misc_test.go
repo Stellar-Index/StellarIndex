@@ -1199,11 +1199,11 @@ func TestCopyMergeSEP41_GenerationGuard(t *testing.T) {
 	})
 }
 
-// TestMigration0174_NoOpLeavesCompressedChunksCompressed pins the v0.92.1
+// TestMigration0174_NoOpLeavesCompressedChunksCompressed pins the
 // neutralisation of 0174: over two populated compressed chunks it
 // decompresses nothing and adds no constraint, leaves the version clean at
-// 174, and its down succeeds both on that no-op state and on the v0.92.0
-// state, where the old body had added sep41_transfers_amount_check.
+// 174, and its down succeeds both on that no-op state and on the
+// pre-neutralisation state, where the old body had added sep41_transfers_amount_check.
 func TestMigration0174_NoOpLeavesCompressedChunksCompressed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1235,7 +1235,7 @@ func TestMigration0174_NoOpLeavesCompressedChunksCompressed(t *testing.T) {
 	applyMigrationsUpTo(t, dsn, 173)
 	requireSEP41AmountCheck(t, ctx, db, false, "after 0174 down from the no-op")
 
-	// The v0.92.0 state: the old body ran, so the CHECK exists at 174.
+	// The pre-neutralisation state: the old body ran, so the CHECK exists at 174.
 	if _, err := db.ExecContext(ctx, `SELECT decompress_chunk(c, true) FROM show_chunks('sep41_transfers') c`); err != nil {
 		t.Fatalf("decompress for the v0.92.0 0174 state: %v", err)
 	}

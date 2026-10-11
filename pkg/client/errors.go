@@ -47,7 +47,7 @@ type APIError struct {
 	RequestID string
 
 	// RetryAfter is the parsed value of the HTTP `Retry-After`
-	// response header, when present (G22-08). The server sets it on
+	// response header, when present. The server sets it on
 	// 429 (rate-limited) and 503 (service-unavailable) responses to
 	// tell the caller how long to back off. Zero when the header was
 	// absent or unparseable. Both wire forms are supported: a

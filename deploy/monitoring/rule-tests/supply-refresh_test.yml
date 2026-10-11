@@ -3,7 +3,7 @@
 #
 #   promtool test rules deploy/monitoring/rule-tests/supply-refresh_test.yml
 #
-# The alert was structurally unfireable before this wave: it used
+# An age check on timestamp() cannot fire here: it would be
 #   time() - max(timestamp(supply_refresh_total{outcome="ok"})) > 30*60
 # and timestamp() returns the SAMPLE's scrape time (≈now while the counter
 # series is still being scraped), so the age evaluated to ≈0 forever. These

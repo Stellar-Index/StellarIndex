@@ -215,7 +215,7 @@ func TestParseAPIError(t *testing.T) {
 	})
 }
 
-// TestParseAPIError_RetryAfter pins the G22-08 contract: the
+// TestParseAPIError_RetryAfter pins the contract: the
 // Retry-After response header is parsed into APIError.RetryAfter for
 // both the delta-seconds and HTTP-date wire forms, and ignored when
 // absent / in the past / unparseable.

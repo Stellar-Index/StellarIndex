@@ -1,5 +1,5 @@
 #!/bin/bash
-# Phase D1: archive-walk the degraded ranges with the v0.17.0 ops binary.
+# Phase D1: archive-walk the degraded ranges with the ops binary.
 # Writes full-fidelity ledger_entry_changes (op-level + intra_ledger_seq) over
 # [54M,63.05M] (recent, high value) then [2,38M] (early era). 1M-ledger windows,
 # resumable (fresh state file — NOT the old done-windows.txt), disk-guarded.

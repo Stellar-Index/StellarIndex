@@ -413,7 +413,7 @@ func TestChunkProgressLastVerifiedHash_IsNotTheBoundaryProof(t *testing.T) {
 	base := startTierProgress(VerifyArchiveState{}, "chain", 2, 3000, 3, chunks, now)
 	base = markChunkDoneStitch(base, "chain", 0, chunk0, now, false)
 
-	// Precondition: the field the old comment named is in fact written.
+	// Precondition: the field the plan reads is in fact written.
 	if got := base.Tiers["chain"].InProgress.Chunks[0].LastVerifiedHash; got != hashToHex(hashByte(0xaa)) {
 		t.Fatalf("precondition: chunk[0].LastVerifiedHash = %q, want the terminal hash", got)
 	}

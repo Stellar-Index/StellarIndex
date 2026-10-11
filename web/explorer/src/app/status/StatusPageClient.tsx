@@ -126,7 +126,7 @@ type IngestionSnapshot = Omit<
   backfill_coverage: Array<
     IngestionSnapshotWire['backfill_coverage'][number] & {
       // Evolving (spec documents the diagnostics surface as its stable core
-      // + a described evolving remainder — board #33): density/gap-free fields
+      // + a described evolving remainder): density/gap-free fields
       // (diagnostics_ingestion.go BackfillCoverageView).
       density_pct?: number;
       gap_free_pct?: number;

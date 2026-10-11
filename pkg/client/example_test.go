@@ -1135,7 +1135,7 @@ func ExampleClient_History() {
 // standalone `/v1/currencies/{ticker}` route was retired and folded
 // into `/v1/assets` (asset_class=fiat), and the SDK exposes no
 // Currency method. The leftover was a truncated, dangling comment
-// with no function body — see G22-09.)
+// with no function body.)
 
 // ExampleClient_Cursors demonstrates the per-source ingest
 // cursor surface — which sources are caught up, which are

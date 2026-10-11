@@ -2521,7 +2521,7 @@ func TestUSDVolumeGenerationAwareNullPreservation(t *testing.T) {
 	ledger := int64(50_000_000 + nonce)
 
 	// 2.5 quote units (25,000,000 stroops at 1e7) x $2.00 = $5.00 — a small,
-	// below-ceiling single-leg print, so W1-flow-price-serve-1's bound does
+	// below-ceiling single-leg print, so the single-leg bound does
 	// not apply and the value populates.
 	res := &flakeyFXResolver{prices: map[string]string{quote.String(): "2.00"}}
 	store.SetUSDVolumeFXResolver(res)

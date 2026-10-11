@@ -457,7 +457,7 @@ func TestAssetVolumeCharacterRollup_DemoteSort(t *testing.T) {
 	if washRow.Volume24hUSD == nil || *washRow.Volume24hUSD != "200000" {
 		t.Errorf("WASH raw volume_24h_usd = %v, want the real unaltered 200000", washRow.Volume24hUSD)
 	}
-	// The listing carries the label (was null pre-change).
+	// The listing carries the label .
 	if washRow.VolumeCharacter == nil || *washRow.VolumeCharacter != timescale.VolumeCharacterConcentrated {
 		t.Errorf("WASH listing volume_character = %v, want concentrated", washRow.VolumeCharacter)
 	}

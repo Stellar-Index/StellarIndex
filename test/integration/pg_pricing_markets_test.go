@@ -718,8 +718,8 @@ func numeric(t *testing.T, s *string) float64 {
 	return v
 }
 
-// TestOrientStragglers_CombineBothDirections proves the rc.131 pair-direction
-// canonicalization now reaches the straggler read paths (BACKLOG #55 / item 3):
+// TestOrientStragglers_CombineBothDirections proves the pair-direction
+// canonicalization reaches the straggler read paths:
 // VWAPsForPair1m, PairMarket, and OHLCSeries each combine BOTH stored
 // directions of a market into the requested orientation, inverting the flipped
 // rows. The SDEX decoder records XLM/USDC and USDC/XLM as separate rows, so a

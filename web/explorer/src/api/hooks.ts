@@ -44,7 +44,7 @@ const PRICING_ENABLED = CURRENT_NETWORK.pricing;
 // the UI.
 //
 // Fields the API demonstrably serves but the spec doesn't declare yet
-// are kept via `& { … }` intersections tagged `spec'd since board #33; local narrowing retained:` — each cites
+// are kept via `& { … }` intersections tagged `Local narrowing retained:` — each cites
 // the Go handler that emits the field. Remove the intersection once the
 // spec catches up.
 // ---------------------------------------------------------------------------
@@ -251,7 +251,7 @@ export function useStatus() {
 // MeResponse — /v1/account/me. The spec's `Account` schema documents the
 // API-key caller shape (key_id / tier / rate_limit_per_min / …).
 export type MeResponse = Omit<Schemas['Account'], 'tier'> & {
-  // spec'd since board #33; local narrowing retained: session-cookie callers (the dashboard flow) get `user` +
+  // Local narrowing retained: session-cookie callers (the dashboard flow) get `user` +
   // `account` objects from internal/api/v1/account.go handleMe; the spec
   // only documents the API-key shape.
   user?: {
@@ -272,7 +272,7 @@ export type MeResponse = Omit<Schemas['Account'], 'tier'> & {
     rate_limit_per_min?: number;
     monthly_request_quota?: number;
   };
-  // spec'd since board #33; local narrowing retained: the spec enum ("anonymous" | "apikey" | "partner") omits
+  // Local narrowing retained: the spec enum ("anonymous" | "apikey" | "partner") omits
   // the platform account tiers the dashboard session flow reports
   // (free / partner, plus legacy strings from older API builds) —
   // widened until the spec covers them.
@@ -413,7 +413,7 @@ export function useChangeSummary(
 }
 
 export type Source = Omit<Schemas['Source'], 'class'> & {
-  // spec'd since board #33; local narrowing retained: the spec's Source.class enum omits the on-chain analytic
+  // Local narrowing retained: the spec's Source.class enum omits the on-chain analytic
   // classes 'lending' | 'router' | 'bridge', which are live on the wire
   // for blend / soroswap-router+defindex / cctp+rozo (see
   // internal/sources/external ClassLending / ClassRouter / ClassBridge).
@@ -542,7 +542,7 @@ export function useNativeUsdPrice() {
 // this alias once hand-typed — slug, class, first/last_seen_ledger,
 // observation_count, change_1h/7d_pct, price_history_24h/7d, ath,
 // issuer_scam_reason, and the `global` / `external` members of `type` —
-// have all been spec'd since board #33, and the copy kept here had
+// are all in the spec, and the old local copy had
 // drifted the other way: it declared `slug`, `first_seen_ledger`,
 // `last_seen_ledger` and `observation_count` REQUIRED while the handler
 // emits every one of them `omitempty` (a classic asset with no catalogue
@@ -804,13 +804,13 @@ export function useCoins(
 }
 
 export type IssuerListEntry = GetJSON<'/issuers'>['data'][number] & {
-  // spec'd since board #33; local narrowing retained: org_verified is served by /v1/issuers
+  // Local narrowing retained: org_verified is served by /v1/issuers
   // (internal/api/v1/issuers.go IssuerSummary) but missing from the
   // spec's inline row schema. True only when the issuer's SEP-1 toml
   // lists it back (bidirectional). Show a verified badge; safe to
   // group/merge issuers by org only when true.
   org_verified?: boolean;
-  // spec'd since board #33; local narrowing retained: scam_reason (issuers.go IssuerSummary.ScamReason) —
+  // Local narrowing retained: scam_reason (issuers.go IssuerSummary.ScamReason) —
   // non-empty when the issuer is on the curated scam list (sourced
   // from stellar.expert's directory). Render a warning badge on
   // any UI that surfaces this issuer's row.
@@ -843,7 +843,7 @@ type IssuerDetailData = GetJSON<'/issuers/{g_strkey}'>['data'];
 export type IssuedAsset = NonNullable<IssuerDetailData['assets']>[number];
 
 export type Issuer = IssuerDetailData & {
-  // spec'd since board #33; local narrowing retained: scam_reason is served by /v1/issuers/{g_strkey}
+  // Local narrowing retained: scam_reason is served by /v1/issuers/{g_strkey}
   // (internal/api/v1/issuers.go IssuerDetail.ScamReason) but missing
   // from the spec's inline detail schema.
   scam_reason?: string;

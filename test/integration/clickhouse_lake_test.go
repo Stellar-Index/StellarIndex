@@ -312,7 +312,7 @@ func TestClickHouseTxHashIndexProbeFallback(t *testing.T) {
 
 // TestClickHouseProtocolBreakdownT0XDR exercises the protocol event-breakdown
 // reader's fast path (stellar.contract_events_daily) vs its raw-scan path
-// (stellar.contract_events) around the t0_xdr column (BACKLOG #55 / #43). The
+// (stellar.contract_events) around the t0_xdr column. The
 // seeded event is Phoenix-shaped: topic[0] is a non-Symbol String action name
 // ("swap"), so topic_0_sym is EMPTY and the label can only be recovered from
 // the raw topic[0] XDR (t0_xdr) — while topic[1] is a String FIELD name

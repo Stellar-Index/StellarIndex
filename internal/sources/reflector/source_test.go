@@ -201,8 +201,8 @@ func TestDecodeUpdate_OpIndexStrideIsFixed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Event B: op_index=1 with 2 prices — if the old formula was
-	// still in place, B's first slot would be OpIndex=2 which
+	// Event B: op_index=1 with 2 prices — if the formula were
+	// op_index*3+slot, B's first slot would be OpIndex=2 which
 	// collides with A's third slot at OpIndex=2 (0×3+2).
 	decodeUpdateBody = func(_ string) ([]PriceEntry, error) {
 		return []PriceEntry{

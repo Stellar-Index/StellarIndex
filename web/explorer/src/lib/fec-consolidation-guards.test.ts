@@ -88,7 +88,7 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // A3-F1: relative-time / duration bucket math has ONE home. 15 forks
+  // relative-time / duration bucket math has ONE home. 15 forks
   // existed; three had real rendering bugs ("-1s ago", raw-ISO leak,
   // "NaNd ago"). Recorded variants: ConvertPair's absolute-time switch and
   // AnomaliesFeed's 1.5x-unit hysteresis (deliberate).
@@ -149,7 +149,7 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // A3-F3/F6.1: pager state machine + sort pill have one home each.
+  // pager state machine + sort pill have one home each.
   it('cursor-stack pagination lives only in lib/useCursorPager.ts', () => {
     const offenders = sources
       .filter(
@@ -183,7 +183,7 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // A3-F8: the venue markets table is ONE component. PoolsTable and
+  // the venue markets table is ONE component. PoolsTable and
   // PairsTable were a 300-line whole-component fork that had already
   // drifted once (LastPriceCell); they must stay thin wrappers.
   it('PoolsTable and PairsTable stay thin wrappers over VenueMarketsTable', () => {
@@ -198,7 +198,7 @@ describe('FEC guards (repo-walk)', () => {
     }
   });
 
-  // A3-F7: clipboard behavior has one home (the ui hook). 5 forks existed;
+  // clipboard behavior has one home (the ui hook). 5 forks existed;
   // each was missing at least one of: unmount-safe reset, propagation
   // guards (copy inside a row <Link> must not navigate), try/catch.
   it('navigator.clipboard is touched only inside components/ui', () => {
@@ -209,7 +209,7 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // A3-F9: the markdown inline tokenizer (the actual top jscpd clone,
+  // the markdown inline tokenizer (the actual top jscpd clone,
   // triplicated + drifted) lives only in lib/markdown.tsx.
   it('the inline-markdown tokenizer pattern exists only in lib/markdown.tsx', () => {
     const offenders = sources
@@ -246,7 +246,7 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
-  // A3-F6.2 (decision D7): aria-pressed toggle rows have exactly two
+  // aria-pressed toggle rows have exactly two
   // sanctioned homes — ui/Segmented (the in-card window/metric switch;
   // quiet bg-surface active style + WindowPills' donated a11y) and
   // SortPill (the recorded separate sibling). 7 hand-rolled rows with 4

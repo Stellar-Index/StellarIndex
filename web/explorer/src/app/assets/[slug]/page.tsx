@@ -151,10 +151,10 @@ type AssetSchema = components['schemas']['Asset'];
 // (internal/api/v1/assets.go AssetDetail's "Coin-equivalence extension")
 // aren't in the spec yet.
 type CoinSummary = Omit<AssetSchema, 'type'> & {
-  // Spec'd since board #33 (Asset.type now includes global/external);
+  // Spec Asset.type includes global/external;
   // kept widened to plain string for forward-compat.
   type?: string;
-  // Spec'd on Asset since board #33 (optional there). This page
+  // Spec'd on Asset (optional there). This page
   // fetches the FULL detail, so the intersection narrows the fields
   // it renders unconditionally to required — a typing guarantee, not
   // a spec gap.
@@ -196,7 +196,7 @@ type CoinSummary = Omit<AssetSchema, 'type'> & {
   issuer_scam_reason?: string | null;
 };
 
-// top_markets rows are spec'd since board #33; typed locally for the
+// top_markets rows are in the spec; typed locally for the
 // spec's Asset schema either.
 interface TopMarket {
   counterparty: string;

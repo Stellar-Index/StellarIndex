@@ -470,7 +470,7 @@ func TestCatalogueReads_RoundAfterTheDecimalsCorrection(t *testing.T) {
 
 	places := sqlWithoutComments(catalogueRoundPlacesForRow)
 	for _, want := range []string{
-		"10 + COALESCE(",                // no confirmed row: exactly the old ROUND(…, 10)
+		"10 + COALESCE(",                // no confirmed row: exactly ROUND(…, 10)
 		"GREATEST(nda.decimals - 7, 0)", // scaling DOWN never narrows the rounding
 		"nonstandard_decimals_assets",
 	} {

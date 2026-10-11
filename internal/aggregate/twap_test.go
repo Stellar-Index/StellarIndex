@@ -183,7 +183,7 @@ func TestTWAP_farFutureWindowEndCannotProduceNegativePrice(t *testing.T) {
 	}
 }
 
-// twapPathologicalTrades builds the shape that made the old big.Rat
+// twapPathologicalTrades builds the shape that makes a big.Rat
 // accumulator super-linear: every trade carries a DISTINCT base amount, so
 // each Add accretes the LCM of all denominators seen so far. Prime-ish
 // bases maximise that growth.

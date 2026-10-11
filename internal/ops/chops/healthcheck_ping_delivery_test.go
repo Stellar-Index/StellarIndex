@@ -86,7 +86,7 @@ func readPingMetric(t *testing.T, dir, check, metric string) float64 {
 	return v
 }
 
-// TestUndeliveredPingIsRecorded is the case the old `|| true` erased: the
+// TestUndeliveredPingIsRecorded is the case a swallowed ping failure (`|| true`) erases: the
 // service under the check is healthy, and the ping about it is lost.
 func TestUndeliveredPingIsRecorded(t *testing.T) {
 	var status atomic.Int32

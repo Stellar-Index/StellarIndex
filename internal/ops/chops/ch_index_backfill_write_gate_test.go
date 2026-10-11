@@ -26,7 +26,7 @@ var indexBackfillSubcommands = []string{
 
 // TestIndexBackfills_RefuseWithoutAStatedMode: a run naming neither -write
 // nor -dry-run is refused before any ClickHouse contact, so a scripted
-// caller written for the old write-by-default contract fails loudly
+// caller assuming write-by-default fails loudly
 // instead of previewing and exiting 0.
 func TestIndexBackfills_RefuseWithoutAStatedMode(t *testing.T) {
 	for _, verb := range indexBackfillSubcommands {

@@ -28,7 +28,7 @@ func TestCopyMergeUpsertSQL_GenerationGuarded(t *testing.T) {
 
 	got := copyMergeUpsertSQL(target, tmp, colList, conflict, updateCols)
 
-	// It must NOT be the old additive DO NOTHING — that is the exact defect.
+	// It must NOT be an additive DO NOTHING — that is the defect.
 	if strings.Contains(got, "DO NOTHING") {
 		t.Fatalf("copyMergeUpsertSQL still emits DO NOTHING (TV-1/TV-3 regression):\n%s", got)
 	}

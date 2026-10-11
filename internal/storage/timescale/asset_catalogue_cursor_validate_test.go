@@ -6,7 +6,7 @@ import (
 )
 
 // ValidateAssetsCursor pins the per-shape rejection. Garbage that
-// matched the old loose parser (returns 0, "") would fall through
+// matched a loose parser (returns 0, "") would fall through
 // silently and produce an empty page that looked like end-of-
 // pagination — see the package comment on parseAssetCursor.
 
