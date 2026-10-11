@@ -81,11 +81,6 @@ internal/storage/timescale/asset_catalogue.go	long-block
 internal/storage/timescale/asset_catalogue.go	long-block
 internal/storage/timescale/asset_listing_directory.go	long-block
 internal/storage/timescale/asset_listing_directory.go	long-block
-internal/storage/timescale/asset_price_snapshot.go	long-block
-internal/storage/timescale/asset_price_snapshot.go	long-block
-internal/storage/timescale/asset_price_snapshot.go	long-block
-internal/storage/timescale/asset_price_snapshot.go	long-block
-internal/storage/timescale/asset_price_snapshot.go	long-block
 internal/storage/timescale/asset_registry.go	long-block
 internal/storage/timescale/asset_registry.go	long-block
 internal/storage/timescale/asset_volume_character.go	long-block
@@ -102,11 +97,6 @@ internal/storage/timescale/contract_catalogue.go	long-block
 internal/storage/timescale/coverage_floor.go	long-block
 internal/storage/timescale/coverage_floor.go	long-block
 internal/storage/timescale/coverage_floor.go	long-block
-internal/storage/timescale/cursors.go	long-block
-internal/storage/timescale/cursors.go	long-block
-internal/storage/timescale/cursors.go	long-block
-internal/storage/timescale/cursors.go	long-block
-internal/storage/timescale/cursors.go	long-block
 internal/storage/timescale/discovery.go	long-block
 internal/storage/timescale/errors.go	long-block
 internal/storage/timescale/freeze_events.go	long-block
