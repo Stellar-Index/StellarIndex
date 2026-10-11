@@ -371,15 +371,9 @@ func TestDefaultThresholds_AreValid(t *testing.T) {
 	}
 }
 
-// TestDecision_PublishesIsExhaustive pins the fail-closed contract for
-// an unknown Action.
-//
-// The orchestrator's publish choke point tests `!decision.IsFrozen()`,
-// so a fourth variant added later would publish silently — there is no
-// switch over Action anywhere, hence no compiler or lint pressure. This
-// asserts that an unrecognised Action refuses to publish, which is the
-// recoverable direction: refusing serves the last-known-good, whereas
-// publishing puts a wrong price on the wire and in the cache.
+// TestDecision_PublishesIsExhaustive pins fail-closed behaviour for an unknown Action: the publish
+// choke point tests !IsFrozen(), so a variant added later would publish silently with no compiler pressure.
+// Refusing serves last-known-good; publishing a wrong price is unrecoverable.
 func TestDecision_PublishesIsExhaustive(t *testing.T) {
 	for _, tc := range []struct {
 		action anomaly.Action

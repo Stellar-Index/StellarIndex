@@ -5,16 +5,7 @@ import (
 	"time"
 )
 
-// TestFreezeKeepsTheHeldValuesObservationStamp pins the writer half of
-// the observed_at contract. The API stamps observed_at on a VWAP-cache serve from the
-// value's `:observed_at` sibling, so every publish must write it with the
-// value, and a freeze — which keeps the value alive for its hold without
-// rewriting it — must keep the stamp alive for exactly as long, still
-// saying when the held value was observed. The key is spelled out on the
-// wire because the reader is another binary.
-//
-// Against the unfixed aggregator no stamp exists at all, and the API
-// served the held value as observed at read time for the whole hold.
+// TestFreezeKeepsTheHeldValuesObservationStamp pins the writer half of the observed_at contract: every publish writes the value's :observed_at sibling, and a freeze keeps the stamp alive as long as the held value. The key is spelled out on the wire because the reader is another binary.
 func TestFreezeKeepsTheHeldValuesObservationStamp(t *testing.T) {
 	f := newFreezeFixture(t)
 	stampKey := f.vwapKey() + ":observed_at"

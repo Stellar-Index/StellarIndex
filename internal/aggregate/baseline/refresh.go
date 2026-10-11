@@ -16,14 +16,12 @@ import (
 // DefaultWindow is ADR-0019's rolling training window: 30 days of 1m bucket VWAPs.
 const DefaultWindow = 30 * 24 * time.Hour
 
-// TimedVWAPSource reads a pair's 1m VWAPs over [from, to), oldest first ([SplitByLookback]
-// depends on the order).
+// TimedVWAPSource reads a pair's 1m VWAPs over [from, to), oldest first.
 type TimedVWAPSource interface {
 	TimedVWAPsForPair1m(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]TimedVWAP, error)
 }
 
-// Sink UPSERTs one pair's [MultiBaseline] so all three windows land atomically. It takes plain
-// metadata so the storage adapter implements it, not the other way round.
+// Sink UPSERTs one pair's [MultiBaseline] atomically across all three windows.
 type Sink interface {
 	UpsertBaseline(
 		ctx context.Context,
@@ -33,8 +31,7 @@ type Sink interface {
 	) error
 }
 
-// Refresher recomputes per-pair baselines from one 30-day prices_1m read (split by
-// [SplitByLookback]) and writes them through a [Sink], on a slow cadence: they are 30-day stats.
+// Refresher recomputes per-pair baselines from one 30-day prices_1m read and writes them through a [Sink].
 type Refresher struct {
 	src         TimedVWAPSource
 	sink        Sink
@@ -54,9 +51,7 @@ func NewRefresher(src TimedVWAPSource, sink Sink, window time.Duration, logger *
 	return &Refresher{src: src, sink: sink, window: window, logger: logger, minuteFloor: new(big.Rat)}
 }
 
-// WithMinuteNotionalFloor sets the USD notional one baseline sample point
-// must carry; see [Refresher.volumeBars] and [MinuteNotionalFloor]. nil or
-// negative means 0 (every priced minute is its own point).
+// WithMinuteNotionalFloor sets the USD notional one baseline point must carry; nil or negative means 0.
 func (r *Refresher) WithMinuteNotionalFloor(floor *big.Rat) *Refresher {
 	if floor == nil || floor.Sign() < 0 {
 		floor = new(big.Rat)
@@ -65,11 +60,7 @@ func (r *Refresher) WithMinuteNotionalFloor(floor *big.Rat) *Refresher {
 	return r
 }
 
-// MinuteNotionalFloor pro-rates the publish floor (min_usd_volume per
-// window) to one minute of the LONGEST published window, so a pair trading
-// at exactly the publish floor yields one baseline point per minute and the
-// bootstrap cap's density measures sustained USD flow, not print count.
-// minUSDVolume <= 0 (floor disabled) yields 0.
+// MinuteNotionalFloor pro-rates the publish floor to one minute of the longest window, so baseline density measures USD flow, not print count; minUSDVolume <= 0 yields 0.
 func MinuteNotionalFloor(minUSDVolume float64, longestWindow time.Duration) *big.Rat {
 	minutes := int64(longestWindow / time.Minute)
 	if minUSDVolume <= 0 || minutes <= 0 {
@@ -127,9 +118,7 @@ type RefreshSummary struct {
 	OKUnvalued          int
 }
 
-// RefreshPair recomputes one pair's [MultiBaseline] from its 30-day series and upserts it. It
-// persists nothing and returns [ErrNotEnoughSamples] when even the 30d window is in bootstrap, and
-// OutcomeReadError / OutcomeWriteError with the source or sink error.
+// RefreshPair recomputes and upserts one pair's [MultiBaseline]; it returns [ErrNotEnoughSamples] and persists nothing when even the 30d window is in bootstrap.
 func (r *Refresher) RefreshPair(ctx context.Context, pair canonical.Pair) (RefreshOutcome, error) {
 	now := time.Now().UTC()
 	windowStart := now.Add(-r.window)
@@ -198,8 +187,7 @@ func (r *Refresher) volumeBars(timed []TimedVWAP) (bars []TimedVWAP, valued bool
 	return bars, valued
 }
 
-// RefreshAll runs [Refresher.RefreshPair] for pairs, at most concurrency at once (<= 0 means 1;
-// keep it within the DB pool). One pair's failure is logged, never aborting the batch.
+// RefreshAll runs RefreshPair for pairs, at most concurrency at once (<= 0 means 1); one failure never aborts the batch.
 func (r *Refresher) RefreshAll(ctx context.Context, pairs []canonical.Pair, concurrency int) RefreshSummary {
 	if concurrency < 1 {
 		concurrency = 1

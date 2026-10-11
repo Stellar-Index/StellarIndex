@@ -19,19 +19,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Composite-reference corroboration — the tests that pin
-// the product decision AND its safety envelope. Every scenario is the
-// production shape: crypto:XLM/fiat:GBP quoted by ONE venue, its chain
-// [crypto:XLM/fiat:USD, fiat:USD/fiat:GBP] with XLM/USD refreshed as a
-// pair in the SAME tick (multi-venue) and USD/GBP snapped from the FX
-// store. Tick 1 warms comparators (direct 0.08 = 0.10 × 0.80); tick 2
-// is the bucket under test (direct 0.12, a +50% / z≈50 single-venue
-// print); tick 3 repeats it so a hold can be checked.
-//
-// Deliberately, aggregate.Pairs lists the TARGET before its LEG so the
-// refresh-order guarantee (composite_reference.go refreshOrder) is
-// exercised on every scenario — without it every reading would be
-// "leg_not_refreshed".
+// Scenario shape: crypto:XLM/fiat:GBP quoted by ONE venue, chain [XLM/USD, USD/GBP] with XLM/USD multi-venue in the same tick and USD/GBP snapped. Tick 1 warms comparators, tick 2 is the +50% bucket, tick 3 repeats it.
+// aggregate.Pairs lists the TARGET before its LEG to exercise refreshOrder; without it every reading would be leg_not_refreshed.
 
 type compositeRefScenario struct {
 	// legSources are the venues printing XLM/USD each tick (>= 2 makes
@@ -224,14 +213,7 @@ func runCompositeRefScenario(t *testing.T, sc compositeRefScenario) compositeRef
 	return res
 }
 
-// TestCompositeReference_VenueSpecificSpikeStillFreezes is the
-// manipulation control WITH the mechanism ON: the deep XLM/USD leg
-// (2 venues) does not move, the FX leg is fresh — the composite says
-// 0.08 while the single venue prints 0.12. The composite REFUTES the
-// print: freeze engages on tick 2, persists on tick 3, the comparator
-// does not ratchet onto the manipulated print and the served value
-// stays the last-known-good. The reason string names the basis and
-// keeps `sources=1` (the composite never widens the count).
+// TestCompositeReference_VenueSpecificSpikeStillFreezes is the manipulation control with the mechanism ON: the composite refutes the single-venue print, so the freeze engages and persists, the comparator does not ratchet and the LKG serves; sources=1 stays in the reason.
 func TestCompositeReference_VenueSpecificSpikeStillFreezes(t *testing.T) {
 	res := runCompositeRefScenario(t, defaultCompositeScenario())
 	if !res.froze {
@@ -264,14 +246,7 @@ func TestCompositeReference_VenueSpecificSpikeStillFreezes(t *testing.T) {
 	}
 }
 
-// TestCompositeReference_MarketWideMoveDoesNotFreeze is the mirror:
-// XLM/USD (2 venues) moves +50% to 0.15 on the same bucket, FX fresh →
-// composite 0.12 agrees with the venue's 0.12 within tolerance → the
-// move is market-wide → NO freeze on tick 2 or 3, the fresh value is
-// served, the comparator advances, composite_meta carries
-// corroboration_basis=composite + the leg strengths, the suppressed
-// counter and verdict gauge move — and the served independence count
-// is STILL 1 (effectiveSourceCount is untouched by the composite).
+// TestCompositeReference_MarketWideMoveDoesNotFreeze is the mirror: the leg moves with the venue, the composite agrees, so no freeze, the comparator advances and meta carries corroboration_basis=composite; the independence count stays 1.
 func TestCompositeReference_MarketWideMoveDoesNotFreeze(t *testing.T) {
 	// An unrelated (pair, window) that this scenario never touches —
 	// read before and after to prove the suppression is attributed to
@@ -324,13 +299,7 @@ func TestCompositeReference_MarketWideMoveDoesNotFreeze(t *testing.T) {
 	}
 }
 
-// TestCompositeReference_UnavailableReferenceFreezes — each way the
-// reference can be unavailable leaves the freeze exactly as before, with
-// the reason saying why. The leg is kept FLAT in the single-venue case: a
-// single-venue XLM/USD that itself jumped +50% freezes on its own and
-// publishes nothing, so the target reads "leg_not_refreshed" (a different
-// cause). The agreeing-but-thin case is pinned on the evaluator in
-// TestCompositeReference_ToleranceBoundary/thin_leg_agreeing.
+// TestCompositeReference_UnavailableReferenceFreezes: each way the reference can be unavailable leaves the freeze unchanged, with the reason saying why. The leg stays flat so the target is not leg_not_refreshed.
 func TestCompositeReference_UnavailableReferenceFreezes(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -400,11 +369,7 @@ func assertUnavailableFroze(t *testing.T, res compositeRefResult, wantReason str
 	}
 }
 
-// TestCompositeReference_MultiVenueTargetByteIdentical — a target with
-// >= 2 real venues is never evaluated: every cache key and every
-// freeze mark is byte-identical between mechanism ON and OFF, even on
-// a bucket the composite WOULD corroborate (XLM/USD moved with it) and
-// even though the print is a z≈50 move.
+// TestCompositeReference_MultiVenueTargetByteIdentical: a target with >= 2 venues is never evaluated, so cache keys and freeze marks are byte-identical with the mechanism ON or OFF.
 func TestCompositeReference_MultiVenueTargetByteIdentical(t *testing.T) {
 	snapshot := func(res compositeRefResult) []string {
 		keys := res.mr.Keys()
@@ -523,13 +488,7 @@ func TestCompositeReference_RefreshOrderPutsLegsFirst(t *testing.T) {
 	}
 }
 
-// TestCompositeReference_LegDispersionCannotCorroborate (A1) — XLM/USD
-// has two venues on the bucket, but they DISAGREE: Kraken 0.15 and
-// Coinbase 0.1545 (+3 %). The leg VWAP sits 150 bps from each venue,
-// above leg_dispersion_bps (= tolerance, 75), so two venues do not
-// count as two: the reference is UNAVAILABLE, the single-venue spike
-// still freezes, and the dispersion is in the reason. The agreeing
-// two-venue case is TestCompositeReference_MarketWideMoveDoesNotFreeze.
+// TestCompositeReference_LegDispersionCannotCorroborate: two leg venues that disagree beyond leg_dispersion_bps do not count as two, so the reference is unavailable, the spike freezes and the reason names the dispersion.
 func TestCompositeReference_LegDispersionCannotCorroborate(t *testing.T) {
 	sc := defaultCompositeScenario()
 	sc.legPriceT2 = 15_000_000
@@ -601,12 +560,7 @@ func TestLegDispersion_MeasuresWorstVenue(t *testing.T) {
 	}
 }
 
-// TestCompositeReference_UncomputableDispersionFailsClosed (A4) — a
-// venue whose own VWAP cannot be computed (every print zero-base,
-// bypassing canonical.Trade.Validate the way aggregate.VWAP's doc says
-// callers occasionally do) must not SKIP the guard: the leg is refused
-// with `leg_dispersion=uncomputable`, end to end through recordLegRef →
-// referenceLeg, and the target's spike still freezes.
+// TestCompositeReference_UncomputableDispersionFailsClosed: a venue whose VWAP cannot be computed must not skip the dispersion guard; the leg is refused with leg_dispersion=uncomputable and the spike still freezes.
 func TestCompositeReference_UncomputableDispersionFailsClosed(t *testing.T) {
 	o, xlmUSD, _, xlmGBP, now := newCompositeEvaluator(t)
 	window := time.Minute
@@ -629,13 +583,7 @@ func TestCompositeReference_UncomputableDispersionFailsClosed(t *testing.T) {
 	}
 }
 
-// TestCompositeReference_ReleaseBandHoldsVenueOffset (A2) — after a
-// venue-specific freeze, the venue settles at a HELD +4 % offset from
-// the (flat) composite: calm per-tick returns, but the dedicated 2 %
-// composite release band refuses it, so the hold is kept past the
-// initial 30 min. When the venue genuinely comes back to within 2 %
-// the streak earns the auto-release. With the shared 5 % band the
-// +4 % offset would have released (red proof).
+// TestCompositeReference_ReleaseBandHoldsVenueOffset: a held +4% venue offset is refused by the dedicated 2% composite release band (the shared 5% band would release it); the streak releases only once within 2%.
 func TestCompositeReference_ReleaseBandHoldsVenueOffset(t *testing.T) {
 	window := time.Minute
 	clock := time.Now().UTC()
@@ -713,20 +661,8 @@ func compositeSeriesFor(t *testing.T, c prometheus.Collector, pair, window strin
 	return n
 }
 
-// TestCompositeReference_VerdictGaugeRetiredWhenPairLeavesTheEvaluatedSet
-// pins the lifetime of the three verdict series.
-//
-// The composite reference is evaluated ONLY for an allow-listed target
-// whose bucket is single-venue (compositeReferenceEligible). The gauges
-// it publishes are a PER-TICK verdict — so when the pair gains a second
-// venue and stops being evaluated, a lingering `verdict="corroborated"`
-// series claims a freeze decision consulted a reference that tick never
-// built, and keeps claiming it until the aggregator restarts. Only
-// recordVenueVWAPs otherwise deletes series (grep `Delete` in the package).
-//
-// Note the label-value trap: emitCompositeReference labels the window
-// with windowLabel ("1m"), not window.String() ("1m0s"). A clear written
-// against the other convention deletes nothing and this test fails.
+// TestCompositeReference_VerdictGaugeRetiredWhenPairLeavesTheEvaluatedSet: the verdict series are per-tick, so when a pair gains a second venue and stops being evaluated they must be deleted, not linger claiming a reference was consulted.
+// The window label is windowLabel ("1m"), not window.String(); a clear using the other form deletes nothing.
 func TestCompositeReference_VerdictGaugeRetiredWhenPairLeavesTheEvaluatedSet(t *testing.T) {
 	// A target no other test in this package uses, so the series counted
 	// here can only have come from this test.

@@ -18,13 +18,7 @@ const freezeThreshold = 5.0
 // trained on.
 const driftBucketsPerDay = 1440
 
-// noiseGen is a tiny deterministic LCG (Knuth/MMIX constants). These
-// scenarios need CONTINUOUS noise: the discrete 4-point stableJitter
-// used elsewhere in this package pins the sample median to an atom
-// boundary, which flatters or starves the drift statistic depending
-// on coverage. math/rand is avoided deliberately — its stream is not
-// a compatibility promise across Go releases, and these assertions
-// are numeric.
+// noiseGen is a deterministic LCG (Knuth/MMIX constants): the scenarios need continuous noise, and math/rand's stream is not stable across Go releases.
 type noiseGen uint64
 
 // uniform returns the next value in [-1, 1).
@@ -34,11 +28,8 @@ func (g *noiseGen) uniform() float64 {
 	return 2*u - 1
 }
 
-// driftedReturns builds `days` of 1m bucket returns carrying uniform
-// +/-noiseAmp noise, where the LAST `driftDays` days additionally
-// carry a constant per-bucket push of driftPerDay/1440 — the
-// frog-boiling profile: every individual bucket unremarkable, the
-// direction never changing.
+// driftedReturns builds days of 1m returns with uniform +/-noiseAmp noise; the last driftDays carry a constant
+// push of driftPerDay/1440 per bucket (the frog-boiling profile).
 func driftedReturns(days, driftDays int, driftPerDay, noiseAmp float64) []float64 {
 	g := noiseGen(1)
 	out := make([]float64, 0, days*driftBucketsPerDay)
@@ -55,16 +46,8 @@ func driftedReturns(days, driftDays int, driftPerDay, noiseAmp float64) []float6
 	return out
 }
 
-// confidenceScoringZ mirrors the value the orchestrator hands to
-// confidence.Compute (internal/aggregate/orchestrator/confidence.go):
-// the larger of the per-bucket spike score and the sustained-drift
-// score.
-//
-// This is the CONFIDENCE input only. The Phase 2 freeze leg is fed
-// the observation-based MaxZScore instead, deliberately — a drift
-// score cannot be cleared by a good bucket, so it must never gate
-// publication. Do not rename this back to something that reads like
-// a single unified "anomaly z".
+// confidenceScoringZ mirrors the z the orchestrator hands confidence.Compute: the larger of spike score and drift score.
+// It is the CONFIDENCE input only; the freeze leg uses observation-based MaxZScore because a drift score cannot be cleared by a good bucket.
 func confidenceScoringZ(mb baseline.MultiBaseline, freshReturn float64) float64 {
 	z, _, valid := mb.MaxZScore(bucketReturn(freshReturn))
 	if !valid {
@@ -94,21 +77,8 @@ func windowsFromReturns(returns []float64) baseline.MultiBaseline {
 	}
 }
 
-// TestFrogBoiling_SlowDriftReachesFreezeThreshold is the slow-drift
-// regression guard.
-//
-// An attacker pushes a quiet asset 0.5%/day for 30 days (~15% total)
-// while keeping per-bucket moves inside the noise — the exact attack
-// ADR-0019's multi-window safeguard exists to stop.
-//
-// Before the drift statistic this was undetectable BY CONSTRUCTION:
-// each bucket's return is ~3.5e-6 against a return-MAD of ~7e-5, so
-// MaxZScore reports ~0.05 at every window length (the pre-existing
-// TestMultiBaseline_FrogBoilingDefense passes with z30=0.02 — it
-// only ever asserted that the 30d z was the LARGEST of three tiny
-// numbers, never that it crossed the threshold, which is why the
-// hole survived). The anomaly signal must actually reach the freeze
-// threshold.
+// TestFrogBoiling_SlowDriftReachesFreezeThreshold: a 0.5%/day push for 30 days keeps each bucket inside the noise, so
+// MaxZScore sees ~0.05 at every window (undetectable by construction); the drift signal must reach the freeze threshold.
 func TestFrogBoiling_SlowDriftReachesFreezeThreshold(t *testing.T) {
 	const (
 		driftPerDay = 0.005  // 0.5%/day — ~15% over the 30d window
@@ -120,11 +90,7 @@ func TestFrogBoiling_SlowDriftReachesFreezeThreshold(t *testing.T) {
 	// The attacker's next bucket looks exactly like every other one.
 	freshReturn := driftPerDay / driftBucketsPerDay
 
-	// The contract, asserted on the signal the orchestrator actually
-	// consumes. Stated first and without a validity guard in front of
-	// it so that a detector which reports NO drift signal at all —
-	// a drift-blind detector — fails right here, on the number, rather
-	// than on a setup precondition.
+	// Assert on the signal the orchestrator consumes, with no validity guard first, so a drift-blind detector fails on the number.
 	got := confidenceScoringZ(mb, freshReturn)
 	if got < freezeThreshold {
 		t.Errorf("confidence scoring z = %.2f, want >= %.1f: a 15%%-over-30d sustained push must register as anomalous, not hide inside the return noise",
@@ -152,12 +118,8 @@ func TestFrogBoiling_SlowDriftReachesFreezeThreshold(t *testing.T) {
 	}
 }
 
-// TestFrogBoiling_FasterDriftCaughtByShortWindow — the other end of
-// the detection ladder. A more aggressive ramp (2%/day) that has only
-// been running for a DAY is diluted to nothing in the 7d/30d medians,
-// but the 1d window has full coverage and trips. This is what makes
-// the three windows genuinely non-redundant: they cover different
-// attack durations, which the return-only version never did.
+// TestFrogBoiling_FasterDriftCaughtByShortWindow — a 2%/day ramp running for only a day is diluted in the 7d/30d medians
+// but the 1d window has full coverage and trips; the three windows cover different attack durations.
 func TestFrogBoiling_FasterDriftCaughtByShortWindow(t *testing.T) {
 	returns := driftedReturns(30, 1, 0.025, 0.0001)
 	mb := windowsFromReturns(returns)
@@ -176,12 +138,8 @@ func TestFrogBoiling_FasterDriftCaughtByShortWindow(t *testing.T) {
 	}
 }
 
-// TestDriftZScore_GenuineVolatilityDoesNotFire — the trigger-happy
-// guard. A violently volatile but DIRECTIONLESS asset (0.5%/min,
-// ~30x the quiet-asset noise of the attack scenario) must not
-// register as drift: the moves are large but they cancel, so the
-// median return stays ~0. Without this, the fix would trade a blind
-// detector for one that freezes every volatile asset.
+// TestDriftZScore_GenuineVolatilityDoesNotFire — a violently volatile but directionless asset (0.5%/min) must not
+// register as drift: the moves cancel and the median stays ~0. Otherwise every volatile asset would freeze.
 func TestDriftZScore_GenuineVolatilityDoesNotFire(t *testing.T) {
 	returns := driftedReturns(30, 0, 0, 0.005) // no drift at all
 	mb := windowsFromReturns(returns)
@@ -206,17 +164,8 @@ func rallyReturns(days int, totalGain, noiseAmp float64) []float64 {
 	return driftedReturns(days, days, perDay, noiseAmp)
 }
 
-// TestDriftZScore_GenuineRallyDoesNotFire — the harder false-positive
-// case: a real, sustained, one-directional market move. An asset
-// that doubles-minus-half (+50%) in a week while carrying ordinary
-// alt-coin volatility (uniform 0.25%/min ~= 105% annualized) must
-// stay clear of the freeze threshold.
-//
-// Why it stays clear: a genuine rally is NOISY, and its own
-// volatility is the denominator of the statistic. The manipulator's
-// only edge is smoothness — holding each bucket inside the noise to
-// evade the spike detector — and smoothness is exactly what this
-// prices. An attacker cannot be both stealthy and undetected.
+// TestDriftZScore_GenuineRallyDoesNotFire — a real +50%/week rally with ordinary alt volatility stays clear of the
+// freeze threshold: its own noise is the denominator, and only a smooth (stealthy) push scores high.
 func TestDriftZScore_GenuineRallyDoesNotFire(t *testing.T) {
 	b, err := baseline.FromReturns(rallyReturns(7, 0.50, 0.0025))
 	if err != nil {
@@ -234,53 +183,9 @@ func TestDriftZScore_GenuineRallyDoesNotFire(t *testing.T) {
 	}
 }
 
-// TestDriftZScore_QuietAssetLargeMoveFires_AcceptedFalsePositive
-// pins the accepted false-positive posture rather than leaving it in
-// prose, so a future reader meets it as a decision instead of a
-// surprise.
-//
-// The statistic measures a move against the asset's OWN volatility,
-// so the percentage that trips it is not fixed — it scales with the
-// asset (ADR-0019 §Consequences: "no operator picks the right
-// percentage"). Measured by bisection against this package's real
-// DriftZScore — the 7-day gain needed to reach z=5:
-//
-//	~21% annualized vol (peg/RWA/FX-like):  +17.2%
-//	~54% annualized (large cap):            +50.1%
-//	~105% annualized (typical alt):         +114.1%
-//	~209% annualized (memecoin):            +325.3%
-//
-// Be honest about what the second row means: ~54% annualized is
-// ordinary large-cap crypto volatility and +50% in a week is a
-// recurring genuine bull-market event, not an exotic edge case. Such
-// weeks WILL score above 5. This is the real, recurring cost of the
-// defence, and it is accepted only because of what the score is
-// allowed to do.
-//
-// What it is allowed to do: reduce confidence, and nothing else. The
-// drift signal feeds confidence.Compute alone; the Phase 2 freeze leg
-// keeps the observation-based MaxZScore (see computeConfidence in
-// internal/aggregate/orchestrator/confidence.go). So the cost of a
-// false positive here is a temporarily pessimistic confidence number
-// on a genuinely fast-moving asset — which is arguably the correct
-// reading anyway — and never a withheld price.
-//
-// It must NOT be re-wired into the freeze on the strength of a
-// "3-signal AND protects us" argument. The reason is that a freeze
-// gated on this statistic cannot self-clear — it takes no observation,
-// so a good current bucket does not release it (that is what
-// TestMaxDriftZScore_PersistsLongAfterTheMoveEnds below measures).
-//
-// Without the unmeasured-liquidity sentinel there is a second,
-// independent reason: the AND's confidence leg is not live for most
-// pairs. approxUSDVolume returns 0 for every non-USD-quoted pair, LiquidityFactor(0) is 0,
-// and one zero factor drives the geometric mean to 0, so
-// `confidence < 0.10` is pinned true for 8 of the 12 pairs in
-// defaultPairs() no matter what else was true, degenerating the AND to
-// `z > 5` alone. An unvaluable pair passes the
-// confidence.LiquidityUnmeasured sentinel and scores on the factors we
-// did measure, so that leg discriminates — which removes the
-// second reason, not the first.
+// TestDriftZScore_QuietAssetLargeMoveFires_AcceptedFalsePositive pins the accepted false positive: the 7-day gain reaching z=5 scales with the asset's own volatility (+17% at ~21% annualized, +50% at ~54%, +325% at ~209%).
+// It is safe only because drift feeds confidence alone; wired into the freeze it would never self-clear (see TestMaxDriftZScore_PersistsLongAfterTheMoveEnds).
+// Unmeasured-liquidity pairs must pass confidence.LiquidityUnmeasured, or the confidence AND-leg is pinned true for non-USD pairs.
 func TestDriftZScore_QuietAssetLargeMoveFires_AcceptedFalsePositive(t *testing.T) {
 	// +25% in a week on a ~21%-annualized-volatility asset.
 	b, err := baseline.FromReturns(rallyReturns(7, 0.25, 0.0005))
@@ -299,24 +204,8 @@ func TestDriftZScore_QuietAssetLargeMoveFires_AcceptedFalsePositive(t *testing.T
 	}
 }
 
-// TestMaxDriftZScore_PersistsLongAfterTheMoveEnds is a HAZARD test.
-// It does not guard a feature; it pins the reason the drift score is
-// kept out of the freeze path, so that anyone tempted to wire it in
-// has to delete a failing assertion that spells out the cost.
-//
-// A quiet asset reprices +50% over 7 days and then goes completely
-// flat. Fourteen days later every recent bucket is unremarkable — the
-// observation-based score, which is what the freeze actually reads,
-// is ~0 — yet the drift score is still above the threshold, because
-// the move has to age out of the 30d window rather than merely stop.
-// Gate publication on this and the asset serves a stale
-// pre-repricing price for weeks after the market has moved on.
-//
-// Built through the real refresher path (SplitByLookback ->
-// NewMultiBaseline) rather than hand-assembled windows, so the
-// timestamped slicing is exercised too. Note SplitByLookback applies
-// only a LOWER cutoff, so the series must be truncated at `now`
-// exactly as Refresher.RefreshPair's [now-30d, now] query does.
+// TestMaxDriftZScore_PersistsLongAfterTheMoveEnds is a hazard test: after +50% over 7 days then flat, observation z is ~0 but drift z stays above threshold until the move ages out of 30d,
+// so gating publication on it would serve a stale price for weeks. The series is truncated at now, as RefreshPair's [now-30d, now] query does.
 func TestMaxDriftZScore_PersistsLongAfterTheMoveEnds(t *testing.T) {
 	const noise = 0.0005 // quiet asset, ~21% annualized
 	const quietDaysAfter = 14
@@ -359,11 +248,8 @@ func TestMaxDriftZScore_PersistsLongAfterTheMoveEnds(t *testing.T) {
 	}
 }
 
-// TestDriftZScore_DetectedAtPartialWindowCoverage pins that a drift
-// covering less than half the window is NOT "diluted by the honest
-// majority": the median shifts in proportion to the
-// covered fraction and sqrt(N)=208 amplifies what remains, so a
-// strong move is detected at roughly a fifth of the window.
+// TestDriftZScore_DetectedAtPartialWindowCoverage — a drift covering under half the window is not diluted away:
+// the median shifts with the covered fraction and sqrt(N)=208 amplifies it, so a strong move is detected at about a fifth of the window.
 func TestDriftZScore_DetectedAtPartialWindowCoverage(t *testing.T) {
 	const noise = 0.0005
 
@@ -388,11 +274,8 @@ func TestDriftZScore_DetectedAtPartialWindowCoverage(t *testing.T) {
 	}
 }
 
-// TestDriftZScore_SpikeCannotFakeDrift — robustness. One enormous
-// bucket in an otherwise-quiet window must not manufacture a drift
-// signal. Pins the choice of MEDIAN over mean (ADR-0019 rejects
-// mean/stddev for exactly this reason); swapping in a mean would
-// make a single print able to trigger a freeze.
+// TestDriftZScore_SpikeCannotFakeDrift — one enormous bucket in a quiet window must not manufacture drift;
+// pins MEDIAN over mean (ADR-0019), since a mean would let a single print trigger a freeze.
 func TestDriftZScore_SpikeCannotFakeDrift(t *testing.T) {
 	returns := driftedReturns(1, 0, 0, 0.0001)
 	returns[len(returns)/2] = 5.0 // a single +500% print
@@ -473,11 +356,8 @@ func TestDriftZScore_ZeroMADConventions(t *testing.T) {
 	}
 }
 
-// TestDriftZScore_MostlyUnchangedIlliquidPrice — the realistic
-// illiquid shape: the price sits still in most buckets and jumps
-// occasionally. Median and MAD are both 0, so this must read as
-// "no drift" rather than +Inf. Guards the freeze path against a
-// storm of false positives on thin pairs.
+// TestDriftZScore_MostlyUnchangedIlliquidPrice — a price that sits still and jumps occasionally has Median and MAD 0
+// and must read as no drift, not +Inf, so thin pairs do not storm the freeze path with false positives.
 func TestDriftZScore_MostlyUnchangedIlliquidPrice(t *testing.T) {
 	returns := make([]float64, 4*baseline.MinDriftSamples)
 	for i := range returns {

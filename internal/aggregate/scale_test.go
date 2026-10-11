@@ -43,12 +43,7 @@ func pow10(n int) *big.Int {
 	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
 }
 
-// TestNormalizeAmountScale_MixedWindowFixesVWAP is the headline case: 1000 XLM
-// @0.10 on-chain (7dp) + 1000 XLM @0.12 CEX (8dp), equal real volume, so the
-// true volume-weighted price is the midpoint 0.11. Over the RAW cross-scale
-// amounts the CEX leg's base weight (10^11) is 10× the on-chain leg's (10^10),
-// so the un-normalized VWAP is dragged to 0.1181…; normalizing lifts the
-// on-chain leg to the common 8dp scale and restores 0.11 exactly.
+// TestNormalizeAmountScale_MixedWindowFixesVWAP is the headline case: 1000 XLM at 0.10 (7dp) plus 1000 XLM at 0.12 (8dp) must price at 0.11, not the raw-weighted 0.1181.
 func TestNormalizeAmountScale_MixedWindowFixesVWAP(t *testing.T) {
 	// 1000 XLM at 7dp = 1000·10^7 = 10^10; 100 USDC quote = 10^9  → 0.10.
 	onchain := scaleTrade("onchain",
@@ -85,10 +80,7 @@ func TestNormalizeAmountScale_MixedWindowFixesVWAP(t *testing.T) {
 	}
 }
 
-// TestNormalizeAmountScale_UniformWindowByteIdentical proves the critical
-// invariant: a single-scale window (all-CEX or all-on-chain) is returned
-// byte-for-byte unchanged — every amount, not just the resulting price — so
-// the fix cannot move a served value on the common uniform path.
+// TestNormalizeAmountScale_UniformWindowByteIdentical pins that a single-scale window is returned byte-for-byte unchanged, every amount and not just the price.
 func TestNormalizeAmountScale_UniformWindowByteIdentical(t *testing.T) {
 	for _, src := range []string{"cex", "onchain", "fx"} {
 		src := src
@@ -116,9 +108,7 @@ func TestNormalizeAmountScale_UniformWindowByteIdentical(t *testing.T) {
 	}
 }
 
-// TestNormalizeAmountScale_PreservesPerTradeRatio confirms the price ratio of
-// every individual trade is untouched — only its WEIGHT is rescaled. Base and
-// quote are lifted by the same factor, so quote/base is invariant.
+// TestNormalizeAmountScale_PreservesPerTradeRatio confirms every trade's quote/base ratio is untouched; only its weight is rescaled.
 func TestNormalizeAmountScale_PreservesPerTradeRatio(t *testing.T) {
 	in := []canonical.Trade{
 		scaleTrade("onchain", new(big.Int).Mul(big.NewInt(3), pow10(7)), new(big.Int).Mul(big.NewInt(7), pow10(7))),
@@ -135,10 +125,7 @@ func TestNormalizeAmountScale_PreservesPerTradeRatio(t *testing.T) {
 	}
 }
 
-// TestNormalizeAmountScale_DoesNotMutateInput guards against corrupting a
-// shared read cache: the input slice's amounts must be left exactly as they
-// were (the helper reads via Amount.BigInt, which copies, and writes via
-// canonical.NewAmount, which copies).
+// TestNormalizeAmountScale_DoesNotMutateInput guards a shared read cache: the input amounts must be left exactly as they were.
 func TestNormalizeAmountScale_DoesNotMutateInput(t *testing.T) {
 	origBase := new(big.Int).Mul(big.NewInt(1000), pow10(7))
 	origQuote := new(big.Int).Mul(big.NewInt(100), pow10(7))
@@ -155,10 +142,7 @@ func TestNormalizeAmountScale_DoesNotMutateInput(t *testing.T) {
 	}
 }
 
-// TestNormalizeAmountScale_TWAPUnaffected substantiates the scoping call that
-// TWAP does not carry this bug: TWAP weights each trade's (scale-invariant)
-// price by TIME, never by amount, so normalizing the amounts leaves the TWAP
-// output identical on the same mixed window that moves the VWAP.
+// TestNormalizeAmountScale_TWAPUnaffected pins that TWAP weights by time, not amount, so normalizing leaves it identical on a mixed window.
 func TestNormalizeAmountScale_TWAPUnaffected(t *testing.T) {
 	t0 := time.Unix(0, 0).UTC()
 	a := scaleTrade("onchain", new(big.Int).Mul(big.NewInt(1000), pow10(7)), new(big.Int).Mul(big.NewInt(100), pow10(7)))
@@ -184,10 +168,7 @@ func TestNormalizeAmountScale_TWAPUnaffected(t *testing.T) {
 	}
 }
 
-// TestScaledWindow_FilterKeepsLiftTarget pins that the outlier filter
-// cannot strip a window's scale: dropping the only 8dp print leaves the
-// 7dp survivors lifted ×10, so the window must still state 8 and price
-// them at their own (scale-invariant) ratio.
+// TestScaledWindow_FilterKeepsLiftTarget pins that the outlier filter cannot strip a window's scale: survivors lifted x10 still state 8dp.
 func TestScaledWindow_FilterKeepsLiftTarget(t *testing.T) {
 	var raw []canonical.Trade
 	for _, q := range []int64{100, 101, 99, 100} {
@@ -220,8 +201,7 @@ func TestScaledWindow_FilterKeepsLiftTarget(t *testing.T) {
 	}
 }
 
-// TestNormalizeAmountScale_UniformWindowStatesItsScale pins Decimals() on
-// windows nothing was lifted in, including the empty one.
+// TestNormalizeAmountScale_UniformWindowStatesItsScale pins Decimals() on windows nothing was lifted in, including the empty one.
 func TestNormalizeAmountScale_UniformWindowStatesItsScale(t *testing.T) {
 	for src, want := range map[string]int{"cex": 8, "onchain": 7, "fx": 6} {
 		w := aggregate.NormalizeAmountScale([]canonical.Trade{scaleTrade(src, big.NewInt(2), big.NewInt(3))}, scaleDecimals)

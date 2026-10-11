@@ -39,12 +39,8 @@ func initialHoldOf(p freeze.Policy, corroborated bool) time.Duration {
 	return p.UncorroboratedInitialHold
 }
 
-// FuzzPolicyEvaluate checks one lifecycle step against the ADR-0019
-// contract for an arbitrary (policy, prior state, signal): release only on
-// an earned streak after the initial hold, never out of escalation; the
-// ladder only climbs at a scored expiry; the marker TTL always covers the
-// remaining hold plus grace, and the persisted ladder is still live (by the
-// durable authority's own predicate) for exactly that TTL.
+// FuzzPolicyEvaluate checks one lifecycle step against the ADR-0019 contract: release only on an earned streak after the initial hold and never out of
+// escalation; the ladder climbs only at a scored expiry; marker TTL covers remaining hold plus grace.
 func FuzzPolicyEvaluate(f *testing.F) {
 	// hold, uncorr, ext, grace, maxExt, buckets, confMin, zMax,
 	// active, firedAgoMin, holdLeftMin, extUsed, escalated, streak, corrPrev,
@@ -201,12 +197,8 @@ func FuzzPolicyEvaluate(f *testing.F) {
 	})
 }
 
-// FuzzPolicyLadder drives a whole freeze through a fuzzed sequence of
-// buckets on a monotone clock and checks the ladder-level guarantees no
-// single step can: a release is always backed by UnfreezeBuckets
-// consecutive healthy buckets and the served initial hold; the ladder
-// never exceeds MaxExtensions and escalates only once it is spent; an
-// escalated freeze never auto-releases; the hold never moves backwards.
+// FuzzPolicyLadder drives a whole freeze through fuzzed buckets: a release is backed by UnfreezeBuckets healthy buckets and the initial hold,
+// the ladder never exceeds MaxExtensions, an escalated freeze never auto-releases, and the hold never moves backwards.
 func FuzzPolicyLadder(f *testing.F) {
 	f.Add(uint8(0), uint8(0), uint8(0), uint8(0), uint8(0), []byte{0x01, 0x80, 0x80, 0x9f, 0x9f})
 	f.Add(uint8(2), uint8(3), uint8(1), uint8(4), uint8(3), []byte{0x01, 0x8e, 0x0e, 0x0e, 0x0e, 0x0e, 0x0e, 0xfe, 0xfe})
@@ -269,9 +261,7 @@ func FuzzPolicyLadder(f *testing.F) {
 	})
 }
 
-// FuzzLadderStillLive pins the durable-liveness predicate the rehydrate,
-// the recovery worker and the marker merge all share: live exactly while
-// now <= hold + grace, monotone in both the clock and the grace.
+// FuzzLadderStillLive pins the shared liveness predicate: live exactly while now <= hold + grace, monotone in clock and grace.
 func FuzzLadderStillLive(f *testing.F) {
 	f.Add(true, int64(0), int64(0), int64(0))
 	f.Add(true, int64(60), int64(300), int64(360))

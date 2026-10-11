@@ -42,15 +42,7 @@ func readCompositeMeta(t *testing.T, cache Cache, target canonical.Pair, window 
 	return m, true
 }
 
-// TestRouterFreeze_RouteCorroborationDoesNotDisarmSingleSourceFreeze pins
-// ADR-0019 amendment §2: a composite is corroboration,
-// not a second venue, so a thin single-DIRECT-source target that trips the
-// Phase-2 3-signal freeze (confidence < 0.45 AND z > 5 AND
-// source_count <= 1) STILL freezes when the graph router has corroborated
-// it with two agreeing, edge-disjoint routes on the prior tick, and the
-// freeze reason reports the venue count (sources=1), not the route count.
-// The corroboration count is pinned to 2 after tick 1 so the assertion does
-// not depend on the router's trust floors.
+// TestRouterFreeze_RouteCorroborationDoesNotDisarmSingleSourceFreeze pins the ADR-0019 amendment: a composite is corroboration, not a second venue, so a single-direct-source target tripping the 3-signal freeze still freezes even with two agreeing edge-disjoint routes, and the reason reports sources=1. The count is pinned to 2 so trust floors do not matter.
 func TestRouterFreeze_RouteCorroborationDoesNotDisarmSingleSourceFreeze(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
@@ -65,13 +57,7 @@ func TestRouterFreeze_RouteCorroborationDoesNotDisarmSingleSourceFreeze(t *testi
 	chainUSD := TriangulationChain{Target: xlmGBP, Legs: []canonical.Pair{xlmUSD, usdGBP}}
 	chainEUR := TriangulationChain{Target: xlmGBP, Legs: []canonical.Pair{xlmEUR, eurGBP}}
 
-	// run drives three ticks and reports whether the freeze engaged on the
-	// second (single-source, z≈50) bucket. tick 1 warms prevVWAP + records
-	// the composite corroboration; tick 2 is the one that would freeze;
-	// tick 3 repeats the anomalous print (a PERSISTENT single-venue
-	// manipulation) so the caller can check the hold is kept and the
-	// comparator did not ratchet onto the manipulated print. A positive
-	// corroborate overrides the count recorded on tick 1.
+	// run drives three ticks: tick 1 warms prevVWAP and records the corroboration, tick 2 is the single-source z~50 bucket that would freeze, tick 3 repeats it (persistent manipulation) to check the hold is kept and the comparator does not ratchet. A positive corroborate overrides tick 1's count.
 	type runResult struct {
 		froze         bool     // freeze marker written on tick 2
 		reason        string   // first freeze marker's reason
@@ -172,12 +158,7 @@ func TestRouterFreeze_RouteCorroborationDoesNotDisarmSingleSourceFreeze(t *testi
 		t.Errorf("freeze reason = %q; want route_corroboration=2 beside sources=1", two.reason)
 	}
 
-	// Control: a single hub route (XLM→USD→GBP = 0.08) that AGREES with
-	// the tick-1 direct print → corroborationCount 1 → still single-source
-	// → the tick-2 single-venue spike freezes. This is the exact production
-	// shape (design doc §10: a USD-FX-derived hub route must never be
-	// claimed as a second source), so it is the control that must stay red
-	// if anyone widens the freeze leg from a single agreeing route.
+	// Control: one hub route (XLM-USD-GBP = 0.08) agreeing with the tick-1 print gives corroborationCount 1, still single-source, so the spike freezes. A USD-FX-derived hub route must never count as a second source (design doc 10); this stays red if the freeze leg is widened.
 	one := run(t, []TriangulationChain{chainUSD}, 0)
 	if one.corroboration != 1 {
 		t.Fatalf("single-route target recorded corroborationCount=%d, want 1", one.corroboration)
@@ -187,11 +168,7 @@ func TestRouterFreeze_RouteCorroborationDoesNotDisarmSingleSourceFreeze(t *testi
 			"single-source bucket — the counterfactual is broken, so the two-route pass proves nothing")
 	}
 
-	// Persistent manipulation (tick 3 still 0.12): the hold must be kept,
-	// the comparator must NOT ratchet onto the anomalous print (a prior-
-	// tick "agreement" pinning sources=2 for the next bucket would publish
-	// 0.12, advance prevVWAPs to it and collapse z to 0 on tick 3), and the
-	// served key must still be the last-known-good 0.08.
+	// Persistent manipulation (tick 3 still 0.12): the hold is kept, the comparator does not ratchet onto the anomalous print (that would collapse z to 0), and the served key stays the LKG 0.08.
 	if !one.heldOnTick3 {
 		t.Error("tick 3 (manipulation persists): freeze lifecycle is NOT active — the hold was dropped")
 	}
@@ -205,11 +182,7 @@ func TestRouterFreeze_RouteCorroborationDoesNotDisarmSingleSourceFreeze(t *testi
 	}
 }
 
-// TestRouterTarget_DustEdgeIsLowConfidenceNotPublished is regression (b):
-// a target reachable ONLY through a low-confidence (thin, single-source)
-// edge is flagged low_confidence and does NOT overwrite the served price
-// with the dust-derived cross. A dust edge can't launder itself into a
-// confident valuation through a hub.
+// TestRouterTarget_DustEdgeIsLowConfidenceNotPublished: a target reachable only through a thin single-source edge is flagged low_confidence and does not overwrite the served price, so dust cannot launder into a confident valuation.
 func TestRouterTarget_DustEdgeIsLowConfidenceNotPublished(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
@@ -320,14 +293,7 @@ func TestRouterTarget_SingleRouteUnchanged(t *testing.T) {
 	}
 }
 
-// runFreezeWithChains drives the two-tick single-source-z≈50 freeze
-// scenario used by the corroboration-integrity tests: tick 1 warms the
-// prev VWAP + records the composite corroboration, tick 2 is the
-// single-source spike bucket that freezes UNLESS the recorded
-// corroboration widened its source_count leg past 1. It returns whether a
-// freeze marker was written and the corroboration count the chain pass
-// recorded on tick 1. legVWAPs seeds the leg cache values that shape the
-// routes.
+// runFreezeWithChains drives the two-tick single-source z~50 scenario: tick 1 warms prev VWAP and records corroboration, tick 2 freezes unless that corroboration widened source_count past 1. Returns whether a marker was written and tick 1's recorded count; legVWAPs seeds the leg cache values that shape the routes.
 func runFreezeWithChains(
 	t *testing.T,
 	target canonical.Pair,
@@ -377,11 +343,7 @@ func runFreezeWithChains(
 	return len(marker.marks) > 0, sample.corroborationCount
 }
 
-// TestRouterFreeze_LooselyAgreeingRoutesDoNotSuppress is R1: two routes
-// that survive the LOOSE 40% outlier band but disagree beyond the tight
-// corroboration band must NOT suppress the single-source freeze. Before
-// the fix the raw survivor pathCount (2) fed the freeze and wrongly
-// suppressed it; the corroboration count is now 0, so the freeze fires.
+// TestRouterFreeze_LooselyAgreeingRoutesDoNotSuppress: two routes inside the loose 40% outlier band but outside the tight corroboration band must not suppress the single-source freeze; the corroboration count is 0, not the raw survivor pathCount of 2.
 func TestRouterFreeze_LooselyAgreeingRoutesDoNotSuppress(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
@@ -454,11 +416,7 @@ func TestRouterFreeze_SharedBottleneckDoesNotSuppress(t *testing.T) {
 	}
 }
 
-// TestRouterTarget_FXDryRerouteGatedAndFlagged is R3: when a configured
-// FX leg dries and the router substitutes a crypto cross-pair path, the
-// reroute is (a) confidence-gated on a sane floor — a thin substitute does
-// NOT publish over the direct price — and (b) flagged so it is observable,
-// never silent.
+// TestRouterTarget_FXDryRerouteGatedAndFlagged: when a configured FX leg dries and the router substitutes a crypto cross path, the reroute is confidence-gated (a thin substitute does not publish over the direct price) and flagged, never silent.
 func TestRouterTarget_FXDryRerouteGatedAndFlagged(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")   // the FX leg that dries
@@ -470,13 +428,7 @@ func TestRouterTarget_FXDryRerouteGatedAndFlagged(t *testing.T) {
 
 	const directPrice = "0.050000000000" // the direct price that must keep serving
 
-	// buildO wires a target xlmGBP whose configured chain [XLM/USD, USD/GBP]
-	// has a DRY USD/GBP leg, plus a reroute path XLM→USD→EUR→GBP supplied by
-	// a second chain that adds the USD↔EUR and EUR↔GBP edges. When
-	// thinXLMUSD is true the XLM/USD edge is a single-source priced pair
-	// (confidence ≈ 0.119, below the reroute floor); otherwise it is a
-	// cached NON-FX leg (confidence 0.5 = cachedLegConfidence, exactly AT the
-	// reroute floor, so `0.5 < 0.5` is false and the reroute publishes — L1).
+	// buildO wires target xlmGBP with a DRY USD/GBP leg and a reroute XLM-USD-EUR-GBP from a second chain. With thinXLMUSD the XLM/USD edge is a single-source priced pair (~0.119, below the floor); otherwise a cached non-FX leg (0.5 = cachedLegConfidence, exactly at the floor, so it publishes).
 	buildO := func(t *testing.T, thinXLMUSD bool) (*Orchestrator, Cache) {
 		t.Helper()
 		store := &mockStore{}
@@ -573,13 +525,7 @@ func TestRouterTarget_FXDryRerouteGatedAndFlagged(t *testing.T) {
 	})
 }
 
-// TestRecordComposite_RetainsMonotonicClock is M1: recordComposite must stamp
-// the sample with a MONOTONIC clock reading (time.Now(), not time.Now().UTC()).
-// The staleness checks read it only through time.Since, so stripping the
-// monotonic reading drops them to wall-clock arithmetic where a backward
-// NTP/VM step can latch a stale, freeze-suppressing corroboration count.
-// A time.Time carrying a monotonic reading renders with a trailing " m=..."
-// field (documented in time.Time.String); .UTC() strips it.
+// TestRecordComposite_RetainsMonotonicClock: recordComposite must stamp time.Now() (monotonic), not .UTC(). The staleness checks use time.Since, and stripping the monotonic reading lets a backward NTP/VM step latch a stale freeze-suppressing corroboration count.
 func TestRecordComposite_RetainsMonotonicClock(t *testing.T) {
 	window := time.Minute
 	o := New(nil, nil, Config{Windows: []time.Duration{window}})
@@ -639,11 +585,7 @@ func TestRouteTarget_RerouteAboveBootstrapCapPublishes(t *testing.T) {
 	}
 }
 
-// TestRouterTarget_CachedNonFXLegLimitsConfidence: a chain leg resolved
-// from CACHE that is NOT an FX leg (crypto/fiat here) must enter the router at
-// the conservative cachedLegConfidence (0.5), so it can be the route's
-// limiting edge — not at the FX max of 1.0, which would let a stale cached
-// crypto leg ride through a hub at full confidence and never limit anything.
+// TestRouterTarget_CachedNonFXLegLimitsConfidence: a cached non-FX leg enters at cachedLegConfidence (0.5), not the FX max 1.0, so it can be the route's limiting edge instead of a stale crypto leg riding a hub at full confidence.
 func TestRouterTarget_CachedNonFXLegLimitsConfidence(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD") // cached NON-FX leg
 	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")   // FX leg (stays 1.0)
@@ -676,15 +618,8 @@ func TestRouterTarget_CachedNonFXLegLimitsConfidence(t *testing.T) {
 	}
 }
 
-// TestRouteTarget_FrozenLegRerouteRespectsFreeze is H2. Part (a): a leg frozen
-// this tick (st.frozen) that the router reaches the target AROUND is a
-// substitution just like a dry leg — a BELOW-FLOOR frozen-leg reroute must NOT
-// publish over the direct price and must be flagged Rerouted. Part (b): a
-// target frozen this tick on its OWN direct market must not have its frozen
-// last-known-good silently overwritten by a fresh composite.
-//
-// Both drive routeTarget directly with a constructed leg status, so the H2
-// logic is exercised without the full two-tick freeze machinery.
+// TestRouteTarget_FrozenLegRerouteRespectsFreeze: (a) a below-floor reroute around a leg frozen this tick must not publish over the direct price and must be flagged Rerouted; (b) a target frozen on its own market must not have its LKG overwritten by a composite.
+// Both drive routeTarget directly with a constructed leg status.
 func TestRouteTarget_FrozenLegRerouteRespectsFreeze(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
@@ -784,11 +719,7 @@ func TestRouteTarget_FrozenLegRerouteRespectsFreeze(t *testing.T) {
 	})
 }
 
-// TestRecordComposite_PublishesRouteCorroborationGauge: the
-// router corroboration count behind the last published composite is
-// exported per (pair, window), not only held in the in-process
-// lastComposites map, so the audit trail has a series distinguishing it
-// from path_count or the venue source count.
+// TestRecordComposite_PublishesRouteCorroborationGauge: the router corroboration count behind the last composite is exported per (pair, window), giving the audit trail a series distinct from path_count and the venue source count.
 func TestRecordComposite_PublishesRouteCorroborationGauge(t *testing.T) {
 	cache, _ := newTestRedis(t)
 	o := New(nil, cache, Config{})

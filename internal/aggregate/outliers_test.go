@@ -151,18 +151,7 @@ func TestFilterOutliers_IdenticalPricesAllKept(t *testing.T) {
 	}
 }
 
-// TestFilterOutliers_MADCatchesMaskedOutlier is the masked-outlier proof:
-// on a SMALL window the single-pass mean/σ filter is masking-vulnerable
-// and rejects nothing, whereas the median+MAD filter catches the
-// injected outlier.
-//
-// Window: four clean prints at 100 + one fat-finger at 200 (a 2x
-// outlier). Mean/σ: mean = 120, sample stdev ≈ 44.7, so even a 4σ
-// band ≈ 178.9 — the 200 is only 80 off the mean and SURVIVES (the
-// outlier inflated σ enough to escape its own rejection: masking).
-// Median+MAD: median = 100, MAD = 0 (a strict majority are identical),
-// so any deviation from the majority centre is an outlier and the 200
-// is dropped.
+// TestFilterOutliers_MADCatchesMaskedOutlier is the masked-outlier proof: mean/sigma keeps a 2x fat finger in a small window, while median+MAD (MAD=0 here) drops it.
 func TestFilterOutliers_MADCatchesMaskedOutlier(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(1, 100), mkTrade(1, 100), mkTrade(1, 100), mkTrade(1, 100),
@@ -179,15 +168,7 @@ func TestFilterOutliers_MADCatchesMaskedOutlier(t *testing.T) {
 	}
 }
 
-// TestFilterOutliers_ZeroMADKeepsHonestDispersion is the zero-MAD
-// regression, asserted on the SERVED VALUE (the VWAP the filter feeds).
-//
-// A trade-count majority at one exact price — four fills against the
-// same resting order — drives MAD to 0. The band then collapsed to
-// that single price and every honestly-differing print was dropped, so
-// VWAP served the majority price alone (100) instead of the window's
-// real volume-weighted price (100.2). Erasing price discovery is not
-// outlier rejection.
+// TestFilterOutliers_ZeroMADKeepsHonestDispersion asserts on the served VWAP that a zero-MAD count majority at one price does not erase honest price discovery (100.2, not 100).
 func TestFilterOutliers_ZeroMADKeepsHonestDispersion(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(1, 100), mkTrade(1, 100), mkTrade(1, 100), mkTrade(1, 100),
@@ -209,10 +190,7 @@ func TestFilterOutliers_ZeroMADKeepsHonestDispersion(t *testing.T) {
 	}
 }
 
-// TestFilterOutliers_ZeroMADStillDropsFatFinger pins the other half of
-// the zero-MAD fix: relaxing the zero-MAD band must NOT reopen the M5
-// masking hole, and must not degenerate into a no-op. A print well
-// outside the relative floor is still rejected.
+// TestFilterOutliers_ZeroMADStillDropsFatFinger pins that the zero-MAD relative floor still rejects a print well outside it and is not a no-op.
 func TestFilterOutliers_ZeroMADStillDropsFatFinger(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(1, 100), mkTrade(1, 100), mkTrade(1, 100), mkTrade(1, 100),
@@ -231,9 +209,7 @@ func TestFilterOutliers_ZeroMADStillDropsFatFinger(t *testing.T) {
 	}
 }
 
-// TestFilterOutliers_MADCleanWindowUnaffected is the companion "clean
-// window is unaffected" half of the M5 proof: a small window with
-// genuine, tight spread (MAD > 0) keeps every trade.
+// TestFilterOutliers_MADCleanWindowUnaffected pins that a tight window with genuine spread (MAD > 0) keeps every trade.
 func TestFilterOutliers_MADCleanWindowUnaffected(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTrade(1, 100), mkTrade(1, 101), mkTrade(1, 99),

@@ -159,23 +159,7 @@ func TestTWAP_NonPositiveFinalDurationClamps(t *testing.T) {
 	}
 }
 
-// TestTWAP_farFutureWindowEndCannotProduceNegativePrice is a
-// saturation regression test.
-//
-// totalNanos was an int64 of nanoseconds. time.Time.Sub SATURATES at
-// MaxInt64 (~292.47 years), so a far-future windowEnd produced a
-// saturated Δt and adding any further positive interval wrapped the sum
-// NEGATIVE — the final division then flipped the sign of the published
-// price. The guard tested only for zero, so the negative sailed through.
-//
-// Reproduced against production:
-//
-//	/v1/twap?base=native&quote=fiat:USD&from=2026-08-01&to=9999-12-31
-//	-> 200 {"price":"-0.1702543997","flags":{"stale":false}}
-//
-// The API puts no upper bound on an explicit `to`, so any client using a
-// far-future sentinel for "no end bound" got a negative money string on a
-// success response.
+// TestTWAP_farFutureWindowEndCannotProduceNegativePrice is a saturation regression: time.Time.Sub saturates at MaxInt64, so a far-future windowEnd once wrapped an int64 sum negative and flipped the published price's sign.
 func TestTWAP_farFutureWindowEndCannotProduceNegativePrice(t *testing.T) {
 	base := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	trades := []canonical.Trade{
@@ -214,19 +198,7 @@ func twapPathologicalTrades(n int) []canonical.Trade {
 	return trades
 }
 
-// TestTWAP_PathologicalInputStaysLinear pins the CPU-exhaustion class shut.
-//
-// A big.Rat accumulator's denominator grows as the LCM
-// of every trade's base amount. At the /v1/twap handler's own maxTrades
-// cap of 10000 that cost 60.6s of pure CPU for one unauthenticated request
-// (measured 7.47 CPU-seconds against production, and journalctl already
-// held three 111-second 200s with 296-byte bodies). aggregate.TWAP takes
-// no ctx and RequestTimeout only injects a deadline without aborting the
-// handler goroutine, so nothing could reclaim it.
-//
-// The bound here is deliberately loose — this asserts the COMPLEXITY CLASS,
-// not a latency SLO. Anything still quadratic blows a 10s budget by ~6x on
-// a big.Rat accumulator while the linear version lands in single-digit ms.
+// TestTWAP_PathologicalInputStaysLinear pins the CPU-exhaustion class shut: a big.Rat accumulator's LCM growth took ~60s at the handler's 10000-trade cap; this asserts the complexity class, not a latency SLO.
 func TestTWAP_PathologicalInputStaysLinear(t *testing.T) {
 	const handlerMaxTrades = 10_000
 	trades := twapPathologicalTrades(handlerMaxTrades)
@@ -247,14 +219,7 @@ func TestTWAP_PathologicalInputStaysLinear(t *testing.T) {
 	}
 }
 
-// TestTWAP_FixedPointMatchesExactRational proves the fixed-point
-// accumulator agrees with the exact rational computation it replaced, to
-// far more precision than the value is ever serialised at.
-//
-// Error model: each term truncates by <1 unit in the last place and every
-// Δt is >=1ns, so the relative error of the quotient is bounded by
-// 1/twapScale = 10^-40. Assert 10^-30 — comfortably inside that bound and
-// twenty orders below the ~10 decimal places /v1/twap publishes.
+// TestTWAP_FixedPointMatchesExactRational proves the fixed-point accumulator agrees with the exact rational to 10^-30 (bound 10^-40), far beyond the ~10 served places.
 func TestTWAP_FixedPointMatchesExactRational(t *testing.T) {
 	trades := twapPathologicalTrades(300)
 	windowEnd := trades[len(trades)-1].Timestamp.Add(time.Second)
@@ -292,10 +257,7 @@ func TestTWAP_FixedPointMatchesExactRational(t *testing.T) {
 	}
 }
 
-// TestTWAP_SameInstantFillsWeightedBySize pins the per-instant rule: fills
-// sharing a timestamp (one ledger) set that instant's price by their summed
-// volumes, so a dust print inside a real ledger moves the TWAP by its size,
-// and the answer does not depend on which fill sorts last within the ledger.
+// TestTWAP_SameInstantFillsWeightedBySize pins the per-instant rule: same-timestamp fills set the instant's price by summed volume, independent of sort order within the ledger.
 func TestTWAP_SameInstantFillsWeightedBySize(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	bulk := mkTradeAt(999_999_998, 999_999_998, t0) // price 1
@@ -321,9 +283,7 @@ func TestTWAP_SameInstantFillsWeightedBySize(t *testing.T) {
 	}
 }
 
-// TestTWAPWithCount_CountsOnlyWeightCarryingTrades: an unpriced trade and a
-// trade whose slot is empty (at windowEnd) carry no weight and are not
-// counted as support for the price.
+// TestTWAPWithCount_CountsOnlyWeightCarryingTrades pins that an unpriced trade and one whose slot is empty carry no weight and are not counted as support.
 func TestTWAPWithCount_CountsOnlyWeightCarryingTrades(t *testing.T) {
 	t0 := time.Unix(1_770_000_000, 0).UTC()
 	end := t0.Add(20 * time.Second)

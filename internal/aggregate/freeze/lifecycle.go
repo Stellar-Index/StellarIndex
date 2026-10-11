@@ -6,60 +6,43 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// ADR-0019 freeze lifecycle: a HOLD with an extension ladder (30 min, up to 4 × 30 min, then
-// P1 and manual unfreeze only), released when confidence > 0.30 AND z < 3.0 for two consecutive
-// buckets. Releasing on one bucket's negated fire condition lets one trade on a second venue, or
-// nudging z from 5.1 to 4.9, publish the manipulated price. The state machine is a pure function
-// of (previous state, signal); the orchestrator owns persistence. Load-bearing:
-//   - the initial hold is a MINIMUM: on a wide-MAD asset a price far from last-known-good can
-//     read z < 3 two buckets running;
-//   - release needs POSITIVE evidence; an unscorable bucket resets the streak.
+// ADR-0019 freeze lifecycle: a HOLD with an extension ladder (30 min, up to 4 x 30 min, then P1 and manual unfreeze only), released when
+// confidence > 0.30 AND z < 3.0 for two consecutive buckets, never on one bucket's negated fire condition. The initial hold is a MINIMUM
+// and release needs POSITIVE evidence (an unscorable bucket resets the streak); the machine is pure, the orchestrator owns persistence.
 
 // Freeze-lifecycle defaults, per ADR-0019 §"Freeze duration" and
 // §"Auto-unfreeze trigger". Operators tune via `[anomaly.phase2]`;
 // unset fields fall back to these.
 const (
-	// DefaultInitialHold — ADR-0019's flat "Initial: 30 minutes",
-	// applied to any freeze that fired on a pair with a corroborating
-	// lens available this bucket (see [Signal.Corroborated]).
+	// DefaultInitialHold is ADR-0019's flat 30-minute initial hold, for a pair a corroborating lens read this bucket (see [Signal.Corroborated]).
 	DefaultInitialHold = 30 * time.Minute
 
-	// DefaultUncorroboratedInitialHold deviates from ADR-0019 for pairs no corroborating lens read.
-	// A false freeze serves a stale price (its own money bug) and false freezes concentrate on thin
-	// books; 10 min still outlasts the 5m window and several ticks. Extensions are NOT scaled.
+	// DefaultUncorroboratedInitialHold deviates from ADR-0019 for pairs no lens read: false freezes serve a stale price and concentrate on thin books. Extensions are NOT scaled.
 	DefaultUncorroboratedInitialHold = 10 * time.Minute
 
 	// DefaultExtension — ADR-0019: "extend by 30 min".
 	DefaultExtension = 30 * time.Minute
 
-	// DefaultMaxExtensions — ADR-0019: "up to 4 extensions (2 hours
-	// total)", after which the freeze escalates to operator review.
+	// DefaultMaxExtensions is ADR-0019's 4 extensions (2 hours total) before escalation to operator review.
 	DefaultMaxExtensions = 4
 
-	// DefaultUnfreezeConfidenceMin — ADR-0019 §"Auto-unfreeze
-	// trigger": "confidence rises above 0.30".
+	// DefaultUnfreezeConfidenceMin is ADR-0019's auto-unfreeze confidence floor (above 0.30).
 	DefaultUnfreezeConfidenceMin = 0.30
 
-	// DefaultUnfreezeZScoreMax — ADR-0019 §"Auto-unfreeze trigger":
-	// "z_score falls below 3.0".
+	// DefaultUnfreezeZScoreMax is ADR-0019's auto-unfreeze z-score ceiling (below 3.0).
 	DefaultUnfreezeZScoreMax = 3.0
 
-	// DefaultUnfreezeBuckets — ADR-0019 §"Auto-unfreeze trigger":
-	// "for two consecutive buckets".
+	// DefaultUnfreezeBuckets is ADR-0019's two consecutive buckets for auto-unfreeze.
 	DefaultUnfreezeBuckets = 2
 
-	// DefaultOverrideMemory is how long a force-unfrozen ladder is remembered, so a pair re-firing
-	// inside it resumes escalated instead of starting a fresh hold that will not page for two hours.
+	// DefaultOverrideMemory is how long a force-unfrozen ladder is remembered, so a re-fire inside it resumes escalated rather than a fresh hold.
 	DefaultOverrideMemory = 2 * time.Hour
 )
 
-// DefaultMarkerGrace is how long the Redis marker outlives its hold, so a missed tick or restart
-// cannot blink `flags.frozen` off mid-hold. A freeze's DURATION is state, not a TTL.
+// DefaultMarkerGrace is how long the Redis marker outlives its hold so a missed tick cannot blink flags.frozen off; duration is state, not a TTL.
 var DefaultMarkerGrace = cachekeys.FreezeTTL
 
-// Policy is the operator-tunable shape of the ADR-0019 freeze
-// lifecycle. The zero value is valid: every field falls back to its
-// documented `Default*` above via [Policy.WithDefaults].
+// Policy is the operator-tunable ADR-0019 lifecycle; the zero value is valid via [Policy.WithDefaults].
 type Policy struct {
 	// InitialHold is the minimum freeze duration for a corroborated
 	// freeze (ADR-0019: 30 minutes).
@@ -95,9 +78,7 @@ type Policy struct {
 	OverrideMemory time.Duration
 }
 
-// WithDefaults replaces every zero field with its ADR-0019 default. A zero
-// UnfreezeConfidenceMin would pass any positive confidence, so a deliberate 0 becomes 0.30;
-// negative MaxExtensions is rejected by config validation.
+// WithDefaults replaces zero fields with ADR-0019 defaults; a zero UnfreezeConfidenceMin would pass any positive confidence, so 0 becomes 0.30.
 func (p Policy) WithDefaults() Policy {
 	if p.InitialHold <= 0 {
 		p.InitialHold = DefaultInitialHold
@@ -129,8 +110,7 @@ func (p Policy) WithDefaults() Policy {
 	return p
 }
 
-// State is one pair's freeze-lifecycle authority; the Redis marker stays the serving authority
-// and carries a copy so the state survives a restart. The zero value is "not frozen".
+// State is one pair's freeze-lifecycle authority (the marker carries a copy for restarts); the zero value is "not frozen".
 type State struct {
 	// FiredAt is when the freeze first engaged. Preserved across
 	// extensions, so `now - FiredAt` is the freeze's true age.
@@ -167,8 +147,7 @@ type State struct {
 	OverriddenAt time.Time `json:"overridden_at,omitempty"`
 }
 
-// Overridden returns the inactive State an override leaves behind: the
-// ladder it ended, remembered from `now`.
+// Overridden returns the inactive State an override leaves behind: the ended ladder, remembered from now.
 func (s State) Overridden(now time.Time) State {
 	return State{ExtensionsUsed: s.ExtensionsUsed, Escalated: s.Escalated, OverriddenAt: now}
 }
@@ -207,8 +186,7 @@ type Signal struct {
 	ReleaseCorroborated bool
 }
 
-// Transition names what the lifecycle did on one evaluation. Stable
-// strings: they appear in logs and metric labels.
+// Transition names what the lifecycle did on one evaluation; the strings are stable (logs and metric labels).
 type Transition string
 
 const (
@@ -220,17 +198,13 @@ const (
 	TransitionHeld Transition = "held"
 	// TransitionExtended — the hold expired unreleased; ladder +1.
 	TransitionExtended Transition = "extended"
-	// TransitionHeldUnscored — the hold expired on an unscored bucket; it slides without consuming
-	// an extension, and the ladder resumes when scoring does.
+	// TransitionHeldUnscored: the hold expired on an unscored bucket and slid without consuming an extension.
 	TransitionHeldUnscored Transition = "held_unscored"
 	// TransitionEscalated — the ladder ran out; operator review (P1).
 	TransitionEscalated Transition = "escalated"
-	// TransitionReleased — the auto-unfreeze condition was met at
-	// expiry; the freeze ends.
+	// TransitionReleased: the auto-unfreeze condition was met at expiry.
 	TransitionReleased Transition = "released"
-	// TransitionOverridden — the operator cleared the marker out of
-	// band (ADR-0019: "Operator override always available: force
-	// unfreeze"); the freeze ends immediately, ladder and all.
+	// TransitionOverridden: the operator cleared the marker out of band, ending the freeze and its ladder immediately.
 	TransitionOverridden Transition = "overridden"
 )
 
@@ -251,10 +225,7 @@ type Outcome struct {
 	MarkerTTL time.Duration
 }
 
-// Evaluate advances the freeze lifecycle by one bucket.
-//
-// Pure: same (prev, sig) always yields the same Outcome. All
-// persistence, marker IO, metrics and logging belong to the caller.
+// Evaluate advances the lifecycle by one bucket; pure, with persistence, marker IO, metrics and logging left to the caller.
 func (p Policy) Evaluate(prev State, sig Signal) Outcome {
 	p = p.WithDefaults()
 

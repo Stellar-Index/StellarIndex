@@ -13,14 +13,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// ─── E1: the marker carries one ladder PER window ─────────────────
-//
-// The `freeze:<asset>:<quote>` marker is keyed per pair — its presence
-// is the pair-wide `flags.frozen` the API serves — while the ADR-0019
-// lifecycle inside it advances per (pair, window). These tests pin the
-// two halves that follow: a write records only the writing window's
-// ladder (and preserves every other window's), and a read answers with
-// the asking window's ladder and no one else's.
+// E1: the marker carries one ladder PER window. A write records only the writing window's ladder (preserving the rest),
+// and a read answers with the asking window's ladder only.
 
 const (
 	shortWindow = 5 * time.Minute
@@ -44,10 +38,7 @@ func ladderState(firedAt time.Time, extensions int) freeze.State {
 	}
 }
 
-// TestMarkHoldForWindow_KeepsEachWindowsLadderApart is E1 at the
-// storage layer: two windows of one pair freeze independently, and
-// each must read back ITS OWN ladder — not the other's, and not the
-// last one written.
+// TestMarkHoldForWindow_KeepsEachWindowsLadderApart: two windows of one pair freeze independently and each reads back its OWN ladder.
 func TestMarkHoldForWindow_KeepsEachWindowsLadderApart(t *testing.T) {
 	_, rdb := newRedis(t)
 	w, err := freeze.NewWriter(rdb, time.Minute)
@@ -104,13 +95,7 @@ func TestMarkHoldForWindow_KeepsEachWindowsLadderApart(t *testing.T) {
 	}
 }
 
-// TestLoadStateForWindow_LegacyMarkerAnswersPairWide pins the upgrade
-// shape: a marker written before per-window ladders existed carries one
-// pair-level state and no way to tell whose it is. It must keep
-// answering for every window — dropping it instead would release a
-// freeze that is still running, and on a restarted process (no
-// prev-VWAP comparator) the window could not even re-fire on its own
-// signal.
+// TestLoadStateForWindow_LegacyMarkerAnswersPairWide: a pre-Ladders marker keeps answering for every window, since dropping it would release a running freeze.
 func TestLoadStateForWindow_LegacyMarkerAnswersPairWide(t *testing.T) {
 	_, rdb := newRedis(t)
 	now := time.Now().UTC()
@@ -165,17 +150,8 @@ func TestLoadStateForWindow_LegacyMarkerAnswersPairWide(t *testing.T) {
 	}
 }
 
-// TestMarkHoldForWindow_MarkerLossKeepsEveryWindowFrozen pins the
-// recovery that per-window ladders could otherwise narrow away.
-//
-// Redis loses the marker while both windows of a pair are frozen. The
-// migration-0119 durable ladder is keyed (asset, quote) with no window
-// column, so it says "this pair is inside an unreleased freeze" and
-// nothing about whose. The first window to re-mark must NOT rewrite
-// that pair-wide fact into "only I am frozen": the sibling is cold in
-// the same recovery and, on a restarted process, has no prev-VWAP
-// comparator to re-fire on, so reading the narrowed marker would make
-// it publish the bucket the freeze was withholding.
+// TestMarkHoldForWindow_MarkerLossKeepsEveryWindowFrozen: after Redis loses the marker, the first window to re-mark must not narrow the
+// pair-wide durable fact to "only I am frozen"; the cold sibling would publish the withheld bucket.
 func TestMarkHoldForWindow_MarkerLossKeepsEveryWindowFrozen(t *testing.T) {
 	mr, rdb := newRedis(t)
 	ladder := newFakeLadderStore()
@@ -252,9 +228,7 @@ func TestMarkHoldForWindow_MarkerLossKeepsEveryWindowFrozen(t *testing.T) {
 	}
 }
 
-// TestRetireWindowLadder_LeavesTheMarkerAndTheSibling pins the release
-// half: one window's ladder goes, the marker, its TTL and every other
-// window's ladder stay.
+// TestRetireWindowLadder_LeavesTheMarkerAndTheSibling: one window's ladder goes; the marker, its TTL and other ladders stay.
 func TestRetireWindowLadder_LeavesTheMarkerAndTheSibling(t *testing.T) {
 	mr, rdb := newRedis(t)
 	w, err := freeze.NewWriter(rdb, time.Minute)
@@ -309,12 +283,8 @@ func TestRetireWindowLadder_LeavesTheMarkerAndTheSibling(t *testing.T) {
 	}
 }
 
-// TestLoadStateForWindow_ColdWindowDoesNotAdoptEscalatedUpgradeLadder pins
-// the adoption bound on an upgraded marker's unowned ladder. The snapshot
-// stays live for its whole hold, and its Escalated bit is one ADR-0019
-// never auto-releases, so a window that reaches the freeze step after the
-// upgrade tick (it had been under the USD-volume floor) and adopted it
-// would be held until a manual unfreeze on a bucket nothing was wrong with.
+// TestLoadStateForWindow_ColdWindowDoesNotAdoptEscalatedUpgradeLadder pins the adoption bound: a late window must not adopt an
+// escalated unowned ladder (never auto-released) and be held on a healthy bucket.
 func TestLoadStateForWindow_ColdWindowDoesNotAdoptEscalatedUpgradeLadder(t *testing.T) {
 	_, rdb := newRedis(t)
 	now := time.Now().UTC()
@@ -438,11 +408,7 @@ func TestMarkHoldForWindow_PrunesAnAbandonedSiblingLadder(t *testing.T) {
 	}
 }
 
-// TestMarkHoldForWindow_NeverShortensASiblingsHold is the same invariant
-// between two lifecycle writers. The marker has ONE TTL and carries every
-// window's ladder; a 5m window re-marking with its own short remainder
-// must not pull the expiry in under a 1h sibling whose window is not
-// re-marking this tick.
+// TestMarkHoldForWindow_NeverShortensASiblingsHold: the marker has ONE TTL, so a 5m re-mark must not pull expiry in under a 1h sibling.
 func TestMarkHoldForWindow_NeverShortensASiblingsHold(t *testing.T) {
 	mr, rdb := newRedis(t)
 	w, err := freeze.NewWriter(rdb, 0)
@@ -479,10 +445,7 @@ func (c clearAfterReadCache) Get(ctx context.Context, key string) *redis.StringC
 	return cmd
 }
 
-// TestRetireWindowLadder_DoesNotResurrectAClearedMarker: a marker cleared
-// between the retire's read and its write must stay cleared. SET KEEPTTL
-// on a key that no longer exists creates it with NO expiry, so the write
-// back would bring the freeze back permanently, past the operator's clear.
+// TestRetireWindowLadder_DoesNotResurrectAClearedMarker: SET KEEPTTL on a missing key creates it with NO expiry, so a cleared marker must stay cleared.
 func TestRetireWindowLadder_DoesNotResurrectAClearedMarker(t *testing.T) {
 	mr, rdb := newRedis(t)
 	w, err := freeze.NewWriter(rdb, time.Minute)
@@ -513,10 +476,7 @@ func TestRetireWindowLadder_DoesNotResurrectAClearedMarker(t *testing.T) {
 	}
 }
 
-// TestRetireWindowLadder_RetiresTheDurableEntryToo: a window that
-// auto-releases while a sibling stays frozen has its ladder dropped from
-// the marker. The durable copy has to go with it, or a Redis loss before
-// the sibling releases resurrects a freeze that already ended.
+// TestRetireWindowLadder_RetiresTheDurableEntryToo: the durable copy must go with the marker ladder, or a Redis loss resurrects an ended freeze.
 func TestRetireWindowLadder_RetiresTheDurableEntryToo(t *testing.T) {
 	mr, rdb := newRedis(t)
 	store := newWindowedFakeLadderStore()

@@ -12,51 +12,26 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Graph-based cross-rate router: a port of the Rates Engine pathfinder (predecessor system, rate_calculator.go). It
-// answers "what is the price of base in quote's terms?" when no direct market exists, by chaining fresh per-pair
-// rates through hub assets (XLM, USD, BTC, ...) and corroborating across every independent path of the same
-// (shortest) length. Two deliberate adaptations from the reference:
-//  - Types: canonical.Pair / canonical.Asset and exact *big.Rat prices
-//    (ADR-0003). A rate's inverse is new(big.Rat).Inv(p), never 1.0/p; no
-//    float64 touches a served price.
-//  - Combine statistic: a MEMBER MEDIAN of the highest-confidence tier instead
-//    of the reference's weighted mean, never a blend of two disagreeing
-//    co-equal routes (see [highestConfidencePrice], [CombineRoutes]). This
-//    matches the repo's masking-resistant median posture (robust.go /
-//    FilterOutliers / GuardServedVWAP) and isn't dragged by one divergent
-//    survivor.
-// Confidence is weakest-link: a single dust SDEX print (0.00001 units for $10, an implied ~$1M/unit) must never
-// launder itself into a confident valuation by riding through a hub. Every edge carries a confidence scalar in [0,1],
-// a route's confidence is the MINIMUM across its edges, and [CombineRoutes] gates routes on a caller-supplied floor
-// before treating a composite as confident. Price math stays exact *big.Rat; confidence is a float64 quality weight,
-// never a served money value.
+// Graph-based cross-rate router (port of the Rates Engine pathfinder): prices base in quote's terms by chaining fresh per-pair rates through hubs,
+// corroborated across same-length paths. Prices are exact *big.Rat (ADR-0003), inverses are Inv(p). The combine statistic is the MEMBER MEDIAN of the
+// highest-confidence tier, never a blend; confidence is weakest-link (min edge), a float64 quality weight and never a served money value.
 
 var (
-	// ErrNoRoute is returned by [CombineRoutes] when no path of at most
-	// maxHops legs connects base to quote through the available edges.
+	// ErrNoRoute is returned by [CombineRoutes] when no path within maxHops connects base to quote.
 	ErrNoRoute = errors.New("aggregate: no route from base to quote")
 
-	// ErrEmptyRoute is returned by [CompositeRate] for a zero-length
-	// path (no legs to multiply).
+	// ErrEmptyRoute is returned by [CompositeRate] for a zero-length path.
 	ErrEmptyRoute = errors.New("aggregate: empty route has no composite rate")
 
-	// ErrRouteBroken is returned by [CompositeRate] when consecutive
-	// legs do not chain (leg i's From is not leg i-1's To) — mirrors the
-	// RE's ErrRatePairMismatch base/quote-chaining guard.
+	// ErrRouteBroken is returned by [CompositeRate] when consecutive legs do not chain.
 	ErrRouteBroken = errors.New("aggregate: route legs do not chain")
 
-	// ErrLegNonPositive is returned when a leg (or a source quote)
-	// carries a zero/negative price — a price is only well-defined for
-	// strictly positive rates (mirrors [ErrTriangulateZero]).
+	// ErrLegNonPositive is returned when a leg or source quote has a zero or negative price.
 	ErrLegNonPositive = errors.New("aggregate: route leg price must be positive")
 )
 
 const (
-	// routerOutlierPermitPct is the median-relative band, in percent,
-	// within which a candidate composite is kept during outlier
-	// omission. Ported from the RE's CalculateAverageRate, which calls
-	// OmitOutlierRates(rates, 40). A composite further than 40% from the
-	// median of the candidates is rejected as an outlier route.
+	// routerOutlierPermitPct is the median-relative band in percent within which a composite survives outlier omission (40, as in the Rates Engine).
 	routerOutlierPermitPct = 40
 
 	// routerDivergenceSpreadPct is the post-omission survivor spread, in
@@ -65,85 +40,35 @@ const (
 	// surviving routes still disagree by more than this much.
 	routerDivergenceSpreadPct = 40
 
-	// routerCorroborationAgreePct is the TIGHT pairwise-agreement band, in
-	// percent, two surviving routes' composites must fall within of each
-	// other before either is counted as CORROBORATING the other (see
-	// corroboratingRouteCount /
-	// [CombineRoutes]'s corroborationCount return). It is deliberately
-	// MUCH tighter than routerOutlierPermitPct (40): merely surviving the
-	// loose outlier band is "not an outlier", NOT "agrees". Corroboration
-	// is an anti-manipulation control — "N routes agree" must mean the
-	// routes actually agree, not just that they are within 40% of the
-	// median — so the bar is a few percent. Measured against the SMALLER
-	// of the two prices (the conservative, fail-closed denominator).
-	// Serving is unaffected; this only tightens what COUNTS as
-	// corroboration.
+	// routerCorroborationAgreePct is the TIGHT pairwise band, in percent, within which two surviving routes count as corroborating each other, measured
+	// against the SMALLER price (fail-closed). Much tighter than routerOutlierPermitPct: surviving the loose band is not agreement. Serving is unaffected.
 	routerCorroborationAgreePct = 3
 
-	// maxCorroborationRoutes caps the brute-force set-packing / clique
-	// search corroboratingRouteCount runs over the surviving routes. The
-	// shortest-route set for a real target is a handful, so the exact
-	// 2^n enumeration is trivial; beyond this many survivors it falls
-	// back to a greedy (UNDER-counting, fail-closed) estimate rather than
-	// risk a pathological blow-up. Under-counting can only understate
-	// corroboration, never overstate it.
+	// maxCorroborationRoutes caps the exact 2^n corroboration search; beyond it a greedy estimate runs that can only UNDER-count (fail-closed), never overstate.
 	maxCorroborationRoutes = 16
 )
 
-// RouteTrustFloor is the weakest-link confidence a route must score
-// STRICTLY ABOVE before it may publish as a leg-substitution reroute or
-// COUNT toward the corroboration count (see corroboratingRouteCount /
-// [CombineRoutes]). min_route_confidence ships at 0 so SERVING stays
-// permissive; these two gates are the trust checks it leaves open.
-//
-// It is the bootstrap cap, and the comparison is strict, because the cap is
-// what every edge the scorer could not vouch for carries: an unscored edge
-// is clamped to it, a cache-only leg enters at it, and a still-bootstrapping
-// pair's score is pinned to it. A floor the cap can reach is a gate every
-// such route clears.
+// RouteTrustFloor is the bootstrap confidence cap; a route must score STRICTLY above it to publish as a reroute or count toward corroboration, since every unscored edge carries exactly the cap.
 const RouteTrustFloor = confidence.BootstrapConfidenceCap
 
-// ClearsRouteTrustFloor reports whether a route's weakest-link confidence
-// is strictly above [RouteTrustFloor].
+// ClearsRouteTrustFloor reports whether weakestLink is strictly above [RouteTrustFloor].
 func ClearsRouteTrustFloor(weakestLink float64) bool {
 	return weakestLink > RouteTrustFloor
 }
 
-// RouteLeg is one directed edge of the exchange graph AND one hop of a
-// resolved route (an edge and a leg are the same object): 1 unit of
-// From is worth Price units of To, with a per-edge Confidence in [0,1].
-//
-// A route is a []RouteLeg whose legs chain (leg[i].From == leg[i-1].To)
-// from the query base to the query quote.
+// RouteLeg is one directed edge of the exchange graph and one hop of a route: 1 unit of From is worth Price units of To, with a per-edge Confidence in [0,1].
 type RouteLeg struct {
 	From canonical.Asset
 	To   canonical.Asset
-	// Price is the exact rate: 1 From = Price To. Always strictly
-	// positive on a well-formed edge (see [BuildEdges]).
+	// Price is the exact rate (1 From = Price To), strictly positive on a well-formed edge.
 	Price *big.Rat
-	// Confidence is the trust weight of THIS edge in [0,1]. Step 2
-	// populates it from real signal; the router only ever takes minima
-	// and maxima of it, so any ordering-consistent scale works.
+	// Confidence is this edge's trust weight in [0,1]; the router only takes minima and maxima of it.
 	Confidence float64
-	// Provenance names the underlying data row(s) this edge's price was
-	// actually computed from, beyond its nominal {From,To} pair (e.g. an
-	// fx_quotes ticker for a fiat cross snapped via a shared USD-anchored
-	// row). Nil for an organically observed market edge, whose {From,To}
-	// pair already IS its own provenance. [corroboratingRouteCount] folds
-	// this into edge identity so two nominally different pairs that both
-	// bottom out in the same underlying row (e.g. USD/GBP and EUR/GBP
-	// both reading the same fx_quotes GBP row) are not miscounted as
-	// edge-disjoint corroboration.
+	// Provenance names underlying data rows beyond the nominal pair (e.g. a shared fx_quotes row), folded into edge identity by [corroboratingRouteCount]; nil for an organic market edge.
 	Provenance []string
 }
 
-// Quote is a directed price observation for a pair: the price of
-// Pair.Base in Pair.Quote's terms, with a Confidence in [0,1]. It is
-// the input to [BuildEdges]. Step 2 constructs these from fresh VWAPs
-// and their computed confidence; this pure core treats Confidence as an
-// opaque weakest-link weight. Provenance carries through to both
-// directions of the resulting [RouteLeg] pair unchanged (see
-// [RouteLeg.Provenance]).
+// Quote is a directed price observation (Pair.Base in Pair.Quote terms) with a Confidence in [0,1], the input to [BuildEdges]; Provenance carries to both directions.
 type Quote struct {
 	Pair       canonical.Pair
 	Price      *big.Rat
@@ -151,39 +76,12 @@ type Quote struct {
 	Provenance []string
 }
 
-// BuildEdges expands directed pair quotes into a bidirectional edge
-// set. Each quote (A/B)=p contributes BOTH directions: edge A→B at p
-// AND edge B→A at the exact rational inverse 1/p
-// (new(big.Rat).Inv(p)); both directions inherit the quote's
-// confidence. Prices are defensively copied, so the caller may mutate
-// its inputs afterwards.
-//
-// Returns [ErrLegNonPositive] if any quote price is nil or ≤ 0 (an
-// inverse of a non-positive rate is meaningless), and skips
-// same-asset "pairs" defensively (they cannot be a real market and
-// would be a self-loop in the graph). Output is sorted deterministically
-// so repeated builds — and any downstream route ordering — are stable.
-//
-// A market quoted in BOTH orientations (XLM/USD and USD/XLM) is deduped by
-// its UNDIRECTED key so it contributes ONE canonical quote (both directions
-// derived from it), never two double-counted directed edges. A
-// non-finite quote confidence (NaN/±Inf) is clamped to 0 so it can never
-// win — or empty — the served highest-confidence tier (L5).
+// BuildEdges expands quotes into bidirectional edges (A to B at p, B to A at exact 1/p), deduped by undirected market, with non-finite confidence clamped to 0; a nil or non-positive price returns [ErrLegNonPositive].
 func BuildEdges(quotes []Quote) ([]RouteLeg, error) {
 	edges := make([]RouteLeg, 0, len(quotes)*2)
 	seen := make(map[string]struct{}, len(quotes))
-	// Deterministic dedup: the orchestrator builds `quotes` by ranging a
-	// Go map, so without this the "first quote seen per undirected
-	// market" winner below is chosen by RANDOMIZED map-iteration order.
-	// For a market quoted in BOTH orientations (XLM/USD and USD/XLM) the
-	// two VWAPs are generally non-reciprocal, so the surviving edge — and
-	// every served cross routing through it — would flip between ticks
-	// and DIVERGE across regions, violating the ADR-0018
-	// all-regions-serve-the-same-rate invariant. Sort by pair string
-	// first so the dedup winner is stable. Not reachable in the shipped
-	// single-orientation chain config, but a latent trap with no other
-	// guard. Safe to sort in place — the caller hands
-	// a freshly-built slice each tick.
+	// Sort by pair string first: quotes come from a map range, so the first-seen quote per undirected market would vary per tick and diverge
+	// across regions, violating the all-regions-serve-the-same-rate invariant (ADR-0018). Safe in place: the caller passes a fresh slice.
 	sort.SliceStable(quotes, func(i, j int) bool {
 		return quotes[i].Pair.String() < quotes[j].Pair.String()
 	})
@@ -194,12 +92,8 @@ func BuildEdges(quotes []Quote) ([]RouteLeg, error) {
 		if q.Pair.Base.Equal(q.Pair.Quote) {
 			continue
 		}
-		// Dedup by UNDIRECTED market key: XLM/USD and USD/XLM are the same
-		// physical market quoted opposite ways. Without this each seeds its
-		// own directed edges and the market is double-counted as two routes,
-		// inflating pathCount and the serving/omit population. First
-		// quote seen for a market derives both directions; a later reverse-
-		// oriented duplicate is skipped.
+		// Dedup by UNDIRECTED market key: XLM/USD and USD/XLM are one market, and counting both would inflate pathCount.
+		// The first quote seen derives both directions.
 		mkey := undirectedEdgeKey(q.Pair.Base, q.Pair.Quote)
 		if _, dup := seen[mkey]; dup {
 			continue
@@ -222,18 +116,7 @@ func BuildEdges(quotes []Quote) ([]RouteLeg, error) {
 	return edges, nil
 }
 
-// FindRoutes returns every acyclic path of at most maxHops legs from
-// base to quote through edges. maxHops counts LEGS (edges), so a route
-// via one hub asset (base→hub→quote) has 2 legs. A path never revisits
-// an asset (no cycles), which also bounds the search.
-//
-// When shortestOnly is true the result is pruned to only the paths of
-// the minimum leg-count found — the fewest-hop routes win, matching the
-// RE's `shortest` pruning in CalculatePathsOfExchange. Routing is purely
-// topological; edge confidence does not influence which paths are found
-// (it is scored later, in [CombineRoutes]).
-//
-// Returns nil for base == quote, maxHops < 1, or a disconnected quote.
+// FindRoutes returns every acyclic path of at most maxHops legs from base to quote; shortestOnly prunes to the fewest-hop paths, and the result is nil for base == quote, maxHops < 1 or no connection.
 func FindRoutes(edges []RouteLeg, base, quote canonical.Asset, maxHops int, shortestOnly bool) [][]RouteLeg {
 	if maxHops < 1 || base.Equal(quote) {
 		return nil
@@ -307,16 +190,7 @@ func keepShortest(paths [][]RouteLeg) [][]RouteLeg {
 	return out
 }
 
-// CompositeRate multiplies the leg rates along one route into that
-// route's composite price (base→quote), exactly (*big.Rat). Ported
-// from the RE's CalculateCompositeRate, including its base/quote
-// chaining validation.
-//
-// Rejects an empty route ([ErrEmptyRoute]), a route whose legs do not
-// chain ([ErrRouteBroken]), and any zero/negative leg
-// ([ErrLegNonPositive]) — a broken or non-positive leg would yield a
-// plausible-looking but wrong price, so we fail closed rather than
-// skip it (cf. [TriangulateChain]). The result is freshly allocated.
+// CompositeRate multiplies leg rates along a route exactly (*big.Rat), failing closed with [ErrEmptyRoute], [ErrRouteBroken] or [ErrLegNonPositive] rather than skipping a bad leg.
 func CompositeRate(path []RouteLeg) (*big.Rat, error) {
 	if len(path) == 0 {
 		return nil, ErrEmptyRoute
@@ -335,10 +209,7 @@ func CompositeRate(path []RouteLeg) (*big.Rat, error) {
 	return out, nil
 }
 
-// RouteConfidence is the weakest-link confidence of a route: the
-// MINIMUM edge confidence along the path. A route is only as
-// trustworthy as its flimsiest leg, so one dust-thin edge caps the
-// whole route's confidence. An empty route has confidence 0.
+// RouteConfidence is the weakest-link confidence of a route: the minimum edge confidence, 0 for an empty route.
 func RouteConfidence(path []RouteLeg) float64 {
 	if len(path) == 0 {
 		return 0
@@ -352,14 +223,8 @@ func RouteConfidence(path []RouteLeg) float64 {
 	return minConf
 }
 
-// sanitizeConfidence clamps a non-finite confidence (NaN / ±Inf) to 0.
-// Fail-closed: a route whose confidence is not a real number is untrustworthy
-// and must never win — or, worse, EMPTY — the served highest-confidence tier.
-// A NaN would propagate through [maxConfidence] (NaN > x and x > NaN are both
-// false) and then never match `confidence == best` in [highestConfidencePrice],
-// leaving the top tier empty and panicking the served-price median. Applied
-// at both graph-construction ([BuildEdges]) and route-scoring ([scoreRoutes])
-// so a bad confidence cannot reach the serving path from either entry (L5).
+// sanitizeConfidence clamps NaN/Inf to 0 (fail-closed): a NaN never matches confidence == best in [highestConfidencePrice], emptying the top tier
+// and panicking the served-price median. Applied at both [BuildEdges] and [scoreRoutes].
 func sanitizeConfidence(c float64) float64 {
 	if math.IsNaN(c) || math.IsInf(c, 0) {
 		return 0
@@ -367,20 +232,7 @@ func sanitizeConfidence(c float64) float64 {
 	return c
 }
 
-// OmitOutliers rejects composites that diverge from the group's median
-// by more than permitDivergentPct percent, returning the survivors in
-// input order. Ported from the RE's OmitOutlierRates, with two
-// deliberate changes: (1) the baseline is the exact MEDIAN, not the
-// mean — the median is not dragged by the very outlier we are trying to
-// reject (masking-resistant, matching robust.go); (2) the guard fires
-// at ≥ 3 values (the RE only filtered at > 3), because a median can
-// identify the odd-one-out among three where a mean cannot.
-//
-// With fewer than 3 values there is no robust way to say which is the
-// outlier, so all are kept. If the band would reject EVERYTHING (a
-// bimodal even-count with no member near the midpoint), all are kept
-// too — we never return an empty survivor set. A zero/undefined median
-// disables the relative test (all kept).
+// OmitOutliers rejects composites more than permitDivergentPct percent from the exact median, keeping input order; with fewer than 3 values, or if every value would be rejected, all are kept.
 func OmitOutliers(rates []*big.Rat, permitDivergentPct int) []*big.Rat {
 	keep := omitOutlierIndices(rates, permitDivergentPct)
 	out := make([]*big.Rat, 0, len(keep))
@@ -436,25 +288,7 @@ type scoredRoute struct {
 	confidence float64
 }
 
-// CombineRoutes is the top-level cross-rate resolver: it finds the fewest-hop routes from base to quote, gates them
-// on weakest-link confidence, rejects median-relative outliers, and serves the most-trusted surviving route(s).
-// minConfidence is the floor (0 disables it): routes at or above it alone back the combine when any exist. Returns:
-//   - composite: the MEMBER median of the highest-confidence tier, chosen BEFORE
-//     outlier omission ([highestConfidencePrice]): a lower-confidence route can
-//     trip diverged but never move the top price.
-//   - combinedConfidence: the MAXIMUM weakest-link confidence among survivors.
-//   - servedRouteCount: size of the top tier after its own outlier omission.
-//   - pathCount: survivors of outlier omission over ALL gated routes; not
-//     necessarily the routes that produced the value, nor the corroboration count.
-//   - corroborationCount: an audit signal only, never a source count (ADR-0019
-//     amendment §2). 0 when diverged or no two survivors agree within
-//     routerCorroborationAgreePct; otherwise the largest tightly-agreeing set of
-//     PAIRWISE EDGE-DISJOINT routes (routes sharing an edge are one market).
-//   - diverged: any outlier rejected, survivors spread beyond
-//     routerDivergenceSpreadPct, or the next-longer tier disagrees that much.
-//   - lowConfidence: NO route cleared minConfidence; the composite may be served
-//     flagged/stale but must never feed market-cap.
-//   - err: [ErrNoRoute] when no path exists within maxHops.
+// CombineRoutes serves the member median of the top-confidence gated tier (chosen before outlier omission); lowConfidence means no route cleared minConfidence and must never feed market-cap, and corroborationCount is an audit signal, not a source count.
 func CombineRoutes(
 	edges []RouteLeg, base, quote canonical.Asset, maxHops int, minConfidence float64,
 ) (composite *big.Rat, combinedConfidence float64, servedRouteCount, pathCount, corroborationCount int, diverged, lowConfidence bool, err error) {
@@ -471,26 +305,13 @@ func CombineRoutes(
 
 	gated, lowConf := gateByConfidence(scored, minConfidence)
 
-	// SERVING ANCHOR: the served composite is anchored to the
-	// highest-confidence tier of the GATED routes, chosen BEFORE any
-	// price-median outlier omission. This is the invariant a lower-confidence
-	// route must not defeat — at n≥3 a thin divergent MAJORITY would
-	// otherwise make the highest-confidence route the price-median outlier
-	// and evict it, letting the majority set the served price. Only the
-	// most-trusted route(s) set the value (see [highestConfidencePrice]); its
-	// confidence is the confidence we report. servedRouteCount is that tier's
-	// size: the route count that actually produced composite, kept
-	// separate from pathCount below because the two sets can be disjoint.
+	// SERVING ANCHOR: the composite is the highest-confidence tier of the GATED routes, chosen BEFORE price-median omission, so a thin divergent
+	// majority cannot evict the best route and set the price. servedRouteCount is that tier's size, separate from pathCount (the sets can be disjoint).
 	composite, servedRouteCount = highestConfidencePrice(gated)
 	combinedConfidence = maxConfidence(gated)
 
-	// DIVERGENCE + CORROBORATION are computed over the full gated route set
-	// with the loose outlier band, unchanged: a lower-confidence route still
-	// corroborates and can trip diverged; it just cannot move the served
-	// price above. pathCount is the surviving serving multiplicity carried on
-	// the composite meta (NOT the independence claim — that is
-	// corroborationCount, and NOT what produced the served value — that is
-	// servedRouteCount above).
+	// DIVERGENCE and CORROBORATION use the full gated set with the loose outlier band: a lower-confidence route can trip diverged or corroborate but
+	// cannot move the served price. pathCount is serving multiplicity, not independence (corroborationCount) nor what produced the value (servedRouteCount).
 	keep := omitOutlierIndices(pricesOf(gated), routerOutlierPermitPct)
 	survivors := make([]scoredRoute, 0, len(keep))
 	for _, i := range keep {
@@ -513,11 +334,8 @@ func CombineRoutes(
 	return composite, combinedConfidence, servedRouteCount, pathCount, corroborationCount, diverged, lowConf, nil
 }
 
-// nextTierDisagrees reports whether the served composite differs by more
-// than routerDivergenceSpreadPct from the consensus of the next-longer
-// route tier (the shortest length above `shortest`): that tier's routes,
-// confidence-gated and outlier-omitted exactly as the served tier is,
-// reduced to their member median. No longer tier → false.
+// nextTierDisagrees reports whether the composite differs by more than routerDivergenceSpreadPct from the member median of the next-longer
+// route tier (gated and outlier-omitted like the served tier); false if there is no longer tier.
 func nextTierDisagrees(composite *big.Rat, all [][]RouteLeg, shortest int, minConfidence float64) (bool, error) {
 	next := 0
 	for _, r := range all {
@@ -604,25 +422,9 @@ func maxConfidence(scored []scoredRoute) float64 {
 	return best
 }
 
-// highestConfidencePrice is the SERVED composite: the MEMBER median of the prices of only the
-// routes whose weakest-link confidence equals the maximum (the top-confidence TIER), computed on
-// the GATED set BEFORE outlier omission. A lower-confidence route therefore can never evict the top
-// tier as a price-median outlier: a thin, unguarded bridge route (e.g. XLM->BTC->GBP, whose XLM/BTC
-// leg escapes the USD-volume floor) can trip the divergence flags but never move the price.
-//   - single route: that route's price.
-//   - one deep route + one thin bridge route: the deep route's price, even when
-//     the thin one is a divergent majority; the disagreement still sets
-//     diverged, so the composite is served FLAGGED, not silently blended.
-//   - several co-equal top routes: the member median, so the value is always a
-//     price a route actually produced, never an averaged midpoint of two
-//     disagreeing routes. A divergent minority (median-relative, >=3 only) is
-//     dropped first.
-//
-// Coherent with combinedConfidence = maxConfidence(gated): we serve the price OF the route(s) whose
-// confidence we report. The top tier is never empty when routes is non-empty.
-//
-// Also returns the top tier's size after its own outlier omission (servedRouteCount, distinct from
-// pathCount).
+// highestConfidencePrice is the SERVED composite: the member median of only the top weakest-link-confidence tier of the GATED set, computed BEFORE outlier omission,
+// so a thin low-confidence route trips divergence flags but never moves the price. Co-equal routes give a price one actually produced, never an averaged midpoint;
+// a divergent minority (>=3 only) is dropped first. Also returns the tier's size after omission (servedRouteCount, distinct from pathCount).
 func highestConfidencePrice(routes []scoredRoute) (*big.Rat, int) {
 	best := maxConfidence(routes)
 	top := make([]*big.Rat, 0, len(routes))
@@ -665,25 +467,9 @@ func spreadExceeds(vals []*big.Rat, pct int) bool {
 	return lhs.Cmp(rhs) > 0
 }
 
-// corroboratingRouteCount is the anti-manipulation corroboration count ([CombineRoutes]' corroborationCount): the
-// number of INDEPENDENT, tightly-agreeing, non-diverged routes backing the composite. It is deliberately much
-// stricter than the raw survivor count, so "N routes agree" can't be faked by wash-trading a single shared leg.
-// Rules, in order:
-//   - diverged: 0 (fail closed).
-//   - 0 or 1 survivor: that count (one route is the "one unverified path" baseline, 1).
-//   - 2+ survivors with no tightly-agreeing pair (within
-//     routerCorroborationAgreePct): 0. Routes that fit the loose 40% outlier
-//     band but actively disagree are evidence of a PROBLEM, so this drops below
-//     the single-path baseline.
-//   - a route whose weakest-link confidence does not clear [RouteTrustFloor]
-//     never counts toward corroboration, however tightly it agrees; a dust route
-//     is not an independent confirmation just because min_route_confidence ships
-//     at 0 for serving.
-//   - otherwise: the size of the largest set of confidence-clearing survivors
-//     that pairwise both agree tightly AND are edge-disjoint. Routes sharing any
-//     undirected edge, or any [RouteLeg.Provenance] entry, collapse to one
-//     confirmation, so an all-through-one-bottleneck set scores 1 and two fiat
-//     crosses sourced from the same fx_quotes row also score 1.
+// corroboratingRouteCount is the anti-manipulation count of INDEPENDENT, tightly-agreeing, non-diverged routes: diverged is 0; 0-1 survivors is that count; 2+ with no pair
+// within routerCorroborationAgreePct is 0; otherwise the largest set of survivors clearing [RouteTrustFloor] that agree pairwise AND are edge-disjoint (a shared edge or
+// [RouteLeg.Provenance] collapses to one confirmation), so wash-trading one shared leg cannot fake it.
 func corroboratingRouteCount(survivors []scoredRoute, diverged bool) int {
 	if diverged {
 		return 0
@@ -720,21 +506,7 @@ func corroboratingRouteCount(survivors []scoredRoute, diverged bool) int {
 	return maxCliqueSize(n, agreeAndDisjoint)
 }
 
-// MaxEdgeDisjointRoutes returns the size of the maximum subset of routes
-// that are PAIRWISE edge-disjoint — the count of genuinely independent
-// paths in the set. Edge identity is the UNDIRECTED leg {From,To} PLUS
-// each leg's [RouteLeg.Provenance]: an edge and its inverse are the same
-// physical market and count as one, and two edges that nominally quote
-// different pairs but were computed from the same underlying data row
-// (e.g. a fiat cross snapped through a shared fx_quotes row) also count
-// as one, so two routes that share either are NOT independent.
-// Shortest-route sets are tiny, so the maximum-set-packing search is
-// exact by brute force up to maxCorroborationRoutes routes and a
-// fail-closed (under-counting) greedy estimate beyond.
-//
-// This is the pure independence primitive behind the corroboration
-// count (see corroboratingRouteCount); exported so the
-// shared-bottleneck case can be pinned directly.
+// MaxEdgeDisjointRoutes returns the largest pairwise edge-disjoint subset of routes (edge = undirected {From,To} plus Provenance), exact up to maxCorroborationRoutes and a fail-closed under-counting greedy beyond.
 func MaxEdgeDisjointRoutes(routes [][]RouteLeg) int {
 	n := len(routes)
 	if n <= 1 {
@@ -748,11 +520,8 @@ func MaxEdgeDisjointRoutes(routes [][]RouteLeg) int {
 	return maxCliqueSize(n, disjoint)
 }
 
-// pricesAgreeWithin reports whether two strictly-positive composite prices
-// are within pct percent of each other, measured against the SMALLER of
-// the two (the conservative denominator: it yields the larger relative
-// gap, so a borderline pair is rejected rather than accepted). Exact
-// rational compare — no float ever enters the agreement decision.
+// pricesAgreeWithin reports whether two positive prices are within pct percent, measured against the SMALLER (conservative: a borderline pair
+// is rejected). Exact rational compare, no float.
 func pricesAgreeWithin(a, b *big.Rat, pct int) bool {
 	if a == nil || b == nil || a.Sign() <= 0 || b.Sign() <= 0 {
 		return false
@@ -789,11 +558,8 @@ func provenanceEdgeKey(p string) string {
 	return "provenance\x00" + p
 }
 
-// undirectedEdgeKey is the order-independent identity of the physical
-// market between two assets: A→B and B→A hash to the same key, because
-// they are the same market quoted in opposite directions. The NUL
-// separator cannot appear in a canonical asset string, so the join is
-// unambiguous.
+// undirectedEdgeKey is the order-independent identity of the market between two assets (A-to-B and B-to-A match);
+// the NUL separator cannot appear in a canonical asset string.
 func undirectedEdgeKey(a, b canonical.Asset) string {
 	sa, sb := a.String(), b.String()
 	if sa <= sb {
@@ -816,12 +582,8 @@ func edgeSetsDisjoint(a, b map[string]struct{}) bool {
 	return true
 }
 
-// maxCliqueSize returns the size of the largest subset of {0..n-1} in
-// which every pair is connected() — a maximum clique. n is tiny (a
-// shortest-route set), so up to maxCorroborationRoutes it enumerates
-// every subset exactly; beyond that it returns a greedy clique, which
-// can only UNDER-estimate (fail closed: corroboration is understated,
-// never overstated).
+// maxCliqueSize returns the largest subset of {0..n-1} whose pairs are all connected(); exact up to maxCorroborationRoutes,
+// a greedy clique beyond, which only UNDER-estimates (fail-closed).
 func maxCliqueSize(n int, connected func(i, j int) bool) int {
 	if n <= 0 {
 		return 0
@@ -861,11 +623,7 @@ func maskIsClique(mask int, connected func(i, j int) bool) bool {
 	return true
 }
 
-// greedyCliqueSize is the fail-closed fallback for absurdly large route
-// sets: it grows a single clique greedily, adding a node only if it is
-// connected to every node already chosen. The result is a valid clique
-// but not necessarily the maximum — it can only under-count, which is the
-// safe direction for an anti-manipulation count.
+// greedyCliqueSize is the fail-closed fallback for huge route sets: a greedy clique that is valid but may under-count, the safe direction for an anti-manipulation count.
 func greedyCliqueSize(n int, connected func(i, j int) bool) int {
 	chosen := make([]int, 0, n)
 	for i := 0; i < n; i++ {

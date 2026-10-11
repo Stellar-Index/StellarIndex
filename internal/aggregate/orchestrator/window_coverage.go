@@ -9,14 +9,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// fetchTradesDetectTruncation wraps the store fetch with the per-query
-// cap and bumps AggregatorWindowTruncatedTotal (+ a WARN) when the
-// returned row count hits the cap — i.e. the window held more trades
-// than `MaxTradesPerWindow` and the VWAP is computed over only the
-// newest `cap` of them. `target` is the aggregation target (for the log
-// line); `fetch` is the actual pair queried (== target for the direct
-// path, a stablecoin-backer pair under proxy expansion). A capped read
-// also returns its oldest trade's timestamp as coveredFrom; zero otherwise.
+// fetchTradesDetectTruncation wraps the store fetch with the per-query cap, warning and counting when the cap is hit (VWAP then covers only the newest cap trades).
+// `target` is the aggregation target, `fetch` the pair actually queried (a stablecoin-backer pair under proxy expansion). A capped read returns its oldest trade's timestamp as coveredFrom; zero otherwise.
 func (o *Orchestrator) fetchTradesDetectTruncation(
 	ctx context.Context, target, fetch canonical.Pair, from, to time.Time,
 ) (trades []canonical.Trade, coveredFrom time.Time, err error) {

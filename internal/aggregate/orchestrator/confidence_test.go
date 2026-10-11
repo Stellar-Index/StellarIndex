@@ -648,11 +648,7 @@ func TestFreezeHold_ConfidenceSurvivesEveryWindowOfTheHold(t *testing.T) {
 	}
 }
 
-// TestConfidence_ServedFactorsCarryBootstrapState — the cached score the
-// API serves names the baseline density the bootstrap cap gated on and
-// whether the cap bounded the score, and the per-pair gauges agree. A
-// thin baseline (1,001 buckets) is capped; a fully-observed 30d window
-// (43,200 buckets = 30.0 days-equivalent) is not.
+// TestConfidence_ServedFactorsCarryBootstrapState: the cached score names the baseline density the bootstrap cap gated on and whether it bounded the score, with agreeing gauges; a thin baseline is capped, a full 30d window is not.
 func TestConfidence_ServedFactorsCarryBootstrapState(t *testing.T) {
 	cases := []struct {
 		name       string

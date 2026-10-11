@@ -13,13 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// bucketReturnCase ticks a single-source market with one steady print per
-// minute across the whole window, then closes a minute holding one steady
-// print and one equal-sized print at 3x. That minute's VWAP is +100% over the
-// previous minute's — past Phase 1's crypto FreezePct (50%) and far past a
-// 1%-MAD baseline — while the rolling window moves only 1/(window minutes+1)
-// as much (+33% on 5m, +3.3% on 1h, +0.14% on 24h). It returns whether the
-// second bucket published and whether the window's freeze is active.
+// bucketReturnCase ticks a steady single-source market, then closes a minute with a 3x print: +100% minute-on-minute, past Phase 1's 50% crypto FreezePct, while the rolling window moves far less. Returns whether the second bucket published and the window froze.
 func bucketReturnCase(t *testing.T, window time.Duration, cfg Config) (published, frozen bool) {
 	t.Helper()
 	pair := xlmUSDPair(t)

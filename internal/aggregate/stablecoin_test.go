@@ -6,11 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestStablecoinCodes_InSyncWithCanonical pins canonical.StablecoinCodes
-// (used by the storage layer's pair-orientation SQL) to the KEYS of
-// this package's stablecoinFiatProxy (the pricing-policy source of
-// truth). They live in two packages to avoid a storage→aggregate import
-// cycle; this guards against drift.
+// TestStablecoinCodes_InSyncWithCanonical pins canonical.StablecoinCodes to the keys of stablecoinFiatProxy, which live in two packages to avoid a storage-to-aggregate import cycle.
 func TestStablecoinCodes_InSyncWithCanonical(t *testing.T) {
 	for code := range stablecoinFiatProxy {
 		if !canonical.StablecoinCodes[code] {
@@ -95,23 +91,14 @@ func TestFiatProxy_NonCryptoAssetsReturnFalse(t *testing.T) {
 		t.Error("FiatProxy(native) ok=true, want false")
 	}
 
-	// Classic-issued USDC is NOT proxied. Circle's Stellar-classic
-	// USDC-GA5ZSEJY… carries full issuer identity; proxying it to
-	// fiat:USD would conflate all classic USDC with the abstract
-	// `crypto:USDC` ticker, which intentionally aren't Equal() under
-	// canonical semantics.
+	// Classic-issued USDC is NOT proxied: it carries full issuer identity, and proxying to fiat:USD would conflate it with the abstract crypto:USDC ticker.
 	classicUSDC, _ := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if _, ok := FiatProxy(classicUSDC); ok {
 		t.Error("FiatProxy(classic USDC) ok=true, want false — must not coerce issuer-specific asset")
 	}
 }
 
-// TestIsFiatProxyFor: the aggregator's
-// USD-volume accounting asks "is this quote leg dollar-denominated?"
-// and MUST answer yes for the abstract USD-pegged stablecoin tickers
-// the proxy expansion fetches under. The predicate reads the same
-// peg map as FiatProxy so a peg added there is recognised by the
-// MinUSDVolume floor without a second hard-coded list.
+// TestIsFiatProxyFor pins that the USD-volume predicate says yes for the USD-pegged tickers, reading the same peg map as FiatProxy.
 func TestIsFiatProxyFor(t *testing.T) {
 	classicUSDC, err := canonical.NewClassicAsset("USDC", "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")
 	if err != nil {
@@ -161,11 +148,7 @@ func TestIsFiatProxyFor(t *testing.T) {
 	}
 }
 
-// TestIsFiatProxyFor_CoversEveryUSDBacker pins the predicate to the
-// USD peg set the expansion path fetches: every ticker FiatBackers
-// enumerates for "USD" must be recognised as USD-denominated by the
-// volume accounting, or that leg's dollars vanish at the
-// MinUSDVolume floor.
+// TestIsFiatProxyFor_CoversEveryUSDBacker pins the predicate to the USD peg set FiatBackers enumerates, or that leg's dollars vanish at the MinUSDVolume floor.
 func TestIsFiatProxyFor_CoversEveryUSDBacker(t *testing.T) {
 	backers := FiatBackers("USD")
 	if len(backers) == 0 {
@@ -365,12 +348,8 @@ func TestExpandTargetPair_NonFiatTargetReturnsOnlyItself(t *testing.T) {
 }
 
 func TestExpandTargetPairWithClassicPegs_USDFiatAddsClassicSources(t *testing.T) {
-	// On Stellar mainnet most XLM/USD volume is quoted in classic
-	// `USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`,
-	// not the abstract `crypto:USDC` ticker. Without classic-peg
-	// expansion the aggregator's XLM/fiat:USD VWAP would be empty
-	// even with EnableStablecoinFiatProxy on — the bug observed in
-	// production on r1 (vwap_writes_total stuck at 0 across 3h).
+	// Most XLM/USD volume on mainnet is quoted in classic USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN, not crypto:USDC;
+	// without classic-peg expansion the XLM/fiat:USD VWAP is empty.
 	xlm, _ := canonical.NewCryptoAsset("XLM")
 	usd, _ := canonical.NewFiatAsset("USD")
 	target, _ := canonical.NewPair(xlm, usd)
@@ -461,12 +440,7 @@ func TestExpandTargetPair_BaseCollisionWithBackerIsSkipped(t *testing.T) {
 	}
 }
 
-// TestFiatProxy_CodesAreOnCanonicalAllowList guards against a future
-// addition to stablecoinFiatProxy for a ticker that's NOT on the
-// canonical crypto allow-list. Such a code could never originate
-// from a decoder (`NewCryptoAsset` would reject it), so the entry
-// would be dead weight — this test forces us to add the ticker in
-// both places.
+// TestFiatProxy_CodesAreOnCanonicalAllowList guards against a stablecoinFiatProxy ticker missing from the canonical crypto allow-list, which no decoder could ever originate.
 func TestFiatProxy_CodesAreOnCanonicalAllowList(t *testing.T) {
 	for code := range stablecoinFiatProxy {
 		if !canonical.IsKnownCrypto(code) {

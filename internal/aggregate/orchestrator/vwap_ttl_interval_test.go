@@ -10,12 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// TestOrchestratorVWAPMaxAge_DerivesFromInterval: VWAPMaxAge's
-// "10 missed ticks at the default cadence" relationship is code, not
-// a comment. An operator raising Config.Interval must get proportionally
-// MORE missed-tick grace, not the flat cachekeys.VWAPMaxAge regardless of
-// cadence — and a faster-than-default interval must not tighten the
-// documented floor below cachekeys.VWAPMaxAge.
+// TestOrchestratorVWAPMaxAge_DerivesFromInterval: a raised Config.Interval must give proportionally more missed-tick grace, and a faster interval must not tighten the floor below cachekeys.VWAPMaxAge.
 func TestOrchestratorVWAPMaxAge_DerivesFromInterval(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

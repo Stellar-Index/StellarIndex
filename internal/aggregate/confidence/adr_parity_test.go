@@ -36,11 +36,8 @@ func readSquashed(t *testing.T, path string) string {
 	return squashWhitespace(string(b))
 }
 
-// TestADR0019PinsTheBootstrapDensityGate — the ADR's warmup rule says
-// "< 30 days of history", but the cap gates on bucket density at
-// [confidence.BootstrapDensityDays], re-engaging below
-// [confidence.BootstrapReengageDensityDays]. An ADR amendment
-// records both; this fails if it is dropped or a constant moves away from it.
+// TestADR0019PinsTheBootstrapDensityGate: the cap gates on bucket density at [confidence.BootstrapDensityDays], re-engaging below
+// [confidence.BootstrapReengageDensityDays], not on the ADR's "< 30 days" wording; the ADR must record both constants.
 func TestADR0019PinsTheBootstrapDensityGate(t *testing.T) {
 	adr := readSquashed(t, adr0019DetailPath)
 	gate := strconv.FormatFloat(confidence.BootstrapDensityDays, 'f', -1, 64)

@@ -6,8 +6,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// KindOracleSandwich is the mev_events.kind for trades bracketing an
-// on-chain oracle update.
+// KindOracleSandwich is the mev_events.kind for trades bracketing an on-chain oracle update.
 const KindOracleSandwich = "oracle_sandwich"
 
 const oracleSandwichNote = "One account traded an asset in transactions on BOTH sides " +
@@ -35,14 +34,9 @@ type oracleSandwichDetail struct {
 	Note               string       `json:"note"`
 }
 
-// DetectOracleSandwiches scans for trades bracketing an on-chain
-// oracle update: within one ledger, account A trades a pair touching
-// the oracle's asset in transactions strictly before AND strictly
-// after the update's transaction (by lake tx_index). One candidate
-// per (oracle update, account).
-//
-// txIdx must cover both the trades' and the oracle updates' tx
-// hashes; unresolved hashes degrade detection silently.
+// DetectOracleSandwiches finds one account trading a pair touching the oracle's asset strictly before AND after
+// the update's tx within one ledger (by tx_index); one candidate per (update, account).
+// txIdx must cover trade and oracle tx hashes; unresolved hashes silently degrade detection.
 func DetectOracleSandwiches(trades []canonical.Trade, usdVolume []string, oracles []OracleRef, txIdx map[string]uint32) []Candidate {
 	if len(txIdx) == 0 || len(oracles) == 0 {
 		return nil

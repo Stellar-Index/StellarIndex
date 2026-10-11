@@ -1,9 +1,5 @@
-// Package rollupworker holds the ticker-driven control flow shared by the
-// aggregator's per-rollup workers (assetcharacterrollup, assetvolrollup,
-// protoeventsrollup): an immediate pass on boot, then one pass per tick
-// until the context is cancelled. Each caller keeps its own DefaultInterval,
-// refresh error handling and metrics in a roll closure; only the loop is
-// shared.
+// Package rollupworker holds the ticker loop shared by the aggregator's rollup workers (assetcharacterrollup, assetvolrollup, protoeventsrollup):
+// an immediate pass on boot, then one per tick until ctx is cancelled. Each caller keeps its own interval, error handling and metrics in its roll closure.
 package rollupworker
 
 import (
@@ -11,11 +7,7 @@ import (
 	"time"
 )
 
-// Run calls roll once immediately, then again on every tick of interval,
-// until ctx is cancelled, at which point it returns ctx.Err(). roll is
-// expected to handle its own errors (log + metric) rather than return one,
-// matching the aggregator worker convention: a transient failure must not
-// stop the loop.
+// Run calls roll immediately, then every interval until ctx is cancelled and returns ctx.Err(); roll handles its own errors so a transient failure never stops the loop.
 func Run(ctx context.Context, interval time.Duration, roll func(context.Context)) error {
 	tick := time.NewTicker(interval)
 	defer tick.Stop()

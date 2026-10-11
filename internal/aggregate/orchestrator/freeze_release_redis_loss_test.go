@@ -10,16 +10,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ─── a release during a Redis loss must not end a sibling's freeze ───
-//
-// These tests build the writer the way cmd/stellarindex-aggregator does:
-// WITH a ladder store. The window-isolation fixture builds
-// freeze.NewWriter(rdb, 0) with none, so nothing it drives can reach the
-// durable half of a release — which is where this defect lived. With the
-// marker gone, the release of a recovering 5m window found "no sibling in
-// the marker", cleared, and the clear retired the WHOLE durable record:
-// the escalated 1h window, cold in this process, then rehydrated nothing
-// and published.
+// A release during a Redis loss must not end a sibling's freeze. These tests build the writer as cmd/stellarindex-aggregator does, WITH a ladder store, so the durable half of a release is reachable.
+// With the marker gone, a recovering 5m window cleared and retired the WHOLE durable record, so the cold escalated 1h window rehydrated nothing and published.
 
 // sinkShapedLadderStore mirrors timescale.FreezeEventSink's ladder
 // semantics (the real sink is exercised in test/integration): a per-window

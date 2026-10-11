@@ -32,12 +32,7 @@ func TestReleaseCorroborated_CrossOracleBandIsInclusive(t *testing.T) {
 	}
 }
 
-// FuzzResolveCompositeReference checks the current-bucket reference
-// against an exact big.Rat model: the composite is the exact product of
-// the legs, the verdict is corroborated iff |direct − composite| /
-// composite <= ToleranceBps in exact arithmetic (either side of the
-// composite), a thin or dispersed leg or an FX snap older than FXMaxAge
-// is unavailable, and a direct price far past 2^63 is judged on its value.
+// FuzzResolveCompositeReference checks the reference against an exact big.Rat model: exact leg product, corroboration iff within ToleranceBps, thin/dispersed legs or stale FX unavailable, values past 2^63 judged exactly.
 func FuzzResolveCompositeReference(f *testing.F) {
 	// directNum, directDen, directShift, legNum, legDen, fxNum, fxDen, fxAgeSec, legSources, dispersionBps
 	f.Add(uint64(8), uint64(100), uint8(0), uint32(10), uint32(100), uint32(80), uint32(100), int64(3600), uint8(3), uint16(0))
@@ -125,15 +120,7 @@ func FuzzResolveCompositeReference(f *testing.F) {
 	})
 }
 
-// TestReleaseCorroborated_DecidedInExactRatSpace pins exact-Rat release: a
-// resolved composite reference must gate mid-hold release on
-// [compositeReference.deviationRatio] (exact *big.Rat), not on the
-// divergencePct float64 mirror that composite_reference.go keeps only
-// for reporting. A deviation genuinely 3% away from the composite, with
-// a 2% release band, must never release — regardless of what the float
-// mirror says — because a float64 compare puts the boundary at the
-// mercy of binary rounding on a decision that gates whether a held,
-// possibly-manipulated price is served.
+// TestReleaseCorroborated_DecidedInExactRatSpace pins release on the exact *big.Rat deviationRatio, not the float64 divergencePct mirror: a 3% deviation with a 2% band must never release, since float rounding must not decide a held price's release.
 func TestReleaseCorroborated_DecidedInExactRatSpace(t *testing.T) {
 	ref := compositeReference{
 		verdict: compositeVerdictRefuted,

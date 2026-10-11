@@ -8,9 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestNewLocalIndex_OrderIndependentOfInputOrder pins the tie-break
-// itself: the index's time order must be a function of the TRADE SET,
-// not of the order the caller merged it in.
+// TestNewLocalIndex_OrderIndependentOfInputOrder pins that the index's time order is a function of the trade set, not of the caller's merge order.
 func TestNewLocalIndex_OrderIndependentOfInputOrder(t *testing.T) {
 	ts := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
 	// Four prints sharing one ledger-close timestamp, from two sources,
@@ -64,12 +62,7 @@ func TestNewLocalIndex_OrderIndependentOfInputOrder(t *testing.T) {
 	}
 }
 
-// TestNewLocalIndex_OrderNeutralToVenueName pins venue-name neutrality: inside one
-// ledger close the index's order must not depend on what the venues are
-// called. The neighbourhood reference and the anchor chain are
-// positional, so a source-name tie-break handed the alphabetically-early
-// venue the leading positions of every ledger. Swapping the two venue
-// names must leave the prints exactly where they were.
+// TestNewLocalIndex_OrderNeutralToVenueName pins venue-name neutrality: within one ledger close, swapping venue names must leave the prints where they were.
 func TestNewLocalIndex_OrderNeutralToVenueName(t *testing.T) {
 	ts := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
 	build := func(first, second string) []canonical.Trade {

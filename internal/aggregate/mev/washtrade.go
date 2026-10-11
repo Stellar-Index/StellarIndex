@@ -25,12 +25,8 @@ const (
 	// ordinary trading; repeated back-and-forth is the signal.
 	roundTripMinPerDirection = 2
 
-	// roundTripBucket is the round-trip event's time identity. It must fit
-	// inside the worker's scan window minus one tick, so some scan sees the
-	// whole bucket and its evidence supersedes every earlier partial one
-	// (InsertMEVEvent). A UTC day could never be seen whole by a 30-minute
-	// scan, so the first slice to cross the threshold was published for the
-	// entire day.
+	// roundTripBucket is the round-trip time identity. It must fit inside the scan window minus one tick so some
+	// scan sees it whole and its evidence supersedes partial ones (InsertMEVEvent); a UTC day never fits.
 	roundTripBucket = 15 * time.Minute
 )
 
@@ -60,22 +56,9 @@ type washDetail struct {
 	Note               string    `json:"note"`
 }
 
-// DetectWashTrades scans a batch of trades for two wash signatures,
-// both answerable from the served rows alone:
-//
-//   - self_trade: maker == taker on a single trade (an account
-//     crossing its own offer). Unambiguous; one candidate per
-//     (tx, account).
-//   - round_trip: two accounts fill each other's offers on the same
-//     (unordered) pair in BOTH directions, ≥2 fills per direction,
-//     bucketed by roundTripBucket so re-scans of overlapping windows
-//     dedup deterministically. One candidate per (pair, account-pair,
-//     bucket).
-//
-// Both variants only fire where maker is an account (see accountMaker):
-// SDEX order-book fills. Soroban AMM rows leave maker empty and SDEX
-// liquidity-pool fills carry the pool's hex id; a pool is not a party
-// that can wash-trade, so those rows are excluded explicitly.
+// DetectWashTrades finds self_trade (maker == taker; one per (tx, account)) and round_trip (two accounts filling each
+// other both ways, 2+ fills per direction, per roundTripBucket). Both fire only where maker is an account (accountMaker),
+// so Soroban AMM rows and SDEX pool fills are excluded.
 func DetectWashTrades(trades []canonical.Trade, usdVolume []string) []Candidate {
 	out := detectSelfTrades(trades, usdVolume)
 	out = append(out, detectRoundTrips(trades, usdVolume)...)

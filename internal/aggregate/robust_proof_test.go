@@ -19,15 +19,7 @@ func mkAggRow(source string, priceScaled int64, decimals uint8) canonical.Oracle
 	}
 }
 
-// TestRobustCentreScale_EmptyValsDoesNotPanic pins a latent
-// panic: medianRat(nil) returns nil (its own documented defensive
-// behaviour), and robustCentreScale without a guard would pass that nil straight into
-// madRat -> big.Rat.Sub as the subtrahend with no guard of its own,
-// which panics on a nil-pointer dereference rather than returning the
-// same "nothing to judge" nil, nil every other empty-input path here
-// uses. Every current caller happens to guard len(vals)>0 first, but
-// the guard belongs on the shared primitive, not on each caller's
-// memory of doing so.
+// TestRobustCentreScale_EmptyValsDoesNotPanic pins that robustCentreScale on empty vals returns nil, nil instead of panicking in madRat on medianRat's nil; the guard belongs on the shared primitive.
 func TestRobustCentreScale_EmptyValsDoesNotPanic(t *testing.T) {
 	centre, scale := robustCentreScale(nil)
 	if centre != nil || scale != nil {

@@ -21,13 +21,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// ADR-0019 freeze-lifecycle fixtures: one pair (native/fiat:USD), one 1m
-// window, baseline MAD 0.001 so a return r scores z = r / 0.001.
-//
-//	lkgPrice      0.1242 -> return 0, z 0,   confidence 0.4972 (clears auto-unfreeze: > 0.30, z < 3.0)
-//	manipPrice    0.2000 -> return 0.610, z 610, confidence 0.0000 (clears freeze: < 0.45, z > 5.0, sources <= 1)
-//
-// Measured against the real confidence combiner.
+// ADR-0019 fixtures: one pair (native/fiat:USD), one 1m window, baseline MAD 0.001 so z = return / 0.001.
+// lkgPrice 0.1242: z 0, confidence 0.4972 (clears auto-unfreeze: > 0.30, z < 3.0).
+// manipPrice 0.2000: z 610, confidence 0 (fires: < 0.45, z > 5.0, sources <= 1). Measured against the real combiner.
 const (
 	lkgBaseAmount    = 1_000_000_000_000 // 100,000 XLM at 1e7
 	lkgQuoteAmount   = 124_200_000_000   // $12,420 at 1e7 → price 0.1242
@@ -208,11 +204,7 @@ func agreeingLens(pair canonical.Pair, servedPrice, level float64) divergence.Ca
 	}
 }
 
-// Regression N-F6: freeze on a manipulated single-source bucket, then one
-// bucket with a second source at the SAME manipulated price. The old release
-// (negated fire condition) let `source_count <= 1` failing clear the freeze.
-// ADR-0019 releases only on confidence > 0.30 AND z < 3.0 for two consecutive
-// buckets past the minimum hold; a price still 61% off the LKG meets neither.
+// TestFreezeLifecycle_SingleCleanBucketDoesNotRelease: a second source at the same manipulated price must not clear the freeze; ADR-0019 releases only on confidence > 0.30 AND z < 3.0 for two consecutive buckets past the minimum hold.
 func TestFreezeLifecycle_SingleCleanBucketDoesNotRelease(t *testing.T) {
 	f := newFreezeFixture(t)
 
@@ -358,15 +350,8 @@ func TestFreezeLifecycle_NoLensMeansNoAutoRelease(t *testing.T) {
 	}
 }
 
-// The ladder: a manipulation the attacker HOLDS never earns release, so each
-// hold expiry grants one 30-minute extension until the four are spent, then it
-// escalates to operator review and stops auto-unfreezing.
-//
-// A held level is per-tick calm (z=0), so the release gate is what separates
-// it from a real settle: the streak counts only buckets whose FRESH candidate a
-// lens agrees with. Mid-freeze the worker compares references to the SERVED
-// (pinned LKG) price, so OurPrice = Median = LKG; the candidate-vs-median check
-// (0.2000 vs 0.1242, 61% >> 5%) is what refuses the streak.
+// TestFreezeLifecycle_ExtendsThenEscalates: a held manipulation earns no release, so each hold expiry grants one 30-minute extension until four are spent, then it escalates to operator review.
+// The streak counts only buckets whose FRESH candidate a lens agrees with; mid-freeze OurPrice = Median = LKG, so the candidate-vs-median check (61% >> 5%) refuses it.
 func TestFreezeLifecycle_ExtendsThenEscalates(t *testing.T) {
 	f := newFreezeFixture(t)
 	beforeExt := testutil.ToFloat64(obs.AnomalyFreezeExtensionsTotal)
@@ -732,11 +717,7 @@ func newTwoWindowFreeze(t *testing.T) (
 	return orch, marker, feed, tick, served, shortWindow, longWindow, pair
 }
 
-// Regression: the marker, ladder and serving lookup are keyed by (asset,
-// quote) but the lifecycle runs per WINDOW. A short-window auto-release must
-// not clear the shared marker under a still-frozen longer window, or the next
-// tick reads the absent marker as an operator override and publishes the
-// manipulated long-window VWAP unflagged.
+// TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen: marker, ladder and lookup are keyed by (asset, quote) but the lifecycle runs per window, so a short-window release must not clear the marker under a still-frozen longer window.
 func TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen(t *testing.T) {
 	orch, marker, feed, tick, served, shortWindow, longWindow, pair := newTwoWindowFreeze(t)
 	shortKey := pair.String() + ":" + shortWindow.String()
@@ -828,12 +809,7 @@ func TestFreezeLifecycle_OperatorOverrideReleasesAllWindows(t *testing.T) {
 // with confidence ~0.49 > 0.30, i.e. healthy.
 const bandQuoteAmount = 127_305_000_000 // 0.127305, +2.5% vs the 0.1242 LKG
 
-// Regression: a Phase 1 freeze must release once the pair is statistically
-// healthy. Phase 1 measures against the pinned LKG comparator, so a residual
-// level past FreezePct re-fires every bucket, short-circuiting the Phase 2
-// confidence step that alone produces the auto-unfreeze streak; the pair would
-// serve the LKG until escalation. Phase 2 now drives the lifecycle once a
-// freeze is active.
+// TestFreezeLifecycle_Phase1FreezeReleasesWhenAnomalyClears: Phase 1 measures against the pinned LKG, so a residual level re-fires it every bucket; Phase 2 must drive the lifecycle once a freeze is active so the auto-unfreeze streak can accrue.
 func TestFreezeLifecycle_Phase1FreezeReleasesWhenAnomalyClears(t *testing.T) {
 	pair := xlmUSDPair(t)
 	// MAD 0.02: the 2.5% band bucket scores z = 1.25, below the auto-unfreeze bound.
@@ -886,11 +862,7 @@ func TestFreezeLifecycle_Phase1FreezeReleasesWhenAnomalyClears(t *testing.T) {
 	}
 }
 
-// XLM/GBP ratchet regression: scoring mid-freeze buckets against the PINNED
-// pre-freeze prev makes z measure drift-since-freeze, so release is reachable
-// only if the market round-trips. When it settles at a NEW level (~6% above LKG)
-// and stays, ADR-0019's "is the market calm NOW" must release; frozenPrevVWAPs
-// scores refused buckets per tick against the previous refused bucket.
+// TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel: a market that settles at a new level (~6% above LKG) must release; frozenPrevVWAPs scores each refused bucket against the previous refused one, so z measures calm now, not drift since freeze.
 func TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel(t *testing.T) {
 	// 0.1317: +6.04% from the LKG. z ~ 60 against the pinned prev, 0 tick-over-tick.
 	const driftedQuoteAmount = 131_700_000_000
@@ -1078,11 +1050,7 @@ func TestFreezeLifecycle_ReleaseDuringRedisLossKeepsEscalatedSibling(t *testing.
 	}
 }
 
-// TestFreezeLifecycle_OperatorOverrideStillSticksWithADurableRecord: asking
-// the durable record before a clear must not make the override fail to
-// take. `freeze-unfreeze` clears through the writer, which retires the
-// durable record; every window then observes the absent marker, releases,
-// and nothing re-freezes the pair.
+// TestFreezeLifecycle_OperatorOverrideStillSticksWithADurableRecord: consulting the durable record before a clear must not defeat freeze-unfreeze; every window sees the absent marker, releases, and nothing re-freezes.
 func TestFreezeLifecycle_OperatorOverrideStillSticksWithADurableRecord(t *testing.T) {
 	f := newProductionWiredFixture(t)
 	ctx := context.Background()
@@ -1112,13 +1080,7 @@ func TestFreezeLifecycle_OperatorOverrideStillSticksWithADurableRecord(t *testin
 	}
 }
 
-// TestFreezeLifecycle_UnpricedBucketsKeepTheFreezeAlive — a frozen window
-// whose buckets go empty or fall under MinUSDVolume must keep advancing its
-// lifecycle. If those buckets returned before the lifecycle step,
-// nothing would refresh the marker or the durable ladder; once hold + grace
-// lapsed, the next priced bucket would read the absence as the operator
-// override, release with mode="operator" and publish the manipulated
-// print the freeze was withholding.
+// TestFreezeLifecycle_UnpricedBucketsKeepTheFreezeAlive: empty or under-floor buckets must still advance the lifecycle (refreshing marker and ladder), else the next priced bucket reads the lapse as an operator override and publishes the manipulated print.
 func TestFreezeLifecycle_UnpricedBucketsKeepTheFreezeAlive(t *testing.T) {
 	cases := []struct {
 		name         string

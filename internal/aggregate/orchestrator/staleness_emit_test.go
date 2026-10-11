@@ -10,16 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// TestEmitStalenessGauges_growsAcrossTicks asserts the documented
-// contract: a pair that has never had a successful VWAP
-// write should see its staleness gauge grow on every tick. The first
-// emit seeds lastWriteAt to "now" (so the metric is present but not
-// pageing immediately), and subsequent emits compute now - first-seen.
-//
-// This test exists because the live r1 deployment shows the gauge
-// stuck at 0 for assets that never get a write (e.g. crypto:BTC with
-// no CEX connectors enabled), suggesting the seed-on-first-sighting
-// logic isn't persisting between ticks.
+// TestEmitStalenessGauges_growsAcrossTicks: a pair that never had a VWAP write must see its staleness gauge grow every tick; the first emit seeds lastWriteAt to now and later emits compute now minus first-seen.
 func TestEmitStalenessGauges_growsAcrossTicks(t *testing.T) {
 	btc, err := canonical.NewCryptoAsset("BTC")
 	if err != nil {
@@ -61,17 +52,7 @@ func TestEmitStalenessGauges_growsAcrossTicks(t *testing.T) {
 	}
 }
 
-// TestEmitStalenessGauges_xlmNativeMirrorOrderIndependent asserts the
-// fix to the order-dependent mirror bug: regardless of whether the
-// `native` pair or the `crypto:XLM` pair iterates first, both labels
-// surface the freshest staleness across the two forms.
-//
-// Mirror code writing the *current* pair's stale value to
-// the other label as a side-effect lets iteration order pick the
-// winner. If `native` is fresh (SDEX writing) and `crypto:XLM` is
-// stale (no CEX), the metric for both reports native's 0 OR
-// crypto:XLM's high value, depending on which appears last in
-// cfg.Pairs. Instead, both labels carry MIN(native_stale, ticker_stale).
+// TestEmitStalenessGauges_xlmNativeMirrorOrderIndependent: both native and crypto:XLM labels must carry MIN(native_stale, ticker_stale) whatever order cfg.Pairs iterates; mirroring the current pair's value as a side effect let iteration order pick the winner.
 func TestEmitStalenessGauges_xlmNativeMirrorOrderIndependent(t *testing.T) {
 	xlm, err := canonical.NewCryptoAsset("XLM")
 	if err != nil {

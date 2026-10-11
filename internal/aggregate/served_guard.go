@@ -4,88 +4,29 @@ import (
 	"math/big"
 )
 
-// Serving-sanity guard for the /v1/price closed-bucket path.
-//
-// /v1/price serves the most-recent CLOSED prices_1m continuous-aggregate
-// bucket for a directly-quoted pair. That CAGG is a bare Σ(quote)/Σ(base) per
-// bucket — it is NOT run through the orchestrator's σ-outlier filter,
-// min-USD-volume gate, or freeze value-protection (those guard the path that
-// writes the filtered VWAP to Redis, which the CAGG bypasses). A pure-synthetic
-// fiat pair like native/fiat:USD has no prices_1m rows and uses the filtered
-// Redis value, but any pair with real prices_1m rows serves its raw VWAP, so a
-// single fat-finger / manipulation trade in the served minute would corrupt the
-// price with stale=false and no volume floor.
-//
-// [GuardServedVWAP] is a robust sanity bound over the pair's recent trailing
-// closed buckets: it rejects a candidate grossly off the robust centre and
-// signals the caller to serve last-known-good. It is tuned CONSERVATIVELY: the
-// acceptance region is the UNION of a wide ratio band and a MAD band, so a
-// legitimately volatile move passes. Everything is exact *big.Rat (ADR-0003).
+// Serving-sanity guard for the /v1/price closed-bucket path: the prices_1m CAGG is a bare sum(quote)/sum(base) that bypasses the outlier filter, USD-volume gate
+// and freeze protection, so one fat-finger trade would be served as stale=false. [GuardServedVWAP] rejects a candidate grossly off the trailing robust centre
+// and signals serving last-known-good; the acceptance region is the UNION of a ratio band and a MAD band, so volatile moves pass. Exact *big.Rat (ADR-0003).
 
 const (
-	// guardMinSamples is the number of trailing closed buckets with a
-	// usable VWAP at or above which the guard applies its FULL band
-	// (tight ratio ∪ MAD). Below it there is no stable MAD, so the guard
-	// falls back to the wider thin-history band ([guardThinRatioBound])
-	// rather than failing fully open. Only a TRULY
-	// empty baseline (zero usable buckets) fails open, because then
-	// there is no centre to judge a candidate against at all.
+	// guardMinSamples is the usable trailing buckets at or above which the FULL band applies; below it the wider [guardThinRatioBound] applies, and only a truly empty baseline fails open.
 	guardMinSamples = 5
 )
 
 var (
-	// guardRatioBound: on a tight/flat history a candidate is accepted
-	// only if it lies within [centre/R, centre*R] of the robust centre.
-	//
-	// R = 3. A 10× bound would admit the 3×–9× manipulation band the guard
-	// exists to stop; 3× catches a 5× pump and anything larger. A swing beyond
-	// 3× in one 1-minute bucket is not credible on a pair with tight history;
-	// when a genuine >3× move occurs we serve the last clean bucket (a real
-	// recent price), never a fabricated number.
-	//
-	// The band is inclusive: only deviations STRICTLY GREATER than 3× are
-	// rejected. 3 is the served-price manipulation tolerance (a business-value
-	// knob). A genuinely volatile pair is not held to it: the MAD band below
-	// widens acceptance from the pair's own history.
+	// guardRatioBound R=3: on a tight history a candidate is accepted only within [centre/R, centre*R] (inclusive). 10x would admit the 3x-9x manipulation
+	// band; a genuine >3x move serves the last clean bucket. A business-value knob; the MAD band widens acceptance for volatile pairs.
 	guardRatioBound = big.NewRat(3, 1)
 
-	// guardThinRatioBound is the WIDER but FINITE ratio band applied
-	// when the baseline is thin (1..guardMinSamples-1 usable buckets):
-	// [centre/10, centre*10]. Failing fully open on a short history
-	// would admit any manipulation. A scarce baseline is
-	// widened (we only catch order-of-magnitude, decimal-shift
-	// fat-fingers) rather than tightened, so a real price off a thin
-	// history is never over-filtered — but a 10×/100× print is still
-	// caught instead of served unguarded.
+	// guardThinRatioBound is the WIDER but FINITE band [centre/10, centre*10] for a thin baseline (1..guardMinSamples-1 buckets): failing open would admit any manipulation.
 	guardThinRatioBound = big.NewRat(10, 1)
 
-	// guardMADFactor widens acceptance for genuinely volatile pairs: a
-	// candidate within the ratio-symmetric band [centre²/(centre + K·s),
-	// centre + K·s], s = 1.4826·MAD, also passes (see [symmetricDev]). Because the
-	// acceptance region is the UNION of the ratio band and this MAD band,
-	// a volatile pair whose recent buckets are widely spread is never
-	// over-filtered — its own history earns it the wider band. K = 10 is
-	// ~6.7σ-equivalent, well beyond ordinary volatility.
+	// guardMADFactor K=10 (~6.7 sigma) widens acceptance for volatile pairs: the ratio-symmetric band [centre^2/(centre+K*s), centre+K*s], s = 1.4826*MAD,
+	// is UNIONED with the ratio band ([symmetricDev]), so a pair's own spread earns it latitude.
 	guardMADFactor = big.NewRat(10, 1)
 )
 
-// GuardServedVWAP decides, from a candidate VWAP and the pair's recent
-// trailing closed-bucket VWAPs (newest-first, index-aligned with the
-// caller's rows — nil entries are tolerated for unparseable values),
-// whether the candidate is a robust-sane value to serve.
-//
-// Returns:
-//   - accept=true, lkgIdx=-1 → serve the candidate. Either it passed the
-//     robust band, or there was no usable baseline to judge it against
-//     (fail-open). These are NOT equivalent: the second is UNVALIDATED (a
-//     pair's first-ever served minute) and would serve a fat-finger print
-//     with stale=false. The serving path MUST consult
-//     [ServedBaselineValidated] on the same trailing slice and surface an
-//     unvalidated accept as low-confidence/stale.
-//   - accept=false, lkgIdx>=0 → the candidate is grossly off the robust
-//     centre; serve trailing[lkgIdx], the newest trailing value within the
-//     band. The centre is the median, so at least half the baseline lies
-//     within the band and a clean member always exists when the guard fires.
+// GuardServedVWAP decides whether a candidate VWAP is sane against newest-first trailing VWAPs: accept=false gives lkgIdx of the newest in-band value; accept=true with lkgIdx=-1 may be an UNVALIDATED fail-open, so callers must check [ServedBaselineValidated].
 func GuardServedVWAP(candidate *big.Rat, trailing []*big.Rat) (accept bool, lkgIdx int) {
 	lo, hi, ok := robustBand(trailing)
 	if !ok || candidate == nil {
@@ -106,44 +47,14 @@ func GuardServedVWAP(candidate *big.Rat, trailing []*big.Rat) (accept bool, lkgI
 	return true, -1
 }
 
-// ServedBaselineValidated reports whether `trailing` provides a usable
-// robust centre to VALIDATE a served candidate against. It is the
-// companion signal to [GuardServedVWAP]'s fail-open: GuardServedVWAP
-// returns accept=true both when a candidate PASSED the robust band and
-// when there was NO baseline to judge it against (an empty baseline — a
-// pair's first-ever served minute, where robustBand is undefined). Those
-// two acceptances are indistinguishable from (accept, lkgIdx) alone, yet
-// only the first is a validated price; the second is an UNVALIDATED
-// fail-open a single manipulated/fat-finger print would otherwise be
-// served through with stale=false and no volume floor.
-//
-// A serving path consults this on the SAME trailing slice it passed to
-// [GuardServedVWAP] and, when it is false, surfaces the accepted value as
-// low-confidence/stale — never a blackout: a legitimate new pair's first
-// price is still served, only flagged. It shares robustBand's baseline
-// definition, so "validated here" is exactly "had a centre to judge
-// against there". Exact-rational (ADR-0003).
+// ServedBaselineValidated reports whether trailing gives a usable centre to validate against; when false, surface an accepted value as low-confidence/stale, never a blackout.
 func ServedBaselineValidated(trailing []*big.Rat) bool {
 	_, _, ok := robustBand(trailing)
 	return ok
 }
 
-// robustBand returns the acceptance interval [lo, hi] for a candidate,
-// where centre is the median of the (positive, non-nil) trailing
-// values. ok is false ONLY when there is no usable value at all (an
-// empty baseline — nothing to judge against, so the guard fails open).
-//
-// Regimes:
-//   - >= [guardMinSamples] usable values: the FULL band = union of the
-//     tight ratio band [centre/R, centre*R] ([guardRatioBound]) and the
-//     MAD band [centre²/(centre + K·1.4826·MAD), centre + K·1.4826·MAD]
-//     ([guardMADFactor]) — ratio-symmetric, so its lower edge mirrors
-//     its upper edge instead of running off below zero. A
-//     volatile pair earns the wider band from its own spread.
-//   - 1..guardMinSamples-1 usable values (thin history, M11(b)): the
-//     WIDER but finite ratio-only band [centre/thinR, centre*thinR]
-//     ([guardThinRatioBound]). No stable MAD on so few points, so we
-//     widen rather than fail fully open.
+// robustBand returns the acceptance interval [lo, hi] around the median of positive trailing values; ok is false only for an empty baseline (guard fails open).
+// With >= guardMinSamples values it is the union of the tight ratio band and the ratio-symmetric MAD band; with fewer, the finite [guardThinRatioBound] band.
 func robustBand(trailing []*big.Rat) (lo, hi *big.Rat, ok bool) {
 	vals := make([]*big.Rat, 0, len(trailing))
 	for _, v := range trailing {
@@ -173,19 +84,8 @@ func robustBand(trailing []*big.Rat) (lo, hi *big.Rat, ok bool) {
 	lo = new(big.Rat).Quo(centre, guardRatioBound)
 	hi = new(big.Rat).Mul(centre, guardRatioBound)
 
-	// MAD band: up to centre + K·(1.4826·MAD), and down to that edge's
-	// RATIO-SYMMETRIC mirror centre²/(centre + K·scale) ([symmetricDev]).
-	// Unioned with the ratio band; both intervals contain
-	// centre, so their union is a single interval.
-	//
-	// An additive lower edge centre − K·scale would go
-	// non-positive once the baseline's relative MAD reaches 1/(K·1.4826)
-	// = 6.75 % — ordinary long-tail volatility — and from there the guard
-	// would have NO downside at all: a crafted bucket at any price down to 0 would be
-	// served verbatim as a confident price, while the mirror-image pump
-	// would still be caught. The mirrored edge is always strictly positive and
-	// never below the additive one, so a volatile pair still earns its wider
-	// band from its own spread, symmetrically in both directions.
+	// MAD band: up to centre + K*scale, down to its ratio-symmetric mirror centre^2/(centre + K*scale) ([symmetricDev]), unioned with the ratio band.
+	// An additive lower edge goes non-positive at relative MAD 1/(K*1.4826) = 6.75%, leaving no downside guard: a crafted bucket down to 0 would be served.
 	scale := new(big.Rat).Mul(madToStd, madRat(vals, centre)) // σ-equivalent
 	half := new(big.Rat).Mul(guardMADFactor, scale)           // K·scale
 	madHi := new(big.Rat).Add(centre, half)

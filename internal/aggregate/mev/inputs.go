@@ -7,21 +7,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
-// OracleRef is one on-chain oracle_updates row, as the ordering-aware
-// detectors consume it. Asset/Quote are the canonical asset strings
-// the served tier stores (e.g. "CAS3J7…" SAC ids, "fiat:USD").
-//
-// Canonical definition lives in [domain.MEVOracleRef] (D8 M0-1:
-// internal/storage/timescale reads/writes this shape and must not
-// import upward into this package to do so); this is a transparent
-// alias so every existing caller of mev.OracleRef is unaffected.
+// OracleRef is one on-chain oracle_updates row; an alias of [domain.MEVOracleRef], which lives there so
+// storage need not import this package.
 type OracleRef = domain.MEVOracleRef
 
-// AuctionFill is one blend_auctions fill row (event_kind='fill',
-// liquidation-relevant auction types) for the cascade detector.
-//
-// Canonical definition lives in [domain.MEVAuctionFill] — see the
-// [OracleRef] doc for why this is an alias.
+// AuctionFill is one blend_auctions fill row for the cascade detector; an alias of [domain.MEVAuctionFill].
 type AuctionFill = domain.MEVAuctionFill
 
 // sdexOpIndexStride is internal/sources/sdex's opIndexFanoutStride: sdex
@@ -29,13 +19,8 @@ type AuctionFill = domain.MEVAuctionFill
 // against that constant by TestSDEXOpIndexStrideMatchesSource.
 const sdexOpIndexStride = 1024
 
-// OpRef locates a trade leg on chain. trades.op_index is not an
-// operation index for the MEV-eligible sources — it packs the op with
-// the trade's position inside it — so evidence publishes it decoded:
-// OpIndex is the operation's index within the transaction, SubIndex the
-// trade's position within the operation (Soroban contract-event index,
-// or SDEX claim-atom index). Both are omitted for a source whose
-// encoding is unknown. TradeOpIndex is the stored trades.op_index.
+// OpRef locates a trade leg on chain. trades.op_index packs the op with the trade's position, so evidence
+// publishes it decoded (OpIndex, SubIndex), omitted for a source with an unknown encoding.
 type OpRef struct {
 	OpIndex      *uint32 `json:"op_index,omitempty"`
 	SubIndex     *uint32 `json:"sub_index,omitempty"`
@@ -119,16 +104,9 @@ func orderableTrade(t canonical.Trade) bool {
 	return t.Ledger > 0 && t.TxHash != "" && t.Taker != ""
 }
 
-// OrderingTxHashes returns the distinct tx hashes the ordering-aware
-// detectors (sandwich + oracle_sandwich) would need tx_index for,
-// prefiltered so the lake lookup stays bounded:
-//
-//   - trades in a (ledger, pair) group with ≥3 trades, ≥2 distinct
-//     takers, and some taker holding ≥2 distinct txs (the minimum
-//     sandwich shape), and
-//   - trades in a ledger that also carries an on-chain oracle update,
-//     where the trade touches the oracle's asset, plus the oracle
-//     update txs themselves.
+// OrderingTxHashes returns the distinct tx hashes the sandwich detectors need tx_index for, prefiltered to
+// keep the lake lookup bounded: sandwich-shaped (ledger, pair) groups, and trades touching a same-ledger
+// oracle update's asset plus the update txs.
 func OrderingTxHashes(trades []canonical.Trade, oracles []OracleRef) []string {
 	need := map[string]struct{}{}
 	collectSandwichHashes(trades, need)

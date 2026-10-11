@@ -77,11 +77,7 @@ func TestTriangulationDivergencePct_MeasuresDirectAgainstComposite(t *testing.T)
 	}
 }
 
-// TestTriangulationDivergencePct_StaleCompositeIsUnchecked — a chain
-// that has STOPPED publishing must degrade to "unchecked", never to
-// "disagrees". Otherwise a frozen or broken chain would drag a healthy
-// pair's confidence down as the direct price walked away from a
-// composite that stopped updating.
+// TestTriangulationDivergencePct_StaleCompositeIsUnchecked: a chain that stopped publishing must degrade to unchecked, never to disagrees, or a broken chain would drag a healthy pair's confidence down.
 func TestTriangulationDivergencePct_StaleCompositeIsUnchecked(t *testing.T) {
 	xlmEUR := mkPair(t, "crypto", "XLM", "fiat", "EUR")
 	window := 5 * time.Minute

@@ -308,12 +308,8 @@ func TestComputeAcceleration(t *testing.T) {
 		return out
 	}
 
-	// computeAcceleration compares the last quarter's mean step against
-	// the previous quarter's. With 9 points (8 steps) and q=2 that is
-	// the step ending the series vs the step two-quarters back, so the
-	// cases below vary the LAST step's magnitude relative to an earlier
-	// one. The key regression: a steepening DOWNtrend (more-negative
-	// last step) must read "increasing", not "decreasing".
+	// computeAcceleration compares the last quarter's mean step with the previous quarter's; the cases vary the LAST step's magnitude against an earlier one.
+	// Key regression: a steepening DOWNtrend (more-negative last step) must read increasing, not decreasing.
 	for _, tc := range []struct {
 		name   string
 		series []TimedValue

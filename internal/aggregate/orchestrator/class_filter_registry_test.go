@@ -13,11 +13,7 @@ var noVenueRow = map[string]string{
 	"blend_backstop": "projected lending surface; its replay audit is blend's (registry.go replayAuditCoveredBy)",
 }
 
-// Every source an indexer can enable must have an explicit registry row.
-// Without one, filterForVWAP fail-closes it through external.Lookup while
-// the prices_* CAGGs, which group every `trades` row, count it: the same
-// trades would be excluded from the aggregator's VWAP and included in the
-// served one.
+// TestKnownSourcesHaveARegistryClass requires a registry row for every enableable source, else filterForVWAP fail-closes it while the prices_* CAGGs count it and VWAP diverges.
 func TestKnownSourcesHaveARegistryClass(t *testing.T) {
 	for name := range config.KnownSources {
 		if _, exempt := noVenueRow[name]; exempt {

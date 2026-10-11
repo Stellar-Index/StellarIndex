@@ -15,38 +15,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// ─── E1: per-window freeze ladders ────────────────────────────────
-//
-// The freeze marker (and the migration-0119 durable ladder behind it)
-// is keyed by (asset, quote) because its PRESENCE is the pair-wide
-// `flags.frozen` the API serves — but the ADR-0019 lifecycle inside it
-// advances per (pair, WINDOW), and the windows of a pair freeze and
-// release independently.
-//
-// Two failures follow from getting that wrong, in opposite directions,
-// and both are pinned below:
-//
-//   - BLEED. A window that never reached the freeze step —
-//     refreshPairWindow drops a window under [Config.MinUSDVolume]
-//     BEFORE computeNormalizedVWAP and the confidence/freeze steps, so
-//     its stateKey never enters o.freezeStates — is a COLD key the
-//     first time it does qualify. With one pair-level ladder in the
-//     marker it adopted a SIBLING window's FiredAt / HoldUntil /
-//     ExtensionsUsed / Escalated: a last-known-good price served for a
-//     window nothing is wrong with, a severity:page freeze it never
-//     earned, and (once the inherited ladder escalated) no exit but a
-//     manual `stellarindex-ops freeze-unfreeze`.
-//   - STRANDING. The opposite over-correction — tagging the marker
-//     with ONE owning window — silently drops every other window's
-//     freeze across a restart, where all windows are cold at once and
-//     only one can match the tag. A restarted process has no prev-VWAP
-//     comparator either, so the stranded window cannot re-fire on its
-//     own signal: it publishes the manipulated bucket the freeze
-//     existed to withhold.
-//
-// Every test drives the PRODUCTION [freeze.Writer] over miniredis
-// rather than the package's pair-level recording fake, so what they
-// pin is the marker shape the aggregator actually writes.
+// Per-window freeze ladders. The marker is keyed by (asset, quote) because its presence is the pair-wide flags.frozen, but the ADR-0019 lifecycle advances per (pair, window).
+// BLEED: a cold window (never reached the freeze step, e.g. under MinUSDVolume) must not adopt a sibling's ladder. STRANDING: tagging the marker with one owner drops other windows' freezes across a restart, so each window needs its own ladder.
+// These drive the production [freeze.Writer] over miniredis, so they pin the marker shape actually written.
 
 const (
 	// isolationMinUSDVolume is the floor that makes a window "thin":
@@ -60,11 +31,7 @@ const (
 	thinBaseAmount  = lkgBaseAmount / 1000
 	thinQuoteAmount = lkgQuoteAmount / 1000
 
-	// nudgedQuoteAmount is the last-known-good price plus 0.1%: a
-	// HEALTHY bucket (z = 1, well under the freeze's z > 5) that is
-	// nevertheless distinguishable from the pinned LKG, so "did this
-	// window publish, or was it refused by a freeze?" is answerable
-	// from the served value alone.
+	// nudgedQuoteAmount is the LKG price plus 0.1%: a healthy bucket (z = 1) distinguishable from the pinned LKG, so the served value shows whether the window published or was refused.
 	nudgedQuoteAmount = lkgQuoteAmount * 1001 / 1000
 	nudgedFormatted   = "0.124324200000"
 )
@@ -99,11 +66,7 @@ func newWindowIsolationFixture(t *testing.T) *windowIsolationFixture {
 	}
 	f.orch = f.newOrchestrator()
 
-	// The LONG window has published before: it is the window that
-	// freezes in the bleed tests. The short window is left unseeded by
-	// default — thin from the start, so it has neither a cached VWAP nor
-	// a prev-VWAP comparator, exactly the state a never-published window
-	// is in. [windowIsolationFixture.seedLKG] opts it in.
+	// The LONG window has published before; the short window is unseeded (no cached VWAP or comparator, like a never-published window) unless [windowIsolationFixture.seedLKG] opts it in.
 	f.seedLKG(f.long)
 	return f
 }
@@ -256,12 +219,7 @@ func (f *windowIsolationFixture) assertShortWindowStartsClean(wantValue string) 
 	}
 }
 
-// TestFreezeWindowIsolation_ColdThinWindowDoesNotAdoptASiblingsLadder
-// is E1's no-restart path: while the 1h window is frozen IN THIS
-// PROCESS, the 5m window clears the USD-volume floor for the first
-// time. Its first qualifying bucket is healthy and unscorable (no
-// prior VWAP to derive a return from), so the only way it can end up
-// frozen is by adopting the marker the 1h window wrote.
+// TestFreezeWindowIsolation_ColdThinWindowDoesNotAdoptASiblingsLadder: with the 1h window frozen in this process, the 5m window's first qualifying (unscorable) bucket must not end up frozen by adopting the 1h marker.
 func TestFreezeWindowIsolation_ColdThinWindowDoesNotAdoptASiblingsLadder(t *testing.T) {
 	f := newWindowIsolationFixture(t)
 	f.freezeTheLongWindow()
@@ -288,11 +246,7 @@ func TestFreezeWindowIsolation_ColdThinWindowDoesNotAdoptASiblingsLadder(t *test
 	}
 }
 
-// TestFreezeWindowIsolation_RestartDoesNotSpreadALadderAcrossWindows
-// is the same bleed with no in-process sibling to compare against:
-// after a restart EVERY window is cold, so the thin window's first
-// qualifying bucket reads the marker with nothing in memory to say
-// which window's ladder it carries. The marker itself must carry that.
+// TestFreezeWindowIsolation_RestartDoesNotSpreadALadderAcrossWindows: after a restart every window is cold, so the marker itself must say which window's ladder it carries.
 func TestFreezeWindowIsolation_RestartDoesNotSpreadALadderAcrossWindows(t *testing.T) {
 	f := newWindowIsolationFixture(t)
 	f.freezeTheLongWindow()
@@ -308,19 +262,7 @@ func TestFreezeWindowIsolation_RestartDoesNotSpreadALadderAcrossWindows(t *testi
 	f.assertShortWindowStartsClean(lkgFormatted)
 }
 
-// TestFreezeWindowIsolation_RestartRehydratesEveryFrozenWindow is the
-// opposite failure, and the reason the marker carries a ladder PER
-// window instead of the single owning-window tag that would also stop
-// the bleed above.
-//
-// Both windows freeze on the same manipulated print, so both have a
-// ladder of their own. A deploy makes every (pair, window) key cold at
-// once; the manipulation is still swinging. Every window must rehydrate
-// ITS OWN ladder and keep serving the last-known-good 0.1242. A marker
-// that can only name one owner strands the other window with no ladder
-// — and a restarted process has no prev-VWAP comparator, so that window
-// cannot re-fire on its own signal either: it publishes the manipulated
-// 0.2000 the freeze exists to withhold.
+// TestFreezeWindowIsolation_RestartRehydratesEveryFrozenWindow: both windows freeze on the same print and each must rehydrate ITS OWN ladder after a restart and keep serving the LKG 0.1242; a single-owner tag would strand one window, which cannot re-fire without a comparator and would publish 0.2000.
 func TestFreezeWindowIsolation_RestartRehydratesEveryFrozenWindow(t *testing.T) {
 	f := newWindowIsolationFixture(t)
 	f.seedLKG(f.short) // both windows have published before
@@ -359,13 +301,7 @@ func TestFreezeWindowIsolation_RestartRehydratesEveryFrozenWindow(t *testing.T) 
 	}
 }
 
-// TestFreezeWindowIsolation_ReleasedWindowLadderLeavesTheMarker pins
-// the other half of a per-window ladder map: when one window releases
-// while a sibling is still frozen, the marker STAYS (it is the pair's
-// flags.frozen) but the released window's ladder must not — otherwise a
-// restart would rehydrate a freeze that had already ended and re-pin a
-// healthy window to a last-known-good price for the rest of a stale
-// hold.
+// TestFreezeWindowIsolation_ReleasedWindowLadderLeavesTheMarker: when one window releases, the marker stays (pair flags.frozen) but the released window's ladder must go, else a restart re-pins a healthy window.
 func TestFreezeWindowIsolation_ReleasedWindowLadderLeavesTheMarker(t *testing.T) {
 	f := newWindowIsolationFixture(t)
 	f.seedLKG(f.short)
@@ -379,14 +315,7 @@ func TestFreezeWindowIsolation_ReleasedWindowLadderLeavesTheMarker(t *testing.T)
 		}
 	}
 
-	// The short window releases while the long one stays frozen. Driven
-	// through releaseFreeze directly rather than through the ADR-0019
-	// auto-unfreeze: the streak needs a RELEASE-CORROBORATING lens
-	// (freeze.Signal.ReleaseCorroborated) and this single-source fixture
-	// has none, so the transition is unreachable from trade fixtures
-	// alone. releaseFreeze is the production release path for every mode
-	// — auto, operator, ladder — and the marker bookkeeping under test
-	// is all downstream of it.
+	// The short window releases while the long stays frozen. Driven through releaseFreeze directly: the auto-unfreeze streak needs a release-corroborating lens this single-source fixture lacks, and releaseFreeze is the production path for every mode.
 	shortKey := f.key(f.short)
 	f.orch.releaseFreeze(context.Background(), f.pair, f.short, shortKey,
 		f.orch.freezeStates[shortKey], freeze.TransitionReleased)
@@ -479,10 +408,6 @@ func TestFreezeWindowIsolation_ReleaseDoesNotClearAColdSiblingsFreeze(t *testing
 	}
 }
 
-// TestFreezeWindowIsolation_LastReleaseStillClearsTheMarker is the other
-// half: consulting the marker must not turn into never clearing it. With
-// no other window's ladder in the record, the release deletes the marker
-// so flags.frozen clears at once rather than after the remaining hold.
 func TestFreezeWindowIsolation_LastReleaseStillClearsTheMarker(t *testing.T) {
 	f := newWindowIsolationFixture(t)
 	ctx := context.Background()

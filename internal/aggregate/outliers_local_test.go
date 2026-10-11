@@ -31,12 +31,8 @@ func noisy(centre int64, i int) int64 {
 	return centre + int64((i*7919)%21-10)*(centre/10_000)
 }
 
-// thinStepSeries is the XLM/GBP drift shape replayed on a
-// THIN, SINGLE-SOURCE series: one Kraken print per minute for 5 h at
-// 0.1337, then a genuine +2% step to 0.1364 that the last `tailMin`
-// minutes hold (the cross XLM/USD × GBP/USD moved with it — every
-// print after the step agrees). Returns the trades in time order and
-// the index of the first post-step print.
+// thinStepSeries is the XLM/GBP drift shape on a thin single-source series: one print per minute for 5 h at 0.1337, then a genuine
+// +2% step held for tailMin minutes. Returns the trades in time order and the index of the first post-step print.
 func thinStepSeries(t0 time.Time, totalMin, tailMin int) ([]canonical.Trade, int) {
 	trades := make([]canonical.Trade, 0, totalMin)
 	stepAt := totalMin - tailMin
@@ -366,12 +362,8 @@ func countQuote(trades []canonical.Trade, pred func(int64) bool) int {
 }
 
 func TestFilterOutliersLocal_DenseSingleVenueWashBurstIsDropped(t *testing.T) {
-	// SDEX-only pair, 2 honest prints/min for 6 h at 0.1337. One 1 m
-	// bucket in the middle additionally carries SIX wash prints at
-	// 2.5× (the same venue self-trading) — the majority of that
-	// bucket. Before anchoring the bucket's own median WAS the wash
-	// level, so every wash print scored z≈0 and survived; the honest
-	// prints must survive untouched throughout.
+	// SDEX-only pair, 2 honest prints/min for 6 h; one 1 m bucket also carries SIX wash prints at 2.5x, a majority of that bucket.
+	// The honest prints must survive untouched throughout.
 	t0 := time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC)
 	const honestPerMin, minutes = 2, 360
 	trades := make([]canonical.Trade, 0, honestPerMin*minutes+6)
@@ -396,12 +388,8 @@ func TestFilterOutliersLocal_DenseSingleVenueWashBurstIsDropped(t *testing.T) {
 }
 
 func TestFilterOutliersLocal_MixedVenueSpamBurstIsDropped(t *testing.T) {
-	// Two honest venues (kraken, coinbase) at 2 prints/min each plus a
-	// spam venue that fires TEN prints at 2.5× inside one bucket —
-	// the burst dominates that bucket (10 of 14). Every spam print
-	// must go; every honest print (including the four inside the
-	// spam-dominated bucket, which lean on the adjacent buckets and
-	// the window) must stay.
+	// Two honest venues at 2 prints/min each plus a spam venue firing TEN prints at 2.5x in one bucket (10 of 14). Every spam print
+	// must go; every honest print, including the four in that bucket, must stay.
 	t0 := time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC)
 	const minutes = 240
 	trades := make([]canonical.Trade, 0, 4*minutes+10)
@@ -430,13 +418,8 @@ func TestFilterOutliersLocal_MixedVenueSpamBurstIsDropped(t *testing.T) {
 	}
 }
 
-// tokenFarmSeries is the observed SDEX token-farm signature on a
-// SINGLE configured pair: an honest print every 2 minutes for 24 h at
-// 0.1337 (720 prints), plus a 2 h wave of dust-sized self-trades at
-// 4 prints/min (480 prints) whose CONSECUTIVE prices gap by 25–37 %
-// (alternating direction, deterministic, reflected so the walk stays
-// within 0.4×–2.5× of the honest level). Returns the trades in time
-// order and the count of wave prints.
+// tokenFarmSeries is the observed SDEX token-farm signature on one pair: an honest print every 2 min for 24 h at 0.1337, plus a 2 h wave
+// of dust self-trades whose consecutive prices gap 25-37%. Returns the trades in time order and the count of wave prints.
 func tokenFarmSeries(t0 time.Time) ([]canonical.Trade, int) {
 	trades := make([]canonical.Trade, 0, 720+480)
 	for i := 0; i < 720; i++ {
@@ -480,14 +463,8 @@ func tokenFarmSeries(t0 time.Time) ([]canonical.Trade, int) {
 }
 
 func TestFilterOutliersLocal_TokenFarmWaveTrimShareMatchesLegacy(t *testing.T) {
-	// The design required the trim-fraction alert to be PROVEN on the
-	// token-farm shape before the counter-based storm gate could be
-	// retired. This test is the source of the numbers in
-	// deploy/monitoring/rule-tests/aggregator_test.yml (trim_fraction
-	// case 4, the token-farm fixture): the
-	// stage=class value is the fixture's print count and the
-	// stage=outlier value is the survivor count pinned below. Change
-	// one and the other must follow.
+	// Source of the numbers in deploy/monitoring/rule-tests/aggregator_test.yml (trim_fraction case 4, token-farm fixture): stage=class is the
+	// fixture's print count, stage=outlier the survivor count pinned below. Change one and the other must follow.
 	t0 := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
 	trades, wave := tokenFarmSeries(t0)
 	const (
@@ -572,9 +549,7 @@ func baseSum(trades []canonical.Trade) *big.Int {
 	return s
 }
 
-// A count majority of dust prints must not delete a volume majority
-// and become the published window: a count-only filter keeps the 4 wash
-// prints alone, a served VWAP of 0.114 (+12.3 %) under the WarnPct.
+// TestFilterOutliersLocal_DustCountMajorityCannotOverrideVolumeMajority pins that a count majority of dust prints must not delete a volume majority and become the published window.
 func TestFilterOutliersLocal_DustCountMajorityCannotOverrideVolumeMajority(t *testing.T) {
 	t0 := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 	trades := dustOverBlockWindow(t0)
@@ -597,11 +572,7 @@ func TestFilterOutliers_DustCountMajorityCannotOverrideVolumeMajority(t *testing
 	}
 }
 
-// The mirror image — one large print that is a count minority but the
-// volume majority — is equally contested. Serving the retail prints
-// alone would publish a price that ignores most of the money traded;
-// serving the large print would let one wash trade set the price
-// (ADR-0046 §5). Neither side is published.
+// TestFilterOutliersLocal_LoneVolumeMajorityPrintWithholdsWindow pins that a lone large print (count minority, volume majority) is equally contested: neither side is published (ADR-0046 §5).
 func TestFilterOutliersLocal_LoneVolumeMajorityPrintWithholdsWindow(t *testing.T) {
 	t0 := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 	trades := []canonical.Trade{sizedTrade("sdex", 5_000_000, 200, 1000, t0)}
@@ -614,9 +585,7 @@ func TestFilterOutliersLocal_LoneVolumeMajorityPrintWithholdsWindow(t *testing.T
 	}
 }
 
-// Ordinary trimming — a dust-sized fat finger in an honest window —
-// is unchanged: the guard only fires when the trim removes more base
-// volume than it keeps.
+// TestFilterOutliersLocal_DustFatFingerStillTrimmedAlone pins that trimming a dust-sized fat finger from an honest window is unchanged; the guard fires only when the trim removes more base volume than it keeps.
 func TestFilterOutliersLocal_DustFatFingerStillTrimmedAlone(t *testing.T) {
 	t0 := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 	trades := make([]canonical.Trade, 0, 6)
@@ -636,11 +605,7 @@ func TestFilterOutliersLocal_DustFatFingerStillTrimmedAlone(t *testing.T) {
 	}
 }
 
-// Base volume is compared at one smallest-unit scale. A CEX print
-// stamped at 1e8 carries 10× the raw base units of an equal on-chain
-// 1e7 print, so on raw units the 8dp wash prints below outweigh the
-// honest block; on real volume they are a minority and the window is
-// contested.
+// TestFilterOutliersLocal_VolumeGuardComparesAtCommonScale pins that base volume is compared at one smallest-unit scale: raw units would let 8dp wash prints outweigh the honest 7dp block.
 func TestFilterOutliersLocal_VolumeGuardComparesAtCommonScale(t *testing.T) {
 	t0 := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 	var trades []canonical.Trade
@@ -665,9 +630,7 @@ func TestFilterOutliersLocal_VolumeGuardComparesAtCommonScale(t *testing.T) {
 	}
 }
 
-// Property: whatever either filter publishes carries at least as much
-// base volume as it trimmed away. Exhaustive over small windows mixing
-// three price levels and three size magnitudes.
+// TestOutlierFilters_NeverPublishAVolumeMinority is a property test: whatever either filter publishes carries at least as much base volume as it trimmed away.
 func TestOutlierFilters_NeverPublishAVolumeMinority(t *testing.T) {
 	t0 := time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)
 	prices := []int64{100, 103, 140}

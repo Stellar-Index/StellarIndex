@@ -15,10 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Marker is the JSON shape stored at the `freeze:<asset>:<quote>`
-// Redis key. Carries diagnostic context the API doesn't read but
-// operators want for log correlation when investigating frozen
-// pairs.
+// Marker is the JSON stored at the `freeze:<asset>:<quote>` Redis key, with diagnostic context for operators.
 type Marker struct {
 	// AssetID + QuoteID echo the (asset, quote) the freeze applies
 	// to. Lets a Redis dump be self-describing without needing the
@@ -73,10 +70,7 @@ type Marker struct {
 	State State `json:"state,omitempty"`
 }
 
-// RedisCache is the subset of the Redis client the Writer, Looker and
-// Recovery worker need. Declared as an interface so tests can
-// substitute miniredis without pulling the full UniversalClient
-// surface.
+// RedisCache is the subset of the Redis client the Writer, Looker and Recovery need, so tests can use miniredis.
 type RedisCache interface {
 	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
 	SetArgs(ctx context.Context, key string, value any, a redis.SetArgs) *redis.StatusCmd
@@ -84,8 +78,7 @@ type RedisCache interface {
 	Del(ctx context.Context, keys ...string) *redis.IntCmd
 }
 
-// EventSink is the optional durable mirror behind /v1/anomalies (nil = Redis only); production
-// wires `timescale.FreezeEventSink`.
+// EventSink is the optional durable mirror behind /v1/anomalies (nil = Redis only); production wires `timescale.FreezeEventSink`.
 type EventSink interface {
 	// RecordFreeze persists a freeze event, a no-op while the pair has an open row. frozenValue
 	// is the last-known-good VWAP as a fixed decimal string, empty on a first-tick freeze; any NULL/0
@@ -93,10 +86,8 @@ type EventSink interface {
 	RecordFreeze(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) error
 }
 
-// LadderStore is the durable home for the lifecycle [State] (migration 0119). Redis may be
-// flushed, and a MISSING marker under a live freeze reads as the operator override, so without it a
-// flush would RELEASE every freeze, escalated ones included. Optional (nil = Redis only), concurrent-safe,
-// best-effort: a store failure never blocks the Redis write.
+// LadderStore is the durable home for the lifecycle [State]. A missing marker under a live freeze reads as the operator override,
+// so without it a Redis flush would RELEASE every freeze, escalated ones included. Optional, concurrent-safe, best-effort.
 type LadderStore interface {
 	// SaveLadder writes the whole state on every transition, so it is idempotent and self-correcting.
 	// It never creates a record; zero rows affected is an error (timescale.ErrNotFound), counted.
@@ -107,15 +98,10 @@ type LadderStore interface {
 	LoadLadder(ctx context.Context, asset, quote canonical.Asset) (State, bool, error)
 }
 
-// WindowLadderStore is the per-window [LadderStore] (migration 0163). A pair-keyed record is
-// last-writer-wins, so a 5m window's fresh ladder could replace a 1h ESCALATED one in the only record
-// that survives Redis. Implementations keep the pair-level view as a fail-closed summary (furthest
-// hold, highest rung, escalated if any) for [Recovery] and freeze-unfreeze.
+// WindowLadderStore is the per-window [LadderStore]: a pair-keyed record is last-writer-wins, so a 5m ladder could replace a 1h
+// ESCALATED one. Implementations keep a fail-closed pair-level summary for [Recovery] and freeze-unfreeze.
 type WindowLadderStore interface {
-	// SaveWindowLadder records `state` as `window`'s ladder on the pair's
-	// open freeze record, leaving every other window's untouched. An
-	// inactive `state` retires the window's ladder. Same "never creates a
-	// record, zero rows is an error" contract as [LadderStore.SaveLadder].
+	// SaveWindowLadder records state as window's ladder on the open record, leaving other windows untouched; an inactive state retires it.
 	SaveWindowLadder(ctx context.Context, asset, quote canonical.Asset, window time.Duration, state State) error
 
 	// LoadWindowLadders returns every window's ladder verbatim; `unowned` is a pre-0163 pair-level
@@ -123,8 +109,7 @@ type WindowLadderStore interface {
 	LoadWindowLadders(ctx context.Context, asset, quote canonical.Asset) (ladders map[time.Duration]State, unowned State, ok bool, err error)
 }
 
-// Writer writes `freeze:<asset>:<quote>` markers and, when wired, the durable mirror and ladder.
-// Safe for concurrent use.
+// Writer writes `freeze:<asset>:<quote>` markers and, when wired, the durable mirror and ladder; safe for concurrent use.
 type Writer struct {
 	cache  RedisCache
 	ttl    time.Duration
@@ -150,8 +135,7 @@ func (w *Writer) now() time.Time {
 	return time.Now()
 }
 
-// NewWriter constructs a Writer; ttl=0 means cachekeys.FreezeTTL, used only by [Writer.Mark]
-// ([Writer.MarkHold] takes its TTL from the lifecycle [Outcome]).
+// NewWriter constructs a Writer; ttl=0 means cachekeys.FreezeTTL, used only by [Writer.Mark].
 func NewWriter(cache RedisCache, ttl time.Duration, opts ...WriterOption) (*Writer, error) {
 	if cache == nil {
 		return nil, errors.New("freeze: RedisCache is required")
@@ -172,9 +156,7 @@ func NewWriter(cache RedisCache, ttl time.Duration, opts ...WriterOption) (*Writ
 // WriterOption tunes a Writer at construction time.
 type WriterOption func(*Writer)
 
-// WithClock sets the clock [LadderStillLive] and the marker stamps are
-// read against, so a caller driving the lifecycle on its own clock (the
-// orchestrator's Signal.Now) judges a ladder's hold on that same clock.
+// WithClock sets the clock that [LadderStillLive] and marker stamps use, so the orchestrator's Signal.Now judges holds on the same clock.
 func WithClock(clock func() time.Time) WriterOption {
 	return func(w *Writer) { w.clock = clock }
 }
@@ -186,12 +168,10 @@ func WithEventSink(sink EventSink) WriterOption {
 	}
 }
 
-// DefaultLadderGrace equals [DefaultMarkerGrace] so losing Redis is behaviour-neutral: shorter
-// drops a freeze flushed near its hold's end, longer lets a long-dead aggregator resurrect one.
+// DefaultLadderGrace equals [DefaultMarkerGrace]: shorter drops a freeze flushed near its hold end, longer resurrects one from a long-dead aggregator.
 var DefaultLadderGrace = DefaultMarkerGrace
 
-// WithLadderStore wires the durable ladder: MarkHold mirrors every transition and LoadState
-// falls back to it on a marker miss, so an escalated freeze survives a flush. grace <= 0 → default.
+// WithLadderStore wires the durable ladder: MarkHold mirrors every transition and LoadState falls back to it on a marker miss; grace <= 0 uses the default.
 func WithLadderStore(store LadderStore, grace time.Duration) WriterOption {
 	return func(w *Writer) {
 		w.ladder = store
@@ -203,15 +183,12 @@ func WithLadderStore(store LadderStore, grace time.Duration) WriterOption {
 	}
 }
 
-// Mark records a freeze with the flat TTL and no lifecycle, refreshing an existing marker. It is
-// NOT the freeze-duration policy (re-mark-to-live releases on one bucket, the defect ADR-0019 fixes);
-// it stays for the per-tick composite/triangulation refusal. frozenValue goes only to the EventSink.
+// Mark records a freeze with the flat TTL and no lifecycle; it is NOT the duration policy (re-mark-to-live releases on one bucket) and serves the composite refusal.
 func (w *Writer) Mark(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) error {
 	return w.MarkHold(ctx, asset, quote, frozenValue, decision, State{}, w.ttl)
 }
 
-// MarkHold is [Writer.Mark] plus the lifecycle: State in the marker, TTL from
-// [Outcome.MarkerTTL]. ttl <= 0 falls back to the default so the marker still expires.
+// MarkHold is [Writer.Mark] plus the lifecycle: State in the marker and TTL from [Outcome.MarkerTTL]; ttl <= 0 uses the default.
 func (w *Writer) MarkHold(
 	ctx context.Context,
 	asset, quote canonical.Asset,
@@ -223,9 +200,7 @@ func (w *Writer) MarkHold(
 	return w.markHold(ctx, asset, quote, 0, frozenValue, decision, state, ttl)
 }
 
-// MarkHoldForWindow records `state` as `window`'s ladder, MERGING with the marker so siblings
-// survive, including windows this process never saw (under the volume floor since startup). An
-// inactive state retires the ladder; window <= 0 is exactly [Writer.MarkHold].
+// MarkHoldForWindow records state as window's ladder, MERGING with the marker so unseen siblings survive; window <= 0 is [Writer.MarkHold].
 func (w *Writer) MarkHoldForWindow(
 	ctx context.Context,
 	asset, quote canonical.Asset,
@@ -336,9 +311,7 @@ func (w *Writer) saveLadder(ctx context.Context, asset, quote canonical.Asset, s
 	}
 }
 
-// RetireWindowLadder drops ONE window's ladder while keeping the marker (and `flags.frozen`) for
-// a still-frozen sibling, so a restart cannot rehydrate an ended freeze. KEEPTTL: the remaining hold
-// is the sibling's. No-op on an absent or pre-Ladders marker; best-effort, the caller logs.
+// RetireWindowLadder drops ONE window's ladder but keeps the marker (and flags.frozen) for a frozen sibling, KEEPTTL; no-op on an absent or pre-Ladders marker.
 func (w *Writer) RetireWindowLadder(ctx context.Context, asset, quote canonical.Asset, window time.Duration) error {
 	label := windowLabel(window)
 	if label == "" {
@@ -376,10 +349,8 @@ func (w *Writer) RetireWindowLadder(ctx context.Context, asset, quote canonical.
 	return nil
 }
 
-// ReleaseWindow ends `window`'s freeze for a caller that believes it is the LAST frozen window,
-// reporting whether the marker was kept. That belief misses floor-dropped windows and every window
-// after a restart, and once let a sibling's recovery end an ESCALATED freeze, so the marker and then
-// the durable record are asked; an unreadable record returns the error rather than unfreezing.
+// ReleaseWindow ends window's freeze for a caller believing it is the LAST frozen window and reports whether the marker was kept.
+// That belief misses floor-dropped and post-restart windows, so the marker and then the durable record are asked; an unreadable record returns the error.
 func (w *Writer) ReleaseWindow(ctx context.Context, asset, quote canonical.Asset, window time.Duration) (bool, error) {
 	label := windowLabel(window)
 	marker, ok, err := w.readMarker(ctx, cachekeys.Freeze(asset, quote))
@@ -589,18 +560,14 @@ func windowLabel(window time.Duration) string {
 	return window.String()
 }
 
-// LoadState reads the lifecycle state, falling back to the durable ladder when the marker is gone,
-// since a Redis flush must not read as an override. A missing marker with an open, unlapsed row is
-// PRESENT; no open row means ended (freeze-unfreeze stamps recovered_at; a raw `redis-cli DEL` is not
-// an override); a lapsed row is not resurrected. An undecodable marker is (State{}, true, nil).
+// LoadState reads the lifecycle state, falling back to the durable ladder when the marker is gone (a flush is not an override).
+// An open unlapsed row is PRESENT; no open row means ended; a lapsed row is not resurrected; an undecodable marker is (State{}, true, nil).
 func (w *Writer) LoadState(ctx context.Context, asset, quote canonical.Asset) (State, bool, error) {
 	return w.loadState(ctx, asset, quote, 0)
 }
 
-// LoadStateForWindow is [Writer.LoadState] for one window. Presence is pair-scoped; the ladder is
-// Ladders[window], and a window with none gets zero rather than a sibling's (that pinned a healthy
-// window). Pre-Ladders markers and ownerless durable ladders answer pair-wide, adopted only within one
-// grace of UnownedSince, because Escalated never auto-releases.
+// LoadStateForWindow is [Writer.LoadState] for one window: Ladders[window], or zero, never a sibling's. Pre-Ladders and ownerless
+// durable ladders answer pair-wide, adopted only within one grace of UnownedSince, because Escalated never auto-releases.
 func (w *Writer) LoadStateForWindow(
 	ctx context.Context,
 	asset, quote canonical.Asset,
@@ -700,9 +667,7 @@ func (w *Writer) loadDurableWindowLadder(
 	return State{}, false, nil
 }
 
-// LadderStillLive is the single definition of "Redis lost the marker" vs "the freeze is over" (active,
-// inside hold plus grace). LoadState, [Recovery.tick] and operator tools must agree: a recovery stamp on
-// a live ladder destroys the rehydrate's predicate. Clock-injected so tests pin the boundary.
+// LadderStillLive is the single definition of "Redis lost the marker" vs "the freeze is over" (active, inside hold plus grace); LoadState, Recovery and tools must agree.
 func LadderStillLive(st State, grace time.Duration, now time.Time) bool {
 	if !st.Active() {
 		return false
@@ -710,9 +675,7 @@ func LadderStillLive(st State, grace time.Duration, now time.Time) bool {
 	return !now.After(st.HoldUntil.Add(grace))
 }
 
-// Clear deletes the marker, so a released freeze does not keep `flags.frozen` for its remaining hold,
-// and retires the durable ladder: otherwise a restart before the recovery sweep re-freezes a cleared
-// pair from the still-open row. Idempotent; the store write is best-effort.
+// Clear deletes the marker and retires the durable ladder, so a restart before the recovery sweep cannot re-freeze a cleared pair; idempotent, store write best-effort.
 func (w *Writer) Clear(ctx context.Context, asset, quote canonical.Asset) error {
 	key := cachekeys.Freeze(asset, quote)
 	if err := w.cache.Del(ctx, key.String()).Err(); err != nil {
@@ -731,8 +694,7 @@ type overrideRecord struct {
 	At     time.Time `json:"at"`
 }
 
-// RecordOverride writes the override tombstone freeze-unfreeze sets before [Writer.Clear], so the
-// orchestrator can tell a human's force-unfreeze from a marker that merely expired.
+// RecordOverride writes the tombstone freeze-unfreeze sets before [Writer.Clear], so a human override is told apart from an expired marker.
 func (w *Writer) RecordOverride(ctx context.Context, asset, quote canonical.Asset, actor, reason string) error {
 	key := cachekeys.FreezeOverride(asset, quote)
 	body, err := json.Marshal(overrideRecord{Actor: actor, Reason: reason, At: w.now().UTC()})
@@ -745,8 +707,7 @@ func (w *Writer) RecordOverride(ctx context.Context, asset, quote canonical.Asse
 	return nil
 }
 
-// OverrideRecorded reports whether [Writer.RecordOverride]'s tombstone is
-// live for (asset, quote).
+// OverrideRecorded reports whether [Writer.RecordOverride]'s tombstone is live for (asset, quote).
 func (w *Writer) OverrideRecorded(ctx context.Context, asset, quote canonical.Asset) (bool, error) {
 	key := cachekeys.FreezeOverride(asset, quote)
 	err := w.cache.Get(ctx, key.String()).Err()
@@ -772,8 +733,7 @@ func NewLooker(cache RedisCache) (*Looker, error) {
 	return &Looker{cache: cache}, nil
 }
 
-// FrozenForPair reports whether (asset, quote) has a live freeze marker. On a Redis error the caller
-// logs and serves frozen=false: better a price without the warning than a 5xx.
+// FrozenForPair reports whether (asset, quote) has a live marker; on a Redis error the caller logs and serves frozen=false.
 func (l *Looker) FrozenForPair(ctx context.Context, asset, quote canonical.Asset) (bool, error) {
 	key := cachekeys.Freeze(asset, quote)
 	_, err := l.cache.Get(ctx, key.String()).Bytes()

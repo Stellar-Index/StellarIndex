@@ -1,21 +1,6 @@
-// Package mev detects on-chain MEV patterns from the canonical trade stream and writes them to
-// mev_events for the explorer's /mev feed. Detected kinds:
-//
-//   - arbitrage (detector.go): one taker trades a closed asset cycle inside a single transaction.
-//   - wash_trade (washtrade.go): self-trades and two-account back-and-forth.
-//   - sandwich (sandwich.go): one account's trades in two different transactions bracket another
-//     account's trade on the same pair within one ledger. Needs intra-ledger TRANSACTION ordering,
-//     which only the raw lake carries (stellar.transactions.tx_index), so it runs only when a
-//     TxOrderResolver is wired.
-//   - oracle_sandwich (oracle_sandwich.go): one account's trades bracket an on-chain oracle update
-//     on an asset the trades touch, within one ledger. Same tx_index requirement.
-//   - liquidation_cascade (cascade.go): Blend liquidation-auction fills against distinct positions
-//     clustered within a short ledger window with an oracle update in the bracket.
-//
-// Every detector is a pure function over batches of served rows (plus an optional tx_hash →
-// tx_index map); the worker (worker.go) supplies the inputs and persists candidates. Detection is
-// positional evidence, not proof of intent. sandwich and oracle_sandwich require bracket legs in
-// opposite directions (trades.base_asset, convention takerBaseIsReceived) and drop unknown ones.
+// Package mev detects MEV patterns (arbitrage, wash_trade, sandwich, oracle_sandwich,
+// liquidation_cascade) over served trade batches and writes them to mev_events. Detection is
+// positional evidence, not proof of intent; sandwich kinds need the lake tx_index (TxOrderResolver).
 package mev
 
 import (
@@ -33,8 +18,7 @@ const KindArbitrage = "arbitrage"
 // one.
 const minLegs = 2
 
-// Leg is one trade in a detected pattern, kept as evidence in the
-// stored detail jsonb. Amounts are decimal strings (ADR-0003).
+// Leg is one trade in a detected pattern, kept as evidence; amounts are decimal strings (ADR-0003).
 type Leg struct {
 	Source      string `json:"source"`
 	Base        string `json:"base"`
@@ -66,10 +50,7 @@ type Candidate struct {
 	Detail             any    // per-kind evidence payload (marshalled to mev_events.detail); nil → arbDetail
 }
 
-// DedupKey is the deterministic idempotency key persisted to
-// mev_events.dedup_key. Default shape: one detection per (pattern,
-// tx, actor); detectors whose identity needs more dimensions set
-// Candidate.Dedup explicitly.
+// DedupKey is the idempotency key for mev_events.dedup_key: (pattern, tx, actor) unless Candidate.Dedup is set.
 func (c Candidate) DedupKey() string {
 	if c.Dedup != "" {
 		return c.Dedup
@@ -77,21 +58,9 @@ func (c Candidate) DedupKey() string {
 	return c.Kind + ":" + c.TxHash + ":" + c.Taker
 }
 
-// DetectArbitrage scans a batch of trades and returns one Candidate per atomic-arbitrage cycle
-// found. Trades are grouped by (tx_hash, taker) — a cycle must be a single actor inside a single
-// transaction.
-//
-// Each asset-connected component of a group is judged on its own; a component is a cycle when its
-// hop graph (assets = nodes, distinct (venue, unordered asset pair) hops = edges) has at least as
-// many edges as nodes (a forest has edges ≤ nodes−1). Trades collapse to hops first because SDEX
-// emits one trade per claim atom: a hop that fills two offers is two trades but one edge. A
-// 2-asset cycle therefore spans ≥2 venues by construction; ≥3-asset cycles (triangular+) are
-// accepted on any venues.
-//
-// usdVolume[i] is the optional USD notional of trades[i] (parallel slice; nil or short → no
-// notional). It's summed across a cycle's legs into Candidate.NotionalUSD purely as a size signal
-// carried in the detail — attacker profit is not estimated, so profit_usd stays null downstream. A
-// cycle spans several assets, so it has no primary AssetID/QuoteID.
+// DetectArbitrage returns one Candidate per atomic-arbitrage cycle, grouped by (tx_hash, taker).
+// A component is a cycle when its hop graph (distinct (venue, unordered pair) edges) has edges >= nodes;
+// trades collapse to hops first because SDEX emits one trade per claim atom. usdVolume is an optional parallel size signal only.
 func DetectArbitrage(trades []canonical.Trade, usdVolume []string) []Candidate {
 	type group struct {
 		idxs []int
@@ -264,11 +233,8 @@ func sortedKeys(m map[string]struct{}) []string {
 	return out
 }
 
-// sumUSD adds the parallel USD-volume entries for the group's legs
-// with exact decimal arithmetic. Returns "" when no leg carried a USD
-// valuation (so the field is omitted downstream rather than reported
-// as a misleading 0); otherwise a 2dp decimal string. lowerBound is true
-// when a non-empty sum left out an unpriced leg.
+// sumUSD adds the legs' USD volumes with exact decimal arithmetic. It returns "" when no leg was priced
+// (never a misleading 0); lowerBound is true when a non-empty sum left out an unpriced leg.
 func sumUSD(usdVolume []string, idxs []int) (notional string, lowerBound bool) {
 	total := new(big.Rat)
 	priced, unpriced := false, false

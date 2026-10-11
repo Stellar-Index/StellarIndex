@@ -74,9 +74,7 @@ func eqRat(t *testing.T, got, want *big.Rat, ctx string) {
 
 // ── topology ────────────────────────────────────────────────────────
 
-// CombineRoutes outcomes over small fixed graphs: composite, confidence,
-// pathCount, corroboration and divergence. wantComposite/wantConf/wantRoutes
-// are skipped when zero-valued.
+// TestRouter_CombineRoutes checks CombineRoutes outcomes over small fixed graphs: composite, confidence, pathCount, corroboration, divergence.
 func TestRouter_CombineRoutes(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -215,8 +213,7 @@ func TestRouter_CombineRoutes(t *testing.T) {
 	}
 }
 
-// shortest-preference: with BOTH a 2-hop and a 3-hop route to the same
-// target, shortestOnly returns ONLY the 2-hop route.
+// TestRouter_ShortestPreference pins that with both a 2-hop and a 3-hop route, shortestOnly returns only the 2-hop.
 func TestRouter_ShortestPreference(t *testing.T) {
 	edges := mustEdges(t,
 		rq(obscure, xlm, 2, 1, 0.9),
@@ -252,10 +249,7 @@ func TestRouter_ShortestPreference(t *testing.T) {
 	}
 }
 
-// A single thin 2-leg route that appears next to three agreeing 3-leg
-// routes is served (shortest wins), but it must not read CLEANER than the
-// set it displaced: disagreeing with that longer tier is divergence, and a
-// diverged result corroborates nothing. When it agrees, nothing is flagged.
+// TestRouter_ShortestRouteDivergesFromDisplacedLongerTier pins that a thin short route displaced from three agreeing longer routes is flagged diverged when it disagrees, and unflagged when it agrees.
 func TestRouter_ShortestRouteDivergesFromDisplacedLongerTier(t *testing.T) {
 	jpy := canonical.Asset{Type: canonical.AssetFiat, Code: "JPY"}
 	chf := canonical.Asset{Type: canonical.AssetFiat, Code: "CHF"}
@@ -292,14 +286,7 @@ func TestRouter_ShortestRouteDivergesFromDisplacedLongerTier(t *testing.T) {
 	}
 }
 
-// The served composite and pathCount can come from DISJOINT route
-// sets. A high-confidence route (0.9, price 1.0) and two agreeing
-// lower-confidence routes (0.5, price 0.5 each) — highestConfidencePrice
-// serves the 0.9 route's 1.0 alone (servedRouteCount=1), but that route is a
-// 100%-off outlier against the 0.5/0.5 median over the FULL gated set, so
-// omitOutlierIndices survives only the two 0.5 routes (pathCount=2). A
-// pathCount=2 must never be read as "two routes back this value" — the value
-// is 2× everything in that survivor set.
+// TestRouter_ServedRouteCountDisjointFromPathCount pins that the served composite and pathCount can come from disjoint route sets, so pathCount is never read as the routes backing the value.
 func TestRouter_ServedRouteCountDisjointFromPathCount(t *testing.T) {
 	edges := mustEdges(t,
 		rq(obscure, xlm, 1, 1, 0.9), rq(xlm, gbp, 1, 1, 0.9), // A: 1.0, conf 0.9
@@ -329,8 +316,7 @@ func TestRouter_ServedRouteCountDisjointFromPathCount(t *testing.T) {
 	}
 }
 
-// 4-hop obscure×obscure: resolves at maxHops=4 but NOT at maxHops=3 —
-// proves the cap and that the worst case is reachable.
+// TestRouter_FourHopObscureToObscure pins that a 4-hop obscure-to-obscure route resolves at maxHops=4 but not 3.
 func TestRouter_FourHopObscureToObscure(t *testing.T) {
 	edges := mustEdges(t,
 		rq(obsAsset, xlm, 2, 1, 0.7),  // OBSA→XLM
@@ -371,8 +357,7 @@ func routeLen(routes [][]aggregate.RouteLeg) int {
 	return len(routes[0])
 }
 
-// no-cycle / no-route: a fully cyclic graph plus a disconnected quote
-// must terminate and return no route (never loop forever).
+// TestRouter_NoCycleNoRoute pins that a cyclic graph with a disconnected quote terminates with no route.
 func TestRouter_NoCycleNoRoute(t *testing.T) {
 	edges := mustEdges(t,
 		rq(obscure, xlm, 2, 1, 0.9), // cycle: OBSCURE→XLM→USD→OBSCURE
@@ -425,9 +410,7 @@ func TestRouter_ExactRationalNoFloatDrift(t *testing.T) {
 
 // ── confidence (weakest-link) ───────────────────────────────────────
 
-// (a) A route through ONE low-confidence edge has route confidence ==
-// that low value, and CombineRoutes flags lowConfidence when it is the
-// only route (and it sits below the floor).
+// TestRouter_WeakestLinkConfidence pins that a route through one low-confidence edge has that confidence, and is flagged lowConfidence when alone below the floor.
 func TestRouter_WeakestLinkConfidence(t *testing.T) {
 	edges := mustEdges(t,
 		rq(obscure, xlm, 2, 1, 0.9), // strong leg
@@ -457,9 +440,7 @@ func TestRouter_WeakestLinkConfidence(t *testing.T) {
 	}
 }
 
-// (b) Two same-length routes, one high-conf and one low-conf: the
-// low-conf route is EXCLUDED by the floor and does not drag the
-// composite toward its (bad, dust-inflated) value.
+// TestRouter_LowConfidenceRouteExcluded pins that a low-confidence route is excluded by the floor and does not drag the composite.
 func TestRouter_LowConfidenceRouteExcluded(t *testing.T) {
 	edges := mustEdges(t,
 		rq(obscure, xlm, 2, 1, 0.9), rq(xlm, gbp, 3, 10, 0.9), // A: 3/5, conf 0.9
@@ -485,12 +466,8 @@ func TestRouter_LowConfidenceRouteExcluded(t *testing.T) {
 		t.Error("diverged = true, want false (single trusted survivor)")
 	}
 
-	// Control: even WITHOUT the confidence floor the bad route can no longer
-	// drag the served price — highestConfidencePrice serves the MAX-confidence
-	// survivor (0.9 → 3/5), independently of the floor. The dust route still
-	// counts toward pathCount and sets diverged (so the composite is served
-	// FLAGGED), but it does not move the value. Two independent protections:
-	// the floor EXCLUDES it, confidence-weighted serving REFUSES to blend it.
+	// Control: even WITHOUT the floor the bad route cannot drag the served price (highestConfidencePrice serves the MAX-confidence survivor, 0.9 -> 3/5).
+	// The dust route still counts toward pathCount and sets diverged, but does not move the value.
 	served, _, _, count0, _, diverged0, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
 	if err != nil {
 		t.Fatalf("CombineRoutes (floor 0): %v", err)
@@ -505,8 +482,7 @@ func TestRouter_LowConfidenceRouteExcluded(t *testing.T) {
 	}
 }
 
-// (c) All routes below the floor → a best-effort composite is still
-// returned, but lowConfidence=true so the caller serves it flagged.
+// TestRouter_AllRoutesBelowFloor pins that when all routes are below the floor a best-effort composite is returned with lowConfidence=true.
 func TestRouter_AllRoutesBelowFloor(t *testing.T) {
 	edges := mustEdges(t,
 		rq(obscure, xlm, 2, 1, 0.10), rq(xlm, gbp, 3, 10, 0.10), // A: 3/5, conf 0.10
@@ -617,15 +593,10 @@ func TestRouteConfidence_Empty(t *testing.T) {
 	}
 }
 
-// ── corroboration integrity ─────────────────────────────────
-//
-// The corroboration count CombineRoutes returns is the number fed to the
-// anomaly-freeze source_count leg. It must count only INDEPENDENT +
-// TIGHTLY-AGREEING + NON-DIVERGED routes, or a manipulator games the
-// freeze. These pin each of those three properties.
+// Corroboration integrity: the count fed to the anomaly-freeze source_count leg must count only INDEPENDENT, TIGHTLY-AGREEING,
+// NON-DIVERGED routes, or a manipulator games the freeze.
 
-// R2 core: the maximum edge-disjoint subset counts two routes that share
-// ANY undirected edge as ONE independent confirmation.
+// TestRouter_MaxEdgeDisjointRoutes pins that routes sharing any undirected edge count as one independent confirmation.
 func TestRouter_MaxEdgeDisjointRoutes(t *testing.T) {
 	// Two 3-hop routes that converge on the SAME final edge USD→GBP (the
 	// shared bottleneck): a single wash-traded USD/GBP market backs both,
@@ -666,8 +637,7 @@ func TestRouter_MaxEdgeDisjointRoutes(t *testing.T) {
 	}
 }
 
-// Companion to [TestRouter_CorroborationSharedFXProvenance]: the primitive
-// itself (no confidence/median machinery) must also see the shared row.
+// TestRouter_MaxEdgeDisjointRoutes_SharedFXProvenance pins that the primitive alone also sees a shared fx_quotes provenance row.
 func TestRouter_MaxEdgeDisjointRoutes_SharedFXProvenance(t *testing.T) {
 	routes := [][]aggregate.RouteLeg{
 		{rl(obscure, usd, 3, 1, 0.9), {From: usd, To: gbp, Price: big.NewRat(1, 5), Confidence: 0.9, Provenance: []string{"fx:GBP"}}},
@@ -678,12 +648,7 @@ func TestRouter_MaxEdgeDisjointRoutes_SharedFXProvenance(t *testing.T) {
 	}
 }
 
-// Step 3.5 — a lower-confidence route CORROBORATES but never moves the served
-// price. This is what makes enabling a thin, USD-volume-floor-EXEMPT bridge
-// (XLM→BTC→GBP, where the crypto-quoted XLM/BTC leg escapes dropForMinUSDVolume)
-// safe: it can widen the freeze source_count when it agrees, but a manipulator
-// wash-trading the thin leg cannot drag the served cross — the deep route sets
-// the price.
+// TestRouter_ServesHighestConfidenceRoute pins that a lower-confidence route corroborates but never moves the served price, so a thin USD-volume-floor-exempt bridge cannot be wash-traded into the cross.
 func TestRouter_ServesHighestConfidenceRoute(t *testing.T) {
 	// Deep route A (conf 0.95) prices obscure/GBP at 3/5 = 0.6; thin bridge
 	// route B (conf 0.20) is 20% higher at 18/25 = 0.72 — inside the loose 40%
@@ -726,11 +691,7 @@ func TestRouter_ServesHighestConfidenceRoute(t *testing.T) {
 
 // ── serving anchor ─────────────────────────────────────────────
 
-// H1 (a): a deep, high-confidence route must set the served price even when
-// a thin low-confidence MAJORITY would evict it as a price-median outlier. At
-// n≥3 the median-relative outlier filter is confidence-blind, so before the
-// fix the two thin routes (the majority) evicted the deep route and served
-// their own 0.3; the served composite must instead be the deep route's 0.6.
+// TestRouter_DeepRouteProtectedFromThinMajority pins that a deep high-confidence route sets the served price even when a thin low-confidence majority would evict it as a median outlier.
 func TestRouter_DeepRouteProtectedFromThinMajority(t *testing.T) {
 	edges := mustEdges(t,
 		rq(obscure, xlm, 2, 1, 0.9), rq(xlm, gbp, 3, 10, 0.9), // A: 0.6, conf 0.9 (deep)
@@ -766,10 +727,7 @@ func TestRouter_DeepRouteProtectedFromThinMajority(t *testing.T) {
 	}
 }
 
-// H1 (b): two genuinely co-equal top-confidence routes that DISAGREE (two
-// clusters >40% apart) must serve a price ONE cluster actually produced, not
-// the averaged midpoint. A blending medianRat would serve an
-// unproduced value.
+// TestRouter_BimodalCoEqualServesProducedValue pins that two co-equal top routes that disagree serve a value one cluster produced, not the averaged midpoint.
 func TestRouter_BimodalCoEqualServesProducedValue(t *testing.T) {
 	edges := mustEdges(t,
 		rq(obscure, xlm, 2, 1, 0.9), rq(xlm, gbp, 3, 10, 0.9), // A: 0.6, conf 0.9
@@ -791,11 +749,7 @@ func TestRouter_BimodalCoEqualServesProducedValue(t *testing.T) {
 
 // ── corroboration confidence floor ─────────────────────────────
 
-// M2: a thin route (weakest-link confidence below the corroboration floor)
-// that agrees tightly AND is edge-disjoint must NOT raise the corroboration
-// count. With min_route_confidence shipped at 0 the thin route still serves +
-// survives, but a route too thin to trust cannot be an independent
-// confirmation the freeze relies on.
+// TestRouter_CorroborationRequiresConfidenceFloor pins that a thin route below the corroboration floor does not raise the corroboration count even when it agrees and is edge-disjoint.
 func TestRouter_CorroborationRequiresConfidenceFloor(t *testing.T) {
 	edges := mustEdges(t,
 		rq(obscure, xlm, 2, 1, 0.9), rq(xlm, gbp, 3, 10, 0.9), // A: 3/5, conf 0.9
@@ -821,10 +775,7 @@ func TestRouter_CorroborationRequiresConfidenceFloor(t *testing.T) {
 	}
 }
 
-// The corroboration floor is strictly above the bootstrap cap. Every
-// unscored edge, cache-only leg and still-bootstrapping pair carries exactly
-// the cap, so two edge-disjoint, exactly-agreeing routes built only from such
-// edges must not corroborate; one hair above the cap they do.
+// TestRouter_BootstrapCapRoutesDoNotCorroborate pins that the corroboration floor is strictly above the bootstrap cap, so routes built only from cap-confidence edges do not corroborate.
 func TestRouter_BootstrapCapRoutesDoNotCorroborate(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -858,9 +809,7 @@ func TestRouter_BootstrapCapRoutesDoNotCorroborate(t *testing.T) {
 
 // ── reverse-oriented market dedup ──────────────────────────────
 
-// M3: a market quoted in BOTH orientations (XLM/OBSCURE and OBSCURE/XLM) is
-// ONE physical market. The dedup must yield the same edge set + route set as
-// one orientation alone — not a double-counted market that becomes two routes.
+// TestBuildEdges_DedupsReverseOrientedMarket pins that a market quoted in both orientations dedups to one edge set and route set, not two routes.
 func TestBuildEdges_DedupsReverseOrientedMarket(t *testing.T) {
 	oneOrientation := mustEdges(t,
 		rq(obscure, xlm, 2, 1, 0.9),
@@ -892,10 +841,7 @@ func TestBuildEdges_DedupsReverseOrientedMarket(t *testing.T) {
 
 // ── non-finite confidence guard (L5) ────────────────────────────────
 
-// A quote whose confidence is NaN must not panic the router. Unclamped, the
-// NaN propagates through RouteConfidence → maxConfidence, never matches
-// `== best`, empties the served top tier and panics the median. Instead
-// the confidence is clamped to 0 (fail-closed) and a sensible price is served.
+// TestRouter_NonFiniteConfidenceNoPanic pins that a NaN confidence is clamped to 0 (fail-closed) and does not panic the router.
 func TestRouter_NonFiniteConfidenceNoPanic(t *testing.T) {
 	edges := mustEdges(t,
 		aggregate.Quote{Pair: canonical.Pair{Base: obscure, Quote: xlm}, Price: big.NewRat(2, 1), Confidence: math.NaN()},

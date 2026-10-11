@@ -35,8 +35,7 @@ func nativeUSD(t *testing.T) (canonical.Asset, canonical.Asset) {
 	return canonical.NativeAsset(), usd
 }
 
-// TestNewWriter_RejectsNilCache — operator misconfig must fail at
-// construction, not at first write.
+// TestNewWriter_RejectsNilCache: a nil cache must fail at construction, not at first write.
 func TestNewWriter_RejectsNilCache(t *testing.T) {
 	if _, err := freeze.NewWriter(nil, 0); err == nil {
 		t.Error("expected error for nil cache")
@@ -50,8 +49,7 @@ func TestNewLooker_RejectsNilCache(t *testing.T) {
 	}
 }
 
-// TestLooker_FrozenForPair_AbsentMarker — clean state returns
-// (false, nil), NOT an error. The API treats this as "not frozen".
+// TestLooker_FrozenForPair_AbsentMarker: clean state returns (false, nil), not an error.
 func TestLooker_FrozenForPair_AbsentMarker(t *testing.T) {
 	_, rdb := newRedis(t)
 	l, _ := freeze.NewLooker(rdb)
@@ -66,8 +64,7 @@ func TestLooker_FrozenForPair_AbsentMarker(t *testing.T) {
 	}
 }
 
-// TestLooker_FrozenForPair_PresentMarker — marker present →
-// (true, nil).
+// TestLooker_FrozenForPair_PresentMarker: a present marker returns (true, nil).
 func TestLooker_FrozenForPair_PresentMarker(t *testing.T) {
 	_, rdb := newRedis(t)
 	w, _ := freeze.NewWriter(rdb, 0)
@@ -88,10 +85,7 @@ func TestLooker_FrozenForPair_PresentMarker(t *testing.T) {
 	}
 }
 
-// TestLooker_FrozenForPair_TTLExpiry — once the marker's TTL
-// elapses, FrozenForPair returns (false, nil) — same as a
-// never-marked pair (which is correct: the freeze policy says
-// "the anomaly cleared, publish normally").
+// TestLooker_FrozenForPair_TTLExpiry: once the marker TTL elapses the pair reads (false, nil), like a never-marked pair.
 func TestLooker_FrozenForPair_TTLExpiry(t *testing.T) {
 	mr, rdb := newRedis(t)
 	w, _ := freeze.NewWriter(rdb, 30*time.Second)
@@ -114,9 +108,7 @@ func TestLooker_FrozenForPair_TTLExpiry(t *testing.T) {
 	}
 }
 
-// TestLooker_DistinctPairsIsolated — two different (asset, quote)
-// pairs use different keys; freezing one doesn't bleed into the
-// other.
+// TestLooker_DistinctPairsIsolated: freezing one (asset, quote) pair does not bleed into another.
 func TestLooker_DistinctPairsIsolated(t *testing.T) {
 	_, rdb := newRedis(t)
 	w, _ := freeze.NewWriter(rdb, 0)
@@ -180,13 +172,8 @@ var (
 	_ = cachekeys.Freeze
 )
 
-// ─── An owned ladder nobody advances is bounded like the unowned one ───
-//
-// A window that escalated and then dropped under the USD-volume floor never
-// reaches the freeze step again, so it never retires its own entry, while a
-// still-frozen sibling keeps re-marking the pair. Its escalated ladder must
-// not survive past its hold plus the grace, or the next restart rehydrates
-// it and holds a window nothing is wrong with until a manual unfreeze.
+// An owned ladder nobody advances is bounded like the unowned one: a window dropped under the USD-volume
+// floor never retires its entry, so its escalated ladder must not outlive hold plus grace or a restart rehydrates it.
 
 // abandonedEscalated is an escalated ladder whose last writer stopped
 // hours ago: well past HoldUntil plus any grace.

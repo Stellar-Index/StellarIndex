@@ -19,32 +19,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Composite-reference corroboration for structurally single-venue targets
-// (docs/design/composite-route-corroboration-for-structurally-single-venue.md §10).
-//
-// A pair like crypto:XLM/fiat:GBP is quoted by one or two venues, so the
-// ADR-0019 phase-2 freeze (confidence < 0.45 AND z > 5 AND source_count <= 1)
-// fires on every large move. Its triangulation chain (XLM/USD × USD/GBP from
-// massive.com FX) is evaluated on the CURRENT bucket to CORROBORATE or REFUTE the
-// freeze: within [CompositeReferenceConfig.ToleranceBps] of the direct print
-// means a market-wide move, so the fire is SUPPRESSED (corroboration_basis=
-// composite); disagreement or an unavailable composite freezes as before.
-//
-// CURRENT bucket, never a prior tick's sample: a tick-lagged composite
-// certified the pre-spike LEVEL and suppressed a z≈50 manipulation.
-//
-// Invariants (pinned by composite_reference_test.go):
-//   - the composite NEVER contributes to VWAP and NEVER raises source_count
-//     ([distinctSourceCount]); it only changes the freeze VERDICT;
-//   - the priced leg needs >= MinLegSources venues, the FX leg must be fresh
-//     within FXMaxAge and from the FX source class;
-//   - targets with >= 2 real venues on the bucket are never evaluated.
+// Composite-reference corroboration for structurally single-venue targets (docs/design/composite-route-corroboration-for-structurally-single-venue.md §10).
+// The triangulation chain is evaluated on the CURRENT bucket (never a prior tick's sample, which certified a pre-spike level) to corroborate or refute the ADR-0019 phase-2 freeze; agreement within ToleranceBps suppresses it.
+// Invariants (composite_reference_test.go): the composite NEVER contributes to VWAP or source_count, only the freeze VERDICT; targets with >= 2 real venues are never evaluated.
 
-// CompositeReferenceConfig gates and tunes the composite-reference
-// corroboration. Zero-valued numeric fields fall back to the
-// Default* constants in [CompositeReferenceConfig.withDefaults]; a
-// zero-valued struct (Enabled=false) disables the mechanism entirely,
-// which is what a Config assembled directly in a test gets.
+// CompositeReferenceConfig gates and tunes composite-reference corroboration; zero numeric fields take the Default* values and a zero struct (Enabled=false) disables it.
 type CompositeReferenceConfig struct {
 	// Enabled is the master switch. The binary's config default is ON
 	// for the Targets allow-list below (config.Default()).
@@ -70,28 +49,15 @@ type CompositeReferenceConfig struct {
 	// rather than the 6h poll-liveness alert.
 	FXMaxAge time.Duration
 
-	// LegDispersionBps is the leg-dispersion guard: every venue's own bucket VWAP on a priced leg must be
-	// within this many bps of the leg VWAP, else the leg cannot
-	// corroborate (`composite_unavailable: leg_dispersion=…`). A leg
-	// where one venue dominates and a dust print on another sits 3 % off
-	// is not two agreeing venues. 0 = ToleranceBps.
+	// LegDispersionBps is the leg-dispersion guard: each venue's bucket VWAP on a priced leg must be within this many bps of the leg VWAP, else the leg cannot corroborate. 0 = ToleranceBps.
 	LegDispersionBps int
 
-	// ReleaseBandPct is the mid-hold RELEASE agreement band for a target
-	// whose reference resolved on the bucket (advisory A2): the fresh
-	// candidate must sit within this % of the current-bucket composite
-	// for the auto-unfreeze streak to advance — dedicated and tighter
-	// than the shared cross-oracle band (releaseAgreementMaxPct, 5 %),
-	// which a held +4 % venue-specific offset would satisfy. 0 = default.
+	// ReleaseBandPct is the mid-hold RELEASE agreement band (percent) against the current-bucket composite; tighter than the shared releaseAgreementMaxPct, which a venue-specific +4 % offset would satisfy. 0 = default.
 	ReleaseBandPct float64
 }
 
 const (
-	// DefaultCompositeReferenceToleranceBps — 75 bps. A genuine
-	// repricing carries the composite with the venue to within tens of
-	// bps; a venue-specific spike the freeze exists for is >5σ, i.e.
-	// several percent, so the band has ample margin on both sides while
-	// still absorbing a daily-bucket FX leg's intraday drift.
+	// DefaultCompositeReferenceToleranceBps is 75 bps: wide enough for a daily FX leg's intraday drift, far inside the >5 sigma venue-specific spike the freeze targets.
 	DefaultCompositeReferenceToleranceBps = 75
 
 	// DefaultCompositeReferenceMinLegSources — 2 real venues on the
@@ -99,12 +65,7 @@ const (
 	// thing under suspicion and corroborates nothing.
 	DefaultCompositeReferenceMinLegSources = 2
 
-	// DefaultCompositeReferenceFXMaxAge — 76h, the same budget the
-	// Chainlink FX feeds carry in the shipped template ("FX markets
-	// close weekends; 3h crypto default reads them dead Fri-Mon").
-	// fx_quotes rows are keyed by DAY and updated in place, so a
-	// Monday-morning read of Friday's bucket is ~72h old and still
-	// valid; a feed that missed Monday is stale by Tuesday.
+	// DefaultCompositeReferenceFXMaxAge is 76h: fx_quotes rows are keyed by DAY, so Monday's read of Friday's bucket is ~72h old and still valid.
 	DefaultCompositeReferenceFXMaxAge = 76 * time.Hour
 
 	// DefaultCompositeReferenceReleaseBandPct — 2 %. A genuine repricing
@@ -162,11 +123,7 @@ var compositeVerdicts = []compositeVerdict{
 	compositeVerdictCorroborated, compositeVerdictRefuted, compositeVerdictUnavailable,
 }
 
-// legRef is one priced pair's CURRENT-tick publish, recorded by
-// refreshPairWindow for the reference evaluator: the exact VWAP and the
-// distinct venue count behind it. Only confident publishes are
-// recorded — a frozen / dropped / empty leg leaves no entry, so the
-// reference fails closed on it.
+// legRef is one priced pair's CURRENT-tick publish (exact VWAP, distinct venue count); only confident publishes are recorded, so a frozen/dropped/empty leg fails the reference closed.
 type legRef struct {
 	price   *big.Rat
 	sources int
@@ -187,11 +144,7 @@ type legRef struct {
 	// — prints quoted in a stablecoin, priced here at par with real USD.
 	proxyShare float64
 
-	// surfaceDivergence is |proxyVWAP − ownQuoteVWAP| / ownQuoteVWAP
-	// between the proxy-rewritten prints and the prints quoted in the
-	// pair's own quote asset: a stablecoin de-peg, which the par rewrite
-	// otherwise absorbs into the leg unseen. nil when either surface is
-	// empty; surfaceUncomputable when a surface VWAP failed.
+	// surfaceDivergence is |proxyVWAP - ownQuoteVWAP| / ownQuoteVWAP, exposing a stablecoin de-peg the par rewrite absorbs; nil when a surface is empty, surfaceUncomputable when a VWAP failed.
 	surfaceDivergence   *big.Rat
 	surfaceUncomputable bool
 }
@@ -248,14 +201,7 @@ func (o *Orchestrator) quoteSurfaces(
 	return share, divergence, false
 }
 
-// legDispersion computes the leg-dispersion statistic for one
-// published bucket: each venue's own VWAP over the post-filter
-// survivor trades (the same slice and the same normalisation the leg
-// VWAP came from), measured against the leg VWAP. (nil, false) when the
-// bucket has fewer than two venues (nothing to disperse — the guard
-// does not apply). (nil, true) when a venue VWAP cannot be computed:
-// the guard could not run, which is NOT the same as passing it, so the
-// caller fails closed (A4).
+// legDispersion computes each venue's own VWAP over the post-filter survivors against the leg VWAP. (nil, false): under two venues, guard N/A. (nil, true): a venue VWAP could not be computed, which is NOT a pass, so the caller fails closed.
 func (o *Orchestrator) legDispersion(pair canonical.Pair, trades []canonical.Trade, vwap *big.Rat) (dispersion *big.Rat, uncomputable bool) {
 	if vwap == nil || vwap.Sign() <= 0 {
 		return nil, true
@@ -306,11 +252,7 @@ type compositeReference struct {
 	// float64 mirror of [deviationRatio] for gauges and log lines.
 	divergencePct float64
 
-	// deviationRatio is the same |direct − composite| / composite as
-	// divergencePct, but exact *big.Rat: the value [releaseCorroborated]
-	// must compare against its own band, so the mid-hold release
-	// decision is decided in the same exact space as the verdict above
-	// it, not at the mercy of float64 binary rounding at the boundary.
+	// deviationRatio is the exact *big.Rat |direct - composite| / composite that [releaseCorroborated] compares against its band, avoiding float64 rounding at the boundary.
 	deviationRatio *big.Rat
 
 	// legSources maps each chain leg (canonical pair string) to the
@@ -392,12 +334,7 @@ func (r compositeReference) reasonSuffix() string {
 	}
 }
 
-// compositeReferenceEligible reports whether the reference is evaluated
-// for this bucket at all: the mechanism is enabled, the pair is on the
-// allow-list, and the bucket is single-venue by the freeze's own
-// source_count leg. A multi-venue bucket is never evaluated — its
-// freeze path, confidence input, reason string and composite_meta stay
-// byte-identical to before (pinned by the differential test).
+// compositeReferenceEligible reports whether the reference is evaluated: enabled, pair on the allow-list, and single-venue by the freeze's source_count leg. Multi-venue buckets are never evaluated.
 func (o *Orchestrator) compositeReferenceEligible(pair canonical.Pair, trades []canonical.Trade) bool {
 	cfg := o.cfg.CompositeReference
 	if !cfg.Enabled || !containsPair(cfg.Targets, pair) {
@@ -427,12 +364,7 @@ func (o *Orchestrator) chainForTarget(pair canonical.Pair) (TriangulationChain, 
 	return TriangulationChain{}, false
 }
 
-// recordLegRef captures a confidently-published (pair, window) bucket
-// as a CURRENT-tick leg for the reference evaluator. Called from
-// refreshPairWindow at the publish point (next to newEdgeQuote), so
-// frozen / dropped / empty / below-floor buckets leave no entry.
-// Rebuilt at the top of every Tick; same single-Tick-at-a-time
-// invariant as tickEdgeQuotes (L4).
+// recordLegRef captures a confidently-published bucket as a CURRENT-tick leg, at the publish point in refreshPairWindow. Rebuilt every Tick; same single-Tick-at-a-time invariant as tickEdgeQuotes.
 func (o *Orchestrator) recordLegRef(pair canonical.Pair, window time.Duration, vwap *big.Rat, trades []canonical.Trade) {
 	o.setTickLegRef(pair, window, o.newLegRef(pair, vwap, trades, nil))
 }
@@ -465,13 +397,8 @@ func (o *Orchestrator) setTickLegRef(pair canonical.Pair, window time.Duration, 
 	o.tickLegRefs[window][pair.String()] = lr
 }
 
-// evaluateCompositeReference builds the reference for (pair, window)
-// on the CURRENT bucket, compares it with the fresh direct VWAP and
-// records the reading in tickCompositeRefs (read by the confidence
-// step, the freeze step and the triangulation pass's composite_meta).
-// Every failure mode is fail-closed: the verdict is "unavailable" with
-// a named cause and the freeze semantics are exactly the pre-existing
-// ones.
+// evaluateCompositeReference builds the reference for (pair, window) on the CURRENT bucket, compares it with the direct VWAP and records it in tickCompositeRefs.
+// Every failure is fail-closed: verdict "unavailable" with a named cause, freeze semantics unchanged.
 func (o *Orchestrator) evaluateCompositeReference(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -550,19 +477,8 @@ func (o *Orchestrator) resolveCompositeReference(
 	return ref
 }
 
-// referenceLeg resolves ONE chain leg for the current bucket. Returns
-// (price, distinct source count, "") on success or (nil, 0, cause)
-// when the leg cannot back a reference this bucket.
-//
-// A priced (non-FX) leg must have been published THIS tick
-// (tickLegRefs — [Orchestrator.refreshOrder] guarantees the legs are
-// refreshed before their targets) with >= MinLegSources venues. An FX
-// leg is snapped at `now` through the same [FXStore] the chain pass
-// uses, must be within FXMaxAge, and every provider in its source
-// label must be of the FX source class — an oracle can never be the FX
-// leg of a reference. FXStore nil (a test Config) reads as unavailable
-// rather than falling back to the cached VWAP: the cached value's
-// freshness and provenance are unknown.
+// referenceLeg resolves ONE chain leg: (price, distinct source count, "") or (nil, 0, cause).
+// A priced leg must be published THIS tick (refreshOrder guarantees legs refresh first) with >= MinLegSources venues. An FX leg is snapped at `now` via [FXStore], within FXMaxAge, all providers of the FX source class; nil FXStore reads as unavailable, never the cached VWAP (unknown provenance).
 func (o *Orchestrator) referenceLeg(
 	ctx context.Context,
 	leg canonical.Pair,
@@ -616,11 +532,7 @@ func (o *Orchestrator) referenceLeg(
 	return price, len(strings.Split(source, "+")), ""
 }
 
-// fxSnapRejection is the admission rule for every FX snap, the
-// publishing chain leg and the corroborating reference alike: the quote
-// must be within maxAge of now and every provider in its source label
-// must be of the FX source class. Returns "" when the snap is usable,
-// else the refusal reason.
+// fxSnapRejection is the admission rule for every FX snap (chain leg and reference): within maxAge of now and every provider of the FX source class. Returns "" when usable, else the reason.
 func fxSnapRejection(now, observedAt time.Time, source string, maxAge time.Duration) string {
 	if observedAt.IsZero() || now.Sub(observedAt) > maxAge {
 		return "fx_stale"
@@ -633,12 +545,7 @@ func fxSnapRejection(now, observedAt time.Time, source string, maxAge time.Durat
 	return ""
 }
 
-// emitCompositeReference publishes the verdict gauge (one series per
-// verdict, exactly one of them 1) and the per-leg source-count gauge,
-// and logs the load-bearing outcome: a corroborated bucket is the one
-// that changes a freeze decision, so it is logged at Info with the
-// full decomposition; the others are Debug (they leave the freeze
-// path exactly as before).
+// emitCompositeReference publishes the verdict gauge (one series per verdict, exactly one is 1) and the per-leg source-count gauge; a corroborated bucket changes a freeze decision so it logs at Info, the rest at Debug.
 func (o *Orchestrator) emitCompositeReference(pair canonical.Pair, window time.Duration, ref compositeReference) {
 	for _, v := range compositeVerdicts {
 		val := 0.0
@@ -677,17 +584,8 @@ func (o *Orchestrator) emitCompositeReference(pair canonical.Pair, window time.D
 	o.logger.Debug("composite reference evaluated", attrs...)
 }
 
-// clearCompositeReference drops every composite-reference series for
-// (pair, window). Called on a tick where the pair is NOT eligible (it
-// gained a second venue, or left the allow-list): the gauges are a
-// per-tick verdict, so leaving the last eligible tick's "corroborated"
-// standing would have a dashboard — or an alert — assert that a freeze
-// decision consulted a reference it never saw, until the process
-// restarts. Same shape as recordVenueVWAPs' delete-then-set for a venue
-// that stopped trading.
-//
-// The label values MUST match emitCompositeReference's (windowLabel, not
-// window.String()) or this deletes nothing at all.
+// clearCompositeReference drops every composite-reference series for (pair, window) on a tick where the pair is not eligible, so a stale "corroborated" gauge never claims a freeze consulted a reference it never saw.
+// Label values MUST match emitCompositeReference's (windowLabel, not window.String()) or this deletes nothing.
 func (o *Orchestrator) clearCompositeReference(pair canonical.Pair, window time.Duration) {
 	labels := prometheus.Labels{"pair": pair.String(), "window": windowLabel(window)}
 	obs.AggregatorCompositeCorroboration.DeletePartialMatch(labels)
@@ -705,17 +603,8 @@ func (o *Orchestrator) currentCompositeReference(pair canonical.Pair, window tim
 	return ref, ok
 }
 
-// refreshOrder returns the per-tick refresh order: cfg.Pairs with the
-// priced (non-FX) legs of every enabled composite-reference chain
-// moved to the front, relative order otherwise preserved. The
-// reference is evaluated inside the TARGET's refresh, so its legs must
-// already have published this tick; without this an operator-supplied
-// `aggregate.pairs` that lists XLM/GBP before XLM/USD would leave the
-// mechanism silently dead ("leg_not_refreshed" every bucket). Returns
-// cfg.Pairs itself when the mechanism is off, so nothing changes for a
-// deployment that has not enabled it. Refresh order has no effect on
-// any per-pair output: refreshPairWindow reads and writes only
-// per-(pair, window) state.
+// refreshOrder returns cfg.Pairs with the priced legs of every enabled composite-reference chain moved to the front, since the reference is evaluated inside the TARGET's refresh and its legs must publish first.
+// Returns cfg.Pairs itself when the mechanism is off; refresh order does not affect per-pair output.
 func refreshOrder(cfg Config) []canonical.Pair {
 	if !cfg.CompositeReference.Enabled || len(cfg.CompositeReference.Targets) == 0 {
 		return cfg.Pairs

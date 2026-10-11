@@ -11,17 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
-// ─── Mark sets the serving flag and NOTHING a lifecycle owns ─────
-//
-// `freeze:<asset>:<quote>` has two writers. The ADR-0019 lifecycle
-// (MarkHoldForWindow) owns the ladders inside it and the TTL that keeps
-// them alive for the hold. The triangulated-composite refusal
-// (inheritLegFreeze → Mark) owns neither: it only needs the pair to carry
-// flags.frozen for a few minutes. Its targets are themselves members of
-// the aggregator's pair set, and its call sits on the ErrNoRoute branch
-// AHEAD of the guard that protects a self-frozen target — so Mark does
-// land on markers a live ladder owns. These tests pin what it may not do
-// to them.
+// Mark sets the serving flag and NOTHING a lifecycle owns: the composite refusal (inheritLegFreeze) calls Mark on pairs
+// whose markers a live ladder may own, so these tests pin what Mark may not do to them.
 
 func inheritedDecision() anomaly.Decision {
 	return anomaly.Decision{
@@ -31,11 +22,7 @@ func inheritedDecision() anomaly.Decision {
 	}
 }
 
-// TestMark_NeverShortensALiveLifecycleTTL: the lifecycle wrote the marker
-// with `remaining hold + grace` (tens of minutes). Mark's flat TTL must not
-// replace it, so on any tick the owning window did not re-mark — it
-// returns early on an empty or thin bucket — the marker of an ESCALATED
-// freeze was five minutes from lapsing.
+// TestMark_NeverShortensALiveLifecycleTTL: Mark's flat TTL must not replace the lifecycle's remaining hold plus grace, or an ESCALATED freeze lapses in minutes.
 func TestMark_NeverShortensALiveLifecycleTTL(t *testing.T) {
 	mr, rdb := newRedis(t)
 	w, err := freeze.NewWriter(rdb, time.Minute) // flat TTL: 1 minute
@@ -82,10 +69,7 @@ func TestMark_NeverShortensALiveLifecycleTTL(t *testing.T) {
 	}
 }
 
-// TestMark_PreservesALegacyMarkersLadder: a marker written before
-// per-window ladders existed keeps its one ladder in the pair-level State
-// field, which is what every window rehydrates from. Mark must not rewrite
-// that field to zero.
+// TestMark_PreservesALegacyMarkersLadder: Mark must not zero the pair-level State a pre-Ladders marker keeps its one ladder in.
 func TestMark_PreservesALegacyMarkersLadder(t *testing.T) {
 	_, rdb := newRedis(t)
 	w, err := freeze.NewWriter(rdb, time.Minute)
@@ -113,10 +97,7 @@ func TestMark_PreservesALegacyMarkersLadder(t *testing.T) {
 	}
 }
 
-// TestMark_KeepsALegacyMarkersOwnerRecord: on a legacy marker the
-// pair-level State IS the live ladder, so Mark must leave the whole
-// marker as its lifecycle owner wrote it — reason and ladder — not
-// relabel an escalated freeze as an inherited refusal.
+// TestMark_KeepsALegacyMarkersOwnerRecord: on a legacy marker Mark leaves reason and ladder as the owner wrote them, not relabelling an escalated freeze as inherited.
 func TestMark_KeepsALegacyMarkersOwnerRecord(t *testing.T) {
 	mr, rdb := newRedis(t)
 	w, err := freeze.NewWriter(rdb, time.Minute)
@@ -149,12 +130,7 @@ func TestMark_KeepsALegacyMarkersOwnerRecord(t *testing.T) {
 	}
 }
 
-// TestMark_AfterRedisLossDoesNotHideTheDurableLadder: Redis lost the
-// marker, and the inherited refusal re-creates it BEFORE the target's own
-// window next reaches the freeze step. From then on the marker is present,
-// so the durable ladder is never consulted again — the marker Mark writes
-// has to carry it, or the target's cold window reads a present marker with
-// no ladder and publishes the bucket an escalated freeze was withholding.
+// TestMark_AfterRedisLossDoesNotHideTheDurableLadder: a Mark that re-creates a lost marker must carry the durable ladder, since a present marker is never rechecked against it.
 func TestMark_AfterRedisLossDoesNotHideTheDurableLadder(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

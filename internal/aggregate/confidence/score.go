@@ -139,12 +139,7 @@ type Score struct {
 	Factors    Factors `json:"factors"`
 }
 
-// Compute returns the weighted geometric mean of the factors:
-//
-//	confidence = prod(factor_i ^ weight_i) ^ (1 / sum(weights))
-//
-// All-zero weights return 0.5 with factors populated; a zero factor with non-zero weight
-// zeroes the score, as ADR-0019 wants.
+// Compute returns the weighted geometric mean, prod(factor_i ^ weight_i) ^ (1 / sum(weights)); all-zero weights give 0.5, a zero factor with non-zero weight gives 0.
 func Compute(in Inputs, w Weights) Score {
 	f := Factors{
 		ZScore:                 ZScoreFactor(in.ZScore),

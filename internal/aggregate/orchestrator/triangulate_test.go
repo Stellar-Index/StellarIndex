@@ -163,25 +163,8 @@ func TestIsFXLeg_StructuralPredicate(t *testing.T) {
 	}
 }
 
-// TestTriangulate_FrozenLegDoesNotPublishDerivedPrice — a
-// freeze must not be launderable through triangulation.
-//
-// When Phase 1 or Phase 2 refuses to publish a pair, the orchestrator
-// deliberately leaves that pair's last-known-good value in Redis (the
-// API serves it with flags.frozen=true, which is the honest answer).
-// The triangulation pass then read that very key as if it were this
-// tick's fresh price, multiplied it by the other legs, and published
-// the product to the TARGET pair — which carries no freeze marker of
-// its own. The price we just declined to serve on XLM/USDT reached
-// consumers on XLM/EUR one multiplication later, looking fresh.
-//
-// The chain must refuse (outcome "frozen_leg"), keeps the
-// target's own prior value alive, and marks the target frozen so the
-// derived pair tells the same truth as the leg it descends from.
-//
-// Proven red without the guard: the target key is written with "0.900000000000"
-// (the frozen 1.00 leg × the 0.90 leg) and Mark is called once (the
-// leg only) instead of twice.
+// TestTriangulate_FrozenLegDoesNotPublishDerivedPrice: a freeze must not be launderable via triangulation. The frozen leg's LKG stays in Redis, and the chain must not multiply it as a fresh price into a target with no marker of its own.
+// The chain must refuse (frozen_leg), keep the target's prior value alive and mark the target frozen. Red without the guard: the target is written 0.900000000000 and Mark is called once, not twice.
 func TestTriangulate_FrozenLegDoesNotPublishDerivedPrice(t *testing.T) {
 	ctx := context.Background()
 	leg1 := xlmUsdtPair(t) // crypto:XLM/crypto:USDT — the pair that freezes
@@ -298,12 +281,7 @@ func TestTriangulate_HealthyLegStillPublishes(t *testing.T) {
 	}
 }
 
-// perPairFreezeMarker is a [FreezeMarker] fake keyed by (asset, quote),
-// unlike [recordingFreezeMarker] (which models a single global marker
-// slot). Needed whenever a test freezes one pair while a DIFFERENT pair
-// also exercises the phase-2 rehydrate-from-marker path in the same
-// tick — a shared, asset-agnostic fake would leak the first pair's
-// "present" state into the second pair's LoadState read.
+// perPairFreezeMarker is a [FreezeMarker] fake keyed by (asset, quote), unlike [recordingFreezeMarker]'s single global slot; needed when one pair freezes while another exercises the rehydrate-from-marker path in the same tick.
 type perPairFreezeMarker struct {
 	marks []recordedMark
 	state map[string]freeze.State
@@ -338,15 +316,7 @@ func (m *perPairFreezeMarker) Clear(_ context.Context, asset, quote canonical.As
 	return nil
 }
 
-// TestTriangulate_FrozenLegTargetPublishedDirectlyIsNotLaundered:
-// a leg of the chain freezes and the route around
-// it is unreachable (ErrNoRoute), but the TARGET published its own
-// fresh direct print this same tick. That value is not a last-known-
-// good — inheriting the freeze onto it would Expire a fresh key down to
-// FreezeTTL and stamp flags.frozen=true on a price nothing actually
-// froze. The fix must serve it unmarked: outcome
-// frozen_leg_direct_served, no freeze marker, no second
-// AnomalyFreezeEngagedTotal increment.
+// TestTriangulate_FrozenLegTargetPublishedDirectlyIsNotLaundered: a leg freezes and the route around it is unreachable, but the target published its own fresh direct print this tick. Inheriting the freeze would expire a fresh key to FreezeTTL and mark it frozen, so it serves unmarked (frozen_leg_direct_served, no marker, no second AnomalyFreezeEngagedTotal).
 func TestTriangulate_FrozenLegTargetPublishedDirectlyIsNotLaundered(t *testing.T) {
 	ctx := context.Background()
 	leg1 := xlmUsdtPair(t)                             // crypto:XLM/crypto:USDT — freezes this tick
@@ -437,13 +407,7 @@ func TestTriangulate_FrozenLegTargetPublishedDirectlyIsNotLaundered(t *testing.T
 	}
 }
 
-// An UNSCORABLE edge must never outrank a fully-scored one. The
-// unscored fallback is a bare source-count factor (0.731 at 4 sources,
-// 0.953 at 6) on a different scale from the multi-factor score, and
-// uncapped it cleared the reroute + corroboration gates (both 0.5) that
-// a scored edge only ties — so edges with no z-score, no liquidity
-// measure and no cross-oracle check were the ones setting composites
-// and widening the freeze's source-count leg.
+// An UNSCORABLE edge must never outrank a fully-scored one: the unscored fallback is a bare source-count factor (0.731 at 4 sources, 0.953 at 6) which uncapped cleared the 0.5 reroute and corroboration gates a scored edge only ties.
 func TestEdgeConfidence_UnscoredFallbackCannotOutrankAScoredEdge(t *testing.T) {
 	t.Parallel()
 
@@ -537,23 +501,8 @@ func TestTriangulate_InheritedFreeze_StreamCarriesAMarker(t *testing.T) {
 	}
 }
 
-// TestTriangulate_FrozenLegStaysRefusedOnATickItsWindowIsEmpty is the
-// second half of the frozen-leg guard: a freeze must not be launderable through
-// triangulation on the ticks AFTER the one that fired it either.
-//
-// The laundering guard read a set rebuilt at the top of every tick, and
-// the only thing that ever wrote to it was engageFreeze. But
-// refreshPairWindow returns BEFORE the freeze step when the window is
-// empty, when it is under the USD-volume floor, and when the VWAP has no
-// trades — and a pair whose market has just been manipulated on one thin
-// venue is exactly the pair whose next bucket is empty. On that tick the
-// pair is still frozen (its ADR-0019 hold runs for tens of minutes, its
-// marker and its last-known-good value are both deliberately still in
-// Redis) yet nothing re-entered it into the set, so the chain read the
-// LKG as a fresh leg and published the product to a target that carries
-// no frozen flag.
-//
-// Tick 1 here is the same-tick frozen-leg scenario. Tick 2 is the hole.
+// TestTriangulate_FrozenLegStaysRefusedOnATickItsWindowIsEmpty: the laundering guard read a per-tick set written only by engageFreeze, but refreshPairWindow returns before the freeze step on an empty, under-floor or VWAP-less window, so a still-frozen pair (hold and LKG still in Redis) was read as a fresh leg.
+// Tick 1 is the same-tick scenario; tick 2 is the hole.
 func TestTriangulate_FrozenLegStaysRefusedOnATickItsWindowIsEmpty(t *testing.T) {
 	ctx := context.Background()
 	leg1 := xlmUsdtPair(t) // the pair that freezes
@@ -624,14 +573,7 @@ func TestTriangulate_FrozenLegStaysRefusedOnATickItsWindowIsEmpty(t *testing.T) 
 	}
 }
 
-// TestTriangulate_RefusedLegIsNotReadBackFromCache covers the non-freeze
-// half of the laundering route: refreshPairWindow refuses a configured
-// pair's window (empty, under the USD-volume floor, or unfetchable) and
-// returns before writing anything, but the pair's previous value is still
-// in Redis. Read
-// back as a chain leg, that value entered the cross-rate graph as if this
-// tick had priced it, and the target published a fresh-looking composite
-// on a leg nobody priced.
+// TestTriangulate_RefusedLegIsNotReadBackFromCache: when refreshPairWindow refuses a configured pair's window (empty, under floor, unfetchable) its previous Redis value must not enter the cross-rate graph as if priced this tick, publishing a fresh-looking composite on a leg nobody priced.
 func TestTriangulate_RefusedLegIsNotReadBackFromCache(t *testing.T) {
 	window := 5 * time.Minute
 	for _, tc := range []struct {

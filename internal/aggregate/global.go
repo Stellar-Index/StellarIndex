@@ -10,131 +10,70 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// PriceAuthority labels what produced a global-view price. Surfaces
-// verbatim on `/v1/assets/{slug}.price_authority`.
-// The first three are the tiers of [ComputeGlobalPrice]; consumers
-// downgrade trust on the second and third vs the first. The rest label
-// prices served outside that ladder and are never `vwap_native`.
+// PriceAuthority labels what produced a global-view price, served as /v1/assets/{slug}.price_authority.
 type PriceAuthority string
 
 const (
-	// AuthorityVWAPNative means the served price came from our own
-	// VWAP across exchange-class trades — the gold standard. For a
-	// Stellar-issued asset this is the SDEX + Soroban DEX trades;
-	// for cross-chain tickers it's any direct-pair venue trade.
+	// AuthorityVWAPNative is our own VWAP across exchange-class trades, the gold standard.
 	AuthorityVWAPNative PriceAuthority = "vwap_native"
 
-	// AuthorityAggregatorAvg means the served price is a simple
-	// average across `Class:Aggregator` sources (CoinGecko + CMC +
-	// CryptoCompare). Used when the VWAP tier didn't have enough
-	// trades. Aggregator-class sources never contribute to VWAP
-	// (they're already aggregated upstream — mixing would
-	// double-count), so this tier is a separate fallback layer
-	// rather than a VWAP input.
+	// AuthorityAggregatorAvg is a simple average across Class:Aggregator sources, which never feed VWAP (already aggregated upstream; mixing double-counts).
 	AuthorityAggregatorAvg PriceAuthority = "aggregator_avg"
 
-	// AuthorityTriangulated means the served price was derived via
-	// a bridge currency (`ASSET_USD ≈ ASSET_BTC × BTC_USD`). Last-
-	// resort tier; only fires when neither direct VWAP nor
-	// aggregator coverage exists for the pair.
+	// AuthorityTriangulated is a price derived via a bridge currency, the last-resort tier.
 	AuthorityTriangulated PriceAuthority = "triangulated"
 
-	// AuthorityReferenceRate is a published FX reference rate (the daily
-	// ECB series in fx_quotes), not a traded VWAP.
+	// AuthorityReferenceRate is a published FX reference rate (the daily ECB series in fx_quotes), not a traded VWAP.
 	AuthorityReferenceRate PriceAuthority = "reference_rate"
 
 	// AuthorityIdentity is a price true by definition (USD in USD).
 	AuthorityIdentity PriceAuthority = "identity"
 
-	// AuthorityOnChainListing is the per-Stellar-asset listing price
-	// (/v1/assets) served as a Stellar-only token's headline. It carries
-	// no trade-count floor and no observation time.
+	// AuthorityOnChainListing is the per-asset listing price served as a Stellar-only token's headline, with no trade-count floor or observation time.
 	AuthorityOnChainListing PriceAuthority = "onchain_listing"
 )
 
-// GlobalPriceResult is the output of [ComputeGlobalPrice]. Carries
-// the served price string + the tier that produced it + the
-// contributing source names for transparency.
+// GlobalPriceResult is the output of [ComputeGlobalPrice]: the served price, its tier and the contributing sources.
 type GlobalPriceResult struct {
 	Price     string         // decimal string, exactly as Postgres serialises NUMERIC
 	Authority PriceAuthority // which tier won
 	Sources   []string       // contributors — venue names (VWAP), aggregator names (avg), bridge-currency-anchor source (triangulated, optional)
 	AsOf      time.Time      // observation timestamp the price corresponds to
-	// TradeCount carries the trade count from the VWAP tier; zero
-	// for the aggregator and triangulated tiers. Useful for
-	// consumers that want to render "12 trades from 4 venues"
-	// alongside the price.
+	// TradeCount is the VWAP tier's trade count; zero for the aggregator and triangulated tiers.
 	TradeCount int64
 }
 
-// GlobalPriceReader is the storage seam [ComputeGlobalPrice] reads
-// against. Each method maps to one tier of the fallback chain; the
-// production wiring in cmd/stellarindex-api/main.go provides a thin
-// adapter over *timescale.Store + the existing Redis triangulation
-// looker.
+// GlobalPriceReader is the storage seam [ComputeGlobalPrice] reads, one method per fallback tier.
 type GlobalPriceReader interface {
-	// LatestVWAP returns the most-recent closed VWAP bucket for the
-	// pair. `ok` is false when no closed bucket exists yet (no
-	// trades, retention pruned, or the asset doesn't trade on this
-	// pair). The trade count + sources powers the threshold check
-	// + transparency surface.
-	//
-	// vwap is the RAW prices_1m quote/base ratio, not decimals-corrected,
-	// and [ComputeGlobalPrice] passes it through verbatim: whoever serves
-	// the result must apply [AdjustPrice] for (base, quote) as asked here.
+	// LatestVWAP returns the latest closed VWAP bucket; vwap is the RAW prices_1m ratio, so whoever serves it must apply [AdjustPrice].
 	LatestVWAP(ctx context.Context, base, quote canonical.Asset) (vwap string, asOf time.Time, tradeCount int64, sources []string, ok bool, err error)
 
-	// LatestAggregatorPrices returns the most-recent observation
-	// per source across the supplied aggregator-class source list.
-	// Callers typically pass `external.AggregatorSources()`.
+	// LatestAggregatorPrices returns the latest observation per source across the given aggregator-class sources.
 	LatestAggregatorPrices(ctx context.Context, base, quote canonical.Asset, sources []string) ([]canonical.OracleUpdate, error)
 
-	// LookupTriangulated returns the implied price for (base, quote)
-	// computed via a bridge currency (typically BTC or USD).
-	// `ok` is false when no triangulation path was published for
-	// this pair (caller doesn't need to know the bridge — the
-	// triangulation worker tracks the path itself).
+	// LookupTriangulated returns the bridge-implied price for (base, quote); ok is false when no path was published.
 	LookupTriangulated(ctx context.Context, base, quote canonical.Asset, window time.Duration) (price string, asOf time.Time, ok bool, err error)
 }
 
 // GlobalPriceOptions tunes the fallback-chain policy.
 type GlobalPriceOptions struct {
-	// VWAPMinTradeCount is the trade-count floor below which the
-	// VWAP tier falls through to the aggregator tier. Zero =>
-	// any non-empty bucket wins. The default in [DefaultGlobalPriceOptions]
-	// matches our existing reduced-redundancy threshold so the
-	// global view's "is this real VWAP?" judgement stays aligned
-	// with the rest of the API.
+	// VWAPMinTradeCount is the trade-count floor below which the VWAP tier falls through to the aggregator tier; zero accepts any non-empty bucket.
 	VWAPMinTradeCount int64
 
-	// AggregatorSources is the source list the aggregator tier
-	// reads from. Empty disables tier 2 entirely (the global price
-	// will skip from VWAP straight to triangulated).
+	// AggregatorSources is the source list for the aggregator tier; empty disables it.
 	AggregatorSources []string
 
-	// TriangulationWindow is the time window the triangulation
-	// worker's published implied VWAP was computed over. Echoed
-	// to the looker so it can pick the matching cache key.
+	// TriangulationWindow is the window the published implied VWAP was computed over, used to pick the cache key.
 	TriangulationWindow time.Duration
 
-	// MaxAggregatorAge caps how stale an aggregator-tier
-	// observation can be before it's ignored. Zero means no
-	// freshness check — observations land regardless of age.
-	// Defaults to 10 minutes in [DefaultGlobalPriceOptions]
-	// (within CG's typical update cadence; observations older
-	// than this are stale enough to trust less than the next tier).
+	// MaxAggregatorAge caps aggregator observation age (default 10 minutes); zero disables the freshness check.
 	MaxAggregatorAge time.Duration
 
-	// MaxVWAPAge is the VWAP tier's freshness ceiling. A VWAP older than
-	// this yields to a fresh aggregator or triangulated price and is
-	// served only when neither exists. Zero means no freshness check.
+	// MaxVWAPAge is the VWAP tier's freshness ceiling: an older VWAP yields to a fresh lower tier and is served only if none exists; zero disables it.
 	MaxVWAPAge time.Duration
 }
 
-// DefaultGlobalPriceOptions returns the conservative defaults: 5
-// trades to clear the VWAP threshold, 5-minute triangulation
-// window, 10-minute freshness ceiling on both the VWAP and the
-// aggregator tier, so tier order decides only between current prices.
+// DefaultGlobalPriceOptions returns the defaults: 5-trade floor, 5-minute triangulation window, 10-minute freshness ceiling on the VWAP and aggregator tiers.
 func DefaultGlobalPriceOptions() GlobalPriceOptions {
 	return GlobalPriceOptions{
 		VWAPMinTradeCount:   5,
@@ -145,26 +84,9 @@ func DefaultGlobalPriceOptions() GlobalPriceOptions {
 }
 
 // ErrNoPrice indicates none of the three tiers produced a price.
-// Handlers translate to 404 + problem+json.
 var ErrNoPrice = errors.New("aggregate: no global price available")
 
-// ComputeGlobalPrice walks the three-tier fallback chain and returns
-// the first tier whose data satisfies its threshold:
-//
-//  1. `vwap_native` — wins when LatestVWAP returns a row with
-//     trade_count >= VWAPMinTradeCount observed within MaxVWAPAge.
-//  2. `aggregator_avg` — wins when LatestAggregatorPrices returns
-//     >= 1 fresh observation (within MaxAggregatorAge).
-//  3. `triangulated` — wins when LookupTriangulated returns ok.
-//  4. a VWAP that cleared the floor but not MaxVWAPAge, labelled
-//     `vwap_native` with its own (old) AsOf.
-//
-// Returns ErrNoPrice when every tier comes up empty. Reader errors
-// other than "no rows" are propagated — a transient storage failure
-// shouldn't silently degrade to a lower tier (operator wants to see
-// the failure, and the aggregator tier might mask a broken VWAP
-// path). The exception is sql-style "not found", which is the
-// expected miss signal and triggers the next tier instead.
+// ComputeGlobalPrice walks vwap_native, aggregator_avg, triangulated, then a stale VWAP, returning [ErrNoPrice] if all are empty; reader errors other than not-found propagate.
 func ComputeGlobalPrice(
 	ctx context.Context,
 	base, quote canonical.Asset,
@@ -212,14 +134,8 @@ func tryVWAPTier(
 	reader GlobalPriceReader,
 	opts GlobalPriceOptions,
 ) (fresh, stale *GlobalPriceResult, err error) {
-	// Loop the base's canonical aliases, mirroring
-	// the API's readPriceWithAliases. XLM has two canonical forms —
-	// `native` (SDEX-emitted) and `crypto:XLM` (CEX-emitted). The
-	// aggregator VWAPs under whichever form the configured pair set
-	// names; without the alias loop the global view (/v1/assets/{slug})
-	// degrades from vwap_native to aggregator_avg when LatestVWAP is
-	// queried under the form that has no trades. The FIRST alias whose
-	// VWAP clears the trade-count floor wins.
+	// Loop the base's canonical aliases (XLM: native, crypto:XLM, SAC); the pair set may be configured under any form.
+	// The FIRST alias whose VWAP clears the trade-count floor wins.
 	for _, b := range assetAliases(base) {
 		vwap, asOf, tradeCount, sources, ok, err := reader.LatestVWAP(ctx, b, quote)
 		if err != nil {
@@ -245,15 +161,8 @@ func tryVWAPTier(
 	return nil, stale, nil
 }
 
-// assetAliases is the aggregate spelling of [canonical.AssetAliases].
-//
-// Delegates to the leaf primitive so the aggregator and api/v1 cannot
-// drift apart on XLM's identities (including the SAC C-address). The
-// leaf godoc carries
-// the priority-order reasoning that matters here: [tryVWAPTier] takes
-// the FIRST alias that clears VWAPMinTradeCount, so the SAC form is
-// ordered last and can only win when both SDEX (`native`) and CEX
-// (`crypto:XLM`) miss.
+// assetAliases delegates to [canonical.AssetAliases] so the aggregator and api/v1 cannot drift on XLM's identities.
+// The SAC form is ordered last: tryVWAPTier takes the FIRST alias clearing VWAPMinTradeCount.
 func assetAliases(asset canonical.Asset) []canonical.Asset {
 	return canonical.AssetAliases(asset)
 }
@@ -267,13 +176,7 @@ func tryAggregatorTier(
 	if len(opts.AggregatorSources) == 0 {
 		return GlobalPriceResult{}, false, nil
 	}
-	// Loop the base's canonical aliases exactly as
-	// tryVWAPTier does. Aggregators publish under whichever form the
-	// configured pair set names (`native` vs `crypto:XLM` vs the SAC
-	// C-address); querying only the literal base degrades the headline
-	// /v1/assets/{slug} price to a lower tier when the base's coverage
-	// lives under an alias. The FIRST alias whose fresh average clears
-	// the tier wins; the SAC form is ordered last (see [assetAliases]),
+	// Same alias loop as tryVWAPTier; the FIRST fresh average clearing the tier wins and the SAC form is last,
 	// so a thin Soroban pool can never shadow the deep classic/CEX feeds.
 	for _, b := range assetAliases(base) {
 		rows, err := reader.LatestAggregatorPrices(ctx, b, quote, opts.AggregatorSources)
@@ -316,12 +219,8 @@ func tryTriangulatedTier(
 	reader GlobalPriceReader,
 	opts GlobalPriceOptions,
 ) (GlobalPriceResult, bool, error) {
-	// Same alias loop as tryVWAPTier / tryAggregatorTier.
-	// The triangulation worker publishes each implied VWAP under a single
-	// canonical form, so a base whose bridge path was computed under
-	// `crypto:XLM` (or the SAC) is invisible to a `native`-keyed read
-	// without walking the alias family. FIRST alias with a published path
-	// wins; the SAC form is tried last.
+	// Same alias loop as the other tiers: the worker publishes each implied VWAP under one canonical form.
+	// The FIRST alias with a published path wins; the SAC form is tried last.
 	for _, b := range assetAliases(base) {
 		price, asOf, ok, err := reader.LookupTriangulated(ctx, b, quote, opts.TriangulationWindow)
 		if err != nil {
@@ -363,43 +262,16 @@ func filterFreshAggregatorRows(rows []canonical.OracleUpdate, maxAge time.Durati
 // aggregator's native precision (CoinGecko=8, CMC=8).
 const aggregatorCommonDecimals = 14
 
-// aggregatorMinForOutlierReject is the fewest sources at which a robust
-// outlier can be identified. With 1–2 sources there is no majority to
-// define a consensus (two sources 2× apart are indistinguishable —
-// either could be the true price), so the tier averages them
-// unchanged; at >= 3 a single divergent print is a clear minority and
-// is dropped.
+// aggregatorMinForOutlierReject is the fewest sources at which an outlier is identifiable; with 1-2 sources there is no majority, so they are averaged unchanged.
 const aggregatorMinForOutlierReject = 3
 
-// aggregatorMADFactor is the σ-equivalent half-width of the aggregator
-// tier's acceptance band: a source is dropped when it lies more than
-// aggregatorMADFactor·(1.4826·MAD) from the median of the sources.
-//
-// K = 5 matches the codebase's 5σ anomaly convention (ADR-0019).
-// NOTE (business-value knob): this is the aggregator-divergence
-// tolerance — how far a CoinGecko/CMC/CryptoCompare print may sit from
-// its peers before it is treated as a bad print rather than a real
-// disagreement. Surfaced for the orchestrator to tune per risk
-// appetite.
+// aggregatorMADFactor is K=5 sigma-equivalents (ADR-0019), the half-width of the aggregator tier's acceptance band
+// around the median; a business-value tolerance knob.
 var aggregatorMADFactor = big.NewRat(5, 1)
 
-// rejectAggregatorOutliers drops aggregator observations whose price is
-// grossly divergent from the consensus of the other sources, so a
-// single bad print cannot drag the plain-mean headline price.
-//
-// It computes the EXACT median of the sources' prices (projected onto
-// [aggregatorCommonDecimals]) and drops any source whose deviation exceeds
-// aggregatorMADFactor*(1.4826*MAD). When MAD == 0, [robustCentreScale]
-// substitutes [zeroScaleRelFloor]*|centre| (about +-2.5% at the defaults).
-// All comparison arithmetic is exact *big.Rat (ADR-0003).
-//
-// The deviation is measured in RATIO space ([symmetricDev]): the additive band
-// `|p - centre| > K*scale` goes non-positive at the lower edge once K*scale
-// reaches the centre (routine for thin RWA), so no downward print, such as a
-// decimal-shifted or zero quote, could be rejected.
-//
-// It NEVER fails closed: with fewer than [aggregatorMinForOutlierReject]
-// usable sources it returns the input unchanged.
+// rejectAggregatorOutliers drops sources beyond aggregatorMADFactor*(1.4826*MAD) of the median, in ratio space ([symmetricDev])
+// so a downward or zero print is rejected too; exact *big.Rat (ADR-0003). Fewer than [aggregatorMinForOutlierReject]
+// usable sources returns the input unchanged (never fails closed).
 func rejectAggregatorOutliers(rows []canonical.OracleUpdate) []canonical.OracleUpdate {
 	if len(rows) < aggregatorMinForOutlierReject {
 		return rows
@@ -461,17 +333,8 @@ func pow10(n int) *big.Int {
 	return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil)
 }
 
-// averageAggregatorPrices computes the simple arithmetic mean
-// across a slice of OracleUpdate. Each price is scaled to a common
-// 14-decimal representation before averaging — matches the
-// decimal precision the existing /v1/oracle/lastprice surface
-// already uses, and exceeds the per-source `Decimals` for every
-// aggregator we wire today (CG=8, CMC=8). Returns a decimal string
-// + the latest observation timestamp + ok=true on success.
-//
-// The mean is rounded half-up once at 14 dp. ok=false when the input
-// has zero rows, no row has a positive price, or the mean rounds to zero
-// at 14 dp — "0.00000000000000" is not a price, so the tier misses.
+// averageAggregatorPrices returns the arithmetic mean of positive prices scaled to 14 dp, rounded half-up once, plus the latest
+// observation time. ok=false when no row has a positive price or the mean rounds to zero ("0.00000000000000" is not a price).
 func averageAggregatorPrices(rows []canonical.OracleUpdate) (string, time.Time, bool) {
 	if len(rows) == 0 {
 		return "", time.Time{}, false

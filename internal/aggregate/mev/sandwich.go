@@ -6,17 +6,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// KindSandwich is the mev_events.kind for cross-transaction sandwich
-// candidates.
+// KindSandwich is the mev_events.kind for cross-transaction sandwich candidates.
 const KindSandwich = "sandwich"
 
-// Direction opposition: trades.base_asset IS the trade direction — the
-// amounts are both positive, so direction lives in which asset the source
-// places in Base, under a per-source convention (see takerBaseIsReceived).
-// A genuine sandwich front-runs then back-runs the SAME pair in OPPOSITE
-// directions; buildSandwichCandidate enforces that. This feeds a
-// publicly-served accusation, so same-direction (and direction-unknown)
-// brackets are dropped rather than naming an account.
+// trades.base_asset IS the direction (amounts are both positive) under a per-source convention
+// (takerBaseIsReceived). A sandwich needs OPPOSITE directions on the same pair; same-direction and
+// unknown brackets are dropped because this is a publicly served accusation.
 const sandwichNote = "One account's trades in two different transactions bracket at " +
 	"least one other account's trade on the same pair within a single ledger " +
 	"(tx_index application order from the raw lake), and the account's front and " +
@@ -25,9 +20,7 @@ const sandwichNote = "One account's trades in two different transactions bracket
 	"per-source convention; same-direction brackets are rejected. Profit is not " +
 	"estimated, so treat as an unverified candidate, not proof, and not an accusation."
 
-// OrderedLeg is one trade in an ordering-aware pattern's evidence,
-// carrying the lake-resolved tx_index that placed it. Amounts are
-// decimal strings (ADR-0003).
+// OrderedLeg is one trade in an ordering-aware pattern's evidence with its lake tx_index; amounts are decimal strings (ADR-0003).
 type OrderedLeg struct {
 	Source  string `json:"source"`
 	TxHash  string `json:"tx_hash"`
@@ -52,16 +45,9 @@ type sandwichDetail struct {
 	Note               string       `json:"note"`
 }
 
-// DetectSandwiches scans a batch of trades for the cross-transaction
-// sandwich shape: within one ledger and one (unordered) pair, account
-// A trades in two DIFFERENT transactions whose tx_index bracket ≥1
-// trade by a different account. txIdx maps tx_hash → tx_index
-// (application order within the ledger, resolved from the raw lake);
-// trades whose hash is not in the map are ignored — a partial map
-// degrades detection, never fabricates order.
-//
-// usdVolume is the optional parallel USD-notional slice (same
-// convention as DetectArbitrage).
+// DetectSandwiches finds, within one ledger and unordered pair, an account trading in two DIFFERENT txs whose
+// tx_index brackets another account's trade. Trades missing from txIdx are ignored: a partial map degrades detection, never fabricates order.
+// usdVolume is the optional parallel notional slice, as in DetectArbitrage.
 func DetectSandwiches(trades []canonical.Trade, usdVolume []string, txIdx map[string]uint32) []Candidate {
 	if len(txIdx) == 0 {
 		return nil
@@ -209,12 +195,8 @@ func bracketTrades(trades []canonical.Trade, txIdx map[string]uint32, idxs []int
 	return front, back, true
 }
 
-// oppositeDirection reports whether the front and back trades sit on
-// OPPOSITE sides of the same pair — the defining shape of a sandwich
-// (front-run one way, back-run the other). If the direction of EITHER
-// leg is indeterminate (a source whose base convention we don't know),
-// it returns false: this feeds a publicly-served accusation, so we never
-// assert an opposition we cannot prove.
+// oppositeDirection reports whether front and back sit on OPPOSITE sides of the pair. If either direction is
+// indeterminate it returns false: we never assert an opposition we cannot prove.
 func oppositeDirection(front, back canonical.Trade) bool {
 	fl, fok := takerReceivesLowAsset(front)
 	bl, bok := takerReceivesLowAsset(back)
@@ -248,11 +230,8 @@ func takerReceivesAsset(t canonical.Trade, asset string) (received, ok bool) {
 	}
 }
 
-// takerReceivesLowAsset reports whether the taker RECEIVED the
-// orientation-independent LOW asset of the trade's pair (the same "low"
-// unorderedPairKey sorts on), collapsing the per-source base convention
-// into one comparable direction. ok is false when the source's
-// convention is unknown.
+// takerReceivesLowAsset reports whether the taker RECEIVED the pair's orientation-independent LOW asset
+// (as unorderedPairKey sorts); ok is false when the source's convention is unknown.
 func takerReceivesLowAsset(t canonical.Trade) (low, ok bool) {
 	received, ok := takerBaseIsReceived(t.Source)
 	if !ok {
@@ -264,25 +243,9 @@ func takerReceivesLowAsset(t canonical.Trade) (low, ok bool) {
 	return received == baseIsLow, true
 }
 
-// takerBaseIsReceived reports, per source, whether a trade's raw Base
-// asset is the one the TAKER received (bought). Direction is not a sign
-// on the amounts (both are positive) — it lives in which asset the
-// source places in Base, and that convention is INVERTED between the
-// classic orderbook and the Soroban AMMs:
-//
-//   - sdex writes base = the asset the maker SOLD, i.e. what the taker
-//     RECEIVED (internal/sources/sdex/decode.go).
-//   - the Soroban AMMs (aquarius, comet, phoenix, soroswap, sushiswap_v3)
-//     write base = token_in = what the taker SOLD, so the taker received
-//     the QUOTE (each source's decode.go). For sushiswap_v3 that is the
-//     POSITIVE signed pool delta — the leg the pool received.
-//
-// These are the only on-chain sources that emit taker-attributed,
-// ledger>0 trades (off-chain venues stamp ledger 0 and are excluded by
-// orderableTrade).
-// ok is false for any other source: an unknown convention cannot yield a
-// proven direction, and dropping the candidate is the only safe move for
-// accusation data — better a missed candidate than a named innocent.
+// takerBaseIsReceived reports whether a source's Base asset is what the TAKER received. The convention is INVERTED
+// between sdex (base = maker sold = taker received) and the Soroban AMMs (base = token_in = taker sold; sushiswap_v3 is the
+// positive pool delta). ok is false for any other source: a missed candidate beats a named innocent.
 func takerBaseIsReceived(source string) (received, ok bool) {
 	switch source {
 	case "sdex":

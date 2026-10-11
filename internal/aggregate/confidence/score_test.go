@@ -8,14 +8,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
 )
 
-// healthyInputs are the ADR-0019 worked-example values:
-//
-//	z=0.3, sources=6, classes=2, liquidity=$250K, divergence=0.4%,
-//	baseline_age=187 days
-//
-// Expected confidence ≈ 0.92 per the ADR. Used as a regression
-// anchor so a future tweak to factor shapes doesn't accidentally
-// drift the documented worked example.
+// healthyInputs are the ADR-0019 worked-example values (z=0.3, 6 sources, 2 classes, $250K, 0.4% divergence, 187 days), a regression anchor.
 func healthyInputs() confidence.Inputs {
 	return confidence.Inputs{
 		ZScore:                   0.3,
@@ -40,15 +33,8 @@ func ordinaryBucketInputs() confidence.Inputs {
 	}
 }
 
-// TestCompute_HealthyAnchor — the ADR-0019 worked-example inputs
-// produce a high confidence under the implemented factor shapes.
-//
-// The ADR's illustrative figure of "≈ 0.92" describes the
-// SHAPE of the response (high but not 1.0) rather than a
-// mathematical anchor. With our z/source/etc. factor shapes a
-// fully-healthy bucket sits in [0.85, 1.0]; this test pins that
-// range so future shape edits surface as deliberate decisions
-// rather than silent regressions.
+// TestCompute_HealthyAnchor: the ADR's "about 0.92" is a shape, not an anchor; a fully healthy bucket sits in [0.85, 1.0] and
+// this pins that range so shape edits are deliberate.
 func TestCompute_HealthyAnchor(t *testing.T) {
 	got := confidence.Compute(healthyInputs(), confidence.DefaultWeights())
 	if got.Confidence < 0.85 {
@@ -69,16 +55,8 @@ func TestCompute_HealthyAnchor(t *testing.T) {
 	}
 }
 
-// TestCompute_DominatingFactor — ADR-0019: "any one factor near
-// zero pulls the whole score down". A single low factor (single-
-// source asset, ~0.12) materially drops the combined score.
-//
-// With 6 equal-weight factors, the geometric mean's "domination"
-// is real but mild — a 0.12 factor among five 1.0s gives
-// confidence ≈ 0.69, not "near zero". To get a sharper drop the
-// operator can raise that factor's weight via `Weights.SourceCount`.
-// Verifies the healthy → degraded delta is significant: the
-// healthy anchor scores ~0.92, single-source drags below 0.75.
+// TestCompute_DominatingFactor: one low factor (single source, ~0.12) among healthy ones drops the mean materially but mildly
+// (~0.69); raise Weights.SourceCount for a sharper drop. Healthy ~0.92 falls below 0.75.
 func TestCompute_DominatingFactor(t *testing.T) {
 	healthy := confidence.Compute(healthyInputs(), confidence.DefaultWeights())
 
@@ -199,20 +177,9 @@ func TestCompute_BootstrapCapPreservesLowConfidence(t *testing.T) {
 // ─── The combiner is the
 // NORMALISED weighted geometric mean ───────────────────────────────
 
-// TestCompute_IsNormalisedGeometricMeanNotBareProduct pins the
-// combiner ADR-0019's formula block omitted the exponent for:
-//
-//	confidence = prod(factor_i ^ weight_i) ^ (1 / sum(weights))
-//
-// The ADR's combiner amendment records the code as authoritative, so
-// this is the test that keeps it that way. A future "fix" that makes
-// the code match the ADR's *truncated* formula (a bare product) fails
-// here with a ~0.44 gap — and would ship a silent, unannounced change
-// to every published `confidence` value AND to when assets freeze.
-//
-// Values below are the shape of an ordinary production bucket: mild
-// z, four sources across two classes, $50K liquidity, no cross-oracle
-// reference yet (Phase 3 not universally live), mature baseline.
+// TestCompute_IsNormalisedGeometricMeanNotBareProduct: code, not the ADR's truncated formula, is authoritative. A bare product
+// differs by ~0.44 and would silently change every published confidence and when assets freeze.
+// Inputs are an ordinary bucket: mild z, 4 sources over 2 classes, $50K liquidity, no cross-oracle reference, mature baseline.
 func TestCompute_IsNormalisedGeometricMeanNotBareProduct(t *testing.T) {
 	in := ordinaryBucketInputs()
 	got := confidence.Compute(in, confidence.DefaultWeights())
@@ -229,12 +196,8 @@ func TestCompute_IsNormalisedGeometricMeanNotBareProduct(t *testing.T) {
 			got.Confidence, wantNormalised, got.Confidence-wantNormalised)
 	}
 
-	// 2. Concrete corrected value, so this test pins a number rather
-	//    than a tautology against whatever the code happens to do.
-	//    With liquidityCeilingUSD at $1M rather than $100K, the
-	//    $50K bucket's liquidity factor drops from
-	//    ln(50)/ln(100) = 0.84949 to ln(50)/ln(1000) = 0.56632, which is
-	//    the whole of the change here.
+	// 2. Pin a concrete number: with the ceiling at $1M rather than $100K the $50K liquidity factor is ln(50)/ln(1000) = 0.56632,
+	// not ln(50)/ln(100) = 0.84949, which is the whole change.
 	const wantConfidence = 0.81103334478800171 // prod = 0.28459827331540849
 	if math.Abs(got.Confidence-wantConfidence) > 1e-9 {
 		t.Errorf("Compute = %.17f, want %.17f", got.Confidence, wantConfidence)
@@ -248,13 +211,8 @@ func TestCompute_IsNormalisedGeometricMeanNotBareProduct(t *testing.T) {
 	}
 }
 
-// TestCompute_WeightsAreRelativeNotAbsolute — the property that makes
-// the `^ (1 / sum(weights))` exponent load-bearing: ADR-0019 sells
-// `[anomaly.weights]` as per-factor *influence*, so scaling every
-// weight by a constant must not move the score. Under a bare product
-// doubling the weights squares the result (0.868 → 0.753 here), which
-// would silently push buckets toward the freeze threshold whenever an
-// operator touched the weight block.
+// TestCompute_WeightsAreRelativeNotAbsolute: scaling every weight must not move the score, which the `^ (1 / sum(weights))`
+// exponent guarantees. A bare product would square it (0.868 to 0.753) and push buckets toward the freeze threshold.
 func TestCompute_WeightsAreRelativeNotAbsolute(t *testing.T) {
 	in := ordinaryBucketInputs()
 	base := confidence.Compute(in, confidence.DefaultWeights())
@@ -275,12 +233,8 @@ func TestCompute_WeightsAreRelativeNotAbsolute(t *testing.T) {
 	}
 }
 
-// TestCompute_NoCrossOracleDataStaysNeutral — ADR-0019 documents 0.7
-// as the NEUTRAL cross-oracle value for "no external reference
-// available". Under the normalised combiner that costs a fully-
-// healthy bucket ~6 points (1.0 → 0.941); under the bare product the
-// same 0.7 would CAP every such bucket at 0.7, i.e. a penalty, not
-// neutrality — and today most pairs have no cross-oracle reference.
+// TestCompute_NoCrossOracleDataStaysNeutral: 0.7 is the neutral cross-oracle value; the normalised combiner costs a healthy
+// bucket ~6 points (1.0 to 0.941), whereas a bare product would cap every such bucket at 0.7.
 func TestCompute_NoCrossOracleDataStaysNeutral(t *testing.T) {
 	in := confidence.Inputs{
 		ZScore:                   0,
@@ -336,13 +290,8 @@ func TestDefaultWeights(t *testing.T) {
 	}
 }
 
-// TestCompute_CrossOracleAgreementDecomposition — ADR-0019 Phase 3:
-// the served decomposition carries the cross-oracle checked flag +
-// agreement count so consumers can distinguish "neutral because
-// unverified" from "neutral because mildly diverging" (the
-// DivergenceChecked discipline applied to the confidence surface).
-// The combined score itself is unchanged by the agreement count —
-// the ADR's cross_oracle_factor input is divergence-from-median.
+// TestCompute_CrossOracleAgreementDecomposition: the served checked flag and agreement count separate "neutral because unverified"
+// from "neutral because mildly diverging"; the score itself ignores the count.
 func TestCompute_CrossOracleAgreementDecomposition(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -446,16 +395,8 @@ func TestCompute_AgreementCountDoesNotChangeScore(t *testing.T) {
 	}
 }
 
-// TestCompute_UnmeasuredLiquidityDoesNotZeroTheScore — a pair
-// this index cannot value in USD (every non-USD-quoted pair) must still
-// score on the factors that WERE measured. Passing 0 for it instead of
-// the sentinel drove the geometric mean to exactly 0, so the served
-// confidence carried no information and the Phase 2 freeze's
-// `confidence < 0.10` leg was pinned true for those pairs.
-//
-// Proven red against a LiquidityFactor mapping negative → 0: the
-// unmeasured score comes back 0, failing both the ">0" and the
-// "≈ measured-mid-band" assertions below.
+// TestCompute_UnmeasuredLiquidityDoesNotZeroTheScore: a pair not valued in USD must score on the factors that WERE measured;
+// passing 0 instead of the sentinel zeroed the mean and pinned the freeze's `confidence < 0.10` leg true.
 func TestCompute_UnmeasuredLiquidityDoesNotZeroTheScore(t *testing.T) {
 	in := healthyInputs()
 	in.LiquidityUSD = confidence.LiquidityUnmeasured
@@ -468,17 +409,8 @@ func TestCompute_UnmeasuredLiquidityDoesNotZeroTheScore(t *testing.T) {
 	if got.Confidence <= 0 {
 		t.Fatalf("unmeasured-liquidity confidence = %v, want > 0", got.Confidence)
 	}
-	// The score must equal what the same bucket scores with a
-	// mid-band MEASURED liquidity — i.e. the neutral factor is the only
-	// difference, nothing else silently changed.
-	//
-	// The collision volume is the curve's GEOMETRIC midpoint, ≈ $31,622.78
-	// (under a $100K ceiling it would sit at $10,000, the production
-	// min_usd_volume floor — the worst possible place for it). LiquidityUnmeasuredFactor deliberately stays at
-	// 0.5 rather than tracking the curve; see its doc comment for why
-	// following it down to 0.333 would have made the 8 non-USD-quoted
-	// pairs freeze more readily for a reason that says nothing about
-	// them.
+	// The score must equal a mid-band MEASURED liquidity score, so the neutral factor is the only difference. The collision volume is the
+	// curve's geometric midpoint (~$31,622.78); LiquidityUnmeasuredFactor stays 0.5 rather than tracking the curve (see its doc).
 	mid := healthyInputs()
 	mid.LiquidityUSD = math.Sqrt(1_000.0 * 1_000_000.0) // log-midpoint → factor 0.5
 	wantSame := confidence.Compute(mid, confidence.DefaultWeights())
@@ -506,19 +438,9 @@ func TestCompute_UnmeasuredLiquidityDoesNotZeroTheScore(t *testing.T) {
 
 // ─── Triangulation (composite) corroboration ──────────────────────
 
-// TestCompute_TriangulationUncheckedIsInert is the load-bearing safety
-// property of the whole composite-corroboration feature: a pair with no
-// triangulation chain — which is EVERY pair in the index until an
-// operator configures one — must score exactly what it scored before
-// the factor existed, to the last bit.
-//
-// A "neutral" constant would not have achieved that. Compute is a
-// NORMALISED geometric mean, so adding any seventh factor value changes
-// the 1/sum(weights) exponent and therefore re-scores every pair in the
-// index — silently moving the Phase 2 freeze's confidence leg for
-// pairs that gained nothing. Only zeroing the unchecked factor's WEIGHT
-// is a true no-op, and this test pins that: the served value equals the
-// six-factor mean computed independently here.
+// TestCompute_TriangulationUncheckedIsInert: a pair with no triangulation chain must score bit-for-bit as without the factor.
+// A neutral constant would change the 1/sum(weights) exponent and re-score every pair; only a zero WEIGHT is a true no-op,
+// so the served value must equal the six-factor mean computed independently here.
 func TestCompute_TriangulationUncheckedIsInert(t *testing.T) {
 	in := healthyInputs() // TriangulationChecked is false (zero value)
 	got := confidence.Compute(in, confidence.DefaultWeights())
@@ -538,12 +460,8 @@ func TestCompute_TriangulationUncheckedIsInert(t *testing.T) {
 	}
 }
 
-// TestCompute_TriangulationZeroValueIsNotAgreement — the fail-closed
-// default. `TriangulationDivergencePct` is a float, so its zero value
-// is 0.0 = "the composite agrees perfectly"; if that alone flipped the
-// factor to checked, every caller that never heard of the field would
-// silently collect full corroboration credit. The explicit
-// TriangulationChecked flag is what prevents it.
+// TestCompute_TriangulationZeroValueIsNotAgreement: the float's zero value reads as perfect agreement, so only the explicit
+// TriangulationChecked flag may turn the factor on (fail closed).
 func TestCompute_TriangulationZeroValueIsNotAgreement(t *testing.T) {
 	in := healthyInputs()
 	in.TriangulationDivergencePct = 0 // as if never set
@@ -561,11 +479,8 @@ func TestCompute_TriangulationZeroValueIsNotAgreement(t *testing.T) {
 	}
 }
 
-// TestCompute_TriangulationAgreementRaisesAndDisagreementLowers pins
-// the direction of the signal in both directions, which is the point of
-// the factor: a composite that reproduces the direct price is
-// corroboration (score up), and one that contradicts it is a
-// manipulation signal on one side or the other (score down, hard).
+// TestCompute_TriangulationAgreementRaisesAndDisagreementLowers pins both directions: a composite matching the direct price
+// raises the score, a contradicting one lowers it hard.
 func TestCompute_TriangulationAgreementRaisesAndDisagreementLowers(t *testing.T) {
 	unchecked := confidence.Compute(healthyInputs(), confidence.DefaultWeights()).Confidence
 
@@ -603,11 +518,8 @@ func TestCompute_TriangulationAgreementRaisesAndDisagreementLowers(t *testing.T)
 	}
 }
 
-// TestCompute_TriangulationNeverTouchesSourceCount — ADR-0019's freeze
-// is a 3-signal AND whose third leg is `source_count <= 1`. A composite
-// re-uses our own legs and pipeline, so it must not count as a second
-// source: if it did, configuring a chain would silently disarm the
-// freeze on exactly the thin single-venue pairs chains are deployed for.
+// TestCompute_TriangulationNeverTouchesSourceCount: the freeze's third leg is `source_count <= 1`; a composite reuses our own
+// legs and must not count as a second source, or it would disarm the freeze on thin single-venue pairs.
 func TestCompute_TriangulationNeverTouchesSourceCount(t *testing.T) {
 	single := confidence.Inputs{
 		ZScore:                   6,
@@ -635,18 +547,8 @@ func TestCompute_TriangulationNeverTouchesSourceCount(t *testing.T) {
 	}
 }
 
-// TestCompute_zeroWeightOnZeroFactorIsNotNaN is a NaN
-// regression test.
-//
-// safeLog(0) is -Inf and IEEE-754 says -Inf * 0 = NaN, so a factor of
-// exactly 0 carrying a weight of exactly 0 collapsed the entire score:
-// NaN propagates through the sum, survives math.Exp, passes both
-// branches of applyBootstrapCap, and lands in clamp01(NaN) = 0. The
-// published confidence would read 0 beside a factor decomposition
-// showing everything healthy.
-//
-// The package documents a zero weight as REMOVING the factor, and doc.go
-// promises the geometric mean never produces NaN.
+// TestCompute_zeroWeightOnZeroFactorIsNotNaN: safeLog(0) is -Inf and -Inf * 0 = NaN, which would collapse the score to 0 beside
+// healthy factors. A zero weight REMOVES the factor, and doc.go promises the mean never yields NaN.
 func TestCompute_zeroWeightOnZeroFactorIsNotNaN(t *testing.T) {
 	w := confidence.DefaultWeights()
 	w.Liquidity = 0 // a plausible operator response to unmeasurable pairs
@@ -669,20 +571,8 @@ func TestCompute_zeroWeightOnZeroFactorIsNotNaN(t *testing.T) {
 
 // ─── The bootstrap gate is a DENSITY threshold ──────────
 
-// TestCompute_BootstrapCapReleasesAtDensityThreshold pins the shipped
-// release point of the bootstrap cap as a NUMBER, both sides of it.
-//
-// [Inputs.BaselineAgeDays] carries days-equivalent of 1-minute bucket
-// DENSITY, and a 30-day window holds at most 43,200 of those buckets —
-// so a gate at 30.0 days-equivalent demands a literally perfect
-// window and is never satisfied by anything: the
-// cap would be unconditional and every asset's served confidence
-// pinned at 0.5. The gate is 28.5 days-equivalent (95% of the
-// window). Buckets accrue at no more than 1,440 a day, so clearing it
-// still implies at least 28.5 calendar days of observed history —
-// which is what keeps the relaxation on the safe side of ADR-0019's
-// 30-day warmup rule.
-//
+// TestCompute_BootstrapCapReleasesAtDensityThreshold pins the release point as a number on both sides. A gate at 30.0
+// density-days is never satisfied (at most 43,200 buckets in 30 days), so the gate is 28.5 (95%), which still implies 28.5 calendar days.
 // Change these numbers only as a deliberate money-path decision.
 func TestCompute_BootstrapCapReleasesAtDensityThreshold(t *testing.T) {
 	const gate = 28.5
@@ -709,11 +599,8 @@ func TestCompute_BootstrapCapReleasesAtDensityThreshold(t *testing.T) {
 	}
 }
 
-// TestApplyBootstrapCap_SetsBootstrapCapped — the served decomposition
-// names the bootstrap ceiling and the density it gated on, so a
-// consumer can tell a capped 0.5 from a scored one. Below the 28.5
-// days-equivalent gate (and on the no-baseline sentinel) the flag is
-// set; at or above it, it is clear.
+// TestApplyBootstrapCap_SetsBootstrapCapped: the served decomposition names the ceiling and the density gated on, so a capped 0.5
+// is distinguishable from a scored one; the flag is set below the 28.5 gate and on the no-baseline sentinel.
 func TestApplyBootstrapCap_SetsBootstrapCapped(t *testing.T) {
 	cases := []struct {
 		age        float64

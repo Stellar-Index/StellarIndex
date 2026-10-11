@@ -7,19 +7,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// TestRejectAggregatorOutliers_CrashAndPumpBothDropped contaminates one
-// dispersed source set once with a crash quote and once with a pump
-// quote, and asserts BOTH are dropped and the headline is the clean
-// consensus either way.
-//
-// Baseline sources 70/85/100/115/130 (median 100, relative MAD 15 % —
-// past the 13.5 % at which the additive lower edge went non-positive).
-// With the 1.00 crash quote folded in: median 92.50, MAD 22.50, so the
-// old band was [92.50 − 166.79, 92.50 + 166.79] = [−74.29, 259.29] and
-// the crash quote scored INSIDE it, dragging the served mean from
-// 100.00 to 83.50. The ratio-symmetric lower edge is 92.50²/259.29 =
-// 33.00, so it is dropped — while 70.00, the honest low source, is
-// untouched.
+// TestRejectAggregatorOutliers_CrashAndPumpBothDropped pins that a crash quote and a pump quote on a dispersed set are both dropped, leaving the clean consensus headline.
 func TestRejectAggregatorOutliers_CrashAndPumpBothDropped(t *testing.T) {
 	base := []int64{7000, 8500, 10000, 11500, 13000} // 70.00 … 130.00 at 2dp
 
@@ -68,11 +56,7 @@ func TestRejectAggregatorOutliers_CrashAndPumpBothDropped(t *testing.T) {
 	}
 }
 
-// TestRejectAggregatorOutliers_HonestlyDispersedSetFullyKept pins the
-// other side: the ratio-symmetric band must not start trimming the low
-// tail of a set that is merely dispersed. All five sources of the
-// uncontaminated baseline survive, so the fix cannot degenerate into
-// "reject more of everything".
+// TestRejectAggregatorOutliers_HonestlyDispersedSetFullyKept pins that the ratio-symmetric band does not trim the low tail of a merely dispersed set.
 func TestRejectAggregatorOutliers_HonestlyDispersedSetFullyKept(t *testing.T) {
 	rows := []canonical.OracleUpdate{
 		mkAggRow("a", 7000, 2), mkAggRow("b", 8500, 2), mkAggRow("c", 10000, 2),
@@ -85,16 +69,7 @@ func TestRejectAggregatorOutliers_HonestlyDispersedSetFullyKept(t *testing.T) {
 	}
 }
 
-// TestRejectAggregatorOutliers_BetweenOldAndNewEdgeIsDropped pins the
-// boundary the other two tests straddle but never land on: a source
-// sitting strictly between the old additive lower edge and the new
-// ratio-symmetric one.
-//
-// 66.00/100.00/106.745: median 100.00, MAD 6.745, scale = 1.4826·MAD ≈
-// 10.0002, so K·scale ≈ 50.0008. The old additive edge, centre −
-// K·scale ≈ 49.9992, would have kept 66.00. The ratio-symmetric edge,
-// centre²/(centre + K·scale) ≈ 66.6663, does not: 66.00 sits inside the
-// newly-tightened gap and must be dropped, not kept.
+// TestRejectAggregatorOutliers_BetweenOldAndNewEdgeIsDropped pins a source strictly between the old additive lower edge and the new ratio-symmetric one: it must be dropped.
 func TestRejectAggregatorOutliers_BetweenOldAndNewEdgeIsDropped(t *testing.T) {
 	rows := []canonical.OracleUpdate{
 		mkAggRow("lo", 66000, 3), mkAggRow("mid", 100000, 3), mkAggRow("hi", 106745, 3),
@@ -148,15 +123,8 @@ func TestRejectAggregatorOutliers(t *testing.T) {
 	})
 
 	t.Run("always_keeps_at_least_one", func(t *testing.T) {
-		// A pathological 3-way split (1, 1000, 1000000 — a 1000x low
-		// print and a 1000x high print either side of the median) still
-		// yields a non-empty survivor set (the median centre is always
-		// a survivor), AND the survivor set must actually
-		// exclude both divergent prints, not just be non-empty: a
-		// downward-blind band would let the 1000x-low print "a" survive
-		// alongside the median while only trimming the high side, which
-		// `len(kept) == 0` can never distinguish from the correct
-		// symmetric reject.
+		// A 3-way split (1, 1000, 1000000) must leave a non-empty survivor set (the median) that excludes both divergent prints;
+		// a downward-blind band would let the low print survive.
 		rows := []canonical.OracleUpdate{
 			mkAggRow("a", 100, 2), mkAggRow("b", 100000, 2), mkAggRow("c", 100000000, 2),
 		}

@@ -6,24 +6,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// Stablecoin → fiat proxy mapping — **aggregator policy, not decoder
-// policy**.
-//
-// Why this belongs here and not at ingest: pegs can break. USDT
-// trading at $0.9680 during a stress event IS news — folding
-// USDT→USD unconditionally at decode time would hide a depeg from
-// every downstream consumer. We store the raw pair (`XLM/USDT`,
-// `XLM/USDC`) on the way in, and the aggregator rewrites
-// quote-side stablecoins to their target fiat at VWAP compute
-// time only. See AGENTS.md § "stablecoins-as-fiat is aggregator
-// policy" and ADR-0014's stablecoin-code notes.
-//
-// Extension is a one-line amendment — add the new ticker here and
-// ensure it's already on the `knownCryptoCodes` allow-list in
-// internal/canonical/asset_crypto.go. If you catch yourself mapping
-// a token whose stable peg is disputed (e.g. an algo-stable that
-// has failed before), the aggregator is the wrong layer — that
-// belongs behind a per-deployment feature flag or exclusion.
+// Stablecoin to fiat proxy mapping is aggregator policy, not decoder policy: pegs break (USDT at 0.9680 is news), so we store the raw pair (XLM/USDT)
+// and rewrite quote-side stablecoins to fiat at VWAP compute time only (ADR-0014). To add a ticker, add it here and to knownCryptoCodes in
+// internal/canonical/asset_crypto.go; a token with a disputed peg belongs behind a per-deployment flag, not here.
 
 var stablecoinFiatProxy = map[string]string{
 	// USD-pegged stablecoins.
@@ -42,17 +27,7 @@ var stablecoinFiatProxy = map[string]string{
 	"MXNe": "MXN",
 }
 
-// FiatProxy returns the fiat asset a stablecoin tracks, and ok=true,
-// when the given asset is a `crypto:<STABLE>` ticker with a known
-// peg. Returns ok=false for everything else (real crypto, fiat
-// already, native/classic/soroban on-chain assets).
-//
-// Classic-issued stablecoins (`USDC-GA5ZSEJY…` = Circle's
-// Stellar-classic USDC) are intentionally NOT mapped here: classic
-// assets already carry full issuer identity, and an operator who
-// wants classic-USDC→USD substitution configures that downstream
-// alongside per-issuer trust. The crypto-prefixed form is the
-// abstract global ticker — unambiguous to proxy.
+// FiatProxy returns the fiat a known-peg crypto:<STABLE> ticker tracks; ok=false for everything else, including classic-issued stablecoins, which keep their issuer identity.
 func FiatProxy(a canonical.Asset) (canonical.Asset, bool) {
 	if a.Type != canonical.AssetCrypto {
 		return canonical.Asset{}, false
@@ -75,35 +50,13 @@ func FiatProxy(a canonical.Asset) (canonical.Asset, bool) {
 	return proxy, true
 }
 
-// IsFiatProxyFor reports whether asset a is a `crypto:<STABLE>`
-// ticker whose peg target is the given fiat code ("USD", "EUR",
-// "MXN"). Thin predicate over [FiatProxy] for callers that only
-// need the yes/no — notably the aggregator's USD-volume accounting,
-// which must recognise `crypto:USDT`/`USDC`/`DAI`/`PYUSD`/`USDP`
-// quote legs as dollar-denominated when it values a window against
-// the MinUSDVolume floor.
-//
-// Derives from the SAME [stablecoinFiatProxy] map the expansion
-// path uses, so a peg added at the top of this file is picked up by
-// every consumer at once — the alternative (a second hard-coded
-// ticker list at the call site) is exactly the drift that let
-// proxy-fetched stablecoin legs value at $0 against the floor.
+// IsFiatProxyFor reports whether a is a crypto:<STABLE> ticker pegged to fiatCode, from the same map as [FiatProxy] so USD-volume accounting recognises every peg without a second list.
 func IsFiatProxyFor(a canonical.Asset, fiatCode string) bool {
 	proxy, ok := FiatProxy(a)
 	return ok && proxy.Code == fiatCode
 }
 
-// ProxyPair rewrites the quote side of a pair through the
-// stablecoin→fiat map. Returns ok=false when the quote isn't a
-// known stablecoin, i.e. the pair is already fiat-denominated,
-// crypto/crypto, or any form not matching.
-//
-// Only the QUOTE is rewritten. The semantic question a VWAP
-// answers is "what is the price of BASE expressed in quote?" —
-// rewriting XLM/USDT → XLM/USD preserves that axis. Rewriting the
-// base side would re-pose the question on the wrong axis
-// (USDC/XLM → USD/XLM recasts a stablecoin-denominated market as
-// a fiat-denominated one with the assets in the wrong roles).
+// ProxyPair rewrites only the QUOTE side through the stablecoin-to-fiat map (rewriting the base would pose the question on the wrong axis); ok=false when the quote is not a known stablecoin.
 func ProxyPair(p canonical.Pair) (canonical.Pair, bool) {
 	proxy, ok := FiatProxy(p.Quote)
 	if !ok {
@@ -111,21 +64,13 @@ func ProxyPair(p canonical.Pair) (canonical.Pair, bool) {
 	}
 	rewritten, err := canonical.NewPair(p.Base, proxy)
 	if err != nil {
-		// Base and proxy quote collide (theoretical: base is
-		// fiat:USD and quote is crypto:USDT). Skip rather than
-		// fail — the aggregator treats a non-proxiable pair as
-		// "leave it alone" so real-world edge cases don't crash
-		// the tick.
+		// Base and proxy quote collide (e.g. base fiat:USD, quote crypto:USDT): leave the pair alone rather than fail the tick.
 		return canonical.Pair{}, false
 	}
 	return rewritten, true
 }
 
-// ProxyTrade returns a copy of the trade with its Pair rewritten
-// through ProxyPair. Returns the original trade and ok=false when
-// no proxy applies — callers decide whether to pass through the
-// unrewritten row (useful when the target pair set already
-// includes the original) or drop it.
+// ProxyTrade returns a copy of the trade with its Pair rewritten via [ProxyPair], or the original and ok=false when no proxy applies.
 func ProxyTrade(t canonical.Trade) (canonical.Trade, bool) {
 	p, ok := ProxyPair(t.Pair)
 	if !ok {
@@ -135,22 +80,7 @@ func ProxyTrade(t canonical.Trade) (canonical.Trade, bool) {
 	return t, true
 }
 
-// FiatBackers returns the stablecoin crypto tickers pegged to the
-// given fiat code (e.g. "USD" → ["USDT", "USDC", "DAI", "PYUSD",
-// "USDP"]). Returns nil for fiat codes that no stablecoin in the
-// proxy map targets — the orchestrator treats that as "nothing to
-// fetch beyond the direct pair."
-//
-// The result is sorted, so it is the SAME list on every call and in
-// every process. Go map-iteration order would not do: the orchestrator turns this list
-// into its fetch plan ([ExpandTargetPairWithClassicPegs]) and appends
-// each source's batch to one merged window in that order, and the
-// published-VWAP outlier filter ([FilterOutliersLocal]) references a
-// print's neighbours BY POSITION. Same-timestamp prints from different
-// sources therefore changed places tick to tick and moved a real trim
-// decision, so one window's VWAP was not reproducible from its own
-// inputs. The order belongs here; call sites do not
-// re-sort.
+// FiatBackers returns the stablecoin tickers pegged to fiat, SORTED so the fetch plan and merged window order are identical on every call (the local outlier filter references neighbours by position); nil if none.
 func FiatBackers(fiat string) []string {
 	var out []string
 	for stable, target := range stablecoinFiatProxy {
@@ -162,37 +92,12 @@ func FiatBackers(fiat string) []string {
 	return out
 }
 
-// ExpandTargetPair enumerates the source pairs the aggregator should fetch from
-// Timescale to populate a fiat-denominated target pair's window.
-//
-//   - If the target's quote is fiat, the result contains the direct target pair
-//     (operators may have real-fiat trades from FX connectors) plus one entry per
-//     stablecoin backer (`BASE/USDT`, `BASE/USDC`, …). Trades fetched under backer
-//     pairs are then rewritten via ProxyPair before VWAP.
-//   - Otherwise the result is just the target itself: no stablecoin-proxy expansion.
-//
-// Equivalent to [ExpandTargetPairWithClassicPegs] with an empty classic-pegs
-// slice. An error means the target is malformed; callers can treat err != nil as
-// a configuration bug.
+// ExpandTargetPair enumerates the source pairs to fetch for a target: for a fiat quote the direct pair plus one per stablecoin backer, otherwise just the target; an error means a malformed target.
 func ExpandTargetPair(target canonical.Pair) ([]canonical.Pair, error) {
 	return ExpandTargetPairWithClassicPegs(target, nil)
 }
 
-// ExpandTargetPairWithClassicPegs is [ExpandTargetPair] augmented with
-// operator-declared classic-asset stablecoins. On Stellar mainnet the dominant
-// USD-denominated DEX pairs are quoted not in the abstract `crypto:USDC` ticker but
-// in classic credits like `USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`
-// (Circle's Stellar-classic USDC). Those quotes carry full issuer identity and
-// aren't in the abstract stablecoin map; the operator's allow-list (configured under
-// `[trades].usd_pegged_classic_assets`) names which classic credits are trusted as
-// fiat-equivalent.
-//
-// classicUSDPegs is that list; each entry must be `Type=AssetClassic`. Non-classic
-// entries are silently skipped (the config parser already rejects malformed shapes).
-// Entries are appended to the source list when the target's fiat is "USD" and
-// ignored for other fiat targets. The `Pair=target` rewrite step in `fetchForTarget`
-// lifts the fetched trades onto the target pair, so no per-classic `ProxyPair` rule
-// is needed.
+// ExpandTargetPairWithClassicPegs is [ExpandTargetPair] plus operator-declared classic USD-pegged credits (each Type=AssetClassic, appended only for a USD target), which keep issuer identity and are not in the abstract map.
 func ExpandTargetPairWithClassicPegs(target canonical.Pair, classicUSDPegs []canonical.Asset) ([]canonical.Pair, error) {
 	if err := target.Validate(); err != nil {
 		return nil, err

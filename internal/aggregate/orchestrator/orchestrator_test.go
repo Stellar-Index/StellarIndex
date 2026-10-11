@@ -722,11 +722,7 @@ func TestTick_AnomalyAllow_PublishesAndUpdatesPrev(t *testing.T) {
 	}
 }
 
-// A freeze leaves the cached LKG untouched, marks it, keeps the
-// comparator on the LKG, publishes no closed bucket, and re-arms the LKG
-// TTL to the whole hold (ADR-0019 uncorroborated hold + silence grace,
-// not the flat cachekeys.FreezeTTL), so the API never serves frozen=true
-// with an evicted value.
+// TestTick_AnomalyFreeze_SkipsCacheAndMarks: a freeze leaves the LKG untouched and marked, keeps the comparator on it, publishes no bucket, and re-arms the LKG TTL to the whole ADR-0019 hold plus grace so the API never serves frozen=true with an evicted value.
 func TestTick_AnomalyFreeze_SkipsCacheAndMarks(t *testing.T) {
 	for _, initialTTL := range []time.Duration{time.Minute, 10 * time.Second} {
 		t.Run("initial TTL "+initialTTL.String(), func(t *testing.T) {
@@ -1716,11 +1712,7 @@ func TestTick_ExcludedSources_DropsStoredTrades(t *testing.T) {
 	}
 }
 
-// TestTick_AnomalyFreeze_StreamCarriesAMarker: a pair that freezes
-// mid-stream must put the refused bucket on the closed-bucket stream as a
-// frozen marker, once per bucket, or /v1/price/stream subscribers see only
-// keepalives while /v1/price serves flags.frozen — a freeze would read as
-// a quiet market.
+// TestTick_AnomalyFreeze_StreamCarriesAMarker: a freezing pair must put the refused bucket on the stream as a frozen marker once per bucket, else /v1/price/stream reads as a quiet market while /v1/price serves flags.frozen.
 func TestTick_AnomalyFreeze_StreamCarriesAMarker(t *testing.T) {
 	pair := xlmUsdtPair(t)
 	window := 5 * time.Minute
@@ -1768,20 +1760,8 @@ func TestTick_AnomalyFreeze_StreamCarriesAMarker(t *testing.T) {
 	}
 }
 
-// TestTick_DeadQuoteIsNotMaskedByALiveSiblingQuote runs at the
-// production entry point (Tick → refreshPairWindow → the write-time
-// record → emitStalenessGauges).
-//
-// The scenario the finding describes: one base is configured against
-// several quotes; one quote's feed goes dark while another keeps
-// publishing. `stellarindex_price_staleness_seconds` is the ONLY input
-// to the `stellarindex_api_price_stale` alert, so it must not be keyed
-// by base alone — every publish of the live quote would reset the one
-// timestamp the dead quote is judged by, and the gauge would read 0 for an
-// asset whose other quote had served nothing for ten minutes.
-//
-// BTC is used (not XLM) so the native ↔ crypto:XLM dual-form merge is
-// not in play: this pins the quote dimension alone.
+// TestTick_DeadQuoteIsNotMaskedByALiveSiblingQuote runs through Tick: stellarindex_price_staleness_seconds is the only input to the api_price_stale alert, so it must be keyed per pair, not by base alone, or a live quote hides a dead one.
+// BTC, not XLM, so the native/crypto:XLM merge is not in play and only the quote dimension is pinned.
 func TestTick_DeadQuoteIsNotMaskedByALiveSiblingQuote(t *testing.T) {
 	btc := mustCrypto(t, "BTC")
 	live := mustStalenessPair(t, btc, mustCrypto(t, "USDT"))
@@ -1875,15 +1855,7 @@ func TestTick_AllQuotesLiveReadsFresh(t *testing.T) {
 	}
 }
 
-// TestTick_XLMDualFormIsMergedPerQuote pins how the native ↔ crypto:XLM
-// merge composes with the quote dimension. The two forms are
-// interchangeable for ONE quote (the API resolves
-// `asset=native&quote=fiat:GBP` through either form's GBP key), so the
-// merge is "freshest form" WITHIN a quote and "stalest quote" ACROSS
-// them. A fresh native/USD says nothing about anybody's GBP.
-//
-// Driven through Tick, in both cfg.Pairs orders, because the merge this
-// replaces was order-dependent once already.
+// TestTick_XLMDualFormIsMergedPerQuote: native and crypto:XLM are interchangeable for ONE quote, so the merge is freshest form within a quote and stalest quote across them. Driven in both cfg.Pairs orders because the merge was order-dependent once.
 func TestTick_XLMDualFormIsMergedPerQuote(t *testing.T) {
 	xlm, native := mustCrypto(t, "XLM"), canonical.NativeAsset()
 	usd, gbp := mustFiat(t, "USD"), mustFiat(t, "GBP")
@@ -1941,14 +1913,7 @@ func TestTick_XLMDualFormIsMergedPerQuote(t *testing.T) {
 	}
 }
 
-// TestTick_CompositeServedPairReadsFresh — the served VWAP key has TWO
-// writers, and a pair-level clock stamped from only one of them is
-// wrong for every pair the other one serves. BTC/EUR here has no direct
-// trades; publishComposite writes its VWAP key on every Tick. With the
-// stamp taken from refreshPairWindow alone, BTC/EUR read 600 s stale
-// while publishing every tick, and because the gauge is the STALEST
-// quote, it dragged crypto:BTC to 600 with it — a permanent false page
-// for a healthy asset (second writer).
+// TestTick_CompositeServedPairReadsFresh: the served VWAP key has two writers, so the pair-level clock must be stamped by publishComposite too, else a composite-only pair reads stale while publishing and drags its asset to a false page.
 func TestTick_CompositeServedPairReadsFresh(t *testing.T) {
 	fx := &fakeFXStore{quote: new(big.Rat).SetFrac(big.NewInt(90), big.NewInt(100)), source: "exchangeratesapi", observedAt: liveFXObservedAt}
 	h := newCompositeStalenessHarness(t, fx, 0)
@@ -1977,11 +1942,7 @@ func TestTick_CompositeServedPairReadsFresh(t *testing.T) {
 	}
 }
 
-// TestTick_CompositeThatDoesNotPublishStillClimbs is the converse, and
-// the reason the stamp sits AFTER the value write on the "ok" path
-// only: a chain that resolves nothing, or resolves a composite it
-// refuses to publish, has written no VWAP key, so the gauge must keep
-// climbing for a target with no direct trades.
+// TestTick_CompositeThatDoesNotPublishStillClimbs is the converse: the stamp sits after the value write on the ok path only, so a chain that publishes nothing keeps its gauge climbing.
 func TestTick_CompositeThatDoesNotPublishStillClimbs(t *testing.T) {
 	liveFX := &fakeFXStore{quote: new(big.Rat).SetFrac(big.NewInt(90), big.NewInt(100)), source: "exchangeratesapi", observedAt: liveFXObservedAt}
 	for _, tc := range []struct {
@@ -2021,15 +1982,8 @@ func TestTick_CompositeThatDoesNotPublishStillClimbs(t *testing.T) {
 	}
 }
 
-// TestTick_WedgedStoreCallIsCutAndTheNextTickRecovers covers the
-// aggregator leg. Tick ran on the process-lifetime context with no
-// deadline of its own, so one store call that stopped answering held
-// the tick — and with it every price the aggregator publishes — until
-// the process was restarted.
-//
-// No TickTimeout is set: the bound under test is the DEFAULT one, so
-// this proves a production-shaped Config is protected, and the test
-// compiles against code that predates the field.
+// TestTick_WedgedStoreCallIsCutAndTheNextTickRecovers: Tick must have a default deadline so one unanswering store call cannot hold every published price until restart.
+// No TickTimeout is set, so the default bound under test protects a production-shaped Config.
 func TestTick_WedgedStoreCallIsCutAndTheNextTickRecovers(t *testing.T) {
 	btc, usd := mustCrypto(t, "BTC"), mustFiat(t, "USD")
 	pair := mustStalenessPair(t, btc, usd)
@@ -2106,19 +2060,8 @@ func TestTick_CallerCancellationIsNotATimeout(t *testing.T) {
 	}
 }
 
-// TestTick_EveryFXQueryInheritsTheTickDeadline pins the two FX query
-// sites — the triangulation leg (triangulate.go legPrice) and
-// the composite-reference evaluator (composite_reference.go) — to the
-// tick's deadline. Neither sets one of its own; both are bounded only
-// because Tick hands them a bounded context, so this is the test that
-// fails if either is ever given a fresh one.
-//
-// The scenario is the market-wide move from the composite-reference
-// suite: a single-venue XLM/GBP print jumps on tick 2, which is what
-// sends the phase-2 freeze to consult the composite reference and so
-// reach its FX query. The two sites are told apart by their cutoff: the
-// triangulation leg asks at the window-aligned bucket end, the
-// evaluator at the tick's own unaligned `now`.
+// TestTick_EveryFXQueryInheritsTheTickDeadline pins both FX query sites (triangulate.go legPrice, composite_reference.go) to the tick's deadline: neither sets its own, so the test fails if either gets a fresh context.
+// The scenario is the composite-reference market-wide move; the sites differ by cutoff (window-aligned bucket end versus the tick's unaligned now).
 func TestTick_EveryFXQueryInheritsTheTickDeadline(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdGBP := mkPair(t, "fiat", "USD", "fiat", "GBP")
@@ -2191,11 +2134,7 @@ func TestTick_EveryFXQueryInheritsTheTickDeadline(t *testing.T) {
 	}
 }
 
-// TestTick_CompositeRecordedOnlyOnPublish — the sample that feeds the
-// confidence factor is written by the chain pass and ONLY on a
-// successful publish. A chain that could not publish (missing leg here;
-// a frozen leg takes the same path via outcomeFrozenLeg) must leave no
-// sample behind for the confidence step to read as evidence.
+// TestTick_CompositeRecordedOnlyOnPublish: the sample feeding the confidence factor is written only on a successful publish; a chain that cannot publish (missing or frozen leg) must leave no evidence behind.
 func TestTick_CompositeRecordedOnlyOnPublish(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
@@ -2238,15 +2177,8 @@ func TestTick_CompositeRecordedOnlyOnPublish(t *testing.T) {
 	}
 }
 
-// TestTick_CompositeCorroborationReachesTheCachedConfidence is the
-// end-to-end wiring proof: a configured chain publishes a composite,
-// and the NEXT tick's confidence score for that pair carries the
-// composite comparison — checked, and lower when the two disagree.
-//
-// It also pins the invariant that makes this safe to ship: the
-// source-count factor is identical in both runs. A composite is
-// corroboration, never a second source, so it must not move the leg
-// ADR-0019's 3-signal freeze AND reads (`source_count <= 1`).
+// TestTick_CompositeCorroborationReachesTheCachedConfidence is the end-to-end proof: the next tick's confidence carries the composite comparison, lower when they disagree.
+// The source-count factor must be identical in both runs: a composite is corroboration, never a second source, so it must not move the freeze's source_count <= 1 leg.
 func TestTick_CompositeCorroborationReachesTheCachedConfidence(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
@@ -2435,11 +2367,7 @@ func TestTick_Triangulation_ParseError(t *testing.T) {
 	}
 }
 
-// TestTick_Triangulation_FXSnap_HappyPath — when FXStore is wired and
-// returns a quote for the FX leg, the orchestrator uses the snap
-// price (not the leg's cached VWAP) and bypasses the fallback counter.
-// Asserts the bucket-end timestamp passed to FXStore is the most-
-// recent UTC-aligned boundary of the window.
+// TestTick_Triangulation_FXSnap_HappyPath: with FXStore wired the FX leg uses the snap price (not cached VWAP), bypasses the fallback counter, and queries at the most recent UTC-aligned window boundary.
 func TestTick_Triangulation_FXSnap_HappyPath(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
@@ -2555,11 +2483,7 @@ func TestTick_Triangulation_FXSnap_FallbackOnNoQuote(t *testing.T) {
 	}
 }
 
-// TestTick_Triangulation_FXSnap_DBErrorAborts — non-ErrNoFXQuote
-// errors from the FX store mean we can't trust ANY chained-fiat
-// output this tick. The chain skips publish and surfaces redis_error;
-// the fallback counter does NOT increment (this isn't a planned
-// fallback, it's an outage signal).
+// TestTick_Triangulation_FXSnap_DBErrorAborts: a non-ErrNoFXQuote FX store error means no chained-fiat output can be trusted, so the chain skips publish with redis_error and the fallback counter does not move (an outage, not a planned fallback).
 func TestTick_Triangulation_FXSnap_DBErrorAborts(t *testing.T) {
 	xlmUSD := mkPair(t, "crypto", "XLM", "fiat", "USD")
 	usdEUR := mkPair(t, "fiat", "USD", "fiat", "EUR")
@@ -2665,21 +2589,8 @@ func TestTick_Triangulation_NoChainsConfigured(t *testing.T) {
 	}
 }
 
-// TestTick_LongWindowVWAP_StopsServingAfterTheSilenceGrace checks, at
-// the production entry point: the value the windowed /v1/price surface
-// reads is written by Tick, and it must not outlive the aggregator.
-//
-// The scenario the finding describes: the aggregator stops (crash,
-// deploy, OOM, failing Redis writes) at T0. Before this bound the
-// `vwap:<pair>:86400` key lived for the WINDOW — 24 h — and every
-// `GET /v1/price?asset=…&window=86400` in between returned HTTP 200
-// with `observed_at` stamped at request time and `flags.stale` unset,
-// i.e. a price computed the previous day asserted as current, with no
-// field on the wire able to reveal it.
-//
-// Asserted through the real write path (Tick → refreshPairWindow →
-// cachekeys.VWAPTTL) rather than against the TTL function alone, so a
-// writer that stops honouring the bound fails here too.
+// TestTick_LongWindowVWAP_StopsServingAfterTheSilenceGrace: the windowed value written by Tick must not outlive the aggregator, else /v1/price returns a day-old price as current (observed_at at request time, no stale flag).
+// Asserted through the real write path (Tick, refreshPairWindow, cachekeys.VWAPTTL), so a writer that stops honouring the bound fails too.
 func TestTick_LongWindowVWAP_StopsServingAfterTheSilenceGrace(t *testing.T) {
 	pair := xlmUsdtPair(t)
 	cache, mr := newTestRedis(t)

@@ -9,78 +9,30 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// Composite corroboration.
-//
-// A triangulation chain also gives a SECOND, independently-routed opinion
-// about a pair we price directly. That matters on the thin pairs chains are
-// deployed for (XLM/EUR ran 87.5% single-source minutes, XLM/GBP 100%): a
-// composite through USD reaches them via markets that are not thin.
-//
-// The single-chain DIVERGENCE comparison feeds ONE confidence factor
-// ([confidence.Inputs.TriangulationDivergencePct]). It deliberately does not
-// touch [confidence.Inputs.SourceCount]: a composite re-uses our own leg VWAPs
-// and usually upstream venues, so counting it as a source would claim an
-// independence it lacks.
-//
-// The router's MULTI-ROUTE corroboration count (aggregate.CombineRoutes'
-// corroborationCount) is held to the same rule (ADR-0019 amendment §2):
-// counting it would let configuring a chain disarm the `source_count <= 1` leg
-// of the freeze. Both freeze phases read [distinctSourceCount] alone; the count
-// is audit-only. A composite may stand down a single-venue freeze only via the
-// SAME-bucket composite reference (composite_reference.go).
+// Composite corroboration: a triangulation chain gives a SECOND, independently-routed opinion about a directly priced pair, which matters on thin pairs (XLM/EUR ran 87.5% single-source minutes).
+// The divergence comparison feeds ONE confidence factor ([confidence.Inputs.TriangulationDivergencePct]) and deliberately not [confidence.Inputs.SourceCount]: a composite re-uses our own leg VWAPs, so counting it would claim independence it lacks.
+// The router's multi-route corroborationCount is held to the same rule (ADR-0019 amendment 2) and is audit-only; both freeze phases read [distinctSourceCount] alone. A composite stands down a single-venue freeze only via the SAME-bucket composite reference (composite_reference.go).
 
-// compositeSample is the most recent composite (triangulated) price the
-// chain pass published for one target (pair, window), with the time it was
-// published at and the router corroboration that backed it.
-//
-// `at` retains the process MONOTONIC clock reading (stamped with
-// time.Now(), NOT time.Now().UTC() — see [Orchestrator.recordComposite]): the
-// staleness checks below read it only through time.Since, which is immune to
-// a backward wall-clock (NTP/VM) step so long as the monotonic reading
-// survives.
-//
-// Mirrors [Orchestrator.prevVWAPs]: bounded by len(Triangulations) ×
-// len(Windows), read and written only from within a single Tick (which
-// the ticker serialises), so it needs no lock of its own.
+// compositeSample is the latest composite price the chain pass published for one target (pair, window), with its publish time and router corroboration.
+// `at` MUST keep the MONOTONIC clock reading (time.Now(), not .UTC(); see [Orchestrator.recordComposite]) so time.Since staleness checks survive a backward wall-clock step.
+// Like [Orchestrator.prevVWAPs]: bounded, and read/written only within a single Tick, so lock-free.
 type compositeSample struct {
 	price *big.Rat
 	at    time.Time
 
-	// corroborationCount is the number of INDEPENDENT, tightly-agreeing,
-	// non-diverged router routes that backed this composite
-	// (aggregate.CombineRoutes' corroborationCount return — the maximum
-	// edge-disjoint subset of the routes that agree within the tight band,
-	// 0 when diverged or when no two routes tightly agree). Audit only:
-	// it never feeds any source count (see the file header).
+	// corroborationCount is the number of INDEPENDENT, tightly-agreeing, non-diverged router routes behind this composite (CombineRoutes' maximum edge-disjoint agreeing subset; 0 when diverged). Audit only: never feeds a source count.
 	corroborationCount int
 
-	// combinedConfidence / diverged are the router's quality flags for
-	// this composite, carried so downstream (Step 3: market-cap gating,
-	// /v1/price flags) can respect them. A low-confidence composite is
-	// NOT recorded here at all — it is never published over the direct
-	// price — so a sample present in this map is always a CONFIDENT one.
+	// combinedConfidence / diverged are the router's quality flags for this composite; a low-confidence composite is never recorded (never published over the direct price), so a sample here is always CONFIDENT.
 	combinedConfidence float64
 	diverged           bool
 }
 
-// compositeMaxAgeTicks bounds how old a recorded composite may be
-// before the confidence step stops trusting it, expressed in ticks
-// because that is the cadence the chain pass republishes at.
-//
-// Two ticks (60s at the default interval) tolerates a single missed
-// chain — a leg whose window happened to be empty, an FX snap blip —
-// without tolerating a chain that has actually stopped. That
-// distinction is the whole point: a composite that stopped updating
-// while the direct price kept moving would drift into apparent
-// disagreement and quietly drag a healthy pair's confidence down, so
-// staleness must read as "unchecked", never as "disagrees".
+// compositeMaxAgeTicks bounds how old a recorded composite may be before the confidence step stops trusting it, in chain-pass ticks.
+// Two ticks tolerate one missed chain without tolerating a stopped one: a stale composite would drift into apparent disagreement and drag a healthy pair's confidence down, so staleness must read as "unchecked", never "disagrees".
 const compositeMaxAgeTicks = 2
 
-// recordComposite stores the composite price a chain just published for
-// (target, window), together with the router corroboration that backed
-// it. Called from [Orchestrator.triangulateOne] only on a CONFIDENT
-// publish (a low-confidence composite is never published over the direct
-// price and never recorded, so a sample here always corroborates).
+// recordComposite stores the composite a chain just published for (target, window) with its router corroboration, only on a CONFIDENT publish from [Orchestrator.triangulateOne], so a sample here always corroborates.
 func (o *Orchestrator) recordComposite(
 	target canonical.Pair, window time.Duration, price *big.Rat,
 	corroborationCount int, combinedConfidence float64, diverged bool,
@@ -95,11 +47,7 @@ func (o *Orchestrator) recordComposite(
 		// Defensive copy: the caller's *big.Rat is the chain's own
 		// working value and must not alias into next tick's comparison.
 		price: new(big.Rat).Set(price),
-		// time.Now(), NOT .UTC(): the staleness readers ([routeCorroborationCount],
-		// [triangulationDivergencePct]) compare this only via time.Since, so it
-		// must RETAIN the monotonic clock reading. .UTC() strips it, dropping
-		// those comparisons to wall-clock arithmetic where a backward NTP/VM
-		// step could latch a stale composite as fresh.
+		// time.Now(), NOT .UTC(): staleness readers compare via time.Since, so the monotonic clock reading must be retained; .UTC() strips it and a backward NTP/VM step could latch a stale composite as fresh.
 		at:                 time.Now(),
 		corroborationCount: corroborationCount,
 		combinedConfidence: combinedConfidence,
@@ -109,15 +57,8 @@ func (o *Orchestrator) recordComposite(
 		Set(float64(corroborationCount))
 }
 
-// routeCorroborationCount returns the number of INDEPENDENT, tightly-
-// agreeing, non-diverged router routes that backed (pair, window)'s
-// composite on the last chain pass. It is reported beside the venue count
-// in the freeze reason and never folded into it (see the file header).
-//
-// Returns (_, false) under exactly the conditions
-// [triangulationDivergencePct] rejects a composite: no chain output
-// recorded for this pair, or the last publish is older than
-// [compositeMaxAgeTicks].
+// routeCorroborationCount returns the number of INDEPENDENT, tightly-agreeing, non-diverged router routes behind (pair, window)'s last composite, reported beside the venue count in the freeze reason and never folded into it.
+// Returns (_, false) when [triangulationDivergencePct] would reject the composite: none recorded, or older than [compositeMaxAgeTicks].
 func (o *Orchestrator) routeCorroborationCount(pair canonical.Pair, window time.Duration) (int, bool) {
 	if len(o.lastComposites) == 0 {
 		return 0, false
@@ -140,25 +81,9 @@ func compositeKey(pair canonical.Pair, window time.Duration) string {
 	return pair.String() + ":" + window.String()
 }
 
-// triangulationDivergencePct returns the % absolute deviation between
-// the direct VWAP just computed for (pair, window) and the most recent
-// composite published for the same pair, plus whether a comparison happened
-// ([confidence.Inputs.TriangulationDivergencePct] / TriangulationChecked).
-//
-// Returns (_, false) when there is nothing to compare: no chain configured,
-// none published yet, older than [compositeMaxAgeTicks], or a non-positive
-// price. Unchecked is fail-closed: [confidence.Compute] drops the factor's weight.
-//
-// The composite is one tick old by construction: the chain pass runs AFTER the
-// per-pair refresh loop in [Orchestrator.Tick] (its legs read the VWAPs that
-// loop wrote). Re-deriving mid-refresh would double the FX-snap query load and
-// double-count [obs.AggregatorFXSnapFallbackTotal], which drives an alert.
-//
-// A leg frozen this tick makes the chain refuse to publish.
-//
-// A RESOLVED composite-reference reading for this bucket (composite_reference.go)
-// is returned instead of the prior tick's sample, so confidence, freeze verdict
-// and release lens read ONE sample. An UNAVAILABLE reading falls through.
+// triangulationDivergencePct returns the % absolute deviation between the direct VWAP just computed and the latest composite for the pair, plus whether a comparison happened. (_, false) when nothing is comparable (no chain, none published, older than [compositeMaxAgeTicks], non-positive price); unchecked is fail-closed ([confidence.Compute] drops the factor's weight).
+// The composite is one tick old by construction: the chain pass runs after the per-pair loop, and re-deriving mid-refresh would double the FX-snap load and double-count [obs.AggregatorFXSnapFallbackTotal]. A leg frozen this tick makes the chain refuse to publish.
+// A RESOLVED composite-reference reading (composite_reference.go) is returned instead so confidence, freeze verdict and release lens read ONE sample; an UNAVAILABLE one falls through.
 func (o *Orchestrator) triangulationDivergencePct(
 	pair canonical.Pair,
 	window time.Duration,

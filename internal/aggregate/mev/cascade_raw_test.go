@@ -2,13 +2,9 @@ package mev
 
 import "testing"
 
-// TestDetectLiquidationCascades_RawOracleRowsAreNotEvidence pins the
-// oracle capture-totality consumer rule for the one unkeyed
-// oracle_updates reader: `raw:<symbol>` rows (unmapped oracle symbols
-// recorded verbatim — canonical.AssetOracleRaw) must never correlate
-// a cascade. 12 raw rows and one mapped row sit inside the bracket;
-// the evidence must contain only the mapped row, and with raw rows
-// alone there is no candidate at all.
+// TestDetectLiquidationCascades_RawOracleRowsAreNotEvidence pins that raw:<symbol> oracle rows
+// (unmapped symbols, canonical.AssetOracleRaw) never correlate a cascade; with raw rows alone
+// there is no candidate.
 func TestDetectLiquidationCascades_RawOracleRowsAreNotEvidence(t *testing.T) {
 	fills := []AuctionFill{
 		fill("CPOOLA", "GUSER1", "GFILL1", txA, 100),
