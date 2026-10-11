@@ -7,42 +7,30 @@ import (
 	"time"
 )
 
-// OracleUpdate is one price observation published by an on-chain or
-// off-chain oracle (Reflector, Redstone, Band, Chainlink-HTTP, …).
+// OracleUpdate is one price observation published by an on-chain or off-chain
+// oracle (Reflector, Redstone, Band, Chainlink-HTTP, …).
 //
-// Identity mirrors [Trade]: (Source, Ledger, TxHash, OpIndex) is the
-// unique key, giving us the same stable cross-region dedup semantics
-// for oracle feeds as we have for trades.
+// Identity mirrors [Trade]: (Source, Ledger, TxHash, OpIndex) is the unique key.
 //
 // # Price representation
 //
-// Oracles return prices at source-specific fixed scales. Reflector
-// Pulse emits i128 price values at a contract-declared `decimals`
-// (typically 14). Band emits E9-scaled relayed rates + E18-scaled
-// pair rates. Redstone emits U256 values at 8 decimals for most
-// feeds.
-//
-// Rather than normalise to a single decimal choice at ingest time
-// (which either loses precision or forces a float), we preserve the
-// raw integer in [Price] and record the source-declared [Decimals].
-// The aggregation layer scales on read per query need:
+// Oracles return prices at source-specific fixed scales (Reflector Pulse: i128 at
+// a contract-declared `decimals`, typically 14; Band: E9 relayed rates + E18 pair
+// rates; Redstone: U256 at 8 decimals for most feeds). Rather than normalise at
+// ingest (which loses precision or forces a float), the raw integer is kept in
+// [Price] with the source-declared [Decimals], and the aggregation layer scales
+// on read:
 //
 //	decimalValue := new(big.Float).Quo(
 //	    new(big.Float).SetInt(update.Price.BigInt()),
 //	    new(big.Float).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(update.Decimals)), nil)),
 //	)
 //
-// That arithmetic lives in `internal/aggregate/scale.go`
-// (future), not here.
-//
 // # Pair vs single-asset
 //
-// Some oracle sources emit single-asset-USD updates ("XLM = 0.12 USD");
-// others emit cross-pair ("XLM/EUR = 0.11"). [Quote] is the
-// denominator asset for the price; for single-asset-USD the Quote is
-// a synthetic off-chain fiat reference (not a Stellar asset),
-// constructed via [NewFiatAsset]: `Asset{Type: AssetFiat, Code: "USD"}`
-// with the wire form `fiat:USD`. See ADR-0010.
+// [Quote] is the denominator ("XLM/EUR = 0.11"); for single-asset-USD updates it
+// is a synthetic fiat reference (not a Stellar asset) built via [NewFiatAsset]:
+// `Asset{Type: AssetFiat, Code: "USD"}`, wire form `fiat:USD`. See ADR-0010.
 type OracleUpdate struct {
 	// Source is the oracle name: "reflector-dex", "reflector-cex",
 	// "reflector-fx", "redstone", "band", "chainlink",

@@ -6,44 +6,30 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// FilterOutliers returns a copy of trades with prices further than
-// `sigma` σ-equivalents from the robust centre removed, using a
-// median + MAD (median absolute deviation) guard.
+// FilterOutliers returns a copy of trades with prices further than `sigma`
+// σ-equivalents from the robust centre removed, using a median + MAD guard.
 //
-// Why MAD, not mean/σ: a mean/σ filter is MASKING-vulnerable (a few
-// extreme prints inflate σ enough to escape their own rejection) and
-// below ~18 trades provably rejects nothing. Median + MAD resists masking
-// and discriminates on small windows, matching the serve-time guard
-// ([GuardServedVWAP], robust.go).
+// Why MAD, not mean/σ: a mean/σ filter is MASKING-vulnerable (a few extreme
+// prints inflate σ enough to escape their own rejection) and below ~18 trades
+// provably rejects nothing. Median + MAD resists masking and discriminates on
+// small windows, matching the serve-time guard ([GuardServedVWAP], robust.go).
 //
 // A price is dropped when its deviation from the median exceeds
-// sigma · (1.4826 · MAD); [madToStd] rescales MAD to a σ-equivalent for
-// normal data, so a config of 4.0 still reads as "≈4σ".
-//
-// The deviation is symmetric in RATIO space ([symmetricDev]; ADR-0046 §1),
-// so the band is [median²/(median + sigma·scale), median + sigma·scale]
-// and a ½× print is exactly as outlying as a 2× one. An additive band's
-// lower edge goes non-positive once relative MAD reaches 1/(sigma·1.4826)
-// — 16.9 % at sigma=4 — after which no downward print could be rejected.
-//
-// Everything on the value path is exact *big.Rat (ADR-0003); `sigma`, a
-// config knob, is converted to a rational before it touches a price.
+// sigma · (1.4826 · MAD); [madToStd] rescales MAD to a σ-equivalent for normal
+// data. The deviation is symmetric in RATIO space ([symmetricDev]; ADR-0046 §1),
+// so a ½× print is exactly as outlying as a 2× one. Exact *big.Rat on the value
+// path (ADR-0003); `sigma` is converted to a rational before it touches a price.
 //
 // Edge cases:
-//   - sigma <= 0 is a no-op (returns a shallow copy); σ=0 would reject
-//     every trade.
-//   - Fewer than 3 usable prices → no robust centre; usable trades are
-//     returned unchanged.
+//   - sigma <= 0 is a no-op (shallow copy); σ=0 would reject every trade.
+//   - Fewer than 3 usable prices → no robust centre; returned unchanged.
 //   - Zero-base / zero-quote trades have no price and are dropped first.
-//   - MAD == 0 (a majority of identical prices — every fill hit one
-//     resting order, or a pegged pair) falls back to
-//     [zeroScaleRelFloor]·centre, a ±2% band at sigma=4: a 100.01 beside
-//     four 100s survives, while [100,100,100,100,200] is still dropped.
-//     Dropping every non-majority price would erase honest price discovery.
-//   - A trim whose survivors carry less base volume than the prints it
-//     dropped returns an EMPTY slice ([keepIfVolumeMajority]): the window
-//     is contested between a count and a volume majority, and neither side
-//     is published.
+//   - MAD == 0 (a majority of identical prices) falls back to
+//     [zeroScaleRelFloor]·centre, a ±2% band at sigma=4: a 100.01 beside four
+//     100s survives, while [100,100,100,100,200] is still dropped.
+//   - A trim whose survivors carry less base volume than the prints it dropped
+//     returns an EMPTY slice ([keepIfVolumeMajority]): neither a count nor a
+//     volume majority is published.
 func FilterOutliers(trades []canonical.Trade, sigma float64) []canonical.Trade {
 	if sigma <= 0 || len(trades) < 3 {
 		out := make([]canonical.Trade, len(trades))

@@ -10,53 +10,28 @@ import (
 
 // Time-local outlier trimming for the published-VWAP path.
 //
-// The whole-window [FilterOutliers] scores every print against one
-// centre (the window median) and one scale (1.4826·MAD), so an AGREED
-// move larger than ~1% is trimmed wholesale until it becomes the
-// majority, then the old regime is trimmed instead: a genuine +2%
-// XLM/GBP step was trimmed for hours and the served VWAP then jumped in
-// one tick. A step is not an outlier; only a print that disagrees with
-// the prints AROUND it is.
+// The whole-window [FilterOutliers] scores every print against one centre and
+// scale, so an AGREED move larger than ~1% is trimmed wholesale until it becomes
+// the majority. A step is not an outlier; only a print that disagrees with the
+// prints AROUND it is.
 //
-// So each print is kept if it sits inside the band of ANY of:
+// A print is kept if it sits inside the band of ANY of: the whole-window
+// centre/scale (nothing the legacy filter accepted is newly rejected); its own
+// time bucket (default 1 m) holding at least [DefaultOutlierMinBucket] prices;
+// the nearest qualifying bucket either side; or, when its own is too thin, the
+// nearest [DefaultOutlierNeighbours] prints.
 //
-//   - the whole-window centre/scale (the legacy band — so nothing the
-//     legacy filter accepted is newly rejected);
-//   - its own time bucket (default 1 m), when the bucket holds at
-//     least [DefaultOutlierMinBucket] prices;
-//   - the nearest qualifying bucket on either side (a step landing
-//     mid-bucket leaves new-regime prints a minority of their own);
-//   - when its own bucket is too thin, the nearest
-//     [DefaultOutlierNeighbours] prints on each side, excluding itself,
-//     so thin single-source series are covered too.
+// The local references are ANCHORED, otherwise a wash burst that is the majority
+// of its own bucket would validate itself: the local scale is CLAMPED to
+// [localScaleRelFloor, localScaleRelCeiling]·centre, and a local reference is
+// TRUSTED only when its centre lies within sigma·max(window scale,
+// ceiling·centre) of the window median OR the previous trusted reference.
 //
-// A print is DROPPED only when it disagrees with every reference: the
-// shape of a fat-finger, wash print or dust spam fill.
-//
-// The local references are ANCHORED, because otherwise a wash burst that
-// is the majority of its own bucket would validate itself:
-//
-//   - the local scale is CLAMPED to [localScaleRelFloor,
-//     localScaleRelCeiling]·centre (0.25 %–1 %);
-//   - a local reference is TRUSTED only when its centre lies within
-//     sigma·max(window scale, ceiling·centre) (±4 % at the default sigma)
-//     of the window median OR of the previous trusted reference. An
-//     agreed step chains bucket-to-bucket; a 2.5× wash bucket is
-//     scored against the window band alone, where it fails.
-//
-// A burst holding the COUNT majority of the window moves the median and
-// can trim honest prints; unless it also holds the base-volume majority,
-// the window is withheld ([keepIfVolumeMajority]) rather than published
-// at the burst level.
-//
-// Accepted residual gap: a burst still self-validates when it holds both
-// the count and base-volume majority, sits within the ~4 % anchor
-// tolerance, or random-walks in ≤ 4 % steps — each indistinguishable from
-// real market moves. The unregistered-venue filter, outlier_trim_fraction
-// and outlier_storm cover the neighbouring cases.
-//
-// The whole value path is exact *big.Rat (ADR-0003); `Sigma` is a
-// config knob converted once to an exact rational.
+// A burst holding the COUNT majority moves the median and can trim honest prints;
+// unless it also holds the base-volume majority, the window is withheld
+// ([keepIfVolumeMajority]). One holding both majorities is indistinguishable
+// from a real move; the unregistered-venue filter, outlier_trim_fraction and
+// outlier_storm cover it. Exact *big.Rat on the value path (ADR-0003).
 
 // Default local-reference geometry. Held as package constants rather
 // than config knobs: the bucket matches the closed-bucket serving

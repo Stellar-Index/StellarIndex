@@ -312,53 +312,29 @@ func (r *AliasRegistry) AliasStrings(asset Asset) []string {
 	return out
 }
 
-// AssetAliases returns every canonical FORM equivalent to `asset` that a
-// read path should try, in priority order: the literal input first, then
-// the rest of its equivalence class in canonical order. An asset with no
-// known second form returns just itself, so callers can loop
-// unconditionally.
+// AssetAliases returns every canonical FORM equivalent to `asset` that a read
+// path should try, in priority order: the literal input first, then the rest of
+// its equivalence class in canonical order. An asset with no known second form
+// returns just itself, so callers can loop unconditionally.
 //
-// # Why XLM has three identities
+// XLM has three identities, all the SAME asset: `native` (the per-network classic
+// form; SDEX rows, prices_1m, the CAGGs), `crypto:XLM` (the cross-network
+// global-ticker form, ADR-0014; every CEX venue and Reflector's CEX oracle) and
+// the Stellar Asset Contract wrapping native XLM (`CAS3J7GY…`; Soroban AMMs). A
+// read keyed by one form that does not try the others silently omits every venue
+// publishing under an alias.
 //
-//   - `native` — the per-network, strkey-less classic form. SDEX trade
-//     rows, prices_1m, the CAGGs and every on-chain surface write this.
-//   - `crypto:XLM` — the cross-network global-ticker form (ADR-0014).
-//     Every CEX venue and Reflector's CEX oracle publish under it.
-//   - `CAS3J7GY…` — the Stellar Asset Contract that wraps native XLM,
-//     which Soroban AMMs trade.
+// The SAC form is LAST, deliberately. Read paths that loop these aliases take the
+// FIRST form that produces an answer, and Soroban XLM pools are orders of
+// magnitude thinner than SDEX and the CEX feeds; anywhere but last, one small
+// pool could become THE served XLM price. A caller who names the C-address still
+// gets that form first. Set-shaped callers (v1.sourceStatsAliases) ignore order
+// but need COMPLETENESS: omitting the SAC literal undercounts Soroban XLM volume.
 //
-// All three are the SAME asset. A read keyed by one form that does not
-// try the others silently omits every venue publishing under an alias
-// (observed: /v1/price?asset=native served a 39h-stale bucket while a
-// fresh CEX VWAP sat under `crypto:XLM`).
-//
-// # Why the SAC form is LAST, deliberately
-//
-// Read paths that loop these aliases take the FIRST form that produces an
-// answer, and Soroban XLM pools are orders of magnitude thinner than SDEX
-// and the CEX feeds. Anywhere but last, a few thousand dollars in one pool
-// could become THE served XLM price. Last means it is reached only when
-// the alternative is no price, still behind the usual freshness,
-// trade-count and divergence guards. A caller who names the C-address
-// still gets that form first.
-//
-// Set-shaped callers (v1.sourceStatsAliases) ignore order but need
-// COMPLETENESS: omitting the SAC literal undercounted Soroban XLM volume.
-//
-// # Generalising beyond XLM: the alias registry
-//
-// Every SAC-wrapped classic asset has the same dual identity. XLM's
-// three-way split is unconditional ([baseAliasFamilies]); other pairs are
-// operator data in `[supply].sac_wrappers` (SAC C-strkey → `CODE:ISSUER`),
-// because [Asset.SacContractID] is a hash and cannot be inverted.
-// [NewAliasRegistry] builds the table at start-up and
-// [InstallAliasRegistry] publishes it with one atomic store, so this
-// function keeps its signature without a per-call config dependency.
-//
-// Until a registry is installed (unit tests, or a binary that never
-// serves reads) the function resolves against the baseline for the network
-// [InstallNetworkPassphrase] published (pubnet when none), so the XLM
-// three-form behaviour is invariant either way.
+// Other SAC-wrapped classic assets are operator data in `[supply].sac_wrappers`
+// ([Asset.SacContractID] is a hash and cannot be inverted), built by
+// [NewAliasRegistry] and published by [InstallAliasRegistry]. Until one is
+// installed the baseline for [InstallNetworkPassphrase]'s network applies.
 func AssetAliases(asset Asset) []Asset {
 	return activeAliasRegistry().Aliases(asset)
 }
