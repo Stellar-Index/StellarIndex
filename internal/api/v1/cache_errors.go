@@ -18,8 +18,7 @@ import (
 //     ErrPoolExhausted, ErrPoolTimeout).
 //   - MISCONF replies: with `stop-writes-on-bgsave-error` active and BGSAVE
 //     failing, every cache write returns MISCONF and cascade-affected handlers
-//     (/v1/oracle/*, /v1/lending/pools, /v1/vwap, /v1/observations*,
-//     /v1/price/tip*) would otherwise 500. 503 + Retry-After lets clients back
+//     would otherwise 500. 503 + Retry-After lets clients back
 //     off while operators unblock writes.
 //
 // Returns false for:

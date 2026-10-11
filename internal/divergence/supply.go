@@ -28,13 +28,8 @@ import (
 // from the market with no automated signal, and the manual "is our
 // supply right?" investigation (see
 // docs/methodology/xlm-circulating-supply.md) is the only line of
-// defense. This automates that check.
+// defense.
 //
-// The reference universe is deliberately different from the price
-// path's: circulating supply is published by the Stellar Network
-// Dashboard (authoritative for XLM, free, no auth) and by CoinGecko
-// (`/coins/{id}` → `market_data.circulating_supply`, off by default
-// because the free tier is 429-throttled).
 // The check degrades gracefully to a `no_reference` outcome when every
 // reference is dark or stale — exactly the discipline the price path
 // applies, so a dead reference is a distinct (non-paging) signal, not

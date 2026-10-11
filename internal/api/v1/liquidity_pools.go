@@ -23,13 +23,9 @@ import (
 // watched-asset pools.
 //
 // Query params:
-//   - pool (optional): L-strkey (SEP-23) or 32-byte hex; restricts to that
-//     pool, 404 when not a captured native pool.
 //   - limit (optional, listing only): 1-100, default 25. Ranked by pool-share
 //     trustline count, the only cross-pool-comparable size signal without USD
 //     pricing of arbitrary pool assets.
-//   - asset (optional, listing only): canonical asset id; restricts to pools
-//     holding any of its alias forms on either side.
 //
 // Consistency: current ledger-entry state (tip-adjacent; per-pool
 // `as_of_ledger` stamps the state ledger), not closed-bucket. ADR-0041

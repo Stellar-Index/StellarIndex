@@ -12,15 +12,11 @@ import (
 // It is NOT a source. It is the ADR-0033 recognition audit's
 // unattributed census: distinct (contract, topic) event shapes in the
 // lake on contracts that NO source in the registry owns — foreign
-// Soroban protocols we have not integrated. compute-completeness
-// writes it through the same CompletenessSnapshot struct as a real
-// source purely because that is the table it lives in, which forces
-// six per-source fields onto it that have no meaning for a census:
-// substrate_ok / projection_ok are hardcoded true, complete /
-// lake_complete are false PERMANENTLY BY CONSTRUCTION (they can only
-// be true if no un-indexed Soroban contract exists anywhere on the
-// network), and coverage_pct measures ledgers until the first foreign
-// contract appeared, so it only ever decreases.
+// Soroban protocols we have not integrated. Its per-source fields have
+// no meaning for a census: substrate_ok / projection_ok are hardcoded
+// true, complete / lake_complete are false PERMANENTLY BY CONSTRUCTION
+// (they can only be true if no un-indexed Soroban contract exists
+// anywhere on the network).
 //
 // The deployed metrics already exclude this row from the per-source
 // gauges for exactly this reason — see the two `WHERE source <>

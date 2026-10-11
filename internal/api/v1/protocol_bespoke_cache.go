@@ -14,8 +14,7 @@ import (
 )
 
 // This file puts a LAST-GOOD layer under the per-category bespoke analytics
-// block of /v1/protocols/{name} (the KPI/series/table suite the
-// CCTP/DEX/lending/yield/oracle pages render).
+// block of /v1/protocols/{name}.
 //
 // Why: the bespoke block is built LAST in buildProtocolDetail, so it inherits
 // whatever remains of the rebuild's 90-second budget after the roster and lake
@@ -31,10 +30,8 @@ import (
 // last good block.
 //
 // Cadence: every build kicks a refresh UNCONDITIONALLY (single flight collapses
-// duplicates). Builds are already rate-limited by the detail cache (the prewarm
-// sweep touches each (protocol, window) key every ~13-16 minutes), so this
-// refreshes at the sweep cadence. A freshness-gated kick would sawtooth, the
-// same failure PrewarmProtocolDetails avoids.
+// duplicates). A freshness-gated kick would sawtooth, the same failure
+// PrewarmProtocolDetails avoids.
 
 // bespokeStaleAfter is the age past which a SERVED bespoke block is
 // reported stale (the detail view's analytics.status drops ok → stale).

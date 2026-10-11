@@ -159,17 +159,13 @@ func (rec *idempotencyRecorder) Write(b []byte) (int, error) {
 // Idempotency returns middleware that lets a client safely retry a
 // state-changing POST. A caller supplying the Idempotency-Key header
 // gets the ORIGINAL captured response replayed verbatim on any repeat
-// within store's TTL, instead of the handler re-running — for a
-// mint-once endpoint (API-key creation, price-alert creation) that
-// otherwise silently mints a second resource the client has no way to
-// reconcile against the first.
+// within store's TTL, instead of the handler re-running.
 //
 // subjectKeyFn scopes the cache to the caller (account/session) so
 // two different callers who happen to pick the same literal key
 // string never collide; the method and path scope it to one route. A
 // nil subjectKeyFn, an empty subject, or a missing/blank header leaves
-// the request to run normally — the header is opt-in, matching its
-// semantics elsewhere (Stripe et al.).
+// the request to run normally.
 //
 // A repeat that arrives while the first request is still running gets
 // a retryable 409 rather than a second run of the handler.

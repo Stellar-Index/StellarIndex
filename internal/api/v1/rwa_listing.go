@@ -15,10 +15,6 @@ import (
 //
 // # The population this arm exists to reach
 //
-// Candidates drawn only from the curated directory's issuing-tagged contracts
-// skip every address it has never heard of: the two directories barely
-// overlap, and the in-repo curated binding set names none of the directory's.
-//
 // So the population is the UNION of the directory's addresses and every address
 // the in-repo binding set names. Enumerating is NOT admitting: a curated binding
 // must still be named by the listing directory to pass C2. Enumeration makes its
@@ -26,8 +22,7 @@ import (
 //
 // # Why the two arms are reported separately
 //
-// They narrow different populations from different roots, so stage counts
-// reconcile only within each. The candidate sets are made DISJOINT: an address
+// The candidate sets are made DISJOINT: an address
 // the curated directory recognises is evaluated by the directory arm and
 // removed here, or the served set would carry it twice (a double-counted
 // market cap).
