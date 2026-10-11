@@ -7,15 +7,12 @@ import (
 	"time"
 )
 
-// BespokeBlock is the served-tier, per-category bespoke analytics for a
-// protocol page (the v1 API maps it 1:1 to api/v1.ProtocolBespoke — timescale
-// can't import v1). A generic container (headline KPIs + named time-series +
-// named top-N tables) filled with content tailored to the protocol's category,
-// so the UI renders the three shapes generically while the DATA is bespoke.
+// BespokeBlock is the served-tier, per-category bespoke analytics for a protocol page (mapped 1:1
+// to api/v1.ProtocolBespoke; timescale cannot import v1): headline KPIs, named time-series and
+// named top-N tables, so the UI renders three generic shapes while the DATA is bespoke.
 //
-// All numeric values are PRE-FORMATTED strings here: the store owns formatting
-// so amounts that exceed 2^53 stay exact (ADR-0003) and percentages/counts read
-// the way the page shows them.
+// All numeric values are PRE-FORMATTED strings: the store owns formatting so amounts above 2^53
+// stay exact (ADR-0003).
 type BespokeBlock struct {
 	Category   string
 	KPIs       []BespokeKPI
@@ -71,11 +68,10 @@ type BespokeTable struct {
 	Rows    [][]string
 }
 
-// BuildProtocolBespoke assembles the bespoke block for source (the protocol
-// name) given its category, over a trailing windowDays. Returns nil (not an
-// error) for a category with no bespoke metrics yet, so the page degrades to
-// its generic analytics. windowDays bounds every query to the ts-indexed recent
-// window so the projected-table scans stay cheap.
+// BuildProtocolBespoke assembles the bespoke block for source (the protocol name) over a trailing
+// windowDays. Returns nil (not an error) for a category with no bespoke metrics, so the page
+// degrades to its generic analytics. windowDays bounds every query to the ts-indexed recent window
+// so projected-table scans stay cheap.
 func (s *Store) BuildProtocolBespoke(ctx context.Context, source, category string, windowDays int) (*BespokeBlock, error) {
 	if windowDays <= 0 {
 		windowDays = 90
@@ -99,21 +95,15 @@ func (s *Store) BuildProtocolBespoke(ctx context.Context, source, category strin
 // bespokeBridge builds the bridge bespoke block: DIRECTIONAL (in/out)
 // USDC-denominated flow volumes, daily series, and per-domain tables.
 //
-// Amount scales are per-bridge and DIFFERENT — both checked
-// against the USDC SAC leg of a real tx (the external-scaling trap
-// class, AGENTS.md):
-//   - cctp_events.amount is CANONICAL 6-decimal USDC (event 172,719,938 vs
-//     SAC mint 1,727,199,380 — exactly 10× — matching the on-chain
-//     token_decimal_config {canonical:6, local:7} fixture) — EXCEPT
-//     mint_and_forward, which restates its op's mint_and_withdraw amount at
-//     the LOCAL 7-decimal scale (exactly 10× on all 13,651 pairs measured)
-//     and is therefore excluded from flow sums entirely
-//     (see protocol_bespoke_cctp.go);
-//   - rozo_events.amount is LOCAL 7-decimal SAC stroops (event and SAC
-//     transfer byte-identical: 2,500,000).
+// Amount scales are per-bridge and DIFFERENT, both checked against the USDC SAC leg of a real tx
+// (the external-scaling trap, AGENTS.md):
+//   - cctp_events.amount is CANONICAL 6-decimal USDC (exactly 10x below the SAC mint, matching the
+//     on-chain token_decimal_config {canonical:6, local:7}) EXCEPT mint_and_forward, which
+//     restates its op's mint_and_withdraw amount at the LOCAL 7-decimal scale and is therefore
+//     excluded from flow sums entirely (see protocol_bespoke_cctp.go);
+//   - rozo_events.amount is LOCAL 7-decimal SAC stroops (identical to the SAC transfer).
 //
-// Values are rendered as decimal USDC strings via exact NUMERIC division —
-// never floats (ADR-0003).
+// Values are rendered as decimal USDC strings via exact NUMERIC division, never floats (ADR-0003).
 func (s *Store) bespokeBridge(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
 	since := fmt.Sprintf("%d days", windowDays)
 	switch source {
@@ -125,13 +115,10 @@ func (s *Store) bespokeBridge(ctx context.Context, source string, windowDays int
 	return nil, nil
 }
 
-// bridgeSeriesGrain returns the date_trunc grain + to_char timestamp format
-// for the bridge flow series. windowDays == 1 buckets by HOUR — a daily bucket
-// would collapse the 24h window into a single point, useless for a chart —
-// with the hour spelled out so a consumer can tell the grain apart from the
-// date-only daily shape. Longer windows stay daily. (In to_char patterns
-// double-quoted text is emitted literally, so "T" renders as the ISO 'T'
-// separator.)
+// bridgeSeriesGrain returns the date_trunc grain + to_char format for the bridge flow series.
+// windowDays == 1 buckets by HOUR (a daily bucket would collapse the 24h window to one point), with
+// the hour spelled out so a consumer can tell the grain from the date-only daily shape. In to_char
+// patterns double-quoted text is literal, so "T" renders as the ISO 'T' separator.
 func bridgeSeriesGrain(windowDays int) (trunc, format string) {
 	if windowDays == 1 {
 		return "hour", `YYYY-MM-DD"T"HH24:00`
@@ -139,22 +126,16 @@ func bridgeSeriesGrain(windowDays int) (trunc, format string) {
 	return "day", "YYYY-MM-DD"
 }
 
-// completeDayCutoffSQL is the SQL expression for the start of the current
-// day — the exclusive upper bound [completeDaysOnly] applies. Evaluated in
-// the session timezone (UTC in production), the SAME zone
-// date_trunc('day', …) buckets in, so the excluded bucket is exactly the
-// one that would render partial.
+// completeDayCutoffSQL is the start of the current day, the exclusive upper bound
+// [completeDaysOnly] applies. It is evaluated in the session timezone, the SAME zone
+// date_trunc('day', ...) buckets in, so the excluded bucket is exactly the partial one.
 const completeDayCutoffSQL = `date_trunc('day', now())`
 
-// completeDaysOnly returns a WHERE-clause fragment (leading " AND ") that
-// excludes the current, still-accumulating day from a DAILY-grain series —
-// the "phantom cliff" class: today's partial bucket renders as a plummeting
-// final point on every daily chart, indistinguishable from a real activity
-// collapse. Empty at the 24h window, whose HOURLY grain keeps its live edge
-// (a partial current hour reads as "now", not as a cliff). col is a
-// code-owned column name, never request input. Applies to the
-// POINT-producing scan only — top-N ranking CTEs may keep the live day
-// (selection, not display).
+// completeDaysOnly returns a WHERE fragment (leading " AND ") excluding the current,
+// still-accumulating day from a DAILY-grain series: otherwise today's partial bucket renders as a
+// plummeting final point, indistinguishable from a real activity collapse. Empty at the 24h
+// window, whose HOURLY grain keeps its live edge. col is a code-owned column name, never request
+// input. It applies to the point-producing scan only; top-N ranking CTEs may keep the live day.
 func completeDaysOnly(windowDays int, col string) string {
 	if windowDays == 1 {
 		return ""
@@ -270,18 +251,11 @@ func (s *Store) dexSourceAugments(ctx context.Context, blk *BespokeBlock, source
 	return nil
 }
 
-// aquariusReserveBlocks augments the Aquarius DEX block with the pool
-// liquidity-depth surface derived from aquarius_reserves (migration 0089) —
-// the first Aquarius TVL/depth signal on the analytics axis. It adds a
-// pool-depth KPI (pools with a live reserve snapshot), a latest-snapshot
-// recency KPI, and a per-pool latest-reserves table in native token base
-// units. Aquarius pools have no independently published price, so USD TVL
-// is NOT computed — depth is reported in native units with the caveat in
-// the appended Note (mirrors bespokeDEX's "quote never resolved to USD
-// contributes 0" honesty on the volume side).
-//
-// Empty-safe: a no-op when no reserves have been captured, so the block
-// renders cleanly with just the volume KPIs.
+// aquariusReserveBlocks augments the Aquarius DEX block with pool liquidity depth from
+// aquarius_reserves: a pool-depth KPI, a latest-snapshot recency KPI and a per-pool
+// latest-reserves table in native token base units. Aquarius pools have no independently
+// published price, so USD TVL is NOT computed; the appended Note says so. Empty-safe: a no-op
+// when no reserves were captured.
 func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, windowDays int) error {
 	pools, err := s.LatestAquariusReserves(ctx, windowDays)
 	if err != nil {
@@ -355,26 +329,15 @@ func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, wi
 	return nil
 }
 
-// aquariusRewardsBlocks augments the Aquarius DEX block with the rewards-
-// gauge / governance surface (aquarius_rewards_events, migration 0099;
-// aquarius_admin, migration 0100). Adds:
+// aquariusRewardsBlocks augments the Aquarius DEX block with the rewards-gauge / governance
+// surface (aquarius_rewards_events, aquarius_admin): lifetime and 30d KPIs, a 30d claim_reward
+// volume table per reward token, a lifetime per-kind event table, a recent-governance table and a
+// daily claim_reward series.
 //
-//   - lifetime + windowed KPIs: rewards-gauge events (lifetime), 30d
-//     claim_reward count/distinct claimants (+ volume when a single reward
-//     token was claimed), and governance events (lifetime).
-//   - a 30d claim_reward volume table, one row per reward token.
-//   - a lifetime per-kind event-count table (all 12 rewards-gauge kinds).
-//   - a recent-governance-events table (newest first, across all 8 admin kinds).
-//   - a daily claim_reward series.
-//
-// The claim_reward drill-down is fixed at 30 days regardless of the caller's
-// windowDays (a fixed, comparable window); the per-kind breakdown and
-// governance total are unwindowed lifetime figures; the daily series follows
-// windowDays like its DEX-block siblings.
-//
-// Empty-safe: a no-op when neither rewards-gauge nor governance events have
-// been captured; each KPI/table/series also degrades independently on an
-// empty result.
+// The claim_reward drill-down is fixed at 30 days regardless of windowDays (a comparable window);
+// the per-kind breakdown and governance total are unwindowed lifetime figures; the daily series
+// follows windowDays. Empty-safe: a no-op when neither event kind was captured, and each
+// KPI/table/series degrades independently on an empty result.
 func (s *Store) aquariusRewardsBlocks(ctx context.Context, blk *BespokeBlock, windowDays int) error {
 	byKind, err := s.AquariusRewardsLifetimeByKind(ctx)
 	if err != nil {
@@ -519,23 +482,14 @@ func (s *Store) aquariusGovernanceTable(ctx context.Context, blk *BespokeBlock) 
 	return nil
 }
 
-// cometLiquidityBlocks augments the Comet DEX block with the pool
-// liquidity-flow surface derived from comet_liquidity (migration 0042). It
-// adds LP-activity KPIs (pools with flow / token legs / events) and a
-// per-(pool, token) net-flow table in native token base units.
+// cometLiquidityBlocks augments the Comet DEX block with pool liquidity flow from comet_liquidity:
+// LP-activity KPIs and a per-(pool, token) net-flow table in native token base units.
 //
-// Depth here is a WINDOW net flow (added − removed over the window), NOT an
-// absolute reserve or USD TVL — Comet emits no post-state reserve snapshot
-// and has no published price. Comet is contract-identity gated (curated
-// one-pool allowlist): the decoder's Matches() requires the emitting
-// contract to be in comet.MainnetGatedSet, so a look-alike Balancer-v1
-// deployment cannot land NEW rows here. Rows captured before the gate were
-// written by a topic-only-match decoder and are not retroactively
-// re-verified, so historical rows may predate the gate. Both caveats are
-// appended as Notes.
-//
-// Empty-safe: a no-op when no liquidity events were captured, so the block
-// renders cleanly with just the volume KPIs.
+// Depth is a WINDOW net flow (added - removed), NOT an absolute reserve or USD TVL: Comet emits no
+// post-state reserve snapshot and has no published price. Comet is contract-identity gated
+// (comet.MainnetGatedSet), so a look-alike Balancer-v1 deployment cannot land NEW rows; rows
+// captured before the gate came from a topic-only decoder and are not re-verified. Both caveats
+// are appended as Notes. Empty-safe: a no-op when no liquidity events were captured.
 func (s *Store) cometLiquidityBlocks(ctx context.Context, blk *BespokeBlock, windowDays int) error {
 	flows, err := s.LatestCometLiquidityFlows(ctx, windowDays)
 	if err != nil {
@@ -595,19 +549,14 @@ func (s *Store) cometLiquidityBlocks(ctx context.Context, blk *BespokeBlock, win
 	return nil
 }
 
-// phoenixLiquidityBlocks augments the Phoenix DEX block with the pool
-// liquidity-flow surface derived from phoenix_liquidity (migration 0044). It
-// adds LP-activity KPIs (pools with flow / provides / withdraws) and a
-// per-pool two-token net-flow table in native token base units.
+// phoenixLiquidityBlocks augments the Phoenix DEX block with pool liquidity flow from
+// phoenix_liquidity: LP-activity KPIs and a per-pool two-token net-flow table in native token base
+// units.
 //
-// Depth here is a WINDOW net flow (provide − withdraw over the window), NOT
-// an absolute reserve or USD TVL — Phoenix pool events carry the moved
-// amounts, not post-state reserves, and Phoenix has no published price.
-// Phoenix IS contract-identity gated (curated set, gated before Comet), so
-// unlike Comet it needs no historical-rows-may-predate-the-gate caveat.
-//
-// Empty-safe: a no-op when no liquidity events were captured, so the block
-// renders cleanly with just the volume KPIs.
+// Depth is a WINDOW net flow (provide - withdraw), NOT an absolute reserve or USD TVL: Phoenix
+// events carry moved amounts, not post-state reserves, and Phoenix has no published price. Phoenix
+// IS contract-identity gated, so unlike Comet it needs no pre-gate-rows caveat. Empty-safe: a
+// no-op when no liquidity events were captured.
 func (s *Store) phoenixLiquidityBlocks(ctx context.Context, blk *BespokeBlock, windowDays int) error {
 	flows, err := s.LatestPhoenixLiquidityFlows(ctx, windowDays)
 	if err != nil {
@@ -672,11 +621,9 @@ func (s *Store) phoenixLiquidityBlocks(ctx context.Context, blk *BespokeBlock, w
 	return nil
 }
 
-// phoenixStakeKPIs augments the Phoenix DEX block with LP-staking KPIs
-// derived from phoenix_stake_events (migration 0044) — bonded / unbonded /
-// net-staked LP-share amounts and unique stakers over the window. Amounts
-// are LP-share-token base units, not USD. Empty-safe: a no-op when no
-// bond/unbond event was captured.
+// phoenixStakeKPIs augments the Phoenix DEX block with LP-staking KPIs from phoenix_stake_events:
+// bonded / unbonded / net-staked amounts and unique stakers over the window. Amounts are
+// LP-share-token base units, not USD. Empty-safe: a no-op when no bond/unbond was captured.
 func (s *Store) phoenixStakeKPIs(ctx context.Context, blk *BespokeBlock, windowDays int) error {
 	st, err := s.PhoenixStakeWindowStats(ctx, windowDays)
 	if err != nil {
@@ -697,11 +644,9 @@ func (s *Store) phoenixStakeKPIs(ctx context.Context, blk *BespokeBlock, windowD
 	return nil
 }
 
-// soroswapSkimKPIs augments the Soroswap DEX block with skim KPIs derived
-// from soroswap_skim_events (migration 0043) — the caller-initiated claim of
-// pool balance above recorded reserves (rare). Amounts are served per pair
-// only, in native token base units, not USD; skim is not a trade and never
-// feeds VWAP. Empty-safe: a no-op when no skim was captured.
+// soroswapSkimKPIs augments the Soroswap DEX block with skim KPIs from soroswap_skim_events (the
+// rare caller-initiated claim of pool balance above recorded reserves). Amounts are per pair, in
+// native token base units, not USD; skim is not a trade and never feeds VWAP. Empty-safe.
 func (s *Store) soroswapSkimKPIs(ctx context.Context, blk *BespokeBlock, windowDays int) error {
 	sk, err := s.SoroswapSkimWindowStats(ctx, windowDays)
 	if err != nil {
@@ -773,13 +718,10 @@ func (s *Store) lendingEmissionKPIs(ctx context.Context, blk *BespokeBlock, wind
 // net-position table, the per-pool activity table, and the daily
 // position-event series.
 //
-// COUNT-first (the bespoke_lending.go visual-suite rationale):
-// blend_positions rows mix many tokens at per-asset decimals with no
-// USD valuation at this layer, so a headline "Net supplied/borrowed"
-// KPI — token_amount summed ACROSS assets — or per-pool cross-asset
-// sums with a "Util %" ratio would be meaningless numbers with
-// authoritative labels. Amount sums survive only where scoped to a
-// single asset (the per-asset table).
+// COUNT-first: blend_positions rows mix many tokens at per-asset decimals with no USD valuation at
+// this layer, so a headline "Net supplied/borrowed" KPI (token_amount summed ACROSS assets) or
+// per-pool cross-asset sums with a "Util %" ratio would be meaningless numbers with authoritative
+// labels. Amount sums survive only where scoped to a single asset (the per-asset table).
 func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
 	var users, flashLoans string
 	err := s.db.QueryRowContext(ctx, `
@@ -814,11 +756,9 @@ func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, si
 		blk.Tables = append(blk.Tables, tbl)
 	}
 
-	// Per-pool table is COUNT-only: a pool holds positions in several
-	// assets, so any per-pool amount sum (and a Util% ratio of two such
-	// sums) mixes decimals across tokens. Side counts use the same kind
-	// partition as bespoke_lending.go's lendingSupplySideKinds /
-	// lendingBorrowSideKinds.
+	// Per-pool table is COUNT-only: a pool holds several assets, so a per-pool amount sum (or a
+	// Util% ratio of two) mixes decimals across tokens. Side counts use the kind partition of
+	// lendingSupplySideKinds / lendingBorrowSideKinds in bespoke_lending.go.
 	poolTbl, err := s.scanTable(ctx,
 		BespokeTable{Title: "Activity by pool", Columns: []string{"Pool", "Supply-side events", "Borrow-side events", "Users", "Events"}},
 		`SELECT pool,
@@ -888,16 +828,12 @@ func (s *Store) lendingAuctionBlocks(ctx context.Context, blk *BespokeBlock, sin
 // lendingBackstopKPIs fills the backstop deposit/withdraw volume KPIs (the
 // table is sparse — degrades to 0).
 func (s *Store) lendingBackstopKPIs(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
-	// The `amount` column carries DIFFERENT units per event_kind:
-	// deposit/withdraw amounts are underlying TOKENS, but
-	// queue_withdrawal/dequeue_withdrawal amounts are backstop-LP SHARES
-	// and distribute/gulp_emissions/claim/donate amounts are BLND
-	// emissions. Summing across kinds produces a meaningless mixed-unit
-	// figure dominated by whichever kind is most frequent (per
-	// docs/protocols/blend.md that is queue_withdrawal — shares). This KPI
-	// is the deposit/withdraw *token* volume (per the function name +
-	// label), so restrict the sum to those two token-denominated kinds.
-	// The event COUNT stays unfiltered — it is a coherent all-kinds tally.
+	// The `amount` column carries DIFFERENT units per event_kind: deposit/withdraw are underlying
+	// TOKENS, queue_withdrawal/dequeue_withdrawal are backstop-LP SHARES, and
+	// distribute/gulp_emissions/claim/donate are BLND emissions. Summing across kinds yields a
+	// meaningless mixed-unit figure dominated by the most frequent kind (queue_withdrawal, per
+	// docs/protocols/blend.md), so this token-volume KPI sums only the two token-denominated kinds.
+	// The event COUNT stays unfiltered: it is a coherent all-kinds tally.
 	var backstopVol, backstopCount string
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT COALESCE(sum(amount) FILTER (WHERE event_kind IN ('deposit','withdraw')),0)::text,

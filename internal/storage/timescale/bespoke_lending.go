@@ -5,15 +5,11 @@ package timescale
 // (BespokeBlock/KPI/Series/Table/Breakdown) + the dispatcher + the scan
 // helpers stay in protocol_bespoke.go.
 
-// bespokeLending builds the Blend lending bespoke block: PER-ASSET net
-// supplied (supply + supply_collateral − withdraw − withdraw_collateral) and
-// net borrowed (borrow − repay) from blend_positions, plus auction and
-// backstop activity. blend_positions amounts are unsigned magnitudes — the
-// sign is the event_kind, not the value — so net positions are signed sums of
-// the gross magnitudes, and they are only ever summed WITHIN one asset
-// (cross-asset sums mix per-token decimals — see the count-first block comment
-// below; that is why there is no cross-asset "Net supplied/borrowed" headline
-// KPI and no per-pool Util%).
+// bespokeLending builds the Blend lending bespoke block: PER-ASSET net supplied (supply +
+// supply_collateral - withdraw - withdraw_collateral) and net borrowed (borrow - repay) from
+// blend_positions, plus auction and backstop activity. Amounts are unsigned magnitudes (the sign
+// is the event_kind), and are only ever summed WITHIN one asset because cross-asset sums mix
+// per-token decimals; hence no cross-asset headline KPI and no per-pool Util%.
 import (
 	"context"
 	"fmt"
@@ -68,26 +64,18 @@ func (s *Store) bespokeLending(ctx context.Context, source string, windowDays in
 	return blk, nil
 }
 
-// ─── Blend visual-suite extensions ──────────────────────────────────────
+// Everything below is COUNT-first on purpose: blend_positions / blend_backstop_events rows mix
+// many tokens at per-asset decimals with no USD valuation at this layer, so summing raw amounts
+// across rows would be a meaningless number. Amounts appear only where one row's single asset is
+// shown (the flash-loan table) or a sum is already scoped per-asset.
 //
-// Everything below is COUNT-first on purpose: blend_positions /
-// blend_backstop_events rows mix many tokens at per-asset decimals, and no USD
-// valuation exists for them at this layer — summing different tokens' raw
-// amounts across rows would be a meaningless (and dishonest) number. Amounts
-// appear only where a single row's single asset is shown (the flash-loan
-// table) or where an existing surface already scopes a sum per-asset.
-//
-// Series names are window-stable (no "(Nd)" suffix, no "Daily" prefix):
-// the grain — hourly at the 24h window, daily otherwise, via
-// bridgeSeriesGrain — lives in the point timestamps, mirroring the CCTP
-// series convention.
+// Series names are window-stable (no "(Nd)" suffix, no "Daily" prefix): the grain (hourly at 24h,
+// daily otherwise, via bridgeSeriesGrain) lives in the point timestamps, as in the CCTP series.
 
-// lendingSupplySideKinds / lendingBorrowSideKinds partition all seven
-// blend_positions event kinds into the two sides of the money market:
-// supply-side = lender-leg movements (deposits AND their withdrawals),
-// borrow-side = debt-leg movements (borrow, repay, flash_loan — a
-// flash loan is a same-tx borrow). Together they cover every kind, so
-// the two lines sum to total position events.
+// lendingSupplySideKinds / lendingBorrowSideKinds partition all seven blend_positions event kinds
+// into lender-leg movements (deposits AND withdrawals) and debt-leg movements (borrow, repay,
+// flash_loan, a same-tx borrow). Together they cover every kind, so the two lines sum to total
+// position events.
 const (
 	lendingSupplySideKinds = `'supply','supply_collateral','withdraw','withdraw_collateral'`
 	lendingBorrowSideKinds = `'borrow','repay','flash_loan'`
@@ -104,12 +92,10 @@ const (
 	                          WHEN event_kind = 'repay' THEN -token_amount END`
 )
 
-// lendingBackstopInflowKinds / lendingBackstopOutflowKinds are the
-// backstop event kinds that move funds INTO vs OUT OF a backstop
-// (deposit/donate vs withdraw/draw). The remaining kinds (claim,
-// queue/dequeue_withdrawal, distribute, gulp_emissions, rw_zone*) are
-// accounting/queueing events, not fund flows, and are excluded from the
-// flow series (they stay in the backstop-events KPI count).
+// lendingBackstopInflowKinds / lendingBackstopOutflowKinds are the backstop event kinds that move
+// funds INTO vs OUT OF a backstop (deposit/donate vs withdraw/draw). The remaining kinds (claim,
+// queue/dequeue_withdrawal, distribute, gulp_emissions, rw_zone*) are accounting or queueing
+// events, excluded from the flow series but kept in the backstop-events KPI count.
 const (
 	lendingBackstopInflowKinds  = `'deposit','donate'`
 	lendingBackstopOutflowKinds = `'withdraw','draw'`
@@ -157,14 +143,11 @@ func lendingAuctionSeriesQuery(windowDays int) string {
 		 GROUP BY 1 ORDER BY 1 ASC`
 }
 
-// lendingPerPoolSeriesQuery builds the top-5-pools-by-window-events
-// activity series: (pool, bucket, events) rows ordered by each pool's
-// window event count descending, then pool, then bucket — the same fold
-// shape as the CCTP per-chain series. The pool tiebreak (both in the
-// top-5 CTE and the outer ORDER BY) is load-bearing: two pools tied on
-// window event count otherwise sort by bucket first and interleave, and
-// collectLendingPoolSeries's consecutive-key fold starts a new series on
-// every interleave, fragmenting one pool's line into several.
+// lendingPerPoolSeriesQuery builds the top-5-pools-by-window-events series: (pool, bucket, events)
+// rows ordered by window event count descending, then pool, then bucket. The pool tiebreak (in
+// the top-5 CTE and the outer ORDER BY) is load-bearing: pools tied on count otherwise interleave
+// by bucket, and collectLendingPoolSeries's consecutive-key fold would fragment one pool's line
+// into several.
 func lendingPerPoolSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
@@ -183,11 +166,9 @@ func lendingPerPoolSeriesQuery(windowDays int) string {
 		 ORDER BY top.events DESC, p.pool, 2 ASC`
 }
 
-// lendingAllTimeKPIQuery is the unwindowed lifetime scale of the Blend
-// money market: total position events, supply-side / borrow-side event
-// counts, distinct users, and distinct pools. Deliberately NOT
-// window-bounded (an explicit all-time aggregate; the whole block is
-// built under the window-keyed protocol-detail cache).
+// lendingAllTimeKPIQuery is the unwindowed lifetime scale of the Blend money market: position
+// events, supply/borrow-side counts, distinct users and pools. Deliberately NOT window-bounded;
+// the whole block is built under the window-keyed protocol-detail cache.
 func lendingAllTimeKPIQuery() string {
 	return `
 		SELECT count(*)::text,
@@ -262,11 +243,9 @@ func (s *Store) lendingActivitySeries(ctx context.Context, blk *BespokeBlock, si
 	return nil
 }
 
-// collectLendingPoolSeries folds the ordered (pool, bucket, count) rows of
-// lendingPerPoolSeriesQuery into per-pool BespokeSeries, preserving the
-// query's events-descending pool order (the CCTP per-chain fold shape).
-// Pools are labelled by truncated contract id — no pool-name registry
-// exists in the served tier.
+// collectLendingPoolSeries folds the ordered rows of lendingPerPoolSeriesQuery into per-pool
+// BespokeSeries, preserving its events-descending pool order. Pools are labelled by truncated
+// contract id; the served tier has no pool-name registry.
 func (s *Store) collectLendingPoolSeries(ctx context.Context, query, since string) ([]BespokeSeries, error) {
 	rows, err := s.db.QueryContext(ctx, query, since)
 	if err != nil {
@@ -292,12 +271,9 @@ func (s *Store) collectLendingPoolSeries(ctx context.Context, query, since strin
 	return out, rows.Err()
 }
 
-// lendingActivityBreakdowns fills the two composition datasets (the donut
-// complement to the series): position events by pool (top 10) and by event
-// kind (all seven). Both are event-count weighted — the only honest weight
-// across mixed-asset rows (see the section comment); Value and Count carry
-// the same event tally so count-rendering and value-rendering consumers
-// agree.
+// lendingActivityBreakdowns fills the two composition datasets: position events by pool (top 10)
+// and by event kind (all seven). Both are event-count weighted, the only honest weight across
+// mixed-asset rows; Value and Count carry the same tally so both kinds of consumer agree.
 func (s *Store) lendingActivityBreakdowns(ctx context.Context, blk *BespokeBlock, since string, windowDays int) error {
 	byPool, err := s.collectLendingBreakdown(ctx,
 		BespokeBreakdown{Title: "Activity by pool", Unit: "events"},
@@ -355,13 +331,10 @@ func (s *Store) collectLendingBreakdown(ctx context.Context, base BespokeBreakdo
 	return base, nil
 }
 
-// lendingFlashLoanTable fills the recent-flash-loans table — the showcase
-// event class the auction table doesn't cover. Rows are RECENCY-ordered, never
-// amount-ordered: ranking mixed-asset raw amounts against each other would
-// compare numbers at different per-asset decimal scales. Each row shows its
-// own single asset's raw amount honestly; Tx carries the full hash like the
-// bridge largest-transfers table. Empty-safe: omitted when no flash loan
-// landed in the window.
+// lendingFlashLoanTable fills the recent-flash-loans table. Rows are RECENCY-ordered, never
+// amount-ordered: ranking mixed-asset raw amounts would compare different per-asset decimal
+// scales. Each row shows its own asset's raw amount; Tx carries the full hash. Empty-safe: omitted
+// when no flash loan landed in the window.
 func (s *Store) lendingFlashLoanTable(ctx context.Context, blk *BespokeBlock, since string) error {
 	tbl, err := s.scanTable(ctx,
 		BespokeTable{Title: "Recent flash loans", Columns: []string{"When", "Pool", "Asset", "Amount (raw token units)", "Borrower", "Tx"}},
@@ -386,12 +359,9 @@ func (s *Store) lendingFlashLoanTable(ctx context.Context, blk *BespokeBlock, si
 	return nil
 }
 
-// truncLendingID renders "CAJJ…BXBD" for a contract/account id — a
-// display label for breakdown slices and per-pool series names where a
-// 56-char strkey would overwhelm the chart. A private duplicate of the
-// API layer's truncPositionsContract on purpose: storage never imports
-// api packages (the same no-upward-import reasoning as sorocredit.go's
-// row types).
+// truncLendingID renders "CAJJ…BXBD" for a contract/account id, a display label where a 56-char
+// strkey would overwhelm the chart. It duplicates the API layer's truncPositionsContract on
+// purpose: storage never imports api packages.
 func truncLendingID(id string) string {
 	if len(id) <= 9 {
 		return id
@@ -399,32 +369,22 @@ func truncLendingID(id string) string {
 	return id[:4] + "…" + id[len(id)-4:]
 }
 
-// lendingEmissionKPIs augments the Blend lending block with emission /
-// credit-risk KPIs from blend_emissions (migration 0045) — claimed-emission
-// volume + claim/gulp counts, and a credit-risk (bad_debt + defaulted_debt)
-// event count surfaced honestly. Claim amounts are token base units, not
-// USD. Empty-safe: a no-op when no emission event was captured.
+// lendingEmissionKPIs augments the Blend lending block with emission and credit-risk KPIs from
+// blend_emissions: claimed-emission volume, claim/gulp counts and a (bad_debt + defaulted_debt)
+// event count. Claim amounts are token base units, not USD. Empty-safe.
 
-// bespokeCredit builds the sorocredit (consumer-USDC credit / CDP protocol)
-// lending bespoke block from the four credit_* hypertables (migration 0090):
-// positions opened + a window-scoped open-position proxy, statements
-// published, SCHEDULED settlements (volume + count), withdrawals, and a
-// recent-settlements table.
+// bespokeCredit builds the sorocredit (consumer-USDC credit / CDP) bespoke block from the four
+// credit_* hypertables: positions opened, a window-scoped open-position proxy, statements,
+// SCHEDULED settlements (volume + count), withdrawals and a recent-settlements table.
 //
-// CRITICAL semantic: credit_settlements rows are the on-wire "Liquidation"
-// event but are recurring SCHEDULED keeper settlements of published
-// statements — NOT distressed liquidations. Every settlement label + the
-// appended Note says so; a "liquidations" risk signal must never be surfaced
-// from this data (migration 0090 header + internal/sources/sorocredit).
+// CRITICAL: credit_settlements rows are the on-wire "Liquidation" event but are recurring
+// SCHEDULED keeper settlements, NOT distressed liquidations. Every label and the appended Note say
+// so; a "liquidations" risk signal must never be surfaced from this data.
 //
-// Empty-safe: returns nil (not an error) when no credit_* row exists in the
-// window, so /v1/protocols/sorocredit degrades to its generic analytics.
-// Amounts are USDC / token base units (per-asset decimals), never USD
-// (sorocredit has no published price).
-//
-// creditAmountUnitsNote and creditSettlementVolumeHint document the USDC
-// scale: a SAC wrapping a classic asset is 7-decimal fixed point on-chain,
-// never the off-chain 6-decimal USDC convention.
+// Empty-safe: returns nil (not an error) when no credit_* row exists in the window. Amounts are
+// token base units, never USD (no published price). A SAC wrapping a classic asset is 7-decimal on
+// chain, never the off-chain 6-decimal USDC convention (see creditAmountUnitsNote and
+// creditSettlementVolumeHint).
 const (
 	creditAmountUnitsNote      = "Amounts are in token base units (USDC settlements at 7-decimal USDC base units; statement amounts at the protocol's i128 scale) — NOT USD. sorocredit has no published price and never contributes to VWAP."
 	creditSettlementVolumeHint = "summed scheduled-settlement amount in 7-decimal USDC base units (NOT a liquidation/risk signal)"
@@ -467,11 +427,8 @@ func (s *Store) bespokeCredit(ctx context.Context, windowDays int) (*BespokeBloc
 		})
 	}
 
-	// Scheduled-settlement volume per bucket (the protocol's dominant
-	// recurring flow). Native USDC base units, not USD. Name is
-	// window-stable ("Settlement volume", not "Daily settlement
-	// volume"): the grain — hourly at the 24h window, daily otherwise —
-	// lives in the point timestamps (the CCTP series convention).
+	// Scheduled-settlement volume per bucket, in native USDC base units, not USD. The name is
+	// window-stable; the grain lives in the point timestamps (the CCTP series convention).
 	series, err := s.scanDailySeries(ctx, creditSettlementSeriesQuery(windowDays), since)
 	if err != nil {
 		return nil, err
@@ -524,11 +481,10 @@ func creditPartialSettlementsPhrase(n int64) string {
 	return strconv.FormatInt(n, 10) + " settlements"
 }
 
-// creditSettlementSeriesQuery builds the scheduled-settlement volume
-// series at the window's grain (hourly at 24h via bridgeSeriesGrain,
-// daily otherwise). Only USDC primary legs are summed, so the series stays
-// single-denomination (7-decimal USDC base units); bespokeCredit flags it a
-// lower bound when any settlement is not fully summed.
+// creditSettlementSeriesQuery builds the scheduled-settlement volume series at the window's grain
+// (bridgeSeriesGrain). Only USDC primary legs are summed, so the series stays single-denomination
+// (7-decimal base units); bespokeCredit flags it a lower bound when a settlement is not fully
+// summed.
 func creditSettlementSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
@@ -550,12 +506,10 @@ func creditPositionsOpenedSeriesQuery(windowDays int) string {
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
-// creditAllTimePositionsKPIQuery is the unwindowed lifetime scale of the
-// sorocredit position book: positions ever opened + distinct owners.
-// credit_positions is the only credit_* table with a real owner column
-// (credit_events carries no owner — see the migration 0090 shapes), so the
-// all-time unique-users figure is honestly scoped to position opens.
-// Deliberately NOT window-bounded.
+// creditAllTimePositionsKPIQuery is the unwindowed lifetime scale of the sorocredit position book:
+// positions ever opened + distinct owners. credit_positions is the only credit_* table with an
+// owner column, so the unique-users figure is scoped to position opens. Deliberately NOT
+// window-bounded.
 func creditAllTimePositionsKPIQuery() string {
 	return `
 		SELECT count(*)::text, count(DISTINCT owner)::text
@@ -586,8 +540,7 @@ func (s *Store) creditPositionExtras(ctx context.Context, blk *BespokeBlock, win
 	return nil
 }
 
-// bespokeYield builds the DeFindex vault bespoke block from defindex_flows:
-// windowed gross deposit / withdraw flow volume (by direction), per-vault net
-// flow (deposit − withdraw, an AUM proxy), and unique actors. The series and
-// per-vault net scope to the vault layer to avoid double-counting a deposit
-// that fans out into strategies.
+// bespokeYield builds the DeFindex vault bespoke block from defindex_flows: windowed gross
+// deposit/withdraw volume, per-vault net flow (an AUM proxy) and unique actors. The series and
+// per-vault net scope to the vault layer to avoid double-counting a deposit that fans out into
+// strategies.

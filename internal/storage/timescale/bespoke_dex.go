@@ -1,25 +1,20 @@
 package timescale
 
-// DEX/AMM bespoke analytics (soroswap / phoenix / aquarius / comet / sdex).
-// Three data tiers, chosen per query so nothing scans the 300M+-row trades
-// hypertable unbounded:
+// DEX/AMM bespoke analytics (soroswap / phoenix / aquarius / comet / sdex). Three data tiers,
+// chosen per query so nothing scans the 300M+-row trades hypertable unbounded:
 //
-//  1. dex_volume_by_pair_1d (migration 0064, materialized_only=true): the daily
-//     per-(source, pair) rollup, for >1-day windows (sdex 90d stays cheap via a
-//     hash-agg pair count and a top CTE + direct index join). HONESTY FLOOR: it
-//     starts well after genesis, so lifetime figures are "since <floor date>", never "all-time".
-//  2. source_volume_1h (migration 0068, real-time): the 24h window.
-//  3. Raw `trades`, the ONLY place taker addresses and per-trade rows live,
-//     window-bounded; sdex is gated OFF beyond 7 days (dexRawWindowOK, ~15-20s
-//     at 90d) and the omission is Noted on the block.
+//  1. dex_volume_by_pair_1d (materialized_only=true): the daily per-(source, pair) rollup, for
+//     >1-day windows. HONESTY FLOOR: it starts well after genesis, so lifetime figures are
+//     "since <floor date>", never "all-time".
+//  2. source_volume_1h (real-time): the 24h window.
+//  3. Raw `trades`, the ONLY place taker addresses and per-trade rows live, window-bounded; sdex
+//     is gated OFF beyond 7 days (dexRawWindowOK, ~15-20s at 90d) and the omission is Noted.
 //
-// Older soroswap rows carry NULL taker: trader metrics are omitted (with a Note)
-// unless the window has taker-stamped rows.
-// Every USD figure is trade-time trades.usd_volume (or its CAGG sums), never
-// ad-hoc pricing. At 24h the XLM legs valuation left unpriced are named and the
-// figure is served as a lower bound; elsewhere NULL-usd trades are excluded from
-// USD sums and averages but still count toward trade totals. Division is exact
-// NUMERIC (ADR-0003); rounding is round(x, 2), never a float literal.
+// Older soroswap rows carry NULL taker: trader metrics are omitted (with a Note) unless the window
+// has taker-stamped rows. Every USD figure is trade-time trades.usd_volume (or its CAGG sums),
+// never ad-hoc pricing. At 24h the unpriced XLM legs are named and the figure is served as a lower
+// bound; elsewhere NULL-usd trades are excluded from USD sums and averages but still count toward
+// trade totals. Division is exact NUMERIC (ADR-0003); rounding is round(x, 2), never a float.
 
 import (
 	"context"
@@ -41,27 +36,21 @@ const (
 	dexTopPairPrefix = "Top pairs · "
 )
 
-// dexRawWindowOK reports whether raw-trades-derived surfaces (unique traders,
-// avg trade size, largest trades, the 24h per-pair shapes) are servable for
-// source at this window. sdex is the one source big enough to price out: 754k
-// rows/24h (~1s), 5.0M rows/7d, ~15–20s extrapolated at 90d — so sdex serves
-// raw-derived surfaces on the 24h/7d windows only. Every other DEX source is
-// ≤1.0M rows even at 90d.
+// dexRawWindowOK reports whether raw-trades-derived surfaces (unique traders, avg trade size,
+// largest trades, the 24h per-pair shapes) are servable for source at this window. sdex is the one
+// source too big (754k rows/24h, 5.0M/7d, ~15-20s extrapolated at 90d), so it serves them on the
+// 24h/7d windows only; every other DEX source is at most 1.0M rows even at 90d.
 func dexRawWindowOK(source string, windowDays int) bool {
 	return source != "sdex" || windowDays <= 7
 }
 
-// ─── query builders ──────────────────────────────────────────────────────
-//
-// Every windowed query binds source=$1 and the window=$2::interval and bounds
-// its time column through dexWindowSQL; the since-totals query binds source=$1
-// only.
+// Query builders: every windowed query binds source=$1 and window=$2::interval and bounds its time
+// column through dexWindowSQL; the since-totals query binds source=$1 only.
 
-// dexWindowSQL is the window predicate on col. 24h is a rolling 24 hours;
-// longer windows are the N complete UTC days before today, because the
-// daily CAGG labels a day by its 00:00 start and never materializes today —
-// a rolling cut there sums N-1 days under an "(Nd)" label. Raw-trade
-// figures take the same bounds so one block describes one window.
+// dexWindowSQL is the window predicate on col. 24h is a rolling 24 hours; longer windows are the N
+// complete UTC days before today, because the daily CAGG labels a day by its 00:00 start and never
+// materializes today, so a rolling cut would sum N-1 days under an "(Nd)" label. Raw-trade figures
+// take the same bounds so one block describes one window.
 func dexWindowSQL(windowDays int, col string) string {
 	if windowDays == 1 {
 		return col + " > now() - $2::interval"
@@ -69,14 +58,10 @@ func dexWindowSQL(windowDays int, col string) string {
 	return col + " >= " + completeDayCutoffSQL + " - $2::interval AND " + col + " < " + completeDayCutoffSQL
 }
 
-// ─── the source_volume_1h read contract ──────────────────────────────────
-//
-// source_volume_1h (migration 0068) stores sum_usd_priced (trade-time
-// usd_volume) plus the XLM legs of trades left unpriced. Readers sum only
-// sum_usd_priced: valuing the XLM legs at today's XLM/USD would make a
-// historical window move with spot. The unpriced XLM is reported
-// (dexXLMLegUnvalued) so the figure is served as a named lower bound,
-// the same rule sourceVolumeHistory applies.
+// The source_volume_1h read contract: it stores sum_usd_priced (trade-time usd_volume) plus the
+// XLM legs of trades left unpriced. Readers sum only sum_usd_priced, because valuing the XLM legs
+// at today's XLM/USD would make a historical window move with spot. The unpriced XLM is reported
+// (dexXLMLegUnvalued) so the figure is served as a named lower bound, as sourceVolumeHistory does.
 const dexPricedUSD = "COALESCE(sum(sum_usd_priced),0)"
 
 // dexXLMLegUnvalued is the unpriced XLM amount excluded from dexPricedUSD,
@@ -86,14 +71,11 @@ const dexXLMLegUnvalued = `COALESCE(CASE WHEN COALESCE(sum(sum_xlm_base),0) + CO
 		         THEN round((COALESCE(sum(sum_xlm_base),0) + COALESCE(sum(sum_xlm_quote),0))
 		           / 10000000::numeric, 7)::text END, '')`
 
-// dexHourlyBucketWindow is the shared "trailing interval" predicate every
-// source_volume_1h reader binds against its own $N::interval placeholder.
-// A strict `>` against now() — never `>=`, and never a date_trunc()-rounded
-// floor — so every reader selects the SAME set of hourly buckets for the
-// same nominal window. Rounding the floor down to the top of the hour
-// would pull in one extra bucket (25 vs this file's 24) and report a
-// different 24h volume for the same source and window than
-// dexWindowKPIQuery/dexActivitySeriesQuery.
+// dexHourlyBucketWindow is the shared "trailing interval" predicate every source_volume_1h reader
+// binds against its own $N::interval placeholder. It is a strict `>` against now(), never `>=` and
+// never a date_trunc()-rounded floor, so every reader selects the SAME hourly buckets for a
+// window; rounding the floor down to the top of the hour pulls in a 25th bucket and reports a
+// different 24h volume than dexWindowKPIQuery/dexActivitySeriesQuery.
 func dexHourlyBucketWindow(intervalParam int) string {
 	return fmt.Sprintf("bucket > now() - $%d::interval", intervalParam)
 }
@@ -115,14 +97,12 @@ func dexActivitySeriesQuery(windowDays int) string {
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
-// dexWindowKPIQuery returns (usd_volume, trades, active_pairs) over the
-// window. The >1d form reads the daily CAGG; the pair count is a hash-agg
-// subquery, NOT count(DISTINCT (base,quote)) — the row-comparison sort of
-// the latter is about 9x slower than this shape on a 90d sdex window.
-// The 24h form reads source_volume_1h, which has no pair
-// dimension — the caller fills active-pairs from the raw KPI query
-// (dexRawWindowOK is always true at 24h); it returns the unpriced XLM
-// (dexXLMLegUnvalued) in place of the pair count.
+// dexWindowKPIQuery returns (usd_volume, trades, active_pairs) over the window. The >1d form reads
+// the daily CAGG; the pair count is a hash-agg subquery, NOT count(DISTINCT (base,quote)), whose
+// row-comparison sort is about 9x slower on a 90d sdex window. The 24h form reads source_volume_1h,
+// which has no pair dimension, so the caller fills active-pairs from the raw KPI query
+// (dexRawWindowOK is always true at 24h) and this returns the unpriced XLM (dexXLMLegUnvalued)
+// in its place.
 func dexWindowKPIQuery(windowDays int) string {
 	if windowDays == 1 {
 		return `
@@ -139,12 +119,10 @@ func dexWindowKPIQuery(windowDays int) string {
 		FROM dex_volume_by_pair_1d WHERE source = $1 AND ` + dexWindowSQL(windowDays, "bucket")
 }
 
-// dexRawKPIQuery returns (unique_takers, priced_trades, active_pairs,
-// avg_trade_usd) from raw trades over the window. The average is exact
-// NUMERIC division of the USD-volume sum by the PRICED trade count
-// (ADR-0003; NULL-usd trades are excluded from both sides), rounded to
-// cents. aquarius 90d (the heaviest AMM: 1.0M rows) 1.0s; sdex gated to
-// ≤7d by dexRawWindowOK.
+// dexRawKPIQuery returns (unique_takers, priced_trades, active_pairs, avg_trade_usd) from raw
+// trades over the window. The average is exact NUMERIC division of the USD-volume sum by the
+// PRICED trade count (ADR-0003; NULL-usd trades are excluded from both sides), rounded to cents.
+// sdex is gated to 7d or less by dexRawWindowOK.
 func dexRawKPIQuery(windowDays int) string {
 	return `
 		SELECT count(DISTINCT taker)::text, count(usd_volume)::text,
@@ -165,13 +143,10 @@ func dexTradersSeriesQuery(windowDays int) string {
 		GROUP BY 1 ORDER BY 1 ASC`
 }
 
-// dexPairBreakdownQuery returns the window's volume-by-pair composition:
-// the top 8 pairs by USD volume plus one fold-the-rest row whose pair
-// columns are empty (the caller labels it "Others"). Ranking and folding
-// happen in SQL so sdex's 99k window pairs never cross the wire (9 rows /
-// 0.84s on sdex 90d; 9 rows / 13ms on aquarius). The 24h form computes
-// the same shape from raw trades (25 rows scanned shape, 0.51s on sdex
-// 24h) because the daily CAGG cannot bucket a 24h window.
+// dexPairBreakdownQuery returns the window's volume-by-pair composition: the top 8 pairs by USD
+// volume plus one fold-the-rest row with empty pair columns (the caller labels it "Others").
+// Ranking and folding happen in SQL so sdex's ~99k window pairs never cross the wire. The 24h form
+// computes the same shape from raw trades because the daily CAGG cannot bucket a 24h window.
 func dexPairBreakdownQuery(windowDays int) string {
 	var p string
 	if windowDays == 1 {
@@ -194,12 +169,10 @@ func dexPairBreakdownQuery(windowDays int) string {
 		FROM r GROUP BY 1, 2 ORDER BY min(rn) ASC`
 }
 
-// dexTopPairsSeriesQuery returns the top-5-pairs-by-window-volume series:
-// (base, quote, bucket, usd) rows ordered by each pair's window volume
-// descending, then bucket. The >1d form joins the daily CAGG directly
-// against the top-5 CTE — CAGG rows are already unique per (source, pair,
-// bucket) (materialized_only=true), and re-aggregating them through a
-// grouped CTE first is about 20x slower than this shape on a 90d sdex
+// dexTopPairsSeriesQuery returns the top-5-pairs-by-window-volume series: (base, quote, bucket,
+// usd) rows ordered by each pair's window volume descending, then bucket. The >1d form joins the
+// daily CAGG directly against the top-5 CTE: its rows are already unique per (source, pair,
+// bucket), and re-aggregating through a grouped CTE first is about 20x slower on a 90d sdex
 // window. The 24h form buckets raw trades hourly.
 func dexTopPairsSeriesQuery(windowDays int) string {
 	if windowDays == 1 {
@@ -263,11 +236,9 @@ func dexLargestTradesQuery(windowDays int) string {
 		ORDER BY usd_volume DESC LIMIT 10`
 }
 
-// dexSinceTotalsQuery returns the source's lifetime-within-the-rollup totals:
-// (usd_volume, trades, floor_date) over ALL materialized buckets. Deliberately
-// unwindowed and deliberately NOT called "all-time": the rollup's
-// materialization floor is well after genesis while raw sdex history reaches 2018 —
-// the floor date is served with the KPI so the label stays honest.
+// dexSinceTotalsQuery returns the source's lifetime-within-the-rollup totals (usd_volume, trades,
+// floor_date) over ALL materialized buckets. Deliberately unwindowed and NOT called "all-time":
+// the rollup's floor is well after genesis, so the floor date is served with the KPI.
 func dexSinceTotalsQuery() string {
 	return `
 		SELECT round(COALESCE(sum(vol),0),2)::text, COALESCE(sum(trades),0)::text, COALESCE(min(bucket)::date::text, '')
@@ -276,12 +247,10 @@ func dexSinceTotalsQuery() string {
 
 // ─── pair labelling ──────────────────────────────────────────────────────
 
-// dexSACSymbols lazily builds the token-contract → verified-ticker map the
-// pair labels resolve through: the native SAC → "XLM" plus every verified
-// currency's Stellar issuance (classic assets via deterministic SAC
-// derivation, Soroban-native tokens by their own contract id). Pure
-// in-memory derivation off the embedded catalogue — no DB read, built
-// once per process.
+// dexSACSymbols lazily builds the token-contract to verified-ticker map pair labels resolve
+// through: the native SAC to "XLM" plus every verified currency's Stellar issuance (classic assets
+// via SAC derivation, Soroban-native tokens by contract id). In-memory off the embedded catalogue,
+// built once per process.
 var dexSACSymbols = sync.OnceValue(func() map[string]string {
 	m := map[string]string{}
 	if sac, err := canonical.NativeAsset().SacContractID(); err == nil {
@@ -401,11 +370,9 @@ func (s *Store) bespokeDEX(ctx context.Context, source string, windowDays int) (
 	return blk, nil
 }
 
-// dexWindowBlocks fills every window-scoped sub-part: KPIs, the activity +
-// traders + top-pair series, the pair breakdown, and the two tables. A
-// window with zero trades adds nothing (the block degrades to the
-// since-totals + augments). It returns the window KPI's xlmUnvalued so the
-// block note can disclose an XLM/USD anchor outage.
+// dexWindowBlocks fills every window-scoped sub-part: KPIs, the activity, traders and top-pair
+// series, the pair breakdown and the two tables. A window with zero trades adds nothing. It
+// returns the window KPI's xlmUnvalued so the block note can disclose an XLM/USD anchor outage.
 func (s *Store) dexWindowBlocks(ctx context.Context, blk *BespokeBlock, source, since string, windowDays int) (string, error) {
 	w, err := s.dexWindowKPIs(ctx, source, since, windowDays)
 	if err != nil {
@@ -488,12 +455,10 @@ func (s *Store) dexWindowKPIs(ctx context.Context, source, since string, windowD
 	return w, nil
 }
 
-// dexRawKPIs adds the raw-trades-derived KPI cards: unique traders (when
-// the window has taker-stamped rows — data-driven, since taker coverage
-// varies by source AND ingest date), avg trade size over priced trades,
-// and the active-pairs fallback for the 24h grain. takersZero reports
-// whether the window observably has NO taker-stamped trades, so
-// dexOmissionNotes can disclose the omission honestly.
+// dexRawKPIs adds the raw-trades-derived KPI cards: unique traders (data-driven, since taker
+// coverage varies by source AND ingest date), avg trade size over priced trades, and the
+// active-pairs fallback for the 24h grain. takersZero reports whether the window observably has NO
+// taker-stamped trades, so dexOmissionNotes can disclose the omission.
 func (s *Store) dexRawKPIs(ctx context.Context, blk *BespokeBlock, source, since string, windowDays int, pairs *string) (takersZero bool, err error) {
 	var takers, priced, rawPairs, avg string
 	err = s.db.QueryRowContext(ctx, dexRawKPIQuery(windowDays), source, since).
@@ -722,12 +687,10 @@ func (s *Store) dexSinceTotalsKPIs(ctx context.Context, blk *BespokeBlock, sourc
 	return nil
 }
 
-// dexOmissionNotes appends the honest omission notes for surfaces this
-// source/window combination cannot serve. The trader-metrics note is
-// DATA-DRIVEN (takersZero — observed from the window's rows), not a
-// static per-source claim: a hard-coded "soroswap captures no taker" note
-// goes stale the moment a decoder starts stamping takers, and would then
-// disclaim real data on the wire indefinitely.
+// dexOmissionNotes appends omission notes for surfaces this source/window cannot serve. The
+// trader-metrics note is DATA-DRIVEN (takersZero, observed from the window's rows), not a static
+// per-source claim, which would go stale once a decoder starts stamping takers and then disclaim
+// real data.
 func (s *Store) dexOmissionNotes(blk *BespokeBlock, windowDays int, raw, takersZero bool) {
 	if raw && takersZero {
 		blk.Notes = append(blk.Notes, fmt.Sprintf(

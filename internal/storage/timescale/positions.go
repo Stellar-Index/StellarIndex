@@ -7,34 +7,24 @@ import (
 	"time"
 )
 
-// This file is the read side for GET /v1/accounts/{g_strkey}/positions
-// (the "DeFi positions" view): six per-protocol fold queries, one per venue
-// table the ADR-0035-gated on-chain sources write into. Every query is a
-// `WHERE <user_col> = $1 GROUP BY <venue_col...>` bounded by
-// positionsVenueLimit (defence-in-depth, the same convention
-// poolTokensRowLimit uses in pool_tokens.go), and every `WHERE` is served by
-// a user-leading index (four pre-existing; two added by migration 0107).
+// This file is the read side for GET /v1/accounts/{g_strkey}/positions: six per-protocol fold
+// queries, one per venue table the ADR-0035-gated sources write into. Each is a
+// `WHERE <user_col> = $1 GROUP BY <venue_col...>` bounded by positionsVenueLimit (defence in
+// depth) and served by a user-leading index.
 //
-// Net-position amounts are computed HERE, in SQL, as a per-venue SUM of
-// signed per-event deltas ("event_derived" basis). None of these tables
-// track a running balance: the served tier is append-only (ADR-0031/0032,
-// the projector INSERTs one row per observed event, never UPDATEs a running
-// total). sorocredit's credit_positions is the one exception (see
-// CreditPositionsByOwner): it has no per-event amount, so its "current"
-// figure is the protocol's own most-recently-published statement, "basis:
-// stateful".
+// Net-position amounts are computed HERE, in SQL, as a per-venue SUM of signed per-event deltas
+// ("event_derived" basis), because the served tier is append-only (ADR-0031/0032) and none of
+// these tables track a running balance. sorocredit's credit_positions is the exception (see
+// CreditPositionsByOwner): it has no per-event amount, so its figure is the protocol's own
+// latest published statement ("basis: stateful").
 //
-// Every fold orders by its venue key before the LIMIT so which venues
-// survive positionsVenueLimit is not plan-dependent.
+// Every fold orders by its venue key before the LIMIT so which venues survive
+// positionsVenueLimit is not plan-dependent.
 const positionsVenueLimit = 500
 
-// queryFold runs one of this file's `WHERE <user_col> = $1 ... LIMIT
-// $2` fold queries and scans each row via scan, sharing the
-// QueryContext -> rows.Next/Scan -> rows.Err shell every fold method
-// here has in common. label matches each method's own name so the
-// wrapped error text is unchanged (e.g. "timescale: BlendPositionsByUser:
-// %w") — only this shell is shared; each method keeps its own SQL and
-// scanned struct.
+// queryFold runs one of this file's `WHERE <user_col> = $1 ... LIMIT $2` fold queries and scans
+// each row via scan, sharing the query/scan/err shell. label is the calling method's name, used
+// in the wrapped error text; each method keeps its own SQL and scanned struct.
 func queryFold[T any](ctx context.Context, db *sql.DB, label, query string, args []any, scan func(*sql.Rows) (T, error)) ([]T, error) {
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -56,25 +46,21 @@ func queryFold[T any](ctx context.Context, db *sql.DB, label, query string, args
 	return out, nil
 }
 
-// BlendPositionFold is one (pool, asset) money-market fold for a user, read
-// from blend_positions. SupplyNet and BorrowNet are independent nets: a user
-// can carry both in the same (pool, asset), so each becomes its own position
-// row at the handler layer, independently net-zero-filtered.
+// BlendPositionFold is one (pool, asset) money-market fold for a user, read from blend_positions.
+// SupplyNet and BorrowNet are independent nets: a user can carry both in the same (pool, asset),
+// so each becomes its own position row at the handler, independently net-zero-filtered.
 //
-// SupplyNet sums `token_amount` (the UNDERLYING asset amount, NOT
-// `b_or_d_amount`, the b-token amount) signed +supply/+supply_collateral,
-// -withdraw/-withdraw_collateral. BorrowNet sums the same column signed
-// +borrow/+flash_loan, -repay: a flash_loan mints d-tokens that stay owed
-// until a `repay` burns them; excluding it nets that repay to negative debt.
-// Summed at each event, the fold cannot reflect accrued interest.
+// SupplyNet sums `token_amount` (the UNDERLYING amount, NOT the b-token `b_or_d_amount`) signed
+// +supply/+supply_collateral, -withdraw/-withdraw_collateral. BorrowNet sums the same column
+// signed +borrow/+flash_loan, -repay: a flash_loan mints d-tokens that stay owed until a `repay`
+// burns them, so excluding it would net that repay to negative debt. Summed per event, the fold
+// cannot reflect accrued interest.
 //
-// SupplySuperseded / BorrowSuperseded mark a leg an auction or bad-debt
-// write-off has moved b/d-tokens into or out of (blendAuctionMovesSQL). Those
-// moves carry no underlying amount, so SupplyNet/BorrowNet stop describing
-// the position. For such a leg SupplyTokens/BorrowTokens is its exact b/d-token
-// balance (the events' b_or_d_amount plus every move), which tells the handler
-// a fully seized leg (zero tokens) from a partly seized one. A superseded leg
-// exists even with no blend_positions row (a filler that only received a lot).
+// SupplySuperseded / BorrowSuperseded mark a leg an auction or bad-debt write-off has moved
+// b/d-tokens into or out of (blendAuctionMovesSQL). Those moves carry no underlying amount, so
+// the nets stop describing the position; SupplyTokens/BorrowTokens then hold the exact b/d-token
+// balance, telling a fully seized leg (zero) from a partly seized one. A superseded leg exists
+// even with no blend_positions row (a filler that only received a lot).
 type BlendPositionFold struct {
 	Pool               string
 	Asset              string
@@ -102,21 +88,20 @@ const (
 	                            WHEN event_kind = 'repay' THEN -b_or_d_amount END`
 )
 
-// blendAuctionMovesSQL yields one (pool, asset, addr, side, delta, ledger,
-// ts) row per movement of an account's b-tokens (side 'supply') or
-// d-tokens (side 'borrow') that blend_positions cannot hold; delta is the
-// signed token amount:
+// blendAuctionMovesSQL yields one (pool, asset, addr, side, delta, ledger, ts) row per movement of
+// an account's b-tokens (side 'supply') or d-tokens (side 'borrow') that blend_positions cannot
+// hold; delta is the signed token amount:
 //
-//   - a UserLiquidation (0) fill moves the filled lot bTokens and bid
-//     dTokens from the auctioned user to the filler (the event carries the
-//     filled portion — docs/operations/wasm-audits/blend.md);
-//   - a BadDebt (1) fill moves the auctioned account's bid dTokens to the
-//     filler; its lot is backstop tokens, not a pool position;
+//   - a UserLiquidation (0) fill moves the filled lot bTokens and bid dTokens from the auctioned
+//     user to the filler (the event carries the filled portion; see
+//     docs/operations/wasm-audits/blend.md);
+//   - a BadDebt (1) fill moves the auctioned account's bid dTokens to the filler; its lot is
+//     backstop tokens, not a pool position;
 //   - a bad_debt emission moves the user's dTokens to the backstop.
 //
 // Interest (2) auctions trade underlying only and move no pool position.
-// blendAuctionMovesForUserSQL is the same set pre-filtered to the account
-// bound to $1 before the lot/bid expansion.
+// blendAuctionMovesForUserSQL is the same set pre-filtered to the account bound to $1 before the
+// lot/bid expansion.
 const (
 	blendFillMovesSQL = `
 		SELECT a.pool, x.elem->>'asset' AS asset, p.addr, x.side,
@@ -190,16 +175,12 @@ const blendPositionsByUserSQL = `
 		 ORDER BY 1, 2
 		 LIMIT $2`
 
-// BlendPositionsByUser folds blend_positions into one row per (pool,
-// asset) the user has ever touched via any blend_positions event or
-// auction move, computing an independent net for the supply side and the
-// borrow side (see BlendPositionFold's doc comment for the column/sign
-// convention and the superseded flags).
+// BlendPositionsByUser folds blend_positions into one row per (pool, asset) the user has touched
+// via any blend_positions event or auction move, with independent supply and borrow nets (see
+// BlendPositionFold for the sign convention and superseded flags).
 //
-// Sargable: `WHERE user_address = $1` is served by
-// blend_positions_user_ts_idx (migration 0107); the GROUP BY then
-// operates only on that user's own (typically tiny) row set. The move
-// side reads only fill and bad_debt rows, which are rare.
+// Sargable: `WHERE user_address = $1` is served by blend_positions_user_ts_idx, so the GROUP BY
+// sees only that user's rows. The move side reads only rare fill and bad_debt rows.
 func (s *Store) BlendPositionsByUser(ctx context.Context, address string) ([]BlendPositionFold, error) {
 	return queryFold(ctx, s.db, "BlendPositionsByUser", blendPositionsByUserSQL, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (BlendPositionFold, error) {
 		var (
@@ -228,20 +209,15 @@ func (s *Store) BlendPositionsByUser(ctx context.Context, address string) ([]Ble
 	})
 }
 
-// BlendBackstopFold is one pool's backstop-share fold for a user, read
-// from blend_backstop_events.
+// BlendBackstopFold is one pool's backstop-share fold for a user, read from blend_backstop_events.
 //
-// SharesNet sums `amount2`, signed +deposit/-withdraw: the decoder puts
-// shares minted (deposit) and shares burned (withdraw) in Amount2 on both
-// kinds (decodeDeposit / decodeWithdraw). Shares are only minted on deposit
-// and burned on withdraw, so this is an exact current share count and
-// amount_semantics at the handler layer is "shares".
+// SharesNet sums `amount2`, signed +deposit/-withdraw: the decoder puts shares minted and burned
+// in Amount2 (decodeDeposit / decodeWithdraw). Shares only mint on deposit and burn on withdraw,
+// so this is an exact current share count and amount_semantics is "shares".
 //
-// queue_withdrawal / dequeue_withdrawal are DELIBERATELY EXCLUDED: they are
-// intent-only (queued shares stay staked until the matching `withdraw`) and
-// carry their shares in `Amount`, not `Amount2` (decodeQueueWithdrawal), so
-// folding them in would double-count the eventual `withdraw` and read the
-// wrong column.
+// queue_withdrawal / dequeue_withdrawal are DELIBERATELY EXCLUDED: they are intent-only (queued
+// shares stay staked until the matching `withdraw`) and carry shares in `Amount`, not `Amount2`,
+// so folding them in would double-count the eventual `withdraw` and read the wrong column.
 type BlendBackstopFold struct {
 	Pool         string
 	SharesNet    string
@@ -280,16 +256,13 @@ func (s *Store) BlendBackstopSharesByUser(ctx context.Context, address string) (
 	})
 }
 
-// PhoenixStakeFold is one stake-contract's bond/unbond fold for a user,
-// read from phoenix_stake_events (migration 0044/0060/0098).
+// PhoenixStakeFold is one stake-contract's bond/unbond fold for a user, read from
+// phoenix_stake_events.
 //
-// NetAmount sums `amount` — the table's own column comment: "the
-// share-token amount, always positive — the action discriminator
-// carries the direction". Signed +bond/-unbond. Only action IN
-// ('bond','unbond') is read; `withdraw_rewards`/`distribute_rewards`
-// (migration 0098) carry NULL amount and are a reward-claim surface,
-// not a stake-balance change, so they are excluded by the WHERE clause
-// itself.
+// NetAmount sums `amount`, the always-positive share-token amount (the action carries the
+// direction), signed +bond/-unbond. Only action IN ('bond','unbond') is read;
+// `withdraw_rewards`/`distribute_rewards` carry NULL amount and are a reward-claim surface, not a
+// stake-balance change, so the WHERE clause excludes them.
 type PhoenixStakeFold struct {
 	StakeContract string
 	LPToken       string
@@ -328,18 +301,13 @@ func (s *Store) PhoenixStakeByUser(ctx context.Context, address string) ([]Phoen
 	})
 }
 
-// DefindexVaultFold is one vault's df-token-share fold for a user, read
-// from defindex_flows (migration 0050/0055), VAULT layer only.
+// DefindexVaultFold is one vault's df-token-share fold for a user, read from defindex_flows,
+// VAULT layer only.
 //
-// SharesNet sums `df_tokens` — the migration-0050 doc comment: "Vault
-// layer: ... share-token delta (`df_tokens_minted` on deposit,
-// `df_tokens_minted` on withdraw)" (DfTokens column, always the
-// magnitude — direction carries in `direction`), signed
-// +deposit/-withdraw. STRATEGY-layer rows (Actor = the vault contract
-// itself moving capital into/out of Blend, not an end user) are
-// excluded by `layer = 'vault'` — see the migration's layer-discriminator
-// doc comment for why the two layers can't be folded together (different
-// actor identity space entirely).
+// SharesNet sums `df_tokens` (always the magnitude; direction is in `direction`), signed
+// +deposit/-withdraw. STRATEGY-layer rows (Actor = the vault contract itself moving capital
+// into/out of Blend, not an end user) are excluded by `layer = 'vault'`: the two layers live in
+// different actor identity spaces and cannot be folded together.
 type DefindexVaultFold struct {
 	ContractID   string
 	SharesNet    string
@@ -377,24 +345,19 @@ func (s *Store) DefindexVaultSharesByUser(ctx context.Context, address string) (
 	})
 }
 
-// CreditPositionFold is one sorocredit position for an owner, read from
-// credit_positions LEFT-JOINed against that position's MOST RECENT
-// credit_statements row.
+// CreditPositionFold is one sorocredit position for an owner, read from credit_positions
+// LEFT-JOINed against that position's MOST RECENT credit_statements row.
 //
-// Unlike every other protocol here, sorocredit has no per-event amount to
-// sum: credit_positions is an identity registry (one row per opened
-// position, from `NewCollateralContract`). The closest thing to its size is
-// the protocol's own latest `StatementPublished` amount, a value the
-// PROTOCOL computed ("basis: stateful" at the handler layer).
+// Unlike other protocols here, sorocredit has no per-event amount to sum: credit_positions is an
+// identity registry (one row per opened position). The closest thing to its size is the
+// protocol's own latest `StatementPublished` amount ("basis: stateful").
 //
-// LatestAmount is the empty string / LatestActivity the zero time when no
-// statement has been published yet (a just-opened position); the handler
+// LatestAmount is empty / LatestActivity the zero time when no statement exists yet; the handler
 // surfaces that as no reportable amount rather than guessing 0.
 //
-// Withdrawn reports whether a `Withdrawal` event has ever fired against
-// this position's collateral_contract, the same "still open" proxy
-// CreditWindowAnalytics uses but UNWINDOWED: credit_events carries no
-// retention, so an all-time EXISTS is the honest signal.
+// Withdrawn reports whether a `Withdrawal` event has ever fired against the position's
+// collateral_contract, the "still open" proxy CreditWindowAnalytics uses but UNWINDOWED:
+// credit_events has no retention, so an all-time EXISTS is the honest signal.
 type CreditPositionFold struct {
 	CollateralContract string
 	PositionUUID       string
@@ -406,12 +369,9 @@ type CreditPositionFold struct {
 	Withdrawn          bool
 }
 
-// CreditPositionsByOwner reads every credit_positions row this owner has
-// ever opened, each joined to its latest statement. Sargable: the outer
-// WHERE uses credit_positions_owner_ts_idx (migration 0090); the LATERAL
-// join uses credit_statements_position_ts_idx (migration 0090); the
-// EXISTS probe uses credit_events_collateral_ts_idx (migration 0090) —
-// three existing indexes, no new migration needed for this protocol.
+// CreditPositionsByOwner reads every credit_positions row this owner has opened, each joined to
+// its latest statement. Sargable: the outer WHERE uses credit_positions_owner_ts_idx, the LATERAL
+// join credit_statements_position_ts_idx, and the EXISTS probe credit_events_collateral_ts_idx.
 func (s *Store) CreditPositionsByOwner(ctx context.Context, address string) ([]CreditPositionFold, error) {
 	const q = `
 		SELECT p.collateral_contract, p.position_uuid, p.ledger_close_time, p.ledger,
@@ -460,22 +420,14 @@ func (s *Store) CreditPositionsByOwner(ctx context.Context, address string) ([]C
 	})
 }
 
-// AquariusGaugeFold is one pool's gauge-position fold for a user, read
-// from aquarius_rewards_events (migration 0099), `position_update` kind
-// only.
+// AquariusGaugeFold is one pool's gauge-position fold for a user, read from
+// aquarius_rewards_events, `position_update` kind only.
 //
-// NetDelta sums `attributes->>'delta'` — decode_rewards.go's
-// decodePositionUpdate: "delta is SIGNED and observed negative on a
-// withdrawal ... Because delta can be negative it is NOT promoted to
-// the universal (always >= 0) Amount field — it lands in Attributes as
-// a signed decimal string." Summing that signed per-event delta is, by
-// construction, the position's current size as of the latest observed
-// checkpoint — but decodePositionUpdate's own doc comment marks the
-// FIELD ITSELF best-effort ("this suggests field[1] is a range/tick-
-// style checkpoint index and field[2] mirrors the correlated position's
-// amount, but this is an observed correlation, not a confirmed
-// contract-source semantic"). The handler layer reflects that
-// uncertainty honestly rather than calling it "shares" or "underlying".
+// NetDelta sums `attributes->>'delta'`, a SIGNED decimal string (negative on withdrawal, so it is
+// not promoted to the always >= 0 Amount field). The signed sum is the position's size as of the
+// latest checkpoint, but decodePositionUpdate marks the field itself best-effort: an observed
+// correlation, not a confirmed contract-source semantic. The handler therefore does not call it
+// "shares" or "underlying".
 type AquariusGaugeFold struct {
 	ContractID   string
 	NetDelta     string

@@ -16,43 +16,27 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// FreezeEventSink is the timescale-backed implementation of
-// freeze.EventSink. Records every clear→firing transition into the
-// `freeze_events` hypertable so the explorer /anomalies timeline
-// has durable history.
-//
-// Idempotent on the (asset, quote) currently-firing row: if a row
-// with recovered_at IS NULL already exists for the pair, RecordFreeze
-// is a no-op. The pre-existing Redis-marker write that drives the
-// API's flags.frozen field stays the source-of-truth for liveness;
-// this struct only mirrors the transitions for offline reads.
+// FreezeEventSink is the timescale-backed freeze.EventSink. It records each clear-to-firing
+// transition in `freeze_events` for the /anomalies timeline. RecordFreeze is a no-op while a
+// row with recovered_at IS NULL exists for the pair. The Redis marker stays the source of
+// truth for liveness; this only mirrors transitions for offline reads.
 type FreezeEventSink struct {
 	db        *sql.DB
 	clock     func() time.Time
 	getLedger LedgerProvider
-	// onFreeze, when non-nil, is invoked AFTER a successful
-	// RecordFreeze that actually inserted a new row (idempotent
-	// no-ops don't fire). Production wiring: the aggregator
-	// binary plugs a customerwebhook.Fanout.Publish closure so
-	// dashboard-registered hooks subscribed to `anomaly.freeze`
-	// receive a callback.
+	// onFreeze, when non-nil, runs after a RecordFreeze that actually inserted a row
+	// (idempotent no-ops don't fire); the aggregator wires customerwebhook fan-out here.
 	onFreeze FreezeHook
 }
 
-// FreezeHook is the callback shape for post-insert side-effects.
-// Best-effort: errors are logged and dropped by the sink so a
-// downstream failure (e.g. customerwebhook fan-out) doesn't take
-// the load-bearing INSERT down. frozenValue is empty on a first-tick
-// freeze (no prior bucket), never the column's "0" filler.
+// FreezeHook is the post-insert callback. It is best-effort: the sink logs and drops errors so
+// a downstream failure cannot undo the INSERT. frozenValue is empty on a first-tick freeze
+// (no prior bucket), never the column's "0" filler.
 type FreezeHook func(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision)
 
-// LedgerProvider is the seam for reading the most-recently-ingested
-// ledger sequence. Used to stamp `frozen_at_ledger` on inserts so
-// the timeline can be re-anchored on a specific ledger range later.
-//
-// Implementations must be concurrent-safe and cheap (it's called on
-// the aggregator's hot path). A typical implementation reads an
-// atomic int that the indexer updates on every cursor advance.
+// LedgerProvider reads the most recently ingested ledger sequence, stamped as
+// `frozen_at_ledger`. Implementations must be concurrent-safe and cheap: it is called on the
+// aggregator's hot path.
 type LedgerProvider interface {
 	LatestLedger() uint32
 }
@@ -75,12 +59,8 @@ func NewFreezeEventSink(s *Store, opts ...FreezeEventSinkOption) *FreezeEventSin
 // FreezeEventSinkOption tunes a FreezeEventSink at construction.
 type FreezeEventSinkOption func(*FreezeEventSink)
 
-// WithFreezeHook installs a post-insert side-effect closure.
-// Invoked AFTER a successful row insert (idempotent no-ops
-// don't fire). Wired by the aggregator binary to bridge into
-// customerwebhook.Fanout.Publish so dashboard hooks subscribed
-// to `anomaly.freeze` get callbacks. Best-effort — hook
-// panics/errors don't propagate.
+// WithFreezeHook installs a closure that runs after a successful row insert (idempotent
+// no-ops don't fire). Best-effort: hook panics and errors don't propagate.
 func WithFreezeHook(hook FreezeHook) FreezeEventSinkOption {
 	return func(s *FreezeEventSink) {
 		s.onFreeze = hook
@@ -96,20 +76,9 @@ func WithFreezeLedgerProvider(p LedgerProvider) FreezeEventSinkOption {
 	}
 }
 
-// RecordFreeze implements freeze.EventSink.
-//
-// Idempotent: if a row already exists for (asset, quote) with
-// recovered_at IS NULL, this is a no-op (the pair is already
-// recorded as currently-firing; another Mark call is just a TTL
-// refresh from the orchestrator's perspective). Otherwise INSERT
-// a new row.
-//
-// Implementation note: the idempotency check + INSERT happen in the
-// same transaction so two concurrent Mark calls for the same pair
-// can't both insert. The (asset_id, quote_id, frozen_at) PK has
-// timestamp resolution; if two callers try to insert at the
-// identical microsecond, one wins on PK-conflict and the other
-// silently no-ops via ON CONFLICT DO NOTHING.
+// RecordFreeze implements freeze.EventSink. It is a no-op when a row with recovered_at IS NULL
+// already exists for the pair (another Mark is just a TTL refresh). The check and INSERT share
+// one transaction; if two callers hit the same microsecond, the PK conflict makes one a no-op.
 func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) error {
 	now := s.clock().UTC()
 	var ledger uint32
@@ -127,32 +96,18 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 	// land here; we expose the most-specific reason we have.
 	reason := mapFreezeReason(decision)
 
-	// frozen_value column is NUMERIC NOT NULL — write 0 when the
-	// orchestrator had no prior bucket to freeze on (first-tick
-	// freeze). The decimal-string value is forwarded verbatim;
-	// pgx/lib-pq parses NUMERIC literals from strings without
-	// precision loss.
+	// frozen_value is NUMERIC NOT NULL, so a first-tick freeze (no prior bucket) writes 0.
+	// The decimal string is forwarded verbatim; the driver parses NUMERIC without precision loss.
 	frozenValueArg := frozenValue
 	if frozenValueArg == "" {
 		frozenValueArg = "0"
 	}
 
-	// Atomic dedupe under concurrent RecordFreeze calls. Without
-	// it, two aggregator workers racing on the same (asset, quote)
-	// pair could both pass the `WHERE NOT EXISTS` check and each
-	// insert a still-firing row, leaving duplicate open rows for
-	// the same pair — every recovery worker would then have to
-	// clear N rows instead of 1.
-	//
-	// So the check + insert run in a transaction guarded
-	// by `pg_advisory_xact_lock` keyed on a stable hash of
-	// (asset, quote). The lock is process-local to the txn so
-	// it auto-releases on COMMIT/ROLLBACK and never strands the
-	// row. Advisory locks (vs row locks) work here because the
-	// "no row yet" branch has nothing to row-lock against;
-	// Timescale also forbids unique constraints that don't
-	// include the partition key, so a partial UNIQUE index
-	// isn't an option.
+	// Two workers racing on one pair could both pass WHERE NOT EXISTS and leave duplicate open
+	// rows, so the check and insert run under pg_advisory_xact_lock keyed on a hash of
+	// (asset, quote); it releases on COMMIT/ROLLBACK. An advisory lock is used because the
+	// "no row yet" branch has nothing to row-lock, and Timescale forbids a partial UNIQUE index
+	// that omits the partition key.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("timescale: RecordFreeze: begin tx: %w", err)
@@ -206,43 +161,29 @@ func (s *FreezeEventSink) RecordFreeze(ctx context.Context, asset, quote canonic
 	return nil
 }
 
-// SaveLadder persists the ADR-0019 lifecycle state onto the currently-firing
-// `freeze_events` row for (asset, quote). Implements freeze.LadderStore.
+// SaveLadder persists the lifecycle state onto the open `freeze_events` row for (asset, quote).
+// Implements freeze.LadderStore. It is the durable copy, so a Redis flush cannot take an
+// ESCALATED freeze down with it.
 //
-// Held only in memory and the Redis marker's JSON, the ladder would let a Redis
-// flush take an ESCALATED freeze (held "until manual unfreeze") down with it.
-// This is the durable copy, written on every transition by freeze.Writer.MarkHold.
+// It is an UPDATE of the open row only:
 //
-// Deliberately an UPDATE of the OPEN row and nothing else:
+//   - No INSERT. RecordFreeze owns row creation; inserting here would race it and open a second
+//     firing row for one pair.
+//   - No row returns [ErrNotFound], not a silent nil. Causes include a failed RecordFreeze insert,
+//     an operator closing the row, or the ladder migration not yet applied (then EVERY write
+//     matches nothing). The caller cannot act on it but must be able to COUNT it.
 //
-//   - No INSERT. RecordFreeze owns row creation; a SaveLadder that could
-//     insert would race it and open a second firing row for one pair — the
-//     race RecordFreeze's advisory lock serialises against.
-//   - No row → [ErrNotFound], NOT a silent nil. Causes: RecordFreeze's insert
-//     failed (best-effort by contract), the operator closed the row under a
-//     tick, or migration 0119 is not applied while the new binary runs, in
-//     which case EVERY ladder write matches nothing. The caller cannot act
-//     (the write is best-effort) but must be able to COUNT them.
-//
-// Idempotent: every write is the whole current state, so a lost write is
-// corrected by the next tick's write.
+// Idempotent: each write is the whole current state, so the next tick corrects a lost write.
 func (s *FreezeEventSink) SaveLadder(ctx context.Context, asset, quote canonical.Asset, state freeze.State) error {
 	var holdUntil any
 	if !state.HoldUntil.IsZero() {
 		holdUntil = state.HoldUntil.UTC()
 	}
-	// Migration 0163: a RETIRE (NULL hold_until — what freeze.Writer.Clear
-	// writes on the last window's release and on the operator override)
-	// drops the per-window ladders with it. hold_until is already the
-	// switch LoadWindowLadders honours them on, so this is not what makes
-	// the retire take; it is what stops a LATER freeze on the same
-	// still-open row (the recovery worker closes it up to 60s afterwards)
-	// from inheriting the ended freeze's windows. An active pair-level
-	// write leaves them alone: it comes from a caller with no window to
-	// name, which by construction knows nothing about them.
-	// A retire nulls hold_until only: extensions_used / escalated /
-	// corroborated stay on the row as the freeze's history, which the
-	// anomalies timeline reads after the recovery worker closes it.
+	// A RETIRE (NULL hold_until) also drops the per-window ladders, so a later freeze on the
+	// same still-open row (the recovery worker closes it up to 60s afterwards) cannot inherit
+	// the ended freeze's windows. An active pair-level write leaves them alone: its caller
+	// names no window. A retire nulls hold_until only; extensions_used / escalated /
+	// corroborated stay as history for the anomalies timeline.
 	const q = `
 		UPDATE freeze_events
 		   SET hold_until      = $3::timestamptz,
@@ -261,14 +202,10 @@ func (s *FreezeEventSink) SaveLadder(ctx context.Context, asset, quote canonical
 		return fmt.Errorf("timescale: SaveLadder %s/%s: %w",
 			asset.String(), quote.String(), err)
 	}
-	// A ladder write that matched NOTHING is the silent-failure shape that
-	// matters most here: it is what "migration 0119 has not been applied yet
-	// while the new binary is already running" looks like from the caller's
-	// side — every MarkHold succeeds, the Redis marker is written, and the
-	// durable ladder is simply never there when a flush needs it. Same for a
-	// row closed out from under a tick. Neither is an error the Writer can
-	// act on (it is best-effort by contract), so report it as ErrNotFound
-	// and let the caller COUNT it.
+	// A write matching NOTHING is the silent failure that matters: with the ladder migration
+	// unapplied (or the row closed under a tick) every MarkHold looks fine while the durable
+	// ladder never exists. The Writer is best-effort and cannot act, so report ErrNotFound and
+	// let the caller COUNT it.
 	n, err := res.RowsAffected()
 	if err != nil {
 		// Driver cannot report it — do not manufacture a false negative.
@@ -280,25 +217,18 @@ func (s *FreezeEventSink) SaveLadder(ctx context.Context, asset, quote canonical
 	return nil
 }
 
-// LoadLadder reads the durable ADR-0019 ladder for (asset, quote).
-// Implements freeze.LadderStore.
+// LoadLadder reads the durable ladder for (asset, quote). Implements freeze.LadderStore.
 //
-// Returns ok=false unless there is an OPEN row (recovered_at IS NULL) that
-// carries a lifecycle (hold_until NOT NULL). Both conditions are
-// load-bearing and neither is redundant:
+// It returns ok=false unless there is an OPEN row (recovered_at IS NULL) with hold_until NOT NULL.
+// Neither condition is redundant:
 //
-//   - recovered_at IS NULL is what distinguishes "Redis lost the marker"
-//     from "an operator ended this freeze". `stellarindex-ops
-//     freeze-unfreeze` clears the marker AND stamps recovered_at, so after
-//     a supported override this returns ok=false and the override stands.
-//   - hold_until NOT NULL excludes rows written by a pre-0119 binary, which
-//     have no ladder to restore. Those fall back to today's Redis-only
-//     behaviour rather than rehydrating a zero ladder, which would read as
-//     "freeze fired just now, 0 extensions" and reset the escalation clock.
+//   - recovered_at IS NULL separates "Redis lost the marker" from "an operator ended this
+//     freeze"; freeze-unfreeze stamps recovered_at, so the override stands.
+//   - hold_until NOT NULL excludes rows from before the ladder existed. Rehydrating a zero ladder
+//     would read as "fired just now, 0 extensions" and reset the escalation clock.
 //
-// The caller ([freeze.Writer.LoadState]) applies the freshness bound on
-// hold_until; this method reports the stored state verbatim so an operator
-// tool can display a lapsed ladder without the reader's policy applied.
+// The caller ([freeze.Writer.LoadState]) applies the freshness bound; this reports the stored
+// state verbatim so an operator tool can show a lapsed ladder.
 func (s *FreezeEventSink) LoadLadder(ctx context.Context, asset, quote canonical.Asset) (freeze.State, bool, error) {
 	const q = `
 		SELECT frozen_at, hold_until,
@@ -407,25 +337,18 @@ func loadOpenLadderRow(ctx context.Context, q ladderQuerier, asset, quote canoni
 	return row, true, nil
 }
 
-// entries returns the row's live per-window map, applying the three rules
-// that make the 0163 column safe beside the 0119 ones:
+// entries returns the row's live per-window map, applying three rules:
 //
-//   - hold_until IS NULL → no ladder, whatever window_ladders holds. The
-//     previous binary retires a ladder by nulling hold_until and does not
-//     know the new column exists; its retire must still switch it off.
-//   - window_ladders IS NULL with a live pair-level ladder → a row written
-//     before 0163. Its ladder has no recorded owner, so it is carried as
-//     the UNOWNED entry rather than dropped.
-//   - window_ladders present but OUTRUN by the pair-level columns → a map
-//     gone stale under a rolled-back binary ([pairLadderAhead]). It fails
-//     closed against the columns ([foldPairLadderInto]) instead of winning
-//     because it is non-NULL: preferring it discarded an escalation the
-//     previous binary had made.
+//   - hold_until IS NULL means no ladder, whatever window_ladders holds. An older binary retires
+//     a ladder by nulling hold_until and does not know the map exists.
+//   - window_ladders IS NULL with a live pair-level ladder is a row from before per-window
+//     ladders; its ladder has no recorded owner, so it is carried as the UNOWNED entry.
+//   - window_ladders OUTRUN by the pair-level columns is a map gone stale under a rolled-back
+//     binary ([pairLadderAhead]). It fails closed ([foldPairLadderInto]) rather than winning
+//     for being non-NULL, which would discard an escalation.
 //
-// Both callers inherit the third rule, and it matters that the WRITE path
-// does: [FreezeEventSink.SaveWindowLadder] merges into what this returns,
-// so a window's next tick persists the fold and the record converges on it
-// rather than writing the stale map's summary back over the columns.
+// The write path inherits the third rule: [FreezeEventSink.SaveWindowLadder] merges into this
+// result, so the next tick persists the fold instead of writing the stale summary back.
 func (r openLadderRow) entries() map[string]freeze.State {
 	out := map[string]freeze.State{}
 	if !r.pair.Active() {
@@ -444,26 +367,18 @@ func (r openLadderRow) entries() map[string]freeze.State {
 	return out
 }
 
-// pairLadderAhead reports whether the pair-level 0119 columns record a
-// WORSE freeze than `summary`, the fold of the row's own window_ladders:
-// escalated where no entry is, a higher rung, or a later hold.
+// pairLadderAhead reports whether the pair-level columns record a WORSE freeze than `summary`,
+// the fold of the row's own window_ladders: escalated where no entry is, a higher rung, or a
+// later hold.
 //
-// This binary never produces that. It writes the columns only as the
-// summary of the map ([writeWindowLadders]) or nulls both together
-// ([FreezeEventSink.SaveLadder]'s retire), so on a row only it has written
-// the two agree. They disagree after a binary ROLLBACK with the schema left
-// at 0163 (migrations/README.md rule 9): the previous binary keeps
-// advancing the columns and does not know the map exists, so the map goes
-// stale underneath it.
+// This binary never produces that, since it writes the columns only as the map's summary or
+// nulls both together. They disagree after a binary ROLLBACK with the schema left in place: the
+// older binary keeps advancing the columns and the map goes stale.
 //
-// The hold is compared at the precision it is STORED at. hold_until is
-// timestamptz, whole microseconds, while a map entry keeps the nanoseconds
-// it was written with, so the column and the entry it summarises are never
-// bit-equal. The production driver truncates (the column is never later),
-// but nothing here may depend on that: under a store that rounded instead,
-// a bare After would read every freeze as stale and mint an ownerless
-// ladder for windows that were never frozen. A real disagreement is a
-// lifecycle extension — minutes.
+// The hold is compared at STORED precision. hold_until is timestamptz (microseconds) while a map
+// entry keeps nanoseconds, so they are never bit-equal. A bare After would, under a store that
+// rounds, read every freeze as stale and mint an ownerless ladder for windows never frozen. A
+// real disagreement is a lifecycle extension, i.e. minutes.
 func pairLadderAhead(pair, summary freeze.State) bool {
 	if pair.Escalated && !summary.Escalated {
 		return true
@@ -474,24 +389,17 @@ func pairLadderAhead(pair, summary freeze.State) bool {
 	return pair.HoldUntil.Sub(summary.HoldUntil) > time.Microsecond
 }
 
-// foldPairLadderInto makes a stale per-window map fail closed against the
-// pair-level ladder that outran it.
+// foldPairLadderInto makes a stale per-window map fail closed against the pair-level ladder that
+// outran it.
 //
-// Which entries are stale is unknowable — the previous binary's pair-level
-// write is last-writer-wins across the pair's windows and names none — so
-// no entry may answer with less than the columns record: every held entry
-// is raised to the fail-closed fold of itself and the pair-level ladder
-// (furthest hold, highest rung, escalated if either is), and the pair-level
-// ladder is carried as the UNOWNED entry for any window the map does not
-// name. Folding rather than replacing matters in the other direction: the
-// previous binary's 5m window can overwrite the columns with a fresh ladder
-// whose hold is LATER while the map still holds a 1h window's escalation,
-// and replacing would drop it.
+// Which entries are stale is unknowable (the older binary's pair-level write is last-writer-wins
+// across windows and names none), so every held entry is raised to the fail-closed fold of itself
+// and the pair ladder (furthest hold, highest rung, escalated if either is), and the pair ladder
+// is carried as the UNOWNED entry. Folding, not replacing, matters: a 5m window can overwrite the
+// columns with a LATER hold while the map still holds a 1h window's escalation.
 //
-// This errs towards over-holding, deliberately and boundedly: a window of
-// the pair that was never frozen rehydrates the ownerless ladder after a
-// Redis loss, exactly as it does for a row written before 0163, until the
-// ladder lapses or an operator lifts the freeze.
+// This over-holds deliberately and boundedly: a never-frozen window rehydrates the ownerless
+// ladder after a Redis loss until it lapses or an operator lifts the freeze.
 func foldPairLadderInto(entries map[string]freeze.State, pair freeze.State) {
 	for k, st := range entries {
 		if st.Active() {
@@ -503,15 +411,11 @@ func foldPairLadderInto(entries map[string]freeze.State, pair freeze.State) {
 	}
 }
 
-// summariseLadders folds per-window ladders into the pair-level 0119
-// columns, fail-closed: the furthest hold, the highest rung, escalated /
-// corroborated if ANY window is. The zero State (NULL hold_until — "no
-// ladder") when nothing is held.
+// summariseLadders folds per-window ladders into the pair-level columns, fail-closed: furthest
+// hold, highest rung, escalated/corroborated if ANY window is. Nothing held yields the zero State.
 //
-// It is what keeps every pair-level reader correct without knowing about
-// windows: [freeze.Recovery] asks "is any window of this pair still inside
-// a hold" before closing the row, `stellarindex-ops freeze-unfreeze -list`
-// shows the worst rung, and a rolled-back binary rehydrates a ladder that
+// This keeps pair-level readers correct without knowing about windows: [freeze.Recovery] asks
+// whether any window is still inside a hold before closing the row, and a rolled-back binary
 // can over-hold a window but never drop an escalation.
 func summariseLadders(entries map[string]freeze.State) freeze.State {
 	var out freeze.State
@@ -540,26 +444,20 @@ func windowLadderKey(window time.Duration) string {
 	return strconv.FormatInt(int64(window/time.Second), 10)
 }
 
-// SaveWindowLadder persists `state` as `window`'s ADR-0019 ladder on the
-// pair's open row, leaving every other window's entry untouched, and
-// refreshes the pair-level columns as the summary of what is held.
-// Implements freeze.WindowLadderStore (migration 0163).
+// SaveWindowLadder persists `state` as `window`'s ladder on the pair's open row, leaving other
+// windows untouched, and refreshes the pair-level columns as the summary. Implements
+// freeze.WindowLadderStore.
 //
-// An inactive `state` retires the window's entry. When that was the last
-// one the summary nulls hold_until, which is the same "ladder retired"
-// state [FreezeEventSink.SaveLadder] writes for freeze.Writer.Clear.
+// An inactive `state` retires the window's entry; retiring the last one nulls hold_until, the
+// same "ladder retired" state [FreezeEventSink.SaveLadder] writes.
 //
-// Read-merge-write under the pair's advisory lock — the one RecordFreeze
-// takes — rather than a jsonb expression in a single UPDATE: the summary
-// is a fold over decoded lifecycle states, and the rule for a pre-0163 row
-// (keep its ownerless ladder as the unowned entry) is a decision about
-// the row's prior state. The lock makes the merge atomic against every
-// other writer of this pair's open row; an advisory lock rather than a
-// row lock for RecordFreeze's reason, and because `freeze_events` is a
-// compressed hypertable.
+// It is read-merge-write under the pair's advisory lock (the one RecordFreeze takes), not a
+// single jsonb UPDATE, because the summary is a fold over decoded states and the pre-per-window
+// row rule depends on the row's prior state. The lock makes the merge atomic against other
+// writers; it is advisory, not a row lock, for RecordFreeze's reason and because `freeze_events`
+// is a compressed hypertable.
 //
-// Same contract as SaveLadder otherwise: UPDATE only, never an INSERT, and
-// "no open row" is [ErrNotFound] so the caller can count it.
+// As SaveLadder: UPDATE only, never INSERT, and "no open row" is [ErrNotFound].
 func (s *FreezeEventSink) SaveWindowLadder(
 	ctx context.Context,
 	asset, quote canonical.Asset,
@@ -637,15 +535,12 @@ func writeWindowLadders(
 	return nil
 }
 
-// LoadWindowLadders reads every window's durable ladder for (asset,
-// quote). Implements freeze.WindowLadderStore (migration 0163).
+// LoadWindowLadders reads every window's durable ladder for (asset, quote). Implements
+// freeze.WindowLadderStore.
 //
-// ok=false on exactly [FreezeEventSink.LoadLadder]'s conditions — no OPEN
-// row, or one whose hold_until IS NULL — so the operator override and a
-// retired ladder read the same through either method.
-//
-// `unowned` is the ladder of a row written before 0163 (or that ladder,
-// preserved under key "0" by the first window-aware write). States are
+// ok=false on exactly [FreezeEventSink.LoadLadder]'s conditions (no OPEN row, or hold_until IS
+// NULL), so an operator override and a retired ladder read the same through either method.
+// `unowned` is the ownerless ladder of a pre-per-window row, kept under key "0". States are
 // reported verbatim; the caller applies the freshness bound.
 func (s *FreezeEventSink) LoadWindowLadders(
 	ctx context.Context,
@@ -687,15 +582,10 @@ func pairAdvisoryLockKey(asset, quote string) int64 {
 	return int64(h.Sum64()) //nolint:gosec // narrowing to int64 is acceptable; pg accepts signed bigint
 }
 
-// ListOpen returns every (asset, quote) currently in firing state
-// — `freeze_events` rows with recovered_at IS NULL. Snapshot read,
-// no locking; the recovery worker can race a fresh RecordFreeze
-// safely because both end states (still firing / cleared) are
-// idempotent on the open-row PK.
-//
-// Returns the freeze package's OpenFreezePair shape so the
-// recovery worker (which lives in `internal/aggregate/freeze`)
-// avoids a hard dependency on this storage adapter.
+// ListOpen returns every (asset, quote) with a `freeze_events` row where recovered_at IS NULL.
+// It is a lock-free snapshot; the recovery worker can race a fresh RecordFreeze safely because
+// both end states are idempotent. It returns the freeze package's OpenFreezePair so that package
+// does not depend on this adapter.
 func (s *FreezeEventSink) ListOpen(ctx context.Context) ([]freeze.OpenFreezePair, error) {
 	const q = `
 		SELECT asset_id, quote_id
@@ -729,16 +619,10 @@ func (s *FreezeEventSink) ListOpen(ctx context.Context) ([]freeze.OpenFreezePair
 	return out, nil
 }
 
-// MarkRecovered closes out the currently-firing row for (asset,
-// quote). Called by a recovery worker (or the aggregator when it
-// detects a already-frozen pair has cleared) — NOT by the
-// freeze.Writer.Mark path.
-//
-// releasedBy records who closed the row: "operator:<actor>" or
-// "system:<worker>"; anything else is refused before the UPDATE runs.
-//
-// Idempotent: if no open row exists, returns ErrNotFound. Caller
-// can swallow and continue.
+// MarkRecovered closes the currently-firing row for (asset, quote). It is called by a recovery
+// worker, not by the freeze.Writer.Mark path. releasedBy is "operator:<actor>" or
+// "system:<worker>"; anything else is refused before the UPDATE. With no open row it returns
+// ErrNotFound, which the caller can swallow.
 func (s *FreezeEventSink) MarkRecovered(ctx context.Context, asset, quote canonical.Asset, releasedBy string) error {
 	if !validReleasedBy(releasedBy) {
 		return fmt.Errorf("timescale: MarkRecovered %s/%s: released_by %q must be \"operator:<actor>\" or \"system:<worker>\"",
@@ -876,14 +760,9 @@ func (s *Store) ListFreezeEvents(ctx context.Context, firingOnly bool, limit int
 	return out, nil
 }
 
-// CountFiringFreezes returns the EXACT number of currently-firing
-// freezes (recovered_at IS NULL), using the same partial index
-// ListFreezeEvents' firingOnly arm selects on.
-//
-// It exists because deriving /v1/anomalies' firing_count as
-// `len(ListFreezeEvents(ctx, true, 500))` — a LIMIT-capped page — would
-// report a freeze storm of any size as exactly 500. A count is also
-// strictly cheaper: no row materialisation, no detail JSONB read.
+// CountFiringFreezes returns the EXACT number of currently-firing freezes (recovered_at IS NULL),
+// via the partial index ListFreezeEvents' firingOnly arm uses. A LIMIT-capped page would report
+// a freeze storm of any size as exactly 500; a count also skips row and detail JSONB reads.
 func (s *Store) CountFiringFreezes(ctx context.Context) (int64, error) {
 	const q = `SELECT count(*) FROM freeze_events WHERE recovered_at IS NULL`
 	var n int64
@@ -936,16 +815,12 @@ type FreezeDailyReasonCount struct {
 	Count  int64
 }
 
-// FreezeDailyReasonCounts tallies freezes per (UTC day, reason) over
-// the trailing `sinceDays` days — FreezeReasonCounts with a day
-// dimension. Days with zero freezes have no rows (the chart renders
-// the absence, it is not fabricated here).
+// FreezeDailyReasonCounts tallies freezes per (UTC day, reason) over the trailing `sinceDays`
+// days. Zero-freeze days have no rows; the chart renders the absence.
 //
-// Index reasoning: same access path as FreezeReasonCounts — the
-// WHERE keeps frozen_at bare (no function on the column), so
-// hypertable chunk exclusion prunes to the window's chunks;
-// date_trunc appears only in SELECT/GROUP BY. sinceDays is capped
-// by the handler's parseWindowDays (≤365), bounding the scan.
+// The WHERE keeps frozen_at bare (no function on the column) so chunk exclusion prunes to the
+// window; date_trunc appears only in SELECT/GROUP BY. The handler's parseWindowDays caps
+// sinceDays at 365, bounding the scan.
 func (s *Store) FreezeDailyReasonCounts(ctx context.Context, sinceDays int) ([]FreezeDailyReasonCount, error) {
 	if sinceDays <= 0 {
 		sinceDays = 30
@@ -994,21 +869,15 @@ func encodeFreezeDetail(decision anomaly.Decision) ([]byte, error) {
 // mapFreezeReason translates the Decision into one of the values
 // allowed by the freeze_events.reason CHECK constraint.
 func mapFreezeReason(decision anomaly.Decision) string {
-	// Phase 2 freezes carry "phase2:..." in Reason — currently
-	// surfaced as 'divergence' (multi-source disagreement is the
-	// driver). Phase 1 single-source / outlier paths fall through
-	// to the default mapping.
+	// "phase2:..." reasons surface as 'divergence' (multi-source disagreement); single-source and
+	// outlier paths fall through to the default mapping.
 	if len(decision.Reason) > 7 && decision.Reason[:7] == "phase2:" {
 		return "divergence"
 	}
 	if decision.Action == anomaly.ActionFreeze {
 		return "outlier_storm"
 	}
-	// Defensive fall-through for a decision shape this mapper doesn't
-	// recognize. 'other', NOT 'manual': 'manual' is reserved for
-	// genuinely operator-initiated freezes, so defaulting to it would
-	// record any unrecognized automated decision as a human action on
-	// the anomalies timeline. Vocabulary extended by
-	// migration 0124.
+	// Unrecognized shapes map to 'other', NOT 'manual': 'manual' is reserved for operator-initiated
+	// freezes, and defaulting to it would show an automated decision as a human action.
 	return "other"
 }

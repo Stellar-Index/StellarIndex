@@ -34,36 +34,25 @@ type FXQuote struct {
 	Source         string
 }
 
-// InsertFXQuoteBatch upserts a slice of fx quotes. Idempotent on the
-// (ticker, bucket) primary key — re-running with the same (ticker, date)
-// updates `rate_usd` + `inverse_usd` + `source`, keeping the original
-// `observed_at` (the DEFAULT does not fire on UPDATE; the first observation
-// date is the more useful diagnostic).
+// InsertFXQuoteBatch upserts fx quotes, idempotent on the (ticker, bucket) primary key. A re-run
+// updates rate_usd, inverse_usd and source but keeps the first observed_at.
 //
-// Generation-guarded corrective upsert (migration 0141): rate_usd is the
-// denominator of every fiat-quoted usd_volume, so the DO UPDATE is guarded by
-// `derive_generation <= EXCLUDED.derive_generation`. The live forex worker
-// writes at generation 0; the operator fx-history-backfill tool stamps a
-// POSITIVE generation ([SetDeriveGeneration]) so its corrected rate wins the
-// conflict AND survives a later live gen-0 refresh. A gen-0-over-gen-0 write
-// re-writes the same row.
+// The upsert is generation-guarded because rate_usd is the denominator of every fiat-quoted
+// usd_volume: DO UPDATE applies only if `derive_generation <= EXCLUDED.derive_generation`. The
+// live worker writes generation 0; fx-history-backfill stamps a POSITIVE generation
+// ([SetDeriveGeneration]) so its corrected rate wins and survives a later live refresh.
 //
-// The per-source `entries` tally (source_entry_counts, migration 0035) is
-// bumped INLINE, as the trades / oracle_updates inserts do: `xmax = 0` marks
-// a genuinely new row, and the HAVING clause skips duplicates, updates and
-// generation-guard skips, so a re-run never inflates the tally.
+// The per-source `entries` tally is bumped inline: `xmax = 0` marks a genuinely new row, and the
+// HAVING clause skips duplicates, updates and guard skips, so a re-run never inflates it.
 //
 // Empty slice is a no-op.
 func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error {
 	if len(quotes) == 0 {
 		return nil
 	}
-	// inverse_usd is derived from rate_usd INSIDE the statement, in
-	// NUMERIC. The worker's float64 reciprocal (1.0 / rate) carries a
-	// second rounding the stored rate does not, so the cached column and
-	// the exact 1/rate_usd the money path computes disagreed in the last
-	// digits; the served /v1/chart and asset-listing fiat legs read this
-	// column. One rate, one reciprocal, both NUMERIC (ADR-0003).
+	// inverse_usd is derived from rate_usd INSIDE the statement, in NUMERIC. A float64 reciprocal
+	// carries a second rounding that would disagree with the exact 1/rate_usd in the last digits,
+	// and served fiat legs read this column (ADR-0003).
 	const stmt = `
 		WITH ins AS (
 			INSERT INTO fx_quotes (bucket, ticker, rate_usd, inverse_usd, source, derive_generation)
@@ -89,18 +78,10 @@ func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error 
 	}
 	defer func() { _ = tx.Rollback() }()
 	for _, q := range quotes {
-		// IsNaN is not redundant. Every comparison with NaN is false in
-		// Go, so `<= 0` lets a NaN rate through — and Postgres does not
-		// catch it either: it orders NaN ABOVE every numeric, so the
-		// column's own `CHECK (rate_usd > 0)` accepts it, and the driver
-		// passes a float64 NaN through as a `NaN` the numeric type takes.
-		// A NaN rate would carry a NaN inverse with it, and
-		// NaN is absorbing under sum(), so every usd_volume derived from
-		// that ticker — and every prices_* CAGG bucket containing one —
-		// becomes NaN. Latent today only because the one live producer
-		// pre-filters non-finite values; this is an exported method with
-		// a second caller, and both the guard and the CHECK read as
-		// "positive rates only".
+		// IsNaN is not redundant: every comparison with NaN is false in Go, so `<= 0` lets it
+		// through, and Postgres orders NaN ABOVE every numeric so the column's CHECK
+		// (rate_usd > 0) accepts it. NaN is absorbing under sum(), so one would poison every
+		// usd_volume derived from that ticker and every prices_* bucket containing one.
 		if q.Ticker == "" || math.IsNaN(q.RateUSD) || math.IsInf(q.RateUSD, 0) || q.RateUSD <= 0 {
 			continue
 		}
@@ -183,47 +164,27 @@ func (s *Store) LatestFXQuotes(ctx context.Context, since time.Time) ([]FXQuote,
 
 // ─── forex-snap read path (fx_quotes-first) ─────────────────────────
 //
-// The connector-path FX sources (exchangeratesapi / ecb) that
-// external.FXSources() selects from the `trades` hypertable are DISABLED
-// in production. The ACTIVE FX feed (`massive`, the
-// internal/sources/external/forex worker) writes the `fx_quotes`
-// hypertable instead, so a trades-only triangulation forex-snap
-// ([Store.FXQuoteAtOrBefore]) would always soft-fall-back to cached VWAP
-// while fresh quotes sat one table over. The helpers below are the
-// fx_quotes-first leg of the unified read path; the trades read
-// survives only as the compatibility fallback for re-enabled
-// connector-path sources.
+// The connector-path FX sources that read the `trades` hypertable are disabled in production; the
+// active feed (`massive`) writes `fx_quotes`. A trades-only forex-snap ([Store.FXQuoteAtOrBefore])
+// would therefore always fall back to cached VWAP while fresh quotes sat in fx_quotes. The helpers
+// below are the fx_quotes-first leg; the trades read is only a fallback for re-enabled connectors.
 
-// fxQuotesSnapLookback bounds how far back the fx_quotes snap read
-// accepts a row. fx_quotes buckets are daily and the feed skips
-// weekends/holidays for some tickers, so 7 days tolerates the longest
-// routine gap while still refusing to price a chained-fiat leg off a
-// quote stale enough to be wrong. Misses inside the window fall back to
-// the trades path; a total miss surfaces [ErrNoFXQuote] and the
-// caller's cached-VWAP fallback. The floor also lets TimescaleDB prune
-// to the window's chunks instead of walking the hypertable to genesis
-// on a miss (same rationale as USDPriceAt's lower bucket bound in
-// usd_fx_resolver.go).
+// fxQuotesSnapLookback bounds how far back the snap read accepts a row. Buckets are daily and the
+// feed skips weekends/holidays for some tickers, so 7 days tolerates the longest routine gap while
+// refusing a stale chained-fiat leg. A total miss surfaces [ErrNoFXQuote]. The floor also lets
+// TimescaleDB prune to the window's chunks instead of scanning to genesis on a miss.
 const fxQuotesSnapLookback = 7 * 24 * time.Hour
 
-// fxQuotesSourceLabel is the provenance label for fx_quotes rows. It is
-// both the source tag the forex worker stamps on every row it writes
-// AND the label substituted for backfill rows whose source column
-// is NULL (migration 0028 allows NULL only for pre-attribution
-// recovery rows — same pipeline, provenance merely unrecorded).
+// fxQuotesSourceLabel is the provenance label for fx_quotes rows, also substituted for rows whose
+// source column is NULL (pre-attribution recovery rows from the same pipeline).
 const fxQuotesSourceLabel = "massive"
 
-// usdFiatCode is the anchor currency fx_quotes rates are expressed
-// against. `rate_usd` is the price of 1 USD denominated in the ticker —
-// i.e. UNITS-OF-TICKER PER 1 USD (e.g. rate_usd(EUR) ≈ 0.92 means 1 USD
-// buys 0.92 EUR). See internal/sources/external/forex/client.go
-// (LatestUSDRates) + cache.go (Currency.RateUSD) for the source-of-truth
-// orientation the `massive` feed writes.
+// usdFiatCode is the anchor currency fx_quotes rates are expressed against. `rate_usd` is
+// UNITS-OF-TICKER PER 1 USD (rate_usd(EUR) ~ 0.92 means 1 USD buys 0.92 EUR).
 const usdFiatCode = "USD"
 
-// fxSnapRow is one latest-per-ticker fx_quotes observation feeding
-// [fxSnapFromRows]. RateUSD carries the NUMERIC column's text form —
-// parsed to *big.Rat, never through a float (ADR-0003).
+// fxSnapRow is one latest-per-ticker fx_quotes observation feeding [fxSnapFromRows]. RateUSD
+// carries the NUMERIC column's text form, parsed to *big.Rat, never through a float (ADR-0003).
 type fxSnapRow struct {
 	Bucket  time.Time
 	RateUSD string
@@ -248,22 +209,16 @@ func fxSnapTickers(pair canonical.Pair) []string {
 	return out
 }
 
-// fxSnapFromRows computes the pair price (quote units per base unit —
-// the same QuoteAmount/BaseAmount orientation the trades path returns)
-// from latest-per-ticker fx_quotes rows, keyed by ticker.
+// fxSnapFromRows computes the pair price (quote units per base unit, the trades path's
+// QuoteAmount/BaseAmount orientation) from latest-per-ticker fx_quotes rows keyed by ticker.
 //
-// Math is exact *big.Rat throughout: rate_usd(T) is "T per 1 USD", so
-// price(B/Q) = quote-per-base = rate_usd(Q) / rate_usd(B), with either
-// USD side contributing an exact 1. (Dividing the other way,
-// rate_usd(B)/rate_usd(Q), would invert every served fiat-quoted
-// pair.) The cached float-derived `inverse_usd` column is
-// deliberately NOT used — inversion happens in Rat space.
+// Math is exact *big.Rat: rate_usd(T) is "T per 1 USD", so price(B/Q) = rate_usd(Q) / rate_usd(B),
+// with a USD side contributing exactly 1. The other direction would invert every served
+// fiat-quoted pair. The cached `inverse_usd` column is NOT used; inversion happens in Rat space.
 //
-// observedAt is the OLDEST bucket among the rows used (the staler
-// input governs the quote's freshness). The source label is the
-// sorted "+"-join of the distinct row sources (a cross like EUR/GBP
-// can mix providers); NULL-source rows read as
-// [fxQuotesSourceLabel].
+// observedAt is the OLDEST bucket used (the staler input governs freshness). The source label is
+// the sorted "+"-join of distinct row sources (a cross can mix providers); NULL-source rows read
+// as [fxQuotesSourceLabel].
 //
 // Returns [ErrNoFXQuote] when a needed ticker has no row.
 func fxSnapFromRows(pair canonical.Pair, rows map[string]fxSnapRow) (*big.Rat, time.Time, string, error) {
@@ -319,16 +274,12 @@ func fxSnapFromRows(pair canonical.Pair, rows map[string]fxSnapRow) (*big.Rat, t
 	return new(big.Rat).Quo(quoteRate, baseRate), observedAt, strings.Join(sources, "+"), nil
 }
 
-// fxQuotesSnapAtOrBefore is the fx_quotes leg of [Store.FXQuoteAtOrBefore]:
-// the most recent fx_quotes observation per needed ticker whose
-// `bucket <= cutoff`, within [fxQuotesSnapLookback]. One round-trip via
-// DISTINCT ON; the (ticker, bucket DESC) index makes each ticker a
-// bounded descending scan.
+// fxQuotesSnapAtOrBefore is the fx_quotes leg of [Store.FXQuoteAtOrBefore]: the newest observation
+// per needed ticker with `bucket <= cutoff` within [fxQuotesSnapLookback]. DISTINCT ON over the
+// (ticker, bucket DESC) index makes each ticker a bounded descending scan.
 //
-// Returns [ErrNoFXQuote] when any needed ticker has no row in the
-// window (caller falls back to the trades path). Other DB errors
-// propagate — a broken fx_quotes read means no chained-fiat output can
-// be trusted this tick.
+// Returns [ErrNoFXQuote] when any needed ticker has no row in the window (caller falls back to
+// trades). Other DB errors propagate: a broken read means no chained-fiat output is trustworthy.
 func (s *Store) fxQuotesSnapAtOrBefore(
 	ctx context.Context,
 	pair canonical.Pair,
@@ -383,12 +334,9 @@ func (s *Store) fxQuotesRowsAtOrBefore(ctx context.Context, tickers []string, cu
 	return got, nil
 }
 
-// fxQuoteBucketAtOrBeforeSelect finds the newest bucket for one ticker
-// at or before a cutoff, within a lookback floor. The floor is what lets
-// TimescaleDB prune to the window's chunks instead of walking the
-// hypertable to genesis on a miss (the same rationale as
-// [fxQuotesSnapLookback]); it also IS the as-of tolerance for the caller
-// below, which is why it is a parameter rather than the constant.
+// fxQuoteBucketAtOrBeforeSelect finds the newest bucket for one ticker at or before a cutoff,
+// within a lookback floor. The floor lets TimescaleDB prune chunks on a miss (as for
+// [fxQuotesSnapLookback]) and is also the caller's as-of tolerance, hence a parameter.
 const fxQuoteBucketAtOrBeforeSelect = `
 	SELECT bucket
 	  FROM fx_quotes
@@ -399,16 +347,13 @@ const fxQuoteBucketAtOrBeforeSelect = `
 	 LIMIT 1
 `
 
-// FXQuoteBucketAtOrBefore returns the newest `fx_quotes` bucket for
-// ticker at or before `at`, looking back no further than `lookback`.
-// ok=false means the table holds no quote for that ticker in
-// [at-lookback, at] — the caller must then REFUSE to price rather than
-// reach forward to a later bucket or extrapolate from an older one.
+// FXQuoteBucketAtOrBefore returns the newest `fx_quotes` bucket for ticker at or before `at`,
+// looking back no further than `lookback`. ok=false means no quote in [at-lookback, at]; the
+// caller must REFUSE to price rather than reach forward or extrapolate.
 //
-// AT OR BEFORE is day-bucket granularity, not publication time: the
-// bucket's date is <= at, but its rate is overwritten by every later
-// refresh that day and by the trailing-7d history bars, so it can carry
-// a rate published up to a day after `at`. Never a later bucket, though.
+// AT OR BEFORE is day-bucket granularity, not publication time: the rate is overwritten by later
+// refreshes that day and by trailing-7d history bars, so it can be published up to a day after
+// `at`. Never a later bucket, though.
 func (s *Store) FXQuoteBucketAtOrBefore(ctx context.Context, ticker string, at time.Time, lookback time.Duration) (time.Time, bool, error) {
 	var bucket time.Time
 	err := s.db.QueryRowContext(ctx, fxQuoteBucketAtOrBeforeSelect,
