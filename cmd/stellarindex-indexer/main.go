@@ -8,10 +8,9 @@
 // no stellar-rpc client, no per-source goroutines. One goroutine drives
 // ledgerstream + dispatcher; a second drains the resulting consumer.Events
 // to Timescale. That second goroutine is deliberately unguarded: a recover()
-// would be cosmetic (writes happen in PersistEvents' persistWorker goroutines,
-// whose panics end the process anyway) and swallowing a panic would leave
-// /metrics and /healthz answering with a frozen cursor while persisting
-// nothing. Crashing lets systemd restart from the last cursor.
+// would be cosmetic (persistWorker panics end the process anyway) and would
+// leave /healthz answering with a frozen cursor. Crashing lets systemd
+// restart from the last cursor.
 //
 // Flags:
 //

@@ -11,29 +11,27 @@ import (
 // Issuer directory-label overlay for /v1/assets + /v1/assets/{id}.
 //
 // Joins each asset's issuer G-address (a contract token's own C-address)
-// against the account_directory table and stamps the additive
-// issuer_directory_{tags,domain,name} fields onto AssetDetail.
+// against account_directory and stamps issuer_directory_{tags,domain,name}
+// onto AssetDetail.
 //
-// DISPLAY-ONLY, with two deliberate exceptions scoped to SCAM-CLASS tags
+// DISPLAY-ONLY, with two exceptions for SCAM-CLASS tags
 // (malicious/unsafe/fraud/scam/hack/phishing). Tags never affect verified
 // status or the substance/decimals gates.
 //
 //  1. A scam-class tag WITHHOLDS every published dollar figure on the row
 //     (price, market cap, listing reference/valuation pair) via
 //     suppressScamIssuerPricing and the reader-seam pricingguard.ScamGate:
-//     a scam token must not lend itself legitimacy with a price, even when
-//     its market clears the substance floor.
+//     a scam token must not lend itself legitimacy with a price.
 //  2. A scam-class tag DEMOTES the asset in the /v1/assets listing
 //     (timescale's listingRankTierExpr), whatever the sort key. The row and
 //     its warning fields stay: we refuse to rank a flagged asset, never hide it.
 //
-// Raw trade surfaces stay visible.
-//
-// Labels are best-effort: a nil reader, an unlisted issuer or a lookup
-// failure omits the fields and never fails the response. Price suppression is
-// not: a failed lookup means nobody checked, so the rows it covered are marked
-// issuerDirectoryUnchecked and withheld like a flagged row. A nil reader (no
-// directory wired) still prices normally, and the SQL demotion fails open.
+// Raw trade surfaces stay visible. Labels are best-effort: a nil reader, an
+// unlisted issuer or a lookup failure omits the fields and never fails the
+// response. Price suppression is not: a failed lookup means nobody checked, so
+// the rows it covered are marked issuerDirectoryUnchecked and withheld like a
+// flagged row. A nil reader (no directory wired) still prices normally, and the
+// SQL demotion fails open.
 
 // stampIssuerDirectory copies one curated directory label onto the
 // detail. Tags are set only when non-empty so an unlabelled entry

@@ -38,9 +38,8 @@ import (
 // therefore carry a premium on a past day and none today.
 //
 // Coverage is small: the curated binding (internal/rwa/oracle_reference.go)
-// admits seven of the fourteen `rwa:` feeds (XAU and SPXU are refused as off-chain
-// codes), and only those trading against a dollar can carry a premium. `excluded[]`
-// names every member left out and who can move it.
+// admits only some `rwa:` feeds, and only those trading against a dollar can
+// carry a premium. `excluded[]` names every member left out and who can move it.
 
 // rwaPremiumHistoryTTL bounds the reuse of one assembled series. It
 // matches [rwaHistoryTTL] for the same reason: a daily grain cannot

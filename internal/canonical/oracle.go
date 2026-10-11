@@ -232,7 +232,4 @@ func (u OracleUpdate) Equal(o OracleUpdate) bool {
 
 // ─── internal helpers ──────────────────────────────────────────────
 
-// (Formerly had isFiatSentinel here — removed per ADR-0010 which
-// promoted fiat to a first-class AssetType variant.)
-//
 // validTxHash defined in trade.go; we re-use it here.

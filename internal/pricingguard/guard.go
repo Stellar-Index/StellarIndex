@@ -74,8 +74,7 @@ type TrailingAtReader interface {
 // is robust-sane or there is no baseline / the trailing fetch failed (fail-open,
 // favour serving a real price), else the newest trailing bucket within the robust
 // band (last-known-good). The math is exact-rational (ADR-0003). It never
-// errors: on doubt it serves the candidate rather than 404 a pair with data. A
-// nil logger disables warn logging.
+// errors: on doubt it serves the candidate rather than 404 a pair with data.
 //
 // lowConfidence is true when a SUCCESSFUL trailing fetch returned no usable
 // baseline (a pair's first-ever served minute, or first after more than

@@ -1511,12 +1511,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	//  - PrewarmContractsDirectory (multi-day GROUP BY on the default rung).
 	//  - PrewarmNetworkThroughput (a FINAL scan over up to a year of ledgers).
 	//  - PrewarmNativeLiquidityPools: only the ENTRY must exist for the request
-	//    path to stop blocking; freshness comes from the request-kicked refresh at
-	//    its 60s TTL, so this is a never-cold/repair guarantee.
-	//  - PrewarmSep1Images (logo map over every issuer's cached stellar.toml; 10-13 s
-	//    inline on r1; 10-minute TTL).
-	//  - PrewarmContractProtocolIndex (a request that had spent its budget would
-	//    cache a statics-only map for everyone; an incomplete build retries in 30 s).
+	//    path to stop blocking; freshness comes from the request-kicked refresh
+	//    at its 60s TTL, so this is a never-cold/repair guarantee.
+	//  - PrewarmSep1Images (logo map over every issuer's cached stellar.toml;
+	//    rebuilt inline it costs a request 10+ s; 10-minute TTL).
+	//  - PrewarmContractProtocolIndex (cohort view's contract-to-protocol map;
+	//    a request that had spent its budget would cache a statics-only map for
+	//    everyone; 10-minute TTL, an incomplete build retries within 30 s).
 	bgWG.Add(1)
 	go func() {
 		defer bgWG.Done()

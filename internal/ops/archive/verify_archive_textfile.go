@@ -20,11 +20,9 @@ import (
 //
 // The P1 `stellarindex_stellar_archive_divergence` page selects
 // `stellarindex_verify_archive_mismatches_total`, whose only other export is
-// the opt-in `-metrics-listen` endpoint that neither the tier-a nor tier-b
-// unit passes and prometheus.r1.yml does not scrape. A short-lived batch job
-// cannot be scraped reliably, so this uses the node_exporter textfile
-// pattern of the other batch emitters (sla-probe, supply-snapshot,
-// archive-completeness, timescale-jobs-probe).
+// the opt-in `-metrics-listen` endpoint, which nothing scrapes. A short-lived
+// batch job cannot be scraped reliably, so this uses the node_exporter
+// textfile pattern of the other batch emitters.
 //
 // Three properties keep the counter usable by `increase()`:
 //
