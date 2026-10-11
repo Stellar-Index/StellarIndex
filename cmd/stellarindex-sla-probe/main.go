@@ -1,15 +1,10 @@
-// Binary stellarindex-sla-probe is the executable SLA-evidence suite.
-// It drives load against a deployed Stellar Index API and reports
-// per-endpoint p50 / p95 / p99 latency, freshness against the observed
-// ledger, and a pass/fail verdict against the SLA targets:
+// Binary stellarindex-sla-probe drives load against a deployed Stellar Index API and reports
+// per-endpoint p50 / p95 / p99 latency, freshness and a pass/fail verdict against the SLA targets:
 //
 //	p95 ≤ 200 ms
 //	p99 ≤ 500 ms
-//	freshness ≤ 30 s   (the price-freshness SLA, measured on
-//	                    /v1/price/tip, the rolling-window surface;
-//	                    /v1/price serves closed buckets per ADR-0015
-//	                    and is held to a structural 150 s bound — see
-//	                    defaultClosedBucketFreshTarget)
+//	freshness ≤ 30 s   (measured on /v1/price/tip; /v1/price serves closed buckets and is
+//	                    held to a structural bound, see defaultClosedBucketFreshTarget)
 //	availability ≥ 99.9 %  (sampled per-tick error rate)
 //
 // Output: a JSON report. Exit 0 = pass, 1 = at least one SLA violated.
@@ -45,18 +40,11 @@ const (
 	defaultFreshTarget   = 30 * time.Second
 	defaultAvailabilityT = 99.9 // percent
 
-	// defaultClosedBucketFreshTarget is the freshness bound applied to
-	// /v1/price specifically. /v1/price serves the most recent CLOSED
-	// bucket (ADR-0015 — the cross-region byte-identical surface), so
-	// its observed_at is STRUCTURALLY 30–150 s old: 60 s bucket width
-	// (prices_1m) + the CAGG refresh policy's 30 s end_offset + up to a
-	// 30 s schedule interval + refresh runtime. The ≤30 s
-	// freshness promise is served by /v1/price/tip (rolling-window,
-	// sub-second observed_at) and is measured there; this bound exists
-	// to catch the closed-bucket pipeline falling behind its design
-	// (aggregator down, CAGG refresh job stuck, trades-insert
-	// backpressure — one chunk-perf regression read 166–186 s and would
-	// correctly fail this).
+	// defaultClosedBucketFreshTarget is the freshness bound for /v1/price, which serves the
+	// most recent CLOSED bucket (ADR-0015), so its observed_at is structurally 30–150 s old:
+	// 60 s bucket + 30 s CAGG end_offset + up to 30 s schedule interval + refresh runtime. The
+	// 30 s promise is measured on /v1/price/tip; this bound catches the closed-bucket pipeline
+	// falling behind its design (aggregator down, CAGG refresh stuck, insert backpressure).
 	defaultClosedBucketFreshTarget = 150 * time.Second
 
 	// maxRequestTimeout caps one request. It must sit well inside the run
@@ -77,13 +65,9 @@ const (
 // against the SLA's success classes (2xx).
 type endpoint struct {
 	Name string
-	// Pair disambiguates Name across -pair flags: staticEndpoints leaves
-	// it empty, pairEndpoints sets it to "asset/quote". Name alone
-	// collides across pairs (every pair's /price/tip is named
-	// "price-tip"), so every place that indexes samples or stats by
-	// endpoint identity must key on (Name, Pair), never Name alone —
-	// otherwise a second -pair's samples silently merge into the
-	// first's and a stale pair's freshness hides behind a fresh one's.
+	// Pair disambiguates Name across -pair flags (empty for static endpoints, "asset/quote"
+	// otherwise). Key samples and stats on (Name, Pair), never Name alone: otherwise one pair's
+	// samples merge into another's and a stale pair's freshness hides behind a fresh one's.
 	Pair     string
 	Path     string
 	Query    map[string]string
@@ -93,11 +77,10 @@ type endpoint struct {
 	// contract (ADR-0015) makes the run-level 30 s target structurally
 	// unmeetable — see defaultClosedBucketFreshTarget.
 	FreshTarget time.Duration
-	// FallbackFreshTarget, when non-zero, is the freshness bound for
-	// responses that carry no data.window_seconds: /price/tip serves
-	// those from the closed 1 m bucket or the VWAP snapshot when the pair
-	// had no trade in the last 30 s, so they are structurally 61-150 s
-	// old. Window responses stay held to the run-level target.
+	// FallbackFreshTarget, when non-zero, bounds responses without data.window_seconds:
+	// /price/tip serves those from the closed 1 m bucket or VWAP snapshot when the pair had no
+	// trade in the last 30 s, so they are structurally 61-150 s old. Window responses keep the
+	// run-level target.
 	FallbackFreshTarget time.Duration
 	// WantObservedAt: a 2xx without a parseable data.observed_at is a
 	// failed sample. Without it a response-shape change would silently
@@ -108,14 +91,9 @@ type endpoint struct {
 	WantData bool
 }
 
-// staticEndpoints are probed regardless of -pair flags — they
-// have no per-pair variant. Health + version probes verify the
-// process is responsive; the catalogue probes (/assets, /issuers,
-// /markets, /diagnostics/cursors) verify that the read-heavy
-// surfaces the explorer site fans out across hold latency under
-// load. Without these, a regression on /v1/assets would only
-// surface as "the explorer is slow" — well after the SLA probe
-// gate would have caught it.
+// staticEndpoints are probed regardless of -pair flags. Health and version probes check
+// responsiveness; the catalogue probes check that the read-heavy surfaces the explorer fans out
+// across hold latency under load.
 func staticEndpoints() []endpoint {
 	return []endpoint{
 		{Name: "healthz", Path: "/healthz", Critical: true},
@@ -128,17 +106,13 @@ func staticEndpoints() []endpoint {
 	}
 }
 
-// pairEndpoints expands one (asset, quote) pair into the per-pair
-// endpoints we measure: /v1/price, /v1/price/tip and
-// /v1/oracle/latest are the load-bearing customer surfaces;
-// /v1/markets is included as a representative listing surface.
+// pairEndpoints expands one (asset, quote) pair into the per-pair endpoints we measure:
+// /v1/price, /v1/price/tip and /v1/oracle/latest are the load-bearing customer surfaces;
+// /v1/markets is a representative listing surface.
 //
-// The freshness SLA (≤30 s) is measured on /price/tip — the
-// rolling-window surface built to deliver it. /price carries its own
-// structural bound (`closedBucketFresh`) because ADR-0015's
-// closed-bucket contract makes its observed_at 30–150 s old by
-// design; holding it to 30 s kept the probe red for weeks with zero
-// regression signal.
+// The 30 s freshness SLA is measured on /price/tip. /price carries its own structural bound
+// (`closedBucketFresh`) because the closed-bucket contract makes its observed_at 30–150 s old
+// by design; holding it to 30 s would be permanently red with no regression signal.
 func pairEndpoints(asset, quote string, closedBucketFresh time.Duration) []endpoint {
 	q := func(extra map[string]string) map[string]string {
 		out := map[string]string{"asset": asset, "quote": quote}
@@ -185,11 +159,9 @@ func fetchNetwork(baseURL, apiKey string) string {
 	return body.Data.Network
 }
 
-// dropNoPriceEndpoints removes the native/USD price, price-tip and
-// oracle-latest probes on test nets, which have no price sources
-// (same network profile as r1-smoke.sh). Dropped endpoints are
-// never sampled, so they are in neither side of the availability
-// denominator. Any other network returns endpoints unchanged.
+// dropNoPriceEndpoints removes the native/USD price, price-tip and oracle-latest probes on test
+// nets, which have no price sources. Dropped endpoints are never sampled, so they count on
+// neither side of the availability denominator. Other networks are returned unchanged.
 func dropNoPriceEndpoints(endpoints []endpoint, network string, log io.Writer) []endpoint {
 	if network != "testnet" && network != "futurenet" {
 		return endpoints
@@ -237,13 +209,10 @@ type stats struct {
 	// LatencyMS is computed over successful responses only, and is nil
 	// when there were none: a failed request has no response latency.
 	LatencyMS *latencyStats `json:"latency_ms,omitempty"`
-	// ObservedAtFreshSec — for endpoints that return an observed_at
-	// timestamp (price, price-tip), the STALEST response's freshness in
-	// seconds, each sample measured at the instant that sample's response
-	// was received (probeSample.receivedAt), not at end-of-run. The
-	// promise is per response, so a median would pass a run in which 49 %
-	// of reads broke it.
-	// Zero when no observed_at field on this endpoint.
+	// ObservedAtFreshSec is the STALEST response's freshness in seconds for endpoints returning
+	// observed_at, each sample measured at its own receivedAt, not end-of-run. The promise is
+	// per response, so a median would pass a run in which 49 % of reads broke it.
+	// Zero when the endpoint has no observed_at field.
 	ObservedAtFreshSec *float64 `json:"observed_at_fresh_sec,omitempty"`
 	// FreshnessTargetSec — the per-endpoint freshness target override
 	// (endpoint.FreshTarget) when one is set, so the JSON evidence
@@ -256,11 +225,8 @@ type stats struct {
 	// hide behind the looser fallback bound.
 	FallbackObservedAtFreshSec *float64 `json:"fallback_observed_at_fresh_sec,omitempty"`
 	FallbackTargetSec          float64  `json:"fallback_target_sec,omitempty"`
-	// Critical mirrors endpoint.Critical: a Critical endpoint fails the
-	// whole run on ANY error, independent of whether the blanket
-	// availability target is still cleared. Carried through to the
-	// verdict so a single /readyz blip on a 2,400-sample run cannot
-	// hide behind 99.9%+ overall availability.
+	// Critical mirrors endpoint.Critical: a Critical endpoint fails the whole run on ANY error,
+	// so a single /readyz blip cannot hide behind 99.9%+ overall availability.
 	Critical bool `json:"critical,omitempty"`
 }
 
@@ -415,20 +381,12 @@ func main() {
 	}
 }
 
-// probeSample is one observation: latency + success + (optional)
-// observed_at parsed from the response body, plus the instant the
-// response was received.
+// probeSample is one observation: latency, success, optional observed_at parsed from the body,
+// and the instant the response was received.
 //
-// receivedAt is what freshness is measured against. It is NOT
-// decoration: computing freshness as time.Since(observedAt) during
-// aggregation, which happens once, AFTER the whole run has finished,
-// would charge every sample the time between its own request and the
-// end of the run. Over a uniformly-sampled run of length D that biases
-// the MEDIAN by D/2 and the oldest sample by a full D. On r1 (D = 30 s)
-// that computation reported /price/tip's ~0.1 s freshness as ~15 s, half
-// of the 30 s page threshold spent on measurement error; at the
-// SLA_PROBE_DURATION=120 s the wrapper recommends for memory-pressured
-// hosts it would have read ~60 s and paged forever on a perfectly
+// Freshness is measured against receivedAt. Aggregation runs once after the whole run, so
+// time.Since(observedAt) there would charge each sample the time until the end of the run,
+// biasing the median by D/2 and the oldest sample by D for a run of length D, and paging on a
 // healthy tip.
 type probeSample struct {
 	latency time.Duration
@@ -442,13 +400,10 @@ type probeSample struct {
 	fallback bool
 }
 
-// runProbe drives `concurrency` workers against `endpoints` for
-// `duration`, then aggregates per-endpoint stats and produces a
-// pass/fail report. apiKey, when non-empty, is sent as
-// `Authorization: Bearer <key>` on every request — without one the
-// probe hits the anonymous-tier rate limit and the verdict reads as
-// fail for reasons unrelated to actual SLA compliance. maxRPS > 0 caps
-// the request rate across all workers; 0 leaves them unpaced.
+// runProbe drives `concurrency` workers against `endpoints` for `duration`, then aggregates
+// per-endpoint stats into a pass/fail report. A non-empty apiKey is sent as a Bearer token;
+// without one the probe hits the anonymous-tier rate limit and fails for non-SLA reasons.
+// maxRPS > 0 caps the request rate across all workers; 0 leaves them unpaced.
 func runProbe(baseURL, apiKey string, endpoints []endpoint, duration time.Duration, concurrency int, maxRPS float64, sla slaTargets) report {
 	started := time.Now().UTC()
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
@@ -475,26 +430,21 @@ func runProbe(baseURL, apiKey string, endpoints []endpoint, duration time.Durati
 	return rep
 }
 
-// collectSamples spawns `concurrency` workers that round-robin
-// across `endpoints` until ctx expires. Returns a per-endpoint-name
-// sample slice.
+// collectSamples spawns `concurrency` workers that round-robin across `endpoints` until ctx
+// expires, returning a per-endpoint sample slice.
 //
-// ctx's deadline stops workers STARTING requests; it never cancels one
-// in flight. Each request instead runs to completion or to its own
-// reqTimeout and is counted either way. Cancelling it at the deadline
-// and discarding it made a request the API accepted and never answered
-// invisible: the run straddling a hang read 100 %. A non-nil limiter
-// gates every request start; its Wait fails once the next token would
-// land past ctx's deadline, which ends the worker like ctx.Done does.
+// ctx's deadline stops workers STARTING requests; it never cancels one in flight. Each request
+// runs to completion or its own reqTimeout and is counted either way, so a request the API
+// accepted and never answered cannot vanish and make a hung run read 100 %. A non-nil limiter
+// gates every request start; its Wait fails once the next token would land past ctx's deadline,
+// which ends the worker like ctx.Done does.
 func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []endpoint, concurrency int, limiter *rate.Limiter, reqTimeout time.Duration) map[string][]probeSample {
 	var mu sync.Mutex
 	samples := make(map[string][]probeSample)
 
-	// Every endpoint is on the same host; the default transport's
-	// MaxIdleConnsPerHost (2) would force connection churn the moment
-	// concurrency > 2, and a churned keep-alive is a closed-connection
-	// race waiting to happen. Size the idle pool to the worker count
-	// so each worker keeps a warm connection between requests.
+	// Every endpoint is on one host; the default MaxIdleConnsPerHost (2) would churn connections
+	// once concurrency > 2, risking closed-keep-alive races. Size the idle pool to the worker
+	// count so each worker keeps a warm connection.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = concurrency * 2
 	transport.MaxIdleConnsPerHost = concurrency * 2
@@ -641,11 +591,8 @@ func endpointFailures(st stats, sla slaTargets) []string {
 		return []string{fmt.Sprintf("%s: no samples", label)}
 	}
 	var out []string
-	// A Critical endpoint fails the run on any error, independent of the
-	// blanket availability target: that target tolerates up to 0.1% of a
-	// large sample count failing, which would let a single /readyz or
-	// /price/tip outage pass silently on a long run (see doc comment on
-	// endpoint.Critical).
+	// A Critical endpoint fails the run on any error: the blanket availability target tolerates
+	// 0.1% failures, which would let a single /readyz or /price/tip outage pass on a long run.
 	if st.Critical && st.Errors > 0 {
 		out = append(out, fmt.Sprintf("%s: %d/%d requests failed (critical endpoint)", label, st.Errors, st.Samples))
 	}
@@ -722,17 +669,11 @@ func hit(ctx context.Context, c *http.Client, baseURL, apiKey string, ep endpoin
 	if err != nil {
 		return 0, "request", time.Time{}, false
 	}
-	// The API keeps synthetic traffic out of the customer-facing SLO and
-	// out of the access log by User-Agent prefix, and `stellarindex-probe/`
-	// is the prefix it reserves for operator probes
-	// (internal/obs.IsSyntheticUA). Sending none meant Go's default
-	// `Go-http-client/1.1`, so this probe's load — hundreds of requests per
-	// endpoint per run, every 15 minutes — was counted as customer
-	// traffic in the availability ratio and in the latency histogram, and
-	// it cleared the burn alerts' own 5 req/s "don't burn on synthetic
-	// traffic" floor while doing it. A probe that cannot be told apart
-	// from a customer makes every number derived from the difference
-	// wrong.
+	// The API keeps synthetic traffic out of the customer-facing SLO and access log by
+	// User-Agent prefix; `stellarindex-probe/` is reserved for operator probes
+	// (internal/obs.IsSyntheticUA). Go's default UA would count this probe's load as customer
+	// traffic in the availability ratio and latency histogram, and defeat the burn alerts'
+	// synthetic-traffic floor.
 	req.Header.Set("User-Agent", "stellarindex-probe/1")
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)

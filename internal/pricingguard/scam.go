@@ -29,18 +29,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// scamFlagTagSet is the lookup form of the curated-directory tag
-// vocabulary that withholds an issuer's price. The LIST itself lives in
-// timescale.DirectoryScamFlagTags — next to the account_directory table
-// it reads — because the /v1/assets listing SQL ranks on the same set
-// and a storage package cannot import this one. It MUST also mirror the
-// frontend warning set in web/explorer/src/lib/directory-tags.ts
-// (DIRECTORY_SCAM_FLAG_TAGS) so every asset that shows a scam BANNER
-// also has its price withheld and is demoted in the ranking — a
-// gate/warning/ranking split is exactly the drift this one set exists to
-// prevent. Matched on timescale.CanonicalDirectoryTag, the form every
-// directory writer stores; the paired tests (scam_test.go here,
-// directory-tags.test.ts there) pin each.
+// scamFlagTagSet is the lookup form of the directory tag vocabulary that withholds an issuer's
+// price. The list lives in timescale.DirectoryScamFlagTags, next to the account_directory
+// table, because the /v1/assets ranking SQL uses the same set and a storage package cannot
+// import this one. It MUST mirror the frontend set in web/explorer/src/lib/directory-tags.ts
+// (DIRECTORY_SCAM_FLAG_TAGS) so every asset showing a scam banner also has its price withheld
+// and is demoted in ranking. Matched on timescale.CanonicalDirectoryTag, the form every
+// directory writer stores; scam_test.go and directory-tags.test.ts pin each side.
 var scamFlagTagSet = func() map[string]struct{} {
 	m := make(map[string]struct{}, len(timescale.DirectoryScamFlagTags))
 	for _, t := range timescale.DirectoryScamFlagTags {
@@ -131,17 +126,14 @@ func NewScamGate(dir ScamDirectoryReader, opts ScamGateOptions) *ScamGate {
 // gate refuses the pair, OR when either leg's issuer is
 // directory-scam-flagged.
 //
-// It lives here rather than in a binary because a decision spelled once
-// per binary drifts once per binary: the aggregator's price-alert
-// evaluator once consulted the substance half alone, so an alert could
-// name a price /v1/price refuses to publish. Its methods are the only
-// exported expression that folds the two halves; the AST guard in
-// gate_guard_test.go fails on any cmd/* file that consults a half
-// directly or reads a closed VWAP bucket without asking a Gate.
+// It lives here rather than in a binary because a decision spelled once per binary drifts once
+// per binary (an alert could name a price /v1/price refuses to publish). Its methods are the
+// only exported expression that folds the two halves; the AST guard in gate_guard_test.go fails
+// on any cmd/* file that consults a half directly or reads a closed VWAP bucket without asking
+// a Gate.
 //
-// Both halves are nil-receiver safe (nil == allow everything), so an
-// operator who disabled [pricing_guard] keeps today's behaviour, and the
-// zero Gate withholds nothing.
+// Both halves are nil-receiver safe (nil == allow everything), so a disabled [pricing_guard]
+// withholds nothing, and so does the zero Gate.
 type Gate struct {
 	Substance *SubstanceGate // nil → no thin-market floor
 	Scam      *ScamGate      // nil → no scam-issuer gate
@@ -239,10 +231,9 @@ func (g Gate) PriceWithholding(ctx context.Context, base, quote canonical.Asset,
 }
 
 // PriceWithholdingAt is [Gate.PriceWithholding] for a point-in-time read:
-// the substance half is asked about the instant being served instead of
-// about now. The scam half is deliberately NOT moved in time — a
-// directory flag is an owner-level trust decision about the issuer, and
-// it withholds that issuer's history along with its present.
+// the substance half is asked about the instant being served instead of about now. The scam
+// half is deliberately NOT moved in time: a directory flag is an owner-level trust decision
+// about the issuer, so it withholds that issuer's history along with its present.
 func (g Gate) PriceWithholdingAt(ctx context.Context, base, quote canonical.Asset, at time.Time, surface string) Withholding {
 	return g.Judge(ctx, base, quote, surface, Query{PointInTime: true, At: at}).Withholding
 }
@@ -274,34 +265,28 @@ func WithholdingFor(scamFlagged, substanceAllowed bool) Withholding {
 	}
 }
 
-// WithheldPair reports whether the aggregated price for the pair
-// base/quote must be withheld because EITHER leg's issuer is
-// directory-scam-flagged. This is the form every price surface should
-// consult: the decision is a property of the market, and the same
-// market is named by both orientations of the pair (see the "BOTH
-// LEGS, always" paragraph in the package doc).
+// WithheldPair reports whether the aggregated price for base/quote must be withheld because
+// EITHER leg's issuer is directory-scam-flagged. Every price surface should consult this form:
+// the decision is a property of the market, which both orientations of the pair name (see
+// "BOTH LEGS, always" in the file header).
 //
-// The fold is a short-circuiting OR, so a flagged base costs exactly
-// the one directory lookup it always did and increments the metric
-// once.
+// The fold is a short-circuiting OR, so a flagged base costs one directory lookup and
+// increments the metric once.
 func (g *ScamGate) WithheldPair(ctx context.Context, base, quote canonical.Asset, surface string) bool {
 	return g.withheldLeg(ctx, base, surface) || g.withheldLeg(ctx, quote, surface)
 }
 
-// Withheld is the BASE-ONLY spelling of the decision. It answers HALF the
-// question and no price-serving path asks it; every surface uses
-// [ScamGate.WithheldPair] via internal/api/v1's scamWithheld
-// (TestScamGateIsAskedThePairQuestion fails on any other selector, no exemptions).
+// Withheld is the BASE-ONLY spelling of the decision: it answers half the question and no
+// price-serving path asks it. Every surface uses [ScamGate.WithheldPair] via internal/api/v1's
+// scamWithheld (TestScamGateIsAskedThePairQuestion fails on any other selector).
 //
 // It survives only because the v1.PriceScamGate interface declares it and
-// v1.PriceScamPairGate embeds that. Production wires *ScamGate, which satisfies
-// the pair form (TestProductionScamGateIsPairAware), so scamWithheld's base-only
-// fallback is unreachable there. It shares withheldLeg with the pair form, so it
-// is not a second policy, but a new surface must not reach for it.
+// v1.PriceScamPairGate embeds that. Production wires *ScamGate, which satisfies the pair form
+// (TestProductionScamGateIsPairAware), so scamWithheld's base-only fallback is unreachable
+// there. It shares withheldLeg with the pair form, so it is not a second policy.
 //
-// `surface` labels obs.PriceServeScamWithheldTotal: a low-cardinality constant
-// ("price_read", "tip", ...), never a pair string. Nil-receiver safe. Fail-open
-// on directory error.
+// `surface` labels obs.PriceServeScamWithheldTotal: a low-cardinality constant ("price_read",
+// "tip", ...), never a pair string. Nil-receiver safe. Fail-open on directory error.
 func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface string) bool {
 	return g.withheldLeg(ctx, base, surface)
 }
@@ -309,20 +294,19 @@ func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface s
 // withheldLeg is the single-asset predicate both exported forms fold over: "is THIS asset's
 // issuer directory-scam-flagged?". Nil-receiver safe; fail-open on directory error.
 //
-// A CLASSIC asset is judged on its issuer G-address and a contract token on its
-// own C-address. Native / fiat / crypto-CEX assets have no address to flag.
+// A CLASSIC asset is judged on its issuer G-address and a contract token on its own C-address.
+// Native / fiat / crypto-CEX assets have no address to flag.
 //
 // The asset is first resolved to its CANONICAL family form (canonical.CanonicalAsset): a SAC
 // wrapper has no G-address of its own, so without resolution a flagged issuer's price would stay
 // servable via the wrapper's C-address. Resolution is one-way and classic-first; XLM's SAC
 // canonicalises to `native`, which has no issuer and returns false.
 //
-// A SAC with no `[supply].sac_wrappers` entry resolves to itself (a C-address
-// cannot be inverted without that table), so a contract leg is matched against
-// [ScamGate.flaggedSAC]: the derived SAC ids of every registered classic asset
-// whose issuer is flagged. Derivation, not metadata, is the trust anchor, so a
-// genuine SEP-41 token can never match. A SAC whose classic asset is absent from
-// classic_assets stays unrecognised.
+// A SAC with no `[supply].sac_wrappers` entry resolves to itself (a C-address cannot be
+// inverted without that table), so a contract leg is matched against [ScamGate.flaggedSAC]:
+// the derived SAC ids of every registered classic asset whose issuer is flagged. Derivation,
+// not metadata, is the trust anchor, so a genuine SEP-41 token can never match. A SAC whose
+// classic asset is absent from classic_assets stays unrecognised.
 func (g *ScamGate) withheldLeg(ctx context.Context, asset canonical.Asset, surface string) bool {
 	if g == nil {
 		return false

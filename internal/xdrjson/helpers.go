@@ -49,12 +49,10 @@ func assetID(a xdr.Asset) string {
 	}
 }
 
-// assetCode trims the trailing NUL padding from a fixed-width asset code
-// and validates what remains against [canonical.ValidateAssetCode] — the
-// same rule internal/canonical.AssetFromXDR enforces. ok=false for a code
-// AssetFromXDR would refuse (empty after trim, over-length, or carrying a
-// non-ASCII-alphanumeric byte), so this package never mints an asset id
-// the canonical layer disagrees with.
+// assetCode trims the trailing NUL padding from a fixed-width asset code and validates it with
+// [canonical.ValidateAssetCode], the rule internal/canonical.AssetFromXDR enforces. ok=false for a
+// code AssetFromXDR would refuse, so this package never mints an asset id the canonical layer
+// disagrees with.
 func assetCode(raw []byte) (string, bool) {
 	code := strings.TrimRight(string(raw), "\x00")
 	if canonical.ValidateAssetCode(code) != nil {
@@ -110,12 +108,9 @@ func assetPath(path []xdr.Asset) []string {
 	return out
 }
 
-// changeTrustAsset renders a change-trust line: a regular asset, or a
-// liquidity-pool-share trustline as "pool:<hex>" — the SAME spelling
-// TrustLineAssetID already uses for a live pool-share trustline, computed
-// from the op's own AssetA/AssetB/Fee via the SDK's canonical pool-id
-// derivation (the identical hash the network itself keys the pool by), so a
-// change_trust op and the resulting trustline never disagree on the id.
+// changeTrustAsset renders a change-trust line: a regular asset, or a pool-share trustline as
+// "pool:<hex>". That is the spelling TrustLineAssetID uses, derived from AssetA/AssetB/Fee with
+// the SDK's pool-id hash, so a change_trust op and its trustline never disagree on the id.
 func changeTrustAsset(c xdr.ChangeTrustAsset) string {
 	switch c.Type {
 	case xdr.AssetTypeAssetTypeNative:
@@ -157,11 +152,9 @@ func poolShareLine(params xdr.LiquidityPoolParameters) string {
 	return "pool:" + hex.EncodeToString(id[:])
 }
 
-// claimableBalanceIDHex renders a ClaimableBalanceId's V0 hash as lowercase
-// hex — the same encoding claimable_balance_seed.go and the
-// claimable_balances source use for this id everywhere else in the lake.
-// ok=false for a union arm without a V0 hash (none exist yet; forward-compat
-// guard, mirrors assetCode's refuse-rather-than-guess discipline).
+// claimableBalanceIDHex renders a ClaimableBalanceId's V0 hash as lowercase hex, matching the
+// claimable_balances source. ok=false for a union arm without a V0 hash, refusing rather than
+// guessing as assetCode does.
 func claimableBalanceIDHex(id xdr.ClaimableBalanceId) (string, bool) {
 	if id.V0 == nil {
 		return "", false

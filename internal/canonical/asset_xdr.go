@@ -10,26 +10,20 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// AssetFromXDR converts an [xdr.Asset] to its canonical form. It is the
-// ONE definition of "which on-chain assets this system can represent",
-// and therefore of which SDEX fills become trade rows.
+// AssetFromXDR converts an [xdr.Asset] to its canonical form. It is the ONE definition of which
+// on-chain assets this system can represent, and so of which SDEX fills become trade rows. A
+// SAC-wrapped classic asset arrives as classic (see [Asset.SacContractID]).
 //
-// A SAC-wrapped classic asset arrives as classic — the SAC address is
-// metadata, not canonical identity (see [Asset.SacContractID]).
-//
-// It returns an ERROR — never a partial asset — for every input the model
-// cannot represent exactly:
+// It returns an ERROR, never a partial asset, for any input the model cannot represent exactly:
 //
 //   - an unsupported/future xdr.AssetType;
 //   - an issuer whose ed25519 bytes don't strkey-encode;
-//   - a code that fails [validateClassicAssetCode] (stellar-core does not
-//     enforce the character rule, so control-byte and emoji codes DO occur
-//     on pubnet).
+//   - a code failing [validateClassicAssetCode] (stellar-core does not enforce the character
+//     rule, so control-byte and emoji codes DO occur on pubnet).
 //
-// It lives in this leaf package so the dispatcher census, the lake
-// extractor and internal/sdexclaim (which cannot import sdex: import
-// cycle) all apply one rule; otherwise a rejected fill would be counted
-// by the oracles yet dropped by the writer.
+// It lives in this leaf package so the dispatcher census, lake extractor and internal/sdexclaim
+// (which cannot import sdex: import cycle) apply one rule; otherwise a rejected fill would be
+// counted by the oracles yet dropped by the writer.
 func AssetFromXDR(a xdr.Asset) (Asset, error) {
 	switch a.Type {
 	case xdr.AssetTypeAssetTypeNative:
@@ -54,14 +48,11 @@ func AssetFromXDR(a xdr.Asset) (Asset, error) {
 	return Asset{}, fmt.Errorf("canonical: AssetFromXDR: unsupported asset type %d", a.Type)
 }
 
-// TrimTrailingNulls removes zero bytes from the end of a classic
-// asset-code byte slice. AssetCode arrays are fixed-size (4 or 12 bytes)
-// with nulls padding short codes ("AQUA" in a 12-array has 8 nulls).
+// TrimTrailingNulls removes the zero padding from a fixed-size classic asset-code array.
 //
-// It trims ONLY trailing nulls: an interior null (or any other control
-// byte) is left in place so [validateClassicAssetCode] can reject the
-// code, rather than being silently truncated into a different — and
-// possibly colliding — asset identity.
+// It trims ONLY trailing nulls: an interior null or other control byte stays so
+// [validateClassicAssetCode] rejects the code, instead of silently truncating it into a
+// different, possibly colliding, asset identity.
 func TrimTrailingNulls(b []byte) string {
 	n := len(b)
 	for n > 0 && b[n-1] == 0 {

@@ -28,25 +28,20 @@ const (
 // ResendSender ships transactional email through Resend's REST
 // API (https://resend.com/docs/api-reference/emails/send-email).
 //
-// Configured via the Resend API token (resend_api_key).
-// Production deployments populate it from
-// `STELLARINDEX_RESEND_API_KEY`; an empty token → the constructor
-// returns ErrNotConfigured, and the API binary wires
-// [UnconfiguredSender] in its place, so a deployment missing the
-// key fails every send loudly rather than silently dropping mail.
+// Configured via the Resend API token (`STELLARINDEX_RESEND_API_KEY` in production). An empty
+// token makes the constructor return ErrNotConfigured and the API binary wires
+// [UnconfiguredSender] instead, so a missing key fails every send loudly rather than dropping mail.
 type ResendSender struct {
 	APIKey  string
 	Client  *http.Client
 	BaseURL string // defaults to https://api.resend.com when empty; tests override
 }
 
-// NewResendSender constructs a sender. Validates the API key
-// is non-empty so misconfigured deployments fail at boot
-// rather than at the first /v1/auth/login call.
+// NewResendSender constructs a sender, rejecting an empty key so a misconfigured deployment
+// fails at boot rather than at the first login email.
 //
-// The key is whitespace-trimmed: a blank-only value is no key at
-// all, and a stray trailing newline (a hand-edited env file) would
-// otherwise corrupt the Authorization header on every send.
+// The key is whitespace-trimmed: a blank-only value is no key, and a stray trailing newline
+// would corrupt the Authorization header on every send.
 func NewResendSender(apiKey string) (*ResendSender, error) {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
@@ -88,20 +83,17 @@ type resendErrorResp struct {
 	StatusCode int    `json:"statusCode"`
 }
 
-// Send POSTs to /emails. Validates first so misconfigured
-// callers get a structured error before we burn a Resend API
-// call; maps 4xx → ErrProviderRejected, 429 + 5xx + network → ErrTransient.
-// An ErrTransient attempt is retried up to [sendAttempts] times with
-// doubling backoff; a cancelled ctx stops further retries.
+// Send POSTs to /emails. It validates first so bad callers get a structured error before a
+// provider call, and maps 4xx to ErrProviderRejected and 429, 5xx and network errors to
+// ErrTransient. A transient attempt is retried up to [sendAttempts] times with doubling backoff;
+// a cancelled ctx stops further retries.
 //
-// A sender with no key (a struct literal that bypassed
-// NewResendSender) fails with ErrNotConfigured before the wire: a
-// blank bearer can only ever be rejected, and the honest name for
-// that state is "not configured", not "provider rejected".
+// A sender with no key (a struct literal that bypassed NewResendSender) fails with
+// ErrNotConfigured before the wire: a blank bearer is "not configured", not "provider rejected".
 //
-// The POST runs detached from ctx's cancellation: callers send after
-// their side effects are durable (token row, signup reservation), so a
-// client disconnect must not abort delivery and be counted as failed.
+// The POST runs detached from ctx's cancellation: callers send after their side effects are
+// durable (token row, signup reservation), so a client disconnect must not abort delivery and be
+// counted as failed.
 func (r *ResendSender) Send(ctx context.Context, msg Message) error {
 	if !r.MailConfigured() {
 		return ErrNotConfigured

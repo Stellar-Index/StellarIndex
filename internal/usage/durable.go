@@ -51,11 +51,10 @@ type durableEntry struct {
 	days     map[string]int64
 }
 
-// get returns subject's durable per-day units for [from, to]. On a
-// read failure it falls back to an earlier read of the same month:
-// usage_daily only grows, so any earlier snapshot is still a lower
-// bound. With no such snapshot the error is returned, so the caller's
-// fail-closed dwell sees an unreadable meter rather than a low one.
+// get returns subject's durable per-day units for [from, to]. On a read failure it falls back to
+// an earlier read of the same month: usage_daily only grows, so any earlier snapshot is still a
+// lower bound. With none, the error is returned so the caller's fail-closed dwell sees an
+// unreadable meter rather than a low one.
 func (d *durableDays) get(ctx context.Context, subject, from, to string, now time.Time) (map[string]int64, error) {
 	d.mu.Lock()
 	cached, ok := d.entries[subject]

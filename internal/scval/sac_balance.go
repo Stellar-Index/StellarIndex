@@ -24,11 +24,8 @@ var balanceKeySymbol = MustEncodeSymbol("Balance")
 // `DataKey::Balance(Address)` shape — a Vec of length 2 with
 // Symbol("Balance") at index 0.
 //
-// This is the single home for the SEP-41 / SAC balance-key predicate,
-// shared by the live sac_balances LedgerEntryChange observer
-// (internal/sources/sac_balances) and the lake-seed reader
-// (internal/storage/clickhouse) so both recognise exactly the same
-// on-wire shape.
+// This is the single balance-key predicate, shared by the live sac_balances observer and the
+// lake-seed reader so both recognise exactly the same on-wire shape.
 func IsSEP41BalanceKey(key xdr.ScVal) bool {
 	vec, err := AsVec(key)
 	if err != nil || len(vec) != 2 {
@@ -61,11 +58,9 @@ func HolderFromBalanceKey(key xdr.ScVal) (string, error) {
 	return addr, nil
 }
 
-// SEP41BalanceAmount returns the i128 amount from a SEP-41 / SAC balance
-// value as a *big.Int (ADR-0003 — never truncated to int64). The value
-// is EITHER a bare i128 OR a map carrying an `amount` i128 field (the
-// native SAC's BalanceValue shape). Returns [ErrUnknownBalanceValShape]
-// for any other shape.
+// SEP41BalanceAmount returns the i128 amount from a SEP-41 / SAC balance value as a *big.Int,
+// never truncated to int64. The value is either a bare i128 or a map carrying an `amount` i128
+// (the native SAC's BalanceValue shape); any other shape returns [ErrUnknownBalanceValShape].
 func SEP41BalanceAmount(val xdr.ScVal) (*big.Int, error) {
 	switch val.Type {
 	case xdr.ScValTypeScvI128:
@@ -98,9 +93,8 @@ func SEP41BalanceAmount(val xdr.ScVal) (*big.Int, error) {
 
 // ContractIDFromScAddress returns the C-strkey form of addr when it is a
 // Contract-variant ScAddress, and ok=false otherwise. Unlike
-// [AsAddressStrkey] (which encodes any of the five ScAddress variants),
-// this narrows to the Contract case — the SAC-wrapper contract id — so
-// a non-contract holder scAddress can't masquerade as a wrapper.
+// [AsAddressStrkey] (which encodes any of the five ScAddress variants), this narrows to the
+// Contract case so a non-contract holder address can't masquerade as a SAC wrapper.
 func ContractIDFromScAddress(addr xdr.ScAddress) (string, bool) {
 	if addr.Type != xdr.ScAddressTypeScAddressTypeContract {
 		return "", false

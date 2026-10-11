@@ -4,15 +4,13 @@ package completeness
 // is what lets FirstProblem use 0 as its "none" sentinel.
 const firstLedger uint32 = 1
 
-// Watermark is the per-source completeness verdict (ADR-0033 headline).
-// Ledger is the highest ledger such that every claim whose problem ledgers
-// the caller passed to ComputeWatermark holds contiguously from Genesis; the
-// verdict attests nothing beyond that set. compute-completeness passes
-// substrate + recognition on its -ch path, where projection failures are not
-// localised and gate only Complete (combineWatermark); the legacy Postgres
-// path also passes per-ledger projection mismatches; the system recognition
-// snapshot passes recognition alone. There is no sparsity threshold: a single
-// proven problem pins the watermark.
+// Watermark is the per-source completeness verdict (ADR-0033 headline). Ledger is the highest
+// ledger such that every claim whose problem ledgers were passed to ComputeWatermark holds
+// contiguously from Genesis; it attests nothing beyond that set. The -ch path passes substrate +
+// recognition (projection failures are not localised and gate only Complete, via
+// combineWatermark), the legacy Postgres path also passes per-ledger projection mismatches, and
+// the system recognition snapshot passes recognition alone. There is no sparsity threshold: a
+// single proven problem pins the watermark.
 type Watermark struct {
 	Genesis     uint32 // effective floor: the caller's genesis, raised to firstLedger
 	Tip         uint32
@@ -24,18 +22,14 @@ type Watermark struct {
 	FirstProblem uint32
 }
 
-// ComputeWatermark reduces the set of "problem ledgers" (the earliest
-// ledger of each substrate gap / hash-chain break / recognition gap /
-// projection mismatch found in [Genesis, Tip]) into the completeness
-// watermark. The watermark is one below the earliest problem at or
-// after Genesis; if there are no problems it reaches Tip.
+// ComputeWatermark reduces the "problem ledgers" (earliest ledger of each substrate gap,
+// hash-chain break, recognition gap or projection mismatch in [Genesis, Tip]) to the completeness
+// watermark: one below the earliest problem at or after Genesis, or Tip when there is none.
 //
-// Pure and deterministic: the same inputs always yield the same
-// verdict, so it is auditable and re-runnable (a Proof-of-Indexing
-// analogue). Problems below Genesis are ignored (out of this source's
-// scope); problems above Tip are ignored (not yet in range). A genesis of 0
-// is raised to firstLedger, and an in-scope problem reported at ledger 0 is
-// placed there too, so a located problem never reads as the 0 "none" sentinel.
+// Pure and deterministic, so the verdict is auditable and re-runnable. Problems below Genesis
+// (out of scope) or above Tip (not yet in range) are ignored. A genesis of 0 is raised to
+// firstLedger, and an in-scope problem at ledger 0 is placed there too, so a located problem never
+// reads as the 0 "none" sentinel.
 func ComputeWatermark(genesis, tip uint32, problemLedgers []uint32) Watermark {
 	lo := max(genesis, firstLedger)
 	w := Watermark{Genesis: lo, Tip: tip}

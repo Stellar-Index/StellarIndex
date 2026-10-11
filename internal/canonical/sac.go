@@ -11,40 +11,27 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// PubnetPassphrase is the Stellar mainnet network passphrase — the
-// input to deterministic SAC contract-ID derivation. Kept here (not
-// config) because the canonical asset model is pubnet-scoped
-// throughout (docs/architecture/coverage-matrix.md).
+// PubnetPassphrase is the Stellar mainnet passphrase, the input to deterministic SAC
+// contract-ID derivation. Kept here, not in config, because the asset model is pubnet-scoped.
 const PubnetPassphrase = "Public Global Stellar Network ; September 2015"
 
-// TestnetPassphrase and FuturenetPassphrase are the two SDF test
-// networks' passphrases (the values config.StellarConfig.Passphrase()
-// resolves "testnet" / "futurenet" to). Exported here so leaf packages
-// that key network-dependent constants off the passphrase (e.g. the
-// native-XLM total in internal/supply) can compare against one source
-// instead of re-spelling the literals.
+// TestnetPassphrase and FuturenetPassphrase are the SDF test networks' passphrases, exported so
+// leaf packages keying network-dependent constants off the passphrase share one source.
 const (
 	TestnetPassphrase   = "Test SDF Network ; September 2015"
 	FuturenetPassphrase = "Test SDF Future Network ; October 2022"
 )
 
-// SacContractID returns the C-strkey of the asset's Stellar Asset
-// Contract on the CONFIGURED network ([NetworkPassphrase] — pubnet
-// unless a binary installed another at start-up via
-// [InstallNetworkPassphrase]). The SAC address is a pure function of
-// (asset, network passphrase) — no on-chain lookup, and it is valid
-// even for assets whose SAC has never been deployed (deployment is
-// permissionless and address-stable, so wallets treat the derived
-// address as THE address). Deriving against the wrong network would
-// serve a contract address that resolves to nothing / a different
-// asset on the target network — see InstallNetworkPassphrase.
+// SacContractID returns the C-strkey of the asset's Stellar Asset Contract on the configured
+// network ([NetworkPassphrase]; see [InstallNetworkPassphrase]). It is a pure function of
+// (asset, passphrase) with no on-chain lookup, valid even if the SAC was never deployed
+// (deployment is permissionless and address-stable). The wrong network would yield an address
+// resolving to nothing or a different asset.
 //
-// Classic asset metadata carries a "Contract Address": wallets resolve
-// holdings by contract address post-Soroban, so the classic detail must
-// carry this and a C-address lookup must land on the classic identity.
+// Wallets resolve holdings by contract address, so classic detail must carry this and a
+// C-address lookup must land on the classic identity.
 //
-// Returns an error only for asset shapes with no SAC (a Soroban
-// token IS its own contract; use Asset.ContractID directly).
+// It errors only for shapes with no SAC (a Soroban token is its own contract; use ContractID).
 func (a Asset) SacContractID() (string, error) {
 	return a.sacContractIDOn(NetworkPassphrase())
 }
@@ -72,11 +59,10 @@ func (a Asset) sacContractIDOn(passphrase string) (string, error) {
 	return strkey.MustEncode(strkey.VersionByteContract, raw[:]), nil
 }
 
-// SEP11SACAsset resolves a SEP-0011 asset name ("native" or "CODE:GISSUER",
-// as a CAP-67 event's trailing topic carries it) to the classic asset ONLY
-// when contractID is that asset's SAC on the configured network. Any
-// contract can emit that topic, so the name alone is never an identity; the
-// deterministic derivation is. ok=false means the claim must not be trusted.
+// SEP11SACAsset resolves a SEP-0011 name ("native" or "CODE:GISSUER", a CAP-67 event's trailing
+// topic) to the classic asset ONLY when contractID is its SAC on the configured network. Any
+// contract can emit that topic, so the name is never an identity; the derivation is.
+// ok=false means the claim must not be trusted.
 func SEP11SACAsset(name, contractID string) (Asset, bool) {
 	var asset Asset
 	if name == "native" {

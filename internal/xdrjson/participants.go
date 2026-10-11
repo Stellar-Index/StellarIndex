@@ -9,25 +9,19 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// ParticipantAccounts returns the non-source G-account strkeys an operation
-// touches: the "incoming"/counterparty side the participant index (ADR-0038
-// Phase B) needs so an account's RECEIVED activity (payment destination, trustor,
-// merge target, clawback victim, …) is queryable, not just what it sourced.
+// ParticipantAccounts returns the non-source G-account strkeys an operation touches: the
+// counterparty side the participant index needs so an account's received activity (payment
+// destination, trustor, merge target, clawback victim, ...) is queryable.
 //
-// The op body is decoded and, keyed on op type, ONLY fields that are genuine
-// account addresses are collected (payment-like and create-account destinations,
-// trustors, clawback `from`, claimants, sponsorship targets; muxed destinations
-// resolved to their underlying G-account).
-// Opaque free-text fields (a manage_data name/value, a memo, a contract string
-// arg) are NEVER interpreted as participants even when they spell a valid
-// G-strkey: a per-type allowlist is the only safe way to keep an
-// attacker-controlled blob out of a victim account's history. Soroban
-// InvokeContract ops contribute NOTHING: call arguments and auth entries are
-// attacker-controllable at this XDR-decode layer (an auth-entry signature is
-// verified only by the network during apply, while the indexer also decodes
-// failed-tx op bodies). Soroban received-activity belongs to the event-based
-// /movements path. The op's own source account is a lake column, so it is NOT
-// returned. Deduplicated + sorted (deterministic, so re-derive is idempotent).
+// Keyed on op type, only fields that are genuine account addresses are collected (muxed
+// destinations resolve to their underlying G-account). Opaque free text (manage_data name/value,
+// memo, contract string arg) is never interpreted as a participant even when it spells a valid
+// G-strkey: a per-type allowlist is the only way to keep an attacker-controlled blob out of a
+// victim account's history. Soroban InvokeContract ops contribute nothing: call arguments and
+// auth entries are attacker-controllable at this layer (auth signatures are verified only by the
+// network during apply, and failed-tx op bodies are decoded too). Soroban received activity belongs
+// to the event-based /movements path. The op's own source account is a lake column, so it is not
+// returned. Output is deduplicated and sorted so a re-derive is idempotent.
 func ParticipantAccounts(bodyB64 string) ([]string, error) {
 	var body xdr.OperationBody
 	if err := scval.UnmarshalBase64(bodyB64, &body); err != nil {
@@ -35,12 +29,9 @@ func ParticipantAccounts(bodyB64 string) ([]string, error) {
 	}
 	var out []string
 	seen := map[string]struct{}{}
-	// add classifies a candidate strkey and records the underlying G-account.
-	// A plain G-strkey is added as-is; an M-strkey is resolved to its
-	// underlying ed25519 account (that's the account whose RECEIVED activity we
-	// index); anything else (empty, contract C-, claimable-balance B-, …) is
-	// dropped. Only strkeys that reach here come from account-typed fields, so
-	// this never promotes free text to a participant.
+	// add records the underlying G-account: a G-strkey as-is, an M-strkey resolved to its ed25519
+	// account, anything else (empty, C-, B-, ...) dropped. Only account-typed fields reach here,
+	// so free text is never promoted to a participant.
 	add := func(candidate string) {
 		var g string
 		switch {
@@ -70,12 +61,9 @@ func ParticipantAccounts(bodyB64 string) ([]string, error) {
 	return out, nil
 }
 
-// participantCandidateAddrs returns the raw (possibly muxed) address
-// strings an operation body names in an account-typed field, keyed on op
-// type. Split out of ParticipantAccounts to keep the per-type dispatch and
-// the seen/candidate bookkeeping each independently under the gocyclo
-// threshold; behaviour is unchanged. See ParticipantAccounts' godoc for the
-// allowlist rationale and the InvokeHostFunction exclusion.
+// participantCandidateAddrs returns the raw (possibly muxed) addresses an operation body names in
+// an account-typed field, keyed on op type. It is split out of ParticipantAccounts to keep both
+// under the gocyclo threshold; see that godoc for the allowlist and InvokeHostFunction exclusion.
 func participantCandidateAddrs(body xdr.OperationBody) []string {
 	var out []string
 
@@ -124,24 +112,17 @@ func participantCandidateAddrs(body xdr.OperationBody) []string {
 			out = append(out, signer.AccountId.Address())
 		}
 	case xdr.OperationTypeInvokeHostFunction:
-		// Deliberately contributes no participants. A Soroban InvokeContract's
-		// call args AND its op.Auth SorobanAuthorizationEntry entries are both
-		// attacker-controllable at this XDR-decode layer (auth signatures are
-		// verified only by the network during apply, and the indexer decodes
-		// failed-tx op bodies too), so neither can be trusted to name a
-		// participant — deriving one lets an attacker inject an arbitrary victim
-		// into that victim's permanent public account history. See the godoc.
-		// The op source is still indexed via operations.source_account.
+		// Deliberately no participants: call args and op.Auth entries are attacker-controllable here,
+		// and deriving one would let an attacker inject a victim into that victim's permanent public
+		// account history. The op source is still indexed via operations.source_account.
 	}
 
 	return out
 }
 
-// revokeSponsorshipLedgerKeyAccount returns the G-account that owns the
-// sponsored ledger entry named by a RevokeSponsorship op's ledger-key arm —
-// the account whose reserve requirement the revocation returns to it — or ""
-// when the entry has no single owning account (e.g. a claimable balance or
-// liquidity pool), which `add` safely drops.
+// revokeSponsorshipLedgerKeyAccount returns the G-account owning the sponsored entry named by a
+// RevokeSponsorship op's ledger-key arm, or "" when there is no single owner (e.g. a claimable
+// balance or liquidity pool), which `add` drops.
 func revokeSponsorshipLedgerKeyAccount(lk xdr.LedgerKey) string {
 	switch lk.Type {
 	case xdr.LedgerEntryTypeAccount:

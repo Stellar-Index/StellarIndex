@@ -16,37 +16,26 @@ import (
 // `deploy/monitoring/rules/archive-completeness.yml`; renaming any
 // field is a wire break against the alert rule file.
 type MetricsSnapshot struct {
-	// FilesMissing per archive. The current flow populates
-	// `cross-anchor` only; callers may add other archives once those
-	// checks are implemented.
+	// FilesMissing per archive; only `cross-anchor` is populated today.
 	FilesMissing map[string]int
 
-	// ChecksExpected / ChecksFound are the per-archive checkpoint
-	// counts a run scanned. FilesMissing alone has no denominator, so
-	// `archive_files_missing == 0` reads identically whether a run
-	// scanned 2M checkpoints or zero (a vacuous range, see
-	// [Report.Vacuous]) — these two gauges let an alert require
-	// Expected > 0 before trusting a zero-missing reading.
+	// ChecksExpected / ChecksFound are the per-archive checkpoint counts a run scanned.
+	// FilesMissing has no denominator, so zero missing reads the same for 2M checkpoints or none
+	// (a vacuous range, see [Report.Vacuous]); these let an alert require Expected > 0 first.
 	ChecksExpected map[string]int
 	ChecksFound    map[string]int
 
 	// RunDurationSeconds is wall-clock for the whole verify run.
 	RunDurationSeconds float64
 
-	// LastSuccessTimestamp is set to the run's start time when
-	// the run completed cleanly (no missing files left). Zero when
-	// the run finished with residuals — [WriteTextfileAtomic] then
-	// re-emits the PREVIOUS run's value read back off the existing
-	// textfile, which is what alerts on `_last_success_timestamp
-	// older than 26h` consume.
+	// LastSuccessTimestamp is the run's start time when it completed cleanly (no missing files
+	// left); zero otherwise, in which case [WriteTextfileAtomic] re-emits the previous run's value
+	// read back from the existing textfile, which the 26h staleness alert consumes.
 	LastSuccessTimestamp time.Time
 
-	// RepairAttempts / RepairFailures per source, for THIS run.
-	// [WriteTextfileAtomic] adds them to the totals it reads back
-	// off the existing textfile, so what lands on disk is a genuine
-	// monotonic counter (which is what the `_total` suffix and the
-	// `# TYPE … counter` declaration promise, and what makes
-	// `increase()` in the alert rules meaningful).
+	// RepairAttempts / RepairFailures per source, for THIS run. [WriteTextfileAtomic] adds them to
+	// the totals on disk so the series is a genuine monotonic counter, as the `_total` suffix and
+	// `# TYPE counter` promise and as `increase()` in the alert rules requires.
 	RepairAttempts map[string]int
 	RepairFailures map[string]int
 }
@@ -63,21 +52,14 @@ func NewMetricsSnapshot() *MetricsSnapshot {
 	}
 }
 
-// WriteTextfile renders snapshot to w in Prometheus exposition
-// format (the format node_exporter's textfile collector reads).
+// WriteTextfile renders snapshot to w in Prometheus exposition format for node_exporter's textfile
+// collector (ADR-0017 "Prometheus surface"; alerts live in
+// `deploy/monitoring/rules/archive-completeness.yml`).
 //
-// Pure: it renders exactly what the snapshot holds. Cross-run
-// persistence (carrying the previous run's last-success timestamp
-// and repair totals forward) is [WriteTextfileAtomic]'s job, because
-// only it knows the path to read the previous file back from.
-//
-// Operator workflow per ADR-0017 §"Prometheus surface": a systemd timer
-// runs `archive-completeness verify -textfile-output PATH`, PATH being
-// node_exporter's textfile_collector/archive_completeness.prom; alerts in
-// `deploy/monitoring/rules/archive-completeness.yml` fire on thresholds.
-//
-// Atomic write protocol: the caller writes `<PATH>.tmp` then renames into
-// place, since the collector skips partial writes as parse errors.
+// Pure: it renders exactly what the snapshot holds. Carrying the previous run's last-success
+// timestamp and repair totals forward is [WriteTextfileAtomic]'s job, as only it knows the path.
+// A systemd timer writes it to node_exporter's textfile_collector/archive_completeness.prom; the
+// caller writes `<PATH>.tmp` then renames, since the collector treats partial writes as parse errors.
 func WriteTextfile(w io.Writer, snapshot *MetricsSnapshot) error {
 	if snapshot == nil {
 		return nil
@@ -133,23 +115,13 @@ func writeFilesMissing(w io.Writer, snapshot *MetricsSnapshot) error {
 	return nil
 }
 
-// writeLastSuccess ALWAYS emits the last_success_timestamp gauge.
+// writeLastSuccess ALWAYS emits the last_success_timestamp gauge. The textfile collector re-reads
+// the file each scrape, so an omitted line makes the series disappear, and the
+// `(time() - archive_completeness_last_success_timestamp) > 26h/48h` alert over an absent series
+// yields no samples: it would go silent in exactly the persistent-failure state it exists for.
 //
-// Returning early on a zero timestamp would not leave node_exporter
-// serving the previous-scrape value: the textfile collector re-reads
-// the file on every scrape, so an omitted line means the SERIES
-// DISAPPEARS. `archive-completeness.yml` alerts on
-// `(time() - archive_completeness_last_success_timestamp) > 26h/48h`,
-// and a PromQL comparison over an absent series yields no samples, so
-// the staleness alert would go silent during exactly the persistent-
-// failure state it exists for — absence reading as health.
-//
-// [WriteTextfileAtomic] fills a zero timestamp from the previous
-// textfile before we get here, so this normally emits the last clean
-// run's value. A literal 0 means "no clean run has EVER been
-// recorded on this host", which makes `time() - 0` enormous and
-// correctly fires the staleness alert — a never-verified archive is
-// not a healthy one.
+// [WriteTextfileAtomic] normally fills a zero timestamp from the previous textfile. A literal 0
+// means no clean run was ever recorded, so `time() - 0` is enormous and correctly fires the alert.
 func writeLastSuccess(w io.Writer, snapshot *MetricsSnapshot) error {
 	var unix int64
 	if !snapshot.LastSuccessTimestamp.IsZero() {
@@ -220,25 +192,15 @@ func writeCounter(w io.Writer, name, help, labelKey string, samples map[string]i
 	return nil
 }
 
-// WriteTextfileAtomic writes snapshot to path via the standard
-// node_exporter textfile-collector atomic-write protocol:
+// WriteTextfileAtomic writes snapshot to path using the node_exporter textfile-collector protocol:
+// fold the existing file's persistent state into snapshot ([MetricsSnapshot.carryForward]), write
+// `<path>.tmp` with restrictive permissions, then rename (POSIX atomic on one filesystem). The
+// collector skips `.tmp` files, so a partial write never appears in a scrape.
 //
-//  1. Read the existing textfile at path and fold its persistent
-//     state into snapshot (see [MetricsSnapshot.carryForward])
-//  2. Write to `<path>.tmp` with restrictive permissions
-//  3. Rename to <path> (POSIX atomic on the same filesystem)
-//
-// node_exporter's textfile collector skips files whose name ends
-// in `.tmp`, so a partial write never appears in a scrape.
-//
-// Step 1 exists because the rename REPLACES the file wholesale: any
-// series this run doesn't re-emit vanishes from the next scrape (see
-// [writeLastSuccess]). It MUTATES snapshot (last-success timestamp
-// and the two repair counters) so that what lands on disk is
-// cumulative host state rather than a per-run fragment. A missing or
-// unparseable previous file is normal (first run ever, operator wiped
-// the collector dir) and is treated as "no prior state", which is a
-// plain counter reset to Prometheus.
+// The fold exists because the rename REPLACES the file wholesale, so any series this run does not
+// re-emit vanishes (see [writeLastSuccess]). It MUTATES snapshot (last-success timestamp and the
+// two repair counters) so the file holds cumulative host state, not a per-run fragment. A missing
+// or unparseable previous file means "no prior state", a plain counter reset to Prometheus.
 func WriteTextfileAtomic(path string, snapshot *MetricsSnapshot) error {
 	if snapshot != nil {
 		snapshot.carryForward(readPriorTextfile(path))
@@ -264,11 +226,9 @@ func WriteTextfileAtomic(path string, snapshot *MetricsSnapshot) error {
 	return nil
 }
 
-// priorTextfileState is the subset of an already-written textfile
-// that must survive a rewrite: the last clean-run timestamp and the
-// two per-source repair counters. Everything else in the file
-// (files-missing, run duration) describes only the run that wrote
-// it and is legitimately replaced each time.
+// priorTextfileState is the part of a written textfile that must survive a rewrite: the last
+// clean-run timestamp and the two per-source repair counters. Files-missing and run duration
+// describe only their own run and are replaced.
 type priorTextfileState struct {
 	lastSuccess time.Time
 	attempts    map[string]int
@@ -282,18 +242,14 @@ const (
 	metricRepairFailures = "archive_completeness_repair_failures_total"
 )
 
-// maxPriorTextfileBytes bounds the read-back. The file this package
-// writes is a few hundred bytes; anything vastly larger is not ours
-// and we would rather start from a clean counter reset than parse an
-// unbounded blob on the ops path.
+// maxPriorTextfileBytes bounds the read-back. Our file is a few hundred bytes; anything vastly
+// larger is not ours, and a counter reset beats parsing an unbounded blob on the ops path.
 const maxPriorTextfileBytes = 1 << 20
 
-// readPriorTextfile parses the persistent state out of the textfile
-// at path. Best-effort by design: a missing file (first run), an
-// unreadable one, or a malformed line all degrade to "no prior
-// state" rather than failing the run — an ops binary that refuses to
-// publish metrics because it couldn't parse its own last output
-// would recreate the blind spot this whole change removes.
+// readPriorTextfile parses the persistent state out of the textfile at path. Best-effort by
+// design: a missing, unreadable or malformed file degrades to "no prior state", because a binary
+// that refuses to publish metrics after failing to parse its own last output recreates the blind
+// spot this persistence removes.
 func readPriorTextfile(path string) priorTextfileState {
 	state := priorTextfileState{
 		attempts: map[string]int{},
@@ -417,21 +373,14 @@ func (s *MetricsSnapshot) PopulateFromReport(r *Report) {
 	}
 }
 
-// PopulateFromFillResult merges a FillResult's per-source counts
-// into the snapshot. Every try against a source — success or failure
-// — contributes one attempt under that source's REAL name, and every
-// failed try contributes one failure under the same name.
+// PopulateFromFillResult merges a FillResult's per-source counts into the snapshot. Every try
+// (success or failure) adds one attempt under the source's REAL name, and every failed try adds
+// one failure under the same name.
 //
-// Filing failures under a synthetic `multi-source-exhausted` label
-// while attempts use real source names would leave the two label sets
-// disjoint, so `archive-completeness.yml`'s
-// `sum by (source)(failures) / sum by (source)(attempts)` alert would
-// have a permanently-zero numerator for every real source —
-// structurally unfireable. [CrossAnchorFiller.Fill] therefore reports
-// per-source attempts and failures directly.
-//
-// Per-run counts: [WriteTextfileAtomic] adds them to the totals
-// already on disk so the emitted series is a real counter.
+// Failures under a synthetic `multi-source-exhausted` label would leave the attempt and failure
+// label sets disjoint, giving the `sum by (source)(failures) / sum by (source)(attempts)` alert a
+// permanently-zero numerator. These are per-run counts; [WriteTextfileAtomic] adds them to the
+// totals on disk so the series is a real counter.
 func (s *MetricsSnapshot) PopulateFromFillResult(res FillResult) {
 	for source, count := range res.PerSourceAttempt {
 		s.RepairAttempts[source] += count

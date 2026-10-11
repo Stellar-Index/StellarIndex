@@ -18,11 +18,9 @@ import (
 // blow the stack or the response size.
 const displayMaxDepth = 3
 
-// Display renders an ScVal as a compact human-readable string for
-// explorer surfaces (contract event rows must render every topic and the
-// data, not just topic_0). It is a
-// DISPLAY format, not a wire format — lossy by design (long payloads
-// truncate, exotic types degrade to their type name).
+// Display renders an ScVal as a compact human-readable string for explorer event rows. It is a
+// display format, not a wire format: long payloads truncate and exotic types degrade to their
+// type name.
 func Display(v xdr.ScVal) string {
 	return display(v, 0)
 }
@@ -74,12 +72,8 @@ func display(v xdr.ScVal, depth int) string {
 func displayScalar(v xdr.ScVal) string {
 	switch v.Type {
 	case xdr.ScValTypeScvBool:
-		// NOT v.MustB(): ScValTypeScvBool == 0, so the ZERO-VALUE xdr.ScVal
-		// reports Type==Bool while carrying a nil B pointer, and MustB
-		// dereferences it. scval.AsBool guards this exact case by name;
-		// Display did not, and Display is the one accessor reachable from a
-		// default-constructed ScVal — MapField returns xdr.ScVal{} on a miss,
-		// so logging the value on a miss path panicked the goroutine.
+		// Not v.MustB(): ScValTypeScvBool == 0, so the zero-value xdr.ScVal reports Type==Bool with
+		// a nil B pointer. MapField returns xdr.ScVal{} on a miss, so Display must survive it.
 		if v.B == nil {
 			return "bool"
 		}
@@ -144,11 +138,8 @@ func int256String(p xdr.Int256Parts) string {
 
 // truncateDisplay bounds one rendered fragment.
 //
-// Cuts on a RUNE boundary: slicing bytes would, for a >120-byte string
-// whose multi-byte rune straddled byte 120 produced invalid UTF-8 —
-// encoding/json substitutes U+FFFD so the API doesn't error, but a
-// consumer writing the field to a strict-UTF-8 sink rejects the row. The
-// string is contract-supplied, so the input is attacker-chosen.
+// Cuts on a rune boundary: a byte slice through a multi-byte rune yields invalid UTF-8, which a
+// strict-UTF-8 sink rejects. The string is contract-supplied, so the input is attacker-chosen.
 func truncateDisplay(s string) string {
 	const maxLen = 120
 	if len(s) <= maxLen {

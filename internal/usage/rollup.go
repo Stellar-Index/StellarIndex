@@ -34,35 +34,27 @@ type RollupSink interface {
 	UpsertUsageDaily(ctx context.Context, rows []RollupRow) error
 }
 
-// DefaultRollupInterval is the sweep cadence. Five minutes keeps
-// the dashboard's "today" row at most one tick stale while the
-// per-sweep cost stays tiny (one SCAN + one HGETALL per active
-// subject-day, then a chunked upsert of only the rows that changed
-// since the sink last acknowledged them). It is also the per-sweep
-// deadline: a sweep that outlives its own cadence is already behind.
+// DefaultRollupInterval is the sweep cadence: five minutes keeps the dashboard's "today" row at
+// most one tick stale while a sweep stays cheap (one SCAN plus one HGETALL per active
+// subject-day, then an upsert of only changed rows). It is also the per-sweep deadline, since a
+// sweep outliving its cadence is already behind.
 const DefaultRollupInterval = 5 * time.Minute
 
-// catchUpDaysPerSweep bounds the backlog days (older than yesterday)
-// one sweep re-folds. Each costs a keyspace SCAN, so an unbounded
-// catch-up could outlive the sweep deadline and starve the live days;
-// seven clears a weekend outage in one sweep and a fresh process's
-// whole retention window in five.
+// catchUpDaysPerSweep bounds the backlog days (older than yesterday) one sweep re-folds. Each
+// costs a keyspace SCAN, so unbounded catch-up could outlive the sweep deadline and starve the
+// live days; seven clears a weekend outage in one sweep and the retention window in five.
 const catchUpDaysPerSweep = 7
 
 const dayLayout = "2006-01-02"
 
-// Rollup is the ticker-driven worker that folds the Redis
-// per-endpoint detail hashes into the `usage_daily` Timescale
-// hypertable. Runs inside the API binary (the only writer of the
-// Redis counters and the only reader of the rollups).
+// Rollup is the ticker-driven worker that folds the Redis per-endpoint detail hashes into the
+// `usage_daily` hypertable. It runs inside the API binary, the only writer of the Redis counters
+// and only reader of the rollups.
 //
-// Each sweep covers TODAY + YESTERDAY (UTC) plus every older day in
-// the Redis retention window that no successful sweep has folded since
-// it ended, oldest first and at most [catchUpDaysPerSweep] of them per
-// sweep. A sink or process outage therefore heals itself: the first
-// sweeps after recovery re-fold the skipped days while their counters
-// still exist. A fresh process has no record of what was folded before
-// it, so it walks the whole retention window once.
+// Each sweep covers TODAY + YESTERDAY (UTC) plus every older day in the Redis retention window
+// that no successful sweep has folded since it ended, oldest first, at most
+// [catchUpDaysPerSweep] per sweep. A sink or process outage heals itself while the counters
+// still exist; a fresh process has no record of earlier folds and walks the whole window once.
 type Rollup struct {
 	counter  *Counter
 	sink     RollupSink
@@ -134,12 +126,10 @@ func (r *Rollup) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep folds the live days plus the next catch-up batch (see
-// [Rollup]) and upserts the rows the sink has not yet acknowledged at
-// their current value. Returns the number of rows upserted. Bounded to
-// one interval of wall-clock so a stalled Redis or Postgres cannot pin
-// the worker; one sweep at a time. The catch-up cursor only advances
-// on success, so a failed sweep's days stay owed.
+// Sweep folds the live days plus the next catch-up batch (see [Rollup]) and upserts rows the
+// sink has not acknowledged at their current value, returning the count. It is bounded to one
+// interval of wall-clock so a stalled Redis or Postgres cannot pin the worker, and runs one at
+// a time. The catch-up cursor advances only on success, so a failed sweep's days stay owed.
 func (r *Rollup) Sweep(ctx context.Context) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -248,13 +238,10 @@ func (r *Rollup) observe(outcome string, start time.Time) {
 		Observe(time.Since(start).Seconds())
 }
 
-// detailGrouper folds per-class detail rows into per-(day, subject,
-// endpoint) RollupRows one row at a time, so a caller streaming
-// DetailRows off [Counter.ScanDetailFunc] never has to buffer the
-// whole day's raw rows to group them — only the (far smaller) set of
-// distinct (day, subject, endpoint) aggregates. Unknown classes are
-// ignored (forward-compat: an older binary sweeping hashes written by
-// a newer one must not misfile counts).
+// detailGrouper folds per-class detail rows into per-(day, subject, endpoint) RollupRows one at
+// a time, so a caller streaming off [Counter.ScanDetailFunc] buffers only the far smaller set of
+// aggregates. Unknown classes are ignored so an older binary sweeping hashes written by a newer
+// one cannot misfile counts.
 type detailGrouper struct {
 	grouped map[rollupKey]*RollupRow
 	order   []rollupKey

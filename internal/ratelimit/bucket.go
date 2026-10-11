@@ -12,44 +12,30 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// DefaultDwellTime is the fail-open dwell-time
-// window: how long Take is allowed to be failing-open on Redis
-// errors before flipping to fail-CLOSED via [ErrThrottleUnavailable].
-//
-// 30s matches [auth.DefaultSignupThrottleDwellTime] (kept in step
-// across the two abuse-prevention seams so operators reason about
-// one threshold, not two). Long enough for a Redis blip not to
-// take rate-limiting offline; short enough that a sustained
-// attacker-induced outage can't pivot to unbounded request volume.
+// DefaultDwellTime is how long Take may fail open on Redis errors before flipping to fail-CLOSED
+// via [ErrThrottleUnavailable]. 30s matches [auth.DefaultSignupThrottleDwellTime] so operators
+// reason about one threshold. It is long enough to ride out a Redis blip, short enough that a
+// sustained attacker-induced outage cannot pivot to unbounded request volume.
 const DefaultDwellTime = 30 * time.Second
 
-// ErrThrottleUnavailable signals the rate-limiter has been failing
-// open on Redis errors for longer than the configured dwell-time
-// and the caller should switch to fail-CLOSED (HTTP 503 +
-// Retry-After). Returned by [Bucket.Take] / [Bucket.Charge] in place
-// of the wrapped Redis error once the dwell-time threshold is
-// crossed; transient errors within the window keep returning the
-// wrapped Redis error so handlers retain their existing fail-open
-// branch for blip-class outages.
+// ErrThrottleUnavailable signals the limiter has failed open on Redis errors for longer than the
+// dwell-time and the caller should fail CLOSED (HTTP 503 + Retry-After). [Bucket.Take] and
+// [Bucket.Charge] return it in place of the wrapped Redis error; errors within the window keep
+// the wrapped error so handlers retain their fail-open branch for blips.
 var ErrThrottleUnavailable = errors.New("ratelimit: throttle layer unavailable (sustained backend errors)")
 
 // Bucket is a per-(client × window) counter.
 //
-// Safe for concurrent use. One Bucket serves many callers —
-// construct a single instance at binary startup and share it across
-// handlers.
+// Safe for concurrent use. Construct one instance at startup and share it across handlers.
 //
 // # Dwell-time fail-open inversion
 //
-// Take returns a wrapped Redis error on transport failure while
-// the dwell-time clock is still inside its window (default 30s,
-// see [DefaultDwellTime]); callers fall open as before. Once Redis
-// has been failing continuously for longer than the dwell-time,
-// Take returns [ErrThrottleUnavailable] and callers should switch
-// to fail-CLOSED (HTTP 503 + Retry-After). Only a sustained recovery —
-// a full dwell-time of unbroken successes, or a success after a
-// dwell-time with no failure — resets the clock; a stray success
-// under a flapping Redis does not (see healthySince).
+// Take returns a wrapped Redis error on transport failure while the dwell-time clock is inside
+// its window (see [DefaultDwellTime]); callers fall open. Once Redis has failed continuously for
+// longer than the dwell-time, Take returns [ErrThrottleUnavailable] and callers should fail
+// CLOSED. Only sustained recovery (a full dwell-time of unbroken successes, or a success after a
+// dwell-time with no failure) resets the clock; a stray success under a flapping Redis does not
+// (see healthySince).
 type Bucket struct {
 	rdb    redis.Cmdable
 	max    int
@@ -67,22 +53,18 @@ type Bucket struct {
 	// inversion, so every Redis error fails open.
 	dwellTime time.Duration
 
-	// local is the in-process fixed-window fallback, non-nil iff rdb
-	// was nil at construction. When set, Take/Charge bypass Redis
-	// entirely and enforce the limit from an in-memory map — the
-	// fail-CLOSED fallback that keeps the anon/key tiers throttled when
-	// Redis is absent at boot. See [localStore].
+	// local is the in-process fixed-window fallback, non-nil iff rdb was nil at construction.
+	// Take/Charge then bypass Redis and enforce from memory, keeping the anon/key tiers throttled
+	// when Redis is absent at boot. See [localStore].
 	local *localStore
 
 	mu              sync.Mutex
 	redisErrorSince time.Time
-	// healthySince marks the start of the CURRENT unbroken run of Redis
-	// successes; any failure resets it to zero. redisErrorSince (the fail-closed
-	// clock) is cleared only once this streak has lasted dwellTime. A single
-	// stray success under a flapping Redis must NOT reset the clock
-	// (otherwise 1 success/<dwellTime keeps the limiter — and the auth
-	// brute-force + signup throttles that share this Bucket type — fail-open
-	// indefinitely while Redis is effectively down).
+	// healthySince marks the start of the CURRENT unbroken run of Redis successes; any failure
+	// resets it to zero. redisErrorSince (the fail-closed clock) is cleared only once this streak
+	// has lasted dwellTime. A stray success under a flapping Redis must NOT reset the clock, or
+	// the limiter and the auth/signup throttles sharing this type would stay fail-open while
+	// Redis is effectively down.
 	healthySince time.Time
 	// lastFailure lets a success that follows a failure-free dwellTime clear
 	// the clock, so a long-ago outage cannot make the next blip fail closed.
@@ -106,14 +88,10 @@ func WithKeyPrefix(prefix string) Option {
 	return func(b *Bucket) { b.keyPrefix = prefix }
 }
 
-// WithDwellTime overrides the fail-open dwell-time window: how long
-// Redis may keep failing before Take stops failing open and returns
-// [ErrThrottleUnavailable]. Operators with a stricter or looser
-// Redis-availability SLO tune this via api.rate_limit_dwell
-// (config.APIConfig.RateLimitDwell, wired at
-// cmd/stellarindex-api/main.go); a negative value disables the
-// inversion, so every Redis error fails open. Default
-// [DefaultDwellTime] (30s).
+// WithDwellTime overrides how long Redis may keep failing before Take stops failing open and
+// returns [ErrThrottleUnavailable]. Operators tune it via api.rate_limit_dwell
+// (config.APIConfig.RateLimitDwell); a negative value disables the inversion, so every Redis
+// error fails open. Default [DefaultDwellTime].
 func WithDwellTime(d time.Duration) Option {
 	return func(b *Bucket) { b.dwellTime = d }
 }
@@ -142,24 +120,18 @@ type Result struct {
 //   - max    — requests per window.
 //   - window — size of the fixed window.
 //
-// rdb may be nil: the Bucket then falls back to an in-process
-// fixed-window limiter (see [localStore]) instead of Redis. This is the
-// deliberate degraded mode for a single-instance deployment with no
-// Redis — the limits are still ENFORCED (fail-closed), just accounted
-// per-process rather than fleet-wide. Every other caller passes a real
-// client and gets the Redis path unchanged.
+// rdb may be nil: the Bucket then uses an in-process fixed-window limiter (see [localStore]).
+// This is the deliberate degraded mode for a single-instance deployment with no Redis; limits
+// are still ENFORCED (fail-closed), just per-process rather than fleet-wide.
 //
-// Panics on invalid arguments (zero or negative limit / sub-second
-// window).
+// Panics on invalid arguments (zero or negative limit, sub-second window).
 func New(rdb redis.Cmdable, limit int, window time.Duration, opts ...Option) *Bucket {
 	if limit <= 0 {
 		panic("ratelimit: max must be positive")
 	}
-	// Windows below 1s would integer-divide to zero in Take()'s
-	// bucket-key derivation (`Unix() / int64(window.Seconds())` →
-	// divide by zero). The bucket scheme is inherently seconds-
-	// based; rejecting sub-second windows fails-fast instead of
-	// surfacing the panic at first request.
+	// Sub-second windows would divide by zero in Take()'s bucket-key derivation
+	// (`Unix() / int64(window.Seconds())`); reject them here so the failure is at construction,
+	// not the first request.
 	if window < time.Second {
 		panic("ratelimit: window must be >= 1s")
 	}
@@ -209,16 +181,12 @@ func (b *Bucket) observeRedisFailure() bool {
 	return now.Sub(b.redisErrorSince) > b.dwellTime
 }
 
-// observeRedisSuccess advances the recovery streak. The fail-closed clock
-// (redisErrorSince) is cleared only after dwellTime of UNBROKEN successes —
-// NOT on a single success. Under a flapping Redis the interspersed
-// failures keep resetting healthySince via observeRedisFailure, so the streak
-// never reaches dwellTime, redisErrorSince stays armed, and observeRedisFailure
-// trips fail-CLOSED as designed instead of failing open forever. A genuine,
-// sustained recovery (dwellTime of continuous OKs) clears it and fail-open
-// resumes. A success after dwellTime with no observed failure also clears it:
-// the flap evidence has aged out, and otherwise a sparse-traffic outage long
-// past would make the first error of an unrelated blip fail closed.
+// observeRedisSuccess advances the recovery streak. The fail-closed clock (redisErrorSince) is
+// cleared only after dwellTime of UNBROKEN successes, not on a single success: under a flapping
+// Redis the interspersed failures keep resetting healthySince, so the clock stays armed and
+// observeRedisFailure trips fail-CLOSED instead of failing open forever. A success after
+// dwellTime with no observed failure also clears it, since the flap evidence has aged out and
+// an old sparse-traffic outage would otherwise make an unrelated blip fail closed.
 func (b *Bucket) observeRedisSuccess() {
 	now := b.nowFn()
 	b.mu.Lock()
@@ -253,10 +221,8 @@ func (b *Bucket) Window() time.Duration { return b.window }
 //
 //	retry_after is 0 when allowed.
 //
-// The expiry is armed when the post-increment count EQUALS the cost —
-// i.e. this call created the key — which is the weighted form of the
-// old `current == 1`. Keying it on 1 would leave a key first written
-// by a cost-N charge with no TTL at all.
+// The expiry is armed when the post-increment count EQUALS the cost, i.e. this call created
+// the key. Keying it on 1 would leave a key first written by a cost-N charge with no TTL.
 const lua = `
 local cost = tonumber(ARGV[3])
 local current = redis.call('INCRBY', KEYS[1], cost)
@@ -278,37 +244,29 @@ return {current, 0}
 // compile per process is enough — the Lua source is immutable.
 var luaScript = redis.NewScript(lua)
 
-// Take increments the counter for key in the current window and
-// returns whether the request is allowed. One Redis round-trip.
+// Take increments the counter for key in the current window and reports whether the request is
+// allowed, in one Redis round-trip.
 //
-// On error the caller must branch on [ErrThrottleUnavailable]: a
-// wrapped Redis error (still inside the dwell-time) fails OPEN, while
-// ErrThrottleUnavailable fails CLOSED with 503 + Retry-After. Treating
-// every error as fail-open re-opens the sustained-outage bypass — see
-// the package doc's "Failure mode" section.
+// On error the caller must branch on [ErrThrottleUnavailable]: a wrapped Redis error (inside the
+// dwell-time) fails OPEN, ErrThrottleUnavailable fails CLOSED with 503 + Retry-After. Treating
+// every error as fail-open re-opens the sustained-outage bypass (package doc, "Failure mode").
 func (b *Bucket) Take(ctx context.Context, key string) (Result, error) {
 	return b.Charge(ctx, key, 1, 0)
 }
 
-// Charge spends cost tokens against key's counter for the current
-// window in ONE atomic step and reports whether the request still fits.
-// `Take(ctx, key)` is exactly `Charge(ctx, key, 1, 0)`. A request's price
-// must track the work it buys: a 1000-id batch for the token a one-id
-// request pays would be a 1000x amplifier.
+// Charge spends cost tokens against key's counter for the current window in ONE atomic step and
+// reports whether the request still fits. `Take(ctx, key)` is `Charge(ctx, key, 1, 0)`. A
+// request's price must track the work it buys, or a 1000-id batch is a 1000x amplifier.
 //
-// cost and limit are different axes. limit > 0 replaces the bucket's
-// max for this call only (a per-subject ceiling such as an API key's
-// `rate_limit_per_min`); ≤ 0 uses the bucket's max. Callers MUST pass a
-// stable limit for any given key: flipping it races the shared counter
-// against inconsistent thresholds. There is deliberately no take with one
-// extra int: a wrong guess at cost vs ceiling silently rewrites the limit.
+// cost and limit are different axes. limit > 0 replaces the bucket's max for this call only (a
+// per-subject ceiling such as an API key's `rate_limit_per_min`); <= 0 uses the bucket's max.
+// Callers MUST pass a stable limit per key, or the shared counter races inconsistent thresholds.
 //
-// One round-trip whatever the cost (INCRBY). Never weight a request by
-// looping Take: that is not atomic against concurrent callers.
+// One round-trip whatever the cost (INCRBY). Never weight a request by looping Take: that is not
+// atomic against concurrent callers.
 //
-// Cost is clamped to [1, effective limit]: below 1 charges 1 (a negative
-// INCRBY would REFUND budget); above the limit charges the whole limit
-// (else a 1000-id batch on a 60/min limit could never succeed).
+// Cost is clamped to [1, effective limit]: below 1 charges 1 (a negative INCRBY would REFUND
+// budget); above the limit charges the whole limit (else a big batch could never succeed).
 // A denied charge is still counted; its Retry-After names the window end.
 func (b *Bucket) Charge(ctx context.Context, key string, cost, limit int) (Result, error) {
 	effectiveMax := b.max
@@ -325,19 +283,12 @@ func (b *Bucket) Charge(ctx context.Context, key string, cost, limit int) (Resul
 		return b.localCharge(key, cost, effectiveMax, minute), nil
 	}
 
-	// url.QueryEscape the caller-supplied key before concatenating
-	// with ":<minute>". Callers pass things like IPv6 addresses (which
-	// contain `:`), future API-key strings, SEP-10 account IDs; any
-	// `:` in the key would make two distinct keys collide on the same
-	// Redis slot — a silent cross-client rate-limit smear. Escaping
-	// all RFC 3986 reserved chars also hardens against injection of
-	// exotic control bytes. Still human-readable in Redis for ops.
+	// Escape the caller-supplied key before appending ":<minute>". Keys such as IPv6 addresses
+	// contain `:`, which would let two distinct keys collide on one Redis slot and smear limits
+	// across clients. Escaping also blocks control-byte injection and stays readable for ops.
 	rlKey := b.keyPrefix + url.QueryEscape(key) + ":" + strconv.FormatInt(minute, 10)
-	// Double-window TTL so keys drain naturally. Floor-at-1 guards
-	// sub-second windows — Redis treats EXPIRE 0 as "no expiry",
-	// which would leak keys forever for any window < 500ms. 1s
-	// floor is still finite; the exact value doesn't matter because
-	// those windows would roll over on the next Take() anyway.
+	// Double-window TTL so keys drain naturally. The floor of 1 guards sub-second windows:
+	// Redis treats EXPIRE 0 as "no expiry", which would leak keys forever.
 	ttlSeconds := int(b.window.Seconds() * 2)
 	if ttlSeconds < 1 {
 		ttlSeconds = 1
@@ -374,25 +325,18 @@ func (b *Bucket) Charge(ctx context.Context, key string, cost, limit int) (Resul
 		return Result{}, fmt.Errorf("ratelimit: retry_after not int64: %T", arr[1])
 	}
 
-	// Use `count` as the authoritative allow-signal, not retryTTL.
-	// The Lua clamps a negative TTL to 0 on the deny path, and Go
-	// must not read "retryTTL == 0" as "allowed" — a TTL<0 race
-	// (key lazy-evicted between INCR and TTL) would otherwise flip
-	// a deny into an allow. Pair-comparing against max_count is the
-	// same check the Lua makes; keeping them symmetric eliminates
-	// the decoupling bug entirely.
+	// Use `count` as the authoritative allow-signal, not retryTTL. The Lua clamps a negative TTL
+	// to 0 on the deny path, so reading "retryTTL == 0" as allowed would flip a deny into an
+	// allow when the key is lazily evicted between INCR and TTL. Comparing count to the limit is
+	// the same check the Lua makes.
 	allowed := int(count) <= effectiveMax
 	remaining := effectiveMax - int(count)
 	if remaining < 0 {
 		remaining = 0
 	}
-	// RetryAfter is "time until caller can succeed". That's the
-	// REMAINING SECONDS IN THE CURRENT WINDOW, not the Redis-side
-	// key TTL (which is 2× window for drain purposes). Computing
-	// on the Go side instead of reading ttl from Lua means the
-	// client's Retry-After header doesn't sit at a drain-padded
-	// value that's up to 60× longer than the actual reset. Floor
-	// at 1s so the HTTP header is never zero on a denial.
+	// RetryAfter is the REMAINING SECONDS IN THE CURRENT WINDOW, not the Redis key TTL (2x window
+	// for draining), which would overstate the reset. Floor at 1s so the header is never zero
+	// on a denial.
 	var retryAfter time.Duration
 	if !allowed {
 		windowSec := int64(b.window.Seconds())
@@ -425,21 +369,15 @@ func clampCost(cost, effectiveMax int) int {
 	return cost
 }
 
-// localCharge is the in-process fixed-window path taken when rdb was nil
-// at construction. Mirrors the Redis path's Result derivation
-// (Remaining clamped at zero; RetryAfter = seconds left in the current
-// window, floored at 1s on a denial) so callers can't tell the two
-// backends apart from the Result shape. Never errors — the whole point
-// of the fallback is that it stays enforced when Redis is unavailable.
+// localCharge is the in-process fixed-window path taken when rdb was nil at construction. It
+// mirrors the Redis path's Result derivation (Remaining clamped at zero; RetryAfter = seconds
+// left in the window, floored at 1s on a denial) so callers cannot tell the backends apart.
+// It never errors: the fallback exists to stay enforced when Redis is unavailable.
 //
-// The weight is spent as cost single-token takes against the store.
-// This is the one place a loop is right: there is no round-trip to
-// multiply (each take is a map write under a mutex, and cost is bounded
-// by the effective limit), and it keeps the store's capacity/overflow
-// routing and sweep cadence in exactly one implementation rather than a
-// second, weighted copy that could drift from it. The verdict is read
-// off the LAST take, so a concurrent caller interleaving with the loop
-// can only make it stricter, never looser.
+// The weight is spent as cost single-token takes. A loop is right here: each take is a map write
+// under a mutex, cost is bounded by the effective limit, and the store's capacity/overflow
+// routing and sweep stay in one implementation. The verdict is read off the LAST take, so a
+// concurrent caller interleaving can only make it stricter, never looser.
 func (b *Bucket) localCharge(key string, cost, effectiveMax int, minute int64) Result {
 	now := b.nowFn()
 	var (

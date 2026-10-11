@@ -9,28 +9,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// Decoder is the per-source decode surface the reconciler re-runs over
-// the lake's contract_events. Satisfied by every internal/sources/<venue> decoder
-// (and by dispatcher routing). Matches + Decode are the SAME functions
-// the projector uses, so the re-derive is the deterministic
-// recomputation of what the projector should have written — not a
-// parallel reimplementation that could disagree for the wrong reason.
+// Decoder is the per-source decode surface the reconciler re-runs over the lake's contract_events.
+// Matches + Decode are the SAME functions the projector uses, so the re-derive recomputes what the
+// projector should have written instead of a parallel implementation that could disagree for the
+// wrong reason.
 type Decoder interface {
 	Matches(events.Event) bool
 	Decode(events.Event) ([]consumer.Event, error)
 }
 
-// eventLedgerCarrier is an optional-interface upgrade (http.Flusher
-// style, like the dispatcher's EvictedOrphans): a decoder whose
-// correlation buffer can emit an output while processing a LATER
-// stream event than the one the output belongs to (the phoenix
-// 7-field-era sweep rescue) exposes the output's OWN ledger here. The
-// re-derive then counts that output where its served row actually
-// lives instead of at the sweep-trigger ledger — without this, every
-// sweep-rescued trade appears as a ± per-ledger shift pair in a
-// strict reconcile (net-zero, but noise that forces sources like
-// phoenix onto aggregate netting). 1:1 decoders need not implement
-// it: their output's ledger equals the stream event's.
+// eventLedgerCarrier is an optional interface for a decoder whose correlation buffer can emit an
+// output while processing a LATER stream event than the one it belongs to (the phoenix 7-field-era
+// sweep rescue). The re-derive then counts the output at its own ledger, where the served row
+// lives; otherwise every sweep-rescued trade shows as a +/- per-ledger shift pair in a strict
+// reconcile (net-zero noise that forces phoenix onto aggregate netting). 1:1 decoders need not
+// implement it.
 type eventLedgerCarrier interface{ EventLedger() uint32 }
 
 // countLedger picks the per-ledger bucket for one decoded output: the
@@ -45,62 +38,50 @@ func countLedger(out consumer.Event, streamLedger uint32) uint32 {
 	return streamLedger
 }
 
-// ProjectionGap is a ledger where the number of rows the decoder would
-// emit from the raw events (Expected) disagrees with the number
-// actually present in the protocol table (Actual). Expected > Actual is
-// a projection/persistence drop; Actual > Expected is a phantom row
-// (or a pre-event_index-fix duplicate). Either is a real discrepancy
-// localized to one ledger (ADR-0033 Claim 2b).
+// ProjectionGap is a ledger where the rows the decoder would emit from raw events (Expected)
+// disagree with the rows present in the protocol table (Actual). Expected > Actual is a
+// projection/persistence drop; Actual > Expected is a phantom row or duplicate. Either is a real
+// discrepancy localized to one ledger (ADR-0033 Claim 2b).
 //
-// SCOPE: this is a ROW-COUNT check only. A ledger with zero
-// gaps proves the RIGHT NUMBER of rows exist for that ledger — it does
-// NOT prove those rows' derived columns (amounts, prices, decoded
-// fields, …) are correct. A decoder bug that writes the right row
-// count with wrong derived values passes ReconcileCounts silently. Any
-// consumer of a clean ReconcileCounts result must not describe the
-// range as "complete" or "verified correct" for VALUE correctness on
-// the strength of this check alone.
+// SCOPE: ROW-COUNT only. A clean ledger proves the right NUMBER of rows exist, not that their
+// derived columns (amounts, prices, decoded fields) are correct; a decoder bug writing the right
+// count with wrong values passes ReconcileCounts silently. A clean result must not be described as
+// "complete" or "verified correct" for VALUE correctness.
 type ProjectionGap struct {
 	Ledger   uint32
 	Expected int
 	Actual   int
 }
 
-// BlindSpots records the raw rows a re-derive could not turn into a
-// comparable expectation at all: the rows it SKIPPED rather than counted.
+// BlindSpots records the raw rows a re-derive SKIPPED because it could not turn them into a
+// comparable expectation.
 //
-// The skip deliberately mirrors the projector's: a row the projector could not
-// decode produced no served row, and a row the re-derive cannot decode produces
-// no expected row, so ReconcileCounts sees expected == actual == 0 and reports
-// the ledger CLEAN. Both sides fail for the SAME reason (same Decode, same
-// bytes), so a decoder bug or truncated payload nets to zero and certifies
-// `projection_ok` on a ledger where rows were provably dropped.
+// The skip mirrors the projector's: a row the projector could not decode produced no served row,
+// and one the re-derive cannot decode produces no expected row, so ReconcileCounts sees
+// expected == actual == 0 and reports the ledger CLEAN. Both sides fail for the same reason, so a
+// decoder bug or truncated payload nets to zero and certifies `projection_ok` where rows were
+// dropped.
 //
-// Row counts alone cannot detect this class. The only honest signal is the
-// blindness itself, which is why it is returned rather than logged: a caller
-// certifying completeness must treat "I could not evaluate this ledger" as
-// NOT-clean. The recognition audit does not cover it: an event the decoder
-// claims (Matches == true) and then fails to Decode is a recognised event.
+// Row counts cannot detect this class; the blindness itself is the only honest signal, hence it is
+// returned rather than logged. A caller certifying completeness must treat "could not evaluate
+// this ledger" as NOT clean. The recognition audit misses it: an event the decoder claims
+// (Matches == true) and then fails to Decode is a recognised event.
 type BlindSpots struct {
 	// Ledgers holds every ledger with at least one blind row, ascending and
 	// deduped. Callers whose branch pins the watermark on problem ledgers
 	// append these; callers whose branch flips a boolean use [BlindSpots.Any].
 	Ledgers []uint32
 
-	// UndecodableMatched counts rows the decoder CLAIMED (Matches == true)
-	// and then failed to Decode. The precisely-attributed half: this source
-	// owned the event and could not produce its expectation.
+	// UndecodableMatched counts rows the decoder CLAIMED (Matches == true) and then failed to
+	// Decode: this source owned the event but could not produce its expectation.
 	UndecodableMatched int
 
-	// Unreconstructable counts stored soroban_events rows too structurally
-	// broken to rebuild into an events.Event at all (empty contract_id,
-	// missing topic_0_xdr, wrong-length tx_hash, undecodable op_args). Matches
-	// is never evaluated for these, so they cannot be attributed to a decoder
-	// — but the projector dropped them for the identical reason, so the served
-	// tier is genuinely missing whatever they would have produced. Blind is
-	// blind; they pin too. Counted separately so a verdict says which class
-	// fired. Always 0 on the ClickHouse path, which streams events.Event
-	// directly with no Row round-trip.
+	// Unreconstructable counts stored soroban_events rows too broken to rebuild into an
+	// events.Event (empty contract_id, missing topic_0_xdr, wrong-length tx_hash, undecodable
+	// op_args). Matches is never evaluated, so no decoder is to blame, but the projector dropped
+	// them for the same reason and the served tier is missing whatever they held; they pin too.
+	// Counted separately so a verdict says which class fired. Always 0 on the ClickHouse path,
+	// which streams events.Event with no Row round-trip.
 	Unreconstructable int
 }
 
@@ -140,14 +121,11 @@ func (b BlindSpots) Detail() string {
 		len(b.Ledgers), b.UndecodableMatched, b.Unreconstructable, b.Ledgers[0])
 }
 
-// BlindTracker accumulates [BlindSpots] during a stream, keeping the ledger
-// set deduped without holding a second copy of it.
+// BlindTracker accumulates [BlindSpots] during a stream, keeping the ledger set deduped.
 //
-// Exported because the re-derives in this package are NOT the only per-row
-// soft-fail sites: the ContractCall census in internal/ops/chops skips a
-// malformed call exactly the way the ch-rebuild writer does, with the same
-// nets-to-zero consequence. One tracker implementation means one definition
-// of "blind", and a new soft-fail site cannot quietly invent a weaker one.
+// Exported because the re-derives here are not the only per-row soft-fail sites: the ContractCall
+// census in internal/ops/chops skips malformed calls the same way, with the same nets-to-zero
+// consequence. One tracker means one definition of "blind", so no site can invent a weaker one.
 type BlindTracker struct {
 	seen  map[uint32]bool
 	spots BlindSpots
@@ -185,24 +163,16 @@ func (t *BlindTracker) Result() BlindSpots {
 	return t.spots
 }
 
-// safeDecode runs dec.Decode under a per-event recover, converting a decoder
-// PANIC into a returned error so the caller's existing decode-error path
-// (blind.Undecodable + skip) handles it unchanged. It mirrors the projector's
-// processEventSafely, where a recovered panic and a returned decode error are
-// the SAME outcome — the row is dropped, the failure is counted, the cursor
-// advances.
+// safeDecode runs dec.Decode under a per-event recover, turning a decoder PANIC into a returned
+// error so the caller's decode-error path (blind.Undecodable + skip) handles it. This mirrors the
+// projector's processEventSafely, where a recovered panic and a decode error have the same outcome:
+// the row is dropped, the failure counted, the cursor advances.
 //
-// This matters because the projector RECOVERS panics on historical /
-// upgraded-WASM event shapes — a designed-for input ("backfill sees every
-// prior version") — so a panicking decoder silently drops rows from the served
-// tier. The completeness re-derive exists to make those drops VISIBLE
-// (projection_ok=false / a BlindSpots entry). If it let the panic escape, the
-// whole compute-completeness run would crash before writing any
-// completeness_snapshot: no verdict would flip false, EVERY source's verdict
-// would freeze, and the loss would surface only as a crash-looping ops job
-// instead of the blind spot it is. Funnelling the panic into the same error
-// path a returned decode error takes feeds it the SAME blind-spot accounting,
-// so `delta==0 && !blind.Any()` correctly stays false.
+// The projector recovers panics on historical / upgraded-WASM event shapes (backfill sees every
+// prior version), silently dropping rows from the served tier, and the re-derive exists to make
+// those drops VISIBLE. An escaped panic would crash compute-completeness before it wrote any
+// snapshot, freezing EVERY source's verdict instead of flagging a blind spot. Sharing the
+// decode-error accounting keeps `delta==0 && !blind.Any()` false.
 func safeDecode(dec Decoder, ev events.Event) (outs []consumer.Event, err error) {
 	if perr := Guard(func() { outs, err = dec.Decode(ev) }); perr != nil {
 		return nil, fmt.Errorf("decoder panicked on event shape: %w", perr)
@@ -210,12 +180,10 @@ func safeDecode(dec Decoder, ev events.Event) (outs []consumer.Event, err error)
 	return outs, err
 }
 
-// Guard runs fn under a recover and returns a recovered panic as an error
-// (nil when fn returns normally). It is the one panic guard every
-// completeness oracle runs decoder code under — the re-derives here and the
-// census / preseed / prefilter walks in internal/ops/chops — so a decoder
-// the production dispatcher recovers per input (dispatcher.recordDecoderPanic)
-// becomes a blind spot on the audit path rather than a crash that freezes
+// Guard runs fn under a recover and returns a recovered panic as an error. It is the one panic
+// guard every completeness oracle runs decoder code under (these re-derives and the chops census /
+// preseed / prefilter walks), so a decoder the production dispatcher recovers per input
+// (dispatcher.recordDecoderPanic) becomes a blind spot on the audit path, not a crash that freezes
 // every remaining source's verdict (see [safeDecode]).
 func Guard(fn func()) (err error) {
 	defer func() {
@@ -227,13 +195,10 @@ func Guard(fn func()) (err error) {
 	return nil
 }
 
-// safeMatches runs dec.Matches under the same per-event recover as
-// [safeDecode]. Matches is not the safe half of the pair: it type-asserts
-// topic vectors and reads body fields to decide ownership, so a malformed
-// row panics there just as readily as in Decode, and an escaped panic
-// would take down whichever binary was reconciling. A panic is treated exactly like a
-// decode failure: the row is skipped AND recorded as a blind spot, so a
-// ledger the re-derive could not evaluate can never be certified clean.
+// safeMatches runs dec.Matches under the same per-event recover as [safeDecode]. Matches
+// type-asserts topic vectors and reads body fields, so a malformed row panics there as readily as
+// in Decode. A panic is treated like a decode failure: the row is skipped AND recorded as a blind
+// spot, so a ledger the re-derive could not evaluate is never certified clean.
 func safeMatches(dec Decoder, ev events.Event) (matched bool, err error) {
 	if perr := Guard(func() { matched = dec.Matches(ev) }); perr != nil {
 		return false, fmt.Errorf("decoder panicked matching event shape: %w", perr)
@@ -248,19 +213,16 @@ type EventStreamer interface {
 	StreamContractEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms []string, fn func(events.Event) error) error
 }
 
-// ReDeriveOutputCountsByKindFromEvents re-runs the decoder over the lake's
-// contract_events in [from, to] and returns the output counts keyed by the
-// output's EventKind(), then by ledger. A single decoder routes different
-// output kinds to different tables (soroswap emits "soroswap.trade" → trades
-// AND "soroswap.skim" → soroswap_skim_events; blend emits five kinds across
-// four tables), so reconciliation per table must count ONLY the kinds that
-// land in that table — [SumKinds] projects them per target.
+// ReDeriveOutputCountsByKindFromEvents re-runs the decoder over the lake's contract_events in
+// [from, to] and returns output counts keyed by EventKind(), then ledger. One decoder routes kinds
+// to different tables (soroswap "soroswap.trade" to trades, "soroswap.skim" to
+// soroswap_skim_events; blend emits five kinds across four tables), so per-table reconciliation
+// must count ONLY that table's kinds; [SumKinds] projects them.
 //
-// contractIDs / topic0Syms are the same prefilters the projector passes for
-// this source (empty = match-by-topic across all contracts). An event that
-// fails Decode is skipped, not fatal, and returned as a [BlindSpots]
-// entry so a clean reconcile over a range the decoder could not read does not
-// certify as complete. BlindSpots.Unreconstructable is always 0 here.
+// contractIDs / topic0Syms are the projector's prefilters for this source (empty = match by topic
+// across all contracts). An event failing Decode is skipped and returned as a [BlindSpots] entry,
+// so a clean reconcile over a range the decoder could not read is not certified complete.
+// BlindSpots.Unreconstructable is always 0 here.
 func ReDeriveOutputCountsByKindFromEvents(
 	ctx context.Context,
 	es EventStreamer,
@@ -270,11 +232,9 @@ func ReDeriveOutputCountsByKindFromEvents(
 ) (map[string]map[uint32]int, BlindSpots, error) {
 	byKind := make(map[string]map[uint32]int)
 	blind := NewBlindTracker()
-	// Adjacent-duplicate skip: the CH stream is ORDER BY (ledger, tx_hash,
-	// op_index, event_index), so un-merged ReplacingMergeTree duplicate rows
-	// (re-run partitions 25/45/62) arrive consecutively. Dedup by identity vs
-	// the previous event — O(1) memory, and it lets the read stay no-FINAL
-	// (gentle) while counting correctly.
+	// Adjacent-duplicate skip: the stream is ORDER BY (ledger, tx_hash, op_index, event_index), so
+	// un-merged ReplacingMergeTree duplicates arrive consecutively. Comparing identity with the
+	// previous event is O(1) memory and keeps the read no-FINAL (gentle) while counting correctly.
 	var (
 		haveLast bool
 		lL       uint32
@@ -328,17 +288,12 @@ func SumKinds(byKind map[string]map[uint32]int, kinds ...string) map[uint32]int 
 	return out
 }
 
-// ReconcileCounts diffs expected (decoder re-derive) against actual
-// (protocol-table rows) per ledger and returns every ledger where they
-// disagree, sorted ascending. An empty result means every ledger the
-// decoder would have produced rows for has exactly those rows — Claim
-// 2b's ROW-COUNT invariant holds for the range.
+// ReconcileCounts diffs expected (decoder re-derive) against actual (protocol-table rows) per
+// ledger and returns every disagreeing ledger, ascending. Empty means Claim 2b's ROW-COUNT
+// invariant holds for the range.
 //
-// This is COUNT-ONLY (see the ProjectionGap doc comment for the
-// scope caveat): an empty result does not certify that the rows' derived
-// column VALUES are correct, only that the right number of rows exist
-// per ledger. Do not label a range "complete" for value correctness on
-// the strength of ReconcileCounts alone.
+// COUNT-ONLY (see ProjectionGap): an empty result does not certify the rows' derived VALUES, so
+// never label a range "complete" for value correctness on this alone.
 func ReconcileCounts(expected, actual map[uint32]int) []ProjectionGap {
 	var gaps []ProjectionGap
 	seen := make(map[uint32]bool, len(expected))

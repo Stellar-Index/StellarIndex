@@ -14,28 +14,19 @@ import (
 //
 // # Price representation
 //
-// Oracles return prices at source-specific fixed scales (Reflector Pulse: i128 at
-// a contract-declared `decimals`, typically 14; Band: E9 relayed rates + E18 pair
-// rates; Redstone: U256 at 8 decimals for most feeds). Rather than normalise at
-// ingest (which loses precision or forces a float), the raw integer is kept in
-// [Price] with the source-declared [Decimals], and the aggregation layer scales
-// on read.
+// Oracle scales are source-specific (Reflector i128 at ~14 decimals; Band E9/E18; Redstone U256
+// at 8). Normalising at ingest would lose precision or force a float, so the raw integer is
+// kept in [Price] with the source-declared [Decimals] and the aggregation layer scales on read.
 //
 // # Pair vs single-asset
 //
-// [Quote] is the denominator ("XLM/EUR = 0.11"); for single-asset-USD updates it
-// is a synthetic fiat reference (not a Stellar asset) built via [NewFiatAsset]:
-// `Asset{Type: AssetFiat, Code: "USD"}`, wire form `fiat:USD`. See ADR-0010.
+// [Quote] is the denominator; for single-asset-USD updates it is a synthetic fiat reference
+// (`fiat:USD`, built via [NewFiatAsset]), not a Stellar asset. See ADR-0010.
 type OracleUpdate struct {
-	// Source is the oracle name: "reflector-dex", "reflector-cex",
-	// "reflector-fx", "redstone", "band", "chainlink",
-	// "coingecko", "coinmarketcap". Stable — part of identity.
-	//
-	// Note: "chainlink" is the EVM-via-HTTP ingest source
-	// (internal/sources/external/chainlink) — observable on the
-	// /v1/sources?class=oracle surface. Distinct from
-	// internal/divergence/chainlink.go which is an in-memory
-	// cross-check helper that doesn't write to oracle_updates.
+	// Source is the oracle name ("reflector-dex", "reflector-cex", "reflector-fx", "redstone",
+	// "band", "chainlink", "coingecko", "coinmarketcap"). Stable; part of identity. "chainlink"
+	// is the EVM-via-HTTP ingest source, distinct from the in-memory cross-check helper in
+	// internal/divergence/chainlink.go, which writes nothing to oracle_updates.
 	Source string `json:"source"`
 
 	// ContractID is the originating contract address for on-chain
@@ -61,19 +52,15 @@ type OracleUpdate struct {
 	// Stellar asset for cross-pair oracles).
 	Quote Asset `json:"quote"`
 
-	// Price is the integer value at [Decimals] scale, in this row's
-	// "<Asset> in <Quote>" orientation. Never truncated — ADR-0003. For a
-	// feed the source publishes inverted it is the rounded reciprocal of
+	// Price is the integer at [Decimals] scale in this row's "<Asset> in <Quote>" orientation,
+	// never truncated (ADR-0003). For a feed published inverted it is the rounded reciprocal of
 	// the publisher's value; see [PublishedPrice].
 	Price Amount `json:"price"`
 
-	// PublishedPrice is the publisher's own integer, verbatim at
-	// [Decimals] scale, when Price was derived from it by inversion
-	// (RedStone and chainlink Invert feeds): a reciprocal at fixed scale
-	// is lossy, so this is the only copy of the published value. nil
-	// means no separate published value was recorded — NOT that Price is
-	// verbatim (ecb / exchangeratesapi invert at a different scale and
-	// leave it nil).
+	// PublishedPrice is the publisher's own integer, verbatim at [Decimals] scale, when Price was
+	// derived by inversion (RedStone and chainlink Invert feeds). A fixed-scale reciprocal is
+	// lossy, so this is the only copy of the published value. nil means none was recorded, NOT
+	// that Price is verbatim (ecb / exchangeratesapi invert at a different scale and leave it nil).
 	PublishedPrice *Amount `json:"published_price,omitempty"`
 
 	// Decimals is the source-declared scale for [Price]. Typical
@@ -81,16 +68,12 @@ type OracleUpdate struct {
 	// relayed), 18 (Band pair).
 	Decimals uint8 `json:"decimals"`
 
-	// Confidence is an optional 0–1.0 confidence score. Oracles that
-	// don't publish one leave it at 0. See
-	// internal/divergence/* for how this flows into API
-	// divergence_warning flags.
+	// Confidence is an optional 0–1.0 score (0 when the oracle publishes none); it feeds the API
+	// divergence_warning flags (internal/divergence).
 	Confidence float64 `json:"confidence,omitempty"`
 
-	// Observer is an optional attribution — for on-chain oracle
-	// events the relayer or transaction submitter. Band's `relay` and
-	// Redstone's `write_prices` take the relayer as a Soroban
-	// `Address`, so it may be a contract (C…) as well as an account.
+	// Observer is an optional attribution, the relayer or submitter of an on-chain event. It is
+	// a Soroban Address (Band `relay`, Redstone `write_prices`), so it may be a C… contract.
 	Observer string `json:"observer,omitempty"`
 }
 

@@ -6,14 +6,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/strkey"
 )
 
-// Strkey validators backed by the go-stellar-sdk strkey package —
-// SEP-23 base32 + CRC-16 checksum verification, not just format.
-//
-// Earlier revisions did a format-only regex check at this boundary
-// because we hadn't yet taken the SDK dependency. Now that the SDK
-// is widely used (ledgerstream, sdex, scval, …), there's no reason
-// to accept a strkey whose prefix + length match but whose checksum
-// is wrong — the SDK's decoder is the single source of truth.
+// Strkey validators backed by the go-stellar-sdk strkey package: SEP-23 base32 + CRC-16 checksum
+// verification, not just format. The SDK decoder is the single source of truth, so a strkey with
+// matching prefix and length but a wrong checksum is rejected.
 
 // IsAccountID reports whether s is a valid Stellar account / issuer
 // public key (G-strkey), CRC-checked.
@@ -51,31 +46,23 @@ func MuxedAccountID(m string) (string, bool) {
 	return g, true
 }
 
-// IsClaimableBalance reports whether s is a valid Stellar
-// claimable-balance address (B-strkey), CRC-checked. CAP-67 / P23
-// extended SEP-41 transfer destinations to include claimable
-// balances.
+// IsClaimableBalance reports whether s is a valid claimable-balance address (B-strkey),
+// CRC-checked. CAP-67 extended SEP-41 transfer destinations to include them.
 func IsClaimableBalance(s string) bool {
 	_, err := strkey.Decode(strkey.VersionByteClaimableBalance, s)
 	return err == nil
 }
 
-// IsLiquidityPool reports whether s is a valid Stellar
-// liquidity-pool address (L-strkey), CRC-checked. CAP-67 / P23
-// extended SEP-41 transfer destinations to include LP addresses;
-// a cascade-window drain dry-run found this the dominant
-// decoder-failure mode.
+// IsLiquidityPool reports whether s is a valid liquidity-pool address (L-strkey), CRC-checked.
+// CAP-67 extended SEP-41 transfer destinations to include LP addresses.
 func IsLiquidityPool(s string) bool {
 	_, err := strkey.Decode(strkey.VersionByteLiquidityPool, s)
 	return err == nil
 }
 
-// IsAnyHolder reports whether s is a valid Stellar address that
-// can plausibly hold a SEP-41 balance: G (account), C (contract),
-// M (muxed), B (claimable balance), or L (liquidity pool). Used
-// at the /v1/sep41_transfers handler boundary for from/to
-// validation — pre-CAP-67 only G was accepted, which rejected
-// legitimate post-P23 destinations as invalid input.
+// IsAnyHolder reports whether s can plausibly hold a SEP-41 balance: G, C, M, B or L. It
+// validates from/to at the /v1/sep41_transfers boundary; G alone would reject legitimate
+// post-CAP-67 destinations.
 func IsAnyHolder(s string) bool {
 	return IsAccountID(s) || IsContractID(s) || IsMuxedAccount(s) ||
 		IsClaimableBalance(s) || IsLiquidityPool(s)

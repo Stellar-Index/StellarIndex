@@ -10,11 +10,10 @@ import (
 // so dividing elapsed time by it under-counts the ledgers actually closed.
 const SlowestLedgerClose = 6 * time.Second
 
-// NetworkTipLowerBound is the least ledger the network can have closed by now,
-// given that lastLedger was ingested at ingestedAt. A ledger is ingested only
-// after it closes, so at least elapsed/[SlowestLedgerClose] more have closed
-// since; the bound grows with wall-clock time, which a stalled ingest frontier
-// cannot hold still. A zero or future ingestedAt yields lastLedger.
+// NetworkTipLowerBound is the least ledger the network can have closed by now, given that
+// lastLedger was ingested at ingestedAt. At least elapsed/[SlowestLedgerClose] more have closed
+// since, so the bound grows with wall-clock time even when the ingest frontier stalls. A zero or
+// future ingestedAt yields lastLedger.
 func NetworkTipLowerBound(lastLedger uint32, ingestedAt, now time.Time) uint32 {
 	if ingestedAt.IsZero() || !now.After(ingestedAt) {
 		return lastLedger

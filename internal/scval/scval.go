@@ -1,19 +1,13 @@
-// Package scval wraps github.com/stellar/go-stellar-sdk/xdr with the
-// narrow set of SCVal primitives the source connectors need: parse a
-// base64-encoded SCVal, typed accessors (symbol / u64 / i128 / vec /
-// map / address), and a Map-by-field-name lookup that enforces the
-// "decode-by-name-not-position" rule from
+// Package scval wraps github.com/stellar/go-stellar-sdk/xdr with the narrow set of SCVal
+// primitives the source connectors need: base64 parsing, typed accessors, and a Map-by-field-name
+// lookup that enforces the "decode-by-name-not-position" rule from
 // docs/architecture/ingest-pipeline.md#contract-schema-evolution.
 //
-// This is the only package in the tree allowed to import
-// .../go-stellar-sdk/xdr directly. Connectors go through the helpers
-// below so a future SDK swap (or a hand-rolled replacement) changes
-// one package, not twenty.
+// This is the only package allowed to import .../go-stellar-sdk/xdr directly, so an SDK swap
+// changes one package, not twenty.
 //
-// Errors in this package wrap a package-local sentinel; callers can
-// errors.Is against [ErrScValType] / [ErrScValDecode] to distinguish
-// "wrong XDR shape" (bug or malicious input) from "base64 decode
-// failed" (truncation / corruption).
+// Errors wrap a package-local sentinel: errors.Is against [ErrScValType] separates a wrong XDR
+// shape (bug or malicious input) from [ErrScValDecode] (truncation or corruption).
 package scval
 
 import (
@@ -81,12 +75,9 @@ func UnmarshalBase64(b64 string, dest any) error {
 	return xdr.SafeUnmarshal(raw, dest)
 }
 
-// ParseBytes is the raw-bytes twin of [Parse] — XDR-unmarshals a
-// pre-decoded byte slice into an ScVal. Used by decoders whose
-// event body arrives as an ScVal::Bytes wrapping an XDR-encoded
-// struct (see redstone.sdkDecodeBody); they call [AsBytes] first,
-// then pass the raw bytes through here to get the inner ScVal.
-// Like Parse, it rejects bytes left over after the value.
+// ParseBytes is the raw-bytes twin of [Parse], for event bodies that arrive as an ScVal::Bytes
+// wrapping an XDR-encoded struct: call [AsBytes] first, then this. Like Parse, it rejects
+// trailing bytes after the value.
 func ParseBytes(raw []byte) (xdr.ScVal, error) {
 	var sv xdr.ScVal
 	if err := xdr.SafeUnmarshal(raw, &sv); err != nil {
@@ -96,18 +87,11 @@ func ParseBytes(raw []byte) (xdr.ScVal, error) {
 }
 
 // EncodeArgsAsScVec wraps a slice of base64-encoded ScVal blobs
-// (the wire format used by [events.Event.OpArgs]) into a single
-// XDR-marshalled ScVal::Vec blob.
+// (the wire format used by [events.Event.OpArgs]) into a single XDR-marshalled ScVal::Vec blob.
 //
-// Returns nil + nil error for an empty input (callers can map nil
-// to SQL NULL at the storage boundary). Returns a non-nil error
-// when any of the input ScVals fails to parse — the source-of-truth
-// for InvokeContract args is the dispatcher's own marshalling, so
-// a parse failure here indicates a wire corruption.
-//
-// Powers the soroban_events landing zone (ADR-0029); the sink
-// stores op_args as the marshalled ScVec bytes so downstream
-// decoders can use the standard [scval.Parse] / [AsVec] pathway.
+// Empty input returns nil, nil so callers can map it to SQL NULL. A parse failure returns an
+// error: the dispatcher produced these args itself, so it means wire corruption. The soroban_events
+// sink stores op_args in this form so downstream decoders reuse [Parse] / [AsVec].
 func EncodeArgsAsScVec(b64Args []string) ([]byte, error) {
 	if len(b64Args) == 0 {
 		return nil, nil
@@ -126,20 +110,12 @@ func EncodeArgsAsScVec(b64Args []string) ([]byte, error) {
 }
 
 // DecodeScVecToArgs is the inverse of [EncodeArgsAsScVec]: it
-// takes the XDR-marshalled bytes of a ScVal::Vec (as stored in the
-// `soroban_events.op_args_xdr` column) and returns the slice of
-// base64-encoded ScVal blobs that [events.Event.OpArgs] expects.
+// takes the XDR-marshalled bytes of a ScVal::Vec (the `soroban_events.op_args_xdr` column) and
+// returns the base64-encoded ScVal blobs that [events.Event.OpArgs] expects.
 //
-// Returns (nil, nil) for empty input (the stored column was NULL).
-// Returns an error when the bytes don't unmarshal to a ScVal::Vec
-// — the schema commits to that exact shape (see EncodeArgsAsScVec)
-// so a mismatch indicates a corrupt row, not a decoder concern.
-//
-// Used by `stellarindex-ops projector-replay` (and the lake-replay
-// rebuild paths) that reconstruct events.Event values from
-// soroban_events rows and feed them back through the live decoders.
-// (The per-source `<source>-backfill` subcommands this once named
-// were deleted in ADR-0032 Phase 5.)
+// Empty input (a NULL column) returns nil, nil. Bytes that don't unmarshal to a ScVal::Vec mean a
+// corrupt row, since the schema commits to that shape. Replay paths use this to rebuild
+// events.Event values for the live decoders.
 func DecodeScVecToArgs(b []byte) ([]string, error) {
 	if len(b) == 0 {
 		return nil, nil
@@ -167,14 +143,11 @@ func DecodeScVecToArgs(b []byte) ([]string, error) {
 }
 
 // MustEncodeSymbol returns the base64-encoded SCVal::Symbol(s) blob
-// used for topic matching (both in stellar-rpc getEvents filters and
-// for byte-comparison against Event.Topic entries).
+// used for topic matching (stellar-rpc getEvents filters and byte-comparison against
+// Event.Topic entries).
 //
-// Panics on invalid inputs (empty string, non-ASCII, longer than
-// SorobanObjectSizeLimit). Only call with compile-time constants —
-// never with network-received data. The name "Must…" is a Go
-// convention flag for "panic on programmer error." Validated against
-// xdr.ScSymbol's upstream bounds.
+// Panics on an empty, non-ASCII or over-long (SorobanObjectSizeLimit) string, so call it only
+// with compile-time constants, never network-received data.
 func MustEncodeSymbol(s string) string {
 	b64, err := EncodeSymbol(s)
 	if err != nil {
@@ -184,13 +157,10 @@ func MustEncodeSymbol(s string) string {
 }
 
 // MustEncodeString returns the base64-encoded SCVal::String(s) blob.
-// Some Soroban contracts emit topic[0] as a String (not Symbol) —
-// e.g. Soroswap's `("SoroswapPair", symbol_short!("swap"))` where
-// the first element is a string literal. SCVal::String has wider
-// character-set support than SCVal::Symbol (no identifier-only
-// restriction) and no length cap beyond SorobanObjectSizeLimit.
+// Some contracts emit topic[0] as a String, not a Symbol (e.g. Soroswap's "SoroswapPair"); String
+// has no identifier-only restriction and no length cap beyond SorobanObjectSizeLimit.
 //
-// Panics on marshal error — only call with compile-time constants.
+// Panics on marshal error, so call it only with compile-time constants.
 func MustEncodeString(s string) string {
 	b64, err := EncodeString(s)
 	if err != nil {
@@ -212,18 +182,12 @@ func EncodeString(s string) (string, error) {
 }
 
 // AsString returns the String value of sv, wrapping ErrScValType if
-// sv is not a String. Analogous to AsSymbol, kept distinct so
-// callers can't accidentally confuse the two types — they look
-// similar on-wire but have different semantics (Symbols are
-// identifier-constrained; Strings are arbitrary bytes).
+// sv is not a String. It is distinct from AsSymbol because Symbols are identifier-constrained
+// while Strings are arbitrary bytes.
 //
-// The result is the RAW BYTES of the ScString held in a Go string. It
-// is NOT text: the Soroban host accepts any byte sequence in a String,
-// so a contract caller chooses these bytes and they may hold a NUL or
-// an invalid UTF-8 sequence. Compare it, hash it, or match it against
-// an allow-list freely — but never bind it to a Postgres `text` column
-// (the server rejects it with SQLSTATE 22021, a permanent data error).
-// A value that is persisted as text goes through [AsText] instead.
+// The result is the raw bytes of the ScString, not text: a contract chooses them, so they may hold
+// a NUL or invalid UTF-8. Compare or hash freely, but never bind it to a Postgres `text` column
+// (SQLSTATE 22021, a permanent data error); persisted text goes through [AsText] instead.
 func AsString(sv xdr.ScVal) (string, error) {
 	if sv.Type != xdr.ScValTypeScvString {
 		return "", fmt.Errorf("%w: want String, got %s", ErrScValType, sv.Type.String())
@@ -249,26 +213,19 @@ func AsText(sv xdr.ScVal) (string, error) {
 	return ToText(raw), nil
 }
 
-// ToText maps arbitrary contract-supplied bytes onto a string that is
-// always valid UTF-8 without a NUL — the two properties a Postgres
-// `text` value must have — without losing a byte:
+// ToText maps arbitrary contract-supplied bytes onto a string that is valid UTF-8 without a NUL
+// (what a Postgres `text` value requires) without losing a byte:
 //
-//   - raw that is already valid NUL-free UTF-8 and does not begin with
-//     [TextHexPrefix] is returned UNCHANGED (every ordinary value, so
-//     re-deriving an existing row writes the same text);
-//   - anything else is returned as [TextHexPrefix] + lowercase hex of
-//     every byte of raw.
+//   - raw that is already valid NUL-free UTF-8 and does not begin with [TextHexPrefix] is
+//     returned unchanged, so re-deriving an existing row writes the same text;
+//   - anything else is returned as [TextHexPrefix] + lowercase hex of every byte of raw.
 //
-// A clean value that itself begins with the prefix takes the hex arm
-// too. That is what makes the mapping injective — no literal value can
-// collide with an encoded one, so [FromText] is unambiguous — and it is
-// why ToText must be applied exactly ONCE, at the point bytes become
-// text: applying it to its own output re-encodes it.
+// A clean value that itself begins with the prefix takes the hex arm too. That keeps the mapping
+// injective, so [FromText] is unambiguous, and is why ToText must be applied exactly once, where
+// bytes become text: applying it to its own output re-encodes it.
 //
-// Pure and total: the same bytes always yield the same text, so a
-// re-derive of the same event produces the same row. Validity is Go's
-// utf8.ValidString, which rejects what the server's UTF8 verifier
-// rejects (overlong forms, encoded surrogates, values above U+10FFFF).
+// It is pure and total. Validity is utf8.ValidString, which rejects what the server's UTF8
+// verifier rejects (overlong forms, encoded surrogates, values above U+10FFFF).
 func ToText(raw string) string {
 	if utf8.ValidString(raw) && !strings.Contains(raw, "\x00") && !strings.HasPrefix(raw, TextHexPrefix) {
 		return raw
@@ -363,11 +320,8 @@ func AsI32(sv xdr.ScVal) (int32, error) {
 	return int32(*sv.I32), nil
 }
 
-// AsBytes returns the raw []byte value from sv. Used by decoders
-// whose event body is a Bytes-wrapped XDR-encoded struct (e.g.
-// Redstone: the adapter's Rust contract does `self.to_xdr(env).to_val()`
-// which wraps the serialized struct in ScVal::Bytes rather than
-// emitting the struct directly as a Map).
+// AsBytes returns the raw []byte value from sv, for event bodies that are a Bytes-wrapped
+// XDR-encoded struct (e.g. Redstone) rather than a Map.
 func AsBytes(sv xdr.ScVal) ([]byte, error) {
 	if sv.Type != xdr.ScValTypeScvBytes {
 		return nil, fmt.Errorf("%w: want Bytes, got %s", ErrScValType, sv.Type.String())
@@ -384,11 +338,8 @@ func AsBool(sv xdr.ScVal) (bool, error) {
 		return false, fmt.Errorf("%w: want Bool, got %s", ErrScValType, sv.Type.String())
 	}
 	if sv.B == nil {
-		// ScValTypeScvBool == 0, so the zero-value ScVal reports
-		// Type==ScvBool while carrying a nil B pointer — as does any
-		// malformed value. Guard the deref here rather than panicking
-		// the decode goroutine (a malformed/zero contract value must
-		// fail this accessor, not crash ingest).
+		// ScValTypeScvBool == 0, so a zero-value or malformed ScVal reports Type==ScvBool with a nil
+		// B pointer. Fail the accessor rather than panic the decode goroutine.
 		return false, fmt.Errorf("%w: Bool arm has nil value (malformed or zero ScVal)", ErrScValType)
 	}
 	return bool(*sv.B), nil
@@ -401,11 +352,8 @@ func IsVoid(sv xdr.ScVal) bool {
 	return sv.Type == xdr.ScValTypeScvVoid
 }
 
-// NewU32 builds an ScVal wrapping a uint32, suitable for passing as
-// a contract-invocation argument (e.g. factory.all_pairs(i: u32)).
-// Sibling of the existing Encode* helpers but returns the ScVal
-// directly rather than its base64 wire form — callers building
-// InvokeContract args work with ScVals, not blobs.
+// NewU32 builds an ScVal wrapping a uint32 for use as a contract-invocation argument. Unlike the
+// Encode* helpers it returns the ScVal itself, not its base64 wire form.
 func NewU32(v uint32) xdr.ScVal {
 	u := xdr.Uint32(v)
 	return xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: &u}
@@ -450,20 +398,14 @@ func AsAmountFromU256(sv xdr.ScVal) (canonical.Amount, error) {
 }
 
 // AsAddressStrkey returns the strkey-encoded form of an
-// ScVal::Address (G… / C… / M… / B… / L…). Delegates checksum +
-// format to the SDK's strkey package — no shortcuts like "first
-// char is G so it's an account"; this is the path that catches a
-// malformed address before it reaches the database.
+// ScVal::Address (G… / C… / M… / B… / L…). Checksum and format validation is delegated to the
+// SDK's strkey package, so a malformed address is caught before it reaches the database.
 //
-// CAP-67 / Protocol 23 (mainnet September 2025) extended ScAddress
-// from the original two variants (Account, Contract) to five:
-// added Muxed Account, Claimable Balance, and Liquidity Pool. A
-// SEP-41 transfer event's `to` field can carry any of these —
-// a two-variant decoder fails a liquidity-pool destination with
-// `unknown ScAddress type 4` and silently drops the event.
+// CAP-67 extended ScAddress from two variants (Account, Contract) to five, adding Muxed Account,
+// Claimable Balance and Liquidity Pool. A SEP-41 transfer `to` can carry any of them; a
+// two-variant decoder fails with `unknown ScAddress type 4` and silently drops the event.
 //
-// Strkey payload shapes are pinned by the SDK's strkey/decode_test.go
-// table:
+// Strkey payload shapes, pinned by the SDK's strkey/decode_test.go:
 //   - Muxed (M-…): 40 bytes = 32-byte ed25519 || 8-byte big-endian id
 //   - Claimable Balance (B-…): 33 bytes = 1-byte type prefix (0x00 = V0)
 //     || 32-byte hash
@@ -504,14 +446,9 @@ func AsAddressStrkey(sv xdr.ScVal) (string, error) {
 }
 
 // AsAddressOrVoid decodes sv as either a Stellar Address strkey or
-// ScvVoid, returning "" for void. Some Soroban admin/governance
-// events carry a field that is normally an Address but is Void the
-// FIRST time the event fires (e.g. an "old admin" before any admin
-// was ever set — observed on Circle's CCTP contracts,
-// internal/sources/cctp). Callers must type-test rather than assume
-// Address (AGENTS.md "Type-test before MustI128" — the same
-// schema-evolution stance the SEP-41 transfer decoder's
-// `to_muxed_id` field type-test follows).
+// ScvVoid, returning "" for void. Some admin/governance events carry a field that is normally an
+// Address but is Void the first time the event fires (e.g. an "old admin" before any was set, as
+// on the CCTP contracts), so callers must type-test rather than assume Address.
 func AsAddressOrVoid(sv xdr.ScVal) (string, error) {
 	if sv.Type == xdr.ScValTypeScvVoid {
 		return "", nil
@@ -548,14 +485,12 @@ func AsMap(sv xdr.ScVal) ([]xdr.ScMapEntry, error) {
 }
 
 // MapField looks up a map entry whose key is Symbol(key). Returns
-// the value and true on hit, zero and false on miss. Use
-// [MustMapField] at sites where a miss is a schema violation that
-// should surface ErrScValMissingKey.
+// the value and true on hit, zero and false on miss. Use [MustMapField] where a miss is a schema
+// violation that should surface ErrScValMissingKey.
 //
-// This is the canonical "decode by field name, not by position"
-// entry point. Per docs/architecture/ingest-pipeline.md#contract-schema-evolution,
-// new contract versions may add, reorder, or remove fields; lookup
-// by symbolic key makes decoders resilient to all three.
+// This is the canonical "decode by field name, not by position" entry point: new contract
+// versions may add, reorder or remove fields
+// (docs/architecture/ingest-pipeline.md#contract-schema-evolution).
 func MapField(entries []xdr.ScMapEntry, key string) (xdr.ScVal, bool) {
 	for i := range entries {
 		if entries[i].Key.Type != xdr.ScValTypeScvSymbol {
@@ -604,12 +539,9 @@ type AddressOrSymbol struct {
 }
 
 // DecodeAddressOrSymbol dispatches on sv's kind: returns
-// {Address: G|C…} for ScAddress, {Symbol: "…"} for ScSymbol,
-// and ErrScValType for anything else.
-//
-// Lets connectors consume union-of-Address-or-Symbol shapes (common
-// in Soroban oracle payloads) without importing xdr. Keeps the
-// "scval is the single xdr-boundary package" rule from ADR-0013.
+// {Address: G|C…} for ScAddress, {Symbol: "…"} for ScSymbol, and ErrScValType for anything else.
+// It lets connectors consume the Address-or-Symbol unions common in oracle payloads without
+// importing xdr.
 func DecodeAddressOrSymbol(sv xdr.ScVal) (AddressOrSymbol, error) {
 	switch sv.Type {
 	case xdr.ScValTypeScvAddress:

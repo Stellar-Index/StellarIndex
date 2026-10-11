@@ -11,33 +11,24 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// FixedWindowCounter is the shared low-level "N per rolling window"
-// primitive behind the auth throttles (login magic-link sends, signup
-// per-IP caps): INCR a per-window Redis key, set a 2×window drain TTL
-// on first touch, and return the post-increment count for the caller
-// to compare against its cap.
+// FixedWindowCounter is the "N per window" primitive behind the auth throttles (login
+// magic-link sends, signup per-IP caps): INCR a per-window Redis key, set a 2x window drain TTL
+// on first touch, and return the post-increment count for the caller to compare to its cap.
 //
-// Like [Bucket] the INCR + EXPIRE-on-first pair is a single atomic Lua
-// EVAL: a counter key must never outlive its drain TTL. The window
-// bucketing is sliding-window approximate — at most 2× the cap during a
-// window-crossing burst — which is fine for an abuse-prevention
-// threshold, NOT for a strict billing meter (use internal/usage for
-// metering).
+// Like [Bucket], INCR plus EXPIRE-on-first is one atomic Lua EVAL, so a counter key never
+// outlives its drain TTL. Window bucketing allows up to 2x the cap in a window-crossing burst,
+// fine for abuse prevention, NOT for billing (use internal/usage for metering).
 type FixedWindowCounter struct {
 	rdb    redis.Cmdable
 	window time.Duration
 	nowFn  func() time.Time
 }
 
-// NewFixedWindowCounter constructs a counter. rdb must be non-nil and
-// window >= 1s; nowFn nil defaults to [time.Now] (tests inject a
-// synthetic clock to drive window transitions deterministically).
+// NewFixedWindowCounter constructs a counter. rdb must be non-nil and window >= 1s; a nil nowFn
+// defaults to [time.Now] (tests inject a clock to drive window transitions).
 //
-// The 1s floor matches [New]'s: the bucket key derivation divides by
-// `int64(window.Seconds())`, which truncates to zero — a divide-by-zero
-// panic at first Incr — for any sub-second window. Rejecting it at
-// construction fails fast at wiring time instead of on the first
-// request.
+// The 1s floor matches [New]: key derivation divides by `int64(window.Seconds())`, which is zero
+// for a sub-second window and would panic at first Incr, so reject it at wiring time.
 func NewFixedWindowCounter(rdb redis.Cmdable, window time.Duration, nowFn func() time.Time) *FixedWindowCounter {
 	if rdb == nil {
 		panic("ratelimit: NewFixedWindowCounter: rdb must not be nil")
@@ -59,12 +50,9 @@ func NewFixedWindowCounter(rdb redis.Cmdable, window time.Duration, nowFn func()
 //
 // Returns — the post-increment count.
 //
-// As a client-side INCR-then-EXPIRE pair the
-// EXPIRE was both non-atomic and best-effort, so any dropped connection
-// / MISCONF / OOM between the two calls left a TTL-less key behind. Those
-// keys are never revisited (the bucket suffix moves on with the clock),
-// so each leak was permanent and the throttle namespace grew without
-// bound. Inside EVAL, Redis runs both commands or neither.
+// A client-side INCR-then-EXPIRE pair is non-atomic: a dropped connection, MISCONF or OOM
+// between the calls leaves a TTL-less key that is never revisited (the suffix moves with the
+// clock), growing the namespace without bound. Inside EVAL, Redis runs both commands or neither.
 const incrLua = `
 local current = redis.call('INCR', KEYS[1])
 if current == 1 then
@@ -77,11 +65,9 @@ return current
 // immutable and go-redis caches the SHA inside the value.
 var incrScript = redis.NewScript(incrLua)
 
-// Incr increments the counter behind keyBase for the current window —
-// the window bucket (`unix_seconds / window_seconds`, same derivation
-// as [Bucket]) is appended to the key as ":<n>" — and returns the
-// post-increment count. The 2×window drain TTL is set atomically with
-// the increment that creates the key.
+// Incr increments the counter behind keyBase for the current window and returns the
+// post-increment count. The window bucket (`unix_seconds / window_seconds`, as in [Bucket]) is
+// appended as ":<n>", and the 2x window drain TTL is set atomically with the creating increment.
 func (c *FixedWindowCounter) Incr(ctx context.Context, keyBase string) (int64, error) {
 	windowStart := c.nowFn().Unix() / int64(c.window.Seconds())
 	key := fmt.Sprintf("%s:%d", keyBase, windowStart)
@@ -103,15 +89,11 @@ func (c *FixedWindowCounter) Incr(ctx context.Context, keyBase string) (int64, e
 	return count, nil
 }
 
-// LocalFixedWindowCounter is the in-process twin of
-// [FixedWindowCounter]: same `unix / window_seconds` bucketing, same
-// Nth+1-is-over semantics, no backend and therefore no error path. It
-// exists so a Redis-backed throttle can keep enforcing its cap —
-// degraded to per-process accounting — while Redis is unreachable,
-// instead of falling open for the whole outage.
-//
-// Backed by the same bounded [localStore] as the [Bucket] fallback, so
-// it inherits the once-per-window sweep and the hard key cap.
+// LocalFixedWindowCounter is the in-process twin of [FixedWindowCounter]: same bucketing and
+// Nth+1-is-over semantics, no backend and so no error path. It lets a Redis-backed throttle keep
+// enforcing its cap, with per-process accounting, while Redis is unreachable instead of falling
+// open for the outage. It shares the bounded [localStore] of the [Bucket] fallback, inheriting
+// the once-per-window sweep and the hard key cap.
 type LocalFixedWindowCounter struct {
 	store  *localStore
 	window time.Duration

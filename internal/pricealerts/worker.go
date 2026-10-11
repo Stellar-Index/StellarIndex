@@ -19,21 +19,16 @@ import (
 // DefaultInterval is the sweep cadence when Options.Interval is unset.
 const DefaultInterval = 30 * time.Second
 
-// alertTimeoutDivisor sets each alert's evaluation budget to a fraction of
-// the sweep interval. The sweep is serial, so without a per-alert deadline
-// one slow alert (a never-traded pair whose VWAP probe walks evicted
-// chunks) holds every other account's alerts for up to the 30 m
+// alertTimeoutDivisor sets each alert's evaluation budget to a fraction of the sweep interval.
+// The sweep is serial, so without a per-alert deadline one slow alert (a never-traded pair whose
+// VWAP probe walks evicted chunks) would hold every other account's alerts for up to the 30 m
 // background statement timeout.
 const alertTimeoutDivisor = 3
 
-// maxPriceStaleness bounds how old the closed VWAP bucket an alert
-// evaluates against may be. LatestVWAP's own gate
-// (timescale.latestVWAPGateWindow) allows a bucket up to 14 DAYS old —
-// generous for general price serving, but a "price crossed a threshold"
-// notification built off a bucket that stale is no longer describing a
-// live crossing. 15 one-minute buckets is a wide margin over
-// the evaluator's own 30 s-default sweep cadence while still rejecting
-// the multi-day-stale case the gate lets through.
+// maxPriceStaleness bounds how old the closed VWAP bucket an alert evaluates against may be.
+// LatestVWAP's own gate (timescale.latestVWAPGateWindow) allows 14 DAYS, which is fine for
+// serving but not for a "price crossed" notification. 15 one-minute buckets is wide against the
+// 30 s default sweep cadence while still rejecting multi-day-stale buckets.
 const maxPriceStaleness = 15 * time.Minute
 
 // Per-alert outcomes recorded on stellarindex_price_alert_evaluated_total.
@@ -74,12 +69,10 @@ type WebhookEnqueuer interface {
 	EnqueueDelivery(ctx context.Context, d platform.WebhookDelivery) error
 }
 
-// PriceReader returns the latest CLOSED 1-minute VWAP for a pair.
-// Satisfied in production by an adapter over
-// timescale.Store.LatestClosedVWAP1mForPair (which combines both stored
-// orientations), tried across every canonical.AssetAliases spelling of
-// both legs. ok=false with a nil error means "no closed bucket in
-// scope" — a benign no-op, not a failure.
+// PriceReader returns the latest CLOSED 1-minute VWAP for a pair. Production wraps
+// timescale.Store.LatestClosedVWAP1mForPair (both stored orientations) and tries every
+// canonical.AssetAliases spelling of both legs. ok=false with a nil error means no closed bucket
+// in scope: a benign no-op, not a failure.
 type PriceReader interface {
 	LatestVWAP(ctx context.Context, base, quote canonical.Asset) (price string, bucketClose time.Time, ok bool, err error)
 }
@@ -202,16 +195,14 @@ func (w *Worker) sweepOnce(ctx context.Context) string {
 	return "ok"
 }
 
-// evaluateOne evaluates a single alert against the latest closed VWAP and
-// returns its per-alert outcome. The error is non-nil only for a genuine
-// failure (bad row, price-read, claim or enqueue error, or the alert's
-// deadline) — a benign no-price / not-crossed / already-fired /
-// cooling-down / no-subscriber / claim-lost outcome returns nil.
+// evaluateOne evaluates a single alert against the latest closed VWAP. The error is non-nil
+// only for a genuine failure (bad row, price-read, claim or enqueue error, or the alert's
+// deadline); no-price, not-crossed, already-fired, cooling-down, no-subscriber and claim-lost
+// outcomes return nil.
 //
-// The reads and the fan-out each get their own alertTimeout budget from
-// the sweep context. A crossing is claimed before it is enqueued, so a
-// fan-out left with whatever the reads did not spend could claim the
-// crossing and then run out of time before enqueueing it.
+// The reads and the fan-out each get their own alertTimeout budget. A crossing is claimed before
+// it is enqueued, so a fan-out sharing the reads' leftover budget could claim the crossing and
+// then run out of time before enqueueing it.
 func (w *Worker) evaluateOne(ctx context.Context, a platform.PriceAlert, now time.Time, reads map[pairKey]vwapRead) (string, error) {
 	readCtx, cancel := context.WithTimeout(ctx, w.alertTimeout)
 	c, outcome, err := w.checkCrossing(readCtx, a, now, reads)
@@ -334,16 +325,13 @@ func (w *Worker) fire(ctx context.Context, a platform.PriceAlert, now time.Time,
 	if err != nil {
 		return "", fmt.Errorf("build payload: %w", err)
 	}
-	// Claim the crossing BEFORE enqueuing: the claim disarms the
-	// alert, so a mid-fan-out failure never re-notifies a webhook (once per
-	// crossing). A fan-out that enqueued nothing re-arms below, so it retries.
+	// Claim the crossing BEFORE enqueuing: the claim disarms the alert, so a mid-fan-out failure
+	// never re-notifies a webhook. A fan-out that enqueued nothing re-arms below and retries.
 	//
-	// The claim is CONDITIONAL in SQL, and that is what makes coolingDown
-	// above an optimisation rather than the guarantee: coolingDown reads
-	// the LastFiredAt snapshot ListEnabledPriceAlerts took at the top of
-	// this sweep, so two evaluators (a second aggregator, an R2/R3
-	// standby, an overlapping deploy) both pass it on the same crossing.
-	// Only one of them can win the row-locked UPDATE.
+	// The claim is CONDITIONAL in SQL, which makes coolingDown an optimisation, not the guarantee:
+	// it reads the LastFiredAt snapshot from the top of the sweep, so two evaluators (second
+	// aggregator, R2/R3 standby, overlapping deploy) both pass it, and only one wins the
+	// row-locked UPDATE.
 	claimed, err := w.alerts.ClaimPriceAlertFire(ctx, a, now)
 	if err != nil {
 		return "", fmt.Errorf("claim fire: %w", err)
@@ -404,11 +392,9 @@ func (w *Worker) coolingDown(a platform.PriceAlert, now time.Time) bool {
 	return now.Sub(a.LastFiredAt) < time.Duration(a.CooldownSeconds)*time.Second
 }
 
-// subscribedHooks returns the account's enabled webhooks that are
-// subscribed to the price.alert event — the fan-out targets for a
-// crossing. Resolving the targets BEFORE the fired-mark lets
-// evaluateOne skip the mark entirely when there is nothing to deliver to
-// (no subscriber yet), while still marking-before-enqueue when there is.
+// subscribedHooks returns the account's enabled webhooks subscribed to price.alert, the fan-out
+// targets for a crossing. Resolving them BEFORE the fired-mark lets evaluateOne skip the mark
+// when nothing can be delivered, while still marking before enqueue when something can.
 func (w *Worker) subscribedHooks(ctx context.Context, accountID uuid.UUID) ([]platform.CustomerWebhook, error) {
 	hooks, err := w.webhooks.ListWebhooksForAccount(ctx, accountID)
 	if err != nil {
@@ -423,14 +409,10 @@ func (w *Worker) subscribedHooks(ctx context.Context, accountID uuid.UUID) ([]pl
 	return targets, nil
 }
 
-// enqueueAll enqueues one price.alert delivery per target webhook and
-// returns the count enqueued. It attempts every webhook even when an
-// earlier one fails — the alert is already marked fired (see
-// evaluateOne), so a crossing is never re-delivered to a webhook that
-// already received it, and aborting the loop early would silently skip
-// every webhook after the failing one instead of just the failing one.
-// Per-webhook errors are joined and returned alongside the count so the
-// caller can log which targets were missed without losing the rest.
+// enqueueAll enqueues one price.alert delivery per target webhook and returns the count. It
+// attempts every webhook even after a failure: the alert is already marked fired, so aborting
+// early would silently skip every later webhook. Per-webhook errors are joined and returned with
+// the count so the caller can log which targets were missed.
 func (w *Worker) enqueueAll(ctx context.Context, hooks []platform.CustomerWebhook, payload []byte) (int, error) {
 	enqueued := 0
 	var errs []error

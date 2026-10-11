@@ -6,45 +6,30 @@ import (
 	"strconv"
 )
 
-// SystemRecognitionSource is the reserved `source` value of the
-// SYSTEM recognition row in completeness_snapshots.
+// SystemRecognitionSource is the reserved `source` value of the SYSTEM recognition row in
+// completeness_snapshots. It is NOT a source but the ADR-0033 recognition audit's census of
+// (contract, topic) event shapes on contracts no registry source owns (foreign Soroban protocols).
 //
-// It is NOT a source. It is the ADR-0033 recognition audit's
-// unattributed census: distinct (contract, topic) event shapes in the
-// lake on contracts that NO source in the registry owns — foreign
-// Soroban protocols we have not integrated. Its per-source fields have
-// no meaning for a census: substrate_ok / projection_ok are hardcoded
-// true, complete / lake_complete are false PERMANENTLY BY CONSTRUCTION
-// (they can only be true if no un-indexed Soroban contract exists
-// anywhere on the network).
-//
-// The deployed metrics already exclude this row from the per-source
-// gauges for exactly this reason — see the two `WHERE source <>
-// 'recognition'` clauses in
-// configs/ansible/roles/archival-node/files/data-freshness.sh.
-// [IsAuditAxis] is the Go-side twin so /v1/coverage's public
-// headline agrees with them.
+// Its per-source fields are meaningless: substrate_ok / projection_ok are hardcoded true, and
+// complete / lake_complete are false by construction (true only if no un-indexed Soroban contract
+// exists anywhere). The two `WHERE source <> 'recognition'` clauses in
+// configs/ansible/roles/archival-node/files/data-freshness.sh exclude it from the per-source
+// gauges, and [IsAuditAxis] is the Go twin so /v1/coverage's public headline agrees.
 const SystemRecognitionSource = "recognition"
 
-// IsAuditAxis reports whether a completeness_snapshots row is a
-// SYSTEM AUDIT AXIS rather than an indexed source's verdict.
+// IsAuditAxis reports whether a completeness_snapshots row is a SYSTEM AUDIT AXIS rather than an
+// indexed source's verdict.
 //
-// Fail-LOUD by design: a name this function does not classify is not
-// an audit axis, so it counts as a source and can still fail the
-// public "N of M complete" headline. The dangerous direction here is
-// a pseudo-row quietly excusing itself from the trust surface, so the
-// set is a closed, reserved-name list rather than a shape heuristic.
+// Fail-loud by design: an unclassified name counts as a source and can still fail the public
+// "N of M complete" headline. A pseudo-row quietly excusing itself from the trust surface is the
+// dangerous direction, so the set is a closed reserved-name list, not a shape heuristic.
 func IsAuditAxis(source string) bool {
 	return source == SystemRecognitionSource
 }
 
-// RecognitionCensus is the unattributed-recognition audit's result:
-// how many distinct event shapes, on how many distinct contracts, and
-// the earliest ledger one was seen at.
-//
-// Zero shapes is the clean state ("every event shape on-chain belongs
-// to a protocol we decode") — attainable in principle, not in practice
-// on a public network.
+// RecognitionCensus is the unattributed-recognition audit's result: distinct event shapes, the
+// distinct contracts they sit on, and the earliest ledger one was seen at. Zero shapes is the
+// clean state, attainable in principle but not on a public network.
 type RecognitionCensus struct {
 	Shapes         int
 	Contracts      int
@@ -58,17 +43,13 @@ type RecognitionCensus struct {
 var recognitionDetailRE = regexp.MustCompile(
 	`^(\d+) unrecognized shape\(s\) on (\d+) unowned contract\(s\) \(earliest ledger (\d+)\)`)
 
-// FormatRecognitionDetail renders the census as the `detail` string
-// stored on the system recognition snapshot and served verbatim on
-// /v1/coverage.
+// FormatRecognitionDetail renders the census as the `detail` string stored on the recognition
+// snapshot and served verbatim on /v1/coverage.
 //
-// WIRE CONTRACT — the string MUST keep leading with the shape count as
-// bare digits. The deployed data-freshness exporter derives
-// stellarindex_recognition_unattributed_shapes with
-// `substring(detail FROM '^[0-9]+')`
-// (configs/ansible/roles/archival-node/files/data-freshness.sh), and a
-// non-numeric prefix silently reports 0 shapes — the exact
-// under-reporting direction this surface exists to prevent.
+// WIRE CONTRACT: the string MUST lead with the shape count as bare digits. The data-freshness
+// exporter (configs/ansible/roles/archival-node/files/data-freshness.sh) derives
+// stellarindex_recognition_unattributed_shapes with `substring(detail FROM '^[0-9]+')`, and a
+// non-numeric prefix silently reports 0 shapes, the under-reporting this surface exists to prevent.
 func FormatRecognitionDetail(c RecognitionCensus) string {
 	if c.Shapes == 0 {
 		return "0 unrecognized shape(s): every event shape in the lake belongs to a contract an indexed source owns"
@@ -80,16 +61,13 @@ func FormatRecognitionDetail(c RecognitionCensus) string {
 		c.Shapes, c.Contracts, c.EarliestLedger)
 }
 
-// ParseRecognitionDetail recovers the census from a stored detail
-// string, so /v1/coverage can publish the numbers as typed fields
-// instead of making every consumer regex English.
+// ParseRecognitionDetail recovers the census from a stored detail string so /v1/coverage can
+// publish typed fields instead of making consumers regex English.
 //
-// ok=false when the string is not in [FormatRecognitionDetail]'s
-// shape — including rows written before this format existed. Callers
-// MUST then omit the typed counts rather than publish zeroes: "0
-// unrecognized shapes" is a claim of cleanliness, and inventing it
-// from a parse failure is precisely the laundering this endpoint must
-// not do. The raw detail string is still served, so nothing is lost.
+// ok=false when the string is not in [FormatRecognitionDetail]'s shape, including older rows.
+// Callers MUST then omit the typed counts rather than publish zeroes: "0 unrecognized shapes"
+// claims cleanliness, and inventing it from a parse failure is laundering. The raw detail is
+// still served.
 func ParseRecognitionDetail(detail string) (RecognitionCensus, bool) {
 	m := recognitionDetailRE.FindStringSubmatch(detail)
 	if m == nil {

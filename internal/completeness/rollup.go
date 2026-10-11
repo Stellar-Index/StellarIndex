@@ -5,41 +5,35 @@ import (
 	"sort"
 )
 
-// This file adds the fourth ADR-0033 integrity check: the DERIVED-CHECKPOINT
-// reconcile. The substrate / recognition / projection reconciles prove raw rows
-// are captured and became table rows; this one proves that an
-// *incrementally-maintained running total* folded from those rows still equals
-// the authoritative re-sum of them.
+// This file adds the fourth ADR-0033 integrity check, the DERIVED-CHECKPOINT reconcile. The
+// substrate / recognition / projection reconciles prove raw rows are captured and became table
+// rows; this one proves an incrementally maintained running total still equals the authoritative
+// re-sum of those rows.
 //
-// `sep41_supply_rollup` (migration 0085) holds a per-contract mint/burn/clawback
-// running total advanced by a watermark worker (AdvanceSEP41SupplyRollup: sum
-// only `ledger > last_ledger`). A history re-derive that rewrote raw
-// `sep41_supply_events` BELOW an existing checkpoint, without resetting it, made
-// the worker re-fold counted history (served supply exactly 2×). The row-count
-// reconciles (reconcile.go) could not catch it: the raw rows were correct.
+// `sep41_supply_rollup` (migration 0085) holds per-contract mint/burn/clawback totals advanced by
+// a watermark worker that sums only `ledger > last_ledger`. A history re-derive rewriting raw
+// `sep41_supply_events` BELOW an existing checkpoint, without resetting it, makes the worker
+// re-fold history (served supply exactly 2x), which row-count reconciles (reconcile.go) cannot
+// see because the raw rows are correct.
 //
-// The invariant: for every checkpointed contract, checkpoint.total == Σ(raw
-// rows this checkpoint folds). A double-fold shows up as checkpoint = k×truth;
-// a dropped-below-checkpoint edit as checkpoint != truth. Zero tolerance
-// catches both exactly.
+// Invariant: for every checkpointed contract, checkpoint.total == the sum of the raw rows it
+// folds. A double-fold shows as checkpoint = k*truth, a below-checkpoint edit as checkpoint !=
+// truth; zero tolerance catches both exactly.
 
-// RunningTotals is a per-kind i128-safe supply total (mint / burn /
-// clawback) a SEP-41 contract's incremental checkpoint carries. Each
-// field is *big.Int per ADR-0003 (Σmint alone can exceed i128, so a
-// fixed-width int would truncate); a nil field reads as zero.
+// RunningTotals is the per-kind (mint / burn / clawback) supply total a SEP-41 contract's
+// incremental checkpoint carries. Fields are *big.Int per ADR-0003 (the mint sum alone can exceed
+// i128, so a fixed-width int would truncate); nil reads as zero.
 type RunningTotals struct {
 	Mint     *big.Int
 	Burn     *big.Int
 	Clawback *big.Int
 }
 
-// TotalsDrift is one (contract, kind) where a served incremental
-// checkpoint disagrees with the authoritative re-sum of the same rows by
-// more than tolerance. Delta = Checkpoint − Truth: a positive Delta is an
-// OVER-count (the KALE double-fold: Checkpoint = 2×Truth ⇒ Delta =
-// +Truth); a negative Delta is an UNDER-count (a below-checkpoint edit
-// the incremental watermark never re-summed). Either means the rollup
-// must be TRUNCATEd and re-folded from zero.
+// TotalsDrift is one (contract, kind) where a served incremental checkpoint disagrees with the
+// authoritative re-sum of the same rows by more than tolerance. Delta = Checkpoint − Truth: positive
+// is an OVER-count (a double-fold, Checkpoint = 2×Truth), negative an UNDER-count (a
+// below-checkpoint edit the watermark never re-summed). Either means the rollup must be
+// TRUNCATEd and re-folded from zero.
 type TotalsDrift struct {
 	ContractID string   // SEP-41 contract C-strkey
 	Kind       string   // "mint" | "burn" | "clawback"
@@ -48,24 +42,20 @@ type TotalsDrift struct {
 	Delta      *big.Int // Checkpoint − Truth (>0 over-count, <0 under-count)
 }
 
-// ReconcileRunningTotals is the DERIVED-CHECKPOINT reconcile: it diffs a served
-// incremental checkpoint (`checkpoint`, e.g. sep41_supply_rollup's per-contract
-// totals) against the AUTHORITATIVE re-sum of the exact rows it folds (`truth`),
-// up to the checkpoint's last_ledger. It returns every (contract, kind) whose
-// values differ by strictly more than tolerance (abs), sorted by (contract, kind).
+// ReconcileRunningTotals is the DERIVED-CHECKPOINT reconcile: it diffs a served incremental
+// checkpoint (e.g. sep41_supply_rollup's per-contract totals) against the AUTHORITATIVE re-sum
+// (`truth`) of the exact rows it folds, up to the checkpoint's last_ledger. It returns every
+// (contract, kind) differing by strictly more than tolerance (abs), sorted by (contract, kind).
 //
-// TRUTH SOURCE. `truth` MUST be the same-source re-sum of the rows the
-// checkpoint folds, NOT the network-wide ClickHouse `supply_flows` lake. The PG
-// SEP-41 observer is watched-set-gated and bare-i128-only; the CH lake is
-// network-wide and map-variant-aware, so their totals legitimately differ
-// (migration 0085) and comparing to the lake would false-positive on every
-// map-variant token. The projection reconcile (reconcile.go) separately proves
-// `sep41_supply_events` faithful to the lake, so checkpoint == PG re-sum ⇒
-// checkpoint == lake truth.
+// TRUTH SOURCE: `truth` MUST be the same-source re-sum of the rows the checkpoint folds, NOT the
+// network-wide ClickHouse `supply_flows` lake. The PG SEP-41 observer is watched-set-gated and
+// bare-i128-only while the lake is network-wide and map-variant-aware, so totals legitimately
+// differ (migration 0085) and comparing to the lake would false-positive on every map-variant
+// token. The projection reconcile (reconcile.go) separately proves `sep41_supply_events` faithful
+// to the lake, so checkpoint == PG re-sum implies checkpoint == lake truth.
 //
-// tolerance nil is treated as exact (zero): the rollup sums the same integer
-// amounts the re-sum does. A caller MAY pass a small tolerance to absorb an
-// in-flight advance racing the re-sum snapshot. Pure, no IO.
+// A nil tolerance means exact: the rollup sums the same integer amounts. A caller MAY pass a small
+// one to absorb an in-flight advance racing the re-sum snapshot. Pure, no IO.
 func ReconcileRunningTotals(checkpoint, truth map[string]RunningTotals, tolerance *big.Int) []TotalsDrift {
 	tol := tolerance
 	if tol == nil {

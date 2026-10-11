@@ -7,23 +7,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
-// sanityCheck validates that a getEvents response is internally
-// consistent. Caught conditions:
+// sanityCheck validates that a getEvents response is internally consistent:
 //
-//   - OldestLedger > LatestLedger — RPC served from an inconsistent
-//     view (node mid-catchup, node forked, node buggy).
-//   - Any event's Ledger outside [OldestLedger, LatestLedger] —
-//     event slipped in from a different shard or is stale past
-//     retention; either way we don't trust it.
-//   - Events not in monotonically-ascending Ledger order — source
-//     buffers (Soroswap swap+sync, Phoenix 8-field) assume in-order
-//     delivery; an out-of-order page could silently correlate the
-//     wrong events.
+//   - OldestLedger <= LatestLedger, else the node served an inconsistent view.
+//   - Every event's Ledger lies within [OldestLedger, LatestLedger], else it is from another shard
+//     or stale past retention and is not trusted.
+//   - Events are in ascending Ledger order, because source buffers (Soroswap swap+sync, Phoenix
+//     8-field) assume in-order delivery and an out-of-order page could correlate the wrong events.
 //
-// Checks run at zero cost when the response is well-formed.
-// Returns a wrapped error pointing at the offending event when it
-// isn't — call site turns that into a retry with backoff (the
-// source's existing error path) rather than ingesting garbage.
+// A violation returns an error naming the offending event; the call site retries with backoff
+// rather than ingesting garbage.
 func (r *EventsResponse) sanityCheck() error {
 	if r.OldestLedger > 0 && r.LatestLedger > 0 && r.OldestLedger > r.LatestLedger {
 		return fmt.Errorf("stellarrpc: response has OldestLedger %d > LatestLedger %d",
@@ -32,11 +25,8 @@ func (r *EventsResponse) sanityCheck() error {
 	var prev uint32
 	for i := range r.Events {
 		l := r.Events[i].Ledger
-		// Stellar genesis is ledger 1; Ledger=0 means the field was
-		// either absent from the JSON payload or the node returned a
-		// malformed record. Either way, downstream groupKey builders
-		// (phoenix/soroswap fanout) would collide on (0, tx, opIdx)
-		// for multiple unrelated events. Reject at the boundary.
+		// Genesis is ledger 1, so Ledger=0 means an absent field or a malformed record. Downstream
+		// groupKey builders (phoenix/soroswap) would collide on (0, tx, opIdx) across unrelated events.
 		if l == 0 {
 			return fmt.Errorf("stellarrpc: event %s has zero ledger", r.Events[i].ID)
 		}
@@ -89,10 +79,9 @@ func (e *JSONRPCError) Error() string {
 
 // Health is the response from getHealth.
 //
-// Status is "healthy" when the node's last-applied ledger is within
-// the configured staleness threshold. When the node is catching up
-// or disconnected, this RPC returns an error envelope — callers
-// should check for that error AND then this Status field.
+// Status is "healthy" when the node's last-applied ledger is within the staleness threshold. A
+// catching-up or disconnected node returns an error envelope instead, so check that error and then
+// Status.
 type Health struct {
 	Status             string `json:"status"`
 	LatestLedger       uint32 `json:"latestLedger,omitempty"`
@@ -136,10 +125,8 @@ type EventsResponse struct {
 
 // EventFilter restricts which events getEvents returns.
 //
-// Type: "contract" | "system" | "diagnostic" (or "" for all).
-// ContractIDs: optional allow-list of C-address strings.
-// Topics: optional list of per-position topic patterns (base64 SCVal
-// or the literal "*" wildcard per the stellar-rpc wire contract).
+// Type is "contract", "system", "diagnostic" or "" for all. ContractIDs is an optional allow-list
+// of C-addresses. Topics holds optional per-position patterns (base64 SCVal or the "*" wildcard).
 type EventFilter struct {
 	Type        string     `json:"type,omitempty"`
 	ContractIDs []string   `json:"contractIds,omitempty"`
@@ -197,12 +184,9 @@ const (
 
 // TransactionResponse is the response from getTransaction.
 //
-// XDR fields are base64-encoded; callers decode via
-// github.com/stellar/go-stellar-sdk/xdr (the post-monorepo
-// SDK; stellar/go is archived). The dependency
-// scope decision is ADR-0013; the structural guardrail that
-// keeps `xdr` out of decoder packages outside of internal/scval
-// lives in scripts/ci/lint-imports.sh rule B.
+// XDR fields are base64-encoded; callers decode via github.com/stellar/go-stellar-sdk/xdr
+// (ADR-0013). scripts/ci/lint-imports.sh rule B keeps `xdr` out of decoder packages other than
+// internal/scval.
 type TransactionResponse struct {
 	Status TransactionStatus `json:"status"`
 
@@ -234,9 +218,8 @@ type transactionParams struct {
 
 // TransactionsResponse is the response from getTransactions.
 //
-// stellar-rpc paginates via cursor. Each entry is a full
-// TransactionResponse (minus the envelope-level latest/oldest ledger
-// fields which live on the outer response).
+// stellar-rpc paginates via cursor. Each entry is a full TransactionResponse minus the latest and
+// oldest ledger fields, which live on the outer response.
 type TransactionsResponse struct {
 	Transactions          []TransactionResponse `json:"transactions"`
 	Cursor                string                `json:"cursor,omitempty"`
@@ -279,12 +262,9 @@ type SimulationResponse struct {
 	MinResourceFee string `json:"minResourceFee,omitempty"`
 }
 
-// SimulationResult is one entry in SimulationResponse.Results. XDR
-// holds the base64-encoded SCVal return value of the invoked
-// contract function. Auth is the list of required authorization
-// entries (empty for public view functions); included so callers
-// building a real tx from a simulation see what still needs
-// signing.
+// SimulationResult is one entry in SimulationResponse.Results. XDR holds the base64 SCVal return
+// value. Auth lists the required authorization entries (empty for public view functions), so a
+// caller building a real tx sees what still needs signing.
 type SimulationResult struct {
 	XDR  string   `json:"xdr"`            // base64 SCVal return value
 	Auth []string `json:"auth,omitempty"` // base64 SorobanAuthorizationEntry

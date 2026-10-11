@@ -9,25 +9,20 @@ import (
 	"time"
 )
 
-// localStore is the in-process fixed-window counter that backs a
-// [Bucket] constructed with a nil Redis client: the fail-CLOSED fallback
-// for a boot without Redis, which would otherwise omit the rate-limit
-// middleware and leave the API uncapped. Tiers stay enforced, degraded to
-// single-instance accounting.
-//
-// Semantics match [Bucket]'s Redis path (per-(key × window) counter; the
-// Nth+1 request is rejected) but it can never fail open.
+// localStore is the in-process fixed-window counter behind a [Bucket] built with a nil Redis
+// client: the fail-CLOSED fallback for a boot without Redis, which would otherwise omit the
+// rate-limit middleware and leave the API uncapped. Semantics match [Bucket]'s Redis path (the
+// Nth+1 request per (key x window) is rejected) but it can never fail open.
 //
 // # Memory bound
 //
-// Stale entries are swept lazily, once per window: a second sweep in the SAME
-// window frees nothing, and a size-triggered one would rescan O(n) under the
-// global mutex on EVERY call past [localStoreMaxKeys].
+// Stale entries are swept lazily, once per window: a second sweep in the SAME window frees
+// nothing, and a size-triggered one would rescan O(n) under the global mutex on EVERY call past
+// [localStoreMaxKeys].
 //
-// Growth is capped: at [localStoreMaxKeys] entries an untracked key goes to
-// ONE shared fail-CLOSED overflow bucket ([localOverflowKey]); tracked clients
-// keep their own. IPv6 keys are masked to /64, so one cheap IPv6 holder could
-// fill the cap and starve NEW clients: each /48 may insert at most
+// At [localStoreMaxKeys] entries an untracked key goes to ONE shared fail-CLOSED overflow bucket
+// ([localOverflowKey]); tracked clients keep their own. IPv6 keys are masked to /64, so one cheap
+// IPv6 holder could fill the cap and starve NEW clients: each /48 may insert at most
 // [localStoreMaxKeysPer48] keys per window, then shares a per-/48 bucket.
 type localStore struct {
 	mu      sync.Mutex
@@ -76,12 +71,10 @@ const localStoreMaxKeysPer48 = 1024
 // keeps it disjoint from every real /64 key, as with [localOverflowKey].
 const localPer48BucketTag = "\x00per48\x00"
 
-// localOverflowKey is the shared bucket every key beyond the cap is
-// folded into. The NUL bytes make it unreachable as a real limiter key
-// (callers pass IPs, API-key hashes and `<prefix>:<value>` strings), so
-// a client can never aim itself at the overflow bucket to dodge its own
-// counter — and could not gain anything if it did, the overflow budget
-// being strictly smaller than a private one.
+// localOverflowKey is the shared bucket every key beyond the cap folds into. Its NUL bytes make
+// it unreachable as a real limiter key (callers pass IPs, key hashes and `<prefix>:<value>`
+// strings), so a client cannot target it, and it would gain nothing since the overflow budget is
+// smaller than a private one.
 const localOverflowKey = "\x00overflow\x00"
 
 func newLocalStore() *localStore {
@@ -93,14 +86,10 @@ func newLocalStore() *localStore {
 	}
 }
 
-// take increments key's counter for the named window and reports the
-// post-increment count plus whether it fits within max. window is the
-// caller's `unix / window_seconds` bucket; a key whose stored entry
-// names an older window is reset to the new one (that is the
-// window-rollover that makes this a FIXED-window limiter).
-//
-// A key that is not already tracked once the map is at capacity is
-// counted against the shared overflow bucket — see [localStore].
+// take increments key's counter for the named window and reports the post-increment count and
+// whether it fits within max. window is the caller's `unix / window_seconds` bucket; an entry
+// naming an older window is reset, which is the rollover that makes this a FIXED-window limiter.
+// An untracked key at capacity counts against the shared overflow bucket (see [localStore]).
 func (s *localStore) take(key string, window int64, limit int, now time.Time, windowDur time.Duration) (count int, allowed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -164,18 +153,13 @@ func slash48Key(key string) (string, bool) {
 	return "", false
 }
 
-// gcLocked deletes entries belonging to a window strictly older than
-// current. Current-window entries are always retained — they are the
-// live counters. Caller holds s.mu.
+// gcLocked deletes entries from windows strictly older than current; current-window entries are
+// the live counters and are kept. Caller holds s.mu.
 //
-// Runs at most once per window: after a scan at window W every surviving
-// entry names W, and every entry written afterwards names W as well
-// (window is derived from the same clock for all callers), so re-scanning
-// at W can only walk live entries and delete none — that is exactly the
-// wasted O(n)-per-request scan. Past that guard
-// the sweep runs either on the per-window cadence or immediately when the
-// map is at capacity (so a flood's stale entries are reclaimed on the
-// first call of the next window rather than a full windowDur later).
+// It runs at most once per window: after a scan at W every surviving and later-written entry
+// names W (all callers share one clock), so a rescan would walk live entries and delete none,
+// an O(n)-per-request waste. Past that guard it runs on the per-window cadence, or immediately
+// at capacity so a flood's stale entries are reclaimed on the first call of the next window.
 func (s *localStore) gcLocked(current int64, now time.Time, windowDur time.Duration) {
 	if current == s.lastSweptWindow {
 		return // a scan here is provably incapable of freeing anything
