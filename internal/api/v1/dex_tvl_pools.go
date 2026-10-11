@@ -8,24 +8,19 @@ import (
 	"time"
 )
 
-// Per-leg exclusion reasons on the DEX TVL drill-down. A reserve
-// leg that carries one of these contributed EXACTLY 0 to its pool and
-// marked the pool unpriced; the reason says which rule in
-// docs/methodology/dex-tvl.md did it. The set is closed and each value
-// is a distinct cause, so a consumer can tell "the platform refuses to
-// price this" (withheld) from "nobody prices this" (no_served_price)
-// from "the token is unknown" (unresolved_token / malformed_token).
+// Per-leg exclusion reasons on the DEX TVL drill-down. A leg carrying one contributed EXACTLY 0
+// to its pool and marked the pool unpriced; the reason names the docs/methodology/dex-tvl.md rule.
+// The set is closed and each value a distinct cause: "refused to price" (withheld), "nobody
+// prices this" (no_served_price), "token unknown" (unresolved_token / malformed_token).
 const (
 	// DEXTVLLegWithheld — the serving trust gates withhold a USD
 	// valuation of this asset (directory-flagged issuer, or a market
 	// below the substance floor). /v1/assets/{asset} serves
 	// price_usd: null for it, and so does this leg.
 	DEXTVLLegWithheld = "withheld"
-	// DEXTVLLegUnverifiedAsset — the asset is not native XLM, an
-	// operator-declared USD peg, or a verified-currency catalogue entry
-	// (reached classic or through its SAC). Pools are permissionless, so
-	// a self-listed token's reserve AND its VWAP are authored by whoever
-	// deploys and trades it; neither is a valuation we can stand behind.
+	// DEXTVLLegUnverifiedAsset — the asset is not native XLM, a declared USD peg, or a verified
+	// catalogue entry (classic or via its SAC). Pools are permissionless, so a self-listed token's
+	// reserve AND VWAP are authored by whoever deploys and trades it.
 	DEXTVLLegUnverifiedAsset = "unverified_asset"
 	// DEXTVLLegNoServedPrice — no USD price is served for this asset
 	// through the price tiers (declared peg → direct VWAP → XLM bridge).
@@ -74,11 +69,9 @@ type DEXTVLLegView struct {
 	// decimal string — ADR-0003). Omitted when nothing was captured
 	// (excluded = invalid_reserve).
 	Reserve string `json:"reserve,omitempty"`
-	// Asset is the canonical identity the served price path values this
-	// leg under — the same id /v1/assets/{id} answers for. A configured
-	// classic↔SAC wrapper collapses to its classic twin here, exactly as
-	// the trust gates were asked about it. Omitted when the token could
-	// not be resolved to an asset at all.
+	// Asset is the canonical identity the served price path values this leg under, the id
+	// /v1/assets/{id} answers for. A configured classic-SAC wrapper collapses to its classic twin,
+	// as the trust gates saw it. Omitted when the token did not resolve to an asset.
 	Asset string `json:"asset,omitempty"`
 	// Basis is how USD was derived (see the DEXTVLBasis* constants).
 	// Present iff the leg was valued.
@@ -92,11 +85,9 @@ type DEXTVLLegView struct {
 	Excluded string `json:"excluded,omitempty"`
 }
 
-// DEXTVLPoolView is one pool's contribution to its protocol's tvl_usd.
-// Its tvl_usd is the EXACT sum of its legs' published usd strings, and
-// the protocol's tvl_usd is the exact sum of its pools' — so a reader
-// can add the rows at any level and land on the level above
-// byte-for-byte, the same contract tvl_total keeps over the protocols.
+// DEXTVLPoolView is one pool's contribution to its protocol's tvl_usd. Pool tvl_usd is the EXACT
+// sum of its legs' published usd strings, and the protocol's the exact sum of its pools', so
+// rows add up to the level above byte-for-byte, as tvl_total does over the protocols.
 type DEXTVLPoolView struct {
 	// Pool is the pool (pair) contract C-strkey.
 	Pool string `json:"pool"`
@@ -126,12 +117,9 @@ type ProtocolTVLDetailView struct {
 	// row for the same snapshot — same fields, same figure — so the two
 	// surfaces can be checked against each other.
 	TVL ProtocolTVLView `json:"tvl"`
-	// CarriedForward is true when this protocol's reserve read failed on
-	// the most recent refresh and the figure (and pools) shown are the
-	// previous cycle's. The envelope's flags.stale says the same thing;
-	// the headline tvl_total refuses such a figure (see
-	// dexTVLRefusedStale) and this surface labels it instead of hiding
-	// it.
+	// CarriedForward is true when the latest reserve read failed and the figure and pools are the
+	// previous cycle's (flags.stale says the same). The headline tvl_total refuses such a figure
+	// (see dexTVLRefusedStale); this surface labels it instead of hiding it.
 	CarriedForward bool `json:"carried_forward"`
 	// Pools are every pool the protocol figure was summed from, highest
 	// tvl_usd first (ties by pool id), including the ones that
@@ -156,18 +144,13 @@ type tvlLegInput struct {
 	raw   *big.Int
 }
 
-// tvlProtocolAccumulator folds pools into one protocol's ProtocolTVLView
-// and its per-pool breakdown. Every one of the four refresh paths feeds
-// it the same way, so the accounting rules (priced XOR unpriced, the
-// lower-bound contract, the as-of high-water, the leaf rounding) live
-// in exactly one place.
+// tvlProtocolAccumulator folds pools into one protocol's ProtocolTVLView and per-pool breakdown.
+// All four refresh paths feed it the same way, so the accounting rules (priced XOR unpriced, the
+// lower-bound contract, the as-of high-water, leaf rounding) live in one place.
 //
-// Money is rounded ONCE, at the leaf: each valued leg is published to
-// the cent, and every figure above it — the pool, the protocol, the
-// headline total — is the exact sum of the published strings beneath.
-// Rounding at every level instead would let a pool's legs sum to a cent
-// more or less than the pool, and the whole point of this surface is
-// that the rows reconcile with the figure above them.
+// Money is rounded ONCE, at the leaf: each valued leg is published to the cent and every figure
+// above it is the exact sum of the published strings beneath. Rounding at every level would let
+// a pool's legs differ from the pool by a cent and break reconciliation.
 type tvlProtocolAccumulator struct {
 	valuer *tvlValuer
 	view   ProtocolTVLView
@@ -268,13 +251,11 @@ func (a *tvlProtocolAccumulator) finish() (ProtocolTVLView, []DEXTVLPoolView) {
 	return a.view, a.pools
 }
 
-// handleProtocolTVL serves GET /v1/protocols/{name}/tvl — the per-pool
-// breakdown behind the `tvl` block on the protocol's directory row.
+// handleProtocolTVL serves GET /v1/protocols/{name}/tvl, the per-pool breakdown behind the `tvl`
+// block on the protocol's directory row.
 //
-// It reads ONLY the in-process snapshot the background refresher
-// maintains; no reserve table or price tier is touched per request, so
-// the handler needs no budget of its own and cannot be made expensive by
-// traffic. Degradation is explicit, never a fabricated empty figure:
+// It reads ONLY the in-process snapshot the background refresher keeps, so traffic cannot make
+// it expensive. Degradation is explicit, never a fabricated empty figure:
 //
 //   - unknown protocol → 404 (same problem as /v1/protocols/{name});
 //   - a known protocol with no pooled-liquidity derivation → 404 naming
@@ -283,10 +264,8 @@ func (a *tvlProtocolAccumulator) finish() (ProtocolTVLView, []DEXTVLPoolView) {
 //     or the read returned no pools) → 404 saying exactly that;
 //   - no cache wired, or wired but not yet refreshed → 503 problem.
 //
-// A protocol whose figure is carried forward from an earlier cycle is
-// SERVED, labelled carried_forward with flags.stale set — the headline
-// total refuses such a figure, and this surface is where an operator
-// goes to see exactly what was refused.
+// A figure carried forward from an earlier cycle is SERVED, labelled carried_forward with
+// flags.stale set; the headline total refuses it, and this is where to see what was refused.
 func (s *Server) handleProtocolTVL(w http.ResponseWriter, r *http.Request) {
 	meta, ok := protocolByName(r.PathValue("name"))
 	if !ok {
@@ -342,12 +321,9 @@ func (s *Server) handleProtocolTVL(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// dexTVLNotDerivedReason explains a 404 on a KNOWN protocol: the
-// standing scope decision where one names it (so /v1/protocols/sdex/tvl
-// says the same thing tvl_total.excluded does), otherwise the generic
-// "not wired here" — a protocol with an absolute reserve source whose
-// readers this deployment did not wire is simply absent from the
-// snapshot, and absence is honest "unavailable", never zero TVL.
+// dexTVLNotDerivedReason explains a 404 on a KNOWN protocol: the scope exclusion where one names
+// it (matching tvl_total.excluded), otherwise "not wired here". An unwired protocol is absent
+// from the snapshot, and absence is honest "unavailable", never zero TVL.
 func dexTVLNotDerivedReason(name string) string {
 	for _, ex := range dexTVLScopeExclusions {
 		if ex.Subject == name {

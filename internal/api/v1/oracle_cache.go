@@ -13,23 +13,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// CachedOracleReader wraps an [OracleReader] with a per-process TTL
-// cache + single-flight refetch on the high-traffic
-// LatestOracleUpdatesForAssets path. The cache absorbs bursts on one
-// key set; the SQL itself must meet the 200 ms SLO on a miss, since the
-// endpoint takes any asset (see Store.LatestOracleUpdatesForAssets).
+// CachedOracleReader wraps an [OracleReader] with a per-process TTL cache and single-flight
+// refetch on LatestOracleUpdatesForAssets. The cache only absorbs bursts on one key set; the SQL
+// must still meet the 200 ms SLO on a miss, since the endpoint takes any asset.
 //
-// TTL of 3 s is well below the freshest oracle's publish cadence
-// (Redstone ~10 s, Reflector ~30 s, Band ~60 s) so customers never
-// see oracle data older than they would have without the cache. The
-// pattern mirrors CachedIssuersReader/CachedMarketsReader (the
-// delete-on-error / waiter-err-pointer single-flight shape).
-//
-// LatestOracleUpdatesForAsset delegates to the multi-key variant so
-// the cache key space is consolidated. LatestOracleStreams is
-// pass-through — its caller is /v1/oracles/streams, which is on the
-// explorer's status-tile path (~one call per page load), not the
-// SLA-probed /v1/oracle/latest hot path.
+// The 3 s TTL is well below the freshest oracle's publish cadence (Redstone ~10 s, Reflector
+// ~30 s, Band ~60 s), so callers never see older data than they would uncached. The single-flight
+// shape (delete-on-error, waiter err pointer) mirrors CachedIssuersReader/CachedMarketsReader.
+// LatestOracleUpdatesForAsset delegates to the multi-key variant to share one key space.
 type CachedOracleReader struct {
 	upstream OracleReader
 	ttl      time.Duration
@@ -45,45 +36,27 @@ type oracleCacheEntry struct {
 
 	updates []canonical.OracleUpdate
 
-	// err is set by the leader before close(flight) on a failing
-	// upstream call. Waiters hold a pointer to the SAME entry they
-	// joined the flight on — so even if the leader removes the
-	// entry from the map (we don't TTL-cache errors), waiters can
-	// still read entry.err here and return it instead of nil-
-	// derefing the missing entry. Same pattern as
-	// CachedMarketsReader / CachedIssuersReader.
+	// err is set by the leader before close(flight) on a failing upstream call. Waiters hold a
+	// pointer to the entry they joined, so they can still read err after the leader removes it
+	// from the map (errors are not TTL-cached).
 	err error
 }
 
 // oracleCacheMaxEntries bounds the entry map.
 //
 // The key is the caller's sorted asset list plus the source filter, and
-// `/v1/oracle/latest?asset=` is public and unauthenticated — every
-// distinct asset an anonymous caller names mints a new key. Successful
-// fills were never evicted (only failures delete their entry, and an
-// empty result for an asset no oracle quotes is a SUCCESS), so a walk of
-// the asset key space grew the map without limit until the process OOMed.
-//
-// The cap + oldest-first eviction mirrors the bounded siblings
-// (historyCacheMaxEntries, assetDetailCacheMaxEntries) and sits far above
-// the real working set: the SLA probe and the explorer poll a handful of
-// assets, and a multi-asset request collapses to one key.
+// `/v1/oracle/latest?asset=` is public and unauthenticated, so every distinct asset an anonymous
+// caller names mints a key. Only failures delete their entry (an empty result is a success), so
+// without a cap a walk of the asset space grows the map until OOM. The cap sits far above the
+// real working set; oldest-first eviction mirrors historyCacheMaxEntries.
 const oracleCacheMaxEntries = 4096
 
-// evictIfFullLocked drops the oldest-filled entry when the map is at
-// capacity. Caller must hold c.mu, and must only call it when admitting a
-// NEW key — replacing an expired entry is size-neutral and would
-// otherwise cost an unrelated live key for nothing.
+// evictIfFullLocked drops the oldest-filled entry when the map is at capacity. Caller must hold
+// c.mu and call it only when admitting a NEW key; replacing an expired entry is size-neutral.
 //
-// In-flight entries (at.IsZero()) are never evicted — dropping one would
-// orphan its waiters from the fill that is about to close their channel.
-// The map can therefore sit briefly above the cap when every entry is a
-// live fill, but that overshoot is bounded by the number of concurrent
-// requests, not by the key space, and reclaims as those fills land.
-// Evicting a still-fresh entry costs at most one extra upstream query on
-// the next request for it, so correctness is unaffected. With the cap far
-// above the working set the scan is cheap and runs only on
-// insert-at-capacity.
+// In-flight entries (at.IsZero()) are never evicted, since that would orphan their waiters. The
+// map can briefly exceed the cap when every entry is a live fill, bounded by concurrent requests
+// rather than the key space. Evicting a fresh entry costs at most one extra upstream query.
 func (c *CachedOracleReader) evictIfFullLocked(op string) {
 	if len(c.entries) < oracleCacheMaxEntries {
 		return
@@ -102,11 +75,8 @@ func (c *CachedOracleReader) evictIfFullLocked(op string) {
 	}
 	if oldestKey != "" {
 		delete(c.entries, oldestKey)
-		// NOTE: `evicted` is NOT a read outcome, so the
-		// api_cache_miss_rate_high alert filters it (and
-		// `refresh_error`) out of its denominator in both rule trees.
-		// Left unfiltered it cancelled the very miss storm it is meant
-		// to catch: miss/(miss+evicted) can never exceed 0.5.
+		// `evicted` is not a read outcome: api_cache_miss_rate_high filters it (and
+		// `refresh_error`) out of its denominator, else miss/(miss+evicted) caps at 0.5.
 		obs.APICacheOpsTotal.WithLabelValues("oracle", op, "evicted").Inc()
 	}
 }
@@ -129,11 +99,8 @@ func (c *CachedOracleReader) LatestOracleUpdatesForAsset(ctx context.Context, as
 	return c.LatestOracleUpdatesForAssets(ctx, []canonical.Asset{asset}, sourceFilter)
 }
 
-// LatestOracleUpdatesForAssets is cached. The key is the sorted
-// asset-string list joined by `|`, then `|` + sourceFilter. Sort is
-// stable across callers that pass the same set in a different order
-// (e.g. [native, crypto:XLM] and [crypto:XLM, native] both share the
-// same cache slot).
+// LatestOracleUpdatesForAssets is cached. The key is the sorted asset strings joined by `|`, then
+// `|` + sourceFilter, so the same set in a different order shares one slot.
 func (c *CachedOracleReader) LatestOracleUpdatesForAssets(ctx context.Context, assets []canonical.Asset, sourceFilter string) ([]canonical.OracleUpdate, error) {
 	rows, _, err := c.LatestOracleUpdatesForAssetsAt(ctx, assets, sourceFilter)
 	return rows, err
@@ -172,12 +139,9 @@ func (c *CachedOracleReader) LatestOracleUpdatesForAssetsAt(ctx context.Context,
 	})
 }
 
-// LatestOracleStreams — cached like its siblings.
-//
-// /v1/oracle/streams is fetched by BOTH /oracles and the home page, and
-// uncached every hit re-runs the oracle_updates scan and rebuilds ~34 KB —
-// 0.43–0.46 s per request WARM on production. The call has no per-request
-// dimensions, so it occupies exactly one cache slot.
+// LatestOracleStreams is cached like its siblings. /v1/oracle/streams is fetched by both
+// /oracles and the home page, and uncached each hit re-runs the oracle_updates scan (~0.45 s
+// warm). It has no per-request dimensions, so it occupies one cache slot.
 func (c *CachedOracleReader) LatestOracleStreams(ctx context.Context) ([]canonical.OracleUpdate, error) {
 	rows, _, err := c.LatestOracleStreamsAt(ctx)
 	return rows, err
@@ -195,11 +159,8 @@ func (c *CachedOracleReader) LatestOracleStreamsAt(ctx context.Context) ([]canon
 	})
 }
 
-// oracleFetchBudget bounds a fill goroutine's own upstream call —
-// independent of any single caller's ctx. See fetch's fill comment:
-// this is what stops one caller's abort from propagating to every
-// caller single-flighted onto the same fill. Mirrors
-// CachedHistoryReader's historyRefreshBudget.
+// oracleFetchBudget bounds a fill goroutine's upstream call independently of any caller's ctx, so
+// one caller's abort cannot propagate to every caller single-flighted onto the same fill.
 const oracleFetchBudget = 30 * time.Second
 
 // errOracleFillPanicked is handed to waiters when the fill goroutine
@@ -207,15 +168,10 @@ const oracleFetchBudget = 30 * time.Second
 // see fill's comment. Mirrors CachedHistoryReader.errHistoryFillPanicked.
 var errOracleFillPanicked = errors.New("oracle cache: fill panicked")
 
-// fetch is the TTL + single-flight loop, in the same shape as
-// CachedIssuersReader.fetchList EXCEPT for who runs the upstream
-// call: a fill is always DETACHED into its own goroutine on
-// oracleFetchBudget, never bound to whichever caller happened to
-// trigger it. A caller that cancels its own ctx (client disconnect,
-// its own deadline) only stops that caller from waiting — it must
-// not abort the in-flight fetch out from under every other caller
-// single-flighted onto the same key. Mirrors CachedHistoryReader's
-// cold path (LatestTradePerSource), which handles the same shape.
+// fetch is the TTL + single-flight loop, as in CachedIssuersReader.fetchList except that a fill
+// is always DETACHED into its own goroutine on oracleFetchBudget, never bound to the caller that
+// triggered it. A caller cancelling its ctx only stops that caller waiting; it must not abort the
+// fetch under every other caller single-flighted onto the key.
 func (c *CachedOracleReader) fetch(
 	ctx context.Context,
 	op, key string,
@@ -266,15 +222,11 @@ func (c *CachedOracleReader) fetch(
 	}
 }
 
-// fill runs the upstream call on oracleFetchBudget — NOT the ctx of
-// whichever caller triggered it — and settles entry for every waiter
-// holding its pointer. This is what fetch's (B)/(C) branch depends
-// on: the fill must outlive any one caller's cancellation.
+// fill runs the upstream call on oracleFetchBudget, not the triggering caller's ctx, and settles
+// entry for every waiter holding its pointer, so it outlives any one caller's cancellation.
 //
-// The panic guard exists because entry starts zero-valued (no error,
-// no updates): a fill that panicked without settling would still
-// close(done), and every waiter would read that as a legitimate empty
-// success rather than a failure. Mirrors CachedHistoryReader.fill.
+// The panic guard exists because entry starts zero-valued: a fill that panicked without settling
+// would still close(done) and waiters would read an empty success instead of a failure.
 func (c *CachedOracleReader) fill(
 	key string,
 	entry *oracleCacheEntry,

@@ -17,18 +17,13 @@ import (
 // verified for reserve serving today (matches soroswap.SourceName).
 const sourceSoroswap = "soroswap"
 
-// GET /v1/pools/reserves — CURRENT per-pool-contract reserves + a
-// constant-product depth approximation, read from the certified lake's
-// contract storage (ADR-0039 pattern, same as /v1/lending/pools/{pool}/
-// reserves).
+// GET /v1/pools/reserves serves CURRENT per-pool reserves plus a constant-product depth
+// approximation, read from the lake's contract storage (ADR-0039 pattern).
 //
-// Honest-coverage contract: reserves are served ONLY for venues whose
-// pool-contract storage layout we have verified against the lake.
-// Today that is Soroswap alone (u32-keyed pair instance storage). Phoenix / Aquarius / Comet pools are NOT
-// served — their layouts are unverified and we refuse to guess.
-// Historical reserve series are not served anywhere: reserves are not
-// persisted by ingest (Soroswap SyncEvents are consumed transiently at
-// trade decode), so only the current state is honestly available.
+// Honest-coverage contract: reserves are served ONLY for venues whose storage layout is verified
+// against the lake, which today is Soroswap alone. Phoenix, Aquarius and Comet are not served
+// because their layouts are unverified and we refuse to guess. No history is served: ingest does
+// not persist reserves (SyncEvents are consumed transiently at trade decode).
 
 // soroswapFeeBps is Soroswap's Uniswap-v2-style total swap fee (0.3%,
 // taken on the input side). A venue constant, not read from chain.
@@ -95,16 +90,13 @@ type PoolDepthSide struct {
 // handlePoolReserves serves GET /v1/pools/reserves.
 //
 // Query params:
-//   - pool   (optional): a pool contract C-strkey; restricts to that
-//     one pool. 404 when the contract isn't a registered Soroswap
-//     pair — per-venue coverage is explicit, not silent.
-//   - source (optional): venue filter. "soroswap" is the only value
-//     accepted today; anything else is a 400 naming the venues that
-//     do serve reserves, so coverage limits are visible at the API
-//     edge rather than via silently-empty responses.
+//   - pool   (optional): a pool contract C-strkey; restricts to that pool. 404 when it is not a
+//     registered Soroswap pair, so coverage is explicit rather than silent.
+//   - source (optional): venue filter. Only "soroswap" is accepted; anything else is a 400 naming
+//     the venues that serve reserves, not a silently empty response.
 //
-// Consistency surface: current contract state (tip-adjacent, per-pool
-// as_of_ledger stamps the exact state ledger) — not closed-bucket.
+// Consistency surface: current contract state (tip-adjacent; per-pool as_of_ledger stamps the
+// exact state ledger), not closed-bucket.
 func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 	if s.Explorer == nil {
 		s.explorerUnavailable(w, r)
@@ -140,12 +132,9 @@ func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if handlerTimedOut(ctx, err) {
-			// Only a COLD archived-pair verdict snapshot can push this read
-			// past the budget (clickhouse.ttlLivenessCache): the DEXTVL
-			// background refresher fills that snapshot at startup and every
-			// 10 minutes on its own 3-minute budget, so this window is the
-			// first minutes of a process at most and a retry lands warm — a
-			// truthful retryable 503, not a 500.
+			// Only a COLD archived-pair verdict snapshot can exceed the budget
+			// (clickhouse.ttlLivenessCache); the DEXTVL refresher fills it at startup, so this is
+			// the first minutes of a process at most and a retry lands warm: a retryable 503.
 			s.logger.Warn("SoroswapPairReserves deadline exceeded (cold TTL-verdict snapshot; background refresh will fill it)")
 			writeProblem(w, r, "https://api.stellarindex.io/errors/pool-reserves-timeout",
 				"Pool reserves timed out", http.StatusServiceUnavailable,
@@ -169,13 +158,9 @@ func (s *Server) handlePoolReserves(w http.ResponseWriter, r *http.Request) {
 		out = append(out, buildPoolReservesRow(st, displays, displaysOK))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Pool < out[j].Pool })
-	// ADR-0041 Decision 4: each row already carries its exact per-pool
-	// `as_of_ledger` (the pool's last state-change ledger — more precise
-	// than the cached watermark), but the envelope's `flags.stale` still
-	// reflects lake freshness: a wedged galexie→ClickHouse sink makes
-	// EVERY reserve read stale regardless of when a given pool last
-	// changed. Stamp it from the same cached watermark the other
-	// current-state reads use.
+	// ADR-0041 Decision 4: rows carry their own per-pool `as_of_ledger`, but `flags.stale` still
+	// reflects lake freshness, since a wedged sink makes EVERY reserve read stale whatever a
+	// pool's last change. Stamp it from the cached watermark the other current-state reads use.
 	_, stale, _ := s.lakeWatermark(ctx)
 	writeJSON(w, out, Flags{Stale: stale, Degraded: !displaysOK}, sourceSoroswap)
 }
@@ -291,12 +276,10 @@ func (s *Server) poolReservesPairs(ctx context.Context, w http.ResponseWriter, r
 }
 
 // poolReservesDisplays batch-fetches token display metadata for every
-// token appearing in the decoded states. Best-effort for the reserves
-// (a failure never blocks them), but ok=false on a fetch failure so
-// callers can tell "the lookup errored" apart from "the token declares
-// no metadata": conflating the two would stamp decimals=7 on EVERY token
-// and compute mid-prices from those decimals, so one transient CH error
-// would mis-scale every non-7dp pair's mid price by 10^(d-7) with no signal.
+// token in the decoded states. Best-effort (a failure never blocks the reserves), but ok=false on
+// a fetch failure so callers can tell "the lookup errored" from "the token declares no metadata".
+// Conflating them would stamp decimals=7 everywhere, mis-scaling every non-7dp pair's mid price
+// by 10^(d-7) on one transient error.
 func (s *Server) poolReservesDisplays(ctx context.Context, states map[string]clickhouse.SoroswapPairState) (map[string]clickhouse.TokenDisplayMeta, bool) {
 	tokenSet := make(map[string]struct{}, len(states)*2)
 	for _, st := range states {
@@ -316,13 +299,10 @@ func (s *Server) poolReservesDisplays(ctx context.Context, states map[string]cli
 }
 
 // buildPoolReservesRow assembles one wire row from a decoded pair
-// state + the best-effort token display map. The decimals-dependent mid
-// prices are emitted only when BOTH tokens' decimals were actually read:
-// after a failed lookup (displaysOK=false), or for a token with no
-// readable declaration, they are null rather than computed from the
-// default-7 stamp, which would mis-scale them by 10^(d-7) with no
-// signal. Reserves and depth are base-unit exact and
-// decimals-independent — always served.
+// state and the best-effort token display map. Decimals-dependent mid prices are emitted only
+// when BOTH tokens' decimals were actually read; otherwise they are null rather than computed
+// from the default-7 stamp, which would mis-scale them by 10^(d-7). Reserves and depth are
+// base-unit exact and decimals-independent, so always served.
 func buildPoolReservesRow(st clickhouse.SoroswapPairState, displays map[string]clickhouse.TokenDisplayMeta, displaysOK bool) PoolReservesRow {
 	tok := func(contract string, reserve *big.Int) (PoolReserveToken, bool) {
 		t := PoolReserveToken{Contract: contract, Decimals: 7, Reserve: reserve.String()}
@@ -377,27 +357,22 @@ func buildPoolReservesRow(st clickhouse.SoroswapPairState, displays map[string]c
 
 // ─── Depth math — exact integer/rational arithmetic (ADR-0003) ────
 //
-// Constant-product AMM with the fee taken on the input side
-// (Uniswap-v2 / Soroswap): for reserves (x, y), input Δx and fee
-// f = feeBps/10⁴, the output is
+// Constant-product AMM with the fee on the input side (Uniswap-v2 / Soroswap): for reserves
+// (x, y), input Δx and fee f = feeBps/10⁴, the output is
 //
 //	Δy = y·(1−f)·Δx / (x + (1−f)·Δx)
 //
-// so the AVERAGE execution price (Δy/Δx) relative to the mid price
-// (y/x) carries slippage s = 1 − x·(1−f)/(x + (1−f)·Δx). Solving for
-// the largest Δx with slippage ≤ s:
+// so the average execution price relative to mid carries slippage
+// s = 1 − x·(1−f)/(x + (1−f)·Δx). The largest Δx with slippage ≤ s is
 //
 //	Δx = x·(s−f)·10⁴ / ((10⁴−f)·(10⁴−s))    [bps-scaled]
 //
-// Both are evaluated in exact big.Int arithmetic, floored to base
-// units. Assumptions the wire labels via `model`: the pool follows
-// x·y=k with the whole fee on input, and no other trade lands between
-// the state ledger and execution.
+// Both use exact big.Int arithmetic, floored to base units. The wire's `model` label states the
+// assumptions: x·y=k with the whole fee on input, and no other trade between state and execution.
 
 // maxInputWithinSlippage returns the largest input (base units of the
-// input-side token, floored) whose average execution price stays
-// within slipBps of the mid price. Zero when slipBps ≤ feeBps (the
-// fee alone exceeds the tier).
+// input-side token, floored) whose average execution price stays within slipBps of mid. Zero when
+// slipBps ≤ feeBps (the fee alone exceeds the tier).
 //
 //nolint:unparam // feeBps always receives soroswapFeeBps today (single-venue coverage); the parameter keeps the model math venue-generic and the fee assumption explicit at every call site
 func maxInputWithinSlippage(reserveIn *big.Int, feeBps, slipBps int64) *big.Int {

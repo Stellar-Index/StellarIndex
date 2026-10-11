@@ -22,24 +22,19 @@ func parseFloatOr0(s string) float64 {
 	return f
 }
 
-// MarketSourceReader is the seam the /v1/markets/sources handler reads
-// through. timescale.Store satisfies it via PairSourceStats /
-// AssetSourceStats. Each asset argument is the full set of canonical
-// FORMS to match (the handler expands via assetAliases), so a
-// multi-form asset's legs — XLM's `native` (SDEX) and `crypto:XLM`
-// (CEX) — aggregate into one per-source breakdown instead of
-// undercounting whichever form the query named.
+// MarketSourceReader is the seam the /v1/markets/sources handler reads through; timescale.Store
+// satisfies it. Each asset argument is the full set of canonical FORMS to match (expanded via
+// assetAliases), so XLM's `native` (SDEX) and `crypto:XLM` (CEX) legs aggregate into one
+// per-source breakdown instead of undercounting whichever form the query named.
 type MarketSourceReader interface {
 	PairSourceStats(ctx context.Context, base, quote []string) ([]timescale.SourceStats, error)
 	AssetSourceStats(ctx context.Context, asset []string) ([]timescale.SourceStats, error)
 }
 
-// SourceVolume is one source's trailing-24h contribution to a market
-// (or asset). VolumeUSD24h is the sum of trade-time usd_volume,
-// stringified per ADR-0003; omitted when no trade in the window was
-// priced. VolumeLowerBound is true when unpriced trades were excluded
-// from it. SharePct is this source's share of the total priced USD
-// volume across all sources (0 when the total is unknown).
+// SourceVolume is one source's trailing-24h contribution to a market (or asset). VolumeUSD24h
+// is the sum of trade-time usd_volume as a decimal string (ADR-0003), omitted when no trade
+// was priced. VolumeLowerBound is true when unpriced trades were excluded. SharePct is the
+// source's share of total priced USD volume (0 when the total is unknown).
 type SourceVolume struct {
 	Source           string  `json:"source"`
 	VolumeUSD24h     *string `json:"volume_24h_usd,omitempty"`
@@ -60,17 +55,13 @@ type MarketSourcesResp struct {
 
 // handleMarketSources serves GET /v1/markets/sources.
 //
-// Returns the trailing-24h USD-volume + trade-count breakdown grouped
-// by source for either a single market pair (?base=&quote=) or an
-// asset across every pair it appears in (?asset=). Backs the
-// volume-by-source pie on the market-pair + asset pages — the
-// /v1/history feed only samples recent trades, so an accurate 24h
-// share needs this server-side aggregate.
+// Returns the trailing-24h USD-volume and trade-count breakdown by source for a market pair
+// (?base=&quote=) or an asset across every pair (?asset=). /v1/history only samples recent
+// trades, so an accurate 24h share needs this server-side aggregate.
 //
-// Volume derivation matches /v1/sources?include=stats: trade-time
-// usd_volume only, never today's XLM price; a source with unpriced
-// trades is flagged volume_lower_bound, and one with no priced trade
-// still appears with its trade count and a null volume.
+// Volume derivation matches /v1/sources?include=stats: trade-time usd_volume only, never
+// today's XLM price; a source with unpriced trades is flagged volume_lower_bound, and one with
+// no priced trade still appears with its trade count and a null volume.
 func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	base := q.Get("base")
@@ -98,13 +89,8 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 8s ceiling on the per-source aggregate, matching the cold-path
-	// timeout pattern applied across every other aggregation endpoint
-	// (/v1/sources?include=stats, /v1/history, …). Derived from
-	// r.Context() so a client that hangs up mid-query is observed —
-	// the deadline is the resource bound, cancellation is the early
-	// exit, and both need the DB call to hold a context, not r.Context()
-	// passed straight through with nothing capping it.
+	// 8s ceiling on the per-source aggregate, matching the other aggregation endpoints. Derived
+	// from r.Context() so a client hang-up cancels early; the deadline is the resource bound.
 	msCtx, msCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer msCancel()
 
@@ -177,24 +163,16 @@ func (s *Server) writeMarketSourcesError(w http.ResponseWriter, r *http.Request,
 		"Storage layer returned an error.")
 }
 
-// sourceStatsAliases expands a raw asset_id query param into every
-// canonical FORM the per-source aggregate should match, reusing the
-// price path's alias primitive. XLM is the live multi-form
-// case: SDEX writes `native`, every CEX writes `crypto:XLM`, and
-// Soroban AMMs write the SAC C-address, so filtering on one form alone
-// undercounts the market's volume-by-source split.
+// sourceStatsAliases expands a raw asset_id query param into every canonical FORM the
+// per-source aggregate should match, via [canonical.AssetAliases]. XLM is the multi-form case:
+// SDEX writes `native`, CEXes write `crypto:XLM`, Soroban AMMs write the SAC C-address, so one
+// form alone undercounts the volume-by-source split.
 //
-// Membership and valuation must agree: the per-source queries' volume
-// CASE treats `CAS3J7GY…` as XLM (it applies the XLM/USD rate to a SAC
-// leg), so a filter passing only `native` + `crypto:XLM` would exclude
-// every Soroban XLM trade that would have been valued as XLM, and
-// /v1/markets/sources?asset=native would undercount Soroban volume by
-// construction. Both sides derive from [canonical.AssetAliases]; the
-// SQL binds [canonical.NativeSACContractID], the same SAC this
-// expansion emits.
+// Membership and valuation must agree: the per-source volume CASE values the XLM SAC leg at
+// the XLM/USD rate, so a filter without the SAC would drop Soroban XLM trades that are valued
+// as XLM. The SQL binds [canonical.NativeSACContractID], the same SAC this expansion emits.
 //
-// Falls back to the literal id when it doesn't parse as a canonical
-// asset, so a malformed param still produces a (single-form) query
+// It falls back to the literal id when the param does not parse, giving a single-form query
 // rather than an error.
 func sourceStatsAliases(id string) []string {
 	a, err := canonical.ParseAsset(id)

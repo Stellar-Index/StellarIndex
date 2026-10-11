@@ -9,22 +9,14 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// DEXTVLTotalView is the headline TVL figure across the pooled-liquidity
-// protocols the snapshot covers — the sum of the per-protocol figures
-// actually published on the same response, never an independent
-// re-derivation.
+// DEXTVLTotalView is the headline TVL across the pooled-liquidity protocols the snapshot
+// covers: the EXACT sum of the `tvl_usd` strings on the published `protocols[]` rows, never an
+// independent re-derivation. A consumer re-adding the visible parts reconciles byte-for-byte;
+// a total from the underlying rationals would differ and nobody could tell which side is wrong.
+// Each part has exactly two decimals, so the sum does too and nothing rounds here.
 //
-// That definition is the point. `tvl_usd` is the EXACT sum of the
-// `tvl_usd` strings on the `protocols[]` rows, so a consumer who adds up
-// what it can see reconciles with us byte-for-byte; a total computed
-// from the underlying rationals would round-trip to a different number
-// than the published parts and there would be no way for a caller to
-// tell which of us was wrong. Each part carries exactly two decimal
-// places, so their sum does too and no rounding occurs here.
-//
-// It is deliberately NOT a whole-network figure: `excluded` enumerates
-// every pooled-value surface we index and consciously leave out, with
-// the reason. See docs/methodology/dex-tvl.md.
+// It is deliberately NOT a whole-network figure: `excluded` lists every pooled-value surface
+// we index and leave out, with the reason. See docs/methodology/dex-tvl.md.
 type DEXTVLTotalView struct {
 	// TVLUSD is the exact sum of the included protocols' published
 	// tvl_usd strings, as a decimal string (ADR-0003).
@@ -33,12 +25,10 @@ type DEXTVLTotalView struct {
 	// which protocols' figures are summed into TVLUSD. A consumer can
 	// re-add these rows and get TVLUSD.
 	Protocols []string `json:"protocols"`
-	// LowerBound is true when at least one included protocol has
-	// unpriced pools, a protocol was dropped by the reconciliation
-	// below, or a derived protocol published no figure this cycle — i.e. the named protocols' true pooled value is at least
-	// TVLUSD. It says nothing about `Excluded`, which is a SCOPE
-	// statement, not a valuation gap: overloading one boolean with both
-	// meanings would make neither legible.
+	// LowerBound is true when an included protocol has unpriced pools, the reconciliation
+	// dropped a protocol, or a derived protocol published no figure this cycle: the named
+	// protocols' true value is at least TVLUSD. It says nothing about `Excluded`, which is a
+	// scope statement, not a valuation gap.
 	LowerBound bool `json:"lower_bound"`
 	// PoolsTotal / PoolsPriced / UnpricedPools are the summed pool
 	// counts across the included protocols.
@@ -71,13 +61,9 @@ type DEXTVLExclusion struct {
 	Reason  string `json:"reason"`
 }
 
-// dexTVLScopeExclusions are the STANDING scope decisions — the pooled-
-// or locked-value surfaces Stellar Index indexes and this total
-// consciously omits. They are published on every response so the number
-// can never be read as a whole-network claim by omission.
-//
-// Written from what ships, not from intent: each entry names something
-// we genuinely hold data for today and genuinely do not sum here.
+// dexTVLScopeExclusions are the standing scope decisions: pooled- or locked-value surfaces we
+// index but deliberately do not sum. They ship on every response so the total cannot be read
+// as a whole-network claim by omission. Each entry must name something we hold data for today.
 var dexTVLScopeExclusions = []DEXTVLExclusion{
 	{
 		Subject: "classic liquidity pools",
@@ -166,18 +152,15 @@ func (c *DEXTVLCache) Total() *DEXTVLTotalView {
 	return c.total
 }
 
-// reconcileDEXTVLTotal folds a per-protocol snapshot into the headline total,
-// admitting only parts whose own published claims hold. It REFUSES rather than
-// warns: a protocol failing admission is dropped from the sum and named in
-// `excluded`, so a wrong total is never served.
+// reconcileDEXTVLTotal folds a per-protocol snapshot into the headline total, admitting only
+// parts whose own published claims hold. It REFUSES rather than warns: a protocol failing
+// admission is dropped from the sum and named in `excluded`, so a wrong total is never served.
 //
 // Refusals:
 //
-//   - stale: Refresh's carryPrev keeps a protocol's PREVIOUS entry when its
-//     reserve read fails (the live failure mode whenever
-//     stellarindex_dex_tvl_refresh_failing is true). Refresh NAMES carried
-//     protocols instead of comparing stamps: RFC3339 is second-resolution, so a
-//     carried figure could share an as_of and pass an equality test.
+//   - stale: Refresh's carryPrev keeps a protocol's previous entry when its reserve read
+//     fails. Refresh NAMES carried protocols instead of comparing stamps: RFC3339 is
+//     second-resolution, so a carried figure could share an as_of and pass an equality test.
 //   - unparseable: the sum must be exact; a part that is not a non-negative
 //     decimal has no defined contribution.
 //   - pool accounting: every pool is priced XOR unpriced, so pools_total must
@@ -220,15 +203,9 @@ func reconcileDEXTVLTotal(snapshot map[string]ProtocolTVLView, at time.Time, car
 	}
 
 	if len(out.Protocols) == 0 {
-		// Nothing was admitted. Publishing "0.00" here would be a
-		// NUMBER where the honest answer is silence: a consumer reading
-		// tvl_total.tvl_usd without also reading basis and excluded
-		// would see a real total of zero dollars, which is the one
-		// reading that is definitely wrong. tvl_total is `omitempty` on
-		// a pointer precisely so it can be absent, and the per-protocol
-		// figures are still on the wire beside it. Same posture the
-		// listing takes when its price rollup is stale: render
-		// unpriced, never a plausible-looking wrong figure.
+		// Nothing was admitted. Publishing "0.00" would read as a real total of zero dollars,
+		// which is definitely wrong; tvl_total is an omitempty pointer so it can be absent
+		// while the per-protocol figures stay on the wire.
 		obs.DEXTVLReconcileTotal.WithLabelValues("divergent").Inc()
 		return nil
 	}
@@ -248,13 +225,9 @@ func reconcileDEXTVLTotal(snapshot map[string]ProtocolTVLView, at time.Time, car
 	return out
 }
 
-// dexTVLAdmit decides whether a per-protocol figure may be summed into
-// the headline total, and on admission returns the parsed amount. The
-// admitted value comes back from the SAME call that validated it, so a
-// caller can never sum a figure this function did not vouch for —
-// re-parsing at the call site would leave a nil *big.Rat reachable the
-// moment an admission rule was loosened. ok=false returns the refusal
-// reason verbatim for `excluded`.
+// dexTVLAdmit decides whether a per-protocol figure may be summed into the headline total and
+// returns the parsed amount from the SAME call that validated it, so a caller can never sum a
+// figure this function did not vouch for. ok=false returns the refusal reason for `excluded`.
 func dexTVLAdmit(part ProtocolTVLView, stamp string, carried bool) (*big.Rat, string, bool) {
 	// Carried-forward is reported by Refresh; the stamp comparison is a
 	// second, independent way the same inconsistency can show up (a part

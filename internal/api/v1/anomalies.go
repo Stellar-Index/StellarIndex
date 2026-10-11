@@ -38,20 +38,15 @@ type DivergenceReader interface {
 
 // AnomaliesView is the wire response for GET /v1/anomalies.
 //
-// FiringCount is an exact COUNT(*) over currently-firing freezes, not the
-// length of a page: `len(ListFreezeEvents(…, 500))` would report exactly
-// 500 for a storm of more than 500 assets, silently saturating at the
-// moment it matters most.
+// FiringCount is an exact COUNT(*) over currently-firing freezes, not a page length, which would
+// saturate at the page limit during a large freeze storm.
 type AnomaliesView struct {
 	FiringCount int64             `json:"firing_count"`
 	ReasonTally []ReasonCountV    `json:"reason_tally"`
 	Events      []FreezeEventView `json:"events"`
-	// Daily is the day×reason tally over the same window as
-	// ReasonTally — populated only when `?include=daily` was
-	// requested. Deliberately NOT omitempty: `null` means "not
-	// requested / not served" while `[]` means "requested, zero
-	// freezes in the window" — a client must never render a
-	// heatmap of zeros off the null case (degraded ≠ zero).
+	// Daily is the day×reason tally over ReasonTally's window, populated only for `?include=daily`.
+	// Deliberately NOT omitempty: null means "not requested/served", [] means "zero freezes", so a
+	// client never renders a heatmap of zeros off the null case.
 	Daily []DailyReasonCountV `json:"daily"`
 }
 
@@ -71,11 +66,9 @@ type DailyReasonCountV struct {
 // FreezeEventView mirrors a freeze_events row. recovered_at is null
 // while the freeze is currently firing. frozen_value is a decimal
 // string (ADR-0003).
-// Escalated and HoldUntil are the ADR-0019 lifecycle fields (migration
-// 0119): the only way a customer surface can tell a 10-minute
-// uncorroborated hold apart from a freeze that has climbed the
-// extension ladder and now stays firing until manual unfreeze. Both
-// are nil on a pre-0119 row or once the freeze has cleared.
+// Escalated and HoldUntil are the ADR-0019 lifecycle fields: they tell a short uncorroborated hold
+// apart from a freeze that climbed the extension ladder and stays firing until manual unfreeze.
+// Both are nil on older rows or once the freeze has cleared.
 type FreezeEventView struct {
 	AssetID           string          `json:"asset_id"`
 	QuoteID           string          `json:"quote_id"`
@@ -92,15 +85,10 @@ type FreezeEventView struct {
 }
 
 // handleAnomalies serves GET /v1/anomalies — the freeze timeline
-// (ADR-0019). `?firing=true` restricts to currently-firing pairs;
-// `?limit=` (default 100, max 500); `?window_days=` scopes the reason
-// tally (default 30); `?include=daily` adds the day×reason tally over
-// the same window (the /anomalies calendar heatmap). Always reports
-// the live firing count + per-reason breakdown alongside the event
-// list.
-//
-// 200 + empty payload when no reader is wired — feature-gated like
-// /v1/lending/pools.
+// (ADR-0019). `?firing=true` restricts to firing pairs; `?limit=` (default 100, max 500);
+// `?window_days=` scopes the reason tally (default 30); `?include=daily` adds the day×reason
+// tally. The live firing count and reason breakdown are always reported. Returns 200 with an
+// empty payload when no reader is wired.
 func (s *Server) handleAnomalies(w http.ResponseWriter, r *http.Request) {
 	if s.Anomalies == nil {
 		writeJSON(w, AnomaliesView{ReasonTally: []ReasonCountV{}, Events: []FreezeEventView{}}, Flags{})
@@ -266,13 +254,10 @@ type DivergenceRefV struct {
 }
 
 // handleDivergence serves GET /v1/divergence — the current
-// cross-reference divergence board: per (asset, quote) pair, our price
-// beside the latest comparison against each reference within
-// `?window_days=` (default 7), pairs with the widest |delta_pct| first.
-// `?firing=true` keeps pairs with at least one firing reference;
-// `?limit=` counts pairs (default 100, max 500).
-//
-// 200 + empty payload when no reader is wired.
+// cross-reference divergence board: per (asset, quote) pair, our price beside the latest
+// comparison against each reference within `?window_days=` (default 7), widest |delta_pct| first.
+// `?firing=true` keeps pairs with a firing reference; `?limit=` counts pairs (default 100, max
+// 500). Returns 200 with an empty payload when no reader is wired.
 func (s *Server) handleDivergence(w http.ResponseWriter, r *http.Request) {
 	if s.Divergences == nil {
 		writeJSON(w, DivergenceView{Pairs: []DivergencePairV{}}, Flags{})
@@ -360,11 +345,9 @@ const (
 )
 
 // storedMarketGate returns /v1/price's withholding verdict for stored rows
-// keyed on (asset_id, quote_id), memoised per market for one response.
-// Decided at read time, like /v1/changes: a newly flagged issuer or a
-// market gone thin takes effect on rows written before it. With a gate
-// wired, an id that does not parse names no market that can be vetted and
-// is withheld; with neither gate wired nothing is withheld.
+// keyed on (asset_id, quote_id), memoised per market for one response. It is decided at read time
+// so a newly flagged issuer or thin market also applies to rows already stored. With a gate
+// wired, an id that does not parse cannot be vetted and is withheld; with no gate nothing is.
 func (s *Server) storedMarketGate(surface string) func(ctx context.Context, assetID, quoteID string) (bool, PriceWithheldReason) {
 	type verdict struct {
 		withheld bool
@@ -430,24 +413,17 @@ type DivergenceSeriesRefV struct {
 }
 
 // divergenceSeriesDays whitelists the `?days=` windows the series
-// endpoint serves — each maps to a fixed bucket width in the reader
-// (timescale.DivergenceSeriesBucket), keeping every response ≤ ~360
-// points. An open-ended window param would let one request scan an
-// unbounded history slice.
+// endpoint serves. Each maps to a fixed bucket width in the reader (timescale.DivergenceSeriesBucket),
+// capping a response near 360 points; an open-ended window would allow an unbounded history scan.
 var divergenceSeriesDays = map[int]bool{1: true, 7: true, 30: true}
 
 // handleDivergenceSeries serves GET /v1/divergence/series — the Δ%
-// time-series for ONE pair against every reference:
-// `?pair=<asset_id>~<quote_id>` (the markets slug convention), `?days=`
-// ∈ {1, 7, 30} (default 7). There is no per-reference selector: a
-// reference's prices are served only beside the others. The history
-// companion to the /v1/divergence board.
+// time-series for ONE pair against every reference: `?pair=<asset_id>~<quote_id>` (the markets
+// slug convention), `?days=` in {1, 7, 30} (default 7). There is no per-reference selector; a
+// reference's prices are served only beside the others.
 //
-// Cache policy: private, no-store, set by an explicit policyForPath arm
-// it shares with its sibling /v1/divergence and with /v1/anomalies.
-//
-// 200 + empty points when no reader is wired or the pair has no
-// observations in the window.
+// Cache policy is private, no-store, via an explicit policyForPath arm shared with /v1/divergence
+// and /v1/anomalies. Returns 200 with empty points when no reader is wired or the window is empty.
 func (s *Server) handleDivergenceSeries(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	pair := q.Get("pair")
@@ -549,10 +525,8 @@ func (s *Server) divergenceSeriesWithheld(w http.ResponseWriter, r *http.Request
 }
 
 // parseWindowDays reads an optional ?window_days= positive int in
-// [1, 365]; def when absent. A present but out-of-range or unparseable
-// value writes a 400 (matching the sibling ?days= and ?limit= params)
-// rather than silently falling back to def, so a caller can't be told
-// its window was honored when it was ignored.
+// [1, 365]; def when absent. A present but invalid value writes a 400, like the sibling ?days=
+// and ?limit= params, so a caller is never told its window was honored when it was ignored.
 func parseWindowDays(w http.ResponseWriter, r *http.Request, def int) (int, bool) {
 	raw := r.URL.Query().Get("window_days")
 	if raw == "" {

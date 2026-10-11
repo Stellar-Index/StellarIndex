@@ -52,33 +52,22 @@ type SEP41TransfersResponse struct {
 // classic/native stroops and the SAC default.
 const defaultTokenDecimals = 7
 
-// tokenMetadataReadTimeout bounds EVERY best-effort token-metadata read
-// this package makes against the ClickHouse lake (decimals() and the
-// SEP-41 supply overlay). These reads are overlays: their failure mode is
-// a documented default or a null field, so blocking a whole request on
-// one is never the right trade. Without a sub-budget they inherit the
-// request context and a slow lake stalls the caller for the FULL request
-// budget to produce a field that was optional anyway.
-//
-// One named constant keeps the sibling call sites from drifting apart,
-// so none of them is left without a bound.
+// tokenMetadataReadTimeout bounds EVERY best-effort token-metadata read against the ClickHouse
+// lake (decimals() and the SEP-41 supply overlay). These are overlays whose failure mode is a
+// documented default or null field; without a sub-budget a slow lake would stall the caller for
+// the FULL request budget. One constant keeps sibling call sites bounded alike.
 const tokenMetadataReadTimeout = 2 * time.Second
 
-// sep41TransfersReadTimeout is the whole budget the per-contract read
-// gets: the store's lookback ladder and its full-history fallback
-// together. The ladder is bounded to at most half of it by
-// timescale.SEP41TransferLadderBudget, so the fallback always runs on
-// at least as much time as the ladder that failed to answer;
-// TestSEP41Transfers_LadderBudgetLeavesTheFallbackAtLeastHalf pins the
-// relationship, since neither package can see the other's constant.
+// sep41TransfersReadTimeout is the whole budget for the per-contract read: the store's lookback
+// ladder plus its full-history fallback. timescale.SEP41TransferLadderBudget caps the ladder at
+// half, so the fallback gets at least as much time as the ladder that failed; neither package
+// sees the other's constant, so TestSEP41Transfers_LadderBudgetLeavesTheFallbackAtLeastHalf pins it.
 const sep41TransfersReadTimeout = 8 * time.Second
 
-// resolveTokenDecimals reads a token contract's on-chain decimals() via
-// the tokenDecimals reader, bounded by tokenMetadataReadTimeout. A nil
-// reader or an uncaptured/non-standard token is the documented default 7;
-// a FAILED read (error or deadline) returns ok=false, because the result
-// is published as the conversion factor for every amount beside it and a
-// guessed 7 on an 18-decimal token overstates each one 10^11-fold.
+// resolveTokenDecimals reads a token contract's on-chain decimals(), bounded by
+// tokenMetadataReadTimeout. A nil reader or uncaptured token yields the default 7; a FAILED read
+// returns ok=false, because decimals is the conversion factor for every amount beside it and a
+// guessed 7 on an 18-decimal token overstates each by 10^11.
 func (s *Server) resolveTokenDecimals(ctx context.Context, contractID string) (decimals int, ok bool) {
 	if s.TokenDecimals == nil {
 		return defaultTokenDecimals, true
@@ -97,12 +86,9 @@ func (s *Server) resolveTokenDecimals(ctx context.Context, contractID string) (d
 	return int(d), true
 }
 
-// resolveAssetDecimals returns the smallest-unit scale for a canonical
-// asset: the token contract's declared decimals() for Soroban tokens
-// (via resolveTokenDecimals, whose ok it passes through), else the
-// classic/native/fiat default of 7. Callers resolve once per side per
-// request — never per row — since a /v1/history page shares one
-// base+quote pair.
+// resolveAssetDecimals returns the smallest-unit scale for a canonical asset: the contract's
+// decimals() for Soroban tokens (passing through resolveTokenDecimals's ok), else the default 7.
+// Callers resolve once per side per request, never per row.
 func (s *Server) resolveAssetDecimals(ctx context.Context, a canonical.Asset) (decimals int, ok bool) {
 	if a.Type == canonical.AssetSoroban && a.ContractID != "" {
 		return s.resolveTokenDecimals(ctx, a.ContractID)
@@ -122,11 +108,8 @@ func writeDecimalsUnavailable(w http.ResponseWriter, r *http.Request, problemTyp
 		"the token contract's decimals() could not be read, and every amount in this response is scaled by it; retry shortly.")
 }
 
-// handleSEP41Transfers serves GET
-// /v1/contracts/{contract_id}/transfers[?from=&to=&limit=].
-//
-// It enables per-account net-position queries, which CG/CMC
-// structurally cannot offer.
+// handleSEP41Transfers serves GET /v1/contracts/{contract_id}/transfers[?from=&to=&limit=],
+// enabling per-account net-position queries.
 func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 	if s.SEP41Transfers == nil {
 		writeProblem(w, r,
@@ -225,13 +208,9 @@ func (s *Server) handleSEP41Transfers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp, Flags{})
 }
 
-// parseSEP41TransferIdentifiers parses + validates the path
-// contract_id and optional ?from / ?to query params as Stellar
-// strkeys. Returns (contractID, from, to, true) on success;
-// writes a 400 Problem and returns ok=false on any validation
-// failure. Extracted from handleSEP41Transfers to keep that
-// function under the gocognit threshold (cognitive complexity
-// goes from 21 → 9 after the extraction).
+// parseSEP41TransferIdentifiers validates the path contract_id and optional ?from / ?to as
+// Stellar strkeys. On failure it writes a 400 Problem and returns ok=false. Split out of
+// handleSEP41Transfers for the gocognit threshold.
 func parseSEP41TransferIdentifiers(w http.ResponseWriter, r *http.Request) (contractID, fromAddr, toAddr string, ok bool) {
 	contractID = r.PathValue("contract_id")
 	if contractID == "" {
@@ -251,12 +230,9 @@ func parseSEP41TransferIdentifiers(w http.ResponseWriter, r *http.Request) (cont
 
 	fromAddr = r.URL.Query().Get("from")
 	toAddr = r.URL.Query().Get("to")
-	// SEP-41 from/to participants can be any address that holds a
-	// balance: G (account), C (contract), and post-CAP-67 also M
-	// (muxed), B (claimable balance), or L (liquidity pool). A bad
-	// input would otherwise reach the SQL layer and return an empty
-	// result set indistinguishable from "no matching transfers" —
-	// actively misleading for the operator-debugging use case.
+	// SEP-41 participants can be any balance-holding address: G, C, and post-CAP-67 M, B or L. A
+	// bad input would otherwise reach SQL and return an empty set indistinguishable from "no
+	// matching transfers".
 	if fromAddr != "" && !canonical.IsAnyHolder(fromAddr) {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-address",

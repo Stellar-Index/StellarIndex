@@ -24,40 +24,29 @@ type SelfServiceKeyManager interface {
 // own store. Implemented by [auth.RedisAPIKeyStore].
 type KeyMirror interface {
 	CreateWithSecret(ctx context.Context, k auth.MirroredKey) error
-	// RevokeKeyByID removes a mirrored credential by KeyID, scoped to its
-	// owner identifier. The register path uses it to roll back a mirror
-	// that succeeded but whose durable management row then failed to
-	// commit, so no credential ever outlives its management record.
-	// Implemented by [auth.RedisAPIKeyStore.RevokeKeyByID].
+	// RevokeKeyByID removes a mirrored credential by KeyID, scoped to its owner identifier. Register
+	// uses it to roll back a mirror whose management row failed to commit, so no credential
+	// outlives its management record.
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
 }
 
-// KeyCacheInvalidator evicts one API-key record from the runtime
-// auth read-through cache by its SHA-256 hex hash. Implemented by
-// both auth.RedisKeyCacheInvalidator and
-// auth.PostgresAPIKeyValidator — the same narrowing pattern as
-// dashboardkeys.CacheInvalidator.
+// KeyCacheInvalidator evicts one API-key record from the auth read-through cache by its SHA-256
+// hex hash.
 //
-// It is meaningful ONLY under auth_backend=postgres. Under the default
-// redis backend `apikey:<hash>` is the canonical credential, not a
-// cache, so an "eviction" there deletes a customer's key for good;
-// [NewAPIKeyBudgetStores] leaves the field nil in that mode.
+// It is meaningful ONLY under auth_backend=postgres. Under the default redis backend
+// `apikey:<hash>` is the canonical credential, not a cache, so an eviction there deletes the
+// customer's key for good; [NewAPIKeyBudgetStores] leaves the field nil in that mode.
 type KeyCacheInvalidator interface {
 	InvalidateCachedKey(ctx context.Context, hexHash string) error
 }
 
-// APIKeyBudgetStores groups the credential stores a TIER CHANGE has to
-// clamp, so every path that lowers an account's tier lowers the budget
-// on every credential the previous tier allowed.
+// APIKeyBudgetStores groups the credential stores a TIER CHANGE has to clamp, so every path that
+// lowers a tier lowers the budget on every credential the old tier allowed.
 //
-// There are two independent key stores in production and a missed one
-// is a live throughput leak: Postgres-backed dashboard keys
-// (platform.APIKeyStore) and Redis-backed self-service keys minted
-// through POST /v1/account/keys ([SelfServiceKeyManager]). The
-// enforced budget is read straight off the key record by both
-// validators (auth/apikey_postgres.go, auth/apikey_redis.go), so
-// lowering accounts.tier alone changes nothing the key holder can
-// feel.
+// There are two independent stores, Postgres dashboard keys (platform.APIKeyStore) and Redis
+// self-service keys ([SelfServiceKeyManager]), and a missed one is a live throughput leak: both
+// validators read the enforced budget off the key record, so lowering accounts.tier alone changes
+// nothing the key holder feels.
 type APIKeyBudgetStores struct {
 	// Platform is the Postgres-backed dashboard key store. Nil skips
 	// that half (deployments without Postgres).
@@ -65,18 +54,13 @@ type APIKeyBudgetStores struct {
 	// Redis is the Redis-backed self-service key store, reached by
 	// [auth.AccountIdentifier](account.Slug). Nil skips that half.
 	Redis SelfServiceKeyManager
-	// RedisMirror writes an already-minted credential into the Redis
-	// validator store. Non-nil only when the deployment wires Redis;
-	// POST /v1/register uses it so the key it hands back authenticates
-	// against the REDIS validator r1 actually runs (a Postgres-only
-	// key 401s).
+	// RedisMirror writes an already-minted credential into the Redis validator store; non-nil only
+	// when Redis is wired. POST /v1/register uses it so the returned key authenticates against the
+	// Redis validator (a Postgres-only key 401s).
 	RedisMirror KeyMirror
-	// CacheInvalidator evicts each lowered Postgres key from the auth
-	// read-through cache so the new budget is enforced on the next
-	// request rather than after the validator's ~1h TTL. Nil is safe,
-	// and is REQUIRED under auth_backend=redis (see
-	// [KeyCacheInvalidator]); build the struct with
-	// [NewAPIKeyBudgetStores] rather than setting this by hand.
+	// CacheInvalidator evicts each lowered Postgres key from the auth cache so the new budget
+	// applies on the next request, not after the ~1h TTL. Nil is REQUIRED under auth_backend=redis
+	// (see [KeyCacheInvalidator]); build via [NewAPIKeyBudgetStores].
 	CacheInvalidator KeyCacheInvalidator
 	// OnError, when non-nil, is called with the failing step name
 	// (list_keys | key_update | key_cache_invalidate) so a caller can
@@ -84,22 +68,15 @@ type APIKeyBudgetStores struct {
 	OnError func(step string)
 }
 
-// NewAPIKeyBudgetStores assembles the credential stores for one
-// deployment: the single place that decides, from `[api].auth_backend`,
-// whether a key-cache invalidator exists at all.
+// NewAPIKeyBudgetStores assembles the credential stores for one deployment; it is the single place
+// that decides, from `[api].auth_backend`, whether a key-cache invalidator exists. platformKeys
+// and rdb are nil without Postgres and Redis respectively.
 //
-// platformKeys is the Postgres dashboard key store (nil without
-// Postgres); rdb is the shared Redis client (nil without Redis).
-//
-// The invalidator is wired ONLY under auth_backend=postgres. Under the
-// default redis backend it would point a DEL at the canonical credential:
-// any admin PATCH that changed an override, suspended the account or
-// lowered its tier would permanently destroy every POST /v1/register key
-// the account held — the plaintext is shown once and Postgres keeps
-// only the hash, so the record cannot be rebuilt. Under the redis
-// backend nothing needs evicting: the tier clamp rewrites the canonical record in place
-// through [SelfServiceKeyManager], and suspension and the account
-// overrides are read by the Redis validator's own account cache.
+// The invalidator is wired ONLY under auth_backend=postgres. Under the redis backend it would DEL
+// the canonical credential, and an admin PATCH would permanently destroy every register-minted
+// key (the plaintext is shown once; only a hash is kept). Nothing needs evicting there: the tier
+// clamp rewrites the record in place via [SelfServiceKeyManager], and the Redis validator reads
+// suspension and overrides from its own account cache.
 func NewAPIKeyBudgetStores(platformKeys platform.APIKeyStore, rdb redis.Cmdable, authBackend string) APIKeyBudgetStores {
 	var st APIKeyBudgetStores
 	if platformKeys != nil {
@@ -129,17 +106,12 @@ func (st APIKeyBudgetStores) note(step string) {
 	}
 }
 
-// clampKeyBudgetsToTier lowers every credential `account` can still
-// authenticate with down to `ceiling`, across BOTH key stores. Returns
-// how many keys were lowered and how many failed to lower, so a caller
-// can record the outcome durably (the admin path writes both into its
-// audit row).
+// clampKeyBudgetsToTier lowers every credential `account` can still authenticate with down to
+// `ceiling`, across BOTH key stores. It returns the lowered and failed counts so the caller can
+// record the outcome durably. `cause` is stamped on every log line.
 //
-// Best-effort and idempotent: keys already at or below the ceiling are
-// skipped, revoked keys are left alone, and a failure on one key never
-// stops the others — leaving over-tier throughput live is the worse
-// outcome. `cause` names what triggered the clamp and is stamped on
-// every log line ("admin PATCH by key …").
+// Best-effort and idempotent: keys at or below the ceiling and revoked keys are skipped, and one
+// key's failure never stops the others, since leaving over-tier throughput live is worse.
 func (s *Server) clampKeyBudgetsToTier(
 	ctx context.Context,
 	cause string,
@@ -163,11 +135,9 @@ func (s *Server) clampKeyBudgetsToTier(
 	return lowered, failed
 }
 
-// downgradePlatformAPIKeys lowers every active Postgres-backed dashboard
-// key for `account` whose per-minute budget exceeds `ceiling`, evicting
-// each from the auth read-through cache afterwards. Keys already at or
-// below the ceiling are skipped (idempotent), and revoked keys are left
-// alone.
+// downgradePlatformAPIKeys lowers every active Postgres dashboard key for `account` whose
+// per-minute budget exceeds `ceiling`, then evicts it from the auth cache. Idempotent; revoked
+// keys are left alone.
 func (s *Server) downgradePlatformAPIKeys(
 	ctx context.Context,
 	cause string,
@@ -211,11 +181,9 @@ func (s *Server) downgradePlatformAPIKeys(
 	return lowered, failed
 }
 
-// downgradeRedisAPIKeys lowers every Redis-backed key the account minted
-// through POST /v1/account/keys (which copies the caller's Subject
-// identifier, i.e. [auth.AccountIdentifier](slug), onto the record and
-// inherits the caller's then-current budget) down to `ceiling`.
-// No-op without a Redis store or a slug.
+// downgradeRedisAPIKeys lowers every Redis key the account minted through POST /v1/account/keys
+// down to `ceiling`. Those records carry [auth.AccountIdentifier](slug) and inherit the caller's
+// budget at mint time. No-op without a Redis store or a slug.
 func (s *Server) downgradeRedisAPIKeys(
 	ctx context.Context,
 	cause string,
@@ -256,13 +224,10 @@ func (s *Server) downgradeRedisAPIKeys(
 	return lowered, failed
 }
 
-// invalidatePlatformKeyCache evicts a just-updated Postgres key from
-// the runtime auth read-through cache. No-op when no invalidator is
-// wired (Redis-less / auth_backend=redis) or the row has no hash.
-// A failure is logged + counted under the
-// `key_cache_invalidate` operation but never surfaced — the Postgres
-// write already succeeded, so the worst case is the key serving
-// the old budget until the cache TTL elapses.
+// invalidatePlatformKeyCache evicts a just-updated Postgres key from the auth read-through cache.
+// No-op when no invalidator is wired or the row has no hash. A failure is logged and counted
+// under `key_cache_invalidate` but not surfaced: the write succeeded, so the worst case is the
+// old budget until the cache TTL elapses.
 func (s *Server) invalidatePlatformKeyCache(ctx context.Context, cause string, st APIKeyBudgetStores, account platform.Account, k platform.APIKey) {
 	if st.CacheInvalidator == nil || len(k.KeyHash) == 0 {
 		return

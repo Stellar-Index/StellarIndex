@@ -12,32 +12,21 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// CachedHistoryReader wraps a [HistoryReader], adding a small
-// stale-while-revalidate cache to **`LatestTradePerSource` only**, the
-// primitive behind `/v1/observations` (ADR-0018 Surface 3). Every other method
-// is pass-through (range-bounded or CAGG-backed and fast).
+// CachedHistoryReader wraps a [HistoryReader], adding a stale-while-revalidate cache to
+// `LatestTradePerSource` only, the primitive behind `/v1/observations`. Every other method is
+// pass-through (range-bounded or CAGG-backed and fast).
 //
-// The query is not slow: a DISTINCT ON (source) over `trades` with no time
-// bound, but migration 0037's `trades_pair_source_ts_idx` makes it a Merge
-// Append of per-chunk SkipScans (measured on r1: 49 ms native/fiat:USD, 289 ms
-// heaviest pair). The cache keeps the status page's poll (one fixed key,
-// `native|fiat:USD|`, every ~2 min) off the database; the exact result,
-// including a legitimate empty slice, is cached.
+// The query is a DISTINCT ON (source) over `trades` with no time bound; `trades_pair_source_ts_idx`
+// makes it per-chunk SkipScans (49-289 ms on r1). The cache keeps the status page's poll off the
+// database and caches the exact result, including a legitimate empty slice.
 //
-// Shape follows asset_catalogue_cache.go / markets_cache.go with one change: the
-// cold fill runs in a **detached** goroutine on its own budget. The handler's
-// hard 8s ceiling would otherwise fail every cold call before it could populate
-// the cache, so the endpoint would 503 forever. Detached, the first caller(s)
-// 503 while the fill warms the cache for the next poll.
+// The cold fill runs in a detached goroutine on its own budget: the handler's hard 8s ceiling
+// would otherwise fail every cold call before it could populate the cache, so the endpoint would
+// 503 forever. Detached, the first callers 503 while the fill warms the cache for the next poll.
 type CachedHistoryReader struct {
-	// logger sinks a panic recovered in a detached refresh goroutine.
-	// It is the PROCESS DEFAULT rather than the API Server's logger:
-	// these reader wrappers are constructed directly in
-	// cmd/stellarindex-api/main.go before the Server exists, and
-	// widening the exported constructor would churn every caller for a
-	// sink that ends up in the same journal either way. The
-	// load-bearing signal is stellarindex_worker_panics_total, which
-	// worker.Report moves regardless of the sink.
+	// logger sinks a panic recovered in a detached refresh goroutine. It is the process default,
+	// not the Server's logger, because the wrappers are built before the Server exists. The
+	// load-bearing signal is stellarindex_worker_panics_total, which worker.Report moves anyway.
 	logger *slog.Logger
 
 	HistoryReader // embedded: every method pass-through unless overridden below
@@ -50,20 +39,11 @@ type CachedHistoryReader struct {
 
 // historyCacheMaxEntries bounds the entry map.
 //
-// The key is `base|quote|source`, and both asset components accept any
-// CRC-valid strkey — a key space an anonymous caller can walk for free.
-// Without a cap, successful fills are never evicted (only failures
-// delete their entry, and an empty result for a nonexistent pair is a
-// SUCCESS), so one IP at the 6000/min anon budget could mint ~6000
-// permanent entries a minute — roughly 1.7 GB/day of unreclaimable
-// memory on a host that also runs Postgres, ClickHouse, MinIO and
-// galexie's captive core.
-//
-// The cap + oldest-first eviction mirrors accountStateCache's
-// established shape (internal/storage/clickhouse/account_state_cache.go).
-// It is far above the real working set: the status page polls a handful
-// of pairs, and every legitimate consumer is bounded by the configured
-// source registry.
+// The key is `base|quote|source`, and both asset components accept any CRC-valid strkey, a key
+// space an anonymous caller can walk for free. Only failures delete their entry (an empty result
+// for a nonexistent pair is a success), so without a cap one IP at the anon budget mints thousands
+// of permanent entries a minute. The cap is far above the real working set, and eviction is
+// oldest-first as in accountStateCache.
 const historyCacheMaxEntries = 4096
 
 type historyCacheEntry struct {
@@ -72,19 +52,14 @@ type historyCacheEntry struct {
 
 	trades []canonical.Trade
 
-	// err is set by the filler before close(flight) on a failing
-	// upstream call. Waiters hold a pointer to the SAME entry they
-	// joined on, so they can read err even though we delete the
-	// entry from the map (errors are not TTL-cached). Mirrors
-	// markets_cache.go's marketsCacheEntry.err.
+	// err is set by the filler before close(flight) on a failing upstream call. Waiters hold a
+	// pointer to the entry they joined, so they can read err after it leaves the map (errors are
+	// not TTL-cached).
 	err error
 }
 
-// NewCachedHistoryReader wraps `upstream` so `LatestTradePerSource`
-// is stale-while-revalidate cached. ttl=0 disables the cache
-// (pure pass-through). Production wires 2m (mirrors the markets /
-// coins cache TTL — observations move with trades but the status
-// page tolerates 2m staleness on a "latest per source" surface).
+// NewCachedHistoryReader wraps `upstream` so `LatestTradePerSource` is stale-while-revalidate
+// cached. ttl=0 disables the cache. Production wires 2m, which the status page tolerates.
 func NewCachedHistoryReader(upstream HistoryReader, ttl time.Duration) *CachedHistoryReader {
 	return &CachedHistoryReader{
 		logger:        slog.Default(),
@@ -116,14 +91,8 @@ func (c *CachedHistoryReader) TradesInRangeAfterFromSource(
 		afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
 }
 
-// LatestTradePerSource is the one cached method. See type doc.
-// evictIfFullLocked drops the oldest-filled entry when the map is at
-// capacity. Caller must hold c.mu.
-//
-// In-flight entries (at.IsZero()) are never evicted — dropping one
-// would orphan its waiters from the fill that is about to close their
-// channel. With the cap far above the working set, a scan is cheap and
-// runs only on insert-at-capacity.
+// evictIfFullLocked drops the oldest-filled entry when the map is at capacity. Caller must hold
+// c.mu. In-flight entries (at.IsZero()) are never evicted, since that would orphan their waiters.
 func (c *CachedHistoryReader) evictIfFullLocked() {
 	if len(c.entries) < historyCacheMaxEntries {
 		return
@@ -199,11 +168,8 @@ func (c *CachedHistoryReader) LatestTradePerSource(
 		return out, nil
 	}
 
-	// (B)/(C) Cold: no usable value. Ensure a detached fill is in
-	// flight, then wait on it OR the request ctx — whichever first.
-	// The caller is bounded by its own ctx (handler 503s at 8s); the
-	// fill always runs to completion on its own budget and warms the
-	// cache for the next poll.
+	// (B)/(C) Cold: ensure a detached fill is in flight, then wait on it or the request ctx. The
+	// caller is bounded by its own ctx; the fill completes on its own budget and warms the cache.
 	var entry *historyCacheEntry
 	if ok && e.flight != nil {
 		entry = e
@@ -231,24 +197,15 @@ func (c *CachedHistoryReader) LatestTradePerSource(
 	}
 }
 
-// fill runs the upstream query on a detached budget and updates the
-// entry. On success it caches (and clears flight so the entry is
-// reusable as a fresh/stale value). On error it does NOT cache —
-// the entry is removed from the map; waiters still read entry.err
-// via their retained pointer. Mirrors markets_cache.go settleFailedFillLocked.
-// errHistoryFillPanicked is what a cold waiter receives when the fill
-// goroutine it joined panicked. It is a distinct sentinel rather than a
-// reused upstream error so an operator reading the 5xx can tell "the
-// refresher died" from "the query failed".
+// errHistoryFillPanicked is what a cold waiter receives when the fill it joined panicked. It is
+// distinct from upstream errors so an operator can tell "the refresher died" from "the query
+// failed".
 var errHistoryFillPanicked = errors.New("history cache: fill panicked")
 
-// settleFailedFill applies the FAILED-fill bookkeeping to entry: keep a
-// stale value and clear the in-flight marker so the next expiry retries;
-// or, when there is no prior value, hand the error to the waiters and
-// drop the entry so the next request starts a fresh fill. Split out of
-// fill so the panic guard can run exactly the same transitions the error
-// path runs — a guard that only reported would leave the entry latched
-// in flight forever.
+// settleFailedFill applies the failed-fill bookkeeping to entry: keep a stale value and clear the
+// in-flight marker so the next expiry retries, or with no prior value hand the error to waiters
+// and drop the entry so the next request starts a fresh fill. It is split out so the panic guard
+// runs the same transitions; a guard that only reported would latch the entry in flight forever.
 func (c *CachedHistoryReader) settleFailedFill(key string, entry *historyCacheEntry, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -269,24 +226,14 @@ func (c *CachedHistoryReader) fill(
 	upstream func(context.Context) ([]canonical.Trade, error),
 ) {
 	defer close(done)
-	// Registered AFTER close(done), so it runs BEFORE it. That order is
-	// load-bearing: waiters read entry.err / entry.trades only once
-	// `done` closes, and that close is the happens-before edge, so the
-	// entry has to be SETTLED before it fires.
+	// Registered AFTER close(done), so it runs BEFORE it: waiters read entry.err / entry.trades
+	// once `done` closes, so the entry must be settled before that happens-before edge fires.
 	//
-	// Settling on a panic is the whole point. Without it the entry keeps
-	// entry.flight set and entry.at zero forever: the cold waiter wakes
-	// on the close, reads a nil error and nil trades, and returns an
-	// EMPTY result with 200 OK — and every later request re-joins the
-	// already-closed flight and gets the same empty answer, for the life
-	// of the process. A permanently-empty cache that reports success is
-	// strictly worse than the crash it replaces, so the recover runs the
-	// same bookkeeping the error path runs (see settleFailedFill).
-	//
-	// The only panic source inside the lock would be the switch below —
-	// map delete and field assignment, neither of which panics — so
-	// settleFailedFill cannot deadlock re-acquiring c.mu. The realistic
-	// panic is in upstream, which runs before the lock is taken.
+	// Settling on a panic is the point. Otherwise entry.flight stays set and entry.at zero forever,
+	// and every waiter reads nil error and nil trades as an EMPTY 200 OK for the life of the
+	// process. A permanently-empty cache reporting success is worse than the crash, so recover
+	// runs the error path's bookkeeping (see settleFailedFill). The panic source is upstream,
+	// which runs before the lock is taken, so settleFailedFill cannot deadlock on c.mu.
 	defer func() {
 		if rec := recover(); rec != nil {
 			worker.Report(c.logger, "api-history-latest-per-source-fill", rec)

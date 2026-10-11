@@ -8,12 +8,9 @@ import (
 	"time"
 )
 
-// assetDetailEntry holds a fully-rendered /v1/assets/{id} response
-// for serving warm requests inside the cache TTL.
-//
-// The cached payload is the full JSON wire bytes (flags already
-// encoded into the envelope by renderAssetDetailEnvelope) plus the
-// time it was cached. Storing post-render avoids // chain + asset-catalogue overlay + verified-currency overlay on every hit.
+// assetDetailEntry holds a fully-rendered /v1/assets/{id} response for warm requests inside the
+// TTL: the JSON wire bytes (flags already encoded by renderAssetDetailEnvelope) plus the cache
+// time. Storing post-render skips the handler chain and both overlays on every hit.
 type assetDetailEntry struct {
 	body     []byte
 	cachedAt time.Time
@@ -22,21 +19,16 @@ type assetDetailEntry struct {
 	degraded bool
 }
 
-// assetDetailResponseCache is the response-level cache for /v1/assets/{id}.
-// Keyed by the normalised asset_id (post-`normaliseAssetIDInput`); the value is
-// the full pre-rendered JSON, so the warm path replays the wire body without
-// the handler chain.
+// assetDetailResponseCache is the response-level cache for /v1/assets/{id}, keyed by the
+// normalised asset_id (post-`normaliseAssetIDInput`) and holding the pre-rendered JSON.
 //
-// Why a response cache: the handler fans out wide (Volume24hUSDForAsset,
-// supply.LatestSupply, lookupUSDPrice x2, applyAssetExtensionFields' 7 readers,
-// applySep1Overlay), and wrapping every reader is 5+ new types. Drift-safe: the
-// entry IS what the handler produces, so new fields and overlays flow through
-// with no per-reader plumbing.
+// It caches the whole response because the handler fans out to many readers; wrapping each
+// would be many new types. It is drift-safe: the entry IS what the handler produces, so new
+// fields and overlays flow through with no per-reader plumbing.
 //
-// TTL (120s in production, set in server.New) MUST exceed the
-// selfPrewarmAssetEndpoints cadence, or the cache is cold between expiry and
-// the next prewarm and every request in that gap pays full handler cost. 120s
-// staleness is inside the closed-bucket contract (ADR-0015).
+// TTL (set in server.New) MUST exceed the selfPrewarmAssetEndpoints cadence, or the cache is
+// cold between expiry and the next prewarm and every request in the gap pays full handler cost.
+// The staleness is inside the closed-bucket contract (ADR-0015).
 type assetDetailResponseCache struct {
 	mu      sync.RWMutex
 	entries map[string]*assetDetailEntry
@@ -72,28 +64,16 @@ func (c *assetDetailResponseCache) get(assetID string) (*assetDetailEntry, bool)
 	return e, true
 }
 
-// assetDetailCacheMaxEntries hard-bounds the response cache. Fabricated
-// asset_ids 404 before put (handleAssetGet), so growth is driven by the
-// REAL-asset universe — but that universe is large (every classic asset
-// with any trade/oracle observation, ~10^5+). Without a cap a crawler or
-// an attacker walking known asset_ids would add a permanent ~1-4 KB entry
-// per distinct id — TTL-expiry only checks freshness at READ time and
-// never removes anything — climbing resident memory to hundreds of MB / a
-// slow OOM on a long-lived API instance. Every sibling
-// response cache is bounded (accountStateCacheMax=4096, assetHoldersCacheMax
-// =512); this makes the asset-detail cache match. The verified-currency set
-// + native + the realistic exotic-classic tail sits well under the cap; it
-// only engages under adversarial/crawler id churn.
+// assetDetailCacheMaxEntries hard-bounds the response cache. Fabricated ids 404 before put, but
+// the real-asset universe is large (~10^5+), and TTL expiry only checks freshness at READ time
+// and never removes anything, so a crawler walking known ids would slowly OOM the instance. The
+// realistic working set sits well under the cap; it engages only under id churn.
 const assetDetailCacheMaxEntries = 4096
 
-// put stores a freshly-rendered response under assetID. Existing
-// entries are replaced (last-write-wins; concurrent requests for
-// the same asset may both compute, both write — accepted as a
-// stampede cost rather than adding a single-flight layer here).
-//
-// Callers should pass an already-marshalled body (flags already
-// encoded into it by renderAssetDetailEnvelope); this avoids holding
-// the lock during JSON encoding.
+// put stores a freshly-rendered response under assetID, last-write-wins: concurrent requests for
+// one asset may both compute and write, accepted as a stampede cost rather than adding a
+// single-flight layer. Callers pass an already-marshalled body so the lock is not held during
+// JSON encoding.
 func (c *assetDetailResponseCache) put(assetID string, body []byte, degraded bool) {
 	if c == nil || c.ttl <= 0 {
 		return
@@ -110,13 +90,9 @@ func (c *assetDetailResponseCache) put(assetID string, body []byte, degraded boo
 	}
 }
 
-// evictLocked reclaims room when the cache is at capacity. It first drops
-// every expired entry (cheap, TTL-based — the common case, since the prewarm
-// cadence keeps the hot set fresh and everything else ages out); only if the
-// whole map is still fresh does it evict the single oldest entry so a new one
-// can be admitted. Both passes are O(n) but n is capped at
-// assetDetailCacheMaxEntries and eviction runs only at capacity, so it is off
-// every hot path. Caller must hold c.mu.
+// evictLocked reclaims room at capacity: it first drops every expired entry, and only if the
+// whole map is still fresh evicts the single oldest. Both passes are O(n) with n capped and run
+// only at capacity, so they are off the hot path. Caller must hold c.mu.
 func (c *assetDetailResponseCache) evictLocked() {
 	before := len(c.entries)
 	now := time.Now()
@@ -141,20 +117,10 @@ func (c *assetDetailResponseCache) evictLocked() {
 	}
 }
 
-// renderAssetDetailEnvelope builds the wire bytes for an AssetDetail
-// response and returns them. Mirrors writeJSON / writeEnvelope so
-// the cached body matches the live writeJSON output byte-for-byte.
-//
-// Used by the handleAssetGet cache path:
-//   - On cache miss: render to bytes, cache them, write to client.
-//   - On cache hit: replay the cached bytes verbatim. The AsOf
-//     timestamp is frozen at render time and served up to ttl stale
-//     — there is no AsOf re-splice (that would require re-parsing the
-//     body); ttl staleness sits well inside the closed-bucket
-//     contract (ADR-0015).
-//
-// Returns the raw envelope bytes (the `Data` field is the
-// AssetDetail).
+// renderAssetDetailEnvelope builds the wire bytes for an AssetDetail response, mirroring
+// writeJSON / writeEnvelope so the cached body matches live output byte-for-byte. On a hit the
+// bytes are replayed verbatim: AsOf is frozen at render time and up to ttl stale, with no
+// re-splice (that would need re-parsing the body), inside the closed-bucket contract (ADR-0015).
 func renderAssetDetailEnvelope(detail AssetDetail, flags Flags) ([]byte, error) {
 	env := Envelope{
 		Data:  detail,
@@ -168,12 +134,8 @@ func renderAssetDetailEnvelope(detail AssetDetail, flags Flags) ([]byte, error) 
 	return buf.Bytes(), nil
 }
 
-// writeCachedAssetDetail writes a cached entry to the response.
-// Mirrors writeJSON's header set (Content-Type: application/json,
-// implicit 200). The body bytes carry an AsOf that's up to ttl
-// stale; clients reading AsOf know the data was computed at-most
-// `ttl` ago. Per ADR-0015's closed-bucket-only contract that's
-// well within the allowed staleness envelope.
+// writeCachedAssetDetail writes a cached entry with writeJSON's header set. The body's AsOf is up
+// to ttl stale, which clients can read and which ADR-0015's closed-bucket contract allows.
 func writeCachedAssetDetail(w http.ResponseWriter, entry *assetDetailEntry) {
 	if entry.degraded {
 		w.Header().Set("Cache-Control", "no-store")

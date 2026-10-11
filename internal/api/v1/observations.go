@@ -72,24 +72,15 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// NO quote family is answered from memory here, `fiat:USD` least of
-	// all — it is this endpoint's DEFAULT quote AND a real stored trade
-	// quote. The CEX connectors trade straight against it (coinbase /
-	// kraken / bitstamp XLM-USD, BTC-USD, ETH-USD), so `quote_asset`
-	// holds the literal string on every one of those rows: /v1/history
-	// serves them, and /v1/observations/stream — same computeObservations,
-	// no short-circuit — emits three venues for that pair, so answering
-	// it with `[]` here would contradict both. Nor does cost call for a
-	// fast-path: migration 0037's trades_pair_source_ts_idx covers
-	// LatestTradePerSource's DISTINCT ON (source), so the lookup is
-	// O(num_sources), not an O(rows_in_pair) fan-out.
+	// No quote family is short-circuited to an empty answer, `fiat:USD` least of all: it is the
+	// default quote AND a real stored trade quote (CEX connectors trade straight against it), so
+	// `[]` would contradict /v1/history and /v1/observations/stream. Cost needs no fast-path
+	// either: trades_pair_source_ts_idx covers LatestTradePerSource, so the lookup is
+	// O(num_sources).
 
-	// 8s ceiling on the trades hypertable scan, the same pattern as
-	// /v1/pools and /v1/markets. Unguarded, a prod test
-	// (asset=native&quote=USDC-G…) hit a 10s curl timeout — the
-	// cold-cache "latest trade per source" scan over a high-traffic pair
-	// can run several seconds on first hit. The bound surfaces a
-	// structured 503 instead of holding the connection open until the upstream LB cuts it.
+	// 8s ceiling on the trades hypertable scan, as /v1/pools and /v1/markets: a cold-cache "latest
+	// trade per source" scan over a busy pair can take several seconds, and the bound yields a
+	// structured 503 instead of holding the connection until the upstream LB cuts it.
 	obsCtx, obsCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer obsCancel()
 	trades, ok := s.fetchObservationsOrWriteError(w, r, obsCtx, pair, source, aggregate, asset, quote)
@@ -117,30 +108,20 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 
 	// Single-source flag: true when exactly one source contributed (informational).
 	//
-	// FRESHNESS CONTRACT: this is the RAW per-source surface, so there is no single
-	// staleness verdict. flags.stale is always false here BY DESIGN and the
-	// envelope's as_of is the response time (shared writeJSON), NOT the data's age: a
-	// venue that last traded the pair weeks ago still returns its last trade.
-	// Consumers assess freshness PER OBSERVATION from each row's own trade timestamp.
+	// FRESHNESS CONTRACT: this RAW per-source surface has no single staleness verdict.
+	// flags.stale is always false BY DESIGN and the envelope's as_of is the response time, NOT the
+	// data's age; consumers assess freshness per row from its own trade timestamp.
 	//
-	// divergence_checked is also structurally false here, and s.Divergence is
-	// deliberately never consulted. The cross-reference verdict is cached per base and
-	// speaks to an aggregated number (/v1/price, its windowed variant, /v1/price/tip,
-	// the tip stream and /v1/vwap carry it). Stamping a base-level verdict onto every
-	// venue's last trade would read as "each of these rows was cross-checked" when
-	// none was. Pinned by TestObservations_DivergenceCheckedStructurallyFalse; the
-	// stream twin (observationsStreamEvent) mirrors it.
+	// divergence_checked is also structurally false and s.Divergence is never consulted: the
+	// cross-reference verdict is cached per base and speaks to an aggregated number, so stamping
+	// it on each venue's last trade would claim a cross-check that never happened. Pinned by
+	// TestObservations_DivergenceCheckedStructurallyFalse; the stream twin
+	// (observationsStreamEvent) mirrors it.
 	flags := Flags{SingleSource: len(srcs) == 1}
 
-	// Triangulation hint: an empty observations array is genuinely
-	// confusing when the same (asset, quote) pair returns a price
-	// from /v1/price via triangulation or stablecoin-fiat proxy. The
-	// consumer sees `data: []` on /v1/observations and assumes the
-	// pair is unpriced, when really it's just that no source carries
-	// a DIRECT trade for it (ADR-0018 Surface 3 is raw-only by
-	// design). Set flags.triangulated=true when an empty result
-	// coexists with a triangulated/proxied price elsewhere — same
-	// signal /v1/price returns.
+	// Triangulation hint: an empty array reads as "unpriced" when /v1/price serves the pair via
+	// triangulation or the stablecoin-fiat proxy and only no source has a DIRECT trade (this
+	// surface is raw-only, ADR-0018). Set flags.triangulated=true in that case, as /v1/price does.
 	if len(rows) == 0 && source == "" {
 		flags.Triangulated = s.observationsHaveTriangulatedPrice(obsCtx, pair)
 	}
@@ -149,12 +130,9 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 }
 
 // fetchObservationsOrWriteError runs computeObservations and translates
-// any error into the right problem+json (client-abort silent return,
-// timeout 503, cache-unavailable 503, generic internal 500). Returns
-// (trades, true) on success; (_, false) means a response was already
-// written and the caller must return. Extracted from handleObservations
-// to keep its gocognit complexity below the 20 ceiling with the
-// cache-unavailable branch.
+// any error into the right problem+json (client-abort silent return, timeout 503,
+// cache-unavailable 503, internal 500). Returns (trades, true) on success; (_, false) means a
+// response was already written and the caller must return.
 func (s *Server) fetchObservationsOrWriteError(
 	w http.ResponseWriter, r *http.Request,
 	obsCtx context.Context,
@@ -194,12 +172,9 @@ func (s *Server) fetchObservationsOrWriteError(
 }
 
 // observationsHaveTriangulatedPrice is the best-effort lookup that
-// powers the empty-observations triangulation hint. Returns true
-// when /v1/price would have served a value for the same pair via
-// either the Redis VWAP cache (triangulation worker output) or the
-// stablecoin-fiat proxy (X / fiat:USD → X / <peg>). All errors
-// downgrade to false silently — this is a UX hint, not a
-// load-bearing signal.
+// powers the empty-observations triangulation hint. Returns true when /v1/price would serve the
+// pair via the Redis VWAP cache or the stablecoin-fiat proxy. Errors downgrade to false: this is
+// a UX hint, not a load-bearing signal.
 func (s *Server) observationsHaveTriangulatedPrice(ctx context.Context, pair canonical.Pair) bool {
 	if _, _, _, _, ok := s.tryRedisVWAPFallback(ctx, pair.Base, pair.Quote); ok {
 		return true
@@ -211,10 +186,9 @@ func (s *Server) observationsHaveTriangulatedPrice(ctx context.Context, pair can
 }
 
 // rejectObservationsTierParams enforces the URL-discipline rule from
-// ADR-0018: ?granularity= and ?window_seconds= are tier-selectors for
-// other surfaces; accepting them on /v1/observations would let a
-// query param silently change the consistency contract. Returns true
-// when neither is present; writes a 400 + returns false otherwise.
+// ADR-0018: ?granularity= and ?window_seconds= select tiers on other surfaces, and accepting
+// them here would let a query param silently change the consistency contract. Returns true when
+// neither is present; otherwise writes a 400 and returns false.
 func rejectObservationsTierParams(w http.ResponseWriter, r *http.Request) bool {
 	q := r.URL.Query()
 	if q.Get("granularity") != "" {

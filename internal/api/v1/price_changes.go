@@ -12,14 +12,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// PriceChangeHorizon is one trailing-window delta on
-// GET /v1/price/changes. Every pointer field is nil when the horizon is
-// unavailable — no closed bucket that far back (a young pair, or a
-// horizon predating recorded history), a read failure, or a withheld
-// reference (Withheld) — and the miss is per-horizon, never an error
-// for the whole call. ReferenceAt + Resolution disclose exactly
-// which closed bucket the comparison used, so a consumer can see the
-// delta was measured against, say, a daily bar and not a 1-minute one.
+// PriceChangeHorizon is one trailing-window delta on GET /v1/price/changes. Pointer fields are
+// nil when the horizon is unavailable (no bucket that far back, or a withheld reference); the
+// miss is per-horizon, never an error for the whole call. ReferenceAt + Resolution disclose
+// which closed bucket the comparison used.
 type PriceChangeHorizon struct {
 	// ChangePct is the signed percentage move of the current price vs
 	// the reference price, two fractional digits with an explicit
@@ -39,24 +35,17 @@ type PriceChangeHorizon struct {
 	// Available is the per-horizon flag: false means the horizon has no
 	// reference price (all the pointer fields are null).
 	Available bool `json:"available"`
-	// Withheld is true when the reference bucket EXISTS but a serving
-	// gate refused to publish it (the thin-market or scam-issuer gate, or
-	// the serving-sanity guard). It is what separates "withheld" from
-	// "no data that far back" on an unavailable horizon; always false
-	// when Available is true.
+	// Withheld is true when the reference bucket exists but a serving gate refused it. It
+	// separates "withheld" from "no data that far back"; always false when Available is true.
 	Withheld bool `json:"withheld"`
 	// ThinMarket: the reference bucket was served under `include_thin=true`
 	// from a market below the substance floor.
 	ThinMarket bool `json:"thin_market,omitempty"`
 }
 
-// PriceChanges is the GET /v1/price/changes payload: the current
-// closed price plus signed change over 1h / 24h / 7d / 30d in one
-// call — the multi-horizon accommodation for wallet/portfolio UIs
-// (RFP §6). Each horizon is computed as the current closed VWAP vs the
-// closed VWAP at-or-before now-horizon, both from the same
-// point-in-time reader /v1/price/at uses (finest CAGG that covers the
-// instant; prices_1d spans to 2015).
+// PriceChanges is the GET /v1/price/changes payload: the current closed price plus signed change
+// over 1h / 24h / 7d / 30d. Each horizon compares the current closed VWAP with the closed VWAP
+// at-or-before now-horizon, both read through the same point-in-time reader /v1/price/at uses.
 type PriceChanges struct {
 	AssetID          string `json:"asset_id"`
 	Quote            string `json:"quote"`
@@ -78,21 +67,14 @@ type PriceChanges struct {
 	Substance *SubstanceEvidence `json:"substance,omitempty"`
 }
 
-// priceChangesCurrentStaleness bounds how old the "current" bucket may
-// be before the pair is treated as having no current price (a 404).
-// One day matches /v1/price/at's [priceAtMaxLookback]: a pair with no
-// trade in the last day has no honest "current" price to anchor a
-// change on.
+// priceChangesCurrentStaleness bounds how old the "current" bucket may be before the pair has no
+// current price (404). It matches [priceAtMaxLookback]: a pair with no trade in a day has no
+// honest anchor for a change.
 const priceChangesCurrentStaleness = priceAtMaxLookback
 
-// priceChangeHorizons are the trailing windows /v1/price/changes
-// reports, in ascending order. Each horizon's reference is the closed
-// bucket at-or-before now-dur; the staleness tolerance passed to the
-// reader is the horizon itself — generous enough to let a coarse
-// (daily) bar answer a multi-week horizon, while still refusing a
-// bucket more than one horizon-width stale (which is the "no data that
-// far back" signal). reference_at + resolution disclose the bucket
-// actually used.
+// priceChangeHorizons are the trailing windows /v1/price/changes reports, ascending. The reader's
+// staleness tolerance is the horizon itself: loose enough for a daily bar to answer a multi-week
+// horizon, while a bucket more than one horizon-width stale means "no data that far back".
 var priceChangeHorizons = []struct {
 	label string
 	dur   time.Duration
@@ -105,13 +87,9 @@ var priceChangeHorizons = []struct {
 
 // handlePriceChanges serves GET /v1/price/changes?asset=&quote=.
 //
-// Returns the current closed price plus the signed change over each of
-// the four horizons. Missing horizons are null with available=false —
-// never an error — and withheld=true when the reference bucket exists but
-// a serving gate refused it. A 404 only when the
-// pair has no CURRENT price to anchor against; a 503 when no
-// point-in-time reader is wired; a 503/500 when any read fails, since a
-// failed read is not evidence that a bucket is missing.
+// Missing horizons are null with available=false, never an error; withheld=true when the
+// reference bucket exists but a serving gate refused it. 404 only when the pair has no current
+// price; 503/500 when a read fails, since a failed read is not evidence a bucket is missing.
 func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
 	if s.PriceAt == nil {
 		writeProblem(w, r,
@@ -143,14 +121,9 @@ func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Per-request DB ceiling: the endpoint issues up to five
-	// sequential PriceAt reads (the current anchor plus one per
-	// horizon), each walking alias combinations and, for a fiat:USD
-	// quote, every configured USD peg. Without a bounded context a slow
-	// run holds its pool connection until the client gives up. 8s
-	// matches the sibling single-shot read endpoints (oracle.go,
-	// vwap.go, ohlc.go) and fires before the blanket request-timeout
-	// middleware.
+	// Per-request DB ceiling: up to five sequential PriceAt reads, each walking aliases (and USD
+	// pegs for a fiat:USD quote); unbounded, a slow run holds its pool connection. 8s matches the
+	// sibling read endpoints and fires before the blanket request-timeout middleware.
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
@@ -280,19 +253,12 @@ type priceAtResult struct {
 	resSec     int
 }
 
-// resolvePriceChangePair finds the (base, quote) orientation that
-// yields a current price for the request and returns that pair so
-// every horizon is measured against the SAME market. It walks the XLM
-// dual-form aliases and, when the quote is fiat:USD and no
-// direct/aliased bucket exists, the operator's USD-pegged classics
-// (the same stablecoin-proxy chain /v1/price and /v1/price/at use) —
-// flagging triangulated=true on that path. found=false when no
-// orientation has a fresh-enough current bucket; a non-nil withheld
-// (only meaningful when found=false) is the first ErrPriceWithheld-class
-// error an orientation returned — a bucket existed but a serving gate
-// refused it — and the caller reports the distinct price-withheld 404,
-// worded for that gate, rather than the generic not-found. The last
-// return is a reader failure that ended the walk.
+// resolvePriceChangePair finds the (base, quote) orientation that yields a current price and
+// returns it so every horizon is measured against the SAME market. It walks the XLM aliases and,
+// for a fiat:USD quote with no direct bucket, the USD-pegged classics (triangulated=true).
+// found=false means no orientation had a fresh current bucket; a non-nil withheld (only
+// meaningful then) is the first ErrPriceWithheld-class error, so the caller can report the
+// price-withheld 404 instead of generic not-found. The last return is a reader failure.
 func (s *Server) resolvePriceChangePair(
 	ctx context.Context, asset, quote canonical.Asset, now time.Time,
 ) (canonical.Pair, priceAtResult, bool, bool, error, error) {
@@ -328,12 +294,9 @@ func (s *Server) resolvePriceChangePair(
 	return canonical.Pair{}, priceAtResult{}, false, false, withheld, nil
 }
 
-// currentPriceForAliases returns the first (assetAlias, quoteAlias)
-// orientation with a current closed bucket within
-// priceChangesCurrentStaleness of now. withheld is the first
-// ErrPriceWithheld-class error any orientation returned (nil when none
-// did) — the caller needs it to choose the correct 404 once every
-// orientation is exhausted. err is a reader failure that ended the walk.
+// currentPriceForAliases returns the first (assetAlias, quoteAlias) orientation with a current
+// closed bucket within priceChangesCurrentStaleness. withheld is the first ErrPriceWithheld-class
+// error seen, so the caller can pick the right 404 once all orientations are exhausted.
 func (s *Server) currentPriceForAliases(
 	ctx context.Context, asset, quote canonical.Asset, now time.Time,
 ) (canonical.Pair, priceAtResult, bool, error, error) {
@@ -354,11 +317,9 @@ func (s *Server) currentPriceForAliases(
 				}
 				continue
 			}
-			// dex-nonstandard-decimals forward normalization (M2) on the
-			// absolute current price. The pct deltas are scale-invariant (a
-			// constant K cancels in (ref-cur)/cur), so they are UNCHANGED; only
-			// the served current_price / reference_price absolute values are
-			// corrected. Resolve against the actual traded legs. No-op at 7dp.
+			// Decimals normalization applies to the absolute price only: pct deltas are
+			// scale-invariant (a constant K cancels in (ref-cur)/cur). Resolve against the
+			// actual traded legs.
 			value = s.normalizeRawRatioString(value, pair.Base, pair.Quote)
 			return pair, priceAtResult{value: value, observedAt: observedAt, resSec: resSec}, true, nil, nil
 		}
@@ -366,16 +327,11 @@ func (s *Server) currentPriceForAliases(
 	return canonical.Pair{}, priceAtResult{}, false, withheld, nil
 }
 
-// priceChangeHorizon computes one horizon's delta for an already-
-// resolved pair. Returns an unavailable (all-null) horizon on a miss —
-// no bucket that far back, a withheld reference, or an unparseable ratio.
-// A reader failure is returned as err instead: rendering it as
-// available=false would claim the pair has no history that far back. A
-// withheld reference (ErrPriceWithheld, which includes
-// ErrPriceAtGuarded) additionally sets Withheld: the gates are asked
-// about `target`, not `now`, so one horizon can be withheld while
-// its siblings are not, and a consumer must not read that null as "no
-// history that far back". The reason is the withheld reference's.
+// priceChangeHorizon computes one horizon's delta for an already-resolved pair. A miss (no bucket,
+// withheld reference, unparseable ratio) yields an all-null horizon; a reader failure is returned
+// as err, since available=false would falsely claim no history. A withheld reference sets Withheld:
+// the gates are asked about `target`, not `now`, so one horizon can be withheld while its siblings
+// are not.
 func (s *Server) priceChangeHorizon(
 	ctx context.Context, pair canonical.Pair, currentPrice string, target time.Time, tolerance time.Duration,
 ) (PriceChangeHorizon, PriceWithheldReason, error) {
@@ -389,11 +345,8 @@ func (s *Server) priceChangeHorizon(
 		}
 		return PriceChangeHorizon{Available: false}, "", nil
 	}
-	// dex-nonstandard-decimals forward normalization (M2) on the absolute
-	// reference price. `currentPrice` was already normalized against this SAME
-	// pair (resolvePriceChangePair), so pctChange sees both legs scaled by the
-	// identical K and the returned percentage is unaffected; only the
-	// emitted reference_price absolute value is rescaled. No-op at 7dp.
+	// currentPrice was already normalized against this SAME pair, so both legs carry the identical
+	// K and pctChange is unaffected; only the emitted reference_price is rescaled.
 	value = s.normalizeRawRatioString(value, pair.Base, pair.Quote)
 	pct, err := pctChange(currentPrice, value)
 	if err != nil {

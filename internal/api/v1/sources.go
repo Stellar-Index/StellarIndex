@@ -55,11 +55,8 @@ func (l liveSourcesStats) GetSourceVolumeHistory7dAt(ctx context.Context) ([]tim
 	return rows, time.Time{}, err
 }
 
-// VolumeBucket is one wire-shape hour bucket on the per-source
-// 24h sparkline. Hour is RFC 3339; volume_usd is numeric-stringified
-// to preserve precision through the JSON boundary; trade_count is the
-// number of trades in the hour (powers the trade-count line above the
-// $-volume bars on the source page chart).
+// VolumeBucket is one hour bucket on the per-source 24h sparkline. Hour is RFC 3339; volume_usd is
+// a decimal string to preserve precision through JSON; trade_count is the trades in that hour.
 type VolumeBucket struct {
 	Hour       WireTime `json:"hour"`
 	VolumeUSD  string   `json:"volume_usd"`
@@ -125,44 +122,27 @@ func markXLMUnpriced(into map[string]bool, buckets []timescale.SourceVolumeBucke
 
 // Source is the wire shape for /v1/sources entries.
 //
-// Mirrors external.Metadata 1:1 today. Field-by-field on the wire
-// rather than embedding so the JSON contract stays decoupled from
-// the internal struct — adding an internal-only field on
-// external.Metadata won't change the API output.
-//
-// Class string values: `exchange` / `aggregator` / `oracle` /
-// `authority_sanity`. See internal/sources/external/framework.go
-// for the policy semantics behind each class.
+// Fields are copied one by one from external.Metadata rather than embedding it, so an
+// internal-only field added there cannot change the JSON contract.
 type Source struct {
 	Name string `json:"name"`
-	// Class is the top-level taxonomy: exchange / aggregator /
-	// oracle / authority_sanity / lending / router / bridge. Drives
-	// the aggregator's class filter (only `exchange` contributes to
-	// VWAP by default). /v1/methodology's `source_classes` defines
-	// each one.
+	// Class is the top-level taxonomy (exchange / aggregator / oracle / authority_sanity / lending /
+	// router / bridge). It drives the aggregator's class filter: only `exchange` contributes to VWAP
+	// by default. /v1/methodology's `source_classes` defines each one.
 	Class string `json:"class"`
-	// Subclass refines `class=exchange` into `dex` / `cex` / `fx`
-	// so consumers can group venues (e.g. a UI rendering "DEX
-	// liquidity" alongside "CEX prices"). Empty for every other
-	// class — none of them has a subclass dimension.
+	// Subclass refines `class=exchange` into `dex` / `cex` / `fx`; empty for every other class.
 	Subclass          string `json:"subclass,omitempty"`
 	IncludeInVWAP     bool   `json:"include_in_vwap"`
 	Paid              bool   `json:"paid"`
 	BackfillAvailable bool   `json:"backfill_available"`
-	// BackfillSafe gates the `stellarindex-ops backfill` subcommand
-	// per AGENTS.md "Soroban DeFi contracts upgrade in place".
-	// On-chain Soroban sources start `false` and only flip `true`
-	// after a per-WASM-hash audit
-	// (`docs/operations/wasm-audits/`). Off-chain CEX/FX sources
-	// are always `true` — no on-chain WASM dependency.
+	// BackfillSafe gates the `stellarindex-ops backfill` subcommand because Soroban contracts upgrade
+	// in place. On-chain Soroban sources stay false until a per-WASM-hash audit
+	// (`docs/operations/wasm-audits/`); off-chain CEX/FX sources are always true.
 	BackfillSafe  bool `json:"backfill_safe"`
 	DefaultWeight int  `json:"default_weight"`
-	// OnChain is true when the source observes the Stellar network
-	// directly (dispatcher-path ingest) rather than reading an
-	// off-chain vendor API. See external.IsOnChain — the explorer's
-	// Stellar-network surfaces filter on this so reference-pricing
-	// feeds (CEX / FX / aggregators / Chainlink) don't appear as
-	// Stellar on-chain activity.
+	// OnChain is true when the source observes the Stellar network directly rather than an
+	// off-chain vendor API (see external.IsOnChain). Explorer surfaces filter on it so
+	// reference-pricing feeds do not appear as Stellar on-chain activity.
 	OnChain bool `json:"on_chain"`
 	// Selectable is true when `source=` accepts this name on the
 	// single-source routes: on-chain sources and CEX venues. False for
@@ -177,11 +157,8 @@ type Source struct {
 	// trade-time usd_volume. Those are never valued at today's XLM price.
 	VolumeLowerBound bool  `json:"volume_lower_bound,omitempty"`
 	MarketsCount24h  int64 `json:"markets_count_24h,omitempty"`
-	// VolumeHistory24h — per-hour USD volume buckets for the
-	// trailing 24h. Populated only when the request includes
-	// `sparkline` (e.g. `?include=stats,sparkline`). Holes are
-	// filled with zero-volume buckets so the array always has 24
-	// entries, oldest → newest.
+	// VolumeHistory24h holds per-hour USD volume buckets for the trailing 24h, only with
+	// `?include=stats,sparkline`. Holes are zero-filled so there are always 24 entries, oldest first.
 	VolumeHistory24h []VolumeBucket `json:"volume_history_24h,omitempty"`
 	// VolumeHistory7d — same per-hour shape over the trailing 7 days
 	// (168 buckets), populated only when the request includes
@@ -224,23 +201,12 @@ func (s *Server) servesPubnetReference() bool {
 
 // handleSources serves GET /v1/sources.
 //
-// Returns the static external.Registry, scoped to the sources that exist
-// on the configured network (sourcenet.Applicable), projected onto the wire
-// shape, sorted by name for deterministic responses + cache-
-// friendliness behind a CDN. The whole catalogue is small enough
-// (~25 entries today) that pagination would be over-engineering.
+// Returns the static external.Registry scoped to the configured network (sourcenet.Applicable),
+// sorted by name so responses are deterministic and CDN-cacheable. The catalogue is small enough
+// that it is not paginated. The optional `class` filter must be in validSourceClasses, else 400.
 //
-// Query parameters:
-//   - class (optional): filter by source class (any value in
-//     validSourceClasses). Unknown value → 400 naming the accepted set.
-//
-// This endpoint is the operator-facing rendering of the same
-// metadata the aggregator's class filter consults internally —
-// /v1/sources tells API consumers "every venue we know about,
-// labelled with whether it contributes to VWAP." A source listed
-// with `include_in_vwap=false` is intentional policy
-// (aggregator/oracle/authority-sanity classes), not a missing
-// connector.
+// It renders the metadata the aggregator's class filter consults, so `include_in_vwap=false` is
+// intentional policy (aggregator/oracle/authority-sanity classes), not a missing connector.
 func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,gocyclo // include parsing + per-source stat-fill + sparkline backfill are linear; splitting would scatter the request lifecycle
 	classFilter := r.URL.Query().Get("class")
 	if classFilter != "" && !validSourceClasses[classFilter] {
@@ -251,12 +217,8 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		return
 	}
 
-	// `include=stats` opt-in joins per-source 24h trade counts.
-	// Absent the param the response stays the static-registry
-	// projection it always was; opt-in lets callers that want the
-	// extra column pay the (cheap) DB hit, while everyone else
-	// keeps the all-static fast path. `include=stats,sparkline`
-	// additionally joins the per-hour 24h volume series.
+	// `include=stats` opts in to per-source 24h trade counts so callers that do not want them keep
+	// the all-static fast path; `include=stats,sparkline` also joins the per-hour 24h volume series.
 	includeStats, includeSparkline, includeSparkline7d := parseSourcesInclude(r.URL.Query().Get("include"))
 	type stats struct {
 		trades  int64
@@ -275,11 +237,8 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		reads = sourcesStatsAt(s.SourcesStats)
 	}
 	if includeStats && reads != nil {
-		// 8s ceiling on the stats fan-out — same pattern as
-		// /v1/markets and /v1/pools. Soft-fail
-		// already serves the registry without stats on error,
-		// so a deadline just degrades gracefully rather than
-		// hanging the whole sources listing on a cold cache.
+		// 8s ceiling on the stats fan-out, as in /v1/markets and /v1/pools. Stats soft-fail to the
+		// bare registry, so a deadline degrades gracefully instead of hanging the listing cold.
 		statsCtx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 		got, at, err := reads.GetSourceStatsAt(statsCtx)
 		cancel()

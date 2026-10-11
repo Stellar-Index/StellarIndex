@@ -10,11 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
-// handleSignupRetired answers every method on /v1/signup and
-// /v1/signup/verify with the same 410. It deliberately reads neither the
-// body nor the email: answering 201 for a new email and 409 for a known
-// one is an email-existence oracle, so no unauthenticated response may
-// depend on request content.
+// handleSignupRetired answers every method on /v1/signup and /v1/signup/verify with the same
+// 410. It reads neither body nor email: 201-vs-409 would be an email-existence oracle, so no
+// unauthenticated response may depend on request content.
 func (s *Server) handleSignupRetired(w http.ResponseWriter, r *http.Request) {
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/endpoint-retired",
@@ -22,39 +20,22 @@ func (s *Server) handleSignupRetired(w http.ResponseWriter, r *http.Request) {
 		"POST /v1/signup and /v1/signup/verify have been retired; use POST /v1/register to obtain an API key")
 }
 
-// SignupIPThrottle is the v1 boundary for the per-IP signup
-// rate-limit. Production wires a Redis-backed token bucket with
-// a tight cap (default 5/hour); nil disables the check entirely,
-// leaving only the global rate-limit middleware.
+// SignupIPThrottle is the v1 boundary for the per-IP signup rate limit. Production wires a
+// Redis-backed token bucket with a tight cap (default 5/hour); nil disables the check, leaving
+// only the global middleware.
 //
-// Designed as a separate seam from the global rate limit so a
-// future deployment can swap in a stricter / different policy
-// (e.g. CAPTCHA, proof-of-work, federated denylist) without
-// touching the global path.
-//
-// The global anonymous bucket allows 60/min per IP — plenty for
-// browsing the public surfaces but
-// 60 signups/min/IP is also 3,600 keys/hour per IP, well above
-// any legitimate signup rate. Tightening here closes the
-// bulk-mint vector without affecting other anonymous traffic.
+// It is a separate seam because the global anonymous bucket (60/min per IP) would allow 3,600
+// keys/hour per IP; tightening here closes the bulk-mint vector without affecting other
+// anonymous traffic.
 type SignupIPThrottle interface {
-	// CheckIP returns nil when the IP is below its signup quota,
-	// or [auth.ErrSignupRateLimited] when the quota is exhausted.
-	// Other errors (typically Redis unavailable) propagate so the
-	// handler can fall open with a 503 — better than silently
-	// disabling the throttle.
+	// CheckIP returns nil when the IP is below its signup quota, or [auth.ErrSignupRateLimited]
+	// when exhausted. Other errors (typically Redis unavailable) propagate to the caller.
 	CheckIP(ctx context.Context, ip string) error
 }
 
-// signupIPThrottleOK runs the per-IP signup throttle check.
-// Returns true when the request should proceed, false when the
-// handler has already written the response (429 on quota
-// exhaustion). Falls open on Redis errors so a transient backend
-// blip doesn't take signup offline; the global rate-limit
-// middleware still applies as a safety net.
-//
-// Extracted from handleSignup to keep that function under the
-// gocognit threshold.
+// signupIPThrottleOK runs the per-IP signup throttle check. It returns true when the request
+// should proceed, false when the response is already written (429 on quota exhaustion). It
+// falls open on transient Redis errors; the global rate-limit middleware still applies.
 func (s *Server) signupIPThrottleOK(w http.ResponseWriter, r *http.Request) bool {
 	if s.SignupIPThrottle == nil {
 		return true
@@ -75,15 +56,10 @@ func (s *Server) signupIPThrottleOK(w http.ResponseWriter, r *http.Request) bool
 		return false
 	}
 	if errors.Is(err, auth.ErrThrottleUnavailable) {
-		// Sustained Redis outage: fail-CLOSED rather than disabling
-		// abuse-prevention indefinitely. Retry-After MUST be set
-		// BEFORE writeProblem because writeProblem calls
-		// w.WriteHeader(status) internally — headers added after
-		// that point are silently dropped by net/http. The 30s
-		// hint matches [auth.DefaultSignupThrottleDwellTime];
-		// clients that obey Retry-After will naturally space
-		// retries far enough apart to ride out a typical Redis
-		// fail-over.
+		// Sustained Redis outage: fail CLOSED rather than disable abuse prevention. Retry-After
+		// MUST be set BEFORE writeProblem, which writes the header; later additions are dropped
+		// by net/http. The 30s hint matches [auth.DefaultSignupThrottleDwellTime], enough to
+		// ride out a typical Redis fail-over.
 		w.Header().Set("Retry-After", "30")
 		s.logger.Warn("signup IP throttle unavailable; failing closed (sustained Redis errors)",
 			"err", err, "ip", ip)

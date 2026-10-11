@@ -13,55 +13,41 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
-// This file puts a LAST-GOOD layer under the per-category bespoke analytics
-// block of /v1/protocols/{name}.
+// This file puts a LAST-GOOD layer under the per-category bespoke analytics block of
+// /v1/protocols/{name}.
 //
-// Why: the bespoke block is built LAST in buildProtocolDetail, so it inherits
-// whatever remains of the rebuild's 90-second budget after the roster and lake
-// analytics. Under load that reaches zero and the build fails with `context
-// deadline exceeded`; enrichBespoke then drops the block, and with no healthy
-// entry yet (cold process, fresh deploy) the bespoke-less view would be cached
-// and stamped fresh, so the page would render its suite as ABSENT.
+// The bespoke block is built LAST in buildProtocolDetail, so it inherits whatever remains of
+// the rebuild's 90-second budget; under load that reaches zero and enrichBespoke drops the
+// block. With no healthy entry yet (cold process) the bespoke-less view would be cached and
+// stamped fresh, rendering the suite as ABSENT.
 //
-// The block gets its own TTL-less cache with a detached, single-flighted, GATED
-// refresh. A build serves the previous block instantly; only a TRUE first-ever
-// miss waits, bounded by the build's context (the compute survives that
-// deadline, so the next build lands warm). A failed or starved refresh keeps the
-// last good block.
+// The block therefore has its own TTL-less cache with a detached, single-flighted, GATED
+// refresh. A build serves the previous block instantly; only a TRUE first-ever miss waits,
+// bounded by the build's context (the compute survives that deadline, so the next build lands
+// warm). A failed or starved refresh keeps the last good block.
 //
-// Cadence: every build kicks a refresh UNCONDITIONALLY (single flight collapses
-// duplicates). A freshness-gated kick would sawtooth, the same failure
-// PrewarmProtocolDetails avoids.
+// Every build kicks a refresh UNCONDITIONALLY (single flight collapses duplicates); a
+// freshness-gated kick would sawtooth, as PrewarmProtocolDetails also avoids.
 
-// bespokeStaleAfter is the age past which a SERVED bespoke block is
-// reported stale (the detail view's analytics.status drops ok → stale).
-// It is NOT a refresh trigger — refreshes are driven by the build cadence
-// above. Three sweeps' worth (~45 min): a healthy system always serves a
-// block from the previous sweep (≈13–16 min old), so crossing this line
-// means the refresh has been failing or starved for a while, which is
-// exactly when a client should be told.
+// bespokeStaleAfter is the age past which a SERVED bespoke block is reported stale
+// (analytics.status drops ok to stale); it is NOT a refresh trigger. Three sweeps' worth: a
+// healthy system serves a block from the previous sweep (~13-16 min old), so crossing it means
+// refreshes have been failing or starved, which is when a client should be told.
 const bespokeStaleAfter = 45 * time.Minute
 
-// bespokeRefreshTimeout bounds ONE detached bespoke battery. Measured on
-// r1 UNDER replay load: soroswap 90d ~1.9s, cctp ~0.4s. A
-// minute is two orders of magnitude of headroom for contention while
-// still bounding a wedged query so it cannot pin the single-flight.
+// bespokeRefreshTimeout bounds ONE detached bespoke battery. Batteries take ~2s under load, so
+// a minute is ample headroom while still bounding a wedged query so it cannot pin the
+// single-flight.
 const bespokeRefreshTimeout = time.Minute
 
-// bespokeGateLimit bounds concurrently-running detached bespoke
-// batteries. The key space is closed (registry × the four whitelisted
-// windows ≈ 80 keys, none of them caller-chosen), but a cold-start burst
-// could still launch one Postgres battery per key at once, so the gate
-// caps it. 8 (class cap 4 — TryAcquireClass allows a server-keyed class
-// half the global limit) is a third of timescale.PoolMaxOpenConns, so the detached tier
-// can never crowd out request-path served-tier reads, while leaving
-// enough headroom that a legitimate burst of never-built keys is served
-// rather than skipped.
+// bespokeGateLimit bounds concurrently-running detached bespoke batteries. The key space is
+// closed (registry x four whitelisted windows, ~80 keys), but a cold-start burst could launch
+// one Postgres battery per key at once. 8 (class cap 4, since TryAcquireClass allows a
+// server-keyed class half the global limit) is a third of timescale.PoolMaxOpenConns, so the
+// detached tier cannot crowd out request-path served-tier reads.
 //
-// Deliberately a SEPARATE gate from the explorer's lake gate: these
-// queries run against the served tier (Postgres), and borrowing the
-// ClickHouse pool's bound would couple two pools that share no resource
-// — a bespoke burst would starve lake refreshes and vice versa.
+// Deliberately SEPARATE from the explorer's lake gate: these queries hit the served tier
+// (Postgres), and sharing the ClickHouse bound would couple two pools that share no resource.
 const bespokeGateLimit = 8
 
 // bespokeGateClass is this cache's refresh class. Its own name so a burst
@@ -173,11 +159,9 @@ func (c *bespokeCache) refreshGate() *clickhouse.RefreshGate {
 	return c.gate
 }
 
-// refreshBespoke kicks ONE detached bespoke build for key (returning the
-// live flight when one is already up) and returns it to optionally wait
-// on. Detached on purpose: a build bound to the caller's remaining budget
-// lets the battery die at the deadline and drops the block from the page,
-// which is the failure this cache exists to prevent.
+// refreshBespoke kicks ONE detached bespoke build for key (returning the live flight when one
+// is up) for the caller to optionally wait on. Detached on purpose: a build bound to the
+// caller's remaining budget dies at the deadline and drops the block, which this cache prevents.
 func (s *Server) refreshBespoke(key, source, category string, windowDays int) *bespokeFlight {
 	fl, owner := s.protocolBespokeCache.begin(key)
 	if !owner {
@@ -225,14 +209,12 @@ func (s *Server) refreshBespoke(key, source, category string, windowDays int) *b
 
 // cachedBespoke returns the bespoke block for (source, category, window).
 //
-//   - A cached block is returned IMMEDIATELY (never blocking a build on
-//     the store), flagged stale once it is older than bespokeStaleAfter,
+//   - A cached block is returned IMMEDIATELY, flagged stale once older than bespokeStaleAfter,
 //     while one detached refresh runs.
-//   - A TRUE first-ever miss waits for that detached build, bounded by
-//     ctx. The build outlives the wait, so the next one lands warm.
-//   - ok=false means no block could be produced at all (no reader wired,
-//     or the first-ever build failed / was starved / outran ctx) — the
-//     caller drops the bespoke block.
+//   - A TRUE first-ever miss waits for that detached build, bounded by ctx. The build outlives
+//     the wait, so the next one lands warm.
+//   - ok=false means no block could be produced (no reader wired, or the first-ever build
+//     failed, was starved or outran ctx); the caller drops the bespoke block.
 func (s *Server) cachedBespoke(ctx context.Context, source, category string, windowDays int) (blk *timescale.BespokeBlock, stale, ok bool) {
 	if s.ProtocolBespoke == nil {
 		return nil, false, false

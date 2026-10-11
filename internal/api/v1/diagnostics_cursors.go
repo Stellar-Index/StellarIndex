@@ -15,15 +15,9 @@ type CursorsReader interface {
 	ListCursors(ctx context.Context) ([]timescale.Cursor, error)
 }
 
-// Cursor is the wire shape of one row in the
-// /v1/diagnostics/cursors response. last_updated is RFC 3339; lag
-// is reported as seconds-since-update so operators can spot stuck
-// sources without wall-clock math.
-//
-// State is the derived lifecycle marker (see [cursorStateFor]) — the
-// field that tells a dead one-shot shard apart from a live position
-// without the reader having to do age arithmetic against two
-// thresholds it has no way to know.
+// Cursor is the wire shape of one /v1/diagnostics/cursors row. last_updated is RFC 3339 and lag
+// is seconds-since-update. State is the derived lifecycle marker (see [cursorStateFor]), so
+// readers need not do age arithmetic against thresholds they cannot know.
 type Cursor struct {
 	Source      string `json:"source"`
 	SubSource   string `json:"sub_source,omitempty"`
@@ -33,70 +27,42 @@ type Cursor struct {
 	State       string `json:"state"`
 }
 
-// statusActiveMaxAge is the lag-seconds ceiling that the
-// `?status=active` filter uses to distinguish a live, actively-
-// writing cursor from a stale / completed one. 10 minutes is a
-// generous-but-not-excessive window for the live indexer
-// (production cursor updates every ~5s) and reliably excludes
-// completed backfill cursors that linger in the table for days
-// or weeks before manual cleanup.
+// statusActiveMaxAge is the lag ceiling for `?status=active`. 10 minutes is generous for the live
+// indexer (cursor updates every ~5s) and still excludes completed backfill cursors that linger
+// for days or weeks.
 const statusActiveMaxAge = 10 * time.Minute
 
-// cursorAbandonedAge is the boundary past which a cursor in a one-shot
-// job's namespace is reported as `abandoned` and dropped from the
-// DEFAULT response. It does not apply to the live namespaces — see
-// [cursorStateFor].
-//
-// Nothing in this system checkpoints weekly: the live indexer writes a
-// cursor every ~5s, the projector every cycle, and a backfill shard
-// that is still walking advances continuously. A row untouched for a
-// week is therefore a record of FINISHED OR ABANDONED work, not a
-// position anything is still writing to — `ingestion_cursors` has no
-// retention policy, so those records accumulate forever.
-//
-// Measured on r1, 4,703 of 4,815 rows were past this line, among them
-// SDEX backfill shards carrying a ~9.7M-second lag. Unfiltered, every
-// public request would carry all of them (~520 KB before compression),
-// with nothing on the wire to say which of them anything is still
-// working on.
+// cursorAbandonedAge is the age past which a cursor in a one-shot job's namespace is reported as
+// `abandoned` and dropped from the DEFAULT response; live namespaces are exempt (see
+// [cursorStateFor]). Nothing checkpoints weekly, so a week-old row records finished or abandoned
+// work, and `ingestion_cursors` has no retention policy, so those rows would otherwise swamp
+// every public response.
 const cursorAbandonedAge = 7 * 24 * time.Hour
 
-// Cursor lifecycle states. Derived, not stored — `ingestion_cursors`
-// has no state column, and a cursor's own writer has no chance to mark
-// it dead (a shard that is abandoned is, by definition, one whose
-// process went away without finishing).
+// Cursor lifecycle states. Derived, not stored: an abandoned shard's writer went away without
+// finishing, so it can never mark its own row dead.
 const (
 	cursorStateLive      = "live"      // lag <= statusActiveMaxAge — something is writing this row
 	cursorStateStale     = "stale"     // behind, but a position something is still expected to advance
 	cursorStateAbandoned = "abandoned" // past cursorAbandonedAge in a one-shot job's namespace — finished or dead work
 )
 
-// Response bound for /v1/diagnostics/cursors. The row count is
-// operationally unbounded — one row per (source, sub_source) with no
-// retention — and every ops job that shards its work mints rows in the
-// thousands (projected-rebuild alone accounted for 4,523 of r1's
-// 4,815). Excluding the abandoned set is what makes the DEFAULT
-// response small; this cap is what stops any single response growing
-// without limit, including `?include_abandoned=true`, which pages
-// via `pagination.next`.
+// Response bound for /v1/diagnostics/cursors. Rows are one per (source, sub_source) with no
+// retention, and sharded ops jobs mint thousands. Excluding the abandoned set keeps the DEFAULT
+// response small; this cap bounds every response, including `?include_abandoned=true`, which
+// pages via `pagination.next`.
 const (
 	cursorsDefaultLimit = 500
 	cursorsMaxLimit     = 2000
 )
 
-// cursorStateFor derives a row's lifecycle state from its source and
-// its lag. The two thresholds are the same ones `?status=` filters on,
-// so the state field and the filters can never disagree.
+// cursorStateFor derives a row's lifecycle state from its source and lag, using the same
+// thresholds `?status=` filters on so state and filters cannot disagree.
 //
-// A row in a live cursor namespace ([timescale.LiveCursorSources]) is
-// never `abandoned`, at any age. Nothing abandons the live indexer's
-// or the projector's own resume point, so an old row there means ingest
-// is STUCK — the single condition this endpoint exists to surface.
-// Ageing it out of the default response (and out of `?status=stale`,
-// documented as the view for spotting dead ingest paths) would hide the
-// incident behind the cleanup. It is also the same rule `reap-cursors`
-// applies to the same list, from the same premise: those rows are
-// resume state, not a record of finished work.
+// A row in a live cursor namespace ([timescale.LiveCursorSources]) is never `abandoned`: nothing
+// abandons the indexer's or projector's resume point, so an old row there means ingest is STUCK,
+// the condition this endpoint exists to surface. Ageing it out would hide the incident; it is the
+// same rule `reap-cursors` applies to the same list.
 func cursorStateFor(source string, lag time.Duration) string {
 	switch {
 	case lag <= statusActiveMaxAge:
@@ -162,16 +128,12 @@ func parseCursorsQuery(w http.ResponseWriter, r *http.Request) (cursorsQuery, bo
 		q.maxAge = d
 	}
 
-	// include_abandoned is the explicit opt-in to the dead set. It is
-	// opt-in rather than opt-out because the abandoned rows outnumber
-	// the live ones by ~40:1 and describe work that ended months ago.
+	// include_abandoned is an opt-in because abandoned rows vastly outnumber live ones and
+	// describe long-ended work.
 	q.includeAbandoned = r.URL.Query().Get("include_abandoned") == "true"
 
-	// status: "active" / "stale" / "abandoned" / "" — semantic
-	// convenience layer over max_age. Active = lag <= 10 min
-	// (caps maxAge); stale = the complement, up to the abandoned
-	// boundary; abandoned = the dead set alone, which implies the
-	// opt-in so `?status=abandoned` needs no second parameter.
+	// status is a convenience layer over max_age: active caps maxAge at statusActiveMaxAge, stale
+	// is the complement up to the abandoned boundary, and abandoned implies include_abandoned.
 	switch r.URL.Query().Get("status") {
 	case "":
 		// no-op — return everything live + stale (subject to max_age + source).
@@ -222,12 +184,10 @@ func parseCursorsQuery(w http.ResponseWriter, r *http.Request) (cursorsQuery, bo
 // handleCursors serves GET /v1/diagnostics/cursors; parameters are
 // documented in the OpenAPI spec.
 //
-// The response defaults to non-abandoned rows: `ingestion_cursors` keeps one
-// permanent row per one-shot job shard, which otherwise dominates it
-// (measured on r1: 4,703 of 4,815 rows). Live namespaces are never
-// `abandoned` at any age, so stuck ingest cannot drop out of the default
-// view. Unknown `source` values return an empty array rather than 400, so a
-// typo and a brand-new source look the same.
+// The response defaults to non-abandoned rows, since permanent one-shot shard rows would
+// otherwise dominate it. Live namespaces are never `abandoned`, so stuck ingest cannot drop out
+// of the default view. Unknown `source` values return an empty array rather than 400, so a typo
+// and a brand-new source look the same.
 func (s *Server) handleCursors(w http.ResponseWriter, r *http.Request) {
 	if s.Cursors == nil {
 		writeProblem(w, r,
@@ -291,16 +251,9 @@ func pageCursors(rows []Cursor, offset, limit int) ([]Cursor, string) {
 	return rows, ""
 }
 
-// writeCursorsListError maps a ListCursors error to the appropriate
-// Problem+JSON response. Under cascade the
-// /v1/diagnostics/cursors endpoint is exactly the operator's
-// must-have view, and a generic 500 would not
-// distinguish "postgres briefly stalled" (retry now) from "endpoint
-// permanently broken" (escalate). Mapping transient + timeout
-// shapes to 503 lets operators read the response without ambiguity.
-//
-// Extracted from handleCursors to keep that function under the
-// gocognit ceiling — the seven-branch error map pushed it past 20.
+// writeCursorsListError maps a ListCursors error to a Problem+JSON response. A generic 500 would
+// not distinguish "postgres briefly stalled" (retry) from "endpoint broken" (escalate), so
+// transient and timeout shapes map to 503. Split out of handleCursors for the gocognit ceiling.
 func (s *Server) writeCursorsListError(w http.ResponseWriter, r *http.Request, listCtx context.Context, err error) {
 	if clientAborted(r, err) {
 		return

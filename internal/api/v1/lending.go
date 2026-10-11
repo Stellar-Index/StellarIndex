@@ -26,15 +26,11 @@ type LendingReader interface {
 
 // LendingPool is the wire shape for /v1/lending/pools entries.
 //
-// Today the listing is Blend-only — every row is one Blend pool
-// contract observed in the event stream (auctions and/or position
-// events). net_supplied_30d / net_borrowed_30d are a 30-day NET-FLOW
-// proxy in token base-units, NOT all-time TVL or current reserve
-// balances, and null when the window's flows span more than one
-// reserve asset (base units of different tokens do not add).
-// utilization_30d_pct is their ratio, null whenever either is null or
-// net supply is not positive. Current-state per-reserve TVL,
-// utilization and APR are served by /v1/lending/pools/{pool}/reserves.
+// The listing is Blend-only. net_supplied_30d / net_borrowed_30d are a 30-day NET-FLOW proxy in
+// token base-units, NOT TVL or reserve balances, and null when the flows span more than one
+// reserve asset (base units of different tokens do not add). utilization_30d_pct is their ratio,
+// null when either is null or net supply is not positive. Current per-reserve state is served by
+// /v1/lending/pools/{pool}/reserves.
 type LendingPool struct {
 	Protocol          string   `json:"protocol"`
 	Pool              string   `json:"pool"`
@@ -49,13 +45,9 @@ type LendingPool struct {
 
 // handleLendingPools serves GET /v1/lending/pools.
 //
-// Returns one row per distinct Blend pool contract observed in
-// the trailing-7d auction stream, with auction counts and last-
-// seen timestamp. Sorted by total auction count desc.
-//
-// 200 + empty array when no LendingReader is wired or no pools
-// have been observed — consistent with the rest of the
-// "feature-gated reader" handlers.
+// One row per Blend pool seen in the trailing-7d auction stream, sorted by total auctions desc.
+// Returns 200 with an empty array when no LendingReader is wired, like other feature-gated
+// handlers.
 func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 	reader := s.Lending
 	if reader == nil {
@@ -119,12 +111,9 @@ type LendingPoolReservesView struct {
 	// supplied_usd is null — so the pool holds at least TVLUSD.
 	LowerBound bool          `json:"lower_bound"`
 	Reserves   []ReserveView `json:"reserves"`
-	// AsOfLedger is the lake watermark this current-state read is fresh
-	// to (ADR-0041 Decision 4): the highest ledger the ClickHouse lake
-	// had captured at serve time. The reserve state is decoded from the
-	// lake's contract storage, so a wedged sink makes these figures
-	// stale — pairs with `flags.stale`. Omitted when no watermark reader
-	// is wired.
+	// AsOfLedger is the highest ledger the lake had captured at serve time (ADR-0041 Decision 4).
+	// Reserve state is decoded from lake storage, so a wedged sink makes it stale; pairs with
+	// `flags.stale`. Omitted when no watermark reader is wired.
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
 }
 
@@ -149,12 +138,9 @@ type ReserveView struct {
 }
 
 // handleLendingPoolReserves serves GET /v1/lending/pools/{pool}/reserves
-// — REAL current-state TVL / utilization / supply+borrow APY per
-// reserve (ADR-0039), decoded from the pool contract's Soroban storage
-// in the lake. USD values are best-effort: priced when we have a USD
-// price and established decimals for the reserve's underlying token,
-// else null (the token-unit amounts + util + APY are always exact).
-// Distinct from the /v1/lending/pools window net-flow proxy.
+// - current-state TVL, utilization and APY per reserve (ADR-0039), decoded from the pool's
+// Soroban storage in the lake. USD values are best-effort and null without a USD price and
+// established decimals; token-unit amounts, utilization and APY are always exact.
 func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Request) {
 	if s.Explorer == nil {
 		s.explorerUnavailable(w, r)
@@ -171,12 +157,9 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// The longest budget that still fires ahead of the blanket request
-	// deadline. The reserve lookup is a PK-prefix probe on the
-	// lake's current-state projection rather than a 250k-ledger scan (see
-	// BlendPoolReserves), and the per-reserve pricing below fans out
-	// bounded rather than serially, so this ceiling is a backstop for a
-	// degraded lake — not the routine cost of the route.
+	// The longest budget that still fires ahead of the blanket request deadline. The reserve read
+	// is a PK-prefix probe, not a ledger scan, and pricing fans out bounded, so this ceiling is a
+	// backstop for a degraded lake.
 	ctx, cancel := context.WithTimeout(r.Context(), maxHandlerBudget)
 	defer cancel()
 
@@ -211,20 +194,12 @@ func (s *Server) handleLendingPoolReserves(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Price the reserves with a BOUNDED fan-out, not a serial walk.
-	// buildReserveView is DB-bound: each call resolves a USD price, and a
-	// single resolution can cost several round-trips (the alias walk, then
-	// the stablecoin-peg proxy's per-peg probes) — the reserve token is a
-	// SAC whose price lives under the classic asset it wraps, so the miss
-	// paths are the common ones here. Serially the route's cost scales
-	// with the reserve count on top of the lake read: measured serial,
-	// the largest pool crossed the ceiling while a small one already sat
-	// at 78% of it. Fanned out, the pricing stage costs one lookup's
-	// latency instead of len(states) of them, for every pool size.
+	// Price reserves with a BOUNDED fan-out, not serially: each USD price resolution can cost
+	// several round-trips (alias walk, then peg probes), and serial cost scales with the reserve
+	// count enough to threaten the ceiling on large pools.
 	//
-	// Each goroutine writes only its own index-keyed slot (the sanctioned
-	// shape — see forEachBounded); the TVL is summed afterwards in reserve
-	// order so the total does not depend on completion order.
+	// Each goroutine writes only its own index-keyed slot (see forEachBounded); the TVL is summed
+	// afterwards in reserve order so the total does not depend on completion order.
 	views := make([]ReserveView, len(states))
 	suppliedUSD := make([]*big.Rat, len(states))
 	forEachBounded(s.logger, len(states), readFanoutConcurrency, func(i int) {
@@ -263,10 +238,9 @@ func reservesTVLUSD(suppliedUSD []*big.Rat) (total *string, lowerBound bool) {
 }
 
 // blendReserveInputs resolves the served-tier inputs of the reserves
-// read: the pool's contract generation and its reserve assets. A pool
-// with no known V1/V2 lineage gets an empty reserve list — its rate
-// scale is unknowable, and a guess is off by 10^3. proceed=false means
-// a response has been written or the client has gone.
+// read: the pool's contract generation and its reserve assets. A pool with no known V1/V2
+// lineage gets an empty reserve list, since a guessed rate scale is off by 10^3. proceed=false
+// means a response has been written or the client has gone.
 func (s *Server) blendReserveInputs(ctx context.Context, w http.ResponseWriter, r *http.Request, pool string) (version blend.PoolVersion, assets []string, proceed bool) {
 	version, err := s.Lending.BlendPoolVersion(ctx, pool)
 	if err != nil {
@@ -301,16 +275,11 @@ func (s *Server) writeLendingLookupError(ctx context.Context, w http.ResponseWri
 	writeProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
 }
 
-// writeLendingReservesTimeout is the 503 the reserves handler owes a
-// caller when its [maxHandlerBudget] ceiling fires (12s — the 15s global
-// request deadline less 3s, so this fires FIRST and the caller gets a
-// typed problem rather than a bare cut-off), mirroring the
-// `lending-timeout` response [Server.handleLendingPools] returns in this
-// file. A deadline on a lake contract_data read is a RETRYABLE capacity
-// condition, not an internal fault: a 500 would tell clients "don't retry,
-// it's broken", burn an availability point in the sla-probe's 5xx
-// accounting, and is not a status the OpenAPI spec declares for this path
-// (400 + 503 only).
+// writeLendingReservesTimeout is the typed 503 for when the [maxHandlerBudget] ceiling fires,
+// ahead of the global request deadline so the caller gets a problem rather than a bare cut-off.
+// A deadline on a lake read is a retryable capacity condition, not a fault: a 500 would tell
+// clients not to retry, count against 5xx availability, and is not declared in the OpenAPI spec
+// for this path (400 and 503 only).
 func (s *Server) writeLendingReservesTimeout(w http.ResponseWriter, r *http.Request, stage, pool string) {
 	s.logger.Warn("lending reserves deadline exceeded", "stage", stage, "pool", pool)
 	writeProblem(w, r,
@@ -384,16 +353,12 @@ func (s *Server) reserveDecimals(ctx context.Context, st clickhouse.BlendReserve
 }
 
 // reservePriceUSD resolves a USD price for a Blend reserve's underlying
-// token (a Soroban SAC contract id). It maps the SAC contract back to
-// the classic/native asset it wraps (via the verified-currency
-// catalogue's SAC ids) and prices THAT — our price feeds are keyed by
-// the classic asset (USDC-G…), not the SAC C-id. Falls back to pricing
-// the Soroban asset directly for a non-SAC reserve token. Best-effort:
-// ok=false → TVL is reported in token units only.
+// token (a Soroban SAC contract id). It maps the SAC back to the classic/native asset it wraps
+// and prices that, since price feeds are keyed by (code, issuer), not the C-id; a non-SAC token
+// is priced directly. Best-effort: ok=false means TVL is reported in token units only.
 //
-// scale is the decimals the price was normalised with (the
-// nonstandard-decimals projection, else 7): only an amount divided by that
-// same exponent can be multiplied by it.
+// scale is the decimals the price was normalised with (nonstandard-decimals projection, else 7):
+// only an amount divided by that same exponent can be multiplied by it.
 func (s *Server) reservePriceUSD(ctx context.Context, assetC string) (price string, scale int, ok bool) {
 	if canonicalID, ok := s.resolveSACAsset(assetC); ok {
 		if a, err := canonical.ParseAsset(canonicalID); err == nil {

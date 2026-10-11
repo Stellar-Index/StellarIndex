@@ -13,13 +13,9 @@ import (
 // SEP40Price is the wire shape for the SEP-40 passthrough
 // endpoints (/v1/oracle/lastprice, /v1/oracle/x_last_price).
 //
-// Field set is deliberately minimal — SEP-40 oracle contracts
-// expose `(price, timestamp)` only. Adding source/confidence/
-// price_type would let in a richer view via the SEP-40 surface,
-// but those fields are already on /v1/oracle/latest and
-// /v1/price; mixing them in here would break the "this surface
-// matches what an on-chain SEP-40 oracle returns" contract that
-// integrators rely on.
+// The field set is minimal on purpose: on-chain SEP-40 oracles expose only `(price, timestamp)`,
+// and integrators rely on this surface matching that. Richer fields live on /v1/oracle/latest
+// and /v1/price.
 type SEP40Price struct {
 	Asset     string   `json:"asset"`
 	Price     string   `json:"price"`
@@ -28,11 +24,9 @@ type SEP40Price struct {
 
 // handleOracleLastPrice serves GET /v1/oracle/lastprice?asset=<id>.
 //
-// SEP-40 `lastprice(asset) -> Option<PriceData>` passthrough.
-// The on-chain oracle contract's native quote is fixed by the
-// contract; our API mirrors that semantic by quoting in
-// fiat:USD always — clients wanting a different quote should
-// hit /v1/price?asset=&quote= or /v1/oracle/x_last_price.
+// SEP-40 `lastprice(asset) -> Option<PriceData>` passthrough. The quote is always fiat:USD,
+// mirroring a fixed-quote on-chain oracle; other quotes go through /v1/price or
+// /v1/oracle/x_last_price.
 //
 // 404 when no price observation exists for the asset. A frozen pair
 // (ADR-0019) serves the held last-known-good with flags.frozen, or 503
@@ -77,12 +71,8 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
-	// Route the primary read through the XLM dual-form alias loop,
-	// exactly as handlePrice does. Without it, SEP-40
-	// `lastprice(native)` queries only the literal `native/fiat:USD`
-	// key and misses a fresh `crypto:XLM/fiat:USD` VWAP that CEX
-	// trades populate — returning stale/empty here while /v1/price
-	// serves fresh. See readPriceWithAliases for the full rationale.
+	// Loop the XLM aliases as handlePrice does; querying only the literal `native/fiat:USD` key
+	// would miss a fresh `crypto:XLM/fiat:USD` VWAP from CEX trades.
 	snapshot, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, reader, asset, defaultPriceQuote)
 	// Substance-gated pair: withheld beats the fallback chain — same
 	// rationale as handlePrice (see ErrPriceWithheld). The SEP-40
@@ -103,13 +93,9 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	// flag is the only place the envelope says so.
 	triangulated := false
 	if errors.Is(err, ErrPriceNotFound) {
-		// Same fallback chain as /v1/price (priceFallback): Redis VWAP
-		// cache (stablecoin-proxy rewrites + triangulated chains) →
-		// read-time stablecoin-fiat proxy → fiat-vs-fiat cross-rate.
-		// Without this, SEP-40 `lastprice(native)` 404s in steady
-		// state because prices_1m has no literal native/fiat:USD
-		// bucket, while /v1/price?asset=native&quote=fiat:USD succeeds
-		// via the same fallback.
+		// Same chain as /v1/price (priceFallback): Redis VWAP cache, stablecoin-fiat proxy, then
+		// fiat cross-rate. prices_1m has no literal native/fiat:USD bucket, so without it
+		// `lastprice(native)` would 404 in steady state.
 		viaFallback = true
 		fb := s.priceFallback(ctx, asset, defaultPriceQuote)
 		snapshot, sources, served, triangulated = fb.snap, fb.sources, fb.served, fb.triangulated
@@ -219,15 +205,9 @@ func (s *Server) sep40Serve(ctx context.Context, asset, quote canonical.Asset, r
 
 // handleOraclePrices serves GET /v1/oracle/prices?asset=<id>&records=N.
 //
-// SEP-40 `prices(asset, records) -> Option<Vec<PriceData>>`
-// passthrough. Returns up to `records` most-recent CLOSED 1-minute
-// VWAP snapshots for the asset/USD pair (newest first), per the
-// SEP-40 spec semantic that prices() is "the last N price records."
-//
-// Per ADR-0015 only closed buckets are returned; the in-progress
-// bucket is excluded.
-//
-// Defaults + caps from the OpenAPI: records default 60, max 200.
+// SEP-40 `prices(asset, records) -> Option<Vec<PriceData>>` passthrough: up to `records` most
+// recent CLOSED 1-minute VWAP snapshots for asset/USD, newest first. Per ADR-0015 the
+// in-progress bucket is excluded. records defaults to 60, max 200.
 //
 // 200 with empty array when the asset has no closed buckets yet.
 // 400 when records is out of range or asset is malformed.
@@ -315,14 +295,9 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]SEP40Price, len(snapshots))
 	for i, snap := range snapshots {
-		// dex-nonstandard-decimals forward normalization — the snapshots
-		// come from RecentClosedSnapshots, the same raw prices_1m CAGG
-		// ratio /v1/price's closed-1m-bucket path reads (see
-		// normalizeRawPriceSnapshot in price.go). The quote leg is always
-		// fiat:USD or a 7dp classic USD peg here, so resolving against
-		// defaultPriceQuote is exact for both the direct and the
-		// peg-fallback branch. No-op (byte-identical) for an unflagged
-		// asset.
+		// Snapshots are the raw prices_1m ratio, so apply the same decimals normalization as
+		// /v1/price. The quote leg is fiat:USD or a 7dp USD peg, so defaultPriceQuote resolves it
+		// exactly on both branches; no-op for an unflagged asset.
 		s.normalizeRawPriceSnapshot(&snap, asset, defaultPriceQuote)
 		out[i] = SEP40Price{
 			Asset:     asset.String(),
@@ -336,22 +311,16 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, out, Flags{Stale: viaPeg, Triangulated: viaPeg})
 }
 
-// recentClosedWithStablecoinFallback wraps PriceReader.RecentClosedSnapshots
-// with the same X/fiat:USD -> X/<peg> retry shape used in the other
-// handler-side stablecoin-proxy fallbacks. When the literal asset/fiat:USD
-// lookup returns an empty slice AND quote is fiat:USD AND the operator declared
-// classic USD pegs, walks the pegs and returns the first non-empty
-// asset/<peg> result. viaPeg=true on the return so the envelope can
-// stamp the peg-served series stale and triangulated.
+// recentClosedWithStablecoinFallback wraps PriceReader.RecentClosedSnapshots with the usual
+// X/fiat:USD -> X/<peg> retry: when the fiat:USD read is empty and the operator declared classic
+// USD pegs, it returns the first non-empty asset/<peg> result with viaPeg=true so the envelope
+// can mark the series stale and triangulated.
 //
-// A withheld peg leg is not a miss: the asset HAS a price there that
-// policy declines to publish. A later peg may still serve (as in
-// [Server.walkUSDPegs]); if none does, the first withheld verdict is
-// returned so the handler answers withheld rather than 200 [].
+// A withheld peg leg is not a miss: the asset has a price that policy declines to publish. A
+// later peg may still serve (as in [Server.walkUSDPegs]); if none does, the first withheld
+// verdict is returned so the handler answers withheld rather than 200 [].
 //
-// Both reads go through [Server.recentClosedForAliases], the XLM dual-form
-// alias loop, so `/v1/oracle/prices?asset=native` finds a `crypto:XLM/fiat:USD`
-// bucket written under the alias spelling.
+// Both reads go through [Server.recentClosedForAliases] so the XLM alias spellings are covered.
 func (s *Server) recentClosedWithStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, n int,
 ) (snapshots []PriceSnapshot, viaPeg bool, err error) {
@@ -387,11 +356,9 @@ func (s *Server) recentClosedWithStablecoinFallback(
 	return snapshots, false, nil
 }
 
-// recentClosedForAliases tries each XLM dual-form alias of asset (see
-// [assetAliases]) against quote, in priority order, and returns the
-// first non-empty result. Mirrors [Server.readPriceWithAliasesServed]'s
-// alias loop so /v1/oracle/prices doesn't miss a native-vs-crypto:XLM
-// split of the same market.
+// recentClosedForAliases tries each XLM alias of asset (see [assetAliases]) against quote in
+// priority order and returns the first non-empty result, so a native vs crypto:XLM split of one
+// market is not missed.
 func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, error) {
 	var firstErr error
 	for _, a := range assetAliases(asset) {
@@ -421,12 +388,8 @@ const (
 // handleOracleXLastPrice serves
 // GET /v1/oracle/x_last_price?base=<id>&quote=<id>.
 //
-// SEP-40 `x_last_price(base, quote)` passthrough — returns the
-// last observed price of `base` in terms of `quote`. The
-// `asset` field in the response carries the canonical base
-// identifier so existing SEP-40 clients can reuse their
-// lastprice parsing path; the implicit quote is whatever was
-// passed in the request.
+// SEP-40 `x_last_price(base, quote)` passthrough. The response `asset` carries the canonical base
+// id so SEP-40 clients can reuse their lastprice parsing; the quote is the one requested.
 //
 // 404 when no observation exists for the pair. Freeze handling as
 // handleOracleLastPrice.
