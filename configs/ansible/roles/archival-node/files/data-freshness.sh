@@ -1,26 +1,15 @@
 #!/usr/bin/env bash
-# data-freshness watchdog — the "never get behind" signal.
-#
-# Emits node_exporter textfile gauges for (a) per-domain ingest freshness across
-# EVERY data domain and (b) the per-source ADR-0033 completeness verdict, so a
-# feed dying (coingecko hit its quota → 11 days stale, unnoticed), a timer
-# silently not firing (sep1-refresh never existed; the completeness verdict went
-# 21 days stale), or a real served≠lake gap (a source going complete=false now
-# that the watchdog is trustworthy) all PAGE instead of rotting silently.
-#
-# The gap detector (source_coverage_snapshots) already covers on-chain
-# trade/event source gaps; this fills the rest: reference oracles, FX, supply,
-# the issuer-metadata cron, and the verdict itself.
-#
-# Run from a 15-min timer. One cheap grouped query per domain; same DSN sourcing
+# data-freshness watchdog: node_exporter textfile gauges for per-domain ingest freshness
+# and the per-source ADR-0033 completeness verdict, so a dead feed, a timer that never
+# fires, or a real served<>lake gap pages instead of rotting silently.
+# Complements the gap detector (source_coverage_snapshots, on-chain trade/event gaps):
+# this covers reference oracles, FX, supply, the issuer-metadata cron and the verdict.
+# Run from a 15-min timer. DSN sourced as in compute-archive-to.sh (peer-auth fails under systemd's user-switch).
 # as compute-archive-to.sh (peer-auth fails under systemd's user-switch).
 set -euo pipefail
-# Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
-# values are unquoted (that is what systemd wants), so the shell would
-# expand `$`, split on `;`/`&`/`|`/whitespace and eat quotes inside a
-# secret: the services keep working while this path gets a mangled DSN
-# (deploy-ansible-secrets-5). Same reader as run-heavy-job.sh.
-# usage: load_env_file FILE [export]
+# Read a systemd EnvironmentFile VERBATIM, never source it: its values are unquoted, so
+# the shell would expand `$`, split on `;&|` and eat quotes inside a secret, mangling the DSN.
+# Same reader as run-heavy-job.sh. usage: load_env_file FILE [export]
 load_env_file() {
   local line
   while IFS= read -r line || [ -n "$line" ]; do
@@ -36,18 +25,16 @@ load_env_file() {
   done < "$1"
 }
 load_env_file /etc/default/stellarindex
-# CH as ops_monitor once the role renders this file; /dev/null (no
-# credential, CH `default`) until then, so no deploy order strands this script.
+# CH as ops_monitor once the role renders this file; /dev/null (CH `default`) until then,
+# so no deploy order strands this script.
 CH_NETRC="${CH_NETRC:-/etc/clickhouse-client/ops-monitor.netrc}"
 if [[ ! -r "$CH_NETRC" ]]; then
   echo "data-freshness.sh: credential file $CH_NETRC unreadable; using ClickHouse default user" >&2
   CH_NETRC=/dev/null
 fi
 
-# Debian's pg_wrapper `psql` stats the cluster data dir to pick a version and
-# aborts with "Invalid data directory for cluster 15 main" for any user that
-# cannot read it — which User=stellarindex cannot. Call the versioned binary
-# directly to bypass the wrapper.
+# Debian's pg_wrapper psql aborts ("Invalid data directory") for users who cannot read the
+# cluster data dir, which User=stellarindex cannot; call the versioned binary directly.
 PSQL="/usr/lib/postgresql/${PG_VERSION:-15}/bin/psql"
 
 OUT="${TEXTFILE_OUTPUT:-/var/lib/node_exporter/textfile_collector/data_freshness.prom}"
@@ -69,52 +56,33 @@ trap 'rm -f "$TMP"' EXIT
   echo '# TYPE stellarindex_cagg_history_missing gauge'
   echo '# HELP stellarindex_twap_history_missing 1 when a TWAP continuous aggregate is missing the history prices_1m holds — a migration recreated/emptied it (WITH NO DATA) and the manual refresh_continuous_aggregate follow-up never ran.'
   echo '# TYPE stellarindex_twap_history_missing gauge'
-  # The three families below are composed inside the SQL blocks further
-  # down rather than by a printf here, which is how they came to be the
-  # only ones in this file with no header of their own. An undeclared
-  # family is scraped untyped and its meaning lives nowhere the operator
-  # reading a scrape can see it. Declared here with the rest.
+  # These families are composed inside the SQL blocks below; an undeclared family is scraped
+  # untyped, so declare HELP/TYPE here.
   echo '# HELP stellarindex_supply_assets_stale Watched assets whose newest asset_supply_history row is older than 30h. An aggregate max(time) cannot see a PARTIAL freeze: on 2026-07-28 a handful of live assets kept it green while 37 of 48 had stopped (CS-102).'
   echo '# TYPE stellarindex_supply_assets_stale gauge'
   echo '# HELP stellarindex_supply_asset_max_age_seconds Worst per-asset supply age in seconds across the watched set, 0 when none is known.'
   echo '# TYPE stellarindex_supply_asset_max_age_seconds gauge'
   echo '# HELP stellarindex_completeness_watermark_lag_ledgers Ledgers between the live ingest tip and a source latest ADR-0033 verdict watermark. A verdict can read complete=true while it was only ever verified up to an old ledger (CS-090).'
   echo '# TYPE stellarindex_completeness_watermark_lag_ledgers gauge'
-  # Publication safety, not a data signal. Emitted on EVERY run so the
-  # healthy value (0) is a series that exists rather than an absence: see
-  # the validator just above the atomic swap for why a line that is not a
-  # metric is withheld instead of being allowed to take the file down.
+  # Publication safety, not a data signal. Emitted on EVERY run so the healthy 0 exists as a
+  # series rather than an absence; see the validator above the atomic swap.
   echo '# HELP stellarindex_data_freshness_unparseable_lines Exposition lines this run rendered that are not valid Prometheus samples and were therefore WITHHELD from the published textfile. 0 every healthy run; above 0 means a query answered with something that is not a number (a NULL, an error string, a command tag) and that one series is absent this tick.'
   echo '# TYPE stellarindex_data_freshness_unparseable_lines gauge'
 } > "$TMP"
 
-# (domain, source, age_seconds, threshold_seconds) per domain. Thresholds are a
-# generous multiple of each domain's natural cadence so only a real stall fires.
+# (domain, source, age_seconds, threshold_seconds) per domain. Thresholds are a generous
+# multiple of each domain's natural cadence so only a real stall fires.
 #
-# ── NO WINDOW ON THE SOURCE ENUMERATION ─────────────────────────────────
-# A windowed enumeration (`WHERE <time col> > now() - interval '30 days'
-# GROUP BY source`) would make the window that defines the universe the same
-# window that defines health. A source dead longer than it — the
-# coingecko-quota shape, 11 days and climbing — leaves the GROUP BY entirely,
-# its stale series goes ABSENT rather than to 1, Prometheus ages it out, and
-# `stellarindex_data_source_stale == 1` RESOLVES. The watchdog gets quieter the
-# worse the outage gets, and the same window would silence the supply leg at
-# 7 days.
+# No window on the source enumeration: a windowed GROUP BY would make the window that
+# defines the universe also define health, so a source dead longer than it (the
+# coingecko-quota shape) would leave the GROUP BY, its stale series would go ABSENT
+# instead of 1, and the alert would RESOLVE as the outage worsens. So the universe is
+# every source the table has EVER held, aged against its own newest row. Scan cost stays
+# small: oracle_updates is a hypertable on `ts` (an `ingested_at` window would not prune),
+# fx_quotes is daily-grain, asset_supply_history answers max(time) from its index.
 #
-# So the universe is every source the table has EVER held, and the age is
-# measured against that source's own newest row. The scan cost stays where it
-# matters: `oracle_updates` is a hypertable on `ts`, and a window on
-# `ingested_at` — not a dimension — would never prune a chunk anyway;
-# `fx_quotes` is daily-grain (one row per ticker per bucket, upserted), so its
-# whole history is small; `asset_supply_history` answers max(time) from its
-# time index.
-#
-# The cost is the other direction: a source RETIRED on purpose
-# keeps its history and therefore keeps reporting stale. That is the
-# fail-closed side of the trade and it is deliberate — a retired feed is a
-# deliberate act with an operator behind it, a dead feed is not. Retiring one
-# means deleting its rows (or excluding it here in the same change), and the
-# ticket it raises until then is the reminder.
+# Trade-off: a source retired on purpose keeps reporting stale (fail-closed). Retiring one
+# means deleting its rows or excluding it here in the same change.
 #
 # shellcheck disable=SC2129  # the appends below are separate on purpose: each is a distinct query with its own reasoning between them, and a single `{ … } >> $TMP` would bury that
 if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
@@ -214,20 +182,15 @@ then
   echo "data-freshness: per-domain oracle/fx/supply/cursor freshness query failed — its gauges skipped this tick, others unaffected" >&2
 fi
 
-# The `supply` domain above measures max(time) across the WHOLE table, so it
-# only proves SOME asset is publishing. It has been observed reading green
-# while 37 of 48 watched assets had frozen — a handful of live assets kept the
-# global max current and hid the rest. An aggregate cannot see a partial
-# freeze, so emit the per-asset shape too: how many watched assets are stale,
-# and the worst age among them. Low cardinality (two series) on purpose —
-# per-asset series would grow with the watched set.
+# The `supply` domain above is max(time) over the whole table, so it only proves SOME asset
+# publishes (it read green with 37 of 48 watched assets frozen). Emit the per-asset shape
+# too: count of stale watched assets and the worst age. Two series, so cardinality does not
+# grow with the watched set.
 #
-# The 30-day window here bounds the WATCHED SET, not the health verdict, and it
-# is anchored to the newest supply row in the table rather than to now().
-# Anchored to now(), a freeze that outlasts it empties the CTE and the gauge
-# reports a literal healthy 0 — `count(*) FILTER (age > 108000)` over no rows —
-# at the exact moment every watched asset has stopped. Anchored to the domain's
-# own newest observation, the set an all-stop froze stays in view and its ages
+# The 30-day window bounds the WATCHED SET, not health, and is anchored to the newest supply
+# row, not now(): anchored to now(), a freeze outlasting it empties the CTE and the gauge
+# reports a healthy 0 exactly when every asset has stopped. Anchored to the newest row, a
+# frozen set stays in view and keeps aging, while a truly retired asset still ages out.
 # go on climbing, while an asset genuinely retired 30 days before the last
 # publication still ages out of the watched set as intended.
 if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
@@ -249,16 +212,11 @@ then
 fi
 
 # Per-source completeness verdict (latest snapshot per source): 1 = incomplete.
-#
-# The system 'recognition' row is EXCLUDED: it counts event shapes on contracts
-# NO source owns — i.e. the rest of the Soroban ecosystem (~23k shapes, growing
-# ~30/day) — so complete=false there is the permanent, expected state of a
-# curated indexer, not a served<>lake gap. Folding it into this gauge would keep
-# the ticket alert firing continuously. Real silent-drop detection lives in each
-# source's OWN recognition axis (recognition_ok on owned contracts), which flips
-# that source's row incomplete and still alerts here. The system row is exported
-# below as a COUNT so a registry regression (a whole protocol's shapes suddenly
-# unattributed — the class seen with rozo) shows as a step change instead.
+# The system 'recognition' row is EXCLUDED: it counts shapes on contracts NO source owns
+# (the rest of Soroban, ~23k and growing), so complete=false there is the permanent expected
+# state, not a served<>lake gap; including it would keep the ticket alert firing. Real
+# silent drops show in each source's OWN recognition axis, which flips that source's row
+# here. The system row is exported below as a COUNT so a registry regression shows as a step.
 if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_completeness_incomplete{source="'||source||'"} '||(NOT complete)::int::text
   FROM (SELECT DISTINCT ON (source) source, complete
@@ -269,22 +227,12 @@ then
   echo "data-freshness: completeness_incomplete verdict query failed — its gauges skipped this tick, others unaffected" >&2
 fi
 
-# Per-source recognition verdict — the OWNED bucket.
-#
-# attributeRecognitionGaps splits every unrecognized shape two ways: gaps on
-# contracts a source OWNS cap that source's recognition axis, and gaps on
-# unowned contracts flow to the system `recognition` row as the unattributed
-# census. Only the first kind is a defect — it means a protocol we index
-# emitted an event none of its decoders claimed, so we are silently dropping
-# data we promised to cover.
-#
-# That bucket was computed but never exported: recognition_ok has been a
-# column on completeness_snapshots all along and appeared only in the API's
-# /v1/coverage response. So the harmless number (unattributed_shapes) carried
-# a metric AND an alert, while the harmful one had neither.
-#
-# The system `recognition` row is excluded for the same reason it is excluded
-# from completeness_incomplete above: it is the unowned census, not a source,
+# Per-source recognition verdict, the OWNED bucket. attributeRecognitionGaps puts gaps on
+# contracts a source OWNS on that source's recognition axis and unowned ones in the system
+# `recognition` census. Only the owned kind is a defect: an indexed protocol emitted an
+# event none of its decoders claimed, i.e. we silently drop data we promised to cover.
+# The system row is excluded as above: it is the unowned census, and its recognition_ok is
+# false by construction.
 # and its recognition_ok is false permanently by construction (it can only be
 # true if no un-indexed Soroban contract exists anywhere on the network).
 if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
@@ -297,14 +245,11 @@ then
   echo "data-freshness: recognition_ok verdict query failed — its gauges skipped this tick, others unaffected" >&2
 fi
 
-# System recognition census count, parsed from the snapshot's detail text
-# ("<N> unrecognized shape(s) on <M> unowned contract(s) (earliest ledger L) —
-# …"; the clean state leads with a literal "0"). The leading-digits contract is
-# OWNED by completeness.FormatRecognitionDetail (internal/completeness/audit_axis.go)
-# and pinned by TestFormatRecognitionDetail_leadsWithTheShapeCount, because a
-# reword that dropped the numeric prefix would make this substring() report 0
-# shapes silently — the under-reporting direction. The COALESCE is kept as a
-# belt-and-braces fallback for a row written before that format existed.
+# System recognition census count, parsed from the snapshot detail text ("<N> unrecognized
+# shape(s) on <M> unowned contract(s) ..."; clean state leads with "0"). The leading-digits
+# contract is OWNED by completeness.FormatRecognitionDetail (internal/completeness/audit_axis.go)
+# and pinned by TestFormatRecognitionDetail_leadsWithTheShapeCount: a reword dropping the
+# numeric prefix would make this report 0 silently. COALESCE is a fallback for older rows.
 if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 SELECT 'stellarindex_recognition_unattributed_shapes '||
        COALESCE(substring(detail FROM '^[0-9]+'), '0')
@@ -316,42 +261,22 @@ then
   echo "data-freshness: recognition unattributed-shape census query failed — its gauges skipped this tick, others unaffected" >&2
 fi
 
-# A continuous aggregate that a
-# migration recreated WITH NO DATA — or that a replay rewrote the base rows of —
-# is EMPTIED PENDING REFRESH, and nothing else in this system can see that
-# state. Migrations 0115 and 0147 both DROP and recreate all nine price/TWAP
-# views and leave `CALL refresh_continuous_aggregate(...)` to an operator
-# banner; a fresh database (a new region, a test net, a restore) applies them
-# from zero and is left the same way. The trap that hides a skipped follow-up:
-# each view's refresh POLICY only auto-materializes its trailing start_offset
-# window (prices_1m 5 minutes, twap_1h 4 hours), so the NEWEST bars reappear on
-# the next policy tick and every newest-bar freshness/age/last-refresh check —
-# stellarindex_cagg_last_refresh_unix included — reads GREEN while the entire
-# back-history serves empty. The ADR-0033 completeness verdict cannot see it
-# either: these are derived price views, not reconcile TARGETS.
+# Emptied continuous aggregates. A cagg recreated WITH NO DATA (migrations 0115/0147 drop
+# and recreate all nine price/TWAP views and leave refresh_continuous_aggregate to an
+# operator), or whose base rows a replay rewrote, is empty pending refresh and nothing else
+# sees it: each refresh POLICY only re-fills a trailing window, so newest-bar and
+# last-refresh checks read GREEN while back-history serves empty. The ADR-0033 verdict
+# cannot see it either (derived views are not reconcile TARGETS).
 #
-# So detect it directly, and judge EVERY view against the thing that is not
-# emptied with them. The reference is `trades` — the raw hypertable all nine
-# aggregate, kept forever (migration 0031 removed its retention). Using
-# prices_1m's own min(bucket) would make the detector self-muting in exactly
-# the scenario it names: 0147 empties prices_1m TOO, so after it runs the
-# reference is the policy's minutes-old sliver, `tmin > pmin + 1 day` is false
-# for every view, and the gauge publishes a healthy 0 for a database with no
-# OHLC history at all.
+# Judge every view against `trades` (raw, kept forever), not prices_1m's own min(bucket):
+# 0147 empties prices_1m too, so that reference would be the policy's minutes-old sliver and
+# the gauge would publish a healthy 0 with no OHLC history. A view is emptied when it is
+# empty or its oldest bar trails the oldest trade by more than a day, except where an ARMED
+# retention policy (0156 ships one disabled on prices_1m) moves the floor to now()-drop_after;
+# reading timescaledb_information.jobs keeps that in step without a hardcoded window.
 #
-# A view is emptied-pending-refresh when it is empty, or when its OLDEST
-# materialized bar trails the oldest bar it OUGHT to hold by more than a day.
-# That floor is the oldest trade — except where an ARMED retention policy makes
-# a shorter history correct: migration 0156 attaches a 90-day retention to
-# prices_1m and ships it disabled, and an operator who arms it deliberately
-# moves that view's floor to now()-90d. Reading the armed policies out of
-# timescaledb_information.jobs keeps the two facts in step automatically
-# instead of hardcoding a window here that a later arming would falsify.
-#
-# Cheap: min(bucket) rides each view's time index and min(ts) rides the trades
-# time index. The 1-day slack absorbs bucket truncation (time_bucket rounds
-# DOWN, so a healthy view's oldest bar is at or before the oldest trade) and
-# the 2-day gate keeps a fresh deploy's legitimate initial-materialization
+# Cheap: min(bucket)/min(ts) ride the time indexes. The 1-day slack absorbs time_bucket
+# rounding down; the 2-day gate keeps a fresh deploy's initial materialization quiet.
 # window from false-firing.
 if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH base AS (SELECT min(ts) AS tmin FROM trades),
@@ -397,11 +322,9 @@ then
   echo "data-freshness: emptied-continuous-aggregate detector query failed — its gauges skipped this tick, others unaffected" >&2
 fi
 
-# A verdict can read complete=true while its watermark lags the live
-# network head (a mid-walk stall or a manual small -to). complete/computed_at
-# alone can't see that, so emit the per-source lag (live ingest cursor tip −
-# verdict watermark) — a source verified only to an old ledger becomes
-# observable/alertable instead of showing a green "N/N complete" badge.
+# A verdict can read complete=true while its watermark lags the network head (mid-walk stall,
+# small manual -to). Emit per-source lag (ingest cursor tip - verdict watermark) so that is
+# alertable rather than a green "N/N complete" badge.
 if ! "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH tip AS (SELECT max(last_ledger) AS t FROM ingestion_cursors)
 SELECT 'stellarindex_completeness_watermark_lag_ledgers{source="'||s.source||'"} '
@@ -413,37 +336,22 @@ then
   echo "data-freshness: completeness watermark lag query failed — its gauges skipped this tick, others unaffected" >&2
 fi
 
-# supply_flows (ClickHouse) is the per-token mint/burn/clawback set that backs
-# /v1/assets SEP-41 supply — TokenSupply() sums it FINAL on-demand, so its
-# freshness IS the served SEP-41 supply's freshness. Live-written by the
-# indexer; if it stalls, served SEP-41 supply goes stale. (Threshold generous —
-# supply events are bursty.)
+# supply_flows (ClickHouse) backs /v1/assets SEP-41 supply (TokenSupply() sums it FINAL), so
+# its freshness IS served SEP-41 supply freshness. Threshold is generous: supply events are bursty.
 #
-# BEST-EFFORT, and it has to stay that way: this is the only non-Postgres
-# probe in the script, and ClickHouse is a separate daemon that can be down
-# while every Postgres-derived gauge above is perfectly computable. A bare
-# `SF_AGE=$(curl … | tr …)` assignment would take curl's status under
-# `set -euo pipefail`, so a CH outage would ABORT the script here — the EXIT
-# trap removes $TMP, the atomic `mv` below never runs, and node_exporter
-# goes on re-serving the PREVIOUS data_freshness.prom verbatim. Every gauge
-# then FREEZES at its last value rather than going absent: stale sources keep
-# reading `stellarindex_data_freshness_stale 0`, and the watchdog's own
-# meta-alert (absent_over_time(...[45m])) cannot fire either, because the
-# series are still present. One ClickHouse outage would silence the whole
-# "never get behind" layer.
-#
-# Running the probe as an `if` condition exempts it from `set -e`; `-f`
-# turns an HTTP 5xx into a failure instead of an error body that would be
-# emitted as a metric value.
+# BEST-EFFORT by design: ClickHouse is a separate daemon that can be down while every
+# Postgres gauge is computable. A bare `SF_AGE=$(curl ... | tr ...)` would take curl's status
+# under `set -euo pipefail`, abort the script, and the EXIT trap would remove $TMP so
+# node_exporter re-serves the PREVIOUS file: every gauge FREEZES (stale sources keep reading
+# 0) and the absent_over_time meta-alert cannot fire. So the probe is an `if` condition
+# (exempt from `set -e`) and `-f` turns an HTTP 5xx into a failure instead of a metric value.
 SF_AGE=""
 if ! SF_AGE=$(curl -sS -f --max-time 15 --netrc-file "$CH_NETRC" http://localhost:8123/ --data-binary \
   "SELECT toUInt64(dateDiff('second', max(ingested_at), now())) FROM stellar.supply_flows" | tr -d '[:space:]'); then
   echo "data-freshness: ClickHouse supply_flows probe failed — sep41_supply gauges skipped this tick" >&2
   SF_AGE=""
 fi
-# Digits only. A partial or non-numeric body must not reach the textfile:
-# ONE unparseable sample makes node_exporter reject the WHOLE file, taking
-# every other gauge in it down with the probe.
+# Digits only: ONE unparseable sample makes node_exporter reject the WHOLE file.
 case "$SF_AGE" in
   '' | *[!0-9]*) SF_AGE="" ;;
 esac
@@ -453,64 +361,28 @@ if [ -n "$SF_AGE" ]; then
     "$([ "$SF_AGE" -gt 3600 ] && echo 1 || echo 0)" >> "$TMP"
 fi
 
-# ── Validate the rendered bytes before publishing ─────────────────────
+# ── Validate the rendered bytes before publishing ──
 #
-# Everything above this line reached $TMP UNEXAMINED. Seven psql
-# invocations write their stdout straight into it and compose their
-# exposition text inside SQL, so nothing in this shell script even looks
-# like a metric line, and it carries the largest exposure of the 21
-# gated producers: 162 samples on r1, every byte of every value chosen by
-# Postgres.
+# Everything above reached $TMP unexamined: the psql invocations write Postgres-chosen bytes
+# straight in. node_exporter rejects the WHOLE file on one unparseable line (a NULL as an
+# empty value, an error string, a command tag), taking every gauge and this watchdog's own
+# meta-alert with it. Same grammar and sequence as timescale-jobs-probe.sh
+# (roles/archival-node/tasks/10-observability.yml): parse the rendered bytes, then swap.
 #
-# node_exporter does not skip an unparseable line, it rejects the WHOLE
-# file. One NULL rendering as an empty value field, one error string,
-# one stray command tag would take all 162 off the host together — the
-# per-domain freshness gauges, the ADR-0033 completeness verdicts, the
-# recognition axis — and take this watchdog's own meta-alert with them,
-# because the series it reads is in this same file. That is exactly the
-# shape that cost 127 unrelated stellarindex_timescale_* series ~20
-# minutes of darkness.
+# The verdict on a bad line differs on purpose. That probe refuses to publish because an
+# unpublished file AGES and its last-run gauge notices. Here there is no last-run gauge and
+# the only meta-alert is absent_over_time(stellarindex_data_freshness_stale[45m])
+# (deploy/monitoring/rules/data-freshness.yml); an unpublished file is re-served verbatim, so
+# nothing goes absent and every gauge freezes. So publish and withhold only the offending
+# lines: a withheld series is ABSENT, which every `== 1` predicate already tolerates.
 #
-# Same grammar, and the same place in the sequence, as
-# timescale-jobs-probe.sh (roles/archival-node/tasks/10-observability.yml):
-# parse the rendered bytes, then swap. What differs is the VERDICT on a
-# bad line, and the difference is deliberate.
-#
-#   The probe REFUSES to publish and exits 1. Its stated reason is that
-#   a file not published AGES, and `time() - stellarindex_timescale_
-#   probe_last_run_unix` is precisely the arm of
-#   stellarindex_timescale_probe_degraded that notices.
-#
-#   That premise is false here. This producer emits no last-run gauge,
-#   and its only meta-alert is
-#   `absent_over_time(stellarindex_data_freshness_stale[45m])`
-#   (deploy/monitoring/rules/data-freshness.yml). A file left unpublished
-#   is re-served verbatim by node_exporter on every scrape with a fresh
-#   timestamp: NOTHING goes absent, so that alert cannot fire, and every
-#   gauge FREEZES at its last value — genuinely stale sources keep
-#   reading stellarindex_data_freshness_stale 0. That is not a
-#   hypothetical: it is the failure the ClickHouse probe above is shaped
-#   (an `if`, not a bare assignment) to avoid. Refusing here would
-#   re-admit through the front door the failure that probe keeps out the
-#   back.
-#
-# So: publish, and withhold only the offending lines. 161 true samples
-# beat 162 frozen ones, and a withheld line leaves its series ABSENT —
-# where every alert predicate over this file is `== 1` and was already
-# quiet on an absence — rather than leaving it asserting a falsehood.
-#
-# The withholding is NOT silent, which is the whole objection to dropping
-# lines. Each one is named on stderr (journal), the count is published as
-# a gauge of its own, and a non-zero count exits non-zero AFTER the swap,
-# which leaves data-freshness.service in `failed` and therefore under
-# stellarindex_systemd_unit_failed (infra.yml, severity ticket) — the
-# unit is deliberately not in scripts/ci/unit-failed-dedicated.baseline,
-# so that signal costs no new rule. Loud, and never at the cost of the
-# other families in this file.
+# Withholding is not silent: each line is named on stderr, the count is its own gauge, and a
+# non-zero count exits non-zero AFTER the swap, leaving the unit `failed` under
+# stellarindex_systemd_unit_failed (ticket; unit deliberately not in
+# scripts/ci/unit-failed-dedicated.baseline).
 CHECKED="$(mktemp "${TMP}.XXXXXX")"
-# Run as an `if` condition so a validator that cannot run is HANDLED
-# rather than killing the script under `set -e` — same reasoning as the
-# ClickHouse probe above. awk's stdout is the withheld-line tally.
+# Run as an `if` condition so a validator that cannot run is handled, not fatal under
+# `set -e`. awk's stdout is the withheld-line tally.
 if ! DROPPED="$(awk -v keep="$CHECKED" '
   # Comment lines (the HELP/TYPE headers) and blanks are exposition
   # too, and carry no value field: pass them through untouched.
@@ -538,10 +410,8 @@ if ! DROPPED="$(awk -v keep="$CHECKED" '
   echo "data-freshness: the exposition validator did not run — refusing to publish unvalidated bytes, since node_exporter drops an unparseable file whole and says so only in node_textfile_scrape_error. Previous data_freshness.prom left in place." >&2
   exit 1
 fi
-# The tally is about to become a metric value, so it gets the same
-# digits-only treatment as the ClickHouse body above. A validator that
-# answered with something other than a count has validated nothing, so
-# this is a refusal rather than a coercion to 0.
+# The tally becomes a metric value, so digits-only as above; a non-count means nothing was
+# validated, so refuse rather than coerce to 0.
 case "$DROPPED" in
   '' | *[!0-9]*)
     rm -f "$CHECKED"
@@ -558,11 +428,9 @@ chmod 0644 "$TMP"
 mv "$TMP" "$OUT"
 trap - EXIT
 
-# Published — now be loud. A withheld line means this producer rendered
-# something that is not a metric, which is a defect in the SQL above or in
-# what Postgres answered, and the operator has to see it. The 161 good
-# samples are already on disk by this point, so exiting non-zero costs
-# nothing but a failed oneshot — which the catch-all
+# Published; now be loud. A withheld line is a defect in the SQL above or in what Postgres
+# answered. The good samples are already on disk, so exiting non-zero only fails the oneshot,
+# which the stellarindex_systemd_unit_failed ticket already watches.
 # stellarindex_systemd_unit_failed ticket already watches.
 if [ "$DROPPED" -gt 0 ]; then
   echo "data-freshness: published data_freshness.prom with $DROPPED unparseable line(s) withheld — stellarindex_data_freshness_unparseable_lines carries the count" >&2

@@ -1,46 +1,29 @@
 #!/usr/bin/env bash
-# lake-dedup-driver-test.sh — fixture tests for the two fail-open guards
-# in deploy/clickhouse/lake-dedup-driver.sh.
+# lake-dedup-driver-test.sh - fixture tests for the fail-open guards in
+# deploy/clickhouse/lake-dedup-driver.sh.
 #
-# clickhouse-client and df are STUBBED (fake-ch / fake-df, dropped in a
-# throwaway PATH dir), so this runs anywhere in under a second and never
-# touches a real lake. The stub records every statement handed to it and
-# answers from fixture env vars, which is what makes the interesting
-# assertion possible: not "the script printed something" but "OPTIMIZE
-# was never issued" / "the run exits non-zero and says why".
+# clickhouse-client and df are STUBBED (fake-ch / fake-df in a throwaway PATH
+# dir), so this runs anywhere in under a second and never touches a real lake.
+# The stub records every statement and answers from fixture env vars, so tests
+# can assert "OPTIMIZE was never issued", not just that something printed.
 #
-# What is pinned, and why each is the actual defect (not an invented one):
-#
-#   1. the partition-enumeration query FAILING (auth, OOM, server down)
-#      left PARTS empty, so total=0, the for-loop never ran, and
-#      the driver logged "=== done: 0 partitions processed ===" and
-#      exited 0 — a failed enumeration was indistinguishable from a
-#      legitimate quiet run. It must now ABORT (exit 1) before that line.
-#   2. a legitimate quiet run (the query succeeds, finds nothing) must
-#      still exit 0 and log the zero — the fix must not turn "nothing to
-#      do" into a false failure.
-#   3. the disk-space guard failing OPEN on unparseable df output: `df`
-#      printing something non-numeric made `[ "$free_bytes" -lt … ]`
-#      error (exit 2), which `if` reads as false, skipping the ABORT and
-#      falling straight through to an unguarded OPTIMIZE. The guard must
-#      now validate free_bytes as digits BEFORE the comparison.
-#   4. OPTIMIZE's own exit code was captured (`rc=$?`) but never acted
-#      on — a failed merge was logged inline as just another partition
-#      and the run still reported success. The driver must now abort on
-#      a nonzero rc.
-#   5. the ordinary success path (no failures injected) still completes,
-#      processes every candidate partition, and reports the right count.
-#   6. the <table> argument is spliced into SQL and the log path, so any
-#      name outside the lake tables the driver is for is refused before
-#      a single statement is issued.
-#   7. the run's progress reaches monitoring as textfile-collector gauges
+# Pinned cases:
+#   1. a FAILING partition-enumeration query (auth, OOM, server down) must ABORT
+#      (exit 1), not look like a quiet run ("done: 0 partitions", exit 0).
+#   2. a legitimate quiet run (query ok, nothing found) still exits 0 and logs 0.
+#   3. the disk guard must validate free_bytes as digits BEFORE the comparison:
+#      non-numeric df output makes `[ -lt ]` error, `if` reads false, and the
+#      ABORT is skipped into an unguarded OPTIMIZE.
+#   4. a nonzero OPTIMIZE exit code aborts the run.
+#   5. the ordinary success path processes every candidate and counts correctly.
+#   6. the <table> argument is spliced into SQL and the log path, so names
+#      outside the lake tables are refused before any statement is issued.
+#   7. progress reaches monitoring as textfile-collector gauges
 #      (stellarindex_lake_dedup_*), and the terminal state is written.
-#   8. a run that ABORTs on the enumeration query, before the candidate
-#      count is known, still overwrites the previous run's
-#      last_exit_ok=1 with 0, so a failed run never reads as healthy.
-#   9. a run stopped by SIGTERM mid-OPTIMIZE exits non-zero promptly,
-#      takes its in-flight clickhouse-client with it, and records
-#      last_exit_ok=0 / running=0 rather than a clean exit.
+#   8. an ABORT before the candidate count is known still overwrites the previous
+#      run's last_exit_ok=1 with 0.
+#   9. SIGTERM mid-OPTIMIZE exits non-zero promptly, kills the in-flight
+#      clickhouse-client and records last_exit_ok=0 / running=0.
 #
 # Run: bash deploy/clickhouse/lake-dedup-driver-test.sh
 set -uo pipefail
@@ -60,10 +43,9 @@ bad() { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
 mkdir -p "$TMP/bin"
 
 # ─── the fake clickhouse-client ─────────────────────────────────────
-# Answers the driver's three query shapes from env fixtures, and
-# appends every statement (whitespace squashed to one line) to $CH_LOG
-# so a test can assert a statement was NEVER issued, not just that the
-# run exited a certain way.
+# Answers the driver's three query shapes from env fixtures and appends every
+# statement (whitespace squashed) to $CH_LOG, so a test can assert one was NEVER
+# issued.
 cat > "$TMP/bin/fake-ch" <<'STUB'
 #!/usr/bin/env bash
 sql=""
@@ -121,9 +103,8 @@ STUB
 chmod +x "$TMP/bin/fake-ch"
 
 # ─── the fake df ─────────────────────────────────────────────────────
-# Ignores its arguments (the driver always targets the same mount) and
-# prints a header + one avail-bytes line, matching what
-# `df --output=avail -B1 <dir> | tail -1` hands the driver.
+# Ignores its arguments; prints a header + one avail-bytes line, as
+# `df --output=avail -B1 <dir> | tail -1` would.
 cat > "$TMP/bin/df" <<'STUB'
 #!/usr/bin/env bash
 echo "Avail"
@@ -282,10 +263,9 @@ else
 fi
 
 # ── 5c. the dup-candidate probe uses the table's real ORDER BY key, ──
-# not a toYYYYMM(ingested_at) proxy — a partition spanning two ingest
-# months with zero actual duplicate rows must not be flagged, and one
-# with duplicates inside a single ingest month must be. Both are the
-# same defect: a months-based proxy gets each case wrong.
+# not a toYYYYMM(ingested_at) proxy: a partition spanning two ingest months
+# with no duplicate rows must not be flagged, and one with duplicates inside a
+# single month must be.
 run real_dup_probe SORTKEY_ANSWER='ledger_seq, tx_index' ENUM_PARTS=$'0000000003\n' -- transactions
 if grep -q 'uniqExact((ledger_seq, tx_index))' "$LOG_STMT"; then
   ok "candidate query measures real duplicates via the table's own ORDER BY key"
@@ -311,11 +291,9 @@ for bad_table in 'transactions GROUP BY 1; DROP TABLE stellar.ledgers --' '../..
   fi
 done
 
-# ── 7. textfile-collector metrics reach monitoring (F127) ────────────
-# A multi-day dedup run must be observable beyond tailing $OUT.
-# Point TEXTFILE_DIR at a real directory and assert the terminal .prom
-# state reflects the run: running=0 (exited), partitions_processed=2
-# (both candidates finished), last_exit_ok=1 (clean exit).
+# ── 7. textfile-collector metrics reach monitoring ────────────
+# Point TEXTFILE_DIR at a real directory and assert the terminal .prom state:
+# running=0, partitions_processed=2, last_exit_ok=1.
 PROMDIR="$TMP/textfile-collector"
 mkdir -p "$PROMDIR"
 run metrics_happy ENUM_PARTS=$'0000000001\n0000000002\n' STATS_BEFORE="$(printf '100\t1000')" \
@@ -352,9 +330,8 @@ else
 fi
 
 # ── 8. an enumeration ABORT overwrites a previous clean run's state ───
-# The prior run's .prom (from case 7) says last_exit_ok=1, running=0.
-# A later run that aborts before the candidate count is known must
-# replace that with last_exit_ok=0, otherwise the failure is invisible.
+# Case 7's .prom says last_exit_ok=1; an abort before the candidate count is
+# known must replace it with 0, or the failure is invisible.
 run metrics_enum_fail ENUM_FAIL=1 TEXTFILE_DIR="$PROMDIR" -- operations
 if [ "$RC" -ne 0 ] && grep -q 'ABORT: partition-enumeration query FAILED' "$LOG"; then
   ok "metrics enum-fail run: aborts non-zero"
@@ -387,10 +364,9 @@ else
 fi
 
 # ── 9. SIGTERM mid-OPTIMIZE is a failed run, not a clean one ─────────
-# The EXIT trap alone sees the last command's status on a signal, so a
-# SIGTERM'd run recorded last_exit_ok=1. The fake OPTIMIZE blocks for
-# 30s; the driver must exit within 10s of SIGTERM, non-zero, with the
-# client killed and the terminal gauges reporting the failure.
+# The EXIT trap alone sees the last command's status on a signal. The fake
+# OPTIMIZE blocks 30s; the driver must exit within 10s of SIGTERM, non-zero,
+# with the client killed and the gauges reporting failure.
 LOG="$TMP/log.metrics_sigterm"; : > "$LOG"
 OPT_STARTED="$TMP/opt-started"; rm -f "$OPT_STARTED"
 env -u ENUM_FAIL -u STATS_FAIL -u OPT_FAIL -u AFTER_FAIL -u DF_GARBAGE -u SORTKEY_FAIL \

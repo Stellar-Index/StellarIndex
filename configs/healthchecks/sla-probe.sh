@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
 #
-# sla-probe.sh — wrapper around `stellarindex-sla-probe` that
-# reports pass/fail to Healthchecks.io. Distinct from smoke.sh:
-# that one verifies the API surface (schema + data integrity);
-# this one drives load and asserts the latency, freshness and
-# availability SLAs are met (p95 ≤ 200 ms, p99 ≤ 500 ms, freshness
-# ≤ 30 s, availability ≥ 99.9 % — the figure published at
-# stellarindex.io/sla).
+# sla-probe.sh - wrapper around `stellarindex-sla-probe` that reports pass/fail
+# to Healthchecks.io. Unlike smoke.sh (API surface), this drives load and asserts
+# the latency, freshness and availability SLAs (p95 <= 200 ms, p99 <= 500 ms,
+# freshness <= 30 s, availability >= 99.9 %, as published at stellarindex.io/sla).
 #
-# Exit code from the binary = 0 (pass) or 1 (at least one SLA
-# violated). Both branches POST the full JSON report body to
-# Healthchecks.io so operators reading the dashboard see exactly
-# which percentile / endpoint tripped.
+# Binary exit code is 0 (pass) or 1 (an SLA violated). Both branches POST the
+# full JSON report to Healthchecks.io so the dashboard shows which percentile or
+# endpoint tripped.
 #
 # URL comes from /etc/default/stellarindex-healthchecks
-# (HEALTHCHECKS_URL_SLA_PROBE). Empty URL silently runs the probe
-# for journal-only coverage.
+# (HEALTHCHECKS_URL_SLA_PROBE). An empty URL runs the probe for journal-only
+# coverage.
 
 set -uo pipefail
 
@@ -25,44 +21,28 @@ set -uo pipefail
 
 PROBE_BIN="${PROBE_BIN:-/usr/local/bin/stellarindex-sla-probe}"
 BASE_URL="${SLA_PROBE_BASE_URL:-http://localhost:3000/v1}"
-# 30s default keeps the probe
-# cheap on a quiet deployment, but on a single-instance host
-# under memory pressure (e.g. r1 today) a 30s window of ~800
-# requests is too sensitive to single-timeout jitter — one
-# straggler at 99.9% availability = unit_failed=1. Operators on
-# memory-pressured single-instance hosts should override to
-# SLA_PROBE_DURATION=120s (or longer) in /etc/default/stellarindex-
-# healthchecks for a smoother percentile.
+# 30s default keeps the probe cheap, but on a memory-pressured single-instance
+# host a ~800-request window is too sensitive to timeout jitter (one straggler
+# at 99.9% = unit_failed=1). Such hosts should set SLA_PROBE_DURATION=120s or
+# longer in /etc/default/stellarindex-healthchecks.
 DURATION="${SLA_PROBE_DURATION:-30s}"
-# Default concurrency=1
-# (not 2). At 2 the probe drives ~2.5k req/s against the API which
-# is well above any realistic customer cadence; it tripped both
-# the operator-tier rate limit (returning 429s → fake availability
-# fail) AND saturated the API's request path itself (p95 climbed
-# to ~3.8s under the load — a false positive). At
-# concurrency=1 the probe samples at ~800 req over 30s which
-# stresses the closed-bucket lookup enough to surface real
-# regressions without overwhelming a single-instance deployment.
-# Operators on multi-instance HA can override via inventory.
+# Default concurrency=1, not 2: at 2 the probe drives ~2.5k req/s, which tripped
+# the operator-tier rate limit (429s read as fake availability failure) and
+# saturated the API request path (p95 ~3.8s, a false positive). At 1, ~800 req
+# over 30s still stresses the closed-bucket lookup enough to surface real
+# regressions. Multi-instance HA can override via inventory.
 CONCURRENCY="${SLA_PROBE_CONCURRENCY:-1}"
 PAIR="${SLA_PROBE_PAIR:-native,fiat:USD}"
 URL="${HEALTHCHECKS_URL_SLA_PROBE:-}"
-# TEXTFILE_OUTPUT — path under node_exporter's textfile_collector
-# dir where the probe writes per-endpoint p50/p95/p99 + freshness
-# + verdict metrics. Without this set the alerts in
-# deploy/monitoring/rules/sla-probe.yml have no series to evaluate
-# against — the gap an audit caught. The
-# archival-node ansible role provisions
-# /var/lib/node_exporter/textfile_collector/ + sets the
-# --collector.textfile flag on node_exporter; we default-on here
-# so a fresh-from-ansible host gets the SLA-evidence chain wired
-# automatically. Set to empty to disable the metric emission.
+# TEXTFILE_OUTPUT - path under node_exporter's textfile_collector dir where the
+# probe writes per-endpoint p50/p95/p99 + freshness + verdict metrics. Without
+# it the alerts in deploy/monitoring/rules/sla-probe.yml have no series. The
+# archival-node role provisions the dir and the --collector.textfile flag, so
+# this defaults on. Set empty to disable.
 TEXTFILE_OUTPUT="${SLA_PROBE_TEXTFILE_OUTPUT:-/var/lib/node_exporter/textfile_collector/sla_probe.prom}"
 
-# A missing or non-executable
-# probe binary is itself a failure — fan out to Healthchecks/fail
-# so the SLA-evidence check goes red, otherwise a broken binary
-# deploy silently disables the check without anyone noticing.
+# A missing or non-executable probe binary is itself a failure: fan out to
+# Healthchecks/fail so a broken deploy cannot silently disable the check.
 if [ ! -x "$PROBE_BIN" ]; then
   MSG="sla-probe: $PROBE_BIN not found or not executable"
   echo "$MSG" >&2
@@ -70,9 +50,8 @@ if [ ! -x "$PROBE_BIN" ]; then
   exit 0
 fi
 
-# Build the textfile-output arg conditionally — the binary's flag
-# parser rejects empty -textfile-output, so we omit the flag
-# entirely when TEXTFILE_OUTPUT is intentionally blank.
+# Omit -textfile-output entirely when TEXTFILE_OUTPUT is blank: the binary's
+# flag parser rejects an empty value.
 TEXTFILE_FLAG=()
 if [ -n "$TEXTFILE_OUTPUT" ]; then
   TEXTFILE_FLAG=(-textfile-output "$TEXTFILE_OUTPUT")
@@ -80,13 +59,10 @@ fi
 
 # Run the probe. JSON report on stdout; pass=0, fail=1 on exit.
 #
-# STELLARINDEX_PROBE_API_KEY is deliberately NOT passed as -api-key on
-# argv: process arguments are world-readable (`ps`, /proc/<pid>/cmdline)
-# to any local user, which would leak the key. The unit's
-# EnvironmentFile sets the variable directly in this process's
-# environment, so it is already exported and the probe binary falls
-# back to it when `-api-key` is empty (resolveAPIKey,
-# cmd/stellarindex-sla-probe/main.go) — no flag needed.
+# The probe's auth variable is deliberately NOT passed as a flag: argv is
+# world-readable (`ps`, /proc/<pid>/cmdline) and would leak it. The unit's
+# EnvironmentFile already exports STELLARINDEX_PROBE_API_KEY and the binary falls
+# back to it when `-api-key` is empty (resolveAPIKey, cmd/stellarindex-sla-probe/main.go).
 OUT="$(
   "$PROBE_BIN" \
     -base-url "$BASE_URL" \
@@ -98,19 +74,17 @@ OUT="$(
 )"
 RC=$?
 
-# An unauthenticated probe cannot produce a trustworthy verdict: it
-# measures our rate limiter, not our SLA. Say so loudly rather than
-# pinging /fail and letting an operator chase a phantom outage.
+# An unauthenticated probe measures our rate limiter, not our SLA. Say so loudly
+# rather than pinging /fail and sending an operator after a phantom outage.
 if [ -z "${STELLARINDEX_PROBE_API_KEY:-}" ]; then
   echo "sla-probe: WARNING no STELLARINDEX_PROBE_API_KEY — this run measured the anonymous rate limit, not the SLA" >&2
 fi
 
-# A failing run pings /fail only after HC_FAIL_AFTER (default 2)
-# consecutive failing runs; /fail bypasses the check's grace period,
-# so a single run caught by a restart would otherwise email twice.
+# A failing run pings /fail only after HC_FAIL_AFTER (default 2) consecutive
+# failures; /fail bypasses the grace period, so one run caught by a restart
+# would otherwise email twice.
 hc_ping_verdict sla-probe "$URL" "$RC" "${HC_FAIL_AFTER:-2}" --data-binary "$OUT"
 
-# Always exit 0 from the timer's perspective — failures route
-# via the /fail webhook + journalctl, same contract as the other
-# Healthchecks-driven timers.
+# Always exit 0 from the timer's perspective; failures route via the /fail
+# webhook + journalctl, as with the other Healthchecks-driven timers.
 exit 0

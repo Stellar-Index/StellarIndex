@@ -1,61 +1,49 @@
 #!/usr/bin/env bash
 # Apply alertmanager.r1.yml to R1.
 #
-# Reads webhook URLs from /etc/default/alertmanager-secrets, injects
-# them into the config (using a Python YAML walker so empty URLs
-# leave the receiver as a no-op stub instead of breaking the file),
-# validates with amtool, atomic-installs to
+# Reads webhook URLs from /etc/default/alertmanager-secrets, injects them with a
+# Python YAML walker (an empty URL leaves the receiver a no-op stub instead of
+# breaking the file), validates with amtool, installs to
 # /etc/prometheus/alertmanager.yml, then reloads alertmanager.
 #
 # Required env vars (in /etc/default/alertmanager-secrets):
-#   HEALTHCHECKS_DEADMANSSWITCH_URL — e.g. https://hc-ping.com/<uuid>
-#   DISCORD_WEBHOOK_URL_PAGES       — e.g. https://discord.com/api/webhooks/<id>/<token>
-#   DISCORD_WEBHOOK_URL_ALERTS      — e.g. https://discord.com/api/webhooks/<id>/<token>
+#   HEALTHCHECKS_DEADMANSSWITCH_URL - e.g. https://hc-ping.com/<uuid>
+#   DISCORD_WEBHOOK_URL_PAGES       - e.g. https://discord.com/api/webhooks/<id>/<token>
+#   DISCORD_WEBHOOK_URL_ALERTS      - e.g. https://discord.com/api/webhooks/<id>/<token>
 #
 # Optional env var:
-#   HEALTHCHECKS_ALERT_DELIVERY_URL — a SECOND Healthchecks check (not
-#     the deadmansswitch one) that carries
-#     stellarindex_alertmanager_notifications_failing out of band, so a
-#     dead Discord receiver cannot swallow the alert that reports it.
-#     Optional so that provisioning a new check never blocks an urgent
-#     apply — but never silent: every run prints whether it is wired.
+#   HEALTHCHECKS_ALERT_DELIVERY_URL - a SECOND Healthchecks check (not the
+#     deadmansswitch one) carrying stellarindex_alertmanager_notifications_failing
+#     out of band, so a dead Discord receiver cannot swallow the alert that
+#     reports it. Optional so provisioning a check never blocks an urgent apply,
+#     but never silent: every run prints whether it is wired.
 #
-# An empty URL makes the renderer drop that receiver's *_configs block,
-# leaving a no-op stub: the receiver accepts alerts and delivers them to
-# nobody, exactly like `silent`. That is a legitimate rendering branch
-# (it keeps the config valid), but it is NEVER a legitimate thing to
-# INSTALL unasked — so applying with an empty URL is a hard error.
+# An empty URL makes the renderer drop that receiver's *_configs block, leaving
+# a stub that delivers to nobody, like `silent`. That keeps the config valid but
+# is never legitimate to INSTALL unasked, so applying with an empty URL is a
+# hard error. A warning is not enough: once, a secrets file supplied none of the
+# three URLs and every delivery path (page, ticket, default AND the deadman's
+# switch) was a black hole for 31 days. The config reloaded successfully, so
+# alertmanager_config_last_reload_successful stayed 1 and
+# stellarindex_alertmanager_config_bad never fired; the reporter was the broken
+# part.
 #
-# Why it is fatal rather than a warning: once
-# the secrets file supplied none of the three URLs.
-# Every delivery path — page, ticket, default AND the deadman's switch —
-# was a black hole for 31 days. The config reloaded SUCCESSFULLY the
-# whole time, so alertmanager_config_last_reload_successful stayed 1 and
-# stellarindex_alertmanager_config_bad never fired. Nothing in the system
-# could report it, because the thing that reports things was the thing
-# that was broken. A warning would have scrolled past; this exits 1.
-#
-# Deliberately running one channel (e.g. no separate pages webhook) is
-# still possible, but it has to be said out loud, per receiver:
+# Deliberately running one channel must be said per receiver:
 #   ALERTMANAGER_ALLOW_EMPTY=pages bash apply.sh
-# Point both Discord URLs at the same webhook if you only want one
-# channel — that is the better answer than waiving one.
+# Pointing both Discord URLs at the same webhook beats waiving one.
 
 set -euo pipefail
 
-# --check-only: render + amtool-validate, then stop before the
-# install/reload. Used by CI (monitoring-rules job) to validate both
-# render branches at PR time — pre-gate, a malformed edit that broke
-# the block-stripper's indentation assumptions produced a silently
-# receiver-less Alertmanager, discovered only at the next hand apply.
+# --check-only: render + amtool-validate, then stop before install/reload. CI
+# (monitoring-rules job) uses it to validate both render branches: a malformed
+# edit that broke the block-stripper's indentation assumptions once produced a
+# silently receiver-less Alertmanager, found only at the next hand apply.
 #
-# --render-only <path>: render to <path> and stop BEFORE amtool. Exists
-# so scripts/ci/check-alertmanager-parity.sh can compare this file's
-# rendering against the Ansible template's using THIS renderer rather
-# than a second copy of the block-stripper — a parity gate built on a
-# reimplementation of the thing it checks proves only that the two
-# copies agree. It runs in the `ansible` CI job, which has jinja2 but
-# not amtool; --check-only remains the validating mode.
+# --render-only <path>: render to <path> and stop BEFORE amtool, so
+# scripts/ci/check-alertmanager-parity.sh can compare this rendering with the
+# Ansible template's using THIS renderer (a parity gate on a reimplementation
+# only proves the two copies agree). Runs in the `ansible` CI job, which has
+# jinja2 but not amtool; --check-only remains the validating mode.
 CHECK_ONLY=false
 RENDER_ONLY=false
 RENDER_OUT=""
@@ -109,15 +97,14 @@ am_var_for() {
   esac
 }
 AM_RECEIVERS="deadmansswitch pages alerts"
-# Optional: absence is reported, not refused. Adding delivery-failure to
-# the required set would mean the apply that RESTORES a broken chat
-# channel first fails on a check nobody has created yet — the worst
-# possible moment to introduce a new precondition.
+# Optional: absence is reported, not refused. Requiring delivery-failure would
+# make the apply that RESTORES a broken chat channel fail on a check nobody has
+# created yet, the worst moment for a new precondition.
 AM_OPTIONAL_RECEIVERS="delivery-failure informational"
 
-# --check-only is a RENDERER test: CI drives it with every URL empty on
-# purpose, to exercise the block-stripper. The fail-closed guard is an
-# INSTALL-time policy, so it is deliberately not applied in that mode.
+# --check-only is a RENDERER test: CI drives it with every URL empty to exercise
+# the block-stripper. The fail-closed guard is install-time policy, so it is
+# skipped in that mode.
 if [ "$CHECK_ONLY" = false ]; then
   ALLOW="${ALERTMANAGER_ALLOW_EMPTY:-}"
   missing=""
@@ -145,9 +132,8 @@ if [ "$CHECK_ONLY" = false ]; then
     exit 1
   fi
 
-  # Optional receivers are never refused, but they are never silent
-  # either: an out-of-band transport that nobody notices is missing is
-  # the same failure mode as one that was never added.
+  # Optional receivers are never refused but never silent: an out-of-band
+  # transport nobody notices is missing is the same failure as one never added.
   for r in $AM_OPTIONAL_RECEIVERS; do
     if [ -n "$(am_url_for "$r")" ]; then
       echo "alertmanager: optional receiver '$r' is wired ($(am_var_for "$r"))"
@@ -240,13 +226,11 @@ if [ "$CHECK_ONLY" = true ]; then
   exit 0
 fi
 
-# ── prove the credentials are LIVE, not merely non-empty ───────────
-# amtool validates syntax; it cannot tell a current webhook from a
-# revoked one. A stale-but-well-formed URL fails exactly like an empty
-# one — silently, at the moment it is needed. Both probes are read-only:
-# a Healthchecks ping URL records a heartbeat (the same thing
-# Alertmanager does every minute), and a GET on a Discord webhook
-# returns the webhook object without posting a message.
+# ── prove the credentials are LIVE, not merely non-empty ──
+# amtool validates syntax, not whether a webhook was revoked; a stale URL fails
+# as silently as an empty one. Both probes are read-only: a Healthchecks ping
+# records a heartbeat (as Alertmanager does every minute) and a Discord webhook
+# GET returns the webhook object without posting.
 # ALERTMANAGER_SKIP_PROBE=1 for an offline or air-gapped apply.
 if [ "${ALERTMANAGER_SKIP_PROBE:-0}" != "1" ]; then
   probe_failed=""
@@ -268,17 +252,16 @@ if [ "${ALERTMANAGER_SKIP_PROBE:-0}" != "1" ]; then
   fi
 fi
 
-# 0640 (not 0644) so the rendered config — which embeds the Discord
-# webhook URLs + the Healthchecks deadman URL (bearer capabilities) — is not
-# world-readable. Group is the alertmanager service user's group (prometheus on
-# r1) so the service can still read it; override via AM_GROUP if it differs.
+# 0640 so the rendered config, which embeds the Discord webhook and Healthchecks
+# deadman URLs (bearer capabilities), is not world-readable. Group is the
+# alertmanager service group (prometheus on r1); override via AM_GROUP.
 install -m 0640 -o root -g "${AM_GROUP:-prometheus}" "$RENDERED" "$TARGET"
 systemctl reload prometheus-alertmanager
 echo "alertmanager: applied $TARGET, reload OK"
 
-# ── publish which optional receivers were installed dark ───────────
-# The DARK line above scrolls past; this gauge lets an alert carry it.
-# It describes the installed config, so it is rewritten only by an apply.
+# ── publish which optional receivers were installed dark ──
+# Lets an alert carry the DARK line that scrolls past above. Describes the
+# installed config, so only an apply rewrites it.
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 AM_PROM="$TEXTFILE_DIR/alertmanager_receivers.prom"
 write_receiver_gauge() {
@@ -301,12 +284,10 @@ if ! write_receiver_gauge; then
   echo "alertmanager: WARNING — could not write $AM_PROM; dark optional receivers are unalarmed." >&2
 fi
 
-# ── assert what Alertmanager actually LOADED still delivers ────────
-# A successful reload is not evidence of delivery: the 31-day outage
-# reloaded successfully every time. Read the running config back and
-# require the delivery blocks to be present in it. This is the step
-# that turns "the file I wrote looks right" into "the process I just
-# reloaded will fan out".
+# ── assert what Alertmanager actually LOADED still delivers ──
+# A successful reload is not evidence of delivery (the 31-day outage reloaded
+# fine every time). Read the running config back and require the delivery
+# blocks in it.
 AM_API="${AM_API:-http://localhost:9093}"
 for _ in 1 2 3 4 5; do
   loaded="$(curl -fsS --max-time 5 "$AM_API/api/v2/status" 2>/dev/null \
@@ -329,9 +310,8 @@ else
   got_webhook=$(printf '%s' "$loaded" | grep -c 'webhook_configs:' || true)
   got_discord=$(printf '%s' "$loaded" | grep -c 'discord_configs:' || true)
   bad=""
-  # Counted, not "at least one": with two webhook receivers configured, a
-  # single surviving block would otherwise satisfy the old `-lt 1` test
-  # while the other one had been stripped.
+  # Counted, not "at least one": with two webhook receivers, one surviving block
+  # would satisfy a `-lt 1` test while the other had been stripped.
   [ "$got_webhook" -lt "$want_webhook" ] && bad="$bad webhook($got_webhook/$want_webhook)"
   [ "$got_discord" -lt "$want_discord" ] && bad="$bad discord($got_discord/$want_discord)"
   if [ -n "$bad" ]; then

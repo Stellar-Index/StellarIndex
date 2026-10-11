@@ -1,19 +1,13 @@
 #!/usr/bin/env bash
 # ch-schema-drift-test.sh — self-test for ch-schema-drift.sh.
 #
-# Mirrors scripts/ops/ch-schema-snapshot-test.sh: a hermetic harness that
-# feeds the checker synthetic inputs and asserts the verdict, so the
-# comparison logic is exercised without a ClickHouse server.
+# Hermetic (no ClickHouse server): feeds the checker synthetic inputs and asserts the
+# verdict. Mirrors scripts/ops/ch-schema-snapshot-test.sh.
 #
-# The fixtures matter as much as the assertions. LIVE_OK below is written
-# in ClickHouse's OWN `SHOW CREATE TABLE` rendering — backticked column
-# names, the database qualifier, an inferred column list on the
-# materialized view, a trailing `SETTINGS index_granularity = 8192`, a
-# tuple ORDER BY, and the newline layout the server actually emits —
-# while the intent fixture is written the way a human writes
-# tier1_schema.sql. If the normalizer only ever saw two files of the same
-# shape (which a naive "diff the file against itself" test does), it
-# would pass while being useless against a real snapshot.
+# The live fixture is in ClickHouse's own SHOW CREATE rendering (backticked names, database
+# qualifier, inferred MV column list, trailing SETTINGS, tuple ORDER BY) while the intent
+# fixture is human-written. Two files of the same shape would pass while being useless
+# against a real snapshot.
 #
 # Usage: ./configs/ansible/roles/archival-node/files/ch-schema-drift-test.sh
 set -uo pipefail
@@ -26,9 +20,8 @@ trap 'rm -rf "$tmp"' EXIT
 pass=0
 fail=0
 
-# bt is a literal backtick — ClickHouse quotes identifiers with them in
-# SHOW CREATE output, and building the sed patterns from a variable keeps
-# them out of any quoting context that would try to evaluate them.
+# bt is a literal backtick (ClickHouse quotes identifiers with it); a variable keeps it out
+# of quoting contexts that would evaluate it.
 bt='`'
 
 indent() { while IFS= read -r l; do printf '       | %s\n' "$l"; done <<<"$1"; }
@@ -36,12 +29,9 @@ indent() { while IFS= read -r l; do printf '       | %s\n' "$l"; done <<<"$1"; }
 ok()  { pass=$((pass + 1)); echo "ok   — $1"; }
 bad() { fail=$((fail + 1)); echo "FAIL — $1"; indent "$2"; }
 
-# no_sidecars is a path that does not exist, pinned into every helper
-# below: the convergence gate reads the deployed-versions sidecars, and a
-# harness that fell through to the host's real /var/lib/stellarindex/
-# deployed-versions would give a different verdict on r1 than on a laptop.
-# With no sidecar readable the gate is UNVERIFIED and the comparison runs
-# unchanged, which is the lane the explicit-intent cases below expect.
+# no_sidecars is a nonexistent path pinned into every helper: the convergence gate reads
+# deployed-versions sidecars, and falling through to the host's real dir would change the
+# verdict per machine. With none readable the gate is UNVERIFIED and the comparison runs unchanged.
 no_sidecars="$tmp/no-sidecars"
 
 # run <name> <want-rc> <intent-file> <live-file>
@@ -156,11 +146,8 @@ SQL
 
 mutate() { sed "$1" "$tmp/live-ok.sql" > "$2"; }
 
-# stamp <version> <ddl-file> <dest> — the shipped copy as the role's "Ship
-# the repo's Tier-1 lake DDL" task now writes it: the provenance header
-# it renders, then the DDL verbatim. Every fixture that stands in for the
-# SHIPPED copy goes through this, because an unstamped shipped copy is
-# itself a refusal now (see the provenance cases at the end of this file).
+# stamp <version> <ddl-file> <dest> — the shipped copy as the role writes it: provenance
+# header, then the DDL verbatim. Every shipped-copy fixture needs it, since an unstamped one is refused.
 stamp() {
   {
     printf '%s\n' '-- ch-schema-drift intent provenance — written by ansible at ship time.'
@@ -183,9 +170,8 @@ mutate 's/PARTITION BY intDiv(ledger, 1000000)/PARTITION BY intDiv(ledger, 50000
 run       "drift: PARTITION BY changed live"      1 "$tmp/intent.sql" "$tmp/live-part.sql"
 expect_msg "drift: names the PARTITION BY" "DRIFT account_movements.partition" "$tmp/intent.sql" "$tmp/live-part.sql"
 
-# ReplacingMergeTree version column swapped: same engine NAME, different
-# dedup semantics. system.tables.engine would NOT catch this — the engine
-# args only exist in SHOW CREATE, which is why the checker parses that.
+# Version column swapped: same engine name, different dedup semantics. system.tables.engine
+# would miss it; the args only exist in SHOW CREATE.
 sed 's/^ENGINE = ReplacingMergeTree(ingested_at)$/ENGINE = ReplacingMergeTree(ledger)/' "$tmp/live-ok.sql" > "$tmp/live-eng.sql"
 run       "drift: ReplacingMergeTree version column changed" 1 "$tmp/intent.sql" "$tmp/live-eng.sql"
 expect_msg "drift: names the engine" "DRIFT ledgers.engine" "$tmp/intent.sql" "$tmp/live-eng.sql"
@@ -194,8 +180,7 @@ sed "/${bt}op_index${bt} UInt32,/d" "$tmp/live-ok.sql" > "$tmp/live-col.sql"
 run       "drift: column dropped live"            1 "$tmp/intent.sql" "$tmp/live-col.sql"
 expect_msg "drift: names the columns" "DRIFT account_movements.columns" "$tmp/intent.sql" "$tmp/live-col.sql"
 
-# Same column SET, two columns swapped: the header promises "column NAMES,
-# in order", so a set comparison would silently pass this.
+# Same column set, two swapped: a set comparison would pass this; names are compared in order.
 awk -v bt="$bt" '
   held != "" { if ($0 == "    " bt "op_index" bt " UInt32,") { print; print held; held = ""; next }
                print held; held = "" }
@@ -207,14 +192,10 @@ run       "drift: two columns reordered live, same set" 1 "$tmp/intent.sql" "$tm
 expect_msg "drift: names the reordered column list" \
   "live: address,ledger,op_index,tx_hash,amount,ingested_at" "$tmp/intent.sql" "$tmp/live-colorder.sql"
 
-# ─── secondary index (reverification) ──────────────────
-# idx_am_tx is declared IDENTICALLY in intent.sql and live-ok.sql above —
-# the clean case (rc=0) already proves a matching index does not itself
-# manufacture drift. The repo retunes the bloom-filter false-positive
-# rate (the exact idx_lec_key_xdr shape this finding is about) while the
-# live host still carries the old value: this must now be caught, where
-# before the column parser discarded the whole INDEX clause and this
-# comparison never existed.
+# ─── secondary index ──────────────────
+# idx_am_tx is identical in intent.sql and live-ok.sql, so the clean case already proves a
+# matching index manufactures no drift. Retuning the bloom-filter rate in the repo while live
+# keeps the old value (the idx_lec_key_xdr shape) must be caught.
 sed 's/INDEX idx_am_tx tx_hash TYPE bloom_filter(0.01) GRANULARITY 1/INDEX idx_am_tx tx_hash TYPE bloom_filter(0.0001) GRANULARITY 1/' \
   "$tmp/intent.sql" > "$tmp/intent-idxfp.sql"
 run       "drift: repo retunes a bloom-filter FP rate the deployment does not have (T339)" 1 \
@@ -229,22 +210,17 @@ expect_msg "drift: names the missing index" "DRIFT account_movements.INDEX idx_a
   "$tmp/intent.sql" "$tmp/live-idx-missing.sql"
 
 # ─── the REVERSE direction on a declared table ─────────
-# An index hand-added live during an incident (or dropped from the repo
-# but never dropped live) is an index-only divergence too. It must be seen:
-# the comparison walks the repo's indices only, and the "uncodified" bucket
-# counts TABLES, so unless checked an extra index on a declared table
-# reaches no counter — rc=0, "0 divergent, 0 uncodified".
+# An index added by hand live (or dropped from the repo only) is an index-only divergence.
+# The uncodified bucket counts TABLES, so it must be caught here or the run exits 0.
 awk '/^    INDEX idx_am_tx/ { print $0 ","; print "    INDEX idx_am_hand amount TYPE minmax GRANULARITY 4"; next } { print }' \
   "$tmp/live-ok.sql" > "$tmp/live-idx-extra.sql"
 run       "drift: index present live but never declared" 1 "$tmp/intent.sql" "$tmp/live-idx-extra.sql"
 expect_msg "drift: names the undeclared index" "DRIFT account_movements.INDEX idx_am_hand: present in" \
   "$tmp/intent.sql" "$tmp/live-idx-extra.sql"
 
-# A projection hand-added live, rendered the way SHOW CREATE renders one:
-# the body is a multi-line ( SELECT … ORDER BY … ) block whose closing
-# paren sits alone one level deeper than the column list's. It must be
-# reported as the PROJECTION it is — not swallowed, and not misread as a
-# column named SELECT (which is what the old parser made of it).
+# A projection added live, rendered as SHOW CREATE does: a multi-line ( SELECT … ORDER BY … )
+# block whose closing paren sits one level deeper than the column list's. It must be reported
+# as a PROJECTION, not swallowed or misread as a column named SELECT.
 awk -v bt="$bt" '
   /^    INDEX idx_am_tx/ {
     print $0 ","
@@ -269,14 +245,10 @@ else
 fi
 
 # ─── cut-over objects: operator DDL beside the intent ─────────
-# The v2 halves of an in-flight migration are declared in an operator
-# file marked `-- si-cutover-object:` and are deliberately absent from
-# tier1_schema.sql. If treated as uncodified, a live v2 table's ENGINE/
-# ORDER BY would never be compared — the ReplacingMergeTree
-# version column ledger_entries_current_v2 exists to change could be
-# wrong live and produce zero signal. So: compared like any declared
-# table WHEN live; "no cut-over in progress" when absent; never counted
-# as uncodified.
+# v2 halves of an in-flight migration live in an operator file marked
+# `-- si-cutover-object:`, absent from tier1_schema.sql. They are compared like declared
+# tables WHEN live, read "no cut-over in progress" when absent, and are never counted as
+# uncodified (else a wrong live version column would give no signal).
 mkdir -p "$tmp/cutover"
 cat > "$tmp/cutover/am_v2.sql" <<'SQL'
 -- si-apply-scope: operator
@@ -419,12 +391,10 @@ if [[ -r "$real_intent" ]]; then
 fi
 
 # ── AS-clone (alias) declarations ──────────────────────────────────
-# tier1_schema.sql declares every *_staging table as a two-line clone
-# (`CREATE TABLE x_staging` / `AS stellar.x;`) with no ENGINE/columns of
-# its own, while SHOW CREATE renders the clone fully. The
-# incident: the parser emitted empty facts for the clone → 3 drifts per
-# staging table forever; and the symmetric intent-vs-intent test above
-# could never catch it. These fixtures are deliberately ASYMMETRIC.
+# tier1_schema.sql declares each *_staging table as a two-line clone (`CREATE TABLE x_staging`
+# / `AS stellar.x;`) with no ENGINE/columns, while SHOW CREATE renders it fully. The parser
+# once emitted empty facts for the clone (3 drifts per staging table forever) and the
+# symmetric intent-vs-intent test above could not catch it, so these fixtures are ASYMMETRIC.
 cat > "$tmp/alias_intent.sql" <<SQL
 CREATE TABLE IF NOT EXISTS stellar.base_t
 (
@@ -500,23 +470,11 @@ expect_msg "AS-clone of an undeclared base reports drift" \
   "not declared" "$tmp/alias_orphan.sql" "$tmp/alias_orphan_live.sql"
 
 # ─── how the check FINDS the repo's intent ─────────────
-# Every case above hands the checker an explicit INTENT, so the branch
-# that runs when nothing sets one was never exercised — and it shipped
-# broken. That branch is not a corner: it is the by-hand shape
-# ch-schema-restore.md documents ("Run it by hand: ch-schema-drift.sh"),
-# the first thing an operator types when the unit goes red.
-#
-# Installed standalone at /usr/local/bin, the checkout-relative default
-# `dirname/../../../../..` does not fail — it CLAMPS at `/`, so the check
-# refused itself with
-#
-#   ch-schema-drift: repo intent //deploy/clickhouse/tier1_schema.sql is
-#   not readable — nothing to compare against
-#
-# a double-slashed path that cannot exist on any host. It reads as schema
-# drift and is a broken check, and while it stood the testnet had NO
-# ClickHouse schema-drift coverage at all. Reproducing it needs a copy of
-# the script OUTSIDE any checkout, which is what the fixture below is.
+# Every case above passes an explicit INTENT, so the no-INTENT branch was never exercised
+# and shipped broken. It is the by-hand shape ch-schema-restore.md documents. Installed
+# standalone at /usr/local/bin, the checkout-relative default clamps at `/` and the check
+# refused itself with a nonexistent `//deploy/clickhouse/tier1_schema.sql`, reading as drift.
+# Reproducing it needs a copy of the script OUTSIDE any checkout, as below.
 
 fake_bin="$tmp/opt/bin"
 fake_share="$tmp/opt/share"
@@ -524,10 +482,8 @@ mkdir -p "$fake_bin" "$fake_share"
 cp "$drift" "$fake_bin/ch-schema-drift.sh"
 installed="$fake_bin/ch-schema-drift.sh"
 
-# The host-side copy the role's "Ship the repo's Tier-1 lake DDL as the
-# drift check's intent side" task installs. It carries one table the live
-# fixture does not, so a run that reports THAT table can only have read
-# THIS file — provenance, not merely "something got compared".
+# The host-side copy the role installs. It carries one table the live fixture lacks, so a
+# run reporting that table can only have read THIS file.
 shipped="$fake_share/tier1_schema.sql"
 stamp v0.67.0 "$tmp/intent.sql" "$shipped"
 cat >> "$shipped" <<'SQL'
@@ -544,9 +500,8 @@ SQL
 shipped_clean="$fake_share/tier1_schema_clean.sql"
 stamp v0.67.0 "$tmp/intent.sql" "$shipped_clean"
 
-# by_hand <installed-intent> <live> — the installed script with INTENT
-# genuinely ABSENT from the environment (`env -u`, not the empty string),
-# which is what a bare `ch-schema-drift.sh` on a host actually gets.
+# by_hand <installed-intent> <live> — the installed script with INTENT genuinely absent
+# (`env -u`, not empty), as a bare run on a host gets.
 by_hand() {
   env -u INTENT INSTALLED_INTENT="$1" LIVE_SCHEMA="$2" TEXTFILE_DIR=/dev/null \
     DEPLOYED_VERSIONS_DIR="$no_sidecars" bash "$installed" 2>&1
@@ -582,11 +537,8 @@ else
   bad "$name: rc=$rc want 2, must name the candidate it tried and must not print '//deploy/clickhouse' or compare anything" "$out"
 fi
 
-# The refusal must stay a refusal. An INTENT the operator set explicitly
-# and that cannot be read is a HARD STOP — silently comparing against the
-# shipped copy instead would answer a question nobody asked, and would be
-# the "check that cannot find its reference passes anyway" failure this
-# whole script exists to prevent.
+# An explicit but unreadable INTENT is a hard stop: falling back to the shipped copy would
+# answer a question nobody asked, the "check that cannot find its reference passes anyway" failure.
 name="explicit but unreadable INTENT still exits 2, never falls back"
 out="$(INTENT="$tmp/typo-tier1.sql" INSTALLED_INTENT="$shipped_clean" \
        LIVE_SCHEMA="$tmp/live-ok.sql" TEXTFILE_DIR=/dev/null \
@@ -600,28 +552,22 @@ else
 fi
 
 # ─── the shipped-copy path is written in four places ────────────────
-# The script's fallback, the role default, the unit's Environment= and
-# the copy task's dest must name the SAME file. Three of the four already
-# agreed and the script did not, which is exactly how the
-# by-hand run ended up reading a path no host has. Pinned rather than
-# trusted: these four live in four different files and nothing else
-# compares them.
+# The script's fallback, the role default, the unit's Environment= and the copy task's dest
+# must name the same file. They live in four files and nothing else compares them; the
+# script once disagreed and the by-hand run read a path no host has.
 defaults_yml="$here/../defaults/main.yml"
 unit_j2="$here/../templates/systemd/ch-schema-drift.service.j2"
 role_tasks="$here/../tasks/18-pgbackrest-backup.yml"
 ship_task="$here/../../../tasks/ship-ch-schema-intent.yml"
 
-# jinja_default <file> — the literal inside `default('…')` on the line
-# that reads ch_schema_drift_intent. Anchored on the variable name so a
-# neighbouring default() for something else cannot be picked up.
+# jinja_default <file> — the literal inside `default('…')` on the ch_schema_drift_intent line
+# (anchored on the name so a neighbouring default() is not picked up).
 jinja_default() {
   sed -n "s/.*ch_schema_drift_intent | default('\([^']*\)').*/\1/p" "$1"
 }
 
-# The `${INSTALLED_INTENT:-…}` default, matched as text. Spelled without
-# the literal `${` so shellcheck does not read a deliberately-inert
-# pattern as a botched expansion (SC2016); an empty capture fails the
-# assertion below, so a rename cannot make this quietly stop looking.
+# The INSTALLED_INTENT default matched as text, spelled without a literal dollar-brace so
+# the linter does not flag an inert pattern (SC2016). An empty capture fails the assertion below.
 script_path="$(sed -n 's/^INSTALLED_INTENT=.*:-\(.*\)}"$/\1/p' "$drift")"
 role_path="$(sed -n 's/^ch_schema_drift_intent:[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$defaults_yml")"
 unit_path="$(jinja_default "$unit_j2")"
@@ -642,22 +588,10 @@ ch-schema-drift.service.j2          : ${unit_path:-<not found>}
 fi
 
 # ─── WHICH SIDE IT ACTUALLY READS ──────────────────────
-# The unit is called "repo intent vs live" and the metric HELP says
-# repo-vs-live — but until this change a bare run compared the intent
-# against the newest DAILY SNAPSHOT. Measured on both hosts that morning,
-# in both directions:
-#
-#   FALSE DRIFT — r1's capture was written 05:41, that day's deploy
-#   shipped a new intent at 17:17, and the check reported 8 tables
-#   "ABSENT from the live schema" that were all live (account_creator_edges
-#   alone held 20.9M rows). It would have cleared itself at the next
-#   morning's capture.
-#   HIDDEN DRIFT — a comparison that never reads the server does not
-#   measure live-vs-intent at all, and reports "0 divergent" off a capture
-#   that ages silently while ClickHouse is down.
-#
-# Every case up to here hands the checker an explicit LIVE_SCHEMA, so the
-# mode CHOICE — the thing that was wrong — was never exercised.
+# A bare run once compared the intent against the newest DAILY snapshot, failing both ways:
+# FALSE DRIFT (r1's morning capture vs a later deploy's intent: 8 live tables reported
+# ABSENT) and HIDDEN DRIFT (no server read, so "0 divergent" while ClickHouse is down).
+# Earlier cases pass an explicit LIVE_SCHEMA, so the mode choice itself was never exercised.
 
 snapdir="$tmp/snapshots"
 mkdir -p "$snapdir/2026-09-08"
@@ -669,8 +603,7 @@ mkdir -p "$snapdir/2026-09-08"
   cat "$tmp/live-ok.sql"
 } > "$snapdir/2026-09-08/schema.sql"
 
-# The intent as it looks AFTER a deploy that added a table — the r1 shape,
-# with the table that was actually misreported.
+# The intent after a deploy that added a table (the table r1 misreported).
 newer_intent="$tmp/intent-after-deploy.sql"
 cp "$tmp/intent.sql" "$newer_intent"
 cat >> "$newer_intent" <<'SQL'
@@ -684,8 +617,7 @@ ENGINE = MergeTree
 ORDER BY creator;
 SQL
 
-# A port nothing listens on — the fastest honest "ClickHouse unreachable",
-# and no server to start or tear down.
+# A port nothing listens on: the fastest honest "ClickHouse unreachable".
 dead_ch="http://127.0.0.1:1/"
 
 name="default mode goes to the server — a usable snapshot does not stand in for live"
@@ -700,9 +632,8 @@ else
 fi
 
 name="snapshot mode REFUSES when the intent is newer than the capture (the r1 false drift)"
-# The exact shape: a capture from before a deploy that declared a new
-# table. That table is missing from the capture for a reason that has
-# nothing to do with the live schema, so no verdict is available.
+# A capture from before a deploy that declared a new table lacks it for reasons unrelated to
+# live, so no verdict is available.
 touch -t 202609080541 "$snapdir/2026-09-08/schema.sql"
 touch -t 202609091717 "$newer_intent"
 out="$(env -u LIVE_SCHEMA LIVE=0 INTENT="$newer_intent" SNAPSHOT_DIR="$snapdir" \
@@ -719,10 +650,8 @@ else
 fi
 
 name="snapshot mode is not a mute: a capture NEWER than the intent still reports real drift"
-# The non-vacuity half of the case above. Same fixtures, mtimes the other
-# way round: now the capture CAN answer, and a declared-but-absent table
-# is a real finding again — reported against the file it was read from,
-# by name and capture stamp, not against "the live schema".
+# Non-vacuity of the case above: with mtimes reversed the capture CAN answer, and a
+# declared-but-absent table is a real finding, reported against the file read (name + capture stamp).
 touch -t 202609091717 "$snapdir/2026-09-08/schema.sql"
 touch -t 202609080541 "$newer_intent"
 out="$(env -u LIVE_SCHEMA LIVE=0 INTENT="$newer_intent" SNAPSHOT_DIR="$snapdir" \
@@ -736,14 +665,11 @@ else
 fi
 
 # ─── the default really sweeps the server ───────────────────────────
-# The cases above prove the default no longer reads the snapshot. This
-# proves what it reads INSTEAD is a live SHOW CREATE sweep that actually
-# compares: a mode switch that reached the server and then parsed nothing
-# would satisfy "not the snapshot" and still be a broken check.
+# Proves the default reads a live SHOW CREATE sweep that actually compares; a mode switch
+# that reached the server and parsed nothing would still satisfy "not the snapshot".
 #
-# curl is shadowed on PATH rather than a ClickHouse being started. The
-# shim answers only the two queries ch() makes; the mode choice, the sweep
-# loop, the parser, the comparison, the verdict and the metric are all the
+# curl is shadowed on PATH with a shim answering only the two queries ch() makes; the mode
+# choice, sweep loop, parser, comparison, verdict and metric are real.
 # real thing.
 shim_bin="$tmp/shim"
 mkdir -p "$shim_bin"
@@ -830,12 +756,9 @@ $prom"
 fi
 
 # ─── the unit cannot claim a mode it does not set ───────────────────
-# The Description said "repo intent vs live" while Environment= selected
-# the snapshot, for as long as both existed. They now render from ONE
-# expression in each template, which is the only structural reason they
-# cannot disagree again — so it is pinned, not trusted. Same genre as the
-# four-path pin above: the two live in different sections of a file
-# nothing else compares.
+# Description and Environment= once disagreed ("repo intent vs live" while selecting the
+# snapshot). Each template now renders both from ONE expression; pinned because nothing
+# else compares them.
 timer_j2="$here/../templates/systemd/ch-schema-drift.timer.j2"
 
 svc_desc="$(grep -n '^Description=' "$unit_j2")"
@@ -874,32 +797,18 @@ ClickHouse is down."
 fi
 
 # ─── IS THE INTENT SIDE ITSELF CURRENT? ────────────────
-# THE BLIND SPOT, measured on both test nets by extracting the
-# `transactions` DDL from each host's OWN shipped intent file and
-# comparing it to that host's live schema:
+# Blind spot: the intent arrives by the same convergence the check polices, so the host
+# furthest behind goes green. Seen on the test nets: testnet (new intent, old live) correctly
+# read DRIFT; futurenet (old intent, same old live) read CLEAN. Earlier cases never question
+# the intent's currency, which is why they could not see it.
 #
-#   testnet    intent = NEW shape   live = OLD shape  -> DRIFT (correct)
-#   futurenet  intent = OLD shape   live = OLD shape  -> CLEAN (false)
-#
-# Both hosts carried the SAME stale live schema. futurenet read clean
-# only because its intent file was stale by the same two weeks — the
-# intent side arrives by the SAME convergence this check is supposed to
-# police, so the check goes green exactly where a host is furthest
-# behind. Every case above this line hands the checker an intent whose
-# CURRENCY is never questioned, which is why 35 green assertions could
-# not see it.
-#
-# The fixtures below are the futurenet shape on purpose: an intent that
-# AGREES with live perfectly. A case built on a drifted pair would pass
-# for the wrong reason (it would refuse, but so would a check that
-# simply reported the drift).
+# The fixtures are the futurenet shape on purpose: an intent that agrees with live perfectly.
+# A drifted pair would refuse for the wrong reason (a plain drift report would also pass).
 
 sidecar_dir="$tmp/deployed-versions"
 
-# sidecars <version-per-binary…> — rebuild the deployed-versions dir.
-# Written with `printf '%s'`, NO trailing newline: that is exactly how
-# tasks/deploy-one-binary.yml writes them (`copy: content:`), and reading
-# them with `cat` is what fed deploy.yml a mashed `v0.46.1v0.44.7…` token.
+# sidecars <name=version…> — rebuild the deployed-versions dir with `printf '%s'` and no
+# trailing newline, as deploy-one-binary.yml's `copy: content:` writes them (cat once mashed tags).
 sidecars() {
   rm -rf "$sidecar_dir"; mkdir -p "$sidecar_dir"
   local spec name ver
@@ -1005,10 +914,8 @@ else
 fi
 
 name="stellarindex-migrate is excluded from the host baseline (#427)"
-# migrate legitimately lags — it gates no config surface and is omitted
-# from some deploys by design. Including it would make the host read
-# v0.28.1, so the v0.63.0 intent would score NEWER than the host and the
-# defect above would sail through with the gate installed.
+# migrate legitimately lags and gates no config surface; counting it would make the host read
+# v0.28.1, so a v0.63.0 intent would score NEWER and the defect would sail through.
 sidecars stellarindex-api=v0.66.1 stellarindex-migrate=v0.28.1
 out="$(converge_run "$stale_intent" "$tmp/live-ok.sql")"; rc=$?
 if [[ "$rc" -eq 2 ]] && grep -qF -- "NOT CONVERGED" <<<"$out" \
@@ -1019,10 +926,8 @@ else
 fi
 
 name="the host baseline is the LOWEST managed binary, not the highest"
-# deploy.yml's own convention: config from a release is unapplied if ANY
-# binary predates it, so the oldest is the honest baseline. Taking the
-# highest here would refuse a host whose config IS in step with its
-# oldest binary.
+# deploy.yml convention: config is unapplied if ANY binary predates it, so the oldest is the
+# baseline; the highest would refuse a host whose config is in step with its oldest binary.
 sidecars stellarindex-api=v0.67.0 stellarindex-indexer=v0.63.0
 between_intent="$fake_share/tier1_between.sql"
 stamp v0.65.0 "$tmp/intent.sql" "$between_intent"
@@ -1034,10 +939,9 @@ else
 fi
 
 name="an UNSTAMPED shipped copy refuses — the side door stays shut"
-# The task that installs this script and the task that ships the DDL are
-# adjacent in one role, so a stamped script beside an unstamped shipped
-# intent means the ship did not converge. Without this, the whole gate is
-# bypassed by the one file state every host has TODAY.
+# The ship task and this script's install task sit adjacent in one role, so a stamped script
+# beside an unstamped shipped intent means the ship did not converge; without this case the
+# gate is bypassed by the file state every pre-stamp host has.
 sidecars stellarindex-api=v0.67.0
 unstamped="$fake_share/tier1_unstamped.sql"
 cp "$tmp/intent.sql" "$unstamped"
@@ -1052,11 +956,9 @@ else
 fi
 
 name="an unstamped intent the OPERATOR named is UNVERIFIED, never refused"
-# The by-hand invocation ch-schema-restore.md documents points INTENT at
-# a checkout's deploy/clickhouse/tier1_schema.sql, which no role stamps.
-# Refusing that would break the documented recovery path; passing it
-# silently would be the original defect. It compares, and says the
-# verdict is unvouched.
+# ch-schema-restore.md's by-hand run points INTENT at a checkout's tier1_schema.sql, which no
+# role stamps. Refusing would break recovery; passing silently would be the original defect.
+# It compares and marks the verdict unvouched.
 out="$(INTENT="$tmp/intent.sql" LIVE_SCHEMA="$tmp/live-ok.sql" \
        DEPLOYED_VERSIONS_DIR="$sidecar_dir" TEXTFILE_DIR="$prom_dir" \
        bash "$installed" 2>&1)"; rc=$?
@@ -1074,9 +976,7 @@ $prom"
 fi
 
 # ─── the deployed-versions path is written in three places ──────────
-# Same genre as the shipped-intent four-path pin above: the script's
-# default, the role default and the unit's Environment= must name one
-# directory, and nothing else compares them.
+# Script default, role default and unit Environment= must name one directory; nothing else compares them.
 script_dv="$(sed -n 's/^DEPLOYED_VERSIONS_DIR=.*:-\(.*\)}"$/\1/p' "$drift")"
 role_dv="$(sed -n 's/^ch_schema_drift_deployed_versions_dir:[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$defaults_yml")"
 unit_dv="$(sed -n "s/.*ch_schema_drift_deployed_versions_dir | default('\([^']*\)').*/\1/p" "$unit_j2")"
@@ -1095,10 +995,8 @@ convergence gate permanently UNVERIFIED — green-looking, and blind."
 fi
 
 # ─── the role must actually ship what the script parses ─────────────
-# The stamp is a contract between two files that nothing else compares:
-# the ship task WRITES `-- Intent-Version:`, the script READS it. If
-# either is renamed alone the gate goes quiet — verified 0 forever, which
-# is a silent gate wearing a metric.
+# The ship task WRITES `-- Intent-Version:` and the script READS it; renaming either alone
+# silences the gate (verified 0 forever).
 name="the ship task writes the Intent-Version stamp the script parses"
 ship_writes="$(grep -c -- '-- Intent-Version:' "$ship_task")"
 script_reads="$(grep -c -- 'Intent-Version' "$drift")"
@@ -1115,10 +1013,8 @@ stamp shipped as a separate sidecar could be current while the DDL beside
 it was not, which is the same disagreement this stamp removes."
 fi
 
-# The refusal messages tell the operator to run `--tags ch-schema-drift`.
-# That instruction is only true while every task in the family carries the
-# tag: a targeted apply that re-ships the intent but skips the units — or
-# vice versa — leaves the host half-converged and the check still red.
+# The refusal messages tell the operator to run `--tags ch-schema-drift`, true only while every
+# task in the family carries the tag; a partial apply leaves the host half-converged and still red.
 name="every ch-schema-drift task carries the tag its refusal message names"
 tagged="$(grep -c '^  tags: \[ch-schema-drift\]$' "$role_tasks")"
 if [[ "$tagged" -eq 5 ]] && grep -qF -- "--tags ch-schema-drift" "$drift"; then

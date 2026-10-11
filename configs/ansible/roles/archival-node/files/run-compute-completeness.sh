@@ -1,43 +1,27 @@
 #!/usr/bin/env bash
-# ADR-0033 completeness-verdict refresh — whole-pass driver.
+# Daily completeness-verdict refresh (compute-completeness.service, ADR-0033).
 #
-# compute-completeness.service runs this on a daily timer. It makes ONE
-# `stellarindex-ops compute-completeness -ch -pass` invocation, which proves
-# recognition + substrate ONCE at full range for the entire source catalogue and
-# then reconciles EACH source's projection incrementally from its own watermark,
-# advancing every source's verdict in a single process.
+# ONE `stellarindex-ops compute-completeness -ch -pass` call proves recognition +
+# substrate once at full range for the whole catalogue, then reconciles each
+# source's projection from its own watermark. Why one pass, not a per-source,
+# per-chunk loop:
+#   1. Every invocation re-ran the global DistinctTopicShapes recognition scan
+#      (~60s, independent of -source/-from); a source pinned far below tip
+#      repeated it hundreds of times and blew the timeout, leaving verdicts stale.
+#   2. Chunking existed for SDEX reconcile memory in ClickHouse (25k OK, 68k OOM);
+#      reDeriveSDEXCensusViaDecoder now windows the join at 25k itself.
+#   3. Driving off completeness_snapshots never reached never-seeded sources
+#      (blend_emitter/blend_backstop/sorocredit); -pass iterates the catalogue.
+#   4. Substrate is proved at full tip, so the write is never blocked by the
+#      monotonic-tip guard. The tool still refuses to regress an advanced verdict
+#      or upgrade a failing one without a full re-verify.
 #
-# Why one -pass call, NOT the old per-source, per-chunk loop:
-#   1. The old loop re-invoked the tool for every source AND every 25k chunk,
-#      and EACH invocation re-ran the load-heaviest step — the global
-#      DistinctTopicShapes recognition scan (~60s over full history), identical
-#      regardless of -source/-from. A source pinned far below tip (e.g. aquarius,
-#      recognition-capped near its genesis) walked hundreds of chunks, so that
-#      one 60s scan ran hundreds of times per night — the 3h52m timeout that
-#      left the alphabetical tail's verdicts days stale. -pass runs it ONCE.
-#   2. The old loop's whole reason to chunk was the SDEX projection reconcile's
-#      ClickHouse memory (25k OK, 68k OOMs). That is now bounded INSIDE the tool:
-#      reDeriveSDEXCensusViaDecoder windows the CH join at 25k regardless of the
-#      requested range, so a single -pass call is memory-safe.
-#   3. The old loop drove off `SELECT DISTINCT source FROM completeness_snapshots`,
-#      so a never-seeded source (blend_emitter/blend_backstop/sorocredit) never
-#      appeared and never got a verdict. -pass iterates the CATALOGUE, so every
-#      source is computed — a never-seeded one reconciles from genesis on its
-#      first pass.
-#   4. -pass proves substrate at FULL tip, so its write advances the tip and is
-#      never blocked by the monotonic-tip write guard (the low-tip substrate flap a
-#      chunked run could never clear). The tool still refuses to REGRESS an
-#      advanced verdict (monotonic-tip guard) and never upgrades a failing
-#      verdict without a full re-verify.
-#
-# Same DSN sourcing as compute-archive-to.sh (peer-auth fails under systemd's
+# DSN sourcing matches compute-archive-to.sh (peer-auth fails under systemd's
 # restricted user-switch context).
 set -euo pipefail
-# Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
-# values are unquoted (that is what systemd wants), so the shell would
-# expand `$`, split on `;`/`&`/`|`/whitespace and eat quotes inside a
-# secret: the services keep working while this path gets a mangled DSN
-# (deploy-ansible-secrets-5). Same reader as run-heavy-job.sh.
+# Read a systemd EnvironmentFile VERBATIM, never source it: its values are
+# unquoted, so the shell would expand `$`, split on `;&|` and eat quotes inside a
+# secret, yielding a mangled DSN. Same reader as run-heavy-job.sh.
 # usage: load_env_file FILE [export]
 load_env_file() {
   local line
@@ -55,10 +39,9 @@ load_env_file() {
 }
 load_env_file /etc/default/stellarindex
 
-# Debian's pg_wrapper `psql` stats the cluster data dir to pick a version and
-# aborts with "Invalid data directory for cluster 15 main" for any user that
-# cannot read it — which User=stellarindex (non-root hardening)
-# cannot. Call the versioned binary directly to bypass the wrapper.
+# Debian's pg_wrapper `psql` aborts ("Invalid data directory for cluster")
+# for users that cannot read the data dir, as User=stellarindex cannot; call the
+# versioned binary directly.
 PSQL="/usr/lib/postgresql/${PG_VERSION:-15}/bin/psql"
 
 DSN="$STELLARINDEX_POSTGRES_DSN"
@@ -72,23 +55,18 @@ if [ -z "$TIP" ] || [ "$TIP" = "0" ]; then
   echo "compute-completeness: ledgerstream tip unresolved; bailing" >&2
   exit 1
 fi
-# Reconcile a safety margin BELOW the live cursor: the served-tier drain
-# legitimately trails the lake by seconds-minutes under load, and a
-# per-ledger reconcile right up to the cursor reads that lag as
-# "expected>0 served=0" — a false red (seen: sdex "205
-# mismatched ledgers" that were simply not drained yet).
+# Reconcile a margin BELOW the live cursor: the served-tier drain trails the lake
+# by seconds-minutes, and reconciling up to the cursor reads that lag as
+# "expected>0 served=0", a false red.
 TIP=$(( TIP - 100 ))
 
-# -pass runs sources serially with soroswap-router and sep41 last, so a budget
-# below their sum starves the same tail every night. PASS_TIMEOUT
-# (EnvironmentFile) overrides it; it must stay below the unit's 180 min pass
-# budget (TimeoutStartSec=54000 is that plus a 43200 s lock wait).
+# -pass runs sources serially, soroswap-router and sep41 last, so a too-small
+# budget starves the same tail nightly. PASS_TIMEOUT (EnvironmentFile) overrides;
+# keep it below the unit's 180 min budget (TimeoutStartSec=54000 = that + 43200 s lock wait).
 PASS_TIMEOUT="${PASS_TIMEOUT:-170m}"
 
-# Arguments replace `-pass -timeout $PASS_TIMEOUT`: compute-completeness-sdex
-# .service passes `-source sdex -timeout 360m` and compute-completeness-sep41
-# .service `-source sep41_transfers -timeout 360m` for the weekly full re-proofs
-# the pass never forces, and both still need the tip margin above.
+# Arguments replace `-pass -timeout $PASS_TIMEOUT`: the -sdex and -sep41 units pass
+# `-source <name> -timeout 360m` for weekly full re-proofs, and still need the tip margin.
 if [ "$#" -gt 0 ]; then
   MODE=("$@")
 else

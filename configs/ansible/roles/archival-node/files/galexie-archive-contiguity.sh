@@ -1,41 +1,27 @@
 #!/bin/bash
-# galexie-archive-contiguity — partition-level gap scan of the ADR-0016
-# R1 durable mirror (the DR keystone the multi-region plan's off-site
-# copy will be pulled from).
+# galexie-archive-contiguity: partition-level gap scan of the ADR-0016 R1 durable mirror
+# (the DR keystone the off-site copy is pulled from).
 #
-# WHY: a DR review found the ratified HA plan claiming a
-# FULL-history archive while the bucket actually holds the genesis
-# partition [0,63999] plus [ARCHIVE_FROM=49984000 → tip] — the middle
-# is a DELIBERATE capacity trim (recoverable only from
-# aws-public-blockchain). That mismatch sat unnoticed because nothing
-# recurring asserted the archive's SHAPE: tip-lag proves the
-# newest edge advances, archive-fill proves the pipe runs, but a
-# partition silently deleted (bad trim cutoff, fat-fingered mc rm,
-# MinIO heal failure) or an overlap from a botched re-fill would only
-# surface at restore time — the worst possible moment for a DR asset.
-# This scan is the promised recurring gap-check: the EXPECTED coverage
-# is declared, and anything else pages.
+# WHY: the HA plan assumed a FULL-history archive, but the bucket holds the genesis
+# partition [0,63999] plus [ARCHIVE_FROM=49984000 -> tip]; the middle is a DELIBERATE
+# capacity trim (recoverable only from aws-public-blockchain). Tip-lag and archive-fill do
+# not assert the archive's SHAPE, so a deleted partition (bad trim, stray `mc rm`, MinIO heal
+# failure) or an overlap from a botched re-fill would surface only at restore time. The
+# EXPECTED coverage is declared here and anything else pages.
 #
-# Mechanics: one `mc ls` of the bucket's top-level partition dirs
-# (`<reverse-hex>--<start>-<end>/`, 64k ledgers each; ~220 rows —
-# cheap). Sort by start ledger, walk the ranges, and count every
-# discontinuity that is NOT the declared trim window. Overlaps count
-# as unexpected too (a re-fill writing a partition that straddles an
-# existing one is corruption, not coverage). Chunk-level holes INSIDE
-# a partition are out of scope here — that is restore-drill territory
-# (deploy/monitoring/rules/restore-drill.yml); this guards the
-# coarse shape cheaply every hour.
+# Mechanics: one `mc ls` of the top-level partition dirs (`<reverse-hex>--<start>-<end>/`,
+# 64k ledgers each, ~220 rows). Sort by start, walk the ranges, count every discontinuity
+# that is NOT the declared trim; overlaps count too (a straddling re-fill is corruption).
+# Chunk-level holes inside a partition are restore-drill territory
+# (deploy/monitoring/rules/restore-drill.yml).
 #
-# The declared trim is overridable via /etc/default/stellarindex-galexie
-# style env (EXPECTED_TRIM="<gap_start>-<gap_end>", set EXPECTED_TRIM=""
-# once the middle range is backfilled and the archive really is
-# full-history — the scan then requires strict contiguity).
+# EXPECTED_TRIM="<gap_start>-<gap_end>" overrides the trim (via the
+# /etc/default/stellarindex-galexie style env); set it empty once the middle is backfilled
+# to require strict contiguity.
 #
-# The scan also reports ITS OWN health — galexie_archive_scan_ok,
-# _scan_listing_lines and _scan_last_run_unix, written on every run —
-# because its consumer stellarindex_galexie_archive_gap is severity
-# `page` and a failed bucket read produced a verdict that was
-# indistinguishable from a healthy one. See the read below, and
+# The scan also reports its OWN health (galexie_archive_scan_ok, _scan_listing_lines,
+# _scan_last_run_unix) on every run, because stellarindex_galexie_archive_gap is severity
+# `page` and a failed bucket read must not look like a healthy verdict; see
 # stellarindex_galexie_archive_scan_degraded in both rule trees.
 # Fixtures: scripts/ci/galexie-archive-contiguity-test.sh
 
@@ -47,45 +33,34 @@ TMP="$OUT.tmp.$$"
 trap 'rm -f "$TMP" "$TMP.checked"' EXIT
 
 BUCKET="${BUCKET:-local/galexie-archive}"
-# Ledger range NOT expected in the archive (the ADR capacity trim):
-# first missing ledger, last missing ledger. Empty string = expect
-# strict contiguity from first partition to tip.
-# NOTE ${VAR-default}, not ${VAR:-default}: an explicitly EMPTY
-# EXPECTED_TRIM is the documented "strict full-history" mode and must
-# not fall back to the default trim.
+# Ledger range NOT expected in the archive (the ADR capacity trim): first and last missing
+# ledger. Empty = expect strict contiguity from first partition to tip.
+# ${VAR-default}, not ${VAR:-default}: an explicitly EMPTY EXPECTED_TRIM is the documented
+# strict mode and must not fall back to the default trim.
 EXPECTED_TRIM="${EXPECTED_TRIM-64000-49983999}"
 
-# Buffer the listing before parsing (mc ls + early-exiting pipe reader
-# → SIGPIPE aborts under pipefail; see galexie-archive-tip-lag.sh).
+# Buffer the listing before parsing (mc ls + early-exiting pipe reader -> SIGPIPE under
+# pipefail; see galexie-archive-tip-lag.sh).
 #
-# THE READ'S SUCCESS AND ITS CONTENT ARE SEPARATE NUMBERS. This line
-# ended in `|| true`, which threw mc's exit status away, so a read that
-# died PARTWAY through the listing handed the parser a truncated but
-# perfectly contiguous prefix — bad=0, unexpected_gaps 0, a clean
-# DR verdict derived from a failed read. Reproduced against
-# these exact bytes: a listing cut after 4 of 11 partitions wrote
-# `galexie_archive_unexpected_gaps 0`, byte-identical to the healthy
-# answer, and stellarindex_galexie_archive_gap (severity `page`) is the
-# ONLY recurring guard on this bucket's shape.
+# The read's success and its content are separate numbers. Discarding mc's exit status
+# (`|| true`) let a read that died PARTWAY hand the parser a truncated but contiguous
+# prefix: bad=0, unexpected_gaps 0, byte-identical to a healthy answer, while
+# stellarindex_galexie_archive_gap (page) is the ONLY recurring guard on this bucket's shape.
 listing=""
 read_rc=0
 listing=$(mc ls "$BUCKET/" 2>/dev/null) || read_rc=$?
 
-# Raw rows the listing returned, published alongside the status. It is
-# what separates "the mirror is empty" (0) from "mc answered in a shape
-# this scan can no longer parse" (>0) when the partition count is zero;
-# both reach the same page below, and the responder cannot otherwise
-# tell a deleted archive from a parser that stopped matching.
+# Raw rows the listing returned, published with the status: with a zero partition count it
+# separates "the mirror is empty" (0) from "mc answered in a shape this scan can no longer
+# parse" (>0); both reach the same page, and the responder cannot otherwise tell them apart.
 listing_lines=0
 if [ -n "$listing" ]; then
   listing_lines=$(printf '%s\n' "$listing" | wc -l | tr -d ' ')
 fi
 
-# Left empty when the read failed, and then NOT emitted at all. The
-# alternative is publishing a number nothing measured: a truncated read
-# fabricates "no gaps" and a dead read fabricates a DR-corruption page
-# that sends the responder to the wrong runbook. galexie_archive_scan_ok
-# is what speaks for a run that could not look.
+# Left empty, and NOT emitted, when the read failed: a truncated read would fabricate "no
+# gaps" and a dead read a DR-corruption page pointing at the wrong runbook.
+# galexie_archive_scan_ok speaks for a run that could not look.
 scan_ok=0
 count=""
 first=""
@@ -102,10 +77,8 @@ if [ "$read_rc" -eq 0 ]; then
     | sort -n -k1,1)
 
   if [ -z "$ranges" ]; then
-    # A SUCCESSFUL read that yielded no partitions — the bucket is empty,
-    # or mc answered in a shape the parser no longer matches. Both are DR
-    # events and both keep the shape that FIRES; a FAILED read never
-    # lands here.
+    # A SUCCESSFUL read with no partitions (empty bucket, or mc output the parser no longer
+    # matches) is a DR event and keeps the shape that FIRES; a FAILED read never lands here.
     count=0; first=0; last=0; unexpected=1
   else
     read -r trim_start trim_end <<< "$(printf '%s' "$EXPECTED_TRIM" | tr '-' ' ')"
@@ -121,21 +94,13 @@ if [ "$read_rc" -eq 0 ]; then
       }
       END { print n, first, prev, bad }')
     read -r count first last unexpected <<< "$result"
-    # awk's four fields ARE the partition block's values, and `read`
-    # cannot fail loudly here: a SHORT answer — awk killed mid-run, awk
-    # missing, the walk erroring out, or a future edit to that END print
-    # — leaves the tail variables EMPTY and silently renders
-    # `galexie_archive_last_ledger` with no value field. node_exporter
-    # does not skip an unparseable line; it rejects the WHOLE file, so
-    # that one empty field would take the scan's own health gauges down
-    # together with the verdict they exist to qualify — the r1
-    # earlier shape, where one bad value cost 127 unrelated series
-    # ~20 minutes of darkness.
+    # awk's four fields ARE the partition block's values, and `read` cannot fail loudly: a SHORT
+    # answer (awk killed, missing, or a future edit to that END print) leaves the tail variables
+    # EMPTY and renders a sample with no value field, which makes node_exporter reject the WHOLE
+    # file, health gauges included.
     #
-    # The publication guard below withholds any such line instead of
-    # publishing it, so this check does not repair anything: it names
-    # the CAUSE in the journal, because otherwise the operator sees
-    # four withheld lines and no reason for them.
+    # The publication guard below withholds any such line, so this check repairs nothing: it names
+    # the CAUSE in the journal, otherwise the operator sees withheld lines with no reason.
     for field in "$count" "$first" "$last" "$unexpected"; do
       case "$field" in
         '' | *[!0-9]*)
@@ -166,22 +131,16 @@ galexie_archive_unexpected_gaps $unexpected
 EOF
 fi
 
-# ── The scan's own health, written on EVERY run ──────────────────────
+# ── The scan's own health, written on EVERY run ──
 #
-#   _scan_ok            1 iff `mc ls` exited 0. Zero means the four
-#                       series above are absent because nothing was
-#                       measured, not because the archive is fine.
-#   _scan_listing_lines rows that read returned (see above).
-#   _scan_last_run_unix when this file was last WRITTEN. Deliberately
-#                       not _last_success_unix: it stamps the RUN, so a
-#                       run whose read failed still refreshes it and
-#                       _scan_ok is what says the data is bad. It is
-#                       also the only thing that catches the scan not
-#                       running at all — node_exporter keeps serving the
-#                       LAST file it saw, so a dead timer leaves
-#                       fresh-looking scrapes of a frozen zero-gaps
-#                       verdict. stellarindex_galexie_archive_scan_degraded
-#                       reads all three.
+#   _scan_ok            1 iff `mc ls` exited 0. Zero means the series above are absent
+#                       because nothing was measured, not because the archive is fine.
+#   _scan_listing_lines rows that read returned.
+#   _scan_last_run_unix when this file was last WRITTEN (stamps the RUN, not success, so
+#                       _scan_ok says the data is bad). Also the only catch for the scan not
+#                       running: node_exporter keeps serving the LAST file, so a dead timer
+#                       leaves fresh-looking scrapes of a frozen zero-gaps verdict.
+#                       stellarindex_galexie_archive_scan_degraded reads all three.
 cat >> "$TMP" <<EOF
 # HELP galexie_archive_scan_ok Whether the bucket listing this scan is derived from exited 0 (1 = yes). 0 means the partition series above were not written.
 # TYPE galexie_archive_scan_ok gauge
@@ -196,29 +155,21 @@ galexie_archive_scan_last_run_unix $(date +%s)
 # TYPE galexie_archive_unparseable_lines gauge
 EOF
 
-# ── Validate the rendered bytes before publishing ────────────────────
+# ── Validate the rendered bytes before publishing ──
 #
-# Everything above reaches $TMP unexamined, and four of the seven values
-# come out of an awk walk through a bucket listing this scan does not
-# control. node_exporter rejects an unparseable textfile WHOLE, so one
-# empty or non-numeric field would take the DR verdict AND the scan's
-# own health gauges off the host together — and the health gauges are
-# the only thing that can say the verdict is missing.
+# Everything above reaches $TMP unexamined, and four of the seven values come from an awk
+# walk over a listing this scan does not control. node_exporter rejects an unparseable
+# textfile WHOLE, so one bad field would take the DR verdict AND the health gauges off the host.
 #
-# WITHHOLD the offending lines rather than refusing to publish the file:
-# a withheld verdict leaves galexie_archive_unexpected_gaps ABSENT,
-# which stellarindex_galexie_archive_contiguity_silent already reads,
-# whereas an unpublished file is re-served by node_exporter verbatim on
-# every scrape and freezes the verdict on whatever it last said — a
-# stale zero-gaps DR certificate that nothing can distinguish from a
-# fresh one.
+# WITHHOLD offending lines rather than refuse to publish: a withheld verdict leaves
+# galexie_archive_unexpected_gaps ABSENT, which stellarindex_galexie_archive_contiguity_silent
+# already reads, whereas an unpublished file is re-served verbatim and freezes a stale
+# zero-gaps DR certificate indistinguishable from a fresh one.
 #
-# Same grammar as data-freshness.sh and the timescale-jobs probe.
-# Braces are written [{] / [}]: in an ERE a bare brace opens an interval
-# expression and the escape is undefined by POSIX, so the bracket form
-# means the same thing under mawk (the Debian default), gawk and BWK awk
-# alike. No apostrophe appears in the awk program — it is a
-# single-quoted shell word and one would end it.
+# Same grammar as data-freshness.sh and the timescale-jobs probe. Braces are [{] / [}]: in an
+# ERE a bare brace opens an interval expression (escape undefined by POSIX), so the bracket
+# form means the same under mawk, gawk and BWK awk. No apostrophe in the awk program: it is
+# a single-quoted shell word.
 CHECKED="$TMP.checked"
 if ! DROPPED=$(awk -v keep="$CHECKED" '
   /^[ \t]*$/ || /^#/ { print > keep; next }
@@ -238,9 +189,8 @@ if ! DROPPED=$(awk -v keep="$CHECKED" '
   echo "galexie-archive-contiguity: the exposition validator did not run — refusing to publish unvalidated bytes, since node_exporter drops an unparseable file whole and says so only in node_textfile_scrape_error. Previous galexie_archive_contiguity.prom left in place; its age is what the scan_last_run_unix arm of stellarindex_galexie_archive_scan_degraded reads." >&2
   exit 1
 fi
-# The tally is about to become a metric value of its own. A validator
-# that answered with something other than a count has validated
-# nothing, so this refuses rather than coercing it to 0.
+# The tally becomes a metric value; a non-count means nothing was validated, so refuse
+# rather than coerce to 0.
 case "${DROPPED:-}" in
   '' | *[!0-9]*)
     rm -f "$CHECKED"
@@ -248,9 +198,8 @@ case "${DROPPED:-}" in
     exit 1
     ;;
 esac
-# Guarded: an unchecked `mv` that failed would leave $TMP holding the
-# UNVALIDATED render, and the publish below would then ship exactly the
-# bytes this block exists to withhold.
+# Guarded: a failed unchecked `mv` would leave $TMP holding the UNVALIDATED render for the
+# publish below to ship.
 if ! mv "$CHECKED" "$TMP"; then
   rm -f "$CHECKED"
   echo "galexie-archive-contiguity: could not swap in the validated render — refusing to publish. Previous galexie_archive_contiguity.prom left in place." >&2
@@ -258,18 +207,15 @@ if ! mv "$CHECKED" "$TMP"; then
 fi
 printf 'galexie_archive_unparseable_lines %s\n' "$DROPPED" >> "$TMP"
 
-# node_exporter runs unprivileged and SILENTLY skips a textfile it
-# cannot read, so set the mode explicitly rather than inheriting umask.
+# node_exporter runs unprivileged and SILENTLY skips an unreadable textfile; set the mode
+# explicitly rather than inheriting umask.
 chmod 644 "$TMP"
 mv "$TMP" "$OUT"
 trap - EXIT
 
-# Published — now be loud. A withheld line means this scan rendered
-# something that is not a metric, which is a defect here or in what mc
-# answered. The good samples are already on disk, so a non-zero exit
-# costs nothing but a failed oneshot — which the catch-all
-# stellarindex_systemd_unit_failed ticket already watches
-# (galexie-archive-contiguity.service is deliberately not in
+# Published; now be loud. A withheld line is a defect here or in what mc answered. The good
+# samples are already on disk, so a non-zero exit only fails the oneshot, which the
+# stellarindex_systemd_unit_failed ticket already watches (the unit is deliberately not in
 # scripts/ci/unit-failed-dedicated.baseline).
 if [ "$DROPPED" -gt 0 ]; then
   echo "galexie-archive-contiguity: published galexie_archive_contiguity.prom with $DROPPED unparseable line(s) withheld — galexie_archive_unparseable_lines carries the count" >&2

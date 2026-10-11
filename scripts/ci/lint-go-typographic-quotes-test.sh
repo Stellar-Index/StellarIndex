@@ -1,35 +1,28 @@
 #!/usr/bin/env bash
-# lint-go-typographic-quotes-test.sh — fixtures for the typographic-quote
-# gate (scripts/ci/lint-go-typographic-quotes.py).
+# lint-go-typographic-quotes-test.sh - fixtures for the typographic-quote gate
+# (scripts/ci/lint-go-typographic-quotes.py).
 #
-# The gate exists because gofumpt's doc-comment reformatter rewrites a
-# doubled apostrophe to U+201D, which silently changed what several
-# ClickHouse/Timescale comments said the filter was. A gate for that has to
-# be demonstrated failing on the real corrupted shape, not just passing on a
-# clean tree — a gate never seen to go red is not known to work.
+# The gate exists because gofumpt's doc-comment reformatter rewrites a doubled
+# apostrophe to U+201D, silently changing what several ClickHouse/Timescale
+# comments said the filter was. It must be shown failing on the real corrupted
+# shape, not just passing on a clean tree.
 #
-# What is pinned here:
-#
-#   1. THE KNOWN-BAD FILE. The byte-for-byte incident shape (a doc comment
-#      carrying U+201D beside a raw string that still has the literal '')
-#      is caught, at the right line, and the raw-string line is NOT flagged.
-#   2. THE FMT-STABLE PROPERTY, run for real when gofumpt is installed:
-#      `gofumpt -l` over that same file lists NOTHING while the gate fails.
-#      This is the whole reason the gate is not "just run the formatter".
-#   3. THE CLEAN FILE PASSES: '' in a raw string, and '' inside an indented
-#      doc-comment code block — the remedy the failure text recommends —
-#      are both fine.
-#   4. ALL FOUR characters are found, one finding each. This is the case a
-#      BRE `\|` alternation scan got wrong: POSIX basic regular expressions
-#      have no alternation, so a grep without the GNU extension matches a
-#      literal `|` and exits 1 — a clean bill of health that means nothing.
-#      The gate does not shell out to grep at all, and case 9 pins that.
-#   5. WAIVERS: `lint-quotes:ok: <reason>` on the line, or the line above,
-#      waives and is COUNTED; the bare marker with no reason does not.
-#   6. VACUITY: a tree with no Go file in scope exits 2 rather than
-#      reporting a pass over nothing.
-#   7. SCOPE: vendored and generated files are skipped and counted;
-#      untracked files are not scanned at all (discovery is `git ls-files`).
+# Pinned here:
+#   1. KNOWN-BAD FILE: the incident shape (a doc comment with U+201D beside a raw
+#      string still holding the literal '') is caught at the right line, and the
+#      raw-string line is NOT flagged.
+#   2. FMT-STABLE: when gofumpt is installed, `gofumpt -l` on that file lists
+#      NOTHING while the gate fails (why the gate is not "just run the formatter").
+#   3. CLEAN FILE PASSES: '' in a raw string and in an indented doc-comment code
+#      block (the remedy the failure text recommends).
+#   4. ALL FOUR characters are found, one finding each. A BRE `\|` scan got this
+#      wrong (no alternation in POSIX BRE: it matches a literal `|`, exits 1, a
+#      false clean bill); the gate never shells out to grep, pinned by case 9.
+#   5. WAIVERS: `lint-quotes:ok: <reason>` on the line or the line above waives
+#      and is COUNTED; the bare marker with no reason does not.
+#   6. VACUITY: a tree with no Go file in scope exits 2, not a pass over nothing.
+#   7. SCOPE: vendored and generated files are skipped and counted; untracked
+#      files are not scanned (discovery is `git ls-files`).
 #   8. A Go file that is not valid UTF-8 is a finding, not a crash.
 #
 # Run: bash scripts/ci/lint-go-typographic-quotes-test.sh
@@ -39,9 +32,8 @@ cd "$(dirname "$0")/../.." || exit 1
 SRC="$PWD/scripts/ci/lint-go-typographic-quotes.py"
 [ -f "$SRC" ] || { echo "lint-go-typographic-quotes-test: gate not found at $SRC" >&2; exit 2; }
 
-# pwd -P: mktemp -d hands back /var/folders/... on macOS while git reports
-# /private/var/folders/..., and the fixture-landed-here assertion below
-# compares those two strings.
+# pwd -P: mktemp -d gives /var/folders/... on macOS while git reports
+# /private/var/folders/..., and the fixture-landed-here assertion compares them.
 TMP="$(mktemp -d)" || exit 2
 TMP="$(cd "$TMP" && pwd -P)" || exit 2
 trap 'rm -rf "$TMP"' EXIT
@@ -54,15 +46,13 @@ expect_rc()   { if [ "$rc" -eq "$1" ]; then ok "$2 (rc=$rc)"; else bad "$2 (expe
 expect_hit()  { if grep -q -- "$1" <<<"$out"; then ok "$2"; else bad "$2 (missing: $1)"; echo "$out" | sed -n '1,12s/^/      | /p'; fi; }
 expect_miss() { if grep -q -- "$1" <<<"$out"; then bad "$2 (unexpected: $1)"; echo "$out" | sed -n '1,12s/^/      | /p'; else ok "$2"; fi; }
 
-# new_repo <abs-dir> — a throwaway tracked tree. The gate discovers its
-# subject with `git ls-files`, so the fixture has to be a real repository.
+# new_repo <abs-dir> - a throwaway tracked tree (the gate uses `git ls-files`).
 #
-# A git hook runs with GIT_DIR / GIT_INDEX_FILE and friends EXPORTED, and
-# `git init` honours an inherited GIT_DIR AHEAD of its own -C — so a fixture
-# built from the pre-commit path (which is where scripts/dev/lint-changed.sh
-# runs this file) would re-initialise the REAL repository instead. Clear them
-# first, then ASSERT the fixture landed where it was asked to: missing one
-# variable fails the same silent way, and git says only "warning: re-init".
+# A git hook EXPORTS GIT_DIR / GIT_INDEX_FILE and friends, and `git init` honours
+# an inherited GIT_DIR AHEAD of -C, so a fixture built from the pre-commit path
+# (scripts/dev/lint-changed.sh runs this file) would re-initialise the REAL repo.
+# Clear them, then ASSERT the fixture landed where asked: missing one variable
+# fails silently (git says only "warning: re-init").
 # Enforced by scripts/ci/lint-git-fixture-isolation.sh.
 new_repo() {
   local d="$1"
@@ -85,8 +75,7 @@ run_gate() {
   rc=$?
 }
 
-# The typographic characters are written as UTF-8 byte escapes so this file
-# stays plain ASCII and the codepoint under test is stated, not guessed:
+# The typographic characters are UTF-8 byte escapes so this file stays ASCII:
 #   \xe2\x80\x98 U+2018   \xe2\x80\x99 U+2019
 #   \xe2\x80\x9c U+201C   \xe2\x80\x9d U+201D
 # \x27 is a plain apostrophe, so \x27\x27 is the doubled form gofumpt eats.
@@ -241,15 +230,11 @@ expect_rc 1 "a Go file that is not valid UTF-8 is a finding, not a crash"
 expect_hit "not valid UTF-8" "and the finding says why"
 
 # ── 9. the gate must not scan with grep ────────────────────────────────────
-# Not style policing: the first sweep for these characters used a basic
-# regular expression with `\|` alternation and came back clean, because
-# POSIX BRE has no alternation and a grep without the GNU extension matches
-# a literal `|` instead — exit 1, no output, indistinguishable from a pass.
-# `grep -P` is not the escape either: /usr/bin/grep on macOS is BSD grep and
-# rejects -P outright. Developers here work on macOS and CI runs Linux, so
-# the scan has to behave identically on both; Python decodes the file and
-# has no dialect. If someone rewrites the gate around grep, this says why
-# not before the false negative does.
+# Not style policing: a BRE `\|` sweep for these characters came back clean
+# because POSIX BRE has no alternation (a non-GNU grep matches a literal `|`,
+# exit 1, no output, same as a pass). `grep -P` is no escape: macOS's BSD grep
+# rejects it, and the scan must behave identically on macOS and Linux. Python
+# decodes the file and has no dialect.
 echo "lint-go-typographic-quotes-test: no grep in the scan path"
 
 if grep -nE '(subprocess|os\.system|os\.popen|check_output)[^#]*grep' "$SRC" > /dev/null 2>&1; then

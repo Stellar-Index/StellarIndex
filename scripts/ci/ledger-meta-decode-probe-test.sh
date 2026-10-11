@@ -3,28 +3,19 @@
 # configs/ansible/roles/archival-node/files/ledger-meta-decode-probe.sh,
 # installed by the archival-node role as /usr/local/bin/ledger-meta-decode-probe.
 #
-# THE DEFECT THIS PINS. The probe counted decode-failure signatures with
-#   n=$(journalctl -u "$u" ... 2>/dev/null | grep -cE "$PATTERN" 2>/dev/null || true)
-#   n=${n:-0}
-# `grep -c` legitimately prints 0 and exits 1 when nothing matches (the
-# healthy case), so `|| true` was load-bearing there -- and it also
-# swallowed a genuine journalctl failure (journald unreachable, permission
-# denied, missing binary) with it, defaulting n to 0 either way. The
-# script's own header promises "fail-open by design: any probe error emits
-# nothing rather than a false 0", but the redirected stderr plus `|| true`
-# published exactly that false 0 as a real gauge value.
+# Pins the probe's fail-open contract: `grep -c` exits 1 when nothing matches, so
+# `|| true` there must not also swallow a genuine journalctl failure (journald
+# unreachable, permission denied, missing binary) as a false 0.
 #
 # What must hold:
-#   1. a healthy read with real decode-failure lines counts them per unit
-#      and in the total, and refreshes _updated_seconds;
-#   2. a healthy read that found nothing publishes a genuine 0 (must stay
-#      distinguishable from a suppressed failure only by the next case);
-#   3. a journalctl READ FAILURE (non-zero exit) must NOT publish 0 -- the
-#      probe must leave the previous textfile (and its _updated_seconds)
-#      untouched so the staleness alert can page, instead of writing a
-#      fabricated 0 that masks a real decode failure;
-#   4. a renamed/absent unit (journalctl exits 0, no output) is a genuine
-#      zero and must still be published, unlike case 3.
+#   1. a healthy read with decode-failure lines counts them per unit and in
+#      the total, and refreshes _updated_seconds;
+#   2. a healthy read that found nothing publishes a genuine 0;
+#   3. a journalctl READ FAILURE (non-zero exit) must NOT publish 0: the
+#      previous textfile and its _updated_seconds stay untouched so the
+#      staleness alert can page;
+#   4. a renamed/absent unit (journalctl exits 0, no output) is a genuine zero
+#      and is still published.
 #
 # Run: bash scripts/ci/ledger-meta-decode-probe-test.sh
 set -uo pipefail
@@ -42,8 +33,7 @@ ok()  { printf '  ok   %s\n' "$1"; pass=$((pass + 1)); }
 bad() { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
 
 mkdir -p "$TMP/bin" "$TMP/textfile"
-# journalctl stub. All three probed units (galexie, galexie-backfill,
-# stellarindex-indexer) get the same scenario per run.
+# journalctl stub; all three probed units get the same scenario per run.
 cat > "$TMP/bin/journalctl" <<'SH'
 #!/usr/bin/env bash
 case "${SCENARIO:-healthy}" in
@@ -129,13 +119,8 @@ expect_unix_stamp "a clean run stamps updated_seconds" "$stamp2"
 
 # ─── 3. journalctl READ FAILURE must not fabricate a 0 ──────────────
 #
-# This is the defect: pre-fix, a failed journal read still wrote 0 for
-# every unit and refreshed updated_seconds, hiding the failure behind a
-# fresh, false "no decode failures" gauge. The prior run (decoding_failure)
-# left a genuinely NON-ZERO total on disk: if a failed read fabricated a 0,
-# it would show up here as the total dropping to 0. Re-running "healthy"
-# afterwards would also read back as 0 and mask the same fabrication, so
-# the discriminating check has to happen right after a non-zero run.
+# Must follow a non-zero run: a fabricated 0 shows as the total dropping to 0,
+# which a preceding "healthy" run would mask.
 run decoding_failure
 prev_total=$(metric stellarindex_ledger_meta_decode_failures_total)
 prev_stamp=$(metric stellarindex_ledger_meta_decode_probe_updated_seconds)

@@ -1,37 +1,25 @@
 #!/usr/bin/env bash
 #
-# smoke.sh — wrapper around scripts/dev/r1-smoke.sh that reports
-# the result to Healthchecks.io and to node_exporter's textfile
-# collector. Distinct from heartbeat.sh: that probes the metrics
-# port (process up); this one verifies the public API surface
-# (schema + data integrity).
+# smoke.sh - wrapper around scripts/dev/r1-smoke.sh that reports the result to
+# Healthchecks.io and node_exporter's textfile collector. Unlike heartbeat.sh
+# (metrics port up), this verifies the public API surface (schema + data
+# integrity): a 200 with malformed JSON, /v1/coins missing `data`, an OpenAPI
+# change that breaks clients.
 #
-# Catches regressions the per-binary heartbeats can't see — e.g.
-# /v1/price returning a 200 with malformed JSON, /v1/coins missing
-# the `data` field, an OpenAPI-spec change that breaks downstream
-# clients.
-#
-# Two sinks, one optional and one not:
-#
+# Two sinks:
 #   - Healthchecks.io, from HEALTHCHECKS_URL_SMOKE in
-#     /etc/default/stellarindex-healthchecks. An empty URL skips the
-#     ping — and that variable has been empty on r1 since install.
-#   - the node_exporter textfile at $TEXTFILE_DIR/api_smoke.prom,
-#     which stellarindex_api_smoke_{failing,stale} evaluate against
-#     (configs/prometheus/rules.r1/api-smoke.yml). Written on every
-#     run, unconditionally.
+#     /etc/default/stellarindex-healthchecks. An empty URL skips the ping.
+#   - the textfile $TEXTFILE_DIR/api_smoke.prom, which
+#     stellarindex_api_smoke_{failing,stale} evaluate against
+#     (configs/prometheus/rules.r1/api-smoke.yml). Written on EVERY run.
 #
-# A failing run pings /fail only after HC_FAIL_AFTER (default 2)
-# consecutive failing runs, so one run overlapping a deploy restart
-# does not cost a down + up email pair; api_smoke.prom still carries
-# every run's verdict at once, so the Prometheus alerts are unchanged.
+# The textfile is the non-optional leg: with only the Healthchecks leg, an unset
+# URL leaves the one check that sees structurally wrong JSON reporting to
+# nothing (no ping, no series, no alert). Journal-only is not coverage.
 #
-# The textfile is the leg that is not optional. With only the
-# Healthchecks leg, an unset URL left a 5-minute timer running 34 jq
-# shape assertions — the one check that can see a 200 carrying
-# structurally wrong JSON — reporting to nothing at all: no ping, no
-# series, no alert rule. "Journal-only coverage" is not coverage;
-# nothing reads a journal until someone already suspects a problem.
+# A failing run pings /fail only after HC_FAIL_AFTER (default 2) consecutive
+# failures, so one run overlapping a deploy restart costs no down + up email
+# pair; api_smoke.prom still carries every run's verdict immediately.
 
 set -uo pipefail
 
@@ -42,27 +30,22 @@ set -uo pipefail
 
 SMOKE_SCRIPT="${SMOKE_SCRIPT:-/opt/stellarindex/healthchecks/r1-smoke.sh}"
 URL="${HEALTHCHECKS_URL_SMOKE:-}"
-# Same directory + atomic-write convention as the pgbackrest and
-# restore-drill emitters. The archival-node role provisions the
-# directory 0775 group stellarindex; stellarindex-smoke.service puts
-# its DynamicUser in that group and lists the path in ReadWritePaths,
-# which ProtectSystem=strict would otherwise refuse with EROFS.
+# Same directory + atomic-write convention as the pgbackrest and restore-drill
+# emitters. The archival-node role provisions it 0775 group stellarindex;
+# stellarindex-smoke.service's DynamicUser joins that group and lists the path
+# in ReadWritePaths, or ProtectSystem=strict refuses with EROFS.
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 METRIC_OUT="$TEXTFILE_DIR/api_smoke.prom"
 
 # emit_metric <failed-check-count>
 #
-# Rewritten on EVERY run, pass or fail, so `failures` is this run's
-# verdict rather than a survivor of an older one, and `last_run_unix`
-# always advances. The two alerts split on exactly that: `_failing`
-# reads the count, `_stale` reads the timestamp — and its
-# absent_over_time branch is what covers the run that never happened
-# (dead timer, fresh host, unwritable directory), which a plain
-# `time() - last_run` comparison can never see, because an absent
-# series is an empty vector.
-# The tmp is removed on every exit path (failed chmod/mv, SIGTERM from a
-# systemd timeout) so none accumulates in the node_exporter directory; its
-# name never ends in .prom, so the collector cannot read a partial file.
+# Rewritten on EVERY run so `failures` is this run's verdict and `last_run_unix`
+# always advances. `_failing` reads the count; `_stale` reads the timestamp, and
+# its absent_over_time branch covers a run that never happened (dead timer,
+# fresh host, unwritable dir), which `time() - last_run` cannot see (an absent
+# series is an empty vector).
+# The tmp is removed on every exit path (failed chmod/mv, SIGTERM from a systemd
+# timeout); its name never ends in .prom, so the collector cannot read a partial.
 SMOKE_TMP=""
 trap '[ -z "$SMOKE_TMP" ] || rm -f "$SMOKE_TMP"' EXIT
 trap 'exit 143' TERM INT HUP
@@ -86,43 +69,33 @@ emit_metric() {
   fi
 }
 
-# A missing or non-executable
-# smoke script is itself a failure — fan out to Healthchecks/fail
-# so the 5-min API-surface check goes red, otherwise a broken
-# install silently disables the check without anyone noticing.
+# A missing or non-executable smoke script is itself a failure: fan out to
+# Healthchecks/fail so a broken install cannot silently disable the check.
 if [ ! -x "$SMOKE_SCRIPT" ]; then
   MSG="smoke: $SMOKE_SCRIPT not found or not executable"
   echo "$MSG" >&2
-  # Count it as one failed check rather than emitting nothing: an
-  # absent write would leave the PREVIOUS run's `failures 0` in place
-  # for node_exporter to keep serving on behalf of a check that can no
-  # longer run — the frozen-textfile trap the data-freshness watchdog
-  # hit.
+  # Count it as one failed check: an absent write would leave the PREVIOUS run's
+  # `failures 0` served for a check that can no longer run (frozen-textfile trap).
   emit_metric 1
   hc_ping smoke "${URL:+${URL}/fail}" --data-binary "$MSG"
   exit 0
 fi
 
-# Run the smoke script. Captures its exit code (= number of failed
-# checks per the script's contract) and the full output for the
-# Healthchecks.io ping body — operators reading the dashboard see
-# exactly which checks tripped without leaving the page.
+# Run the smoke script. Captures its exit code (= number of failed checks) and
+# the full output for the Healthchecks.io ping body.
 OUT="$(bash "$SMOKE_SCRIPT" 2>&1)"
 RC=$?
 
-# On failure the reason must reach the JOURNAL, not only the ping body.
-# The failing check names must not go solely into
-# the Healthchecks.io ping, so the dashboard knows what broke and the host
-# does not — `journalctl -u stellarindex-smoke` shows only Starting and
-# Finished. Diagnosing an alert would then require the dashboard, which is
-# exactly when you want the host to be able to answer for itself.
+# On failure the reason must reach the JOURNAL, not only the ping body:
+# `journalctl -u stellarindex-smoke` otherwise shows only Starting and Finished,
+# and diagnosing an alert would need the dashboard.
 if [ "$RC" -ne 0 ]; then
   echo "smoke: FAILED — $RC check(s) tripped:" >&2
   printf '%s\n' "$OUT" | grep -iE '^[[:space:]]*(FAIL|not ok)|✗' >&2 || printf '%s\n' "$OUT" | tail -20 >&2
 fi
 
-# Emitted before the ping: the metric is the always-wired sink, and it
-# must land even when curl spends its whole retry budget hanging.
+# Emitted before the ping: the metric is the always-wired sink and must land
+# even when curl spends its whole retry budget hanging.
 emit_metric "$RC"
 
 hc_ping_verdict smoke "$URL" "$RC" "${HC_FAIL_AFTER:-2}" --data-binary "$OUT"

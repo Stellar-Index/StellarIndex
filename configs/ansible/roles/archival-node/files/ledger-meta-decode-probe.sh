@@ -1,43 +1,25 @@
 #!/usr/bin/env bash
-# ledger-meta-decode-probe — detect "we are behind a protocol upgrade" FAST.
+# ledger-meta-decode-probe — detect "we are behind a protocol upgrade" fast.
 #
-# WHY THIS EXISTS:
-# galexie v27 could not decode Protocol-28 ledger meta. The futurenet archive
-# backfill died at ledger 92747 with:
+# An old galexie cannot decode newer-protocol ledger meta (e.g.
+# "decoding ParallelTxExecutionStage"). It fails closed (errors and stops, no
+# corrupt objects) but surfaced only as generic tip-lag / archive-gap.
 #
-#   decoding LedgerCloseMetaV2: decoding GeneralizedTransactionSet:
-#   decoding TransactionSetV1: decoding TransactionPhase:
-#   decoding ParallelTxsComponent: decoding ParallelTxExecutionStage
+# The primary guard (stellar-stack-version-probe -> protocol_lag) is slow: it
+# runs daily with `for: 6h` (~30h worst case) and compares against RELEASED
+# versions, so it cannot know the network started emitting the new XDR (the
+# breaking arm appears only once a ledger contains the new structure).
 #
-# The failure was HANDLED SAFELY — galexie errors and stops rather than writing
-# corrupt objects (fail-closed; the archive kept every valid ledger). But it was
-# NOT diagnosable: it surfaced only as generic tip-lag / archive-gap, and the
-# actual cause had to be dug out of journald by hand.
+# This is the reactive backstop: it names an actual decode failure ("this
+# component cannot decode current ledger meta, bump it").
 #
-# The proactive guard (stellar-stack-version-probe -> protocol_lag, severity
-# page) is the primary defence and SHOULD catch this first. Its blind spots:
-#   * it runs DAILY and the alert is `for: 6h`, so ~30h worst case to page;
-#   * it compares against RELEASED upstream versions, so it cannot know the
-#     network actually started emitting the new XDR (futurenet/testnet lead
-#     mainnet, and the breaking arm only appears once a ledger genuinely
-#     CONTAINS the new structure — testnet ingested 240 P28 ledgers on a v27
-#     galexie with no error at all before anything broke).
-#
-# So this probe is the REACTIVE backstop: it watches for an actual decode
-# failure and names the cause, turning "ingestion mysteriously stalled" into
-# "this component cannot decode current ledger meta — bump it".
-#
-# Fail-open by design: any probe error emits nothing rather than a false 0,
-# so a broken probe cannot mask a real decode failure (the alert also has a
-# staleness guard on _updated_seconds).
+# Fail-open by design: any probe error emits nothing rather than a false 0
+# (the alert also has a staleness guard on _updated_seconds).
 
 set -uo pipefail
 
-# The override is the same seam galexie-catchup-probe.sh and
-# timescale-jobs-probe.sh carry, and exists for the same reason: it lets
-# scripts/ci/ledger-meta-decode-probe-test.sh execute these exact bytes
-# rather than a hand-copied twin. The service unit sets no environment, so
-# a real run always takes the default.
+# The override lets scripts/ci/ledger-meta-decode-probe-test.sh run these exact
+# bytes (same seam as galexie-catchup-probe.sh); the service unit sets none.
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 OUT="$TEXTFILE_DIR/ledger_meta_decode.prom"
 TMP="$OUT.tmp.$$"
@@ -46,13 +28,12 @@ WINDOW="${DECODE_PROBE_WINDOW:-15min}"
 [ -d "$TEXTFILE_DIR" ] || exit 0
 trap 'rm -f "$TMP"' EXIT
 
-# Units that decode ledger meta. galexie-backfill is a transient unit and may
-# not exist; journalctl tolerates unknown units with --unit repeated.
+# Units that decode ledger meta. galexie-backfill is transient and may not exist;
+# journalctl tolerates unknown units.
 UNITS=(galexie galexie-backfill stellarindex-indexer)
 
-# The signature set. Deliberately narrow: these are XDR/protocol decode
-# failures, NOT generic errors — a broad grep here would page on every
-# transient hiccup and get muted, which is how a real one gets missed.
+# Deliberately narrow: XDR/protocol decode failures only. A broad grep would
+# page on every hiccup and get muted, which is how a real one gets missed.
 PATTERN='decoding LedgerCloseMeta|decoding GeneralizedTransactionSet|decoding TransactionPhase|ParallelTxExecutionStage|unsupported ledger version|unknown union arm|xdr:.*unknown|decoding cached ledger meta'
 
 total=0
@@ -61,12 +42,8 @@ for u in "${UNITS[@]}"; do
     out=$(journalctl -u "$u" --since "-${WINDOW}" --no-pager 2>&1)
     rc=$?
     if [ "$rc" -ne 0 ]; then
-        # journalctl itself failed (journald unreachable, permission denied,
-        # missing binary, ...) -- a real read failure, not "zero matches".
-        # Fail open per the header: emit nothing this cycle and leave the
-        # previous textfile (and its _updated_seconds) in place, so the
-        # staleness guard pages instead of a fabricated 0 masking a real
-        # decode failure.
+        # A real read failure, not "zero matches": emit nothing and keep the
+        # previous textfile so the staleness guard pages instead of a fabricated 0.
         printf 'ledger-meta-decode-probe: journalctl failed for unit %s (rc=%d): %s\n' \
             "$u" "$rc" "$out" >&2
         exit 0

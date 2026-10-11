@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
 # Self-test for apply.sh's fail-closed guard.
 #
-# The guard exists because an empty URL is not a no-op: the renderer
-# drops the receiver's *_configs block, the reload SUCCEEDS, and the
-# receiver becomes a black hole identical to `silent`. That is what
-# produced 31 days of total alerting silence
-# with every self-check green throughout.
+# An empty URL is not a no-op: the renderer drops the receiver's *_configs
+# block, the reload SUCCEEDS, and the receiver becomes a black hole like
+# `silent` (once 31 days of alerting silence with every self-check green).
 #
-# A guard nobody has watched fail is not a guard, so each case below
-# asserts on the specific message, not merely on a non-zero exit — an
-# exit code alone would also be satisfied by the script being broken.
+# Each case asserts on the specific message, not just a non-zero exit, which a
+# broken script would also satisfy.
 
 set -uo pipefail
 
@@ -21,9 +18,8 @@ FAIL=0
 ok()   { printf '  ok   — %s\n' "$1"; PASS=$((PASS + 1)); }
 bad()  { printf '  FAIL — %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
-# Run apply.sh with a secrets file built from the given KEY=VALUE lines.
-# Never reaches install: every case either trips the guard first, or is
-# stopped at the probe with an unroutable URL.
+# Run apply.sh with a secrets file built from the given KEY=VALUE lines. Never
+# reaches install: cases trip the guard or stop at the probe (unroutable URL).
 run_with() {
   local env_file out
   env_file="$(mktemp)"
@@ -56,8 +52,7 @@ else
   bad "all URLs empty should be refused; rc=$rc out=${out:0:200}"
 fi
 
-# 2. Every missing receiver is NAMED, so the operator does not have to
-#    guess which variable to set.
+# 2. Every missing receiver is NAMED.
 for r in deadmansswitch pages alerts; do
   if [[ "$out" == *"receiver '$r' has no URL"* ]]; then
     ok "names the missing receiver '$r'"
@@ -66,8 +61,8 @@ for r in deadmansswitch pages alerts; do
   fi
 done
 
-# 3. One empty URL is as fatal as three — the deadman's switch alone
-#    going dark is the case that hid the outage from every other check.
+# 3. One empty URL is as fatal as three (the deadman's switch alone going dark
+#    hid the outage from every other check).
 out2="$(run_with "${FULL[0]}" "${FULL[1]}" 'DISCORD_WEBHOOK_URL_ALERTS=')"
 rc2=$?
 if [ "$rc2" -ne 0 ] && [[ "$out2" == *"receiver 'alerts' has no URL"* ]]; then
@@ -89,9 +84,8 @@ else
   echo "  skip — amtool not installed; waiver pass-through not exercised"
 fi
 
-# 5. The waiver is scoped to the receiver named — waiving one must not
-#    silently waive another. (A substring-matching waiver check would
-#    pass 1-4 and fail here.)
+# 5. A waiver is scoped to the receiver named; a substring-matching check
+#    would pass 1-4 and fail here.
 out4="$(ALERTMANAGER_ALLOW_EMPTY=alerts run_with 'HEALTHCHECKS_DEADMANSSWITCH_URL=' "${FULL[1]}" 'DISCORD_WEBHOOK_URL_ALERTS=')"
 rc4=$?
 if [ "$rc4" -ne 0 ] && [[ "$out4" == *"receiver 'deadmansswitch' has no URL"* ]]; then
@@ -100,9 +94,8 @@ else
   bad "waiver leaked across receivers; rc=$rc4 out=${out4:0:200}"
 fi
 
-# 6. --check-only must keep BOTH render branches working: CI drives it
-#    with every URL empty on purpose, to exercise the block-stripper.
-#    The guard is install-time policy and must not break that.
+# 6. --check-only must keep BOTH render branches working: CI runs it with every
+#    URL empty to exercise the block-stripper; the guard is install-time only.
 if command -v amtool >/dev/null 2>&1; then
   CHECK_ONLY_FLAG=--check-only
   out5="$(run_with 'HEALTHCHECKS_DEADMANSSWITCH_URL=' 'DISCORD_WEBHOOK_URL_PAGES=' 'DISCORD_WEBHOOK_URL_ALERTS=')"
@@ -124,9 +117,8 @@ else
   echo "  skip — amtool not installed; --check-only branches not exercised"
 fi
 
-# 7. The probe must be able to reject a well-formed but dead URL. Uses a
-#    reserved-for-documentation address so the test never depends on a
-#    third party being reachable.
+# 7. The probe must reject a well-formed but dead URL; uses a documentation-reserved
+#    address so no third party is needed.
 if command -v amtool >/dev/null 2>&1; then
 out7="$(SKIP_PROBE=0 run_with \
   'HEALTHCHECKS_DEADMANSSWITCH_URL=https://192.0.2.1/ping' \
@@ -141,10 +133,9 @@ else
   echo "  skip — amtool not installed; probe rejection not exercised"
 fi
 
-# 8. The out-of-band delivery-failure receiver is OPTIONAL — an unset
-#    URL must not block the apply. Making it required would mean the
-#    apply that restores a broken chat channel fails first on a
-#    Healthchecks check nobody has created yet.
+# 8. The out-of-band delivery-failure receiver is OPTIONAL: requiring it would
+#    make the apply that restores a broken chat channel fail on a check nobody
+#    has created yet.
 out8="$(run_with "${FULL[@]}")"
 if [[ "$out8" != *"refusing to install"* ]]; then
   ok "an unset HEALTHCHECKS_ALERT_DELIVERY_URL does not block the apply"
@@ -152,9 +143,7 @@ else
   bad "unset delivery-failure URL should not be fatal; out=${out8:0:200}"
 fi
 
-# 9. …but it is never SILENT. A dark out-of-band transport that nobody
-#    notices is missing fails exactly like one that was never added, so
-#    every run says so by name and names the variable to set.
+# 9. ...but never SILENT: every run names it and the variable to set.
 if [[ "$out8" == *"optional receiver 'delivery-failure' is DARK"* ]] \
    && [[ "$out8" == *"HEALTHCHECKS_ALERT_DELIVERY_URL"* ]]; then
   ok "an unset delivery-failure URL is reported by name"
@@ -162,9 +151,8 @@ else
   bad "dark optional receiver was not reported; out=${out8:0:300}"
 fi
 
-# 10. And when it IS set: reported as wired, and the extra
-#     `${HEALTHCHECKS_ALERT_DELIVERY_URL}` marker substitutes cleanly —
-#     case 6 only ever exercises that marker on the stripper branch.
+# 10. When set: reported as wired, and the `${HEALTHCHECKS_ALERT_DELIVERY_URL}`
+#     marker substitutes cleanly (case 6 only covers it on the stripper branch).
 if command -v amtool >/dev/null 2>&1; then
   CHECK_ONLY_FLAG=--check-only
   out10="$(run_with "${FULL[@]}" 'HEALTHCHECKS_ALERT_DELIVERY_URL=https://hc-ping.com/y')"
@@ -185,9 +173,8 @@ else
   echo "  skip — amtool not installed; delivery-failure branches not exercised"
 fi
 
-# 11. A completed apply publishes each optional receiver's dark state as a
-#     textfile gauge, so an alert — not just this run's stderr — carries it.
-#     The host-mutating tools are stubbed so the run reaches the install tail.
+# 11. A completed apply publishes each optional receiver's dark state as a textfile
+#     gauge so an alert carries it; host-mutating tools are stubbed to reach the install tail.
 STUBS="$(mktemp -d)"
 for t in amtool install systemctl; do printf '#!/bin/sh\nexit 0\n' > "$STUBS/$t"; done
 # The post-reload read-back wants every wired receiver's block in the running config.
