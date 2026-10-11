@@ -14,8 +14,7 @@ import (
 // ONE definition of "which on-chain assets this system can represent",
 // and therefore of which SDEX fills become trade rows.
 //
-// Handles native, credit alphanum4 and credit alphanum12. A Soroban
-// SAC-wrapped classic asset arrives as classic — the SAC address is
+// A SAC-wrapped classic asset arrives as classic — the SAC address is
 // metadata, not canonical identity (see [Asset.SacContractID]).
 //
 // It returns an ERROR — never a partial asset — for every input the model

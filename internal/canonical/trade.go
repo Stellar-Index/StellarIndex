@@ -94,8 +94,7 @@ type Trade struct {
 //
 // Encoding: opIndex in the high 16 bits, eventIndex in the low 16. Both
 // are smallint on the wire (≤ 32767) so neither overflows its half, and
-// the result is stable + deterministic (the projection re-derive
-// reproduces it exactly).
+// the projection re-derive reproduces the result exactly.
 //
 // Sources whose op emits at most one trade — or that already space
 // op_index themselves (SDEX's *1024 stride) — need not use this. Sources
