@@ -11,16 +11,11 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// NativeLiquidityPoolState is one classic (CAP-38) constant-product
-// liquidity pool's decoded CURRENT reserve state (ADR-0039), read
-// straight from the `liquidity_pool` LedgerEntry in the certified
-// lake's current-state table. Both sides are always present — native
-// pools carry TWO-sided reserves on-chain (unlike the watched-asset-
-// gated `lp_reserve_observations` supply path, which only records the
-// operator-watched side). Reserves are classic 7-decimal stroops kept
-// as *big.Int (ADR-0003), even though they fit in int64, so the shared
-// constant-product depth math consumes them uniformly with the Soroban
-// AMM path.
+// NativeLiquidityPoolState is one classic (CAP-38) constant-product pool's CURRENT reserve
+// state (ADR-0039), read from the `liquidity_pool` LedgerEntry in the lake. Both sides are
+// always present, unlike the watched-asset-gated `lp_reserve_observations` supply path.
+// Reserves are 7-decimal stroops kept as *big.Int (ADR-0003) even though they fit in int64,
+// so the shared constant-product depth math treats them like the Soroban AMM path.
 type NativeLiquidityPoolState struct {
 	PoolHex     string // 32-byte LiquidityPoolId, lowercase hex (Horizon/SDEX form)
 	PoolStrkey  string // L-strkey (SEP-23)
@@ -36,14 +31,10 @@ type NativeLiquidityPoolState struct {
 	Ledger uint32
 }
 
-// NativeLiquidityPoolReserves reads the CURRENT two-sided reserve state
-// for the given classic liquidity pools from the lake in a single
-// batched `key_xdr IN (...)` lookup against ledger_entries_current
-// (PK-prefix on (entry_type, key_xdr) — cheap even for a handful at
-// once). Pool ids may be L-strkey (SEP-23) or 32-byte hex. Pools whose
-// entry isn't captured, was removed, or isn't a ConstantProduct pool
-// are absent from the result — callers treat absence as "reserves
-// unavailable", never as zero.
+// NativeLiquidityPoolReserves reads the CURRENT reserves for the given classic pools in one
+// batched `key_xdr IN (...)` lookup on the (entry_type, key_xdr) primary-key prefix. Pool ids
+// may be L-strkey (SEP-23) or 32-byte hex. Pools not captured, removed, or not ConstantProduct
+// are absent; callers treat absence as "reserves unavailable", never as zero.
 func (r *ExplorerReader) NativeLiquidityPoolReserves(ctx context.Context, poolIDs []string) (map[string]NativeLiquidityPoolState, error) {
 	keys := make([]string, 0, len(poolIDs))
 	for _, p := range poolIDs {
@@ -90,25 +81,20 @@ func (r *ExplorerReader) NativeLiquidityPoolReserves(ctx context.Context, poolID
 	return out, nil
 }
 
-// NativeLiquidityPoolsRanked reads EVERY classic constant-product pool's
-// current state from the lake and returns the top `limit` ranked by
-// pool-share trustline count descending (number of liquidity providers
-// — the only cross-pool-comparable size signal available without USD
-// pricing of arbitrary pool assets; pool shares and reserves are in
-// per-pair units and don't compare across pools). Ties break on pool
-// id for a stable order. The scan is a single PK-prefix-scoped
-// aggregate over the `liquidity_pool` entry_type (~40k pools, ~0.07s on
-// r1); callers cache the ranked result rather than re-scan per request.
+// NativeLiquidityPoolsRanked reads EVERY classic constant-product pool's current state and
+// returns the top `limit` by pool-share trustline count (liquidity providers), the only
+// cross-pool-comparable size signal without USD pricing of arbitrary assets: shares and
+// reserves are in per-pair units. Ties break on pool id for a stable order. The scan is one
+// PK-prefix-scoped aggregate over the `liquidity_pool` entry_type (~40k pools); callers cache
+// the result rather than re-scan per request.
 func (r *ExplorerReader) NativeLiquidityPoolsRanked(ctx context.Context, limit int) ([]NativeLiquidityPoolState, error) {
-	// argMax over the ReplacingMergeTree versions (manual dedup — cheaper
-	// than FINAL for a whole-prefix scan), latest entry per pool. The
-	// trailing removal (empty entry_xdr) is dropped by `HAVING e != ''`.
+	// argMax over the ReplacingMergeTree versions (manual dedup, cheaper than FINAL for a
+	// whole-prefix scan) gives the latest entry per pool; a trailing removal (empty entry_xdr)
+	// is dropped by `HAVING e != ''`.
 	//
-	// Version key: `version` ((ledger_seq<<32)|intra_ledger_seq, from
-	// ledger_entries_current_intra_ledger_seq.sql) where that schema is
-	// applied, else `ledger_seq`. The column is absent on the pre-D3 served
-	// table, so it is probed once per process; hard-coding it 500s the
-	// endpoint.
+	// Version key is `version` ((ledger_seq<<32)|intra_ledger_seq) where that schema is applied,
+	// else `ledger_seq`. The column is absent on older tables, so it is probed once per process;
+	// hard-coding it would 500 the endpoint there.
 	versionKey := "ledger_seq"
 	if r.ledgerEntriesVersioned(ctx) {
 		versionKey = "version"

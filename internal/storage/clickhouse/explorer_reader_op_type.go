@@ -14,15 +14,12 @@ type OpTypePage struct {
 	ScannedFrom uint32
 }
 
-// RecentOperationsOfType is RecentOperations restricted to opTypes (the lake's
-// enum strings, e.g. "OperationTypePayment"), newest first, on the same keyset
-// cursor.
+// RecentOperationsOfType is RecentOperations restricted to opTypes (the lake's enum strings,
+// e.g. "OperationTypePayment"), newest first, on the same keyset cursor.
 //
-// stellar.operations sorts on (ledger_seq, tx_index, op_index) with no op_type
-// skip index, so the filter cannot prune. Each page instead scans at most
-// recentLedgersTailWindow ledgers below its anchor (the tip on the first page)
-// and never falls back to an unbounded read: a rare type yields a short or
-// empty page whose continuation is OpTypePage.ScannedFrom.
+// stellar.operations has no op_type skip index, so the filter cannot prune. Each page scans at
+// most recentLedgersTailWindow ledgers below its anchor and never falls back to an unbounded
+// read: a rare type yields a short or empty page whose continuation is OpTypePage.ScannedFrom.
 func (r *ExplorerReader) RecentOperationsOfType(ctx context.Context, limit int, cur ExplorerCursor, opTypes []string) (OpTypePage, error) {
 	if len(opTypes) == 0 {
 		return OpTypePage{}, errors.New("clickhouse: recent operations of type: no op types")

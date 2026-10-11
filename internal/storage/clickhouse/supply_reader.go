@@ -23,18 +23,14 @@ type MintBurnFlow struct {
 	DataXDR    string
 }
 
-// StreamMintBurnFlows streams the supply flows (mint/burn/clawback contract
-// events) for [from,to] inclusive, ordered by ledger. These include CAP-67
-// classic-asset issuance/destruction back to genesis AND SEP-41 token
-// mint/burn/clawback, so Σ over all history gives total supply for EVERY token
-// (baseline = 0 at genesis), per
-// docs/architecture/storage-considerations.md#supply-flows-in-the-lake.
+// StreamMintBurnFlows streams the supply flows (mint/burn/clawback contract events) for [from,to]
+// inclusive, ordered by ledger. These include CAP-67 classic-asset issuance/destruction back to
+// genesis AND SEP-41 token mint/burn/clawback, so the sum over all history gives total supply for
+// EVERY token (baseline = 0 at genesis).
 //
-// useFinal toggles FINAL: with it, ReplacingMergeTree parts dedup at read time
-// (correct, but the all-history merge is ~40× slower). Without it the scan
-// double-counts the re-run partitions 25/45/62: acceptable only for a quick
-// estimate. The topic_0_sym IN filter keeps the scan to supply flows rather
-// than all contract_events.
+// useFinal toggles FINAL: with it, ReplacingMergeTree parts dedup at read time (correct, but the
+// all-history merge is ~40x slower). Without it the scan double-counts re-run partitions:
+// acceptable only for a quick estimate. The topic_0_sym IN filter keeps the scan to supply flows.
 func StreamMintBurnFlows(ctx context.Context, addr string, from, to uint32, useFinal bool, fn func(MintBurnFlow) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -50,14 +46,12 @@ func StreamMintBurnFlows(ctx context.Context, addr string, from, to uint32, useF
 	return streamMintBurnFlowRows(rows, fn)
 }
 
-// mintBurnFlowsQuery is StreamMintBurnFlows' SQL, built here rather than inline
-// so its text stays independently assertable (StreamMintBurnFlows dials its own
-// connection via openRead — see sdexOpsQuery's note on the same seam).
+// mintBurnFlowsQuery is StreamMintBurnFlows' SQL, built here so its text stays independently
+// assertable (it dials its own connection via openRead; see sdexOpsQuery's note on the seam).
 //
-// TWO bind parameters: the ledger window's from + to. useFinal is a SHAPE
-// toggle, not a bound value — it selects the ReplacingMergeTree dedup at the
-// ~40x read cost documented on StreamMintBurnFlows, so the two variants differ
-// ONLY by the FINAL keyword and must not diverge in predicate or column list.
+// TWO bind parameters: the ledger window's from + to. useFinal is a SHAPE toggle, not a bound
+// value, so the two variants differ ONLY by the FINAL keyword and must not diverge in predicate or
+// column list.
 func mintBurnFlowsQuery(useFinal bool) string {
 	final := ""
 	if useFinal {

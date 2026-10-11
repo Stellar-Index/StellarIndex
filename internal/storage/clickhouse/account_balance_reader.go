@@ -8,19 +8,13 @@ import (
 	"fmt"
 )
 
-// AccountBalanceSnapshot is our lake's LATEST known NATIVE (XLM)
-// balance for one account, folded from stellar.ledger_entry_changes.
-// Backs stellarindex-ops reconcile-balances (ADR-0033-style
-// verification harness) — the account-observer / classic-movements
-// readers already query this table for other entry types; this is
-// the account/native-balance analogue.
+// AccountBalanceSnapshot is our lake's LATEST known NATIVE (XLM) balance for one account,
+// folded from stellar.ledger_entry_changes. Backs stellarindex-ops reconcile-balances.
 type AccountBalanceSnapshot struct {
-	// Stroops is argMax(balance, (ledger_seq, intra_ledger_seq)) — the
-	// balance from the LAST change in canonical intra-ledger walk order. The
-	// intra_ledger_seq tie-break matters: one ledger can hold several changes
-	// to an account, and ledger_seq alone ties them, picking an ARBITRARY
-	// mid-ledger balance. The column is Int64: stroops fit within int64 for
-	// the whole XLM supply, unlike Soroban i128 amounts (ADR-0003).
+	// Stroops is argMax(balance, (ledger_seq, intra_ledger_seq)): the balance from the LAST change
+	// in intra-ledger walk order. The tie-break matters because one ledger can hold several
+	// changes to an account and ledger_seq alone would pick an ARBITRARY mid-ledger balance.
+	// Int64 suffices: stroops fit it for the whole XLM supply, unlike Soroban i128 (ADR-0003).
 	Stroops int64
 	// AtLedger is the ledger_seq that snapshot was recorded at.
 	AtLedger uint32
@@ -30,23 +24,15 @@ type AccountBalanceSnapshot struct {
 	Snapshots uint64
 }
 
-// QueryAccountBalance returns our lake's latest recorded native
-// balance for accountID (the strkey G... address), read from
-// stellar.ledger_entry_changes. found is false when the account has
-// zero rows — outside our coverage, not a zero balance (a real
-// zero-balance account still has at least one 'created'/'updated'
-// row).
+// QueryAccountBalance returns our lake's latest recorded native balance for accountID (G...
+// strkey). found is false when the account has zero rows: outside our coverage, not a zero
+// balance (a real zero-balance account still has a 'created'/'updated' row).
 //
-// SHAPE NOTE: this is the ONE remaining `account_id = ?` bloom-shaped filter
-// in the package, and it is deliberate: it backs ONLY the `reconcile-balances`
-// operator diagnostic (internal/ops/chops), never a serving path, and the
-// aggregate over the account's FULL change history is the tool's purpose.
-// Every SERVING account read rides a primary-key shape. Do not copy this
-// filter shape into a handler path.
-// SERVING account read rides a primary-key shape: key_xdr point/prefix
-// (account state), the table's own sort key (account_movements), or
-// the ops_by_source / operation_participants projections (history).
-// Do not copy this filter shape into a handler path.
+// SHAPE NOTE: this is the ONE remaining `account_id = ?` bloom-shaped filter in the package,
+// and it is deliberate: it backs ONLY the `reconcile-balances` operator diagnostic, whose
+// purpose is an aggregate over the account's FULL change history. Every SERVING account read
+// rides a primary-key shape (key_xdr point/prefix, account_movements' sort key, or the
+// ops_by_source / operation_participants projections). Do not copy this filter into a handler.
 func QueryAccountBalance(ctx context.Context, addr, accountID string) (snap AccountBalanceSnapshot, found bool, err error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -88,19 +74,16 @@ const sampleAccountIDsQuery = `
 	LIMIT ?
 `
 
-// SampleAccountIDs returns up to n distinct account_ids that have a
-// stellar.ledger_entry_changes 'account' entry above minLedger —
-// reconcile-balances' -sample source set. Restricting to ledger_seq >
-// minLedger biases the sample toward recently active accounts, whose LATEST
-// snapshot approximates current chain state (a stale one would show up as a
-// false MISMATCH). The frame is the change log itself, not the
-// ledger_entries_current projection, so an account the projection lost is
-// still drawable; callers keep the scan affordable with a tip-relative
-// minLedger.
+// SampleAccountIDs returns up to n distinct account_ids with a ledger_entry_changes 'account'
+// entry above minLedger (reconcile-balances' -sample source set). The minLedger floor biases the
+// sample toward recently active accounts, whose LATEST snapshot approximates current state (a
+// stale one would show as a false MISMATCH). The frame is the change log, not the
+// ledger_entries_current projection, so an account the projection lost is still drawable;
+// callers keep the scan affordable with a tip-relative minLedger.
 //
-// The order is cityHash64(account_id, seed): a seeded pseudo-shuffle, so
-// each seed draws a different cohort while one seed reproduces its cohort
-// exactly. account_id breaks hash ties so a seed's order is total.
+// The order is cityHash64(account_id, seed), a seeded pseudo-shuffle: each seed draws a
+// different cohort and one seed reproduces its cohort exactly. account_id breaks hash ties so
+// a seed's order is total.
 func SampleAccountIDs(ctx context.Context, addr string, minLedger uint32, seed uint64, n int) ([]string, error) {
 	if n <= 0 {
 		return nil, nil

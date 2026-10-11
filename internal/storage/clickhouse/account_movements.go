@@ -64,10 +64,9 @@ type AccountMovementRow struct {
 }
 
 // FanOutAccountMovement expands one movement into its account_movements row(s).
-// Two exceptions to "one row per participant": From==To (both set) is one
-// direction=self row, so no two rows differ only by `direction`; exactly one side
-// set (claimable-balance escrow, LP or path-payment leg) is one row for the known
-// side with Counterparty="". Neither side set returns nil.
+// Two exceptions to "one row per participant": From==To is one direction=self row, so no two
+// rows differ only by `direction`; exactly one side set (claimable-balance escrow, LP or
+// path-payment leg) is one row for the known side with Counterparty="". Neither set returns nil.
 func FanOutAccountMovement(m AccountMovement) []AccountMovementRow {
 	base := AccountMovementRow{
 		Ledger:          m.Ledger,
@@ -154,11 +153,10 @@ func EnsureAccountMovementsTable(ctx context.Context, addr string) error {
 // bounding payload size however large the caller's window is.
 const accountMovementsInsertChunk = 20_000
 
-// InsertAccountMovements fans out and batch-inserts movements; a retry of the
-// whole batch is safe because ReplacingMergeTree absorbs duplicates.
-// Rows go out in ledger order, so a partial send is complete below max(ledger),
-// which is what makes max(ledger) a sound resume point for classic-movements-backfill.
-// Returns rows sent, not rows surviving dedup.
+// InsertAccountMovements fans out and batch-inserts movements; retrying the whole batch is safe
+// because ReplacingMergeTree absorbs duplicates. Rows go out in ledger order, so a partial send
+// is complete below max(ledger), a sound resume point for classic-movements-backfill. Returns
+// rows sent, not rows surviving dedup.
 func InsertAccountMovements(ctx context.Context, addr string, movements []AccountMovement) (int64, error) {
 	if len(movements) == 0 {
 		return 0, nil
@@ -358,14 +356,14 @@ func chunkStrings(ids []string, n int) [][]string {
 	return chunks
 }
 
-// FindClaimableBalanceCreates batch-resolves pending claim/clawback refs to their create rows, keyed by balance_id.
-// Ids go in a ClickHouse external table and match via a hash-set semijoin: an
-// inlined IN-list exceeds max_query_size and compounds the bloom filter's
-// false-positive rate into a full scan of the wide attributes column. The query
-// runs with use_skip_indexes=0, so idx_cb_balance_id is unused here.
-// The map holds only found ids; a miss means no create row yet (ADR-0047 D4
-// incompleteness), so callers must count and log it, never guess an amount.
-// Duplicate rows are identical, first wins. Empty input returns an empty non-nil map.
+// FindClaimableBalanceCreates batch-resolves pending claim/clawback refs to their create rows,
+// keyed by balance_id. Ids go in a ClickHouse external table and match via a hash-set semijoin:
+// an inlined IN-list exceeds max_query_size and compounds the bloom filter's false-positive
+// rate into a full scan of the wide attributes column. The query runs with use_skip_indexes=0,
+// so idx_cb_balance_id is unused here.
+// The map holds only found ids; a miss means no create row yet (ADR-0047 D4 incompleteness), so
+// callers must count and log it, never guess an amount. Duplicate rows are identical, first
+// wins. Empty input returns an empty non-nil map.
 func FindClaimableBalanceCreates(ctx context.Context, addr string, balanceIDHexes []string) (map[string]ClaimableBalanceCreateRow, error) {
 	out := make(map[string]ClaimableBalanceCreateRow, len(balanceIDHexes))
 	if len(balanceIDHexes) == 0 {
@@ -553,12 +551,12 @@ func accountMovementsSQL(filter AccountMovementFilter, hasCursor, exactDedup boo
 }
 
 // AccountMovements returns one address's movement feed, newest first, keyset-paged.
-// `address` is an equality on the ORDER BY prefix: one contiguous range, no UNION.
-// The explorer merges this archive with the Postgres tail; its ledger ceiling travels
-// in filter.MaxLedger/HasMaxLedger so it applies before LIMIT, never as a post-read trim.
-// No FINAL: the page is read as a window in sort-key order (LIMIT 1 BY would stop
-// the early exit), newest ingested_at per key is kept in Go, and a window that
-// cannot prove a full page falls back to accountMovementsQuery.
+// `address` is an equality on the ORDER BY prefix: one contiguous range, no UNION. The explorer
+// merges this archive with the Postgres tail; its ledger ceiling travels in
+// filter.MaxLedger/HasMaxLedger so it applies before LIMIT, never as a post-read trim.
+// No FINAL: the page is read as a window in sort-key order (LIMIT 1 BY would stop the early
+// exit), newest ingested_at per key is kept in Go, and a window that cannot prove a full page
+// falls back to accountMovementsQuery.
 func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, limit int, cur AccountMovementCursor, filter AccountMovementFilter) ([]AccountMovementRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 25

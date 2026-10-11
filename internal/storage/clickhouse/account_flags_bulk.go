@@ -10,9 +10,8 @@ import (
 
 // AuthFlagsSource records HOW an [AccountAuthFlags] value was obtained, so a consumer
 // can tell a CURRENT reading from a historical one. Persisted verbatim into
-// `issuers.auth_flags_source` and served on /v1/issuers/{g_strkey}. Merged-away
-// issuers' flags are knowable only as of their removal ledger; serving them without
-// provenance would assert a current policy for an account that no longer exists.
+// `issuers.auth_flags_source`. Merged-away issuers' flags are knowable only as of their removal
+// ledger; serving them without provenance would assert a current policy for a dead account.
 type AuthFlagsSource string
 
 const (
@@ -36,10 +35,9 @@ type AccountAuthFlags struct {
 	Clawback  bool
 	// HomeDomain rides along because the same AccountEntry holds it.
 	//
-	// ALWAYS EMPTY when Source is AuthFlagsSourceLastKnownBeforeRemoval: home_domain is
-	// a self-asserted identity claim that a merged account can no longer back with SEP-1
-	// (the toml's [[CURRENCIES]] back-reference), so persisting it would create an
-	// impersonation surface. The flags are objective state and are kept.
+	// ALWAYS EMPTY when Source is AuthFlagsSourceLastKnownBeforeRemoval: home_domain is a
+	// self-asserted claim a merged account can no longer back with SEP-1, so persisting it
+	// would create an impersonation surface. The flags are objective state and are kept.
 	HomeDomain string
 	// Source is how this reading was obtained — see [AuthFlagsSource].
 	Source AuthFlagsSource
@@ -94,17 +92,15 @@ func decodeAccountAuthFlags(entryXDR string) (AccountAuthFlags, bool) {
 }
 
 // BulkAccountAuthFlags returns auth flags for the G-strkeys, omitting accounts with
-// no live entry (absence is a measurement). Every value has Source =
-// [AuthFlagsSourceLive]. Merged accounts are NOT resolved here; see
-// [ExplorerReader.RemovedAccountsLastKnownAuthFlags], whose historical answer must
-// keep its provenance.
+// no live entry (absence is a measurement). Every value has Source = [AuthFlagsSourceLive].
+// Merged accounts are NOT resolved here; see [ExplorerReader.RemovedAccountsLastKnownAuthFlags],
+// whose historical answer must keep its provenance.
 //
-// Matches on key_xdr, not account_id: ledger_entries_current is ORDER BY
-// (entry_type, key_xdr), so key_xdr is a sort-key prefix (0.069 s vs 5.18 s via the
-// account_id skip-index; decisive at ~59k issuers).
+// Matches on key_xdr, not account_id: ledger_entries_current is ORDER BY (entry_type, key_xdr),
+// so key_xdr is a sort-key prefix (0.069 s vs 5.18 s via the account_id skip-index).
 //
-// One query per call: the caller batches, since chunk size depends on its memory
-// budget and max_query_size.
+// One query per call: the caller batches, since chunk size depends on its memory budget and
+// max_query_size.
 func (r *ExplorerReader) BulkAccountAuthFlags(ctx context.Context, gStrkeys []string) (map[string]AccountAuthFlags, error) {
 	out := make(map[string]AccountAuthFlags, len(gStrkeys))
 	if len(gStrkeys) == 0 {
@@ -159,20 +155,19 @@ func (r *ExplorerReader) BulkAccountAuthFlags(ctx context.Context, gStrkeys []st
 // no `removed` row are absent.
 //
 // Scoped single-ledger read, not a key scan: an unbounded `key_xdr IN (?)` over
-// ledger_entry_changes leans on idx_lec_key_xdr, a bloom skip-index over a 150B-row
-// table whose false-positive rate is a pruning floor. The removal ledger is already
-// in ledger_entries_current and the lake records the PRE-IMAGE in that same ledger, so the read is
+// ledger_entry_changes leans on idx_lec_key_xdr, a bloom skip-index over a 150B-row table whose
+// false-positive rate is a pruning floor. The removal ledger is already in
+// ledger_entries_current and the lake records the PRE-IMAGE in that same ledger, so the read is
 // partition-pruned to the removal ledgers.
 //
-// change_type != 'removed' admits `state` rows on purpose: the `state` row before
-// the `removed` one IS the pre-image; `updated` rows are ordered against it.
+// change_type != 'removed' admits `state` rows on purpose: the `state` row before the `removed`
+// one IS the pre-image; `updated` rows are ordered against it.
 //
 // ARGMAX key (ledger_seq, intra_ledger_seq, change_index): change_index restarts per
-// TRANSACTION, intra_ledger_seq is the ledger-wide tiebreak but is 0 on rows not
-// re-derived after the ADR-0038 walk fix, so change_index is the fallback (valid
-// because a merge's same-ledger changes share its tx). Residual: set_options and
-// account_merge in TWO txs of one ledger on a non-re-derived range can resolve to
-// the pre-set_options flags.
+// TRANSACTION and intra_ledger_seq, the ledger-wide tiebreak, is 0 on rows not re-derived after
+// the ADR-0038 walk fix, so change_index is the fallback (valid because a merge's same-ledger
+// changes share its tx). Residual: set_options and account_merge in TWO txs of one ledger on a
+// non-re-derived range can resolve to the pre-set_options flags.
 func (r *ExplorerReader) RemovedAccountsLastKnownAuthFlags(ctx context.Context, gStrkeys []string) (map[string]AccountAuthFlags, error) {
 	out := make(map[string]AccountAuthFlags, len(gStrkeys))
 	if len(gStrkeys) == 0 {

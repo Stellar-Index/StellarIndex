@@ -15,27 +15,23 @@ const maxSaneTokenDecimals = 38
 
 // tokenDecimalsKeys are the METADATA map keys that carry the scale, in preference order.
 //
-// `decimal` is the soroban-token-sdk's name (SACs, token-sdk builds); hand-written tokens
-// use `decimals`, including tokenized Treasury funds, so both are read. A missed reading
-// publishes a wrong figure on the RWA surface: a 5-decimal fund read at the default 7 shows one
-// hundredth of its capitalisation. Never blended: see [decimalsFromInstanceEntry] for
-// disagreement.
+// `decimal` is the soroban-token-sdk's name (SACs, token-sdk builds); hand-written tokens, including
+// tokenized Treasury funds, use `decimals`, so both are read. A missed reading publishes a
+// wrong figure: a 5-decimal fund read at the default 7 shows one hundredth of its
+// capitalisation. Never blended: see [decimalsFromInstanceEntry].
 var tokenDecimalsKeys = []string{"decimal", "decimals"}
 
 // tokenMetadataMapKeys are the instance-storage keys whose value is a map that may carry the
 // scale, in preference order.
 //
-// `METADATA` is the soroban-token-sdk convention. The private-credit deal tokens have no
-// METADATA key; their instance storage holds `Config`, a map whose `decimals` is the scale.
-// Reading it keeps a nine-figure published supply on our own measurement, not a third-party
-// seed file. As with the field spellings, both maps are read and never blended: a contract
-// declaring different scales in each is refused by [decimalsFromInstance].
+// `METADATA` is the soroban-token-sdk convention. Private-credit deal tokens have no METADATA
+// key; their instance storage holds `Config`, a map whose `decimals` is the scale. Reading it
+// keeps the published supply on our own measurement, not a third-party seed file. Both maps are
+// read and never blended: differing scales are refused by [decimalsFromInstance].
 var tokenMetadataMapKeys = []string{"METADATA", "Config"}
 
-// TokenDecimals resolves a token contract's `decimals()` from the lake. The soroban-token-sdk
-// persists TokenMetadata in the contract INSTANCE storage under Symbol "METADATA" as
-// Map{decimal: U32, name, symbol}; hand-written tokens use `decimals` in the same map. This is
-// the value `decimals()` would return, without executing WASM.
+// TokenDecimals resolves a token contract's `decimals()` from the METADATA map in its instance
+// storage, the value `decimals()` would return, without executing WASM.
 //
 // found=false (nil error) when the instance isn't in the lake, no METADATA map exists, or the
 // declaration is out of bounds; callers keep their default (7).
@@ -74,8 +70,7 @@ func (r *ExplorerReader) TokenDecimals(ctx context.Context, contractID string) (
 // decimalsFromInstanceEntry decodes one contract-instance LedgerEntry and returns its declared
 // scale as read by [decimalsFromInstance]. ok=false when it isn't an instance or no usable
 // scale exists: none, out of bounds, or two that DISAGREE. Disagreement is refused, not
-// resolved by preference: picking one of two contradictory self-declarations would invent an
-// exponent for a money figure, which maxSaneTokenDecimals exists to prevent.
+// resolved by preference, since picking one would invent an exponent for a money figure.
 func decimalsFromInstanceEntry(b64 string) (uint32, bool) {
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {

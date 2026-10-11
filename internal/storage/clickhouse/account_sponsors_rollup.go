@@ -32,11 +32,9 @@ type AccountSponsorRow struct {
 
 // AccountSponsors is one cycle's snapshot: a board slice, the totals and the span aggregated.
 // It deliberately carries NO live sponsored set: figures come from replaying sponsorship
-// OPERATIONS, and a sponsorship also lapses when the entry is deleted or the sponsored account
-// merges, with no operation. A "currently sponsoring" number from this source would OVERSTATE;
-// observing it needs sponsoringID inside ledger_entries_current's entry_xdr, a separate projection
-// that is not served.
-// FromLedger/ThruLedger are data-derived (ADR-0031); the floor at protocol 14 is sponsorship's own
+// OPERATIONS, and a sponsorship also lapses (entry deleted, sponsored account merged) with no
+// operation, so a "currently sponsoring" number from this source would OVERSTATE.
+// FromLedger/ThruLedger are data-derived (ADR-0031); the protocol 14 floor is sponsorship's own
 // genesis, not a gap.
 type AccountSponsors struct {
 	Board                  []AccountSponsorRow
@@ -84,22 +82,20 @@ const factsCTE = `
 
 // sponsorsGatedArmSettings is the settings for the cycle's one walked step, which joins two lake
 // archives.
-// query_plan_join_swap_table = 0 PINS the build side to the window's sponsorship operations (before
-// the gate drops failed ones; at most ~2.5 M rows) against that window's transactions (hundreds of
-// millions, 128x to 460x larger), so a planner swap cannot build a hash table over the
-// transactions. The step measures 1.68 GiB pinned.
-// The 1800 s cap (not the walk's 600 s) matches the sibling's joining arm: gated windows run 19-41
-// s, and the streaming side grows with ALL transaction volume, the term whose margin erodes
-// fastest.
+// query_plan_join_swap_table = 0 PINS the build side to the window's sponsorship operations (a few
+// million rows) against that window's transactions (orders of magnitude larger), so a planner swap
+// cannot build a hash table over the transactions.
+// The 1800 s cap (not the walk's 600 s) matches the sibling's joining arm: the streaming side
+// grows with ALL transaction volume, the term whose margin erodes fastest.
 const sponsorsGatedArmSettings = boundedScanSettings +
 	", query_plan_join_swap_table = 0, max_execution_time = 1800"
 
 // sponsorEdgesSettings is the graph arm's one aggregation (sponsorship ops collapsed to distinct
-// (sponsor, sponsored) pairs); peak ~4 GiB, just below the board join's, so it does not raise the
+// (sponsor, sponsored) pairs); its peak stays below the board join's, so it does not raise the
 // cycle's ceiling.
 // No optimize_aggregation_in_order: the working table is ORDER BY (lseq, tidx, oidx) and this
 // groups by sponsor, so there is no order to exploit, and in-order aggregation cannot spill, so it
-// cancels the external-group-by limit (it killed the sibling creator cycle).
+// cancels the external-group-by limit.
 // The 1800 s cap because this step is not walked: a pair can span lake partitions, so a per-window
 // aggregation would emit an edge more than once.
 const sponsorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
@@ -110,14 +106,14 @@ const sponsorEdgesSettings = boundedScanSettings + ", max_execution_time = 1800"
 // those rows so the board and its coverage span cannot describe different data, then EXCHANGE
 // atomically. An interrupted cycle leaves the previous board.
 // The walk joins the transaction because stellar.operations has no success gate: it keeps
-// operations of FAILED transactions, which never took effect (~10.8% of the archive's sponsorship
-// ops). Under CAP-33 the sponsoring relationship writes no ledger entry, so transactions.successful
-// is the only evidence of application for Begin and End.
+// operations of FAILED transactions, which never took effect. Under CAP-33 the sponsoring
+// relationship writes no ledger entry, so transactions.successful is the only evidence of
+// application for Begin and End.
 // The join is on the full (ledger_seq, tx_index) identity. Both sides are collapsed explicitly:
 // stellar.transactions is a ReplacingMergeTree with bulk-duplicated rows, so an uncollapsed join
 // would multiply each operation. HAVING resolves `successful` by argMax over ingested_at.
-// Walked because unwalked it is one statement over a 2 TiB archive joined to a larger one. Widest
-// measured peak per window is 1.68 GiB against the 8 GiB budget; the board join (4.09 GiB) is the ceiling.
+// Walked because unwalked it is one statement over a multi-TiB archive joined to a larger one; the
+// board join is the memory ceiling.
 // Per-window grouping is exact: both tables are PARTITION BY intDiv(ledger_seq, 1000000), so no
 // group straddles a window. The window predicate is carried TWICE because a join condition prunes
 // neither side, hence two window binds.
@@ -188,12 +184,11 @@ var sponsorsRollupStatements = []rollupStep{
 	     SELECT 'thru_time', toInt64(toUnixTimestamp(max(ctime))) FROM stellar.account_sponsors_ops
 	 )
 	 ` + boundedScanSettings + `, max_execution_time = 900`},
-	// Graph arm. The board says WHO sponsored the most; these say WHOM, one row per distinct
-	// (sponsor, sponsored) pair in both sort orders so each direction is a primary-key range read.
-	// Same per-transaction attribution and working table as the board, so the event sum equals
-	// sponsorships_total exactly. The pair count is NOT distinct_sponsored_total: an account
-	// sponsored by several sponsors adds a pair per sponsor but counts once there (a global
-	// distinct).
+	// Graph arm: WHOM each sponsor sponsored, one row per distinct (sponsor, sponsored) pair in both
+	// sort orders so each direction is a primary-key range read. Same per-transaction attribution
+	// as the board, so the event sum equals sponsorships_total. The pair count is NOT
+	// distinct_sponsored_total: an account with several sponsors adds a pair per sponsor but
+	// counts once there (a global distinct).
 	{sql: `TRUNCATE TABLE stellar.account_sponsor_edges_staging`},
 	{sql: `TRUNCATE TABLE stellar.account_sponsor_edges_by_sponsored_staging`},
 	{sql: `INSERT INTO stellar.account_sponsor_edges_staging

@@ -9,11 +9,9 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// ContractCallOp is one InvokeContract operation reconstructed from the lake —
-// the op body + ledger context, enough to feed dispatcher.ExtractContractCallTree
-// and a source's ContractCallDecoder. Source is the op's source account (the
-// decoder uses it for relayer/observer/taker attribution; it does not affect the
-// emitted event COUNT, which is what the projection census needs).
+// ContractCallOp is one InvokeContract operation reconstructed from the lake: the op body + ledger
+// context, enough to feed dispatcher.ExtractContractCallTree and a ContractCallDecoder. Source is
+// the op's source account, used for attribution; it does not affect the emitted event COUNT.
 type ContractCallOp struct {
 	Ledger   uint32
 	ClosedAt time.Time
@@ -23,20 +21,15 @@ type ContractCallOp struct {
 	Op       xdr.Operation
 }
 
-// StreamContractCallOps re-derives the InvokeContract ops that invoke a given
-// contract — the projection input for event-less ContractCall sources (band,
-// soroswap-router) which have no soroban_events landing zone.
+// StreamContractCallOps re-derives the InvokeContract ops that invoke a given contract: the
+// projection input for event-less ContractCall sources (band, soroswap-router).
 //
-// stellar.operations has no contract_id column, so we restrict to
-// InvokeHostFunction ops in [from,to] and match the contract's raw 32-byte ID
-// (`contractHex`, lowercase hex of the strkey-decoded ID) as a substring of
-// the base64-DECODED body_xdr. That is far faster than decoding every invoke
-// in Go.
+// stellar.operations has no contract_id column, so it restricts to InvokeHostFunction ops in
+// [from,to] and matches the contract's raw 32-byte ID (`contractHex`, lowercase hex) as a
+// substring of the base64-DECODED body_xdr, far faster than decoding every invoke in Go.
 //
-// Successful txs only: a failed tx's invoke never executed, so counting it
-// would over-state the census. The match is a cheap SUPERSET filter; the
-// caller's ContractCallDecoder.Matches gives the exact contract+function
-// predicate.
+// Successful txs only: a failed tx's invoke never executed, so counting it would over-state the
+// census. The match is a cheap SUPERSET filter; ContractCallDecoder.Matches is the exact predicate.
 func StreamContractCallOps(ctx context.Context, addr, contractHex string, from, to uint32, fn func(ContractCallOp) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -52,18 +45,16 @@ func StreamContractCallOps(ctx context.Context, addr, contractHex string, from, 
 	return streamContractCallOpRows(rows, fn)
 }
 
-// contractCallOpsQuery is StreamContractCallOps' SQL, at package level so its
-// text stays independently assertable (see sdexOpsQuery's note on the seam).
+// contractCallOpsQuery is StreamContractCallOps' SQL, at package level so its text stays
+// independently assertable (see sdexOpsQuery's note on the seam).
 //
-// The successful-tx restriction is a grace_hash INNER JOIN, not an
-// IN-subquery: IN builds the window's tx-hash set in memory and blew the
-// 10 GiB query budget on a dense window.
+// The successful-tx restriction is a grace_hash INNER JOIN, not an IN-subquery: IN builds the
+// window's tx-hash set in memory and blew the 10 GiB query budget on a dense window.
 //
-// The FIVE bind parameters are, in order: the successful-tx SUBQUERY's from +
-// to (the joined derived table is written FIRST), then the outer scan's from +
-// to, then contractHex. This is the reverse nesting of sdexOpsQuery, so the
-// order is pinned by test: swapping the pairs is invisible when from/to match
-// and catastrophic when a caller windows them apart.
+// The FIVE bind parameters are, in order: the successful-tx SUBQUERY's from + to (the joined
+// derived table is written FIRST), then the outer scan's from + to, then contractHex. This reverses
+// sdexOpsQuery's nesting, so a test pins the order: swapping the pairs is invisible when from/to
+// match and catastrophic when a caller windows them apart.
 const contractCallOpsQuery = `
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account, o.body_xdr
 		FROM stellar.operations AS o FINAL

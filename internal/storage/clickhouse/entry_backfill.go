@@ -12,26 +12,22 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// seedIntraLedgerSeq is the intra_ledger_seq a snapshot/seed backfill row
-// stamps: math.MaxUint32, the top of the per-ledger position space. A snapshot
-// 'state' row is the authoritative reconstructed FINAL state of its entry as of
-// LastModifiedLedgerSeq (ADR-0034), so it must sit at the END of that ledger's
-// intra-ledger order — a live per-ledger change (a much smaller position) can
-// never overwrite it in ledger_entries_current's version comparison, while a
-// re-snapshot (equal sentinel) stays corrective. The live extract counter
-// cannot reach this value (it would require ~4.3e9 entry-changes in one
-// ledger). Mirrors timescale.SeedIntraLedgerSeq; kept a
-// local const so the lake layer takes no dependency on the served-tier package.
+// seedIntraLedgerSeq is the intra_ledger_seq a snapshot/seed backfill row stamps: math.MaxUint32,
+// the top of the per-ledger position space. A snapshot 'state' row is the authoritative FINAL
+// state of its entry as of LastModifiedLedgerSeq (ADR-0034), so it sits at the END of that
+// ledger's order: a live change (a much smaller position) can never overwrite it in
+// ledger_entries_current's version comparison, while a re-snapshot (equal sentinel) stays
+// corrective. The live counter cannot reach it (~4.3e9 entry-changes in one ledger). Mirrors
+// timescale.SeedIntraLedgerSeq; a local const so the lake layer does not depend on the
+// served-tier package.
 const seedIntraLedgerSeq = uint32(0xFFFFFFFF) // math.MaxUint32
 
-// SnapshotEntryRow builds a ledger_entry_changes row from a live snapshot entry
-// (Post-only), populating owner/asset/balance with the SAME helpers the indexer
-// uses for its own writes — so account-state + asset-holder + supply reads work
-// identically against backfilled rows. Keyed on the entry's real LedgerKey +
-// LastModifiedLedgerSeq (so the readers' key_xdr lookups match and newest-wins
-// ordering stays correct). change_type="state", op_index=-1, intra_ledger_seq =
-// seedIntraLedgerSeq (authoritative final state for its ledger). ok=false on a
-// marshal error (skip the one entry, never abort the backfill).
+// SnapshotEntryRow builds a ledger_entry_changes row from a live snapshot entry (Post-only),
+// populating owner/asset/balance with the SAME helpers the indexer uses, so account-state,
+// asset-holder and supply reads treat backfilled rows identically. Keyed on the entry's real
+// LedgerKey + LastModifiedLedgerSeq so key_xdr lookups match and newest-wins ordering holds.
+// change_type="state", op_index=-1, intra_ledger_seq=seedIntraLedgerSeq. ok=false on a marshal
+// error (skip the one entry, never abort the backfill).
 func SnapshotEntryRow(post *xdr.LedgerEntry, closeTime time.Time) (LedgerEntryChangeRow, bool) {
 	key, err := post.LedgerKey()
 	if err != nil {
@@ -50,13 +46,11 @@ func SnapshotEntryRow(post *xdr.LedgerEntry, closeTime time.Time) (LedgerEntryCh
 		LedgerSeq: uint32(post.LastModifiedLedgerSeq), //nolint:gosec // ledger seq fits uint32
 		CloseTime: closeTime,
 		OpIndex:   -1,
-		// ChangeIndex MUST be per-key unique within a ledger_seq: the table is
-		// ReplacingMergeTree ORDER BY (ledger_seq, tx_hash, op_index,
-		// change_index) and snapshot rows share tx_hash="" + op_index=-1, so a
-		// constant would collapse every same-ledger entry to ONE survivor.
-		// crc32(key) is deterministic (idempotent re-runs) but only the BASE
-		// value: InsertEntryChanges resolves residual 32-bit collisions across
-		// the write batch.
+		// ChangeIndex MUST be per-key unique within a ledger_seq: the table is ReplacingMergeTree
+		// ORDER BY (ledger_seq, tx_hash, op_index, change_index) and snapshot rows share
+		// tx_hash="" + op_index=-1, so a constant would collapse every same-ledger entry to ONE
+		// survivor. crc32(key) is deterministic (idempotent re-runs) but only the BASE value:
+		// InsertEntryChanges resolves residual 32-bit collisions across the write batch.
 		ChangeIndex: crc32.ChecksumIEEE([]byte(keyB64)),
 		ChangeType:  "state",
 		EntryType:   entryTypeName(post.Data.Type),
@@ -83,19 +77,16 @@ func isSnapshotSeedRow(txHash string, opIndex int32, changeType string) bool {
 // fixed-memory chunks rather than one giant batch.
 const entryBackfillChunk = 20_000
 
-// InsertEntryChanges batch-inserts rows directly into
-// stellar.ledger_entry_changes, bypassing the Sink's per-ledger commit-marker
-// flow: it writes NO stellar.ledgers row, so it never advances the completeness
-// watermark. That makes it the correct path for backfilling snapshot entries
-// into the append-log the WASM + account-state readers query. Idempotent under
-// the table's ReplacingMergeTree. Returns the number written. throttle is a
-// pause between chunks; keep it non-zero for large backfills so the insert and
-// the ledger_entries_current MV don't spike the live serving CH.
+// InsertEntryChanges batch-inserts rows directly into stellar.ledger_entry_changes, bypassing the
+// Sink's per-ledger commit-marker flow: it writes NO stellar.ledgers row, so it never advances
+// the completeness watermark, which makes it the correct path for backfilling snapshot entries.
+// Idempotent under the table's ReplacingMergeTree. Returns the number written. throttle pauses
+// between chunks; keep it non-zero for large backfills so the insert and the
+// ledger_entries_current MV don't spike the live serving CH.
 //
-// Resolves any ChangeIndex collision across the whole batch before writing
-// (resolveChangeIndexCollisions): SnapshotEntryRow's crc32(key) base value is
-// only collision-free in the common case, and this is the chokepoint that
-// makes it so for every row reaching ClickHouse.
+// Resolves ChangeIndex collisions across the whole batch before writing
+// (resolveChangeIndexCollisions): SnapshotEntryRow's crc32(key) base value is only
+// collision-free in the common case, and this is the chokepoint for every row reaching ClickHouse.
 func InsertEntryChanges(ctx context.Context, addr string, rows []LedgerEntryChangeRow, throttle time.Duration) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
@@ -172,14 +163,13 @@ func insertEntryChunk(ctx context.Context, conn clickhouse.Conn, chunk []LedgerE
 const maxChangeIndexProbeAttempts = 1 << 20
 
 // resolveChangeIndexCollisions makes ChangeIndex unique within every
-// (ledger_seq, tx_hash, op_index) group in rows — the tuple prefix the
-// table's ReplacingMergeTree ORDER BY shares change_index with. A 32-bit
-// crc32(key) base value collides between different keys often enough in a
+// (ledger_seq, tx_hash, op_index) group in rows, the tuple prefix the ReplacingMergeTree ORDER BY
+// shares change_index with. A 32-bit crc32(key) collides between different keys often enough in a
 // multi-million-row backfill to silently drop one at merge time.
 //
-// Colliding rows are walked in KeyXDR-sorted order, never arrival order, and
-// re-hashed with an incrementing salt until free, so the outcome depends only
-// on the SET of keys in the group and a resumed backfill stays idempotent.
+// Colliding rows are walked in KeyXDR-sorted order, never arrival order, and re-hashed with an
+// incrementing salt until free, so the outcome depends only on the SET of keys in the group and
+// a resumed backfill stays idempotent.
 func resolveChangeIndexCollisions(rows []LedgerEntryChangeRow) error {
 	type groupKey struct {
 		ledgerSeq uint32

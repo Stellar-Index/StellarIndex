@@ -28,35 +28,30 @@ type LiveSinkOptions struct {
 	// WriteTimeout). Ledgers still unflushed when it expires are logged
 	// and left to ch-live-catchup.
 	StopTimeout time.Duration
-	// MaxBufferLedgers caps how many ledgers the underlying Sink holds in
-	// memory before it starts BOUNDED-DROPPING incoming extracts during a
-	// sustained ClickHouse outage (default 4096). The channel
-	// (BufferSize) bounds the worker's INBOX; this bounds the Sink's per-table
-	// row slices, which the channel cap does NOT (a failing flush keeps them
-	// intact while the worker keeps appending). Combined, the live path's CH
-	// backlog is bounded at ~BufferSize + MaxBufferLedgers ledgers; beyond that
+	// MaxBufferLedgers caps how many ledgers the Sink holds in memory before it starts
+	// BOUNDED-DROPPING incoming extracts during a sustained ClickHouse outage (default 4096).
+	// BufferSize bounds the worker's INBOX; this bounds the Sink's per-table row slices, which
+	// the channel cap does NOT (a failing flush keeps them while the worker keeps appending).
+	// Combined, the CH backlog is bounded at ~BufferSize + MaxBufferLedgers ledgers; beyond that
 	// the ch-live-catchup gap-scan timer heals the gap.
 	MaxBufferLedgers int
 	// Logger for worker warn/error lines; nil → slog.Default().
 	Logger *slog.Logger
 }
 
-// LiveSink is the real-time fan-out adapter (ADR-0034): the indexer pushes each
-// ledger's structural [LedgerExtract] and a single worker goroutine batches them
-// into ClickHouse on a short interval, keeping the lake within ~seconds of the
-// chain. The ch-live-catchup timer remains the completeness backstop for
-// anything this best-effort sink drops.
+// LiveSink is the real-time fan-out adapter (ADR-0034): the indexer pushes each ledger's
+// structural [LedgerExtract] and one worker goroutine batches them into ClickHouse on a short
+// interval. The ch-live-catchup timer is the completeness backstop for anything this best-effort
+// sink drops.
 //
-// Safety: PushLedger is NON-BLOCKING — on a full buffer it DROPS the whole
-// LedgerExtract (DroppedCount++) rather than back-pressuring the live ingest
-// loop, so a slow or down ClickHouse can never stall Postgres ingest.
+// Safety: PushLedger is NON-BLOCKING. On a full buffer it DROPS the whole LedgerExtract
+// (DroppedCount++) rather than back-pressuring the live ingest loop, so a slow or down
+// ClickHouse can never stall Postgres ingest.
 //
-// Completeness: a drop (or a mid-flush write error) leaves a HOLE in the lake.
-// ch-live-catchup heals holes only if it gap-scans below CH_max, not just
-// extends the tip. The real-time projector (ADR-0041) does NOT trust the lake
-// to be hole-free: it reads contract_events only up to ContiguousWatermark, so
-// an unhealed drop stalls the projector at the hole rather than silently
-// losing events.
+// Completeness: a drop (or a mid-flush write error) leaves a HOLE in the lake. ch-live-catchup
+// heals holes only if it gap-scans below CH_max, not just extends the tip. The real-time
+// projector (ADR-0041) does not trust the lake to be hole-free: it reads contract_events only up
+// to ContiguousWatermark, so an unhealed drop stalls it at the hole rather than losing events.
 type LiveSink struct {
 	sink        *Sink
 	logger      *slog.Logger
@@ -102,10 +97,8 @@ func NewLiveSink(ctx context.Context, addr string, opts LiveSinkOptions) (*LiveS
 	if logger == nil {
 		logger = slog.Default()
 	}
-	// flushEvery large so Add buffers; the worker's ticker drives flushes at
-	// FlushInterval (real-time at the low live rate; batched under burst).
-	// The decode-at-ingest supply path writes stellar.supply_flows in every
-	// flush; ensure it exists (idempotent) before Open's schema check, which
+	// flushEvery is large so Add buffers; the worker's ticker drives flushes. Every flush writes
+	// stellar.supply_flows, so ensure it exists (idempotent) before Open's schema check, which
 	// refuses a lake missing any table Flush writes to.
 	if err := EnsureSupplyFlowsTable(ctx, addr); err != nil {
 		return nil, err
@@ -149,11 +142,10 @@ func newLiveSink(sink *Sink, logger *slog.Logger, opts LiveSinkOptions) *LiveSin
 // Start launches the drain worker. Call once.
 func (l *LiveSink) Start() { go l.run() }
 
-// PushLedger enqueues a ledger's structural extract for the worker. NON-BLOCKING:
-// drops (DroppedCount++) if the buffer is full or shutdown is in progress, so it
-// never stalls the caller (the live ingest loop). A drop is logged with its
-// ledger: the lake watermark stalls at that hole until the catch-up timer
-// heals it, and the log is what names the ledger to re-derive.
+// PushLedger enqueues a ledger's structural extract for the worker. NON-BLOCKING: drops
+// (DroppedCount++) if the buffer is full or shutdown is in progress, so it never stalls the live
+// ingest loop. A drop is logged with its ledger: the lake watermark stalls at that hole until
+// the catch-up timer heals it, and the log names the ledger to re-derive.
 //
 // The send runs under mu, which Stop takes to set `stopped` before closing
 // `stopping`: a push either lands before the worker's final drain or is
@@ -284,11 +276,10 @@ func (l *LiveSink) add64(p *uint64, n uint64) {
 	l.mu.Unlock()
 }
 
-// WrittenCount / BufferedCount / DroppedCount / ErroredCount expose worker
-// counters for metrics + the shutdown log line. WrittenCount is ledgers
-// DURABLY flushed to CH (post-Flush); BufferedCount is ledgers accepted into
-// the in-memory buffer (pre-flush) — the two diverge by the unflushed backlog,
-// which during a CH stall is the early-warning signal.
+// WrittenCount / BufferedCount / DroppedCount / ErroredCount expose worker counters for metrics.
+// WrittenCount is ledgers DURABLY flushed (post-Flush); BufferedCount is ledgers accepted into
+// the in-memory buffer (pre-flush). They diverge by the unflushed backlog, the early-warning
+// signal during a CH stall.
 func (l *LiveSink) WrittenCount() uint64  { l.mu.Lock(); defer l.mu.Unlock(); return l.written }
 func (l *LiveSink) BufferedCount() uint64 { l.mu.Lock(); defer l.mu.Unlock(); return l.buffered }
 func (l *LiveSink) DroppedCount() uint64  { l.mu.Lock(); defer l.mu.Unlock(); return l.dropped }

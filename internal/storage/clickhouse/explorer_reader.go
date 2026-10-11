@@ -17,15 +17,13 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// explorerScanSettings pins resources on every SCAN-SHAPED explorer read (cost set by
-// a lake table's size, not a primary-key point lookup). At default max_threads a
-// ledger_entries_current probe fanned out to 4.76 GiB peak vs 89 MiB at max_threads=4:
-// the amplification is per-stream read buffers across part ranges, so pinning threads
-// is the lever. The 8 GiB ceiling makes a part-layout shift fail one query loudly.
-// Keyed point reads do not carry it (they never fan out). The clause is SQL text, not
-// clickhouse.WithSettings, because settings did not reach the server on some driver paths
-// and so reader tests can pin it. The spill pair (above 4 GB) turns an 8 GiB OOM into a
-// slower success, needed by the 30-day contracts GROUP BY; it only activates above its threshold.
+// explorerScanSettings pins resources on every SCAN-SHAPED explorer read (cost set by a lake
+// table's size, not a primary-key point lookup). At default max_threads a ledger_entries_current
+// probe fanned out to 4.76 GiB peak vs 89 MiB at max_threads=4: the amplification is per-stream
+// read buffers across part ranges. The 8 GiB ceiling makes a part-layout shift fail one query
+// loudly. Keyed point reads do not carry it (they never fan out). The clause is SQL text, not
+// clickhouse.WithSettings, because settings did not reach the server on some driver paths and so
+// reader tests can pin it. The spill pair turns an OOM into a slower success above 4 GB.
 const explorerScanSettings = ` SETTINGS max_threads = 4, max_memory_usage = 8589934592,` +
 	` max_bytes_before_external_group_by = 4000000000, max_bytes_before_external_sort = 4000000000`
 
@@ -34,11 +32,10 @@ const explorerScanSettings = ` SETTINGS max_threads = 4, max_memory_usage = 8589
 // is not met with a probe per explorer read.
 const schemaProbeRetryAfter = 5 * time.Second
 
-// schemaProbeLease is how long a requireRows probe's POSITIVE verdict is trusted.
-// Rows can vanish under a running process (TRUNCATE, DROP+recreate) and callers
-// derive authority from the verdict (an index miss is a 404), so it is a lease,
-// never a latch. Renewal is lazy: at most one `LIMIT 1` per 30 s per process, and
-// only while the surface is being read.
+// schemaProbeLease is how long a requireRows probe's POSITIVE verdict is trusted. Rows can vanish
+// under a running process (TRUNCATE, DROP+recreate) and callers derive authority from the verdict
+// (an index miss is a 404), so it is a lease, never a latch. Renewal is lazy, only while the
+// surface is being read.
 const schemaProbeLease = 30 * time.Second
 
 // schemaProbeStaleLeases bounds how long an EXPIRED positive lease is honoured while
@@ -521,10 +518,9 @@ func (r *ExplorerReader) LedgerBySeq(ctx context.Context, seq uint32) (LedgerHea
 }
 
 // CloseTimeForLedger returns a ledger's close time; found=false (nil error) when absent.
-// Supply-snapshot resolvers stamp ObservedAt from it, so a historical snapshot carries
-// the real close time and callers fail closed on a miss instead of using time.Now().
-// FINAL: stellar.ledgers is ReplacingMergeTree(ingested_at) and a re-ingest leaves an
-// un-merged duplicate; a single-row point read stays cheap under FINAL.
+// Supply-snapshot resolvers stamp ObservedAt from it, so callers fail closed on a miss instead of
+// using time.Now(). FINAL: stellar.ledgers is ReplacingMergeTree(ingested_at) and a re-ingest
+// leaves an un-merged duplicate; a single-row point read stays cheap under FINAL.
 func (r *ExplorerReader) CloseTimeForLedger(ctx context.Context, seq uint32) (time.Time, bool, error) {
 	const q = `SELECT close_time FROM stellar.ledgers FINAL WHERE ledger_seq = ? LIMIT 1`
 	rows, err := r.conn.Query(ctx, q, seq)
@@ -542,11 +538,9 @@ func (r *ExplorerReader) CloseTimeForLedger(ctx context.Context, seq uint32) (ti
 	return closeTime.UTC(), true, nil
 }
 
-// LatestLedgerLookbackLedgers is how far below maxSeq LatestLedgerAtOrBefore looks, and
-// the single definition of the supply snapshot's stalled-lake bound: both callers
-// derive their refusal bound from it (maxSupplyLakeClampLedgers,
-// maxAutoSnapshotClampLedgers), so the scan window and the accepted window cannot
-// drift. 512 ledgers is ~45 min; widening it widens the scan equally.
+// LatestLedgerLookbackLedgers is how far below maxSeq LatestLedgerAtOrBefore looks, and the single
+// definition of the supply snapshot's stalled-lake bound: both callers derive their refusal bound
+// from it, so the scan window and the accepted window cannot drift. Widening it widens the scan.
 const LatestLedgerLookbackLedgers = 512
 
 // latestLedgerLookbackFloor is that window's lower bound, saturating at 0 to avoid uint32 wraparound.
@@ -557,14 +551,11 @@ func latestLedgerLookbackFloor(maxSeq uint32) uint32 {
 	return maxSeq - LatestLedgerLookbackLedgers
 }
 
-// latestLedgerAtOrBeforeQuery reads the newest landed ledger inside that window. The
-// LOWER bound is load-bearing: stellar.ledgers is PARTITION BY intDiv(ledger_seq,
-// 1000000), so `ledger_seq <= X` alone prunes no partition below X and the descending
-// LIMIT 1 does not save it (64M rows vs ~1.5k rows measured, once per watched asset
-// per tick).
-// FINAL stays and is free here: duplicates (idempotent sink retries, ch-backfill
-// re-derives) concentrate at the tip this window reads, and the row's close_time is
-// stamped as a snapshot's ObservedAt, so it must be the newest-ingested version.
+// latestLedgerAtOrBeforeQuery reads the newest landed ledger inside that window. The LOWER bound is
+// load-bearing: stellar.ledgers is PARTITION BY intDiv(ledger_seq, 1000000), so `ledger_seq <= X`
+// alone prunes no partition below X and the descending LIMIT 1 does not save it.
+// FINAL stays and is cheap here: duplicates concentrate at the tip this window reads, and the
+// row's close_time is stamped as a snapshot's ObservedAt, so it must be the newest-ingested version.
 const latestLedgerAtOrBeforeQuery = `SELECT ledger_seq, close_time FROM stellar.ledgers FINAL
 	WHERE ledger_seq BETWEEN ? AND ? ORDER BY ledger_seq DESC LIMIT 1`
 
@@ -654,13 +645,12 @@ func scanOpsLight(rows driver.Rows) ([]OpRow, error) {
 
 // RecentOperations returns recent operations network-wide, newest first, keyset-paged
 // by (ledger_seq, tx_index, op_index). Light columns only: BodyXDR is always "".
-// TWO-PASS: a read with no lower ledger bound opens every part in every partition,
-// so the tail-window slice (anchored at the tip, or at the cursor) is tried first and
-// prunes to the newest partition(s). It returns exactly the unbounded rows whenever the
-// window holds a full page; a SHORT result repeats the read unbounded, since stopping
-// would truncate the listing and mint a next_cursor that skips operations.
-// A cursor page can be REFUSED (ErrOperationsCursorTooDeep) if its read would exceed
-// the row budget, because `?cursor=` is publicly mintable.
+// TWO-PASS: a read with no lower ledger bound opens every part in every partition, so the
+// tail-window slice (anchored at the tip, or at the cursor) is tried first. It returns exactly the
+// unbounded rows whenever the window holds a full page; a SHORT result repeats the read unbounded,
+// since stopping would truncate the listing and mint a next_cursor that skips operations.
+// A cursor page can be REFUSED (ErrOperationsCursorTooDeep) if its read would exceed the row
+// budget, because `?cursor=` is publicly mintable.
 func (r *ExplorerReader) RecentOperations(ctx context.Context, limit int, cur ExplorerCursor) ([]OpRow, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -731,13 +721,12 @@ func (r *ExplorerReader) queryRecentOperations(ctx context.Context, q string, cu
 
 // recentOperationsQuery builds the exact-dedup SQL, the fallback when a windowed read cannot prove a full page.
 // LIMIT 1 BY the primary key, not FINAL: stellar.operations is ReplacingMergeTree(ingested_at)
-// and a re-ingested operation leaves an un-merged duplicate part that would be served twice.
-// LIMIT 1 BY dedups inside the streamed ORDER BY read; FINAL would merge every overlapping part.
-// explorerScanSettings: stream setup fans out over the part layout at default threads.
-// The `bounded` arm's lower ledger bound (tip or cursor minus recentLedgersTailWindow)
-// makes the read partition-pruned. It is a PERFORMANCE bound only: RecentOperations
-// re-runs unbounded when the bounded pass is short. Cursor arms add
-// recentOperationsCursorPredicate and recentOperationsCursorRowCeiling.
+// and a re-ingested operation leaves an un-merged duplicate that would be served twice. LIMIT 1 BY
+// dedups inside the streamed ORDER BY read; FINAL would merge every overlapping part.
+// The `bounded` arm's lower ledger bound (tip or cursor minus recentLedgersTailWindow) makes the
+// read partition-pruned. It is a PERFORMANCE bound only: RecentOperations re-runs unbounded when
+// the bounded pass is short. Cursor arms add recentOperationsCursorPredicate and
+// recentOperationsCursorRowCeiling.
 func recentOperationsQuery(hasCursor, bounded bool) string {
 	return recentOperationsSQL(hasCursor, bounded, true, false)
 }
@@ -770,25 +759,23 @@ func recentOperationsSQL(hasCursor, bounded, exactDedup, typed bool) string {
 	return q
 }
 
-// recentOperationsCursorPredicate is the keyset comparison written so the primary
-// index can PRUNE. It is exactly equivalent to `(ledger_seq, tx_index, op_index) < (?, ?, ?)`
-// via (L,T,O) < (l,t,o) iff L < l OR (L = l AND (T,O) < (t,o)); all three columns are
-// non-Nullable UInt32 and ExplorerCursor.IsSet() guarantees l > 0.
-// KeyCondition does not decompose a 3-column tuple compare, so the tuple form left only
-// `ledger_seq >= lower`, selecting essentially the whole table (24.7B rows vs 4,157 with this form).
+// recentOperationsCursorPredicate is the keyset comparison written so the primary index can PRUNE.
+// It is equivalent to `(ledger_seq, tx_index, op_index) < (?, ?, ?)` via (L,T,O) < (l,t,o) iff
+// L < l OR (L = l AND (T,O) < (t,o)); all three columns are non-Nullable UInt32 and
+// ExplorerCursor.IsSet() guarantees l > 0. KeyCondition does not decompose a 3-column tuple
+// compare, so the tuple form selected essentially the whole table.
 // The outer parentheses are load-bearing: AND binds tighter than OR, so without them the
-// `AND ledger_seq >= ?` bound would attach to the equality arm alone and return every
-// operation below the cursor.
+// `AND ledger_seq >= ?` bound would attach to the equality arm alone and return every operation
+// below the cursor.
 const recentOperationsCursorPredicate = `(ledger_seq < ? OR (ledger_seq = ? AND (tx_index, op_index) < (?, ?)))`
 
-// recentOperationsCursorRowCeiling is the row budget on a CURSOR page. `?cursor=` is
-// publicly mintable, so a pathological pick is REFUSED (TOO_MANY_ROWS, 158) rather
-// than served over minutes. 200M is ~18x the densest legitimate window (the bounded
-// arm reads at most recentLedgersTailWindow ledgers) and far below a whole-table
-// selection. read_overflow_mode is pinned to 'throw': 'break' would silently
-// TRUNCATE the page and mint a next_cursor from the wrong row.
-// Not applied to the first-page arms: the unbounded first-page fallback is the
-// quiet-tip correctness net, has no caller-controlled input, and would be refused.
+// recentOperationsCursorRowCeiling is the row budget on a CURSOR page. `?cursor=` is publicly
+// mintable, so a pathological pick is REFUSED (TOO_MANY_ROWS, 158) rather than served over
+// minutes. 200M is well above the densest legitimate window and far below a whole-table selection.
+// read_overflow_mode is pinned to 'throw': 'break' would silently TRUNCATE the page and mint a
+// next_cursor from the wrong row.
+// Not applied to the first-page arms: the unbounded first-page fallback is the quiet-tip
+// correctness net and has no caller-controlled input.
 const recentOperationsCursorRowCeiling = `, max_rows_to_read = 200000000, read_overflow_mode = 'throw'`
 
 // chTooManyRows is ClickHouse's TOO_MANY_ROWS (max_rows_to_read under read_overflow_mode='throw').
@@ -873,10 +860,9 @@ const recentLedgersTailWindow = 5000
 
 // NetworkThroughput returns daily throughput for the most-recent `windowDays` UTC days
 // (default 30, cap 365), ascending; windowDays-1 complete days plus today (Partial).
-// The window is DAY-ALIGNED on close_time, not a ledger count: a ledger-count bound
-// lands mid-day, rendering the first bucket as a false drop and mis-sizing the window
-// (real rate ~14,950/day, not 17,280). The ledger predicate is only a partition-pruning
-// hint sized generously so it never clips a day; close_time is the boundary.
+// The window is DAY-ALIGNED on close_time, not a ledger count: a ledger-count bound lands
+// mid-day, rendering the first bucket as a false drop. The ledger predicate is only a
+// partition-pruning hint sized generously so it never clips a day; close_time is the boundary.
 func (r *ExplorerReader) NetworkThroughput(ctx context.Context, windowDays int) ([]ThroughputBucket, error) {
 	if windowDays <= 0 || windowDays > 365 {
 		windowDays = 30
@@ -987,11 +973,10 @@ func (c ContractEventsCursor) IsSet() bool { return c.Ledger > 0 }
 //   - participant: stellar.operation_participants, limited to transactions that
 //     succeeded or that the account itself sourced (participantKeys).
 // Both are ORDER BY (account, ledger_seq, tx_index[, op_index]), so each arm is a
-// primary-key-prefix range and the wide tables see only point lookups; an
-// `IN (SELECT ...)` over the wide tables prunes to one granule per key instead.
-// Exactness: the union of two top-N sets contains the union's top N. mergeKeysDesc
-// drops cross-arm duplicates BEFORE cutting to `limit`, since a duplicate eating a
-// slot would serve a short page that the handler reads as end of history.
+// primary-key-prefix range and the wide tables see only point lookups.
+// Exactness: the union of two top-N sets contains the union's top N. mergeKeysDesc drops
+// cross-arm duplicates BEFORE cutting to `limit`, since a duplicate eating a slot would serve a
+// short page that the handler reads as end of history.
 
 // sourcedTxKeysExactQuery is the sourced tx arm's LIMIT 1 BY form: exact but O(account
 // history), so it runs only when the windowed read cannot prove a full page. The leading
@@ -1010,8 +995,8 @@ func sourcedTxKeysExactQuery(hasCursor bool) string {
 // with the account as a non-source participant), newest first, keyset-paged by
 // (ledger_seq, tx_index) (ADR-0038). The success filter matters: a failed tx still writes
 // participant rows, so anyone could otherwise plant rows in any account's history for a fee.
-// resume is set when the participant arm spent its query budget before the page filled:
-// the page may be short and resume (the scan frontier, not the last row) is the next cursor.
+// resume is set when the participant arm spent its query budget before the page filled: the page
+// may be short and resume (the scan frontier, not the last row) is the next cursor.
 func (r *ExplorerReader) AccountTransactions(ctx context.Context, account string, limit int, cur ExplorerCursor) (_ []TxSummary, resume ExplorerCursor, _ error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -1187,10 +1172,10 @@ var (
 const participantQueryBudget = 16
 
 // participantKeys returns the account's newest `limit` participant keys older than `from`
-// whose tx is visible (visibleParticipantKeys). The filter runs inside the arm because
-// filtering at hydration would serve short pages. If the budget runs out, frontier is the
-// oldest key scanned: keys are exact at or newer than it and the caller resumes strictly
-// below it. `fixed` carries predicates every read must keep (the activity-watermark bound).
+// whose tx is visible (visibleParticipantKeys). The filter runs inside the arm because filtering
+// at hydration would serve short pages. If the budget runs out, frontier is the oldest key scanned:
+// keys are exact at or newer than it and the caller resumes strictly below it. `fixed` carries
+// predicates every read must keep (the activity-watermark bound).
 func participantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, limit int,
 	arm participantArm[K], fixed string, fixedArgs []any, from *K,
 ) (keys []K, frontier *K, err error) {
@@ -1240,10 +1225,10 @@ const visibleTxPredicate = `(successful = 1 OR source_account = ?)`
 const visibilityChunk = 500
 
 // visibleParticipantKeys keeps, in order, keys whose tx succeeded or was sourced by the
-// account (its own failed txs stay in its history), via point lookups on the transactions
-// primary key; it reports how many it ran. The first covers only `need` txs (cost is about
-// a granule per tx), later ones visibilityChunk. No FINAL: successful and source_account
-// are ledger facts, identical across un-merged versions of a key.
+// account (its own failed txs stay in its history), via point lookups on the transactions primary
+// key; it reports how many it ran. The first covers only `need` txs (about a granule per tx),
+// later ones visibilityChunk. No FINAL: successful and source_account are ledger facts, identical
+// across un-merged versions of a key.
 func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn, account string, keys []K, tx func(K) accountTxKey, need int) (_ []K, lookups int, _ error) {
 	seen := make(map[accountTxKey]struct{}, len(keys))
 	var txs []accountTxKey
@@ -1292,10 +1277,10 @@ func visibleParticipantKeys[K comparable](ctx context.Context, conn driver.Conn,
 
 // sourcedOpKeysExactQuery is the sourced op arm's LIMIT 1 BY form (exact, O(account
 // history)); the sentinel op_index rows (tx-sourced) are excluded.
-// hasBound adds `AND ledger_seq <= ?`, the account's activity watermark
-// (accountActivityWatermark), so an idle account's reverse read starts at its real last
-// activity. EXACT: every key either arm can emit comes from a row whose insert also raised
-// the watermark (tier1_schema.sql). Pass ONLY a watermark-derived bound: an under-estimate HIDES history.
+// hasBound adds `AND ledger_seq <= ?`, the account's activity watermark (accountActivityWatermark),
+// so an idle account's reverse read starts at its real last activity. EXACT: every key either arm
+// can emit comes from a row whose insert also raised the watermark. Pass ONLY a watermark-derived
+// bound: an under-estimate HIDES history.
 func sourcedOpKeysExactQuery(hasCursor, hasBound bool) string {
 	clauses := ""
 	if hasBound {
@@ -1311,10 +1296,10 @@ func sourcedOpKeysExactQuery(hasCursor, hasBound bool) string {
 }
 
 // AccountOperations returns operations INVOLVING an account (effective op source, or a
-// non-source participant of a succeeded/self-sourced tx; see AccountTransactions), newest
-// first, keyset-paged by (ledger_seq, tx_index, op_index) (ADR-0038). The arms never overlap
-// at op granularity (TestOperationParticipantRows_SkipsSource). Both arms are bounded by the
-// activity watermark when one exists. resume: see AccountTransactions.
+// non-source participant of a succeeded/self-sourced tx; see AccountTransactions), newest first,
+// keyset-paged by (ledger_seq, tx_index, op_index) (ADR-0038). The arms never overlap at op
+// granularity (TestOperationParticipantRows_SkipsSource) and are bounded by the activity watermark
+// when one exists. resume: see AccountTransactions.
 func (r *ExplorerReader) AccountOperations(ctx context.Context, account string, limit int, cur ExplorerCursor) (_ []OpRow, resume ExplorerCursor, _ error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -1410,9 +1395,9 @@ func (r *ExplorerReader) sourcedOpKeys(ctx context.Context, account string, limi
 // accountOpTypeCountsQuery is AccountOperationTypeCounts' SQL: the SAME two arms as
 // AccountOperations, UNION'd, NOT `source_account = ? OR ... IN (...)` (an OR with a
 // subquery defeats index use). The arms never overlap, so the outer sum() counts each op once.
-// uniqExact over the 3-column primary key, not count() (un-merged duplicate parts would
-// inflate totals) and not FINAL (O(table) merge, see recentOperationsQuery). The
-// external-spill pair in explorerScanSettings turns a whale account's state into a slower success.
+// uniqExact over the 3-column primary key, not count() (un-merged duplicates would inflate totals)
+// and not FINAL (O(table) merge). The external-spill pair in explorerScanSettings turns a whale
+// account's state into a slower success.
 const accountOpTypeCountsQuery = `SELECT op_type, toInt64(sum(c)) AS n FROM (
 		(SELECT op_type, uniqExact((ledger_seq, tx_index, op_index)) AS c
 		   FROM stellar.operations
@@ -1456,14 +1441,13 @@ func (r *ExplorerReader) AccountOperationTypeCounts(ctx context.Context, account
 	return out, rows.Err()
 }
 
-// TransactionByHash looks up one transaction by hex hash. Fast path: when
-// tx_hash_index is available (exists, holds rows) and covered (txHashIndexCovered), the hash
-// resolves to its ledger by primary-key search and the row is read ledger-scoped. A miss
-// against it is AUTHORITATIVE absence. Otherwise the tx_hash bloom skip-index scan over
-// stellar.transactions runs (~5s at 10B rows). Non-emptiness alone is not coverage: a
-// fresh index goes non-empty on the first live tx, so the completion marker is also
-// required; a count comparison cannot stand in (transactions holds duplicates, the backfill
-// inserts FINAL-deduped rows; see txHashIndexBackfillQuery).
+// TransactionByHash looks up one transaction by hex hash. Fast path: when tx_hash_index is
+// available (exists, holds rows) and covered (txHashIndexCovered), the hash resolves to its ledger
+// by primary-key search and a miss is AUTHORITATIVE absence. Otherwise the tx_hash bloom skip-index
+// scan over stellar.transactions runs (slow at lake scale). Non-emptiness alone is not coverage: a
+// fresh index goes non-empty on the first live tx, so the completion marker is also required; a
+// count comparison cannot stand in (transactions holds duplicates, the backfill inserts
+// FINAL-deduped rows; see txHashIndexBackfillQuery).
 func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (TxSummary, bool, error) {
 	if r.txHashIndexAvailable(ctx) && r.txHashIndexCovered(ctx) {
 		tx, found, indexHit, err := r.txByHashIndexed(ctx, hash)
@@ -1481,12 +1465,11 @@ func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (Tx
 }
 
 // txHashIndexAvailable reports whether tx_hash_index is USABLE: exists AND holds a row.
-// Row count matters because a per-hash miss is treated as authoritative not-found
-// (TransactionByHash): against an existing-but-EMPTY index (MV dropped or TRUNCATEd) every
-// real hash would 404. Emptiness is not cached. "Holds rows" is a LEASE, not a latch
-// ([schemaProbeLease]), so truncation under a running process stops granting authority within
-// one lease; only table-absent on a never-seen table latches. The hourly tx_hash_index parity
-// check catches PARTIAL divergence; this catches total loss.
+// Row count matters because a per-hash miss is treated as authoritative not-found: against an
+// existing-but-EMPTY index (MV dropped or TRUNCATEd) every real hash would 404. Emptiness is not
+// cached. "Holds rows" is a LEASE, not a latch ([schemaProbeLease]), so truncation under a running
+// process stops granting authority within one lease. The parity check catches PARTIAL divergence;
+// this catches total loss.
 func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.txIndexProbe,
 		`SELECT ledger_seq FROM stellar.tx_hash_index LIMIT 1`, true)
@@ -1629,11 +1612,11 @@ func (r *ExplorerReader) accountActivityAvailable(ctx context.Context) bool {
 		`SELECT last_ledger FROM stellar.account_activity LIMIT 1`, true)
 }
 
-// accountActivityWatermark returns the account's last-active ledger, the exact upper bound
-// for AccountOperations' reverse resolves. max(last_ledger), never a bare row or FINAL: the
-// table is ReplacingMergeTree(last_ledger) fed by three MVs, so only the MAX is a safe bound
-// (a lower row would HIDE history). ok=false (absent/empty table, no row, read error)
-// degrades to the unbounded scan: a missing watermark may only cost performance, never rows.
+// accountActivityWatermark returns the account's last-active ledger, the exact upper bound for
+// AccountOperations' reverse resolves. max(last_ledger), never a bare row or FINAL: the table is
+// ReplacingMergeTree(last_ledger) fed by three MVs, so only the MAX is a safe bound (a lower row
+// would HIDE history). ok=false degrades to the unbounded scan: a missing watermark may only cost
+// performance, never rows.
 func (r *ExplorerReader) accountActivityWatermark(ctx context.Context, account string) (uint32, bool) {
 	if !r.accountActivityAvailable(ctx) {
 		return 0, false
@@ -1655,21 +1638,20 @@ func (r *ExplorerReader) ledgerEntriesVersioned(ctx context.Context) bool {
 		`SELECT version FROM stellar.ledger_entries_current LIMIT 1`, false)
 }
 
-// probeSchema answers "does this schema object exist" and caches ONLY A DEFINITIVE ANSWER,
-// so a transient error (restart mid-deploy, deadline) cannot latch a probe false for the
-// process lifetime. Definitive means a SCHEMA VERDICT: no error caches true; an exception
-// in [schemaAbsentCodes] caches false (unless this process already saw the object).
-// Anything else is a non-answer: nothing cached, the caller degrades for this call, and
-// re-probes are rate-limited by [schemaProbeRetryAfter].
+// probeSchema answers "does this schema object exist" and caches ONLY A DEFINITIVE ANSWER, so a
+// transient error (restart mid-deploy, deadline) cannot latch a probe false for the process
+// lifetime. Definitive means a SCHEMA VERDICT: no error caches true; an exception in
+// [schemaAbsentCodes] caches false (unless this process already saw the object). Anything else is
+// a non-answer: nothing cached, the caller degrades for this call, and re-probes are rate-limited
+// by [schemaProbeRetryAfter].
 // requireRows tightens "exists" to "exists AND non-empty" for probes whose caller derives
-// AUTHORITY from the object (an index miss is a 404). An existing-but-EMPTY object is
-// unavailable now, uncached, and re-probed after the retry window. An observed row settles
-// it only for [schemaProbeLease]: on expiry the next caller re-asks. Rows renew the lease;
-// empty revokes at once; schema-absent revokes but does not latch (the object was seen, so
-// this is a mid-recreate); no answer honours the old verdict for [schemaProbeStaleLeases],
-// then drops it. Non-requireRows probes keep the process-lifetime latch.
-// The query runs OUTSIDE the mutex (not context-aware, so holding it would serialise every
-// reader behind one slow probe); concurrent first callers may each probe, each a LIMIT 1.
+// AUTHORITY from the object (an index miss is a 404). An existing-but-EMPTY object is unavailable
+// now and uncached. An observed row settles it only for [schemaProbeLease]. Rows renew the lease;
+// empty revokes at once; schema-absent revokes but does not latch (a mid-recreate); no answer
+// honours the old verdict for [schemaProbeStaleLeases], then drops it. Non-requireRows probes keep
+// the process-lifetime latch.
+// The query runs OUTSIDE the mutex (not context-aware, so holding it would serialise every reader
+// behind one slow probe); concurrent first callers may each probe, each a LIMIT 1.
 func (r *ExplorerReader) probeSchema(ctx context.Context, p *schemaProbe, query string, requireRows bool) bool {
 	if verdict, ok := p.cached(requireRows); ok {
 		return verdict
@@ -1728,12 +1710,11 @@ func (r *ExplorerReader) txByHashIndexed(ctx context.Context, hash string) (tx T
 }
 
 // txByLedgerAndHash reads the authoritative transactions row for a KNOWN (ledger_seq, tx_hash).
-// FINAL, not `ORDER BY ingested_at DESC LIMIT 1`: ingested_at is DateTime (1 s), so a
-// re-ingest batch within one second (e.g. a decode-fix backfill) leaves RMT parts that TIE
-// on the version column, and a plain SELECT cannot break the tie and could serve the STALE
-// row. FINAL uses real insertion order. It stays cheap: `ledger_seq = ?` is a partition
-// and primary-key prefix predicate, so FINAL merges only the parts of one ledger. A hash
-// (outer or fee-bump inner) is globally unique, so at most one row matches.
+// FINAL, not `ORDER BY ingested_at DESC LIMIT 1`: ingested_at is DateTime (1 s), so a re-ingest
+// batch within one second leaves parts that TIE on the version column, and a plain SELECT could
+// serve the STALE row. FINAL uses real insertion order and stays cheap: `ledger_seq = ?` is a
+// partition and primary-key prefix predicate, so it merges only one ledger's parts. A hash (outer
+// or fee-bump inner) is globally unique, so at most one row matches.
 func (r *ExplorerReader) txByLedgerAndHash(ctx context.Context, seq uint32, hash string) (TxSummary, bool, error) {
 	q := `SELECT ` + txCols + ` FROM stellar.transactions FINAL
 		WHERE ledger_seq = ? AND (tx_hash = ? OR inner_tx_hash = ?)`
@@ -1749,13 +1730,12 @@ func (r *ExplorerReader) txByLedgerAndHash(ctx context.Context, seq uint32, hash
 	return out[0], true, nil
 }
 
-// txByHashScan is the pre-index lookup, in two steps.
-// 1. Find WHICH ledger holds the hash via the tx_hash bloom skip-index. NOT FINAL: that
-// would defeat the skip-index over the whole table, and there is no ledger to bound it yet.
-// Only ledger_seq is read, safe from an un-merged duplicate since a tx executes in exactly
-// one ledger. The `ORDER BY ingested_at DESC` is a no-op on real data; it is kept so a
-// hash recorded against two ledgers (mis-seeded or cross-network backfill) deterministically
-// resolves to the most recently ingested. It does NOT resolve duplicate rows (1 s resolution).
+// txByHashScan is the lookup without the hash index, in two steps.
+// 1. Find WHICH ledger holds the hash via the tx_hash bloom skip-index. NOT FINAL: that would
+// defeat the skip-index over the whole table, and there is no ledger to bound it yet. Only
+// ledger_seq is read, safe from an un-merged duplicate since a tx executes in exactly one ledger.
+// The `ORDER BY ingested_at DESC` only makes a hash recorded against two ledgers resolve
+// deterministically to the most recently ingested; it does NOT resolve duplicate rows.
 // 2. Read the row via txByLedgerAndHash (cheap FINAL, correct on an ingested_at tie).
 // found=false when step 1 comes up empty.
 func (r *ExplorerReader) txByHashScan(ctx context.Context, hash string) (TxSummary, bool, error) {
@@ -1845,17 +1825,15 @@ type TxOutcome struct {
 
 // TxOutcomesByHash batch-reads the verdict + result code for a page's transactions, keyed
 // by tx_hash (list views fetch operations without their parent tx).
-// The predicate is the EXACT SET of the page's ledgers, never a [lo,hi] range: a sparse
-// account's page can straddle millions of ledgers, and a range selects every granule between
-// them, leaving the tx_hash bloom (about 39% false positives at 50 hashes) as the only
-// filter, and the range form reads billions of rows where the exact set reads a few
-// hundred thousand. The set is lossless: an op's parent
-// tx is in the op's own ledger. This bounds cost by page size (ParseLimit).
-// FINAL stays: transactions holds real duplicates and ingested_at ties (see
-// txByLedgerAndHash); with ledger_seq a point set FINAL merges only a handful of parts,
-// no PrimaryKeyExpand blow-up. Premium ~2x of ~40 ms; a stale verdict is worse.
-// Empty input returns an empty non-nil map. The SQL is a const so
-// explorer_tx_outcomes_test.go can pin the ledger IN-set and FINAL.
+// The predicate is the EXACT SET of the page's ledgers, never a [lo,hi] range: a sparse account's
+// page can straddle millions of ledgers, and a range selects every granule between them, leaving
+// the tx_hash bloom (high false-positive rate) as the only filter. The set is lossless: an op's
+// parent tx is in the op's own ledger. This bounds cost by page size (ParseLimit).
+// FINAL stays: transactions holds real duplicates and ingested_at ties (see txByLedgerAndHash);
+// with ledger_seq a point set FINAL merges only a handful of parts. A stale verdict is worse than
+// the cost.
+// Empty input returns an empty non-nil map. The SQL is a const so explorer_tx_outcomes_test.go can
+// pin the ledger IN-set and FINAL.
 const txOutcomesByHashQuery = `SELECT tx_hash, successful, result_code FROM stellar.transactions FINAL
 		WHERE ledger_seq IN (?) AND tx_hash IN (?)`
 
@@ -1900,13 +1878,12 @@ type ContractActivityRow struct {
 // stops a deep page reading every granule above the cursor.
 const contractEventsCursorClause = ` AND ledger_seq <= ? AND (ledger_seq, tx_hash, op_index, event_index) < (?, ?, ?, ?)`
 
-// contractEventsRecentQuery builds the fast-path SQL. Neither FINAL (defeats the
-// contract_id bloom skip-index) nor LIMIT 1 BY (disables the reverse read-in-order early
-// exit: 16.3s vs 0.16s on a 17.9M-event contract). Un-merged duplicate parts are collapsed
-// in Go by contractEventsScan (adjacent under the full ORDER BY tuple). The page
-// over-fetches contractEventsDedupHeadroom rows; a duplicate storm beyond that falls back
-// to contractEventsRecentDedupQuery. explorerScanSettings: bloom-pruned but scan-shaped
-// over wide topics_xdr/data_xdr columns.
+// contractEventsRecentQuery builds the fast-path SQL. Neither FINAL (defeats the contract_id bloom
+// skip-index) nor LIMIT 1 BY (disables the reverse read-in-order early exit, orders of magnitude
+// slower). Un-merged duplicates are collapsed in Go by contractEventsScan (adjacent under the full
+// ORDER BY tuple). The page over-fetches contractEventsDedupHeadroom rows; a duplicate storm
+// beyond that falls back to contractEventsRecentDedupQuery. explorerScanSettings: bloom-pruned but
+// scan-shaped over wide topics_xdr/data_xdr columns.
 func contractEventsRecentQuery(hasCursor, hasLedgerSet bool) string {
 	q := `SELECT ledger_seq, close_time, tx_hash, op_index, event_index, event_type, topic_0_sym,
 			topics_xdr, data_xdr
@@ -1944,22 +1921,21 @@ func contractEventsRecentDedupQuery(hasCursor, hasLedgerSet bool) string {
 // for not-yet-merged parts, so they are rare and few; 100 extra rows bounds the worst fetch at 600.
 const contractEventsDedupHeadroom = 100
 
-// ContractEventsRecent returns a contract's newest events, descending. The fast query has
-// NO FINAL and NO LIMIT 1 BY (each disables a path; see contractEventsRecentQuery);
-// duplicates collapse in contractEventsScan with an in-CH fallback when headroom is
-// exhausted. A set cursor pages by the full row identity (ledger_seq, tx_hash, op_index,
-// event_index): events tie at op_index=0/event_index=0 across many single-op txs.
+// ContractEventsRecent returns a contract's newest events, descending. The fast query has NO FINAL
+// and NO LIMIT 1 BY (see contractEventsRecentQuery); duplicates collapse in contractEventsScan with
+// an in-CH fallback when headroom is exhausted. A set cursor pages by the full row identity
+// (ledger_seq, tx_hash, op_index, event_index): events tie at op_index=0/event_index=0 across many
+// single-op txs.
 func (r *ExplorerReader) ContractEventsRecent(ctx context.Context, contractID string, limit int, cur ContractEventsCursor) ([]ContractActivityRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	fetch := limit + contractEventsDedupHeadroom
 
-	// Active-ledger bound: when the index is usable AND the per-contract walk is NON-EMPTY,
-	// prune to those ledgers (lossless: each holds at least one event). An EMPTY walk is NOT
-	// "no events": the probe is a table-global emptiness check and cannot see PARTIAL backfill,
-	// so a quiet contract's events may exist. Empty walk or index error falls through to the
-	// unbounded read (the source of truth).
+	// Active-ledger bound: when the index is usable AND the per-contract walk is NON-EMPTY, prune
+	// to those ledgers (lossless: each holds at least one event). An EMPTY walk is NOT "no events":
+	// the probe is table-global and cannot see PARTIAL backfill. Empty walk or index error falls
+	// through to the unbounded read (the source of truth).
 	var ledgers []uint32
 	if r.contractLedgersIndexAvailable(ctx) {
 		if ls, lerr := r.contractActiveLedgers(ctx, contractID, cur.Ledger, fetch); lerr == nil && len(ls) > 0 {
@@ -2066,10 +2042,10 @@ const recentContractsQuery = `SELECT contract_id,
 
 // RecentContracts returns the most active contracts by event count in [sinceLedger, tip]
 // (GET /v1/contracts). Window-scoped so the GROUP BY stays bounded.
-// The count is uniqExact over the PRIMARY KEY, not count(): contract_events is
-// ReplacingMergeTree and retried flushes leave duplicate un-merged parts, which would
-// inflate tallies and MIS-RANK the directory, worst in the recent window. Not FINAL: it would
-// defeat the contract_id bloom index and merge every overlapping part. max() is idempotent over duplicates.
+// The count is uniqExact over the PRIMARY KEY, not count(): contract_events is ReplacingMergeTree
+// and retried flushes leave un-merged duplicates, which would inflate tallies and MIS-RANK the
+// directory. Not FINAL: it would defeat the contract_id bloom index and merge every overlapping
+// part. max() is idempotent over duplicates.
 func (r *ExplorerReader) RecentContracts(ctx context.Context, limit int, sinceLedger uint32) ([]ContractDirectoryRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -2127,20 +2103,19 @@ const contractInteractionsQuery = `SELECT contract_id, toInt64(uniqExact(tx_hash
 
 // ContractInteractions returns contracts co-occurring with contractID in the same
 // transactions, ranked by shared-tx count (GET /v1/contracts/{id}/interactions).
-// Co-occurrence is a proxy for a cross-contract call (the callee's events land in the
-// caller's tx). An IN-subquery (inner: subject's (ledger_seq, tx_hash) set via the
-// contract_id bloom; outer: other contracts in those txs), not a self-join, which
-// ClickHouse materialises more expensively. Window-scoped via sinceLedger.
+// Co-occurrence is a proxy for a cross-contract call (the callee's events land in the caller's tx).
+// An IN-subquery (inner: subject's (ledger_seq, tx_hash) set via the contract_id bloom; outer:
+// other contracts in those txs), not a self-join, which ClickHouse materialises more expensively.
+// Window-scoped via sinceLedger.
 func (r *ExplorerReader) ContractInteractions(ctx context.Context, contractID string, limit int, sinceLedger uint32) ([]ContractEdgeRow, uint32, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	// Anchor the window to the contract's OWN recent activity, not wall-clock days: both
-	// halves scale with ledger SPAN, and 90 days cost a busy contract 3-6 s. This narrows what a
-	// busy contract reports, consistent with subjectTxCap already truncating to a recent
-	// sample; at 500 ledgers the top edges kept the same order (0.7 s vs 3.0 s). Quiet
-	// contracts have fewer active ledgers than the cap and keep the full window. The
-	// effective floor is RETURNED so since_ledger describes the window served.
+	// Anchor the window to the contract's OWN recent activity, not wall-clock days: both halves
+	// scale with ledger SPAN. This narrows what a busy contract reports, consistent with
+	// subjectTxCap already truncating to a recent sample. Quiet contracts have fewer active
+	// ledgers than the cap and keep the full window. The effective floor is RETURNED so
+	// since_ledger describes the window served.
 	const activeLedgerWindow = 500
 	if r.contractLedgersIndexAvailable(ctx) {
 		if ls, err := r.contractActiveLedgers(ctx, contractID, 0, activeLedgerWindow); err == nil && len(ls) == activeLedgerWindow {

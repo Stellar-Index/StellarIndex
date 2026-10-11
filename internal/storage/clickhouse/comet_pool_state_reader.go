@@ -12,14 +12,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Comet pool (Balancer-v1 Soroban port) PERSISTENT-storage layout, derived
-// from the protocol's public Rust source (CometDEX/comet-contracts-v1,
-// c_pool/storage_types.rs + metadata.rs).
+// Comet pool (Balancer-v1 Soroban port) PERSISTENT-storage layout, from the protocol's public Rust
+// source (CometDEX/comet-contracts-v1, c_pool/storage_types.rs + metadata.rs).
 //
-// DataKey is a #[contracttype] enum of unit variants, so each variant encodes
-// as ScvVec[ScvSymbol("<Variant>")]. DataKey::AllRecordData is
-// Map<Address, Record>, PERSISTENT, the per-token balance records this reader
-// consumes:
+// DataKey is a #[contracttype] enum of unit variants, so each variant encodes as
+// ScvVec[ScvSymbol("<Variant>")]. DataKey::AllRecordData is Map<Address, Record>, PERSISTENT, the
+// per-token balance records this reader consumes:
 //
 //	Record { balance: i128, weight: i128, scalar: i128, index: u32 }
 //
@@ -61,19 +59,15 @@ const cometPoolStateQuery = `SELECT key_xdr, ledger_seq, entry_xdr
 	WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
 	SETTINGS max_threads = 4, max_memory_usage = 8000000000`
 
-// CometPoolReserves reads the CURRENT per-token balance records for
-// the given Comet pool contracts from the lake in a single batched
-// `key_xdr IN (...)` lookup. Semantics mirror SoroswapPairReserves /
+// CometPoolReserves reads the CURRENT per-token balance records for the given Comet pool contracts
+// from the lake in one batched `key_xdr IN (...)` lookup. Semantics mirror SoroswapPairReserves /
 // PhoenixPoolReserves:
 //
-//   - Pools with NO captured record entry are absent from both
-//     returns — absence is "reserves unavailable", never zero.
-//   - Pools whose record entry has been TTL-ARCHIVED are absent too.
-//   - Pools whose captured entry does NOT decode to the recognised
-//     Map<Address, Record{balance: i128, …}> shape come back in the
-//     second return (undecodable, sorted) so callers can count them
-//     honestly. The whole pool fails on ANY malformed record — a
-//     partially-read balance set would understate TVL silently.
+//   - Pools with NO captured record entry, or a TTL-ARCHIVED one, are absent from both returns;
+//     absence is "reserves unavailable", never zero.
+//   - Pools whose entry does NOT decode to the recognised Map<Address, Record{balance: i128, ...}>
+//     shape come back in the second return (undecodable, sorted) so callers can count them. The
+//     whole pool fails on ANY malformed record: a partial balance set would understate TVL silently.
 func (r *ExplorerReader) CometPoolReserves(ctx context.Context, pools []string) (map[string]CometPoolState, []string, error) {
 	keys := make([]string, 0, len(pools)*2)
 	poolByKey := make(map[string]string, len(pools)*2)
@@ -142,11 +136,9 @@ func cometPoolKeys(pool string) ([]string, error) {
 	return keys, nil
 }
 
-// scanCometPoolStates folds fetched rows into per-pool winning state.
-// badPools collects pools that had a present-but-undecodable entry;
-// a pool appears there AND in out only if one candidate key decoded
-// while another (theoretically impossible on-chain) did not — the
-// caller resolves that in favour of the decoded state.
+// scanCometPoolStates folds fetched rows into per-pool winning state. badPools collects pools with
+// a present-but-undecodable entry; a pool is in both only if one candidate key decoded and another
+// did not, which the caller resolves in favour of the decoded state.
 func scanCometPoolStates(rows driver.Rows, poolByKey map[string]string) (map[string]CometPoolState, map[string]string, map[string]bool, error) {
 	out := make(map[string]CometPoolState)
 	keyByPool := make(map[string]string)

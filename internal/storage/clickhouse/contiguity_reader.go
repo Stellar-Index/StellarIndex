@@ -151,10 +151,10 @@ const ecTxScopedRow = "tx_hash != ''"
 //
 //   - uniqExact(ledger_seq), not count(): stellar.ledgers is ReplacingMergeTree, so count()
 //     double-counts un-merged re-ingests.
-//   - uniqExactIf(... IN (subquery)) restricts coverage to the same tx-bearing set as the
-//     total; a standalone uniqExact would count tx_count == 0 ledgers as coverage.
-//   - Both sides are primary-key range scans bounded by the stride window.
-//   - The subquery admits only ecTxScopedRow rows: a snapshot or eviction row is not coverage.
+//   - uniqExactIf(... IN (subquery)) restricts coverage to the tx-bearing set the total uses,
+//     so tx_count == 0 ledgers never count as coverage.
+//   - Both sides are primary-key range scans bounded by the stride window; the subquery admits
+//     only ecTxScopedRow rows, since a snapshot or eviction row is not coverage.
 //
 // The four `?` bind positionally: (subquery lo, hi, outer lo, hi).
 func ecWindowCoverageQuery() string {

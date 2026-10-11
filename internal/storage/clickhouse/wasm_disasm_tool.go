@@ -8,15 +8,12 @@ import (
 	"time"
 )
 
-// wasm_disasm_tool.go — best-effort WAT disassembly + wasm-decompile pseudocode via
-// the wabt toolchain (wasm2wat / wasm-decompile). OPTIONAL: if the binaries
-// aren't on PATH the metadata + native-parsed exports still ship, and the
-// ToolNote explains the absence rather than 503-ing.
+// wasm_disasm_tool.go — best-effort WAT disassembly + wasm-decompile pseudocode via the wabt
+// toolchain. OPTIONAL: if the binaries aren't on PATH the metadata + native-parsed exports still
+// ship, and the ToolNote explains the absence rather than 503-ing.
 //
-// `Cache-Control: max-age=86400` (wasm_view.go) is not a server-side cache,
-// so the recurring fork/exec cost is bounded HERE: ExplorerReader.disasmCache
-// (wasm_disasm_cache.go) keys a successful run by wasm hash (content-addressed,
-// immutable), so the tools run at most once per contract per process.
+// Cache-Control (wasm_view.go) is not a server-side cache, so the fork/exec cost is bounded HERE:
+// ExplorerReader.disasmCache keys a successful run by wasm hash (content-addressed, immutable).
 
 // wasmToolTimeout bounds each external tool invocation. WAT/decompile of a
 // ~50 KB module is sub-second; the timeout only fires on a pathological input.
@@ -28,17 +25,12 @@ const wasmToolTimeout = 10 * time.Second
 // inspection; bigger outputs are truncated with a marker.
 const maxDisasmOutputBytes = 2 << 20 // 2 MiB
 
-// buildWasmDisassembly fills info.Wat + info.Decompiled best-effort and appends
-// to info.ToolNote. It never fails the caller — a missing tool or a tool error
-// just leaves the corresponding field empty with an explanatory note.
+// buildWasmDisassembly fills info.Wat + info.Decompiled best-effort and appends to info.ToolNote.
+// It never fails the caller; a missing tool or tool error leaves the field empty with a note.
 //
-// info.WasmHash (already set by the caller) is a content address, so a
-// previously-cached SUCCESSFUL run is served without paying fork/exec again.
-// A miss (never cached, or the prior run failed) computes and — only on full
-// success — populates r.disasmCache for the next request. Caching a failure
-// would pin a transient condition (tool not yet installed, a load-induced
-// timeout) as a permanent false negative for that hash, so failures are
-// always retried instead.
+// info.WasmHash is a content address, so a cached SUCCESSFUL run is served without fork/exec.
+// Only full success populates r.disasmCache: caching a failure would pin a transient condition
+// (tool not yet installed, a load-induced timeout) as a permanent false negative for that hash.
 func (r *ExplorerReader) buildWasmDisassembly(ctx context.Context, info *ContractWasmInfo, code []byte) {
 	if cached, ok := r.disasmCache.get(info.WasmHash); ok {
 		info.Wat = cached.wat
@@ -71,16 +63,12 @@ func (r *ExplorerReader) buildWasmDisassembly(ctx context.Context, info *Contrac
 	}
 }
 
-// runWasmTool runs a wabt binary against the wasm module and returns its text
-// output. The second return is a human note: empty on success, else why the
-// stage is absent.
+// runWasmTool runs a wabt binary against the wasm module and returns its text output. The second
+// return is a human note: empty on success, else why the stage is absent.
 //
-// wabt's wasm2wat / wasm-decompile read the module from a real file path (they
-// do NOT read stdin via "-"; this build treats "-" as a literal filename) and
-// "-o <path>" writes the result there ("-o -" is silently empty), so we stage
-// both the input and the output through temp files. The temp files are removed
-// before returning; the cost is two tiny writes per (immutable, day-cached)
-// contract, amortised to ~nothing.
+// wabt reads the module from a real file path (this build treats "-" as a literal filename) and
+// "-o -" is silently empty, so both input and output are staged through temp files, removed
+// before returning.
 func runWasmTool(ctx context.Context, tool string, code []byte, extraArgs ...string) (string, string) {
 	if _, err := exec.LookPath(tool); err != nil {
 		return "", tool + " not on PATH (install wabt to enable)"

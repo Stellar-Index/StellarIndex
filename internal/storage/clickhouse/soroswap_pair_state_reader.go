@@ -11,10 +11,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
-// Soroswap pair instance-storage layout (empirically verified against
-// the r1 lake, two pairs cross-checked against the
-// soroswap_pairs registry). The pair contract's DataKey enum is a
-// u32-repr enum, so instance-storage keys are plain ScvU32 values:
+// Soroswap pair instance-storage layout, verified against the lake and the soroswap_pairs
+// registry. The pair's DataKey enum is u32-repr, so instance-storage keys are plain ScvU32:
 //
 //	U32(0) = Token0   (Address)
 //	U32(1) = Token1   (Address)
@@ -46,11 +44,8 @@ type SoroswapPairState struct {
 	Ledger uint32
 }
 
-// TokenDisplayMeta is a token contract's display metadata read from
-// its instance METADATA entry (soroban-token-sdk convention, same
-// entry TokenDecimals reads). Best-effort: HasMeta=false when the
-// token stores no readable METADATA map — callers keep their own
-// defaults (decimals 7, contract-id label).
+// TokenDisplayMeta is a token's display metadata from its instance METADATA entry (the entry
+// TokenDecimals reads). Best-effort: HasMeta=false means callers keep their own defaults.
 type TokenDisplayMeta struct {
 	Symbol   string
 	Name     string
@@ -58,22 +53,16 @@ type TokenDisplayMeta struct {
 	HasMeta  bool
 }
 
-// SoroswapPairReserves reads the CURRENT reserve state for the given
-// Soroswap pair contracts from the lake in a single batched
-// `key_xdr IN (...)` lookup against ledger_entries_current (PK-prefix
-// on (entry_type, key_xdr)). Pairs whose instance entry isn't captured, or
-// whose storage doesn't match the verified u32-keyed layout, are absent from
-// the result — callers treat absence as "reserves unavailable", never zero.
+// SoroswapPairReserves reads the CURRENT reserves of the given pairs in one batched
+// `key_xdr IN (...)` lookup (PK-prefix on (entry_type, key_xdr)). Uncaptured or off-layout pairs
+// are absent: callers treat absence as "reserves unavailable", never zero.
 //
-// ARCHIVED pairs are absent too: ledger_entries_current keeps a Soroban
-// entry's last-known value after its TTL lapses, so an unfiltered read would
-// report a dead pool's final reserves as live liquidity. Fail-open: only a
+// ARCHIVED pairs are absent too: ledger_entries_current keeps an entry's last value after its TTL
+// lapses, so an unfiltered read would report a dead pool as live liquidity. Fail-open: only a
 // positively-resolved, lapsed TTL drops a pair (see [ClassifyTTLLiveness]).
-// soroswapPairStateQuery is the batched current-state lookup — a
-// PK-prefix probe on (entry_type, key_xdr). SETTINGS pins are the shared
-// guard rails the sibling readers use (cometPoolStateQuery,
-// phoenixPoolStateQuery, ttlLivenessBatchQuery): a planner or layout shift
-// must fail THIS query loudly rather than fan out on the shared host.
+// soroswapPairStateQuery is the batched current-state lookup, a PK-prefix probe on
+// (entry_type, key_xdr). The SETTINGS pins are shared with the sibling readers so a planner or
+// layout shift fails THIS query loudly rather than fanning out on the shared host.
 const soroswapPairStateQuery = `SELECT key_xdr, ledger_seq, entry_xdr
 	FROM stellar.ledger_entries_current FINAL
 	WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
@@ -110,11 +99,9 @@ func (r *ExplorerReader) SoroswapPairReserves(ctx context.Context, pairs []strin
 	if err != nil {
 		return nil, err
 	}
-	// Liveness is judged at the lake's tip as of the VERDICT SNAPSHOT's
-	// compute time (see ttlLivenessCache) — this reader answers "current",
-	// so an entry archived before that tip is not current. Served
-	// stale-while-revalidate: the classification behind it is a ttl-prefix
-	// scan that cannot run per request.
+	// Liveness is judged at the lake tip as of the verdict snapshot's compute time (see
+	// ttlLivenessCache): an entry archived before that tip is not current. Served
+	// stale-while-revalidate because the ttl-prefix scan behind it cannot run per request.
 	if err := dropArchivedPairs(ctx, r.ttlVerdicts, out, keyByPair); err != nil {
 		return nil, err
 	}
@@ -192,10 +179,8 @@ func dropArchivedPairs(
 	return nil
 }
 
-// TokenDisplays batch-reads display metadata (symbol/name/decimals)
-// for the given token contracts from their instance METADATA entries.
-// Same single-query batching as SoroswapPairReserves. Tokens without
-// readable metadata are present with HasMeta=false.
+// TokenDisplays batch-reads display metadata (symbol/name/decimals) for the given token
+// contracts in one query. Tokens without readable metadata are present with HasMeta=false.
 // tokenDisplaysQuery is the batched current-state lookup for LP-share
 // token metadata. SETTINGS pins match soroswapPairStateQuery above —
 // the shared guard rails the sibling readers use.
@@ -254,11 +239,9 @@ func (r *ExplorerReader) TokenDisplays(ctx context.Context, tokens []string) (ma
 	return out, nil
 }
 
-// soroswapStateFromInstanceEntry decodes one pair-contract instance
-// LedgerEntry into token addresses + reserves. ok=false when the entry
-// isn't an instance or any of the four u32-keyed fields is missing or
-// mis-typed (a non-Soroswap contract, or a future layout change —
-// refuse to guess rather than misreport reserves).
+// soroswapStateFromInstanceEntry decodes a pair instance entry into token addresses and
+// reserves. ok=false when the entry is not an instance or any u32-keyed field is missing or
+// mis-typed: refuse to guess rather than misreport reserves.
 func soroswapStateFromInstanceEntry(b64 string) (SoroswapPairState, bool) {
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {
@@ -325,11 +308,9 @@ func applySoroswapField(st *SoroswapPairState, key uint32, val xdr.ScVal) (match
 	return false, nil
 }
 
-// displayMetaFromInstanceEntry decodes a token instance entry into
-// TokenDisplayMeta. The scale comes from decimalsFromInstance — the same
-// reader TokenDecimals uses — so every declaration form it accepts is
-// accepted here and every refusal (out of bounds, conflicting
-// declarations) is a refusal here. ok=false when no scale is readable.
+// displayMetaFromInstanceEntry decodes a token instance entry into TokenDisplayMeta. The scale
+// comes from decimalsFromInstance, as in TokenDecimals, so both accept and refuse the same
+// declarations. ok=false when no scale is readable.
 func displayMetaFromInstanceEntry(b64 string) (TokenDisplayMeta, bool) {
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {

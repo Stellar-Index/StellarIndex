@@ -10,16 +10,11 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// ClassicOp is one lake-derived classic operation eligible for
-// pre-P23 movement reconstruction (ADR-0047): op body + result +
-// tx-level context, enough to feed a classicmovements-phase decoder
-// via dispatcher.OpContext. Source is the op's resolved effective
-// source account (op override else tx source — stellar.operations.
-// source_account is already resolved this way at extract time, see
-// internal/storage/clickhouse/extract.go::extractOps) — the caller
-// wires it straight into OpContext.TxSource, exactly as ch-rebuild's
-// SDEX pass does with StreamSDEXOps's equivalent field, and leaves
-// OpContext.OpSource empty.
+// ClassicOp is one lake-derived classic operation eligible for pre-P23 movement reconstruction
+// (ADR-0047): op body, result and tx-level context for a classicmovements decoder via
+// dispatcher.OpContext. Source is the op's effective source (op override else tx source;
+// stellar.operations.source_account is already resolved so at extract time); the caller wires
+// it into OpContext.TxSource, as ch-rebuild's SDEX pass does, and leaves OpContext.OpSource empty.
 type ClassicOp struct {
 	Ledger   uint32
 	ClosedAt time.Time
@@ -31,10 +26,8 @@ type ClassicOp struct {
 }
 
 // classicOpTypeInList renders an op-type slice as a SQL IN list:
-// 'a','b',.... opTypes MUST be compile-time constants (e.g.
-// classicmovements.SupportedOpTypes()), never derived from user
-// input — interpolated directly into the query, mirroring
-// tradeOpTypeInList's identical contract in sdex_op_reader.go.
+// 'a','b',.... opTypes MUST be compile-time constants (e.g. classicmovements.SupportedOpTypes()),
+// never user input: they are interpolated into the query, as in tradeOpTypeInList.
 func classicOpTypeInList(opTypes []string) string {
 	quoted := make([]string, len(opTypes))
 	for i, t := range opTypes {
@@ -44,25 +37,19 @@ func classicOpTypeInList(opTypes []string) string {
 }
 
 // StreamClassicOps reads stellar.operations JOIN operation_results for
-// [from,to] inclusive, restricted to opTypes (xdr.OperationType.String()
-// values) AND successful transactions, reconstructs op.Body + the
-// OperationResult from the retained XDR blobs, and invokes fn for each in
-// dispatcher emission order.
+// [from,to] inclusive, restricted to opTypes (xdr.OperationType.String() values) AND successful
+// transactions, rebuilds op.Body and the OperationResult from the retained XDR blobs, and
+// invokes fn for each in dispatcher emission order.
 //
-// The SHARED ADR-0047 lake-read harness for pre-P23 classic-movement
-// reconstruction: later phases extend the CALLER's opTypes list, not this
-// function.
+// This is the SHARED ADR-0047 lake-read harness: later phases extend the CALLER's opTypes list,
+// not this function.
 //
-// Same NO-FINAL / grace_hash-join rationale as StreamSDEXOps: duplicate
-// rows from unmerged parts are harmless on the WRITE side
-// (stellar.account_movements is a ReplacingMergeTree, ADR-0048 D2) but NOT
-// on the READ side, where a duplicate op fans out to k*m identical
-// ClassicOp rows. Callers that count MUST dedupe on
-// (ledger_seq, tx_hash, op_index) themselves — see
-// classicMovementsDecodeOpsSurface's `seen` map. Failed transactions are
-// excluded because their op results can carry stale data for ops that were
-// rolled back.
-// rolled back and never happened.
+// Same NO-FINAL / grace_hash-join rationale as StreamSDEXOps: duplicate rows from unmerged parts
+// are harmless on the WRITE side (account_movements is a ReplacingMergeTree, ADR-0048 D2) but
+// not on the READ side, where a duplicate op fans out to k*m identical ClassicOp rows. Callers
+// that count MUST dedupe on (ledger_seq, tx_hash, op_index), as classicMovementsDecodeOpsSurface
+// does. Failed transactions are excluded because their op results can carry stale data for ops
+// that were rolled back and never happened.
 func StreamClassicOps(ctx context.Context, addr string, from, to uint32, opTypes []string, fn func(ClassicOp) error) error {
 	if len(opTypes) == 0 {
 		return fmt.Errorf("clickhouse: StreamClassicOps: opTypes is empty")
@@ -83,21 +70,17 @@ func StreamClassicOps(ctx context.Context, addr string, from, to uint32, opTypes
 	return streamClassicOpRows(rows, fn)
 }
 
-// classicOpsQuery is StreamClassicOps' SQL, built here rather than inline so
-// its text stays independently assertable (StreamClassicOps dials its own
-// connection via openRead — see sdexOpsQuery's note on the same seam).
+// classicOpsQuery is StreamClassicOps' SQL, built separately so its text is independently
+// assertable (StreamClassicOps dials its own connection; see sdexOpsQuery).
 //
-// Shape and rationale are sdexOpsQuery's, clause for clause: the successful-tx
-// restriction is a grace_hash INNER JOIN over a `GROUP BY tx_hash` derived
-// table (never an IN-subquery — the set-build blew the 10 GiB budget on a dense
-// 250k-ledger window), and that join is spelled BEFORE the outer
-// WHERE so ClickHouse still propagates the ledger window through
-// o.ledger_seq = r.ledger_seq and primary-key-prunes stellar.operation_results.
+// Shape and rationale are sdexOpsQuery's, clause for clause: the successful-tx restriction is a
+// grace_hash INNER JOIN over a `GROUP BY tx_hash` derived table, never an IN-subquery (the set
+// build blew the 10 GiB budget on a dense 250k-ledger window), spelled BEFORE the outer WHERE
+// so ClickHouse still propagates the ledger window through o.ledger_seq = r.ledger_seq and
+// primary-key-prunes stellar.operation_results.
 //
-// The FOUR bind parameters are, in order: the successful-tx derived table's
-// from + to (it is written FIRST), then the outer ledger window's from + to.
-// opTypes is INTERPOLATED — see classicOpTypeInList's
-// compile-time-constants-only contract.
+// The FOUR bind parameters are, in order: the derived table's from + to (written FIRST), then
+// the outer ledger window's from + to. opTypes is INTERPOLATED; see classicOpTypeInList.
 func classicOpsQuery(opTypes []string) string {
 	return fmt.Sprintf(`
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account,

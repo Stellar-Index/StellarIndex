@@ -49,19 +49,13 @@ type HeldAsset struct {
 // topHeldAssetsLimit bounds the most-held board.
 const topHeldAssetsLimit = 12
 
-// AccountsStats reads the rollup snapshot. ok=false (not an error) when
-// the rollup isn't provisioned/populated — the handler 503s with the
-// standard warming message rather than serving zeros as facts.
+// AccountsStats reads the rollup snapshot. ok=false (not an error) when the rollup is not
+// populated, so the handler serves the warming state rather than zeros as facts.
 //
-// The four rollup tables below are exchanged as ONE atomic group by the
-// writer (asset_holders_rollup.go's holdersRollupStatements), but read
-// here as four independent round trips — the swap can land between any two
-// of them and blend two rollup cycles into one served snapshot. Since
-// the swap touches stellar.accounts_stats too, re-reading its computed_at
-// stamp after the last query and comparing it to the value the first query
-// (readStatsMetrics) captured detects that: a mismatch means a swap landed
-// mid-read, so retry the whole read once. Two swaps landing inside one read
-// is impossible at the rollup's 30-minute cadence.
+// The rollup tables are exchanged as one group by holdersRollupStatements but read in
+// separate round trips, so a swap could blend two cycles. Re-reading the accounts_stats
+// computed_at stamp after the last query and comparing it to the first (readStatsMetrics)
+// detects that; a mismatch retries the whole read once, enough at a 30-minute cadence.
 func (r *ExplorerReader) AccountsStats(ctx context.Context) (AccountsStats, bool, error) {
 	if !r.probeSchema(ctx, &r.accountsStatsProbe,
 		`SELECT value FROM stellar.accounts_stats LIMIT 1`, true) {

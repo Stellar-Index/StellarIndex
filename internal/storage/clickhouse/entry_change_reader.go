@@ -8,17 +8,12 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// EntryChange is one op-scoped ledger_entry_changes row — a single
-// before/after/created/removed snapshot of a LedgerEntry produced by
-// ONE classic operation, decoded enough for ADR-0047 Phase 4's
-// entry-changes-correlated movement reconstruction
-// (internal/sources/classicmovements' LiquidityPoolDeposit/Withdraw
-// + CAP-0038 revocation-edge decode arms).
+// EntryChange is one op-scoped ledger_entry_changes row: a snapshot of a LedgerEntry produced by
+// ONE classic operation, decoded for ADR-0047's entry-changes-correlated movement
+// reconstruction (LiquidityPoolDeposit/Withdraw and CAP-0038 revocation-edge arms).
 //
-// Entry is nil for a 'removed' change (the row only carries the key,
-// per internal/storage/clickhouse/extract_entry_changes.go's
-// entryChangeRow) — every other ChangeType ('state'/'created'/
-// 'updated'/'restored') carries the full decoded LedgerEntry.
+// Entry is nil for a 'removed' change (the row carries only the key); every other ChangeType
+// ('state'/'created'/'updated'/'restored') carries the full decoded LedgerEntry.
 type EntryChange struct {
 	Ledger      uint32
 	ClosedAt    time.Time
@@ -30,20 +25,12 @@ type EntryChange struct {
 }
 
 // streamEntryChangesQuery backs StreamEntryChanges. FINAL:
-// stellar.ledger_entry_changes is ReplacingMergeTree(ingested_at); a
-// re-derived/re-ingested window leaves un-merged duplicate PARTS —
-// byte-identical rows bar ingested_at — until a background merge, and
-// without dedup StreamEntryChanges invoked fn TWICE for the same op-scoped
-// change (a genuine over-count into ADR-0047 Phase 4's movement
-// reconstruction, not just a display artifact). FINAL, not `LIMIT 1 BY`:
-// this is an operator-run backfill utility (classic-movements-backfill),
-// not a per-request serving path, entry_xdr is KB-scale (this repo has
-// measured `LIMIT n BY` breaching memory budgets specifically on wide
-// columns — see sac_balance_seed.go's StreamSACBalanceSeedsFullHistory
-// history), and the existing `ledger_seq BETWEEN ? AND ?` window already
-// bounds FINAL's merge cost to that window, exactly like
-// BackfillTxHashIndex's FINAL fix. Preserves the existing ORDER BY (the
-// per-op grouping order callers rely on) unchanged.
+// stellar.ledger_entry_changes is ReplacingMergeTree(ingested_at); a re-derived window leaves
+// un-merged duplicate parts until a background merge, and without dedup fn would run TWICE for
+// one op-scoped change, over-counting the movement reconstruction. FINAL, not `LIMIT 1 BY`:
+// this is an operator-run backfill, not a serving path; entry_xdr is KB-scale and `LIMIT n BY`
+// has breached memory budgets on wide columns; and the `ledger_seq BETWEEN ? AND ?` window
+// bounds FINAL's merge cost. The ORDER BY (the per-op grouping order callers rely on) is kept.
 const streamEntryChangesQuery = `
 	SELECT ledger_seq, close_time, tx_hash, op_index, change_index, change_type, entry_xdr
 	FROM stellar.ledger_entry_changes FINAL
@@ -53,19 +40,15 @@ const streamEntryChangesQuery = `
 	ORDER BY ledger_seq, tx_hash, op_index, change_index
 `
 
-// StreamEntryChanges reads OP-SCOPED (op_index >= 0; fee/tx-level changes at
-// op_index=-1 are irrelevant to a single op's movement reconstruction)
-// ledger_entry_changes rows for [from,to] restricted to entryType
-// ('liquidity_pool' or 'claimable_balance' for ADR-0047 Phase 4), invoking
-// fn in (ledger_seq, tx_hash, op_index, change_index) order — stellar-core's
-// own per-op Changes order, so a caller can treat the first row of an op as
-// "before" and the last as "after" without a sort.
+// StreamEntryChanges reads OP-SCOPED (op_index >= 0; fee/tx-level changes at op_index=-1 are
+// irrelevant to movement reconstruction) rows for [from,to] restricted to entryType
+// ('liquidity_pool' or 'claimable_balance'), invoking fn in (ledger_seq, tx_hash, op_index,
+// change_index) order, stellar-core's own per-op order, so the first row of an op is "before"
+// and the last "after" without a sort.
 //
-// Returns ZERO rows for a range whose per-op fidelity hasn't been backfilled
-// (the legacy census feed stamps op_index=-1 exclusively), which is
-// indistinguishable at the SQL layer from a window with no such changes.
-// Callers MUST run CountOpScopedEntryChanges first (ADR-0047 D2's
-// detect-and-skip-honestly discipline).
+// Returns ZERO rows for a range whose per-op fidelity hasn't been backfilled (the legacy census
+// feed stamps op_index=-1 only), indistinguishable in SQL from a window with no such changes.
+// Callers MUST run CountOpScopedEntryChanges first (ADR-0047 D2: detect and skip honestly).
 func StreamEntryChanges(ctx context.Context, addr string, from, to uint32, entryType string, fn func(EntryChange) error) error {
 	if entryType == "" {
 		return fmt.Errorf("clickhouse: StreamEntryChanges: entryType is empty")
@@ -121,24 +104,19 @@ func StreamEntryChanges(ctx context.Context, addr string, from, to uint32, entry
 	return rows.Err()
 }
 
-// CountOpScopedEntryChanges returns how many op-scoped (op_index >= 0)
-// ledger_entry_changes rows exist for [from,to] — the window-level fidelity
-// probe ADR-0047 Phase 4 needs before trusting an "empty per-op group"
-// signal from StreamEntryChanges. A cheap count over a bounded range, run
-// once per window rather than per-op.
+// CountOpScopedEntryChanges returns how many op-scoped (op_index >= 0) rows exist for [from,to]:
+// the window-level fidelity probe to run, once per window, before trusting an "empty per-op
+// group" from StreamEntryChanges.
 //
-// Zero (with a non-empty window) means the per-op fidelity backfill hasn't
-// reached this range yet: treat every LiquidityPoolDeposit/Withdraw and
-// CAP-0038-eligible AllowTrust/SetTrustLineFlags op in it as
-// entry-changes-unavailable without querying StreamEntryChanges per op.
+// Zero (with a non-empty window) means the per-op backfill hasn't reached this range: treat every
+// LiquidityPoolDeposit/Withdraw and CAP-0038-eligible AllowTrust/SetTrustLineFlags op in it as
+// entry-changes-unavailable without querying per op.
 //
-// Returns uint64: the clickhouse-go driver rejects scanning a UInt64 column
-// into *int64.
+// Returns uint64 because the clickhouse-go driver rejects scanning a UInt64 into *int64.
 //
-// uniqExact over the PRIMARY KEY tuple, not count(): the table is a
-// ReplacingMergeTree, so un-merged duplicate parts would inflate the count
-// and give a false fidelity signal. Same idiom as
-// VerifyAccountMovementsWindow. Only four narrow key columns are touched.
+// uniqExact over the PRIMARY KEY tuple, not count(): the table is a ReplacingMergeTree, so
+// un-merged duplicate parts would inflate the count into a false fidelity signal. Only four
+// narrow key columns are touched.
 func CountOpScopedEntryChanges(ctx context.Context, addr string, from, to uint32) (uint64, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {

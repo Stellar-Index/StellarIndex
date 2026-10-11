@@ -140,15 +140,14 @@ type LedgerEntryChangeRow struct {
 	// Balance is the stroop balance for account and trustline entries (i64 in XDR), 0
 	// otherwise, so holder reads sort and aggregate in SQL without decoding XDR.
 	Balance int64
-	// IntraLedgerSeq is the change's position in the ledger-wide canonical walk, in PHASE
-	// order, not per-tx: (1) every tx's fee changes, (2) every tx's apply-phase meta,
-	// (3) post-apply fee changes (Soroban refunds), (4) evicted keys. Mirrors the SDK's
-	// ingest.LedgerChangeReader and dispatcher walkLedgerEntryChanges. It is folded into
-	// ledger_entries_current's RMT version (ledger_seq<<32 | intra_ledger_seq) so FINAL
-	// keeps the LAST same-ledger change; change_index cannot serve (per-tx counter).
-	// Seed rows stamp seedIntraLedgerSeq. Positions are comparable only within the same
-	// dispatcher.EntryWalkVersion: a bump renumbers every ledger, so the partition must be
-	// dropped before re-ingest (migration 0120). DEFAULT 0 in the lake.
+	// IntraLedgerSeq is the change's position in the ledger-wide canonical walk, in PHASE order,
+	// not per-tx: (1) fee changes, (2) apply-phase meta, (3) post-apply fee changes (Soroban
+	// refunds), (4) evicted keys. Mirrors the SDK's ingest.LedgerChangeReader and dispatcher
+	// walkLedgerEntryChanges. It is folded into ledger_entries_current's RMT version
+	// (ledger_seq<<32 | intra_ledger_seq) so FINAL keeps the LAST same-ledger change; change_index
+	// cannot serve (per-tx counter). Seed rows stamp seedIntraLedgerSeq. Positions are comparable
+	// only within one dispatcher.EntryWalkVersion: a bump renumbers every ledger, so the partition
+	// must be dropped before re-ingest. DEFAULT 0 in the lake.
 	IntraLedgerSeq uint32
 }
 
@@ -357,11 +356,10 @@ func stellarNames(ctx context.Context, conn driver.Conn, query string) (map[stri
 	return have, nil
 }
 
-// Add buffers one ledger's extract and flushes at the ledger threshold; any error
-// other than [ErrBufferFull] comes from that inline flush (e stays buffered). If a
-// finite cap is set and the buffer is AT it, the NEWEST extract is dropped (O(1),
-// keeps the slices intact) and the ch-live-catchup gap scan refills it: bounded heap
-// beats unbounded growth on the shared host.
+// Add buffers one ledger's extract and flushes at the ledger threshold; any error other than
+// [ErrBufferFull] comes from that inline flush (e stays buffered). If a finite cap is set and the
+// buffer is AT it, the NEWEST extract is dropped and the ch-live-catchup gap scan refills it:
+// bounded heap beats unbounded growth on the shared host.
 func (s *Sink) Add(ctx context.Context, e LedgerExtract) error {
 	if s.maxBufferLedgers > 0 && len(s.ledgers) >= s.maxBufferLedgers {
 		return ErrBufferFull
@@ -380,11 +378,11 @@ func (s *Sink) Add(ctx context.Context, e LedgerExtract) error {
 	return nil
 }
 
-// Flush sends one native batch per table, then clears the buffers. A partial failure
-// keeps them so the caller retries the range (idempotent under ReplacingMergeTree).
-// ORDERING IS LOAD-BEARING: stellar.ledgers is flushed LAST as the per-ledger commit
-// marker (the INSERTs are not transactional). The projector's ContiguousWatermark
-// (ADR-0041) relies on it never passing a half-written ledger.
+// Flush sends one native batch per table, then clears the buffers. A partial failure keeps them so
+// the caller retries the range (idempotent under ReplacingMergeTree). ORDERING IS LOAD-BEARING:
+// stellar.ledgers is flushed LAST as the per-ledger commit marker (the INSERTs are not
+// transactional); the projector's ContiguousWatermark relies on it never passing a half-written
+// ledger.
 func (s *Sink) Flush(ctx context.Context) error {
 	n := len(s.ledgers)
 	if n == 0 {

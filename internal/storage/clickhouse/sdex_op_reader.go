@@ -10,14 +10,10 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
-// tradeOpTypes is the set of operation types that can emit ClaimAtoms
-// (classic SDEX trades), as op.Body.Type.String() — the exact strings the
-// extractor stores in stellar.operations.op_type. Mirrors
-// internal/sources/sdex.matchesTradeOp. Used to prefilter the lake scan so
-// the op-based re-derivation touches only trade-bearing ops, not all 23 B.
-// These are compile-time constants (not user input), so inlining them into
-// the IN list below carries no injection risk and avoids driver-specific
-// slice-binding behaviour for IN (?).
+// tradeOpTypes is the set of operation types that can emit ClaimAtoms (classic SDEX trades), as
+// stored in stellar.operations.op_type. Mirrors internal/sources/sdex.matchesTradeOp. It
+// prefilters the lake scan to trade-bearing ops. They are compile-time constants, so inlining
+// them into the IN list is injection-safe and avoids driver-specific slice binding for IN (?).
 var tradeOpTypes = []string{
 	"OperationTypeManageSellOffer",
 	"OperationTypeManageBuyOffer",
@@ -35,11 +31,9 @@ func tradeOpTypeInList() string {
 	return strings.Join(quoted, ",")
 }
 
-// SDEXOp is one trade-eligible operation reconstructed from the ClickHouse
-// lake — the op body + its result + ledger context, enough to feed the SDEX
-// OpDecoder (the caller maps it to dispatcher.OpContext). Source is the
-// resolved op source account (the op's own if it set one, else the tx
-// source), which the decoder uses as the trade Taker.
+// SDEXOp is one trade-eligible operation reconstructed from the lake: op body, result and ledger
+// context, enough to feed the SDEX OpDecoder. Source is the op's own source account if set, else
+// the tx source; the decoder uses it as the trade Taker.
 type SDEXOp struct {
 	Ledger   uint32
 	ClosedAt time.Time
@@ -50,24 +44,21 @@ type SDEXOp struct {
 	OpResult xdr.OperationResult
 }
 
-// StreamSDEXOps is the op-based input adapter (ADR-0034): SDEX trades are
-// op-derived, NOT event-derived. It reads stellar.operations joined to
-// stellar.operation_results on (ledger_seq, tx_hash, op_index) for [from,to],
-// trade-bearing op types and SUCCESSFUL transactions only, rebuilds op.Body +
-// the OperationResult from the retained XDR blobs, and calls fn in order.
+// StreamSDEXOps is the op-based input adapter (ADR-0034): SDEX trades are op-derived, NOT
+// event-derived. It reads stellar.operations joined to stellar.operation_results on (ledger_seq,
+// tx_hash, op_index) for [from,to], trade-bearing op types and SUCCESSFUL transactions only,
+// rebuilds op.Body and the OperationResult from the retained XDR, and calls fn in order.
 //
-// Failed transactions are excluded: their op results can still carry success
-// codes + claim atoms for ops that ran before the failing op, but those trades
-// were rolled back. dispatcher.CensusLedger and internal/sources/sdex both count
-// successful txs only, so the re-derivation must too.
+// Failed transactions are excluded: their op results can still carry success codes and claim
+// atoms for ops that ran before the failing op, but those trades were rolled back.
+// dispatcher.CensusLedger and internal/sources/sdex both count successful txs only.
 //
-// NO FINAL, deliberately: FINAL on a ReplacingMergeTree merges across ALL
-// overlapping parts of each touched PARTITION (~1M ledgers of wide body_xdr
-// rows) even for a 100k-ledger WHERE window, which repeatedly blew the
-// query-memory ceiling. Duplicate rows from un-merged parts are HARMLESS: the
-// census consumer PK-dedups via its `seen` map and ch-rebuild's InsertTrade is
-// ON CONFLICT DO NOTHING. join_algorithm=grace_hash keeps the join memory-bounded
-// (see sdexOpsQuery). Re-deriving all history should still window [from,to].
+// NO FINAL, deliberately: FINAL on a ReplacingMergeTree merges across ALL overlapping parts of
+// each touched PARTITION (~1M ledgers of wide body_xdr rows) even for a 100k-ledger WHERE window,
+// which repeatedly blew the query-memory ceiling. Duplicate rows from un-merged parts are
+// HARMLESS: the census consumer PK-dedups via its `seen` map and ch-rebuild's InsertTrade is
+// ON CONFLICT DO NOTHING. join_algorithm=grace_hash keeps the join memory-bounded (see
+// sdexOpsQuery). Re-deriving all history should still window [from,to].
 func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SDEXOp) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -85,24 +76,23 @@ func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SD
 	return streamSDEXOpRows(rows, fn)
 }
 
-// sdexOpsQuery is StreamSDEXOps' SQL, built here so its text stays independently
-// assertable (StreamSDEXOps dials its own connection, so stubConn cannot drive it).
+// sdexOpsQuery is StreamSDEXOps' SQL, built here so its text stays independently assertable
+// (StreamSDEXOps dials its own connection, so stubConn cannot drive it).
 //
-// The successful-tx restriction is a grace_hash INNER JOIN over a derived table,
-// not an IN-subquery: IN materialises the tx-hash set first and blew the 10 GiB
-// query budget on a dense window. GROUP BY tx_hash gives the derived table SET
-// semantics so un-merged duplicates cannot fan one op row out into two (NO FINAL).
+// The successful-tx restriction is a grace_hash INNER JOIN over a derived table, not an
+// IN-subquery: IN materialises the tx-hash set first and blew the query budget on a dense
+// window. GROUP BY tx_hash gives the derived table SET semantics so un-merged duplicates cannot
+// fan one op row out into two (NO FINAL).
 //
-// The join is spelled BEFORE the outer WHERE, as in contractCallOpsQuery; that
-// placement is load-bearing: wrapping the outer ledger window in a derived table
-// stops ClickHouse propagating it through o.ledger_seq = r.ledger_seq, and
-// stellar.operation_results loses primary-key pruning entirely.
+// The join is spelled BEFORE the outer WHERE, as in contractCallOpsQuery; that placement is
+// load-bearing: wrapping the outer ledger window in a derived table stops ClickHouse
+// propagating it through o.ledger_seq = r.ledger_seq, and stellar.operation_results loses
+// primary-key pruning entirely.
 //
-// The FOUR bind parameters are, in order: the successful-tx derived table's
-// from + to (written FIRST), then the outer window's from + to. Reordering
-// without moving the argument list is a silent wrong-window read; pinned by test.
-//
-// The op-type filter is INTERPOLATED, not bound: see tradeOpTypeInList.
+// The FOUR bind parameters are, in order: the successful-tx derived table's from + to (written
+// FIRST), then the outer window's from + to. Reordering without moving the argument list is a
+// silent wrong-window read; pinned by test. The op-type filter is INTERPOLATED, not bound: see
+// tradeOpTypeInList.
 func sdexOpsQuery() string {
 	return fmt.Sprintf(`
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account,
@@ -121,13 +111,12 @@ func sdexOpsQuery() string {
 		SETTINGS join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 32`, tradeOpTypeInList())
 }
 
-// streamSDEXOpRows decodes an open sdexOpsQuery result set and invokes fn once
-// per row, in the order ClickHouse returned them. Split out of StreamSDEXOps so
-// the decode + fan-out half is drivable against a stub driver.Rows (the
-// scanOpParticipants precedent in participant_backfill.go).
+// streamSDEXOpRows decodes an open sdexOpsQuery result set and invokes fn once per row, in the
+// order ClickHouse returned them. Split out so the decode half is drivable against a stub
+// driver.Rows.
 //
-// fn's error aborts the stream and is returned VERBATIM: callers use a sentinel
-// from fn as a stop signal, so it must not be wrapped.
+// fn's error aborts the stream and is returned VERBATIM: callers use a sentinel from fn as a
+// stop signal, so it must not be wrapped.
 func streamSDEXOpRows(rows driver.Rows, fn func(SDEXOp) error) error {
 	for rows.Next() {
 		var (

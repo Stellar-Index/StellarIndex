@@ -58,11 +58,10 @@ func sqlQuoteEscapedList(ss []string) string {
 	return strings.Join(q, ",")
 }
 
-// boundedScanSettings is the per-query clause for full-history scans. The connection
-// cap does not bound them: the in-order read pool's wide-column buffers are
-// undertracked per query yet counted server-wide, so raising caps did not help.
-// Work shape bounds the footprint: 2 threads, 8 GiB tracked, external group-by/sort
-// spill at 4 GiB (bytes), so a growing lake costs time, never an OOM kill.
+// boundedScanSettings is the per-query clause for full-history scans. The connection cap does not
+// bound them: the in-order read pool's wide-column buffers are undertracked per query yet counted
+// server-wide. Work shape bounds the footprint (2 threads, 8 GiB tracked, external group-by/sort
+// spill at 4 GiB), so a growing lake costs time, never an OOM kill.
 const boundedScanSettings = "SETTINGS max_threads = 2, max_memory_usage = 8589934592, " +
 	"max_bytes_before_external_group_by = 4294967296, max_bytes_before_external_sort = 4294967296"
 
@@ -88,26 +87,21 @@ func forEachLedgerWindow(from, to, stride uint32, fn func(lo, hi uint32) error) 
 	}
 }
 
-// StreamContractEventsFiltered is the projector's forward-read source (ADR-0041):
-// contract_events for [from,to] narrowed by contract_id IN / topic_0_sym IN, rebuilt
-// as events.Event in apply order (SQL sorts by tx_hash; scanInApplyOrder re-sorts each
-// ledger by tx_index). ID and TransactionIndex stay zero. Empty filters leave
-// Decoder.Matches as the only gate.
-//
-// excludeTopic0Syms (nil = none) drops the CAP-67 firehose in SQL (ClassicTokenTopic0Syms).
+// StreamContractEventsFiltered is the projector's forward-read source: contract_events for [from,to]
+// narrowed by contract_id IN / topic_0_sym IN, rebuilt as events.Event in apply order (SQL sorts by
+// tx_hash; scanInApplyOrder re-sorts each ledger by tx_index). ID and TransactionIndex stay zero.
+// Empty filters leave Decoder.Matches as the only gate. excludeTopic0Syms (nil = none) drops the
+// CAP-67 firehose in SQL (ClassicTokenTopic0Syms).
 //
 // useFinal=false (projector): windows are small and writes idempotent, so duplicate
-// ReplacingMergeTree parts are absorbed. A COUNTING consumer must not double-count
-// them: pass true (ch-rebuild sep41 dry-run), or dedup adjacent rows in Go (ORDER BY
-// makes duplicates consecutive; the completeness reconcile does this, gentler on the
-// shared host). FINAL + contract_id filter + wide range is the protocol_reader.go
-// trap; the sole useFinal=true caller is deliberate (openRead has no execution-time
-// cap and it streams), but a new request-path caller needs its own row ceiling.
+// ReplacingMergeTree parts are absorbed. A COUNTING consumer must not double-count them: pass true,
+// or dedup adjacent rows in Go (ORDER BY makes duplicates consecutive; gentler on the shared host).
+// FINAL + contract_id filter + wide range is the protocol_reader.go trap; the sole useFinal=true
+// caller is deliberate (openRead has no execution-time cap and it streams), but a new request-path
+// caller needs its own row ceiling.
 //
-// withOpArgs reads op_args_xdr, a wide column: only decoders reading
-// events.Event.OpArgs (redstone) need it. withStateWriteKeys resolves StateWriteKeys
-// from ledger_entry_changes (state_write_keys.go); per-source opt-in, only redstone
-// reads them.
+// withOpArgs reads op_args_xdr, a wide column only decoders reading events.Event.OpArgs (redstone)
+// need. withStateWriteKeys resolves StateWriteKeys from ledger_entry_changes (state_write_keys.go).
 func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs, withStateWriteKeys bool, fn func(events.Event) error) error {
 	where := contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms)
 	return streamContractEventsWhere(ctx, addr, from, to, contractIDs, where, useFinal, withOpArgs, withStateWriteKeys, fn)
@@ -149,12 +143,11 @@ func streamContractEventsWhere(ctx context.Context, addr string, from, to uint32
 	return nil
 }
 
-// topic0Predicate renders the topic[0] prefilter and matches BOTH encodings:
-// extract.go fills topic_0_sym from GetSym() (Symbol only), so it is empty for an
-// ScvString topic[0] (phoenix) and filtering on it alone silently matches nothing.
-// Also test topics_xdr[1] against the ScvString encoding; widening the column would
-// mean re-extracting the lake. It only widens a prefilter, and each decoder's
-// Matches() remains the final gate.
+// topic0Predicate renders the topic[0] prefilter and matches BOTH encodings: extract.go fills
+// topic_0_sym from GetSym() (Symbol only), so it is empty for an ScvString topic[0] (phoenix) and
+// filtering on it alone silently matches nothing. topics_xdr[1] is also tested against the
+// ScvString encoding, since widening the column would mean re-extracting the lake. It only widens
+// a prefilter; each decoder's Matches() remains the final gate.
 func topic0Predicate(topic0Syms []string) string {
 	asStrings := make([]string, 0, len(topic0Syms))
 	for _, s := range topic0Syms {

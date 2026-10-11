@@ -15,9 +15,8 @@ import (
 
 // ContractStorageSupply is a token's supply summed from the balance ledger entries its contract
 // holds in Soroban storage, not from the event log. It is a DISTRIBUTION level; the event-derived
-// supply ([TokenSupply]) is an issuance accumulation, too low for a log with gaps and a confident
-// zero for a token with no events. Never add the two. See the ContractStorageSupply method for the
-// handover rule.
+// supply ([TokenSupply]) is an accumulation, too low for a log with gaps and a confident zero
+// for a token with no events. Never add the two; see the method for the handover rule.
 type ContractStorageSupply struct {
 	ContractID string
 
@@ -105,10 +104,9 @@ const maxContractStorageBalanceEntries = 25_000
 // balanceKeyMarker is the fixed base64 window a Balance(Address) contract-data key carries;
 // instanceKeyMarker is the instance one. A key's first 40 bytes are (type, address type, contract
 // id), so the SCVal key lands at a FIXED base64 offset: plain string comparisons, no per-row XDR
-// parse.
-// Markers are a PRE-FILTER ONLY; survivors are re-checked by balanceKeyHolder. `BalanceCheckpoints`
-// (a vector of past balances) shares the leading symbol text `Balance` and differs only in the
-// symbol LENGTH bytes the marker pins.
+// parse. Markers are a PRE-FILTER ONLY; survivors are re-checked by balanceKeyHolder.
+// `BalanceCheckpoints` shares the leading symbol text `Balance` and differs only in the symbol
+// LENGTH bytes the marker pins.
 const (
 	balanceKeyMarker = "ABAAAAABAAAAAgAAAA8AAAAHQmFsYW5jZQAAAAAS"
 	// holderCountKeyMarker matches Vec[Symbol("HolderCount")], a top-level persistent entry: the
@@ -126,11 +124,10 @@ const (
 )
 
 // contractStorageSupplyQuery reads one contract's balance + instance entries. startsWith() on
-// key_xdr is a primary-key prefix range ((entry_type, key_xdr) lead the ORDER BY), the same shape
-// as TokenDecimals.
-// FINAL is mandatory: ledger_entries_current is a ReplacingMergeTree, so without it an updated
-// balance returns once per unmerged part and stale copies are summed. `change_type != 'removed'`
-// drops deleted entries: a removed balance no longer exists.
+// key_xdr is a primary-key prefix range ((entry_type, key_xdr) lead the ORDER BY), as in
+// TokenDecimals. FINAL is mandatory: ledger_entries_current is a ReplacingMergeTree, so without
+// it an updated balance returns once per unmerged part and stale copies are summed.
+// `change_type != 'removed'` drops deleted entries.
 const contractStorageSupplyQuery = `
 	SELECT key_xdr, entry_xdr, ledger_seq
 	FROM stellar.ledger_entries_current FINAL
@@ -151,9 +148,8 @@ type ContractStorageSupplyReader interface {
 // SEP-41 / CAP-67 event log cannot see (they are ABSENT from supply_flows, so events sum to a
 // confident zero).
 // Handover: a token with both a storage level and an event accumulation takes the storage reading
-// outright and the two are never added; a level cannot be wrong from missing history. Events stay a
-// cross-check. Measured: storage reproduced the event-derived totals of three complete Wasm tokens
-// exactly.
+// outright and the two are never added; a level cannot be wrong from missing history. Events stay
+// a cross-check.
 // Expiry: the lake never records an eviction, so every balance is judged against
 // stellar.ttl_live_until at the lake tip. A lapsed TEMPORARY balance is dropped; a lapsed
 // PERSISTENT one is archived, still owned, and stays in Total (disclosed via

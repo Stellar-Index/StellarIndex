@@ -62,13 +62,12 @@ type AccountGraphCoverage struct {
 // AccountGraph is one account's neighbourhood in the sponsorship and creation graph.
 //
 // Everything here is history. A sponsorship edge says an arrangement was started, never that
-// one is in force: RevokeSponsorship names its entry inside undecoded body_xdr, so a
-// revocation attributes to the issuer, not an edge, and arrangements also lapse on entry
-// deletion or merge with no operation. No edge field claims a live sponsorship.
+// one is in force: RevokeSponsorship names its entry inside undecoded body_xdr, and
+// arrangements also lapse on entry deletion or merge with no operation.
 //
 // Inbound (CreatedBy / SponsoredBy) is capped by AccountGraphInboundCap with an exact total;
-// outbound is summarised (Created / Sponsored) and paged (Page) because the busiest sponsor
-// covers 785,543 accounts.
+// outbound is summarised and paged (Page) because one sponsor can cover hundreds of thousands
+// of accounts.
 type AccountGraph struct {
 	// CreatedBy is a list because an address can be created, merged away and created again
 	// (by the same or another funder); edges are collapsed to distinct pairs before serving.
